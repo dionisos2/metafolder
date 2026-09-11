@@ -3209,8 +3209,28 @@ completions on stdin), =mf_gui_prompt_tag= (over the tag vocabulary), and
 =mf_gui_prompt_folder= / =mf_gui_prompt_file= (over the repository's tracked
 directories/files, resolved in one =mf metarecord … get --resolve-tree mfr_path=
 round-trip and paired with =mf_gui_path_uuid= to map the chosen path back to a
-metarecord). So e.g. =gui-tag-folder.sh= takes its tag and folder either as
-positional arguments *or*, when omitted, from the GUI completion.
+metarecord). So e.g. =gui-tag-folder.sh= takes its tag either as a positional
+argument *or*, when omitted, from the GUI completion.
+
+**** A query is the scope
+
+A shipped script that acts on a set takes that set as a *query*, and the query
+is the boundary: =gui-tag-folder.sh= answering "yes" on a folder applies to
+=(<query>) AND mfr_path ->* "<path>"=, never to a metarecord the query excludes.
+The query comes from, in order: the argument; else =mf gui query= (what the GUI
+shows — the checkbox selection, else the list's query with its finder
+narrowing); else the folder completion, turned into =mfr_path =>* "<folder>"=.
+An empty query means every metarecord and is used as such, never wrapped
+(=() AND …= is not a query). The scope is resolved *before* the session
+takeover, since the scratch workspace publishes nothing.
+
+Reading the whole scope up front — =--sort order_dir=/=order_file= then
+=--sort mfr_path= for the order, =--resolve-tree mfr_path --tsv= for the
+paths, one pair per kind — replaces the per-folder listing. So the total is
+known before the first question, and the walk goes level by level, folders
+before files, each folder in =mf order='s numbering when it has one and
+alphabetically otherwise. A script never runs =mf order= itself: numbering is a
+deliberate act, and its date-based fallback would walk worse than alphabetical.
 
 *** Example: image comparison script
 

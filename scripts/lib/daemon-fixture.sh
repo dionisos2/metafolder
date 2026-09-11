@@ -19,7 +19,7 @@
 #   df_mf <args…>           call the real mf against the fixture daemon
 #   df_tags <uuid>          the record's positive tag paths (one per line)
 #   df_neg  <uuid>          the record's negative tag paths
-#   hy_reset / hy_input / hy_prompt / hy_log   drive + inspect the gui stub
+#   hy_reset / hy_input / hy_prompt / hy_query / hy_log  drive + inspect the stub
 
 DF_PORT=""
 DF_REPO=""
@@ -105,6 +105,13 @@ case "$sig" in
                        printf '%s\n' "$v"; exit 0
                    fi
                    exit 1 ;;
+    "gui query"*)  # What the GUI is showing. Nothing is published unless a
+                   # test says so (`hy_query`), and "nothing published" is an
+                   # EXIT 1 — distinct from the empty line that means "every
+                   # metarecord", which would silently widen a script's scope to
+                   # the whole repository.
+                   [ -f "$HY_DIR/query" ] || exit 1
+                   cat "$HY_DIR/query"; exit 0 ;;
     "gui "*)       exit 0 ;;   # layout/view/message/workspace: no-op success
     *)             exec "$HYBRID_REAL_MF" -p "$HYBRID_PORT" "$@" ;;
 esac
@@ -113,7 +120,10 @@ SHIM
     PATH="$bin:$PATH"; export PATH
 }
 
-hy_reset() { : >"$HY_DIR/log"; rm -f "$HY_DIR/input" "$HY_DIR/prompt"; }
+hy_reset() { : >"$HY_DIR/log"; rm -f "$HY_DIR/input" "$HY_DIR/prompt" "$HY_DIR/query"; }
+# What `mf gui query` answers (the query the GUI is showing). Unset = exit 1,
+# "nothing published"; an empty string = the empty query, every metarecord.
+hy_query() { printf '%s\n' "${1-}" >"$HY_DIR/query"; }
 hy_input() { local k; for k in "$@"; do printf '%s\n' "$k" >>"$HY_DIR/input"; done; }
 hy_prompt() { local v; for v in "$@"; do printf '%s\n' "$v" >>"$HY_DIR/prompt"; done; }
 hy_log() { cat "$HY_DIR/log"; }

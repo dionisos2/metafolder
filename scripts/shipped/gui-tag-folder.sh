@@ -1,31 +1,46 @@
 #!/usr/bin/env bash
-# Summary: Bulk-apply one tag over a folder subtree (yes/no/mixed walk).
-# Bulk-apply one tag over a folder subtree, in the running metafolder GUI.
-# Given a TAG (a "/"-separated tag path) and a FOLDER, asks whether the folder
-# carries the tag; three answers:
+# Summary: Bulk-apply one tag over a query's metarecords (yes/no/mixed walk).
+# Bulk-apply one tag over a set of metarecords, in the running metafolder GUI.
+# Given a TAG (a "/"-separated tag path) and a QUERY, walks what the query
+# matches and asks, per entry, whether it carries the tag:
 #
-#   y (oui)   -> `mf tag add` on the folder AND its whole subtree
-#                (mfr_path ->* folder).
+#   y (oui)   -> `mf tag add` on the entry; for a folder, on its whole subtree
+#                too — *intersected with the query*, which is the scope.
 #   n (non)   -> `mf tag deny` on the same scope.
-#   m (mixed) -> `mf tag mixed` on the folder only, then descend: ask again for
-#                each direct child (files: y/n/s; sub-dirs: y/n/m/s). Mixed
-#                sub-dirs are processed in turn until none remains unprocessed.
-#   s (skip)  -> leave this entry alone: no tag op, and for a folder no descent
-#                either — the whole subtree is left for another run.
+#   m (mixed) -> `mf tag mixed` on the folder only; its children stay in the
+#                walk and are asked in turn.
+#   s (skip)  -> leave this entry alone: no tag op, and for a folder nothing
+#                under it is asked either — the subtree is left for another run.
 #
 # The arrow keys answer as well: → yes, ← no, ↑ mixed, ↓ skip.
 #
-# Every question carries what is left to answer ("— 7 left, 2 folders to open")
-# and the GUI task bar shows the same as a bar. Neither is a total known in
-# advance: the walk discovers a folder's contents only when a "mixed" answer
-# opens it, so the count is the entries left in the folder being walked plus one
-# per mixed folder still to open — a lower bound that rises as the walk goes
-# deeper and lands on the real figure at the end.
+# THE QUERY IS THE SCOPE. A "yes" on a folder never reaches a metarecord the
+# query excludes: the subtree op is `(<query>) AND mfr_path ->* "<path>"`. So
+# narrowing the list in the GUI narrows what this script can touch.
+#
+# Where the query comes from, in order: the QUERY argument; else what the GUI
+# is showing (`mf gui query` — the checkbox selection, else the list's query
+# with its finder narrowing); else a folder chosen from the completion, turned
+# into `mfr_path =>* "<folder>"` (the folder and its whole subtree). An empty
+# query means every metarecord, and is left as such rather than wrapped.
+#
+# ORDER. The whole scope is read in four round-trips — ordered uuids and
+# uuid→path for each of the two kinds — instead of one listing per folder. The
+# walk then goes level by level (a folder before what it contains), folders
+# before files, and within one folder in the order the daemon returned:
+# `--sort order_dir` / `--sort order_file` first, then `--sort mfr_path`. So a
+# folder that `mf order` has numbered is walked in its own order (an album by
+# track number), and everything else alphabetically by path. The script never
+# runs `mf order` itself: numbering is a deliberate act, and its date-based
+# fallback would be a worse walking order than the alphabetical one.
+#
+# Because the scope is read up front, the total is known before the first
+# question and the progress bar is exact.
 #
 # Resumable: an entry whose answer is already recorded is not asked again. The
 # record carries the tag (`tag`, exactly or through a more specific tag), carries
 # its negation (`negative_tag`, exactly or through a more general one), or is a
-# `mixed_tag` folder — which is descended into straight away, no question. So a
+# `mixed_tag` folder — which is walked into straight away, no question. So a
 # run interrupted halfway (skip, stop, Escape) is continued by re-running the
 # same command, and only the open questions come back. `--redo` asks everything
 # again, decided or not — the way to revise a wrong answer over a subtree.
@@ -33,17 +48,12 @@
 # `mf tag` owns the tag model: it creates the entry if the vocabulary lacks it,
 # adds the ref idempotently, and applies the subsumption/exclusivity rewrites
 # (add drops the more general ancestor tags, deny drops the more specific
-# descendant negatives). So this script is only the folder walk + the y/n/m
-# questions — no tag bookkeeping of its own.
+# descendant negatives). So this script is only the walk + the y/n/m questions.
 #
-# Operates on TRACKED metarecords only — reconcile the folder first if you want
-# everything under it covered.
+# Operates on TRACKED metarecords only — reconcile first if you want everything
+# covered.
 #
-# Both arguments are optional: a missing one is asked in the GUI with
-# completion (the tag over the vocabulary, the folder over the repository's
-# tracked directories).
-#
-# Usage: gui-tag-folder.sh [--redo] [<tag> [<folder>]]
+# Usage: gui-tag-folder.sh [--redo] [<tag> [<query>]]
 
 set -euo pipefail
 
@@ -63,9 +73,11 @@ if [ "${1:-}" = "--redo" ]; then
     REDO=1
     shift
 fi
-[ $# -le 2 ] || mf_die "usage: $0 [--redo] [<tag> [<folder>]]"
+[ $# -le 2 ] || mf_die "usage: $0 [--redo] [<tag> [<query>]]"
 TAG=${1:-}
-FOLDER=${2:-}
+QUERY_GIVEN=0
+[ $# -ge 2 ] && QUERY_GIVEN=1
+QUERY_ARG=${2-}
 
 mf_gui_bind_repo
 
@@ -74,22 +86,25 @@ mf_gui_bind_repo
 [ -n "$TAG" ] || mf_die "empty tag name"
 case $TAG in *\"*) mf_die "tag names must not contain double quotes" ;; esac
 
-# Folder: a command-line argument is a filesystem path (tracked on the fly); a
-# prompted value is an in-repo tree-path chosen from the folder completion.
-if [ -n "$FOLDER" ]; then
-    FOLDER_ABS=$(readlink -f -- "$FOLDER") || mf_die "no such folder: $FOLDER"
-    [ -d "$FOLDER_ABS" ] || mf_die "not a directory: $FOLDER_ABS"
-    FOLDER_UUID=$(mf track "$FOLDER_ABS") || mf_die "cannot track $FOLDER_ABS (inside the repo root?)"
+# The scope. Resolved BEFORE the session takeover: `mf gui query` answers for
+# the focused workspace, and the scratch workspace the session opens publishes
+# nothing.
+if [ "$QUERY_GIVEN" = 1 ]; then
+    SCOPE=$QUERY_ARG
+elif SCOPE=$(mf gui query 2>/dev/null); then
+    : # what the GUI shows (possibly empty = everything)
 else
     FOLDER_TP=$(mf_gui_prompt_folder "Folder: ") || mf_die "cancelled"
     [ -n "$FOLDER_TP" ] || mf_die "empty folder"
-    FOLDER_UUID=$(mf_gui_path_uuid "$FOLDER_TP")
-    [ -n "$FOLDER_UUID" ] || mf_die "no tracked folder at $FOLDER_TP"
+    # `=>*` is the inclusive subtree: the folder itself plus every descendant.
+    SCOPE="mfr_path =>* \"$(mf_gui_query_path "$FOLDER_TP")\""
 fi
-FOLDER_TP=$(mf path --relative "$FOLDER_UUID")
-# Absolute filesystem path for the preview (unset in the prompted branch, which
-# never touched the filesystem): derive it from the uuid, like the child walk.
-FOLDER_ABS=$(mf path "$FOLDER_UUID" 2>/dev/null || true)
+
+# Narrow a predicate to the scope. An empty scope is every metarecord, so it is
+# left alone rather than wrapped — `() AND …` is not a query.
+scoped() { # <predicate>
+    if [ -z "$SCOPE" ]; then printf '%s' "$1"; else printf '(%s) AND %s' "$SCOPE" "$1"; fi
+}
 
 mf_gui_session_open metarecord-detail
 
@@ -98,11 +113,56 @@ POS="$TMP/pos"
 NEG="$TMP/neg"
 MIX="$TMP/mix"
 
+declare -A PATH_OF RANK KIND
+
+# Read one kind of the scope: the uuids in walking order, and their paths.
+# Two round-trips per kind, whatever the size — `--sort` and `--resolve-tree`
+# are exclusive, so the order comes from one call and the paths from the other.
+collect() { # <dir|file> <order field>
+    local kind=$1 field=$2 i=0 uuid path
+    local -a ordered=()
+    mapfile -t ordered < <(
+        mf metarecord -q "$(scoped "mfr_type = \"$kind\"")" get --sort "$field" --sort mfr_path
+    )
+    for uuid in ${ordered+"${ordered[@]}"}; do
+        [ -n "$uuid" ] || continue
+        i=$((i + 1))
+        RANK[$uuid]=$i
+        KIND[$uuid]=$kind
+    done
+    while IFS=$'\t' read -r uuid path; do
+        [ -n "$uuid" ] || continue
+        PATH_OF[$uuid]=$path
+    done < <(
+        mf metarecord -q "$(scoped "mfr_type = \"$kind\"")" get --resolve-tree mfr_path --tsv
+    )
+}
+
+collect dir order_dir
+collect file order_file
+
+# One sortable line per entry: depth, parent path, kind (folders first), then
+# the daemon's own rank. Sorting on that gives the walk its order — level by
+# level, a folder before its contents, folders before files.
+ENTRIES=()
+for uuid in "${!RANK[@]}"; do
+    path=${PATH_OF[$uuid]-}
+    depth=$(awk -F/ '{print NF - 1}' <<<"$path")
+    parent=${path%/*}
+    krank=1
+    [ "${KIND[$uuid]}" = dir ] && krank=0
+    # The parent is prefixed so the field is never empty: a tab is IFS
+    # *whitespace*, so `read` collapses two consecutive ones and an empty middle
+    # field would shift every field after it (the root's parent is "").
+    ENTRIES+=("$depth	.$parent	$krank	${RANK[$uuid]}	$uuid")
+done
+
+TOTAL=${#ENTRIES[@]}
+[ "$TOTAL" -gt 0 ] || mf_die "the query matches no tracked metarecord"
+
 # The answer already recorded for TAG on a metarecord, or nothing when the
 # question is still open. Subsumption is the one `mf tag` applies when writing:
 # a more specific positive implies TAG, a more general negative denies it.
-# One round-trip per field, stopping at the first hit — so an entry that is
-# already tagged costs a single call.
 decided() { # <uuid> -> y | n | m | ""
     [ "$REDO" = 0 ] || return 0
     mf metarecord -i "$1" field get tag --resolve path >"$POS"
@@ -114,129 +174,100 @@ decided() { # <uuid> -> y | n | m | ""
     return 0
 }
 
-# Apply T over a node and its whole subtree (self + descendants). One `mf tag`
-# call per scope; the subsumption is handled server-side across the whole set.
-apply_tree() { # <uuid> <treepath> <verb: add|deny>
+# Apply T over a node and its subtree, the subtree narrowed to the scope.
+apply_tree() { # <uuid> <path> <verb: add|deny>
     mf tag -i "$1" "$3" "$TAG" >/dev/null \
-        && mf tag -q "mfr_path ->* \"$(mf_gui_query_path "$2")\"" "$3" "$TAG" >/dev/null
+        && mf tag -q "$(scoped "mfr_path ->* \"$2\"")" "$3" "$TAG" >/dev/null
 }
 
-# How the walk ended: "" = still going, "user" = Escape, anything else is an
-# ERROR MESSAGE. The two must stay apart. Bash disables `set -e` wherever a
-# failure is tested, so a `mf tag` that failed inside a handler used to surface
-# only as "the handler returned non-zero" — indistinguishable from Escape, and
-# the run ended with a cheerful "stopped." and exit 0 (spec-gui "Script
-# session"). Now a failed tag op aborts loudly with its own message.
+# Subtrees that are settled: a folder answered yes/no (its whole subtree took
+# the answer) or skipped (deliberately left alone). Nothing under them is asked.
+PRUNED=()
+is_pruned() { # <path>
+    local path=$1 root
+    for root in ${PRUNED+"${PRUNED[@]}"}; do
+        case "$path/" in "$root/"*) return 0 ;; esac
+    done
+    return 1
+}
+
+# How the walk ended: "" = still going, "user" = stopped, anything else is an
+# ERROR MESSAGE. The two must stay apart: bash disables `set -e` wherever a
+# failure is tested, so a failed `mf tag` inside a handler would otherwise be
+# indistinguishable from Escape and end the run with a cheerful "stopped."
 STOP=""
 SKIPPED=0
 ALREADY=0
-QUEUE=()
-
-# How far the walk has got. A folder's whole subtree is discovered one listing at
-# a time (a "mixed" answer is what reveals the next one), so there is no total to
-# know up front: DONE counts the entries visited, LEFT_HERE the ones still to
-# visit in the listing being walked (the current one included), and each mixed
-# folder waiting in QUEUE stands for at least one more entry. DONE + LEFT_HERE -
-# 1 + |QUEUE| is therefore a *lower bound* on the work — the bar's total grows
-# whenever a mixed answer opens a new folder, and lands exactly on DONE at the
-# end.
 DONE=0
-LEFT_HERE=1
 
-# Ask about one entry and apply the answer. For a folder, yes/no cover the whole
-# subtree, mixed descends, skip leaves the subtree untouched.
-handle() { # <uuid> <treepath> <abs> <dir|file>
-    local uuid=$1 tp=$2 abs=$3 kind=$4 answer prior left counter
-    left=$((LEFT_HERE + ${#QUEUE[@]}))
+# `depth`, `parent`, `krank` and `rank` are the sort key and are not read again
+# here; only the uuid is.
+# shellcheck disable=SC2034
+while IFS=$'\t' read -r depth parent krank rank uuid; do
+    [ -z "$STOP" ] || break
+    [ -n "$uuid" ] || continue
+    path=${PATH_OF[$uuid]-}
+    kind=${KIND[$uuid]}
+    is_pruned "$path" && continue
     DONE=$((DONE + 1))
-    # Report progress before the decision, so a resume scanning past entries it
+    # Report progress before the decision, so a resume walking past entries it
     # has already answered still moves the bar instead of looking frozen.
-    mf_gui_progress --done "$DONE" --total "$((DONE + left - 1))" --phase "$tp"
-    # Already answered in an earlier run: no question, no tag op. A mixed folder
-    # is still descended into — that is where its remaining questions live.
+    mf_gui_progress --done "$DONE" --total "$TOTAL" --phase "$path"
+    # Already answered in an earlier run: no question, no tag op. A folder that
+    # took the answer whole settles its subtree; a mixed one does not — that is
+    # where its remaining questions live.
     prior=$(decided "$uuid")
     case $prior in
-        y | n) ALREADY=$((ALREADY + 1)); return 0 ;;
+        y | n)
+            ALREADY=$((ALREADY + 1))
+            [ "$kind" = dir ] && PRUNED+=("$path")
+            continue
+            ;;
         m)
             ALREADY=$((ALREADY + 1))
-            [ "$kind" = dir ] && QUEUE+=("$uuid")
-            return 0 ;;
+            continue
+            ;;
     esac
-    mf_gui_show_file "$abs"
-    # What is left to answer, spelled out next to the question: the entries of
-    # this folder, then the mixed folders still to open (each one a listing of
-    # its own, so its children cannot be counted yet).
-    counter="$LEFT_HERE left"
-    case ${#QUEUE[@]} in
-        0) ;;
-        1) counter="$counter, 1 folder to open" ;;
-        *) counter="$counter, ${#QUEUE[@]} folders to open" ;;
-    esac
+    mf_gui_show_file "$(mf path "$uuid" 2>/dev/null || true)"
+    counter="$((TOTAL - DONE)) left"
     if [ "$kind" = dir ]; then
         answer=$(mf_gui_ask_answer \
-            "'$tp' has tag '$TAG'?   [y →] oui   [n ←] non   [m ↑] mixed   [s ↓] skip   [q] stop   — $counter" \
+            "'$path' has tag '$TAG'?   [y →] oui   [n ←] non   [m ↑] mixed   [s ↓] skip   [q] stop   — $counter" \
             y n m s q)
     else
         answer=$(mf_gui_ask_answer \
-            "'$tp' has tag '$TAG'?   [y →] oui   [n ←] non   [s ↓] skip   [q] stop   — $counter" \
+            "'$path' has tag '$TAG'?   [y →] oui   [n ←] non   [s ↓] skip   [q] stop   — $counter" \
             y n s q)
     fi
     case $answer in
         y)
             if [ "$kind" = dir ]; then
-                apply_tree "$uuid" "$tp" add || STOP="cannot tag '$tp'"
+                if apply_tree "$uuid" "$path" add; then PRUNED+=("$path"); else STOP="cannot tag '$path'"; fi
             else
-                mf tag -i "$uuid" add "$TAG" >/dev/null || STOP="cannot tag '$tp'"
-            fi ;;
+                mf tag -i "$uuid" add "$TAG" >/dev/null || STOP="cannot tag '$path'"
+            fi
+            ;;
         n)
             if [ "$kind" = dir ]; then
-                apply_tree "$uuid" "$tp" deny || STOP="cannot untag '$tp'"
+                if apply_tree "$uuid" "$path" deny; then PRUNED+=("$path"); else STOP="cannot untag '$path'"; fi
             else
-                mf tag -i "$uuid" deny "$TAG" >/dev/null || STOP="cannot untag '$tp'"
-            fi ;;
+                mf tag -i "$uuid" deny "$TAG" >/dev/null || STOP="cannot untag '$path'"
+            fi
+            ;;
         m)
-            if mf tag -i "$uuid" mixed "$TAG" >/dev/null; then
-                QUEUE+=("$uuid")
-            else
-                STOP="cannot mark '$tp' mixed"
-            fi ;;
-        s) SKIPPED=$((SKIPPED + 1)) ;;   # a folder's whole subtree, untouched
+            # The children stay in the walk; only the marker is written.
+            mf tag -i "$uuid" mixed "$TAG" >/dev/null || STOP="cannot mark '$path' mixed"
+            ;;
+        s)
+            SKIPPED=$((SKIPPED + 1))
+            [ "$kind" = dir ] && PRUNED+=("$path")
+            ;;
         *) STOP=user ;;
     esac
-}
-
-# Ask about the top folder; recurse into mixed folders breadth-first.
-LEFT_HERE=1
-handle "$FOLDER_UUID" "$FOLDER_TP" "$FOLDER_ABS" dir
-
-while [ -z "$STOP" ] && [ ${#QUEUE[@]} -gt 0 ]; do
-    parent=${QUEUE[0]}; QUEUE=("${QUEUE[@]:1}")
-    parent_tp=$(mf path --relative "$parent")
-    # The whole listing up front, so the walk knows how many entries this folder
-    # still owes an answer (`mapfile`, like gui-tag-pair.sh's worklist).
-    mapfile -t children < <(mf metarecord -q "mfr_path -> \"$(mf_gui_query_path "$parent_tp")\"" get)
-    seen=0
-    for child in ${children+"${children[@]}"}; do
-        [ -n "$child" ] || continue
-        [ -z "$STOP" ] || break
-        seen=$((seen + 1))
-        LEFT_HERE=$((${#children[@]} - seen + 1))
-        # No `| head -n1` here: with `pipefail`, head closing the pipe early can
-        # fail the whole read and kill the run.
-        ctype=$(mf metarecord -i "$child" field get mfr_type)
-        ctype=${ctype%%$'\n'*}
-        ctp=$(mf path --relative "$child")
-        cabs=$(mf path "$child" 2>/dev/null || true)
-        if [ "$ctype" = dir ]; then
-            handle "$child" "$ctp" "$cabs" dir
-        else
-            handle "$child" "$ctp" "$cabs" file
-        fi
-    done
-done
+done < <(printf '%s\n' "${ENTRIES[@]}" | sort -t$'\t' -k1,1n -k2,2 -k3,3n -k4,4n)
 
 case $STOP in
-    "")   mf_gui_finish "done tagging '$TAG' under $FOLDER_TP ($SKIPPED skipped, $ALREADY already decided)." ;;
-    user) mf_gui_finish "stopped tagging '$TAG' under $FOLDER_TP ($SKIPPED skipped, $ALREADY already decided)." ;;
+    "")   mf_gui_finish "done tagging '$TAG' ($SKIPPED skipped, $ALREADY already decided)." ;;
+    user) mf_gui_finish "stopped tagging '$TAG' ($SKIPPED skipped, $ALREADY already decided)." ;;
     *)    mf_gui_finish "tagging '$TAG' aborted: $STOP"; exit 1 ;;
 esac

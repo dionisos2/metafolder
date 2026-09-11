@@ -67,6 +67,19 @@ assert "subfolder: the /sub node is tagged" has_tag "$SUB" subtag
 assert "subfolder: a file under /sub is tagged" has_tag "$INNER" subtag
 assert_not "subfolder: a file OUTSIDE /sub is NOT tagged" has_tag "$TOP" subtag
 
+# ── gui-tag-folder scoped by what the GUI shows, against the real daemon ─────
+# The mocked suite pins the command shapes; this proves the scope really holds:
+# the query is the boundary, so a "yes" on the repository root must not reach a
+# file the query excludes.
+hy_reset
+hy_query 'mfr_path =>* "/sub"'
+hy_input y
+bash "$FOLDER" guitag >/dev/null 2>&1
+assert "gui scope: a file inside the query is tagged" has_tag "$INNER" guitag
+assert_not "gui scope: a file outside it is NOT tagged" has_tag "$TOP" guitag
+assert "gui scope: no folder prompt was needed" \
+    [ "$(hy_log | grep -c '^gui prompt')" -eq 0 ]
+
 # ── gui-tag-folder on the ROOT: the WHOLE repository subtree must be tagged ───
 # This is the bug the mocked suite could not see: the root's relative path is
 # "/", but `mfr_path ->* "/"` / `mfr_path = "/"` resolve to the empty set, so a
