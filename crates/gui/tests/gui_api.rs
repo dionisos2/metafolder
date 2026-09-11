@@ -937,3 +937,65 @@ async fn test_bench_clear_empties_the_buffer() {
     let (_, body) = request(&ctx.router, "GET", "/gui/bench", None).await;
     assert_eq!(body, json!({"records": []}));
 }
+
+// ── Reading a workspace variable (spec-gui "Scripting / GUI API") ───────────
+// A script is a subprocess: it sees nothing of the GUI's state and can only ask
+// through `mf gui …`. This is how it asks — and it is what `mf gui query` reads
+// to start on the query the panel is showing.
+
+#[tokio::test]
+async fn test_a_variable_is_read_back_by_name() {
+    let ctx = setup().await;
+    let ws = ctx.gui.create_workspace(None);
+    ctx.gui.set_var(&ws, "metarecord-list:effective-query-text", json!("rating > 3")).unwrap();
+
+    let (status, body) = request(
+        &ctx.router,
+        "GET",
+        &format!("/gui/workspaces/{ws}/vars/metarecord-list:effective-query-text"),
+        None,
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(body["value"], json!("rating > 3"));
+}
+
+#[tokio::test]
+async fn test_an_unset_variable_reads_as_null_not_as_an_error() {
+    // "Nothing published yet" is an ordinary answer, not a failure: a script
+    // asking before the list has run must fall back, not abort.
+    let ctx = setup().await;
+    let ws = ctx.gui.create_workspace(None);
+
+    let (status, body) =
+        request(&ctx.router, "GET", &format!("/gui/workspaces/{ws}/vars/never-set"), None).await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(body["value"], Value::Null);
+}
+
+#[tokio::test]
+async fn test_reading_a_variable_of_an_unknown_workspace_is_a_404() {
+    let ctx = setup().await;
+    let (status, _) =
+        request(&ctx.router, "GET", "/gui/workspaces/ws-does-not-exist/vars/anything", None).await;
+    assert_eq!(status, StatusCode::NOT_FOUND);
+}
+
+#[tokio::test]
+async fn test_a_variable_holding_a_list_survives_the_round_trip() {
+    // `selected_metarecords` is a list of uuids — the other half of what
+    // `mf gui query` reads, and it must come back as a list, not stringified.
+    let ctx = setup().await;
+    let ws = ctx.gui.create_workspace(None);
+    ctx.gui.set_var(&ws, "selected_metarecords", json!(["aa", "bb"])).unwrap();
+
+    let (status, body) = request(
+        &ctx.router,
+        "GET",
+        &format!("/gui/workspaces/{ws}/vars/selected_metarecords"),
+        None,
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(body["value"], json!(["aa", "bb"]));
+}

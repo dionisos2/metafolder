@@ -2006,6 +2006,21 @@ in the =metarecord-list:effective-query= workspace variable on every fetch, so
 another panel — the =metarecord-detail= bulk field-edit commands — can target
 exactly what the list shows, the live finder narrowing included.
 
+It publishes the same query as *DSL text* next to it, in
+=metarecord-list:effective-query-text= (=""= = match all), for a script asking
+what the panel shows (=mf gui query=): text is what =mf metarecord -q= takes and
+what a script composes with (=(<query>) AND mfr_path ->* "/dir"=). The text is
+not un-parsed from the IR — the base part is the normal DSL the editor already
+expanded, and the finder clause is written by a text builder beside the IR one
+(=osm(field:path, "…")= / =osmd(field:value, "…")=, OR-ed and parenthesised,
+terms escaped). The IR stays authoritative for what the panel runs; the two
+builders are pinned to one meaning by shared vectors
+(=panel-shim/finder-vectors.json=), which the frontend suite checks against
+both builders and a Rust test checks through the real parser. The variable
+=metarecord-list:normal-query= is *not* a substitute: it mirrors the normal-DSL
+zone and is only written while that zone is shown. In the orphan view the text
+is the orphan uuids as bare-UUID atoms, OR-ed.
+
 The searched fields default to =mfr_path:path label:value name:value=,
 configurable as =[panel-defaults.metarecord-list].finder-fields= (see
 [[*Panel defaults]]) and overridable per workspace via the
@@ -2941,6 +2956,14 @@ closed; a slot hidden by =panel:unsplit= stays hidden), or becomes
 unassigned (shows "No workspace selected") when no workspace remains.
 Returns =204 No Content=.
 
+*** =GET /gui/workspaces/:id/vars/:key=
+
+Reads one workspace variable: ={"value": <json>}=. A variable never set reads
+back as ={"value": null}= (=200=) — "nothing published yet" is an answer a
+script falls back from; only an unknown workspace is =404=. A script is a
+subprocess and sees nothing of the GUI's state otherwise; =mf gui query= is
+built on this.
+
 *** =GET /gui/layout=
 
 Returns the current slot assignments.
@@ -3166,6 +3189,7 @@ scripts need neither =curl= nor =jq=. The GUI base URL comes from
 |------------------------------------------------------+--------------------------------------------------------------------|
 | =mf gui status=                                      | =GET /gui/status=, pretty-printed JSON                             |
 | =mf gui repo=                                        | Prints the active repo of the focused workspace (exit 1 if none)   |
+| =mf gui query [--workspace <id>]=                    | Prints the query a script should run on: the checkbox selection (=selected_metarecords=, bare UUIDs OR-ed), else =metarecord-list:effective-query-text= — the precedence of the bulk commands; an empty line = every metarecord; exit 1 when the list has not run (never read as "all") |
 | =mf gui workspace new [--repo <uuid>]=               | Creates a workspace, prints its id                                 |
 | =mf gui workspace rm <id>=                           | Closes a workspace                                                 |
 | =mf gui layout [<slot> [<ws or ->]]=                 | Prints both slots / one slot / assigns (=-= hides the slot)        |

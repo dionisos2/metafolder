@@ -95,6 +95,7 @@ pub fn build_router(state: ServerState) -> Router {
         .route("/thumbnail", get(thumbnail::serve))
         .route("/gui/workspaces", get(gui_api::list_workspaces).post(gui_api::create_workspace))
         .route("/gui/workspaces/:id", delete(gui_api::delete_workspace))
+        .route("/gui/workspaces/:id/vars/:key", get(gui_api::get_workspace_var))
         .route("/gui/layout", get(gui_api::get_layout).put(gui_api::put_layout))
         .route("/gui/panels/:slot/view", put(gui_api::put_panel_view).get(gui_api::get_panel_view))
         .route("/gui/command", post(gui_api::post_command))

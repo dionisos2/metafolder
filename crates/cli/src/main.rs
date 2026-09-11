@@ -836,6 +836,13 @@ enum GuiCommand {
     Status,
     /// Print the active repository of the focused workspace
     Repo,
+    /// Print the query a script should run on: the checkbox selection, else what
+    /// the metarecord list shows (finder included); an empty line = everything
+    Query {
+        /// Workspace id (default: the focused workspace)
+        #[arg(long)]
+        workspace: Option<String>,
+    },
     /// Workspace (tab) management
     Workspace {
         #[command(subcommand)]
@@ -1459,6 +1466,7 @@ fn dispatch_gui(gui_url: Option<String>, command: GuiCommand) -> CmdResult {
     match command {
         GuiCommand::Status => gui::status(&gui_ctx),
         GuiCommand::Repo => gui::repo(&gui_ctx),
+        GuiCommand::Query { workspace } => gui::query(&gui_ctx, workspace.as_deref()),
         GuiCommand::Workspace { command } => match command {
             GuiWorkspaceCommand::New { repo } => gui::workspace_new(&gui_ctx, repo.as_deref()),
             GuiWorkspaceCommand::Rm { id } => gui::workspace_rm(&gui_ctx, &id),

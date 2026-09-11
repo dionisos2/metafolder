@@ -86,15 +86,21 @@ pub fn status(ctx: &GuiCtx) -> Result<i32, CliError> {
     Ok(0)
 }
 
+/// The workspace shown in the focused slot, read from a `GET /gui/status` body.
+fn focused_workspace(status: &Json) -> Result<&str, CliError> {
+    status["layout"]
+        .as_object()
+        .into_iter()
+        .flat_map(|layout| layout.values())
+        .find(|slot| slot["focused"] == true)
+        .and_then(|slot| slot["workspace_id"].as_str())
+        .ok_or_else(|| CliError::Op("no focused workspace".into()))
+}
+
 /// Prints the active repository of the focused slot's workspace.
 pub fn repo(ctx: &GuiCtx) -> Result<i32, CliError> {
     let status = ctx.client.get("/gui/status", &[])?;
-    let layout = status["layout"].as_object().cloned().unwrap_or_default();
-    let workspace_id = layout
-        .values()
-        .find(|slot| slot["focused"] == true)
-        .and_then(|slot| slot["workspace_id"].as_str())
-        .ok_or_else(|| CliError::Op("no focused workspace".into()))?;
+    let workspace_id = focused_workspace(&status)?;
     let repo = status["workspaces"]
         .as_array()
         .into_iter()
@@ -106,6 +112,53 @@ pub fn repo(ctx: &GuiCtx) -> Result<i32, CliError> {
         })?;
     println!("{repo}");
     Ok(0)
+}
+
+/// What a script should run on, from the two variables a workspace publishes —
+/// the same precedence as metarecord-detail's bulk commands (`bulkTarget`), so a
+/// script and a bulk edit never target two different sets:
+///
+/// 1. a non-empty checkbox selection (`selected_metarecords`), spelled with the
+///    DSL's bare-UUID atom, OR-ed;
+/// 2. else the query the list shows, finder included
+///    (`metarecord-list:effective-query-text`) — the empty string being "match
+///    all".
+///
+/// `None` when neither was published: the list has not run. That is *not*
+/// "match all" — answering "everything" there would turn a script loose on the
+/// whole repository.
+pub(crate) fn resolve_query(selection: &Json, text: &Json) -> Option<String> {
+    let uuids: Vec<&str> =
+        selection.as_array().into_iter().flatten().filter_map(Json::as_str).collect();
+    if !uuids.is_empty() {
+        return Some(uuids.join(" OR "));
+    }
+    text.as_str().map(|text| text.trim().to_string())
+}
+
+/// `mf gui query [--workspace <id>]` — prints the query a script should start
+/// on (see [`resolve_query`]); an empty line means every metarecord.
+pub fn query(ctx: &GuiCtx, workspace: Option<&str>) -> Result<i32, CliError> {
+    let workspace = match workspace {
+        Some(id) => id.to_string(),
+        None => focused_workspace(&ctx.client.get("/gui/status", &[])?)?.to_string(),
+    };
+    let var = |key: &str| -> Result<Json, CliError> {
+        let resp = ctx.client.get(&format!("/gui/workspaces/{workspace}/vars/{key}"), &[])?;
+        Ok(resp["value"].clone())
+    };
+    let selection = var("selected_metarecords")?;
+    let text = var("metarecord-list:effective-query-text")?;
+    match resolve_query(&selection, &text) {
+        Some(query) => {
+            println!("{query}");
+            Ok(0)
+        }
+        None => Err(CliError::Op(format!(
+            "workspace {workspace} shows no query yet (its metarecord list has not run); \
+             pass the query explicitly"
+        ))),
+    }
 }
 
 pub fn workspace_new(ctx: &GuiCtx, repo: Option<&str>) -> Result<i32, CliError> {
@@ -321,6 +374,29 @@ mod tests {
         std::fs::write(&present, "gui-port = 7600\n").unwrap();
         assert_eq!(base_url(None, &[missing, present]), "http://127.0.0.1:7600");
         std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    fn test_query_selection_wins_over_the_query_text() {
+        let text = resolve_query(&json!(["aa", "bb"]), &json!("rating > 3"));
+        assert_eq!(text, Some("aa OR bb".to_string()));
+    }
+
+    #[test]
+    fn test_query_an_empty_selection_falls_through_to_the_text() {
+        let text = resolve_query(&json!([]), &json!("rating > 3"));
+        assert_eq!(text, Some("rating > 3".to_string()));
+    }
+
+    #[test]
+    fn test_query_match_all_is_the_empty_text() {
+        assert_eq!(resolve_query(&Json::Null, &json!("")), Some(String::new()));
+    }
+
+    #[test]
+    fn test_query_nothing_published_is_none_not_match_all() {
+        assert_eq!(resolve_query(&Json::Null, &Json::Null), None);
+        assert_eq!(resolve_query(&json!([]), &Json::Null), None);
     }
 
     #[test]

@@ -135,6 +135,10 @@ fn start_stub(input_response: Json_, prompt_response: Json_) -> StubGui {
                     }
                 }),
             )
+            .route(
+                "/gui/workspaces/:id/vars/:key",
+                get(|Path((id, key)): Path<(String, String)>| async move { stub_var(&id, &key) }),
+            )
             .with_state(state);
 
     let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
@@ -443,4 +447,80 @@ fn test_gui_prompt_cancel_fails() {
     let out = mf_gui(&gui, &["prompt", "Tag name: "]);
     assert_eq!(out.code, 1, "stdout: {}", out.stdout);
     assert_eq!(out.stdout, "");
+}
+
+// ── mf gui query (spec-gui "CLI: mf gui") ─────────────────────────────────────
+
+const SEL_A: &str = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
+const SEL_B: &str = "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb";
+
+/// The workspace variables the stub GUI holds, one workspace per situation a
+/// script can meet: `ws-1` (focused) shows a query, `ws-2` also has a checkbox
+/// selection, `ws-3` never ran its list, `ws-4` shows everything. Any other id
+/// is an unknown workspace.
+fn stub_var(id: &str, key: &str) -> axum::response::Response {
+    use axum::response::IntoResponse;
+    let value = match (id, key) {
+        ("ws-1", "metarecord-list:effective-query-text") => json!("rating > 3"),
+        ("ws-2", "selected_metarecords") => json!([SEL_A, SEL_B]),
+        ("ws-2", "metarecord-list:effective-query-text") => json!("x = 1"),
+        ("ws-4", "selected_metarecords") => json!([]),
+        ("ws-4", "metarecord-list:effective-query-text") => json!(""),
+        ("ws-1" | "ws-2" | "ws-3" | "ws-4", _) => Json_::Null,
+        _ => {
+            return (
+                axum::http::StatusCode::NOT_FOUND,
+                Json(json!({"error": format!("unknown workspace: {id}")})),
+            )
+                .into_response()
+        }
+    };
+    Json(json!({ "value": value })).into_response()
+}
+
+#[test]
+fn test_gui_query_prints_what_the_focused_workspace_shows() {
+    let gui = stub();
+    let out = mf_gui(&gui, &["query"]);
+    assert_ok(&out);
+    assert_eq!(out.stdout, "rating > 3\n");
+}
+
+#[test]
+fn test_gui_query_prefers_the_checkbox_selection_like_the_bulk_commands() {
+    // Same precedence as metarecord-detail's bulk edits: a deliberate selection
+    // beats the query, so a script and a bulk command never target two sets.
+    let gui = stub();
+    let out = mf_gui(&gui, &["query", "--workspace", "ws-2"]);
+    assert_ok(&out);
+    assert_eq!(out.stdout, format!("{SEL_A} OR {SEL_B}\n"));
+}
+
+#[test]
+fn test_gui_query_prints_an_empty_line_for_match_all() {
+    // An empty selection falls through, and the list showing everything is the
+    // empty query: success with an empty line, which a script reads as "all".
+    let gui = stub();
+    let out = mf_gui(&gui, &["query", "--workspace", "ws-4"]);
+    assert_ok(&out);
+    assert_eq!(out.stdout, "\n");
+}
+
+#[test]
+fn test_gui_query_fails_when_the_list_has_not_run() {
+    // Nothing published is NOT "match all": answering "everything" there would
+    // turn a script loose on the whole repository.
+    let gui = stub();
+    let out = mf_gui(&gui, &["query", "--workspace", "ws-3"]);
+    assert_eq!(out.code, 1, "stdout: {} stderr: {}", out.stdout, out.stderr);
+    assert!(out.stdout.is_empty(), "nothing on stdout: {}", out.stdout);
+    assert!(out.stderr.contains("ws-3"), "the error names the workspace: {}", out.stderr);
+}
+
+#[test]
+fn test_gui_query_on_an_unknown_workspace_fails() {
+    let gui = stub();
+    let out = mf_gui(&gui, &["query", "--workspace", "ws-404"]);
+    assert_eq!(out.code, 1, "stdout: {} stderr: {}", out.stdout, out.stderr);
+    assert!(out.stderr.contains("unknown workspace"), "stderr: {}", out.stderr);
 }

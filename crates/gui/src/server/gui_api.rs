@@ -49,6 +49,27 @@ pub async fn list_workspaces(State(state): State<ServerState>) -> Response {
     Json(state.gui.workspaces()).into_response()
 }
 
+/// `GET /gui/workspaces/:id/vars/:key` — one workspace variable, by name.
+///
+/// A script is a subprocess: it sees nothing of the GUI's state and can only
+/// ask through `mf gui …`, the way it already asks for the repository with
+/// `mf gui repo`. This is the general form, and it is what `mf gui query` reads
+/// to start a script on the query the panel is showing (spec-gui "Scripting /
+/// GUI API").
+///
+/// A variable that was never set reads back as `null` rather than 404: "nothing
+/// published yet" is an ordinary answer a script falls back from, and only an
+/// unknown *workspace* is an error.
+pub async fn get_workspace_var(
+    State(state): State<ServerState>,
+    Path((id, key)): Path<(String, String)>,
+) -> Response {
+    match state.gui.get_var(&id, &key) {
+        Ok(value) => Json(json!({ "value": value })).into_response(),
+        Err(error) => map_state_error(error),
+    }
+}
+
 #[derive(Deserialize, Default)]
 pub struct CreateWorkspaceBody {
     #[serde(default)]

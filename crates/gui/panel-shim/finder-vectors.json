@@ -1,0 +1,159 @@
+{
+  "_comment": [
+    "Shared test vectors for the finder clause, read by BOTH sides so the DSL",
+    "text and the IR cannot drift apart (spec-gui 'Finder'):",
+    "  - frontend/tests/finder.test.ts asserts finderClause() == ir and",
+    "    finderClauseText() == text;",
+    "  - crates/gui/tests/finder_dsl.rs asserts parse_query(text) == ir.",
+    "Together those pin text and IR to the same meaning through the real parser.",
+    "Add a case here rather than inline in either test.",
+    "INVARIANT: a term never contains whitespace — splitTerms() splits on it, and the parser re-splits the quoted string the same way, so a term with a space would come back as several. Every case here respects that."
+  ],
+  "cases": [
+    {
+      "name": "one path target, two terms",
+      "terms": [
+        "scien",
+        "fic"
+      ],
+      "targets": [
+        {
+          "field": "mfr_path",
+          "mode": "path"
+        }
+      ],
+      "text": "osm(mfr_path:path, \"scien fic\")",
+      "ir": {
+        "type": "osm",
+        "field": "mfr_path",
+        "terms": [
+          "scien",
+          "fic"
+        ],
+        "mode": "path"
+      }
+    },
+    {
+      "name": "one direct target",
+      "terms": [
+        "sf"
+      ],
+      "targets": [
+        {
+          "field": "label",
+          "mode": "direct"
+        }
+      ],
+      "text": "osmd(label:value, \"sf\")",
+      "ir": {
+        "type": "osm",
+        "field": "label",
+        "terms": [
+          "sf"
+        ],
+        "mode": "direct"
+      }
+    },
+    {
+      "name": "several targets are OR-ed and parenthesised",
+      "terms": [
+        "jazz"
+      ],
+      "targets": [
+        {
+          "field": "mfr_path",
+          "mode": "path"
+        },
+        {
+          "field": "label",
+          "mode": "direct"
+        }
+      ],
+      "text": "(osm(mfr_path:path, \"jazz\") OR osmd(label:value, \"jazz\"))",
+      "ir": {
+        "type": "or",
+        "operands": [
+          {
+            "type": "osm",
+            "field": "mfr_path",
+            "terms": [
+              "jazz"
+            ],
+            "mode": "path"
+          },
+          {
+            "type": "osm",
+            "field": "label",
+            "terms": [
+              "jazz"
+            ],
+            "mode": "direct"
+          }
+        ]
+      }
+    },
+    {
+      "name": "a term carrying a quote is escaped, not injected",
+      "terms": [
+        "a\"b"
+      ],
+      "targets": [
+        {
+          "field": "label",
+          "mode": "direct"
+        }
+      ],
+      "text": "osmd(label:value, \"a\\\"b\")",
+      "ir": {
+        "type": "osm",
+        "field": "label",
+        "terms": [
+          "a\"b"
+        ],
+        "mode": "direct"
+      }
+    },
+    {
+      "name": "a term carrying a backslash is escaped",
+      "terms": [
+        "a\\b"
+      ],
+      "targets": [
+        {
+          "field": "label",
+          "mode": "direct"
+        }
+      ],
+      "text": "osmd(label:value, \"a\\\\b\")",
+      "ir": {
+        "type": "osm",
+        "field": "label",
+        "terms": [
+          "a\\b"
+        ],
+        "mode": "direct"
+      }
+    },
+    {
+      "name": "a term that would close the call and inject a predicate",
+      "terms": [
+        "x\")OR(label"
+      ],
+      "targets": [
+        {
+          "field": "label",
+          "mode": "direct"
+        }
+      ],
+      "text": "osmd(label:value, \"x\\\")OR(label\")",
+      "ir": {
+        "type": "osm",
+        "field": "label",
+        "terms": [
+          "x\")OR(label"
+        ],
+        "mode": "direct"
+      }
+    }
+  ]
+}

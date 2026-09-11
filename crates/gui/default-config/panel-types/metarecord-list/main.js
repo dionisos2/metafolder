@@ -7,7 +7,14 @@ import { fetchMounts, offlineMountFor, relativeTo, unavailableLabel } from '/__m
 import { createPagedList } from '/__paged-list.js';
 import { createTypePicker, widgetFor, bulkSetBody, MATCH_ALL, createPickRunner } from '/__value-widget.js';
 import { createSelect } from '/__select.js';
-import { splitTerms, finderTargets, finderClause, composeQuery } from '/__finder.js';
+import {
+  splitTerms,
+  finderTargets,
+  finderClause,
+  finderClauseText,
+  composeQuery,
+  composeQueryText,
+} from '/__finder.js';
 import { fileMenuItems, metarecordMenuItems } from '/__file-actions.js';
 import { attachHistory } from '/__history.js';
 import { latestOnly } from '/__coalesce.js';
@@ -116,6 +123,13 @@ export async function mount(root, metafolder) {
   let loading = false;
   /** @type {Record<string, unknown>|null} null = match all (the structural base query) */
   let queryIR = null;
+  // The same base query as DSL *text*, kept in step with `queryIR` at every
+  // assignment below. It is what a script receives (`mf gui query`, spec-gui
+  // "Finder"): text is what `mf metarecord -q` takes and what a script composes
+  // with. It must be this local and not `metarecord-list:normal-query`, which
+  // mirrors the B zone and is therefore only written while that zone is shown.
+  /** @type {string} '' = match all */
+  let queryText = '';
   // Orphan view (spec-file-tracking "Orphan scan"): when on, `queryIR` is a
   // `uuid_in` set from a daemon disk scan rather than the DSL editor; leaving it
   // (Exit, or applying/clearing a query) restores the editor-driven query.
@@ -348,6 +362,15 @@ export async function mount(root, metafolder) {
     return composeQuery(queryIR, finderClause(splitTerms(finderText), targets));
   }
 
+  // The same query as DSL text. Built from the same inputs by the same-shaped
+  // builders, which the shared vectors keep honest (panel-shim/
+  // finder-vectors.json). null = match all.
+  function effectiveQueryText() {
+    const r = repo;
+    const targets = finderTargets(finderFields, (f) => (r ? cache.fieldType(r, f) : null));
+    return composeQueryText(queryText, finderClauseText(splitTerms(finderText), targets));
+  }
+
   // Returns false when the call is dropped (no repo, or another fetch is in
   // flight — fetches are serialized on `loading`), so the finder can re-run the
   // latest query instead of leaving the list stale.
@@ -378,7 +401,13 @@ export async function mount(root, metafolder) {
       // so other panels (e.g. metarecord-detail's bulk field edits) can target
       // exactly what the list shows — the live finder narrowing included.
       const effQuery = effectiveQuery() ?? MATCH_ALL;
-      if (reset) await workspace.set('metarecord-list:effective-query', effQuery);
+      if (reset) {
+        await workspace.set('metarecord-list:effective-query', effQuery);
+        // ...and the same query as DSL text, for a script asking what the panel
+        // is showing (`mf gui query`). '' = match all, the text counterpart of
+        // MATCH_ALL.
+        await workspace.set('metarecord-list:effective-query-text', effectiveQueryText() ?? '');
+      }
       let result;
       try {
         result = await cache.query(r, {
@@ -716,9 +745,11 @@ export async function mount(root, metafolder) {
     daemon.setContext?.(dsl === '' ? 'match all' : dsl);
     if (dsl === '') {
       queryIR = null; // empty = match all
+      queryText = '';
     } else {
       try {
         queryIR = /** @type {Record<string, unknown>} */ (await query.parse(dsl));
+        queryText = dsl; // only once the parse succeeded: the two stay in step
       } catch (error) {
         (normalShown ? normalError : queryError).textContent = messageOf(error);
         return false;
@@ -786,6 +817,10 @@ export async function mount(root, metafolder) {
     }
     orphanMode = true;
     queryIR = { type: 'uuid_in', uuids: orphanUuids };
+    // The text form of a uuid set is the DSL's bare-UUID atom, OR-ed
+    // (spec-query "Query DSL"). It is long — one atom per orphan — but a script
+    // asking what this view shows must get this view, not the editor's query.
+    queryText = orphanUuids.join(' OR ');
     const n = orphanUuids.length;
     orphanCountEl.textContent = `${n} orphaned metarecord${n === 1 ? '' : 's'} — the tracked file is missing`;
     orphanBanner.hidden = false;
