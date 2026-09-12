@@ -1292,15 +1292,15 @@ fn tag_batch_remove(
 
 /// `mf tag [sel] add <path>` — the record(s) *have* the tag: (idempotently) add
 /// the positive ref, drop the more general ancestor tags, and, when the tag is
-/// exclusive, drop its siblings.
+/// exclusive, drop its siblings. The idempotence is the daemon's: appending a
+/// ref a record already carries is a no-op (spec-data-model "No duplicate
+/// rows"), so the row that is already there is left alone, id included.
 pub fn tag_add(ctx: &Ctx, selector: &str, path: &str) -> Result<i32, CliError> {
     let base = ctx.repo_base()?;
     let cfg = ctx.tag.clone();
     let mut vocab = load_vocab(ctx, &base)?;
     let query = target_query(selector)?;
     let tag_uuid = ensure_tag_entry(ctx, &base, &mut vocab, path)?;
-    // Idempotent add (remove-then-append leaves exactly one row).
-    tag_batch_remove(ctx, &base, &query, &cfg.positive, &tag_uuid)?;
     let n = tag_batch_append(ctx, &base, &query, &cfg.positive, &tag_uuid)?;
     for ancestor in crate::tag::ancestors(path) {
         if let Some(uuid) = vocab.name2uuid.get(&ancestor) {
@@ -1326,7 +1326,6 @@ pub fn tag_deny(ctx: &Ctx, selector: &str, path: &str) -> Result<i32, CliError> 
     let mut vocab = load_vocab(ctx, &base)?;
     let query = target_query(selector)?;
     let tag_uuid = ensure_tag_entry(ctx, &base, &mut vocab, path)?;
-    tag_batch_remove(ctx, &base, &query, &cfg.negative, &tag_uuid)?;
     let n = tag_batch_append(ctx, &base, &query, &cfg.negative, &tag_uuid)?;
     for descendant in crate::tag::descendants(path, &vocab.names) {
         if let Some(uuid) = vocab.name2uuid.get(&descendant) {
@@ -1345,7 +1344,6 @@ pub fn tag_mixed(ctx: &Ctx, selector: &str, path: &str) -> Result<i32, CliError>
     let mut vocab = load_vocab(ctx, &base)?;
     let query = target_query(selector)?;
     let tag_uuid = ensure_tag_entry(ctx, &base, &mut vocab, path)?;
-    tag_batch_remove(ctx, &base, &query, &cfg.mixed, &tag_uuid)?;
     let n = tag_batch_append(ctx, &base, &query, &cfg.mixed, &tag_uuid)?;
     println!("{n}");
     Ok(0)

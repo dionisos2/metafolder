@@ -1021,6 +1021,12 @@ write is applied across the whole selector set through the batch field endpoints
 (=POST …/query/fields/{append,remove}=), one call per set — no per-record loop.
 So a whole subtree is tagged with =mf tag -q 'mfr_path ->* "/dir"' add <path>=.
 
+Their idempotence is the daemon's: appending a ref a record already carries is a
+no-op (see [[*No duplicate rows]]), so the ref is appended once and the row that
+already held it is left untouched, id included — no remove-then-append. The
+number printed is therefore how many records actually *gained* the ref: re-running
+the same =add= prints =0=, and the subsumption removals that follow are unaffected.
+
 ** =mf ignore <verb> <presets>= (named ignore presets)
 
 Applies named ignore presets (spec-file-tracking "Ignore presets") to a target
