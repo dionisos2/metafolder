@@ -56,6 +56,41 @@ scope_holds() { # <dir rows...> -- <file rows...>   rows are "uuid<TAB>path"
     mock_respond "metarecord -q ($SC) AND mfr_type = \"file\" AND mfr_path IS PRESENT get --resolve-tree mfr_path --tsv" "${file_rows%$'\n'}"
 }
 
+# Declare what is ALREADY decided for a tag, as the three set queries the walk
+# reads it with: the records that carry it (or a more specific tag), that deny
+# it (or a more general one), and the folders marked mixed. One round-trip each,
+# whatever the size of the scope — the subsumption is spelled in the query, so
+# the daemon owns it and these tests own only the shapes.
+scope_decided() { # <tag> [<scope>] -- <yes uuids> -- <no uuids> -- <mixed uuids>
+    local tag=$1 scope=$2 bucket=0 arg
+    local yes="" no="" mixed=""
+    shift 2
+    for arg in "$@"; do
+        if [ "$arg" = "--" ]; then bucket=$((bucket + 1)); continue; fi
+        case $bucket in
+            0) yes+="$arg"$'\n' ;;
+            1) no+="$arg"$'\n' ;;
+            2) mixed+="$arg"$'\n' ;;
+        esac
+    done
+    local pre=""
+    [ -n "$scope" ] && pre="($scope) AND "
+    mock_respond "metarecord -q ${pre}tag -> (mf_schema = \"tag\" AND path =>* \"$tag\") get" "${yes%$'\n'}"
+    mock_respond "metarecord -q ${pre}negative_tag -> (mf_schema = \"tag\" AND ($(neg_paths "$tag"))) get" "${no%$'\n'}"
+    mock_respond "metarecord -q ${pre}mixed_tag -> (mf_schema = \"tag\" AND path = \"$tag\") get" "${mixed%$'\n'}"
+}
+
+# The negative side is the tag itself plus its ancestors — a more general "no"
+# denies it — spelled as an explicit alternation.
+neg_paths() { # <tag>
+    local t=$1 out=""
+    while [ -n "$t" ]; do
+        out+="path = \"$t\" OR "
+        case $t in */*) t=${t%/*} ;; *) t="" ;; esac
+    done
+    printf '%s' "${out% OR }"
+}
+
 # How many times the walk asked about one entry (its question message).
 asked() { mock_count "gui message '$1' has tag*"; }
 
@@ -230,8 +265,7 @@ assert_contains "usage: prints a usage line" "$err" usage
 mock_reset
 setup_top
 scope_holds "dir-top	/top" -- "file-a	/top/a.txt" "file-b	/top/b.txt"
-mock_respond 'metarecord -i dir-top field get mixed_tag*' 'music'
-mock_respond 'metarecord -i file-a field get tag*'        'music'
+scope_decided music "$SC" file-a -- -- dir-top
 mock_prompt '/top'
 mock_input y                     # answers file-b, the only question left
 out=$(bash "$SCRIPT" music); code=$?
@@ -244,26 +278,32 @@ assert "resume: the undecided child is asked" [ "$(asked /top/b.txt)" -eq 1 ]
 assert "resume: and answered" [ "$(mock_count 'tag -i file-b add music')" -eq 1 ]
 assert_contains "resume: the summary counts the decided entries" "$out" "2 already"
 
-# ── Case 14: a decision that subsumes the asked tag counts as decided ───────
+# ── Case 14: subsumption is spelled in the queries, and read once each ──────
+# What already answers the question is asked of the daemon as three sets, not
+# of each entry in turn: a more specific positive implies the tag, a more
+# general negative denies it. (That the daemon really resolves those queries
+# that way is pinned against a real one in test-scripts-integration.sh.)
 mock_reset
 setup_top
-scope_holds "dir-top	/top" -- "file-a	/top/a.txt" "file-b	/top/b.txt" "file-c	/top/c.txt"
-mock_respond 'metarecord -i dir-top field get mixed_tag*'   'music'
-mock_respond 'metarecord -i file-a field get tag*'          'music/jazz'
-mock_respond 'metarecord -i file-b field get negative_tag*' 'music'
+scope_holds "dir-top	/top" -- "file-a	/top/a.txt" "file-b	/top/b.txt"
+scope_decided music/jazz "$SC" file-a -- file-b --
 mock_prompt '/top'
-mock_input y
-bash "$SCRIPT" music >/dev/null; code=$?
-assert "subsume: a more specific positive answers the question" [ "$(asked /top/a.txt)" -eq 0 ]
-assert "subsume: an exact negative answers it too" [ "$(asked /top/b.txt)" -eq 0 ]
-assert "subsume: the undecided child is still asked" [ "$(asked /top/c.txt)" -eq 1 ]
+mock_input y y
+bash "$SCRIPT" music/jazz >/dev/null; code=$?
+assert "subsume: a positive on the tag or below answers the question" [ "$(asked /top/a.txt)" -eq 0 ]
+assert "subsume: a negative on the tag or above answers it too" [ "$(asked /top/b.txt)" -eq 0 ]
+assert "subsume: the positive set is read once for the whole scope" \
+    [ "$(mock_count "metarecord -q ($SC) AND tag -> (mf_schema = \"tag\" AND path =>* \"music/jazz\") get")" -eq 1 ]
+assert "subsume: the negative set names the tag and its ancestors" \
+    [ "$(mock_count "metarecord -q ($SC) AND negative_tag -> (mf_schema = \"tag\" AND (path = \"music/jazz\" OR path = \"music\")) get")" -eq 1 ]
+assert "subsume: nothing is read one entry at a time" \
+    [ "$(mock_count 'metarecord -i * field get *')" -eq 0 ]
 
 # ── Case 15: --redo asks everything again, decided or not ───────────────────
 mock_reset
 setup_top
 scope_holds "dir-top	/top" -- "file-a	/top/a.txt"
-mock_respond 'metarecord -i dir-top field get mixed_tag*' 'music'
-mock_respond 'metarecord -i file-a field get tag*'        'music'
+scope_decided music "$SC" file-a -- -- dir-top
 mock_prompt '/top'
 mock_input m y
 bash "$SCRIPT" --redo music >/dev/null; code=$?
@@ -271,6 +311,8 @@ assert "redo: exits 0" [ "$code" -eq 0 ]
 assert "redo: the decided folder is asked again" [ "$(asked /top)" -eq 1 ]
 assert "redo: the decided child is asked again" [ "$(asked /top/a.txt)" -eq 1 ]
 assert "redo: and answered" [ "$(mock_count 'tag -i file-a add music')" -eq 1 ]
+assert "redo: the decided sets are not even read" \
+    [ "$(mock_count 'metarecord -q * tag -> *')" -eq 0 ]
 
 # ── Case 16: the total is known up front, so the bar is exact ───────────────
 # The scope is read in one pass, so — unlike the old per-folder walk — the

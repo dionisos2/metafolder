@@ -112,6 +112,32 @@ assert "mixed: a top-level file is tagged" has_tag "$TOP" mixtag
 assert "mixed: the sub dir is tagged" has_tag "$SUB" mixtag
 assert "mixed: a file inside the 'yes' sub dir is tagged" has_tag "$INNER" mixtag
 
+# ── gui-tag-folder resume: the daemon really resolves the subsumption ────────
+# The walk reads what is already decided as three set queries. The mocked suite
+# pins their shape; only a real daemon can say that `tag ->* "<tag>"` on the
+# entry's path means "this tag or one below it", and the negative alternation
+# "this tag or one above it".
+hy_reset
+df_mf tag -i "$TOP" add subs/deep >/dev/null 2>&1      # more SPECIFIC positive
+df_mf tag -i "$INNER" deny wide >/dev/null 2>&1        # more GENERAL negative
+hy_query 'mfr_type = "file"'
+hy_input s s s s s
+bash "$FOLDER" subs >/dev/null 2>&1
+assert "resume: a more specific positive answers the question" \
+    [ "$(hy_log | grep -c "'/top.txt' has tag 'subs'")" -eq 0 ]
+assert "resume: an undecided file is still asked" \
+    [ "$(hy_log | grep -c "'/sub/inner.txt' has tag 'subs'")" -eq 1 ]
+hy_reset
+hy_query 'mfr_type = "file"'
+hy_input s s s s s
+bash "$FOLDER" wide/narrow >/dev/null 2>&1
+assert "resume: a more general negative answers the question" \
+    [ "$(hy_log | grep -c "'/sub/inner.txt' has tag 'wide/narrow'")" -eq 0 ]
+assert "resume: and an undecided file is still asked" \
+    [ "$(hy_log | grep -c "'/top.txt' has tag 'wide/narrow'")" -eq 1 ]
+assert "resume: the decided sets are read once each, not per entry" \
+    [ "$(hy_log | grep -c '^metarecord -i .* field get ')" -eq 0 ]
+
 # ── gui-tag-pair: y then n over the two files ────────────────────────────────
 # The GUI shows everything (the empty query), which is the scope this walk had
 # before the query became its boundary: every file of the repository.

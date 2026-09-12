@@ -40,7 +40,10 @@
 # Resumable: an entry whose answer is already recorded is not asked again. The
 # record carries the tag (`tag`, exactly or through a more specific tag), carries
 # its negation (`negative_tag`, exactly or through a more general one), or is a
-# `mixed_tag` folder — which is walked into straight away, no question. So a
+# `mixed_tag` folder — which is walked into straight away, no question. Those
+# three sets are read over the whole scope in one round-trip each, with the
+# subsumption spelled in the query, so a resume costs three calls and not three
+# per entry. So a
 # run interrupted halfway (skip, stop, Escape) is continued by re-running the
 # same command, and only the open questions come back. `--redo` asks everything
 # again, decided or not — the way to revise a wrong answer over a subtree.
@@ -60,11 +63,6 @@ set -euo pipefail
 HERE=$(cd "$(dirname "$0")" && pwd)
 # shellcheck source=lib/mf-gui.sh
 source "$HERE/lib/mf-gui.sh"
-# Reuse the pure hierarchy helpers (in_set / has_ancestor_in / has_descendant_in)
-# that decide whether a recorded tag already answers our question; its `main`
-# guard keeps the selector itself inert when sourced.
-# shellcheck source=gui-tag-next.sh
-source "$HERE/gui-tag-next.sh"
 
 # `--redo`: ask every entry again, ignoring the answers already recorded.
 # (`&&` here would end the script under `set -e` whenever the flag is absent.)
@@ -101,9 +99,6 @@ fi
 mf_gui_session_open metarecord-detail
 
 TMP=$(mf_gui_tmpdir)
-POS="$TMP/pos"
-NEG="$TMP/neg"
-MIX="$TMP/mix"
 
 declare -A PATH_OF RANK KIND
 
@@ -136,8 +131,56 @@ collect() { # <dir|file> <order field>
     done < <(mf metarecord -q "$scope" get --resolve-tree mfr_path --tsv)
 }
 
+# TAG and its ancestors, as an alternation over a tag entry's path: a more
+# general "no" denies the tag we are asking about.
+neg_paths() { # <tag> -> path = "a/b" OR path = "a"
+    local t=$1 out=""
+    while [ -n "$t" ]; do
+        out+="path = \"$t\" OR "
+        case $t in */*) t=${t%/*} ;; *) t="" ;; esac
+    done
+    printf '%s' "${out% OR }"
+}
+
+# What TAG already answers for, read as three SETS — one round-trip each for
+# the whole scope. Reading it per entry instead cost three daemon calls before
+# every question, which on a resume is the whole walk spent re-reading answers
+# it already has.
+#
+# Subsumption moves into the query, spelled exactly as the per-record reads
+# spelled it: a positive on TAG *or any tag below it* implies TAG; a negative
+# on TAG *or any tag above it* denies it; only an exact mixed marker is one.
+# `mf tag` applies the same rules when writing, so the two agree.
+declare -A DECIDED
+load_decided() {
+    [ "$REDO" = 0 ] || return 0
+    # Weakest first: a record that is both mixed and denied reads as denied,
+    # and one that is also tagged reads as tagged — the precedence the per-entry
+    # reads had when they stopped at the first hit.
+    local pair answer pred uuid
+    for pair in \
+        "m:mixed_tag -> (mf_schema = \"tag\" AND path = \"$TAG\")" \
+        "n:negative_tag -> (mf_schema = \"tag\" AND ($(neg_paths "$TAG")))" \
+        "y:tag -> (mf_schema = \"tag\" AND path =>* \"$TAG\")"; do
+        answer=${pair%%:*}
+        pred=${pair#*:}
+        while read -r uuid; do
+            [ -n "$uuid" ] || continue
+            DECIDED[$uuid]=$answer
+        done < <(mf metarecord -q "$(mf_gui_scoped "$pred")" get)
+    done
+}
+
+# The answer already recorded for TAG on a metarecord, or nothing when the
+# question is still open.
+decided() { # <uuid> -> y | n | m | ""
+    printf '%s' "${DECIDED[$1]-}"
+}
+
 collect dir order_dir
 collect file order_file
+
+load_decided
 
 # One sortable line per entry: depth, parent path, kind (folders first), then
 # the daemon's own rank. Sorting on that gives the walk its order — level by
@@ -175,20 +218,6 @@ TOTAL=${#ENTRIES[@]}
 # so a deliberate stop looked like a crash. A file has no writer to kill.
 WALK="$TMP/walk"
 printf '%s\n' "${ENTRIES[@]}" | sort -t$'\t' -k1,1n -k2,2 -k3,3n -k4,4n >"$WALK"
-
-# The answer already recorded for TAG on a metarecord, or nothing when the
-# question is still open. Subsumption is the one `mf tag` applies when writing:
-# a more specific positive implies TAG, a more general negative denies it.
-decided() { # <uuid> -> y | n | m | ""
-    [ "$REDO" = 0 ] || return 0
-    mf metarecord -i "$1" field get tag --resolve path >"$POS"
-    if in_set "$TAG" "$POS" || has_descendant_in "$TAG" "$POS"; then printf y; return 0; fi
-    mf metarecord -i "$1" field get negative_tag --resolve path >"$NEG"
-    if in_set "$TAG" "$NEG" || has_ancestor_in "$TAG" "$NEG"; then printf n; return 0; fi
-    mf metarecord -i "$1" field get mixed_tag --resolve path >"$MIX"
-    if in_set "$TAG" "$MIX"; then printf m; fi
-    return 0
-}
 
 # Apply T over a node and its subtree, the subtree narrowed to the scope.
 apply_tree() { # <uuid> <path> <verb: add|deny>
