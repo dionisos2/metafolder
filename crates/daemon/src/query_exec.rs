@@ -902,6 +902,159 @@ impl<'a> Compiler<'a> {
         self.params.push(SqlValue::Text(s.to_string()));
     }
 
+    /// `Matches` (regex), in the two shapes it takes: a `Path` aspect is
+    /// answered from the tree cache and inlined, anything else is a REGEXP scan
+    /// narrowed by the FTS5 trigram pre-filter.
+    fn matches(&mut self, field: &str, pattern: &str, aspect: Aspect) -> Result<String, ApiError> {
+        crate::regexp::compile(pattern)
+            .map_err(|e| ApiError::bad_request(format!("invalid regex pattern: {e}")))?;
+        self.check_aspect(field, aspect, ReadKind::Regex)?;
+        if aspect == Aspect::Path {
+            // Hybrid, like osm path mode: the assembled paths are built
+            // through the tree cache and the matching uuids inlined.
+            let re = crate::regexp::compile(pattern)
+                .map_err(|e| ApiError::bad_request(format!("invalid regex pattern: {e}")))?;
+            let matched = self.path_matches(field, &|path: &str| re.is_match(path))?;
+            return self.inline_uuids(matched);
+        }
+        // Trigram pre-filter (spec-query "MATCHES via FTS5"): when every
+        // match must contain a literal substring (≥ 3 chars), restrict
+        // the REGEXP scan to the rows the FTS index reports containing it
+        // (`id IN (… field_text … MATCH …)`). A sound over-approximation
+        // — REGEXP still re-checks every surviving row, so the result is
+        // identical to the full scan. (Driving from the FTS via a JOIN
+        // was measured *slower* once wrapped in the repo-isolation CTE,
+        // so the membership test is kept as the spec describes.)
+        self.push_text(field);
+        let prefilter = match crate::fts::required_fts_literal(pattern) {
+            Some(literal) => {
+                self.push_text(&crate::fts::match_phrase(&literal));
+                "id IN (SELECT rowid FROM field_text WHERE text MATCH ?) AND "
+            }
+            None => "",
+        };
+        self.push_text(pattern);
+        self.push_text(pattern);
+        Ok(self.add(format!(
+            "SELECT DISTINCT metarecord_uuid AS uuid FROM field \
+                 WHERE field_name = ? AND {prefilter}\
+                   ((value_type = 'string' AND value_text REGEXP ?) OR \
+                    (value_type = 'tree_ref' AND value_name REGEXP ?))"
+        )))
+    }
+
+    /// `SameAs`: the rows of `field` whose value tuple also occurs among the
+    /// `field` rows of the target set.
+    ///
+    /// The whole tuple is compared with `IS` (NULL-safe equality) under an equal
+    /// `value_type`, so one statement covers every value type — the unused
+    /// columns are NULL on both sides and compare equal. `Nothing` rows are
+    /// excluded on both sides: sharing an absence is not sharing a value.
+    fn same_as(&mut self, field: &str, target: &Query) -> Result<String, ApiError> {
+        // The sub-query is compiled first so its `?` placeholders are
+        // pushed before this node's, matching the order they appear in
+        // the assembled SQL.
+        let sub = self.compile_node(target)?;
+        self.push_text(field);
+        self.push_text(field);
+        Ok(self.add(format!(
+            "SELECT DISTINCT a.metarecord_uuid AS uuid FROM field a \
+                 WHERE a.field_name = ? AND a.value_type != 'nothing' \
+                   AND EXISTS (SELECT 1 FROM field b \
+                                WHERE b.field_name = ? AND b.value_type != 'nothing' \
+                                  AND b.metarecord_uuid IN (SELECT uuid FROM {sub}) \
+                                  AND b.value_type = a.value_type \
+                                  AND b.value_text IS a.value_text \
+                                  AND b.value_int IS a.value_int \
+                                  AND b.value_real IS a.value_real \
+                                  AND b.value_uuid IS a.value_uuid \
+                                  AND b.value_ref_repo IS a.value_ref_repo \
+                                  AND b.value_name_bytes IS a.value_name_bytes)"
+        )))
+    }
+
+    /// `Follows` (`->`): the metarecords whose `field` points at the target —
+    /// every match of a sub-query, or the single node at a path.
+    fn follows(&mut self, field: &str, target: &FollowTarget) -> Result<String, ApiError> {
+        match target {
+            FollowTarget::Condition(cond) => {
+                let sub = self.compile_node(cond)?;
+                self.push_text(field);
+                Ok(self.add(format!(
+                    "SELECT DISTINCT metarecord_uuid AS uuid FROM field \
+                     WHERE field_name = ? AND value_type IN ('ref', 'tree_ref') \
+                       AND value_uuid IN (SELECT uuid FROM {sub})"
+                )))
+            }
+            FollowTarget::Path(path) => {
+                let conn = self.conn;
+                let target = self.cache.resolve_path(conn, field, path)?;
+                match target {
+                    None => Ok(self.empty()),
+                    Some(uuid) => {
+                        self.push_text(field);
+                        self.params.push(SqlValue::Blob(db::uuid_to_bytes(uuid)));
+                        Ok(self.add(
+                            "SELECT DISTINCT metarecord_uuid AS uuid FROM field \
+                             WHERE field_name = ? AND value_type = 'tree_ref' \
+                               AND value_uuid = ?"
+                                .to_string(),
+                        ))
+                    }
+                }
+            }
+        }
+    }
+
+    /// `FollowsTransitive` (`->*` / `=>*`): the descendants — and, when the
+    /// query is inclusive, the roots themselves — of a node set in `field`'s
+    /// forest.
+    fn follows_transitive(
+        &mut self,
+        field: &str,
+        target: &FollowTarget,
+        inclusive: bool,
+    ) -> Result<String, ApiError> {
+        // Hybrid execution: the root set (one path-resolved metarecord,
+        // or every match of the condition sub-query) and its
+        // descendants are collected through the tree cache, then
+        // injected as inline literals (no bound parameter limit).
+        // Only TreeRef trees have descendants; on a Ref field this
+        // matches nothing by construction. When `inclusive` (DSL `=>*`),
+        // the roots themselves are part of the result (whole subtree).
+        let conn = self.conn;
+        let roots = match target {
+            FollowTarget::Path(path) => match self.cache.resolve_path(conn, field, path)? {
+                None => Vec::new(),
+                Some(uuid) => vec![uuid],
+            },
+            FollowTarget::Condition(cond) => self.execute_condition(cond)?,
+        };
+        // The inclusive form keeps the roots only on an actual tree_ref
+        // forest — on a ref field FollowsTransitive matches nothing
+        // (TreeRef-only), matching the bitmap index's `supports_transitive`
+        // gate. `descendants` is already empty for a non-forest field.
+        let include_roots = inclusive && self.field_is_tree_ref(field)?;
+        let mut descendants = Vec::new();
+        let mut seen = std::collections::HashSet::new();
+        for root in roots {
+            if include_roots && seen.insert(root) {
+                descendants.push(root);
+            }
+            for d in self.cache.descendants(conn, field, root)? {
+                if seen.insert(d) {
+                    descendants.push(d);
+                }
+            }
+        }
+        if descendants.is_empty() {
+            return Ok(self.empty());
+        }
+        let literals: Vec<String> =
+            descendants.iter().map(|u| format!("(x'{}')", hex_encode(u.as_bytes()))).collect();
+        Ok(self.add(format!("SELECT column1 AS uuid FROM (VALUES {})", literals.join(","))))
+    }
+
     fn compile_node(&mut self, q: &Query) -> Result<String, ApiError> {
         match q {
             Query::IsPresent { field, aspect } => self.presence(field, *aspect, true),
@@ -952,152 +1105,19 @@ impl<'a> Compiler<'a> {
                 Ok(self.add(format!("SELECT uuid FROM _repo EXCEPT SELECT uuid FROM {sub}")))
             }
 
-            Query::Matches { field, pattern, aspect } => {
-                crate::regexp::compile(pattern)
-                    .map_err(|e| ApiError::bad_request(format!("invalid regex pattern: {e}")))?;
-                self.check_aspect(field, *aspect, ReadKind::Regex)?;
-                if *aspect == Aspect::Path {
-                    // Hybrid, like osm path mode: the assembled paths are built
-                    // through the tree cache and the matching uuids inlined.
-                    let re = crate::regexp::compile(pattern).map_err(|e| {
-                        ApiError::bad_request(format!("invalid regex pattern: {e}"))
-                    })?;
-                    let matched = self.path_matches(field, &|path: &str| re.is_match(path))?;
-                    return self.inline_uuids(matched);
-                }
-                // Trigram pre-filter (spec-query "MATCHES via FTS5"): when every
-                // match must contain a literal substring (≥ 3 chars), restrict
-                // the REGEXP scan to the rows the FTS index reports containing it
-                // (`id IN (… field_text … MATCH …)`). A sound over-approximation
-                // — REGEXP still re-checks every surviving row, so the result is
-                // identical to the full scan. (Driving from the FTS via a JOIN
-                // was measured *slower* once wrapped in the repo-isolation CTE,
-                // so the membership test is kept as the spec describes.)
-                self.push_text(field);
-                let prefilter = match crate::fts::required_fts_literal(pattern) {
-                    Some(literal) => {
-                        self.push_text(&crate::fts::match_phrase(&literal));
-                        "id IN (SELECT rowid FROM field_text WHERE text MATCH ?) AND "
-                    }
-                    None => "",
-                };
-                self.push_text(pattern);
-                self.push_text(pattern);
-                Ok(self.add(format!(
-                    "SELECT DISTINCT metarecord_uuid AS uuid FROM field \
-                     WHERE field_name = ? AND {prefilter}\
-                       ((value_type = 'string' AND value_text REGEXP ?) OR \
-                        (value_type = 'tree_ref' AND value_name REGEXP ?))"
-                )))
-            }
+            Query::Matches { field, pattern, aspect } => self.matches(field, pattern, *aspect),
 
             Query::Osm { field, terms, mode } => match mode {
                 OsmMode::Direct => self.osm_direct(field, terms),
                 OsmMode::Path => self.osm_path(field, terms),
             },
 
-            // Same-value matching: the rows of `field` whose value tuple also
-            // occurs among the `field` rows of the target set. The whole tuple
-            // is compared with `IS` (NULL-safe equality) under an equal
-            // `value_type`, so one statement covers every value type — the
-            // unused columns are NULL on both sides and compare equal.
-            // `Nothing` rows are excluded on both sides: sharing an absence is
-            // not sharing a value.
-            Query::SameAs { field, target } => {
-                // The sub-query is compiled first so its `?` placeholders are
-                // pushed before this node's, matching the order they appear in
-                // the assembled SQL.
-                let sub = self.compile_node(target)?;
-                self.push_text(field);
-                self.push_text(field);
-                Ok(self.add(format!(
-                    "SELECT DISTINCT a.metarecord_uuid AS uuid FROM field a \
-                     WHERE a.field_name = ? AND a.value_type != 'nothing' \
-                       AND EXISTS (SELECT 1 FROM field b \
-                                    WHERE b.field_name = ? AND b.value_type != 'nothing' \
-                                      AND b.metarecord_uuid IN (SELECT uuid FROM {sub}) \
-                                      AND b.value_type = a.value_type \
-                                      AND b.value_text IS a.value_text \
-                                      AND b.value_int IS a.value_int \
-                                      AND b.value_real IS a.value_real \
-                                      AND b.value_uuid IS a.value_uuid \
-                                      AND b.value_ref_repo IS a.value_ref_repo \
-                                      AND b.value_name_bytes IS a.value_name_bytes)"
-                )))
-            }
+            Query::SameAs { field, target } => self.same_as(field, target),
 
-            Query::Follows { field, target } => match target {
-                FollowTarget::Condition(cond) => {
-                    let sub = self.compile_node(cond)?;
-                    self.push_text(field);
-                    Ok(self.add(format!(
-                        "SELECT DISTINCT metarecord_uuid AS uuid FROM field \
-                         WHERE field_name = ? AND value_type IN ('ref', 'tree_ref') \
-                           AND value_uuid IN (SELECT uuid FROM {sub})"
-                    )))
-                }
-                FollowTarget::Path(path) => {
-                    let conn = self.conn;
-                    let target = self.cache.resolve_path(conn, field, path)?;
-                    match target {
-                        None => Ok(self.empty()),
-                        Some(uuid) => {
-                            self.push_text(field);
-                            self.params.push(SqlValue::Blob(db::uuid_to_bytes(uuid)));
-                            Ok(self.add(
-                                "SELECT DISTINCT metarecord_uuid AS uuid FROM field \
-                                 WHERE field_name = ? AND value_type = 'tree_ref' \
-                                   AND value_uuid = ?"
-                                    .to_string(),
-                            ))
-                        }
-                    }
-                }
-            },
+            Query::Follows { field, target } => self.follows(field, target),
 
             Query::FollowsTransitive { field, target, inclusive } => {
-                // Hybrid execution: the root set (one path-resolved metarecord,
-                // or every match of the condition sub-query) and its
-                // descendants are collected through the tree cache, then
-                // injected as inline literals (no bound parameter limit).
-                // Only TreeRef trees have descendants; on a Ref field this
-                // matches nothing by construction. When `inclusive` (DSL `=>*`),
-                // the roots themselves are part of the result (whole subtree).
-                let conn = self.conn;
-                let roots = match target {
-                    FollowTarget::Path(path) => {
-                        match self.cache.resolve_path(conn, field, path)? {
-                            None => Vec::new(),
-                            Some(uuid) => vec![uuid],
-                        }
-                    }
-                    FollowTarget::Condition(cond) => self.execute_condition(cond)?,
-                };
-                // The inclusive form keeps the roots only on an actual tree_ref
-                // forest — on a ref field FollowsTransitive matches nothing
-                // (TreeRef-only), matching the bitmap index's `supports_transitive`
-                // gate. `descendants` is already empty for a non-forest field.
-                let include_roots = *inclusive && self.field_is_tree_ref(field)?;
-                let mut descendants = Vec::new();
-                let mut seen = std::collections::HashSet::new();
-                for root in roots {
-                    if include_roots && seen.insert(root) {
-                        descendants.push(root);
-                    }
-                    for d in self.cache.descendants(conn, field, root)? {
-                        if seen.insert(d) {
-                            descendants.push(d);
-                        }
-                    }
-                }
-                if descendants.is_empty() {
-                    return Ok(self.empty());
-                }
-                let literals: Vec<String> = descendants
-                    .iter()
-                    .map(|u| format!("(x'{}')", hex_encode(u.as_bytes())))
-                    .collect();
-                Ok(self.add(format!("SELECT column1 AS uuid FROM (VALUES {})", literals.join(","))))
+                self.follows_transitive(field, target, *inclusive)
             }
 
             Query::UuidIn { uuids } => {
