@@ -692,6 +692,16 @@ export async function mount(root, metafolder) {
     await propagateSelection();
   }
 
+  /** Move the selection down one row, loading the next page when it reaches
+   *  the end of what is loaded. The scroll pager only fires on a real scroll
+   *  event of a displayed panel, so keyboard/script navigation — which works
+   *  just as well on a panel sitting in a hidden workspace — has to ask for
+   *  the next page itself. */
+  async function moveNext() {
+    if (cursorIndex + 1 >= metarecords.length && nextCursor) await fetchPage(false);
+    await setCursor(cursorIndex + 1);
+  }
+
   async function toggleChecked() {
     const metarecord = metarecords[cursorIndex];
     if (!metarecord) return;
@@ -1253,7 +1263,7 @@ export async function mount(root, metafolder) {
 
   void commands.register('metarecord-list:next', {
     label: 'Metarecord list: move the selection down',
-    handler: () => setCursor(cursorIndex + 1),
+    handler: () => moveNext(),
   });
   void commands.register('metarecord-list:prev', {
     label: 'Metarecord list: move the selection up',
