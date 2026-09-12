@@ -771,6 +771,13 @@ such node). Used to *set* a TreeRef value from a path: resolve the parent path t
 a uuid, then post =(parent, name)=. One in-memory round-trip through the tree
 cache.
 
+A node's name is never empty, so an *empty component after the first* can only
+come from a redundant slash and is dropped: ="/"= names the filesystem forest's
+root (whose canonical form, the one =resolve-tree= returns, is the empty string),
+="/music/"= and ="/music//jazz"= name the same nodes as their canonical
+spellings. This is what lets a UI spell the repository root the readable way — a
+bare ="/"= — in a query it hands back to the daemon.
+
 Sibling names are unique, so at most one node matches — *per reading*. A
 component spelling the escaped form of an undecodable byte can name two
 different files at once (one really called =%E9.txt=, one holding the byte
