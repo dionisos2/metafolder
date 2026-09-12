@@ -75,13 +75,28 @@ describe('thumbnail', () => {
     expect(audio.tagName).toBe('SPAN');
     expect(audio.textContent).toBe('🎵');
 
-    const pdf = thumbnail('http://gui', '/a/doc.pdf');
-    expect(pdf.tagName).toBe('SPAN');
-    expect(pdf.textContent).toBe('📕');
-
     const dir = thumbnail('http://gui', '/a/folder', { isDir: true });
     expect(dir.tagName).toBe('SPAN');
     expect(dir.textContent).toBe('📁');
+  });
+
+  test('a PDF gets its first page as a poster at /thumbnail (never /fsraw)', () => {
+    // The server renders it with poppler out of process; an <img> pointed at
+    // the PDF itself would make WebKit try to decode the file as an image.
+    const node = thumbnail('http://gui', '/a/doc.pdf', { token: 't' });
+    expect(node.tagName).toBe('IMG');
+    expect(node.getAttribute('src')).toBe(
+      `http://gui/thumbnail?path=${encodeURIComponent('/a/doc.pdf')}&token=t`,
+    );
+  });
+
+  test('a PDF poster failure (no poppler) falls back to the 📕 glyph', () => {
+    const node = thumbnail('http://gui', '/a/doc.pdf');
+    const host = document.createElement('div');
+    host.append(node);
+    node.dispatchEvent(new Event('error'));
+    expect(host.firstElementChild?.tagName).toBe('SPAN');
+    expect(host.textContent).toBe('📕');
   });
 
   test('unknown type falls back to the fileGlyph default; glyph class applied', () => {

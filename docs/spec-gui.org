@@ -2166,9 +2166,10 @@ Displays a preview of the file at the currently active path from
 message. When =selected_paths= has more than one element (metarecord accessible at
 multiple locations), a dropdown in the panel header lets the user choose which
 path to preview. Uses the HTML5 =<img>=, =<audio>=, or =<video>= element
-depending on the file type; falls back to a plain-text view for text files;
-shows "no preview available" for unsupported formats. Works with both tracked
-and untracked files.
+depending on the file type; renders documents (PDF) as page images (see
+[[*Documents]]); falls back to a plain-text view for text files; shows "no
+preview available" for unsupported formats. Works with both tracked and
+untracked files.
 
 Which extensions take which route — and how much of a text file is read into
 the preview — is configuration, not a constant:
@@ -2323,6 +2324,62 @@ first sample), and persists while browsing other files, exactly like the zoom
 state. While the poster is showing — the only moment with nothing to read it
 off — it is written into the poster's hint line ("volume 40 %", "muted"),
 which says nothing at a plain unmuted 100 %.
+
+**** Documents
+
+A document — a PDF — is previewed **one page at a time, as an image the GUI
+server rendered**. The panel asks =GET /document/info?path== for the page
+count, then shows =GET /document?path=&page=N&dpi=D= in an ordinary =<img>=,
+which makes the whole zoom machinery above apply to a page unchanged. Turning a
+page swaps that image's =src= rather than rebuilding the view, so the zoom the
+user set survives it.
+
+| Command            | Default key | Effect                |
+|--------------------+-------------+-----------------------|
+| =file:page-next=   | =pagedown=  | Next page             |
+| =file:page-prev=   | =pageup=    | Previous page         |
+| =file:page-first=  | —           | First page            |
+| =file:page-last=   | —           | Last page             |
+
+Each is a no-op unless a document is previewed, like the zoom and transport
+commands. =home= / =end= are deliberately *not* bound to first/last page: in
+this panel they already jump the metarecord-list to its first/last row (like
+the arrow keys), and flipping through the files of a folder is the more
+frequent gesture. Which extensions take this route, and at what resolution,
+are =[panel-defaults.file].document-extensions= / =document-dpi= (defaults
+=["pdf"]= / 150 — see [[*Panel defaults]]); the zoom works on the rendered
+image, so the DPI is the *rendering* detail, not the displayed size.
+
+*The file's own bytes never reach the WebView*, and that is the whole reason
+for the endpoint. WebKitGTK ships a built-in PDF.js viewer, so an
+=<iframe src="/fsraw?path=…pdf">= would display the document with no work at
+all — and would also be a full compromise: =/fsraw= carries the session token
+in its URL (an =<img>= =src= cannot set a header), so a crafted PDF loaded *as
+a document* runs as code in the GUI server's origin, can read
+=location.search=, and can drive the whole =/gui/*= scripting API including
+=POST /gui/command= and its =!= shell commands. That is the invariant stated in
+=server/fsraw.rs= and enforced by =tests/panel_invariants.rs= (no shipped panel
+may contain =iframe=, =<object=, =<embed=, =window.open=, =location.href=…),
+and the WebView's CSP says the same with =object-src 'none'= / =frame-src
+'none'=. Rendering out of process keeps the PDF parser — a large C++ library
+facing untrusted input — inside =bwrap= + rlimits, exactly like the =ffmpeg=
+poster extraction (see [[*Untrusted media]]), and hands the web process nothing
+but a PNG.
+
+Rendering is done by *poppler* (=pdftoppm= for the pages, =pdfinfo= for the
+count), an optional runtime dependency: without it a document shows "no preview
+available for this format" and its grid tile falls back to the 📕 glyph. The
+page PNGs are cached in =<repo>/.metafolder/internal/documents/=, keyed by the
+source's path/mtime/size *and* the rendering (page number, DPI), so an edited
+document is never served a stale page. Writing that cache is why =GET /document=
+needs the file's repository and answers 404 for a file inside none — the same
+rule as =/thumbnail=; =GET /document/info= writes nothing and answers for any
+readable file.
+
+A document's *grid tile* is its first page, through the same =GET /thumbnail=
+endpoint as a video poster (=thumbnails::is_posterable= accepts it, and
+dispatches to poppler instead of ffmpeg), so a folder of PDFs shows its covers
+rather than a wall of identical 📕.
 
 *** =file-manager= panel type
 
@@ -3458,13 +3515,16 @@ with a long history of memory-safety bugs, and in metafolder that decoding
 happens **passively**: a thumbnail is generated and a codec probe is run for any
 file that merely appears in a panel, without the user opening it. A crafted file
 is therefore a plausible code-execution vector, reached just by browsing a
-directory. Three decoders exist, and all three are confined:
+directory. The same holds for a *document*: a PDF is parsed by poppler the
+moment its tile or its preview is shown. Every decoder is confined:
 
-- =ffmpeg= (=GET /thumbnail=) and =gst-discoverer-1.0= (=GET /__media-probe=)
+- =ffmpeg= (=GET /thumbnail=), =pdftoppm= / =pdfinfo= (=GET /thumbnail= for a
+  document tile, =GET /document*= for the preview — see [[*Documents]]) and
+  =gst-discoverer-1.0= (=GET /__media-probe=)
   run under =bwrap= (=crates/gui/src/sandbox.rs=): no network, no IPC/PID/user
   namespace sharing, an empty environment, a read-only system, and *only the
-  examined file* bound read-only — plus, for =ffmpeg=, the thumbnail cache
-  directory bound read-write, the single thing it may write. The GStreamer
+  examined file* bound read-only — plus, for the two renderers, the cache
+  directory they write the image into, the single thing they may write. The GStreamer
   plugin registry is bound read-only (=GST_REGISTRY_UPDATE=no=): without it the
   sandbox has no registry and rebuilds one per probe (~1 s against ~80 ms).
   These helpers **fail closed** — no sandbox, no helper, and the panel falls

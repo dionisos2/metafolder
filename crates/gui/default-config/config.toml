@@ -162,6 +162,14 @@ text-extensions = [
   "txt", "md", "org", "json", "toml", "yaml", "yml", "xml", "html", "css", "js", "ts",
   "rs", "py", "sh", "c", "h", "cpp", "java", "log", "csv", "ini", "conf",
 ]
+# Documents previewed page by page as images rendered by the GUI server
+# (poppler's pdftoppm, out of process and sandboxed — the file itself is never
+# loaded into the WebView). Needs the `poppler` package; without it a document
+# falls back to its type glyph.
+document-extensions = ["pdf"]
+# Resolution a document page is rendered at, in DPI. 150 is a readable A4 page;
+# raise it for a sharper zoom at the cost of a bigger image and a slower render.
+document-dpi = 150
 # Bytes of a text file read into the preview (the rest is elided). Default: 256 KiB.
 text-preview-limit = 262144
 # Image zoom: a step multiplies the current scale; the bounds keep the manual

@@ -17,10 +17,8 @@ use crate::thumbnails::{self, ThumbError};
 use axum::extract::{Query, State};
 use axum::http::{header, StatusCode};
 use axum::response::{IntoResponse, Response};
-use metafolder_core::sync::MutexExt;
 use std::path::PathBuf;
-use std::sync::{Mutex, OnceLock};
-use std::time::{Duration, Instant};
+use std::time::Duration;
 
 #[derive(serde::Deserialize)]
 pub struct Params {
@@ -68,55 +66,7 @@ async fn resolve_cache_dir(
     path: &std::path::Path,
     ttl: Duration,
 ) -> Option<PathBuf> {
-    let repos = repo_dirs(daemon, ttl).await;
-    thumbnails::match_internal_dir(&repos, path).map(|internal| internal.join("thumbnails"))
-}
-
-type RepoDirs = Vec<(PathBuf, PathBuf)>;
-
-fn repo_cache() -> &'static Mutex<Option<(Instant, RepoDirs)>> {
-    static CACHE: OnceLock<Mutex<Option<(Instant, RepoDirs)>>> = OnceLock::new();
-    CACHE.get_or_init(|| Mutex::new(None))
-}
-
-/// The loaded repositories as `(root, internal_dir)` pairs, cached for `ttl`
-/// (config.toml `[settings] repo-list-cache-ttl-secs`). A failed fetch is not
-/// cached (so a transient daemon outage does not blank thumbnails for the whole
-/// TTL), and returns an empty list.
-async fn repo_dirs(daemon: &DaemonProxy, ttl: Duration) -> RepoDirs {
-    {
-        let guard = repo_cache().lock_recover();
-        if let Some((fetched, dirs)) = guard.as_ref() {
-            if fetched.elapsed() < ttl {
-                return dirs.clone();
-            }
-        }
-    }
-    match fetch_repo_dirs(daemon).await {
-        Some(dirs) => {
-            *repo_cache().lock_recover() = Some((Instant::now(), dirs.clone()));
-            dirs
-        }
-        None => Vec::new(),
-    }
-}
-
-/// Queries `GET /repos` and extracts the `(root, internal_dir)` of each loaded
-/// repository. `None` on a transport/daemon failure.
-async fn fetch_repo_dirs(daemon: &DaemonProxy) -> Option<RepoDirs> {
-    let response = daemon.request("GET", "/repos", None).await.ok()?;
-    if response.status != 200 {
-        return None;
-    }
-    let dirs = response
-        .body
-        .as_array()?
-        .iter()
-        .filter_map(|repo| {
-            let root = repo.get("root")?.as_str()?;
-            let internal = repo.get("internal_dir")?.as_str()?;
-            Some((PathBuf::from(root), PathBuf::from(internal)))
-        })
-        .collect();
-    Some(dirs)
+    super::repo_dirs::internal_dir(daemon, path, ttl)
+        .await
+        .map(|internal| internal.join("thumbnails"))
 }

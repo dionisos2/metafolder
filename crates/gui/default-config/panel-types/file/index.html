@@ -6,6 +6,14 @@
     <meta charset="UTF-8" />
     <title>file</title>
     <style>
+      /* An element carrying an explicit `display` would otherwise ignore its
+         `hidden` attribute: an author rule beats the UA stylesheet's
+         `[hidden] { display: none }`. Without this the media toolbar (a flex
+         row) stayed on screen over a directory grid or a text file, and so did
+         the document pager inside it. */
+      [hidden] {
+        display: none !important;
+      }
       .mf-panel-body {
         margin: 0;
         display: flex;
@@ -66,6 +74,18 @@
       }
       #media-toolbar button:hover {
         background: var(--mf-bg-raised, #26262e);
+      }
+      /* Document pager: page controls, shown only while a PDF is previewed. */
+      #media-toolbar #doc-pager {
+        display: flex;
+        gap: 4px;
+        align-items: center;
+      }
+      #media-toolbar #page-label {
+        min-width: 56px;
+        text-align: center;
+        font-family: var(--mf-font-mono, monospace);
+        color: var(--mf-fg-dim, #8a8a96);
       }
       #media-toolbar #zoom-label {
         min-width: 48px;
@@ -239,6 +259,11 @@
       <span id="zoom-label"></span>
       <button id="zoom-fit" title="Fit to available space (=)">⤢ Fit</button>
       <button id="zoom-reset" title="Original size (0)">1:1</button>
+      <span id="doc-pager" hidden>
+        <button id="page-prev" title="Previous page (pageup)">‹</button>
+        <span id="page-label"></span>
+        <button id="page-next" title="Next page (pagedown)">›</button>
+      </span>
       <label id="gif-animate-wrap" hidden title="Play the GIF animation (off: first frame only)">
         <input type="checkbox" id="gif-animate" /> animate
       </label>

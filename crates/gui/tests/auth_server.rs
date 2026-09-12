@@ -1,5 +1,5 @@
 //! GUI HTTP server authentication layer (spec-auth): `build_router_authenticated`
-//! gates the sensitive routes (`/fsraw`, `/thumbnail`, `/__media-probe`,
+//! gates the sensitive routes (`/fsraw`, `/thumbnail`, `/document*`, `/__media-probe`,
 //! `/gui/*`) while leaving panel assets open. Header on every protected route;
 //! `?token=` query parameter additionally accepted on the media/raw routes.
 
@@ -83,4 +83,21 @@ async fn fsraw_accepts_header_token() {
     let uri = format!("/fsraw?path={}", file.display());
     let header = format!("Bearer {TOKEN}");
     assert_eq!(status(&router, &uri, Some(&header)).await, StatusCode::OK);
+}
+
+#[tokio::test]
+async fn document_routes_require_a_token() {
+    // Rendering a page reads a local file, so both document routes are gated
+    // like `/fsraw` — and both accept the token in the query string, since the
+    // page is fetched by an `<img>` that cannot set a header.
+    let (_guard, router) = setup();
+    for uri in ["/document?path=/tmp/a.pdf", "/document/info?path=/tmp/a.pdf"] {
+        assert_eq!(status(&router, uri, None).await, StatusCode::UNAUTHORIZED);
+        let wrong = format!("{uri}&token={}", "f".repeat(64));
+        assert_eq!(status(&router, &wrong, None).await, StatusCode::UNAUTHORIZED);
+        // With the right token the auth layer lets it through; the handler then
+        // answers on its own merits (no such file).
+        let allowed = format!("{uri}&token={TOKEN}");
+        assert_ne!(status(&router, &allowed, None).await, StatusCode::UNAUTHORIZED);
+    }
 }

@@ -48,6 +48,14 @@ const TEXT = new Set([
   'rs', 'py', 'sh', 'c', 'h', 'cpp', 'java', 'log', 'csv', 'ini', 'conf',
 ]);
 const TEXT_PREVIEW_LIMIT = 256 * 1024;
+// Documents rendered page by page by the GUI server (`GET /document`), never
+// handed to the WebView as a file: see `server/document.rs` for why. Mirrors
+// `DOCUMENT_EXTENSIONS` in `src/documents.rs`.
+const DOCUMENT = new Set(['pdf']);
+// Resolution of a rendered page, in DPI. 150 is a readable A4 page on a normal
+// screen; the zoom controls work on the resulting image, so this is the
+// *rendering* detail, not the displayed size.
+const DOCUMENT_DPI = 150;
 
 // Zoom: a step multiplies the current scale; bounds keep the manual size sane.
 const ZOOM_STEP = 1.25;
@@ -125,6 +133,8 @@ export async function mount(root, metafolder) {
   const audio = extensionSet(defaults.audioExtensions, AUDIO);
   const video = extensionSet(defaults.videoExtensions, VIDEO);
   const text = extensionSet(defaults.textExtensions, TEXT);
+  const documents = extensionSet(defaults.documentExtensions, DOCUMENT);
+  const documentDpi = positiveNumber(defaults.documentDpi, DOCUMENT_DPI);
   const textPreviewLimit = positiveNumber(defaults.textPreviewLimit, TEXT_PREVIEW_LIMIT);
   const zoomStep = positiveNumber(defaults.zoomStep, ZOOM_STEP);
   const zoomMin = positiveNumber(defaults.zoomMin, ZOOM_MIN);
@@ -159,6 +169,8 @@ export async function mount(root, metafolder) {
   const mediaWarning = byId(root, 'media-warning');
   const zoomLabel = byId(root, 'zoom-label');
   const resumeHint = byId(root, 'resume-hint');
+  const docPager = byId(root, 'doc-pager');
+  const pageLabel = byId(root, 'page-label');
   const gifAnimateWrap = byId(root, 'gif-animate-wrap');
   const gifAnimateBox = byId(root, 'gif-animate', HTMLInputElement);
 
@@ -221,6 +233,25 @@ export async function mount(root, metafolder) {
       ? `&token=${encodeURIComponent(metafolder.sessionToken)}`
       : '';
     return `${metafolder.guiServer}/fsraw?path=${encodeURIComponent(path)}${auth}`;
+  }
+
+  /**
+   * The document being previewed, or null when the view holds anything else.
+   * `img` is kept so turning a page is an image swap rather than a re-render:
+   * the element stays the zoom target, so a zoom the user set survives the
+   * page turn (and the viewer does not flash).
+   *
+   * @type {{path: string, page: number, pages: number, img: HTMLImageElement}|null}
+   */
+  let document_ = null;
+
+  /** @param {string} path @param {number} page */
+  function documentUrl(path, page) {
+    const auth = metafolder.sessionToken
+      ? `&token=${encodeURIComponent(metafolder.sessionToken)}`
+      : '';
+    return `${metafolder.guiServer}/document?path=${encodeURIComponent(path)}` +
+      `&page=${page}&dpi=${documentDpi}${auth}`;
   }
 
   /** @param {string} text */
@@ -760,6 +791,58 @@ export async function mount(root, metafolder) {
     }
   }
 
+  // Document preview: the pages are PNGs rendered out of process by poppler
+  // (`GET /document`), because the file's own bytes must never be loaded as a
+  // document in this origin — `/fsraw` carries the session token in its URL
+  // (see `server/fsraw.rs` and the panel-invariants test). The page count comes
+  // first, so navigation knows where the document ends.
+  /** @param {string} path @param {number} generation */
+  async function renderDocument(path, generation) {
+    const auth = metafolder.sessionToken
+      ? `&token=${encodeURIComponent(metafolder.sessionToken)}`
+      : '';
+    let pages = 0;
+    try {
+      const response = await fetch(
+        `${metafolder.guiServer}/document/info?path=${encodeURIComponent(path)}${auth}`,
+      );
+      if (!response.ok) throw new Error(`HTTP ${response.status}`);
+      pages = Number((await response.json()).pages) || 0;
+    } catch {
+      pages = 0;
+    }
+    if (generation !== renderGeneration) return;
+    if (pages < 1) {
+      // No poppler installed, a file outside every loaded repository, or one
+      // poppler cannot read — the same outcome for the viewer either way.
+      placeholder('no preview available for this format');
+      return;
+    }
+    const img = el('img', { onerror: () => placeholder('cannot render this page') });
+    img.src = documentUrl(path, 1);
+    viewer.replaceChildren(img);
+    document_ = { path, page: 1, pages, img: /** @type {HTMLImageElement} */ (img) };
+    updateDocPager();
+    setZoomTarget(/** @type {HTMLImageElement} */ (img));
+  }
+
+  function updateDocPager() {
+    docPager.hidden = document_ === null;
+    if (document_) pageLabel.textContent = `${document_.page} / ${document_.pages}`;
+  }
+
+  // Moves to page `page`, clamped to the document. A no-op when no document is
+  // shown, so the page commands are harmless bound in the panel at large.
+  /** @param {number} page */
+  function goToPage(page) {
+    if (!document_) return;
+    const next = Math.min(document_.pages, Math.max(1, page));
+    if (next === document_.page) return;
+    document_.page = next;
+    document_.img.src = documentUrl(document_.path, next);
+    updateDocPager();
+  }
+
   async function renderViewer() {
     const generation = ++renderGeneration;
     // Release any media from the previous view before showing the next one.
@@ -778,6 +861,8 @@ export async function mount(root, metafolder) {
     // branch, which un-hides it.
     clearZoomTarget();
     gifAnimateWrap.hidden = true;
+    document_ = null;
+    updateDocPager();
     revokeStaticGif();
     const path = viewedPath();
     if (!path) {
@@ -831,6 +916,8 @@ export async function mount(root, metafolder) {
       setZoomTarget(img);
     } else if (audio.has(extension) || video.has(extension)) {
       renderMedia(video.has(extension) ? 'video' : 'audio', path, url, generation);
+    } else if (documents.has(extension)) {
+      await renderDocument(path, generation);
     } else if (text.has(extension)) {
       // A known text extension: render as text unconditionally.
       await renderText(url, generation, true);
@@ -907,6 +994,25 @@ export async function mount(root, metafolder) {
   void commands.register('file:zoom-reset', {
     label: 'File: original size',
     handler: zoomReset,
+  });
+
+  // Document paging. Like the zoom commands, each is a no-op unless a document
+  // is being previewed.
+  void commands.register('file:page-next', {
+    label: 'File: next page',
+    handler: () => goToPage((document_?.page ?? 1) + 1),
+  });
+  void commands.register('file:page-prev', {
+    label: 'File: previous page',
+    handler: () => goToPage((document_?.page ?? 1) - 1),
+  });
+  void commands.register('file:page-first', {
+    label: 'File: first page',
+    handler: () => goToPage(1),
+  });
+  void commands.register('file:page-last', {
+    label: 'File: last page',
+    handler: () => goToPage(document_?.pages ?? 1),
   });
 
   // --- Playback controls -------------------------------------------------
@@ -1073,6 +1179,8 @@ export async function mount(root, metafolder) {
   byId(root, 'zoom-out').addEventListener('click', () => zoomBy(1 / zoomStep));
   byId(root, 'zoom-fit').addEventListener('click', zoomFit);
   byId(root, 'zoom-reset').addEventListener('click', zoomReset);
+  byId(root, 'page-prev').addEventListener('click', () => goToPage((document_?.page ?? 1) - 1));
+  byId(root, 'page-next').addEventListener('click', () => goToPage((document_?.page ?? 1) + 1));
 
   workspace.onChange('selected_paths', (value) => void update(value));
   await update(await workspace.get('selected_paths'));

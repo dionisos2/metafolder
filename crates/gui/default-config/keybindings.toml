@@ -412,6 +412,14 @@
 "=" = { command = "file:zoom-fit", when = "file" }
 "0" = { command = "file:zoom-reset", when = "file" }
 
+# file: document paging (a PDF preview). No-ops in front of anything else, so
+# the keys stay free for the rest of the panel.
+# (home/end are not taken: in this panel they already jump the metarecord-list
+# to its first/last row, like the arrow keys. file:page-first / file:page-last
+# stay reachable from the command input.)
+"pagedown" = { command = "file:page-next", when = "file" }
+"pageup" = { command = "file:page-prev", when = "file" }
+
 # file: media transport, on the keys a media player uses (mpv's, so the muscle
 # memory carries over). Space, left/right and backspace are in the sections
 # above, alongside the other panels' meaning for those keys. All of them are

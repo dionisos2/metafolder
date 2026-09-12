@@ -6,10 +6,12 @@
 
 pub mod bench;
 pub mod command_wait;
+mod document;
 mod fsraw;
 pub mod gui_api;
 pub mod input_wait;
 mod panel_assets;
+mod repo_dirs;
 mod thumbnail;
 
 use crate::config::ConfigDir;
@@ -93,6 +95,8 @@ pub fn build_router(state: ServerState) -> Router {
         .route("/panel/:name/*path", get(panel_assets::serve))
         .route("/fsraw", get(fsraw::serve))
         .route("/thumbnail", get(thumbnail::serve))
+        .route("/document", get(document::page))
+        .route("/document/info", get(document::info))
         .route("/gui/workspaces", get(gui_api::list_workspaces).post(gui_api::create_workspace))
         .route("/gui/workspaces/:id", delete(gui_api::delete_workspace))
         .route("/gui/workspaces/:id/vars/:key", get(gui_api::get_workspace_var))
@@ -128,15 +132,16 @@ pub fn build_router_authenticated(state: ServerState, token: Arc<str>) -> Router
 
 /// Routes that expose file contents or drive the GUI, and so require the
 /// session token. Everything else (panel code, styles, sink availability) is
-/// open. `/fsraw`, `/thumbnail` and `/__media-probe` accept the token as a
+/// open. `/fsraw`, `/thumbnail`, `/document*` and `/__media-probe` accept the token as a
 /// `?token=` query parameter (they are loaded as `<img>/<video>` `src` or via
 /// a simple GET that cannot set a header); the rest require the header.
 fn is_protected(path: &str) -> bool {
-    matches!(path, "/fsraw" | "/thumbnail" | "/__media-probe") || path.starts_with("/gui/")
+    matches!(path, "/fsraw" | "/thumbnail" | "/document" | "/document/info" | "/__media-probe")
+        || path.starts_with("/gui/")
 }
 
 fn accepts_query_token(path: &str) -> bool {
-    matches!(path, "/fsraw" | "/thumbnail" | "/__media-probe")
+    matches!(path, "/fsraw" | "/thumbnail" | "/document" | "/document/info" | "/__media-probe")
 }
 
 async fn require_token(

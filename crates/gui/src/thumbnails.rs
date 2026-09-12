@@ -8,7 +8,9 @@
 //! frame with `ffmpeg` out of process, scales it down, and caches the PNG on
 //! disk. GIFs take the same route for a different reason: pointed at
 //! `/fsraw` they *animate*, and a grid of animated tiles is a distraction —
-//! the poster gives a still first frame. Every other type gets an emoji
+//! the poster gives a still first frame. Documents (PDF) take it too: their
+//! poster is the first page, rendered by [`crate::documents`] — same cache,
+//! same tile, a different helper behind it. Every other type gets an emoji
 //! glyph in the panel, never this endpoint.
 
 use std::ffi::OsString;
@@ -43,12 +45,15 @@ pub enum ThumbError {
     Failed,
 }
 
-/// Whether `path`'s extension is a type we make poster thumbnails for.
+/// Whether `path`'s extension is a type we make poster thumbnails for: a
+/// video, a GIF, or a document (whose poster is its first page).
 pub fn is_posterable(path: &Path) -> bool {
-    path.extension()
-        .and_then(|ext| ext.to_str())
-        .map(|ext| ext.to_ascii_lowercase())
-        .is_some_and(|ext| POSTER_EXTENSIONS.contains(&ext.as_str()))
+    crate::documents::is_document(path)
+        || path
+            .extension()
+            .and_then(|ext| ext.to_str())
+            .map(|ext| ext.to_ascii_lowercase())
+            .is_some_and(|ext| POSTER_EXTENSIONS.contains(&ext.as_str()))
 }
 
 /// Among the loaded repositories — each a `(root, internal_dir)` pair from the
@@ -99,8 +104,9 @@ fn ffmpeg_args(input: &Path, output: &Path, seek: &str) -> Vec<OsString> {
     args
 }
 
-/// Returns the cached PNG path for `path`'s poster frame, generating it with
-/// `ffmpeg` on a cache miss and storing it in `cache_dir` (the resolved
+/// Returns the cached PNG path for `path`'s poster frame, generating it on a
+/// cache miss (with `ffmpeg` for a video, poppler for a document) and storing
+/// it in `cache_dir` (the resolved
 /// `<repo>/.metafolder/internal/thumbnails`; the caller resolves the repo, so
 /// a file outside any repo never reaches here). Blocking (spawns a process and
 /// does file I/O): call from `spawn_blocking`, not the async runtime.
@@ -128,7 +134,13 @@ pub fn generate(path: &Path, cache_dir: &Path) -> Result<PathBuf, ThumbError> {
     // Render to a per-call temp file, then atomically rename in, so a
     // concurrent request never observes (or serves) a half-written PNG.
     let temp = cache_dir.join(temp_name());
-    let produced = run_ffmpeg(path, &temp, "1") || run_ffmpeg(path, &temp, "0");
+    // A document's first page, or a video frame — the retry at seek 0 covers a
+    // clip shorter than the first offset.
+    let produced = if crate::documents::is_document(path) {
+        crate::documents::render_poster(path, &temp)
+    } else {
+        run_ffmpeg(path, &temp, "1") || run_ffmpeg(path, &temp, "0")
+    };
     if !produced {
         let _ = std::fs::remove_file(&temp);
         return Err(ThumbError::Failed);
@@ -206,9 +218,12 @@ mod tests {
         // GIFs does not animate.
         assert!(is_posterable(Path::new("/a/anim.gif")));
         assert!(is_posterable(Path::new("/a/ANIM.GIF")));
+        // A document's poster is its first page (rendered by `documents`),
+        // so a PDF tile shows the cover rather than the 📕 glyph.
+        assert!(is_posterable(Path::new("/a/doc.pdf")));
+        assert!(is_posterable(Path::new("/a/DOC.PDF")));
         assert!(!is_posterable(Path::new("/a/photo.png")));
         assert!(!is_posterable(Path::new("/a/song.mp3")));
-        assert!(!is_posterable(Path::new("/a/doc.pdf")));
         assert!(!is_posterable(Path::new("noextension")));
     }
 
@@ -239,6 +254,55 @@ mod tests {
         assert_eq!(args[i + 1], "/in.mp4");
         assert_eq!(args.last().unwrap(), "/out.png");
     }
+
+    /// A PDF tile goes through the same cache-and-rename path as a video
+    /// poster, but is rendered by poppler rather than ffmpeg.
+    #[test]
+    fn test_generate_makes_a_poster_for_a_pdf_when_poppler_present() {
+        if std::process::Command::new("pdftoppm")
+            .arg("-v")
+            .stdout(std::process::Stdio::null())
+            .stderr(std::process::Stdio::null())
+            .status()
+            .is_err()
+        {
+            eprintln!("skipping: poppler not available");
+            return;
+        }
+        let dir = std::env::temp_dir()
+            .join("metafolder-tests")
+            .join(format!("mf-pdf-poster-{}", std::process::id()));
+        let cache_dir = dir.join(".metafolder").join("internal").join("thumbnails");
+        std::fs::create_dir_all(&dir).unwrap();
+        let pdf = dir.join("report.pdf");
+        std::fs::write(&pdf, ONE_PAGE_PDF).unwrap();
+
+        let png = generate(&pdf, &cache_dir).expect("pdf poster generated");
+        assert!(png.starts_with(&cache_dir));
+        let bytes = std::fs::read(&png).unwrap();
+        assert_eq!(&bytes[..8], b"\x89PNG\r\n\x1a\n", "output is a PNG");
+        // Cached like every other poster: the second call re-serves the file.
+        assert_eq!(generate(&pdf, &cache_dir).unwrap(), png);
+
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    /// A syntactically complete one-page PDF (exact xref offsets, so poppler
+    /// parses it without reconstructing the table).
+    const ONE_PAGE_PDF: &[u8] = b"%PDF-1.4\n\
+1 0 obj\n<</Type/Catalog/Pages 2 0 R>>\nendobj\n\
+2 0 obj\n<</Type/Pages/Kids[4 0 R]/Count 1>>\nendobj\n\
+3 0 obj\n<</Type/Font/Subtype/Type1/BaseFont/Helvetica>>\nendobj\n\
+4 0 obj\n<</Type/Page/Parent 2 0 R/MediaBox[0 0 200 200]/Resources<</Font<</F1 3 0 R>>>>/Contents 5 0 R>>\nendobj\n\
+5 0 obj\n<</Length 37>>stream\nBT /F1 24 Tf 20 100 Td (page 1) Tj ET\nendstream\nendobj\n\
+xref\n0 6\n\
+0000000000 65535 f \n\
+0000000009 00000 n \n\
+0000000054 00000 n \n\
+0000000105 00000 n \n\
+0000000168 00000 n \n\
+0000000280 00000 n \n\
+trailer\n<</Size 6/Root 1 0 R>>\nstartxref\n364\n%%EOF\n";
 
     #[test]
     fn test_generate_rejects_unsupported_types() {

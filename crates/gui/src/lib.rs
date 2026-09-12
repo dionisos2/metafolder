@@ -11,6 +11,7 @@ pub mod commands;
 pub mod config;
 pub mod daemon_proxy;
 pub mod diagnostics;
+pub mod documents;
 pub mod duplicates;
 pub mod events;
 pub mod fs_commands;

@@ -31,6 +31,22 @@
   playing — never risking the WebView on a codec that is not there.
 </p>
 
+<h2>Documents (PDF)</h2>
+<p>
+  A PDF is shown <strong>one page at a time</strong>, as an image rendered
+  outside the app by <code>poppler</code> — the document itself is never loaded
+  into the WebView. The zoom controls below work on the page like on any image,
+  and a folder of PDFs shows each one's first page as its tile. Without the
+  <code>poppler</code> package installed you get "no preview available" and the
+  📕 glyph instead.
+</p>
+<table>
+  <tbody>
+    <tr><td><span data-mf-key="file:page-next">PageDown</span> / <span data-mf-key="file:page-prev">PageUp</span></td><td>next / previous page</td></tr>
+    <tr><td><code>file:page-first</code> / <code>file:page-last</code></td><td>first / last page (no key: <code>Home</code>/<code>End</code> drive the file list here)</td></tr>
+  </tbody>
+</table>
+
 <h2>Zoom</h2>
 <table>
   <tbody>

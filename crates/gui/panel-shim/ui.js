@@ -156,6 +156,22 @@ export function isVideoThumbnailable(pathOrName) {
   return VIDEO_THUMBNAILABLE.has(extensionOf(pathOrName));
 }
 
+/**
+ * Document extensions the GUI server renders a first-page poster for
+ * (`GET /thumbnail`, via poppler). Mirrors `DOCUMENT_EXTENSIONS` in
+ * `src/documents.rs`. Like a video, a document must NEVER be handed to
+ * `<img src=/fsraw>` — WebKit would try to decode the file as an image.
+ */
+export const DOCUMENT_THUMBNAILABLE = new Set(['pdf']);
+
+/**
+ * Whether a path/filename is a document the server can make a poster for.
+ * @param {string} pathOrName
+ */
+export function isDocumentThumbnailable(pathOrName) {
+  return DOCUMENT_THUMBNAILABLE.has(extensionOf(pathOrName));
+}
+
 /** @param {string} pathOrName */
 function extensionOf(pathOrName) {
   return (pathOrName.split('.').pop() ?? '').toLowerCase();
@@ -232,9 +248,10 @@ export function fileTypeGlyph(pathOrName, fallback = '📄') {
  * Builds a thumbnail node for a filesystem entry, shared by every panel that
  * shows files (file, metarecord-list) so the "never put a non-image in an
  * <img>" rule lives in one place. Image files become a lazy <img> at /fsraw;
- * videos and GIFs a lazy <img> at /thumbnail (a server-extracted poster frame
- * — never the raw video file, and a *still* first frame for a GIF, so a grid
- * of GIFs does not turn into a wall of animations). Both are bare <img>s, so
+ * videos, GIFs and documents a lazy <img> at /thumbnail (a server-rendered
+ * poster — never the raw video or PDF, a *still* first frame for a GIF so a
+ * grid of GIFs does not turn into a wall of animations, and the first page for
+ * a document). Both are bare <img>s, so
  * each panel's own `.thumb img` / `.card img` CSS styles them. Directories,
  * every other type, and a failed image/poster load fall back to a type glyph
  * <span> (see `fileTypeGlyph`) — except a GIF poster failure (ffmpeg missing,
@@ -260,7 +277,7 @@ export function thumbnail(guiServer, path, options = {}) {
   if (!path) return glyph(fileGlyph);
   const gif = extensionOf(path) === 'gif';
   const image = isThumbnailable(path);
-  if (image || isVideoThumbnailable(path)) {
+  if (image || isVideoThumbnailable(path) || isDocumentThumbnailable(path)) {
     const endpoint = image && !gif ? 'fsraw' : 'thumbnail';
     const auth = token ? `&token=${encodeURIComponent(token)}` : '';
     const img = el('img', {
