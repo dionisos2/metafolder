@@ -184,12 +184,7 @@ fn mark_migration_done(conn: &Connection, name: &str) -> Result<()> {
 
 /// Whether that one-shot migration already ran on this database.
 fn migration_done(conn: &Connection, name: &str) -> Result<bool> {
-    let has_table: i64 = conn.query_row(
-        "SELECT COUNT(*) FROM sqlite_master WHERE type = 'table' AND name = 'migration_state'",
-        [],
-        |r| r.get(0),
-    )?;
-    if has_table == 0 {
+    if !table_exists(conn, "migration_state")? {
         return Ok(false);
     }
     let found: i64 = conn.query_row(
@@ -220,12 +215,7 @@ pub fn dedup_field_rows(conn: &Connection) -> Result<()> {
     if migration_done(conn, DEDUP_MIGRATION)? {
         return Ok(());
     }
-    let has_table: i64 = conn.query_row(
-        "SELECT COUNT(*) FROM sqlite_master WHERE type = 'table' AND name = 'field'",
-        [],
-        |r| r.get(0),
-    )?;
-    if has_table > 0 {
+    if table_exists(conn, "field")? {
         // GROUP BY treats NULLs as equal, which is what "same value" means
         // here: a value type uses a fixed subset of the columns and leaves the
         // rest NULL.
@@ -289,12 +279,7 @@ pub(crate) fn duplicate_row_id(
 /// of its own called `order_file` keeps both, because merging two unrelated
 /// fields into one multi-map is worse than leaving one stale name behind.
 fn rename_order_position_fields(conn: &Connection) -> Result<()> {
-    let has_table: i64 = conn.query_row(
-        "SELECT COUNT(*) FROM sqlite_master WHERE type = 'table' AND name = 'field'",
-        [],
-        |r| r.get(0),
-    )?;
-    if has_table == 0 {
+    if !table_exists(conn, "field")? {
         return Ok(()); // fresh database: init_schema creates it with the new names
     }
     for (legacy, current) in [
@@ -345,18 +330,57 @@ fn rename_order_position_fields(conn: &Connection) -> Result<()> {
 /// everything *outside* the buffer already. The `restore_*` rows of the same
 /// table belong to the log and are left alone.
 fn drop_persisted_fs_events(conn: &Connection) -> Result<()> {
-    let has_table: i64 = conn.query_row(
-        "SELECT COUNT(*) FROM sqlite_master \
-         WHERE type = 'table' AND name = 'pending_operation'",
-        [],
-        |r| r.get(0),
-    )?;
-    if has_table == 0 {
+    if !table_exists(conn, "pending_operation")? {
         return Ok(()); // fresh database: init_schema creates it empty
     }
     conn.execute("DELETE FROM pending_operation WHERE op_type LIKE 'fs_%'", [])
         .context("Failed to drop the persisted filesystem-event buffer")?;
     Ok(())
+}
+
+/// Does `table` exist in this database?
+///
+/// Every migration below opens with this question: a repository may be loaded
+/// before the table a migration targets was ever created, and that is a no-op,
+/// not a failure.
+fn table_exists(conn: &Connection, table: &str) -> Result<bool> {
+    let count: i64 = conn.query_row(
+        "SELECT COUNT(*) FROM sqlite_master WHERE type = 'table' AND name = ?1",
+        [table],
+        |r| r.get(0),
+    )?;
+    Ok(count > 0)
+}
+
+/// Does `table` already carry `column`? False for a table that does not exist,
+/// which is what lets a migration ask both questions in either order.
+fn column_exists(conn: &Connection, table: &str, column: &str) -> Result<bool> {
+    let count: i64 = conn.query_row(
+        "SELECT COUNT(*) FROM pragma_table_info(?1) WHERE name = ?2",
+        [table, column],
+        |r| r.get(0),
+    )?;
+    Ok(count > 0)
+}
+
+/// Runs `migration` iff `table` exists and lacks `column` — the shape every
+/// column migration takes.
+///
+/// A database created before the column existed gains it on the next load; a
+/// fresh one (where `init_schema` already declares the column) and one that has
+/// not created the table yet are both no-ops. `migration` is a batch, so it can
+/// carry the back-fill that must accompany the `ALTER`, and the guard is what
+/// keeps that back-fill from running a second time over migrated data.
+fn add_column_if_missing(
+    conn: &Connection,
+    table: &str,
+    column: &str,
+    migration: &str,
+) -> Result<()> {
+    if !table_exists(conn, table)? || column_exists(conn, table, column)? {
+        return Ok(());
+    }
+    conn.execute_batch(migration).with_context(|| format!("Failed to add {table}.{column} column"))
 }
 
 /// Adds `metarecord.next_version` (the per-record monotonic version allocator,
@@ -365,27 +389,13 @@ fn drop_persisted_fs_events(conn: &Connection) -> Result<()> {
 /// encoded, so the current version is the correct allocator high-water mark.
 /// Idempotent; a no-op on fresh databases and on ones with no `metarecord` yet.
 fn ensure_next_version_column(conn: &Connection) -> Result<()> {
-    let has_table: i64 = conn.query_row(
-        "SELECT COUNT(*) FROM sqlite_master WHERE type = 'table' AND name = 'metarecord'",
-        [],
-        |r| r.get(0),
-    )?;
-    if has_table == 0 {
-        return Ok(());
-    }
-    let has_column: i64 = conn.query_row(
-        "SELECT COUNT(*) FROM pragma_table_info('metarecord') WHERE name = 'next_version'",
-        [],
-        |r| r.get(0),
-    )?;
-    if has_column == 0 {
-        conn.execute_batch(
-            "ALTER TABLE metarecord ADD COLUMN next_version INTEGER NOT NULL DEFAULT 1;
-             UPDATE metarecord SET next_version = version + 1;",
-        )
-        .context("Failed to add metarecord.next_version column")?;
-    }
-    Ok(())
+    add_column_if_missing(
+        conn,
+        "metarecord",
+        "next_version",
+        "ALTER TABLE metarecord ADD COLUMN next_version INTEGER NOT NULL DEFAULT 1;
+         UPDATE metarecord SET next_version = version + 1;",
+    )
 }
 
 /// Adds `operation.entity_version_after` to databases created before it existed.
@@ -393,24 +403,12 @@ fn ensure_next_version_column(conn: &Connection) -> Result<()> {
 /// `entity_version_before + 1` for NULL, exactly the pre-migration behaviour.
 /// Idempotent; a no-op on fresh databases and on ones with no `operation` yet.
 fn ensure_entity_version_after_column(conn: &Connection) -> Result<()> {
-    let has_table: i64 = conn.query_row(
-        "SELECT COUNT(*) FROM sqlite_master WHERE type = 'table' AND name = 'operation'",
-        [],
-        |r| r.get(0),
-    )?;
-    if has_table == 0 {
-        return Ok(());
-    }
-    let has_column: i64 = conn.query_row(
-        "SELECT COUNT(*) FROM pragma_table_info('operation') WHERE name = 'entity_version_after'",
-        [],
-        |r| r.get(0),
-    )?;
-    if has_column == 0 {
-        conn.execute("ALTER TABLE operation ADD COLUMN entity_version_after INTEGER", [])
-            .context("Failed to add operation.entity_version_after column")?;
-    }
-    Ok(())
+    add_column_if_missing(
+        conn,
+        "operation",
+        "entity_version_after",
+        "ALTER TABLE operation ADD COLUMN entity_version_after INTEGER",
+    )
 }
 
 /// Adds `pending_operation.tracker` to databases created before it existed, so
@@ -418,24 +416,12 @@ fn ensure_entity_version_after_column(conn: &Connection) -> Result<()> {
 /// cookie. Idempotent; a no-op on fresh databases (`init_schema` already
 /// includes the column) and on databases that have no `pending_operation` yet.
 fn ensure_pending_tracker_column(conn: &Connection) -> Result<()> {
-    let has_table: i64 = conn.query_row(
-        "SELECT COUNT(*) FROM sqlite_master WHERE type = 'table' AND name = 'pending_operation'",
-        [],
-        |r| r.get(0),
-    )?;
-    if has_table == 0 {
-        return Ok(());
-    }
-    let has_column: i64 = conn.query_row(
-        "SELECT COUNT(*) FROM pragma_table_info('pending_operation') WHERE name = 'tracker'",
-        [],
-        |r| r.get(0),
-    )?;
-    if has_column == 0 {
-        conn.execute("ALTER TABLE pending_operation ADD COLUMN tracker INTEGER", [])
-            .context("Failed to add pending_operation.tracker column")?;
-    }
-    Ok(())
+    add_column_if_missing(
+        conn,
+        "pending_operation",
+        "tracker",
+        "ALTER TABLE pending_operation ADD COLUMN tracker INTEGER",
+    )
 }
 
 /// Adds `field.value_name_bytes` and re-keys the forest index onto it, for
@@ -450,41 +436,18 @@ fn ensure_value_name_bytes_column(conn: &Connection) -> Result<()> {
     // before/after snapshots (or a rollback would restore a degraded name),
     // the watcher's buffer and sync's snapshots.
     for table in ["field", "op_snapshot", "pending_operation", "snapshot_field"] {
-        let has_table: i64 = conn.query_row(
-            "SELECT COUNT(*) FROM sqlite_master WHERE type = 'table' AND name = ?1",
-            [table],
-            |r| r.get(0),
-        )?;
-        if has_table == 0 {
-            continue; // fresh database, or a table this schema does not have
-        }
-        let has_column: i64 = conn.query_row(
+        add_column_if_missing(
+            conn,
+            table,
+            "value_name_bytes",
             &format!(
-                "SELECT COUNT(*) FROM pragma_table_info('{table}') WHERE name = 'value_name_bytes'"
+                "ALTER TABLE {table} ADD COLUMN value_name_bytes BLOB;
+                 UPDATE {table} SET value_name_bytes = CAST(value_name AS BLOB)
+                  WHERE value_type = 'tree_ref' AND value_name IS NOT NULL;"
             ),
-            [],
-            |r| r.get(0),
         )?;
-        if has_column != 0 {
-            continue;
-        }
-        conn.execute(&format!("ALTER TABLE {table} ADD COLUMN value_name_bytes BLOB"), [])
-            .with_context(|| format!("Failed to add {table}.value_name_bytes column"))?;
-        conn.execute(
-            &format!(
-                "UPDATE {table} SET value_name_bytes = CAST(value_name AS BLOB)
-                 WHERE value_type = 'tree_ref' AND value_name IS NOT NULL"
-            ),
-            [],
-        )
-        .with_context(|| format!("Failed to back-fill {table}.value_name_bytes"))?;
     }
-    let field_done: i64 = conn.query_row(
-        "SELECT COUNT(*) FROM pragma_table_info('field') WHERE name = 'value_name_bytes'",
-        [],
-        |r| r.get(0),
-    )?;
-    if field_done == 0 {
+    if !column_exists(conn, "field", "value_name_bytes")? {
         return Ok(()); // no `field` table yet: init_schema builds the index itself
     }
     // The forest's uniqueness moves onto the bytes with it, or two siblings
@@ -521,24 +484,13 @@ fn ensure_value_name_bytes_column(conn: &Connection) -> Result<()> {
 /// valid UTF-8 — the watcher could not enqueue anything else — so its text is
 /// exact, and the reader falls back to it when the bytes are absent.
 fn ensure_pending_path_bytes_columns(conn: &Connection) -> Result<()> {
-    let has_table: i64 = conn.query_row(
-        "SELECT COUNT(*) FROM sqlite_master WHERE type = 'table' AND name = 'pending_operation'",
-        [],
-        |r| r.get(0),
-    )?;
-    if has_table == 0 {
-        return Ok(());
-    }
     for column in ["path_bytes", "from_path_bytes", "to_path_bytes"] {
-        let has_column: i64 = conn.query_row(
-            &format!("SELECT COUNT(*) FROM pragma_table_info('pending_operation') WHERE name = '{column}'"),
-            [],
-            |r| r.get(0),
+        add_column_if_missing(
+            conn,
+            "pending_operation",
+            column,
+            &format!("ALTER TABLE pending_operation ADD COLUMN {column} BLOB"),
         )?;
-        if has_column == 0 {
-            conn.execute(&format!("ALTER TABLE pending_operation ADD COLUMN {column} BLOB"), [])
-                .with_context(|| format!("Failed to add pending_operation.{column}"))?;
-        }
     }
     Ok(())
 }
@@ -2087,4 +2039,47 @@ pub(crate) fn delete_field_text_by_metarecord(
     )?
     .execute(params![uuid_to_bytes(metarecord_uuid)])?;
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn schema_probes_answer_for_tables_and_columns() {
+        let conn = Connection::open_in_memory().unwrap();
+        conn.execute_batch("CREATE TABLE t (a INTEGER, b TEXT)").unwrap();
+
+        assert!(table_exists(&conn, "t").unwrap());
+        assert!(!table_exists(&conn, "nope").unwrap());
+        assert!(column_exists(&conn, "t", "b").unwrap());
+        assert!(!column_exists(&conn, "t", "nope").unwrap());
+        // A column of a table that does not exist is absent, not an error: the
+        // migrations rely on it to stay a no-op on a database that has not
+        // created the table yet.
+        assert!(!column_exists(&conn, "nope", "a").unwrap());
+    }
+
+    #[test]
+    fn add_column_if_missing_is_idempotent_and_skips_absent_tables() {
+        let conn = Connection::open_in_memory().unwrap();
+        conn.execute_batch("CREATE TABLE t (a INTEGER); INSERT INTO t (a) VALUES (1)").unwrap();
+
+        let migration = "ALTER TABLE t ADD COLUMN b INTEGER NOT NULL DEFAULT 0;
+                         UPDATE t SET b = a + 1;";
+        add_column_if_missing(&conn, "t", "b", migration).unwrap();
+        let b: i64 = conn.query_row("SELECT b FROM t", [], |r| r.get(0)).unwrap();
+        assert_eq!(b, 2, "the migration's back-fill ran");
+
+        // Second run: the column is there, so the batch — back-fill included —
+        // must not run again.
+        conn.execute("UPDATE t SET b = 99", []).unwrap();
+        add_column_if_missing(&conn, "t", "b", migration).unwrap();
+        let b: i64 = conn.query_row("SELECT b FROM t", [], |r| r.get(0)).unwrap();
+        assert_eq!(b, 99, "an applied migration is not replayed");
+
+        // A table this database never created: nothing to migrate, no error.
+        add_column_if_missing(&conn, "absent", "c", "ALTER TABLE absent ADD COLUMN c INTEGER")
+            .unwrap();
+    }
 }
