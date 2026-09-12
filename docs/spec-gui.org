@@ -673,7 +673,9 @@ daemon is a separate process and the GUI cannot read its stderr.
 
 A line reads =daemon <scope>: <message>=, with =error:= spelled out for the
 error level (a warning is the common case, and the prefix would be noise on
-every line). When the feed reports dropped entries, a line says so before them.
+every line). The =info= level arrives here too: it is how each watcher flush
+says what it applied, and to what (spec-file-tracking "What a flush reports") —
+the answer to "why did something just happen when I did nothing?". When the feed reports dropped entries, a line says so before them.
 
 The cursor starts at 0, so the first poll picks up whatever the daemon already
 warned about — including why a repository failed to load, which happens before
@@ -960,9 +962,14 @@ A dedicated bar directly above the status bar, showing in-flight daemon tasks
 (spec-tasks). It polls =GET /tasks= (all loaded repositories) and lists each
 =running= / =pending= task with a determinate progress bar when the task
 reports =done=/=total=, a spinner otherwise, labelled by =kind=/=phase=. It is
-hidden when there are no tasks. Unlike the status bar it is not tied to a
-workspace: it surfaces every blocking task on the loaded repositories,
-including reconciles started from the CLI or another client.
+hidden when there are no tasks, and a task only earns a place once it has been
+in flight for a grace period (spec-tasks "GUI") — showing the bar re-lays out
+every panel, which is not worth doing for the millisecond-long watcher flush
+that fires whenever anything touches a watched file. What that flush did is
+reported in the [[*Message view]] instead, like any other daemon diagnostic.
+Unlike the status bar it is not tied to a workspace: it surfaces every
+blocking task on the loaded repositories, including reconciles started from the
+CLI or another client.
 
 Running *shell scripts* (a =!= command, or the =script:run= builtin) also
 appear here as a loading indicator for the whole time the subprocess runs, so a

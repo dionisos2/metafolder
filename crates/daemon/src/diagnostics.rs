@@ -25,6 +25,9 @@ pub const CAPACITY: usize = 500;
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
 pub enum Level {
+    /// Something the operator may want to know about, and nothing went wrong:
+    /// what a watcher flush applied, and to what. Never a failure.
+    Info,
     /// Something the operator should see, but the daemon carried on.
     Warning,
     /// An operation failed.
@@ -129,6 +132,10 @@ pub fn record(level: Level, scope: &str, message: impl Into<String>, repo: Optio
     if let Ok(mut feed) = feed().lock() {
         feed.record(level, scope, message, repo);
     }
+}
+
+pub fn info(scope: &str, message: impl Into<String>) {
+    record(Level::Info, scope, message, None);
 }
 
 pub fn warn(scope: &str, message: impl Into<String>) {

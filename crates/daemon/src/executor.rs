@@ -366,6 +366,52 @@ pub fn describe(ev: &FsEvent) -> String {
     }
 }
 
+/// How many events a summary line names before it starts counting. Enough to
+/// recognise what happened ("my editor saved, twice"), short enough that a
+/// mass arrival does not push a screenful into the message panel.
+const SUMMARY_EVENTS: usize = 3;
+
+/// The one line a flush leaves in the diagnostics feed — and so in the GUI's
+/// message panel (spec-file-tracking "Event batching").
+///
+/// A flush runs because the watcher saw something, never on a timer, but the
+/// events it saw may all be about ignored paths: from outside, that flush is
+/// indistinguishable from one that happened for no reason. So the line says
+/// what it saw, what it wrote, and how much of it was ignored.
+///
+/// `listed` is the first [`SUMMARY_EVENTS`] events as [`describe`]d them;
+/// `total` is how many there were.
+fn flush_summary(
+    who: &str,
+    total: usize,
+    listed: &[String],
+    revisions: usize,
+    ignored: usize,
+    elapsed: std::time::Duration,
+) -> String {
+    let plural = |n: usize, word: &str| {
+        if n == 1 {
+            format!("{n} {word}")
+        } else {
+            format!("{n} {word}s")
+        }
+    };
+    let wrote = match revisions {
+        0 => "nothing written".to_string(),
+        n => plural(n, "revision"),
+    };
+    let ignored = if ignored > 0 { format!(" ({ignored} ignored)") } else { String::new() };
+    let mut events = listed.join(", ");
+    if total > listed.len() {
+        events.push_str(&format!(" (+{} more)", total - listed.len()));
+    }
+    format!(
+        "flush on {who}: {} in {} ms -> {wrote}{ignored}; {events}",
+        plural(total, "event"),
+        elapsed.as_millis(),
+    )
+}
+
 fn flush_pending_once(repo: &RepoState, report: FlushReport) -> Result<FlushStats> {
     // While a coordinated rollback holds the lock, pending operations (watcher
     // events and restoration ops) accumulate but are not committed; they are
@@ -378,6 +424,9 @@ fn flush_pending_once(repo: &RepoState, report: FlushReport) -> Result<FlushStat
     if repo.is_ingestion_paused() {
         return Ok(FlushStats::default());
     }
+    // Timed from here, waiting for the connection included: what the summary
+    // line reports is how long the flush took, not how long it worked.
+    let started = std::time::Instant::now();
     // A flush is not served over HTTP, so it names itself: it is the operation
     // most likely to be *holding* the repository when a query complains about
     // waiting for it (spec-slow-log).
@@ -405,6 +454,9 @@ fn flush_pending_once(repo: &RepoState, report: FlushReport) -> Result<FlushStat
     let n_events = events.len();
     metafolder_core::slowlog::note("events", n_events.to_string());
     report(FlushProgress::Compacted(n_events));
+    // Described now: the events are about to be moved into their groups, and
+    // the summary is written once they have all been applied.
+    let listed: Vec<String> = events.iter().take(SUMMARY_EVENTS).map(describe).collect();
 
     // Paths renamed away with no matching arrival in this batch. Either the
     // file really left the repository, or it moved into a directory the watcher
@@ -455,8 +507,9 @@ fn flush_pending_once(repo: &RepoState, report: FlushReport) -> Result<FlushStat
     let cancel = || repo.tasks.is_cancel_requested(task) || repo.is_ingestion_paused();
 
     let applying = metafolder_core::slowlog::phase("watcher.apply");
-    let work = (|| -> Result<usize> {
+    let work = (|| -> Result<(usize, usize)> {
         let mut revisions = 0;
+        let mut ignored = 0usize;
         let mut applied = 0usize;
         for (_, group) in groups {
             let writer = repo.writer(&mut conn, None)?;
@@ -471,6 +524,7 @@ fn flush_pending_once(repo: &RepoState, report: FlushReport) -> Result<FlushStat
                 departed_index: None,
                 elig: &mut elig,
                 cancel: &cancel,
+                ignored: 0,
             };
             for ev in group {
                 apply.check_cancelled()?;
@@ -485,19 +539,32 @@ fn flush_pending_once(repo: &RepoState, report: FlushReport) -> Result<FlushStat
                 });
             }
             let wrote = apply.writer.op_count() > 0;
+            // Read before the commit moves the writer out of `apply`.
+            ignored += apply.ignored;
             metafolder_core::slowlog::timed("commit", || apply.writer.commit())?;
             if wrote {
                 revisions += 1;
             }
         }
 
-        Ok(revisions)
+        Ok((revisions, ignored))
     })();
     drop(applying);
 
     match work {
-        Ok(revisions) => {
+        Ok((revisions, ignored)) => {
             repo.tasks.finish(task, None);
+            crate::diagnostics::info(
+                "executor",
+                flush_summary(
+                    &repo.name(),
+                    n_events,
+                    &listed,
+                    revisions,
+                    ignored,
+                    started.elapsed(),
+                ),
+            );
             Ok(FlushStats {
                 events: n_events,
                 revisions: revisions + revisions_from_restore,
@@ -655,6 +722,11 @@ struct Apply<'a, 'c> {
     /// Cooperative stop probe (the flush task's cancellation flag). Read at
     /// every event, and inside the loops that can run long on a single event.
     cancel: &'a dyn Fn() -> bool,
+    /// Paths this group turned away as ineligible. Watches are placed per
+    /// *directory*, so an ignored file inside a watched one still reaches the
+    /// buffer and is only filtered here — which is how a flush ends up writing
+    /// nothing at all. Counted so the summary can say so.
+    ignored: usize,
 }
 
 /// The stat a rename preserves exactly — kind, size, mtime — as a lookup key.
@@ -732,12 +804,16 @@ impl Apply<'_, '_> {
 
     fn eligible(&mut self, rel: &RelPath) -> Result<bool> {
         self.step("eligibility walk");
-        eligibility::is_eligible_cached(
+        let eligible = eligibility::is_eligible_cached(
             self.writer.connection(),
             self.cache,
             &rel.display(),
             self.elig,
-        )
+        )?;
+        if !eligible {
+            self.ignored += 1;
+        }
+        Ok(eligible)
     }
 
     fn resolve(&mut self, rel: &RelPath) -> Result<Option<Uuid>> {
@@ -1575,5 +1651,39 @@ mod tests {
                 "divergence on {events:?}"
             );
         }
+    }
+
+    // ── flush_summary ──────────────────────────────────────────────────────
+
+    #[test]
+    fn a_summary_names_what_the_flush_saw_and_what_it_wrote() {
+        let listed = vec![describe(&create("/a.txt"))];
+        let line = flush_summary("photos", 1, &listed, 1, 0, Duration::from_millis(12));
+        assert_eq!(line, "flush on photos: 1 event in 12 ms -> 1 revision; create /a.txt");
+    }
+
+    #[test]
+    fn a_summary_says_when_nothing_was_written_and_why() {
+        // The answer to "why is there a flush when nothing happened": the
+        // events were real, they were simply all ignored.
+        let listed = vec![describe(&mmeta("/x")), describe(&mdata("/y"))];
+        let line = flush_summary("photos", 2, &listed, 0, 2, Duration::from_millis(3));
+        assert_eq!(
+            line,
+            "flush on photos: 2 events in 3 ms -> nothing written (2 ignored); \
+             touched /x, modified /y"
+        );
+    }
+
+    #[test]
+    fn a_summary_lists_a_few_events_and_counts_the_rest() {
+        let events = [create("/a"), mdata("/b"), rename("/c", "/d"), remove("/e")];
+        let listed: Vec<String> = events.iter().take(SUMMARY_EVENTS).map(describe).collect();
+        let line = flush_summary("photos", events.len(), &listed, 2, 0, Duration::from_millis(40));
+        assert_eq!(
+            line,
+            "flush on photos: 4 events in 40 ms -> 2 revisions; \
+             create /a, modified /b, rename /c -> /d (+1 more)"
+        );
     }
 }

@@ -248,9 +248,13 @@ whichever terminal started the daemon and was invisible to the person actually
 using the software.
 
 Response: ={"entries": [...], "next_since": <id>, "dropped": <n>}=. Each entry
-is ={id, at_ms, level, scope, message, repo}=, where =level= is =warning= or
-=error= and =scope= names the part that spoke (=watcher=, =reconcile=,
-=executor=, =prune=, =warmup=…). Entries come oldest first.
+is ={id, at_ms, level, scope, message, repo}=, where =level= is =info=,
+=warning= or =error= and =scope= names the part that spoke (=watcher=,
+=reconcile=, =executor=, =prune=, =warmup=…). Entries come oldest first.
+=info= is for what the daemon *did* rather than what went wrong — the one
+line each watcher flush leaves behind (see
+[[file:spec-file-tracking.org][spec-file-tracking.org]] "What a flush
+reports"); nothing about it needs the operator's attention.
 
 - =since= is the last id the client saw; *0 means "everything the ring still
   holds"*. Ids start at 1 and are monotonic **per daemon run** — they are not

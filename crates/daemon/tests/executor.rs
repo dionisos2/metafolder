@@ -89,6 +89,61 @@ fn test_flush_with_events_records_a_flush_task() {
     std::fs::remove_dir_all(root).unwrap();
 }
 
+/// Reads the diagnostics feed from `since`, keeping the entries whose message
+/// mentions `needle` — the feed is process-wide and the test binary is
+/// parallel, so a test recognises its own lines by their content.
+fn diagnostics_about(since: u64, needle: &str) -> Vec<String> {
+    metafolder_daemon::diagnostics::read(since, 1000)
+        .entries
+        .into_iter()
+        .filter(|e| e.scope == "executor" && e.message.contains(needle))
+        .map(|e| e.message)
+        .collect()
+}
+
+fn diagnostics_head() -> u64 {
+    metafolder_daemon::diagnostics::read(0, 1000).next_since
+}
+
+#[test]
+fn test_a_flush_reports_what_it_did_to_the_diagnostics_feed() {
+    let (repo, root, _) = setup("flushreport");
+    write_file(&root, "reported.txt", b"hello");
+    let since = diagnostics_head();
+    enqueue(&repo, &[FsEvent::Create("/reported.txt".into())]);
+
+    executor::flush_pending(&repo).unwrap();
+
+    let lines = diagnostics_about(since, "/reported.txt");
+    assert_eq!(lines.len(), 1, "one summary line per flush, got {lines:?}");
+    let line = &lines[0];
+    assert!(line.contains("1 event"), "{line}");
+    assert!(line.contains("1 revision"), "{line}");
+    assert!(line.contains("create /reported.txt"), "{line}");
+}
+
+#[test]
+fn test_a_flush_that_writes_nothing_says_what_it_ignored() {
+    // The user-visible question this answers: why is there a flush when
+    // nothing happened? Because something *did* happen, to an ignored path.
+    let (repo, root, root_uuid) = setup("flushignored");
+    {
+        let mut conn = repo.conn.lock().unwrap();
+        let mut w = Writer::begin(&mut conn, None).unwrap();
+        w.append_field(root_uuid, "mf_ignore", Value::String(r"\.git(/.*)?$".into())).unwrap();
+        w.commit().unwrap();
+    }
+    write_file(&root, ".git/ignored-here", b"x");
+    let since = diagnostics_head();
+    enqueue(&repo, &[FsEvent::Create("/.git/ignored-here".into())]);
+
+    executor::flush_pending(&repo).unwrap();
+
+    let lines = diagnostics_about(since, "/.git/ignored-here");
+    assert_eq!(lines.len(), 1, "one summary line per flush, got {lines:?}");
+    assert!(lines[0].contains("nothing written (1 ignored)"), "{}", lines[0]);
+}
+
 #[test]
 fn test_empty_flush_records_no_task() {
     let (repo, root, _) = setup("flushempty");

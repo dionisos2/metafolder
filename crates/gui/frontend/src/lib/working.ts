@@ -85,3 +85,46 @@ export function createWorkingTracker(graceMs = WORKING_GRACE_MS): WorkingTracker
 
 /** The shell's single tracker, shared by the panel API and the command layer. */
 export const daemonWork = createWorkingTracker();
+
+// ── Daemon tasks ─────────────────────────────────────────────────────────────
+//
+// The same rule, for the task bar. The bar is a row of the shell's column
+// layout, so showing one takes height away from the panels: every panel
+// re-lays out, mid-scroll and mid-read, for something that will be gone by the
+// next poll. A watcher flush is the ordinary case — it lasts milliseconds and
+// fires whenever anything at all touches a watched file — so a task earns its
+// place only once it has been there long enough to be worth the rearrangement.
+// A long one (a reconcile, a directory of a hundred thousand files arriving)
+// crosses the grace immediately and is shown as before.
+
+/** How long a daemon task must have been in flight before the bar shows it. */
+export const TASK_GRACE_MS = 1000;
+
+/**
+ * The tasks old enough to show, in the order the daemon listed them.
+ *
+ * `seen` carries the first sighting of each task id across calls and is pruned
+ * of whatever the daemon no longer lists — the caller owns it and keeps it for
+ * as long as the bar is mounted. Timing from the first *sighting* rather than
+ * from the task's own `started_at` is deliberate: that field is second-grained,
+ * which is coarser than the grace itself.
+ */
+export function settledTasks<T extends { id: string }>(
+  seen: Map<string, number>,
+  tasks: T[],
+  now: number,
+  graceMs = TASK_GRACE_MS,
+): T[] {
+  const live = new Set(tasks.map((t) => t.id));
+  for (const id of seen.keys()) {
+    if (!live.has(id)) seen.delete(id);
+  }
+  return tasks.filter((t) => {
+    const first = seen.get(t.id);
+    if (first === undefined) {
+      seen.set(t.id, now);
+      return false;
+    }
+    return now - first >= graceMs;
+  });
+}

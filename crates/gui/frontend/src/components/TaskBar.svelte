@@ -8,7 +8,7 @@
   import { onMount } from 'svelte';
   import { invoke } from '../lib/ipc';
   import { ownedByVisible, scriptIndicator, store, visibleWorkspaces } from '../lib/store.svelte';
-  import { daemonWork, type WorkingState } from '../lib/working';
+  import { daemonWork, settledTasks, type WorkingState } from '../lib/working';
 
   interface Task {
     id: string;
@@ -23,6 +23,14 @@
   let tasks = $state<Task[]>([]);
   const POLL_MS = 300;
 
+  // When each in-flight task was first seen, so a task too short to be worth
+  // rearranging the screen for never reaches the bar (see lib/working). The
+  // ordinary watcher flush is exactly that: milliseconds long, and fired by
+  // anything at all touching a watched file. Bookkeeping for the poll, never
+  // rendered — `tasks` is the reactive state — so a plain Map is right here.
+  // eslint-disable-next-line svelte/prefer-svelte-reactivity
+  const firstSeen = new Map<string, number>();
+
   async function poll() {
     try {
       const res = (await invoke('daemon_request', {
@@ -30,11 +38,13 @@
         path: '/tasks',
         body: null,
       })) as { status: number; body: unknown };
-      tasks =
+      const active =
         res.status === 200 && Array.isArray(res.body)
           ? (res.body as Task[]).filter((t) => t.status === 'running' || t.status === 'pending')
           : [];
+      tasks = settledTasks(firstSeen, active, Date.now());
     } catch {
+      firstSeen.clear();
       tasks = [];
     }
   }

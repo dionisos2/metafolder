@@ -91,6 +91,25 @@ mod tests {
     }
 
     #[test]
+    fn test_an_info_line_reads_like_any_other() {
+        // What each watcher flush leaves behind (spec-file-tracking "What a
+        // flush reports"): routine, and marked no differently from a warning.
+        let page = json!({
+            "entries": [
+                { "level": "info", "scope": "executor",
+                  "message": "flush on photos: 1 event in 3 ms -> 1 revision; create /a.txt" },
+            ],
+            "next_since": 9,
+        });
+        let (lines, next) = lines_from_page(&page, 0);
+        assert_eq!(
+            lines,
+            vec!["daemon executor: flush on photos: 1 event in 3 ms -> 1 revision; create /a.txt"]
+        );
+        assert_eq!(next, 9);
+    }
+
+    #[test]
     fn test_a_page_that_lost_entries_says_so_before_the_rest() {
         let page = json!({
             "entries": [{ "level": "warning", "scope": "watcher", "message": "late" }],

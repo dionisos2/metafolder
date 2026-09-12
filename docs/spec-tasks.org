@@ -486,7 +486,18 @@ progress never saturates it:
 - The task bar polls =GET /tasks= (all loaded repositories) at its own cadence
   and lists every =running= / =pending= task with a *progress bar* when the
   task reports =done= / =total=, otherwise a *spinner* labelled with the
-  =kind= / =phase=. It is hidden when there are no tasks. Because it polls the
+  =kind= / =phase=. It is hidden when there are no tasks.
+- A task must have been in flight for a *grace period* (one second) before the
+  bar shows it. The bar is a row of the shell's column layout, so showing one
+  takes height away from the panels and every panel re-lays out — mid-scroll,
+  mid-read. A watcher flush lasts milliseconds and fires whenever anything at
+  all touches a watched file, so without the grace the screen twitches for work
+  nobody asked to see. What the flush did is reported in the message panel
+  instead (see [[file:spec-file-tracking.org][spec-file-tracking.org]] "What a
+  flush reports"). A task that outlasts the grace — a reconcile, a mass
+  arrival — is shown as before, and the delay is chosen client-side like the
+  poll cadence. The grace runs from the task's *first sighting* rather than its
+  =started_at=, which is second-grained and so coarser than the grace itself. Because it polls the
   daemon (not only GUI-launched work), it surfaces *any* in-flight task on the
   loaded repos — reconcile, query, flush, prune, rollback — which matters since
   these tasks are blocking. Closing and reopening the GUI mid-reconcile resumes
@@ -495,9 +506,9 @@ progress never saturates it:
   polls =GET …/tasks/:id= only to know when to show the final summary from
   =result= (or the error) in the status bar; live progress is shown by the task
   bar, not the status bar.
-- *Query / flush*: shown by the task bar like any other task (a query that
-  outlives a poll interval appears with a spinner; very short ones may complete
-  between polls).
+- *Query / flush*: shown by the task bar like any other task once past the
+  grace (a query that outlives it appears with a spinner; the ordinary flush
+  never does, and reports in the message panel instead).
 - The poll cadence is chosen entirely client-side, independently of the CLI.
 
 The *repos panel* additionally lists each repository's active tasks beneath it,

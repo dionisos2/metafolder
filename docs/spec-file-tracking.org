@@ -812,6 +812,32 @@ arrive over a span longer than the batching window and be split across multiple
 revisions. This is acceptable — each revision is still rollbackable
 individually.
 
+*** What a flush reports
+
+Every flush that had something to apply records *one line* in the diagnostics
+feed (=info= level, scope =executor=; see [[file:spec-main.org][spec-main.org]]
+"Diagnostics feed"), which the GUI appends to its message panel:
+
+#+BEGIN_SRC
+flush on photos: 2 events in 3 ms -> nothing written (2 ignored); touched /x, modified /y
+#+END_SRC
+
+It names the repository, how many events the flush applied *after compaction*,
+how long it took, how many revisions it wrote, how many paths it turned away as
+ineligible, and the first few events themselves (the rest counted as =(+N
+more)=).
+
+The reason the line exists is the *ignored* count. A flush never runs on a
+timer: the executor sleeps until the watcher pings it, so a flush means the
+watcher really saw something. But watches are placed per *directory*, and an
+ignored file inside a watched directory still reaches the buffer — it is only
+turned away when the event is applied. Such a flush writes nothing, and from the
+outside is indistinguishable from one that happened for no reason at all. The
+line is what tells the two apart, and names the path responsible.
+
+A flush with an empty buffer reports nothing: it registers no task either
+(see [[file:spec-tasks.org][spec-tasks.org]]), and there is nothing to say.
+
 *** Pausing ingestion
 
 A flush is not always short. A directory of a hundred thousand files dropped
