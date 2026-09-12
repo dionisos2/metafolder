@@ -483,6 +483,7 @@ pub fn run(options: Options) {
             commands::config_info,
             fs_commands::fs_read_dir,
             fs_commands::fs_stat,
+            fs_commands::fs_exists,
             fs_commands::fs_home_dir,
             fs_commands::fs_mkdir,
             fs_commands::fs_create_file,

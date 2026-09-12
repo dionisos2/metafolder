@@ -521,12 +521,10 @@ export async function mount(root, metafolder) {
     // resolved in the cache — the orphan check costs no daemon traffic.
     /** @param {Metafolder.Metarecord} metarecord */
     metarecordPaths: (metarecord) => Promise.resolve(pathsOf(metarecord)),
-    /** @param {string} path */
-    exists: (path) =>
-      metafolder.fs.stat(path).then(
-        () => true,
-        () => false,
-      ),
+    /** @param {string} path — `fs.exists`, not `fs.stat`: the latter follows a
+     *  symlink, so a broken one read as gone and coloured a file that is right
+     *  there as an orphan. */
+    exists: (path) => metafolder.fs.exists(path),
   };
 
   /** @type {Array<import('/__mounts.js').Mount>} the repo's mount points,

@@ -443,11 +443,9 @@ export async function mount(root, metafolder) {
     }
     const state = await orphanState(metarecord, {
       metarecordPaths: (m) => daemon.metarecordPaths(selection.repo, m),
-      exists: (path) =>
-        metafolder.fs.stat(path).then(
-          () => true,
-          () => false,
-        ),
+      // `fs.exists`, not `fs.stat`: stat follows a symlink, so a broken one
+      // read as gone and noted a present file as orphaned.
+      exists: (path) => metafolder.fs.exists(path),
     }).catch(() => null);
     if (state === null || metarecord !== shown) return;
     orphanNote.textContent = orphanLabel(state);

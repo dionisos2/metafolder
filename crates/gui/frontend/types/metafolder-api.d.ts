@@ -288,6 +288,10 @@ declare namespace Metafolder {
   interface Fs {
     readDir(path: string): Promise<FsEntry[]>;
     stat(path: string): Promise<unknown>;
+    /** Is anything at `path` — the entry itself, a broken symlink included?
+     *  `stat` follows links (so a link to a directory reads as a directory);
+     *  this is the one to ask "is it still there?". */
+    exists(path: string): Promise<boolean>;
     homeDir(): Promise<string>;
     /** Creates a single new directory (its parent must exist); errors if it
      *  already exists. */

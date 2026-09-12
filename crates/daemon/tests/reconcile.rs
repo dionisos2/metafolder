@@ -707,3 +707,72 @@ fn reconcile_records_and_then_removes_mfr_inode() {
         "back to a single name ⇒ the field must be gone, not stale"
     );
 }
+
+/// A broken symlink is a file that is *present* — the walk tracks it (it stats
+/// with `symlink_metadata`, which does not follow the link), and `orphans.rs`
+/// says so in as many words ("a broken symlink still counts"). The reconcile
+/// scan used `Path::exists()`, which follows the link and so reported a file
+/// that is right there as gone, handing it to the fingerprint phase as an
+/// orphan to re-attach somewhere else.
+#[cfg(unix)]
+#[test]
+fn broken_symlink_is_not_scanned_as_an_orphan() {
+    let (repo, root) = setup("brokenlink");
+    write_file(&root, "kept.txt", b"k");
+    std::os::unix::fs::symlink("does-not-exist", root.join("link")).unwrap();
+
+    // First pass: both entries are tracked (the link included).
+    reconcile::reconcile(&repo).unwrap();
+
+    // Second pass: nothing moved, so the fingerprint phase has no orphan to
+    // chase — its reported total is the orphan count.
+    let phases = std::sync::Mutex::new(Vec::<(String, Option<u64>, Option<u64>)>::new());
+    reconcile::reconcile_full_reported(
+        &repo,
+        None,
+        false,
+        false,
+        false,
+        &reconcile::Reporter::new(
+            &|phase, done, total| {
+                phases.lock().unwrap().push((phase.to_string(), done, total));
+            },
+            &|| false,
+        ),
+    )
+    .unwrap();
+
+    let phases = phases.into_inner().unwrap();
+    let orphans =
+        phases.iter().find(|(p, _, _)| p == "fingerprint").expect("fingerprint reported").2;
+    assert_eq!(orphans, Some(0), "the broken symlink is present on disk, not an orphan");
+}
+
+/// The single-metarecord reconcile gated its walk on `Path::exists()`, which
+/// follows the link — so for a broken symlink (which the full reconcile tracks
+/// happily, target and all, see above) it walked nothing and refreshed nothing.
+/// Re-targeting the link left the stale `mfr_symlink_target` in place.
+#[cfg(unix)]
+#[test]
+fn targeted_reconcile_refreshes_a_broken_symlink() {
+    let (repo, root) = setup("relinktarget");
+    std::os::unix::fs::symlink("/target-one", root.join("link")).unwrap();
+    reconcile::reconcile(&repo).unwrap();
+    let uuid = resolve(&repo, "/link").expect("the symlink is tracked");
+    assert_eq!(
+        field_value(&repo, uuid, "mfr_symlink_target"),
+        Some(Value::String("/target-one".into()))
+    );
+
+    // The link now points somewhere else (still nowhere real).
+    std::fs::remove_file(root.join("link")).unwrap();
+    std::os::unix::fs::symlink("/target-two", root.join("link")).unwrap();
+
+    reconcile::reconcile_metarecord(&repo, uuid, false, false, true).unwrap();
+
+    assert_eq!(
+        field_value(&repo, uuid, "mfr_symlink_target"),
+        Some(Value::String("/target-two".into())),
+        "the targeted reconcile must re-stat a link that is present on disk"
+    );
+}

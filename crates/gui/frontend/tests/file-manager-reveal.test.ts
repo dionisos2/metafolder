@@ -49,6 +49,7 @@ function stub(repo: string | null, vars: Record<string, unknown>, repoRoot = '/r
     readDir: vi.fn(async (path: string) => (DIRS[path] ?? []).map((e) => ({ ...e }))),
     // A path is a directory iff it is one of the listed directory keys.
     stat: vi.fn(async (path: string) => ({ is_dir: path in DIRS })),
+    exists: vi.fn(async () => true),
     homeDir: vi.fn(async () => '/home/user'),
     mkdir: vi.fn(async () => {}),
     createFile: vi.fn(async () => {}),

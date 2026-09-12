@@ -90,6 +90,19 @@ fn exists(path: &str) -> bool {
     std::fs::symlink_metadata(from_handle(path)).is_ok()
 }
 
+/// Is there anything at `path` — the entry itself, a broken symlink included?
+///
+/// Distinct from `fs_stat`, which follows links on purpose (the file-manager
+/// needs a link to a directory to *be* a directory so it can descend into it).
+/// Asking "is it still there?" through `fs_stat` reported a broken symlink as
+/// gone, which is how the orphan colouring came to flag files that are right
+/// there — the daemon's own scan says the opposite (`orphans.rs`,
+/// "a broken symlink still counts").
+#[tauri::command]
+pub fn fs_exists(path: String) -> bool {
+    exists(&path)
+}
+
 /// Creates a single new directory `path` (its parent must already exist).
 /// Errors if it already exists.
 #[tauri::command]
@@ -289,5 +302,18 @@ mod tests {
         assert!(!tree.exists());
 
         assert!(fs_delete(p(dir.path(), "nope")).is_err());
+    }
+
+    /// `fs_stat` follows the link and fails; `fs_exists` answers about the entry.
+    #[cfg(unix)]
+    #[test]
+    fn test_exists_sees_a_broken_symlink_that_stat_cannot() {
+        let dir = tempfile::tempdir().unwrap();
+        let link = dir.path().join("link");
+        std::os::unix::fs::symlink("nowhere", &link).unwrap();
+        let link = link.display().to_string();
+
+        assert!(fs_exists(link.clone()), "the link itself is on disk");
+        assert!(fs_stat(link).is_err(), "…while stat follows it to nothing");
     }
 }

@@ -207,7 +207,9 @@ fn decide_move(
 ) -> Result<bool, CliError> {
     let from = op["from"].as_str().unwrap_or_default();
     let to = op["to"].as_str().unwrap_or_default();
-    let available = std::path::Path::new(from).exists();
+    // `path_present`, not `exists()`: a broken symlink is a file that is
+    // there, and one this step can move (see `core::trash::path_present`).
+    let available = metafolder_core::fsentry::path_present(std::path::Path::new(from));
     let mut policy = if available { policies.on_available } else { policies.on_unavailable };
     if policy == Policy::Ask {
         policy = ask_move(from, to, available)?;
@@ -225,7 +227,7 @@ fn decide_move(
                 // files) nor overwritten by an `mv` (rename would fail). Rather
                 // than abort the whole navigation, skip just this step (the
                 // metadata rewinds, the file stays put) and warn.
-                if dest.is_dir() {
+                if metafolder_core::fsentry::is_real_dir(dest) {
                     if !silent {
                         eprintln!(
                             "skipped move {from} -> {to}: a directory occupies the destination"
@@ -243,7 +245,7 @@ fn decide_move(
                 // after trashing (e.g. `from` vanished, or a cross-device
                 // from→to), `to` is left empty with its content recoverable in
                 // the trash, and the navigation aborts mid-way.
-                if dest.exists() {
+                if metafolder_core::fsentry::path_present(dest) {
                     let entry =
                         trash.trash_path(dest, Reason::Rollback, op["id"].as_i64(), None, None)?;
                     if !silent {
@@ -1179,6 +1181,45 @@ mod tests {
         assert!(skip, "a directory destination must skip, not abort");
         assert!(from.exists() && to.is_dir(), "nothing was moved or trashed");
         assert!(trash.entries().unwrap().is_empty());
+        std::fs::remove_dir_all(&tmp).ok();
+    }
+
+    // A *broken* symlink is a file like any other: it can be moved, and it can
+    // be overwritten. `Path::exists()` follows the link, so it read the source
+    // as gone (no `mv` — the link stayed behind) and the destination as free
+    // (no trashing — the `mv` destroyed the link, against the trash's promise
+    // that a rollback loses no byte).
+    #[cfg(unix)]
+    #[test]
+    fn apply_moves_a_broken_symlink_and_trashes_a_broken_symlink_it_overwrites() {
+        let tmp = std::env::temp_dir()
+            .join("metafolder-tests")
+            .join(format!("mf_brokenlink_{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(&tmp).unwrap();
+        let from = tmp.join("moved_link");
+        let to = tmp.join("occupied_link");
+        std::os::unix::fs::symlink("gone-target", &from).unwrap();
+        std::os::unix::fs::symlink("other-gone-target", &to).unwrap();
+        let trash = test_trash();
+        let op = move_op(from.to_str().unwrap(), to.to_str().unwrap());
+
+        let skip = decide_move(&op, &policies(Policy::Apply, Policy::Apply), &trash, true).unwrap();
+
+        assert!(!skip, "the source is present, so the move applies");
+        assert!(
+            std::fs::symlink_metadata(&from).is_err(),
+            "the source link was moved, not left behind"
+        );
+        assert_eq!(
+            std::fs::read_link(&to).unwrap(),
+            std::path::Path::new("gone-target"),
+            "the destination now holds the moved link"
+        );
+        assert_eq!(
+            trash.entries().unwrap().len(),
+            1,
+            "the link that occupied the destination went to the trash"
+        );
         std::fs::remove_dir_all(&tmp).ok();
     }
 }

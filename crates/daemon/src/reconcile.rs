@@ -198,7 +198,12 @@ pub fn reconcile_full_reported(
         if offline.contains(&path) {
             continue; // Unavailable, not absent: its existence is unknown.
         }
-        if !root.join(path.trim_start_matches('/')).exists() {
+        // `path_present`, never `exists()`: the latter follows the link, so a
+        // *broken* symlink — a file the walk tracks like any other, since it
+        // stats with `symlink_metadata` too — read as gone and was handed to
+        // the fingerprint phase as an orphan to re-attach elsewhere. Same rule
+        // as `orphans::is_definitely_gone` ("a broken symlink still counts").
+        if !metafolder_core::fsentry::path_present(&root.join(path.trim_start_matches('/'))) {
             orphans.push((uuid, path));
         }
     }
@@ -503,7 +508,9 @@ pub fn reconcile_metarecord_reported(
     let mut paths: Vec<RelPath> = Vec::new();
     let base_rel = RelPath::from_display(&base);
     let abs_base = base_rel.to_abs(&root);
-    if abs_base.exists() {
+    // `path_present`: a broken symlink is on disk and has fields to refresh,
+    // even though `exists()` follows it to nothing (see the orphan scan above).
+    if metafolder_core::fsentry::path_present(&abs_base) {
         paths.push(base_rel.clone()); // The subtree root itself.
         paths.extend(walk(
             &mut writer,

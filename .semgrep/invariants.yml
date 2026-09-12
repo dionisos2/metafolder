@@ -163,3 +163,38 @@ rules:
       exclude:
         - crates/gui/default-config/panel-types/metarecord-list/**
     pattern: $W.get('metarecord-list:query')
+
+  - id: mf-path-exists-follows-symlinks
+    languages: [rust]
+    severity: ERROR
+    message: >-
+      `Path::exists()` follows symlinks, so a *broken* symlink reads as
+      absent — but it is an ordinary tracked file: the reconcile walk stats
+      it with `symlink_metadata` and records its target, and a user can move it
+      and lose it. Believing `exists()` here reported a present file as an
+      orphan, skipped its re-stat, left it behind on a rollback, and let a
+      rename destroy it instead of trashing it first. Ask about the entry
+      itself: `metafolder_core::fsentry::path_present` (and `is_real_dir`
+      wherever `Path::is_dir()`, which follows links too, asks the same
+      question).
+    paths:
+      include:
+        - crates/daemon/src/reconcile.rs
+        - crates/daemon/src/orphans.rs
+        - crates/daemon/src/watcher.rs
+        - crates/daemon/src/executor.rs
+        - crates/core/src/trash.rs
+        - crates/core/src/sync/run.rs
+        - crates/cli/src/log.rs
+      exclude:
+        - "**/tests/**"
+    # Only `.exists()`: it is unambiguous (a `Metadata` has no such method), so
+    # every hit is a path question. `is_dir()` cannot be matched the same way —
+    # the correct `metadata.is_dir()` / `file_type().is_dir()` calls are spelt
+    # identically and would drown the rule in false positives.
+    patterns:
+      - pattern: $P.exists()
+      # The inline `mod tests` of these files asserts on disposable fixtures it
+      # created itself, where following a link is not a question.
+      - pattern-not-inside: |
+          mod tests { ... }

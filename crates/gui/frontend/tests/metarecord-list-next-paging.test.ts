@@ -111,7 +111,7 @@ function stubApi(handlers: Map<string, Handler>, calls: QueryCall[], pages: numb
       invoke: () => null,
     },
     addKeybinding: async () => null,
-    fs: { readDir: async () => [], stat: async () => ({}), homeDir: async () => '/home/user' },
+    fs: { readDir: async () => [], stat: async () => ({}), exists: async () => true, homeDir: async () => '/home/user' },
     trash: { list: async () => [], restore: async () => '', remove: async () => {}, empty: async () => 0 },
     history: { read: async () => [], append: async () => {} },
     statusBar: { message: async () => {}, error: async () => {} },

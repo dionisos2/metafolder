@@ -48,6 +48,7 @@ function stub() {
   const fs = {
     readDir: vi.fn(async (path: string) => (DIRS[path] ?? []).map((e) => ({ ...e }))),
     stat: vi.fn(async (path: string) => ({ is_dir: path in DIRS })),
+    exists: vi.fn(async () => true),
     homeDir: vi.fn(async () => '/home/user'),
     mkdir: vi.fn(async () => {}),
     createFile: vi.fn(async () => {}),

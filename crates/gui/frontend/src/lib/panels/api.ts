@@ -456,6 +456,7 @@ export function createPanelApi(deps: PanelApiDeps, ctx: PanelApiCtx): PanelApiIn
     fs: {
       readDir: (path: string) => invoke('fs_read_dir', { path }) as Promise<Metafolder.FsEntry[]>,
       stat: (path: string) => invoke('fs_stat', { path }),
+      exists: (path: string) => invoke('fs_exists', { path }) as Promise<boolean>,
       homeDir: () => invoke('fs_home_dir') as Promise<string>,
       mkdir: (path: string) => invoke('fs_mkdir', { path }) as Promise<void>,
       createFile: (path: string) => invoke('fs_create_file', { path }) as Promise<void>,

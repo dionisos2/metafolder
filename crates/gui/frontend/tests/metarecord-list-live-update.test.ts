@@ -160,6 +160,10 @@ function setup() {
       case 'fs_stat':
         if (!daemon.exists(args!.path as string)) throw new Error('no such file');
         return { path: args!.path, is_dir: false, size: 1, mtime: 0 };
+      // What the orphan check actually asks now: the entry itself, links
+      // included (`fs_stat` follows them, so it cannot answer for a broken one).
+      case 'fs_exists':
+        return daemon.exists(args!.path as string);
       case 'parse_query':
         return null;
       case 'expand_query':

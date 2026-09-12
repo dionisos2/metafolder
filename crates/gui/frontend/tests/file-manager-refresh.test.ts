@@ -92,6 +92,7 @@ function stub(repo: string | null) {
     fs: {
       readDir: vi.fn(async () => DIR_ENTRIES.map((e) => ({ ...e }))),
       stat: vi.fn(async () => ({})),
+    exists: vi.fn(async () => true),
       homeDir: vi.fn(async () => '/home/user'),
       mkdir: vi.fn(async () => {}),
       createFile: vi.fn(async () => {}),

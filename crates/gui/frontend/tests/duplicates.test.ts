@@ -149,7 +149,7 @@ function stubApi(
         invoke: () => null,
       },
       addKeybinding: async () => null,
-      fs: { readDir: async () => [], stat: async () => ({}), homeDir: async () => '/home/user' },
+      fs: { readDir: async () => [], stat: async () => ({}), exists: async () => true, homeDir: async () => '/home/user' },
       trash: {
         list: async () => [],
         restore: async () => '',

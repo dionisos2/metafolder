@@ -575,7 +575,10 @@ fn exec_copy(ctx: &Ctx, op: &Op) -> Result<Outcome, CliError> {
     else {
         return Ok(Outcome::Skipped("endpoint has no path".into()));
     };
-    if tgt_abs.exists() {
+    // `path_present`, not `exists()`: the latter follows a symlink, so a broken
+    // one at the target read as free and the copy below destroyed it — against
+    // this module's rule that only a trash prune ever deletes.
+    if crate::fsentry::path_present(&tgt_abs) {
         target_trash(ctx, tgt_repo)?.trash_path(&tgt_abs, Reason::Sync, None, None, None)?;
     }
     if let Some(parent) = tgt_abs.parent() {
@@ -615,7 +618,7 @@ fn exec_move(ctx: &Ctx, op: &Op) -> Result<Outcome, CliError> {
     let root = repo_root(ctx, loser_repo)?;
     let old_abs = root.join(loser_path.trim_start_matches('/'));
     let new_abs = root.join(winner_path.trim_start_matches('/'));
-    if old_abs.exists() {
+    if crate::fsentry::path_present(&old_abs) {
         relocate(ctx, loser_repo, &old_abs, &new_abs)?;
     }
     // Update the loser's mfr_path to the winner's position.
@@ -637,7 +640,9 @@ fn relocate(
         std::fs::create_dir_all(p)
             .map_err(|e| CliError::Op(format!("cannot create {}: {e}", p.display())))?;
     }
-    if new.exists() {
+    // See `exec_copy`: a broken symlink occupying the destination is something
+    // to trash, not something absent — the rename below would destroy it.
+    if crate::fsentry::path_present(new) {
         target_trash(ctx, repo)?.trash_path(new, Reason::Sync, None, None, None)?;
     }
     if std::fs::rename(old, new).is_err() {
@@ -745,7 +750,7 @@ fn exec_delete(ctx: &Ctx, a: Uuid, b: Uuid, op: &Op) -> Result<Outcome, CliError
     // Trash the surviving file (nothing is destroyed — trash prune is the only
     // real deleter).
     if let Some(abs) = abs_path(ctx, repo, record)? {
-        if abs.exists() {
+        if crate::fsentry::path_present(&abs) {
             target_trash(ctx, repo)?.trash_path(&abs, Reason::Sync, None, None, None)?;
         }
     }

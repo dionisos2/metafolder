@@ -65,7 +65,7 @@ function stub(path: string) {
         invoke: () => null,
       },
       daemon: { call: async () => ({}), repoRoot: async () => '/' },
-      fs: { stat: async () => ({ is_dir: false }), readDir: async () => [] },
+      fs: { stat: async () => ({ is_dir: false }), exists: async () => true, readDir: async () => [] },
       statusBar: { message: vi.fn(async () => {}), error: vi.fn(async () => {}) },
       recent: { touch: vi.fn(async () => {}) },
       contextMenu: Object.assign(noop, { addDefaultItems: noop }),

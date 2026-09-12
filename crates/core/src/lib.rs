@@ -4,6 +4,7 @@ pub mod config;
 pub mod config_sync;
 pub mod date;
 pub mod dsl;
+pub mod fsentry;
 pub mod hex;
 pub mod ignore;
 pub mod ignore_presets;
