@@ -263,8 +263,18 @@ export function fileMenuItems({ metafolder, repo, path, name, isDir, onChanged }
   const label = name || baseName(path);
   const nudge =
     onChanged ?? (() => void metafolder.workspace.set('metarecords:dirty', Date.now()));
+  // One "File" category, in the order spec-gui lists it, and with no separator
+  // inside it: a rule in a metafolder menu marks a category boundary and
+  // nothing else (orderMenu derives them — see /__menu.js).
   return [
     { header: 'File' },
+    {
+      // The `file:open-with` builtin acts on `selected_paths`, so the
+      // right-clicked row becomes the selection first — the same handoff
+      // `rowActionsProvider` already does for the reveal commands.
+      label: 'Open with…',
+      action: () => void openWithExternal(metafolder, path),
+    },
     {
       label: 'Cut',
       action: () => {
@@ -284,14 +294,6 @@ export function fileMenuItems({ metafolder, repo, path, name, isDir, onChanged }
       disabled: !hasClipboard(),
       action: () => void pasteInto(metafolder, path, isDir, nudge, statusMs),
     },
-    '-',
-    {
-      // The `file:open-with` builtin acts on `selected_paths`, so the
-      // right-clicked row becomes the selection first — the same handoff
-      // `rowActionsProvider` already does for the reveal commands.
-      label: 'Open with…',
-      action: () => void openWithExternal(metafolder, path),
-    },
     { label: 'Rename…', action: () => void renamePath(metafolder, path, nudge, statusMs) },
     { label: 'Duplicate', action: () => void duplicatePath(metafolder, path, nudge, statusMs) },
     {
@@ -301,7 +303,6 @@ export function fileMenuItems({ metafolder, repo, path, name, isDir, onChanged }
         void statusBar.message(`Copied ${path}`, statusMs);
       },
     },
-    '-',
     {
       label: 'Move to trash',
       action: () => void trashPath(metafolder, repo, path, label, nudge, statusMs),
@@ -320,11 +321,15 @@ export function fileMenuItems({ metafolder, repo, path, name, isDir, onChanged }
  * panel already does this when it moves the cursor to the right-clicked row).
  *
  * @param {{ metafolder: MetafolderApi, uuid: string, hasFile?: boolean,
- *   revealFolder?: boolean, leading?: Metafolder.MenuItem[] }} args `hasFile`
+ *   revealFolder?: boolean, revealDetail?: boolean,
+ *   leading?: Metafolder.MenuItem[], trailing?: Metafolder.MenuItem[] }} args
+ *   `hasFile`
  *   gates the file-backed items; `revealFolder` (default `hasFile`) also offers
  *   "Open folder in file manager" — a panel that IS the file manager passes
- *   `false`; `leading` items are inserted right after the header (e.g. a value
- *   picker's "Pick this metarecord").
+ *   `false`, and the detail panel passes `revealDetail: false` for the same
+ *   reason; `leading` items are inserted right after the header (e.g. a value
+ *   picker's "Pick this metarecord") and `trailing` ones close the category
+ *   (e.g. the detail panel's reconcile/delete).
  * @returns {Metafolder.MenuItem[]}
  */
 export function metarecordMenuItems({
@@ -332,18 +337,19 @@ export function metarecordMenuItems({
   uuid,
   hasFile = false,
   revealFolder = hasFile,
+  revealDetail = true,
   leading = [],
+  trailing = [],
 }) {
   const { commands } = metafolder;
   /** @type {Metafolder.MenuItem[]} */
-  const items = [
-    { header: 'Metarecord' },
-    ...leading,
-    {
+  const items = [{ header: 'Metarecord' }, ...leading];
+  if (revealDetail) {
+    items.push({
       label: 'Open in panel metarecord-detail',
       action: () => void commands.invoke('panel:reveal-other metarecord-detail'),
-    },
-  ];
+    });
+  }
   if (hasFile) {
     items.push({
       label: 'Open in panel file',
@@ -363,7 +369,7 @@ export function metarecordMenuItems({
       action: () => void commands.invoke('metarecord-list:list-folder'),
     });
   }
-  items.push({ label: 'Copy UUID', action: () => void copyText(uuid) });
+  items.push({ label: 'Copy UUID', action: () => void copyText(uuid) }, ...trailing);
   return items;
 }
 
@@ -437,7 +443,7 @@ export function rowActionsProvider(metafolder, getRepo) {
       }
       if (hasFile) {
         const isDir = dataset.mfIsdir === '1' ? true : dataset.mfIsdir === '0' ? false : undefined;
-        if (items.length > 0) items.push('-');
+        // No separator to push: orderMenu derives one at the category boundary.
         items.push(...fileMenuItems({ metafolder, repo, path, name: dataset.mfName, isDir }));
       }
       return items;

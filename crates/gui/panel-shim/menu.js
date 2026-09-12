@@ -104,10 +104,75 @@ function isHeader(item) {
 }
 
 /**
+ * The canonical category order, shared by every menu in the GUI (spec-gui
+ * "Context menus"). A right-click reads the same way in every panel because
+ * the categories always come in this order, whatever order the panel happened
+ * to push them in; a header the list does not know keeps its relative position
+ * after the known ones.
+ * @type {string[]}
+ */
+export const MENU_CATEGORIES = ['Metarecord', 'File', 'Directory', 'Ignore', 'Text', 'View'];
+
+/** @param {string} header */
+function categoryRank(header) {
+  const index = MENU_CATEGORIES.indexOf(header);
+  return index < 0 ? MENU_CATEGORIES.length : index;
+}
+
+/**
+ * Normalizes a menu into ordered categories separated by exactly one rule.
+ *
+ * Items are grouped by the `{header}` that precedes them (items before the
+ * first header are the *leading* group — a panel's one primary action — and
+ * stay at the top), same-named groups are merged (two providers contributing
+ * "File" make one File category), empty groups are dropped, and the groups are
+ * reordered by {@link MENU_CATEGORIES}. Separators are then *derived*: the
+ * author's `'-'`s are dropped and one rule is inserted at each group boundary,
+ * so a rule always means "a new category starts here" and never appears in the
+ * middle of one.
+ *
+ * A menu with no header at all is an unstructured list (a two-item row menu,
+ * the panel-type picker): it is returned untouched, separators included.
+ *
+ * @param {Metafolder.MenuItem[]} items
+ * @returns {Metafolder.MenuItem[]}
+ */
+export function orderMenu(items) {
+  if (!items.some(isHeader)) return items.slice();
+  /** @type {Metafolder.MenuEntry[]} */
+  const leading = [];
+  /** @type {Map<string, Metafolder.MenuEntry[]>} */
+  const groups = new Map();
+  /** @type {Metafolder.MenuEntry[]} */
+  let current = leading;
+  for (const item of items) {
+    if (item === '-') continue;
+    if (isHeader(item)) {
+      current = groups.get(item.header) ?? [];
+      groups.set(item.header, current);
+      continue;
+    }
+    current.push(item);
+  }
+  const headers = [...groups.keys()].filter((header) => groups.get(header)?.length);
+  // Array.prototype.sort is stable, so equal ranks (two unknown categories)
+  // keep the order the panels pushed them in.
+  headers.sort((a, b) => categoryRank(a) - categoryRank(b));
+  /** @type {Metafolder.MenuItem[]} */
+  const ordered = [...leading];
+  for (const header of headers) {
+    if (ordered.length > 0) ordered.push('-');
+    ordered.push({ header }, .../** @type {Metafolder.MenuEntry[]} */ (groups.get(header)));
+  }
+  return ordered;
+}
+
+/**
  * Shows an HTML context menu at {x, y} (viewport coordinates).
  *
- * `items` is an array of `{label, action?, disabled?}` objects and `'-'`
- * separators. Resolves with the chosen item (after calling its `action`)
+ * `items` is an array of `{label, action?, disabled?}` objects, `{header}`
+ * category labels and `'-'` separators; it is normalized by {@link orderMenu}
+ * first. Resolves with the chosen item (after calling its `action`)
  * or with null when dismissed (Escape, click outside, another menu).
  * Arrow keys navigate the enabled items (wrapping), Enter selects; typing
  * jumps to the first enabled item whose label starts with the typed prefix
@@ -120,6 +185,9 @@ function isHeader(item) {
  */
 export function showMenu(items, { x, y }) {
   shared.active?.close(null);
+  // Categories in the canonical order, one rule per boundary — whoever built
+  // the list (see orderMenu).
+  items = orderMenu(items);
   // A menu needs at least one selectable entry — headers and separators alone
   // are just decoration.
   if (!items.some(isEntry)) return Promise.resolve(null);
@@ -352,8 +420,7 @@ export function installDefaultContextMenu(target, dispatch) {
     /** @type {Metafolder.MenuItem[]} */
     const items = [];
     for (const provider of providers) {
-      const extra = provider(event) ?? [];
-      if (extra.length > 0) items.push(...extra, '-');
+      items.push(...(provider(event) ?? []));
     }
     items.push(
       { header: 'Text' },

@@ -166,8 +166,8 @@ export function mount(root, metafolder) {
   function rowMenu(event, index) {
     select(index);
     metafolder.contextMenu(event, [
+      { header: 'File' },
       { label: 'Restore', action: () => void doRestore() },
-      '-',
       { label: 'Delete permanently', action: () => void doDelete() },
     ]);
   }

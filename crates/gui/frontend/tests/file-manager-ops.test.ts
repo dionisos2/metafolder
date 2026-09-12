@@ -390,6 +390,29 @@ describe('file-manager filesystem operations', () => {
     expect(items.some((it) => it && it.header === 'Metarecord')).toBe(true);
   });
 
+  test('a row menu normalizes to the canonical category order', async () => {
+    // The panel pushes its categories in the order that reads best in the
+    // source; what the user sees is orderMenu's canonical one, the same in
+    // every panel (spec-gui "Context menus").
+    const { orderMenu } = await import('../../panel-shim/menu.js');
+    const s = stub('repo-1');
+    const captured: Metafolder.MenuItem[][] = [];
+    s.api.contextMenu = Object.assign(
+      (_e: MouseEvent, items: Metafolder.MenuItem[]) => captured.push(items),
+      { addDefaultItems: () => {} },
+    ) as never;
+    const root = shadowRoot();
+    const mod = await import('../../default-config/panel-types/file-manager/main.js');
+    await mod.mount(root, s.api as never);
+    await new Promise((r) => setTimeout(r, 0));
+    const fileRow = [...root.querySelectorAll('li')].at(-1)!;
+    fileRow.dispatchEvent(new MouseEvent('contextmenu', { bubbles: true, cancelable: true }));
+    const headers = orderMenu(captured.at(-1)!)
+      .filter((item) => item !== '-' && 'header' in item)
+      .map((item) => item.header);
+    expect(headers).toEqual(['Metarecord', 'File', 'Directory']);
+  });
+
   test('the row and background context menus build without throwing', async () => {
     for (const repo of ['repo-1', null] as const) {
       const { root } = await mount(repo);

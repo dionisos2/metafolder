@@ -431,7 +431,11 @@ declare namespace Metafolder {
 
   /** One context-menu entry, a `{header}` category label, or the string `'-'`
    *  for a separator. A header is non-interactive: it groups the entries below
-   *  it (metarecord / file / text operations). */
+   *  it (metarecord / file / text operations). The menu is normalized before it
+   *  is shown — categories come out in the canonical order (Metarecord, File,
+   *  Directory, Ignore, Text, View), same-named ones merge, and one separator is
+   *  drawn at each category boundary, so a `'-'` of one's own is only needed in
+   *  a menu that has no category at all. */
   type MenuEntry = { label: string; action?: () => void; disabled?: boolean };
   type MenuHeader = { header: string };
   type MenuItem = MenuEntry | MenuHeader | '-';

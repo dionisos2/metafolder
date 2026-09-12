@@ -2,7 +2,6 @@
 // (spec-gui "metarecord-detail panel type").
 
 import { byId, el, formatValue, valueEl } from '/__ui.js';
-import { copyText } from '/__menu.js';
 import { orphanState, orphanLabel } from '/__orphan.js';
 import { fetchMounts, offlineMountFor, relativeTo, unavailableLabel } from '/__mounts.js';
 import {
@@ -15,7 +14,7 @@ import {
   MATCH_ALL,
 } from '/__value-widget.js';
 import { schemaTypes, templateFields } from '/__schema-template.js';
-import { fileMenuItems } from '/__file-actions.js';
+import { fileMenuItems, metarecordMenuItems } from '/__file-actions.js';
 import { createAnnotator } from './annotations.js';
 import { completionSourceField, resolveRefValue } from './ref-completion.js';
 import { createNavHistory } from './nav-history.js';
@@ -1414,37 +1413,31 @@ export async function mount(root, metafolder) {
   metafolder.contextMenu.addDefaultItems(() => {
     const record = current;
     if (!record) return [];
+    const hasFile = currentPaths.length > 0;
+    // The shared "Metarecord" category, in the same order as everywhere else —
+    // minus "Open in panel metarecord-detail", which is this very panel — plus
+    // this panel's own reconcile/delete at its end.
     /** @type {Metafolder.MenuItem[]} */
-    const items = [
-      { header: 'Metarecord' },
-      { label: 'Copy UUID', action: () => void copyText(record.uuid) },
-      {
-        label: needsWatch() ? 'Enable tracking & reconcile' : 'Reconcile',
-        action: () =>
-          void commands.invoke(needsWatch() ? 'metarecord:watch-reconcile' : 'metarecord:reconcile'),
-      },
-      { label: 'Delete metarecord', action: () => void commands.invoke('metarecord:delete') },
-    ];
-    // Open the metarecord's folder (itself for a directory, the containing
-    // folder for a file) in the file manager, here in this panel.
-    if (currentPaths.length > 0) {
-      items.push(
+    const items = metarecordMenuItems({
+      metafolder,
+      uuid: record.uuid,
+      hasFile,
+      revealDetail: false,
+      trailing: [
         {
-          label: 'Open folder in file manager',
-          action: () => void commands.invoke('file-manager:reveal-folder'),
+          label: needsWatch() ? 'Enable tracking & reconcile' : 'Reconcile',
+          action: () =>
+            void commands.invoke(
+              needsWatch() ? 'metarecord:watch-reconcile' : 'metarecord:reconcile',
+            ),
         },
-        // The same folder as metarecords rather than as disk entries.
-        {
-          label: 'Open folder in metarecord-list',
-          action: () => void commands.invoke('metarecord-list:list-folder'),
-        },
-      );
-    }
-    // File actions (cut/copy/paste/rename/duplicate/trash) when this metarecord
-    // is backed by a file — shared with the file manager (/__file-actions.js).
-    if (record.repo && currentPaths.length > 0) {
+        { label: 'Delete metarecord', action: () => void commands.invoke('metarecord:delete') },
+      ],
+    });
+    // The "File" category (cut/copy/paste/rename/duplicate/trash) when this
+    // metarecord is backed by a file — shared with the file manager.
+    if (record.repo && hasFile) {
       items.push(
-        '-',
         ...fileMenuItems({
           metafolder,
           repo: record.repo,

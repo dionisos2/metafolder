@@ -442,12 +442,13 @@ export function mount(root, metafolder) {
     const row = rows[index];
     if (!row?.member) return shared;
     const others = (row.group.members ?? []).length - 1;
+    // Header-less, so /__menu.js keeps it at the top, above the shared
+    // categories (this panel's own primary action).
     return [
       {
         label: `Keep this copy, trash the other ${others}`,
         action: () => void keepThisOne(),
       },
-      '-',
       ...shared,
     ];
   });

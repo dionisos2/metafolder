@@ -3,11 +3,13 @@
 
 import { afterEach, describe, expect, test, vi } from 'vitest';
 import {
+  MENU_CATEGORIES,
   clampPosition,
   copyText,
   hasOpenMenu,
   installContextMenuSuppression,
   installDefaultContextMenu,
+  orderMenu,
   scopedProvider,
   showMenu,
 } from '../../panel-shim/menu.js';
@@ -47,6 +49,28 @@ describe('showMenu', () => {
     expect(labels).toEqual(['Open', 'Track']);
     expect(document.querySelectorAll('.mf-menu-separator')).toHaveLength(1);
     expect(itemElements()[1].classList.contains('disabled')).toBe(true);
+    press('Escape');
+    await promise;
+  });
+
+  test('normalizes the categories it is given (one rule per boundary)', async () => {
+    const promise = open([
+      { header: 'View' },
+      { label: 'Swap' },
+      { header: 'File' },
+      '-',
+      { label: 'Cut' },
+      '-',
+      { label: 'Copy' },
+    ]);
+    const rendered = [...document.querySelectorAll<HTMLElement>('.mf-menu > *')].map((element) =>
+      element.classList.contains('mf-menu-separator')
+        ? '-'
+        : element.classList.contains('mf-menu-header')
+          ? `# ${element.textContent}`
+          : element.textContent,
+    );
+    expect(rendered).toEqual(['# File', 'Cut', 'Copy', '-', '# View', 'Swap']);
     press('Escape');
     await promise;
   });
@@ -273,6 +297,125 @@ describe('clampPosition', () => {
   });
 });
 
+describe('orderMenu', () => {
+  /** The shape of a normalized menu: headers as '# Name', separators as '-'. */
+  function shape(items: Item[]): string[] {
+    return items.map((item) =>
+      item === '-' ? '-' : 'header' in item ? `# ${item.header}` : item.label,
+    );
+  }
+
+  test('the canonical category order is the documented one', () => {
+    expect(MENU_CATEGORIES).toEqual(['Metarecord', 'File', 'Directory', 'Ignore', 'Text', 'View']);
+  });
+
+  test('sorts categories canonically whatever order the panel pushed them in', () => {
+    const items: Item[] = [
+      { header: 'View' },
+      { label: 'Swap' },
+      { header: 'File' },
+      { label: 'Cut' },
+      { header: 'Metarecord' },
+      { label: 'Copy UUID' },
+    ];
+    expect(shape(orderMenu(items))).toEqual([
+      '# Metarecord',
+      'Copy UUID',
+      '-',
+      '# File',
+      'Cut',
+      '-',
+      '# View',
+      'Swap',
+    ]);
+  });
+
+  test('separators mark category boundaries only — never the inside of one', () => {
+    const items: Item[] = [
+      { header: 'File' },
+      { label: 'Cut' },
+      '-',
+      { label: 'Copy' },
+      '-',
+      { header: 'Text' },
+      '-',
+      { label: 'Copy selection' },
+    ];
+    expect(shape(orderMenu(items))).toEqual([
+      '# File',
+      'Cut',
+      'Copy',
+      '-',
+      '# Text',
+      'Copy selection',
+    ]);
+  });
+
+  test('header-less items lead the menu, separated from the first category', () => {
+    const items: Item[] = [
+      { label: 'Keep this copy' },
+      { header: 'Metarecord' },
+      { label: 'Copy UUID' },
+    ];
+    expect(shape(orderMenu(items))).toEqual([
+      'Keep this copy',
+      '-',
+      '# Metarecord',
+      'Copy UUID',
+    ]);
+  });
+
+  test('two providers contributing the same category are merged into one', () => {
+    const items: Item[] = [
+      { header: 'File' },
+      { label: 'Cut' },
+      { header: 'Metarecord' },
+      { label: 'Copy UUID' },
+      { header: 'File' },
+      { label: 'Rename' },
+    ];
+    expect(shape(orderMenu(items))).toEqual([
+      '# Metarecord',
+      'Copy UUID',
+      '-',
+      '# File',
+      'Cut',
+      'Rename',
+    ]);
+  });
+
+  test('an unknown category keeps its relative order, after the known ones', () => {
+    const items: Item[] = [
+      { header: 'Zebra' },
+      { label: 'z' },
+      { header: 'Alpha' },
+      { label: 'a' },
+      { header: 'View' },
+      { label: 'v' },
+    ];
+    expect(shape(orderMenu(items))).toEqual([
+      '# View',
+      'v',
+      '-',
+      '# Zebra',
+      'z',
+      '-',
+      '# Alpha',
+      'a',
+    ]);
+  });
+
+  test('an empty category is dropped, header and boundary alike', () => {
+    const items: Item[] = [{ header: 'Metarecord' }, { header: 'File' }, { label: 'Cut' }];
+    expect(shape(orderMenu(items))).toEqual(['# File', 'Cut']);
+  });
+
+  test('a menu with no category at all keeps the author’s own separators', () => {
+    const items: Item[] = [{ label: 'Restore' }, '-', { label: 'Delete' }];
+    expect(shape(orderMenu(items))).toEqual(['Restore', '-', 'Delete']);
+  });
+});
+
 describe('installDefaultContextMenu', () => {
   let menu: { addItems: (provider: (event: MouseEvent) => Item[]) => void; uninstall: () => void };
   let dispatch: ReturnType<typeof vi.fn>;
@@ -401,6 +544,36 @@ describe('installDefaultContextMenu', () => {
     expect(itemElements()[1].textContent).toBe('Copy');
     itemByLabel('Open entry').click();
     expect(action).toHaveBeenCalledOnce();
+  });
+
+  test('panel categories land in the canonical order, above Text and View', () => {
+    install();
+    menu.addItems(() => [{ header: 'File' }, { label: 'Cut' }]);
+    menu.addItems(() => [{ header: 'Metarecord' }, { label: 'Copy UUID' }]);
+
+    rightClick(target());
+    const rendered = [...document.querySelectorAll<HTMLElement>('.mf-menu > *')].map((element) =>
+      element.classList.contains('mf-menu-separator')
+        ? '-'
+        : element.classList.contains('mf-menu-header')
+          ? `# ${element.textContent}`
+          : element.textContent,
+    );
+    expect(rendered).toEqual([
+      '# Metarecord',
+      'Copy UUID',
+      '-',
+      '# File',
+      'Cut',
+      '-',
+      '# Text',
+      'Copy',
+      '-',
+      '# View',
+      'Split / unsplit',
+      'Swap panel types',
+      'Open web inspector',
+    ]);
   });
 
   test('providers receive the originating event', () => {

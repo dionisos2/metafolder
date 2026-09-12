@@ -1497,10 +1497,10 @@ export async function mount(root, metafolder) {
         : [],
     });
     if (repo && paths.length > 0) {
-      // Cut / Copy / Paste / Rename / Duplicate / Move-to-trash on the file
-      // (shared with the file manager — see /__file-actions.js).
+      // The "File" category (cut / copy / paste / rename / duplicate / move to
+      // trash), shared with the file manager — see /__file-actions.js. No
+      // separator to push: /__menu.js draws one at the category boundary.
       items.push(
-        '-',
         ...fileMenuItems({
           metafolder,
           repo,

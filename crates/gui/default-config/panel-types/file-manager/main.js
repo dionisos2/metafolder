@@ -413,21 +413,41 @@ export async function mount(root, metafolder) {
     // In a folder pick, a directory row can be chosen directly from the menu.
     if (pickPathMode && item.is_dir) {
       const label = item.name === '.' ? 'Pick this folder' : `Pick “${item.name}”`;
-      items.push({ label, action: () => void pickThisFolder(item.path) }, '-');
+      items.push({ label, action: () => void pickThisFolder(item.path) });
     }
-    if (item.is_dir) items.push({ label: 'Open', action: () => void activate(index) }, '-');
-    items.push({
-      label: 'Track (mf_watch = false)',
-      disabled: !repo || trackedPaths.has(item.path) || !trackable(item.path),
-      action: () => void addSelected(),
-    });
+    // The categories go in whatever order reads best here: /__menu.js sorts
+    // them into the canonical one and draws the rules at their boundaries, so
+    // this menu looks like every other panel's.
+    //
+    // A tracked row is a metarecord too: offer the same "Metarecord" category the
+    // metarecord list does (open in detail/file, Copy UUID). "Open folder in
+    // file manager" is dropped — this panel already IS the file manager. This
+    // covers the synthetic "." / ".." rows as well: the current directory and its
+    // parent are ordinary tracked metarecords (their tree nodes), so right-clicking
+    // "." (e.g. at the repo root) must offer this category too. The `select(index)`
+    // above published the row as `selected_metarecord`, which the reveal commands read.
+    const uuid = trackedPaths.get(item.path);
+    if (repo && uuid) {
+      items.push(...metarecordMenuItems({ metafolder, uuid, hasFile: true, revealFolder: false }));
+    }
+    // Tracking a row creates its metarecord, so it joins that category — the
+    // repeated header is how an untracked row opens it (same-named categories
+    // merge).
+    items.push(
+      { header: 'Metarecord' },
+      {
+        label: 'Track (mf_watch = false)',
+        disabled: !repo || trackedPaths.has(item.path) || !trackable(item.path),
+        action: () => void addSelected(),
+      },
+      { header: 'File' },
+    );
+    if (item.is_dir) items.push({ label: 'Open', action: () => void activate(index) });
     if (isEntry) {
       items.push(
-        '-',
         { label: 'Cut', action: () => clip('cut') },
         { label: 'Copy', action: () => clip('copy') },
         { label: 'Paste', disabled: !hasClipboard(), action: () => void paste() },
-        '-',
         { label: 'Rename…', action: () => void renameSelected() },
         { label: 'Duplicate', action: () => void duplicateSelected() },
         {
@@ -440,22 +460,11 @@ export async function mount(root, metafolder) {
         { label: repo ? 'Move to trash' : 'Delete…', action: () => void deleteSelected() },
       );
     } else {
-      items.push('-', { label: 'Paste', disabled: !hasClipboard(), action: () => void paste() });
-    }
-    // A tracked row is a metarecord too: offer the same "Metarecord" section the
-    // metarecord list does (open in detail/file, Copy UUID). "Open folder in
-    // file manager" is dropped — this panel already IS the file manager. This
-    // covers the synthetic "." / ".." rows as well: the current directory and its
-    // parent are ordinary tracked metarecords (their tree nodes), so right-clicking
-    // "." (e.g. at the repo root) must offer this section too. The `select(index)`
-    // above published the row as `selected_metarecord`, which the reveal commands read.
-    const uuid = trackedPaths.get(item.path);
-    if (repo && uuid) {
-      items.push('-', ...metarecordMenuItems({ metafolder, uuid, hasFile: true, revealFolder: false }));
+      items.push({ label: 'Paste', disabled: !hasClipboard(), action: () => void paste() });
     }
     if (isEntry) items.push(...ignoreMenuItems(item));
     items.push(
-      '-',
+      { header: 'Directory' },
       { label: 'New folder…', action: () => void newFolder() },
       { label: 'New file…', action: () => void newFile() },
     );
@@ -469,18 +478,17 @@ export async function mount(root, metafolder) {
     if (/** @type {Element} */ (event.target).closest('li')) return; // a row handles its own
     /** @type {Metafolder.MenuItem[]} */
     const items = [
+      { header: 'File' },
+      { label: 'Paste', disabled: !hasClipboard(), action: () => void paste() },
+      { header: 'Directory' },
       { label: 'New folder…', action: () => void newFolder() },
       { label: 'New file…', action: () => void newFile() },
-      '-',
-      { label: 'Paste', disabled: !hasClipboard(), action: () => void paste() },
     ];
-    // In a folder pick, empty space chooses the current directory.
+    // In a folder pick, empty space chooses the current directory. It leads the
+    // menu, above the categories (see /__menu.js: header-less items come first).
     if (pickPathMode && currentDir) {
       const dir = currentDir; // narrow for the closure (a `let` is not narrowed)
-      items.unshift(
-        { label: 'Pick this folder', action: () => void pickThisFolder(dir) },
-        '-',
-      );
+      items.unshift({ label: 'Pick this folder', action: () => void pickThisFolder(dir) });
     }
     metafolder.contextMenu(event, items);
   }
@@ -572,7 +580,7 @@ export async function mount(root, metafolder) {
     const dirRel = relPath(currentDir, repoRoot);
     if (rel === null || dirRel === null) return [];
     /** @type {Metafolder.MenuItem[]} */
-    const items = ['-', { header: 'Ignore' }];
+    const items = [{ header: 'Ignore' }];
     items.push({
       label: `Ignore “${item.name}” here`,
       action: () =>

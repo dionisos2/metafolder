@@ -1495,6 +1495,25 @@ layout commands as =View=. A header is not selectable and is skipped by keyboard
 navigation and typeahead. A menu item is either =\{label, action?, disabled?\}=,
 a =\{header\}= category label, or the string =-= for a separator.
 
+Every menu is *normalized* before it is shown (=orderMenu= in =/__menu.js=), so
+the same right-click reads the same way in every panel whatever order the panel
+happened to push its items in:
+
+- The categories always come in one canonical order — =Metarecord=, =File=,
+  =Directory=, =Ignore=, =Text=, =View= — and a header that is not in that list
+  keeps its relative position after the known ones.
+- Items pushed before any header (a panel's single primary action, e.g. the
+  duplicates panel's "Keep this copy" or a picker's "Pick this folder") lead the
+  menu, above the categories.
+- Two providers contributing the same category are merged into one, and a
+  category with no entry is dropped along with its header.
+- *Separators are derived, never authored*: the =-= a builder passes is dropped
+  and exactly one rule is drawn at each category boundary. A rule therefore
+  always means "a new category starts here" and never cuts a category in half.
+  The one exception is a menu with no header at all (a two-item row menu, the
+  panel-type picker), which is passed through untouched — its author's =-=
+  included.
+
 Appearance: classes =mf-menu=, =mf-menu-item= (=active=,
 =disabled=), =mf-menu-header= and =mf-menu-separator=, with built-in defaults
 that the user stylesheet overrides.

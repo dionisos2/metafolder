@@ -236,6 +236,25 @@ describe('file-actions shared operations', () => {
   });
 });
 
+describe('fileMenuItems shape', () => {
+  test('is one File category, in order, with no separator inside it', () => {
+    const { metafolder } = mockMf();
+    const items = fileMenuItems({ metafolder, repo: 'r', path: '/dir/a.txt' });
+    expect(items.filter((i) => i === '-')).toEqual([]);
+    expect(items[0]).toEqual({ header: 'File' });
+    expect(labels(items)).toEqual([
+      'Open with…',
+      'Cut',
+      'Copy',
+      'Paste',
+      'Rename…',
+      'Duplicate',
+      'Copy full path',
+      'Move to trash',
+    ]);
+  });
+});
+
 describe('fileActionsProvider', () => {
   /** A composed-path event whose first tagged node carries `dataset`. */
   function event(dataset: Record<string, string> | null) {
@@ -325,6 +344,22 @@ describe('metarecordMenuItems', () => {
     expect(labels(items)).toEqual([
       'Open in panel metarecord-detail',
       'Open in panel file',
+      'Open folder in metarecord-list',
+      'Copy UUID',
+    ]);
+  });
+
+  test('revealDetail:false drops the detail item (the panel IS the detail panel)', () => {
+    const { metafolder } = mockMf();
+    const items = metarecordMenuItems({
+      metafolder,
+      uuid: 'abc',
+      hasFile: true,
+      revealDetail: false,
+    });
+    expect(labels(items)).toEqual([
+      'Open in panel file',
+      'Open folder in file manager',
       'Open folder in metarecord-list',
       'Copy UUID',
     ]);
