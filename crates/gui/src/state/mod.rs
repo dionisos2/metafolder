@@ -375,10 +375,6 @@ impl GuiState {
     }
 
     /// Whether run `task_id` is the one blocked on the current question.
-    pub fn script_is_waiting(&self, task_id: &str) -> bool {
-        self.scripts.lock_recover().get(task_id).is_some_and(|t| t.waiting)
-    }
-
     /// Whether a script's awaited keys currently reach the script.
     pub fn script_keys_enabled(&self) -> bool {
         self.script_keys.load(Ordering::Relaxed)

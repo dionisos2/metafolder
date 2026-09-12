@@ -94,16 +94,6 @@ impl MetadataMap {
         };
         Self::parse(&text).with_context(|| format!("in {path:?}"))
     }
-
-    /// Writes [`DEFAULT`] to `<metafolder_dir>/metadata-map.toml` if it does not
-    /// already exist (used by repo init). Best-effort: overwriting is never done.
-    pub fn seed_file(metafolder_dir: &Path) -> Result<()> {
-        let path = metafolder_dir.join(FILE_NAME);
-        if !path.exists() {
-            std::fs::write(&path, DEFAULT).with_context(|| format!("failed to seed {path:?}"))?;
-        }
-        Ok(())
-    }
 }
 
 #[cfg(test)]
