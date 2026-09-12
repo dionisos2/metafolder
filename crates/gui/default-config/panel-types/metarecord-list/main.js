@@ -739,6 +739,13 @@ export async function mount(root, metafolder) {
       }
       if (normalShown) normalInput.value = dsl; // reflect in B
     }
+    // The base query as normal DSL, published for the panels that act on "the
+    // current query" (metarecord-detail's bulk commands). It must be THIS
+    // value: `metarecord-list:query` holds the *simplified* text, which the
+    // normal-DSL parser does not read, and `metarecord-list:normal-query`
+    // mirrors the B zone and is only written while that zone is shown. Both
+    // expansion and the frozen-zone case are already settled here.
+    void workspace.set('metarecord-list:base-query-text', dsl);
     // Tell the slow-operation log what this panel is running, so an entry for a
     // slow query names the text the user typed and not just the IR
     // (spec-slow-log "Correlating the GUI and the daemon").

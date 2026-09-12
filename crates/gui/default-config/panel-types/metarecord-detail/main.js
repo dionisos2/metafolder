@@ -1135,7 +1135,11 @@ export async function mount(root, metafolder) {
       all = JSON.stringify(effective) === JSON.stringify(MATCH_ALL);
       query = effective;
     } else {
-      const raw = await workspace.get('metarecord-list:query');
+      // The list's base query, as normal DSL. NOT `metarecord-list:query`:
+      // that one holds the *simplified* text, and parsing it with the normal
+      // DSL parser either threw or — worse — read `#jazz` as something else
+      // entirely, so a bulk edit could target a set the user never asked for.
+      const raw = await workspace.get('metarecord-list:base-query-text');
       const dsl = typeof raw === 'string' ? raw.trim() : '';
       all = dsl === '';
       query = dsl === '' ? MATCH_ALL : await daemon.parseQuery(dsl);

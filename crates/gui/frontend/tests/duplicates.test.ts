@@ -190,7 +190,7 @@ async function mountPanel(groups: unknown[], members: Member[], options: Options
     trashPath,
     invoke,
     rows: () => [...shadow.querySelectorAll('#entries li')] as HTMLElement[],
-    cursorRow: () => shadow.querySelector('#entries li.cursor') as HTMLElement | null,
+    cursorRow: () => shadow.querySelector<HTMLElement>('#entries li.cursor'),
     placeholder: () => shadow.getElementById('placeholder') as HTMLElement,
     status: () => shadow.getElementById('status-line') as HTMLElement,
     /** The visible text of the group rows, "<reclaimable> <size> <count>". */

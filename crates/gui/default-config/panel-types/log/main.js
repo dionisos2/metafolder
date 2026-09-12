@@ -295,12 +295,25 @@ export async function mount(root, metafolder) {
   // Undoes the selected revision in place, by writing its inverse at HEAD
   // (spec-event-log "Revert"). Unlike a rollback it does not move HEAD, so the
   // watcher flushes that landed since are left exactly where they are.
+  /** What `GET /revert/plan` answers (spec-event-log "Revert").
+   *  A blocker names the operation that stands in the way and the revision it
+   *  belongs to.
+   *  @typedef {{revertable?: boolean, blocked?: {rev_id: number, op_id: number}[],
+   *             dependents?: {rev_id: number}[], operations?: unknown[]}} RevertPlan */
+
+  /** What `POST /revert` answers: the new revision, or null when it reverted
+   *  nothing.
+   *  @typedef {{revision: number|null, reverted_operations?: unknown[]}} RevertResult */
+
   async function revert() {
     if (selectedRev === null) return;
     const target = { rev_id: selectedRev };
+    /** @type {RevertPlan} */
     let plan;
     try {
-      plan = await daemon.call('GET', `/repos/${repo}/revert/plan?target_rev_id=${selectedRev}`);
+      plan = /** @type {RevertPlan} */ (
+        await daemon.call('GET', `/repos/${repo}/revert/plan?target_rev_id=${selectedRev}`)
+      );
     } catch (error) {
       await statusBar.error(error);
       return;
@@ -367,10 +380,12 @@ export async function mount(root, metafolder) {
     }
     if (!confirm(`Revert revision #${target.rev_id} — ${ops.length} operation(s)${also}?`)) return;
     try {
-      const result = await daemon.call('POST', `/repos/${repo}/revert`, {
-        target,
-        with_dependents: withDependents,
-      });
+      const result = /** @type {RevertResult} */ (
+        await daemon.call('POST', `/repos/${repo}/revert`, {
+          target,
+          with_dependents: withDependents,
+        })
+      );
       const count = result.reverted_operations?.length ?? 0;
       void statusBar.message(
         result.revision === null

@@ -144,3 +144,22 @@ rules:
         - crates/gui/panel-shim/**
         - crates/gui/default-config/panel-types/**
     pattern-regex: '@ts-(nocheck|ignore|expect-error)'
+
+  - id: mf-simplified-query-read-as-dsl
+    languages: [javascript]
+    severity: ERROR
+    message: >-
+      `metarecord-list:query` holds the *simplified* query text. Handing it to
+      the normal DSL parser is a bug that does not announce itself: `#jazz`
+      either fails to parse or means something else entirely, so a panel acting
+      on "the current query" targets a set the user never asked for. Read
+      `metarecord-list:effective-query` (the IR the list actually runs, finder
+      narrowing included) or `metarecord-list:base-query-text` (the same base
+      query already expanded to normal DSL). The list panel itself owns the
+      simplified text and is exempt.
+    paths:
+      include:
+        - crates/gui/default-config/panel-types/**
+      exclude:
+        - crates/gui/default-config/panel-types/metarecord-list/**
+    pattern: $W.get('metarecord-list:query')

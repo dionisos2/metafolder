@@ -78,8 +78,13 @@ const flush = async () => {
   for (let i = 0; i < 4; i += 1) await new Promise((r) => setTimeout(r, 0));
 };
 
+/** The URL of a fetch argument. `String(input)` would stringify a `Request`
+ *  through Object.prototype.toString ("[object Object]"). */
+const urlOf = (input: RequestInfo | URL): string =>
+  typeof input === 'string' ? input : input instanceof URL ? input.href : input.url;
+
 const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
-  const url = String(input);
+  const url = urlOf(input);
   const body = url.includes('/__media-support')
     ? { audio: true, video: true, missing: [] }
     : { missing: [], slow: null };
@@ -135,7 +140,7 @@ describe('file panel — media loads only on demand', () => {
     await flush();
     const video = viewer.querySelector('video');
     expect(video?.getAttribute('src')).toContain('/fsraw?path=');
-    expect(fetchMock.mock.calls.some(([url]) => String(url).includes('/__media-probe'))).toBe(true);
+    expect(fetchMock.mock.calls.some(([url]) => urlOf(url).includes('/__media-probe'))).toBe(true);
     expect(HTMLMediaElement.prototype.play).toHaveBeenCalled();
   });
 
@@ -161,7 +166,7 @@ describe('file panel — media loads only on demand', () => {
 
   test('a decoder the machine lacks is reported when playback is asked for', async () => {
     fetchMock.mockImplementation(async (input: RequestInfo | URL) => {
-      const url = String(input);
+      const url = urlOf(input);
       const body = url.includes('/__media-support')
         ? { audio: true, video: true, missing: [] }
         : { missing: ['H.264 decoder'], slow: null };
