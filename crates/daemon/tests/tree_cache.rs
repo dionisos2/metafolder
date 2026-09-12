@@ -49,6 +49,24 @@ fn test_resolve_filesystem_paths() {
     assert_eq!(cache.resolve_path(&conn, "mfr_path", "/music/rock").unwrap(), None);
 }
 
+/// A path may carry a redundant slash and still name the same node. `"/"` is the
+/// case that bites: it is how every UI spells the repository root (the GUI's
+/// `treeRefPath` publishes exactly that for the filesystem forest's empty-named
+/// root), while the canonical form `path_of` produces is `""`. Splitting on "/"
+/// turned it into ["", ""] — the root, then a child whose name is empty, which
+/// no node can have — so selecting the repository root built a query that
+/// matched nothing at all.
+#[test]
+fn test_redundant_slashes_resolve_to_the_same_node() {
+    let mut conn = test_conn();
+    let (root, music, jazz, _file) = build_tree(&mut conn);
+    let mut cache = TreeCache::new(false);
+
+    assert_eq!(cache.resolve_path(&conn, "mfr_path", "/").unwrap(), Some(root));
+    assert_eq!(cache.resolve_path(&conn, "mfr_path", "/music/").unwrap(), Some(music));
+    assert_eq!(cache.resolve_path(&conn, "mfr_path", "/music//jazz").unwrap(), Some(jazz));
+}
+
 #[test]
 fn test_resolve_tag_tree_without_leading_slash() {
     let mut conn = test_conn();

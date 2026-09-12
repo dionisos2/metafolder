@@ -257,7 +257,17 @@ impl TreeCache {
         form: PathForm,
     ) -> Result<Option<Uuid>> {
         self.clock += 1;
-        let comps: Vec<&str> = path.split('/').collect();
+        // A node's name is never empty — only the filesystem forest's root has
+        // one, and it is always the first component. So an empty component
+        // *after* the first can only come from a redundant slash, and dropping
+        // it makes every spelling of a path name the same node: `"/"` (how a UI
+        // spells the repository root, whose canonical form `path_of` gives is
+        // `""`), a trailing `"/music/"`, a doubled `"//"`. Keeping them meant
+        // looking for a child with an empty name, which nothing can match.
+        let split: Vec<&str> = path.split('/').collect();
+        let mut comps: Vec<&str> = Vec::with_capacity(split.len());
+        comps.push(split[0]); // `split` always yields at least one component.
+        comps.extend(split[1..].iter().copied().filter(|c| !c.is_empty()));
 
         let roots: Vec<usize> = Self::readings(comps[0], form)
             .iter()
