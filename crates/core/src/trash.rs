@@ -233,6 +233,9 @@ impl TrashDir {
     /// Opens the index only if it already exists, so reads on a never-created
     /// trash return empty/absent without materialising a stray database.
     fn open_existing(&self) -> Result<Option<Connection>, TrashError> {
+        // The trash's own SQLite file, created by this module in a directory it
+        // owns: never a tracked path, never a symlink.
+        // nosemgrep: mf-path-exists-follows-symlinks
         if !self.db_path().exists() {
             return Ok(None);
         }
@@ -681,7 +684,7 @@ pub fn move_path(from: &Path, to: &Path) -> io::Result<()> {
         // EXDEV (18 on Linux): source and destination are on different mounts,
         // so rename cannot work — copy the bytes over and delete the source.
         Err(e) if e.raw_os_error() == Some(18) => {
-            if std::fs::symlink_metadata(from)?.file_type().is_dir() {
+            if crate::fsentry::is_real_dir(from) {
                 copy_tree(from, to)?;
                 std::fs::remove_dir_all(from)
             } else {
@@ -692,53 +695,68 @@ pub fn move_path(from: &Path, to: &Path) -> io::Result<()> {
     }
 }
 
-/// Copies `from` (a file or a whole directory tree) to `to`, leaving the source
-/// in place — the file-manager panel's copy/duplicate primitive (spec-gui
-/// "file-manager panel type"). Modification times are carried over best-effort,
-/// like the trash's cross-device fallback. `to` must not already exist (the
-/// caller de-duplicates the destination name).
+/// Copies `from` (a file, a symlink, or a whole directory tree) to `to`, leaving
+/// the source in place — the file-manager panel's copy/duplicate primitive
+/// (spec-gui "file-manager panel type"). Modification times are carried over
+/// best-effort, like the trash's cross-device fallback. `to` must not already
+/// exist (the caller de-duplicates the destination name).
 pub fn copy_path(from: &Path, to: &Path) -> io::Result<()> {
-    if std::fs::symlink_metadata(from)?.file_type().is_dir() {
+    copy_entry(from, to)
+}
+
+/// Copies one entry by what it *is* rather than by what it resolves to: a
+/// directory recursively, a symlink as a symlink, anything else as bytes.
+///
+/// Dispatching on `symlink_metadata` is the whole point. Following the link
+/// instead turned a copied link into a full duplicate of its target, and a link
+/// *to a directory* failed outright — it is not a directory, so the file branch
+/// took it and `fs::copy` refused the directory it landed on.
+fn copy_entry(from: &Path, to: &Path) -> io::Result<()> {
+    let ft = std::fs::symlink_metadata(from)?.file_type();
+    if ft.is_dir() {
         copy_tree(from, to)
+    } else if ft.is_symlink() {
+        copy_symlink(from, to)
     } else {
-        let mtime = std::fs::symlink_metadata(from).and_then(|m| m.modified());
-        std::fs::copy(from, to)?;
-        if let Ok(t) = mtime {
-            if let Ok(f) = std::fs::OpenOptions::new().write(true).open(to) {
-                let _ = f.set_modified(t);
-            }
-        }
-        Ok(())
+        copy_file(from, to)
     }
 }
 
+/// Recreates `from` at `to` as a link to the same target (unix). Elsewhere there
+/// is no portable link to recreate, so the bytes are copied — the platform
+/// fallback [`copy_across`] already takes for the same reason.
+fn copy_symlink(from: &Path, to: &Path) -> io::Result<()> {
+    #[cfg(unix)]
+    {
+        std::os::unix::fs::symlink(std::fs::read_link(from)?, to)
+    }
+    #[cfg(not(unix))]
+    {
+        std::fs::copy(from, to).map(|_| ())
+    }
+}
+
+/// Copies a regular file, carrying its modification time over best-effort.
+fn copy_file(from: &Path, to: &Path) -> io::Result<()> {
+    let mtime = std::fs::symlink_metadata(from).and_then(|m| m.modified());
+    std::fs::copy(from, to)?;
+    if let Ok(t) = mtime {
+        if let Ok(f) = std::fs::OpenOptions::new().write(true).open(to) {
+            let _ = f.set_modified(t);
+        }
+    }
+    Ok(())
+}
+
 /// Recursively copies the directory `from` to `to` (the cross-device fallback
-/// for a directory blob). Symlinks are recreated as links (unix); regular files
-/// keep their modification time via [`copy_across`]'s sibling logic.
+/// for a directory blob). Each entry goes through [`copy_entry`], so a link
+/// inside the tree is recreated as a link and a regular file keeps its
+/// modification time.
 fn copy_tree(from: &Path, to: &Path) -> io::Result<()> {
     std::fs::create_dir_all(to)?;
     for entry in std::fs::read_dir(from)? {
         let entry = entry?;
-        let src = entry.path();
-        let dst = to.join(entry.file_name());
-        let ft = entry.file_type()?;
-        if ft.is_dir() {
-            copy_tree(&src, &dst)?;
-        } else if ft.is_symlink() {
-            #[cfg(unix)]
-            std::os::unix::fs::symlink(std::fs::read_link(&src)?, &dst)?;
-            #[cfg(not(unix))]
-            {
-                std::fs::copy(&src, &dst)?;
-            }
-        } else {
-            std::fs::copy(&src, &dst)?;
-            if let Ok(t) = entry.metadata().and_then(|m| m.modified()) {
-                if let Ok(f) = std::fs::OpenOptions::new().write(true).open(&dst) {
-                    let _ = f.set_modified(t);
-                }
-            }
-        }
+        copy_entry(&entry.path(), &to.join(entry.file_name()))?;
     }
     Ok(())
 }
@@ -1183,6 +1201,48 @@ mod tests {
         fs::OpenOptions::new().write(true).open(&from).unwrap().set_modified(t).unwrap();
         copy_across(&from, &to).unwrap();
         assert_eq!(fs::metadata(&to).unwrap().modified().unwrap(), t);
+        fs::remove_dir_all(&dir).ok();
+    }
+
+    /// A symlink is copied as a symlink, not as the bytes it points at — the
+    /// same rule `copy_tree` already applies to a link *inside* a copied
+    /// directory. Dereferencing here made the file-manager's copy silently turn
+    /// a link into a full duplicate of its target.
+    #[cfg(unix)]
+    #[test]
+    fn copy_path_keeps_a_symlink_to_a_file_a_symlink() {
+        let dir = tmp();
+        let target = dir.join("target.txt");
+        fs::write(&target, b"payload").unwrap();
+        let link = dir.join("link");
+        std::os::unix::fs::symlink(&target, &link).unwrap();
+
+        copy_path(&link, &dir.join("copy")).unwrap();
+
+        let meta = fs::symlink_metadata(dir.join("copy")).unwrap();
+        assert!(meta.file_type().is_symlink(), "the copy is a symlink, not a regular file");
+        assert_eq!(fs::read_link(dir.join("copy")).unwrap(), target);
+        fs::remove_dir_all(&dir).ok();
+    }
+
+    /// A symlink *to a directory* is the case that did not merely diverge but
+    /// failed outright: `symlink_metadata` says "not a directory", so the copy
+    /// took the file branch and `fs::copy` refused the directory it resolved to.
+    #[cfg(unix)]
+    #[test]
+    fn copy_path_keeps_a_symlink_to_a_directory_a_symlink() {
+        let dir = tmp();
+        let target = dir.join("target");
+        fs::create_dir(&target).unwrap();
+        fs::write(target.join("inside.txt"), b"x").unwrap();
+        let link = dir.join("link");
+        std::os::unix::fs::symlink(&target, &link).unwrap();
+
+        copy_path(&link, &dir.join("copy")).unwrap();
+
+        let meta = fs::symlink_metadata(dir.join("copy")).unwrap();
+        assert!(meta.file_type().is_symlink(), "the copy is a symlink, not a directory");
+        assert_eq!(fs::read_link(dir.join("copy")).unwrap(), target);
         fs::remove_dir_all(&dir).ok();
     }
 
