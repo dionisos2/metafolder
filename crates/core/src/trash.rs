@@ -17,6 +17,8 @@ use crate::date;
 use rusqlite::{params, Connection, OptionalExtension};
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value as Json};
+
+use crate::daemon_client::{DaemonClient, DaemonError};
 use std::io;
 use std::path::{Path, PathBuf};
 use uuid::Uuid;
@@ -810,43 +812,9 @@ fn copy_across(from: &Path, to: &Path) -> io::Result<()> {
 // The filesystem layer above is pure, but trashing/restoring a *tracked* path
 // also talks to the daemon: capture the metarecords to re-link at trash time,
 // then re-link them at restore time. That client glue used to be duplicated in
-// the CLI and the GUI; it now lives here behind a small synchronous
-// `DaemonClient` trait — one implementation, one place for its edge cases —
-// mirroring how `core::sync` shares its orchestration.
-
-/// A daemon HTTP failure surfaced to the re-link glue. `status` is the HTTP
-/// status when there was a response (None for a transport failure); `message`
-/// is the daemon's `{"error": …}` text (or a transport description).
-#[derive(Debug, Clone)]
-pub struct DaemonError {
-    pub status: Option<u16>,
-    pub message: String,
-}
-
-impl DaemonError {
-    /// A non-HTTP failure raised by the glue itself (a malformed uuid, …).
-    pub fn local(message: impl Into<String>) -> Self {
-        Self { status: None, message: message.into() }
-    }
-}
-
-/// The minimal, synchronous daemon HTTP surface the re-link glue needs. The CLI
-/// implements it over its `ureq` client; the GUI over a blocking `ureq` adapter
-/// run off the async runtime — exactly as `core::sync` does.
-pub trait DaemonClient {
-    /// Sends a request; `Ok(body)` on 2xx, `Err` (carrying the status) otherwise.
-    fn request(&self, method: &str, path: &str, body: Option<&Json>) -> Result<Json, DaemonError>;
-
-    fn get(&self, path: &str) -> Result<Json, DaemonError> {
-        self.request("GET", path, None)
-    }
-    fn post(&self, path: &str, body: &Json) -> Result<Json, DaemonError> {
-        self.request("POST", path, Some(body))
-    }
-    fn put(&self, path: &str, body: &Json) -> Result<Json, DaemonError> {
-        self.request("PUT", path, Some(body))
-    }
-}
+// the CLI and the GUI; it lives here instead — one implementation, one place for
+// its edge cases — driving the daemon over `core::daemon_client`, like
+// `core::sync` and `core::ignore` do.
 
 /// Reads a metarecord JSON (`{uuid, fields}`) into a [`TrashedNode`] — its uuid
 /// plus its first `mfr_path` TreeRef — or None when it has no present tree_ref.

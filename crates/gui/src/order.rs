@@ -8,8 +8,8 @@ use std::sync::Arc;
 
 use serde::Serialize;
 
+use metafolder_core::daemon_client::DaemonClient;
 use metafolder_core::order::{self, DEFAULT_MAX_GAP};
-use metafolder_core::trash::DaemonClient;
 
 use crate::commands::App;
 use crate::trash::BlockingClient;
@@ -93,7 +93,7 @@ pub async fn order_run(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use metafolder_core::trash::{DaemonClient, DaemonError};
+    use metafolder_core::daemon_client::{DaemonClient, DaemonError};
     use serde_json::{json, Value};
     use std::cell::RefCell;
 

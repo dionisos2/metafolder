@@ -11,9 +11,9 @@ use std::sync::Arc;
 use serde::Serialize;
 use uuid::Uuid;
 
+use metafolder_core::daemon_client::DaemonClient;
 use metafolder_core::ignore::{self, IgnoreError, Mode};
 use metafolder_core::ignore_presets::Presets;
-use metafolder_core::trash::DaemonClient;
 
 use crate::commands::App;
 use crate::trash::BlockingClient;
@@ -146,8 +146,8 @@ pub async fn ignore_write(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use metafolder_core::daemon_client::{DaemonClient, DaemonError};
     use metafolder_core::ignore_presets::Presets;
-    use metafolder_core::trash::{DaemonClient, DaemonError};
     use serde_json::{json, Value};
     use std::cell::RefCell;
     use uuid::Uuid;

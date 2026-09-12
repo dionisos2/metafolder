@@ -7,7 +7,8 @@
 
 use crate::commands::App;
 use crate::daemon_proxy::DaemonProxy;
-use metafolder_core::trash::{DaemonClient, DaemonError, PruneMode, Reason, TrashDir, TrashEntry};
+use metafolder_core::daemon_client::{DaemonClient, DaemonError};
+use metafolder_core::trash::{PruneMode, Reason, TrashDir, TrashEntry};
 use serde_json::{json, Value};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;

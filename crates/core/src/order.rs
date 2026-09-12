@@ -202,7 +202,7 @@ pub fn assign_positions(items: &[Item], threshold: i64) -> Vec<Assignment> {
 // lives here behind the synchronous `DaemonClient` trait; the CLI and the GUI
 // bring their own HTTP client.
 
-use crate::trash::{DaemonClient, DaemonError};
+use crate::daemon_client::{DaemonClient, DaemonError};
 use serde_json::{json, Value};
 
 /// The boolean field written on the *folder* once its children are numbered, so
@@ -484,7 +484,7 @@ mod tests {
 #[cfg(test)]
 mod orchestration_tests {
     use super::*;
-    use crate::trash::{DaemonClient, DaemonError};
+    use crate::daemon_client::{DaemonClient, DaemonError};
     use serde_json::{json, Value};
     use std::sync::Mutex;
 

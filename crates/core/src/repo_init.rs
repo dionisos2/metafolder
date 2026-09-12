@@ -5,13 +5,13 @@
 //! "create repo" flow behave identically — the daemon itself writes no
 //! `mf_ignore` policy.
 //!
-//! Like [`crate::ignore`], it drives the daemon over [`crate::trash::DaemonClient`].
+//! Like [`crate::ignore`], it drives the daemon over [`crate::daemon_client::DaemonClient`].
 
 use serde_json::Value as Json;
 
+use crate::daemon_client::DaemonClient;
 use crate::ignore::{self, IgnoreError, Mode};
 use crate::ignore_presets::Presets;
-use crate::trash::DaemonClient;
 
 /// What to write to the new root's `mf_ignore` set.
 pub enum InitIgnore<'a> {

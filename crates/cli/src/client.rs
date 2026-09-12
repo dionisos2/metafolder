@@ -74,9 +74,10 @@ impl Client {
         method: &str,
         path: &str,
         body: Option<&Json>,
-    ) -> Result<Json, metafolder_core::trash::DaemonError> {
-        self.send(method, path, &[], body)
-            .map_err(|(status, message)| metafolder_core::trash::DaemonError { status, message })
+    ) -> Result<Json, metafolder_core::daemon_client::DaemonError> {
+        self.send(method, path, &[], body).map_err(|(status, message)| {
+            metafolder_core::daemon_client::DaemonError { status, message }
+        })
     }
 
     /// The raw request: `Ok(body)` on 2xx, else `Err((status, message))` — the

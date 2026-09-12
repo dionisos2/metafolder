@@ -4,15 +4,15 @@
 //! the daemon writes that update a target metarecord's `mf_ignore` set (append,
 //! remove, or whole-set replace). Shared by the CLI (`mf ignore`) and the GUI.
 //!
-//! It reuses [`crate::trash::DaemonClient`] — the minimal synchronous daemon
+//! It reuses [`crate::daemon_client::DaemonClient`] — the minimal synchronous daemon
 //! HTTP surface already implemented by the CLI and GUI — rather than defining a
 //! third client trait; the trait is generic HTTP, not trash-specific.
 
 use serde_json::{json, Value as Json};
 use uuid::Uuid;
 
+use crate::daemon_client::{DaemonClient, DaemonError};
 use crate::ignore_presets::Presets;
-use crate::trash::{DaemonClient, DaemonError};
 
 /// How [`apply`] combines the expanded patterns with the target's current set.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

@@ -93,19 +93,7 @@ impl Ctx {
     /// Maps a unique repository name to its UUID via `GET /repos`.
     fn resolve_name(&self, name: &str) -> Result<Uuid, CliError> {
         let repos = self.client.get("/repos", &[])?;
-        let matches: Vec<&Json> = repos
-            .as_array()
-            .map(|a| a.iter().filter(|r| r["name"].as_str() == Some(name)).collect())
-            .unwrap_or_default();
-        match matches.as_slice() {
-            [] => Err(CliError::Op(format!("no loaded repository named '{name}'"))),
-            [repo] => {
-                let raw = repo["repo_uuid"].as_str().unwrap_or_default();
-                Uuid::parse_str(raw)
-                    .map_err(|_| CliError::Op(format!("daemon returned an invalid uuid: '{raw}'")))
-            }
-            _ => Err(CliError::Op(format!("several loaded repositories named '{name}'"))),
-        }
+        metafolder_core::daemon_client::repo_uuid_by_name(&repos, name).map_err(CliError::Op)
     }
 }
 
@@ -2170,7 +2158,7 @@ pub fn schema_show(ctx: &Ctx) -> Result<i32, CliError> {
 // ── mf trash ────────────────────────────────────────────────────────────────
 
 use crate::trash::{PruneMode, Reason, TrashDir};
-use metafolder_core::trash::DaemonClient as _;
+use metafolder_core::daemon_client::DaemonClient as _;
 
 /// Builds the [`TrashDir`] from a `GET /repos/:repo` info body.
 fn trash_dir_of(info: &Json) -> Result<TrashDir, CliError> {
@@ -2185,18 +2173,18 @@ fn trash_dir_of(info: &Json) -> Result<TrashDir, CliError> {
 /// glue can classify a benign forest rejection by status.
 struct TrashDaemon<'a>(&'a Client);
 
-impl metafolder_core::trash::DaemonClient for TrashDaemon<'_> {
+impl metafolder_core::daemon_client::DaemonClient for TrashDaemon<'_> {
     fn request(
         &self,
         method: &str,
         path: &str,
         body: Option<&Json>,
-    ) -> Result<Json, metafolder_core::trash::DaemonError> {
+    ) -> Result<Json, metafolder_core::daemon_client::DaemonError> {
         self.0.request_daemon(method, path, body)
     }
 }
 
-fn trash_daemon_err(e: metafolder_core::trash::DaemonError) -> CliError {
+fn trash_daemon_err(e: metafolder_core::daemon_client::DaemonError) -> CliError {
     CliError::Op(e.message)
 }
 

@@ -127,19 +127,7 @@ impl SyncCtx<'_> {
     /// Maps a unique repository name to its UUID via `GET /repos`.
     fn resolve_name(&self, name: &str) -> Result<Uuid, SyncError> {
         let repos = self.client.get("/repos", &[])?;
-        let matches: Vec<&Json> = repos
-            .as_array()
-            .map(|a| a.iter().filter(|r| r["name"].as_str() == Some(name)).collect())
-            .unwrap_or_default();
-        match matches.as_slice() {
-            [] => Err(SyncError::Op(format!("no loaded repository named '{name}'"))),
-            [repo] => {
-                let raw = repo["repo_uuid"].as_str().unwrap_or_default();
-                Uuid::parse_str(raw)
-                    .map_err(|_| SyncError::Op(format!("daemon returned an invalid uuid: '{raw}'")))
-            }
-            _ => Err(SyncError::Op(format!("several loaded repositories named '{name}'"))),
-        }
+        crate::daemon_client::repo_uuid_by_name(&repos, name).map_err(SyncError::Op)
     }
 }
 
