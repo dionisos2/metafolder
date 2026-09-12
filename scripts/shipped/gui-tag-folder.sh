@@ -110,12 +110,20 @@ declare -A PATH_OF RANK KIND
 # Read one kind of the scope: the uuids in walking order, and their paths.
 # Two round-trips per kind, whatever the size — `--sort` and `--resolve-tree`
 # are exclusive, so the order comes from one call and the paths from the other.
+#
+# `mfr_path IS PRESENT` keeps out what has no place in a tree walk: a deleted
+# file keeps its metarecord with `mfr_path = Nothing` (spec-file-tracking), so
+# it still answers `mfr_type = "file"` while resolving to no path at all.
+# Without the filter such a record entered the walk with an empty path — which
+# sorts as the repository root, so it was asked about FIRST, in a question
+# naming no file and with a preview that could not move off whatever the panels
+# already held.
 collect() { # <dir|file> <order field>
     local kind=$1 field=$2 i=0 uuid path
+    local scope
+    scope=$(mf_gui_scoped "mfr_type = \"$kind\" AND mfr_path IS PRESENT")
     local -a ordered=()
-    mapfile -t ordered < <(
-        mf metarecord -q "$(mf_gui_scoped "mfr_type = \"$kind\"")" get --sort "$field" --sort mfr_path
-    )
+    mapfile -t ordered < <(mf metarecord -q "$scope" get --sort "$field" --sort mfr_path)
     for uuid in ${ordered+"${ordered[@]}"}; do
         [ -n "$uuid" ] || continue
         i=$((i + 1))
@@ -125,9 +133,7 @@ collect() { # <dir|file> <order field>
     while IFS=$'\t' read -r uuid path; do
         [ -n "$uuid" ] || continue
         PATH_OF[$uuid]=$path
-    done < <(
-        mf metarecord -q "$(mf_gui_scoped "mfr_type = \"$kind\"")" get --resolve-tree mfr_path --tsv
-    )
+    done < <(mf metarecord -q "$scope" get --resolve-tree mfr_path --tsv)
 }
 
 collect dir order_dir
@@ -138,8 +144,19 @@ collect file order_file
 # level, a folder before its contents, folders before files.
 ENTRIES=()
 for uuid in "${!RANK[@]}"; do
-    path=${PATH_OF[$uuid]-}
-    depth=$(awk -F/ '{print NF - 1}' <<<"$path")
+    # No path, no place in the walk. The two round-trips above are separate
+    # queries, so one can hold a record the other does not; and the repository
+    # root's path is the EMPTY string, which is why this tests for the key
+    # rather than for a non-empty value.
+    [ -n "${PATH_OF[$uuid]+set}" ] || continue
+    path=${PATH_OF[$uuid]}
+    # The depth is the number of "/" in the path (the root's "" is 0). Spelled
+    # with parameter expansion rather than `awk`: this loop runs once per
+    # metarecord in the scope, and one process per entry is seconds of pure
+    # forking on a scope of any size — the whole cost of getting to the first
+    # question.
+    slashes=${path//[!\/]/}
+    depth=${#slashes}
     parent=${path%/*}
     krank=1
     [ "${KIND[$uuid]}" = dir ] && krank=0
@@ -151,6 +168,13 @@ done
 
 TOTAL=${#ENTRIES[@]}
 [ "$TOTAL" -gt 0 ] || mf_die "the query matches no tracked metarecord"
+
+# The walk order, materialised in a file rather than read from a pipe. Leaving
+# the walk early (stop, Escape, a failed tag op) closes its input, and a `sort`
+# still writing then dies of SIGPIPE — which the ERR trap reported as an error,
+# so a deliberate stop looked like a crash. A file has no writer to kill.
+WALK="$TMP/walk"
+printf '%s\n' "${ENTRIES[@]}" | sort -t$'\t' -k1,1n -k2,2 -k3,3n -k4,4n >"$WALK"
 
 # The answer already recorded for TAG on a metarecord, or nothing when the
 # question is still open. Subsumption is the one `mf tag` applies when writing:
@@ -256,7 +280,7 @@ while IFS=$'\t' read -r depth parent krank rank uuid; do
             ;;
         *) STOP=user ;;
     esac
-done < <(printf '%s\n' "${ENTRIES[@]}" | sort -t$'\t' -k1,1n -k2,2 -k3,3n -k4,4n)
+done <"$WALK"
 
 case $STOP in
     "")   mf_gui_finish "done tagging '$TAG' ($SKIPPED skipped, $ALREADY already decided)." ;;

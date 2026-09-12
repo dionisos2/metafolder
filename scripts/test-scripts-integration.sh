@@ -167,4 +167,32 @@ assert "unwatch: the file inside is gone" inner_gone
 assert "unwatch: a file OUTSIDE the folder survives" \
     [ "$(df_mf path --relative "$TOP" 2>/dev/null)" = /top.txt ]
 
+# ── gui-tag-folder and a metarecord with no path: not part of the walk ───────
+# A deleted file keeps its metarecord with `mfr_path = Nothing`, so it still
+# answers `mfr_type = "file"` while resolving to no path at all. With an empty
+# path it sorted ahead of everything and was asked about FIRST — a question
+# naming no file, and a preview left showing whatever the panels already held.
+# Runs LAST, after gui-unwatch-folder: it adds a metarecord to the repository.
+# The scope is the files alone, so the only entry that could carry an empty
+# path is the orphan (the repository root's own path is "" too).
+hy_reset
+printf 'gone\n' >"$REPO_DIR/gone.txt"
+df_mf metarecord -i "$DF_ROOT" field set mf_watch:bool=true >/dev/null 2>&1
+df_mf reconcile >/dev/null 2>&1
+df_mf metarecord -i "$DF_ROOT" field set mf_watch:bool=false >/dev/null 2>&1
+GONE=$(df_mf metarecord -q 'mfr_path = "/gone.txt"' get | head -n1)
+assert "orphan fixture: gone.txt is tracked" [ -n "$GONE" ]
+df_mf metarecord -i "$GONE" field set mfr_path:nothing --force >/dev/null 2>&1
+assert "orphan fixture: it now resolves to no path" \
+    [ "$(df_mf metarecord -q 'mfr_type = "file"' get --resolve-tree mfr_path --tsv | grep -c "^$GONE	")" -eq 0 ]
+assert "orphan fixture: but it is still a file metarecord" \
+    [ "$(df_mf metarecord -q 'mfr_type = "file"' get | grep -c "^$GONE$")" -eq 1 ]
+hy_query 'mfr_type = "file"'
+hy_input y y y y y
+bash "$FOLDER" orphantag >/dev/null 2>&1
+assert_not "orphan: the path-less record is not tagged" has_tag "$GONE" orphantag
+assert "orphan: no question named an empty path" \
+    [ "$(hy_log | grep -c "gui message '' has tag")" -eq 0 ]
+assert "orphan: the tracked files still are asked and tagged" has_tag "$TOP" orphantag
+
 assert_summary

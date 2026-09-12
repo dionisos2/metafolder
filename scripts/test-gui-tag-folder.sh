@@ -50,10 +50,10 @@ scope_holds() { # <dir rows...> -- <file rows...>   rows are "uuid<TAB>path"
     for row in ${files+"${files[@]}"}; do
         file_uuids+="${row%%	*}"$'\n'; file_rows+="$row"$'\n'
     done
-    mock_respond "metarecord -q ($SC) AND mfr_type = \"dir\" get --sort order_dir --sort mfr_path" "${dir_uuids%$'\n'}"
-    mock_respond "metarecord -q ($SC) AND mfr_type = \"file\" get --sort order_file --sort mfr_path" "${file_uuids%$'\n'}"
-    mock_respond "metarecord -q ($SC) AND mfr_type = \"dir\" get --resolve-tree mfr_path --tsv" "${dir_rows%$'\n'}"
-    mock_respond "metarecord -q ($SC) AND mfr_type = \"file\" get --resolve-tree mfr_path --tsv" "${file_rows%$'\n'}"
+    mock_respond "metarecord -q ($SC) AND mfr_type = \"dir\" AND mfr_path IS PRESENT get --sort order_dir --sort mfr_path" "${dir_uuids%$'\n'}"
+    mock_respond "metarecord -q ($SC) AND mfr_type = \"file\" AND mfr_path IS PRESENT get --sort order_file --sort mfr_path" "${file_uuids%$'\n'}"
+    mock_respond "metarecord -q ($SC) AND mfr_type = \"dir\" AND mfr_path IS PRESENT get --resolve-tree mfr_path --tsv" "${dir_rows%$'\n'}"
+    mock_respond "metarecord -q ($SC) AND mfr_type = \"file\" AND mfr_path IS PRESENT get --resolve-tree mfr_path --tsv" "${file_rows%$'\n'}"
 }
 
 # How many times the walk asked about one entry (its question message).
@@ -120,10 +120,10 @@ assert_contains "order: the folder comes before the files" \
 mock_reset
 setup_gui
 Q='rating > 3'
-mock_respond "metarecord -q ($Q) AND mfr_type = \"dir\" get --sort order_dir --sort mfr_path"  ''
-mock_respond "metarecord -q ($Q) AND mfr_type = \"file\" get --sort order_file --sort mfr_path" 'file-a'
-mock_respond "metarecord -q ($Q) AND mfr_type = \"dir\" get --resolve-tree mfr_path --tsv"  ''
-mock_respond "metarecord -q ($Q) AND mfr_type = \"file\" get --resolve-tree mfr_path --tsv" "file-a	/x/a.txt"
+mock_respond "metarecord -q ($Q) AND mfr_type = \"dir\" AND mfr_path IS PRESENT get --sort order_dir --sort mfr_path"  ''
+mock_respond "metarecord -q ($Q) AND mfr_type = \"file\" AND mfr_path IS PRESENT get --sort order_file --sort mfr_path" 'file-a'
+mock_respond "metarecord -q ($Q) AND mfr_type = \"dir\" AND mfr_path IS PRESENT get --resolve-tree mfr_path --tsv"  ''
+mock_respond "metarecord -q ($Q) AND mfr_type = \"file\" AND mfr_path IS PRESENT get --resolve-tree mfr_path --tsv" "file-a	/x/a.txt"
 mock_input y
 out=$(bash "$SCRIPT" music "$Q"); code=$?
 assert "query arg: exits 0" [ "$code" -eq 0 ]
@@ -137,10 +137,10 @@ mock_reset
 setup_gui
 G='mfr_type = "file" AND rating > 3'
 mock_respond 'gui query' "$G"
-mock_respond "metarecord -q ($G) AND mfr_type = \"dir\" get --sort order_dir --sort mfr_path"  ''
-mock_respond "metarecord -q ($G) AND mfr_type = \"file\" get --sort order_file --sort mfr_path" 'file-a'
-mock_respond "metarecord -q ($G) AND mfr_type = \"dir\" get --resolve-tree mfr_path --tsv"  ''
-mock_respond "metarecord -q ($G) AND mfr_type = \"file\" get --resolve-tree mfr_path --tsv" "file-a	/x/a.txt"
+mock_respond "metarecord -q ($G) AND mfr_type = \"dir\" AND mfr_path IS PRESENT get --sort order_dir --sort mfr_path"  ''
+mock_respond "metarecord -q ($G) AND mfr_type = \"file\" AND mfr_path IS PRESENT get --sort order_file --sort mfr_path" 'file-a'
+mock_respond "metarecord -q ($G) AND mfr_type = \"dir\" AND mfr_path IS PRESENT get --resolve-tree mfr_path --tsv"  ''
+mock_respond "metarecord -q ($G) AND mfr_type = \"file\" AND mfr_path IS PRESENT get --resolve-tree mfr_path --tsv" "file-a	/x/a.txt"
 mock_input y
 out=$(bash "$SCRIPT" music); code=$?
 assert "gui query: exits 0" [ "$code" -eq 0 ]
@@ -152,10 +152,10 @@ assert "gui query: the record is tagged" [ "$(mock_count 'tag -i file-a add musi
 mock_reset
 setup_gui
 mock_respond 'gui query' ''
-mock_respond 'metarecord -q mfr_type = "dir" get --sort order_dir --sort mfr_path'   ''
-mock_respond 'metarecord -q mfr_type = "file" get --sort order_file --sort mfr_path' 'file-a'
-mock_respond 'metarecord -q mfr_type = "dir" get --resolve-tree mfr_path --tsv'   ''
-mock_respond 'metarecord -q mfr_type = "file" get --resolve-tree mfr_path --tsv' "file-a	/x/a.txt"
+mock_respond 'metarecord -q mfr_type = "dir" AND mfr_path IS PRESENT get --sort order_dir --sort mfr_path'   ''
+mock_respond 'metarecord -q mfr_type = "file" AND mfr_path IS PRESENT get --sort order_file --sort mfr_path' 'file-a'
+mock_respond 'metarecord -q mfr_type = "dir" AND mfr_path IS PRESENT get --resolve-tree mfr_path --tsv'   ''
+mock_respond 'metarecord -q mfr_type = "file" AND mfr_path IS PRESENT get --resolve-tree mfr_path --tsv' "file-a	/x/a.txt"
 mock_input y
 bash "$SCRIPT" music >/dev/null; code=$?
 assert "all: exits 0" [ "$code" -eq 0 ]
@@ -168,10 +168,10 @@ setup_gui
 mock_respond 'gui query'                            '@exit:1'
 mock_respond 'metarecord -q mfr_type = "dir" get*'  '/'
 RSC='mfr_path =>* ""'
-mock_respond "metarecord -q ($RSC) AND mfr_type = \"dir\" get --sort order_dir --sort mfr_path"  'dir-root'
-mock_respond "metarecord -q ($RSC) AND mfr_type = \"file\" get --sort order_file --sort mfr_path" ''
-mock_respond "metarecord -q ($RSC) AND mfr_type = \"dir\" get --resolve-tree mfr_path --tsv"  "dir-root	"
-mock_respond "metarecord -q ($RSC) AND mfr_type = \"file\" get --resolve-tree mfr_path --tsv" ''
+mock_respond "metarecord -q ($RSC) AND mfr_type = \"dir\" AND mfr_path IS PRESENT get --sort order_dir --sort mfr_path"  'dir-root'
+mock_respond "metarecord -q ($RSC) AND mfr_type = \"file\" AND mfr_path IS PRESENT get --sort order_file --sort mfr_path" ''
+mock_respond "metarecord -q ($RSC) AND mfr_type = \"dir\" AND mfr_path IS PRESENT get --resolve-tree mfr_path --tsv"  "dir-root	"
+mock_respond "metarecord -q ($RSC) AND mfr_type = \"file\" AND mfr_path IS PRESENT get --resolve-tree mfr_path --tsv" ''
 mock_prompt '/'
 mock_input y
 bash "$SCRIPT" roottag >/dev/null; code=$?
@@ -201,10 +201,16 @@ setup_top
 scope_holds "dir-top	/top" -- "file-a	/top/a.txt"
 mock_prompt '/top'
 mock_input q
-out=$(bash "$SCRIPT" music); code=$?
+out=$(bash "$SCRIPT" music 2>"$MF_MOCK_DIR/err"); code=$?
+err=$(cat "$MF_MOCK_DIR/err")
 assert "stop: exits 0" [ "$code" -eq 0 ]
 assert_contains "stop: reports stopped" "$out" stopped
 assert "stop: no tag op at all" [ "$(mock_count 'tag *')" -eq 0 ]
+# Leaving the walk early closed the pipe the entry list was read from, and the
+# writer died of SIGPIPE — reported by the ERR trap as a failing `sort`. A
+# deliberate stop must not look like a crash.
+assert "stop: reports no error of its own" \
+    [ "$(printf '%s' "$err" | grep -c '^error:')" -eq 0 ]
 
 # ── Case 11: a tag with a double quote is rejected ──────────────────────────
 mock_reset
@@ -305,5 +311,54 @@ out=$(bash "$SCRIPT" music 2>"$MF_MOCK_DIR/err"); code=$?
 err=$(cat "$MF_MOCK_DIR/err")
 assert_contains "unanswerable: explains itself" "$err" "could not be answered"
 assert "unanswerable: no tag op" [ "$(mock_count 'tag -i *')" -eq 0 ]
+
+# ── Case 19: a metarecord with no resolvable mfr_path is not in the walk ─────
+# A deleted file keeps its metarecord with `mfr_path = Nothing` (spec-file-
+# tracking), so it still answers `mfr_type = "file"` while resolving to no
+# path at all. It has no place in a tree walk: it cannot be shown, and with an
+# empty path it would sort as the repository root and be asked about first.
+mock_reset
+setup_top
+# The ordered call returns the orphan; the path call — the same scope — does not.
+mock_respond "metarecord -q ($SC) AND mfr_type = \"dir\" AND mfr_path IS PRESENT get --sort order_dir --sort mfr_path" ''
+mock_respond "metarecord -q ($SC) AND mfr_type = \"file\" AND mfr_path IS PRESENT get --sort order_file --sort mfr_path" \
+    'file-gone\nfile-a'
+mock_respond "metarecord -q ($SC) AND mfr_type = \"dir\" AND mfr_path IS PRESENT get --resolve-tree mfr_path --tsv" ''
+mock_respond "metarecord -q ($SC) AND mfr_type = \"file\" AND mfr_path IS PRESENT get --resolve-tree mfr_path --tsv" \
+    'file-a\t/top/a.txt'
+mock_prompt '/top'
+mock_input y
+out=$(bash "$SCRIPT" music); code=$?
+assert "orphan: exits 0" [ "$code" -eq 0 ]
+assert "orphan: the path-less record is never asked" [ "$(mock_count "gui message '' has tag*")" -eq 0 ]
+assert "orphan: nor tagged" [ "$(mock_count 'tag -i file-gone *')" -eq 0 ]
+assert "orphan: the real entry is asked" [ "$(asked /top/a.txt)" -eq 1 ]
+assert "orphan: and it alone is counted" \
+    [ "$(mock_count 'gui progress --done 1 --total 1 --phase /top/a.txt')" -eq 1 ]
+
+# ── Case 20: stopping a LONG walk is still a stop, not a crash ──────────────
+# The entry list is read from a pipe. Leaving the walk early closes it, and on
+# a scope big enough that the writer has not finished (more than a pipe buffer
+# of entries) it dies of SIGPIPE — which the ERR trap reported as a failing
+# `sort`. A deliberate stop on the first question must not print an error.
+mock_reset
+setup_top
+big_uuids=""; big_rows=""
+for i in $(seq 1 4000); do
+    big_uuids+="file-$i"$'\n'
+    big_rows+="file-$i"$'\t'"/top/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa-$i.txt"$'\n'
+done
+mock_respond "metarecord -q ($SC) AND mfr_type = \"dir\" AND mfr_path IS PRESENT get --sort order_dir --sort mfr_path" ''
+mock_respond "metarecord -q ($SC) AND mfr_type = \"file\" AND mfr_path IS PRESENT get --sort order_file --sort mfr_path" "${big_uuids%$'\n'}"
+mock_respond "metarecord -q ($SC) AND mfr_type = \"dir\" AND mfr_path IS PRESENT get --resolve-tree mfr_path --tsv" ''
+mock_respond "metarecord -q ($SC) AND mfr_type = \"file\" AND mfr_path IS PRESENT get --resolve-tree mfr_path --tsv" "${big_rows%$'\n'}"
+mock_prompt '/top'
+mock_input q
+out=$(bash "$SCRIPT" music 2>"$MF_MOCK_DIR/err"); code=$?
+err=$(cat "$MF_MOCK_DIR/err")
+assert "long stop: exits 0" [ "$code" -eq 0 ]
+assert_contains "long stop: reports stopped" "$out" stopped
+assert "long stop: reports no error of its own" \
+    [ "$(printf '%s' "$err" | grep -c '^error:')" -eq 0 ]
 
 assert_summary
