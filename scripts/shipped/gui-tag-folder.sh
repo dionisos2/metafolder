@@ -171,12 +171,6 @@ load_decided() {
     done
 }
 
-# The answer already recorded for TAG on a metarecord, or nothing when the
-# question is still open.
-decided() { # <uuid> -> y | n | m | ""
-    printf '%s' "${DECIDED[$1]-}"
-}
-
 collect dir order_dir
 collect file order_file
 
@@ -245,6 +239,25 @@ SKIPPED=0
 ALREADY=0
 DONE=0
 
+# The progress bar is STEPPED, not smooth. Every report is a process and a
+# round-trip, and a resume walks past entries it has already answered without
+# stopping at any of them — one report each would cost more than the walk. An
+# entry that is actually asked always reports (that is where the user is
+# looking); a skipped one reports only once every percent or so of the scope,
+# and the last entry always does, so the bar still reaches the end.
+STEP=$((TOTAL / 100))
+[ "$STEP" -ge 1 ] || STEP=1
+LAST_REPORT=0
+report_progress() { # <done> <phase>
+    LAST_REPORT=$1
+    mf_gui_progress --done "$1" --total "$TOTAL" --phase "$2"
+}
+report_step() { # <done> <phase>   — only when a step has gone by
+    if [ $(($1 - LAST_REPORT)) -ge "$STEP" ] || [ "$1" -eq "$TOTAL" ]; then
+        report_progress "$1" "$2"
+    fi
+}
+
 # `depth`, `parent`, `krank` and `rank` are the sort key and are not read again
 # here; only the uuid is.
 # shellcheck disable=SC2034
@@ -255,24 +268,26 @@ while IFS=$'\t' read -r depth parent krank rank uuid; do
     kind=${KIND[$uuid]}
     is_pruned "$path" && continue
     DONE=$((DONE + 1))
-    # Report progress before the decision, so a resume walking past entries it
-    # has already answered still moves the bar instead of looking frozen.
-    mf_gui_progress --done "$DONE" --total "$TOTAL" --phase "$path"
     # Already answered in an earlier run: no question, no tag op. A folder that
     # took the answer whole settles its subtree; a mixed one does not — that is
-    # where its remaining questions live.
-    prior=$(decided "$uuid")
+    # where its remaining questions live. The answer is a lookup in the sets
+    # read up front, so it is free: read it before reporting, and the report
+    # can then say whether this entry is one the user will be asked about.
+    prior=${DECIDED[$uuid]-}
     case $prior in
         y | n)
             ALREADY=$((ALREADY + 1))
+            report_step "$DONE" "$path"
             [ "$kind" = dir ] && PRUNED+=("$path")
             continue
             ;;
         m)
             ALREADY=$((ALREADY + 1))
+            report_step "$DONE" "$path"
             continue
             ;;
     esac
+    report_progress "$DONE" "$path"
     mf_gui_show_file "$(mf path "$uuid" 2>/dev/null || true)"
     counter="$((TOTAL - DONE)) left"
     if [ "$kind" = dir ]; then

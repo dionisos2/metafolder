@@ -403,4 +403,36 @@ assert_contains "long stop: reports stopped" "$out" stopped
 assert "long stop: reports no error of its own" \
     [ "$(printf '%s' "$err" | grep -c '^error:')" -eq 0 ]
 
+# ── Case 21: walking past decided entries does not cost a call per entry ────
+# A resume walks entries whose answer is already recorded. Reporting progress
+# for each one is a process and a round-trip apiece — the bar would be smooth
+# and the walk would take minutes. The bar is stepped instead: an entry that is
+# actually ASKED always reports (that is where the user is looking), a skipped
+# one only every percent or so of the scope.
+mock_reset
+setup_top
+many_uuids=""; many_rows=""; decided_uuids=""
+for i in $(seq 1 400); do
+    many_uuids+="file-$i"$'\n'
+    many_rows+="file-$i"$'\t'"/top/f$i.txt"$'\n'
+    [ "$i" -lt 400 ] && decided_uuids+="file-$i "
+done
+mock_respond "metarecord -q ($SC) AND mfr_type = \"dir\" AND mfr_path IS PRESENT get --sort order_dir --sort mfr_path" ''
+mock_respond "metarecord -q ($SC) AND mfr_type = \"file\" AND mfr_path IS PRESENT get --sort order_file --sort mfr_path" "${many_uuids%$'\n'}"
+mock_respond "metarecord -q ($SC) AND mfr_type = \"dir\" AND mfr_path IS PRESENT get --resolve-tree mfr_path --tsv" ''
+mock_respond "metarecord -q ($SC) AND mfr_type = \"file\" AND mfr_path IS PRESENT get --resolve-tree mfr_path --tsv" "${many_rows%$'\n'}"
+# shellcheck disable=SC2086
+scope_decided music "$SC" $decided_uuids -- --
+mock_prompt '/top'
+mock_input y
+out=$(bash "$SCRIPT" music); code=$?
+assert "stepped bar: exits 0" [ "$code" -eq 0 ]
+assert "stepped bar: the one open question is asked" [ "$(asked /top/f400.txt)" -eq 1 ]
+assert "stepped bar: and answered" [ "$(mock_count 'tag -i file-400 add music')" -eq 1 ]
+assert_contains "stepped bar: the decided entries are counted" "$out" "399 already"
+assert "stepped bar: far fewer progress calls than entries" \
+    [ "$(mock_count 'gui progress*')" -le 110 ]
+assert "stepped bar: the asked entry reports its own exact position" \
+    [ "$(mock_count 'gui progress --done 400 --total 400 --phase /top/f400.txt')" -eq 1 ]
+
 assert_summary
