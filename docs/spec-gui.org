@@ -3232,6 +3232,12 @@ before files, each folder in =mf order='s numbering when it has one and
 alphabetically otherwise. A script never runs =mf order= itself: numbering is a
 deliberate act, and its date-based fallback would walk worse than alphabetical.
 
+=gui-unwatch-folder.sh= is the deliberate exception: a query matches
+metarecords that already exist, and the folder to stop watching often has none
+yet — which is why its argument is a filesystem path it tracks on the fly, so
+=mf_watch= has somewhere to live. =mf_watch= is a per-directory field inherited
+down the tree, so a folder, not a set, is the shape of what is being said.
+
 *** Example: image comparison script
 
 #+BEGIN_SRC bash

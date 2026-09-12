@@ -19,13 +19,21 @@ source "$HERE/lib/assert.sh"
 # A four-tag vocabulary: two top-level, two children of `music` (non-exclusive).
 UNIVERSE=$'music\t0\t0\nadmin\t0\t0\nmusic/jazz\t0\t0\nmusic/rock\t0\t0'
 
-setup_common() {
+# The optional argument is what `mf gui query` answers (the table is
+# first-match-wins, so it cannot be overridden by a later row).
+setup_common() { # [<gui query response>]
     mock_respond 'gui repo'         'repo-1'
+    mock_respond 'gui query'        "${1-@exit:1}"
     mock_respond 'path rec-1'       '/abs/file'
+    mock_respond 'path --relative rec-1' '/file'
     mock_respond 'tag list'         "$UNIVERSE"
     mock_respond 'gui layout left'  'saved-left'
     mock_respond 'gui layout right' 'saved-right'
     mock_respond 'gui workspace new*' 'ws-1'
+    # The scope resolves to the one record the old single-uuid form named: a
+    # bare uuid is a valid query (spec-query, the UUID-atom bullet), so the old
+    # invocation keeps working.
+    mock_respond 'metarecord -q rec-1 get --sort mfr_path' 'rec-1'
 }
 
 # The ordered list of tags actually asked about, comma-joined.
@@ -70,7 +78,9 @@ assert_contains "q: zeroed summary" "$out" "0 oui, 0 non"
 mock_reset
 mock_respond 'tag list'         ''            # empty vocabulary
 mock_respond 'gui repo'         'repo-1'
+mock_respond 'gui query'        '@exit:1'
 mock_respond 'path rec-1'       '/abs/file'
+mock_respond 'metarecord -q rec-1 get --sort mfr_path' 'rec-1'
 mock_respond 'gui layout left'  'saved-left'
 mock_respond 'gui layout right' 'saved-right'
 mock_respond 'gui workspace new*' 'ws-1'
@@ -78,26 +88,68 @@ err=$(bash "$SCRIPT" rec-1 2>&1 >/dev/null); code=$?
 assert "no-vocab: non-zero exit" [ "$code" -ne 0 ]
 assert_contains "no-vocab: explains the empty vocabulary" "$err" 'no tag entries'
 
-# ── Case 5: no uuid arg — the file is chosen through the GUI completion ───────
+# ── Case 5: no argument — the scope is what the GUI shows ───────────────────
 mock_reset
-setup_common
-mock_respond 'metarecord -q mfr_type = "file" get*'  '/some/file'   # completion (drained)
-mock_respond 'metarecord -q mfr_path = "/some/file" get' 'rec-1'    # path -> uuid
-mock_prompt '/some/file'
+G='mfr_type = "file"'
+setup_common "$G"
+mock_respond "metarecord -q $G get --sort mfr_path" 'rec-1'
 mock_input q
 out=$(bash "$SCRIPT"); code=$?
-assert "prompt: exits 0" [ "$code" -eq 0 ]
-assert "prompt: resolves the chosen path to a uuid" \
-    [ "$(mock_count 'metarecord -q mfr_path = "/some/file" get')" -eq 1 ]
-assert_contains "prompt: classifies the resolved record" "$out" "Classification de rec-1"
+assert "gui scope: exits 0" [ "$code" -eq 0 ]
+assert "gui scope: asks the GUI what it shows" [ "$(mock_count 'gui query')" -ge 1 ]
+assert "gui scope: no folder prompt when one is published" \
+    [ "$(mock_count 'gui prompt*')" -eq 0 ]
+assert_contains "gui scope: classifies the matching record" "$out" "rec-1"
 
-# ── Case 6: cancelling the file prompt aborts ────────────────────────────────
+# ── Case 6: nothing published falls back to the folder completion ───────────
 mock_reset
 setup_common
-mock_respond 'metarecord -q mfr_type = "file" get*' '/some/file'
+mock_respond 'metarecord -q mfr_type = "dir" get*' '/some/dir'      # completion
+mock_respond 'metarecord -q mfr_path =>* "/some/dir" get --sort mfr_path' 'rec-1'
+mock_prompt '/some/dir'
+mock_input q
+out=$(bash "$SCRIPT"); code=$?
+assert "fallback: exits 0" [ "$code" -eq 0 ]
+assert "fallback: the folder becomes an inclusive-subtree query" \
+    [ "$(mock_count 'metarecord -q mfr_path =>* "/some/dir" get --sort mfr_path')" -eq 1 ]
+
+# ── Case 7: cancelling the folder prompt aborts ─────────────────────────────
+mock_reset
+setup_common
+mock_respond 'metarecord -q mfr_type = "dir" get*' '/some/dir'
 mock_prompt @cancel
 err=$(bash "$SCRIPT" 2>&1 >/dev/null); code=$?
 assert "prompt-cancel: non-zero exit" [ "$code" -ne 0 ]
 assert_contains "prompt-cancel: reports cancelled" "$err" cancelled
+
+# ── Case 8: a query matching several records classifies each in turn ────────
+# The old script took ONE metarecord; the scope is now a set, so a run walks it.
+mock_reset
+Q='rating > 3'
+setup_common
+mock_respond "metarecord -q $Q get --sort mfr_path" $'rec-1\nrec-2'
+mock_respond 'path rec-2'            '/abs/file2'
+mock_respond 'path --relative rec-2' '/file2'
+mock_input y n y n   q               # rec-1 fully classified, then rec-2 stopped
+out=$(bash "$SCRIPT" "$Q"); code=$?
+assert "set: exits 0" [ "$code" -eq 0 ]
+assert "set: the first record is classified" [ "$(mock_count 'tag -i rec-1 add music')" -eq 1 ]
+assert "set: the second record is reached" [ "$(mock_count 'gui progress*--phase /file2')" -ge 1 ]
+assert "set: the progress bar knows the total" \
+    [ "$(mock_count 'gui progress --done 1 --total 2*')" -ge 1 ]
+
+# ── Case 9: quitting one record stops the whole run ────────────────────────
+mock_reset
+Q='rating > 3'
+setup_common
+mock_respond "metarecord -q $Q get --sort mfr_path" $'rec-1\nrec-2'
+mock_respond 'path rec-2'            '/abs/file2'
+mock_respond 'path --relative rec-2' '/file2'
+mock_input q
+bash "$SCRIPT" "$Q" >/dev/null; code=$?
+assert "quit: exits 0" [ "$code" -eq 0 ]
+assert "quit: no tag op at all" [ "$(mock_count 'tag -i *')" -eq 0 ]
+assert "quit: the second record is never shown" \
+    [ "$(mock_count 'gui progress*--phase /file2')" -eq 0 ]
 
 assert_summary

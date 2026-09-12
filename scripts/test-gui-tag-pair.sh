@@ -14,13 +14,18 @@ mock_init
 # shellcheck source=lib/assert.sh
 source "$HERE/lib/assert.sh"
 
-# Common GUI-plumbing responses shared by every case.
-setup_gui() {
+# Common GUI-plumbing responses shared by every case. The optional argument is
+# what `mf gui query` answers — the table is first-match-wins, so it has to be
+# set here and not overridden later by a second row.
+setup_gui() { # [<gui query response>]
     mock_respond 'gui repo'          'repo-1'
     mock_respond 'tag list'          $'music\t0\t0\nmusic/jazz\t0\t0'
     mock_respond 'gui layout left'   'saved-left'
     mock_respond 'gui layout right'  'saved-right'
     mock_respond 'gui workspace new*' 'ws-1'
+    # Default: the GUI is showing everything — the empty query, a real answer
+    # (every metarecord) and not "nothing published".
+    mock_respond 'gui query'         "${1-}"
     # `mf path --relative U` must be tried before the bare `mf path U`.
     mock_respond 'path --relative *' 'rel/path'
     mock_respond 'path *'            '/abs/path'
@@ -100,5 +105,55 @@ rm_line=$(mf_log | grep -n '^gui workspace rm' | head -n1 | cut -d: -f1)
 msg_line=$(mf_log | grep -n '^gui message .*--workspace saved-left' | head -n1 | cut -d: -f1)
 assert "summary: posted after the scratch workspace is removed" \
     [ "$msg_line" -gt "$rm_line" ]
+
+# ── The query is the scope (spec-gui "A query is the scope") ────────────────
+
+# ── Case 5: what the GUI shows narrows the walk ─────────────────────────────
+mock_reset
+G='mfr_path ->* "/music"'
+setup_gui "$G"
+mock_prompt 'music/jazz'
+mock_respond 'metarecord -q * get' 'u1'
+mock_input y
+out=$(bash "$SCRIPT"); code=$?
+assert "scope: exits 0" [ "$code" -eq 0 ]
+pred=$(mock_calls_matching 'metarecord -q * get')
+assert_contains "scope: the predicate is narrowed to what the GUI shows" "$pred" "($G) AND"
+assert "scope: no folder prompt when a query is published" \
+    [ "$(mock_count 'gui prompt Folder*')" -eq 0 ]
+
+# ── Case 6: an explicit query argument wins, and skips the GUI ──────────────
+mock_reset
+setup_gui
+Q='rating > 3'
+mock_respond 'metarecord -q * get' 'u1'
+mock_input y
+bash "$SCRIPT" music/jazz "$Q" >/dev/null; code=$?
+assert "arg: exits 0" [ "$code" -eq 0 ]
+pred=$(mock_calls_matching 'metarecord -q * get')
+assert_contains "arg: the predicate uses the argument" "$pred" "($Q) AND"
+assert "arg: the tag is not prompted either" [ "$(mock_count 'gui prompt Tag*')" -eq 0 ]
+
+# ── Case 7: nothing published falls back to the folder completion ───────────
+mock_reset
+setup_gui @exit:1
+mock_respond 'metarecord -q mfr_type = "dir" get*' '/music'
+mock_prompt 'music/jazz' '/music'      # the tag, then the folder
+mock_respond 'metarecord -q * get' 'u1'
+mock_input y
+bash "$SCRIPT" >/dev/null; code=$?
+assert "fallback: exits 0" [ "$code" -eq 0 ]
+pred=$(mock_calls_matching 'metarecord -q * get')
+assert_contains "fallback: the folder becomes an inclusive-subtree query" "$pred" \
+    '(mfr_path =>* "/music") AND'
+
+# ── Case 8: an empty scope is not wrapped ──────────────────────────────────
+mock_reset
+setup_gui
+mock_prompt 'music'
+mock_respond 'metarecord -q * get' ''
+bash "$SCRIPT" >/dev/null; code=$?
+assert "all: exits 0" [ "$code" -eq 0 ]
+assert "all: no empty parentheses in the predicate" [ "$(mock_count 'metarecord -q () AND*')" -eq 0 ]
 
 assert_summary

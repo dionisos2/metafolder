@@ -24,6 +24,14 @@
 # (tracked on the fly if the folder has no metarecord yet, so `mf_watch` has
 # somewhere to live).
 #
+# WHY NOT A QUERY. The other shipped scripts take their scope as a query
+# (spec-gui "A query is the scope"); this one deliberately does not. A query
+# matches metarecords that already exist, and the folder to stop watching is
+# very often one that has none yet — which is exactly why the argument is a
+# filesystem path this script tracks on the fly. `mf_watch` is also a
+# per-directory field inherited down the tree, so a folder, not a set, is the
+# shape of the thing being said.
+#
 # Usage: gui-unwatch-folder.sh [<folder>]
 
 set -euo pipefail

@@ -89,22 +89,14 @@ case $TAG in *\"*) mf_die "tag names must not contain double quotes" ;; esac
 # The scope. Resolved BEFORE the session takeover: `mf gui query` answers for
 # the focused workspace, and the scratch workspace the session opens publishes
 # nothing.
+# SCOPE is read by mf_gui_scoped / mf_gui_scope_get, in lib/mf-gui.sh (a
+# sourced file this check does not follow from here).
+# shellcheck disable=SC2034
 if [ "$QUERY_GIVEN" = 1 ]; then
     SCOPE=$QUERY_ARG
-elif SCOPE=$(mf gui query 2>/dev/null); then
-    : # what the GUI shows (possibly empty = everything)
 else
-    FOLDER_TP=$(mf_gui_prompt_folder "Folder: ") || mf_die "cancelled"
-    [ -n "$FOLDER_TP" ] || mf_die "empty folder"
-    # `=>*` is the inclusive subtree: the folder itself plus every descendant.
-    SCOPE="mfr_path =>* \"$(mf_gui_query_path "$FOLDER_TP")\""
+    SCOPE=$(mf_gui_default_scope "Folder: ") || mf_die "cancelled"
 fi
-
-# Narrow a predicate to the scope. An empty scope is every metarecord, so it is
-# left alone rather than wrapped — `() AND …` is not a query.
-scoped() { # <predicate>
-    if [ -z "$SCOPE" ]; then printf '%s' "$1"; else printf '(%s) AND %s' "$SCOPE" "$1"; fi
-}
 
 mf_gui_session_open metarecord-detail
 
@@ -122,7 +114,7 @@ collect() { # <dir|file> <order field>
     local kind=$1 field=$2 i=0 uuid path
     local -a ordered=()
     mapfile -t ordered < <(
-        mf metarecord -q "$(scoped "mfr_type = \"$kind\"")" get --sort "$field" --sort mfr_path
+        mf metarecord -q "$(mf_gui_scoped "mfr_type = \"$kind\"")" get --sort "$field" --sort mfr_path
     )
     for uuid in ${ordered+"${ordered[@]}"}; do
         [ -n "$uuid" ] || continue
@@ -134,7 +126,7 @@ collect() { # <dir|file> <order field>
         [ -n "$uuid" ] || continue
         PATH_OF[$uuid]=$path
     done < <(
-        mf metarecord -q "$(scoped "mfr_type = \"$kind\"")" get --resolve-tree mfr_path --tsv
+        mf metarecord -q "$(mf_gui_scoped "mfr_type = \"$kind\"")" get --resolve-tree mfr_path --tsv
     )
 }
 
@@ -177,7 +169,7 @@ decided() { # <uuid> -> y | n | m | ""
 # Apply T over a node and its subtree, the subtree narrowed to the scope.
 apply_tree() { # <uuid> <path> <verb: add|deny>
     mf tag -i "$1" "$3" "$TAG" >/dev/null \
-        && mf tag -q "$(scoped "mfr_path ->* \"$2\"")" "$3" "$TAG" >/dev/null
+        && mf tag -q "$(mf_gui_scoped "mfr_path ->* \"$2\"")" "$3" "$TAG" >/dev/null
 }
 
 # Subtrees that are settled: a folder answered yes/no (its whole subtree took

@@ -113,7 +113,10 @@ assert "mixed: the sub dir is tagged" has_tag "$SUB" mixtag
 assert "mixed: a file inside the 'yes' sub dir is tagged" has_tag "$INNER" mixtag
 
 # ── gui-tag-pair: y then n over the two files ────────────────────────────────
+# The GUI shows everything (the empty query), which is the scope this walk had
+# before the query became its boundary: every file of the repository.
 hy_reset
+hy_query ''
 hy_prompt ptag
 hy_input y n
 bash "$PAIR" >/dev/null 2>&1

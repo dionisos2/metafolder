@@ -161,6 +161,50 @@ mf_gui_path_uuid() { # <treepath>
     mf metarecord -q "mfr_path = \"$(mf_gui_query_path "$1")\"" get | head -n1
 }
 
+# ── The scope of a script that acts on a set ─────────────────────────────────
+# A shipped script that acts on several metarecords takes that set as a *query*
+# (spec-gui "A query is the scope"), and the query is the boundary: an operation
+# on a folder's subtree is intersected with it, so a metarecord the query
+# excludes is never touched.
+
+# The scope to use when the script was given no query: what the GUI is showing
+# (`mf gui query` — the checkbox selection, else the list's query with its
+# finder narrowing), else a folder chosen from the completion, turned into the
+# inclusive-subtree query `mfr_path =>* "<folder>"`.
+#
+# Prints the query (an EMPTY line means every metarecord — a real answer, not a
+# failure) and returns non-zero when the user cancels the folder prompt.
+#
+# Call it BEFORE mf_gui_session_open: `mf gui query` answers for the focused
+# workspace, and the scratch workspace the session opens publishes nothing.
+mf_gui_default_scope() { # [<folder prompt>]
+    local scope folder
+    if scope=$(mf gui query 2>/dev/null); then
+        printf '%s' "$scope"
+        return 0
+    fi
+    folder=$(mf_gui_prompt_folder "${1:-Folder: }") || return 1
+    [ -n "$folder" ] || return 1
+    printf 'mfr_path =>* "%s"' "$(mf_gui_query_path "$folder")"
+}
+
+# `mf metarecord … get` over $SCOPE. An empty scope is the whole repository and
+# must be spelled by *omitting* the selector: `-q ""` is not a query (the DSL
+# rejects an empty predicate).
+mf_gui_scope_get() { # <get args...>
+    if [ -z "${SCOPE:-}" ]; then
+        mf metarecord get "$@"
+    else
+        mf metarecord -q "$SCOPE" get "$@"
+    fi
+}
+
+# Narrow a predicate to $SCOPE. An empty scope is every metarecord, so it is
+# left alone rather than wrapped — `() AND …` is not a query.
+mf_gui_scoped() { # <predicate>
+    if [ -z "${SCOPE:-}" ]; then printf '%s' "$1"; else printf '(%s) AND %s' "$SCOPE" "$1"; fi
+}
+
 # Update this script's entry in the GUI task bar (spec-gui "Scripting"): a
 # determinate progress bar with --done/--total, and/or a --phase label for the
 # current step. A no-op outside the GUI (METAFOLDER_GUI_TASK unset) and never

@@ -1,8 +1,9 @@
 #!/usr/bin/env bash
 # Summary: Interactive yes/no tagging of one tag across all files.
-# Interactive y/n tagging for ONE tag over a repository's files, in the running
-# metafolder GUI. Asks for a tag (autocompleting over the existing vocabulary),
-# then walks every file with no opinion on it yet, shows it, and waits for a key:
+# Interactive y/n tagging for ONE tag over a set of files, in the running
+# metafolder GUI. Takes a tag (autocompleting over the existing vocabulary) and
+# a QUERY as the scope, then walks every file of that scope with no opinion on
+# the tag yet, shows it, and waits for a key:
 #
 #   y / →  -> the file HAS the tag      (mf tag add)
 #   n / ←  -> the file does NOT have it (mf tag deny)
@@ -14,7 +15,15 @@
 # Files already referencing the tag either way are excluded, so it is resumable.
 # Skipped files come back on the next run.
 #
-# Usage: gui-tag-pair.sh
+# THE QUERY IS THE SCOPE (spec-gui "A query is the scope"), as in
+# gui-tag-folder.sh: given as the argument, else what the GUI shows
+# (`mf gui query`), else a folder chosen from the completion. An empty query is
+# every file, which is what this script used to do unconditionally.
+#
+# Both arguments are optional: a missing tag is asked in the GUI with
+# completion over the vocabulary, a missing query resolved as above.
+#
+# Usage: gui-tag-pair.sh [<tag> [<query>]]
 
 set -euo pipefail
 
@@ -22,12 +31,29 @@ HERE=$(cd "$(dirname "$0")" && pwd)
 # shellcheck source=lib/mf-gui.sh
 source "$HERE/lib/mf-gui.sh"
 
+[ $# -le 2 ] || mf_die "usage: $0 [<tag> [<query>]]"
+TAG=${1:-}
+QUERY_GIVEN=0
+[ $# -ge 2 ] && QUERY_GIVEN=1
+QUERY_ARG=${2-}
+
 mf_gui_bind_repo
 
-# Ask for the tag, completing over the existing vocabulary.
-TAG=$(mf_gui_prompt_tag "Tag name: ") || mf_die "cancelled"
+# The tag: from the command line, or completed over the existing vocabulary.
+[ -n "$TAG" ] || TAG=$(mf_gui_prompt_tag "Tag name: ") || mf_die "cancelled"
 [ -n "$TAG" ] || mf_die "empty tag name"
 case $TAG in *\"*) mf_die "tag names must not contain double quotes" ;; esac
+
+# The scope, resolved before the session takeover (the scratch workspace it
+# opens publishes nothing).
+# SCOPE is read by mf_gui_scoped / mf_gui_scope_get, in lib/mf-gui.sh (a
+# sourced file this check does not follow from here).
+# shellcheck disable=SC2034
+if [ "$QUERY_GIVEN" = 1 ]; then
+    SCOPE=$QUERY_ARG
+else
+    SCOPE=$(mf_gui_default_scope "Folder: ") || mf_die "cancelled"
+fi
 
 mf_gui_session_open metarecord-detail
 
@@ -37,10 +63,10 @@ mf_gui_session_open metarecord-detail
 # "no opinion"; `mf tag add` creates the entry (and its ancestor chain) on apply.
 TAG_COND="(mf_schema = \"tag\" AND path = \"$TAG\")"
 
-# Files with no opinion on this tag yet (NOT() is a complement, so files where
-# tag/negative_tag are unknown are included).
-PREDICATE="mfr_path IS PRESENT AND mfr_type = \"file\" \
-AND NOT (tag -> $TAG_COND OR negative_tag -> $TAG_COND)"
+# Files of the scope with no opinion on this tag yet (NOT() is a complement, so
+# files where tag/negative_tag are unknown are included).
+PREDICATE=$(mf_gui_scoped "mfr_path IS PRESENT AND mfr_type = \"file\" \
+AND NOT (tag -> $TAG_COND OR negative_tag -> $TAG_COND)")
 
 # Collect the whole worklist up front so the progress indicator has a total.
 mapfile -t uuids < <(mf metarecord -q "$PREDICATE" get)
