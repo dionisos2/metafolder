@@ -55,9 +55,18 @@ pub async fn complete(line_to_cursor: &str) -> Result<Completion, String> {
         return Err("bash completion failed".to_string());
     }
 
-    // NUL-separated (filenames may contain newlines): the completed word
-    // first, then the candidates, deduplicated preserving bash's order.
-    let stdout = String::from_utf8_lossy(&output.stdout);
+    Ok(parse_output(&String::from_utf8_lossy(&output.stdout)))
+}
+
+/// Parses the harness's NUL-separated output (filenames may contain newlines):
+/// the completed word first, then the candidates, deduplicated preserving
+/// bash's order and capped at [`MAX_CANDIDATES`].
+///
+/// Split out from [`complete`] so the capping and de-duplication can be tested
+/// on a string. Exercising them through a real `bash` meant creating hundreds
+/// of files and racing the 3-second [`TIMEOUT`], which made the test fail under
+/// a loaded machine while testing nothing about bash.
+fn parse_output(stdout: &str) -> Completion {
     let mut parts = stdout.split('\0');
     let word = parts.next().unwrap_or("").to_string();
     let mut candidates: Vec<String> = Vec::new();
@@ -69,7 +78,7 @@ pub async fn complete(line_to_cursor: &str) -> Result<Completion, String> {
             break;
         }
     }
-    Ok(Completion { word, candidates })
+    Completion { word, candidates }
 }
 
 #[tauri::command]
@@ -228,14 +237,31 @@ mod tests {
         assert!(completion.candidates.is_empty());
     }
 
-    #[tokio::test]
-    async fn test_candidates_are_capped() {
-        let dir = tempfile::tempdir().unwrap();
+    #[test]
+    fn test_candidates_are_capped() {
+        let mut out = String::from("f");
         for i in 0..(MAX_CANDIDATES + 50) {
-            std::fs::write(dir.path().join(format!("f{i:04}")), "").unwrap();
+            out.push('\0');
+            out.push_str(&format!("f{i:04}"));
         }
-        let base = dir.path().to_str().unwrap();
-        let completion = complete(&format!("cat {base}/f")).await.unwrap();
+        let completion = parse_output(&out);
+        assert_eq!(completion.word, "f");
         assert_eq!(completion.candidates.len(), MAX_CANDIDATES);
+        assert_eq!(completion.candidates[0], "f0000", "bash's order is preserved");
+    }
+
+    #[test]
+    fn test_duplicate_candidates_are_dropped_and_empties_ignored() {
+        let completion = parse_output("wo\0one\0two\0one\0\0three");
+        assert_eq!(completion.word, "wo");
+        assert_eq!(completion.candidates, vec!["one", "two", "three"]);
+    }
+
+    /// A filename may contain a newline, which is why the harness separates on
+    /// NUL — the parser must carry such a name through untouched.
+    #[test]
+    fn test_a_candidate_may_contain_a_newline() {
+        let completion = parse_output("a\0a\nb");
+        assert_eq!(completion.candidates, vec!["a\nb"]);
     }
 }
