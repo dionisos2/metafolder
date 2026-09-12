@@ -2047,3 +2047,199 @@ fn test_the_order_rename_leaves_a_repository_that_already_uses_the_new_name_alon
     assert_eq!(named(&conn, "field", LEGACY_DIR), 0, "the free rename still happens");
     assert_eq!(named(&conn, "field", order::FIELD_DIR), 1);
 }
+
+// ── No duplicate rows (spec-data-model "No duplicate rows") ───────────────────
+
+fn s(v: &str) -> Value {
+    Value::String(v.to_string())
+}
+
+/// The values of `name` on `uuid`, in row order.
+fn values_of(conn: &Connection, uuid: Uuid, name: &str) -> Vec<Value> {
+    db::get_field_rows_named(conn, uuid, name).unwrap().into_iter().map(|r| r.value).collect()
+}
+
+fn count(conn: &Connection, sql: &str) -> i64 {
+    conn.query_row(sql, [], |r| r.get(0)).unwrap()
+}
+
+#[test]
+fn test_append_of_an_identical_field_is_a_no_op() {
+    let mut conn = test_conn();
+    let m = create(&mut conn, vec![Field::new("tag", s("jazz"))]);
+    let existing_id = m.fields[0].id.unwrap();
+    let revisions = count(&conn, "SELECT COUNT(*) FROM revision");
+
+    let mut w = Writer::begin(&mut conn, None).unwrap();
+    let id = w.append_field(m.uuid, "tag", s("jazz")).unwrap().id();
+    w.commit().unwrap();
+
+    assert_eq!(id, existing_id, "the row that already holds the value is returned");
+    assert_eq!(values_of(&conn, m.uuid, "tag"), vec![s("jazz")]);
+    let got = db::get_metarecord(&conn, m.uuid).unwrap().unwrap();
+    assert_eq!(got.version, 0, "a no-op must not bump the version");
+    assert_eq!(
+        count(&conn, "SELECT COUNT(*) FROM operation WHERE op_type = 'append_field'"),
+        0,
+        "a no-op must not be logged"
+    );
+    assert_eq!(count(&conn, "SELECT COUNT(*) FROM revision"), revisions, "no empty revision");
+}
+
+#[test]
+fn test_append_of_an_identical_nothing_is_a_no_op() {
+    let mut conn = test_conn();
+    let m = create(&mut conn, vec![Field::new("note", Value::Nothing)]);
+
+    let mut w = Writer::begin(&mut conn, None).unwrap();
+    w.append_field(m.uuid, "note", Value::Nothing).unwrap();
+    w.commit().unwrap();
+
+    assert_eq!(values_of(&conn, m.uuid, "note"), vec![Value::Nothing]);
+}
+
+#[test]
+fn test_append_of_a_different_value_still_appends() {
+    let mut conn = test_conn();
+    let m = create(&mut conn, vec![Field::new("tag", s("jazz"))]);
+
+    let mut w = Writer::begin(&mut conn, None).unwrap();
+    w.append_field(m.uuid, "tag", s("live")).unwrap();
+    w.commit().unwrap();
+
+    assert_eq!(values_of(&conn, m.uuid, "tag"), vec![s("jazz"), s("live")]);
+}
+
+#[test]
+fn test_set_field_multi_collapses_repeated_values() {
+    let mut conn = test_conn();
+    let m = create(&mut conn, vec![]);
+
+    let mut w = Writer::begin(&mut conn, None).unwrap();
+    w.set_field_multi(m.uuid, "tag", vec![s("a"), s("b"), s("a")]).unwrap();
+    w.commit().unwrap();
+
+    assert_eq!(values_of(&conn, m.uuid, "tag"), vec![s("a"), s("b")], "first occurrence wins");
+}
+
+#[test]
+fn test_create_collapses_repeated_fields() {
+    let mut conn = test_conn();
+    let m = create(
+        &mut conn,
+        vec![
+            Field::new("tag", s("a")),
+            Field::new("tag", s("b")),
+            Field::new("tag", s("a")),
+            Field::new("note", s("a")),
+        ],
+    );
+
+    assert_eq!(values_of(&conn, m.uuid, "tag"), vec![s("a"), s("b")]);
+    assert_eq!(values_of(&conn, m.uuid, "note"), vec![s("a")], "another name is another row");
+    assert_eq!(m.fields.len(), 3, "the returned record mirrors what was stored");
+}
+
+#[test]
+fn test_set_record_collapses_repeated_fields() {
+    let mut conn = test_conn();
+    let m = create(&mut conn, vec![Field::new("tag", s("old"))]);
+
+    let mut w = Writer::begin(&mut conn, None).unwrap();
+    w.set_record(m.uuid, vec![Field::new("tag", s("a")), Field::new("tag", s("a"))]).unwrap();
+    w.commit().unwrap();
+
+    assert_eq!(values_of(&conn, m.uuid, "tag"), vec![s("a")]);
+}
+
+#[test]
+fn test_by_id_edit_that_would_duplicate_a_sibling_is_rejected() {
+    let mut conn = test_conn();
+    let m = create(&mut conn, vec![Field::new("tag", s("jazz")), Field::new("tag", s("live"))]);
+    let live = m.fields[1].id.unwrap();
+
+    let mut w = Writer::begin(&mut conn, None).unwrap();
+    let err = w.replace_field(m.uuid, live, s("jazz")).unwrap_err();
+    assert!(err.to_string().to_lowercase().contains("duplicate"), "got: {err}");
+    drop(w);
+
+    // A rename onto a name that already holds the value is refused the same way.
+    let mut w = Writer::begin(&mut conn, None).unwrap();
+    let jazz = m.fields[0].id.unwrap();
+    w.append_field(m.uuid, "style", s("jazz")).unwrap();
+    let err = w.rename_field(m.uuid, jazz, "style", s("jazz")).unwrap_err();
+    assert!(err.to_string().to_lowercase().contains("duplicate"), "got: {err}");
+    drop(w);
+
+    // Both rows are still there, untouched.
+    assert_eq!(values_of(&conn, m.uuid, "tag"), vec![s("jazz"), s("live")]);
+}
+
+#[test]
+fn test_retype_collapses_rows_that_convert_to_the_same_value() {
+    use metafolder_core::metarecord::FieldType;
+
+    let mut conn = test_conn();
+    let m = create(&mut conn, vec![Field::new("n", s("1")), Field::new("n", s("01"))]);
+
+    let mut w = Writer::begin(&mut conn, None).unwrap();
+    w.retype_field("n", FieldType::Int).unwrap();
+    w.commit().unwrap();
+
+    assert_eq!(values_of(&conn, m.uuid, "n"), vec![Value::Int(1)], "two values became one row");
+}
+
+/// Simulates a repository written before the no-duplicate rule: the marker the
+/// migration leaves behind is removed, and a duplicate row is inserted by hand.
+fn downgrade_to_duplicates_allowed(conn: &Connection, uuid: Uuid, name: &str) {
+    conn.execute("DELETE FROM migration_state WHERE name = 'dedup-field-rows'", []).unwrap();
+    conn.execute(
+        "INSERT INTO field (metarecord_uuid, field_name, value_type, value_text)
+         SELECT metarecord_uuid, field_name, value_type, value_text FROM field
+          WHERE metarecord_uuid = ?1 AND field_name = ?2",
+        rusqlite::params![uuid.as_bytes().as_slice(), name],
+    )
+    .unwrap();
+}
+
+#[test]
+fn test_an_existing_repository_drops_duplicate_rows_on_open() {
+    let dir = common::TempDir::new("migrate-duplicate-rows");
+    let path = dir.path().join("db.sqlite");
+
+    let mut conn = db::open_database(&path, "test").unwrap();
+    db::init_schema(&conn).unwrap();
+    let m = create(&mut conn, vec![Field::new("tag", s("jazz")), Field::new("tag", s("live"))]);
+    let kept: Vec<i64> =
+        db::get_field_rows_named(&conn, m.uuid, "tag").unwrap().into_iter().map(|r| r.id).collect();
+    downgrade_to_duplicates_allowed(&conn, m.uuid, "tag");
+    assert_eq!(count(&conn, "SELECT COUNT(*) FROM field WHERE field_name = 'tag'"), 4);
+    drop(conn);
+
+    // Opening it deduplicates, keeping the lowest id of each group.
+    let conn = db::open_database(&path, "test").unwrap();
+    let rows: Vec<i64> =
+        db::get_field_rows_named(&conn, m.uuid, "tag").unwrap().into_iter().map(|r| r.id).collect();
+    assert_eq!(rows, kept, "the first row of each value survives");
+    assert_eq!(values_of(&conn, m.uuid, "tag"), vec![s("jazz"), s("live")]);
+    // The FTS pre-filter follows the rows it indexes.
+    assert_eq!(count(&conn, "SELECT COUNT(*) FROM field_text"), 2);
+    // ...and the pass records itself, so no later open re-scans `field`.
+    assert_eq!(
+        count(&conn, "SELECT COUNT(*) FROM migration_state WHERE name = 'dedup-field-rows'"),
+        1
+    );
+}
+
+#[test]
+fn test_a_fresh_repository_is_marked_deduplicated_without_a_scan() {
+    let dir = common::TempDir::new("fresh-duplicate-marker");
+    let path = dir.path().join("db.sqlite");
+    let conn = db::open_database(&path, "test").unwrap();
+    db::init_schema(&conn).unwrap();
+    assert_eq!(
+        count(&conn, "SELECT COUNT(*) FROM migration_state WHERE name = 'dedup-field-rows'"),
+        1,
+        "a database that cannot hold duplicates is marked done straight away"
+    );
+}

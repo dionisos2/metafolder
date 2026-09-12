@@ -296,6 +296,47 @@ type is reachable from every other.
   write (parent must exist, no cycle, depth ≤ 1000); a value that would violate
   it falls back to =Nothing= (recorded in the summary) rather than aborting the
   whole retype, so one bad path never blocks the rest.
+- A converted value that becomes equal to another row of the same name on the
+  same metarecord *drops* that row instead of duplicating it (see [[*No duplicate
+  rows]]): two values that the conversion made one are one row afterwards.
+
+** No duplicate rows
+
+A metarecord never holds two field rows with the *same name and the same value*.
+The multi-map is a *set* of =(name, value)= pairs, not a bag: several =tag= rows
+are allowed because their values differ, but the same tag twice says nothing the
+first row does not already say.
+
+Every write enforces this by *collapsing*, never by failing:
+
+- *append* (=POST …/metarecords/:uuid/fields=, =POST /query/fields/append=) of a
+  value the metarecord already carries under that name is a *no-op*: no row, no
+  =version= bump, no logged operation. The metarecord is returned unchanged, and
+  the =updated= count of the set form counts only the metarecords that actually
+  gained a row.
+- *set* (=PUT …/fields/:name= with =values=, =POST /query/fields/set=) and the
+  *whole-record* writes (=POST /metarecords=, =PUT …/metarecords/:uuid=) keep the
+  first occurrence of each value and drop the later ones, in the order given.
+- a *retype* whose conversion makes a row equal to a sibling row of the same name
+  drops that row (the two values became one).
+
+The single exception is the *by-id* edit (=PATCH /repos/:repo_uuid/fields/:id=,
+=mf field set <id>=): it names one specific row, so turning it into the twin of a
+sibling is rejected with =400= instead of silently deleting the row the client
+just addressed.
+
+=Nothing= is a value like any other here: a field holds at most one =Nothing=
+row. The unknown/absent distinction is untouched.
+
+*Log navigation is exempt*: rollback and revert restore the exact rows a snapshot
+recorded, ids included, so a revision written before this rule is returned to
+faithfully (and a duplicate it recorded comes back with it).
+
+Repositories written before this rule are deduplicated *once*, at their first
+open under it: the lowest row id of each =(metarecord, name, value)= group is
+kept, outside the event log (a migration is not a revision). The pass records
+itself in =migration_state= so no later open re-scans the =field= table
+(see [[*SQLite Schema]]).
 
 ** Reserved fields
 
@@ -453,7 +494,20 @@ CREATE INDEX idx_field_reverse      ON field(field_name, value_uuid, value_ref_r
     WHERE value_type IN ('ref', 'externalref');
 CREATE UNIQUE INDEX idx_field_tree  ON field(field_name, value_uuid, value_name_bytes)
     WHERE value_type = 'tree_ref';
+
+-- One-shot migrations that cannot be made into a cheap probe record themselves
+-- here, so that opening a repository keeps doing no schema work
+-- (see [[*No duplicate rows]]).
+CREATE TABLE migration_state (
+    name     TEXT PRIMARY KEY NOT NULL,
+    done_at  TEXT NOT NULL                -- ISO-8601 UTC
+);
 #+END_SRC
+
+There is deliberately *no* unique index over the value columns to enforce
+[[*No duplicate rows]]: it would index every field row a second time, by its whole
+value, roughly doubling the database — for an invariant the write path already
+holds (it reads the rows of =(metarecord, name)= before writing them anyway).
 
 ** Pagination
 
@@ -623,7 +677,9 @@ Deletes the metarecord and all its fields (one =DeleteRecord= op). =204=.
 
 Appends one row without touching existing rows of that name (multi-map append).
 Body ={"name", "value", "force"?}= → updated full object. Protected name without
-=force= → =400=.
+=force= → =400=. Appending a value the metarecord already holds under that name
+is a no-op (see [[*No duplicate rows]]): the record comes back unchanged, same
+=version=, and nothing is logged.
 
 *** =GET|PUT|DELETE /repos/:repo_uuid/metarecords/:uuid/fields/:name=
 
@@ -661,6 +717,8 @@ path — the id alone addresses it). =404= if the id is unknown.
 - =GET= → the row: ={"id", "name", "value"}=.
 - =PATCH= → change its *name and/or value* in place, keeping the id; the value
   type is validated against the (target) field name. Body ={"name"?, "value"?, "force"?}=.
+  =400= if the result would duplicate another row of the same name on that
+  metarecord (see [[*No duplicate rows]]).
 - =DELETE= → remove the row. Body ={"force"?}=, =204=.
 
 *** =POST /repos/:repo_uuid/retype=
@@ -999,7 +1057,9 @@ Operates on a single field row by its DB id (as shown by =mf metarecord get=):
 - =get <id>= — prints the row (JSON);
 - =set <id> <spec>= — sets the row to the field spec's name and value in place,
   *keeping its id*; a differing name renames the row, and the value type is
-  validated against the (target) field name's established type;
+  validated against the (target) field name's established type. Refused (=400=)
+  when the result would duplicate another row of that name on the same
+  metarecord (see [[*No duplicate rows]]);
 - =delete <id>= — removes the row.
 
 There is no =mf field add=: new rows are born at the name level (=mf metarecord
@@ -1015,7 +1075,7 @@ the log shows and rollback reverses:
 | =metarecord add= / =delete=   | one =CreateRecord= / =DeleteRecord=           |
 | =metarecord set=              | one =SetRecord= (all fields before→after)     |
 | =field set <name>= (n values) | one =SetField= (all rows of the name)         |
-| =field add=                   | one =AppendField=                             |
+| =field add=                   | one =AppendField= (none if the value is already there) |
 | =field delete= (by value)     | one =DeleteField= (the removed rows)          |
 | =field unset=                 | one =DeleteField= (all rows of the name)      |
 | =field set <id>= / =delete=   | one row-scoped op (keeps the row id)          |

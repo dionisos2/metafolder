@@ -83,7 +83,7 @@ fn test_revert_of_an_append_then_delete_of_the_same_row() {
 
     let rev = {
         let mut w = Writer::begin(&mut conn, None).unwrap();
-        let id = w.append_field(uuid, "tag", Value::String("doomed".into())).unwrap();
+        let id = w.append_field(uuid, "tag", Value::String("doomed".into())).unwrap().id();
         w.delete_field(uuid, id).unwrap();
         let rev = w.rev_id();
         w.commit().unwrap();

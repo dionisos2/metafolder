@@ -1495,6 +1495,9 @@ impl<'c> Writer<'c> {
         uuid: Uuid,
         fields: Vec<Field>,
     ) -> Result<MetaRecord> {
+        // Repeated (name, value) pairs are written once (spec-data-model
+        // "No duplicate rows"); the record returned mirrors what is stored.
+        let fields = collapse_duplicate_fields(fields);
         for f in &fields {
             self.validate_tree_ref(uuid, &f.name, &f.value)?;
         }
@@ -1536,6 +1539,7 @@ impl<'c> Writer<'c> {
     /// new set) — the whole-record analogue of create/delete. Literal overwrite:
     /// every old row is dropped, including reserved ones not in `fields`.
     pub fn set_record(&mut self, uuid: Uuid, fields: Vec<Field>) -> Result<MetaRecord> {
+        let fields = collapse_duplicate_fields(fields); // spec-data-model "No duplicate rows"
         let version_before = self.bump_version(uuid)?; // errors NotFound if absent
         let before = db::get_field_rows(&self.tx, uuid)?;
         db::delete_field_text_by_metarecord(&self.tx, uuid)?;
@@ -1601,10 +1605,13 @@ impl<'c> Writer<'c> {
         self.set_field_multi_as(OpType::SetField, uuid, name, values).map(|_| ())
     }
 
-    /// [`Self::set_field_multi`] under a chosen op type, returning the new row
-    /// ids in insertion order. A revert needs both: the watcher types when it
-    /// undoes a file event (spec-event-log "Revert content"), and the ids to
-    /// remap the row-scoped inverses that follow it.
+    /// [`Self::set_field_multi`] under a chosen op type, returning one row id
+    /// per *given* value, in order. A revert needs both: the watcher types when
+    /// it undoes a file event (spec-event-log "Revert content"), and the ids to
+    /// remap the row-scoped inverses that follow it — so a repeated value, which
+    /// is collapsed to a single row (spec-data-model "No duplicate rows"),
+    /// reports the id of the row that swallowed it rather than shifting the
+    /// caller's pairing.
     pub fn set_field_multi_as(
         &mut self,
         op_type: OpType,
@@ -1616,6 +1623,9 @@ impl<'c> Writer<'c> {
             self.validate_tree_ref(uuid, name, value)?;
             self.validate_value_type(name, value)?;
         }
+        // Each value is written once; a repeat points back at its first
+        // occurrence so the returned ids still pair with `values`.
+        let (kept, slot) = collapse_duplicates(&values);
         let version_before = self.bump_version(uuid)?;
         let before = db::get_field_rows_named(&self.tx, uuid, name)?;
         db::delete_field_text_by_name(&self.tx, uuid, name)?;
@@ -1623,12 +1633,12 @@ impl<'c> Writer<'c> {
             .prepare_cached("DELETE FROM field WHERE metarecord_uuid = ?1 AND field_name = ?2")?
             .execute(params![db::uuid_to_bytes(uuid), name])?;
         let cleared_to_nothing = values.iter().all(|v| matches!(v, Value::Nothing));
-        let mut after = Vec::with_capacity(values.len());
-        for value in values {
+        let mut after = Vec::with_capacity(kept.len());
+        for value in kept {
             let id = db::insert_field_row(&self.tx, uuid, name, &value, None)?;
             after.push(FieldRow { id, name: name.to_string(), value });
         }
-        let ids = after.iter().map(|r| r.id).collect();
+        let ids = slot.iter().map(|&i| after[i].id).collect();
         self.log_op(op_type, uuid, Some(name), Some(version_before), before, after)?;
         if cleared_to_nothing {
             // No non-Nothing row remains: the type may have unlocked.
@@ -1638,15 +1648,21 @@ impl<'c> Writer<'c> {
     }
 
     /// Appends one row without touching existing rows of that name.
-    /// Returns the new field row id.
-    pub fn append_field(&mut self, uuid: Uuid, name: &str, value: Value) -> Result<i64> {
+    /// A value the metarecord already holds under that name is *not* appended
+    /// again (spec-data-model "No duplicate rows"): nothing is written, nothing
+    /// is logged, the version does not move, and the row that already holds it
+    /// is reported as [`Appended::AlreadyPresent`].
+    pub fn append_field(&mut self, uuid: Uuid, name: &str, value: Value) -> Result<Appended> {
         self.validate_tree_ref(uuid, name, &value)?;
         self.validate_value_type(name, &value)?;
+        if let Some(existing) = db::duplicate_row_id(&self.tx, uuid, name, &value)? {
+            return Ok(Appended::AlreadyPresent(existing));
+        }
         let version_before = self.bump_version(uuid)?;
         let id = db::insert_field_row(&self.tx, uuid, name, &value, None)?;
         let after = vec![FieldRow { id, name: name.to_string(), value }];
         self.log_op(OpType::AppendField, uuid, Some(name), Some(version_before), vec![], after)?;
-        Ok(id)
+        Ok(Appended::Created(id))
     }
 
     /// Replaces the single row identified by `field_id`, keeping its row id.
@@ -1658,7 +1674,37 @@ impl<'c> Writer<'c> {
         let name = old.name.clone();
         self.validate_tree_ref(uuid, &name, &value)?;
         self.validate_value_type(&name, &value)?;
+        self.reject_duplicate(uuid, field_id, &name, &value)?;
         self.replace_owned_row(uuid, old, &name, value)
+    }
+
+    /// A by-id edit names one specific row, so turning it into the twin of a
+    /// sibling is refused rather than silently dropping the row the caller just
+    /// addressed (spec-data-model "No duplicate rows"). The row being edited is
+    /// not its own twin.
+    fn reject_duplicate(&self, uuid: Uuid, field_id: i64, name: &str, value: &Value) -> Result<()> {
+        match self.twin_row(uuid, field_id, name, value)? {
+            Some(id) => Err(DomainError::BadRequest(format!(
+                "duplicate value for field '{name}': row {id} of {uuid} already holds it"
+            ))
+            .into()),
+            None => Ok(()),
+        }
+    }
+
+    /// The id of *another* row of `(uuid, name)` already holding `value`, if
+    /// any — what makes the row `field_id` a duplicate.
+    fn twin_row(
+        &self,
+        uuid: Uuid,
+        field_id: i64,
+        name: &str,
+        value: &Value,
+    ) -> Result<Option<i64>> {
+        Ok(db::get_field_rows_named(&self.tx, uuid, name)?
+            .into_iter()
+            .find(|r| r.id != field_id && &r.value == value)
+            .map(|r| r.id))
     }
 
     /// Changes a field row's *name and/or value* in place, keeping its id — the
@@ -1674,6 +1720,7 @@ impl<'c> Writer<'c> {
         let old = self.get_owned_row(uuid, field_id)?;
         self.validate_tree_ref(uuid, new_name, &value)?;
         self.validate_value_type(new_name, &value)?;
+        self.reject_duplicate(uuid, field_id, new_name, &value)?;
         self.replace_owned_row(uuid, old, new_name, value)
     }
 
@@ -1756,7 +1803,15 @@ impl<'c> Writer<'c> {
                     fallback.insert(uuid);
                 }
                 let name = row.name.clone();
-                self.replace_owned_row(uuid, row, &name, new_value)?;
+                // Two values the conversion made equal are one row afterwards,
+                // not a duplicate (spec-data-model "No duplicate rows"). The
+                // probe reads the transaction's own state, so rows converted
+                // earlier in this pass count as siblings.
+                if self.twin_row(uuid, row.id, &name, &new_value)?.is_some() {
+                    self.delete_field(uuid, row.id)?;
+                } else {
+                    self.replace_owned_row(uuid, row, &name, new_value)?;
+                }
                 converted += 1;
             }
         }
@@ -2092,6 +2147,61 @@ impl<'c> Writer<'c> {
         }
         Ok(())
     }
+}
+
+/// The outcome of [`Writer::append_field`]: either the row it wrote, or the row
+/// that already held the value — in which case the append was a no-op
+/// (spec-data-model "No duplicate rows").
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Appended {
+    Created(i64),
+    AlreadyPresent(i64),
+}
+
+impl Appended {
+    /// The id of the row holding the value, written now or already there.
+    pub fn id(self) -> i64 {
+        match self {
+            Appended::Created(id) | Appended::AlreadyPresent(id) => id,
+        }
+    }
+
+    /// Whether a row was actually written.
+    pub fn created(self) -> bool {
+        matches!(self, Appended::Created(_))
+    }
+}
+
+// ── Duplicate collapsing (spec-data-model "No duplicate rows") ───────────────
+
+/// Splits `values` into the values actually to be written (first occurrence of
+/// each) and, for every given value, the index of the kept value that stands
+/// for it. `(["a", "b", "a"])` → `(["a", "b"], [0, 1, 0])`.
+fn collapse_duplicates(values: &[Value]) -> (Vec<Value>, Vec<usize>) {
+    let mut kept: Vec<Value> = Vec::with_capacity(values.len());
+    let mut slot = Vec::with_capacity(values.len());
+    for value in values {
+        match kept.iter().position(|k| k == value) {
+            Some(i) => slot.push(i),
+            None => {
+                slot.push(kept.len());
+                kept.push(value.clone());
+            }
+        }
+    }
+    (kept, slot)
+}
+
+/// The fields to write for a whole-record write: the first occurrence of each
+/// `(name, value)` pair, in the order given.
+fn collapse_duplicate_fields(fields: Vec<Field>) -> Vec<Field> {
+    let mut kept: Vec<Field> = Vec::with_capacity(fields.len());
+    for f in fields {
+        if !kept.iter().any(|k| k.name == f.name && k.value == f.value) {
+            kept.push(f);
+        }
+    }
+    kept
 }
 
 #[cfg(test)]

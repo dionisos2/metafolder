@@ -230,11 +230,11 @@ pub fn apply(writer: &mut Writer, ops: &[OpRow]) -> Result<usize> {
             "delete_metarecord" => {
                 let record =
                     writer.create_metarecord_with_uuid(op.entity_uuid, rows_to_fields(&before))?;
-                remember(&mut remap, &before, record.fields.iter().filter_map(|f| f.id));
+                remember_fields(&mut remap, &before, &record.fields);
             }
             "set_metarecord" => {
                 let record = writer.set_record(op.entity_uuid, rows_to_fields(&before))?;
-                remember(&mut remap, &before, record.fields.iter().filter_map(|f| f.id));
+                remember_fields(&mut remap, &before, &record.fields);
             }
             "append_field" => {
                 // The row this operation added — under whatever id it carries now.
@@ -244,7 +244,8 @@ pub fn apply(writer: &mut Writer, ops: &[OpRow]) -> Result<usize> {
             }
             "delete_field" => {
                 let Some(row) = before.first() else { continue };
-                let new_id = writer.append_field(op.entity_uuid, &row.name, row.value.clone())?;
+                let new_id =
+                    writer.append_field(op.entity_uuid, &row.name, row.value.clone())?.id();
                 remap.insert(row.id, new_id);
             }
             "unknown" => {
@@ -287,5 +288,19 @@ fn rows_to_fields(rows: &[FieldRow]) -> Vec<Field> {
 fn remember(remap: &mut HashMap<i64, i64>, old: &[FieldRow], new: impl Iterator<Item = i64>) {
     for (row, id) in old.iter().zip(new) {
         remap.insert(row.id, id);
+    }
+}
+
+/// The whole-record form of [`remember`]: pairs each snapshot row with the
+/// written field carrying the same `(name, value)` rather than by position,
+/// because a whole-record write collapses repeated pairs (spec-data-model "No
+/// duplicate rows") — two rows a pre-rule revision recorded as duplicates then
+/// map onto the single row that stands for both.
+fn remember_fields(remap: &mut HashMap<i64, i64>, old: &[FieldRow], new: &[Field]) {
+    for row in old {
+        let written = new.iter().find(|f| f.name == row.name && f.value == row.value);
+        if let Some(id) = written.and_then(|f| f.id) {
+            remap.insert(row.id, id);
+        }
     }
 }

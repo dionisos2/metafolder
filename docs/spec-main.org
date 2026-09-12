@@ -61,6 +61,12 @@ reconcile, observable queries, the task registry — are part of version 1.
   =mfr_path= field is set to =Nothing= rather than deleting the row.
 - =set_field= replaces *all* rows for =(uuid, field_name)=, collapsing multi-map
   fields to a single value.
+- A metarecord never holds two field rows with the same =(name, value)=: the
+  multi-map is a set of pairs, not a bag. Appending a value a metarecord already
+  has is a no-op (no row, no version bump, nothing logged), and a multi-valued or
+  whole-record write keeps the first occurrence of each value. Log navigation is
+  exempt — it restores what a snapshot recorded (see spec-data-model "No
+  duplicate rows").
 - Cross-repo sync state (links and snapshots) lives outside the data model,
   in per-pair sync databases under =.metafolder/internal/=; it is never
   recorded in the event log and can only be modified when both repositories

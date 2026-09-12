@@ -1104,3 +1104,57 @@ async fn test_query_sort_on_tree_ref_uses_the_full_path() {
 
     std::fs::remove_dir_all(root).unwrap();
 }
+
+/// spec-data-model "No duplicate rows": appending a value a match already holds
+/// changes nothing and is not counted.
+#[tokio::test]
+async fn test_batch_append_of_an_existing_value_is_a_no_op() {
+    let (app, repo, _root) = setup("append_dup").await;
+    for genre in ["jazz", "jazz", "rock"] {
+        create(
+            &app,
+            &repo,
+            json!([{"name": "genre", "value": {"type": "string", "value": genre}}]),
+        )
+        .await;
+    }
+    let append = |value: &'static str| {
+        let app = app.clone();
+        let repo = repo.clone();
+        async move {
+            request(
+                &app,
+                "POST",
+                &format!("/repos/{repo}/query/fields/append"),
+                Some(json!({
+                    "query": {"type": "is_present", "field": "genre"},
+                    "name": "tag",
+                    "value": {"type": "string", "value": value}
+                })),
+            )
+            .await
+        }
+    };
+
+    let (status, body) = append("a").await;
+    assert_eq!(status, StatusCode::OK, "append failed: {body}");
+    assert_eq!(body, json!({"updated": 3}));
+
+    // Re-running the same append is a no-op on every match.
+    let (status, body) = append("a").await;
+    assert_eq!(status, StatusCode::OK, "append failed: {body}");
+    assert_eq!(body, json!({"updated": 0}), "nothing gained a row");
+
+    // Each metarecord still holds exactly one `tag` row.
+    let (_, hits) = request(
+        &app,
+        "POST",
+        &format!("/repos/{repo}/query"),
+        Some(json!({"query": {"type": "is_present", "field": "tag"}, "select": ["tag"]})),
+    )
+    .await;
+    for hit in hits.as_array().unwrap() {
+        let tags = hit["fields"].as_array().unwrap();
+        assert_eq!(tags.len(), 1, "one tag row per metarecord: {hit}");
+    }
+}

@@ -160,7 +160,110 @@ const MIGRATIONS: &[(&str, fn(&Connection) -> Result<()>)] = &[
     ("field_text trigram index", ensure_field_text),
     ("drop the persisted filesystem-event buffer", drop_persisted_fs_events),
     ("rename the order_position_* fields", rename_order_position_fields),
+    ("drop duplicate field rows", dedup_field_rows),
 ];
+
+/// The name a one-shot migration records itself under in `migration_state`.
+const DEDUP_MIGRATION: &str = "dedup-field-rows";
+
+/// Records a one-shot migration as done. Creates `migration_state` if the
+/// database predates it (`init_schema` creates it for fresh ones).
+fn mark_migration_done(conn: &Connection, name: &str) -> Result<()> {
+    conn.execute_batch(
+        "CREATE TABLE IF NOT EXISTS migration_state (
+             name     TEXT PRIMARY KEY NOT NULL,
+             done_at  TEXT NOT NULL
+         );",
+    )?;
+    conn.execute(
+        "INSERT OR IGNORE INTO migration_state (name, done_at) VALUES (?1, ?2)",
+        params![name, metafolder_core::date::iso8601_from_ms(metafolder_core::date::now_ms())],
+    )?;
+    Ok(())
+}
+
+/// Whether that one-shot migration already ran on this database.
+fn migration_done(conn: &Connection, name: &str) -> Result<bool> {
+    let has_table: i64 = conn.query_row(
+        "SELECT COUNT(*) FROM sqlite_master WHERE type = 'table' AND name = 'migration_state'",
+        [],
+        |r| r.get(0),
+    )?;
+    if has_table == 0 {
+        return Ok(false);
+    }
+    let found: i64 = conn.query_row(
+        "SELECT EXISTS(SELECT 1 FROM migration_state WHERE name = ?1)",
+        params![name],
+        |r| r.get(0),
+    )?;
+    Ok(found != 0)
+}
+
+/// Drops the duplicate field rows a repository written before spec-data-model
+/// "No duplicate rows" may hold: within one metarecord, two rows of the same
+/// name and the same value. The lowest id of each group survives — it is the
+/// row the write path would have kept — and the `field_text` entries of the
+/// dropped ones go with them.
+///
+/// This is the one migration no cheap probe can decide: finding out whether a
+/// duplicate exists *is* the full scan. So it runs once and marks itself in
+/// `migration_state`; every later open reads one indexed row and stops. A fresh
+/// database (no `field` table yet) is marked without scanning anything: every
+/// write it will ever take goes through the deduplicating `log::Writer`.
+///
+/// The pass is deliberately *not* logged: it is a schema migration, not a
+/// revision. The log's own snapshots keep the ids they recorded, so rolling
+/// back to a revision that held a duplicate restores it — history stays what it
+/// was (spec-data-model "No duplicate rows").
+pub fn dedup_field_rows(conn: &Connection) -> Result<()> {
+    if migration_done(conn, DEDUP_MIGRATION)? {
+        return Ok(());
+    }
+    let has_table: i64 = conn.query_row(
+        "SELECT COUNT(*) FROM sqlite_master WHERE type = 'table' AND name = 'field'",
+        [],
+        |r| r.get(0),
+    )?;
+    if has_table > 0 {
+        // GROUP BY treats NULLs as equal, which is what "same value" means
+        // here: a value type uses a fixed subset of the columns and leaves the
+        // rest NULL.
+        conn.execute_batch(
+            "BEGIN;
+             CREATE TEMP TABLE duplicate_field_row AS
+                 SELECT id FROM field
+                  WHERE id NOT IN (
+                      SELECT MIN(id) FROM field
+                       GROUP BY metarecord_uuid, field_name, value_type, value_text,
+                                value_int, value_real, value_uuid, value_ref_repo,
+                                value_name_bytes);
+             DELETE FROM field_text WHERE rowid IN (SELECT id FROM duplicate_field_row);
+             DELETE FROM field      WHERE id    IN (SELECT id FROM duplicate_field_row);
+             DROP TABLE duplicate_field_row;
+             COMMIT;",
+        )
+        .context("Failed to drop the duplicate field rows")?;
+    }
+    mark_migration_done(conn, DEDUP_MIGRATION)
+}
+
+/// The id of the row of `(metarecord, name)` that already holds `value`, if any
+/// — the probe behind spec-data-model "No duplicate rows". Reads the name's
+/// rows (an index seek on `idx_field_metarecord`) and compares in Rust, so
+/// "same value" is exactly `Value`'s own equality rather than a per-column
+/// SQL transcription of it.
+pub(crate) fn duplicate_row_id(
+    conn: &Connection,
+    uuid: Uuid,
+    name: &str,
+    value: &Value,
+) -> Result<Option<i64>> {
+    Ok(get_field_rows_named(conn, uuid, name)?
+        .into_iter()
+        .find(|r| &r.value == value)
+        .map(|r| r.id))
+}
 
 /// Renames the two `mf order` position fields to their current names —
 /// `order_position_file`/`order_position_dir` became `order_file`/`order_dir`
@@ -600,6 +703,15 @@ pub fn init_schema(conn: &Connection) -> Result<()> {
         -- the storage layer so every write path is covered at once.
         CREATE UNIQUE INDEX idx_mfr_path_single ON field(metarecord_uuid)
             WHERE field_name = 'mfr_path';
+
+        -- One-shot migrations that no cheap probe can detect record themselves
+        -- here, so that opening a repository keeps doing no schema work
+        -- (spec-data-model \"SQLite Schema\"). `IF NOT EXISTS`: the migration
+        -- pass runs before `init_schema` and may have created it already.
+        CREATE TABLE IF NOT EXISTS migration_state (
+            name     TEXT PRIMARY KEY NOT NULL,
+            done_at  TEXT NOT NULL                -- ISO-8601 UTC
+        );
 
         -- Trigram full-text index over the textual field columns, to pre-filter
         -- MATCHES (regex) before the REGEXP scan (spec-query \"MATCHES via FTS5\").

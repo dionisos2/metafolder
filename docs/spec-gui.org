@@ -1068,7 +1068,7 @@ Behaviours:
 | =metarecord:field-delete= | Delete the field row under the cursor               |
 | =metarecord:cancel-edit=  | Cancel the current field edit or add form           |
 | =metarecord:set-field [field] [value]= | Overwrite a field on the current metarecord (all its values) |
-| =metarecord:add-field-value [field] [value]= | Add one value to a field (multi-map) on the current metarecord |
+| =metarecord:add-field-value [field] [value]= | Add one value to a field (multi-map) on the current metarecord; a value it already holds is a no-op (spec-data-model "No duplicate rows") |
 | =metarecord:edit-field-value [value] [new]= | Edit one value on the current metarecord (select by value) |
 | =metarecord:delete-field-value [value]= | Delete one value on the current metarecord (select by value) |
 | =metarecord:edit-field-name [field] [new-name]= | Rename a field (all its values) on the current metarecord |

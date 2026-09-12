@@ -3285,8 +3285,14 @@ async fn batch_append(
 
         let mut writer = repo_state.writer(&mut conn, None)?;
         let writing = slowlog::phase("write.fields");
+        // A match that already holds the value gains nothing, so it is not
+        // counted (spec-data-model "No duplicate rows").
+        let mut updated = 0usize;
         for uuid in &uuids {
-            writer.append_field(*uuid, &body.name, value.clone())?;
+            if !writer.append_field(*uuid, &body.name, value.clone())?.created() {
+                continue;
+            }
+            updated += 1;
             slowlog::timed("validate.schema", || {
                 validate_schema(
                     repo_state,
@@ -3300,8 +3306,8 @@ async fn batch_append(
         let effects = writer.effects();
         slowlog::timed("commit", || writer.commit())?;
         repo_state.settle(&conn, &effects)?;
-        slowlog::note("updated", uuids.len().to_string());
-        Ok(Json(json!({"updated": uuids.len()})))
+        slowlog::note("updated", updated.to_string());
+        Ok(Json(json!({"updated": updated})))
     })
     .await
 }

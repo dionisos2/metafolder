@@ -1331,3 +1331,74 @@ async fn test_create_metarecord_with_supplied_uuid() {
 
     std::fs::remove_dir_all(root).unwrap();
 }
+
+/// spec-data-model "No duplicate rows": the single-record append is idempotent,
+/// and the by-id edit refuses to make a row the twin of a sibling.
+#[tokio::test]
+async fn test_append_duplicate_is_a_no_op_and_by_id_duplicate_is_rejected() {
+    let (app, repo, _root) = app_with_repo("no_duplicate_rows").await;
+    let m = create_metarecord(
+        &app,
+        &repo,
+        json!([{"name": "tag", "value": {"type": "string", "value": "jazz"}}]),
+    )
+    .await;
+    let uuid = m["uuid"].as_str().unwrap().to_string();
+    let version = m["version"].as_u64().unwrap();
+
+    // Appending the value it already holds changes nothing.
+    let (status, body) = request(
+        &app,
+        "POST",
+        &format!("/repos/{repo}/metarecords/{uuid}/fields"),
+        Some(json!({"name": "tag", "value": {"type": "string", "value": "jazz"}})),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "append failed: {body}");
+    assert_eq!(body["fields"].as_array().unwrap().len(), 1, "no second row: {body}");
+    assert_eq!(body["version"].as_u64().unwrap(), version, "no version bump: {body}");
+
+    // A different value still appends.
+    let (status, body) = request(
+        &app,
+        "POST",
+        &format!("/repos/{repo}/metarecords/{uuid}/fields"),
+        Some(json!({"name": "tag", "value": {"type": "string", "value": "live"}})),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "append failed: {body}");
+    assert_eq!(body["fields"].as_array().unwrap().len(), 2);
+
+    // Editing the `live` row into a second `jazz` is rejected, not collapsed.
+    let live_id = body["fields"][1]["id"].as_i64().unwrap();
+    let (status, err) = request(
+        &app,
+        "PATCH",
+        &format!("/repos/{repo}/fields/{live_id}"),
+        Some(json!({"value": {"type": "string", "value": "jazz"}})),
+    )
+    .await;
+    assert_eq!(status, StatusCode::BAD_REQUEST, "expected a duplicate refusal, got: {err}");
+    assert!(err["error"].as_str().unwrap().to_lowercase().contains("duplicate"), "got: {err}");
+
+    // A multi-valued set collapses repeats instead.
+    let (status, body) = request(
+        &app,
+        "PUT",
+        &format!("/repos/{repo}/metarecords/{uuid}/fields/tag"),
+        Some(json!({"values": [
+            {"type": "string", "value": "a"},
+            {"type": "string", "value": "b"},
+            {"type": "string", "value": "a"}
+        ]})),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "set failed: {body}");
+    let values: Vec<&str> = body["fields"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|f| f["value"]["value"].as_str().unwrap())
+        .collect();
+    assert_eq!(values, vec!["a", "b"]);
+}
