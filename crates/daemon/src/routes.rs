@@ -579,6 +579,61 @@ where
     .await
 }
 
+/// Shared scaffold for the set-layer field-write handlers (`batch_set`,
+/// `batch_append`, `batch_remove`, `batch_unset`): runs on the blocking pool,
+/// gates on repository writability and on the field name being writable,
+/// resolves the query to its match set, then opens **one** logged [`Writer`]
+/// and lets `write` mutate each match in turn — the whole batch is a single
+/// revision.
+///
+/// `write` answers whether that metarecord actually changed: a match it left
+/// alone is neither schema-validated nor counted, which is what makes the
+/// reported `updated` the number of metarecords the call really touched
+/// (spec-data-model "No duplicate rows"). Any closure error drops the Writer,
+/// rolling the whole batch back — an all-or-nothing batch, like the
+/// single-record scaffold.
+async fn write_matches<F>(
+    state: &AppState,
+    repo_uuid: Uuid,
+    name: String,
+    force: bool,
+    query: MetaQuery,
+    mut write: F,
+) -> Result<Json<serde_json::Value>, ApiError>
+where
+    F: FnMut(&mut Writer, Uuid) -> Result<bool, ApiError> + Send + 'static,
+{
+    with_repo(state, repo_uuid, move |repo_state| {
+        repo_state.ensure_writable()?;
+        check_writable(&name, force)?;
+        slowlog::note("field", name.as_str());
+        let mut conn = slowlog::timed("wait:conn", || repo_state.conn.lock_recover());
+        let mut cache = slowlog::timed("wait:cache", || repo_state.lock_cache());
+        let uuids = resolve_query_uuids(repo_state, &conn, &mut cache, &query, &|| false)?;
+        drop(cache);
+
+        let mut writer = repo_state.writer(&mut conn, None)?;
+        let writing = slowlog::phase("write.fields");
+        let mut updated = 0usize;
+        for uuid in &uuids {
+            if !write(&mut writer, *uuid)? {
+                continue;
+            }
+            updated += 1;
+            slowlog::timed("validate.schema", || {
+                validate_schema(repo_state, writer.connection(), *uuid, std::slice::from_ref(&name))
+            })?;
+        }
+        drop(writing);
+        let effects = writer.effects();
+        slowlog::timed("commit", || writer.commit())?;
+        repo_state.settle(&conn, &effects)?;
+        slowlog::note("updated", updated.to_string());
+        Ok(Json(json!({ "updated": updated })))
+    })
+    .await
+}
+
 /// The optional `?expected_version=` optimistic-concurrency query parameter on
 /// single-record write endpoints.
 #[derive(serde::Deserialize, Default)]
@@ -3231,34 +3286,12 @@ async fn batch_set(
     let Json(body) = payload?;
     let repo_uuid = parse_uuid(&repo)?;
     let rows = resolved_values(body.value, body.values)?;
-    with_repo(&state, repo_uuid, move |repo_state| {
-        repo_state.ensure_writable()?;
-        check_writable(&body.name, body.force)?;
-        slowlog::note("field", body.name.as_str());
-        let mut conn = slowlog::timed("wait:conn", || repo_state.conn.lock_recover());
-        let mut cache = slowlog::timed("wait:cache", || repo_state.lock_cache());
-        let uuids = resolve_query_uuids(repo_state, &conn, &mut cache, &body.query, &|| false)?;
-        drop(cache);
-
-        let mut writer = repo_state.writer(&mut conn, None)?;
-        let writing = slowlog::phase("write.fields");
-        for uuid in &uuids {
-            writer.set_field_multi(*uuid, &body.name, rows.clone())?;
-            slowlog::timed("validate.schema", || {
-                validate_schema(
-                    repo_state,
-                    writer.connection(),
-                    *uuid,
-                    std::slice::from_ref(&body.name),
-                )
-            })?;
-        }
-        drop(writing);
-        let effects = writer.effects();
-        slowlog::timed("commit", || writer.commit())?;
-        repo_state.settle(&conn, &effects)?;
-        slowlog::note("updated", uuids.len().to_string());
-        Ok(Json(json!({"updated": uuids.len()})))
+    let field = body.name.clone();
+    // A whole-field overwrite always rewrites the rows, so every match counts as
+    // updated — unlike the append/remove forms, which report what they changed.
+    write_matches(&state, repo_uuid, body.name, body.force, body.query, move |writer, uuid| {
+        writer.set_field_multi(uuid, &field, rows.clone())?;
+        Ok(true)
     })
     .await
 }
@@ -3274,40 +3307,11 @@ async fn batch_append(
     let Json(body) = payload?;
     let repo_uuid = parse_uuid(&repo)?;
     let value = single_value(body.value, body.values)?;
-    with_repo(&state, repo_uuid, move |repo_state| {
-        repo_state.ensure_writable()?;
-        check_writable(&body.name, body.force)?;
-        slowlog::note("field", body.name.as_str());
-        let mut conn = slowlog::timed("wait:conn", || repo_state.conn.lock_recover());
-        let mut cache = slowlog::timed("wait:cache", || repo_state.lock_cache());
-        let uuids = resolve_query_uuids(repo_state, &conn, &mut cache, &body.query, &|| false)?;
-        drop(cache);
-
-        let mut writer = repo_state.writer(&mut conn, None)?;
-        let writing = slowlog::phase("write.fields");
-        // A match that already holds the value gains nothing, so it is not
-        // counted (spec-data-model "No duplicate rows").
-        let mut updated = 0usize;
-        for uuid in &uuids {
-            if !writer.append_field(*uuid, &body.name, value.clone())?.created() {
-                continue;
-            }
-            updated += 1;
-            slowlog::timed("validate.schema", || {
-                validate_schema(
-                    repo_state,
-                    writer.connection(),
-                    *uuid,
-                    std::slice::from_ref(&body.name),
-                )
-            })?;
-        }
-        drop(writing);
-        let effects = writer.effects();
-        slowlog::timed("commit", || writer.commit())?;
-        repo_state.settle(&conn, &effects)?;
-        slowlog::note("updated", updated.to_string());
-        Ok(Json(json!({"updated": updated})))
+    let field = body.name.clone();
+    // A match that already holds the value gains nothing, so it is not counted
+    // (spec-data-model "No duplicate rows").
+    write_matches(&state, repo_uuid, body.name, body.force, body.query, move |writer, uuid| {
+        Ok(writer.append_field(uuid, &field, value.clone())?.created())
     })
     .await
 }
@@ -3324,32 +3328,9 @@ async fn batch_remove(
     let Json(body) = payload?;
     let repo_uuid = parse_uuid(&repo)?;
     let value = single_value(body.value, body.values)?;
-    with_repo(&state, repo_uuid, move |repo_state| {
-        repo_state.ensure_writable()?;
-        check_writable(&body.name, body.force)?;
-        slowlog::note("field", body.name.as_str());
-        let mut conn = slowlog::timed("wait:conn", || repo_state.conn.lock_recover());
-        let mut cache = slowlog::timed("wait:cache", || repo_state.lock_cache());
-        let uuids = resolve_query_uuids(repo_state, &conn, &mut cache, &body.query, &|| false)?;
-        drop(cache);
-
-        let mut writer = repo_state.writer(&mut conn, None)?;
-        let mut changed = 0usize;
-        for uuid in &uuids {
-            if writer.delete_fields_valued(*uuid, &body.name, &value)? > 0 {
-                changed += 1;
-                validate_schema(
-                    repo_state,
-                    writer.connection(),
-                    *uuid,
-                    std::slice::from_ref(&body.name),
-                )?;
-            }
-        }
-        let effects = writer.effects();
-        slowlog::timed("commit", || writer.commit())?;
-        repo_state.settle(&conn, &effects)?;
-        Ok(Json(json!({"updated": changed})))
+    let field = body.name.clone();
+    write_matches(&state, repo_uuid, body.name, body.force, body.query, move |writer, uuid| {
+        Ok(writer.delete_fields_valued(uuid, &field, &value)? > 0)
     })
     .await
 }
@@ -3373,32 +3354,9 @@ async fn batch_unset(
 ) -> Result<Json<serde_json::Value>, ApiError> {
     let Json(body) = payload?;
     let repo_uuid = parse_uuid(&repo)?;
-    with_repo(&state, repo_uuid, move |repo_state| {
-        repo_state.ensure_writable()?;
-        check_writable(&body.name, body.force)?;
-        slowlog::note("field", body.name.as_str());
-        let mut conn = slowlog::timed("wait:conn", || repo_state.conn.lock_recover());
-        let mut cache = slowlog::timed("wait:cache", || repo_state.lock_cache());
-        let uuids = resolve_query_uuids(repo_state, &conn, &mut cache, &body.query, &|| false)?;
-        drop(cache);
-
-        let mut writer = repo_state.writer(&mut conn, None)?;
-        let mut changed = 0usize;
-        for uuid in &uuids {
-            if writer.delete_fields_named(*uuid, &body.name)? > 0 {
-                changed += 1;
-                validate_schema(
-                    repo_state,
-                    writer.connection(),
-                    *uuid,
-                    std::slice::from_ref(&body.name),
-                )?;
-            }
-        }
-        let effects = writer.effects();
-        slowlog::timed("commit", || writer.commit())?;
-        repo_state.settle(&conn, &effects)?;
-        Ok(Json(json!({"updated": changed})))
+    let field = body.name.clone();
+    write_matches(&state, repo_uuid, body.name, body.force, body.query, move |writer, uuid| {
+        Ok(writer.delete_fields_named(uuid, &field)? > 0)
     })
     .await
 }
