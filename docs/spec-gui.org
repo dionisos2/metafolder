@@ -1158,8 +1158,8 @@ Behaviours:
 | =file:restart=            | Play the previewed media from the start                       |
 | =file:speed-up= / =-down= | Step the playback rate up/down the ladder (default =]= / =[=) |
 | =file:speed-reset=        | Back to normal speed (default =shift+backspace=)              |
-| =file:volume-up= / =-down= | Step the volume ±10 % (default =shift+up= / =shift+down=)    |
-| =file:mute=               | Mute/unmute the previewed media (default =ctrl+m=)            |
+| =file:volume-up= / =-down= | Step the volume ±10 %, before or during playback (default =shift+up= / =shift+down=) |
+| =file:mute=               | Mute/unmute, before or during playback (default =ctrl+m=)     |
 | =metarecord:back=         | Return to the previously shown metarecord (=metarecord-detail=, default =backspace= / =left=) |
 
 A field whose only value is =Nothing= (an *explicit absence*, distinct from
@@ -2311,6 +2311,18 @@ there is no element *yet*: it is then the gesture that loads the player and
 starts it. Seeks are clamped to the media (never before its start nor past its
 end), the rate walks a fixed ladder rather than scaling freely, and raising the
 volume also unmutes (the natural way to undo a mute).
+
+*Volume and mute are panel state, not the element's* (=file:volume-*= /
+=file:mute= are therefore the one other exception to the no-op rule). The
+element exists only while something plays, so a level held on it could only be
+set *after* the first sound had already come out at whatever the last file
+left behind — and a video that starts at full blast has made the noise before
+anyone can turn it down. Held by the panel, the level is settable in front of
+the poster, is applied to each element before its source (so it holds from the
+first sample), and persists while browsing other files, exactly like the zoom
+state. While the poster is showing — the only moment with nothing to read it
+off — it is written into the poster's hint line ("volume 40 %", "muted"),
+which says nothing at a plain unmuted 100 %.
 
 *** =file-manager= panel type
 

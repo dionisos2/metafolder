@@ -54,6 +54,9 @@ const ZOOM_STEP = 1.25;
 const ZOOM_MIN = 0.05;
 const ZOOM_MAX = 40;
 
+// What the media poster says, before the volume note it may carry.
+const POSTER_HINT = '\u25b6 play (space) \u2014 the player loads on demand';
+
 /** A configured extension list as a lowercase Set, or `fallback` when the
  *  config has none (or something that is not a list of strings).
  *  @param {unknown} configured @param {Set<string>} fallback */
@@ -189,6 +192,15 @@ export async function mount(root, metafolder) {
     if (!blob) throw new Error('cannot rasterize the image');
     return URL.createObjectURL(blob);
   }
+
+  // Volume/mute are panel state, not the media element's. The element only
+  // exists while something plays, so a level living on it could only ever be
+  // set *after* the sound had already come out — and a video that starts at
+  // full blast has already made the noise by the time you can turn it down.
+  // Held here instead, they are settable in front of the poster, applied to
+  // each element as it is built, and kept across files like the zoom below.
+  let volume = 1;
+  let muted = false;
 
   // Zoom state, kept across files so a chosen level persists while browsing.
   // 'fit' fills the available box (aspect preserved); 'manual' shows the media
@@ -580,7 +592,7 @@ export async function mount(root, metafolder) {
           glyphClass: 'glyph',
           token: metafolder.sessionToken,
         }),
-        el('span', { class: 'hint' }, '\u25b6 play (space) \u2014 the player loads on demand'),
+        el('span', { class: 'hint' }, POSTER_HINT + volumeSuffix()),
       ),
     );
   }
@@ -633,6 +645,10 @@ export async function mount(root, metafolder) {
     media.addEventListener('error', () => {
       if (current()) placeholder('cannot play this file (unsupported or corrupt media)');
     });
+    // The chosen level applies from the very first sample: set before the
+    // source, so nothing is ever heard at a volume the user did not ask for.
+    media.volume = volume;
+    media.muted = muted;
     viewer.replaceChildren(media);
     // Only video is zoomable; audio has no visual frame. (Narrowing `kind` does
     // not narrow `media`, hence the instanceof.)
@@ -976,14 +992,34 @@ export async function mount(root, metafolder) {
     handler: () => applySpeed(1),
   });
 
+  /** Push the panel's level onto whatever is showing: the mounted element, or
+   *  the poster's hint (which is how a pre-playback setting is visible at all). */
+  function applyVolume() {
+    if (activeMedia) {
+      activeMedia.volume = volume;
+      activeMedia.muted = muted;
+    }
+    const hint = viewer.querySelector('.media-poster .hint');
+    if (hint) hint.textContent = POSTER_HINT + volumeSuffix();
+  }
+
+  /** What the poster adds about the volume — nothing at all when it is the
+   *  plain, unmuted 100 % nobody needs telling about. */
+  function volumeSuffix() {
+    if (muted) return ' \u2014 muted';
+    return volume < 1 ? ` \u2014 volume ${Math.round(volume * 100)}%` : '';
+  }
+
   /** @param {number} delta */
   function changeVolume(delta) {
-    withMedia((media) => {
-      media.volume = nextVolume(media.volume, delta);
-      // Nudging the volume up is the natural way to undo a mute.
-      if (delta > 0) media.muted = false;
-      void statusBar.message(`Volume ${Math.round(media.volume * 100)}%`, statusMessageMs);
-    });
+    volume = nextVolume(volume, delta);
+    // Nudging the volume up is the natural way to undo a mute.
+    if (delta > 0) muted = false;
+    applyVolume();
+    void statusBar.message(
+      `Volume ${Math.round(volume * 100)}%${muted ? ' (muted)' : ''}`,
+      statusMessageMs,
+    );
   }
   void commands.register('file:volume-up', {
     label: 'File: louder',
@@ -995,11 +1031,14 @@ export async function mount(root, metafolder) {
   });
   void commands.register('file:mute', {
     label: 'File: mute / unmute',
-    handler: () =>
-      withMedia((media) => {
-        media.muted = !media.muted;
-        void statusBar.message(media.muted ? 'Muted.' : 'Unmuted.', statusMessageMs);
-      }),
+    handler: () => {
+      muted = !muted;
+      applyVolume();
+      void statusBar.message(
+        muted ? 'Muted.' : `Unmuted (volume ${Math.round(volume * 100)}%).`,
+        statusMessageMs,
+      );
+    },
   });
 
   /** @param {boolean} on */
