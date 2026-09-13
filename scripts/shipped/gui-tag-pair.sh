@@ -78,12 +78,22 @@ mf_into "$TMP/worklist" metarecord -q "$PREDICATE" get
 mapfile -t uuids <"$TMP/worklist"
 total=${#uuids[@]}
 
+# Every relative path in one round-trip, the way gui-tag-folder reads its walk:
+# `mf path --relative` per entry was a second daemon call for something the whole
+# worklist can answer at once.
+declare -A REL_OF
+mf_into "$TMP/paths" metarecord -q "$PREDICATE" get --resolve-tree mfr_path --tsv
+while IFS=$'\t' read -r u p; do
+    [ -n "$u" ] || continue
+    REL_OF[$u]=$p
+done <"$TMP/paths"
+
 yes=0 no=0 skipped=0 i=0
 for uuid in "${uuids[@]}"; do
     [ -n "$uuid" ] || continue
     i=$((i + 1))
     abs=$(mf path "$uuid") || continue # the file disappeared meanwhile
-    rel=$(mf path --relative "$uuid")
+    rel=${REL_OF[$uuid]-}
     mf_gui_progress --done "$i" --total "$total" --phase "$rel"
     mf_gui_show_file "$abs"
     case "$(mf_gui_ask_answer \

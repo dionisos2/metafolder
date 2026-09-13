@@ -64,54 +64,96 @@ has_descendant_in() {
 gui_tag_next() {
     local universe=$1 pos=$2 neg=$3
 
-    # is_exclusive <path> : the tag excludes its siblings (own `exclusive`, or
-    # its parent is a `partition`). Reads the universe flag columns.
-    is_exclusive() {
-        local t=$1 par excl part
-        excl=$(awk -F '\t' -v t="$t" '$1==t{print ($3==1)?1:0; exit}' "$universe")
-        [ "${excl:-0}" = 1 ] && return 0
-        par=$(tag_parent "$t")
-        [ -n "$par" ] || return 1
-        part=$(awk -F '\t' -v t="$par" '$1==t{print ($2==1)?1:0; exit}' "$universe")
-        [ "${part:-0}" = 1 ]
-    }
+    # Everything is read into memory once, and every test below is parameter
+    # expansion. This used to run `grep` twice and `awk` once or more per
+    # candidate tag, plus a command substitution per parent lookup: with a
+    # hundred-tag vocabulary and a handful of positives that is thousands of
+    # processes for a single question, and the classify loop asks several per
+    # metarecord. gui-tag-folder.sh already records the lesson — "one process
+    # per entry is seconds of pure forking" — and this was the worst offender.
+    local -a order=() positives=()
+    local -A part=() excl=() is_pos=() is_neg=()
+    local path col_part col_excl line
 
-    # reachable <path> : the branch is engaged and not closed by an exclusive
-    # sibling already chosen. Top-level tags are always reachable.
-    reachable() {
-        local t=$1 par c engaged=1 closed=1
-        par=$(tag_parent "$t")
-        [ -n "$par" ] || return 0            # top level
-        engaged=1; closed=1                  # 1 = false, 0 = true (shell truth)
-        # Scan the parent's direct children that are currently positive.
-        while IFS= read -r c || [ -n "$c" ]; do
-            [ -n "$c" ] || continue
-            [ "$(tag_parent "$c")" = "$par" ] || continue
-            engaged=0
-            is_exclusive "$c" && closed=0
-        done <"$pos"
-        # Also engaged if the parent itself is still positive.
-        in_set "$par" "$pos" && engaged=0
-        [ "$engaged" -eq 0 ] && [ "$closed" -ne 0 ]
-    }
-
-    local depth best="" best_depth=-1 path rest
-    while IFS=$'\t' read -r path rest || [ -n "$path" ]; do
+    while IFS=$'\t' read -r path col_part col_excl || [ -n "$path" ]; do
         [ -n "$path" ] || continue
-        in_set "$path" "$pos" && continue                 # already positive
-        in_set "$path" "$neg" && continue                 # already negative
-        has_ancestor_in "$path" "$neg" && continue        # generic negative blocks
-        has_descendant_in "$path" "$pos" && continue       # specific positive implies it
-        reachable "$path" || continue
+        order+=("$path")
+        part[$path]=${col_part:-0}
+        excl[$path]=${col_excl:-0}
+    done <"$universe"
 
-        depth=$(awk -F/ '{print NF-1}' <<<"$path")
+    while IFS= read -r line || [ -n "$line" ]; do
+        [ -n "$line" ] || continue
+        is_pos[$line]=1
+        positives+=("$line")
+    done <"$pos"
+
+    while IFS= read -r line || [ -n "$line" ]; do
+        [ -n "$line" ] || continue
+        is_neg[$line]=1
+    done <"$neg"
+
+    local best="" best_depth=-1
+    local ancestor child child_parent parent depth slashes blocked engaged closed
+    for path in ${order+"${order[@]}"}; do
+        [ -z "${is_pos[$path]:-}" ] || continue           # already positive
+        [ -z "${is_neg[$path]:-}" ] || continue           # already negative
+
+        # A generic negative blocks its whole subtree. Walking the candidate's
+        # own ancestors is the same set as scanning the negatives for one, and
+        # costs the path's depth rather than the negatives' length.
+        blocked=0
+        ancestor=$path
+        while [ "${ancestor%/*}" != "$ancestor" ]; do
+            ancestor=${ancestor%/*}
+            if [ -n "${is_neg[$ancestor]:-}" ]; then
+                blocked=1
+                break
+            fi
+        done
+        [ "$blocked" = 0 ] || continue
+
+        # A specific positive implies — and so hides — its ancestors.
+        blocked=0
+        for child in ${positives+"${positives[@]}"}; do
+            if [[ $child == "$path"/* ]]; then
+                blocked=1
+                break
+            fi
+        done
+        [ "$blocked" = 0 ] || continue
+
+        # Reachable: the branch is engaged (the parent, or one of its direct
+        # children, is positive) and not closed by an exclusive sibling already
+        # chosen. Top-level tags are always reachable.
+        parent=${path%/*}
+        [ "$parent" = "$path" ] && parent=""
+        if [ -n "$parent" ]; then
+            engaged=0
+            closed=0
+            for child in ${positives+"${positives[@]}"}; do
+                child_parent=${child%/*}
+                [ "$child_parent" = "$child" ] && child_parent=""
+                [ "$child_parent" = "$parent" ] || continue
+                engaged=1
+                # Exclusive by its own flag, or because its parent partitions
+                # its children.
+                if [ "${excl[$child]:-0}" = 1 ] || [ "${part[$parent]:-0}" = 1 ]; then
+                    closed=1
+                fi
+            done
+            [ -n "${is_pos[$parent]:-}" ] && engaged=1
+            { [ "$engaged" = 1 ] && [ "$closed" = 0 ]; } || continue
+        fi
+
+        slashes=${path//[!\/]/}
+        depth=${#slashes}
         if [ "$best_depth" -lt 0 ] || [ "$depth" -lt "$best_depth" ]; then
             best=$path
             best_depth=$depth
         fi
-    done <"$universe"
+    done
 
-    unset -f is_exclusive reachable
     [ -n "$best" ] || return 1
     printf '%s\n' "$best"
 }
