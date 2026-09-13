@@ -155,7 +155,7 @@ terminal task with no further activity is only memory (a finished result is
 small) and is reclaimed on the next access.
 
 *Reads are idempotent.* Polling a task — via =GET /tasks= or
-=GET /tasks/:id= — never deletes it. This is required for the motivating
+=GET /repos/:repo_uuid/tasks/:task_uuid= — never deletes it. This is required for the motivating
 scenarios: several observers (a polling GUI plus a CLI) must each be able to
 read the same task's result, and a single client polling in a loop must not
 delete the result out from under its own next read. Memory is bounded by the

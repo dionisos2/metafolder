@@ -575,6 +575,17 @@ link, by the number of identity TreeRef fields:
   Ambiguous or absent → no link (create / leave for =mf sync link=). This
   heuristic is intentionally minimal and may be refined later.
 
+  It runs *client-side*, in the planner (=core::sync::plan::match_by_fields=),
+  not behind a daemon endpoint: it is a policy of how a plan is built, and it
+  reads only what an ordinary query returns. The daemon query it sends asks for
+  the records carrying every field of the signature — a *pre-filter*, since the
+  decision needs the signature to match exactly — and it is **paged to
+  exhaustion**, stopping once a second exact match proves the pair ambiguous.
+  A fixed page cap would silently mis-answer: the one qualifying record can sit
+  anywhere in a uuid-ordered result, so past the cap it reads as "no match" and
+  the planner creates a duplicate, or a second match falls past it and an
+  ambiguous pair is linked as if it were not.
+
 - **One** field =F= at path =P= (the common case). The record links to the
   target-side record at position =P= in forest =F=. If none exists there, a
   record is created at =P=: its parent is resolved by path, or created
@@ -779,22 +790,9 @@ be loaded (=404= otherwise).
   (deletion propagation helper — see [[*Metarecord deletion propagation]] for
   the normative order). Returns ={ "deleted": true }=.
 
-- =POST /sync/:repo/:repo/candidates= — the linking phase's *heuristic*
-  matcher, for source records with **no TreeRef identity** only (e.g.
-  deleted-file tombstones; see [[*The linking phase: match or create]]).
-  TreeRef-identity records are matched by the CLI by reconstructed path
-  (=…/metarecords/:uuid/fields/:name/resolve-tree= + an exact-path query) —
-  1:1 and exact, needing no heuristic. Read-only, stored values only. Body:
-  #+BEGIN_SRC json
-  { "source": "<repo uuid>", "records": [ "<uuid>", … ] | null }
-  #+END_SRC
-  =records= =null= means every unlinked no-TreeRef metarecord of the source.
-  For each, an unlinked target-side record whose *sync-relevant* fields (all
-  except the excluded =mfr_*=, see [[*The metadata diff]]) form the same
-  multiset is returned — only when unambiguous (exactly one on each side).
-  #+BEGIN_SRC json
-  { "candidates": [ { "source": "…", "target": "…" } ] }
-  #+END_SRC
+  (There is deliberately no =candidates= endpoint: the heuristic matcher runs
+  *client-side*, in =core::sync::plan=, because it is a policy of the planner
+  and not a property of either repository — see "The linking phase" below.)
 
 - =GET /sync/:repo/:repo/status= — the per-link change/conflict state:
   #+BEGIN_SRC json

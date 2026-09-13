@@ -142,8 +142,10 @@ ordered operators (=lt=/=lte=/=gt=/=gte=) and =Matches= are rejected with =400=
 unless an explicit =value= or =path= aspect is given: ordering or regex-matching
 a =(parent, name)= couple means nothing, and silently reading the leaf name
 instead would be the kind of implicit rule this aspect vocabulary exists to
-remove. So =path:value < "m"= and =path:path ~ "^music/"= are the spellings;
-bare =path < "m"= and =path ~ "jazz"= are errors naming the two candidates. The
+remove. So =path:value < "m"= and =path:path MATCHES "^music/"= are the
+spellings; bare =path < "m"= and =path MATCHES "jazz"= are errors naming the two
+candidates. (=~= is the *simplified* language's spelling of =MATCHES=, not the
+normal DSL's — the lexer rejects it there.) The
 check depends on the field's value type, so it is made by the engines (which
 know the type) rather than by the pure IR pass of "Comparison validity" below —
 but both engines make it identically, so the rejection never depends on which
@@ -167,9 +169,10 @@ A predicate selects, and selecting by name — anywhere in the tree — is a use
 thing to ask; an order by name alone is not, it just interleaves every directory.
 
 =Matches= uses a SQLite user-defined function =REGEXP= (registered at connection
-setup) backed by the =regex= crate. On a =TreeRef= field it requires an aspect
-(above): =field:value ~ …= applies the regex to the leaf name, =field:path ~ …=
-to the assembled path.
+setup) backed by the =regex= crate, and is *case-sensitive* (=(?i)= at the front
+of the pattern opts out; =Osm= is the case-insensitive operator). On a =TreeRef=
+field it requires an aspect (above): =field:value MATCHES …= applies the regex
+to the leaf name, =field:path MATCHES …= to the assembled path.
 
 ** Comparison typing
 
@@ -200,6 +203,33 @@ engine (bitmap index or SQL) would have handled the query:
 The validation is a single pure pass over the query IR
 (=query_exec::validate_query=); the per-row checks in the SQL engine and the
 index's =Unsupported= branches for these shapes are defensive backstops.
+
+*** Limits
+
+A query is cheap to *send* and can be expensive to *compile*, so two bounds are
+checked upfront — next to "Comparison validity" above and for the same reason:
+whether a query is too large is a property of the query, never of the engine
+that happens to serve it. Both are rejected with =400= and a message naming the
+limit and the value seen.
+
+- =MAX_QUERY_NODES= (2000) — the total number of nodes in the query tree,
+  counting boolean operands and follow/same sub-conditions. A wide or deep
+  =And=/=Or= would otherwise build a giant CTE chain, and tie up a blocking
+  thread, before a single row is read.
+- =MAX_COMBINATOR_OPERANDS= (500) — the operands of any *single* =And=/=Or=,
+  wherever it sits in the tree. Each becomes one term of a SQLite compound
+  =SELECT=, bounded by =SQLITE_MAX_COMPOUND_SELECT= (default 500); past it
+  SQLite fails the statement with an opaque "too many terms in compound SELECT",
+  so the limit is stated in our own words instead.
+
+Both are generous: a hand-written or UI-built query is far below them. What runs
+into them is membership — "this field is one of these N values" — spelled as an
+=Or= of N =Eq=. Decompose it, or use =uuid_in= when the N values are uuids; a
+native =In= operator would make that shape O(1) nodes (docs/review-followups.md).
+
+Neither bounds *execution* time: a small query can still be slow (a =Matches=
+regex over millions of rows, a =->*= over the whole repository). That is a
+separate concern, tracked with the same note.
 
 ** Indexing & scaling
 
@@ -514,12 +544,13 @@ predicate := field "IS" ( "PRESENT" | "ABSENT" | "UNKNOWN" )
            | field "=>*" ( string | "(" query ")" )
 
 osm_call  := ( "osm" | "osmd" ) "(" field "," string ")"
-same_call := "same" "(" field "," query ")"
+same_call := "same" "(" fieldname "," query ")"
 
 cmp_op    := "=" | "!=" | "<" | "<=" | ">" | ">="
 literal   := int | float | string | "true" | "false" | datetime
 datetime  := "@" string | "@" int        # ISO-8601 string, or raw Unix ms
-field     := identifier [ ":" aspect ]
+field     := fieldname [ ":" aspect ]
+fieldname := identifier
 aspect    := "raw" | "value" | "parent" | "path"
 string    := '"' ... '"'
 uuid      := 32 ASCII hexadecimal characters
@@ -530,6 +561,17 @@ uuid      := 32 ASCII hexadecimal characters
   literals.
 - Precedence: =NOT= binds tighter than =AND=, which binds tighter than =OR=;
   parentheses override.
+- Nesting is bounded at *128* levels (the depth =serde_json= allows nested
+  JSON, and for the same reason): the parser is recursive descent, so nesting
+  depth is stack depth, and the input arrives straight from a user. Past it the
+  parse fails with "query too deeply nested" rather than overflowing the stack.
+- *Reference values have no literal.* =literal= covers the scalar types only, so
+  a =RefBase= or =ExternalRef= field cannot be compared in the DSL: =Follows=
+  (=->=) is restricted to =Ref= and =TreeRef= on both sides, and there is no
+  =refbase:<uuid>= literal to compare against. Such a field is reachable only
+  through a JSON =eq=/=neq= body, which =validate_query= accepts. Writing
+  =origin -> (<uuid>)= against a =RefBase= field therefore returns *no rows and
+  no error* — a known gap; a typed reference literal is the natural fix.
 - String escapes: inside a =STRING= literal, =\"= and =\\= decode to the bare
   character; any other backslash escape is passed through *verbatim* (the
   backslash is kept). This lets a =MATCHES= pattern carry regex escapes —
@@ -814,6 +856,9 @@ predicate =
 
 # field aliases: map a few names, pass the rest through. `p` = the file path;
 # `path` is left free so it reads as the tag hierarchy field.
+# Note: WORD excludes ":", so this production carries no ASPECT — the simplified
+# language cannot spell `p:value`, and a query needing one is written in the
+# normal DSL (or the grammar is extended locally, which is what it is for).
 field  = "p"    => mfr_path
        | "size" => mfr_size
        | w:WORD => $w

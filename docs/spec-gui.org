@@ -82,10 +82,12 @@ Built-in panel types:
 | =treeref=        | TreeRef forest explorer; pick a TreeRef field, navigate roots→leaves |
 | =trash=          | Repository trash-bin: list, restore, delete, empty (see [[file:spec-trash.org][spec-trash.org]] "GUI") |
 | =duplicates=     | Groups of byte-identical files, worst reclaimable space first (see [[file:spec-duplicates.org][spec-duplicates.org]] "GUI") |
+| =recent=         | The metarecords most recently viewed in this GUI, newest first; the =recent= picker's panel form |
+| =sync=           | Cross-repo sync: status, plan, show, run (see [[file:spec-sync.org][spec-sync.org]]) |
 | =help=           | In-app help: static pages with a grep search box (see [[*Help]]) |
 
 Users can add custom panel types by creating a new directory under
-=~/.config/metafolder-gui/panel-types/<name>/=. Custom types appear alongside
+=~/.config/metafolder/gui/panel-types/<name>/=. Custom types appear alongside
 built-in types in the panel type selector.
 
 Each panel type retains its full state for the lifetime of the session, even
@@ -375,10 +377,11 @@ cancels the pending sequence (it never matches an =escape= binding in
 that state); a key that fits no continuation aborts the sequence and is
 *swallowed* — it does not fall back to its own single-key binding (a combo
 in progress takes priority), and the shell flashes ='<sequence>' is
-undefined=. The defaults use this for panel type switching: =s=
-followed by one letter (=s l= metarecord-list, =s d= metarecord-detail, =s f=
-file, =s m= file-manager, =s o= log, =s r= repos, =s g= message, =s w=
-workspace-info).
+undefined=. The defaults use this for panel type switching: =t=
+followed by one letter (=t l= metarecord-list, =t d= metarecord-detail, =t f=
+file, =t m= file-manager, =t o= log, =t r= repos, =t g= message, =t w=
+workspace-info, =t t= treeref, =t b= trash, =t y= sync, =t v= recent, =t u=
+duplicates, =t h= help).
 
 Config file examples. A combo's value is either a single binding table, or —
 when the same combo maps to a different command depending on the focused panel
@@ -1235,13 +1238,13 @@ Every command is reachable from the keyboard. No command requires the mouse.
 Within =metarecord-list=:
 - =/= focuses the finder (=metarecord-list:focus-finder=); =Ctrl+/= the structural query
   editor (=metarecord-list:focus-query=).
-- Two chord families edit the three search fields (in addition to =/= and
-  =Ctrl+/=), both scoped to the panel: =e= edits a field (focus, keep content),
-  =c= clears it first. The field letter is shared: =f= finder, =s= simplified
-  query (=e s= / =c s= *unfreeze* B — a frozen B stays authoritative, so typing
-  in A would otherwise change nothing), =q= the normal DSL (opens + freezes
-  it). So =e f= / =e s= / =e q= and
-  =c f= / =c s= / =c q=; =c a= clears all three at once (=clear-queries=).
+- Two families edit the three search fields (in addition to =/= and =Ctrl+/=),
+  both scoped to the panel: an =e= chord edits a field (focus, keep content),
+  the bare field letter clears it first. The field letter is shared: =f= finder,
+  =s= simplified query (=e s= / =s= *unfreeze* B — a frozen B stays
+  authoritative, so typing in A would otherwise change nothing), =q= the normal
+  DSL (opens + freezes it). So =e f= / =e s= / =e q= to edit, =f= / =s= / =q= to
+  clear-then-edit, and =c= clears all three at once (=clear-queries=).
 - =Enter= in any of the search fields applies and *leaves* the field (blur), so
   the panel accelerators resume without a separate =Escape=; =Shift+Enter=
   applies but keeps the focus for another edit.
@@ -1304,9 +1307,10 @@ delegates to the matching per-operation bulk command, which collects its own
 field/value arguments with completion. Each query-scoped bulk command counts its
 matches (daemon-side =count=) and names that number in its confirmation. The
 =metarecord-detail= panel binds the per-operation bulk commands directly instead
-(=m b s= set, =m b a= add, =m b r= remove the field).
+(=m m s= set, =m m a= add, =m m r= remove the field, =m m v= remove one value,
+=m m d= delete the metarecords).
 
-Keybindings are stored in =~/.config/metafolder-gui/keybindings.toml=
+Keybindings are stored in =~/.config/metafolder/gui/keybindings.toml=
 (see [[*Keybinding]] for the =when= and =text-input= scope dimensions).
 The =config:open= command opens a settings view where they can be edited
 interactively; changes take effect immediately.

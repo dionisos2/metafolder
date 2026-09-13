@@ -70,11 +70,17 @@ NOT (seen = true OR rating IS UNKNOWN)</pre>
 
 <h2>Regex — <code>MATCHES</code></h2>
 <p>
-  <code>field MATCHES "regex"</code> is a <strong>case-insensitive</strong>
-  regular-expression test on the field's text. On a TreeRef field it matches
-  against the resolved path.
+  <code>field MATCHES "regex"</code> is a regular-expression test on the field's
+  text, and it is <strong>case-sensitive</strong> — write <code>(?i)</code> at
+  the front of the pattern to ignore case. (<code>osm</code> and
+  <code>osmd</code> are the case-insensitive ones.) On a TreeRef field the
+  pattern needs an <a href="#aspects">aspect</a> saying what to match against —
+  <code>:value</code> for the node's own name, <code>:path</code> for the
+  assembled path — and is rejected without one.
 </p>
-<pre>title MATCHES "[Ll]ive"</pre>
+<pre>title MATCHES "[Ll]ive"
+title MATCHES "(?i)live"
+mfr_path:path MATCHES "^/music/"</pre>
 <p>
   Backslash escapes survive inside the string, so regex escapes work: write
   <code>\.</code> for a literal dot, <code>\d</code>/<code>\w</code>/<code>\s</code>
@@ -111,7 +117,7 @@ NOT (seen = true OR rating IS UNKNOWN)</pre>
 <pre>mfr_path -&gt;* "/music/jazz"
 author -&gt; (name = "Coltrane")</pre>
 
-<h2>Aspects — which part of a value you read</h2>
+<h2 id="aspects">Aspects — which part of a value you read</h2>
 <p>
   A field name may carry an <strong>aspect</strong>, <code>field:aspect</code>,
   saying which component of the value the predicate reads. It matters on a

@@ -153,7 +153,9 @@ assert "root: resolves the root via the empty-string form" \
     [ "$(mock_count 'metarecord -q mfr_path = "" get')" -eq 1 ]
 assert "root: deletes with the empty-string form" \
     [ "$(mock_count 'metarecord -q mfr_path ->* "" delete --force')" -eq 1 ]
-assert "root: never uses the broken \"/\" tree-query form" \
+# As in test-gui-tag-folder: the canonical root spelling is the empty string,
+# not a form the daemon would reject — it accepts "/" as well now.
+assert "root: spells the root the one canonical way" \
     [ "$(mock_count 'metarecord -q mfr_path ->* "/"*')" -eq 0 ]
 
 assert_summary

@@ -216,7 +216,10 @@ bash "$SCRIPT" roottag >/dev/null; code=$?
 assert "root: exits 0" [ "$code" -eq 0 ]
 assert "root: the scope uses the empty-string form" \
     [ "$(mock_count "metarecord -q ($RSC) AND mfr_type = \"dir\"*")" -ge 1 ]
-assert "root: never uses the broken \"/\" tree-query form" \
+# The daemon folds a redundant slash away now, so `"/"` would resolve too —
+# this pins the CANONICAL spelling (the empty string, what `path_of` prints),
+# so every script keeps writing the one form.
+assert "root: spells the root the one canonical way" \
     [ "$(mock_count 'metarecord -q (mfr_path =>* "/") AND*')" -eq 0 ]
 
 # ── Case 9: skip leaves the whole subtree alone ─────────────────────────────
