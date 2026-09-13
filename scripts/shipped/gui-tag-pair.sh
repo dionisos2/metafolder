@@ -57,11 +57,13 @@ fi
 
 mf_gui_session_open metarecord-detail
 
+TMP=$(mf_gui_tmpdir)
+
 # The tag is identified by its hierarchy path: `path = "<TAG>"` is an exact-node
 # match on the `path` TreeRef (a '/'-bearing path resolves to the one node). The
 # entry need not pre-exist — a non-matching condition just leaves every file with
 # "no opinion"; `mf tag add` creates the entry (and its ancestor chain) on apply.
-TAG_COND="(mf_schema = \"tag\" AND path = \"$TAG\")"
+TAG_COND="(mf_schema = \"tag\" AND path = \"$(mf_dsl_str "$TAG")\")"
 
 # Files of the scope with no opinion on this tag yet (NOT() is a complement, so
 # files where tag/negative_tag are unknown are included).
@@ -69,7 +71,11 @@ PREDICATE=$(mf_gui_scoped "mfr_path IS PRESENT AND mfr_type = \"file\" \
 AND NOT (tag -> $TAG_COND OR negative_tag -> $TAG_COND)")
 
 # Collect the whole worklist up front so the progress indicator has a total.
-mapfile -t uuids < <(mf metarecord -q "$PREDICATE" get)
+# Through a file: `< <(mf …)` discards the exit status, so a refused query or a
+# stopped daemon came back as an empty worklist and the run reported "nothing to
+# do" instead of the error.
+mf_into "$TMP/worklist" metarecord -q "$PREDICATE" get
+mapfile -t uuids <"$TMP/worklist"
 total=${#uuids[@]}
 
 yes=0 no=0 skipped=0 i=0

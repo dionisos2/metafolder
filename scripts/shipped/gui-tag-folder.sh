@@ -117,18 +117,24 @@ collect() { # <dir|file> <order field>
     local kind=$1 field=$2 i=0 uuid path
     local scope
     scope=$(mf_gui_scoped "mfr_type = \"$kind\" AND mfr_path IS PRESENT")
+    # Through files rather than `< <(mf …)`: a process substitution throws the
+    # exit status away, so a refused query or a stopped daemon came back as an
+    # empty walk and the script announced "the query matches no tracked
+    # metarecord" — reporting an error as an answer.
     local -a ordered=()
-    mapfile -t ordered < <(mf metarecord -q "$scope" get --sort "$field" --sort mfr_path)
+    mf_into "$TMP/order.$kind" metarecord -q "$scope" get --sort "$field" --sort mfr_path
+    mapfile -t ordered <"$TMP/order.$kind"
     for uuid in ${ordered+"${ordered[@]}"}; do
         [ -n "$uuid" ] || continue
         i=$((i + 1))
         RANK[$uuid]=$i
         KIND[$uuid]=$kind
     done
+    mf_into "$TMP/paths.$kind" metarecord -q "$scope" get --resolve-tree mfr_path --tsv
     while IFS=$'\t' read -r uuid path; do
         [ -n "$uuid" ] || continue
         PATH_OF[$uuid]=$path
-    done < <(mf metarecord -q "$scope" get --resolve-tree mfr_path --tsv)
+    done <"$TMP/paths.$kind"
 }
 
 # TAG and its ancestors, as an alternation over a tag entry's path: a more
@@ -164,10 +170,15 @@ load_decided() {
         "y:tag -> (mf_schema = \"tag\" AND path =>* \"$TAG\")"; do
         answer=${pair%%:*}
         pred=${pair#*:}
+        # Through a file for the same reason as `collect`, and here the silent
+        # failure was worse: an empty answer set is indistinguishable from "you
+        # have answered nothing yet", so a --resume run would quietly ask every
+        # question again.
+        mf_into "$TMP/decided.$answer" metarecord -q "$(mf_gui_scoped "$pred")" get
         while read -r uuid; do
             [ -n "$uuid" ] || continue
             DECIDED[$uuid]=$answer
-        done < <(mf metarecord -q "$(mf_gui_scoped "$pred")" get)
+        done <"$TMP/decided.$answer"
     done
 }
 
@@ -216,7 +227,8 @@ printf '%s\n' "${ENTRIES[@]}" | sort -t$'\t' -k1,1n -k2,2 -k3,3n -k4,4n >"$WALK"
 # Apply T over a node and its subtree, the subtree narrowed to the scope.
 apply_tree() { # <uuid> <path> <verb: add|deny>
     mf tag -i "$1" "$3" "$TAG" >/dev/null \
-        && mf tag -q "$(mf_gui_scoped "mfr_path ->* \"$2\"")" "$3" "$TAG" >/dev/null
+        && mf tag -q "$(mf_gui_scoped "mfr_path ->* \"$(mf_dsl_str "$2")\"")" "$3" "$TAG" \
+            >/dev/null
 }
 
 # Subtrees that are settled: a folder answered yes/no (its whole subtree took
@@ -266,8 +278,12 @@ while IFS=$'\t' read -r depth parent krank rank uuid; do
     [ -n "$uuid" ] || continue
     path=${PATH_OF[$uuid]-}
     kind=${KIND[$uuid]}
-    is_pruned "$path" && continue
+    # Counted before the prune test, not after: TOTAL counts every entry, so a
+    # DONE that skipped the pruned ones never reached it — the "the last entry
+    # always reports" rule never fired, and the "N left" counter claimed a
+    # folder answered whole was still ahead.
     DONE=$((DONE + 1))
+    is_pruned "$path" && continue
     # Already answered in an earlier run: no question, no tag op. A folder that
     # took the answer whole settles its subtree; a mixed one does not — that is
     # where its remaining questions live. The answer is a lookup in the sets

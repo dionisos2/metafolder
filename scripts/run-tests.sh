@@ -112,7 +112,11 @@ fi
 # report, so merge them before aggregating. cargo's own status (a compile
 # error) wins over the aggregate's.
 "${CARGO:-cargo}" test --workspace "$@" 2>&1 | aggregate
-cargo_rc=${PIPESTATUS[0]}
-agg_rc=$?
-[ "$cargo_rc" -ne 0 ] && exit "$cargo_rc"
-exit "$agg_rc"
+# Both statuses come out of PIPESTATUS, and both are read *before* anything
+# else runs: `$?` after `cargo_rc=${PIPESTATUS[0]}` is the status of that
+# assignment — always 0 — so reading the aggregator's status that way silently
+# turned every "no suite reported" into a pass, which is exactly the failure
+# this script promises to catch.
+rcs=("${PIPESTATUS[@]}")
+[ "${rcs[0]}" -ne 0 ] && exit "${rcs[0]}"
+exit "${rcs[1]}"

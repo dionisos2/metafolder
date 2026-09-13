@@ -91,8 +91,10 @@ neg_paths() { # <tag>
     printf '%s' "${out% OR }"
 }
 
-# How many times the walk asked about one entry (its question message).
-asked() { mock_count "gui message '$1' has tag*"; }
+# How many times the walk asked about one entry. The question travels as the
+# wait's own --prompt (spec-gui "Status bar": that is what puts it in the
+# dedicated question bar), so it is the `gui input` call that carries it.
+asked() { mock_count "gui input --prompt '$1' has tag*"; }
 
 # ── Case 1: a folder answered "yes" — the node and its subtree, scoped ───────
 mock_reset
@@ -147,7 +149,8 @@ mock_prompt '/top'
 mock_input m s s s        # top=mixed, then skip each of the three
 out=$(bash "$SCRIPT" music); code=$?
 assert "order: exits 0" [ "$code" -eq 0 ]
-order=$(mock_calls_matching "gui message '*' has tag*" | sed "s/.*message '\([^']*\)'.*/\1/")
+order=$(mock_calls_matching "gui input --prompt '*' has tag*" \
+    | sed "s/.*--prompt '\([^']*\)'.*/\1/")
 assert_contains "order: the folder comes before the files" \
     "$(printf '%s' "$order" | tr '\n' ' ')" "/top /top/sub /top/z.txt /top/a.txt"
 
@@ -327,7 +330,8 @@ assert "count: the first entry is 1 of 3" \
     [ "$(mock_count 'gui progress --done 1 --total 3 --phase /top')" -eq 1 ]
 assert "count: the last is 3 of 3" \
     [ "$(mock_count 'gui progress --done 3 --total 3 --phase /top/b.txt')" -eq 1 ]
-assert "count: the question says how many are left" [ "$(mock_count "gui message*2 left*")" -eq 1 ]
+assert "count: the question says how many are left" \
+    [ "$(mock_count "gui input --prompt*2 left*")" -eq 1 ]
 
 # ── Case 17: a failing `mf tag` is reported, not a silent "stopped" ─────────
 mock_reset
@@ -372,7 +376,7 @@ mock_prompt '/top'
 mock_input y
 out=$(bash "$SCRIPT" music); code=$?
 assert "orphan: exits 0" [ "$code" -eq 0 ]
-assert "orphan: the path-less record is never asked" [ "$(mock_count "gui message '' has tag*")" -eq 0 ]
+assert "orphan: the path-less record is never asked" [ "$(mock_count "gui input --prompt '' has tag*")" -eq 0 ]
 assert "orphan: nor tagged" [ "$(mock_count 'tag -i file-gone *')" -eq 0 ]
 assert "orphan: the real entry is asked" [ "$(asked /top/a.txt)" -eq 1 ]
 assert "orphan: and it alone is counted" \

@@ -28,6 +28,13 @@ DEST_ROOT=${DEST_ROOT:-$HOME/divertissement}
 mf_gui_bind_repo
 [ -d "$SORT_DIR" ] || mf_die "not a directory: $SORT_DIR"
 
+# Take the screen over through the session helper rather than by setting the two
+# slots by hand: it saves the layout, opens a scratch workspace, and installs the
+# EXIT trap that restores everything and publishes mf_gui_finish's outcome. Set
+# by hand, the layout was never put back, and mf_gui_finish printed to stdout and
+# nowhere else — the trap that posts it had never been installed.
+mf_gui_session_open metarecord-detail
+
 # The metarecord uuid of a path. `mf track` is idempotent: it creates the
 # metarecord if needed and always prints the uuid (existing or new).
 ensure_metarecord() { mf track "$1"; }
@@ -72,11 +79,21 @@ for abs in "$SORT_DIR"/*; do
     uuid=$(ensure_metarecord "$abs") || { echo "skip (untrackable): $abs" >&2; continue; }
 
     # 1) Fully specify the tags (the previous script drives its own display).
-    "$HERE/gui-tag-classify.sh" "$uuid"
+    #    Run with `bash`, not directly: metafolder-sync-config installs the
+    #    scripts without the execute bit, so `"$HERE/…"` was a Permission denied
+    #    on the very first file of every real run. Only the GUI's own launcher
+    #    hid it, by running the *outer* script through bash.
+    #
+    #    A failure here skips this file rather than ending the sort: this is a
+    #    per-file template, and one file with nothing to classify is not a reason
+    #    to abandon the rest.
+    if ! bash "$HERE/gui-tag-classify.sh" "$uuid"; then
+        echo "skip (classification failed): $abs" >&2
+        continue
+    fi
 
     # 2) Show the file again for the extra questions.
-    mf gui view right metarecord-detail
-    mf gui view left file --path "$abs"
+    mf_gui_show_file "$abs"
 
     # 3) Extra field questions — three patterns to copy:
     #    (a) a boolean flag: the yes/no answer *is* the value.

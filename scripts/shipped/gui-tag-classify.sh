@@ -63,8 +63,17 @@ else
 fi
 
 # The whole scope up front, in path order, so the progress bar has a total and
-# two runs walk it the same way.
-mapfile -t UUIDS < <(mf_gui_scope_get --sort mfr_path)
+# two runs walk it the same way. Through a file, not `< <(mf …)`: a process
+# substitution discards the exit status, so a refused query or a stopped daemon
+# read back as an empty scope and the run ended on "the query matches no tracked
+# metarecord" — an answer, where there had been an error.
+#
+# Read before the session takes the screen over, so an empty scope does not
+# flash the layout on its way to an error.
+SCOPED=$(mktemp) || mf_die "cannot create a temporary file"
+mf_gui_scope_into "$SCOPED" --sort mfr_path
+mapfile -t UUIDS <"$SCOPED"
+rm -f "$SCOPED"
 TOTAL=0
 for u in ${UUIDS+"${UUIDS[@]}"}; do [ -n "$u" ] && TOTAL=$((TOTAL + 1)); done
 [ "$TOTAL" -gt 0 ] || mf_die "the query matches no tracked metarecord"
@@ -76,7 +85,7 @@ UNIVERSE="$TMP/universe"
 POS="$TMP/pos"
 NEG="$TMP/neg"
 
-mf tag list >"$UNIVERSE"
+mf_into "$UNIVERSE" tag list
 [ -s "$UNIVERSE" ] || mf_die "no tag entries (mf_schema = \"tag\") in repository $REPO"
 
 yes=0 no=0 done_n=0 STOP=""

@@ -4124,3 +4124,47 @@ async fn test_log_revert_moves_the_file_back() {
     assert!(root.join("old.txt").exists(), "the file moved back: {}{}", out.stdout, out.stderr);
     assert!(!root.join("new.txt").exists());
 }
+
+#[test]
+fn metarecord_get_without_a_selector_honours_sort_and_select() {
+    // `mf metarecord get` with no selector means "every metarecord", and it used
+    // to take a separate, reduced path that accepted `--sort`, `--select` and
+    // `--values` on the command line and then silently dropped them. A script
+    // walking the whole repository "in path order" was in fact walking it in
+    // whatever order the daemon returned, so two runs disagreed — and a
+    // `--select` printed uuids instead of the field asked for.
+    let (repo, _root) = init_repo("nosel");
+    let mut made = Vec::new();
+    for name in ["c", "a", "b"] {
+        made.push(create_metarecord(&repo, &[&format!("label:string={name}")]));
+    }
+
+    let out =
+        mf(&["-u", &repo, "metarecord", "get", "--select", "label", "--values", "--sort", "label"]);
+    assert_ok(&out);
+    assert_eq!(out.stdout.lines().collect::<Vec<_>>(), vec!["a", "b", "c"]);
+
+    let desc = mf(&[
+        "-u",
+        &repo,
+        "metarecord",
+        "get",
+        "--select",
+        "label",
+        "--values",
+        "--sort",
+        "label:desc",
+    ]);
+    assert_ok(&desc);
+    assert_eq!(desc.stdout.lines().collect::<Vec<_>>(), vec!["c", "b", "a"]);
+
+    // The plain form still lists uuids, one per line — every metarecord in the
+    // repository, which includes the filesystem root `init` created.
+    let plain = mf(&["-u", &repo, "metarecord", "get"]);
+    assert_ok(&plain);
+    let listed: Vec<&str> = plain.stdout.lines().collect();
+    for uuid in &made {
+        assert!(listed.contains(&uuid.as_str()), "{uuid} missing from: {listed:?}");
+    }
+    assert_eq!(listed.len(), made.len() + 1, "the root metarecord should be listed too");
+}

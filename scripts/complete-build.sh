@@ -1,19 +1,25 @@
 #!/usr/bin/env bash
-# Rebuilds the GUI frontend bundle, then runs the GUI.
+# The complete build: every live artifact universe, the GUI frontend bundle,
+# and the user configuration, in the one order that works.
 #
-# Tauri embeds `crates/gui/frontend/dist` into the binary at compile time, so
-# the frontend must be (re)built BEFORE cargo — `npm run build` is separate from
-# `cargo`. Skipping it leaves the app on a stale bundle and produces confusing
-# runtime errors (e.g. "unknown metafolder API method: query.expand" after a
-# bridge.ts change). This script does both in the right order.
+# What it does, and why in this order:
+#   1. the workspace, the test binaries and the sync-config core — the three
+#      artifact "universes" that must all be current before pruning;
+#   2. scripts/prune-target.sh, which deletes only what those builds superseded;
+#   3. the frontend bundle. Tauri embeds `crates/gui/frontend/dist` into the
+#      binary at compile time and `npm run build` is separate from `cargo`, so
+#      skipping it leaves the app on a stale bundle with confusing runtime
+#      errors (e.g. "unknown metafolder API method: query.expand" after a
+#      bridge.ts change);
+#   4. metafolder-sync-config, which applies crates/*/default-config/ to the
+#      user's config repo at ~/.config/metafolder/.
 #
-# Any arguments are forwarded to mf-gui, e.g.:
-#   scripts/run-gui.sh --gui-port 7524 --daemon-url http://127.0.0.1:7523
+# Takes no arguments.
 
 set -euo pipefail
 
 repo=$(git -C "$(dirname "$0")" rev-parse --show-toplevel)
-cd "$repo"
+cd "$repo" || exit 1
 
 # Build the workspace, then the sync-config binary with the feature scoped to
 # core only: `--features sync-config` on the whole workspace would recompile
@@ -30,8 +36,10 @@ cargo build -p metafolder-core --features sync-config
 # evict the other, forcing perpetual recompilation.
 scripts/prune-target.sh
 
-# First run on a fresh checkout: install the frontend deps once.
-if [ ! -d crates/gui/frontend/node_modules ]; then
+# First run on a fresh checkout: install the frontend deps once. node_modules
+# lives at the repo root — the frontend is an npm workspace member — so that is
+# where its presence is read (same test as scripts/check.sh).
+if [ ! -d node_modules ]; then
     echo "==> Installing frontend dependencies (first run)…"
     npm --prefix crates/gui/frontend install
 fi
@@ -39,4 +47,9 @@ fi
 echo "==> Building the GUI frontend bundle…"
 npm --prefix crates/gui/frontend run build
 
-../target/debug/metafolder-sync-config
+# Apply the shipped defaults to ~/.config/metafolder/. The path is relative to
+# the repo root, which is where this script has been since the `cd` above — it
+# read `../target` for a while, which does not exist, so every run did the whole
+# build and then died here without ever syncing the config.
+echo "==> Applying the user configuration…"
+target/debug/metafolder-sync-config

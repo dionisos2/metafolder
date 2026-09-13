@@ -268,38 +268,6 @@ pub fn unload(ctx: &Ctx) -> Result<i32, CliError> {
 
 // ── MetaRecord manipulation (spec-data-model) ──────────────────────────────────────
 
-pub fn list(ctx: &Ctx, limit: Option<usize>) -> Result<i32, CliError> {
-    let base = ctx.repo_base()?;
-    // "All metarecords" is a match-all query (is_unknown on a never-used field
-    // matches the whole universe) — there is no list endpoint.
-    let all = json!({"type": "is_unknown", "field": "__never__"});
-    let mut remaining = limit;
-    let mut cursor: Option<String> = None;
-    loop {
-        let page = remaining.map_or(ctx.page_size, |r| r.min(ctx.page_size));
-        if page == 0 {
-            break;
-        }
-        let mut body = json!({"query": all, "limit": page});
-        if let Some(c) = &cursor {
-            body["cursor"] = json!(c);
-        }
-        let resp = ctx.client.post(&format!("{base}/query"), &body)?;
-        let results = resp["results"].as_array().cloned().unwrap_or_default();
-        for uuid in &results {
-            println!("{}", uuid.as_str().unwrap_or_default());
-        }
-        if let Some(r) = remaining.as_mut() {
-            *r = r.saturating_sub(results.len());
-        }
-        match resp["next_cursor"].as_str() {
-            Some(c) => cursor = Some(c.to_string()),
-            None => break,
-        }
-    }
-    Ok(0)
-}
-
 pub fn get(
     ctx: &Ctx,
     target: &str,
@@ -577,10 +545,27 @@ fn tsv_row(entry: &Json, fields: &[String]) -> String {
 }
 
 pub fn query(ctx: &Ctx, args: &QueryArgs) -> Result<i32, CliError> {
-    let base = ctx.repo_base()?;
     let predicate =
         if args.simplified { expand_simplified(&args.predicate)? } else { args.predicate.clone() };
-    let query = parse_dsl(&predicate)?;
+    run_query(ctx, parse_dsl(&predicate)?, args)
+}
+
+/// "Every metarecord", as a query: `is_unknown` on a field name nothing uses
+/// matches the whole universe. There is no list endpoint.
+fn match_all_query() -> Json {
+    json!({"type": "is_unknown", "field": "__never__"})
+}
+
+/// Runs an already-built query and prints it the way `args` asks — uuids,
+/// `--select`ed objects, `--values` or `--tsv` — paging to the end.
+///
+/// Shared with the no-selector form of `mf metarecord get`, which is the same
+/// question over the whole repository. That form used to have its own reduced
+/// loop, which accepted `--sort`, `--select` and `--values` on the command line
+/// and then dropped them: a script asking for the repository "in path order"
+/// silently got whatever order came back.
+fn run_query(ctx: &Ctx, query: Json, args: &QueryArgs) -> Result<i32, CliError> {
+    let base = ctx.repo_base()?;
     let sort = parse_sort(&args.sort)?;
     if args.values {
         let single = args.select.as_deref().filter(|s| *s != "*" && !s.contains(',')).is_some();
@@ -772,7 +757,21 @@ pub fn metarecord_get(
         return resolve_tree_paths(ctx, selector, field, tsv);
     }
     match selector {
-        None => list(ctx, limit),
+        // No selector is the whole repository — the same question `-q` asks,
+        // so it takes the same path and honours the same flags.
+        None => run_query(
+            ctx,
+            match_all_query(),
+            &QueryArgs {
+                predicate: String::new(),
+                select: select.map(String::from),
+                sort: sort.to_vec(),
+                limit,
+                values,
+                tsv,
+                simplified: false,
+            },
+        ),
         // A UUID selector (-i) prints the full metadata object (`--select`
         // restricts it); a query selector (-q, already expanded) lists UUIDs.
         // The *typed flag* decides, never the shape of the text: a bare UUID is

@@ -45,8 +45,11 @@
 
 set -uo pipefail   # NOT -e: every check must run, even after one fails.
 
+# `set -e` is deliberately off below, so the `cd` guards itself: without git,
+# `repo` is empty, `cd ""` succeeds as a no-op, and every check would silently
+# run against whatever directory the caller happened to be in.
 repo=$(git -C "$(dirname "$0")" rev-parse --show-toplevel)
-cd "$repo"
+cd "$repo" || exit 1
 
 strict=true
 coverage=false

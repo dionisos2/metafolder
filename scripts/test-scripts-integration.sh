@@ -218,7 +218,7 @@ hy_input y y y y y
 bash "$FOLDER" orphantag >/dev/null 2>&1
 assert_not "orphan: the path-less record is not tagged" has_tag "$GONE" orphantag
 assert "orphan: no question named an empty path" \
-    [ "$(hy_log | grep -c "gui message '' has tag")" -eq 0 ]
+    [ "$(hy_log | grep -c "gui input --prompt '' has tag")" -eq 0 ]
 assert "orphan: the tracked files still are asked and tagged" has_tag "$TOP" orphantag
 
 assert_summary

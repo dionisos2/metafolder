@@ -59,11 +59,20 @@ else
 fi
 FOLDER_TP=$(mf path --relative "$FOLDER_UUID")
 QUERY_PATH=$(mf_gui_query_path "$FOLDER_TP")
-SUBTREE="mfr_path ->* \"$QUERY_PATH\""
+SUBTREE="mfr_path ->* \"$(mf_dsl_str "$QUERY_PATH")\""
 
 # What the deletion would take: the strict descendants (the folder itself is
 # excluded by `->*`, which is why it survives with its mf_watch = false).
-INSIDE=$(mf metarecord -q "$SUBTREE" get | grep -c . || true)
+#
+# Counted from a file, and a failing `mf` is fatal. `$(mf … | grep -c . || true)`
+# turned *every* failure — a stopped daemon, an unloaded repo, a folder whose
+# name broke the query — into the number 0, and 0 is the branch that writes
+# mf_watch = false and then reports "no metarecord inside it": a clean success
+# on an untouched subtree.
+INSIDE_LIST=$(mktemp) || mf_die "cannot create a temporary file"
+mf_into "$INSIDE_LIST" metarecord -q "$SUBTREE" get
+INSIDE=$(grep -c . "$INSIDE_LIST" || true)
+rm -f "$INSIDE_LIST"
 
 # Deleting metarecords is irreversible (no trash for metadata), so it is
 # confirmed — unless there is nothing to delete, in which case unwatching alone

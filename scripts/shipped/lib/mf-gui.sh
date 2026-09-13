@@ -147,18 +147,51 @@ mf_gui_prompt_file() { _mf_gui_prompt_mfr_path "${1:-File: }" 'mfr_type = "file"
 
 # Convert a repository-relative tree path — as `mf path --relative` prints it
 # ("/" for the root, "/a/b" below) — to the form the `mfr_path` tree queries
-# (`= "…"`, `-> "…"`, `->* "…"`) expect: the root is the EMPTY string, every
-# descendant keeps its leading slash. Without this the root folder resolves to
-# the empty set (`mfr_path = "/"` / `->* "/"` match nothing), so a whole-repo
-# operation silently does nothing.
+# (`= "…"`, `-> "…"`, `->* "…"`) expect: the root as the EMPTY string, every
+# descendant keeping its leading slash. The daemon now folds a redundant slash
+# away, so `"/"` names the root too; the empty string stays the canonical
+# spelling, and going through this helper keeps every script writing the same one.
 mf_gui_query_path() { # <relpath>
     if [ "$1" = "/" ]; then printf ''; else printf '%s' "$1"; fi
+}
+
+# Escape a string for use inside a double-quoted DSL literal. File and tag names
+# are user data: a folder legitimately called `Rock "n" Roll` closed the literal
+# early and turned the whole query into a syntax error — which, read through a
+# `|| true`, became "this folder contains nothing".
+mf_dsl_str() { # <text>
+    local s=$1
+    s=${s//\\/\\\\}
+    s=${s//\"/\\\"}
+    printf '%s' "$s"
+}
+
+# Run `mf` with the given arguments, writing its standard output to <outfile>.
+# A failing `mf` is FATAL here, and that is the whole point: reading the output
+# of a failed command as an empty result is how "the daemon is down" or "that
+# query is invalid" turned into "the query matches nothing", after which a
+# script cheerfully reported success on work it had not done. `mapfile < <(mf …)`
+# and `$(mf … | grep -c .)` both throw the status away, so neither can be used
+# on a command whose emptiness means something.
+mf_into() { # <outfile> <mf args...>
+    local out=$1
+    shift
+    local rc=0 why
+    mf "$@" >"$out" 2>"$out.err" || rc=$?
+    if [ "$rc" -ne 0 ]; then
+        why=$(head -n 3 "$out.err" 2>/dev/null)
+        # Nothing in either file is usable now, and the caller is about to be
+        # torn down, so neither is left behind.
+        rm -f "$out.err" "$out"
+        mf_die "mf $* failed${why:+: $why}"
+    fi
+    rm -f "$out.err"
 }
 
 # Resolve an mfr_path tree-path (leading slash) to its metarecord uuid; prints
 # the uuid, or nothing (empty) when no tracked record sits at that path.
 mf_gui_path_uuid() { # <treepath>
-    mf metarecord -q "mfr_path = \"$(mf_gui_query_path "$1")\"" get | head -n1
+    mf metarecord -q "mfr_path = \"$(mf_dsl_str "$(mf_gui_query_path "$1")")\"" get | head -n1
 }
 
 # ── The scope of a script that acts on a set ─────────────────────────────────
@@ -185,7 +218,7 @@ mf_gui_default_scope() { # [<folder prompt>]
     fi
     folder=$(mf_gui_prompt_folder "${1:-Folder: }") || return 1
     [ -n "$folder" ] || return 1
-    printf 'mfr_path =>* "%s"' "$(mf_gui_query_path "$folder")"
+    printf 'mfr_path =>* "%s"' "$(mf_dsl_str "$(mf_gui_query_path "$folder")")"
 }
 
 # `mf metarecord … get` over $SCOPE. An empty scope is the whole repository and
@@ -196,6 +229,18 @@ mf_gui_scope_get() { # <get args...>
         mf metarecord get "$@"
     else
         mf metarecord -q "$SCOPE" get "$@"
+    fi
+}
+
+# [`mf_gui_scope_get`] into a file, dying on a failed `mf` (see [`mf_into`]).
+# Use this one whenever an empty result would be read as an answer.
+mf_gui_scope_into() { # <outfile> <get args...>
+    local out=$1
+    shift
+    if [ -z "${SCOPE:-}" ]; then
+        mf_into "$out" metarecord get "$@"
+    else
+        mf_into "$out" metarecord -q "$SCOPE" get "$@"
     fi
 }
 
@@ -256,28 +301,39 @@ mf_gui_ask_answer() { # <message> <letter>...
 #     key=$(mf_gui_ask "message" y n q)
 # Prints the pressed key; 'escape' when the question could not be answered at
 # all — a timeout, a closed GUI, a refused wait — which every caller's default
-# branch stops on, like the quit key. Targets the
-# session workspace (WS) when one is open.
+# branch stops on, like the quit key.
+#
+# The question travels as the wait's own `--prompt`, which is what puts it in
+# the dedicated question bar above the status line (spec-gui "Status bar"). It
+# used to be posted separately with `mf gui message` and the wait carried no
+# prompt at all: the bar showed the keys under an empty label, the question sat
+# on the status line, and the next message — a progress phase, a report —
+# overwrote it. That bar exists precisely so that cannot happen.
 mf_gui_ask() {
-    local msg=$1 key why err rc
+    local msg=$1 key why err rc=0
     shift
-    if [ -n "${WS:-}" ]; then
-        mf gui message "$msg" --workspace "$WS" >/dev/null
+    # One scratch file for the whole run when a session is open; the session's
+    # EXIT trap removes the directory holding it.
+    if [ -n "${_MF_TMP:-}" ]; then
+        err="$_MF_TMP/ask.err"
     else
-        mf gui message "$msg" >/dev/null
+        err=$(mktemp 2>/dev/null) || err=""
     fi
     # `mf gui input` fails on a timeout, a closed GUI, or a 409 (another wait
     # still holds the lock). All three end the run like Escape does — but the
     # reason must NOT be swallowed: silently answering "escape" is exactly what
     # made a script look like it "just stopped" for no reason.
-    err=$(mktemp 2>/dev/null) || err=""
-    key=$(mf gui input "$@" 2>"${err:-/dev/null}")
-    rc=$?
+    #
+    # `|| rc=$?` and not a bare `rc=$?` on the next line: the assignment must be
+    # part of a *tested* command, or the ERR trap fires on a failure this very
+    # function is about to handle, and the user reads a raw "line N: … exited 1"
+    # before the explanation.
+    key=$(mf gui input --prompt "$msg" "$@" 2>"${err:-/dev/null}") || rc=$?
     if [ "$rc" -ne 0 ]; then
         why=$([ -n "$err" ] && cat "$err" 2>/dev/null)
         mf_gui_report "the question could not be answered (${why:-no reason given}) — stopping"
         key=escape
     fi
-    [ -n "$err" ] && rm -f "$err"
+    [ -n "$err" ] && [ -z "${_MF_TMP:-}" ] && rm -f "$err"
     printf '%s\n' "$key"
 }

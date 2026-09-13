@@ -68,7 +68,7 @@ scan() {
 # prefix both ways (libfoo rlibs vs foo .d/fingerprint/build entries).
 declare -a doomed=()
 mark() {
-    local profile=$1 stem=$2 hash=$3 alt s
+    local profile=$1 stem=$2 hash=$3 alt s path
     if [[ $stem == lib?* ]]; then alt=${stem#lib}; else alt=lib$stem; fi
     for s in "$stem" "$alt"; do
         for path in "$target_dir/$profile/deps/$s-$hash" \
