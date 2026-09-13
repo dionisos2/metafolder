@@ -1,0 +1,125 @@
+* DONE proof of concept (daemon + simple scripts)
+* DONE benchmarks
+* DONE specifications for the daemon
+** DONE basic data model, query language, tree cache, cross-repo sync
+** DONE review reconcile and fingerprint spec
+** DONE review file watcher spec
+** DONE event sourcing and rollback
+*** DONE tree ?
+*** DONE pruning
+*** DONE impossible rollback
+*** DONE tag
+*** DONE failure
+** DONE user schema
+** DONE cross-platform compatibility (abstract OS-specific references in spec)
+** DONE remaining open questions (pagination, regex index)
+* DONE specifications for the GUI
+* DONE specifications for the Rust commands
+* DONE first version of the daemon
+* DONE first version of the Rust commands
+* DONE first version of the GUI
+* DONE post-GUI feature work (towards v0.3)
+** DONE loopback session-token authentication (spec-auth)
+** DONE trash bin (mf trash, core::trash)
+** DONE hierarchical tags (mf tag) + folder ordering (mf order)
+** DONE cross-repo sync (mf sync, core::sync, daemon + GUI panel)
+** DONE in-memory bitmap/BSI query accelerator (daemon/src/index)
+** DONE embedded media metadata extraction (mfr_meta_*)
+** DONE recently-viewed metarecords (GUI)
+** DONE shared file operations in every panel (cut/copy/paste/rename/trash)
+** DONE build/install tooling (Makefile, check-deps.sh)
+** DONE GUI help panel
+* TODO v0.3 release
+** TODO whole-project review pass (docs/code coherence, bugs, refactors)
+A pass ran in September 2026: 5 bugs fixed (a broken symlink read as absent, in
+seven places; a copy dereferencing a symlink; a redundant slash naming no tree
+node), 6 refactors, and the sync linking phase taken from 6 reads per record to
+1. What it found and left is listed under "known issues and deferred work" below.
+** TODO cut the release (tag, changelog)
+* TODO v2 (deferred)
+** TODO multi-owner link metarecords
+Reads already exclude them; the *writes* are not link-aware, which is what has to
+be settled when links arrive — =docs/review-followups.md= §9.
+** TODO adaptive query planner / on-disk index persistence (spec-indexing)
+
+* TODO known issues and deferred work
+Found by the whole-project review pass and not (yet) fixed. Items already
+written up in =docs/review-followups.md= are referenced by their section rather
+than repeated; everything else is described here.
+
+** TODO performance — one request per metarecord
+The recurring defect of this project, in its HTTP form.
+
+*** TODO =mf order= writes one revision per child
+Measured with a counting stub: N children cost N+1 =PUT=s, so N transactions,
+N fsyncs, and — the part that matters — *N revisions of the log*, where every
+other bulk operation in the project is one revision (see the =write_matches=
+scaffold in =routes.rs=). Undoing a numbering therefore takes N rollbacks.
+
+Blocked on a decision: the set layer applies the *same* value to a whole set,
+while each child here gets its own position. It needs an endpoint taking
+=(uuid, value)= pairs — purely additive, so no =API_VERSION= bump.
+
+*** TODO =mf sync plan=: the target-side position lookup is still per-record
+The bulk pass took the linking phase from 6 reads per scope record to 1. The one
+left is =record_at_path=, which asks for the occupant of a position on the
+*other* side — keyed by a path, not by a uuid, and no set endpoint answers that.
+
+*** TODO =FollowsTransitive= materialises the whole subtree
+See =docs/review-followups.md= §7 (recursive CTE; the big one).
+
+** TODO query API limits
+*** TODO native =In= operator, chunked compound selects, execution timeout
+See =docs/review-followups.md= §8.
+
+** TODO correctness, minor
+*** TODO =daemon/src/sync.rs= =locate()= uses =Path::exists()=
+It follows symlinks, like the seven sites fixed in "a broken symlink is a file
+that is there". Harmless here — it probes the sync database file that metafolder
+creates itself under =internal/=, never a tracked path — which is why it was left
+alone and excluded from the =mf-path-exists-follows-symlinks= semgrep rule's
+scope. Worth revisiting only if that file ever becomes user-placeable.
+
+*** TODO =compute_watched_dirs= swallows an unreadable directory entry
+It mirrors =reconcile::walk=, but the walk propagates a failed =DirEntry=
+(=entry?=) while the watcher's version drops it (=entries.flatten()=). The two
+therefore disagree about a directory whose entry cannot be read: the reconcile
+aborts, the watcher silently skips. Decide which is right and make both do it.
+
+*** TODO the GUI orphan fix has no integration test
+=fs_exists= (the entry itself, links included) is unit-tested in Rust and the
+wiring is enforced by =tsc=, but no test mounts =metarecord-list= with a broken
+symlink and checks the row is not coloured as an orphan. The harness exists —
+=frontend/tests/metarecord-list-live-update.test.ts= already models "which paths
+are on disk" and now routes =fs_exists=.
+
+** TODO structure
+*** TODO =routes.rs= is 4111 lines and 83 handlers
+Splitting it into =routes/= submodules is filing, not simplification — a large
+mechanical diff. Worth doing for navigability, not for complexity.
+
+*** TODO the big panels are one =mount()= each
+=metarecord-list= 1593 lines over 93 closures, =metarecord-detail= 1473. They all
+share the panel instance's state, so extracting anything means passing an
+explicit context: a rewrite, against 71% JS coverage. Not to be started casually.
+
+*** TODO long sequential functions
+=reconcile_full_reported= (334 lines), =query_exec::execute= (206),
+=flush_pending_once= (198). Long but linear — phase sequences over shared state,
+not tangled logic. Extraction would cost ten-parameter signatures for a
+debatable gain; left alone deliberately.
+
+** TODO tooling
+*** TODO test coverage has never been measured here
+=cargo llvm-cov= is wired into =scripts/check.sh= behind =--coverage= and was not
+run during the review. Worth one pass to find what is untested.
+
+*** TODO =scripts/check.sh= cannot run in one block on this machine
+Killed three times for low memory (1.9 GiB available, swap already at 6 GiB).
+Run it crate by crate instead — same checks, see [[file:docs/review-followups.md][review-followups]] for the
+pattern. An environment limit, not a defect of the script.
+
+** TODO shipped tagging scripts
+*** TODO deferred items from the scripts pass
+See =docs/review-followups.md= §10 (mock =mf= argument boundaries), §11 (=mf path=
+per question), §12 (level-by-level walk).
