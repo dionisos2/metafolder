@@ -74,8 +74,11 @@ AND NOT (tag -> $TAG_COND OR negative_tag -> $TAG_COND)")
 # Through a file: `< <(mf …)` discards the exit status, so a refused query or a
 # stopped daemon came back as an empty worklist and the run reported "nothing to
 # do" instead of the error.
-mf_into "$TMP/worklist" metarecord -q "$PREDICATE" get
+# Bounded like the other walks: the worklist is held in memory for the whole run.
+mf_into "$TMP/worklist" metarecord -q "$PREDICATE" get \
+    --limit "$((MF_GUI_MAX_ENTRIES + 1))"
 mapfile -t uuids <"$TMP/worklist"
+mf_check_scope_size "${#uuids[@]}" "files with no opinion on this tag"
 total=${#uuids[@]}
 
 # Every relative path in one round-trip, the way gui-tag-folder reads its walk:

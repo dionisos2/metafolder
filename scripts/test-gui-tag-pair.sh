@@ -29,13 +29,17 @@ setup_gui() { # [<gui query response>]
     # `mf path --relative U` must be tried before the bare `mf path U`.
     mock_respond 'path --relative *' 'rel/path'
     mock_respond 'path *'            '/abs/path'
+    # The relative paths come from one batched read, not from `mf path` per
+    # entry; the rows are uuid<TAB>path.
+    mock_respond 'metarecord -q * get --resolve-tree mfr_path --tsv' \
+        $'u1\t/f1\nu2\t/f2\nu3\t/f3\nu4\t/f4\nu5\t/f5'
 }
 
 # ── Case 1: a y / n / s / Escape walk over five files ────────────────────────
 mock_reset
 setup_gui
 mock_prompt 'music/jazz'                     # the tag being applied
-mock_respond 'metarecord -q * get' $'u1\nu2\nu3\nu4\nu5'
+mock_respond 'metarecord -q * get --limit*' $'u1\nu2\nu3\nu4\nu5'
 mock_input y n s q                       # f1=yes f2=no f3=skip f4=STOP
 out=$(bash "$SCRIPT"); code=$?
 
@@ -48,7 +52,7 @@ assert "walk: u5 untouched after Escape stops" [ "$(mock_count 'tag -i u5 *')" -
 assert_contains "walk: summary counts correct" "$out" "1 yes, 1 no, 1 skipped"
 
 # The predicate must exclude files already carrying an opinion and target files.
-pred=$(mock_calls_matching 'metarecord -q * get')
+pred=$(mock_calls_matching 'metarecord -q * get --limit*')
 assert_contains "walk: predicate filters to files" "$pred" 'mfr_type = "file"'
 assert_contains "walk: predicate excludes files with an opinion" "$pred" 'NOT ('
 assert_contains "walk: predicate uses exact tag-path node" "$pred" 'path = "music/jazz"'
@@ -76,7 +80,7 @@ assert_contains "quote: explains the quote rule" "$err" 'double quote'
 mock_reset
 setup_gui
 mock_prompt 'music'
-mock_respond 'metarecord -q * get' ''         # empty universe
+mock_respond 'metarecord -q * get --limit*' ''         # empty universe
 out=$(bash "$SCRIPT"); code=$?
 assert "empty: exits 0" [ "$code" -eq 0 ]
 assert_contains "empty: zeroed summary" "$out" "0 yes, 0 no, 0 skipped"
@@ -89,7 +93,7 @@ assert "empty: no tag op" [ "$(mock_count 'tag -i *')" -eq 0 ]
 mock_reset
 setup_gui
 mock_prompt 'music/jazz'
-mock_respond 'metarecord -q * get' $'u1\nu2\nu3'
+mock_respond 'metarecord -q * get --limit*' $'u1\nu2\nu3'
 mock_input right left down                    # → yes, ← no, ↓ skip
 out=$(bash "$SCRIPT"); code=$?
 assert "arrows: exits 0" [ "$code" -eq 0 ]
@@ -113,11 +117,11 @@ mock_reset
 G='mfr_path ->* "/music"'
 setup_gui "$G"
 mock_prompt 'music/jazz'
-mock_respond 'metarecord -q * get' 'u1'
+mock_respond 'metarecord -q * get --limit*' 'u1'
 mock_input y
 out=$(bash "$SCRIPT"); code=$?
 assert "scope: exits 0" [ "$code" -eq 0 ]
-pred=$(mock_calls_matching 'metarecord -q * get')
+pred=$(mock_calls_matching 'metarecord -q * get --limit*')
 assert_contains "scope: the predicate is narrowed to what the GUI shows" "$pred" "($G) AND"
 assert "scope: no folder prompt when a query is published" \
     [ "$(mock_count 'gui prompt Folder*')" -eq 0 ]
@@ -126,11 +130,11 @@ assert "scope: no folder prompt when a query is published" \
 mock_reset
 setup_gui
 Q='rating > 3'
-mock_respond 'metarecord -q * get' 'u1'
+mock_respond 'metarecord -q * get --limit*' 'u1'
 mock_input y
 bash "$SCRIPT" music/jazz "$Q" >/dev/null; code=$?
 assert "arg: exits 0" [ "$code" -eq 0 ]
-pred=$(mock_calls_matching 'metarecord -q * get')
+pred=$(mock_calls_matching 'metarecord -q * get --limit*')
 assert_contains "arg: the predicate uses the argument" "$pred" "($Q) AND"
 assert "arg: the tag is not prompted either" [ "$(mock_count 'gui prompt Tag*')" -eq 0 ]
 
@@ -139,11 +143,11 @@ mock_reset
 setup_gui @exit:1
 mock_respond 'metarecord -q mfr_type = "dir" get*' '/music'
 mock_prompt 'music/jazz' '/music'      # the tag, then the folder
-mock_respond 'metarecord -q * get' 'u1'
+mock_respond 'metarecord -q * get --limit*' 'u1'
 mock_input y
 bash "$SCRIPT" >/dev/null; code=$?
 assert "fallback: exits 0" [ "$code" -eq 0 ]
-pred=$(mock_calls_matching 'metarecord -q * get')
+pred=$(mock_calls_matching 'metarecord -q * get --limit*')
 assert_contains "fallback: the folder becomes an inclusive-subtree query" "$pred" \
     '(mfr_path =>* "/music") AND'
 
@@ -151,7 +155,7 @@ assert_contains "fallback: the folder becomes an inclusive-subtree query" "$pred
 mock_reset
 setup_gui
 mock_prompt 'music'
-mock_respond 'metarecord -q * get' ''
+mock_respond 'metarecord -q * get --limit*' ''
 bash "$SCRIPT" >/dev/null; code=$?
 assert "all: exits 0" [ "$code" -eq 0 ]
 assert "all: no empty parentheses in the predicate" [ "$(mock_count 'metarecord -q () AND*')" -eq 0 ]

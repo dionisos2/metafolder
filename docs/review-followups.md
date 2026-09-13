@@ -198,3 +198,82 @@ non défini ; un garde-fou serait du code mort (rien ne crée de link). À trait
 lors de la conception des links (`docs/spec-sync.org`). **Pointeurs :**
 `log.rs` (`delete_metarecord`, `navigate`, `prune`), `query_exec.rs` (CTE
 `_repo`, le modèle d'exclusivité de référence), `db.rs` (`metarecord_db`).
+
+## 10. Le log du mock `mf` perd les frontières d'arguments — ⏳ DIFFÉRÉ (coût > gain)
+
+**Constat.** `scripts/lib/mf-mock.sh` journalise chaque appel comme `sig="$*"`,
+c'est-à-dire les arguments joints par des espaces, sans quoting. Idem
+`scripts/lib/daemon-fixture.sh:92`. Un glob d'assertion peut donc matcher du
+texte *à l'intérieur* d'un argument — typiquement une requête DSL, qui contient
+des espaces : `mock_count 'tag -i rec-1 add music'` matcherait un hypothétique
+`mf metarecord -q 'tag -i rec-1 add music' get`.
+
+**Pourquoi c'est différé.** Aucun faux positif observé, et les formes en jeu sont
+contrivées. Le coût, lui, est réel : le format du log est l'interface de
+`mock_count` / `mock_calls_matching`, donc en changer la forme demande de
+réécrire la centaine d'assertions des six suites (`test-gui-tag-*.sh`,
+`test-example-gui-sort-folder.sh`, `test-scripts-integration.sh`). Fragilité
+latente, pas un bug.
+
+**Piste si ça mord un jour.** Garder `$*` comme log lisible (les assertions
+existantes ne bougent pas) et écrire *en plus* un log `argv` séparé par un
+caractère impossible (`\x1f`), avec un `mock_count_argv` pour les assertions qui
+ont besoin de précision. Migration incrémentale, pas de big bang.
+
+## 11. `mf path` par question dans les scripts de tagging — ⏳ DIFFÉRÉ (demande une surface CLI)
+
+**Constat.** `gui-tag-folder.sh` appelle `mf path "$uuid"` pour l'aperçu à chaque
+question alors que `PATH_OF[$uuid]` (le chemin *relatif*) est déjà en mémoire ;
+`gui-tag-pair.sh` fait de même. Il ne manque que la **racine absolue du dépôt**
+pour reconstruire le chemin absolu sans aller-retour.
+
+**Pourquoi c'est différé.** Le coût est d'un aller-retour HTTP par *question*,
+donc par touche pressée par un humain — invisible à côté du temps de réponse.
+(Le vrai coût, lui, était le nombre de *processus* par entrée : traité, cf.
+`gui-tag-next.sh`, 31,8 s → 0,19 s.)
+
+**Ce qui manque pour le faire proprement.** Aucune commande CLI n'imprime la
+racine d'un dépôt : `mf repo list` rend le JSON brut de `GET /repos`, dont
+extraire `root` en bash demanderait `jq` (nouvelle dépendance) ou du sed
+fragile. Déduire la racine en soustrayant le chemin relatif d'un `mf path`
+absolu est pire. La correction propre est d'ajouter `mf repo root` (ou un
+`--root` à `mf repo list`), puis de le lire une fois par run — petite addition
+de surface CLI à peser, pas un refactor de script.
+
+## 12. Les scripts de tagging tiennent tout le scope en mémoire — ⏳ BORNÉ, refonte différée
+
+**Constat.** `gui-tag-folder.sh` (`collect`), `gui-tag-classify.sh` et
+`gui-tag-pair.sh` lisent **tout** leur scope avant la première question, dans
+des tableaux associatifs bash (`RANK`, `KIND`, `PATH_OF`, `DECIDED`,
+`SUBTREE`…). Le scope EST donc la mémoire du run. Le daemon, lui, n'a jamais vu
+de requête non bornée — la CLI pagine déjà par `page-size` (500) et suit les
+curseurs — mais la CLI accumule le tout et le script le garde.
+
+**Ce qui est fait (sept. 2026).** Une borne explicite,
+`MF_GUI_MAX_ENTRIES` (défaut 20000, `lib/mf-gui.sh`), passée en `--limit` sur la
+lecture *ordonnée* et vérifiée par `mf_check_scope_size` : au-delà, le run
+refuse en nommant la borne et en rappelant que **la requête est le scope**
+(la narrower est une fonctionnalité documentée). La vérification tombe avant la
+lecture `--resolve-tree`, qui ne prend pas de limite (elle résout toute la
+requête en un aller-retour) et qui est la plus chère.
+
+**Pourquoi ce n'est qu'une borne.** Le walk a besoin d'un tri *global*
+(profondeur, parent, dossiers avant fichiers, rang du daemon) pour produire son
+ordre, et d'un TOTAL connu d'avance pour que la barre de progression soit
+exacte. Les deux exigent l'ensemble complet. Avancer par pages demanderait de
+renoncer à l'un ou à l'autre.
+
+**La vraie refonte (à faire).** Descendre niveau par niveau, en ne chargeant que
+ce qui sera réellement demandé :
+
+1. lire les **dossiers** seuls (bien moins nombreux) et construire l'arbre ;
+2. ne lire les **fichiers d'un dossier** que lorsqu'on y descend, c'est-à-dire
+   seulement si le dossier n'a pas été réglé en bloc.
+
+Bénéfice double : un « oui » sur un dossier de 100 000 fichiers ne les lit
+**jamais**, et la mémoire devient proportionnelle à la profondeur, pas au scope.
+Coût : le TOTAL n'est plus connu d'avance — la barre devient indéterminée, ou
+bornée par le nombre de dossiers avec un compteur de fichiers qui s'affine. Le
+compteur « N left » (déjà subtree-aware, cf. `SUBTREE`/`prune_subtree`) devrait
+suivre le même modèle. À décider avant de coder : ce que la barre montre quand
+le total est inconnu.

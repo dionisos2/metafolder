@@ -36,7 +36,7 @@ setup_common() { # [<gui query response>]
     # The scope resolves to the one record the old single-uuid form named: a
     # bare uuid is a valid query (spec-query, the UUID-atom bullet), so the old
     # invocation keeps working.
-    mock_respond 'metarecord -q rec-1 get --sort mfr_path' 'rec-1'
+    mock_respond 'metarecord -q rec-1 get --sort mfr_path*' 'rec-1'
 }
 
 # The ordered list of tags actually asked about, comma-joined.
@@ -87,7 +87,7 @@ mock_respond 'tag list'         ''            # empty vocabulary
 mock_respond 'gui repo'         'repo-1'
 mock_respond 'gui query'        '@exit:1'
 mock_respond 'path rec-1'       '/abs/file'
-mock_respond 'metarecord -q rec-1 get --sort mfr_path' 'rec-1'
+mock_respond 'metarecord -q rec-1 get --sort mfr_path*' 'rec-1'
 mock_respond 'gui layout left'  'saved-left'
 mock_respond 'gui layout right' 'saved-right'
 mock_respond 'gui workspace new*' 'ws-1'
@@ -99,7 +99,7 @@ assert_contains "no-vocab: explains the empty vocabulary" "$err" 'no tag entries
 mock_reset
 G='mfr_type = "file"'
 setup_common "$G"
-mock_respond "metarecord -q $G get --sort mfr_path" 'rec-1'
+mock_respond "metarecord -q $G get --sort mfr_path*" 'rec-1'
 mock_input q
 out=$(bash "$SCRIPT"); code=$?
 assert "gui scope: exits 0" [ "$code" -eq 0 ]
@@ -112,13 +112,13 @@ assert_contains "gui scope: classifies the matching record" "$out" "rec-1"
 mock_reset
 setup_common
 mock_respond 'metarecord -q mfr_type = "dir" get*' '/some/dir'      # completion
-mock_respond 'metarecord -q mfr_path =>* "/some/dir" get --sort mfr_path' 'rec-1'
+mock_respond 'metarecord -q mfr_path =>* "/some/dir" get --sort mfr_path*' 'rec-1'
 mock_prompt '/some/dir'
 mock_input q
 out=$(bash "$SCRIPT"); code=$?
 assert "fallback: exits 0" [ "$code" -eq 0 ]
 assert "fallback: the folder becomes an inclusive-subtree query" \
-    [ "$(mock_count 'metarecord -q mfr_path =>* "/some/dir" get --sort mfr_path')" -eq 1 ]
+    [ "$(mock_count 'metarecord -q mfr_path =>* "/some/dir" get --sort mfr_path*')" -eq 1 ]
 
 # ── Case 7: cancelling the folder prompt aborts ─────────────────────────────
 mock_reset
@@ -134,7 +134,7 @@ assert_contains "prompt-cancel: reports cancelled" "$err" cancelled
 mock_reset
 Q='rating > 3'
 setup_common
-mock_respond "metarecord -q $Q get --sort mfr_path" $'rec-1\nrec-2'
+mock_respond "metarecord -q $Q get --sort mfr_path*" $'rec-1\nrec-2'
 mock_respond 'path rec-2'            '/abs/file2'
 mock_respond 'path --relative rec-2' '/file2'
 mock_input n y y n   q               # rec-1 fully classified, then rec-2 stopped
@@ -149,7 +149,7 @@ assert "set: the progress bar knows the total" \
 mock_reset
 Q='rating > 3'
 setup_common
-mock_respond "metarecord -q $Q get --sort mfr_path" $'rec-1\nrec-2'
+mock_respond "metarecord -q $Q get --sort mfr_path*" $'rec-1\nrec-2'
 mock_respond 'path rec-2'            '/abs/file2'
 mock_respond 'path --relative rec-2' '/file2'
 mock_input q

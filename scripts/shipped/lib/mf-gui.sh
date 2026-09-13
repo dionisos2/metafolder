@@ -232,6 +232,24 @@ mf_gui_scope_get() { # <get args...>
     fi
 }
 
+# The most metarecords a single run will hold in memory at once. These scripts
+# build associative arrays over the whole scope, so the scope is the run's
+# memory, and bash arrays are not cheap: a repository of a million files would
+# swap rather than ask a question. A bounded refusal naming the cap is the
+# honest answer, and narrowing the scope is a documented feature — the query IS
+# the scope (spec-gui "A query is the scope").
+#
+# Override with MF_GUI_MAX_ENTRIES for a deliberately large run.
+MF_GUI_MAX_ENTRIES=${MF_GUI_MAX_ENTRIES:-20000}
+
+# Refuse a scope bigger than the cap, before the expensive reads that follow.
+# Pass the count read so far; call it again as more is read, since the cap is on
+# the run's total and a script may read the scope in several pieces.
+mf_check_scope_size() { # <count-so-far> <what>
+    [ "$1" -le "$MF_GUI_MAX_ENTRIES" ] || mf_die \
+        "the scope holds more than $MF_GUI_MAX_ENTRIES $2 — narrow the query (the query is the scope), or raise MF_GUI_MAX_ENTRIES"
+}
+
 # [`mf_gui_scope_get`] into a file, dying on a failed `mf` (see [`mf_into`]).
 # Use this one whenever an empty result would be read as an answer.
 mf_gui_scope_into() { # <outfile> <get args...>

@@ -121,9 +121,16 @@ collect() { # <dir|file> <order field>
     # exit status away, so a refused query or a stopped daemon came back as an
     # empty walk and the script announced "the query matches no tracked
     # metarecord" — reporting an error as an answer.
+    # Bounded, and checked BEFORE the path read below: `--resolve-tree` resolves
+    # the whole query in one round-trip and takes no limit, so the cheap ordered
+    # read is where an oversized scope has to be caught. One past the cap is
+    # asked for, so "more than the cap" is distinguishable from "exactly it".
     local -a ordered=()
-    mf_into "$TMP/order.$kind" metarecord -q "$scope" get --sort "$field" --sort mfr_path
+    mf_into "$TMP/order.$kind" metarecord -q "$scope" get \
+        --sort "$field" --sort mfr_path --limit "$((MF_GUI_MAX_ENTRIES + 1))"
     mapfile -t ordered <"$TMP/order.$kind"
+    COLLECTED=$((COLLECTED + ${#ordered[@]}))
+    mf_check_scope_size "$COLLECTED" "tracked metarecords"
     for uuid in ${ordered+"${ordered[@]}"}; do
         [ -n "$uuid" ] || continue
         i=$((i + 1))
@@ -182,6 +189,9 @@ load_decided() {
     done
 }
 
+# The running total across both kinds: the cap is on what the run holds, not on
+# either query.
+COLLECTED=0
 collect dir order_dir
 collect file order_file
 
@@ -217,6 +227,26 @@ done
 TOTAL=${#ENTRIES[@]}
 [ "$TOTAL" -gt 0 ] || mf_die "the query matches no tracked metarecord"
 
+# How many walk entries lie strictly under each folder. Answering a folder whole
+# settles its entire subtree at once, so that is the number the "N left" counter
+# has to drop by — decrementing by one per entry made it say a folder of ten
+# thousand files was still ahead after it had just been answered.
+#
+# Counted by walking each entry's own ancestors, once, with parameter expansion:
+# one pass over the scope, no process and no prefix scan per folder.
+# Keys carry a "." prefix, as the parent field of the walk line does: the
+# repository root's path is the EMPTY string, and bash rejects an empty
+# associative-array subscript — which is precisely the folder whose subtree is
+# the whole scope.
+declare -A SUBTREE
+for uuid in "${!PATH_OF[@]}"; do
+    ancestor=${PATH_OF[$uuid]}
+    while [ "${ancestor%/*}" != "$ancestor" ]; do
+        ancestor=${ancestor%/*}
+        SUBTREE[.$ancestor]=$((${SUBTREE[.$ancestor]:-0} + 1))
+    done
+done
+
 # The walk order, materialised in a file rather than read from a pipe. Leaving
 # the walk early (stop, Escape, a failed tag op) closes its input, and a `sort`
 # still writing then dies of SIGPIPE — which the ERR trap reported as an error,
@@ -242,12 +272,25 @@ is_pruned() { # <path>
     return 1
 }
 
+# Settle a folder's whole subtree: nothing under it is asked, and REMAINING —
+# what the question's counter reports — drops by everything it covers. The two
+# are one call so they can never drift apart.
+prune_subtree() { # <path>
+    PRUNED+=("$1")
+    REMAINING=$((REMAINING - ${SUBTREE[.$1]:-0}))
+}
+
 # How the walk ended: "" = still going, "user" = stopped, anything else is an
 # ERROR MESSAGE. The two must stay apart: bash disables `set -e` wherever a
 # failure is tested, so a failed `mf tag` inside a handler would otherwise be
 # indistinguishable from Escape and end the run with a cheerful "stopped."
 STOP=""
 SKIPPED=0
+# What the question's counter reports: entries still to be *considered*. It
+# drops by one per entry looked at, and by a whole subtree the moment a folder
+# is settled — unlike DONE, which counts every entry the walk steps over and so
+# drives the progress bar to its total.
+REMAINING=$TOTAL
 ALREADY=0
 DONE=0
 
@@ -283,7 +326,17 @@ while IFS=$'\t' read -r depth parent krank rank uuid; do
     # always reports" rule never fired, and the "N left" counter claimed a
     # folder answered whole was still ahead.
     DONE=$((DONE + 1))
-    is_pruned "$path" && continue
+    # A settled subtree is walked over, not asked about — but it still has to
+    # report, or the bar stops wherever the last question was and never reaches
+    # its total. `report_step` throttles, so this costs one call per percent.
+    if is_pruned "$path"; then
+        report_step "$DONE" "$path"
+        continue
+    fi
+    # Past the prune test this entry is one the run actually considers, so it
+    # comes off the counter. Entries skipped just above were already discounted,
+    # as a block, when their folder was settled.
+    REMAINING=$((REMAINING - 1))
     # Already answered in an earlier run: no question, no tag op. A folder that
     # took the answer whole settles its subtree; a mixed one does not — that is
     # where its remaining questions live. The answer is a lookup in the sets
@@ -294,7 +347,7 @@ while IFS=$'\t' read -r depth parent krank rank uuid; do
         y | n)
             ALREADY=$((ALREADY + 1))
             report_step "$DONE" "$path"
-            [ "$kind" = dir ] && PRUNED+=("$path")
+            [ "$kind" = dir ] && prune_subtree "$path"
             continue
             ;;
         m)
@@ -305,7 +358,7 @@ while IFS=$'\t' read -r depth parent krank rank uuid; do
     esac
     report_progress "$DONE" "$path"
     mf_gui_show_file "$(mf path "$uuid" 2>/dev/null || true)"
-    counter="$((TOTAL - DONE)) left"
+    counter="$REMAINING left"
     if [ "$kind" = dir ]; then
         answer=$(mf_gui_ask_answer \
             "'$path' has tag '$TAG'?   [y →] oui   [n ←] non   [m ↑] mixed   [s ↓] skip   [q] stop   — $counter" \
@@ -318,14 +371,14 @@ while IFS=$'\t' read -r depth parent krank rank uuid; do
     case $answer in
         y)
             if [ "$kind" = dir ]; then
-                if apply_tree "$uuid" "$path" add; then PRUNED+=("$path"); else STOP="cannot tag '$path'"; fi
+                if apply_tree "$uuid" "$path" add; then prune_subtree "$path"; else STOP="cannot tag '$path'"; fi
             else
                 mf tag -i "$uuid" add "$TAG" >/dev/null || STOP="cannot tag '$path'"
             fi
             ;;
         n)
             if [ "$kind" = dir ]; then
-                if apply_tree "$uuid" "$path" deny; then PRUNED+=("$path"); else STOP="cannot untag '$path'"; fi
+                if apply_tree "$uuid" "$path" deny; then prune_subtree "$path"; else STOP="cannot untag '$path'"; fi
             else
                 mf tag -i "$uuid" deny "$TAG" >/dev/null || STOP="cannot untag '$path'"
             fi
@@ -336,7 +389,7 @@ while IFS=$'\t' read -r depth parent krank rank uuid; do
             ;;
         s)
             SKIPPED=$((SKIPPED + 1))
-            [ "$kind" = dir ] && PRUNED+=("$path")
+            [ "$kind" = dir ] && prune_subtree "$path"
             ;;
         *) STOP=user ;;
     esac

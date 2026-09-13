@@ -71,9 +71,13 @@ fi
 # Read before the session takes the screen over, so an empty scope does not
 # flash the layout on its way to an error.
 SCOPED=$(mktemp) || mf_die "cannot create a temporary file"
-mf_gui_scope_into "$SCOPED" --sort mfr_path
+# Bounded: the whole scope is held in memory for the walk, so the scope is the
+# run's memory. One past the cap is asked for, so "more than it" is
+# distinguishable from "exactly it".
+mf_gui_scope_into "$SCOPED" --sort mfr_path --limit "$((MF_GUI_MAX_ENTRIES + 1))"
 mapfile -t UUIDS <"$SCOPED"
 rm -f "$SCOPED"
+mf_check_scope_size "${#UUIDS[@]}" "tracked metarecords"
 TOTAL=0
 for u in ${UUIDS+"${UUIDS[@]}"}; do [ -n "$u" ] && TOTAL=$((TOTAL + 1)); done
 [ "$TOTAL" -gt 0 ] || mf_die "the query matches no tracked metarecord"

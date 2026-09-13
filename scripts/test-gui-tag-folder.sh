@@ -50,8 +50,9 @@ scope_holds() { # <dir rows...> -- <file rows...>   rows are "uuid<TAB>path"
     for row in ${files+"${files[@]}"}; do
         file_uuids+="${row%%	*}"$'\n'; file_rows+="$row"$'\n'
     done
-    mock_respond "metarecord -q ($SC) AND mfr_type = \"dir\" AND mfr_path IS PRESENT get --sort order_dir --sort mfr_path" "${dir_uuids%$'\n'}"
-    mock_respond "metarecord -q ($SC) AND mfr_type = \"file\" AND mfr_path IS PRESENT get --sort order_file --sort mfr_path" "${file_uuids%$'\n'}"
+    # Trailing "*": the ordered reads carry the scope-size cap as a --limit.
+    mock_respond "metarecord -q ($SC) AND mfr_type = \"dir\" AND mfr_path IS PRESENT get --sort order_dir --sort mfr_path*" "${dir_uuids%$'\n'}"
+    mock_respond "metarecord -q ($SC) AND mfr_type = \"file\" AND mfr_path IS PRESENT get --sort order_file --sort mfr_path*" "${file_uuids%$'\n'}"
     mock_respond "metarecord -q ($SC) AND mfr_type = \"dir\" AND mfr_path IS PRESENT get --resolve-tree mfr_path --tsv" "${dir_rows%$'\n'}"
     mock_respond "metarecord -q ($SC) AND mfr_type = \"file\" AND mfr_path IS PRESENT get --resolve-tree mfr_path --tsv" "${file_rows%$'\n'}"
 }
@@ -158,8 +159,8 @@ assert_contains "order: the folder comes before the files" \
 mock_reset
 setup_gui
 Q='rating > 3'
-mock_respond "metarecord -q ($Q) AND mfr_type = \"dir\" AND mfr_path IS PRESENT get --sort order_dir --sort mfr_path"  ''
-mock_respond "metarecord -q ($Q) AND mfr_type = \"file\" AND mfr_path IS PRESENT get --sort order_file --sort mfr_path" 'file-a'
+mock_respond "metarecord -q ($Q) AND mfr_type = \"dir\" AND mfr_path IS PRESENT get --sort order_dir --sort mfr_path*"  ''
+mock_respond "metarecord -q ($Q) AND mfr_type = \"file\" AND mfr_path IS PRESENT get --sort order_file --sort mfr_path*" 'file-a'
 mock_respond "metarecord -q ($Q) AND mfr_type = \"dir\" AND mfr_path IS PRESENT get --resolve-tree mfr_path --tsv"  ''
 mock_respond "metarecord -q ($Q) AND mfr_type = \"file\" AND mfr_path IS PRESENT get --resolve-tree mfr_path --tsv" "file-a	/x/a.txt"
 mock_input y
@@ -175,8 +176,8 @@ mock_reset
 setup_gui
 G='mfr_type = "file" AND rating > 3'
 mock_respond 'gui query' "$G"
-mock_respond "metarecord -q ($G) AND mfr_type = \"dir\" AND mfr_path IS PRESENT get --sort order_dir --sort mfr_path"  ''
-mock_respond "metarecord -q ($G) AND mfr_type = \"file\" AND mfr_path IS PRESENT get --sort order_file --sort mfr_path" 'file-a'
+mock_respond "metarecord -q ($G) AND mfr_type = \"dir\" AND mfr_path IS PRESENT get --sort order_dir --sort mfr_path*"  ''
+mock_respond "metarecord -q ($G) AND mfr_type = \"file\" AND mfr_path IS PRESENT get --sort order_file --sort mfr_path*" 'file-a'
 mock_respond "metarecord -q ($G) AND mfr_type = \"dir\" AND mfr_path IS PRESENT get --resolve-tree mfr_path --tsv"  ''
 mock_respond "metarecord -q ($G) AND mfr_type = \"file\" AND mfr_path IS PRESENT get --resolve-tree mfr_path --tsv" "file-a	/x/a.txt"
 mock_input y
@@ -190,8 +191,8 @@ assert "gui query: the record is tagged" [ "$(mock_count 'tag -i file-a add musi
 mock_reset
 setup_gui
 mock_respond 'gui query' ''
-mock_respond 'metarecord -q mfr_type = "dir" AND mfr_path IS PRESENT get --sort order_dir --sort mfr_path'   ''
-mock_respond 'metarecord -q mfr_type = "file" AND mfr_path IS PRESENT get --sort order_file --sort mfr_path' 'file-a'
+mock_respond 'metarecord -q mfr_type = "dir" AND mfr_path IS PRESENT get --sort order_dir --sort mfr_path*'   ''
+mock_respond 'metarecord -q mfr_type = "file" AND mfr_path IS PRESENT get --sort order_file --sort mfr_path*' 'file-a'
 mock_respond 'metarecord -q mfr_type = "dir" AND mfr_path IS PRESENT get --resolve-tree mfr_path --tsv'   ''
 mock_respond 'metarecord -q mfr_type = "file" AND mfr_path IS PRESENT get --resolve-tree mfr_path --tsv' "file-a	/x/a.txt"
 mock_input y
@@ -206,8 +207,8 @@ setup_gui
 mock_respond 'gui query'                            '@exit:1'
 mock_respond 'metarecord -q mfr_type = "dir" get*'  '/'
 RSC='mfr_path =>* ""'
-mock_respond "metarecord -q ($RSC) AND mfr_type = \"dir\" AND mfr_path IS PRESENT get --sort order_dir --sort mfr_path"  'dir-root'
-mock_respond "metarecord -q ($RSC) AND mfr_type = \"file\" AND mfr_path IS PRESENT get --sort order_file --sort mfr_path" ''
+mock_respond "metarecord -q ($RSC) AND mfr_type = \"dir\" AND mfr_path IS PRESENT get --sort order_dir --sort mfr_path*"  'dir-root'
+mock_respond "metarecord -q ($RSC) AND mfr_type = \"file\" AND mfr_path IS PRESENT get --sort order_file --sort mfr_path*" ''
 mock_respond "metarecord -q ($RSC) AND mfr_type = \"dir\" AND mfr_path IS PRESENT get --resolve-tree mfr_path --tsv"  "dir-root	"
 mock_respond "metarecord -q ($RSC) AND mfr_type = \"file\" AND mfr_path IS PRESENT get --resolve-tree mfr_path --tsv" ''
 mock_prompt '/'
@@ -336,6 +337,65 @@ assert "count: the last is 3 of 3" \
 assert "count: the question says how many are left" \
     [ "$(mock_count "gui input --prompt*2 left*")" -eq 1 ]
 
+# ── Case 16a: a scope bigger than the cap is refused, before the path read ──
+# These scripts build associative arrays over the whole scope, so the scope is
+# the run's memory. The ordered read carries the cap as a --limit and asks for
+# one past it; the expensive --resolve-tree read (which takes no limit — it
+# resolves the whole query in one round-trip) must never be reached.
+mock_reset
+setup_top
+mock_prompt '/top'
+MF_GUI_MAX_ENTRIES=2 scope_holds "dir-top	/top" "dir-a	/top/a" "dir-b	/top/b" -- 
+out=$(MF_GUI_MAX_ENTRIES=2 bash "$SCRIPT" music 2>&1); code=$?
+assert "cap: exits non-zero" [ "$code" -ne 0 ]
+assert_contains "cap: names the cap and what to do" "$out" "narrow the query"
+# (The folder-completion prompt issues a --resolve-tree of its own long before
+# this, so the assertion names the walk's read: it is the one with --tsv.)
+assert "cap: the walk's path read is never issued" \
+    [ "$(mock_count '*--resolve-tree mfr_path --tsv*')" -eq 0 ]
+
+# ── Case 16b: answering a folder whole takes its subtree off the counter ────
+# The walk settles whole subtrees, so what is "left" has to drop by everything
+# the answer covered. Counting one per entry made the counter keep claiming the
+# contents of a folder just answered were still ahead.
+#
+# Four entries: /top, then /top/sub and /top/y.txt, then /top/sub/x.txt.
+# Answering /top/sub whole removes x.txt, so the question after it — y.txt, the
+# last — must say nothing is left. Counted per entry it said "1 left".
+mock_reset
+setup_top
+scope_holds "dir-top	/top" "dir-sub	/top/sub" -- "file-x	/top/sub/x.txt" "file-y	/top/y.txt"
+mock_prompt '/top'
+mock_input m y y          # /top mixed, /top/sub whole, then /top/y.txt
+bash "$SCRIPT" music >/dev/null; code=$?
+assert "subtree count: exits 0" [ "$code" -eq 0 ]
+assert "subtree count: the mixed root says 3 left" \
+    [ "$(mock_count "gui input --prompt '/top' has tag*3 left*")" -eq 1 ]
+assert "subtree count: the folder about to be settled says 2 left" \
+    [ "$(mock_count "gui input --prompt '/top/sub' has tag*2 left*")" -eq 1 ]
+assert "subtree count: the next question has the subtree discounted" \
+    [ "$(mock_count "gui input --prompt '/top/y.txt' has tag*0 left*")" -eq 1 ]
+assert "subtree count: the settled file is never asked" \
+    [ "$(mock_count "gui input --prompt '/top/sub/x.txt'*")" -eq 0 ]
+# And the bar still walks every entry to its total, settled ones included.
+assert "subtree count: the bar reaches 4 of 4" \
+    [ "$(mock_count 'gui progress --done 4 --total 4*')" -eq 1 ]
+
+# A mixed answer does NOT settle the subtree, so the two files stay on the
+# counter and are asked in turn.
+mock_reset
+setup_top
+scope_holds "dir-top	/top" -- "file-a	/top/a.txt" "file-b	/top/b.txt"
+mock_prompt '/top'
+mock_input m y y
+bash "$SCRIPT" music >/dev/null
+assert "mixed count: the folder question still says 2 left" \
+    [ "$(mock_count "gui input --prompt '/top' has tag*2 left*")" -eq 1 ]
+assert "mixed count: the first file says 1 left" \
+    [ "$(mock_count "gui input --prompt '/top/a.txt' has tag*1 left*")" -eq 1 ]
+assert "mixed count: the last file says 0 left" \
+    [ "$(mock_count "gui input --prompt '/top/b.txt' has tag*0 left*")" -eq 1 ]
+
 # ── Case 17: a failing `mf tag` is reported, not a silent "stopped" ─────────
 mock_reset
 setup_top
@@ -369,8 +429,8 @@ assert "unanswerable: no tag op" [ "$(mock_count 'tag -i *')" -eq 0 ]
 mock_reset
 setup_top
 # The ordered call returns the orphan; the path call — the same scope — does not.
-mock_respond "metarecord -q ($SC) AND mfr_type = \"dir\" AND mfr_path IS PRESENT get --sort order_dir --sort mfr_path" ''
-mock_respond "metarecord -q ($SC) AND mfr_type = \"file\" AND mfr_path IS PRESENT get --sort order_file --sort mfr_path" \
+mock_respond "metarecord -q ($SC) AND mfr_type = \"dir\" AND mfr_path IS PRESENT get --sort order_dir --sort mfr_path*" ''
+mock_respond "metarecord -q ($SC) AND mfr_type = \"file\" AND mfr_path IS PRESENT get --sort order_file --sort mfr_path*" \
     'file-gone\nfile-a'
 mock_respond "metarecord -q ($SC) AND mfr_type = \"dir\" AND mfr_path IS PRESENT get --resolve-tree mfr_path --tsv" ''
 mock_respond "metarecord -q ($SC) AND mfr_type = \"file\" AND mfr_path IS PRESENT get --resolve-tree mfr_path --tsv" \
@@ -397,8 +457,8 @@ for i in $(seq 1 4000); do
     big_uuids+="file-$i"$'\n'
     big_rows+="file-$i"$'\t'"/top/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa-$i.txt"$'\n'
 done
-mock_respond "metarecord -q ($SC) AND mfr_type = \"dir\" AND mfr_path IS PRESENT get --sort order_dir --sort mfr_path" ''
-mock_respond "metarecord -q ($SC) AND mfr_type = \"file\" AND mfr_path IS PRESENT get --sort order_file --sort mfr_path" "${big_uuids%$'\n'}"
+mock_respond "metarecord -q ($SC) AND mfr_type = \"dir\" AND mfr_path IS PRESENT get --sort order_dir --sort mfr_path*" ''
+mock_respond "metarecord -q ($SC) AND mfr_type = \"file\" AND mfr_path IS PRESENT get --sort order_file --sort mfr_path*" "${big_uuids%$'\n'}"
 mock_respond "metarecord -q ($SC) AND mfr_type = \"dir\" AND mfr_path IS PRESENT get --resolve-tree mfr_path --tsv" ''
 mock_respond "metarecord -q ($SC) AND mfr_type = \"file\" AND mfr_path IS PRESENT get --resolve-tree mfr_path --tsv" "${big_rows%$'\n'}"
 mock_prompt '/top'
@@ -424,8 +484,8 @@ for i in $(seq 1 400); do
     many_rows+="file-$i"$'\t'"/top/f$i.txt"$'\n'
     [ "$i" -lt 400 ] && decided_uuids+="file-$i "
 done
-mock_respond "metarecord -q ($SC) AND mfr_type = \"dir\" AND mfr_path IS PRESENT get --sort order_dir --sort mfr_path" ''
-mock_respond "metarecord -q ($SC) AND mfr_type = \"file\" AND mfr_path IS PRESENT get --sort order_file --sort mfr_path" "${many_uuids%$'\n'}"
+mock_respond "metarecord -q ($SC) AND mfr_type = \"dir\" AND mfr_path IS PRESENT get --sort order_dir --sort mfr_path*" ''
+mock_respond "metarecord -q ($SC) AND mfr_type = \"file\" AND mfr_path IS PRESENT get --sort order_file --sort mfr_path*" "${many_uuids%$'\n'}"
 mock_respond "metarecord -q ($SC) AND mfr_type = \"dir\" AND mfr_path IS PRESENT get --resolve-tree mfr_path --tsv" ''
 mock_respond "metarecord -q ($SC) AND mfr_type = \"file\" AND mfr_path IS PRESENT get --resolve-tree mfr_path --tsv" "${many_rows%$'\n'}"
 # shellcheck disable=SC2086

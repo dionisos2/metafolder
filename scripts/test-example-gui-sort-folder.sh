@@ -35,7 +35,7 @@ setup_common() {
     # The nested gui-tag-classify.sh now takes a QUERY: a bare uuid is one
     # (spec-query, the UUID-atom bullet), so the example's `classify <uuid>`
     # call still names exactly that record — through a query now.
-    mock_respond 'metarecord -q rec-song get --sort mfr_path' 'rec-song'
+    mock_respond 'metarecord -q rec-song get --sort mfr_path*' 'rec-song'
     mock_respond 'path --relative rec-song' '/song'
     # `mf … field get rate` (scalar, not a tag field) returns nothing.
     mock_respond 'metarecord -i rec-song field get rate' ''
