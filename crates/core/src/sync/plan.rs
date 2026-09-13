@@ -98,6 +98,130 @@ struct LinkingResult {
     existing: Vec<ExistingLink>,
 }
 
+/// The reads the linking phase makes over and over, answered from memory.
+///
+/// Per scope record the phase wants three things — its `tree_ref` fields, its
+/// `ref` fields, and its version — and they all live in the same metarecord
+/// JSON, which it fetched three separate times (`identity_paths`,
+/// `ref_targets`, `baseline`), plus one `resolve-tree` per tree_ref field to
+/// assemble the paths. That is O(N) round-trips for data the daemon hands over
+/// in a fixed number: one paged `select: "*"` listing, and one bulk
+/// `query/fields/resolve-tree` per tree_ref field name — the endpoint exists for
+/// exactly this ("target an explicit set with a `uuid_in` query").
+///
+/// A record the bulk pass never covered — a `ref` target outside the scope, the
+/// occupant of a position on the other side — falls back to the single-record
+/// request, so the answers are the same either way.
+#[derive(Default)]
+struct Reads {
+    records: HashMap<(Uuid, Uuid), Json>,
+    paths: HashMap<(Uuid, Uuid), Vec<(String, String)>>,
+    /// The records the bulk pass covered. For these, `paths` is authoritative:
+    /// an absent entry means "no TreeRef identity", not "not loaded yet".
+    preloaded: HashSet<(Uuid, Uuid)>,
+}
+
+/// Records per bulk request. The `uuid_in` predicate is a single query node
+/// whatever its length, so this bounds the request *body*, not the query.
+const PRELOAD_CHUNK: usize = 500;
+
+impl Reads {
+    /// Fetches `uuids` of `repo` and their TreeRef paths in bulk.
+    ///
+    /// Best-effort by design: a failure here is not reported, because every
+    /// caller falls back to its own single-record request. The phase stays
+    /// correct on an older daemon, or one that refuses the bulk form.
+    fn preload(&mut self, ctx: &Ctx, repo: Uuid, uuids: &[Uuid]) {
+        let base = format!("/repos/{}", repo.as_simple());
+        for chunk in uuids.chunks(PRELOAD_CHUNK) {
+            let hexes: Vec<String> = chunk.iter().map(|u| u.as_simple().to_string()).collect();
+            let selector = json!({"type": "uuid_in", "uuids": hexes});
+            let mut seen: Vec<Uuid> = Vec::new();
+            let mut fields: Vec<String> = Vec::new();
+            let mut cursor: Option<String> = None;
+            loop {
+                let mut body = json!({"query": selector, "select": "*", "limit": ctx.page_size});
+                if let Some(c) = &cursor {
+                    body["cursor"] = json!(c);
+                }
+                let Ok(resp) = ctx.client.post(&format!("{base}/query"), &body) else { return };
+                for m in resp["results"].as_array().cloned().unwrap_or_default() {
+                    let Some(uuid) = m["uuid"].as_str().and_then(|s| Uuid::parse_str(s).ok())
+                    else {
+                        continue;
+                    };
+                    for f in m["fields"].as_array().into_iter().flatten() {
+                        if f["value"]["type"] == "tree_ref" {
+                            if let Some(name) = f["name"].as_str() {
+                                if !fields.iter().any(|n| n == name) {
+                                    fields.push(name.to_string());
+                                }
+                            }
+                        }
+                    }
+                    self.records.insert((repo, uuid), m);
+                    seen.push(uuid);
+                }
+                match resp["next_cursor"].as_str() {
+                    Some(c) => cursor = Some(c.to_string()),
+                    None => break,
+                }
+            }
+
+            // One request per TreeRef field name, not per record. Collected
+            // before anything is published: a record counts as preloaded only
+            // once *every* field came back, because from then on an absent entry
+            // means "carries no TreeRef" — and a record wrongly read that way
+            // would be linked by field equality instead of by its path.
+            let mut paths: HashMap<Uuid, Vec<(String, String)>> = HashMap::new();
+            for field in &fields {
+                let body = json!({"query": selector, "field": field});
+                let Ok(resp) = ctx.client.post(&format!("{base}/query/fields/resolve-tree"), &body)
+                else {
+                    return; // incomplete: leave this chunk to the per-record path
+                };
+                for (hex, found) in resp.as_object().into_iter().flatten() {
+                    let Ok(uuid) = Uuid::parse_str(hex) else { continue };
+                    let entry = paths.entry(uuid).or_default();
+                    for path in found.as_array().into_iter().flatten() {
+                        if let Some(path) = path.as_str() {
+                            entry.push((field.clone(), path.to_string()));
+                        }
+                    }
+                }
+            }
+            for uuid in seen {
+                if let Some(found) = paths.remove(&uuid) {
+                    self.paths.insert((repo, uuid), found);
+                }
+                self.preloaded.insert((repo, uuid));
+            }
+        }
+    }
+
+    /// The metarecord JSON, from memory or from the daemon. A daemon failure —
+    /// a missing metarecord included — is propagated, as the direct `GET` it
+    /// replaces did.
+    fn record(&self, ctx: &Ctx, repo: Uuid, uuid: Uuid) -> Result<Json, CliError> {
+        if let Some(m) = self.records.get(&(repo, uuid)) {
+            return Ok(m.clone());
+        }
+        ctx.client
+            .get(&format!("/repos/{}/metarecords/{}", repo.as_simple(), uuid.as_simple()), &[])
+    }
+
+    /// [`Self::record`] where "no such metarecord" is an answer rather than an
+    /// error: a link endpoint that was deleted has no version, which is how
+    /// deletion propagation recognises it.
+    fn record_opt(&self, ctx: &Ctx, repo: Uuid, uuid: Uuid) -> Result<Option<Json>, CliError> {
+        match self.record(ctx, repo, uuid) {
+            Ok(m) => Ok(Some(m)),
+            Err(CliError::Op(_)) => Ok(None),
+            Err(e) => Err(e),
+        }
+    }
+}
+
 fn linking_phase(
     ctx: &Ctx,
     a: Uuid,
@@ -124,6 +248,18 @@ fn linking_phase(
         }
     }
 
+    // One bulk pass per side, before any per-record decision: the phase then
+    // reads each record's fields, paths and version from memory instead of
+    // asking the daemon three or four times for the same record.
+    let mut reads = Reads::default();
+    let mut scope_a_all: Vec<Uuid> = scope_a.iter().copied().collect();
+    scope_a_all.sort();
+    let mut scope_b_all: Vec<Uuid> = scope_b.iter().copied().collect();
+    scope_b_all.sort();
+    reads.preload(ctx, a, &scope_a_all);
+    reads.preload(ctx, b, &scope_b_all);
+    let reads = reads;
+
     let links = get_links(ctx, a, b)?;
     let linked_a: HashSet<Uuid> = links.iter().map(|l| l.record_a).collect();
     let linked_b: HashSet<Uuid> = links.iter().map(|l| l.record_b).collect();
@@ -136,17 +272,16 @@ fn linking_phase(
     let mut planned_b: HashSet<Uuid> = HashSet::new();
 
     // Pass 1 — from A into B.
-    let mut scope_a_v: Vec<Uuid> = scope_a.iter().copied().collect();
-    scope_a_v.sort();
-    for &rec_a in &scope_a_v {
+    let scope_a_v = &scope_a_all;
+    for &rec_a in scope_a_v {
         if linked_a.contains(&rec_a) || planned_a.contains(&rec_a) {
             continue;
         }
-        let side_a = existing_side(ctx, a, rec_a)?;
-        let side_b = match resolve_link(ctx, a, b, rec_a, &linked_b, &planned_b)? {
+        let side_a = existing_side(ctx, &reads, a, rec_a)?;
+        let side_b = match resolve_link(ctx, &reads, a, b, rec_a, &linked_b, &planned_b)? {
             LinkDecision::To(rec_b) => {
                 planned_b.insert(rec_b);
-                existing_side(ctx, b, rec_b)?
+                existing_side(ctx, &reads, b, rec_b)?
             }
             LinkDecision::Create => bare_side(b),
             LinkDecision::Skip => continue,
@@ -156,17 +291,16 @@ fn linking_phase(
     }
 
     // Pass 2 — from B into A (records not already used as a Pass-1 target).
-    let mut scope_b_v: Vec<Uuid> = scope_b.iter().copied().collect();
-    scope_b_v.sort();
-    for &rec_b in &scope_b_v {
+    let scope_b_v = &scope_b_all;
+    for &rec_b in scope_b_v {
         if linked_b.contains(&rec_b) || planned_b.contains(&rec_b) {
             continue;
         }
-        let side_b = existing_side(ctx, b, rec_b)?;
-        let side_a = match resolve_link(ctx, b, a, rec_b, &linked_a, &planned_a)? {
+        let side_b = existing_side(ctx, &reads, b, rec_b)?;
+        let side_a = match resolve_link(ctx, &reads, b, a, rec_b, &linked_a, &planned_a)? {
             LinkDecision::To(rec_a) => {
                 planned_a.insert(rec_a);
-                existing_side(ctx, a, rec_a)?
+                existing_side(ctx, &reads, a, rec_a)?
             }
             LinkDecision::Create => bare_side(a),
             LinkDecision::Skip => continue,
@@ -180,33 +314,33 @@ fn linking_phase(
     // TreeRef identity, and is not yet linked is materialised on the other side
     // (bare + link) — the link is the only memory of the correspondence. Identity
     // targets need nothing here: the run resolves them by path at translation.
-    for &rec in &scope_a_v {
+    for &rec in scope_a_v {
         if !(linked_a.contains(&rec) || planned_a.contains(&rec)) {
             continue; // skipped record → not synced
         }
-        for y in ref_targets(ctx, a, rec)? {
+        for y in ref_targets(ctx, &reads, a, rec)? {
             if linked_a.contains(&y)
                 || planned_a.contains(&y)
-                || !identity_paths(ctx, a, y)?.is_empty()
+                || !identity_paths_in(ctx, &reads, a, y)?.is_empty()
             {
                 continue;
             }
-            creates.push((existing_side(ctx, a, y)?, bare_side(b)));
+            creates.push((existing_side(ctx, &reads, a, y)?, bare_side(b)));
             planned_a.insert(y);
         }
     }
-    for &rec in &scope_b_v {
+    for &rec in scope_b_v {
         if !(linked_b.contains(&rec) || planned_b.contains(&rec)) {
             continue;
         }
-        for y in ref_targets(ctx, b, rec)? {
+        for y in ref_targets(ctx, &reads, b, rec)? {
             if linked_b.contains(&y)
                 || planned_b.contains(&y)
-                || !identity_paths(ctx, b, y)?.is_empty()
+                || !identity_paths_in(ctx, &reads, b, y)?.is_empty()
             {
                 continue;
             }
-            creates.push((bare_side(a), existing_side(ctx, b, y)?));
+            creates.push((bare_side(a), existing_side(ctx, &reads, b, y)?));
             planned_b.insert(y);
         }
     }
@@ -225,8 +359,8 @@ fn linking_phase(
         if !scope_a.contains(&l.record_a) && !scope_b.contains(&l.record_b) {
             continue;
         }
-        let side_a = existing_side(ctx, a, l.record_a)?;
-        let side_b = existing_side(ctx, b, l.record_b)?;
+        let side_a = existing_side(ctx, &reads, a, l.record_a)?;
+        let side_b = existing_side(ctx, &reads, b, l.record_b)?;
         match (side_a.baseline.is_some(), side_b.baseline.is_some()) {
             (true, true) => existing.push(ExistingLink { side_a, side_b, link: l.uuid }),
             // B was deleted → delete the surviving A; and vice versa.
@@ -654,13 +788,14 @@ enum LinkDecision {
 /// on a multi-TreeRef incoherence.
 fn resolve_link(
     ctx: &Ctx,
+    reads: &Reads,
     source_repo: Uuid,
     target_repo: Uuid,
     record: Uuid,
     linked_target: &HashSet<Uuid>,
     planned_target: &HashSet<Uuid>,
 ) -> Result<LinkDecision, CliError> {
-    let ids = identity_paths(ctx, source_repo, record)?;
+    let ids = identity_paths_in(ctx, reads, source_repo, record)?;
     if ids.is_empty() {
         // No TreeRef identity → the case-0 heuristic: link to an unambiguous
         // field-equal target, else create a bare record (spec-sync).
@@ -705,7 +840,7 @@ fn resolve_link(
             return Ok(LinkDecision::Skip);
         }
         // Type-1: a free position must not force T out of one it already holds.
-        let t_ids = identity_paths(ctx, target_repo, t)?;
+        let t_ids = identity_paths_in(ctx, reads, target_repo, t)?;
         for (field, path, o) in &occ {
             if o.is_none() && t_ids.iter().any(|(tf, tp)| tf == field && tp != path) {
                 return Err(incoherence(
@@ -728,9 +863,24 @@ pub(crate) fn identity_paths(
     repo: Uuid,
     record: Uuid,
 ) -> Result<Vec<(String, String)>, CliError> {
-    let m = ctx
-        .client
-        .get(&format!("/repos/{}/metarecords/{}", repo.as_simple(), record.as_simple()), &[])?;
+    identity_paths_in(ctx, &Reads::default(), repo, record)
+}
+
+/// [`identity_paths`] served from the bulk pass when the record was in it.
+///
+/// A preloaded record's paths are authoritative: absent means it carries no
+/// TreeRef at all, which is the case-0 heuristic's input, so it must not be
+/// mistaken for a cache miss.
+fn identity_paths_in(
+    ctx: &Ctx,
+    reads: &Reads,
+    repo: Uuid,
+    record: Uuid,
+) -> Result<Vec<(String, String)>, CliError> {
+    if reads.preloaded.contains(&(repo, record)) {
+        return Ok(reads.paths.get(&(repo, record)).cloned().unwrap_or_default());
+    }
+    let m = reads.record(ctx, repo, record)?;
     let mut fields: Vec<String> = Vec::new();
     for f in m["fields"].as_array().cloned().unwrap_or_default() {
         if f["value"]["type"] == "tree_ref" {
@@ -862,10 +1012,8 @@ fn field_signature(m: &Json) -> Vec<(String, Json)> {
 /// that is never synced — a bare, empty record per referent on the target side,
 /// for no purpose. `mfr_duplicate_group` (spec-duplicates) is the first
 /// `Ref`-valued field this applies to.
-fn ref_targets(ctx: &Ctx, repo: Uuid, record: Uuid) -> Result<Vec<Uuid>, CliError> {
-    let m = ctx
-        .client
-        .get(&format!("/repos/{}/metarecords/{}", repo.as_simple(), record.as_simple()), &[])?;
+fn ref_targets(ctx: &Ctx, reads: &Reads, repo: Uuid, record: Uuid) -> Result<Vec<Uuid>, CliError> {
+    let m = reads.record(ctx, repo, record)?;
     let mut out = Vec::new();
     for f in m["fields"].as_array().cloned().unwrap_or_default() {
         let name = f["name"].as_str().unwrap_or_default();
@@ -961,8 +1109,8 @@ struct Side {
 }
 
 /// A side onto an existing record, tagged with its current version baseline.
-fn existing_side(ctx: &Ctx, repo: Uuid, record: Uuid) -> Result<Side, CliError> {
-    Ok(Side { repo, record, baseline: baseline(ctx, repo, record)? })
+fn existing_side(ctx: &Ctx, reads: &Reads, repo: Uuid, record: Uuid) -> Result<Side, CliError> {
+    Ok(Side { repo, record, baseline: baseline(ctx, reads, repo, record)? })
 }
 
 /// A bare side: a freshly allocated UUID, no baseline (does not exist yet).
@@ -1100,15 +1248,8 @@ fn query_uuids(
 
 /// The current `version` of a record, or `None` when it does not exist (an
 /// absent baseline: nothing to freshness-check, the record is to be created).
-fn baseline(ctx: &Ctx, repo: Uuid, uuid: Uuid) -> Result<Option<u64>, CliError> {
-    match ctx
-        .client
-        .get(&format!("/repos/{}/metarecords/{}", repo.as_simple(), uuid.as_simple()), &[])
-    {
-        Ok(m) => Ok(Some(m["version"].as_u64().unwrap_or(0))),
-        Err(CliError::Op(_)) => Ok(None),
-        Err(e) => Err(e),
-    }
+fn baseline(ctx: &Ctx, reads: &Reads, repo: Uuid, uuid: Uuid) -> Result<Option<u64>, CliError> {
+    Ok(reads.record_opt(ctx, repo, uuid)?.map(|m| m["version"].as_u64().unwrap_or(0)))
 }
 
 /// Aborts unless both repos report the same schema.
@@ -1239,6 +1380,201 @@ mod tests {
 
     fn uuid(n: u8) -> Uuid {
         Uuid::from_bytes([n; 16])
+    }
+
+    /// Counts the daemon round-trips `linking_phase` makes, as a function of the
+    /// scope size.
+    ///
+    /// The plan used to ask *per record*: its metarecord, its tree paths, its
+    /// version (the same metarecord a second time), and the occupant of each
+    /// identity position — four requests each, two of them identical. On a scope
+    /// of ten thousand files that is tens of thousands of round-trips for a
+    /// command that reads one repository pair.
+    ///
+    /// The slope is what matters, not the constant: bulk reads cost a fixed
+    /// number of requests, so only what is still per-record shows up here.
+    struct CountingClient {
+        scope: Vec<Uuid>,
+        calls: RefCell<Vec<String>>,
+        /// Simulates a daemon that will not serve the bulk form.
+        bulk_fails: bool,
+        /// Every identity position on the target side is already held by a
+        /// record, so a record *with* an identity links to it — while one read
+        /// as having none falls to the case-0 heuristic instead. That is what
+        /// makes the two paths tell each other apart.
+        occupied: bool,
+    }
+
+    impl DaemonClient for CountingClient {
+        fn request(
+            &self,
+            method: &str,
+            path: &str,
+            _query: &[(&str, String)],
+            body: Option<&Json>,
+        ) -> Result<Json, SyncError> {
+            self.calls.borrow_mut().push(format!("{method} {path}"));
+            if path.ends_with("/links") {
+                return Ok(json!({"links": []}));
+            }
+            if path.ends_with("/query/fields/resolve-tree") {
+                if self.bulk_fails {
+                    return Err(SyncError::Op("no bulk form here".into()));
+                }
+                // The bulk form answers a flat object keyed by uuid hex, as the
+                // daemon does — not a `{"paths": …}` envelope.
+                let paths: serde_json::Map<String, Json> = self
+                    .scope
+                    .iter()
+                    .enumerate()
+                    .map(|(i, u)| (u.as_simple().to_string(), json!([format!("/f{i}")])))
+                    .collect();
+                return Ok(Json::Object(paths));
+            }
+            if path.ends_with("/query") {
+                // The scope listing vs `record_at_path`'s single-row lookup,
+                // told apart by the limit the caller sets.
+                if body.and_then(|b| b["limit"].as_u64()) == Some(1) {
+                    // No `select`: the daemon answers bare uuid strings here.
+                    if self.occupied {
+                        return Ok(json!({"results": [uuid(0x77).as_simple().to_string()]}));
+                    }
+                    return Ok(json!({"results": []})); // the position is free
+                }
+                // `select: "*"` returns whole metarecords, version included —
+                // the same shape as `GET …/metarecords/:uuid`.
+                let results: Vec<Json> = self.scope.iter().map(|u| Self::metarecord(*u)).collect();
+                return Ok(json!({"results": results, "next_cursor": null}));
+            }
+            if path.ends_with("/resolve-tree") {
+                return Ok(json!({"paths": ["/f0"]}));
+            }
+            let uuid = path
+                .rsplit('/')
+                .next()
+                .and_then(|s| Uuid::parse_str(s).ok())
+                .unwrap_or_else(|| uuid(0));
+            Ok(Self::metarecord(uuid))
+        }
+    }
+
+    impl CountingClient {
+        /// A record carrying one tree_ref field, so it has a TreeRef identity.
+        fn metarecord(uuid: Uuid) -> Json {
+            json!({
+                "uuid": uuid.as_simple().to_string(),
+                "version": 1,
+                "fields": [{
+                    "name": "mfr_path",
+                    "value": {"type": "tree_ref", "value": {"parent": null, "name": "f"}},
+                }],
+            })
+        }
+    }
+
+    /// The number of *read* requests `linking_phase` makes for a scope of `n`.
+    fn count_reads_for_scope(n: usize) -> usize {
+        let scope: Vec<Uuid> = (0..n).map(|i| Uuid::from_u128(i as u128 + 1)).collect();
+        let client = CountingClient {
+            scope,
+            calls: RefCell::new(Vec::new()),
+            bulk_fails: false,
+            occupied: false,
+        };
+        let prompter = NoopPrompter;
+        let ctx = SyncCtx { client: &client, prompter: &prompter, page_size: 500 };
+        let a = uuid(0xAA);
+        let b = uuid(0xBB);
+        let plan =
+            PlanRepo { uuid: uuid(0xCC), base: format!("/repos/{}", uuid(0xCC).as_simple()) };
+        let intents = Intents {
+            scope: vec![crate::sync::intents::Intent {
+                repo: a.as_simple().to_string(),
+                query: "mfr_path IS PRESENT".into(),
+                simplified: false,
+            }],
+            conflict: Vec::new(),
+            settings: crate::sync::intents::Settings {
+                commit_batch_size: 100,
+                transfer_batch_size: 100,
+                similarity_threshold: None,
+            },
+        };
+        linking_phase(&ctx, a, b, &plan, &intents).expect("linking phase runs");
+        // Reads only: the plan's own writes (one `POST …/metarecords` per
+        // operation it records) are its product, not a round-trip to save.
+        let reads = client.calls.borrow().iter().filter(|c| !c.ends_with("/metarecords")).count();
+        reads
+    }
+
+    #[test]
+    fn linking_phase_does_not_ask_per_record_for_what_it_can_read_in_bulk() {
+        let small = count_reads_for_scope(10);
+        let large = count_reads_for_scope(20);
+        let slope = (large - small) as f64 / 10.0;
+        println!("reads: 10 -> {small}, 20 -> {large} ({slope:.1} per record)");
+        assert!(
+            slope <= 1.5,
+            "the plan costs {slope:.1} reads per scope record; only the target-side \
+             position lookup should remain per-record (it was 6 before the bulk pass)"
+        );
+    }
+
+    /// The bulk pass is an optimisation, never a change of answer.
+    ///
+    /// It is best-effort on purpose — an older daemon, or one that refuses the
+    /// bulk form, must still plan correctly. The trap it has to avoid: marking
+    /// records as preloaded when the path request failed would read them as
+    /// carrying *no* TreeRef identity, and the phase would then link them by
+    /// field equality (the case-0 heuristic) instead of by their path — silently
+    /// producing different links.
+    #[test]
+    fn a_daemon_without_the_bulk_form_plans_the_same_links() {
+        fn plan_with(bulk_fails: bool) -> (usize, Vec<(Uuid, Uuid)>) {
+            let scope: Vec<Uuid> = (0..1).map(|i| Uuid::from_u128(i as u128 + 1)).collect();
+            let client = CountingClient {
+                scope,
+                calls: RefCell::new(Vec::new()),
+                bulk_fails,
+                occupied: true,
+            };
+            let prompter = NoopPrompter;
+            let ctx = SyncCtx { client: &client, prompter: &prompter, page_size: 500 };
+            let a = uuid(0xAA);
+            let b = uuid(0xBB);
+            let plan =
+                PlanRepo { uuid: uuid(0xCC), base: format!("/repos/{}", uuid(0xCC).as_simple()) };
+            let intents = Intents {
+                scope: vec![crate::sync::intents::Intent {
+                    repo: a.as_simple().to_string(),
+                    query: "mfr_path IS PRESENT".into(),
+                    simplified: false,
+                }],
+                conflict: Vec::new(),
+                settings: crate::sync::intents::Settings {
+                    commit_batch_size: 100,
+                    transfer_batch_size: 100,
+                    similarity_threshold: None,
+                },
+            };
+            let out = linking_phase(&ctx, a, b, &plan, &intents).expect("linking phase runs");
+            let mut links: Vec<(Uuid, Uuid)> =
+                out.new_links.iter().map(|(x, y)| (x.record, y.record)).collect();
+            links.sort();
+            (out.op_count, links)
+        }
+
+        let (ops_bulk, links_bulk) = plan_with(false);
+        let (ops_fallback, links_fallback) = plan_with(true);
+        assert_eq!(ops_bulk, ops_fallback, "the same operations either way");
+        assert_eq!(links_bulk, links_fallback, "the same records linked, to the same targets");
+        // And the link is the one the identity dictates: the record holding that
+        // position, not a fresh uuid — which is what a lost identity would give.
+        assert_eq!(
+            links_bulk.iter().map(|(_, t)| *t).collect::<Vec<_>>(),
+            vec![uuid(0x77)],
+            "the record links to the occupant of its TreeRef position"
+        );
     }
 
     #[test]
