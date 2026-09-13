@@ -216,6 +216,16 @@ export function mount(root, metafolder) {
     label: 'Trash: move up',
     handler: () => select(cursorIndex - 1),
   });
+  // Home/End, like every other list panel. `select` already clamps, so the two
+  // ends are just the two extremes of the same move.
+  void commands.register('trash:first', {
+    label: 'Trash: move to the first entry',
+    handler: () => select(0),
+  });
+  void commands.register('trash:last', {
+    label: 'Trash: move to the last entry',
+    handler: () => select(entries.length - 1),
+  });
 
   // Keybindings for this panel live in keybindings.toml (when = "trash").
 

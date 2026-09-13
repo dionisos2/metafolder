@@ -614,16 +614,110 @@ export async function mount(root, metafolder) {
     label: 'Repos: open the field-type conversion form for the active repository',
     reveal: true,
     handler: async () => {
-      const repoUuid = /** @type {string|null} */ ((await workspace.get('active_repo')) ?? null);
-      if (!repoUuid) {
+      // Says so and stops rather than throwing: this one opens a form, and a
+      // form that cannot be filled in is not an error to report.
+      const found = await activeRepoOrNull();
+      if (!found) {
         void statusBar.message('no active repository', 4000);
         return;
       }
-      const repos = /** @type {Repo[]} */ ((await daemon.call('GET', '/repos')) ?? []);
-      const repo = repos.find((r) => r.repo_uuid === repoUuid);
-      openRetype(repoUuid, repo?.name ?? repoUuid.slice(0, 8));
+      openRetype(found.uuid, found.name);
     },
   });
+
+  // The four commands below are the panel's buttons, made reachable the way
+  // every other behaviour is (spec-gui "Every user-visible behaviour is a
+  // command"): Unload, a task's Stop, Resume tracking, and the unwatched-subtree
+  // notice. They were clickable and nothing else — invisible to the autocomplete,
+  // unbindable, and unreachable from a script.
+
+  void commands.register('repos:unload', {
+    label: 'Repos: unload a repository from the daemon',
+    args: [
+      {
+        name: 'repo',
+        prompt: () => 'Unload which repository?',
+        complete: async () => (await loadedRepos()).map((r) => r.name),
+      },
+    ],
+    handler: async (name) => {
+      const repos = await loadedRepos();
+      const repo = repos.find((r) => r.name === name.trim());
+      if (!repo) throw new Error(`no loaded repository named "${name}"`);
+      await unloadRepo(repo.repo_uuid);
+    },
+  });
+
+  void commands.register('repos:stop-task', {
+    label: "Repos: stop one of the active repository's running tasks",
+    args: [
+      {
+        name: 'task',
+        prompt: () => 'Stop which task?',
+        complete: async () => (await stoppableTasks()).map(taskChoice),
+      },
+    ],
+    handler: async (choice) => {
+      const tasks = await stoppableTasks();
+      const task = tasks.find((t) => taskChoice(t) === choice.trim());
+      if (!task) throw new Error(`no stoppable task matching "${choice}"`);
+      await stopTask(task.repo_uuid, task.id, task.kind);
+    },
+  });
+
+  void commands.register('repos:resume-watch', {
+    label: 'Repos: resume tracking on the active repository',
+    handler: async () => {
+      await resumeWatch((await activeRepo()).uuid);
+    },
+  });
+
+  void commands.register('repos:watch-exceeded', {
+    label: 'Repos: list the subtrees left unwatched for want of watch budget',
+    handler: async () => {
+      await showExceeded((await activeRepo()).uuid);
+    },
+  });
+  /** The repositories the daemon currently holds loaded. */
+  async function loadedRepos() {
+    return /** @type {Repo[]} */ ((await daemon.call('GET', '/repos')) ?? []);
+  }
+
+  /** The active repository's uuid and name, or null when there is none. */
+  async function activeRepoOrNull() {
+    const uuid = /** @type {string|null} */ ((await workspace.get('active_repo')) ?? null);
+    if (!uuid) return null;
+    const repo = (await loadedRepos()).find((r) => r.repo_uuid === uuid);
+    return { uuid, name: repo?.name ?? uuid.slice(0, 8) };
+  }
+
+  /**
+   * The active repository, or a throw — which the shell turns into the
+   * status-bar error every other command's failure is reported with.
+   */
+  async function activeRepo() {
+    const found = await activeRepoOrNull();
+    if (!found) throw new Error('no active repository');
+    return found;
+  }
+
+  /** Running/pending tasks of the active repository that can be cancelled. */
+  async function stoppableTasks() {
+    const { uuid } = await activeRepo();
+    const tasks = /** @type {Task[]} */ ((await daemon.call('GET', '/tasks')) ?? []);
+    return tasks.filter(
+      (t) =>
+        t.repo_uuid === uuid &&
+        (t.status === 'running' || t.status === 'pending') &&
+        CANCELLABLE.has(t.kind),
+    );
+  }
+
+  /** How a task reads in the completion — the same label its Stop button sits on. */
+  function taskChoice(/** @type {Task} */ task) {
+    return `${task.kind}: ${task.phase || task.status}`;
+  }
+
   await refresh();
 
   // Keep the per-repo task blocks — and the paused-tracking notice, which a

@@ -2,6 +2,7 @@
 // operations; rollback and prune (spec-gui "Event log").
 
 import { byId, el, qs } from '/__ui.js';
+import { registerFind } from '/__find-entry.js';
 import { moveSelection, edgeSelection } from './selection.js';
 import { graphLayout, revisionParents } from './graph.js';
 
@@ -485,6 +486,24 @@ export async function mount(root, metafolder) {
     label: 'Log: move the selection to the oldest revision',
     handler: () => moveToEdge('last'),
   });
+  // Jump to a revision by number or label, like every other list panel
+  // (spec-gui "Find an entry"). A log is the list one most often arrives at
+  // knowing exactly which revision is wanted, so scrolling to it was the odd
+  // one out.
+  void registerFind(metafolder, 'log:find', {
+    label: 'Log: jump to a revision by number or label',
+    prompt: 'Go to revision:',
+    entries: () =>
+      revisions.map((rev) => ({
+        name: `#${rev.id}`,
+        label: rev.label ? `#${rev.id} — ${rev.label}` : `#${rev.id}`,
+      })),
+    select: (index) => {
+      const rev = revisions[index];
+      if (rev) selectRevision(rev.id);
+    },
+  });
+
   void commands.register('log:toggle-ops', {
     label: 'Log: expand/collapse the selected revision',
     handler: () => {

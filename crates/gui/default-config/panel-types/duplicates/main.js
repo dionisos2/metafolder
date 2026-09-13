@@ -19,6 +19,7 @@
 // deletion decision is made on.
 
 import { byId, el, field, formatValue } from '/__ui.js';
+import { registerFind } from '/__find-entry.js';
 import { rowActionsProvider, baseName } from '/__file-actions.js';
 
 const GROUP_QUERY = { type: 'eq', field: 'mf_schema', value: { type: 'string', value: 'duplicate_group' } };
@@ -413,6 +414,31 @@ export function mount(root, metafolder) {
     label: 'Duplicates: move up',
     handler: () => select(cursorIndex - 1),
   });
+  // Home/End, like every other list panel. `select` clamps and no-ops on an
+  // empty list, so the two ends are the same move at its extremes.
+  void commands.register('duplicates:first', {
+    label: 'Duplicates: move to the first row',
+    handler: () => select(0),
+  });
+  void commands.register('duplicates:last', {
+    label: 'Duplicates: move to the last row',
+    handler: () => select(rows.length - 1),
+  });
+  // Jump to a group by hash or to a member by path, like every other list panel
+  // (spec-gui "Find an entry"). A scan of a large repository produces hundreds
+  // of groups, which is exactly when scrolling stops being an option.
+  void registerFind(metafolder, 'duplicates:find', {
+    label: 'Duplicates: jump to a group or a copy by name',
+    prompt: 'Go to:',
+    entries: () =>
+      rows.map((row) =>
+        row.member === null
+          ? { name: row.group.hash, label: `${row.group.hash} — ${row.group.count} copies` }
+          : { name: row.member.path, label: row.member.path },
+      ),
+    select,
+  });
+
   void commands.register('duplicates:toggle', {
     label: 'Duplicates: expand or collapse the group under the cursor',
     handler: () => activate(),

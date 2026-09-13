@@ -1,0 +1,61 @@
+<h1>Duplicates panel</h1>
+<p>
+  The repository's groups of byte-identical files, worst reclaimable space
+  first. A group is a set of files sharing a content hash; its
+  <em>reclaimable</em> size is what deleting all but one copy would free.
+</p>
+
+<h2>Finding duplicates</h2>
+<p>
+  Groups do not appear on their own: run <code>mf:duplicate-scan</code> (the
+  <strong>Scan</strong> button, or the command) and the scan reports through the
+  task bar like <a data-help-page="tracking">reconcile</a> does. It is the GUI
+  half of <code>mf duplicate scan</code>, and it runs the ordinary
+  whole-repository scan — its options stay on the CLI. Cancelling keeps what it
+  had already found.
+</p>
+
+<h2>The panel</h2>
+<p>
+  Groups are listed collapsed, showing the reclaimable size, the group size, how
+  many copies there are, and the hash. Navigate with
+  <span data-mf-key="duplicates:prev">↑ or k</span> /
+  <span data-mf-key="duplicates:next">↓ or j</span>,
+  <span data-mf-key="duplicates:first">Home</span> /
+  <span data-mf-key="duplicates:last">End</span>, and:
+</p>
+<ul>
+  <li><strong>expand</strong> (<span data-mf-key="duplicates:toggle">Enter</span>) — open a group
+    into its members' paths. A <code>+</code> marks a member that shares an inode
+    with another, so it is already a hard link and costs nothing extra.</li>
+  <li><strong>find</strong> (<span data-mf-key="duplicates:find">f</span>) — jump to a group by hash
+    or to a copy by path (see <a data-help-page="find">find</a>).</li>
+  <li><span data-mf-key="duplicates:refresh">r</span> — reload the groups.</li>
+</ul>
+<p>
+  Moving the cursor publishes the row as the selection, so the
+  <a data-help-page="metarecord-detail">detail</a> panel and the shared file
+  actions follow it — on a member row the file's metarecord, on a header row the
+  group's own metarecord (hash, size, counters are its fields).
+</p>
+
+<h2>Deleting copies</h2>
+<p>
+  Which copy survives is always <em>your</em> choice: nothing here picks one for
+  you, and no action spans groups. Both deletions act on the row under the cursor
+  and both are confirmed.
+</p>
+<ul>
+  <li><strong>keep this one</strong> (<span data-mf-key="duplicates:keep">Shift+k</span>, and the
+    first right-click item) — trash the group's other copies. The confirmation
+    names every path it will trash.</li>
+  <li><strong>trash this one</strong> (<span data-mf-key="duplicates:trash">Delete</span>) — that
+    copy alone, saying what the group is left with.</li>
+</ul>
+<p>
+  Deleted copies go to the <a data-help-page="trash">trash</a>, so a mistake is
+  recoverable. To see what else is identical to a metarecord from anywhere else,
+  <code>metarecord-list:duplicates</code> sets the list's query to
+  <code>same(mfr_duplicate_group, …)</code> — an ordinary, editable
+  <a data-help-page="queries">query</a>.
+</p>

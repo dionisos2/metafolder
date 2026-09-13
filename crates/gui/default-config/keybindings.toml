@@ -72,8 +72,9 @@
 
 # Panel slots. panel:split is available via the command input.
 "v" = { command = "panel:split-toggle" }
-# `panel:unsplit` lives on `u` (not `c`) so `c` can prefix the metarecord-list
-# clear-then-edit chords (c f/c s/c q/c a) below.
+# `panel:unsplit` lives on `u` (not `c`) so `c` is free for the metarecord-list
+# clear-then-edit family below — which ended up on the single keys f/s/q, with
+# `c` itself clearing all three.
 "u" = { command = "panel:unsplit" }
 "o" = { command = "panel:focus-next" }
 "x" = { command = "panel:swap" }
@@ -81,7 +82,7 @@
 # pane with. Escape also leaves fullscreen.
 "z" = { command = "panel:fullscreen" }
 
-# Panel type switching: "s" then one letter (the status bar lists the
+# Panel type switching: "t" then one letter (the status bar lists the
 # continuations while the sequence is pending; escape cancels it).
 "t l" = { command = "panel:set-type metarecord-list" }
 "t d" = { command = "panel:set-type metarecord-detail" }
@@ -188,6 +189,8 @@
   { command = "treeref:first", when = "treeref" },
   { command = "log:first", when = "log" },
   { command = "recent:first", when = "recent" },
+  { command = "trash:first", when = "trash" },
+  { command = "duplicates:first", when = "duplicates" },
 ]
 "end" = [
   { command = "metarecord-list:last", when = "file" },
@@ -196,6 +199,8 @@
   { command = "treeref:last", when = "treeref" },
   { command = "log:last", when = "log" },
   { command = "recent:last", when = "recent" },
+  { command = "trash:last", when = "trash" },
+  { command = "duplicates:last", when = "duplicates" },
 ]
 
 # Enter: confirm while typing (global), otherwise the focused panel's primary
@@ -255,6 +260,8 @@
   { command = "recent:refresh", when = "recent" },
   { command = "repos:refresh", when = "repos" },
   { command = "duplicates:refresh", when = "duplicates" },
+  { command = "log:refresh", when = "log" },
+  { command = "metarecord-list:refresh", when = "metarecord-list" },
 ]
 
 # Delete: send the selected metarecord's file to the trash (spec-trash.org),
@@ -300,6 +307,9 @@
 ]
 # Show/hide dot-entries, on the combo the desktop file managers use.
 "ctrl+h" = { command = "file-manager:toggle-hidden", when = "file-manager" }
+# Browse the repository root ⇄ the whole filesystem — the other thing this panel
+# toggles, and the only one of the pair that had no key.
+"ctrl+r" = { command = "file-manager:toggle-root", when = "file-manager" }
 
 # metarecord-list: selection, finder, query editing.
 "space" = [
@@ -340,6 +350,8 @@
   { command = "treeref:find", when = "treeref" },
   { command = "trash:find", when = "trash" },
   { command = "recent:find", when = "recent" },
+  { command = "log:find", when = "log" },
+  { command = "duplicates:find", when = "duplicates" },
 ]
 # treeref: pick which TreeRef field's forest the panel explores (the drop-down's
 # keyboard equivalent; the field name completes). It keeps the F key, shifted,
@@ -362,7 +374,12 @@
 # metarecord-detail: field actions and record creation.
 "d" = { command = "metarecord:field-delete", when = "metarecord-detail" }
 "a" = { command = "metarecord:open-add-field", when = "metarecord-detail" }
-"ctrl+n" = { command = "metarecord:create", when = "metarecord-detail" }
+"ctrl+n" = [
+  { command = "metarecord:create", when = "metarecord-detail" },
+  # New *file*, on the same combo the folder uses without its shift — the
+  # sibling had a key and it did not.
+  { command = "file-manager:new-file", when = "file-manager" },
+]
 
 # Command-input-driven field editing ("m" = metarecord edit; the status bar
 # lists the continuations while the sequence is pending). Bound under BOTH main
@@ -405,6 +422,19 @@
 "m m s" = { command = "metarecord:bulk-set-field", when = "metarecord-detail" }
 "m m a" = { command = "metarecord:bulk-add-field-value", when = "metarecord-detail" }
 "m m r" = { command = "metarecord:bulk-remove-field", when = "metarecord-detail" }
+# The other two bulk operations the umbrella picker offers, on the same prefix:
+# "v" removes one value of a field (where "r" removes the field), "d" deletes the
+# metarecords themselves (confirmed, naming the count).
+"m m v" = { command = "metarecord:bulk-remove-value", when = "metarecord-detail" }
+"m m d" = { command = "metarecord:bulk-delete", when = "metarecord-detail" }
+
+# sync (spec-sync): the four steps of a cross-repo sync, on the prefix that
+# names it. The panel's own source claimed these lived here long before they
+# did — it was the one panel type with no keybinding at all.
+"y s" = { command = "sync:status", when = "sync" }
+"y p" = { command = "sync:plan", when = "sync" }
+"y w" = { command = "sync:show", when = "sync" }
+"y r" = { command = "sync:run", when = "sync" }
 
 # file: image zoom controls.
 "plus" = { command = "file:zoom-in", when = "file" }

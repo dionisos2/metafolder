@@ -18,6 +18,7 @@
       "find", "find:in-panel", "find:next", "find:prev", "find:close",
       "ctrl-f", "ctrl+f", "search-in-page", "find-in-page",
       "file-manager:find", "treeref:find", "trash:find", "recent:find",
+      "log:find", "duplicates:find",
       "find-entry", "jump-to-entry"
     ]
   },
@@ -143,6 +144,15 @@
     "title": "Recent panel",
     "file": "recent.html",
     "aliases": ["recent", "recently-viewed", "recently viewed"]
+  },
+  {
+    "id": "duplicates",
+    "title": "Duplicates panel",
+    "file": "duplicates.html",
+    "aliases": [
+      "duplicates", "duplicate", "duplicate-scan", "mf:duplicate-scan",
+      "identical", "reclaimable", "hash", "same", "hard-link", "inode"
+    ]
   },
   {
     "id": "trash",
