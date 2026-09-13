@@ -196,6 +196,11 @@ impl RepoState {
         self.name.lock_recover().clone()
     }
 
+    /// This repository's uuid, as diagnostics and tasks spell it.
+    pub fn uuid(&self) -> Uuid {
+        self.config.repo_uuid
+    }
+
     /// This repository's listing info (the `GET /repos` / `GET /repos/:repo`
     /// shape), reading the live name.
     pub fn info(&self) -> RepoInfo {

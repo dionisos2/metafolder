@@ -38,6 +38,7 @@ use crate::executor::{self, ExecutorPinger, FsEvent};
 use crate::relpath::RelPath;
 use crate::state::RepoState;
 use crate::tree_cache::TreeCache;
+use uuid::Uuid;
 
 /// Shared watcher state. Behind mutexes so both the refresh path (manual writes
 /// changing eligibility) and the event callback (directories created/removed at
@@ -47,6 +48,9 @@ struct WatcherInner {
     watcher: Mutex<Option<notify::RecommendedWatcher>>,
     /// Absolute paths of the directories currently watched.
     watched: Mutex<HashSet<PathBuf>>,
+    /// The repository these watches belong to. Carried so a warning about one
+    /// repository is recorded against it, and not shown to every other one.
+    repo: Uuid,
 }
 
 impl WatcherInner {
@@ -65,7 +69,11 @@ impl WatcherInner {
         if let Some(w) = self.watcher.lock_recover().as_mut() {
             if let Err(err) = w.watch(dir, notify::RecursiveMode::NonRecursive) {
                 if !quiet {
-                    crate::diagnostics::warn("watcher", format!("failed to watch {dir:?}: {err}"));
+                    crate::diagnostics::warn_for(
+                        "watcher",
+                        format!("failed to watch {dir:?}: {err}"),
+                        self.repo,
+                    );
                 }
                 watched.remove(dir);
                 return Err(err);
@@ -121,7 +129,11 @@ impl WatcherInner {
                 if is_watch_budget_exhausted(&err) {
                     exhausted += 1;
                 } else {
-                    crate::diagnostics::warn("watcher", format!("failed to watch {dir:?}: {err}"));
+                    crate::diagnostics::warn_for(
+                        "watcher",
+                        format!("failed to watch {dir:?}: {err}"),
+                        self.repo,
+                    );
                 }
             }
         }
@@ -250,7 +262,7 @@ impl WatcherHandle {
         // holding the budget. Transient and external — reported, never recorded
         // (spec-file-tracking "Two different failures").
         if let Some(report) = budget_report(starved, watched) {
-            crate::diagnostics::error("watcher", report);
+            crate::diagnostics::error_for("watcher", report, self.inner.repo);
         }
         Placement { watched, starved, frontier: plan.frontier }
     }
@@ -260,8 +272,11 @@ pub fn start(repo: &Arc<RepoState>, pinger: ExecutorPinger) -> Result<WatcherHan
     let root = repo.config.root.clone();
     let internal_dir = repo.internal_dir();
 
-    let inner =
-        Arc::new(WatcherInner { watcher: Mutex::new(None), watched: Mutex::new(HashSet::new()) });
+    let inner = Arc::new(WatcherInner {
+        watcher: Mutex::new(None),
+        watched: Mutex::new(HashSet::new()),
+        repo: repo.uuid(),
+    });
 
     // Weaks: neither the ingest thread nor the callback may keep the repository
     // (and its exclusive lock) or the watcher alive.

@@ -615,12 +615,29 @@ never silently deprived of the answers it is waiting for.
 
 *** Reserved keys
 
-Three combos are the user's way out of a question, and a script may not take
-them: =escape=, whatever activates the command input (=:=), and whatever
-toggles the script keys (=tab=). They are derived from the compiled keybinding
-table, so rebinding =command-input:activate= moves the reservation with it.
+Four combos are the user's way out of a question, and a script may not take
+them: =escape=, =backspace=, whatever activates the command input (=:=), and
+whatever toggles the script keys (=tab=). The two literals are reserved
+unconditionally; the other two are derived from the compiled keybinding table,
+so rebinding =command-input:activate= moves the reservation with it.
 =POST /gui/input= *rejects* a wait that asks for one of them (=400=), rather
 than accepting a question the GUI would not honour.
+
+=escape= is the way out of the *run*; =backspace= is the way out of an *answer
+already given*. It does not end anything: it resolves the wait with the value
+=back=, and the script decides what that means — only the script knows what its
+last answer wrote. A script that supports it lists =b= among the keys it awaits
+(so the letter works too, and the question can advertise it); one that does not
+is simply asked again, so the key is never a silent no-op and never falls into a
+default branch that would stop the run.
+
+The shipped walks implement it through the event log, which is what makes it
+exact: the operation id is noted before each answer (=mf log head=), and going
+back returns the history to it (=mf log rollback --id=), restoring the very
+field rows and versions the answer replaced. The walk position, the counters and
+any subtree the answer had settled are restored with it — so the re-asked
+question can be answered differently and everything under it is seen again.
+Answers stack, so =back= can be pressed repeatedly, back to the first question.
 
 Escape, while the script keys are enabled, *stops the asking script*: the run's
 whole process group is signalled (=SIGTERM=, then =SIGKILL= if it is still

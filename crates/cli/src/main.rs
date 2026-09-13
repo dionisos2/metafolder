@@ -375,6 +375,8 @@ enum LogCommand {
         #[arg(long)]
         all: bool,
     },
+    /// Print the id of the operation the history is on (what --id targets)
+    Head,
     /// Show full details of one revision (a revision id, or HEAD)
     Show {
         target: String,
@@ -1297,6 +1299,7 @@ fn dispatch_log(ctx: &Ctx, command: Option<LogCommand>) -> CmdResult {
         Some(LogCommand::List { tree, graph, ops, metarecord, limit, since, until, all }) => {
             log::log(ctx, &log::LogArgs { tree, graph, ops, metarecord, limit, since, until, all })
         }
+        Some(LogCommand::Head) => log::log_head(ctx),
         Some(LogCommand::Show { target, raw }) => log::log_show(ctx, &target, raw),
         Some(LogCommand::Rollback {
             args,

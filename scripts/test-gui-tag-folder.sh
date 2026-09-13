@@ -337,6 +337,73 @@ assert "count: the last is 3 of 3" \
 assert "count: the question says how many are left" \
     [ "$(mock_count "gui input --prompt*2 left*")" -eq 1 ]
 
+# ── Case 15b: going back undoes the previous answer and asks it again ───────
+# `backspace` during a question resolves the wait with `back` (spec-gui
+# "Reserved keys"); the letter `b` is its typed twin. The script undoes what the
+# answer wrote — through the event log, which restores the exact rows — puts the
+# walk back where it was, and re-opens whatever the answer had settled.
+mock_reset
+setup_top
+scope_holds "dir-top	/top" -- "file-a	/top/a.txt" "file-b	/top/b.txt"
+mock_prompt '/top'
+# A history that actually moves, so the rollback is not short-circuited by
+# "nothing was written": each `mf log head` pops the next id.
+mock_respond 'log head' '@queue:heads'
+mock_queue heads 10 11 12 13 13 13 14 15 15
+# /top mixed, a.txt yes, then at b.txt's question BACK — which undoes the a.txt
+# answer and re-asks it — then a.txt no, b.txt yes.
+mock_input m y b n y
+bash "$SCRIPT" music >/dev/null; code=$?
+assert "back: exits 0" [ "$code" -eq 0 ]
+assert "back: the undone answer was rolled back through the log" \
+    [ "$(mock_count 'log rollback --id * --silent')" -eq 1 ]
+assert "back: the previous entry is asked again" [ "$(asked /top/a.txt)" -eq 2 ]
+assert "back: and the second answer is the one that stands" \
+    [ "$(mock_count 'tag -i file-a deny music')" -eq 1 ]
+assert "back: the counter is not double-counted on the way back" \
+    [ "$(mock_count "gui input --prompt '/top/a.txt'*1 left*")" -eq 2 ]
+assert "back: the walk carries on and finishes" \
+    [ "$(mock_count 'tag -i file-b add music')" -eq 1 ]
+
+# ── Case 15b': going back re-opens the subtree the answer had settled ───────
+# Answering a folder whole takes its contents out of the walk. Undoing the
+# answer has to put them back, or the re-asked question could be answered
+# differently and the files under it still never be seen.
+# The walk is /top, then /top/sub and /top/y.txt, then /top/sub/x.txt — so
+# there is still a question after the folder answer, which is where `back` is
+# pressed.
+mock_reset
+setup_top
+scope_holds "dir-top	/top" "dir-sub	/top/sub" -- "file-x	/top/sub/x.txt" "file-y	/top/y.txt"
+mock_prompt '/top'
+mock_respond 'log head' '@queue:heads2'
+mock_queue heads2 10 11 12 12 13 14 15 16 17 18
+# /top mixed, /top/sub YES (settling x.txt), BACK at /top/y.txt's question —
+# which undoes the /top/sub answer — then /top/sub mixed, and x.txt is asked.
+mock_input m y b m y y
+bash "$SCRIPT" music >/dev/null; code=$?
+assert "back subtree: exits 0" [ "$code" -eq 0 ]
+assert "back subtree: the folder question is re-asked" [ "$(asked /top/sub)" -eq 2 ]
+assert "back subtree: the settled file is asked once the answer is undone" \
+    [ "$(asked /top/sub/x.txt)" -eq 1 ]
+assert "back subtree: the settling answer was rolled back" \
+    [ "$(mock_count 'log rollback --id * --silent')" -eq 1 ]
+
+# ── Case 15c: nothing to go back to on the first question ───────────────────
+# The key is offered from the second question on, but a `back` arriving anyway
+# (the GUI's backspace is always live) re-asks rather than stopping the run.
+mock_reset
+setup_top
+scope_holds "dir-top	/top" -- "file-a	/top/a.txt"
+mock_prompt '/top'
+mock_respond 'log head' '7'
+mock_input b m y
+out=$(bash "$SCRIPT" music 2>&1); code=$?
+assert "back at the start: exits 0" [ "$code" -eq 0 ]
+assert_contains "back at the start: says there is nothing to go back to" "$out" "nothing to go back to"
+assert "back at the start: nothing was rolled back" [ "$(mock_count 'log rollback*')" -eq 0 ]
+assert "back at the start: the first entry is asked twice" [ "$(asked /top)" -eq 2 ]
+
 # ── Case 16a: a scope bigger than the cap is refused, before the path read ──
 # These scripts build associative arrays over the whole scope, so the scope is
 # the run's memory. The ordered read carries the cap as a --limit and asks for

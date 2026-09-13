@@ -90,9 +90,11 @@ fn normalize_chord(chord: &str) -> Result<String, String> {
 const RESERVED_COMMANDS: [&str; 2] = ["command-input:activate", "script-keys:toggle"];
 
 /// The combos a script's `mf gui input` may not await: whatever opens the
-/// command input, whatever toggles the script keys, and `escape` (which always
-/// stops the script). Single chords only — a script awaits one key press, so a
-/// multi-chord sequence can never collide with it. Sorted and deduplicated.
+/// command input, whatever toggles the script keys, `escape` (which always
+/// stops the script) and `backspace` (which always sends "back" — the way out
+/// of an answer already given, spec-gui "Reserved keys"). Single chords only —
+/// a script awaits one key press, so a multi-chord sequence can never collide
+/// with it. Sorted and deduplicated.
 pub fn reserved_combos(compiled: &[CompiledBinding]) -> Vec<String> {
     let mut combos: Vec<String> = compiled
         .iter()
@@ -103,7 +105,7 @@ pub fn reserved_combos(compiled: &[CompiledBinding]) -> Vec<String> {
                     .any(|c| b.invocation == *c || b.invocation.starts_with(&format!("{c} ")))
         })
         .map(|b| b.keys[0].clone())
-        .chain(std::iter::once("escape".to_string()))
+        .chain(["escape".to_string(), "backspace".to_string()])
         .collect();
     combos.sort();
     combos.dedup();
@@ -634,12 +636,15 @@ mod tests {
 "#;
         let set = KeybindingSet::from_sources(defaults, "").unwrap();
         let reserved = reserved_combos(&set.compiled());
-        assert_eq!(reserved, vec![":", "ctrl+p", "escape", "tab"]);
+        assert_eq!(reserved, vec![":", "backspace", "ctrl+p", "escape", "tab"]);
 
         // A script's key is compared normalized, so "Escape" and "CTRL+P" hit.
         assert!(is_reserved(&reserved, "Escape"));
         assert!(is_reserved(&reserved, "ctrl+P"));
         assert!(is_reserved(&reserved, "tab"));
+        // "back" is the user's way out of an answer, so no script may take it.
+        assert!(is_reserved(&reserved, "backspace"));
+        assert!(is_reserved(&reserved, "Backspace"));
         assert!(!is_reserved(&reserved, "y"));
         // Garbage is not reserved: the caller reports it as a malformed key.
         assert!(!is_reserved(&reserved, "ctrl+"));
@@ -653,6 +658,7 @@ mod tests {
 "g c" = { command = "command-input:activate" }
 "#;
         let set = KeybindingSet::from_sources(defaults, "").unwrap();
-        assert_eq!(reserved_combos(&set.compiled()), vec!["escape"]);
+        // Only the two literals remain: they are reserved whatever is bound.
+        assert_eq!(reserved_combos(&set.compiled()), vec!["backspace", "escape"]);
     }
 }

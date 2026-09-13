@@ -17,6 +17,7 @@
 use serde::{Deserialize, Serialize};
 use std::collections::VecDeque;
 use std::sync::{Mutex, OnceLock};
+use uuid::Uuid;
 
 /// How many entries the ring holds. Enough to cover a noisy reconcile without
 /// the reader having to keep up in real time, small enough to stay free.
@@ -144,6 +145,24 @@ pub fn warn(scope: &str, message: impl Into<String>) {
 
 pub fn error(scope: &str, message: impl Into<String>) {
     record(Level::Error, scope, message, None);
+}
+
+// The `_for` variants carry the repository the diagnostic is about. Readers use
+// it to route: the GUI shows a repo-scoped line only in the workspaces on that
+// repository, where a flush on one repo used to appear in the message log of
+// every other one that happened to be open. A diagnostic with no repository is
+// genuinely daemon-wide and still reaches everyone.
+
+pub fn info_for(scope: &str, message: impl Into<String>, repo: Uuid) {
+    record(Level::Info, scope, message, Some(repo.as_simple().to_string()));
+}
+
+pub fn warn_for(scope: &str, message: impl Into<String>, repo: Uuid) {
+    record(Level::Warning, scope, message, Some(repo.as_simple().to_string()));
+}
+
+pub fn error_for(scope: &str, message: impl Into<String>, repo: Uuid) {
+    record(Level::Error, scope, message, Some(repo.as_simple().to_string()));
 }
 
 /// Reads the process-wide feed. An empty page when the lock is poisoned.

@@ -521,6 +521,7 @@ fn flush_pending_once(repo: &RepoState, report: FlushReport) -> Result<FlushStat
                 departed: &departed,
                 offline: &offline,
                 orphan_limit: repo.orphan_cascade_limit,
+                repo_uuid: repo.uuid(),
                 departed_index: None,
                 elig: &mut elig,
                 cancel: &cancel,
@@ -554,7 +555,7 @@ fn flush_pending_once(repo: &RepoState, report: FlushReport) -> Result<FlushStat
     match work {
         Ok((revisions, ignored)) => {
             repo.tasks.finish(task, None);
-            crate::diagnostics::info(
+            crate::diagnostics::info_for(
                 "executor",
                 flush_summary(
                     &repo.name(),
@@ -564,6 +565,7 @@ fn flush_pending_once(repo: &RepoState, report: FlushReport) -> Result<FlushStat
                     ignored,
                     started.elapsed(),
                 ),
+                repo.uuid(),
             );
             Ok(FlushStats {
                 events: n_events,
@@ -580,12 +582,13 @@ fn flush_pending_once(repo: &RepoState, report: FlushReport) -> Result<FlushStat
             resync_cache(&conn, &mut cache);
             repo.pause_ingestion();
             repo.tasks.mark_cancelled(task);
-            crate::diagnostics::warn(
+            crate::diagnostics::warn_for(
                 "executor",
                 format!(
                     "flush stopped: {n_events} filesystem event(s) left buffered, \
                      ingestion paused until resumed"
                 ),
+                repo.uuid(),
             );
             Ok(FlushStats { events: n_events, revisions: revisions_from_restore, cancelled: true })
         }
@@ -708,6 +711,9 @@ struct Apply<'a, 'c> {
     offline: &'a crate::mount::OfflineMounts,
     /// Mass-orphan circuit breaker (0 = disabled).
     orphan_limit: usize,
+    /// The repository being applied to, so its diagnostics are recorded against
+    /// it rather than shown in every open repository's message log.
+    repo_uuid: Uuid,
     /// `departed` indexed by the stat a rename preserves, built on first use.
     /// Without it the pairing costs one stat and one database read per
     /// (arrival, departure) *pair*: a batch that both loses and gains a few
@@ -985,7 +991,7 @@ impl Apply<'_, '_> {
         // the cascade is not.
         let total = descendants.len() + 1;
         if self.orphan_limit > 0 && total > self.orphan_limit {
-            crate::diagnostics::warn(
+            crate::diagnostics::warn_for(
                 "executor",
                 format!(
                     "refusing to orphan {total} metarecords at once (limit {}): \
@@ -993,6 +999,7 @@ impl Apply<'_, '_> {
                      deletion is real",
                     self.orphan_limit
                 ),
+                self.repo_uuid,
             );
             return Ok(());
         }
@@ -1373,7 +1380,11 @@ pub fn spawn(repo: &Arc<RepoState>, quiet: Duration) -> ExecutorHandle {
                             return; // Repository unloaded.
                         };
                         if let Err(err) = flush_pending(&repo) {
-                            crate::diagnostics::error("executor", format!("flush failed: {err:#}"));
+                            crate::diagnostics::error_for(
+                                "executor",
+                                format!("flush failed: {err:#}"),
+                                repo.uuid(),
+                            );
                         }
                         break;
                     }

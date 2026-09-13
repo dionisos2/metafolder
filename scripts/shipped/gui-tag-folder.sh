@@ -313,10 +313,26 @@ report_step() { # <done> <phase>   — only when a step has gone by
     fi
 }
 
+# Read as an ARRAY rather than streamed, so the walk can step *backwards*: the
+# back key returns to the previous question, which means re-reading a line
+# already consumed. The scope is bounded (MF_GUI_MAX_ENTRIES), so holding it is
+# the same memory the path/rank maps already cost.
+mapfile -t STEPS <"$WALK"
+
+# One frame per answered question, pushed before the answer is applied: where
+# the walk was, the counters as they stood, how many pruned roots there were,
+# and the operation the history was on. Going back pops one and restores all of
+# it — the writes through the event log, which puts back the exact field rows
+# and versions, the rest by assignment.
+BACK_STACK=()
+
 # `depth`, `parent`, `krank` and `rank` are the sort key and are not read again
 # here; only the uuid is.
 # shellcheck disable=SC2034
-while IFS=$'\t' read -r depth parent krank rank uuid; do
+STEP_INDEX=0
+while [ "$STEP_INDEX" -lt "${#STEPS[@]}" ]; do
+    IFS=$'\t' read -r depth parent krank rank uuid <<<"${STEPS[$STEP_INDEX]}"
+    STEP_INDEX=$((STEP_INDEX + 1))
     [ -z "$STOP" ] || break
     [ -n "$uuid" ] || continue
     path=${PATH_OF[$uuid]-}
@@ -325,6 +341,15 @@ while IFS=$'\t' read -r depth parent krank rank uuid; do
     # DONE that skipped the pruned ones never reached it — the "the last entry
     # always reports" rule never fired, and the "N left" counter claimed a
     # folder answered whole was still ahead.
+    # The counters as they stand *before* this entry is considered. A back frame
+    # restores these, so returning here re-walks the entry from a clean state;
+    # frames taken after the decrements below would subtract twice, and the
+    # "N left" counter went negative.
+    pre_done=$DONE
+    pre_remaining=$REMAINING
+    pre_already=$ALREADY
+    pre_skipped=$SKIPPED
+    pre_pruned=${#PRUNED[@]}
     DONE=$((DONE + 1))
     # A settled subtree is walked over, not asked about — but it still has to
     # report, or the bar stops wherever the last question was and never reaches
@@ -359,15 +384,45 @@ while IFS=$'\t' read -r depth parent krank rank uuid; do
     report_progress "$DONE" "$path"
     mf_gui_show_file "$(mf path "$uuid" 2>/dev/null || true)"
     counter="$REMAINING left"
+    # Everything the answer is about to change, noted before it changes: the
+    # history's position (so the writes can be undone exactly), the walk
+    # position, the counters, and how many pruned roots stood. `back` pops this.
+    frame_head=$(mf_log_head)
+    frame="$((STEP_INDEX - 1))	$pre_done	$pre_remaining	$pre_already	$pre_skipped	$pre_pruned	$frame_head"
+    back_hint=""
+    [ "${#BACK_STACK[@]}" -gt 0 ] && back_hint="   [b ⌫] back"
     if [ "$kind" = dir ]; then
         answer=$(mf_gui_ask_answer \
-            "'$path' has tag '$TAG'?   [y →] oui   [n ←] non   [m ↑] mixed   [s ↓] skip   [q] stop   — $counter" \
-            y n m s q)
+            "'$path' has tag '$TAG'?   [y →] oui   [n ←] non   [m ↑] mixed   [s ↓] skip$back_hint   [q] stop   — $counter" \
+            y n m s b q)
     else
         answer=$(mf_gui_ask_answer \
-            "'$path' has tag '$TAG'?   [y →] oui   [n ←] non   [s ↓] skip   [q] stop   — $counter" \
-            y n s q)
+            "'$path' has tag '$TAG'?   [y →] oui   [n ←] non   [s ↓] skip$back_hint   [q] stop   — $counter" \
+            y n s b q)
     fi
+    # Back: undo the previous answer and ask it again. Nothing to go back to on
+    # the first question, so the key is simply re-asked for.
+    if [ "$answer" = b ]; then
+        if [ "${#BACK_STACK[@]}" -eq 0 ]; then
+            mf_gui_report "nothing to go back to"
+            STEP_INDEX=$((STEP_INDEX - 1))
+            continue
+        fi
+        IFS=$'\t' read -r b_index b_done b_remaining b_already b_skipped b_pruned b_head \
+            <<<"${BACK_STACK[-1]}"
+        unset "BACK_STACK[-1]"
+        mf_log_back_to "$b_head"
+        STEP_INDEX=$b_index
+        DONE=$b_done
+        REMAINING=$b_remaining
+        ALREADY=$b_already
+        SKIPPED=$b_skipped
+        # Re-open whatever that answer had settled: the subtree comes back into
+        # the walk, which is what makes the question answerable differently.
+        while [ "${#PRUNED[@]}" -gt "$b_pruned" ]; do unset "PRUNED[-1]"; done
+        continue
+    fi
+    BACK_STACK+=("$frame")
     case $answer in
         y)
             if [ "$kind" = dir ]; then
@@ -393,7 +448,7 @@ while IFS=$'\t' read -r depth parent krank rank uuid; do
             ;;
         *) STOP=user ;;
     esac
-done <"$WALK"
+done
 
 case $STOP in
     "")   mf_gui_finish "done tagging '$TAG' ($SKIPPED skipped, $ALREADY already decided)." ;;

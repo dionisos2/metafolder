@@ -269,11 +269,28 @@ impl DaemonProxy {
         if lines.is_empty() {
             return;
         }
-        // A daemon-wide warning concerns every workspace, so it goes to each
-        // message log rather than to whichever one happens to be focused.
-        for workspace in gui.workspaces() {
-            for line in &lines {
-                let _ = gui.append_message(&workspace.id, line);
+        // Routed by repository. A daemon-wide line (no `repo`) concerns every
+        // workspace and goes to each message log. A line *about* a repository —
+        // a flush, a watch it could not place — goes only to the workspaces on
+        // that repository: with two repositories loaded, A's flushes used to
+        // fill B's message panel, which is noise indistinguishable from B's own.
+        let workspaces = gui.workspaces();
+        for line in &lines {
+            let mut shown = false;
+            for workspace in &workspaces {
+                if line.concerns(workspace.active_repo.as_deref()) {
+                    let _ = gui.append_message(&workspace.id, &line.text);
+                    shown = true;
+                }
+            }
+            // Nowhere to route it: a repository loaded with no workspace on it.
+            // Showing it everywhere is better than dropping it — an error about
+            // a repository nobody is looking at is exactly the one worth seeing,
+            // and the message names its repository.
+            if !shown {
+                for workspace in &workspaces {
+                    let _ = gui.append_message(&workspace.id, &line.text);
+                }
             }
         }
     }

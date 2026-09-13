@@ -188,6 +188,11 @@ export function activeQuestion(): { keys: string[]; task: string | null } | null
  *    key falls through to the ordinary bindings (the panel's own `y` again).
  *
  *  Pure, so it is unit-tested; keys.ts applies the result. */
+/// The value a wait resolves with when the user asks to go back. Not a key the
+/// script awaited, so a script that does not handle it re-asks (see
+/// `mf_gui_ask_answer` in scripts/shipped/lib/mf-gui.sh).
+export const BACK_ANSWER = 'back';
+
 export function inputWaitAction(
   wait: { keys: string[]; task: string | null } | null,
   scriptKeys: boolean,
@@ -195,6 +200,12 @@ export function inputWaitAction(
 ): { kind: 'answer'; value: string } | { kind: 'stop'; task: string | null } | null {
   if (!wait || !combo || !scriptKeys) return null;
   if (combo === 'escape') return { kind: 'stop', task: wait.task };
+  // The way *back* out of a question, next to escape's way out of the run
+  // (spec-gui "Reserved keys"). Reserved like escape — a script cannot await
+  // the key — but it resolves the wait rather than ending the run: only the
+  // script knows what undoing its last answer means, so it is told, and one
+  // that has no answer for "back" asks the same question again.
+  if (combo === 'backspace') return { kind: 'answer', value: BACK_ANSWER };
   const value = inputWaitAnswer(wait, combo);
   return value === null ? null : { kind: 'answer', value };
 }

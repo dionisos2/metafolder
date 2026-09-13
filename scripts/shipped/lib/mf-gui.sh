@@ -262,6 +262,30 @@ mf_gui_scope_into() { # <outfile> <get args...>
     fi
 }
 
+# ── Going back (spec-gui "Reserved keys") ────────────────────────────────────
+# `backspace` during a question always resolves the wait with `back`, and
+# mf_gui_ask_answer turns that into the letter `b` for a script that offers it.
+# What "back" means is the script's own business, but for a walk that writes as
+# it goes the answer is always the same: return the repository to where it was
+# before the answer, and ask again. These two helpers are that.
+
+# The operation id the history is on. Note it BEFORE writing, so the write can
+# be undone exactly — the event log restores field ids and versions, which no
+# hand-written "untag" could.
+mf_log_head() {
+    mf log head 2>/dev/null || printf '0\n'
+}
+
+# Return the repository to the operation `mf_log_head` reported. A no-op when
+# nothing was written since (an idempotent `mf tag` often writes nothing at
+# all), which is why the head is compared rather than counted.
+mf_log_back_to() { # <op-id>
+    [ -n "${1:-}" ] || return 0
+    [ "$(mf_log_head)" = "$1" ] && return 0
+    mf log rollback --id "$1" --silent >/dev/null 2>&1 \
+        || mf_gui_report "could not undo the last answer (history moved on?)"
+}
+
 # Narrow a predicate to $SCOPE. An empty scope is every metarecord, so it is
 # left alone rather than wrapped — `() AND …` is not a query.
 mf_gui_scoped() { # <predicate>
@@ -296,16 +320,32 @@ _mf_gui_arrow_for() { # <letter> -> its arrow key, or nothing
 # refuses a wait that asks for it. A script with cleanup to do offers `q`
 # instead — by convention the quit key of every shipped script.
 #     case "$(mf_gui_ask_answer "$msg" y n m s q)" in ...
+#
+# `backspace` is reserved the same way, and always resolves the wait with the
+# value `back`: the way out of an answer *already given*, where escape is the
+# way out of the run. What going back means is the script's business — only it
+# knows what its last answer wrote — so a script that supports it lists `b`
+# among its letters and gets `b` here. One that does not simply asks the same
+# question again, so the key is never a silent no-op and never lands in a
+# default branch that would stop the run.
 mf_gui_ask_answer() { # <message> <letter>...
     local msg=$1 letter arrow pressed
     shift
-    local keys=()
+    local keys=() supports_back=0
     for letter in "$@"; do
+        [ "$letter" = b ] && supports_back=1
         keys+=("$letter")
         arrow=$(_mf_gui_arrow_for "$letter")
         [ -n "$arrow" ] && keys+=("$arrow")
     done
-    pressed=$(mf_gui_ask "$msg" "${keys[@]}")
+    while :; do
+        pressed=$(mf_gui_ask "$msg" "${keys[@]}")
+        if [ "$pressed" = back ]; then
+            [ "$supports_back" = 1 ] && { printf 'b\n'; return 0; }
+            continue          # not offered here: ask again rather than guess
+        fi
+        break
+    done
     case $pressed in
         right) printf 'y\n' ;;
         left)  printf 'n\n' ;;

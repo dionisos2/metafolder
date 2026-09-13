@@ -4168,3 +4168,29 @@ fn metarecord_get_without_a_selector_honours_sort_and_select() {
     }
     assert_eq!(listed.len(), made.len() + 1, "the root metarecord should be listed too");
 }
+
+#[test]
+fn log_head_prints_the_head_operation_id() {
+    // The primitive a script needs to go back: the operation the history is on
+    // right now, in the form `mf log rollback --id` takes. Without it a script
+    // wanting to undo its own last write had to scrape `mf log show HEAD`.
+    let (repo, _root) = init_repo("loghead");
+
+    let before = mf(&["-u", &repo, "log", "head"]);
+    assert_ok(&before);
+    let before_id: i64 = before.stdout.trim().parse().expect("an operation id");
+
+    create_metarecord(&repo, &["label:string=x"]);
+
+    let after = mf(&["-u", &repo, "log", "head"]);
+    assert_ok(&after);
+    let after_id: i64 = after.stdout.trim().parse().expect("an operation id");
+    assert!(after_id > before_id, "a write moves HEAD forward: {before_id} -> {after_id}");
+
+    // And it is the id `rollback --id` navigates to: going back to it undoes
+    // the write.
+    let back = mf(&["-u", &repo, "log", "rollback", "--id", &before_id.to_string(), "--silent"]);
+    assert_ok(&back);
+    let now = mf(&["-u", &repo, "log", "head"]);
+    assert_eq!(now.stdout.trim(), before_id.to_string(), "HEAD is back where it was");
+}

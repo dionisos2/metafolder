@@ -17,6 +17,24 @@
   <a data-help-page="command-input">command input</a>.
 </p>
 
+<h2>Going back</h2>
+<p>
+  <kbd>Backspace</kbd> undoes the <strong>previous answer</strong> and asks that
+  question again. It is reserved like <kbd>Escape</kbd>, so no script can take
+  the key — but where Escape ends the run, this ends only the answer. Press it
+  repeatedly to walk back question by question, to the first one.
+</p>
+<p>
+  What "back" undoes is the script's business, since only it knows what its last
+  answer wrote. The shipped tagging walks do it through the
+  <a data-help-page="log">event log</a>: they note where the history is before
+  each answer and return it there, so the exact field values come back — and
+  they re-open whatever the answer had settled, so a folder you answered "yes"
+  by mistake can be answered differently and its files are asked about again.
+  A script that offers it shows <kbd>b</kbd> in the question (the typed twin of
+  Backspace); one that does not simply asks again.
+</p>
+
 <h2>Script keys, and getting them back</h2>
 <p>
   While a question is up, the keys it awaits are <em>borrowed from the GUI</em>:
@@ -38,7 +56,7 @@
 <p>
   <kbd>Escape</kbd> stops the asking script outright — the run and every command
   it started. It always works, whatever keys the script grabbed, because no
-  script is allowed to take it: <kbd>Escape</kbd>,
+  script is allowed to take it: <kbd>Escape</kbd>, <kbd>Backspace</kbd>,
   <span data-mf-key="script-keys:toggle">Tab</span> and
   <span data-mf-key="command-input:activate">:</span> are <strong>reserved</strong>, and a script asking for one of
   them is refused. With the script keys unticked, <kbd>Escape</kbd> is an

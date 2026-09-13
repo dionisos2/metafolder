@@ -98,4 +98,16 @@ describe('inputWaitAction (what a key does while a question is up)', () => {
     expect(inputWaitAction(null, true, 'y')).toBeNull();
     expect(inputWaitAction(wait, true, null)).toBeNull();
   });
+
+  it('sends "back" on backspace, which no script can await either', () => {
+    // The way out of an answer already given. Like escape it is reserved, so a
+    // script cannot take the key; unlike escape it does not end the run — the
+    // script decides what going back means (undo its last write, re-ask), and
+    // one that has no answer for it simply asks again.
+    expect(inputWaitAction(wait, true, 'backspace')).toEqual({ kind: 'answer', value: 'back' });
+    // It is a question key like any other: disabled with the script keys.
+    expect(inputWaitAction(wait, false, 'backspace')).toBeNull();
+    // And it means nothing when no question is up.
+    expect(inputWaitAction(null, true, 'backspace')).toBeNull();
+  });
 });

@@ -741,6 +741,19 @@ mod graph_tests {
 
 // ── mf log show ───────────────────────────────────────────────────────────────
 
+/// `mf log head` — the id of the operation HEAD is on, one line.
+///
+/// The primitive for going back to a known point: it is exactly what
+/// `mf log rollback --id` takes, so a script can note where it was, write, and
+/// return there. Reading it used to mean scraping `mf log show HEAD`. `0` on an
+/// empty history, which `rollback --id 0` reads as "before everything".
+pub fn log_head(ctx: &Ctx) -> Result<i32, CliError> {
+    let base = ctx.repo_base()?;
+    let resp = ctx.client.get(&format!("{base}/log/since"), &[])?;
+    println!("{}", resp["head"].as_i64().unwrap_or(0));
+    Ok(0)
+}
+
 pub fn log_show(ctx: &Ctx, target: &str, raw: bool) -> Result<i32, CliError> {
     let base = ctx.repo_base()?;
     let rev = if target.eq_ignore_ascii_case("head") {
