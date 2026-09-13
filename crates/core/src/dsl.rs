@@ -8,7 +8,7 @@ use crate::query::{split_terms, Aspect, FollowTarget, OsmMode, Query};
 /// Parses a DSL predicate string into a `Query`.
 pub fn parse_query(input: &str) -> Result<Query, String> {
     let tokens = lex(input)?;
-    let mut parser = Parser { tokens, pos: 0 };
+    let mut parser = Parser { tokens, pos: 0, depth: 0 };
     let query = parser.or_expr()?;
     match parser.peek() {
         None => Ok(query),
@@ -365,7 +365,18 @@ fn lex_word(chars: &[char], i: &mut usize) -> Tok {
 struct Parser {
     tokens: Vec<Tok>,
     pos: usize,
+    /// Nesting depth of the sub-query being parsed, bounded by [`MAX_DEPTH`].
+    depth: usize,
 }
+
+/// Maximum nesting depth of a parsed query — the same bound serde_json puts on
+/// nested JSON, and for the same reason. This is a recursive-descent parser, so
+/// nesting depth *is* stack depth, and the input comes straight from a user:
+/// the GUI's query editor hands whatever is typed to the `parse_query` command,
+/// `mf query` takes it from argv. Unbounded, a run of open parentheses is not a
+/// parse error but a stack overflow — a process-killing SIGSEGV instead of a
+/// message anyone can act on. Far above any query a human or a UI builds.
+const MAX_DEPTH: usize = 128;
 
 /// Whether a token can follow a field name in a predicate — the lookahead that
 /// tells a 32-hex field name from a bare UUID atom.
@@ -422,7 +433,20 @@ impl Parser {
         }
     }
 
+    /// Every nested sub-query — a parenthesised group, a follow target, a
+    /// `same()` argument — re-enters here, so this is the one place the depth
+    /// bound has to be enforced.
     fn or_expr(&mut self) -> Result<Query, String> {
+        if self.depth >= MAX_DEPTH {
+            return Err(format!("query too deeply nested (maximum {MAX_DEPTH} levels)"));
+        }
+        self.depth += 1;
+        let out = self.or_expr_inner();
+        self.depth -= 1;
+        out
+    }
+
+    fn or_expr_inner(&mut self) -> Result<Query, String> {
         let mut operands = vec![self.and_expr()?];
         while self.peek() == Some(&Tok::Or) {
             self.next();
@@ -1666,5 +1690,21 @@ mod tests {
                 })),
             }
         );
+    }
+
+    #[test]
+    fn deeply_nested_input_is_rejected_not_fatal() {
+        // The parser is recursive descent, so nesting depth is stack depth. This
+        // string reaches it straight from a user: the GUI's query editor sends
+        // whatever is typed through the `parse_query` Tauri command, and `mf
+        // query` through argv. Without a bound it is a stack overflow — a
+        // SIGSEGV that takes the daemon-less CLI or the whole GUI down, and no
+        // `Result` anyone can report.
+        let err = err(&"(".repeat(100_000));
+        assert!(err.contains("nested"), "unexpected error: {err}");
+
+        // The bound is generous: ordinary nesting still parses.
+        let deep = format!("{}a = 1{}", "(".repeat(32), ")".repeat(32));
+        ok(&deep);
     }
 }

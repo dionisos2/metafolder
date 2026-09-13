@@ -1473,3 +1473,43 @@ fn same_as_is_served_by_the_index() {
     o.check_sorted(&same("artist", this(a)), &[("rate", true)], None);
     o.check_sorted(&same("artist", this(a)), &[("rate", false)], Some(1));
 }
+
+#[test]
+fn resolving_index_leaves_is_deterministic() {
+    // The index cannot serve a multi-term OSM path, so `resolve_index_leaves`
+    // rewrites that leaf into the `UuidIn` set it matches. Every page of a
+    // paginated query re-runs the rewrite, and the cursor is bound to a hash of
+    // the query the index was handed — so the rewrite must be a *function*: the
+    // same query in, byte-identical query out. It was not, once: the match set
+    // came out of a `HashSet`, whose iteration order differs between instances,
+    // and the second page of a two-word search died on "invalid cursor".
+    //
+    // Asserted on the rewrite itself rather than on a cursor, because this is
+    // the property the cursor relies on, and it holds for every text leaf the
+    // rewrite touches.
+    let mut o = Oracle::new();
+    let root = o.create(vec![tref("loc", None, "root")]);
+    let sci = o.create(vec![tref("loc", Some(root), "science")]);
+    for i in 0..40 {
+        o.create(vec![tref("loc", Some(sci), &format!("ep{i}.mkv"))]);
+    }
+
+    for q in [
+        osm_path_q("loc", &["sci", "ep"]),
+        osm_path_q("loc", &["root/science"]),
+        Query::Or {
+            operands: vec![
+                osm_path_q("loc", &["sci", "ep"]),
+                Query::Matches { field: "loc".into(), pattern: "mkv".into(), aspect: Aspect::Path },
+            ],
+        },
+    ] {
+        let once = query_exec::resolve_index_leaves(&o.conn, &mut o.cache, &q).unwrap();
+        let twice = query_exec::resolve_index_leaves(&o.conn, &mut o.cache, &q).unwrap();
+        assert_eq!(
+            format!("{once:?}"),
+            format!("{twice:?}"),
+            "the rewrite of {q:?} is not stable between calls"
+        );
+    }
+}

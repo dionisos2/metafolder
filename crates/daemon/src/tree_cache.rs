@@ -457,6 +457,9 @@ impl TreeCache {
                 stack.push(Step::Enter(child, at, depth + 1));
             }
         }
+        // Unordered: the caller (`query_exec::osm_path_matches`) is the
+        // chokepoint that pins the order, for this path and the DB fallback
+        // alike.
         Ok(Some(matched.into_iter().collect()))
     }
 

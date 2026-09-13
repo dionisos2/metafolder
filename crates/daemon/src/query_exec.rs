@@ -136,13 +136,51 @@ fn node_count(q: &Query) -> usize {
     1 + children
 }
 
+/// The widest single `And`/`Or` anywhere in the tree.
+fn widest_combinator(q: &Query) -> usize {
+    let (here, children): (usize, Vec<&Query>) = match q {
+        Query::And { operands } | Query::Or { operands } => {
+            (operands.len(), operands.iter().collect())
+        }
+        Query::Not { operand } => (0, vec![operand]),
+        Query::Follows { target, .. } | Query::FollowsTransitive { target, .. } => match target {
+            FollowTarget::Condition(c) => (0, vec![c.as_ref()]),
+            FollowTarget::Path(_) => (0, Vec::new()),
+        },
+        Query::SameAs { target, .. } => (0, vec![target.as_ref()]),
+        _ => (0, Vec::new()),
+    };
+    children.into_iter().map(widest_combinator).fold(here, usize::max)
+}
+
+/// The message [`MAX_COMBINATOR_OPERANDS`] is rejected with, worded once so the
+/// upfront check and the compiler's own guard say the same thing.
+pub(crate) fn too_wide_message(got: usize) -> String {
+    format!(
+        "a single 'and'/'or' may have at most {MAX_COMBINATOR_OPERANDS} operands \
+         (got {got}); nest or decompose it"
+    )
+}
+
 /// Rejects an over-large query before compiling it (spec-query "Limits").
-fn check_query_size(q: &Query) -> Result<(), ApiError> {
+///
+/// Both limits are checked here, and this must run *before the engine is
+/// chosen*: whether a query is too large is a property of the query, not of
+/// which engine ends up serving it. The width limit used to live only inside
+/// the SQL compiler, so a wide `or` of index-servable leaves was accepted while
+/// the same `or` with one `matches` leaf — which forces the SQL fallback — was
+/// rejected. A client cannot see that routing decision, so it saw the limit
+/// flicker on and off.
+pub fn check_query_size(q: &Query) -> Result<(), ApiError> {
     let n = node_count(q);
     if n > MAX_QUERY_NODES {
         return Err(ApiError::bad_request(format!(
             "query too large ({n} nodes, maximum {MAX_QUERY_NODES}); decompose it into smaller queries"
         )));
+    }
+    let widest = widest_combinator(q);
+    if widest > MAX_COMBINATOR_OPERANDS {
+        return Err(ApiError::bad_request(too_wide_message(widest)));
     }
     Ok(())
 }
@@ -681,7 +719,31 @@ fn non_tree_ref_type(conn: &Connection, field: &str) -> Result<Option<String>, A
     Ok(None)
 }
 
+/// The metarecords whose assembled `field` path matches `terms` in order.
+///
+/// The result is **sorted**, and that is part of the contract, not a detail of
+/// how it was computed. This set is inlined verbatim into a `UuidIn` leaf — by
+/// [`resolve_index_leaves`] for the index, by the compiler for SQL — and
+/// `resolve_index_leaves` runs again on *every page* of a paginated query. The
+/// index binds its cursor to a hash of the query it was handed, so a set whose
+/// order drifts between two calls makes page 2 look like a cursor from some
+/// other query: the index defers, the SQL engine is passed a cursor it cannot
+/// decode, and a two-word search dies on "invalid cursor" halfway through.
+/// Three of the four ways out of this function build their answer in a
+/// `HashSet`, whose iteration order differs between instances — hence the sort
+/// at the one place every path goes through.
 pub fn osm_path_matches(
+    conn: &Connection,
+    cache: &mut TreeCache,
+    field: &str,
+    terms: &[String],
+) -> Result<Vec<Uuid>, ApiError> {
+    let mut matched = osm_path_matches_unordered(conn, cache, field, terms)?;
+    matched.sort_unstable();
+    Ok(matched)
+}
+
+fn osm_path_matches_unordered(
     conn: &Connection,
     cache: &mut TreeCache,
     field: &str,
@@ -1369,12 +1431,10 @@ impl<'a> Compiler<'a> {
         if operands.is_empty() {
             return Err(ApiError::bad_request("'and'/'or' need at least one operand"));
         }
+        // `check_query_size` already rejected this upfront; kept so the limit
+        // still holds for any future caller that compiles without it.
         if operands.len() > MAX_COMBINATOR_OPERANDS {
-            return Err(ApiError::bad_request(format!(
-                "a single 'and'/'or' may have at most {MAX_COMBINATOR_OPERANDS} operands \
-                 (got {}); nest or decompose it",
-                operands.len()
-            )));
+            return Err(ApiError::bad_request(too_wide_message(operands.len())));
         }
         let mut parts = Vec::with_capacity(operands.len());
         for operand in operands {
@@ -1567,14 +1627,41 @@ mod tests {
         // And + leaf + (Not + leaf) + (FollowsTransitive + leaf) = 6
         assert_eq!(node_count(&nested), 6);
 
-        // At the limit passes; one over is rejected.
-        let at_limit = Query::Or { operands: (0..MAX_QUERY_NODES - 1).map(|_| leaf()).collect() };
+        // At the node limit passes; one over is rejected. Nested, because the
+        // two limits are independent: a flat `Or` of 1999 operands is under the
+        // node limit but far over the per-combinator one, so it could not
+        // exercise the node limit at all.
+        let chunk = |n: usize| Query::Or { operands: (0..n).map(|_| leaf()).collect() };
+        let at_limit = Query::Or { operands: vec![chunk(499), chunk(499), chunk(499), chunk(498)] };
         assert_eq!(node_count(&at_limit), MAX_QUERY_NODES);
         assert!(check_query_size(&at_limit).is_ok());
 
-        let over = Query::Or { operands: (0..MAX_QUERY_NODES).map(|_| leaf()).collect() };
+        let over = Query::Or { operands: vec![chunk(499), chunk(499), chunk(499), chunk(499)] };
         assert_eq!(node_count(&over), MAX_QUERY_NODES + 1);
         let err = check_query_size(&over).unwrap_err();
         assert_eq!(err.status, axum::http::StatusCode::BAD_REQUEST);
+        assert!(err.message.contains("too large"), "unexpected error: {}", err.message);
+    }
+
+    #[test]
+    fn query_size_check_also_bounds_combinator_width() {
+        // The width limit is checked upfront, next to the node limit, so it
+        // holds whichever engine ends up serving the query — it used to live
+        // only inside the SQL compiler, where the index path never reached it.
+        let leaf = || Query::IsPresent { field: "x".into(), aspect: Aspect::Raw };
+        let wide = |n: usize| Query::Or { operands: (0..n).map(|_| leaf()).collect() };
+
+        assert!(check_query_size(&wide(MAX_COMBINATOR_OPERANDS)).is_ok());
+        let err = check_query_size(&wide(MAX_COMBINATOR_OPERANDS + 1)).unwrap_err();
+        assert_eq!(err.status, axum::http::StatusCode::BAD_REQUEST);
+        assert!(err.message.contains("at most"), "unexpected error: {}", err.message);
+
+        // Found however deeply it is buried, not just at the root.
+        let buried = Query::Not {
+            operand: Box::new(Query::And {
+                operands: vec![leaf(), wide(MAX_COMBINATOR_OPERANDS + 1)],
+            }),
+        };
+        assert!(check_query_size(&buried).is_err(), "a nested wide combinator slipped through");
     }
 }

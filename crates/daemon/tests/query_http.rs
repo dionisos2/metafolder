@@ -1158,3 +1158,95 @@ async fn test_batch_append_of_an_existing_value_is_a_no_op() {
         assert_eq!(tags.len(), 1, "one tag row per metarecord: {hit}");
     }
 }
+
+#[tokio::test]
+async fn test_multi_term_osm_path_paginates() {
+    // A multi-term OSM path is not indexable as such: `resolve_index_leaves`
+    // rewrites the leaf into the `UuidIn` set it matches, and the index serves
+    // that. The rewrite runs again on every page, so the *set it produces must
+    // be stable* — the cursor guard hashes the rewritten query, and a set that
+    // comes back in a different order makes page 2 look like a cursor from some
+    // other query. The index then defers, the SQL engine is handed a cursor it
+    // cannot decode, and the user gets a 400 halfway through a search.
+    let (app, repo, root) = setup("osmpage").await;
+
+    let node = |parent: Option<&str>, name: &str| {
+        json!([{"name": "loc", "value": {"type": "tree_ref",
+                "value": {"parent": parent, "name": name}}}])
+    };
+    let top = create(&app, &repo, node(None, "root")).await;
+    let sci = create(&app, &repo, node(Some(&top), "science")).await;
+    for i in 0..10 {
+        create(&app, &repo, node(Some(&sci), &format!("ep{i}.mkv"))).await;
+    }
+
+    let query = json!({"type": "osm", "field": "loc",
+                       "terms": ["sci", "ep"], "mode": "path"});
+
+    // Walk every page, exactly as the finder and `mf query --limit` do.
+    let mut seen: Vec<String> = Vec::new();
+    let mut cursor: Option<String> = None;
+    for page in 0..10 {
+        let mut body = json!({"query": query, "limit": 3});
+        if let Some(c) = &cursor {
+            body["cursor"] = json!(c);
+        }
+        let (status, resp) =
+            request(&app, "POST", &format!("/repos/{repo}/query"), Some(body)).await;
+        assert_eq!(status, StatusCode::OK, "page {page} failed: {resp}");
+        seen.extend(
+            resp["results"].as_array().unwrap().iter().map(|v| v.as_str().unwrap().to_string()),
+        );
+        match resp["next_cursor"].as_str() {
+            Some(c) => cursor = Some(c.to_string()),
+            None => break,
+        }
+    }
+
+    seen.sort();
+    seen.dedup();
+    assert_eq!(seen.len(), 10, "every ep*.mkv should be paged through exactly once");
+
+    std::fs::remove_dir_all(root).unwrap();
+}
+
+#[tokio::test]
+async fn test_query_limits_hold_on_both_engines() {
+    // The node and operand limits are a property of the *query*, not of the
+    // engine that happens to serve it. A wide `or` of indexable leaves used to
+    // be accepted (the index path never checked), while the same query with one
+    // `matches` leaf in it fell through to SQL and was rejected — so whether a
+    // client saw 400 depended on an internal routing decision it cannot see.
+    let (app, repo, root) = setup("limits").await;
+    create(&app, &repo, json!([{"name": "rating", "value": {"type": "int", "value": 1}}])).await;
+
+    let leaf = json!({"type": "is_present", "field": "rating"});
+    let wide = |n: usize| json!({"type": "or", "operands": vec![leaf.clone(); n]});
+
+    // Indexable shapes only: this is the path that skipped the check.
+    for (n, expected) in [(600, StatusCode::BAD_REQUEST), (3000, StatusCode::BAD_REQUEST)] {
+        let (status, body) =
+            request(&app, "POST", &format!("/repos/{repo}/query"), Some(json!({"query": wide(n)})))
+                .await;
+        assert_eq!(status, expected, "an or of {n} indexable leaves gave {body}");
+    }
+
+    // The set layer resolves the same query for a write, and must reject it too.
+    let (status, body) = request(
+        &app,
+        "POST",
+        &format!("/repos/{repo}/query/fields/set"),
+        Some(json!({"query": wide(3000), "name": "tag",
+                    "value": {"type": "string", "value": "x"}})),
+    )
+    .await;
+    assert_eq!(status, StatusCode::BAD_REQUEST, "the set layer accepted it: {body}");
+
+    // A query comfortably inside the limits still works.
+    let (status, body) =
+        request(&app, "POST", &format!("/repos/{repo}/query"), Some(json!({"query": wide(3)})))
+            .await;
+    assert_eq!(status, StatusCode::OK, "a small or was rejected: {body}");
+
+    std::fs::remove_dir_all(root).unwrap();
+}

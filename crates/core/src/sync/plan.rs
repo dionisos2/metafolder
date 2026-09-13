@@ -788,25 +788,48 @@ fn match_by_fields(
         .map(|(name, value)| json!({"type": "eq", "field": name, "value": value}))
         .collect();
     let query = json!({"type": "and", "operands": operands});
-    let resp = ctx.client.post(
-        &format!("/repos/{}/query", target_repo.as_simple()),
-        &json!({"query": query, "select": "*", "limit": 50}),
-    )?;
-    let mut matches = Vec::new();
-    for r in resp["results"].as_array().cloned().unwrap_or_default() {
-        let Some(uuid) = r["uuid"].as_str().and_then(|s| Uuid::parse_str(s).ok()) else {
-            continue;
-        };
-        if linked_target.contains(&uuid) || planned_target.contains(&uuid) {
-            continue;
+    // Paged to exhaustion, not capped. The query is only a *pre-filter* — it
+    // asks for every signature field, while the decision needs the signature to
+    // match exactly — so the record that qualifies can sit anywhere in the
+    // result, and the result is ordered by uuid, which says nothing about
+    // relevance. A fixed cap therefore did not "usually work": a signature over
+    // one common field matches thousands, and either the one exact match fell
+    // past the cap (→ no match → a *duplicate* created in the target instead of
+    // a link) or a second exact match did (→ one match seen → an ambiguous pair
+    // linked as if it were unambiguous). Both are silent.
+    //
+    // Only 0, 1 or "more than 1" matters, so the walk stops at the second match.
+    let base = format!("/repos/{}/query", target_repo.as_simple());
+    let mut matches: Vec<Uuid> = Vec::new();
+    let mut cursor: Option<String> = None;
+    'pages: loop {
+        let mut body = json!({"query": query, "select": "*", "limit": ctx.page_size});
+        if let Some(c) = &cursor {
+            body["cursor"] = json!(c);
         }
-        let has_tree_ref = r["fields"]
-            .as_array()
-            .is_some_and(|fs| fs.iter().any(|f| f["value"]["type"] == "tree_ref"));
-        if has_tree_ref || field_signature(&r) != sig {
-            continue;
+        let resp = ctx.client.post(&base, &body)?;
+        for r in resp["results"].as_array().cloned().unwrap_or_default() {
+            let Some(uuid) = r["uuid"].as_str().and_then(|s| Uuid::parse_str(s).ok()) else {
+                continue;
+            };
+            if linked_target.contains(&uuid) || planned_target.contains(&uuid) {
+                continue;
+            }
+            let has_tree_ref = r["fields"]
+                .as_array()
+                .is_some_and(|fs| fs.iter().any(|f| f["value"]["type"] == "tree_ref"));
+            if has_tree_ref || field_signature(&r) != sig {
+                continue;
+            }
+            matches.push(uuid);
+            if matches.len() > 1 {
+                break 'pages;
+            }
         }
-        matches.push(uuid);
+        match resp["next_cursor"].as_str() {
+            Some(c) => cursor = Some(c.to_string()),
+            None => break,
+        }
     }
     Ok((matches.len() == 1).then(|| matches[0]))
 }
@@ -1160,4 +1183,114 @@ pub(crate) fn find_repo_by_name(ctx: &Ctx, name: &str) -> Result<Option<Uuid>, C
         .and_then(|r| r["repo_uuid"].as_str())
         .and_then(|s| Uuid::parse_str(s).ok());
     Ok(found)
+}
+
+#[cfg(test)]
+mod tests {
+    use std::cell::RefCell;
+
+    use super::*;
+    use crate::sync::{DaemonClient, Prompter, SyncCtx, SyncError};
+
+    /// Serves a scripted sequence of `POST /…/query` pages, plus the one
+    /// `GET …/metarecords/…` the matcher starts from.
+    struct PagingClient {
+        record: Json,
+        pages: RefCell<Vec<Json>>,
+        query_calls: RefCell<usize>,
+    }
+
+    impl DaemonClient for PagingClient {
+        fn request(
+            &self,
+            _method: &str,
+            path: &str,
+            _query: &[(&str, String)],
+            _body: Option<&Json>,
+        ) -> Result<Json, SyncError> {
+            if path.ends_with("/query") {
+                *self.query_calls.borrow_mut() += 1;
+                let mut pages = self.pages.borrow_mut();
+                assert!(!pages.is_empty(), "asked for a page past the end of the result");
+                return Ok(pages.remove(0));
+            }
+            Ok(self.record.clone())
+        }
+    }
+
+    struct NoopPrompter;
+    impl Prompter for NoopPrompter {
+        fn resolve_conflict(&self, _: &str, _: Uuid, _: Uuid) -> Result<String, SyncError> {
+            Ok("skip".into())
+        }
+        fn confirm(&self, _: &str) -> Result<bool, SyncError> {
+            Ok(true)
+        }
+        fn warn(&self, _: &str) {}
+    }
+
+    fn rated(uuid: Uuid, extra: Option<&str>) -> Json {
+        let mut fields = vec![json!({"name": "rating", "value": {"type": "int", "value": 5}})];
+        if let Some(name) = extra {
+            fields.push(json!({"name": name, "value": {"type": "string", "value": "x"}}));
+        }
+        json!({"uuid": uuid.as_simple().to_string(), "fields": fields})
+    }
+
+    fn uuid(n: u8) -> Uuid {
+        Uuid::from_bytes([n; 16])
+    }
+
+    #[test]
+    fn match_by_fields_looks_past_the_first_page() {
+        // The query is only a pre-filter — "carries every signature field" —
+        // while the decision needs the signature to match *exactly*. So the one
+        // record that qualifies can sit on any page, and the result is ordered
+        // by uuid, which says nothing about relevance. This used to be capped at
+        // a single 50-row request: the match below, sitting on page two behind a
+        // crowd of near-misses, was reported as "no match", and the planner
+        // created a duplicate in the target instead of linking.
+        let wanted = uuid(0x42);
+        let near_misses: Vec<Json> = (1..=60).map(|n| rated(uuid(n), Some("note"))).collect();
+        let client = PagingClient {
+            record: rated(uuid(0xaa), None),
+            pages: RefCell::new(vec![
+                json!({"results": near_misses, "next_cursor": "page2"}),
+                json!({"results": [rated(wanted, None)], "next_cursor": null}),
+            ]),
+            query_calls: RefCell::new(0),
+        };
+        let prompter = NoopPrompter;
+        let ctx = SyncCtx { client: &client, prompter: &prompter, page_size: 60 };
+
+        let got =
+            match_by_fields(&ctx, uuid(1), uuid(2), uuid(0xaa), &HashSet::new(), &HashSet::new())
+                .unwrap();
+        assert_eq!(got, Some(wanted), "the match on page two was missed");
+        assert_eq!(*client.query_calls.borrow(), 2, "both pages should have been read");
+    }
+
+    #[test]
+    fn match_by_fields_stops_at_the_second_match() {
+        // Two exact matches make the pair ambiguous, and ambiguity is the answer
+        // — there is nothing further to learn, so the walk stops rather than
+        // paging through the rest of the repository. The third page is never
+        // served, and asking for it would panic the stub.
+        let client = PagingClient {
+            record: rated(uuid(0xaa), None),
+            pages: RefCell::new(vec![
+                json!({"results": [rated(uuid(1), None), rated(uuid(2), None)],
+                       "next_cursor": "page2"}),
+            ]),
+            query_calls: RefCell::new(0),
+        };
+        let prompter = NoopPrompter;
+        let ctx = SyncCtx { client: &client, prompter: &prompter, page_size: 60 };
+
+        let got =
+            match_by_fields(&ctx, uuid(1), uuid(2), uuid(0xaa), &HashSet::new(), &HashSet::new())
+                .unwrap();
+        assert_eq!(got, None, "two exact matches are ambiguous, not a link");
+        assert_eq!(*client.query_calls.borrow(), 1, "the walk should stop on the second match");
+    }
 }

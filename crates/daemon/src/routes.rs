@@ -3052,6 +3052,7 @@ fn resolve_query_uuids(
 ) -> Result<Vec<Uuid>, ApiError> {
     let _phase = slowlog::phase("resolve.uuids");
     query_exec::validate_query(query)?;
+    query_exec::check_query_size(query)?;
     let (roots, indexed) = prepare_indexed_query(conn, cache, query, true)?;
     let mut index_guard = slowlog::timed("wait:index", || repo_state.index.lock_recover());
     let index = ensure_index(conn, &mut index_guard, cancel)?;
@@ -3085,9 +3086,11 @@ fn run_query_filter(
     body: &QueryBody,
     cancel: &dyn Fn() -> bool,
 ) -> Result<QueryPage, ApiError> {
-    // Reject ill-defined comparisons upfront, before choosing an engine, so the
-    // rejection never depends on the index→SQL fallback path (spec-query).
+    // Reject ill-defined comparisons and over-large queries upfront, before
+    // choosing an engine, so neither rejection depends on the index→SQL
+    // fallback path (spec-query "Limits", "Comparison validity").
     query_exec::validate_query(&body.query)?;
+    query_exec::check_query_size(&body.query)?;
 
     let sort_by: Vec<crate::index::SortBy> = body
         .sort
