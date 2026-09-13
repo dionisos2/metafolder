@@ -105,7 +105,47 @@ out=$(summarize "$tmp/nothing"); rc=$?
 assert_eq "a run with no test results exits 1" 1 "$rc"
 assert_contains "a run with no test results says so" "$out" "no test"
 
-# ── 4. --help works ─────────────────────────────────────────────────────────
+# ── 4. the real (non---stdin) path reports the aggregator's verdict ─────────
+# The `--stdin` seam above exercises the aggregator alone. This exercises the
+# branch that actually runs, through the CARGO seam: cargo succeeds while
+# printing no suite report at all — a filter that matched nothing, a `--list`.
+# The aggregator's "no test ran" must survive to the exit code.
+#
+# It did not: the status was read with `$?` *after* an assignment from
+# PIPESTATUS, which is the status of the assignment — always 0. Every such run
+# reported success, which is the one thing this script promises never to do.
+cat >"$tmp/fake-cargo-quiet" <<'FAKE'
+#!/usr/bin/env bash
+echo "   Compiling metafolder-core v0.3.0 (/home/u/metafolder/crates/core)"
+exit 0
+FAKE
+chmod +x "$tmp/fake-cargo-quiet"
+out=$(CARGO="$tmp/fake-cargo-quiet" "$script" 2>&1); rc=$?
+assert_eq "a real run with no test results exits 1" 1 "$rc"
+assert_contains "a real run with no test results says so" "$out" "no test"
+
+# And cargo's own failure still wins over the aggregate's.
+cat >"$tmp/fake-cargo-broken" <<'FAKE'
+#!/usr/bin/env bash
+echo "error[E0433]: failed to resolve" >&2
+exit 101
+FAKE
+chmod +x "$tmp/fake-cargo-broken"
+out=$(CARGO="$tmp/fake-cargo-broken" "$script" 2>&1); rc=$?
+assert_eq "cargo's own status wins" 101 "$rc"
+
+# A clean run reports success, so the check above is not just "always 1".
+cat >"$tmp/fake-cargo-green" <<FAKE
+#!/usr/bin/env bash
+cat "$tmp/green"
+exit 0
+FAKE
+chmod +x "$tmp/fake-cargo-green"
+out=$(CARGO="$tmp/fake-cargo-green" "$script" 2>&1); rc=$?
+assert_eq "a real green run exits 0" 0 "$rc"
+assert_contains "a real green run totals the passes" "$out" "296 passed"
+
+# ── 5. --help works ─────────────────────────────────────────────────────────
 help=$("$script" --help 2>&1); rc=$?
 assert_eq "--help exits 0" 0 "$rc"
 assert_contains "--help mentions the script" "$help" "run-tests"

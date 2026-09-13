@@ -17,7 +17,10 @@ mock_init
 source "$HERE/lib/assert.sh"
 
 # A four-tag vocabulary: two top-level, two children of `music` (non-exclusive).
-UNIVERSE=$'music\t0\t0\nadmin\t0\t0\nmusic/jazz\t0\t0\nmusic/rock\t0\t0'
+# Name-sorted, because that is the only order `mf tag list` ever prints
+# (`commands.rs`, `vocab.names.sort()`). Fed unsorted, the suite was exercising
+# the depth tie-break on an input the CLI cannot produce.
+UNIVERSE=$'admin\t0\t0\nmusic\t0\t0\nmusic/jazz\t0\t0\nmusic/rock\t0\t0'
 
 # The optional argument is what `mf gui query` answers (the table is
 # first-match-wins, so it cannot be overridden by a later row).
@@ -44,14 +47,16 @@ asked_order() {
         | sed -n "s/.*add tag '\\([^']*\\)'.*/\\1/p" | paste -sd, -
 }
 
-# ── Case 1: a full descent — music(y) admin(n) jazz(y) rock(n) ───────────────
+# ── Case 1: a full descent — admin(n) music(y) jazz(y) rock(n) ───────────────
+# The two top-level tags come in the vocabulary's own (name-sorted) order, so
+# `admin` is asked first; accepting `music` then opens its two children.
 mock_reset
 setup_common
-mock_input y n y n
+mock_input n y y n
 out=$(bash "$SCRIPT" rec-1); code=$?
 assert "descent: exits 0" [ "$code" -eq 0 ]
 assert_eq "descent: question order shallow-first then into accepted branch" \
-    "music,admin,music/jazz,music/rock" "$(asked_order)"
+    "admin,music,music/jazz,music/rock" "$(asked_order)"
 assert "descent: music added"   [ "$(mock_count 'tag -i rec-1 add music')" -eq 1 ]
 assert "descent: admin denied"  [ "$(mock_count 'tag -i rec-1 deny admin')" -eq 1 ]
 assert "descent: jazz added"    [ "$(mock_count 'tag -i rec-1 add music/jazz')" -eq 1 ]
@@ -61,10 +66,10 @@ assert_contains "descent: summary counts" "$out" "2 oui, 2 non"
 # ── Case 2: denying `music` prunes its whole subtree (no jazz/rock asked) ─────
 mock_reset
 setup_common
-mock_input n y            # music=no -> subtree gone; admin=yes; then exhausted
+mock_input y n            # admin=yes; music=no -> its subtree gone; exhausted
 bash "$SCRIPT" rec-1 >/dev/null; code=$?
 assert "prune: exits 0" [ "$code" -eq 0 ]
-assert_eq "prune: only the two top-level tags are asked" "music,admin" "$(asked_order)"
+assert_eq "prune: only the two top-level tags are asked" "admin,music" "$(asked_order)"
 assert "prune: no child tag touched" [ "$(mock_count 'tag -i rec-1 * music/*')" -eq 0 ]
 
 # ── Case 3: Escape stops immediately with a zeroed summary ───────────────────
@@ -132,7 +137,7 @@ setup_common
 mock_respond "metarecord -q $Q get --sort mfr_path" $'rec-1\nrec-2'
 mock_respond 'path rec-2'            '/abs/file2'
 mock_respond 'path --relative rec-2' '/file2'
-mock_input y n y n   q               # rec-1 fully classified, then rec-2 stopped
+mock_input n y y n   q               # rec-1 fully classified, then rec-2 stopped
 out=$(bash "$SCRIPT" "$Q"); code=$?
 assert "set: exits 0" [ "$code" -eq 0 ]
 assert "set: the first record is classified" [ "$(mock_count 'tag -i rec-1 add music')" -eq 1 ]

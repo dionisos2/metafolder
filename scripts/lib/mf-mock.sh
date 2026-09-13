@@ -133,17 +133,44 @@ case "$sig" in
         # user (spec-gui "Reserved keys"): escape stops the script, tab toggles
         # the script keys, ":" opens the command input. Refuse them here too, or
         # a script asking for one would pass its tests and fail in the GUI.
+        # The awaited keys are the bare arguments after `gui input`; --prompt
+        # and --timeout-ms each swallow the value that follows them.
+        keys=""
+        skip=0
         for a in "$@"; do
+            [ "$skip" = 1 ] && { skip=0; continue; }
             case "$a" in
+                gui|input) continue ;;
+                --prompt|--timeout-ms) skip=1; continue ;;
+                --*) continue ;;
                 escape|tab|:)
+                    # The GUI refuses a wait that asks for one of the keys it
+                    # keeps for the user (spec-gui "Reserved keys"): escape stops
+                    # the script, tab toggles the script keys, ":" opens the
+                    # command input. Refuse them here too, or a script asking for
+                    # one would pass its tests and fail in the GUI.
                     echo "'$a' is reserved by the GUI and cannot be awaited by a script" >&2
                     exit 1 ;;
+                *) keys="$keys $a" ;;
             esac
         done
         if v=$(pop "$dir/q/__input"); then
             # @fail: the wait could not even be registered (closed GUI, 409).
             [ "$v" = "@fail" ] && { echo "input wait ended: closed" >&2; exit 1; }
             [ -n "$v" ] || v=escape
+            # A real wait can only ever resolve to one of the keys it awaits, or
+            # to escape, which ends any wait. Answering anything else let tests
+            # exercise paths the GUI cannot reach — one case pressed `q` at a
+            # question offering only y and n, and so "covered" a cancellation
+            # that in the GUI would have killed the script instead.
+            case " $keys " in
+                *" $v "*) ;;
+                *)
+                    [ "$v" = escape ] || {
+                        echo "mf-mock: answered '$v' to a wait awaiting${keys:- nothing}" >&2
+                        exit 1
+                    } ;;
+            esac
             printf '%s\n' "$v"
         else
             printf 'escape\n'   # exhausted queue = as if the GUI closed
@@ -210,7 +237,35 @@ case "$sig" in
         ;;
 esac
 
-# 5. Anything unmatched: succeed silently (mutations whose output is discarded).
-exit 0
+# 5. A known mutation whose output is discarded: succeed silently.
+#
+#    This list is the point. "Anything unmatched succeeds" was the old rule, and
+#    it meant the tests could not tell a command from a typo: a renamed
+#    subcommand, a flag that no longer exists, an argument in the wrong place —
+#    all of them passed, and the script only broke in front of a user. Two of the
+#    bugs this suite exists to catch hid here for exactly that reason.
+#
+#    So an unrecognised command is a loud failure. Adding a genuinely new `mf`
+#    call to a shipped script means adding its shape here, which is the moment to
+#    check it against `mf --help`.
+case "$sig" in
+    # Writes through the tag verb tree (`mf tag [selector] <verb> <tag>`).
+    "tag "*" add "*|"tag "*" deny "*|"tag "*" mixed "*|"tag "*" remove "*) exit 0 ;;
+    # Field and record writes.
+    "metarecord "*" field set "*|"metarecord "*" field add "*) exit 0 ;;
+    "metarecord "*" field delete "*|"metarecord "*" field unset "*) exit 0 ;;
+    "metarecord "*" set "*|"metarecord add "*|"metarecord "*" delete") exit 0 ;;
+    # Reads a test did not stub: an empty result is a legitimate answer.
+    "metarecord "*" get"*|"metarecord get"*|"field "*|"path "*) exit 0 ;;
+    "track "*|"order "*|"orphan "*|"reconcile"*) exit 0 ;;
+    # The GUI scripting API, whose output every caller discards.
+    "gui message"*|"gui progress"*|"gui view "*|"gui layout "*) exit 0 ;;
+    "gui workspace "*|"gui repo"*|"gui query"*|"gui status"*) exit 0 ;;
+esac
+
+echo "mf-mock: unrecognised command 'mf $sig'" >&2
+echo "  If this is a real command, add its shape to section 5 of" >&2
+echo "  scripts/lib/mf-mock.sh — after checking it against \`mf --help\`." >&2
+exit 127
 SHIM
 }

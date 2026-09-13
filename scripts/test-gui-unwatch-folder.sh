@@ -65,14 +65,19 @@ assert "decline: no delete"         [ "$(mock_count '*delete*')" -eq 0 ]
 assert_contains "decline: says so" "$out" 'cancelled'
 
 # ── Case 3: Escape declines just like "n" ────────────────────────────────────
+# The question offers y and n only, so escape is the one other way out of it —
+# and the only one the GUI can produce. (This used to press `q`, which the real
+# GUI would never deliver to a wait that does not await it; the mock now says so
+# rather than playing along, and the case tests the path that exists.)
 mock_reset
 setup_top
 mock_respond 'metarecord -q mfr_path ->* "/top" get' 'u1'
-mock_input q
-bash "$SCRIPT" "$WORKDIR/top" >/dev/null; code=$?
-assert "q: exits 0"     [ "$code" -eq 0 ]
-assert "q: no delete"   [ "$(mock_count '*delete*')" -eq 0 ]
-assert "q: no mf_watch" [ "$(mock_count '*mf_watch*')" -eq 0 ]
+mock_input escape
+out=$(bash "$SCRIPT" "$WORKDIR/top"); code=$?
+assert "escape: exits 0"     [ "$code" -eq 0 ]
+assert "escape: says so"     [ -n "$(printf '%s' "$out" | grep -F cancelled)" ]
+assert "escape: no delete"   [ "$(mock_count '*delete*')" -eq 0 ]
+assert "escape: no mf_watch" [ "$(mock_count '*mf_watch*')" -eq 0 ]
 
 # ── Case 4: an empty folder still gets unwatched, with no confirmation ───────
 mock_reset

@@ -15,6 +15,7 @@ suites=(
     test-check-deps.sh      # the dependency table + its exit codes
     test-prune-target.sh    # target/ pruning (never deletes a live artifact)
     test-run-tests.sh       # the test-runner wrapper's totals/reporting
+    test-complete-build.sh  # the full build's order and the paths it runs
 )
 
 if [ -t 1 ]; then

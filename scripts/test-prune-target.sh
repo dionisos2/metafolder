@@ -109,7 +109,11 @@ rm -rf "target/debug/.fingerprint/bitflags-$h_new"
 touch "target/debug/deps/libbitflags-$h_new.rlib"
 "$prune" --dry-run >/dev/null
 [ -e "target/debug/deps/libbitflags-$h_old.rlib" ] || fail "--dry-run must not delete"
-[ -e "target/debug/deps/libtoml-$h_toml_old.rlib" ] || true  # already pruned earlier runs
+# The real runs above already lock-pruned this one (scenario 1 asserts it), and
+# --dry-run has no reason to bring it back. Written as the absence it is: as
+# `[ -e … ] || true` it asserted nothing at all, whatever the outcome.
+[ ! -e "target/debug/deps/libtoml-$h_toml_old.rlib" ] \
+    || fail "the lock-pruned toml rlib reappeared"
 ok "dry run"
 
 echo "== scenario 4: state survives and next real run prunes what dry-run showed"
