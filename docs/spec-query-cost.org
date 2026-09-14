@@ -94,6 +94,28 @@ already knows in O(1) unless stated otherwise.
 reported as estimates, and every term that depends on them inherits that flag —
 a client that needs a hard answer reads the terms that do not.
 
+* Three providers, two engines
+
+A query is served by three resident systems, not two, and naming them is what
+makes the table below readable — each category is one system's work.
+
+| Provider                       | Holds                                    | Executes                                        |
+|--------------------------------+------------------------------------------+-------------------------------------------------|
+| the forest (=tree_cache=)      | the TreeRef trees: path ↔ node, children | =path.resolve=, =path.assemble=, tree sort keys |
+| the bitmaps (=index/=)         | the per-field roaring / BSI encodings    | =bitmap.leaf=, =bitmap.combine=, =count=        |
+| SQLite (=field=, =field_text=) | the authoritative rows                   | =sql.scan=, the CTE =sort=, =assemble=          |
+
+Only two of them *evaluate a query*: the bitmaps and SQLite. The forest is a
+provider both of them call, which is why =path.resolve= reads "same" on both
+sides of the cost table — and why "cache-walked descendants" appears below in a
+column headed SQL: the SQL engine walks the forest in memory like everyone else,
+and hands SQLite only the resulting uuids, as inline literals.
+
+Two categories are one question answered by two different providers, and they are
+the two whose count changes with the engine: =follow.transitive= (a forest walk,
+or a bitmap expansion) and =fts.scan= (SQLite =REGEXP= over rows, or an in-memory
+scan of distinct values).
+
 * The cost table
 
 One row per category. =count= is the contract: it is derived from the query and
@@ -102,7 +124,7 @@ calibration ([[*Calibration]]).
 
 | Category            | Count                              | Index path                  | SQL path                     | Constant  |
 |---------------------+------------------------------------+-----------------------------+------------------------------+-----------|
-| =seed=              | one per path / exact-node operand  | tree-cache lookup, O(1)     | same                         | =t_seed=  |
+| =path.resolve=      | one per path / exact-node operand  | forest lookup, O(1)         | same                         | =t_path=  |
 | =bitmap.leaf=       | =R_f= (equality) / =V_f= (ordered) | bucket union                | —                            | =t_bit=   |
 | =bitmap.combine=    | Σ operand cardinalities            | AND/OR/NOT over containers  | —                            | =t_bit=   |
 | =follow.transitive= | =D= ops (index) / =T_n= rows (SQL) | iterative bitmap expansion  | materialises the subtree §7  | =t_bit= / =t_row= |
@@ -132,19 +154,19 @@ the table exists rather than a single number:
 
 The table above prices the work; this one says what the work *is*: which query
 shape raises a category, and what each engine runs for it. It is the answer to
-"what is a =seed=", and to "why does this query carry an =fts.scan=".
+"what is a =path.resolve=", and to "why does this query carry an =fts.scan=".
 
 Two things it is easy to misread. *The tree cache is neither engine*: it is one
 in-memory structure both paths use, so "cache-walked" appears in the SQL column
 without meaning the index served the query — the SQL engine does that work in
 memory too and hands SQLite only its result, as literals. And *one leaf can raise
-two categories*: =tag ->* "music/jazz"= is a =seed= (resolve the path operand to
-its metarecord) followed by a =follow.transitive= (expand from it), where
-=tag ->* (rating > 3)= has no =seed= at all — the sub-query replaces it.
+two categories*: =tag ->* "music/jazz"= is a =path.resolve= (the path operand to
+its metarecord) followed by a =follow.transitive= (the expansion from it), where
+=tag ->* (rating > 3)= has no =path.resolve= at all — the sub-query replaces it.
 
 | Category            | Raised by                            | On the SQL path                     | On the index path                 |
 |---------------------+--------------------------------------+-------------------------------------+-----------------------------------|
-| =seed=              | =->= / =->*= path target, exact node | none — =TreeCache::resolve_path=    | the same lookup, in =QueryRoots=  |
+| =path.resolve=      | =->= / =->*= path target, exact node | =TreeCache::resolve_path=, no SQL   | the same lookup, in =QueryRoots=  |
 | =bitmap.leaf=       | a comparison / presence leaf         | — (it is the =sql.scan= row)        | union of the operand's buckets    |
 | =bitmap.combine=    | =and= / =or= / =not=                 | =INTERSECT= / =UNION= / =EXCEPT=    | Roaring =&=, =\|=, universe =-=   |
 | =follow.transitive= | =->*=, ~=>*~, 1-term =osm= path      | cache-walked descendants, =VALUES=  | expansion over children bitmaps   |
@@ -188,11 +210,11 @@ The SQL column, verbatim — this is what a term of each category stands for:
                           LEFT JOIN _p{i} ON <terminal>) WHERE rn = 1)
 #+END_SRC
 
-=seed= is named after the code it prices: the traversal's starting set
-(=expand_subtrees= grows a *frontier* from it, =prepare_indexed_query= resolves
-"the query's index seeds"). The name fits =->= / =->*=, whose seed really is
-seeded from; it fits an exact-node =mfr_path = "/a/b"= less well, which resolves
-a path the same way and then traverses nothing.
+The code calls this a *seed* (=expand_subtrees= grows a frontier from it,
+=prepare_indexed_query= resolves "the query's index seeds"), and the category was
+named after it. It is =path.resolve= here: only =->= / =->*= is seeded from, and
+an exact-node =mfr_path = "/a/b"= resolves a path the very same way and then
+traverses nothing.
 
 Two rows read differently on the two engines, and that is where an estimate goes
 wrong if the distinction is dropped:
@@ -242,6 +264,32 @@ change the preparation, precisely so that page 1 and page 2 cannot land on
 different engines and reject each other's cursor. Explain's answer is stable for
 a whole paginated session.
 
+** Why not one compiler over three providers
+
+The natural shape — one compiler routing each *operation* to the provider that
+serves it best — is not what runs, and explain describes what runs. The two
+engines are whole-query: the index is tried on the entire query, and a single
+operand it cannot serve sends the *entire* query to SQL, which re-plans it from
+scratch.
+
+Per-operation routing does exist, but only in the preparation and only in one
+direction: a path operand is resolved on the forest before either engine starts,
+and a text leaf the bitmaps cannot serve is evaluated on SQLite and injected back
+as a =uuid_in= set. The currency that makes that possible — a uuid set is both a
+bitmap and a =VALUES= list — is already what a real planner would need. What is
+missing is a cost model to choose with, which is this document, and the
+willingness to compose the two engines *both* ways: a bitmap result has never
+been fed into a SQL chain.
+
+So: three providers, two engines, one ad-hoc bridge in between. Generalising the
+bridge is the adaptive planner deferred in
+[[file:spec-indexing.org][spec-indexing]], and not a change this endpoint may
+make on its own ([[*Non-goals]]). What this document can do for it is price by
+*provider* rather than by engine — every category names one system's work — so
+the model survives a planner that stops choosing an engine per query and starts
+choosing a provider per node. Only =engine= and =fallback[]= would then be
+replaced, by a per-node attribution.
+
 ** What forces the SQL path
 
 Each row is one =Unsupported= a leaf can raise; =fallback[]= reports it verbatim,
@@ -275,7 +323,7 @@ terms: one leaf ran in SQL, the rest of the tree on bitmaps.
 
 | Preparation step                 | Applies to                          | Effect                               |
 |----------------------------------+-------------------------------------+--------------------------------------|
-| path targets → =QueryRoots.path= | =->= / =->*= with a path target     | one =seed=, instead of a fallback    |
+| path targets → =QueryRoots.path= | =->= / =->*= with a path target     | a =path.resolve=, not a fallback     |
 | exact nodes → =QueryRoots.node=  | =mfr_path = "/a/b"= and its =!==    | idem — "no such node" ≠ "defer"      |
 | =resolve_index_leaves=           | =matches=, =osmd=, multi-term =osm= | the leaf becomes an inline =uuid_in= |
 | =SortKeys= from the forest       | a =tree_ref= sort key               | the path keys no BSI can hold        |
@@ -376,7 +424,7 @@ configuration (=~/.config/metafolder/daemon/config.toml=, shipped default in
   row = 0.0008        # per field row scanned or serialised
   regexp = 0.004      # per candidate re-checked
   sort = 0.002        # per sorted element
-  seed = 0.01         # per tree-cache seed resolution
+  path = 0.01         # per path resolved through the forest
 #+END_SRC
 
 A missing or malformed value follows the daemon's existing optional-config model
