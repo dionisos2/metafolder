@@ -1,0 +1,266 @@
+#+TITLE: Metafolder — Query Cost Estimation (=query/explain=)
+#+OPTIONS: toc:2 num:t
+
+* Overview
+
+A client cannot tell, before sending a query, whether it will come back in a
+millisecond or in a minute. That matters wherever a query sits inside a loop
+with a human in it: the tagging scripts ask one question per entry and want a
+live counter next to it ([[file:gui-tag-folder-rework.md][gui-tag-folder-rework]]), the GUI opens a panel on
+whatever the user typed. Today the only way to find out is to run it.
+
+The obvious fix — have the daemon *refuse* the query shapes it cannot serve from
+the bitmap index, behind an "extended" flag — is the wrong one. The set of
+shapes the index declines is an implementation detail of the accelerator, and it
+is *meant* to move: the =:parent= aspect is about to be added, the adaptive
+planner ([[file:spec-indexing.org][spec-indexing]]) will change it again. Freezing it into user-visible
+surface turns every improvement of the index into a contract change, and the
+list is not even the right predicate: "not served by the index" is not the same
+as "slow" — on a small repository the SQL engine answers instantly, while an
+index-served query over a large one can still cost.
+
+So the daemon **describes** instead of refusing, and the client decides:
+
+: POST /repos/:repo/query/explain
+
+answers, *without running the query*, which engine would serve it, which leaves
+force that choice, what the work decomposes into, and — as an indication, not a
+promise — how long it should take. A client then drops its counter, warns, or
+refuses to run, on its own terms.
+
+** Non-goals
+
+- *Not a profiler and not a metrics system.* No aggregates, no percentiles.
+- *Unrelated to the slow-operation log* ([[file:spec-slow-log.org][spec-slow-log]]). That log is a debugging
+  artefact: threshold-based, persistent, and it also records GUI-side time. It
+  is not an input to this feature and this feature does not write to it.
+- *No promise of a duration.* The estimate is a band derived from declared
+  constants (see [[*Calibration]]), and it is explicitly marked as such.
+- *Not a planner.* Explain describes the plan the engines will actually use. It
+  does not choose one — though its cost model is the piece the adaptive planner
+  will need, which is why the two must share it (see [[*Where the model is
+  computed]]).
+
+* Where the model is computed
+
+The symbolic cost is built **while the query is compiled**, as a by-product of
+the compilation that would run anyway — not by a second traversal written for
+explain.
+
+This is a hard constraint, not a preference. Supportedness is currently
+discovered *by evaluating*: the =Unsupported= comes out of =index::eval=. An
+explain that re-derives it in a parallel classifier is two implementations of one
+decision, which is the shape that has already produced real bugs in this project.
+So:
+
+- the leaf-supportedness decision is extracted as a **pure function** of
+  =(query leaf, index metadata, caller-resolved seeds)=, called by both
+  =index::eval= and explain;
+- =query_exec='s compiler annotates each node it compiles with its cost term, so
+  the SQL side of the model is produced by the code that builds the SQL;
+- explain runs compilation and classification, and stops there.
+
+It is *not* computed in the DSL parser. The parser lives in =core= and produces
+the IR; it knows nothing about the repository, and every term of the model needs
+cardinalities. The cost is a property of (IR × data), one step after the parse.
+
+** Fast by construction
+
+Explain must never do the work it describes. Concretely it may not evaluate a
+predicate, may not run the FTS pass (it *reports* that one is needed), and may
+not walk the forest — path and node seeds resolve through the resident tree cache
+like any query preparation, which is a hash lookup.
+
+Its bound is =O(query nodes) + O(path operands)=, independent of the repository
+size. A client may call it before every query.
+
+* Parameters
+
+Every term of the model is a count expressed in these, all of which the index
+already knows in O(1) unless stated otherwise.
+
+| Symbol | Meaning                                              | Known                          |
+|--------+------------------------------------------------------+--------------------------------|
+| =M=    | metarecords in the repository (index universe)       | exact                          |
+| =R_f=  | rows carrying field =f= (=present= ∪ =absent=)       | exact                          |
+| =V_f=  | distinct values of field =f= (encoding buckets)      | exact                          |
+| =K=    | metarecords the query matches                        | *estimated* from selectivities |
+| =N=    | rows returned (=limit=, else =K=)                    | exact once =K= is estimated    |
+| =T_n=  | size of the subtree at node =n=                      | from the resident forest       |
+| =D=    | depth of the forest (bounded at 1000)                | exact                          |
+| =C=    | candidate rows an FTS trigram lookup returns         | *estimated*                    |
+
+=K= and =C= are the two the daemon cannot know without doing the work. They are
+reported as estimates, and every term that depends on them inherits that flag —
+a client that needs a hard answer reads the terms that do not.
+
+* The cost table
+
+One row per category. =count= is the contract: it is derived from the query and
+the parameters above and does not depend on the machine. =constant= is
+calibration ([[*Calibration]]).
+
+| Category            | Count                              | Index path                  | SQL path                     | Constant  |
+|---------------------+------------------------------------+-----------------------------+------------------------------+-----------|
+| =seed=              | one per path / exact-node operand  | tree-cache lookup, O(1)     | same                         | =t_seed=  |
+| =bitmap.leaf=       | =R_f= (equality) / =V_f= (ordered) | bucket union                | —                            | =t_bit=   |
+| =bitmap.combine=    | Σ operand cardinalities            | AND/OR/NOT over containers  | —                            | =t_bit=   |
+| =follow.transitive= | =D= ops (index) / =T_n= rows (SQL) | iterative bitmap expansion  | materialises the subtree §7  | =t_bit= / =t_row= |
+| =fts.scan=          | =C= with a literal, else =R_f=     | caller-side pre-resolution  | same pass                    | =t_regexp= |
+| =sql.scan=          | =R_f= per value predicate          | —                           | no index on the value columns | =t_row=  |
+| =sort=              | =K= reps + =K log K=               | BSI representatives         | window functions             | =t_sort=  |
+| =count=             | 0 (index) / one full filter (SQL)  | O(1) from the bitmap        | re-runs the CTE chain        | —         |
+| =assemble=          | =N= × selected fields              | row read + serialisation    | same                         | =t_row=   |
+
+Three of these rows are the ones that surprise people, and they are the reason
+the table exists rather than a single number:
+
+- *Bitmap work is not O(M).* A Roaring =AND= costs the cardinality of the
+  containers it touches. A selective query is cheap, and a model that prices
+  every bitmap pass at =M= would say the opposite.
+- *An SQL value predicate is O(R_f), not O(M) and not O(all field rows).* =db.rs=
+  indexes =(field_name, …)= and never =value_text= / =value_int= / =value_real=,
+  so the scan is confined to the rows of that one field name — and =R_f= is
+  exactly what =present_of(f).len() + absent_of(f).len()= gives.
+- *The FTS pass is a cliff, not a coefficient.* =fts::required_fts_literal=
+  either extracts a mandatory ≥3-character literal — a trigram lookup over =C=
+  candidates — or does not, and then every row of the field goes through
+  =REGEXP=. Which of the two, and why, is the single most actionable thing this
+  endpoint can report: it is the one the user can fix, by rewriting the pattern.
+
+** Totals
+
+: relative = Σ count_i × weight_i
+: duration = Σ count_i × constant_i
+
+=weight_i= is a fixed, machine-independent number shipped with the daemon, so
+=relative= is comparable across machines and across versions of the same
+repository. =duration= is =relative= priced with the local constants, and is
+reported as a *band*, never a figure: a user reads "1.5 s" as a promise.
+
+* State is reported, never estimated
+
+The shape of a query is predictable. The moment is not, and the moment routinely
+dominates:
+
+- =index.refresh= runs on the read path before every query. It is incremental
+  (one or two operations) in steady state, but rebuilds fully when HEAD was
+  rewritten — which is what =log rollback= / =undo= do — when an operation type
+  is not replayable, when the delta exceeds =REBUILD_OVER=, or when tombstones
+  have piled up.
+- the =wait:conn= / =wait:cache= / =wait:index= waits: the repository connection
+  is =locking_mode = EXCLUSIVE=, so a watcher flush in progress is a wait of
+  unbounded length.
+- the page cache, which no model here can see.
+
+None of these belong in the estimate. They are reported next to it as *observed
+state* — how many operations the index is behind HEAD, whether a rebuild is
+therefore expected, whether the forest is resident, whether a lock is currently
+held — so a client can say "the number below assumes the index does not rebuild
+first" instead of being wrong by two orders of magnitude.
+
+* The endpoint
+
+: POST /repos/:repo/query/explain
+
+Body: the same shape as =POST /repos/:repo/query= — =query= (required), plus the
+optional =sort=, =limit=, =select=, =count= — so that what is explained is
+exactly what would be sent. =verbose= (bool, default =false=) adds the
+attribution of each term to the leaves that cause it.
+
+An invalid query is rejected here exactly as it would be by =query= itself:
+=validate_query= runs upfront, engine-independently, so explain is also a dry run
+of the =400= (a comparison with =nothing=, an ordered comparison on a =bool= or
+a reference, =MATCHES= on a =tree_ref= without an aspect, an over-wide
+combinator).
+
+#+BEGIN_SRC json
+  {
+    "engine": "sql",
+    "fallback": [
+      {"leaf": "mfr_path:parent = \"/music/live\"",
+       "at": "and[1]",
+       "why": "the ':parent' aspect"}
+    ],
+    "parameters": {
+      "metarecords": 512340,
+      "result": {"value": 1830, "estimated": true},
+      "page": 100
+    },
+    "cost": {
+      "relative": 61200,
+      "duration_ms": {"low": 240, "high": 900, "calibrated": true},
+      "terms": [
+        {"category": "sql.scan", "count": 512340, "constant_ms": 0.0008,
+         "ms": 410, "estimated": false,
+         "leaves": ["mfr_path:parent = \"/music/live\""]},
+        {"category": "sort", "count": 1830, "constant_ms": 0.002,
+         "ms": 4, "estimated": true, "leaves": ["sort mfr_path"]}
+      ]
+    },
+    "state": {
+      "index_ops_behind_head": 0,
+      "rebuild_expected": false,
+      "forest_resident": true
+    }
+  }
+#+END_SRC
+
+=leaves= is present only under =verbose=. =at= is a stable address into the IR
+tree (=and[1]=, =or[0].not=), so a GUI can highlight the offending sub-expression
+in the query the user typed.
+
+The response is purely additive to the API surface — a new route, no change to
+any existing one — so it needs no =core::API_VERSION= bump.
+
+* Calibration
+
+The constants are declared, not discovered, and they live in the daemon
+configuration (=~/.config/metafolder/daemon/config.toml=, shipped default in
+=crates/daemon/default-config/config.toml=):
+
+#+BEGIN_SRC toml
+  [query-cost]
+  # milliseconds per unit of the corresponding count
+  bit = 0.000002      # per element of a bitmap pass
+  row = 0.0008        # per field row scanned or serialised
+  regexp = 0.004      # per candidate re-checked
+  sort = 0.002        # per sorted element
+  seed = 0.01         # per tree-cache seed resolution
+#+END_SRC
+
+A missing or malformed value follows the daemon's existing optional-config model
+(missing key → default; malformed file → startup error). When the section is
+absent the shipped defaults apply and the response reports
+=calibrated: false=, so a client knows the duration is generic rather than
+measured on this machine.
+
+Refining them from observation is deliberately left out of this increment: it
+needs a sampling mechanism this feature would have to own (the slow log is not
+it, see [[*Non-goals]]), and the =relative= total — which is machine-independent —
+is what a client should gate on anyway.
+
+* Clients
+
+- *GUI*: gates on the answer before running an expensive query, with an explicit
+  "run it anyway" control. Any threshold is scaled on the repository's own size
+  (=parameters.metarecords=), never on an absolute duration, so a large
+  repository does not become unusable by construction.
+- *Scripts*: probe once at start-up. A walk that wants a per-question counter
+  ([[file:gui-tag-folder-rework.md][gui-tag-folder-rework]]) keeps it when the count is =O(1)= on the index, drops
+  it otherwise, and can refuse to run when even the step query is a scan.
+- *CLI*: a thin =explain= surface over the same body. Its exact spelling in the
+  noun/verb tree is left to the CLI increment.
+
+* Open questions
+
+- *Estimating =K=.* Per-leaf selectivity from the cardinalities is easy and
+  crude; nothing in the index records value distributions. The first increment
+  should multiply leaf selectivities and mark the result estimated rather than
+  pretend to more.
+- *=T_n= without walking.* A subtree size is O(subtree) to count unless the tree
+  cache keeps sizes at its nodes. Until it does, the =follow.transitive= SQL term
+  is an estimate too.
+- *Exposing =weight_i=.* Keeping the weights internal makes =relative= a black
+  box; publishing them makes them contract. Start internal, publish if a client
+  needs to reproduce the arithmetic.

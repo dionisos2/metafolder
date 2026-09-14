@@ -68,7 +68,9 @@ pub struct QueryRoots<'a> {
     /// it is a *resolver* rather than a map: which metarecords need a key is
     /// only known once the query has been evaluated. `None` — or a resolver
     /// whose forest is not fully resident — makes a `tree_ref` sort
-    /// [`Unsupported`], deferring to the SQL engine.
+    /// [`Unsupported`] with a [`Gap::State`]: a daemon bug, reported as one,
+    /// *not* a fall back to SQL — a repository that serves at all has a
+    /// resident forest (`RepoState::warmup`).
     pub keys: Option<&'a crate::tree_cache::SortKeys<'a>>,
 }
 
@@ -1211,11 +1213,11 @@ impl RepoIndex {
         // Exact-node path (spec-query "Field aspects"): under the default `raw`
         // aspect, an Eq/Neq string operand on a tree_ref field is a path-resolved
         // node match. The resolution lives in the tree cache, not
-        // the index, so `Eq` is served only from a caller-supplied [`NodeRoots`]
-        // entry; without one — and for `Neq`, whose multi-map negation the
-        // rewrite does not cover — defer to the SQL engine rather than answer
-        // with the (wrong, value_name-based) bitmap. A string field keeps literal
-        // equality (the index handles it).
+        // the index, so both `Eq` and `Neq` are served only from a caller-supplied
+        // [`NodeRoots`] entry (`Neq` as "present minus the node", below); without
+        // one, defer to the SQL engine rather than answer with the (wrong,
+        // value_name-based) bitmap. A string field keeps literal equality (the
+        // index handles it).
         if matches!(op, CmpOp::Eq | CmpOp::Neq) && aspect == Aspect::Raw {
             if let Value::String(s) = value {
                 if self.types.get(field) == Some(&"tree_ref") {

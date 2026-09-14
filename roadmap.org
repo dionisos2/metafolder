@@ -36,6 +36,52 @@ See =docs/review-followups.md= §7 (recursive CTE; the big one).
 *** TODO native =In= operator, chunked compound selects, execution timeout
 See =docs/review-followups.md= §8.
 
+*** TODO no DSL spelling for a list of UUIDs: =uuid_in [a, b, c]=
+The IR has =UuidIn { uuids }= and the DSL reaches it only one UUID at a time,
+through the bare UUID atom. A set therefore has to be spelled as an =OR= of N
+atoms — N predicate nodes for what the IR holds as one list, which is the shape
+§8 names as the compound-select limit.
+
+A bracketed list atom, =uuid_in [3f2a…9b, 7c11…04]=, compiles to the existing
+=UuidIn= node directly. Purely additive to the grammar (=uuid_in= would join
+=osm=/=osmd=/=same= as a word recognised only in operator position, so a field
+named =uuid_in= stays usable), no =API_VERSION= bump — the wire format already
+carries the list. Same accepted spelling as the atom: bare 32-hex, comma
+separated.
+
+Wanted by every shell client that holds a set of uuids and wants to say "these
+ones": today it either loops or builds an N-term =OR=.
+
+*** TODO the CLI cannot read a scope by batches: no =--cursor=, no =--count=
+The daemon already pages: =POST /query= takes =limit= + an opaque keyset
+=cursor=, answers =next_cursor=, and returns the full =total= on =count: true=
+(O(1) through the bitmap index). *None of it reaches the shell.* =mf metarecord
+get --limit N= caps the *total* and loops over the pages internally
+(=commands.rs=, the =next_cursor= loop), so there is no way to say "the next 100
+after those" — a shell client either takes everything or takes a prefix.
+
+That is why the shipped tagging scripts hold their whole scope in memory behind
+=MF_GUI_MAX_ENTRIES= (=docs/review-followups.md= §12): a bound, not a fix.
+
+Feasible and cheap — it is *exposure*, not new machinery: print =next_cursor=
+(stderr, or a =--tsv= column), accept =--cursor <token>=, add =--count=.
+Performance is unaffected: keyset pagination is index-backed and stable under
+concurrent writes (unlike an offset), which is precisely why the cursor is what
+should be exposed rather than a =--offset=.
+
+Two caveats to spell out in the spec when it is done: a cursor is bound to a
+hash of (query, sort) and is rejected by any other request shape, and a record
+edited between two pages moves with its sort key like any keyset paging.
+
+** TODO =POST /repos/:repo/query/explain=: what will this query cost, before running it
+Specified in [[file:docs/spec-query-cost.org][docs/spec-query-cost.org]] — not implemented. A client decides (drop a
+per-question counter, warn, refuse) instead of the daemon refusing query shapes:
+the set of shapes the bitmap index declines is an implementation detail that must
+keep moving, so it must not become user-visible surface. The spec covers the
+symbolic cost model (built during compilation, one implementation shared with
+=index::eval=), the parameter/cost tables, the calibration constants, and the
+separation between the query's intrinsic cost and the moment's state.
+
 ** TODO correctness, minor
 *** TODO =daemon/src/sync.rs= =locate()= uses =Path::exists()=
 It follows symlinks, like the seven sites fixed in "a broken symlink is a file
@@ -86,4 +132,12 @@ pattern. An environment limit, not a defect of the script.
 ** TODO shipped tagging scripts
 *** TODO deferred items from the scripts pass
 See =docs/review-followups.md= §10 (mock =mf= argument boundaries), §11 (=mf path=
-per question), §12 (level-by-level walk).
+per question), §12 (level-by-level walk — *superseded*, see below).
+
+*** TODO =gui-tag-folder.sh=: the query is the walk state
+Design settled, not coded: [[file:docs/gui-tag-folder-rework.md][docs/gui-tag-folder-rework.md]]. An answer is already a
+write, so "what is left to ask" is a query rather than bash bookkeeping — which
+removes the in-memory scope, the external sort and =MF_GUI_MAX_ENTRIES=, and
+keeps both the =mf order= walk order and an exact counter. Supersedes
+=docs/review-followups.md= §12 (rewrite it when this lands). Prerequisites, in
+order: =:parent= served by the index, then =mf … --count=.
