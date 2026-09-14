@@ -1,34 +1,3 @@
-* DONE proof of concept (daemon + simple scripts)
-* DONE benchmarks
-* DONE specifications for the daemon
-** DONE basic data model, query language, tree cache, cross-repo sync
-** DONE review reconcile and fingerprint spec
-** DONE review file watcher spec
-** DONE event sourcing and rollback
-*** DONE tree ?
-*** DONE pruning
-*** DONE impossible rollback
-*** DONE tag
-*** DONE failure
-** DONE user schema
-** DONE cross-platform compatibility (abstract OS-specific references in spec)
-** DONE remaining open questions (pagination, regex index)
-* DONE specifications for the GUI
-* DONE specifications for the Rust commands
-* DONE first version of the daemon
-* DONE first version of the Rust commands
-* DONE first version of the GUI
-* DONE post-GUI feature work (towards v0.3)
-** DONE loopback session-token authentication (spec-auth)
-** DONE trash bin (mf trash, core::trash)
-** DONE hierarchical tags (mf tag) + folder ordering (mf order)
-** DONE cross-repo sync (mf sync, core::sync, daemon + GUI panel)
-** DONE in-memory bitmap/BSI query accelerator (daemon/src/index)
-** DONE embedded media metadata extraction (mfr_meta_*)
-** DONE recently-viewed metarecords (GUI)
-** DONE shared file operations in every panel (cut/copy/paste/rename/trash)
-** DONE build/install tooling (Makefile, check-deps.sh)
-** DONE GUI help panel
 * TODO v0.3 release
 ** TODO whole-project review pass (docs/code coherence, bugs, refactors)
 A pass ran in September 2026: 5 bugs fixed (a broken symlink read as absent, in
@@ -36,12 +5,7 @@ seven places; a copy dereferencing a symlink; a redundant slash naming no tree
 node), 6 refactors, and the sync linking phase taken from 6 reads per record to
 1. What it found and left is listed under "known issues and deferred work" below.
 ** TODO cut the release (tag, changelog)
-* TODO v2 (deferred)
-** TODO multi-owner link metarecords
-Reads already exclude them; the *writes* are not link-aware, which is what has to
-be settled when links arrive — =docs/review-followups.md= §9.
 ** TODO adaptive query planner / on-disk index persistence (spec-indexing)
-
 * TODO known issues and deferred work
 Found by the whole-project review pass and not (yet) fixed. Items already
 written up in =docs/review-followups.md= are referenced by their section rather
