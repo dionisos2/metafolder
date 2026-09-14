@@ -44,9 +44,21 @@
   the watcher has written since (your change is undone in place and the
   watcher's revisions stay standing). Pressing it again walks further back
   through your own changes rather than undoing the undo.
-  <span data-mf-key="log:redo">Ctrl+Shift+z</span> (<code>log:redo</code>)
-  re-applies what a rollback undid. On the command line the same decision is
-  <code>mf log undo</code>, and <code>mf log undo plan</code> says what it would
+</p>
+
+<h2>Redo</h2>
+<p>
+  <span data-mf-key="log:redo">Ctrl+Shift+z</span> (<code>log:redo</code>) is the
+  mirror: it takes the newest <em>undo</em> back. HEAD moves forward again when
+  the undo was a rollback; when the watcher has written in between — a file moved
+  after you pressed Ctrl+z — the undo is itself undone in place, so the redo
+  survives it instead of refusing. When the newest thing you wrote is an ordinary
+  change rather than an undo, there is nothing to redo: redo takes an undo back,
+  it does not re-apply arbitrary history (that is <code>log:rollback</code>).
+</p>
+<p>
+  On the command line the same two decisions are <code>mf log undo</code> and
+  <code>mf log redo</code>; add <code>plan</code> to either to see what it would
   do without writing.
 </p>
 
