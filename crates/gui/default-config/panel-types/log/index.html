@@ -55,13 +55,47 @@
       tr.rev.selected {
         background: var(--mf-bg-raised, #26262e);
       }
+      tr.ops {
+        cursor: pointer;
+      }
       tr.ops td {
-        padding: 0 8px 8px 24px;
+        padding: 1px 8px 1px 24px;
+      }
+      tr.ops:hover,
+      tr.ops.selected {
+        background: var(--mf-bg-raised, #26262e);
       }
       .op {
         font-family: var(--mf-font-mono, monospace);
         font-size: 0.9em;
         color: var(--mf-fg-dim, #8a8a96);
+      }
+      /* What a revision is, at a glance: whose write it was, whether it is
+         itself an undo, and whether it has already been undone. */
+      .badge {
+        font-size: 0.85em;
+        border: 1px solid currentColor;
+        border-radius: 3px;
+        padding: 0 4px;
+        margin-right: 4px;
+        white-space: nowrap;
+      }
+      .badge.watcher {
+        color: var(--mf-warning, #d8a657);
+      }
+      .badge.revert {
+        color: var(--mf-accent, #4c56c4);
+      }
+      .badge.undone {
+        color: var(--mf-fg-dim, #8a8a96);
+      }
+      /* The watcher's revisions are not yours to undo: they stay legible but
+         step back, so your own changes are what the eye lands on. */
+      tr.rev.watcher-row td:not(:last-child) {
+        color: var(--mf-fg-dim, #8a8a96);
+      }
+      tr.rev.undone-row td:first-child {
+        text-decoration: line-through;
       }
       .head-marker {
         color: var(--mf-ok, #56c44c);
@@ -104,10 +138,16 @@
   <body>
     <div id="toolbar">
       <button id="refresh">Refresh</button>
-      <button id="undo">Undo (log:undo)</button>
+      <button id="undo" title="Undo your last change: a rollback when it is the last thing in the log, a revert when the watcher has written since (ctrl+z)">
+        Undo (log:undo)
+      </button>
       <button id="redo">Redo (log:redo)</button>
-      <button id="rollback" disabled>Go to selected (log:rollback)</button>
-      <button id="revert" disabled>Revert selected (log:revert)</button>
+      <button id="rollback" disabled title="Move HEAD to the end of the selected revision — rollback, or redo forward">
+        Go to selected (log:rollback)
+      </button>
+      <button id="revert" disabled title="Write the inverse of what is selected at HEAD, leaving the history in place (shift+r)">
+        Revert selected (log:revert)
+      </button>
       <button id="checkpoint" disabled>Label selected (log:mark-checkpoint)</button>
       <button id="prune" disabled>Prune before selected (log:prune)</button>
       <label id="graph-toggle"><input type="checkbox" id="graph" />Graph</label>

@@ -286,6 +286,18 @@
 # "k" is vim-up everywhere, so the choice of survivor takes the shifted key.
 "shift+k" = { command = "duplicates:keep", when = "duplicates" }
 
+# log: undoing a *past* change in place — the reverts. Shifted keys throughout:
+# plain "r" is refresh in every panel, and the log's own list keys (j/k, enter)
+# are the ones the fingers already know. "shift+r" reverts whatever the cursor
+# is on (a revision, or one operation of an expanded one), which is the whole
+# point of being able to select an operation.
+"shift+r" = { command = "log:revert", when = "log" }
+"shift+d" = { command = "log:revert-with-dependents", when = "log" }
+"shift+o" = { command = "log:revert-op", when = "log" }
+"shift+v" = { command = "log:revert-revision", when = "log" }
+"shift+l" = { command = "log:mark-checkpoint", when = "log" }
+"shift+g" = { command = "log:toggle-graph", when = "log" }
+
 # file-manager: filesystem operations (clipboard, rename, duplicate, create).
 # All scoped to the panel; it has no text-input focus, so these plain
 # accelerators never clash with editing.

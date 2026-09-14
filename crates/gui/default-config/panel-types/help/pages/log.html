@@ -11,24 +11,83 @@
   Move through revisions with <span data-mf-key="log:prev">↑ or k</span> /
   <span data-mf-key="log:next">↓ or j</span>;
   <span data-mf-key="log:toggle-ops">Enter</span> expands a revision to show its
-  operations. Watcher, reconcile and manual edits all appear here.
+  operations, and the same keys then walk through those — the operation under the
+  cursor is what a revert aims at. Watcher, reconcile and manual edits all appear
+  here.
 </p>
 
-<h2>Undo / redo</h2>
+<h2>Reading the badges</h2>
 <p>
-  <span data-mf-key="log:undo">Ctrl+z</span> (<code>log:undo</code>) and
-  <span data-mf-key="log:redo">Ctrl+Shift+z</span>
-  (<code>log:redo</code>) move HEAD one revision back / forward on the active
-  repository, restoring field values <em>and</em> versions exactly. Navigation is
-  atomic: it computes the shortest path between where HEAD is and where you asked
-  to go, so you can jump to any point, not just step linearly.
+  The status column says what each revision <em>is</em>, which is what decides
+  whether undoing it makes sense:
+</p>
+<ul>
+  <li>
+    <strong>watcher</strong> — the daemon wrote it for the filesystem (a file
+    arrived, moved, went away). Not yours to undo: rewinding past it would
+    unrecord something that is really true on disk. Those rows are dimmed.
+  </li>
+  <li><strong>undo of #N</strong> — the revision is itself a revert of #N.</li>
+  <li>
+    <strong>undone by #N</strong> — a later revert already put it back; its
+    number is struck through.
+  </li>
+  <li><strong>HEAD</strong> — where the history currently stands.</li>
+</ul>
+
+<h2>Undo</h2>
+<p>
+  <span data-mf-key="log:undo">Ctrl+z</span> (<code>log:undo</code>) undoes the
+  newest change <em>you</em> made, and picks the mechanism for it: a
+  <strong>rollback</strong> when your change is the last thing in the log (HEAD
+  simply moves back over it, leaving no trace), a <strong>revert</strong> when
+  the watcher has written since (your change is undone in place and the
+  watcher's revisions stay standing). Pressing it again walks further back
+  through your own changes rather than undoing the undo.
+  <span data-mf-key="log:redo">Ctrl+Shift+z</span> (<code>log:redo</code>)
+  re-applies what a rollback undid. On the command line the same decision is
+  <code>mf log undo</code>, and <code>mf log undo plan</code> says what it would
+  do without writing.
+</p>
+
+<h2>Undoing one past change: revert</h2>
+<p>
+  A revert writes the inverse of a past revision as a new revision at HEAD:
+  nothing leaves the history, and everything written since stays where it is.
+  <span data-mf-key="log:revert">Shift+R</span> (<code>log:revert</code>) reverts
+  whatever is selected — the revision, or a single operation of it when the
+  cursor is on one. <span data-mf-key="log:revert-op">Shift+O</span> narrows to
+  one operation from a revision row, and
+  <span data-mf-key="log:revert-revision">Shift+V</span> widens back to the whole
+  revision.
+</p>
+<p>
+  A revert can be <strong>blocked</strong>: a later operation overwrote the same
+  cell, so undoing this one alone would mean nothing. The panel then selects the
+  blocker and says so — revert that one first, or take both together with
+  <span data-mf-key="log:revert-with-dependents">Shift+D</span>
+  (<code>log:revert-with-dependents</code>), which reverts the target and
+  everything in its way. When the revert needs to move files on disk, the panel
+  hands you the <code>mf log revert</code> line to run instead, so the moves stay
+  coordinated with the metadata.
+</p>
+
+<h2>The rest</h2>
+<p>
+  <code>log:rollback</code> moves HEAD to the selected revision (a rollback, or a
+  redo forward). <span data-mf-key="log:mark-checkpoint">Shift+L</span> labels a
+  revision so you can come back to it by name, and
+  <span data-mf-key="log:toggle-graph">Shift+G</span> draws every branch instead
+  of the active line. <code>log:prune</code> permanently removes history before
+  the selected revision.
 </p>
 
 <h2>Beyond the panel</h2>
 <p>
   The CLI exposes the rest: <code>mf log list</code> to read history,
   <code>mf log rollback</code> to move HEAD (with a coordinated
-  file-move policy), and <code>mf log prune</code> to compact old history. A
-  rollback that would overwrite a file on disk routes the loser to the
+  file-move policy), <code>mf log revert</code> for a coordinated revert, and
+  <code>mf log prune</code> to compact old history. A rollback that would
+  overwrite a file on disk routes the loser to the
   <a data-help-page="trash">trash</a> first.
 </p>

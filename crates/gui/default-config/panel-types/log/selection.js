@@ -1,20 +1,25 @@
 // log panel selection movement: revisions are listed in reverse
 // chronological order, so delta +1 moves down the list (older).
+//
+// The rows are whatever the panel says they are: revisions alone, or revisions
+// with the operations of the expanded one inlined between them. The caller
+// keys the rows (`rev:12`, `op:34`) so the two kinds cannot collide; this
+// module only walks the list it is handed.
 
 /**
- * A revision, of which only the id matters here.
- * @typedef {{id: number}} Revision
+ * A selectable row, of which only the id matters here.
+ * @typedef {{id: number|string}} Row
  */
 
 /**
- * Returns the revision id selected after moving by `delta` rows from
- * `selectedRev`, clamped to the list; the first (newest) revision when
- * nothing valid is selected yet, null when the log is empty.
+ * Returns the row id selected after moving by `delta` rows from `selectedId`,
+ * clamped to the list; the first (newest) row when nothing valid is selected
+ * yet, null when the list is empty.
  *
- * @param {Revision[]} revisions
- * @param {number|null} selectedRev
+ * @param {Row[]} revisions
+ * @param {number|string|null} selectedRev
  * @param {number} delta
- * @returns {number|null}
+ * @returns {number|string|null}
  */
 export function moveSelection(revisions, selectedRev, delta) {
   if (revisions.length === 0) return null;
@@ -25,12 +30,12 @@ export function moveSelection(revisions, selectedRev, delta) {
 }
 
 /**
- * Returns the revision id at the start (`'first'`, newest) or end
- * (`'last'`, oldest) of the list; null when the log is empty.
+ * Returns the row id at the start (`'first'`, newest) or end (`'last'`,
+ * oldest) of the list; null when the list is empty.
  *
- * @param {Revision[]} revisions
+ * @param {Row[]} revisions
  * @param {string} edge
- * @returns {number|null}
+ * @returns {number|string|null}
  */
 export function edgeSelection(revisions, edge) {
   if (revisions.length === 0) return null;

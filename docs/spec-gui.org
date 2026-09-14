@@ -1129,9 +1129,11 @@ Behaviours:
 | =ignore:remove <preset>= | Remove an ignore preset's patterns from the target directory |
 | =ignore:set <preset>= | Replace the target directory's whole ignore set with a preset's patterns |
 | =log:rollback=       | Rollback to the selected revision              |
-| =log:revert=         | Revert the selected revision in place          |
-| =log:revert-with-dependents= | Revert it together with whatever blocks it |
-| =log:undo=           | Undo the last revision of the active repo (default =ctrl+z=) |
+| =log:revert=         | Revert what is selected — the revision, or one operation of it — in place (default =shift+r=) |
+| =log:revert-op=      | Narrow the revert to a single operation (default =shift+o=) |
+| =log:revert-revision= | Widen it back to the whole revision (default =shift+v=) |
+| =log:revert-with-dependents= | Revert it together with whatever blocks it (default =shift+d=) |
+| =log:undo=           | Undo the newest change the user made, on the active repo (default =ctrl+z=) |
 | =log:redo=           | Re-apply the revision ahead of HEAD (default =ctrl+shift+z=) |
 | =log:prune=          | Prune the event log                            |
 | =find:in-panel [text]= | Open the find bar over the focused panel (default =ctrl+f=) — see [[*Find in panel]] |
@@ -2954,10 +2956,23 @@ existing metarecord: it only stops future tracking (spec-file-tracking
 *** Log view (=log= panel type)
 
 Displays revisions in reverse chronological order. Columns: =rev_id=,
-timestamp, operation count, =status= (HEAD marker). A revision written by a
-revert is labelled with the revision it undid, and an expanded operation
-carrying =reverts_op_id= names the operation it reverted, so a correction and
-its cause are readable from one another in both directions. A =Graph= checkbox
+timestamp, operation count, =status=.
+
+The =status= column carries the badges that say what a revision *is* — which is
+what decides whether undoing it makes sense:
+
+- =HEAD= — where the history stands;
+- =watcher= — the daemon wrote it for the filesystem (=revision.origin=, see
+  [[file:spec-event-log.org][spec-event-log.org]] "Revision origin"; on a
+  pre-migration database, judged by the operation types). The row is dimmed:
+  it is not the user's to undo, and =log:undo= skips it;
+- =undo of #N= — the revision is itself a revert of =#N=;
+- =undone by #N= — a later revert already put it back; its number is struck
+  through, and asking to revert it again says so before confirming.
+
+An expanded operation carrying =reverts_op_id= names the operation it reverted,
+and one that has been reverted is marked =undone=, so a correction and its cause
+are readable from one another in both directions. A =Graph= checkbox
 (command =log:toggle-graph=) switches the presentation, refetching the log:
 
 - Unchecked (default) — calls =GET .../log?mode=active=: the active line
@@ -2972,6 +2987,14 @@ A click — or =up= / =down= (also =k= / =j=), via =log:prev= / =log:next= —
 moves the selection (over every listed node, in either presentation). A double
 click or =Enter= (=log:toggle-ops=) expands the revision to show its individual
 operations (and collapses it again).
+
+*The selection reaches into an expanded revision.* Its operations are rows of
+their own: the cursor walks them, a click picks one, and a revert then targets
+*that operation alone* (=op_ids=) instead of the whole revision. This is what
+makes "undo just this one field of what I did" a keystroke rather than a trip to
+=mf log revert --op=. =log:revert-op= narrows from a revision row (expanding it
+and, when it holds more than one operation, asking which); =log:revert-revision=
+widens back.
 
 A status line under the list says how much log there is: the number of
 revisions and operations currently listed and, when the fetched window is only
@@ -2988,17 +3011,30 @@ operations" has a visible destination.
   Refreshes =metarecord-list= and =metarecord-detail= afterwards (=metarecords:dirty=).
 - =log:undo= / =log:redo= — shell builtins (they work without the log
   panel, defaults =ctrl+z= / =ctrl+shift+z=; the log panel also has Undo /
-  Redo toolbar buttons): navigate the active repo's log one revision at a
-  time. Undo targets ={"prev_revision": true}=; redo re-applies the
-  revision of HEAD's child in the operation tree — the daemon has no
-  direct target for it, so the GUI reads =GET .../log?mode=tree= and
-  targets the last operation of that revision (the most recent child when
-  a rollback created several branches). At a tip there is nothing to
-  redo. No confirmation prompt: the operation is itself undoable, that is
+  Redo toolbar buttons).
+
+  Undo undoes the newest change *the user* made, and picks the mechanism for
+  it: the [[file:spec-event-log.org][spec-event-log.org]] "Undo" selection,
+  shared with =mf log undo= through =core::undo=. A rollback when the user's
+  change is the last thing in the log (={"prev_revision": true}=), a revert
+  when the watcher has written since. A revert that is blocked, or that needs
+  a filesystem action, is *reported* rather than forced: the message names
+  =log:revert-with-dependents= or =mf log undo=, because neither is something
+  to do behind the user's back.
+
+  Redo re-applies the revision of HEAD's child in the operation tree — the
+  daemon has no direct target for it, so the GUI reads
+  =GET .../log?mode=tree= and targets the last operation of that revision
+  (the most recent child when a rollback created several branches). At a tip
+  there is nothing to redo; it is the counterpart of an undo that rolled
+  back, and an undo that had to revert is itself undone by reverting the
+  revert. No confirmation prompt: the operation is itself undoable, that is
   the point. Refreshes the panels through =metarecords:dirty=.
-- =log:revert= → =GET .../revert/plan= for the selected revision, then a
-  confirmation naming how many operations it would undo, then
-  =POST .../revert=. Refreshes the panels through =metarecords:dirty=.
+- =log:revert= → =GET .../revert/plan= for what is selected — the revision, or
+  the single operation when the cursor is on one — then a confirmation naming
+  how many operations it would undo (and warning when the target has already
+  been undone), then =POST .../revert=. Refreshes the panels through
+  =metarecords:dirty=.
 
   A plan needing filesystem actions is *not* driven from the panel: it says so
   and names =mf log revert <rev>=, which holds the lock while it moves the
