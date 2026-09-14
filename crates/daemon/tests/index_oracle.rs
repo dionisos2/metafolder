@@ -16,6 +16,7 @@ use metafolder_daemon::index::{
 };
 use metafolder_daemon::log::Writer;
 use metafolder_daemon::query_result::{SortKey, SortOrder};
+use metafolder_daemon::query_validate;
 use metafolder_daemon::tree_cache::{SortKeys, TreeCache};
 use metafolder_query_oracle as query_exec;
 use rusqlite::Connection;
@@ -1660,18 +1661,30 @@ fn path_aspect_leaves_are_resolved_by_the_forest() {
 }
 
 #[test]
-fn a_path_leaf_on_a_non_tree_field_is_left_to_sql() {
-    // `:path` on a field that is not a forest is a 400, and the SQL engine is
-    // the one that says so: rewriting the leaf to an empty set would turn that
-    // mistake into a silent "no rows".
+fn a_path_leaf_on_a_non_tree_field_is_refused_before_any_engine() {
+    // `:path` on a field that is not a forest is a 400, made by the shared type
+    // validation before an engine runs — so the forest resolver never has to
+    // preserve the mistake by leaving the leaf alone.
     let mut o = Oracle::new();
     o.create(vec![Field::new("title", s("hello"))]);
     o.cache.populate(&o.conn).unwrap();
+    let index = RepoIndex::build(&o.conn).unwrap();
 
     let q = Query::Eq { field: "title".into(), value: s("hello"), aspect: Aspect::Path };
-    let rewritten = forest_query::resolve_path_leaves(&o.cache, &q).unwrap();
-    assert_eq!(rewritten, q, "the leaf must be left alone");
-    let index = RepoIndex::build(&o.conn).unwrap();
-    assert!(index.evaluate(&rewritten).is_err(), "and the index must defer");
+    assert!(
+        query_validate::validate_query_types(&q, &|f| index.value_type(f)).is_err(),
+        "a ':path' leaf on a string field must be a 400"
+    );
     assert!(query_exec::execute(&o.conn, &mut o.cache, &q, &[], None, None).is_err());
+
+    // A field with no data at all is the other half of the same question, and
+    // it is *not* an error: it matches nothing, in both engines. The resolver
+    // must answer that rather than decline — with no SQL engine left to defer
+    // to, declining is a 500.
+    let q = Query::Eq { field: "nowhere".into(), value: s("x"), aspect: Aspect::Path };
+    assert!(query_validate::validate_query_types(&q, &|f| index.value_type(f)).is_ok());
+    let rewritten = forest_query::resolve_path_leaves(&o.cache, &q).unwrap();
+    assert!(index.evaluate(&rewritten).unwrap().is_empty());
+    let (sql, _) = query_exec::execute(&o.conn, &mut o.cache, &q, &[], None, None).unwrap();
+    assert!(sql.is_empty());
 }

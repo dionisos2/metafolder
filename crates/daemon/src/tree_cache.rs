@@ -472,10 +472,11 @@ impl TreeCache {
     /// there is no subtree shortcut: an arbitrary predicate says nothing about
     /// the descendants of a node that matched.
     ///
-    /// `None` when the answer would not be authoritative — the cache is
-    /// incomplete, or this field has no forest at all (a field that is not a
-    /// `tree_ref` reads `:path` as a 400, which is the SQL engine's to raise,
-    /// and an empty answer here would silently replace it).
+    /// `None` only when the answer would not be authoritative: an incomplete
+    /// cache. A field with *no* forest answers the empty set — either it holds
+    /// no data at all, which matches nothing in both engines, or it holds
+    /// another type, which the shared type validation has already refused with a
+    /// 400 before any of this runs (spec-query "Field aspects").
     pub fn path_matches(
         &self,
         field: &str,
@@ -484,7 +485,7 @@ impl TreeCache {
         if !self.complete {
             return Ok(None);
         }
-        let Some(ft) = self.fields.get(field) else { return Ok(None) };
+        let Some(ft) = self.fields.get(field) else { return Ok(Some(Vec::new())) };
         let mut matched: HashSet<Uuid> = HashSet::new();
         let mut path = String::new();
 
