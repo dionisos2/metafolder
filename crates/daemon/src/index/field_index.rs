@@ -4,7 +4,8 @@
 //! data-model invariant), so the encoding is unambiguous and chosen from the
 //! first non-`Nothing` value seen. Each encoding answers a comparison against
 //! the SAME row semantics the SQL `scalar_predicate` implements
-//! ([`crate::query_exec`]), including multi-map "some value satisfies": a
+//! (the SQL oracle's `scalar_predicate`), including multi-map "some value
+//! satisfies": a
 //! metarecord matches if *any* of its rows satisfies the predicate, so an
 //! answer is a union of the per-value bitmaps that match.
 
@@ -245,7 +246,7 @@ pub(super) fn sum_bytes<'a>(bitmaps: impl Iterator<Item = &'a RoaringBitmap>) ->
 // ── Sort representatives ────────────────────────────────────────────────────
 
 /// A value reduced to its sort key, reproducing the SQL sort order
-/// ([`crate::query_exec`]): a fixed type-group precedence (bool < numeric <
+/// (the SQL oracle's sort CTEs): a fixed type-group precedence (bool < numeric <
 /// string < datetime < reference < tree_ref), then the natural in-group order.
 /// A field is homogeneous, so all of a field's reps share one group; the
 /// cross-group arm only guards mixed historical data.

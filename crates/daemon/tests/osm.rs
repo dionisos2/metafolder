@@ -6,8 +6,8 @@ use metafolder_core::metarecord::{Field, Value};
 use metafolder_core::query::{OsmMode, Query};
 use metafolder_daemon::db;
 use metafolder_daemon::log::Writer;
-use metafolder_daemon::query_exec;
 use metafolder_daemon::tree_cache::TreeCache;
+use metafolder_query_oracle as query_exec;
 use rusqlite::Connection;
 use uuid::Uuid;
 

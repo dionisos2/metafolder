@@ -5,6 +5,7 @@ members = [
     "crates/cli",
     "crates/gui",
     "crates/bench",
+    "crates/query-oracle",
 ]
 resolver = "2"
 

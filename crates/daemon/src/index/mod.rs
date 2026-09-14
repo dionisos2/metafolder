@@ -2,7 +2,8 @@
 //!
 //! A *derived, read-only* accelerator built from the `field` table. It answers
 //! a [`Query`] as a `RoaringBitmap` of dense metarecord ids and is validated
-//! against the SQL engine ([`crate::query_exec`]) by an equivalence oracle
+//! against the SQL engine (the `metafolder-query-oracle` dev crate) by an
+//! equivalence oracle
 //! (`tests/index_oracle.rs`). It is built at repo load and refreshed to HEAD
 //! per query (`run_query_filter`), which falls back to the SQL engine on any
 //! `Unsupported` shape. Shapes the index cannot resolve on its own are handled
@@ -10,10 +11,11 @@
 //! a root metarecord through the tree cache, and a single-term `Osm` `Path`
 //! resolves to its "term nodes" (name-substring matches) through FTS, which the
 //! index then expands into a subtree union — the exact match set, no per-path
-//! check. Remaining text leaves (`Matches`, `Osm` `Direct`, multi-term `Osm`
-//! `Path`) are pre-resolved to `UuidIn` sets by the caller
-//! (`query_exec::resolve_index_leaves`), so a query that merely *contains* one is
-//! still served whole by the index. Not persisted — rebuilt each session.
+//! check. Text predicates (`Matches`, `Osm` `Direct`) run their regex over the
+//! field's *distinct values* in memory; the leaves no bitmap can answer — the
+//! `:path` aspect, an order-sensitive `Osm` `Path` — are resolved against the
+//! forest and handed in as `UuidIn` sets (`crate::forest_query`). Not
+//! persisted — rebuilt each session.
 
 pub mod field_index;
 pub mod id_registry;
@@ -967,7 +969,7 @@ impl RepoIndex {
             // SQL engine hands its `REGEXP` UDF, so the two cannot drift — in
             // particular over `.`, which does not cross a newline.
             Query::Osm { field, terms, mode: metafolder_core::query::OsmMode::Direct } => {
-                self.text_scan(field, &crate::query_exec::osm_regex(terms), restrict)
+                self.text_scan(field, &crate::query_result::osm_regex(terms), restrict)
             }
         }
         .map(|mut bm| {

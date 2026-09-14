@@ -5,8 +5,10 @@ use metafolder_core::metarecord::{Field, Value};
 use metafolder_core::query::{Aspect, FollowTarget, Query};
 use metafolder_daemon::db;
 use metafolder_daemon::log::Writer;
-use metafolder_daemon::query_exec::{self, SortKey, SortOrder};
+use metafolder_daemon::query_result::{SortKey, SortOrder};
+use metafolder_daemon::query_validate;
 use metafolder_daemon::tree_cache::TreeCache;
+use metafolder_query_oracle as query_exec;
 use rusqlite::Connection;
 use uuid::Uuid;
 
@@ -349,13 +351,13 @@ fn test_validate_query_rejects_meaningless_comparisons() {
     let f = "x".to_string();
     let nope = [Value::Nothing];
     for v in nope {
-        assert!(query_exec::validate_query(&Query::Eq {
+        assert!(query_validate::validate_query(&Query::Eq {
             field: f.clone(),
             value: v.clone(),
             aspect: Aspect::Raw
         })
         .is_err());
-        assert!(query_exec::validate_query(&Query::Lt {
+        assert!(query_validate::validate_query(&Query::Lt {
             field: f.clone(),
             value: v,
             aspect: Aspect::Raw
@@ -370,7 +372,7 @@ fn test_validate_query_rejects_meaningless_comparisons() {
         Value::ExternalRef { repo: Uuid::new_v4(), metarecord: Uuid::new_v4() },
     ];
     for v in unordered {
-        let err = query_exec::validate_query(&Query::Gt {
+        let err = query_validate::validate_query(&Query::Gt {
             field: f.clone(),
             value: v.clone(),
             aspect: Aspect::Raw,
@@ -378,7 +380,7 @@ fn test_validate_query_rejects_meaningless_comparisons() {
         .unwrap_err();
         assert!(err.message.contains("ordered comparison"), "got: {}", err.message);
         // Equality is still fine on the same value.
-        assert!(query_exec::validate_query(&Query::Eq {
+        assert!(query_validate::validate_query(&Query::Eq {
             field: f.clone(),
             value: v,
             aspect: Aspect::Raw
@@ -386,19 +388,19 @@ fn test_validate_query_rejects_meaningless_comparisons() {
         .is_ok());
     }
     // Ordered comparison on naturally-ordered types is allowed.
-    assert!(query_exec::validate_query(&Query::Lt {
+    assert!(query_validate::validate_query(&Query::Lt {
         field: f.clone(),
         value: Value::Int(1),
         aspect: Aspect::Raw
     })
     .is_ok());
-    assert!(query_exec::validate_query(&Query::Gte {
+    assert!(query_validate::validate_query(&Query::Gte {
         field: f.clone(),
         value: s("a"),
         aspect: Aspect::Raw
     })
     .is_ok());
-    assert!(query_exec::validate_query(&Query::Gt {
+    assert!(query_validate::validate_query(&Query::Gt {
         field: f.clone(),
         value: Value::DateTime(0),
         aspect: Aspect::Raw
@@ -411,7 +413,7 @@ fn test_validate_query_rejects_meaningless_comparisons() {
             Query::Gt { field: f.clone(), value: Value::Bool(false), aspect: Aspect::Raw },
         ],
     };
-    assert!(query_exec::validate_query(&nested).is_err());
+    assert!(query_validate::validate_query(&nested).is_err());
     let in_follows = Query::FollowsTransitive {
         field: "loc".into(),
         target: FollowTarget::Condition(Box::new(Query::Lt {
@@ -421,7 +423,7 @@ fn test_validate_query_rejects_meaningless_comparisons() {
         })),
         inclusive: false,
     };
-    assert!(query_exec::validate_query(&in_follows).is_err());
+    assert!(query_validate::validate_query(&in_follows).is_err());
 }
 
 #[test]
@@ -431,7 +433,7 @@ fn test_oversized_query_is_rejected() {
     // A wide Or beyond the node limit: cheap to send, rejected before compiling
     // (our check runs before any SQL is built).
     let huge = Query::Or {
-        operands: (0..=query_exec::MAX_QUERY_NODES)
+        operands: (0..=query_validate::MAX_QUERY_NODES)
             .map(|_| Query::IsPresent { field: "rating".into(), aspect: Aspect::Raw })
             .collect(),
     };
@@ -456,14 +458,16 @@ fn test_wide_combinator_is_rejected_with_clear_message() {
     // One past SQLite's compound-select limit: our clear message, not SQLite's
     // opaque "too many terms in compound SELECT". (Node count stays well under
     // MAX_QUERY_NODES, so this is the combinator check firing, not the size one.)
-    let over =
-        Query::Or { operands: (0..=query_exec::MAX_COMBINATOR_OPERANDS).map(|_| leaf()).collect() };
+    let over = Query::Or {
+        operands: (0..=query_validate::MAX_COMBINATOR_OPERANDS).map(|_| leaf()).collect(),
+    };
     let err = query_exec::execute(&f.conn, &mut f.cache, &over, &[], None, None).unwrap_err();
     assert!(err.message.contains("operands"), "unexpected error: {}", err.message);
 
     // Exactly the limit compiles and runs in SQLite.
-    let at_limit =
-        Query::Or { operands: (0..query_exec::MAX_COMBINATOR_OPERANDS).map(|_| leaf()).collect() };
+    let at_limit = Query::Or {
+        operands: (0..query_validate::MAX_COMBINATOR_OPERANDS).map(|_| leaf()).collect(),
+    };
     assert!(query_exec::execute(&f.conn, &mut f.cache, &at_limit, &[], None, None).is_ok());
 }
 

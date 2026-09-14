@@ -400,16 +400,29 @@ cursors, and its =&mut TreeCache=: **the SQL layer stops knowing about the
 forest**, which is the coupling that made "which engine" and "which provider"
 two different questions.
 
-** It stays as the oracle
+** It stays as the oracle, outside the daemon
 
-=query_exec= is *not* deleted. It stays compiled and exercised by
-=tests/index_oracle.rs= and =tests/fts_oracle.rs= as a second implementation of
-the same questions, with no route calling it. The reason is written in this
-document's own history: a shape the oracle does not cross-check rots unnoticed —
-=MATCHES= under =:parent= answered the =:value= question, and an ordered operator
-under it compared for equality, for as long as the index *declined* the aspect
-and the comparison was therefore never made. An engine that only tests is a cost;
-an index with no second opinion is a risk, and the risk has already materialised.
+The SQL engine is *not* deleted. It lives in **=crates/query-oracle=**, a
+dev-dependency of the daemon and of nothing else, so no shipped binary links it —
+and the daemon's own sources hold no query compiler at all, which is what makes
+"the SQL layer does not know the forest" true of the code rather than of a
+convention. (Cargo allows the dependency cycle this creates: the oracle depends
+on the daemon for =db=, =tree_cache= and the error type.)
+
+It is exercised by the equivalence batteries (=tests/index_oracle.rs=,
+=tests/fts_oracle.rs=) and by the semantics batteries, which run *both* engines
+through =tests/common/engines.rs= and assert they agree. The reason is written in
+this document's own history: a shape the oracle does not cross-check rots
+unnoticed — =MATCHES= under =:parent= answered the =:value= question, and an
+ordered operator under it compared for equality, for as long as the index
+*declined* the aspect and the comparison was therefore never made. An engine that
+only tests is a cost; an index with no second opinion is a risk, and the risk has
+already materialised.
+
+What the daemon keeps of it: =query_validate= (the rejections, engine-independent
+now) and =query_result= (the sort specification a request carries, the assembly
+of a page's fields, and the OSM regex the index shares). Both read the =field=
+table only *for a list of uuids*.
 
 ** Increments
 

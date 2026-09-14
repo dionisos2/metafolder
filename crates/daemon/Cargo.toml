@@ -32,5 +32,9 @@ lofty = "0.25.0"
 nom-exif = "3.6.2"
 
 [dev-dependencies]
+# The SQL engine, kept as the oracle the index is validated against
+# (spec-indexing "It stays as the oracle"). A dev-dependency cycle, which cargo
+# allows: nothing but the tests links it.
+metafolder-query-oracle = { path = "../query-oracle" }
 http-body-util = "0.1"
 tower = { version = "0.4", features = ["util"] }

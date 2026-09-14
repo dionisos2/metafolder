@@ -11,16 +11,17 @@ use metafolder_daemon::error::ApiError;
 use metafolder_daemon::index::{
     collect_node_paths, collect_path_targets, QueryRoots, RepoIndex, SortBy,
 };
-use metafolder_daemon::query_exec::{self, SortKey, SortOrder};
+use metafolder_daemon::query_result::{SortKey, SortOrder};
 use metafolder_daemon::tree_cache::{SortKeys, TreeCache};
 use metafolder_daemon::{forest_query, query_validate};
+use metafolder_query_oracle as query_exec;
 use rusqlite::Connection;
 use uuid::Uuid;
 
 /// The engine-independent rejections, exactly as the route makes them.
 pub fn validate(conn: &Connection, query: &Query) -> Result<(), ApiError> {
-    query_exec::validate_query(query)?;
-    query_exec::check_query_size(query)?;
+    query_validate::validate_query(query)?;
+    query_validate::check_query_size(query)?;
     let index = RepoIndex::build(conn).unwrap();
     query_validate::validate_query_types(query, &|f| index.value_type(f))
 }

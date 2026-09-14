@@ -28,7 +28,7 @@ use crate::log::MAX_TREE_DEPTH;
 /// contents stay together (`photos/2021` before `photos-old`, which a literal
 /// `/` would interleave since `-` < `/`). Keys are internal — they are never
 /// displayed, only compared and carried inside opaque cursors — and the SQL
-/// engine builds the identical key (`query_exec::path_key_cte`).
+/// oracle builds the identical key (`metafolder-query-oracle`'s `path_key_cte`).
 pub const PATH_KEY_SEP: char = '\u{1}';
 
 struct Node {
@@ -457,9 +457,8 @@ impl TreeCache {
                 stack.push(Step::Enter(child, at, depth + 1));
             }
         }
-        // Unordered: the caller (`query_exec::osm_path_matches`) is the
-        // chokepoint that pins the order, for this path and the DB fallback
-        // alike.
+        // Unordered: the caller (`forest_query`) is the chokepoint that pins
+        // the order — a rewritten leaf is hashed into the cursor.
         Ok(Some(matched.into_iter().collect()))
     }
 

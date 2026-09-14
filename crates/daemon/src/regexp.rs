@@ -2,7 +2,8 @@
 //!
 //! Patterns come from user data: `mf_ignore` field values
 //! ([`crate::eligibility`]), the `Matches` query operator
-//! ([`crate::query_exec`]) and the SQLite `REGEXP` UDF ([`crate::db`]). The
+//! (the in-memory scans of [`crate::index`]) and the SQLite `REGEXP` UDF
+//! ([`crate::db`]). The
 //! `regex` crate already guarantees linear-match time (no catastrophic
 //! backtracking), but its default compile-size budget is large (10 MiB); a
 //! pathological pattern could still consume a lot of memory at compile time,

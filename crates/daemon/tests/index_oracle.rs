@@ -15,8 +15,9 @@ use metafolder_daemon::index::{
     collect_node_paths, collect_path_targets, QueryRoots, RepoIndex, SortBy,
 };
 use metafolder_daemon::log::Writer;
-use metafolder_daemon::query_exec::{self, SortKey, SortOrder};
+use metafolder_daemon::query_result::{SortKey, SortOrder};
 use metafolder_daemon::tree_cache::{SortKeys, TreeCache};
+use metafolder_query_oracle as query_exec;
 use rusqlite::Connection;
 use uuid::Uuid;
 

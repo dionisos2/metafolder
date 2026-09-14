@@ -1490,7 +1490,7 @@ fn test_index_build_is_cancellable() {
 
 #[test]
 fn test_assemble_selected_is_cancellable() {
-    use metafolder_daemon::query_exec;
+    use metafolder_daemon::query_result as query_exec;
     // The select-projection loop (the dominant cost of `select=*` over many
     // matches) must honour the cancellation probe.
     let mut conn = test_conn();

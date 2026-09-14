@@ -34,7 +34,8 @@ use metafolder_core::query::{Aspect, FollowTarget, Query};
 use metafolder_daemon::index::{QueryRoots, RepoIndex};
 use metafolder_daemon::log::Writer;
 use metafolder_daemon::state::RepoState;
-use metafolder_daemon::{db, query_exec, reconcile, repo};
+use metafolder_daemon::{db, reconcile, repo};
+use metafolder_query_oracle as query_exec;
 use uuid::Uuid;
 
 mod common;

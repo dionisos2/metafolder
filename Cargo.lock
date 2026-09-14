@@ -2290,6 +2290,7 @@ dependencies = [
  "infer",
  "lofty",
  "metafolder-core",
+ "metafolder-query-oracle",
  "nom-exif",
  "notify",
  "regex",
@@ -2328,6 +2329,19 @@ dependencies = [
  "ureq",
  "uuid",
  "webkit2gtk",
+]
+
+[[package]]
+name = "metafolder-query-oracle"
+version = "0.3.0"
+dependencies = [
+ "anyhow",
+ "metafolder-core",
+ "metafolder-daemon",
+ "regex",
+ "rusqlite",
+ "serde_json",
+ "uuid",
 ]
 
 [[package]]

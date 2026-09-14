@@ -13,8 +13,9 @@ use metafolder_core::query::{Aspect, FollowTarget, Query};
 use metafolder_daemon::db;
 use metafolder_daemon::index::{RepoIndex, SortBy};
 use metafolder_daemon::log::Writer;
-use metafolder_daemon::query_exec::{self, SortKey, SortOrder};
+use metafolder_daemon::query_result::{SortKey, SortOrder};
 use metafolder_daemon::tree_cache::TreeCache;
+use metafolder_query_oracle as query_exec;
 use rusqlite::Connection;
 
 /// Deterministic, reproducible pseudo-random (no Math.random / clock).

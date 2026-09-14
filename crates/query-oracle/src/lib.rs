@@ -1,41 +1,38 @@
-//! Query compilation and execution (spec-query). A `Query` compiles to a CTE
-//! chain — one CTE per node — over the EAV `field` table; the result is
-//! restricted to metarecords owned exclusively by the current repository.
-//! `Follows`/`FollowsTransitive` path targets are resolved through the tree
-//! cache before SQL generation (hybrid execution). Sorting and keyset
-//! pagination follow spec-data-model "Pagination".
+//! The SQL query engine — the **oracle** the bitmap index is validated against
+//! (spec-indexing "It stays as the oracle").
+//!
+//! A `Query` compiles to a CTE chain — one CTE per node — over the EAV `field`
+//! table, restricted to metarecords owned exclusively by the current
+//! repository; `Follows`/`FollowsTransitive` path targets and the `:path`
+//! aspect are resolved through the tree cache before SQL generation (hybrid
+//! execution); sorting and keyset pagination follow spec-data-model
+//! "Pagination".
+//!
+//! It served every query the bitmap index declined, until nothing was left to
+//! decline. It is now a *second implementation* of the same questions, kept
+//! because a shape no oracle cross-checks rots unnoticed — `MATCHES` under the
+//! `:parent` aspect answered the `:value` question for as long as the index
+//! declined the aspect and the comparison was therefore never made. This crate
+//! is a dev-dependency of the daemon and of nothing else, so no shipped binary
+//! links it.
 
 use anyhow::Result;
 use rusqlite::types::Value as SqlValue;
 use rusqlite::Connection;
-use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
-use metafolder_core::metarecord::{Field, MetaRecord, Value, ZERO_UUID};
+use metafolder_core::metarecord::{Value, ZERO_UUID};
 use metafolder_core::query::{Aspect, FollowTarget, OsmMode, Query};
 
-use crate::db;
-use crate::error::ApiError;
-use crate::pagination::{self, Cursor};
-use crate::tree_cache::TreeCache;
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "lowercase")]
-pub enum SortOrder {
-    Asc,
-    Desc,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct SortKey {
-    pub field: String,
-    #[serde(default = "default_order")]
-    pub order: SortOrder,
-}
-
-fn default_order() -> SortOrder {
-    SortOrder::Asc
-}
+use metafolder_daemon::db;
+use metafolder_daemon::error::ApiError;
+use metafolder_daemon::pagination::{self, Cursor};
+use metafolder_daemon::query_result::{osm_regex, SortKey, SortOrder};
+use metafolder_daemon::query_validate::{
+    check_query_size, too_wide_message, validate_query, validate_query_types,
+    MAX_COMBINATOR_OPERANDS,
+};
+use metafolder_daemon::tree_cache::TreeCache;
 
 /// Sentinel replacing NULL numeric key components so that keyset comparisons
 /// stay two-valued. A NULL component only ever meets another NULL (the
@@ -50,7 +47,7 @@ const NUM_SENTINEL: &str = "-9e99";
 ///
 /// Each step prepends the parent's name, so a row's *terminal* tuple — the one
 /// the walk could not extend — carries the components of its whole path joined
-/// by [`crate::tree_cache::PATH_KEY_SEP`], a separator below every character a
+/// by [`metafolder_daemon::tree_cache::PATH_KEY_SEP`], a separator below every character a
 /// name can hold, which makes a plain byte comparison of two keys a
 /// component-by-component comparison of the two paths (spec-data-model "Sorting
 /// a `TreeRef` field").
@@ -66,8 +63,8 @@ const NUM_SENTINEL: &str = "-9e99";
 ///   a root — so the walk stops there too, which is what the terminal predicate
 ///   [`path_key_terminal`] adds to "the parent is the root sentinel".
 fn path_key_cte(i: usize) -> String {
-    let sep = crate::tree_cache::PATH_KEY_SEP as u32;
-    let max_depth = crate::log::MAX_TREE_DEPTH;
+    let sep = metafolder_daemon::tree_cache::PATH_KEY_SEP as u32;
+    let max_depth = metafolder_daemon::log::MAX_TREE_DEPTH;
     format!(
         "SELECT f.id, f.value_uuid, f.value_name, 0 \
            FROM field f JOIN _res ON _res.uuid = f.metarecord_uuid \
@@ -101,198 +98,12 @@ const FIRST_TREE_ROW: &str = "SELECT MIN(x.id) FROM field x \
 /// ([`metafolder_core::metarecord::ZERO_UUID`]), as a SQL blob literal.
 const ZERO_BLOB_SQL: &str = "x'00000000000000000000000000000000'";
 
-/// Upper bound on the number of nodes in a single query. A safety valve
-/// against a query that is cheap to send but expensive to *compile* (a wide
-/// `And`/`Or`, deep nesting): it would otherwise build a giant CTE chain and
-/// tie up a blocking thread before any row is read. Generous on purpose —
-/// realistic hand- or UI-built queries are well under it; a membership filter
-/// over a very large value list (an `Or` of many `Eq`) should be decomposed
-/// (and a future native `In` operator would make it O(1) nodes — see
-/// docs/review-followups.md).
-pub const MAX_QUERY_NODES: usize = 2000;
-
-/// Maximum number of operands in a single `And`/`Or`. Each operand becomes one
-/// term of a SQLite compound `SELECT` (`UNION`/`INTERSECT`), bounded by
-/// `SQLITE_MAX_COMPOUND_SELECT` (default 500); beyond it SQLite fails the whole
-/// statement with an opaque "too many terms in compound SELECT" error, so we
-/// reject early with a clear message. (Nest or decompose, or use a future
-/// native `In` operator — see docs/review-followups.md §8.)
-pub const MAX_COMBINATOR_OPERANDS: usize = 500;
-
-/// Total number of nodes in a query tree, counting boolean operands and follow
-/// sub-conditions. Recursion is bounded: the JSON deserializer caps query
-/// nesting depth, so a parsed `Query` is shallow enough to walk safely.
-fn node_count(q: &Query) -> usize {
-    let children: usize = match q {
-        Query::And { operands } | Query::Or { operands } => operands.iter().map(node_count).sum(),
-        Query::Not { operand } => node_count(operand),
-        Query::Follows { target, .. } | Query::FollowsTransitive { target, .. } => match target {
-            FollowTarget::Condition(c) => node_count(c),
-            FollowTarget::Path(_) => 0,
-        },
-        Query::SameAs { target, .. } => node_count(target),
-        _ => 0, // leaf predicates
-    };
-    1 + children
-}
-
-/// The widest single `And`/`Or` anywhere in the tree.
-fn widest_combinator(q: &Query) -> usize {
-    let (here, children): (usize, Vec<&Query>) = match q {
-        Query::And { operands } | Query::Or { operands } => {
-            (operands.len(), operands.iter().collect())
-        }
-        Query::Not { operand } => (0, vec![operand]),
-        Query::Follows { target, .. } | Query::FollowsTransitive { target, .. } => match target {
-            FollowTarget::Condition(c) => (0, vec![c.as_ref()]),
-            FollowTarget::Path(_) => (0, Vec::new()),
-        },
-        Query::SameAs { target, .. } => (0, vec![target.as_ref()]),
-        _ => (0, Vec::new()),
-    };
-    children.into_iter().map(widest_combinator).fold(here, usize::max)
-}
-
-/// The message [`MAX_COMBINATOR_OPERANDS`] is rejected with, worded once so the
-/// upfront check and the compiler's own guard say the same thing.
-pub(crate) fn too_wide_message(got: usize) -> String {
-    format!(
-        "a single 'and'/'or' may have at most {MAX_COMBINATOR_OPERANDS} operands \
-         (got {got}); nest or decompose it"
-    )
-}
-
-/// Rejects an over-large query before compiling it (spec-query "Limits").
-///
-/// Both limits are checked here, and this must run *before the engine is
-/// chosen*: whether a query is too large is a property of the query, not of
-/// which engine ends up serving it. The width limit used to live only inside
-/// the SQL compiler, so a wide `or` of index-servable leaves was accepted while
-/// the same `or` with one `matches` leaf — which forces the SQL fallback — was
-/// rejected. A client cannot see that routing decision, so it saw the limit
-/// flicker on and off.
-pub fn check_query_size(q: &Query) -> Result<(), ApiError> {
-    let n = node_count(q);
-    if n > MAX_QUERY_NODES {
-        return Err(ApiError::bad_request(format!(
-            "query too large ({n} nodes, maximum {MAX_QUERY_NODES}); decompose it into smaller queries"
-        )));
-    }
-    let widest = widest_combinator(q);
-    if widest > MAX_COMBINATOR_OPERANDS {
-        return Err(ApiError::bad_request(too_wide_message(widest)));
-    }
-    Ok(())
-}
-
-/// Validates a query's comparison nodes *upfront* — independent of which engine
-/// (bitmap index or SQL) runs it — and rejects the ones with no well-defined,
-/// useful meaning (spec-query "Comparison validity"):
-///
-/// - a comparison against `Nothing` (use `is_absent` / `is_unknown` instead);
-/// - an *ordered* comparison (`<` `<=` `>` `>=`) on a value type that has no
-///   meaningful order: `bool` and the reference types. Equality (`eq`/`neq`)
-///   stays allowed on them, and ordered comparison stays allowed on strings,
-///   numbers and datetimes.
-///
-/// This is the single source of truth: the SQL engine's per-row checks and the
-/// index's `Unsupported` branches for these shapes are now defensive backstops.
-/// Callers run this before touching either engine so the rejection never has to
-/// emerge from an engine-selection fallback.
-pub fn validate_query(q: &Query) -> Result<(), ApiError> {
-    match q {
-        Query::Eq { value, .. } | Query::Neq { value, .. } => validate_comparison(value, false),
-        Query::Lt { value, .. }
-        | Query::Lte { value, .. }
-        | Query::Gt { value, .. }
-        | Query::Gte { value, .. } => validate_comparison(value, true),
-        Query::And { operands } | Query::Or { operands } => {
-            // An empty combinator has no meaning to give — neither "everything"
-            // nor "nothing" is more right — and it is a property of the IR, so
-            // it is refused here rather than by whichever engine noticed first.
-            if operands.is_empty() {
-                return Err(ApiError::bad_request("'and'/'or' need at least one operand"));
-            }
-            operands.iter().try_for_each(validate_query)
-        }
-        Query::Not { operand } => validate_query(operand),
-        Query::Follows { target, .. } | Query::FollowsTransitive { target, .. } => match target {
-            FollowTarget::Condition(c) => validate_query(c),
-            FollowTarget::Path(_) => Ok(()),
-        },
-        Query::SameAs { target, .. } => validate_query(target),
-        // A pattern that does not compile is a property of the IR, not of an
-        // engine: reject it here, so no engine has to be the one that notices.
-        Query::Matches { pattern, .. } => crate::regexp::compile(pattern)
-            .map(|_| ())
-            .map_err(|e| ApiError::bad_request(format!("invalid regex pattern: {e}"))),
-        _ => Ok(()),
-    }
-}
-
-fn validate_comparison(value: &Value, ordered: bool) -> Result<(), ApiError> {
-    match value {
-        Value::Nothing => Err(ApiError::bad_request(
-            "comparisons with 'nothing' are not allowed; use is_absent / is_unknown",
-        )),
-        Value::Bool(_)
-        | Value::Ref(_)
-        | Value::RefBase(_)
-        | Value::TreeRef { .. }
-        | Value::ExternalRef { .. }
-            if ordered =>
-        {
-            Err(ApiError::bad_request(format!(
-                "ordered comparison is not supported on {} values",
-                db::encode_value(value).value_type
-            )))
-        }
-        _ => Ok(()),
-    }
-}
-
-/// Assembles the `select`-projected JSON objects for a page of result UUIDs,
-/// polling `cancel` every few hundred rows so a long assembly (the dominant cost
-/// of a `select=*` query over many matches) can be stopped (spec-tasks
-/// "Cancellation"). `fields_filter = None` keeps every field; `Some(list)` keeps
-/// only the named ones. Pass `&|| false` for uncancellable callers.
-pub fn assemble_selected(
-    conn: &Connection,
-    uuids: &[Uuid],
-    fields_filter: Option<&[String]>,
-    cancel: &dyn Fn() -> bool,
-) -> Result<Vec<serde_json::Value>, ApiError> {
-    // Batched reads: the whole page's versions and field rows in a couple of
-    // `IN (…)` scans, not a query per metarecord.
-    let versions = db::versions_for(conn, uuids)?;
-    let mut rows = db::field_rows_for(conn, uuids)?;
-    let mut objects = Vec::with_capacity(uuids.len());
-    for (i, &uuid) in uuids.iter().enumerate() {
-        if i % 256 == 0 && cancel() {
-            return Err(ApiError::conflict("query cancelled"));
-        }
-        let version = *versions
-            .get(&uuid)
-            .ok_or_else(|| ApiError::not_found(format!("Metarecord not found: {uuid}")))?;
-        let fields: Vec<Field> = rows
-            .remove(&uuid)
-            .unwrap_or_default()
-            .into_iter()
-            .filter(|r| fields_filter.is_none_or(|f| f.contains(&r.name)))
-            .map(|r| Field { id: Some(r.id), name: r.name, value: r.value })
-            .collect();
-        let metarecord = MetaRecord { uuid, version, fields };
-        objects.push(serde_json::to_value(metarecord).expect("metarecord serialization"));
-    }
-    Ok(objects)
-}
-
 /// Counts the matching metarecords without fetching them: the same CTE chain
 /// as `execute`, wrapped in a `COUNT(*)` (no sort CTEs, no pagination).
 pub fn count(conn: &Connection, cache: &mut TreeCache, query: &Query) -> Result<usize, ApiError> {
     check_query_size(query)?;
     validate_query(query)?;
-    crate::query_validate::validate_query_types(query, &|f| stored_type(conn, f).ok().flatten())?;
+    validate_query_types(query, &|f| stored_type(conn, f).ok().flatten())?;
     let mut compiler = Compiler::new(conn, cache);
     let last = compiler.compile_node(query)?;
     let Compiler { ctes, params, .. } = compiler;
@@ -323,7 +134,7 @@ pub fn execute(
     }
     check_query_size(query)?;
     validate_query(query)?;
-    crate::query_validate::validate_query_types(query, &|f| stored_type(conn, f).ok().flatten())?;
+    validate_query_types(query, &|f| stored_type(conn, f).ok().flatten())?;
 
     // The cursor is bound to the exact (query, sort) pair that produced it.
     let hash = pagination::context_hash(&[
@@ -586,7 +397,7 @@ pub fn osm_name_nodes(conn: &Connection, field: &str, term: &str) -> Result<Vec<
         Ok(out)
     };
     if term.chars().count() >= 3 {
-        let phrase = crate::fts::match_phrase(term);
+        let phrase = metafolder_daemon::fts::match_phrase(term);
         collect(
             "SELECT DISTINCT metarecord_uuid FROM field \
              WHERE field_name = ?1 AND value_type = 'tree_ref' \
@@ -738,15 +549,6 @@ fn osm_path_matches_unordered(
     Ok(matched)
 }
 
-/// The case-insensitive ordered-substring regex for OSM `Direct` mode:
-/// `["con", "def"]` → `(?i)con.*def`. Terms are regex-escaped; empty `terms`
-/// yields `(?i)`, which matches any string ("present" semantics). Unanchored
-/// (`REGEXP` searches), so this is exactly "con then def, non-overlapping".
-pub(crate) fn osm_regex(terms: &[String]) -> String {
-    let body = terms.iter().map(|t| regex::escape(t)).collect::<Vec<_>>().join(".*");
-    format!("(?i){body}")
-}
-
 fn hex_decode(s: &str) -> Result<Vec<u8>, ApiError> {
     if !s.len().is_multiple_of(2) {
         return Err(ApiError::bad_request("invalid cursor"));
@@ -869,12 +671,12 @@ impl<'a> Compiler<'a> {
     /// answered from the tree cache and inlined, anything else is a REGEXP scan
     /// narrowed by the FTS5 trigram pre-filter.
     fn matches(&mut self, field: &str, pattern: &str, aspect: Aspect) -> Result<String, ApiError> {
-        crate::regexp::compile(pattern)
+        metafolder_daemon::regexp::compile(pattern)
             .map_err(|e| ApiError::bad_request(format!("invalid regex pattern: {e}")))?;
         if aspect == Aspect::Path {
             // Hybrid, like osm path mode: the assembled paths are built
             // through the tree cache and the matching uuids inlined.
-            let re = crate::regexp::compile(pattern)
+            let re = metafolder_daemon::regexp::compile(pattern)
                 .map_err(|e| ApiError::bad_request(format!("invalid regex pattern: {e}")))?;
             let matched = self.path_matches(field, &|path: &str| re.is_match(path))?;
             return self.inline_uuids(matched);
@@ -888,9 +690,9 @@ impl<'a> Compiler<'a> {
         // was measured *slower* once wrapped in the repo-isolation CTE,
         // so the membership test is kept as the spec describes.)
         self.push_text(field);
-        let prefilter = match crate::fts::required_fts_literal(pattern) {
+        let prefilter = match metafolder_daemon::fts::required_fts_literal(pattern) {
             Some(literal) => {
-                self.push_text(&crate::fts::match_phrase(&literal));
+                self.push_text(&metafolder_daemon::fts::match_phrase(&literal));
                 "id IN (SELECT rowid FROM field_text WHERE text MATCH ?) AND "
             }
             None => "",
@@ -1107,7 +909,7 @@ impl<'a> Compiler<'a> {
         let long: Vec<String> = terms
             .iter()
             .filter(|t| t.chars().count() >= 3)
-            .map(|t| crate::fts::match_phrase(t))
+            .map(|t| metafolder_daemon::fts::match_phrase(t))
             .collect();
         let prefilter = if long.is_empty() {
             ""
@@ -1229,7 +1031,7 @@ impl<'a> Compiler<'a> {
         let Value::String(operand) = value else {
             return Err(ApiError::bad_request(format!(
                 "the ':path' aspect compares against a string, got {}",
-                db::encode_value(value).value_type
+                value.type_str()
             )));
         };
         let operand = operand.clone();
@@ -1252,7 +1054,7 @@ impl<'a> Compiler<'a> {
         let Value::String(operand) = value else {
             return Err(ApiError::bad_request(format!(
                 "the ':path' aspect compares against a string, got {}",
-                db::encode_value(value).value_type
+                value.type_str()
             )));
         };
         let operand = operand.clone();
@@ -1456,63 +1258,5 @@ mod tests {
             let back = float_from_cursor(&serde_json::from_slice(&json).unwrap()).unwrap();
             assert_eq!(f.to_bits(), back.to_bits(), "diverged at {f}");
         }
-    }
-
-    #[test]
-    fn query_node_count_and_size_limit() {
-        let leaf = || Query::IsPresent { field: "x".into(), aspect: Aspect::Raw };
-        assert_eq!(node_count(&leaf()), 1);
-
-        // 1 (Or) + 5 leaves; nesting and follow conditions also count.
-        let nested = Query::And {
-            operands: vec![
-                leaf(),
-                Query::Not { operand: Box::new(leaf()) },
-                Query::FollowsTransitive {
-                    field: "mfr_path".into(),
-                    target: FollowTarget::Condition(Box::new(leaf())),
-                    inclusive: false,
-                },
-            ],
-        };
-        // And + leaf + (Not + leaf) + (FollowsTransitive + leaf) = 6
-        assert_eq!(node_count(&nested), 6);
-
-        // At the node limit passes; one over is rejected. Nested, because the
-        // two limits are independent: a flat `Or` of 1999 operands is under the
-        // node limit but far over the per-combinator one, so it could not
-        // exercise the node limit at all.
-        let chunk = |n: usize| Query::Or { operands: (0..n).map(|_| leaf()).collect() };
-        let at_limit = Query::Or { operands: vec![chunk(499), chunk(499), chunk(499), chunk(498)] };
-        assert_eq!(node_count(&at_limit), MAX_QUERY_NODES);
-        assert!(check_query_size(&at_limit).is_ok());
-
-        let over = Query::Or { operands: vec![chunk(499), chunk(499), chunk(499), chunk(499)] };
-        assert_eq!(node_count(&over), MAX_QUERY_NODES + 1);
-        let err = check_query_size(&over).unwrap_err();
-        assert_eq!(err.status, axum::http::StatusCode::BAD_REQUEST);
-        assert!(err.message.contains("too large"), "unexpected error: {}", err.message);
-    }
-
-    #[test]
-    fn query_size_check_also_bounds_combinator_width() {
-        // The width limit is checked upfront, next to the node limit, so it
-        // holds whichever engine ends up serving the query — it used to live
-        // only inside the SQL compiler, where the index path never reached it.
-        let leaf = || Query::IsPresent { field: "x".into(), aspect: Aspect::Raw };
-        let wide = |n: usize| Query::Or { operands: (0..n).map(|_| leaf()).collect() };
-
-        assert!(check_query_size(&wide(MAX_COMBINATOR_OPERANDS)).is_ok());
-        let err = check_query_size(&wide(MAX_COMBINATOR_OPERANDS + 1)).unwrap_err();
-        assert_eq!(err.status, axum::http::StatusCode::BAD_REQUEST);
-        assert!(err.message.contains("at most"), "unexpected error: {}", err.message);
-
-        // Found however deeply it is buried, not just at the root.
-        let buried = Query::Not {
-            operand: Box::new(Query::And {
-                operands: vec![leaf(), wide(MAX_COMBINATOR_OPERANDS + 1)],
-            }),
-        };
-        assert!(check_query_size(&buried).is_err(), "a nested wide combinator slipped through");
     }
 }

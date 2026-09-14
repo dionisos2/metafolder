@@ -26,7 +26,7 @@ use crate::error::ApiError;
 use crate::log::Writer;
 use crate::orphans;
 use crate::pagination::Page;
-use crate::query_exec::{self, SortKey};
+use crate::query_result::SortKey;
 use crate::repo::RepoLocator;
 use crate::reserved;
 use crate::state::{AppState, RepoState, RollbackLock};
@@ -3048,8 +3048,8 @@ fn resolve_query_uuids(
     cancel: &dyn Fn() -> bool,
 ) -> Result<Vec<Uuid>, ApiError> {
     let _phase = slowlog::phase("resolve.uuids");
-    query_exec::validate_query(query)?;
-    query_exec::check_query_size(query)?;
+    crate::query_validate::validate_query(query)?;
+    crate::query_validate::check_query_size(query)?;
     let mut index_guard = slowlog::timed("wait:index", || repo_state.index.lock_recover());
     let index = ensure_index(conn, &mut index_guard, cancel)?;
     crate::query_validate::validate_query_types(query, &|f| index.value_type(f))?;
@@ -3090,8 +3090,8 @@ fn run_query_filter(
     // Reject ill-defined comparisons and over-large queries upfront, before
     // choosing an engine, so neither rejection depends on the index→SQL
     // fallback path (spec-query "Limits", "Comparison validity").
-    query_exec::validate_query(&body.query)?;
-    query_exec::check_query_size(&body.query)?;
+    crate::query_validate::validate_query(&body.query)?;
+    crate::query_validate::check_query_size(&body.query)?;
     // The rejections that need the field's type follow, as soon as the index is
     // in hand — and *before* the preparation, which would otherwise rewrite an
     // invalid leaf into the empty set it matches and answer "no rows" where the
@@ -3102,7 +3102,7 @@ fn run_query_filter(
         .iter()
         .map(|k| crate::index::SortBy {
             field: k.field.clone(),
-            ascending: matches!(k.order, query_exec::SortOrder::Asc),
+            ascending: matches!(k.order, crate::query_result::SortOrder::Asc),
         })
         .collect();
 
@@ -3196,7 +3196,12 @@ fn run_query_inner(
                     SelectSpec::Fields(list) => Some(list.clone()),
                 };
                 slowlog::timed("assemble", || {
-                    query_exec::assemble_selected(&conn, &uuids, fields_filter.as_deref(), &cancel)
+                    crate::query_result::assemble_selected(
+                        &conn,
+                        &uuids,
+                        fields_filter.as_deref(),
+                        &cancel,
+                    )
                 })?
             }
         };
