@@ -106,7 +106,7 @@ calibration ([[*Calibration]]).
 | =bitmap.leaf=       | =R_f= (equality) / =V_f= (ordered) | bucket union                | —                            | =t_bit=   |
 | =bitmap.combine=    | Σ operand cardinalities            | AND/OR/NOT over containers  | —                            | =t_bit=   |
 | =follow.transitive= | =D= ops (index) / =T_n= rows (SQL) | iterative bitmap expansion  | materialises the subtree §7  | =t_bit= / =t_row= |
-| =fts.scan=          | =C= with a literal, else =R_f=     | caller-side pre-resolution  | same pass                    | =t_regexp= |
+| =fts.scan=          | =C= with a literal, else =R_f=     | value scan or pre-resolved  | same pass                    | =t_regexp= |
 | =sql.scan=          | =R_f= per value predicate          | —                           | no index on the value columns | =t_row=  |
 | =sort=              | =K= reps + =K log K=               | BSI representatives         | window functions             | =t_sort=  |
 | =count=             | 0 (index) / one full filter (SQL)  | O(1) from the bitmap        | re-runs the CTE chain        | —         |
@@ -128,6 +128,71 @@ the table exists rather than a single number:
   =REGEXP=. Which of the two, and why, is the single most actionable thing this
   endpoint can report: it is the one the user can fix, by rewriting the pattern.
 
+** What each category is
+
+The table above prices the work; this one says what the work *is*: which query
+shape raises a category, and what each engine runs for it. It is the answer to
+"what is a =seed=", and to "why does this query carry an =fts.scan=".
+
+| Category            | Raised by                            | In SQL                              | In the index                      |
+|---------------------+--------------------------------------+-------------------------------------+-----------------------------------|
+| =seed=              | =->= / =->*= path target, exact node | none — =TreeCache::resolve_path=    | the same lookup, in =QueryRoots=  |
+| =bitmap.leaf=       | a comparison / presence leaf         | — (it is the =sql.scan= row)        | union of the operand's buckets    |
+| =bitmap.combine=    | =and= / =or= / =not=                 | =INTERSECT= / =UNION= / =EXCEPT=    | Roaring =&=, =\|=, universe =-=   |
+| =follow.transitive= | =->*=, ~=>*~, 1-term =osm= path      | cache-walked descendants, =VALUES=  | expansion over children bitmaps   |
+| =fts.scan=          | =matches=, =osm= =direct=            | =REGEXP= scan, FTS5-narrowed        | the regex over distinct values    |
+| =sql.scan=          | presence, comparison, =same=, =->=   | one =field= scan per =field_name=   | — (it is the =bitmap.leaf= row)   |
+| =path.assemble=     | the =:path= aspect, multi-term =osm= | per-node paths, matches as =VALUES= | not served (pre-resolved, or SQL) |
+| =sort=              | each =sort= key                      | the =_p{i}= / =_s{i}= CTEs          | one rep per id, then the page     |
+| =count=             | =count: true=                        | the chain re-run as =COUNT(*)=      | =matched.len()=, O(1)             |
+| =assemble=          | always, for the page's uuids         | =versions_for= + =field_rows_for=   | identical (after the choice)      |
+
+The SQL column, verbatim — this is what a term of each category stands for:
+
+#+BEGIN_SRC sql
+  -- sql.scan: one leaf. `(field_name, ...)` is indexed and the value columns are
+  -- not, so this reads the rows of that one field name, whatever the predicate.
+  SELECT DISTINCT metarecord_uuid AS uuid FROM field
+   WHERE field_name = ? AND (<value predicate>)
+
+  -- fts.scan: the same scan under REGEXP. The `id IN (...)` line is present only
+  -- when `fts::required_fts_literal` found a mandatory literal of 3+ characters;
+  -- without it every row of the field is re-checked. That is the cliff.
+  SELECT DISTINCT metarecord_uuid AS uuid FROM field
+   WHERE field_name = ?
+     AND id IN (SELECT rowid FROM field_text WHERE text MATCH ?)
+     AND ((value_type = 'string'   AND value_text REGEXP ?) OR
+          (value_type = 'tree_ref' AND value_name REGEXP ?))
+
+  -- follow.transitive / path.assemble: hybrid. The forest work happens in the
+  -- tree cache and only its result reaches SQL, as inline literals.
+  SELECT column1 AS uuid FROM (VALUES (x'<uuid>'), (x'<uuid>'), ...)
+
+  -- sort, per key: the representative row (min asc / max desc) of the *filtered*
+  -- universe, plus `_p{i}` reassembling a tree_ref's whole path.
+  _s{i} AS (SELECT uuid, present, grp, vnum, vtext, vblob FROM (
+              SELECT _res.uuid, ...,
+                     ROW_NUMBER() OVER (PARTITION BY _res.uuid
+                                        ORDER BY <grp> <dir>, <num> <dir>, ...) AS rn
+                FROM _res LEFT JOIN field ON field.metarecord_uuid = _res.uuid
+                                         AND field.field_name = ?
+                                         AND field.value_type != 'nothing'
+                          LEFT JOIN _p{i} ON <terminal>) WHERE rn = 1)
+#+END_SRC
+
+Two rows read differently on the two engines, and that is where an estimate goes
+wrong if the distinction is dropped:
+
+- =fts.scan= *is not the same work on both sides.* SQL re-checks *rows* (=R_f=,
+  or =C= behind the trigram pre-filter); the index tests *values* (=V_f=), with
+  no FTS involved at all. On a field whose values repeat — a tag, an extension, a
+  directory name — those are different orders of magnitude, and only the SQL form
+  has the literal/no-literal cliff.
+- =path.assemble= *is a walk of the forest, not of the match set.* A =:path=
+  comparison or a multi-term =osm= path rebuilds the path of every node of the
+  field before testing any of them, on either engine. It has no row in the cost
+  table yet (see [[*Open questions]]).
+
 ** Totals
 
 : relative = Σ count_i × weight_i
@@ -137,6 +202,77 @@ the table exists rather than a single number:
 =relative= is comparable across machines and across versions of the same
 repository. =duration= is =relative= priced with the local constants, and is
 reported as a *band*, never a figure: a user reads "1.5 s" as a promise.
+
+* Which engine runs it
+
+=engine= is the first thing the response says, and it does not report a
+preference: the daemon *always* tries the bitmap index, and the SQL engine is
+its fallback (=routes::run_query_filter=). "Both are possible" is therefore not
+a decision point — the index wins whenever it can answer, and what explain has
+to describe is the outcome of a three-step rule.
+
+1. *Preparation*, engine-independent (=prepare_indexed_query=): the path seeds
+   are resolved through the tree cache, and some text leaves are rewritten to
+   the uuid set they match.
+2. *The index is tried* on the prepared query. Every IR variant is handled
+   there; what is left to SQL is a property of an *operand* — an unresolved
+   path, a pattern the index cannot compile, a comparison the encoding cannot
+   answer — never of a node type.
+3. *A coverage gap falls back*, and only a coverage gap: the query re-runs on
+   the SQL engine, from the *original* query (the un-prepared one). A *state*
+   gap — an accelerator not in the shape a serving repository guarantees — is a
+   =500=, never a silent fallback to an engine that would answer anyway.
+
+The choice is a function of the query shape alone: the =count= flag does not
+change the preparation, precisely so that page 1 and page 2 cannot land on
+different engines and reject each other's cursor. Explain's answer is stable for
+a whole paginated session.
+
+** What forces the SQL path
+
+Each row is one =Unsupported= a leaf can raise; =fallback[]= reports it verbatim,
+with the address of the leaf that raised it.
+
+| Operand / shape                           | Reported as                          | Why the index defers                              |
+|-------------------------------------------+--------------------------------------+---------------------------------------------------|
+| the =:parent= aspect, anywhere            | ="the ':parent' aspect"=             | the parent uuid lives in the tree cache           |
+| the =:path= aspect, anywhere              | ="the ':path' aspect"=               | idem for the assembled path                       |
+| a field seen only through =Nothing=       | ="... field with no indexed values"= | no value partition; empty would be a wrong answer |
+| a shape SQL answers with a =400= (below)  | the matching message                 | the rejection has one author, and it is SQL       |
+| a multi-term =osm= path, not pre-resolved | ="multi-term osm path"=              | ordered matching runs on assembled paths          |
+| an unresolved path target / exact node    | ="path-target follows"=              | only when the caller skipped the preparation      |
+| a cursor from another (query, sort)       | ="cursor does not match ..."=        | SQL then rejects it on its own encoding           |
+
+The =400= shapes the index hands over rather than answering: an ordered
+comparison on a =bool=, on a reference, or on a bare =tree_ref=; =matches= on a
+bare =tree_ref=; an =osm= path on a non-=tree_ref= field; an empty =and= / =or=;
+a pattern that does not compile. The index could report several of them itself,
+and deliberately does not — one query, one author of its error.
+
+The *state* gaps are not in this table on purpose: ="tree_ref sort without a
+resident forest"=, or a missing index on a repository that is serving, are daemon
+bugs. They are a =500=, and explain reports them as such rather than as a plan.
+
+** What keeps a query on the index
+
+The preparation is what makes a query that *reads* like a fallback shape stay on
+the index. It is also why one query can carry both an =fts.scan= and =bitmap.*=
+terms: one leaf ran in SQL, the rest of the tree on bitmaps.
+
+| Preparation step                 | Applies to                          | Effect                               |
+|----------------------------------+-------------------------------------+--------------------------------------|
+| path targets → =QueryRoots.path= | =->= / =->*= with a path target     | one =seed=, instead of a fallback    |
+| exact nodes → =QueryRoots.node=  | =mfr_path = "/a/b"= and its =!==    | idem — "no such node" ≠ "defer"      |
+| =resolve_index_leaves=           | =matches=, =osmd=, multi-term =osm= | the leaf becomes an inline =uuid_in= |
+| =SortKeys= from the forest       | a =tree_ref= sort key               | the path keys no BSI can hold        |
+
+The third one is conditional, and explain must apply the same condition: the text
+leaves are pre-resolved only for a whole-set resolution, or when the query holds
+an =osm= path leaf. Elsewhere a =matches= leaf is served by the index's own
+in-memory value scan — which is why the two are one category with two counts.
+
+A client reading =engine: "index"= next to a non-empty =fts.scan= term is looking
+at exactly this: the query is index-served, and one leaf was paid for in SQL.
 
 * State is reported, never estimated
 
@@ -261,6 +397,11 @@ is what a client should gate on anyway.
 - *=T_n= without walking.* A subtree size is O(subtree) to count unless the tree
   cache keeps sizes at its nodes. Until it does, the =follow.transitive= SQL term
   is an estimate too.
+- *Pricing =path.assemble=.* The =:path= aspect and a multi-term =osm= path walk
+  the whole forest to rebuild paths before testing them, on either engine. The
+  cost table has no row for it, so a query whose only expensive leaf is a path
+  comparison is currently under-priced; it needs a count (nodes of the field ×
+  average depth) and a constant of its own.
 - *Exposing =weight_i=.* Keeping the weights internal makes =relative= a black
   box; publishing them makes them contract. Start internal, publish if a client
   needs to reproduce the arithmetic.
