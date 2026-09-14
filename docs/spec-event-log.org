@@ -11,8 +11,9 @@ that enables:
 - *Rollback*: navigating the history tree to any past or future state.
 - *Revert*: undoing one past revision or operation in place, by writing the
   state it replaced as a new revision rather than by moving HEAD.
-- *Undo*: undoing the newest change /the user/ made, choosing between the two
-  mechanisms above according to what has been written since (see [[*Undo]]).
+- *Undo* / *Redo*: taking back the newest change /the user/ made — and taking
+  that back in turn — choosing between the two mechanisms above according to
+  what has been written since (see [[*Undo]], [[*Redo]]).
 - *Non-destructive branching*: after rolling back, any new write creates a new
   branch — previously "future" operations are never lost.
 
@@ -338,6 +339,53 @@ The log is read in two bounded passes (500 operations, then 20 000) rather than
 one unbounded one: after a large reconcile an unbounded ancestry is millions of
 rows, and a repository whose last manual change is older than the second window
 is told so rather than scanned in full.
+
+** Redo
+
+Redo is the mirror of [[*Undo]]: where undo looks for the newest change the user
+made and takes it back, redo looks for the newest *undo* and takes *that* back.
+It has to survive the same thing undo does — the watcher writing in between —
+which is why "move HEAD forward one revision" is no more sufficient than its
+inverse was.
+
+*** The selection
+
+Three cases, in order:
+
+1. *HEAD is not at a tip.* An earlier undo rolled it back and the operations it
+   unapplied are still in the log, ahead of it. Moving HEAD forward onto them is
+   the exact inverse of that rollback, and it is what redo has always meant.
+2. *HEAD sits in a revert, and nothing has been written since.* Rolling back
+   over it removes the undo as cleanly as it was made — no trace either way.
+3. *The newest revision the user wrote is a revert, with the daemon's own
+   revisions on top of it.* HEAD cannot be rewound over those, so the undo is
+   undone in place: a revert of the revert. This is the case redo exists for.
+
+Anything else is nothing to redo. In particular, when the newest revision the
+user wrote is an ordinary change rather than an undo, redo does nothing: it
+takes an undo back, it does not re-apply arbitrary history — that is what
+=mf rollback= is for.
+
+*** The two rules that keep it from oscillating
+
+Undo and redo move in opposite directions over the same revisions, so each needs
+a rule saying which ones are *not* theirs:
+
+- *A revert of a revert is a redo, not an undo.* Redo steps over those (case 3
+  looks for a revert of an /ordinary change/), or pressing it twice would undo
+  again. A target outside the read window counts as an ordinary change: the
+  conservative reading, which at worst offers a redo with nothing to take back.
+- *Case 1 never moves forward onto an undo.* What lies ahead of HEAD after a
+  redo-by-rollback (case 2) is precisely the revert that redo just stepped back
+  over; re-applying it would undo, and redo and undo would trade the same
+  revision back and forth forever.
+
+There is a third, shared with undo: an operation counts as undone only while the
+revert that undid it is *itself* still standing. A revert that has been reverted
+undid nothing any more, and the change it had taken back stands again. Liveness
+is therefore resolved along the whole revert chain, not read off a single
+=reverts_op_id=. Without it the pair does not compose: after undo → redo, undo
+would find its target "already undone" and refuse to take it back a second time.
 
 * Daemon
 
@@ -1643,6 +1691,35 @@ target; it does not change what the mechanism then does.
 
 The GUI's =log:undo= (=ctrl+z=) is the same selection, made against the same
 =core::undo= (spec-gui "Event log").
+
+** =mf log redo [plan]=
+
+Takes the newest undo back — the [[*Redo]] selection, on the command line. Like
+=mf log undo= it takes no target.
+
+*** Synopsis
+
+#+BEGIN_SRC
+mf log redo [options]
+mf log redo plan
+#+END_SRC
+
+*** Behaviour
+
+1. Reads =GET /log?mode=active= (the *active* line, not the ancestry: it carries
+   HEAD's forward continuation, which case 1 re-applies) twice at most, 500
+   operations then 20 000, and applies the [[*Redo]] selection.
+2. With =plan=, prints the mechanism and the revision, and writes nothing.
+3. =Forward=: runs =mf rollback --id <op>= on the last operation of the revision
+   ahead of HEAD.
+4. =Rollback=: runs =mf rollback= with the implicit previous-revision target.
+5. =Revert=: runs =mf revert= on the revert that undid the change.
+6. With nothing to take back, prints =Nothing to redo.= and exits =0=.
+
+*** Options
+
+The same as [[*=mf log undo [plan]=]], and passed on the same way: the flags
+belong to the mechanism redo picks, not to the picking.
 
 ** =mf rollback [<target>]=
 

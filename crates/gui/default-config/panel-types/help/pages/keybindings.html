@@ -152,13 +152,14 @@
 <p>Undo is <span data-mf-key="log:undo">Ctrl+z</span> from anywhere, not only in
   the panel: it undoes the newest change <em>you</em> made, rolling HEAD back
   when that is the last thing in the log and reverting in place when the watcher
-  has written since. See the <a data-help-page="log">log panel</a>.</p>
+  has written since. <span data-mf-key="log:redo">Ctrl+Shift+z</span> takes that
+  undo back the same way. See the <a data-help-page="log">log panel</a>.</p>
 
 <h2>Global &amp; editing</h2>
 <table>
   <tbody>
     <tr><td><span data-mf-key="command-input:activate">:</span> / <span data-mf-key="bash-input:activate">!</span></td><td>focus the command input / the shell (<code>!</code>) input</td></tr>
-    <tr><td><span data-mf-key="log:undo">Ctrl+z</span> / <span data-mf-key="log:redo">Ctrl+Shift+z</span></td><td>undo your newest change / redo what a rollback undid (<a data-help-page="log">log</a>)</td></tr>
+    <tr><td><span data-mf-key="log:undo">Ctrl+z</span> / <span data-mf-key="log:redo">Ctrl+Shift+z</span></td><td>take your newest change back / take that undo back (<a data-help-page="log">log</a>)</td></tr>
     <tr><td><span data-mf-key="find:in-panel">Ctrl+f</span></td><td><a data-help-page="find">find text</a> in the focused panel (<span data-mf-key="find:next">Enter</span> / <span data-mf-key="find:prev">Shift+Enter</span> step, <span data-mf-key="find:close">Escape</span> closes)</td></tr>
     <tr><td><span data-mf-key="recent">g r</span></td><td>jump to a <a data-help-page="recent">recently-viewed</a> metarecord</td></tr>
     <tr><td><span data-mf-key="script:run">g s</span> / <span data-mf-key="repos:switch">g o</span> / <span data-mf-key="file:open-with">g w</span></td><td>run a <a data-help-page="scripting">script</a> / open a repository / open the selection with another program</td></tr>

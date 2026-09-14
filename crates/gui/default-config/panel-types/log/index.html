@@ -141,7 +141,9 @@
       <button id="undo" title="Undo your last change: a rollback when it is the last thing in the log, a revert when the watcher has written since (ctrl+z)">
         Undo (log:undo)
       </button>
-      <button id="redo">Redo (log:redo)</button>
+      <button id="redo" title="Take the newest undo back: HEAD forward when the undo was a rollback, the undo itself undone when the watcher has written since (ctrl+shift+z)">
+        Redo (log:redo)
+      </button>
       <button id="rollback" disabled title="Move HEAD to the end of the selected revision — rollback, or redo forward">
         Go to selected (log:rollback)
       </button>

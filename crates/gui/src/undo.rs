@@ -7,46 +7,52 @@
 //! [`metafolder_core::undo`]'s, shared with `mf log undo`; this module only
 //! carries it out and reports it.
 //!
-//! Redo re-applies the revision ahead of HEAD in the operation tree (the most
-//! recent branch when several exist), which the daemon has no direct target
-//! for. It is the exact counterpart of an undo that rolled back; an undo that
-//! had to revert leaves HEAD at a tip, and is itself undone by reverting the
-//! revert (`log:revert` on it).
+//! Redo is its mirror: it takes back the newest *undo*, by moving HEAD forward
+//! onto what a rollback unapplied, by rolling back over the revert an undo
+//! wrote, or — when the watcher has written since — by reverting that revert.
+//! The choice is [`metafolder_core::undo::plan_redo`]'s, shared with
+//! `mf log redo`; this module only carries it out and reports it.
 
 use crate::daemon_proxy::DaemonProxy;
 use crate::state::GuiState;
-use metafolder_core::undo::{self, UndoPlan};
+use metafolder_core::undo::{self, RedoPlan, UndoPlan};
 use serde_json::{json, Value};
 use std::sync::Arc;
-
-/// The operation id to navigate to for a redo: the last operation of the
-/// revision of HEAD's most recent child. `None` when HEAD is at a tip
-/// (nothing to redo). A `head` of `None` redoes from the empty state.
-pub fn redo_target(operations: &[Value], head: Option<i64>) -> Option<i64> {
-    let child = operations
-        .iter()
-        .filter(|op| op["parent_id"].as_i64() == head)
-        .max_by_key(|op| op["id"].as_i64())?;
-    operations
-        .iter()
-        .filter(|op| op["rev_id"] == child["rev_id"])
-        .filter_map(|op| op["id"].as_i64())
-        .max()
-}
 
 /// Reads enough of the log to decide what undo should undo — two bounded reads
 /// rather than one unbounded one (spec-event-log "mf log undo").
 async fn undo_plan(daemon: &DaemonProxy, repo: &str) -> Result<UndoPlan, String> {
     for limit in [undo::WINDOW, undo::WIDE_WINDOW] {
-        let log = daemon
-            .request("GET", &format!("/repos/{repo}/log?mode=linear&limit={limit}"), None)
-            .await?;
-        let plan = undo::plan_from_log(&log.body);
-        if plan != UndoPlan::Nothing || !undo::window_exhausted(&log.body, limit) {
+        let log = read_log(daemon, repo, "linear", limit).await?;
+        let plan = undo::plan_from_log(&log);
+        if plan != UndoPlan::Nothing || !undo::window_exhausted(&log, limit) {
             return Ok(plan);
         }
     }
     Ok(UndoPlan::Nothing)
+}
+
+/// The same for redo, over the *active* line: it carries HEAD's forward
+/// continuation, which is what a redo re-applies when a rollback left one.
+async fn redo_plan(daemon: &DaemonProxy, repo: &str) -> Result<RedoPlan, String> {
+    for limit in [undo::WINDOW, undo::WIDE_WINDOW] {
+        let log = read_log(daemon, repo, "active", limit).await?;
+        let plan = undo::plan_redo_from_log(&log);
+        if plan != RedoPlan::Nothing || !undo::window_exhausted(&log, limit) {
+            return Ok(plan);
+        }
+    }
+    Ok(RedoPlan::Nothing)
+}
+
+async fn read_log(
+    daemon: &DaemonProxy,
+    repo: &str,
+    mode: &str,
+    limit: usize,
+) -> Result<Value, String> {
+    let path = format!("/repos/{repo}/log?mode={mode}&limit={limit}");
+    Ok(daemon.request("GET", &path, None).await?.body)
 }
 
 pub async fn navigate(
@@ -65,19 +71,40 @@ pub async fn navigate(
         return undo(gui, daemon, ws_id, repo, timeouts).await;
     }
 
-    // Tree mode keeps the revisions ahead of HEAD listed.
-    let log = daemon.request("GET", &format!("/repos/{repo}/log?mode=tree"), None).await?;
-    let operations = log.body["operations"].as_array().cloned().unwrap_or_default();
-    let target = match redo_target(&operations, log.body["head"].as_i64()) {
-        Some(id) => json!({ "id": id }),
-        None => {
+    match redo_plan(&daemon, &repo).await? {
+        RedoPlan::Nothing => {
             gui.post_status(&ws_id, "Nothing to redo.", "info", Some(timeouts.message_ms))?;
-            return Ok(());
+            Ok(())
         }
-    };
-    let response = rollback(&gui, &daemon, &ws_id, &repo, target, &timeouts).await?;
-    let applied = response["operations_applied"].as_u64().unwrap_or(0);
-    finish(&gui, &ws_id, &format!("Redo: {applied} operations re-applied."), &timeouts)
+        RedoPlan::Forward { op_id, rev_id } => {
+            let response =
+                rollback(&gui, &daemon, &ws_id, &repo, json!({ "id": op_id }), &timeouts).await?;
+            let applied = response["operations_applied"].as_u64().unwrap_or(0);
+            finish(
+                &gui,
+                &ws_id,
+                &format!("Redo: revision {rev_id} re-applied ({applied} operations)."),
+                &timeouts,
+            )
+        }
+        RedoPlan::Rollback { rev_id } => {
+            let response =
+                rollback(&gui, &daemon, &ws_id, &repo, json!({"prev_revision": true}), &timeouts)
+                    .await?;
+            let count = response["operations_unapplied"].as_u64().unwrap_or(0);
+            finish(
+                &gui,
+                &ws_id,
+                &format!("Redo: the undo in revision {rev_id} rolled back ({count} operations)."),
+                &timeouts,
+            )
+        }
+        // The watcher has written since the undo, so HEAD cannot be rewound
+        // over it: the undo is undone in place, exactly as undo itself does.
+        RedoPlan::Revert { rev_id, ops } => {
+            revert(&gui, &daemon, &ws_id, &repo, rev_id, ops, &timeouts).await
+        }
+    }
 }
 
 /// Undo: whichever of the two mechanisms the selection picked.
@@ -150,7 +177,7 @@ async fn revert(
             gui,
             ws_id,
             &format!(
-                "Cannot undo revision {rev_id}: a later change{where_} overwrote what it wrote. \
+                "Cannot take revision {rev_id} back: a later change{where_} overwrote what it wrote. \
                  Open the log panel and use log:revert-with-dependents to undo both."
             ),
             timeouts,
@@ -161,8 +188,8 @@ async fn revert(
             gui,
             ws_id,
             &format!(
-                "Undoing revision {rev_id} moves files on disk; run `mf log undo` so the moves \
-                 are coordinated with the metadata."
+                "Taking revision {rev_id} back moves files on disk; run `mf log undo` (or \
+                 `mf log redo`) so the moves are coordinated with the metadata."
             ),
             timeouts,
         );
@@ -176,10 +203,10 @@ async fn revert(
     }
     let count = response.body["reverted_operations"].as_array().map(|a| a.len()).unwrap_or(0);
     let summary = match response.body["revision"].as_i64() {
-        None => "Undo: nothing was reverted.".to_string(),
+        None => "Nothing was reverted.".to_string(),
         Some(new_rev) => format!(
-            "Undo: revision {rev_id} reverted as revision {new_rev} ({count} operations) — \
-             the watcher's revisions were left in place."
+            "Revision {rev_id} reverted as revision {new_rev} ({count} operations) — \
+             the daemon's own revisions were left in place."
         ),
     };
     finish(gui, ws_id, &summary, timeouts)
@@ -247,36 +274,4 @@ pub async fn log_navigate(
     redo: bool,
 ) -> Result<(), String> {
     navigate(app.gui.clone(), app.daemon.clone(), ws_id, redo, app.status_timeouts()).await
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    fn op(id: i64, parent_id: Option<i64>, rev_id: i64) -> Value {
-        json!({"id": id, "parent_id": parent_id, "rev_id": rev_id})
-    }
-
-    #[test]
-    fn test_redo_target_walks_to_the_end_of_the_child_revision() {
-        let ops = [op(1, None, 1), op(2, Some(1), 1), op(3, Some(2), 2), op(4, Some(3), 2)];
-        assert_eq!(redo_target(&ops, Some(2)), Some(4));
-        // Mid-revision HEAD: the rest of the same revision is re-applied.
-        assert_eq!(redo_target(&ops, Some(3)), Some(4));
-        // From the empty state the first revision is re-applied.
-        assert_eq!(redo_target(&ops, None), Some(2));
-    }
-
-    #[test]
-    fn test_redo_target_at_a_tip_is_none() {
-        let ops = [op(1, None, 1), op(2, Some(1), 1)];
-        assert_eq!(redo_target(&ops, Some(2)), None);
-        assert_eq!(redo_target(&[], None), None);
-    }
-
-    #[test]
-    fn test_redo_target_prefers_the_most_recent_branch() {
-        let ops = [op(1, None, 1), op(2, Some(1), 2), op(3, Some(1), 3), op(4, Some(3), 3)];
-        assert_eq!(redo_target(&ops, Some(1)), Some(4));
-    }
 }

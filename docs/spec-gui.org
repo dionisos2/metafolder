@@ -1134,7 +1134,7 @@ Behaviours:
 | =log:revert-revision= | Widen it back to the whole revision (default =shift+v=) |
 | =log:revert-with-dependents= | Revert it together with whatever blocks it (default =shift+d=) |
 | =log:undo=           | Undo the newest change the user made, on the active repo (default =ctrl+z=) |
-| =log:redo=           | Re-apply the revision ahead of HEAD (default =ctrl+shift+z=) |
+| =log:redo=           | Take the newest undo back, on the active repo (default =ctrl+shift+z=) |
 | =log:prune=          | Prune the event log                            |
 | =find:in-panel [text]= | Open the find bar over the focused panel (default =ctrl+f=) — see [[*Find in panel]] |
 | =find:next= / =find:prev= | Go to the next / previous find match (wrapping) |
@@ -3022,14 +3022,17 @@ operations" has a visible destination.
   =log:revert-with-dependents= or =mf log undo=, because neither is something
   to do behind the user's back.
 
-  Redo re-applies the revision of HEAD's child in the operation tree — the
-  daemon has no direct target for it, so the GUI reads
-  =GET .../log?mode=tree= and targets the last operation of that revision
-  (the most recent child when a rollback created several branches). At a tip
-  there is nothing to redo; it is the counterpart of an undo that rolled
-  back, and an undo that had to revert is itself undone by reverting the
-  revert. No confirmation prompt: the operation is itself undoable, that is
-  the point. Refreshes the panels through =metarecords:dirty=.
+  Redo is its mirror — the [[file:spec-event-log.org][spec-event-log.org]]
+  "Redo" selection, also from =core::undo=: HEAD forward onto what an undo's
+  rollback unapplied (=GET .../log?mode=active= carries that continuation), a
+  rollback over the revert an undo wrote, or a revert of that revert when the
+  daemon has written since. So a redo survives the watcher having moved a file
+  between the undo and it, which is the whole reason it is not simply "HEAD
+  forward one revision". When the newest thing the user wrote is an ordinary
+  change rather than an undo, there is nothing to redo.
+
+  Neither prompts: the operation is itself undoable, that is the point.
+  Refreshes the panels through =metarecords:dirty=.
 - =log:revert= → =GET .../revert/plan= for what is selected — the revision, or
   the single operation when the cursor is on one — then a confirmation naming
   how many operations it would undo (and warning when the target has already

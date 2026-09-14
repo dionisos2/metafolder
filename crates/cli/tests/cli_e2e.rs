@@ -4296,3 +4296,77 @@ fn test_log_undo_reverts_when_the_watcher_has_written_since() {
     assert!(!record.stdout.contains("\"note\""), "the note should be undone: {}", record.stdout);
     assert_eq!(uuids_at(&repo, "later.txt").len(), 1, "the tracked file must survive the undo");
 }
+
+/// Redo takes an undo back. With nothing written since, HEAD simply steps
+/// forward again onto what the undo's rollback unapplied.
+#[test]
+fn test_log_redo_reapplies_what_undo_rolled_back() {
+    let (repo, _root) = init_repo("log_redo_forward");
+    let uuid = create_metarecord(&repo, &["rating:int=3"]);
+    assert_ok(&mf(&["-u", &repo, "metarecord", "-i", &uuid, "field", "set", "rating:int=5"]));
+    assert_ok(&mf(&["-u", &repo, "log", "undo"]));
+    let out = mf(&["-u", &repo, "metarecord", "-i", &uuid, "field", "get", "rating"]);
+    assert!(out.stdout.contains('3'), "undo should have taken it back: {}", out.stdout);
+
+    let plan = mf(&["-u", &repo, "log", "redo", "plan"]);
+    assert_ok(&plan);
+    assert!(plan.stdout.contains("forward"), "stdout: {}", plan.stdout);
+
+    assert_ok(&mf(&["-u", &repo, "log", "redo"]));
+    let out = mf(&["-u", &repo, "metarecord", "-i", &uuid, "field", "get", "rating"]);
+    assert!(out.stdout.contains('5'), "redo should have put it back: {}", out.stdout);
+}
+
+/// The case redo exists for: the undo had to revert (the watcher had written),
+/// so redo undoes that revert instead of rewinding past the watcher's work.
+#[test]
+fn test_log_redo_takes_back_an_undo_the_watcher_forced_into_a_revert() {
+    let (repo, root) = init_repo("log_redo_revert");
+    let root_uuid = mf(&["-u", &repo, "metarecord", "-q", "mfr_type = \"dir\"", "get"])
+        .stdout
+        .trim()
+        .to_string();
+    assert_ok(&mf(&[
+        "-u",
+        &repo,
+        "metarecord",
+        "-i",
+        &root_uuid,
+        "field",
+        "set",
+        "mf_watch:bool=true",
+    ]));
+
+    assert_ok(&mf(&["-u", &repo, "metarecord", "-i", &root_uuid, "field", "set", "note:string=a"]));
+    std::fs::write(root.join("between.txt"), b"hi").unwrap();
+    assert!(poll(40, || uuids_at(&repo, "between.txt").len() == 1), "watcher should track it");
+
+    // Undo reverts (it cannot rewind past the watcher's revision).
+    let undo = mf(&["-u", &repo, "log", "undo"]);
+    assert_ok(&undo);
+    assert!(undo.stdout.contains("revert"), "stdout: {}", undo.stdout);
+    let record = mf(&["-u", &repo, "metarecord", "-i", &root_uuid, "get"]);
+    assert!(!record.stdout.contains("\"note\""), "the note should be gone: {}", record.stdout);
+
+    // Redo puts the change back, and the watcher's metarecord survives it.
+    let redo = mf(&["-u", &repo, "log", "redo"]);
+    assert_ok(&redo);
+    let record = mf(&["-u", &repo, "metarecord", "-i", &root_uuid, "get"]);
+    assert!(record.stdout.contains("\"note\""), "the note should be back: {}", record.stdout);
+    assert_eq!(uuids_at(&repo, "between.txt").len(), 1, "the tracked file must survive the redo");
+
+    // And undo takes it away again: the pair composes.
+    assert_ok(&mf(&["-u", &repo, "log", "undo"]));
+    let record = mf(&["-u", &repo, "metarecord", "-i", &root_uuid, "get"]);
+    assert!(!record.stdout.contains("\"note\""), "undo again: {}", record.stdout);
+}
+
+/// Nothing to take back: redo says so and writes nothing.
+#[test]
+fn test_log_redo_with_nothing_to_redo() {
+    let (repo, _root) = init_repo("log_redo_empty");
+    create_metarecord(&repo, &["rating:int=3"]);
+    let out = mf(&["-u", &repo, "log", "redo"]);
+    assert_ok(&out);
+    assert!(out.stdout.to_lowercase().contains("nothing to redo"), "stdout: {}", out.stdout);
+}

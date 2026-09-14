@@ -145,6 +145,88 @@ pub fn undo_run(
     }
 }
 
+/// `mf log redo [plan]`: takes the newest undo back, whichever mechanism that
+/// takes — HEAD forward onto what a rollback unapplied, a rollback over the
+/// revert an undo wrote, or a revert of that revert when the watcher has
+/// written since (spec-event-log "Redo").
+pub fn redo_run(
+    ctx: &Ctx,
+    plan_only: bool,
+    policies: RollbackPolicies,
+    opts: UndoOpts,
+) -> Result<i32, CliError> {
+    let base = ctx.repo_base()?;
+    // The *active* line, not the ancestry: it carries HEAD's forward
+    // continuation, which is what a redo re-applies when a rollback left one.
+    let mut plan = undo::RedoPlan::Nothing;
+    for limit in [undo::WINDOW, undo::WIDE_WINDOW] {
+        let log = ctx.client.get(
+            &format!("{base}/log"),
+            &[("mode", "active".to_string()), ("limit", limit.to_string())],
+        )?;
+        plan = undo::plan_redo_from_log(&log);
+        if plan != undo::RedoPlan::Nothing || !undo::window_exhausted(&log, limit) {
+            break;
+        }
+    }
+    if plan_only {
+        println!("{}", plan.describe());
+        return Ok(0);
+    }
+    match plan {
+        undo::RedoPlan::Nothing => {
+            println!("Nothing to redo.");
+            Ok(0)
+        }
+        undo::RedoPlan::Forward { op_id, rev_id } => {
+            if !opts.silent {
+                println!("Redoing revision {rev_id} (HEAD moves forward onto it).");
+            }
+            rollback_run(
+                ctx,
+                TargetArgs { label: None, id: Some(op_id), timestamp: None },
+                policies,
+                opts.silent,
+            )
+        }
+        undo::RedoPlan::Rollback { rev_id } => {
+            if !opts.silent {
+                println!("Taking the undo in revision {rev_id} back (rollback).");
+            }
+            rollback_run(
+                ctx,
+                TargetArgs { label: None, id: None, timestamp: None },
+                policies,
+                opts.silent,
+            )
+        }
+        undo::RedoPlan::Revert { rev_id, ops } => {
+            if !opts.silent {
+                println!(
+                    "Taking the undo in revision {rev_id} back \
+                     (revert: later work sits on top of it)."
+                );
+            }
+            let target = RevertTarget {
+                rev_id: ops.is_none().then_some(rev_id),
+                op_ids: ops.unwrap_or_default(),
+            };
+            revert_run(
+                ctx,
+                target,
+                &RevertOpts {
+                    with_dependents: opts.with_dependents,
+                    metadata_only: opts.metadata_only,
+                    label: None,
+                    force: opts.force,
+                    silent: opts.silent,
+                    policies,
+                },
+            )
+        }
+    }
+}
+
 /// The options `mf log undo` passes on to whichever mechanism it picks.
 pub struct UndoOpts {
     pub with_dependents: bool,
