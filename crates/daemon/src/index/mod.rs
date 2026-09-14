@@ -866,6 +866,7 @@ impl RepoIndex {
             // field's type cannot serve, keeping one answer per query.
             Query::IsPresent { field, aspect } => match aspect {
                 Aspect::Parent => self.parent_presence(field, true),
+                Aspect::Path => self.path_presence(field, true),
                 _ => {
                     Self::index_servable_aspect(*aspect)?;
                     Ok(self.present_of(field))
@@ -873,6 +874,7 @@ impl RepoIndex {
             },
             Query::IsAbsent { field, aspect } => match aspect {
                 Aspect::Parent => self.parent_presence(field, false),
+                Aspect::Path => self.path_presence(field, false),
                 _ => {
                     Self::index_servable_aspect(*aspect)?;
                     Ok(self.absent_of(field))
@@ -1036,6 +1038,17 @@ impl RepoIndex {
         let Some(fi) = self.fields.get(field) else { return Ok(RoaringBitmap::new()) };
         let bm = if present { fi.tree_parents_except(Some(ZERO_UUID)) } else { fi.tree_roots() };
         bm.ok_or_else(|| unsupported("the ':parent' aspect"))
+    }
+
+    /// `field:path IS PRESENT` / `IS ABSENT`: a node has an assembled path
+    /// exactly when it has a `tree_ref` row, so the aspect adds nothing to read
+    /// and this is the raw presence — once the field is known to be a forest.
+    /// On anything else `:path` is a `400`, which the SQL engine raises.
+    fn path_presence(&self, field: &str, present: bool) -> Result<RoaringBitmap, Unsupported> {
+        if self.types.get(field).is_some_and(|t| *t != "tree_ref") {
+            return Err(unsupported("the ':path' aspect"));
+        }
+        Ok(if present { self.present_of(field) } else { self.absent_of(field) })
     }
 
     /// `field:parent = "<path>"`: the direct children of the node the caller

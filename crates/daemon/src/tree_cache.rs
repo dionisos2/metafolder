@@ -463,6 +463,74 @@ impl TreeCache {
         Ok(Some(matched.into_iter().collect()))
     }
 
+    /// The metarecords of `field`'s forest with at least one *assembled path*
+    /// satisfying `pred` — the `:path` aspect of spec-query, answered by one
+    /// walk of the resident forest and no SQL.
+    ///
+    /// Like [`Self::osm_path_matches`] the walk carries the branch's path down
+    /// and visits a node once per *position*, so a multi-map TreeRef is tested
+    /// on each of its paths and no path is reassembled from the root. Unlike it
+    /// there is no subtree shortcut: an arbitrary predicate says nothing about
+    /// the descendants of a node that matched.
+    ///
+    /// `None` when the answer would not be authoritative — the cache is
+    /// incomplete, or this field has no forest at all (a field that is not a
+    /// `tree_ref` reads `:path` as a 400, which is the SQL engine's to raise,
+    /// and an empty answer here would silently replace it).
+    pub fn path_matches(
+        &self,
+        field: &str,
+        pred: &dyn Fn(&str) -> bool,
+    ) -> Result<Option<Vec<Uuid>>> {
+        if !self.complete {
+            return Ok(None);
+        }
+        let Some(ft) = self.fields.get(field) else { return Ok(None) };
+        let mut matched: HashSet<Uuid> = HashSet::new();
+        let mut path = String::new();
+
+        enum Step {
+            Enter(usize, usize),
+            /// Truncate the accumulated path back to a parent's length.
+            Leave(usize),
+        }
+        let mut stack: Vec<Step> = ft.roots.values().map(|&node| Step::Enter(node, 0)).collect();
+
+        while let Some(step) = stack.pop() {
+            let (node, depth) = match step {
+                Step::Leave(len) => {
+                    path.truncate(len);
+                    continue;
+                }
+                Step::Enter(node, depth) => (node, depth),
+            };
+            if depth >= MAX_TREE_DEPTH {
+                anyhow::bail!("TreeRef chain deeper than {MAX_TREE_DEPTH} in field '{field}'");
+            }
+            let node = self.node(node);
+            let parent_len = path.len();
+            // A root's path is its bare name; every other node joins with '/' —
+            // the convention `path_of` / `paths_of` use, so the two agree.
+            if depth > 0 {
+                path.push('/');
+            }
+            path.push_str(&node.name.display());
+            if pred(&path) {
+                matched.insert(node.uuid);
+            }
+            stack.push(Step::Leave(parent_len));
+            for &child in node.children.values() {
+                stack.push(Step::Enter(child, depth + 1));
+            }
+        }
+        let mut out: Vec<Uuid> = matched.into_iter().collect();
+        // The caller rewrites this into a `uuid_in` leaf, and a cursor is bound
+        // to a hash of the rewritten query: an unordered set would break page 2
+        // (see docs/spec-query.org "Pagination").
+        out.sort_unstable();
+        Ok(Some(out))
+    }
+
     /// Adds every metarecord below `node` (excluding it) to `out`.
     fn collect_subtree(&self, node: &Node, out: &mut HashSet<Uuid>) {
         let mut frontier: Vec<usize> = node.children.values().copied().collect();

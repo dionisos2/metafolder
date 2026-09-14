@@ -10,6 +10,7 @@
 use metafolder_core::metarecord::{Field, Value};
 use metafolder_core::query::{Aspect, FollowTarget, OsmMode, Query};
 use metafolder_daemon::db;
+use metafolder_daemon::forest_query;
 use metafolder_daemon::index::{
     collect_node_paths, collect_path_targets, QueryRoots, RepoIndex, SortBy,
 };
@@ -1606,4 +1607,67 @@ fn parent_aspect_equality_matches_sql_with_node_roots() {
             "{q:?} must stay with the SQL engine"
         );
     }
+}
+
+#[test]
+fn path_aspect_leaves_are_resolved_by_the_forest() {
+    // The `:path` aspect is the last shape that sent a whole query to SQL. It
+    // needs no SQL at all: the assembled paths come from the resident forest,
+    // and the leaf is rewritten to the uuid set it matches, which the bitmaps
+    // then combine with everything else (spec-indexing "No operand runs in
+    // SQL").
+    let (mut o, [_root, _b, _c, _d]) = forest();
+    let _unrelated = o.create(vec![Field::new("kind", s("file"))]);
+    o.cache.populate(&o.conn).unwrap();
+
+    let path_leaf = |q: Query| q;
+    for q in [
+        path_leaf(Query::Eq { field: "loc".into(), value: s("root/b"), aspect: Aspect::Path }),
+        path_leaf(Query::Neq { field: "loc".into(), value: s("root/b"), aspect: Aspect::Path }),
+        path_leaf(Query::Lt { field: "loc".into(), value: s("root/c"), aspect: Aspect::Path }),
+        path_leaf(Query::Gte { field: "loc".into(), value: s("root/b"), aspect: Aspect::Path }),
+        path_leaf(Query::Eq { field: "loc".into(), value: s("root/nope"), aspect: Aspect::Path }),
+        path_leaf(Query::Matches {
+            field: "loc".into(),
+            pattern: "^root/b".into(),
+            aspect: Aspect::Path,
+        }),
+        Query::And {
+            operands: vec![
+                Query::Matches {
+                    field: "loc".into(),
+                    pattern: "^root/".into(),
+                    aspect: Aspect::Path,
+                },
+                eq("kind", s("file")),
+            ],
+        },
+        Query::IsPresent { field: "loc".into(), aspect: Aspect::Path },
+        Query::IsAbsent { field: "loc".into(), aspect: Aspect::Path },
+    ] {
+        let rewritten = forest_query::resolve_path_leaves(&o.cache, &q).unwrap();
+        let index = RepoIndex::build(&o.conn).unwrap();
+        let mut got = index.to_uuids(&index.evaluate(&rewritten).unwrap());
+        let (mut sql, _) = query_exec::execute(&o.conn, &mut o.cache, &q, &[], None, None).unwrap();
+        got.sort();
+        sql.sort();
+        assert_eq!(got, sql, "':path' divergence on {q:?}");
+    }
+}
+
+#[test]
+fn a_path_leaf_on_a_non_tree_field_is_left_to_sql() {
+    // `:path` on a field that is not a forest is a 400, and the SQL engine is
+    // the one that says so: rewriting the leaf to an empty set would turn that
+    // mistake into a silent "no rows".
+    let mut o = Oracle::new();
+    o.create(vec![Field::new("title", s("hello"))]);
+    o.cache.populate(&o.conn).unwrap();
+
+    let q = Query::Eq { field: "title".into(), value: s("hello"), aspect: Aspect::Path };
+    let rewritten = forest_query::resolve_path_leaves(&o.cache, &q).unwrap();
+    assert_eq!(rewritten, q, "the leaf must be left alone");
+    let index = RepoIndex::build(&o.conn).unwrap();
+    assert!(index.evaluate(&rewritten).is_err(), "and the index must defer");
+    assert!(query_exec::execute(&o.conn, &mut o.cache, &q, &[], None, None).is_err());
 }

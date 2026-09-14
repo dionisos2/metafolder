@@ -413,12 +413,23 @@ an index with no second opinion is a risk, and the risk has already materialised
 
 ** Increments
 
-1. A *forest resolver* for the leaves the bitmaps cannot serve: the =:path=
-   aspect (presence, comparisons, =Matches=) and the order-sensitive =Osm= path.
-   It moves =path_matches= / =osm_path_matches= out of the SQL compiler, returns
-   a uuid set, and is applied in =prepare_indexed_query= next to the seeds — the
-   pre-resolution bridge that already exists for text leaves, pointed at the
-   forest instead of at SQLite.
+1. *(done)* A *forest resolver* for the leaves the bitmaps cannot serve
+   (=forest_query=): a =:path= comparison or =Matches= is answered by one walk
+   of the resident forest (=TreeCache::path_matches=, the =osm_path_matches=
+   walk with an arbitrary predicate and no subtree shortcut) and rewritten into
+   the =uuid_in= set it matches, in =prepare_indexed_query= next to the seeds.
+   The rewrite is unconditional, unlike the text-leaf one: an unresolved =:path=
+   leaf sends the *whole* query to SQL, where a text leaf is served in memory
+   anyway. =:path= *presence* needs no walk at all — a node has a path exactly
+   when it has a =tree_ref= row, so it is the raw presence, which the index now
+   answers directly. The order-sensitive =Osm= path already walked the forest
+   (=TreeCache::osm_path_matches=); only its =VALUES= detour through the SQL
+   compiler remains, and it goes with the compiler.
+   A leaf is left alone — and the query takes its old course — exactly where the
+   forest cannot answer authoritatively: an incomplete cache, a field with no
+   forest, an operand of the wrong type, an uncompilable pattern. The last three
+   are =400=\s, and leaving them to SQL is what keeps a single author for the
+   error until increment 3 moves it.
 2. A field seen only through =Nothing= values answers natively (its partition is
    empty, which is the answer) instead of reporting =Unsupported=.
 3. The type-dependent =400=\s move out of the engines into one validation pass.

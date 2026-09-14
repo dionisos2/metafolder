@@ -3032,11 +3032,17 @@ fn prepare_indexed_query<'a>(
         let node = cache.resolve_path(conn, &field, &path)?;
         roots.node.insert((field, path), node);
     }
-    let has_osm_path = crate::index::contains_osm_path(query);
+    // `:path` leaves are resolved against the resident forest and rewritten to
+    // the uuid set they match (spec-indexing "No operand runs in SQL"). Always,
+    // and before the text-leaf rewrite below: unlike a text leaf — which the
+    // index serves in memory, so pre-resolving it can cost more than it
+    // saves — an unresolved `:path` leaf sends the whole query to SQL.
+    let indexed = crate::forest_query::resolve_path_leaves(cache, query)?;
+    let has_osm_path = crate::index::contains_osm_path(&indexed);
     let indexed = if full_set || has_osm_path {
-        query_exec::resolve_index_leaves(conn, cache, query)?
+        query_exec::resolve_index_leaves(conn, cache, &indexed)?
     } else {
-        query.clone()
+        indexed
     };
     Ok((roots, indexed))
 }
