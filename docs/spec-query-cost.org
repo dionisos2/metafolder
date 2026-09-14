@@ -165,18 +165,18 @@ two categories*: =tag ->* "music/jazz"= is a =path.resolve= (the path operand to
 its metarecord) followed by a =follow.transitive= (the expansion from it), where
 =tag ->* (rating > 3)= has no =path.resolve= at all — the sub-query replaces it.
 
-| Category            | Raised by                               | On the SQL path                     | On the index path                 |
-|---------------------+-----------------------------------------+-------------------------------------+-----------------------------------|
-| =path.resolve=      | =->= / =->*= path target, exact node    | =TreeCache::resolve_path=, no SQL   | the same lookup, in =QueryRoots=  |
-| =bitmap.leaf=       | a comparison / presence leaf, =:parent= | — (it is the =sql.scan= row)        | union of the operand's buckets    |
-| =bitmap.combine=    | =and= / =or= / =not=                    | =INTERSECT= / =UNION= / =EXCEPT=    | Roaring =&=, =\|=, universe =-=   |
-| =follow.transitive= | =->*=, ~=>*~, 1-term =osm= path         | cache-walked descendants, =VALUES=  | expansion over children bitmaps   |
-| =fts.scan=          | =matches=, =osm= =direct=               | =REGEXP= scan, FTS5-narrowed        | the regex over distinct values    |
-| =sql.scan=          | presence, comparison, =same=, =->=      | one =field= scan per =field_name=   | — (it is the =bitmap.leaf= row)   |
-| =path.assemble=     | the =:path= aspect, multi-term =osm=    | per-node paths, matches as =VALUES= | not served (pre-resolved, or SQL) |
-| =sort=              | each =sort= key                         | the =_p{i}= / =_s{i}= CTEs          | one rep per id, then the page     |
-| =count=             | =count: true=                           | the chain re-run as =COUNT(*)=      | =matched.len()=, O(1)             |
-| =assemble=          | always, for the page's uuids            | =versions_for= + =field_rows_for=   | identical (after the choice)      |
+| Category            | Raised by                               | On the SQL path                        | On the index path                     |
+|---------------------+-----------------------------------------+----------------------------------------+---------------------------------------|
+| =path.resolve=      | =->= / =->*= path target, exact node    | =TreeCache::resolve_path=, no SQL      | the same lookup, in =QueryRoots=      |
+| =bitmap.leaf=       | a comparison / presence leaf, =:parent= | — (it is the =sql.scan= row)           | union of the operand's buckets        |
+| =bitmap.combine=    | =and= / =or= / =not=                    | =INTERSECT= / =UNION= / =EXCEPT=       | Roaring =&=, =\|=, universe =-=       |
+| =follow.transitive= | =->*=, ~=>*~, 1-term =osm= path         | cache-walked descendants, =VALUES=     | expansion over children bitmaps       |
+| =fts.scan=          | =matches=, =osm= =direct=               | =REGEXP= scan, FTS5-narrowed           | the regex over distinct values        |
+| =sql.scan=          | presence, comparison, =same=, =->=      | one =field= scan per =field_name=      | — (it is the =bitmap.leaf= row)       |
+| =path.assemble=     | the =:path= aspect, multi-term =osm=    | one walk of the forest, then =uuid_in= | the same walk, before the bitmaps run |
+| =sort=              | each =sort= key                         | the =_p{i}= / =_s{i}= CTEs             | one rep per id, then the page         |
+| =count=             | =count: true=                           | the chain re-run as =COUNT(*)=         | =matched.len()=, O(1)                 |
+| =assemble=          | always, for the page's uuids            | =versions_for= + =field_rows_for=      | identical (after the choice)          |
 
 The SQL column, verbatim — this is what a term of each category stands for:
 
@@ -195,8 +195,9 @@ The SQL column, verbatim — this is what a term of each category stands for:
      AND ((value_type = 'string'   AND value_text REGEXP ?) OR
           (value_type = 'tree_ref' AND value_name REGEXP ?))
 
-  -- follow.transitive / path.assemble: hybrid. The forest work happens in the
-  -- tree cache and only its result reaches SQL, as inline literals.
+  -- follow.transitive: hybrid. The forest work happens in the tree cache and
+  -- only its result reaches SQL, as inline literals. (path.assemble no longer
+  -- reaches SQL at all: its walk rewrites the leaf to a `uuid_in` set.)
   SELECT column1 AS uuid FROM (VALUES (x'<uuid>'), (x'<uuid>'), ...)
 
   -- sort, per key: the representative row (min asc / max desc) of the *filtered*
@@ -291,14 +292,14 @@ compose once no operand runs in SQL. The bridge is a transition artefact too.
 Each row is one =Unsupported= a leaf can raise; =fallback[]= reports it verbatim,
 with the address of the leaf that raised it.
 
-| Operand / shape                           | Reported as                          | Why the index defers                              |
-|-------------------------------------------+--------------------------------------+---------------------------------------------------|
-| the =:path= aspect, anywhere              | ="the ':path' aspect"=               | the assembled path lives in the forest            |
-| a field seen only through =Nothing=       | ="... field with no indexed values"= | no value partition; empty would be a wrong answer |
-| a shape SQL answers with a =400= (below)  | the matching message                 | the rejection has one author, and it is SQL       |
-| a multi-term =osm= path, not pre-resolved | ="multi-term osm path"=              | ordered matching runs on assembled paths          |
-| an unresolved path target / exact node    | ="path-target follows"=              | only when the caller skipped the preparation      |
-| a cursor from another (query, sort)       | ="cursor does not match ..."=        | SQL then rejects it on its own encoding           |
+| Operand / shape                           | Reported as                          | Why the index defers                               |
+|-------------------------------------------+--------------------------------------+----------------------------------------------------|
+| a =:path= leaf the forest cannot resolve  | ="the ':path' aspect"=               | an incomplete forest; otherwise it is pre-resolved |
+| a field seen only through =Nothing=       | ="... field with no indexed values"= | no value partition; empty would be a wrong answer  |
+| a shape SQL answers with a =400= (below)  | the matching message                 | the rejection has one author, and it is SQL        |
+| a multi-term =osm= path, not pre-resolved | ="multi-term osm path"=              | ordered matching runs on assembled paths           |
+| an unresolved path target / exact node    | ="path-target follows"=              | only when the caller skipped the preparation       |
+| a cursor from another (query, sort)       | ="cursor does not match ..."=        | SQL then rejects it on its own encoding            |
 
 The =400= shapes the index hands over rather than answering: an ordered
 comparison on a =bool=, on a reference, or on a bare =tree_ref=; =matches= on a
