@@ -134,7 +134,15 @@ The table above prices the work; this one says what the work *is*: which query
 shape raises a category, and what each engine runs for it. It is the answer to
 "what is a =seed=", and to "why does this query carry an =fts.scan=".
 
-| Category            | Raised by                            | In SQL                              | In the index                      |
+Two things it is easy to misread. *The tree cache is neither engine*: it is one
+in-memory structure both paths use, so "cache-walked" appears in the SQL column
+without meaning the index served the query — the SQL engine does that work in
+memory too and hands SQLite only its result, as literals. And *one leaf can raise
+two categories*: =tag ->* "music/jazz"= is a =seed= (resolve the path operand to
+its metarecord) followed by a =follow.transitive= (expand from it), where
+=tag ->* (rating > 3)= has no =seed= at all — the sub-query replaces it.
+
+| Category            | Raised by                            | On the SQL path                     | On the index path                 |
 |---------------------+--------------------------------------+-------------------------------------+-----------------------------------|
 | =seed=              | =->= / =->*= path target, exact node | none — =TreeCache::resolve_path=    | the same lookup, in =QueryRoots=  |
 | =bitmap.leaf=       | a comparison / presence leaf         | — (it is the =sql.scan= row)        | union of the operand's buckets    |
@@ -179,6 +187,12 @@ The SQL column, verbatim — this is what a term of each category stands for:
                                          AND field.value_type != 'nothing'
                           LEFT JOIN _p{i} ON <terminal>) WHERE rn = 1)
 #+END_SRC
+
+=seed= is named after the code it prices: the traversal's starting set
+(=expand_subtrees= grows a *frontier* from it, =prepare_indexed_query= resolves
+"the query's index seeds"). The name fits =->= / =->*=, whose seed really is
+seeded from; it fits an exact-node =mfr_path = "/a/b"= less well, which resolves
+a path the same way and then traverses nothing.
 
 Two rows read differently on the two engines, and that is where an estimate goes
 wrong if the distinction is dropped:
