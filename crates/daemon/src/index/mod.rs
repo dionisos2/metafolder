@@ -934,11 +934,11 @@ impl RepoIndex {
             // answer. The answer itself is then intersected by the shared tail.
             Query::SameAs { field, target } => {
                 let seed = self.eval(target, roots)?;
-                match self.fields.get(field) {
-                    _ if seed.is_empty() => Ok(RoaringBitmap::new()),
+                Ok(match self.fields.get(field) {
+                    _ if seed.is_empty() => RoaringBitmap::new(),
                     Some(fi) => fi.same_as(&seed),
-                    None => Ok(RoaringBitmap::new()),
-                }
+                    None => RoaringBitmap::new(),
+                })
             }
             Query::FollowsTransitive { field, target, inclusive } => {
                 self.follows_transitive(field, target, *inclusive, roots)
@@ -992,7 +992,8 @@ impl RepoIndex {
     /// A regex text predicate (`Matches`, OSM `Direct`) answered by scanning the
     /// field's *distinct* values in memory — its cardinality, not its row count,
     /// and no SQL at all. An invalid or oversized pattern is left to the SQL
-    /// engine, which reports it as a 400.
+    /// engine, which reports it as a 400. A field with no indexed value matches
+    /// nothing, which is what SQL answers too.
     fn text_scan(
         &self,
         field: &str,
@@ -1002,8 +1003,7 @@ impl RepoIndex {
         let Some(fi) = self.fields.get(field) else { return Ok(RoaringBitmap::new()) };
         let re = crate::regexp::compile(pattern)
             .map_err(|e| unsupported(format!("pattern the index cannot compile: {e}")))?;
-        fi.scan_text(&|text| re.is_match(text), restrict)
-            .ok_or_else(|| unsupported("text scan on a field with no indexed values"))
+        Ok(fi.scan_text(&|text| re.is_match(text), restrict))
     }
 
     /// Direct `Follows`: referrers of every metarecord matching the sub-query.
@@ -1342,6 +1342,14 @@ impl RepoIndex {
             Some(fi) => fi.compare(op, value),
             None => Ok(RoaringBitmap::new()),
         }
+    }
+
+    /// The `value_type` this field holds, `None` for a field with no
+    /// non-`Nothing` row. The type source of
+    /// [`crate::query_validate::validate_query_types`] on the serving path —
+    /// where the SQL oracle asks the database for the same answer.
+    pub fn value_type(&self, field: &str) -> Option<String> {
+        self.types.get(field).map(|t| (*t).to_string())
     }
 
     pub fn to_uuids(&self, bm: &RoaringBitmap) -> Vec<Uuid> {

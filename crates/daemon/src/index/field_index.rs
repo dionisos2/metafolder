@@ -41,14 +41,12 @@ impl CmpOp {
     }
 }
 
-/// One field name's index. Grows as encodings are implemented; a field whose
-/// value type is not yet accelerated is `Unimplemented`, so a comparison on it
-/// reports `Unsupported` (the oracle excludes it) rather than a silent empty.
+/// One field name's index. Every value type has an encoding, so a field that
+/// holds data is always served from one of these.
 pub enum FieldIndex {
     Categorical(CategoricalIndex),
     Bsi(BsiIndex),
     Reverse(ReverseIndex),
-    Unimplemented(&'static str),
 }
 
 impl FieldIndex {
@@ -64,7 +62,13 @@ impl FieldIndex {
             Value::RefBase(_) => FieldIndex::Reverse(ReverseIndex::new(RefKind::RefBase)),
             Value::TreeRef { .. } => FieldIndex::Reverse(ReverseIndex::new(RefKind::TreeRef)),
             Value::ExternalRef { .. } => FieldIndex::Reverse(ReverseIndex::new(RefKind::External)),
-            Value::Nothing => FieldIndex::Unimplemented("nothing"),
+            // Unreachable: a field's encoding is chosen from a *non*-`Nothing`
+            // value, the callers splitting the `Nothing` rows into `absent`
+            // before they get here. Were it reached, this is still the right
+            // answer rather than a wrong one: no `Nothing` row is ever inserted
+            // into a partition, so every predicate reads empty — which is what
+            // SQL answers for a field whose rows are all `Nothing`.
+            Value::Nothing => FieldIndex::Categorical(CategoricalIndex::default()),
         }
     }
 
@@ -74,7 +78,6 @@ impl FieldIndex {
             FieldIndex::Categorical(c) => c.insert(value, id),
             FieldIndex::Bsi(b) => b.insert(value, id),
             FieldIndex::Reverse(r) => r.insert(value, id),
-            FieldIndex::Unimplemented(_) => {}
         }
     }
 
@@ -91,9 +94,6 @@ impl FieldIndex {
             FieldIndex::Categorical(c) => c.compare(op, value),
             FieldIndex::Bsi(b) => Ok(b.compare(op, value)),
             FieldIndex::Reverse(r) => r.compare(op, value),
-            FieldIndex::Unimplemented(family) => {
-                Err(super::unsupported(format!("comparison on a '{family}' field")))
-            }
         }
     }
 
@@ -104,7 +104,6 @@ impl FieldIndex {
             FieldIndex::Categorical(c) => c.clear_member(id, values),
             FieldIndex::Bsi(b) => b.clear_member(id, values),
             FieldIndex::Reverse(r) => r.clear_member(id, values),
-            FieldIndex::Unimplemented(_) => {}
         }
     }
 
@@ -116,7 +115,6 @@ impl FieldIndex {
             FieldIndex::Categorical(c) => c.set_member(id, values),
             FieldIndex::Bsi(b) => b.set_member(id, values),
             FieldIndex::Reverse(r) => r.set_member(id, values),
-            FieldIndex::Unimplemented(_) => {}
         }
     }
 
@@ -157,21 +155,15 @@ impl FieldIndex {
     /// encoding has neither, so it matches nothing, exactly as the `value_type`
     /// guard decides in SQL.
     ///
-    /// `None` when the encoding cannot answer — a field seen only through
-    /// `Nothing` values has no partition to scan — so the caller defers to SQL
-    /// rather than mistake "nothing indexed" for "no match".
     pub fn scan_text(
         &self,
         keep: &dyn Fn(&str) -> bool,
         restrict: Option<&RoaringBitmap>,
-    ) -> Option<RoaringBitmap> {
+    ) -> RoaringBitmap {
         match self {
-            FieldIndex::Categorical(c) => Some(c.scan_text(keep, restrict)),
-            FieldIndex::Reverse(r) if r.kind == RefKind::TreeRef => {
-                Some(r.scan_names(keep, restrict))
-            }
-            FieldIndex::Reverse(_) | FieldIndex::Bsi(_) => Some(RoaringBitmap::new()),
-            FieldIndex::Unimplemented(_) => None,
+            FieldIndex::Categorical(c) => c.scan_text(keep, restrict),
+            FieldIndex::Reverse(r) if r.kind == RefKind::TreeRef => r.scan_names(keep, restrict),
+            FieldIndex::Reverse(_) | FieldIndex::Bsi(_) => RoaringBitmap::new(),
         }
     }
 
@@ -180,17 +172,11 @@ impl FieldIndex {
     /// value → ids partition of its non-`Nothing` rows, so the answer is the
     /// union of the buckets `target` touches: cardinality-bounded, and reflexive
     /// for free (a target's own id sits in its own bucket).
-    ///
-    /// A field seen only through `Nothing` values has no partition to walk, so
-    /// it defers to SQL rather than answer an empty set.
-    pub fn same_as(&self, target: &RoaringBitmap) -> Result<RoaringBitmap, Unsupported> {
+    pub fn same_as(&self, target: &RoaringBitmap) -> RoaringBitmap {
         match self {
-            FieldIndex::Categorical(c) => Ok(union_intersecting(&c.by_value, target)),
-            FieldIndex::Bsi(b) => Ok(union_intersecting(&b.exact, target)),
-            FieldIndex::Reverse(r) => Ok(union_intersecting(&r.exact, target)),
-            FieldIndex::Unimplemented(kind) => {
-                Err(super::unsupported(format!("'same' on a '{kind}' field")))
-            }
+            FieldIndex::Categorical(c) => union_intersecting(&c.by_value, target),
+            FieldIndex::Bsi(b) => union_intersecting(&b.exact, target),
+            FieldIndex::Reverse(r) => union_intersecting(&r.exact, target),
         }
     }
 
@@ -248,7 +234,6 @@ impl FieldIndex {
                     + sum_bytes(r.by_name.values())
                     + sum_bytes(r.by_value_uuid.values())
             }
-            FieldIndex::Unimplemented(_) => 0,
         }
     }
 }

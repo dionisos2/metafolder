@@ -173,6 +173,58 @@ async fn test_osm_path_on_a_string_field_is_rejected() {
 }
 
 #[tokio::test]
+async fn test_type_dependent_rejections_do_not_need_the_sql_engine() {
+    // The rejections that depend on what a field *holds* used to be made by the
+    // SQL compiler, so a query only ever met them by falling back to it. They
+    // are made upfront now, from the index's own type map (spec-indexing "No
+    // operand runs in SQL"): each of these is a 400, not an empty result, and
+    // none of them reaches an engine.
+    let (app, repo, root) = setup("typecheck").await;
+    create(&app, &repo, json!([{"name": "label", "value": {"type": "string", "value": "jazz"}}]))
+        .await;
+
+    for (query, needle) in [
+        // A tree-only aspect on a string field.
+        (
+            json!({"type": "eq", "field": "label", "aspect": "parent",
+                "value": {"type": "string", "value": "x"}}),
+            "tree_ref",
+        ),
+        (json!({"type": "is_absent", "field": "label", "aspect": "path"}), "tree_ref"),
+        // `:parent` reads a uuid: no regex, no ordering.
+        (
+            json!({"type": "matches", "field": "label", "aspect": "parent", "pattern": "x"}),
+            "parent",
+        ),
+        // Buried in a combinator, and behind a traversal: the walk must find it.
+        (
+            json!({"type": "and", "operands": [
+            {"type": "is_present", "field": "label"},
+            {"type": "lt", "field": "label", "aspect": "parent",
+             "value": {"type": "string", "value": "x"}}]}),
+            "parent",
+        ),
+        (
+            json!({"type": "follows", "field": "ref", "target":
+            {"type": "eq", "field": "label", "aspect": "path",
+             "value": {"type": "string", "value": "x"}}}),
+            "tree_ref",
+        ),
+    ] {
+        let (status, body) =
+            request(&app, "POST", &format!("/repos/{repo}/query"), Some(json!({"query": query})))
+                .await;
+        assert_eq!(status, StatusCode::BAD_REQUEST, "expected a 400 for {query}, got {body}");
+        assert!(
+            body["error"].as_str().unwrap_or_default().contains(needle),
+            "the error should name '{needle}': {body}"
+        );
+    }
+
+    std::fs::remove_dir_all(root).unwrap();
+}
+
+#[tokio::test]
 async fn test_exact_node_path_query_is_served_by_the_index() {
     // `mfr_path = "/a/b.txt"` — "find this one file". The route resolves the
     // node through the tree cache and hands it to the bitmap index, so this must

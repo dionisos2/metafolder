@@ -3062,9 +3062,10 @@ fn resolve_query_uuids(
     let _phase = slowlog::phase("resolve.uuids");
     query_exec::validate_query(query)?;
     query_exec::check_query_size(query)?;
-    let (roots, indexed) = prepare_indexed_query(conn, cache, query, true)?;
     let mut index_guard = slowlog::timed("wait:index", || repo_state.index.lock_recover());
     let index = ensure_index(conn, &mut index_guard, cancel)?;
+    crate::query_validate::validate_query_types(query, &|f| index.value_type(f))?;
+    let (roots, indexed) = prepare_indexed_query(conn, cache, query, true)?;
     match slowlog::timed("index.evaluate", || {
         index.evaluate_page_with_roots(&indexed, &[], None, None, &roots)
     }) {
@@ -3100,6 +3101,10 @@ fn run_query_filter(
     // fallback path (spec-query "Limits", "Comparison validity").
     query_exec::validate_query(&body.query)?;
     query_exec::check_query_size(&body.query)?;
+    // The rejections that need the field's type follow, as soon as the index is
+    // in hand — and *before* the preparation, which would otherwise rewrite an
+    // invalid leaf into the empty set it matches and answer "no rows" where the
+    // user deserves a 400 (spec-indexing "No operand runs in SQL").
 
     let sort_by: Vec<crate::index::SortBy> = body
         .sort
@@ -3116,15 +3121,16 @@ fn run_query_filter(
     // list asks for `count` on the first page only, and if that toggled the
     // preparation, page 1 and page 2 could run on different engines and reject
     // each other's cursor.
+    let mut index_guard = slowlog::timed("wait:index", || repo_state.index.lock_recover());
+    let index = ensure_index(conn, &mut index_guard, cancel)?;
+    crate::query_validate::validate_query_types(&body.query, &|f| index.value_type(f))?;
+
     let (mut roots, indexed_query) = prepare_indexed_query(conn, cache, &body.query, false)?;
     // Full-path sort keys for a `tree_ref` sort key, rebuilt from the resident
     // forest (spec-data-model "Sort specification"). Borrows the cache, so the
     // borrow must end before the SQL fallback below takes it mutably again.
     let sort_keys = crate::tree_cache::SortKeys::new(cache);
     roots.keys = Some(&sort_keys);
-
-    let mut index_guard = slowlog::timed("wait:index", || repo_state.index.lock_recover());
-    let index = ensure_index(conn, &mut index_guard, cancel)?;
     // The index build/refresh above is the heavy phase on a large repo; if a
     // Stop landed during it, don't start the (also non-trivial) evaluation.
     if cancel() {

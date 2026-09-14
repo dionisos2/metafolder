@@ -281,6 +281,7 @@ pub fn assemble_selected(
 pub fn count(conn: &Connection, cache: &mut TreeCache, query: &Query) -> Result<usize, ApiError> {
     check_query_size(query)?;
     validate_query(query)?;
+    crate::query_validate::validate_query_types(query, &|f| stored_type(conn, f).ok().flatten())?;
     let mut compiler = Compiler::new(conn, cache);
     let last = compiler.compile_node(query)?;
     let Compiler { ctes, params, .. } = compiler;
@@ -378,6 +379,7 @@ pub fn execute(
     }
     check_query_size(query)?;
     validate_query(query)?;
+    crate::query_validate::validate_query_types(query, &|f| stored_type(conn, f).ok().flatten())?;
 
     // The cursor is bound to the exact (query, sort) pair that produced it.
     let hash = pagination::context_hash(&[
@@ -659,16 +661,6 @@ pub fn osm_name_nodes(conn: &Connection, field: &str, term: &str) -> Result<Vec<
 
 /// Every metarecord with a `tree_ref` value in `field` (the unpruned candidate
 /// set for an all-short-terms or empty OSM path query).
-/// The DSL spelling of an aspect, for error messages.
-fn aspect_name(aspect: Aspect) -> &'static str {
-    match aspect {
-        Aspect::Raw => "raw",
-        Aspect::Value => "value",
-        Aspect::Parent => "parent",
-        Aspect::Path => "path",
-    }
-}
-
 fn all_tree_ref_nodes(conn: &Connection, field: &str) -> Result<Vec<Uuid>, ApiError> {
     let mut stmt = conn
         .prepare(
@@ -696,27 +688,27 @@ fn all_tree_ref_nodes(conn: &Connection, field: &str) -> Result<Vec<Uuid>, ApiEr
 /// (every candidate lies under a node whose name holds the term), while
 /// multi-term (order-sensitive) and all-short-term queries verify the assembled
 /// path. Rejects a non-`tree_ref` field with 400, like the engine.
-/// The value type of `field` when it holds a value that is neither `Nothing` nor
-/// a `tree_ref` — the case `osm` path mode rejects with a 400. `None` when the
-/// field is a forest or has no data at all (a vacuously empty result).
-///
-/// Asked as "which types does this field hold?" rather than "is there a row
-/// with another type?": the first is answered from `idx_field_name_type` alone,
-/// the second fetched every row of the field to read its `value_type` — 81 ms on
-/// a 50 k-row field, which was the entire cost of a multi-term OSM path query.
-fn non_tree_ref_type(conn: &Connection, field: &str) -> Result<Option<String>, ApiError> {
+/// What a field holds, for [`crate::query_validate::validate_query_types`]:
+/// `tree_ref` when the field is a forest, else any other type it carries,
+/// `None` for a field with no data. The SQL side's answer to the question the
+/// index answers from its `types` map.
+pub fn stored_type(conn: &Connection, field: &str) -> Result<Option<String>, ApiError> {
     let mut stmt = conn
         .prepare_cached("SELECT DISTINCT value_type FROM field WHERE field_name = ?1")
         .map_err(anyhow::Error::from)?;
     let types =
         stmt.query_map([field], |row| row.get::<_, String>(0)).map_err(anyhow::Error::from)?;
+    let mut other = None;
     for value_type in types {
         let value_type = value_type.map_err(anyhow::Error::from)?;
-        if value_type != "nothing" && value_type != "tree_ref" {
+        if value_type == "tree_ref" {
             return Ok(Some(value_type));
         }
+        if value_type != "nothing" {
+            other = Some(value_type);
+        }
     }
-    Ok(None)
+    Ok(other)
 }
 
 /// The metarecords whose assembled `field` path matches `terms` in order.
@@ -749,12 +741,6 @@ fn osm_path_matches_unordered(
     field: &str,
     terms: &[String],
 ) -> Result<Vec<Uuid>, ApiError> {
-    if let Some(other) = non_tree_ref_type(conn, field)? {
-        return Err(ApiError::bad_request(format!(
-            "osm path mode requires a tree_ref field, but '{field}' holds {other} values; \
-             use osmd for direct string matching"
-        )));
-    }
     // A blank query matches every metarecord with a path in this forest.
     if terms.is_empty() {
         return all_tree_ref_nodes(conn, field);
@@ -874,35 +860,6 @@ impl CmpOp {
     }
 }
 
-/// What a predicate does with the value it reads. The aspect rules turn on
-/// this and on the field's type (spec-query "Field aspects"): on a `TreeRef`,
-/// `raw` is the `(parent, name)` couple, which can be compared for equality but
-/// neither ordered nor regex-matched.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum ReadKind {
-    Equality,
-    Ordered,
-    Regex,
-}
-
-impl ReadKind {
-    fn of(op: CmpOp) -> Self {
-        if op.is_ordered() {
-            ReadKind::Ordered
-        } else {
-            ReadKind::Equality
-        }
-    }
-
-    fn describe(self) -> &'static str {
-        match self {
-            ReadKind::Equality => "equality",
-            ReadKind::Ordered => "ordered comparison",
-            ReadKind::Regex => "MATCHES",
-        }
-    }
-}
-
 struct Compiler<'a> {
     conn: &'a Connection,
     cache: &'a mut TreeCache,
@@ -970,7 +927,6 @@ impl<'a> Compiler<'a> {
     fn matches(&mut self, field: &str, pattern: &str, aspect: Aspect) -> Result<String, ApiError> {
         crate::regexp::compile(pattern)
             .map_err(|e| ApiError::bad_request(format!("invalid regex pattern: {e}")))?;
-        self.check_aspect(field, aspect, ReadKind::Regex)?;
         if aspect == Aspect::Path {
             // Hybrid, like osm path mode: the assembled paths are built
             // through the tree cache and the matching uuids inlined.
@@ -1142,7 +1098,6 @@ impl<'a> Compiler<'a> {
             Query::Neq { field, value, aspect } => {
                 // At least one non-Nothing occurrence differing from `value`
                 // (a different value type counts as differing).
-                self.check_aspect(field, *aspect, ReadKind::Equality)?;
                 if *aspect == Aspect::Path {
                     // The path is assembled outside SQL, so the negation is
                     // taken there too. Like every `Neq`, it asks for at least
@@ -1235,15 +1190,8 @@ impl<'a> Compiler<'a> {
     /// one segment), verified by the final ordered check on the real path.
     fn osm_path(&mut self, field: &str, terms: &[String]) -> Result<String, ApiError> {
         if terms.is_empty() {
-            // A blank query matches every path-bearing metarecord: a direct scan,
-            // no inlining. Still reject a non-tree_ref field (400), as
-            // `osm_path_matches` does for the non-empty case.
-            if let Some(other) = self.osm_non_tree_ref_type(field)? {
-                return Err(ApiError::bad_request(format!(
-                    "osm path mode requires a tree_ref field, but '{field}' holds {other} values; \
-                     use osmd for direct string matching"
-                )));
-            }
+            // A blank query matches every path-bearing metarecord: a direct
+            // scan, no inlining.
             self.push_text(field);
             return Ok(self.add(
                 "SELECT DISTINCT metarecord_uuid AS uuid FROM field \
@@ -1262,16 +1210,6 @@ impl<'a> Compiler<'a> {
         Ok(self.add(format!("SELECT column1 AS uuid FROM (VALUES {})", literals.join(","))))
     }
 
-    /// The value type of `field` when it demonstrably holds a non-`Nothing`,
-    /// non-`tree_ref` value — the case `osm` path mode rejects (400). `None` when
-    /// the field is a `tree_ref` or has no data (vacuously empty result).
-    fn osm_non_tree_ref_type(&self, field: &str) -> Result<Option<String>, ApiError> {
-        non_tree_ref_type(self.conn, field)
-    }
-
-    /// Whether `field` holds any `tree_ref` value — i.e. is a tree forest. Backs
-    /// the inclusive `FollowsTransitive` (`=>*`) root gate and mirrors the
-    /// index's `supports_transitive`.
     fn field_is_tree_ref(&self, field: &str) -> Result<bool, ApiError> {
         Ok(self
             .conn
@@ -1284,51 +1222,11 @@ impl<'a> Compiler<'a> {
             .map_err(anyhow::Error::from)?)
     }
 
-    /// Rejects an aspect the field's type cannot serve, and the `raw` readings
-    /// that have no meaning on a `TreeRef` (spec-query "Field aspects"). The
-    /// check needs the field's value type, so it lives in the engine rather
-    /// than in `validate_query` — the index makes the same one.
-    fn check_aspect(&self, field: &str, aspect: Aspect, kind: ReadKind) -> Result<(), ApiError> {
-        let is_tree = self.field_is_tree_ref(field)?;
-        match aspect {
-            Aspect::Parent | Aspect::Path if !is_tree => {
-                // A field with no data at all is vacuously fine: the query
-                // simply matches nothing, as every other predicate would.
-                if let Some(other) = non_tree_ref_type(self.conn, field)? {
-                    return Err(ApiError::bad_request(format!(
-                        "the ':{}' aspect needs a tree_ref field, but '{field}' holds {other} values",
-                        aspect_name(aspect)
-                    )));
-                }
-                Ok(())
-            }
-            // `parent` reads the parent's uuid: a regex over it, or an
-            // ordering of it, has no meaning. Refusing here is what keeps the
-            // two from being answered silently — as `value_name` for the regex,
-            // and as plain equality for an ordered operator, which is what the
-            // row predicate below would do with them.
-            Aspect::Parent if kind != ReadKind::Equality => Err(ApiError::bad_request(format!(
-                "{} on the ':parent' aspect of '{field}' reads a uuid: use ':value' for \
-                 the name component, ':path' for the assembled path",
-                kind.describe()
-            ))),
-            Aspect::Raw if is_tree && kind != ReadKind::Equality => {
-                Err(ApiError::bad_request(format!(
-                    "{} on the tree_ref field '{field}' needs an explicit aspect: \
-                     ':value' reads the name component, ':path' the assembled path",
-                    kind.describe()
-                )))
-            }
-            _ => Ok(()),
-        }
-    }
-
     /// `IsPresent` / `IsAbsent`, aspect-aware. Under `parent` the question is
     /// whether the node has a real parent: a forest root's parent is the root
     /// sentinel, so `field:parent IS ABSENT` is the predicate form of "is a
     /// root" — the one the `Follows` arrow cannot express.
     fn presence(&mut self, field: &str, aspect: Aspect, present: bool) -> Result<String, ApiError> {
-        self.check_aspect(field, aspect, ReadKind::Equality)?;
         if aspect == Aspect::Parent {
             self.push_text(field);
             self.params.push(SqlValue::Blob(db::uuid_to_bytes(Uuid::nil())));
@@ -1424,7 +1322,6 @@ impl<'a> Compiler<'a> {
         op: CmpOp,
         aspect: Aspect,
     ) -> Result<String, ApiError> {
-        self.check_aspect(field, aspect, ReadKind::of(op))?;
         if aspect == Aspect::Path {
             let matched = self.path_comparison_matches(field, value, op)?;
             return self.inline_uuids(matched);

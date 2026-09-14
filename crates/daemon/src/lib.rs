@@ -19,6 +19,7 @@ pub mod orphans;
 pub mod pagination;
 pub mod phase;
 pub mod query_exec;
+pub mod query_validate;
 pub mod reconcile;
 pub mod regexp;
 pub mod relpath;
