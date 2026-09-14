@@ -265,31 +265,26 @@ change the preparation, precisely so that page 1 and page 2 cannot land on
 different engines and reject each other's cursor. Explain's answer is stable for
 a whole paginated session.
 
-** Why not one compiler over three providers
+** The engine choice is going away
 
-The natural shape — one compiler routing each *operation* to the provider that
-serves it best — is not what runs, and explain describes what runs. The two
-engines are whole-query: the index is tried on the entire query, and a single
-operand it cannot serve sends the *entire* query to SQL, which re-plans it from
-scratch.
+The rule above describes a transition, not the destination. SQL serves a filter
+only where a resident structure does not yet, and that list is being closed:
+[[file:spec-indexing.org][spec-indexing]] "No operand runs in SQL" settles that
+every operand is answered by the bitmaps or by the forest, and that SQLite reads
+and writes fields *for a list of uuids* and nothing else.
 
-Per-operation routing does exist, but only in the preparation and only in one
-direction: a path operand is resolved on the forest before either engine starts,
-and a text leaf the bitmaps cannot serve is evaluated on SQLite and injected back
-as a =uuid_in= set. The currency that makes that possible — a uuid set is both a
-bitmap and a =VALUES= list — is already what a real planner would need. What is
-missing is a cost model to choose with, which is this document, and the
-willingness to compose the two engines *both* ways: a bitmap result has never
-been fed into a SQL chain.
+Which is why this model prices by *provider* and not by engine. When the last
+leaf leaves SQL, the categories do not move — =path.assemble= is still the
+forest's work and =assemble= still SQLite's — but two fields of the response
+become vestigial: =engine=, which would always read =index=, and =fallback[]=,
+which would always be empty. They stay while the fallback does, as the honest
+report of what ran; explain then loses them and keeps the terms, whose
+attribution is already per node.
 
-So: three providers, two engines, one ad-hoc bridge in between. Generalising the
-bridge is the adaptive planner deferred in
-[[file:spec-indexing.org][spec-indexing]], and not a change this endpoint may
-make on its own ([[*Non-goals]]). What this document can do for it is price by
-*provider* rather than by engine — every category names one system's work — so
-the model survives a planner that stops choosing an engine per query and starts
-choosing a provider per node. Only =engine= and =fallback[]= would then be
-replaced, by a per-node attribution.
+One thing the composition question turned out not to need: a way to combine an
+operand served in SQL with one served from the cache. The currency for it exists
+— a uuid set is both a bitmap and a =VALUES= list — but there is nothing left to
+compose once no operand runs in SQL. The bridge is a transition artefact too.
 
 ** What forces the SQL path
 

@@ -294,12 +294,13 @@ steady-state memory and is paid only by the queries that sort on a tree field.
 The bitmap engine declines a query for one of two reasons, and they are not
 interchangeable:
 
-- *Coverage* — a query shape the index does not accelerate yet: =Matches=, a
-  =Path=-target =Follows=, an =Osm= path that is multi-term or on a non-tree_ref
-  field, a comparison with =Nothing=, an exact-node =tree_ref= path equality, a
-  text scan on a field with no indexed values, a foreign or malformed cursor.
-  The SQL engine answers these, and the oracle battery excludes them. This is
-  *debt*, named so it can be paid down; the fallback exists for it alone.
+- *Coverage* — a query shape the index does not serve. The list has shrunk to
+  the =:path= aspect, a multi-term =Osm= path that was not pre-resolved, a field
+  seen only through =Nothing= values, and a foreign or malformed cursor
+  (=Matches=, =Path=-target follows, exact-node equality and the =:parent=
+  aspect were all coverage gaps and are now served). The SQL engine answers
+  these, and the oracle battery excludes them. This is *debt*, named so it can
+  be paid down — and it is being paid to zero, see [[*No operand runs in SQL]].
 - *State* — an accelerator is not in the state the engine requires (no index, a
   non-resident forest). This cannot be reached through the API: a repository
   serves no data until both are built (spec-main "POST /repos/load"). Reaching
@@ -363,6 +364,76 @@ index stays a possible *specialised, opt-in secondary* for that one motif, to be
 revisited only if the bench shows BSI intersection insufficient for it — the
 same posture as the tree-scoped sort index above. It is not a candidate to
 replace the bitmap/BSI/reverse-bitmap core.
+
+* No operand runs in SQL
+
+*Decision.* Every *operand* of a query is answered by a resident structure — the
+bitmaps or the forest — and the SQL engine serves no part of a filter. What
+reaches SQLite is a list of uuids and the rows to read or write for it.
+
+The argument is that nothing is missing to do it. The bitmaps already hold a
+complete value → ids partition for *every* field, strings included
+(=CategoricalIndex.by_value= keys on the string itself), the numeric BSIs, and
+both the parent and name partitions of a =tree_ref=. The forest is eagerly
+populated at load. The two shapes still compiled to SQL — the =:path= aspect and
+a multi-term =Osm= path — are already computed *in the tree cache* by
+=path_matches= / =osm_path_matches=; they merely happen to be called from the
+SQL compiler and to hand back their answer as a =VALUES= list. So this is a
+wiring problem, not a data problem, and it costs no extra memory: the forest a
+path predicate walks is the one the =tree_ref= sort already walks.
+
+What this buys is not one query's speed but the *floor*: a compiled query always
+carries =_repo= (=SELECT uuid FROM metarecord=) and an =O(R_f)= scan per leaf, so
+falling back has always meant paying the repository's size — twice when =count=
+is asked. Removing the fallback removes the floor.
+
+** What SQL keeps
+
+Reading and writing *fields for a list of uuids*: =versions_for=,
+=field_rows_for=, =assemble_selected=, and every write (which goes through
+=log::Writer= as before). That is a =WHERE metarecord_uuid IN (…)=, and the
+=field= table remains the authoritative store — the bitmaps are a derived cache
+and nothing changes there ([[*Storage model: a derived in-memory cache]]).
+
+=query_exec= therefore loses its compiler, its =_repo= CTE, its sort CTEs, its
+cursors, and its =&mut TreeCache=: **the SQL layer stops knowing about the
+forest**, which is the coupling that made "which engine" and "which provider"
+two different questions.
+
+** It stays as the oracle
+
+=query_exec= is *not* deleted. It stays compiled and exercised by
+=tests/index_oracle.rs= and =tests/fts_oracle.rs= as a second implementation of
+the same questions, with no route calling it. The reason is written in this
+document's own history: a shape the oracle does not cross-check rots unnoticed —
+=MATCHES= under =:parent= answered the =:value= question, and an ordered operator
+under it compared for equality, for as long as the index *declined* the aspect
+and the comparison was therefore never made. An engine that only tests is a cost;
+an index with no second opinion is a risk, and the risk has already materialised.
+
+** Increments
+
+1. A *forest resolver* for the leaves the bitmaps cannot serve: the =:path=
+   aspect (presence, comparisons, =Matches=) and the order-sensitive =Osm= path.
+   It moves =path_matches= / =osm_path_matches= out of the SQL compiler, returns
+   a uuid set, and is applied in =prepare_indexed_query= next to the seeds — the
+   pre-resolution bridge that already exists for text leaves, pointed at the
+   forest instead of at SQLite.
+2. A field seen only through =Nothing= values answers natively (its partition is
+   empty, which is the answer) instead of reporting =Unsupported=.
+3. The type-dependent =400=\s move out of the engines into one validation pass.
+   They are made by =check_aspect= today because it knows the field's type; the
+   index knows it too (=types=, the catalog), so the rejection becomes
+   engine-independent — which is what "one author of the error" was always
+   trying to buy.
+4. The route stops falling back. A coverage gap becomes what a state gap already
+   is: a =500= naming a daemon bug. The =Unsupported= type keeps only its state
+   variant, and =index::eval='s exhaustive match is what guarantees a new IR
+   variant cannot be added without deciding how it is served.
+5. Later, and separately: =field_text= (the FTS5 trigram table) becomes dead
+   weight — it exists to pre-filter a =REGEXP= that no longer runs — and its
+   maintenance is on the write path. Dropping it is a persisted-format change
+   and ships with a migration.
 
 * Storage model: a derived in-memory cache
 
