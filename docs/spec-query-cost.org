@@ -296,20 +296,20 @@ replaced, by a per-node attribution.
 Each row is one =Unsupported= a leaf can raise; =fallback[]= reports it verbatim,
 with the address of the leaf that raised it.
 
-| Operand / shape                                | Reported as                          | Why the index defers                              |
-|------------------------------------------------+--------------------------------------+---------------------------------------------------|
-| =:parent= under =!==, an ordered op, =matches= | ="the ':parent' aspect"=             | not a complement, or a regex over a uuid          |
-| the =:path= aspect, anywhere                   | ="the ':path' aspect"=               | the assembled path lives in the forest            |
-| a field seen only through =Nothing=            | ="... field with no indexed values"= | no value partition; empty would be a wrong answer |
-| a shape SQL answers with a =400= (below)       | the matching message                 | the rejection has one author, and it is SQL       |
-| a multi-term =osm= path, not pre-resolved      | ="multi-term osm path"=              | ordered matching runs on assembled paths          |
-| an unresolved path target / exact node         | ="path-target follows"=              | only when the caller skipped the preparation      |
-| a cursor from another (query, sort)            | ="cursor does not match ..."=        | SQL then rejects it on its own encoding           |
+| Operand / shape                           | Reported as                          | Why the index defers                              |
+|-------------------------------------------+--------------------------------------+---------------------------------------------------|
+| the =:path= aspect, anywhere              | ="the ':path' aspect"=               | the assembled path lives in the forest            |
+| a field seen only through =Nothing=       | ="... field with no indexed values"= | no value partition; empty would be a wrong answer |
+| a shape SQL answers with a =400= (below)  | the matching message                 | the rejection has one author, and it is SQL       |
+| a multi-term =osm= path, not pre-resolved | ="multi-term osm path"=              | ordered matching runs on assembled paths          |
+| an unresolved path target / exact node    | ="path-target follows"=              | only when the caller skipped the preparation      |
+| a cursor from another (query, sort)       | ="cursor does not match ..."=        | SQL then rejects it on its own encoding           |
 
 The =400= shapes the index hands over rather than answering: an ordered
 comparison on a =bool=, on a reference, or on a bare =tree_ref=; =matches= on a
-bare =tree_ref=; an =osm= path on a non-=tree_ref= field; an empty =and= / =or=;
-a pattern that does not compile. The index could report several of them itself,
+bare =tree_ref=; an ordered operator or =matches= under =:parent=, which reads a
+uuid; an =osm= path on a non-=tree_ref= field; an empty =and= / =or=; a pattern
+that does not compile. The index could report several of them itself,
 and deliberately does not — one query, one author of its error.
 
 The *state* gaps are not in this table on purpose: ="tree_ref sort without a

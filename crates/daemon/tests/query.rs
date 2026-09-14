@@ -962,6 +962,56 @@ fn test_matches_on_a_tree_ref_needs_an_aspect() {
 }
 
 #[test]
+fn test_parent_aspect_refuses_a_regex_and_an_ordered_operand() {
+    // `:parent` reads the parent's *uuid*. A regex over it, and an ordering of
+    // it, have no meaning — and both used to be answered silently: `MATCHES`
+    // ran the pattern against `value_name` (the leaf name, which is the `value`
+    // aspect), and an ordered operator compared the parent for *equality*,
+    // ignoring the operator. Both are a 400 naming the aspect.
+    let mut f = Fixture::new();
+    let (_music, _jazz, _art_music) = tag_forest(&mut f);
+
+    let e = f.run_err(&Query::Matches {
+        field: "path".into(),
+        pattern: "music".into(),
+        aspect: Aspect::Parent,
+    });
+    assert!(e.contains("parent"), "regex on ':parent': {e}");
+
+    for q in [
+        Query::Lt { field: "path".into(), value: s("music"), aspect: Aspect::Parent },
+        Query::Gte { field: "path".into(), value: s("music"), aspect: Aspect::Parent },
+    ] {
+        let e = f.run_err(&q);
+        assert!(e.contains("parent"), "{q:?}: {e}");
+    }
+
+    // Equality and presence keep working: they compare the uuid, which is what
+    // the aspect reads.
+    assert!(!f.run(&eq_aspect("path", s("music"), Aspect::Parent)).is_empty());
+    assert!(!f.run(&Query::IsAbsent { field: "path".into(), aspect: Aspect::Parent }).is_empty());
+}
+
+#[test]
+fn test_parent_aspect_inequality_is_every_node_elsewhere() {
+    // `!=` under `:parent` asks for at least one row under *another* parent —
+    // not the complement of `=`: a root is "elsewhere" too, and an unresolved
+    // path excludes nobody.
+    let mut f = Fixture::new();
+    let (music, jazz, art_music) = tag_forest(&mut f);
+    let art = f.run(&eq_aspect("path", s("art"), Aspect::Raw))[0];
+
+    assert_same_set(
+        f.run(&Query::Neq { field: "path".into(), value: s("music"), aspect: Aspect::Parent }),
+        vec![music, art, art_music],
+    );
+    assert_same_set(
+        f.run(&Query::Neq { field: "path".into(), value: s("nope"), aspect: Aspect::Parent }),
+        vec![music, art, jazz, art_music],
+    );
+}
+
+#[test]
 fn test_tree_only_aspects_are_rejected_on_other_field_types() {
     let mut f = Fixture::new();
     f.create(vec![Field::new("title", s("hello"))]);

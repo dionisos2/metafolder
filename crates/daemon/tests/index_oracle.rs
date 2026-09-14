@@ -1553,27 +1553,34 @@ fn parent_aspect_equality_matches_sql_with_node_roots() {
     let _unrelated = o.create(vec![Field::new("kind", s("file"))]);
 
     for path in ["root", "root/b", "root/nope"] {
-        let q = Query::Eq { field: "loc".into(), value: s(path), aspect: Aspect::Parent };
-        let mut targets = Vec::new();
-        collect_node_paths(&q, &mut targets);
-        assert!(!targets.is_empty(), "the collector must see the ':parent' operand in {q:?}");
-        let mut roots = QueryRoots::new();
-        for (field, target) in targets {
-            let node = o.cache.resolve_path(&o.conn, &field, &target).unwrap();
-            roots.node.insert((field, target), node);
-        }
-        let index = RepoIndex::build(&o.conn).unwrap();
+        for q in [
+            Query::Eq { field: "loc".into(), value: s(path), aspect: Aspect::Parent },
+            // `!=` is every node under *another* parent — a root included, and
+            // everybody when the path resolves to nothing.
+            Query::Neq { field: "loc".into(), value: s(path), aspect: Aspect::Parent },
+        ] {
+            let mut targets = Vec::new();
+            collect_node_paths(&q, &mut targets);
+            assert!(!targets.is_empty(), "the collector must see the ':parent' operand in {q:?}");
+            let mut roots = QueryRoots::new();
+            for (field, target) in targets {
+                let node = o.cache.resolve_path(&o.conn, &field, &target).unwrap();
+                roots.node.insert((field, target), node);
+            }
+            let index = RepoIndex::build(&o.conn).unwrap();
 
-        let (mut sql, _) = query_exec::execute(&o.conn, &mut o.cache, &q, &[], None, None).unwrap();
-        let (mut got, _) = index.evaluate_page_with_roots(&q, &[], None, None, &roots).unwrap();
-        sql.sort();
-        got.sort();
-        assert_eq!(got, sql, "':parent' equality divergence on {q:?}");
-        assert_eq!(
-            index.count_with_roots(&q, &roots).unwrap() as usize,
-            query_exec::count(&o.conn, &mut o.cache, &q).unwrap(),
-            "count divergence on {q:?}"
-        );
+            let (mut sql, _) =
+                query_exec::execute(&o.conn, &mut o.cache, &q, &[], None, None).unwrap();
+            let (mut got, _) = index.evaluate_page_with_roots(&q, &[], None, None, &roots).unwrap();
+            sql.sort();
+            got.sort();
+            assert_eq!(got, sql, "':parent' equality divergence on {q:?}");
+            assert_eq!(
+                index.count_with_roots(&q, &roots).unwrap() as usize,
+                query_exec::count(&o.conn, &mut o.cache, &q).unwrap(),
+                "count divergence on {q:?}"
+            );
+        }
     }
 
     let index = RepoIndex::build(&o.conn).unwrap();
@@ -1585,12 +1592,14 @@ fn parent_aspect_equality_matches_sql_with_node_roots() {
     // Out of scope on purpose, and still deferred: `Neq` is not the complement
     // (a multi-position node is in both), and SQL's ordered form ignores the
     // operator instead of comparing uuids.
+    // An ordered operand (and a regex) under `:parent` is a 400 the SQL engine
+    // raises — the index defers rather than answering from a uuid comparison.
     let mut roots = QueryRoots::new();
     let node = o.cache.resolve_path(&o.conn, "loc", "root").unwrap();
     roots.node.insert(("loc".to_string(), "root".to_string()), node);
     for q in [
-        Query::Neq { field: "loc".into(), value: s("root"), aspect: Aspect::Parent },
         Query::Lt { field: "loc".into(), value: s("root"), aspect: Aspect::Parent },
+        Query::Matches { field: "loc".into(), pattern: "root".into(), aspect: Aspect::Parent },
     ] {
         assert!(
             index.evaluate_page_with_roots(&q, &[], None, None, &roots).is_err(),

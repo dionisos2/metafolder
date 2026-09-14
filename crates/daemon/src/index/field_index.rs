@@ -210,12 +210,14 @@ impl FieldIndex {
         }
     }
 
-    /// The ids carrying at least one `tree_ref` row under a *real* parent
-    /// (`field:parent IS PRESENT`). See [`ReverseIndex::parented`] for why this
-    /// is not the complement of [`Self::tree_roots`].
-    pub fn tree_parented(&self) -> Option<RoaringBitmap> {
+    /// The ids carrying at least one `tree_ref` row under a parent other than
+    /// `except`: `field:parent IS PRESENT` excludes the root sentinel,
+    /// `field:parent != "<path>"` the node at that path (and `None` — a path
+    /// that resolves to nothing — excludes nobody). See
+    /// [`ReverseIndex::parents_except`] for why it is not a complement.
+    pub fn tree_parents_except(&self, except: Option<Uuid>) -> Option<RoaringBitmap> {
         match self {
-            FieldIndex::Reverse(r) if r.kind == RefKind::TreeRef => Some(r.parented()),
+            FieldIndex::Reverse(r) if r.kind == RefKind::TreeRef => Some(r.parents_except(except)),
             _ => None,
         }
     }
@@ -936,15 +938,16 @@ impl ReverseIndex {
         self.by_value_uuid.get(&ZERO_UUID).cloned().unwrap_or_default()
     }
 
-    /// The ids with at least one row under a real parent. Deliberately *not*
-    /// the complement of [`Self::roots`]: SQL reads `value_uuid != x'00…'` row
-    /// by row, so a multi-position node that is both a root and a child
-    /// satisfies both predicates. Unioning the buckets is O(rows), which the
-    /// answer is anyway — it is "every non-root node".
-    fn parented(&self) -> RoaringBitmap {
+    /// The ids with at least one row under a parent other than `except`
+    /// (everybody when it is `None`). Deliberately *not* a complement: SQL
+    /// reads its `value_uuid` predicate row by row, so a multi-position node
+    /// sitting both under `except` and elsewhere satisfies it. Unioning the
+    /// buckets is O(rows), which its answer is anyway — it is "every node but
+    /// those".
+    fn parents_except(&self, except: Option<Uuid>) -> RoaringBitmap {
         let mut out = RoaringBitmap::new();
         for (parent, bm) in &self.by_value_uuid {
-            if *parent != ZERO_UUID {
+            if Some(*parent) != except {
                 out |= bm;
             }
         }

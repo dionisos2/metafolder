@@ -163,9 +163,21 @@ down. =field:parent IS PRESENT= is its complement *row by row* (every node under
 real parent) — not over metarecords: a multi-position node, a root in one place
 and a child in another, satisfies both. And =field:parent = <path>= is the same
 set as =field -> "<path>"=, spelled as a comparison rather than as an arrow.
-All three are served by the bitmap index, which partitions a =TreeRef= field by
-parent anyway (see [[file:spec-indexing.org][spec-indexing.org]]), so asking a
-forest for its roots is a lookup and not a scan.
+=field:parent != <path>= is its mirror — at least one row under *another*
+parent, a root included, and everybody when the path resolves to nothing — and
+it is no more a complement than =IS PRESENT= is. All four are served by the
+bitmap index, which partitions a =TreeRef= field by parent anyway (see
+[[file:spec-indexing.org][spec-indexing.org]]), so asking a forest for its roots
+is a lookup and not a scan.
+
+*=parent= reads a uuid*, so only the equality-shaped predicates apply to it:
+=IS PRESENT= / =IS ABSENT=, =eq= and =neq=. An *ordered* operator or =Matches=
+under =parent= is rejected with =400= naming the two candidates (=:value= for
+the name component, =:path= for the assembled path), exactly as a bare ordered
+comparison on a =TreeRef= is. Without that rule each had a silent, wrong
+reading available to it — the regex against =value_name=, the ordered operator
+as plain equality — which is the class of implicit behaviour this vocabulary
+exists to remove.
 
 *Sorting is not aspect-aware*: a =TreeRef= sort key always orders on the *whole
 path* (see "Sort specification" in [[file:spec-data-model.org][spec-data-model.org]]).

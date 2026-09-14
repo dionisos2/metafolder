@@ -21,7 +21,7 @@ pub mod id_registry;
 use std::collections::HashMap;
 
 use base64::Engine;
-use metafolder_core::metarecord::Value;
+use metafolder_core::metarecord::{Value, ZERO_UUID};
 use metafolder_core::query::{Aspect, FollowTarget, Query};
 use roaring::RoaringBitmap;
 use rusqlite::Connection;
@@ -117,7 +117,7 @@ pub fn collect_node_paths(q: &Query, out: &mut Vec<(String, String)>) {
         Query::Eq { field, value: Value::String(s), aspect: Aspect::Raw | Aspect::Parent } => {
             out.push((field.clone(), s.clone()));
         }
-        Query::Neq { field, value: Value::String(s), aspect: Aspect::Raw } => {
+        Query::Neq { field, value: Value::String(s), aspect: Aspect::Raw | Aspect::Parent } => {
             out.push((field.clone(), s.clone()));
         }
         Query::And { operands } | Query::Or { operands } => {
@@ -1034,7 +1034,7 @@ impl RepoIndex {
     /// with no indexed value at all is vacuously empty in both engines.
     fn parent_presence(&self, field: &str, present: bool) -> Result<RoaringBitmap, Unsupported> {
         let Some(fi) = self.fields.get(field) else { return Ok(RoaringBitmap::new()) };
-        let bm = if present { fi.tree_parented() } else { fi.tree_roots() };
+        let bm = if present { fi.tree_parents_except(Some(ZERO_UUID)) } else { fi.tree_roots() };
         bm.ok_or_else(|| unsupported("the ':parent' aspect"))
     }
 
@@ -1043,9 +1043,11 @@ impl RepoIndex {
     /// `Follows` reads, which is what the spec means by "the same set as
     /// `field -> \"<path>\"`, spelled as a comparison".
     ///
-    /// Equality only. `Neq` is *not* the complement (SQL asks for one differing
-    /// row, so a multi-position node is in both sets), and an ordered operand
-    /// has no meaning on a uuid — both stay with the SQL engine.
+    /// `Neq` is the mirror: every node under *another* parent — a forest root
+    /// included, and everybody when the path resolves to nothing. It is not the
+    /// complement of `Eq` (SQL asks for one differing row, so a multi-position
+    /// node is in both sets). A regex or an ordered operand reads a uuid and is
+    /// a `400`, which the SQL engine is the one to raise.
     fn parent_compare(
         &self,
         field: &str,
@@ -1053,7 +1055,7 @@ impl RepoIndex {
         value: &Value,
         roots: Option<&QueryRoots>,
     ) -> Result<RoaringBitmap, Unsupported> {
-        if !matches!(op, CmpOp::Eq) {
+        if !matches!(op, CmpOp::Eq | CmpOp::Neq) {
             return Err(unsupported("the ':parent' aspect"));
         }
         let Value::String(path) = value else {
@@ -1070,9 +1072,15 @@ impl RepoIndex {
         else {
             return Err(unsupported("unresolved ':parent' path"));
         };
-        Ok(match resolved {
-            None => RoaringBitmap::new(),
-            Some(node) => fi.referrers_of(*node).cloned().unwrap_or_default(),
+        Ok(match op {
+            CmpOp::Eq => match resolved {
+                None => RoaringBitmap::new(),
+                Some(node) => fi.referrers_of(*node).cloned().unwrap_or_default(),
+            },
+            // `*resolved` is `None` for a path that is no node: SQL's predicate
+            // is then `NOT (0)`, every row of the field — which is exactly what
+            // excluding no bucket gives.
+            _ => fi.tree_parents_except(*resolved).unwrap_or_default(),
         })
     }
 

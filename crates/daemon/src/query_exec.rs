@@ -1302,6 +1302,16 @@ impl<'a> Compiler<'a> {
                 }
                 Ok(())
             }
+            // `parent` reads the parent's uuid: a regex over it, or an
+            // ordering of it, has no meaning. Refusing here is what keeps the
+            // two from being answered silently — as `value_name` for the regex,
+            // and as plain equality for an ordered operator, which is what the
+            // row predicate below would do with them.
+            Aspect::Parent if kind != ReadKind::Equality => Err(ApiError::bad_request(format!(
+                "{} on the ':parent' aspect of '{field}' reads a uuid: use ':value' for \
+                 the name component, ':path' for the assembled path",
+                kind.describe()
+            ))),
             Aspect::Raw if is_tree && kind != ReadKind::Equality => {
                 Err(ApiError::bad_request(format!(
                     "{} on the tree_ref field '{field}' needs an explicit aspect: \
