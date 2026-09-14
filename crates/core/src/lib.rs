@@ -19,6 +19,7 @@ pub mod simplified;
 pub mod slowlog;
 pub mod sync;
 pub mod trash;
+pub mod undo;
 
 /// Wire-protocol version shared by every metafolder service (daemon, GUI, CLI).
 ///

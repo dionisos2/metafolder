@@ -584,3 +584,49 @@ async fn reconcile(app: &Router, repo: &str) {
     }
     panic!("reconcile did not finish in time");
 }
+
+// ── What a revert leaves behind (spec-event-log "reverts_op_id") ──────────────
+
+/// Every operation a revert writes names the operation it undid, so a later
+/// reader — the undo selection above all — can tell a correction from a change
+/// and see which changes are already undone.
+#[tokio::test]
+async fn test_a_revert_names_the_operations_it_undid() {
+    let (app, repo, _root) = setup("reverts_op_id").await;
+    let uuid =
+        create(&app, &repo, json!([{"name": "rating", "value": {"type": "int", "value": 3}}]))
+            .await;
+    set_field(&app, &repo, &uuid, "rating", json!({"type": "int", "value": 5})).await;
+    let rev = last_revision(&app, &repo).await;
+    let (status, body) = request(&app, "GET", &format!("/repos/{repo}/log"), None).await;
+    assert_eq!(status, StatusCode::OK, "log failed: {body}");
+    let undone: Vec<i64> = body["operations"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter(|o| o["rev_id"].as_i64() == Some(rev))
+        .map(|o| o["id"].as_i64().unwrap())
+        .collect();
+    assert_eq!(undone.len(), 1, "the setup revision should hold one operation");
+
+    let (status, body) = revert(&app, &repo, json!({"target": {"rev_id": rev}})).await;
+    assert_eq!(status, StatusCode::OK, "revert failed: {body}");
+    let revert_rev = body["revision"].as_i64().unwrap();
+
+    let (_, body) = request(&app, "GET", &format!("/repos/{repo}/log"), None).await;
+    let written: Vec<&Value> = body["operations"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter(|o| o["rev_id"].as_i64() == Some(revert_rev))
+        .collect();
+    assert_eq!(written.len(), 1, "the revert should write one operation");
+    assert_eq!(written[0]["reverts_op_id"].as_i64(), Some(undone[0]));
+
+    // An ordinary write names nothing.
+    for op in body["operations"].as_array().unwrap() {
+        if op["rev_id"].as_i64() != Some(revert_rev) {
+            assert_eq!(op["reverts_op_id"], Value::Null, "op {op} should name nothing");
+        }
+    }
+}

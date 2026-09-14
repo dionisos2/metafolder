@@ -4194,3 +4194,105 @@ fn log_head_prints_the_head_operation_id() {
     let now = mf(&["-u", &repo, "log", "head"]);
     assert_eq!(now.stdout.trim(), before_id.to_string(), "HEAD is back where it was");
 }
+
+// ── `mf log undo` (spec-event-log "mf log undo") ──────────────────────────────
+
+/// With nothing but the user's own writes in the log, undo is a rollback: HEAD
+/// moves back over the last revision and the log keeps no correction.
+#[test]
+fn test_log_undo_rolls_back_the_last_manual_revision() {
+    let (repo, _root) = init_repo("log_undo_rollback");
+    let uuid = create_metarecord(&repo, &["rating:int=3"]);
+    assert_ok(&mf(&["-u", &repo, "metarecord", "-i", &uuid, "field", "set", "rating:int=5"]));
+
+    let plan = mf(&["-u", &repo, "log", "undo", "plan"]);
+    assert_ok(&plan);
+    assert!(plan.stdout.contains("rollback"), "stdout: {}", plan.stdout);
+    // A plan writes nothing.
+    let out = mf(&["-u", &repo, "metarecord", "-i", &uuid, "field", "get", "rating"]);
+    assert!(out.stdout.contains('5'), "plan should not have written: {}", out.stdout);
+
+    let undo = mf(&["-u", &repo, "log", "undo"]);
+    assert_ok(&undo);
+    let out = mf(&["-u", &repo, "metarecord", "-i", &uuid, "field", "get", "rating"]);
+    assert!(out.stdout.contains('3'), "stdout: {}", out.stdout);
+}
+
+/// A second undo walks further back through the user's changes instead of
+/// undoing the first one.
+#[test]
+fn test_log_undo_repeats_down_the_users_changes() {
+    let (repo, _root) = init_repo("log_undo_repeat");
+    let uuid = create_metarecord(&repo, &["rating:int=1"]);
+    assert_ok(&mf(&["-u", &repo, "metarecord", "-i", &uuid, "field", "set", "rating:int=2"]));
+    assert_ok(&mf(&["-u", &repo, "metarecord", "-i", &uuid, "field", "set", "tag:string=x"]));
+
+    assert_ok(&mf(&["-u", &repo, "log", "undo"])); // undoes the tag
+    let out = mf(&["-u", &repo, "metarecord", "-i", &uuid, "get"]);
+    assert!(!out.stdout.contains("\"tag\""), "the tag should be gone: {}", out.stdout);
+
+    assert_ok(&mf(&["-u", &repo, "log", "undo"])); // undoes rating=2
+    let out = mf(&["-u", &repo, "metarecord", "-i", &uuid, "field", "get", "rating"]);
+    assert!(out.stdout.contains('1'), "stdout: {}", out.stdout);
+}
+
+/// Undo runs out rather than eating the repository: it stops at the revision
+/// that founds the history (the root metarecord the daemon writes at init),
+/// and says so instead of emptying the log.
+#[test]
+fn test_log_undo_stops_at_the_root_of_the_history() {
+    let (repo, _root) = init_repo("log_undo_empty");
+    create_metarecord(&repo, &["rating:int=3"]);
+
+    let mut said_nothing = false;
+    for _ in 0..6 {
+        let out = mf(&["-u", &repo, "log", "undo"]);
+        assert_ok(&out);
+        if out.stdout.to_lowercase().contains("nothing to undo") {
+            said_nothing = true;
+            break;
+        }
+    }
+    assert!(said_nothing, "undo never ran out");
+    // The root metarecord is still there: the foundation was never undone.
+    let out = mf(&["-u", &repo, "metarecord", "get"]);
+    assert_ok(&out);
+    assert!(!out.stdout.trim().is_empty(), "the repository lost its root metarecord");
+}
+
+/// The case undo exists for: the user changes a field, then the watcher records
+/// something of its own. Undo must not rewind HEAD over the watcher's revision
+/// — that would unrecord a file that is really there — so it reverts the user's
+/// change in place and leaves the watcher's work standing.
+#[test]
+fn test_log_undo_reverts_when_the_watcher_has_written_since() {
+    let (repo, root) = init_repo("log_undo_watcher");
+    let root_uuid = mf(&["-u", &repo, "metarecord", "-q", "mfr_type = \"dir\"", "get"])
+        .stdout
+        .trim()
+        .to_string();
+    assert_ok(&mf(&[
+        "-u",
+        &repo,
+        "metarecord",
+        "-i",
+        &root_uuid,
+        "field",
+        "set",
+        "mf_watch:bool=true",
+    ]));
+
+    // The user's change, then a file arriving under the watched root.
+    assert_ok(&mf(&["-u", &repo, "metarecord", "-i", &root_uuid, "field", "set", "note:string=a"]));
+    std::fs::write(root.join("later.txt"), b"hi").unwrap();
+    assert!(poll(40, || uuids_at(&repo, "later.txt").len() == 1), "watcher should track the file");
+
+    let out = mf(&["-u", &repo, "log", "undo"]);
+    assert_ok(&out);
+    assert!(out.stdout.contains("revert"), "undo should revert, not roll back: {}", out.stdout);
+
+    // The user's field is gone, and the watcher's metarecord is still there.
+    let record = mf(&["-u", &repo, "metarecord", "-i", &root_uuid, "get"]);
+    assert!(!record.stdout.contains("\"note\""), "the note should be undone: {}", record.stdout);
+    assert_eq!(uuids_at(&repo, "later.txt").len(), 1, "the tracked file must survive the undo");
+}

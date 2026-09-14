@@ -991,6 +991,7 @@ fn op_json(
         "op_type": op.op_type,
         "entity_uuid": hex(op.entity_uuid),
         "field_name": op.field_name,
+        "reverts_op_id": op.reverts_op_id,
     });
     if include_snapshots {
         value["snapshots_before"] = snapshots_json(conn, op.id, 0)?;
@@ -1040,17 +1041,17 @@ fn snapshots_json(
 
 fn revision_json(conn: &rusqlite::Connection, rev_id: i64) -> Result<serde_json::Value, ApiError> {
     use rusqlite::OptionalExtension as _;
-    let row: Option<(i64, Option<String>)> = conn
+    let row: Option<(i64, Option<String>, Option<String>)> = conn
         .query_row(
-            "SELECT timestamp, label FROM revision WHERE id = ?1",
+            "SELECT timestamp, label, origin FROM revision WHERE id = ?1",
             rusqlite::params![rev_id],
-            |r| Ok((r.get(0)?, r.get(1)?)),
+            |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)),
         )
         .optional()
         .map_err(anyhow::Error::from)?;
-    let (timestamp, label) =
+    let (timestamp, label, origin) =
         row.ok_or_else(|| ApiError::not_found(format!("revision {rev_id} not found")))?;
-    Ok(json!({"id": rev_id, "timestamp": timestamp, "label": label}))
+    Ok(json!({"id": rev_id, "timestamp": timestamp, "label": label, "origin": origin}))
 }
 
 #[derive(Deserialize)]
@@ -1125,18 +1126,18 @@ async fn get_log(
         };
 
         // Revision timestamps, for since/until filtering.
-        let mut rev_meta: std::collections::HashMap<i64, (i64, Option<String>)> =
+        let mut rev_meta: std::collections::HashMap<i64, (i64, Option<String>, Option<String>)> =
             std::collections::HashMap::new();
         {
             let mut stmt = conn
-                .prepare("SELECT id, timestamp, label FROM revision")
+                .prepare("SELECT id, timestamp, label, origin FROM revision")
                 .map_err(anyhow::Error::from)?;
             let rows = stmt
-                .query_map([], |r| Ok((r.get::<_, i64>(0)?, r.get(1)?, r.get(2)?)))
+                .query_map([], |r| Ok((r.get::<_, i64>(0)?, r.get(1)?, r.get(2)?, r.get(3)?)))
                 .map_err(anyhow::Error::from)?;
             for row in rows {
-                let (id, ts, label) = row.map_err(anyhow::Error::from)?;
-                rev_meta.insert(id, (ts, label));
+                let (id, ts, label, origin) = row.map_err(anyhow::Error::from)?;
+                rev_meta.insert(id, (ts, label, origin));
             }
         }
 
@@ -1146,7 +1147,7 @@ async fn get_log(
                     return false;
                 }
             }
-            let ts = rev_meta.get(&op.rev_id).map(|(ts, _)| *ts).unwrap_or(0);
+            let ts = rev_meta.get(&op.rev_id).map(|(ts, _, _)| *ts).unwrap_or(0);
             params.since.is_none_or(|s| ts >= s) && params.until.is_none_or(|u| ts <= u)
         });
         // `limit` keeps the most recent operations.
@@ -1163,8 +1164,10 @@ async fn get_log(
         for op in &ops {
             op_values.push(op_json(&conn, op, include_snapshots)?);
             if seen_revs.insert(op.rev_id) {
-                if let Some((ts, label)) = rev_meta.get(&op.rev_id) {
-                    revisions.push(json!({"id": op.rev_id, "timestamp": ts, "label": label}));
+                if let Some((ts, label, origin)) = rev_meta.get(&op.rev_id) {
+                    revisions.push(json!({
+                        "id": op.rev_id, "timestamp": ts, "label": label, "origin": origin,
+                    }));
                 }
             }
         }

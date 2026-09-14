@@ -11,6 +11,8 @@ that enables:
 - *Rollback*: navigating the history tree to any past or future state.
 - *Revert*: undoing one past revision or operation in place, by writing the
   state it replaced as a new revision rather than by moving HEAD.
+- *Undo*: undoing the newest change /the user/ made, choosing between the two
+  mechanisms above according to what has been written since (see [[*Undo]]).
 - *Non-destructive branching*: after rolling back, any new write creates a new
   branch — previously "future" operations are never lost.
 
@@ -38,6 +40,28 @@ field). Revisions with many operations arise from batch commands: a =batch_set=
 on K metarecords produces K operations; a =reconcile= creating M files produces M
 operations; a watcher =Remove= on a directory with N descendants produces N+1
 =file_deleted= operations. For large batches, operations are inserted in bulk.
+
+** Revision origin
+
+A revision records /who asked for it/: =revision.origin= is =watcher= for the
+revisions the daemon writes on the filesystem's behalf — the watcher's flush and
+the restoration replay that follows a skipped navigation step — and =NULL= for
+every write a client requested.
+
+It is the revision that carries this, not the operation types, because the types
+cannot express it. A file *arriving* is recorded as a =create_metarecord= plus
+its field writes, indistinguishable by type from a metarecord the user created;
+only =file_deleted=, =file_moved= and =file_modified= name the watcher, and they
+cover the changes to an /existing/ record, not the new ones. A reader that judged
+by type alone would read every arrival as the user's work.
+
+The distinction exists for [[*Undo]], which must not rewind past what the
+filesystem really did. It is also displayed: the GUI's log panel dims the
+watcher's revisions (spec-gui "Event log").
+
+A database written before the column existed has =NULL= everywhere; a reader
+falls back to the operation types there, which is sound (the watcher does write
+those types) without being exact (an arrival still reads as the user's).
 
 ** History tree
 
@@ -257,6 +281,64 @@ The target must lie on HEAD's ancestry. An operation on a branch abandoned by a
 past rollback is not part of the current history, so there is nothing there to
 undo; the daemon rejects it with =400=.
 
+** Undo
+
+Rollback and revert are two mechanisms; /undo/ is the question a user actually
+asks — "take back what I just did" — and it is answered by choosing between
+them. The choice is not the user's to make: which one applies depends on what
+has been written since, which is exactly what they are not watching.
+
+*** Why stepping HEAD back is the wrong answer
+
+The obvious undo — roll HEAD back one revision — is wrong as soon as the watcher
+is running. Between the change a user wants back and the present sit the
+watcher's own revisions: a file touched, a directory renamed, a file gone.
+Rewinding HEAD over those *unrecords facts that are still true on disk*, and the
+metadata comes out of step with the filesystem the daemon exists to track. The
+watcher's revisions are not the user's to undo.
+
+*** The selection
+
+Undo looks down HEAD's ancestry for the newest revision *the user wrote*, and
+undoes that one:
+
+- if it is the revision HEAD sits in, and all of it still stands: a *rollback*,
+  because HEAD can simply move back over it and the log keeps no trace of a
+  mistake that was never seen;
+- otherwise: a *revert*, which leaves everything written since exactly where it
+  is.
+
+A revision is *not* a candidate when:
+
+- it is the daemon's (=origin = 'watcher'= — see [[*Revision origin]]; on a
+  pre-migration database, when all its operations are watcher types);
+- it is *itself* a revert (any of its operations carries =reverts_op_id=).
+  Undoing an undo is a redo, and the next undo would put it back: this is the
+  rule that makes undo repeatable instead of a two-state oscillation;
+- every one of its operations has already been reverted;
+- it holds only =unknown= operations, which carry no snapshots to invert;
+- it is the root of the history — the first revision of a repository is the root
+  metarecord the daemon writes at init, and after a [[*Log pruning]] the oldest
+  revision left is a weak root whose predecessors are gone. Either way there is
+  no state to go back to. (=mf log revert <id>= still reaches it.)
+
+When a revision is only *partly* undone — some of its operations were reverted
+individually — undo targets the operations that are left, not the revision.
+
+The search walks HEAD's parent chain, so a redo future left by an earlier
+rollback, and any divergent branch, are ignored: they are not applied, and
+undoing them would mean nothing.
+
+*** Where it lives
+
+The selection is a *pure function of the log* and belongs to no front end: the
+CLI and the GUI read =GET /log= and share =core::undo=. The daemon has no undo
+endpoint — it offers the two mechanisms, and the client says which one it wants.
+The log is read in two bounded passes (500 operations, then 20 000) rather than
+one unbounded one: after a large reconcile an unbounded ancestry is millions of
+rows, and a repository whose last manual change is older than the second window
+is told so rather than scanned in full.
+
 * Daemon
 
 ** SQLite Schema
@@ -336,8 +418,9 @@ CREATE TABLE pending_operation (
 #+END_SRC
 
 =reverts_op_id= is set on each operation a [[*Revert]] writes, naming the
-operation it undid. It is informational — displays read it, nothing branches on
-it — and it is allowed to dangle: [[*Log pruning]] and a retention trim (see
+operation it undid. Two readers use it: displays, and [[*Undo]] — which is why a
+revert has to record it and not merely look like one. Nothing in the /write/
+path branches on it, and it is allowed to dangle: [[*Log pruning]] and a retention trim (see
 [[*Automatic retention]]) may remove the operation it points at, and neither
 goes back to clear the column. A database written before the column existed is
 migrated by adding it (=ALTER TABLE operation ADD COLUMN=), which leaves every
@@ -975,15 +1058,19 @@ Response body:
   "head": 3,
   "operations": [
     {"id": 1, "parent_id": null, "rev_id": 1, "seq": 1,
-     "op_type": "create_metarecord", "entity_uuid": "...", "field_name": null},
+     "op_type": "create_metarecord", "entity_uuid": "...", "field_name": null,
+     "reverts_op_id": null},
     {"id": 2, "parent_id": 1, "rev_id": 2, "seq": 1,
-     "op_type": "set_field", "entity_uuid": "...", "field_name": "rating"},
+     "op_type": "set_field", "entity_uuid": "...", "field_name": "rating",
+     "reverts_op_id": null},
     {"id": 3, "parent_id": 2, "rev_id": 2, "seq": 2,
-     "op_type": "set_field", "entity_uuid": "...", "field_name": "genre"}
+     "op_type": "set_field", "entity_uuid": "...", "field_name": "genre",
+     "reverts_op_id": null}
   ],
   "revisions": [
-    {"id": 1, "timestamp": 1700000000000, "label": null},
-    {"id": 2, "timestamp": 1700000001000, "label": "before-cleanup"}
+    {"id": 1, "timestamp": 1700000000000, "label": null, "origin": null},
+    {"id": 2, "timestamp": 1700000001000, "label": "before-cleanup",
+     "origin": null}
   ],
   "total_operations": 3,
   "total_revisions": 2
@@ -992,6 +1079,12 @@ Response body:
 
 Only revisions referenced by at least one returned operation are included in
 =revisions=.
+
+=reverts_op_id= names the operation a revert undid (=null= for an ordinary
+write), and =origin= says who wrote the revision (="watcher"= for the daemon's
+own, =null= for a client's — see [[*Revision origin]]). Together they are what a
+client needs to make sense of its own history: [[*Undo]] reads both, and the
+GUI's log panel displays them.
 
 =total_operations= and =total_revisions= count the *whole* log of the
 repository, not the returned window: they are unaffected by =mode=, =limit=,
@@ -1015,6 +1108,7 @@ Response body:
     "id": 12,
     "timestamp": 1700000001000,
     "label": "before-cleanup",
+    "origin": null,
     "is_head": true
   },
   "operations": [
@@ -1506,6 +1600,49 @@ as =reverts op N=.
 | Flag        | Description                          |
 |-------------+--------------------------------------|
 | =--raw=     | Print the raw JSON response body     |
+
+** =mf log undo [plan]=
+
+Undoes the newest change *you* made, whichever mechanism that takes — the
+[[*Undo]] selection, on the command line. It takes no target: finding one is the
+whole job.
+
+*** Synopsis
+
+#+BEGIN_SRC
+mf log undo [options]
+mf log undo plan
+#+END_SRC
+
+*** Behaviour
+
+1. Reads =GET /log?mode=linear= twice at most (500 operations, then 20 000) and
+   applies the [[*Undo]] selection.
+2. With =plan=, prints what it would do — the mechanism, the revision, and why
+   that mechanism — and writes nothing.
+3. =Rollback=: runs =mf rollback= with the implicit previous-revision target,
+   coordinated file moves and all.
+4. =Revert=: runs =mf revert= on the chosen revision (or on the operations of it
+   that are left, when part of it was reverted already).
+5. With nothing to undo, prints =Nothing to undo.= and exits =0=.
+
+A blocked revert, or one needing a filesystem action, behaves exactly as
+=mf revert= does — same report, same prompts, same policies. Undo picks the
+target; it does not change what the mechanism then does.
+
+*** Options
+
+| Flag                      | Description                                                |
+|---------------------------+------------------------------------------------------------|
+| =--with-dependents=       | Passed to the revert: also undo whatever blocks the target  |
+| =--metadata-only=         | Passed to the revert: leave out operations needing a file action |
+| =--on-move-available P=   | Policy for a =move= whose file is present; default =apply=  |
+| =--on-move-unavailable P= | Policy for a =move= whose file is gone; default =ask=       |
+| =--force=                 | Skip the confirmation prompt                                |
+| =--silent=                | Suppress informational output                               |
+
+The GUI's =log:undo= (=ctrl+z=) is the same selection, made against the same
+=core::undo= (spec-gui "Event log").
 
 ** =mf rollback [<target>]=
 

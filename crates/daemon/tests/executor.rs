@@ -1415,3 +1415,47 @@ fn test_a_flush_never_scans_the_repository_for_orphans() {
         "the overwritten destination must still be orphaned: {seen:?}"
     );
 }
+
+/// A revision the watcher writes says so (`revision.origin`), whatever
+/// operation types it holds: a file arriving is recorded as a
+/// `create_metarecord`, indistinguishable by type from a user's write, and the
+/// undo selection (spec-event-log "mf log undo") must not mistake one for the
+/// other.
+#[test]
+fn test_a_watcher_revision_records_its_origin() {
+    let (repo, root, _root_uuid) = setup("origin");
+    write_file(&root, "arrived.txt", b"x");
+    enqueue(&repo, &[FsEvent::Create("/arrived.txt".into())]);
+    executor::flush_pending(&repo).unwrap();
+    assert!(resolve(&repo, "/arrived.txt").is_some(), "the watcher should track the file");
+
+    let conn = repo.conn.lock().unwrap();
+    // The revision holding the arrival — the newest one.
+    let (rev_id, origin): (i64, Option<String>) = conn
+        .query_row("SELECT id, origin FROM revision ORDER BY id DESC LIMIT 1", [], |r| {
+            Ok((r.get(0)?, r.get(1)?))
+        })
+        .unwrap();
+    let types: Vec<String> = {
+        let mut stmt = conn.prepare("SELECT op_type FROM operation WHERE rev_id = ?1").unwrap();
+        let rows = stmt.query_map([rev_id], |r| r.get(0)).unwrap();
+        rows.collect::<rusqlite::Result<_>>().unwrap()
+    };
+    assert!(
+        types.iter().any(|t| t == "create_metarecord"),
+        "an arrival is recorded as a creation: {types:?}"
+    );
+    assert_eq!(origin.as_deref(), Some("watcher"), "rev {rev_id} should be marked");
+
+    // A user's write leaves it unset.
+    drop(conn);
+    let mut conn = repo.conn.lock().unwrap();
+    let uuid = db::find_tree_child(&conn, "mfr_path", None, "").unwrap().unwrap();
+    let mut w = Writer::begin(&mut conn, None).unwrap();
+    w.set_field(uuid, "rating", Value::Int(3)).unwrap();
+    w.commit().unwrap();
+    let origin: Option<String> = conn
+        .query_row("SELECT origin FROM revision ORDER BY id DESC LIMIT 1", [], |r| r.get(0))
+        .unwrap();
+    assert_eq!(origin, None, "an ordinary write is nobody's but the writer's");
+}

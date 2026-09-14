@@ -9,7 +9,7 @@ use std::io::Write as _;
 
 use serde_json::{json, Value as Json};
 
-use metafolder_core::date;
+use metafolder_core::{date, undo};
 
 use crate::client::CliError;
 use crate::commands::Ctx;
@@ -68,6 +68,89 @@ impl TargetArgs {
         }
         Ok(q)
     }
+}
+
+// ── mf log undo (spec-event-log "mf log undo") ───────────────────────────────
+
+/// Reads enough of the log to decide what undo should undo. Two bounded reads
+/// rather than one unbounded one: a repository whose last manual change is
+/// older than [`undo::WINDOW`] operations — a large reconcile sits in between —
+/// asks again with [`undo::WIDE_WINDOW`] (spec-event-log "mf log undo").
+fn undo_plan(ctx: &Ctx, base: &str) -> Result<undo::UndoPlan, CliError> {
+    for limit in [undo::WINDOW, undo::WIDE_WINDOW] {
+        let log = ctx.client.get(
+            &format!("{base}/log"),
+            &[("mode", "linear".to_string()), ("limit", limit.to_string())],
+        )?;
+        let plan = undo::plan_from_log(&log);
+        if plan != undo::UndoPlan::Nothing || !undo::window_exhausted(&log, limit) {
+            return Ok(plan);
+        }
+    }
+    Ok(undo::UndoPlan::Nothing)
+}
+
+/// `mf log undo [plan]`: undoes the newest change the *user* wrote, whichever
+/// mechanism that takes — a rollback when it is the last thing in the log, a
+/// revert when the watcher (or another revision) has written since.
+pub fn undo_run(
+    ctx: &Ctx,
+    plan_only: bool,
+    policies: RollbackPolicies,
+    opts: UndoOpts,
+) -> Result<i32, CliError> {
+    let base = ctx.repo_base()?;
+    let plan = undo_plan(ctx, &base)?;
+    if plan_only {
+        println!("{}", plan.describe());
+        return Ok(0);
+    }
+    match plan {
+        undo::UndoPlan::Nothing => {
+            println!("Nothing to undo.");
+            Ok(0)
+        }
+        undo::UndoPlan::Rollback { rev_id } => {
+            if !opts.silent {
+                println!("Undoing revision {rev_id} (rollback).");
+            }
+            rollback_run(
+                ctx,
+                TargetArgs { label: None, id: None, timestamp: None },
+                policies,
+                opts.silent,
+            )
+        }
+        undo::UndoPlan::Revert { rev_id, ops } => {
+            if !opts.silent {
+                println!("Undoing revision {rev_id} (revert: later work sits on top of it).");
+            }
+            let target = RevertTarget {
+                rev_id: ops.is_none().then_some(rev_id),
+                op_ids: ops.unwrap_or_default(),
+            };
+            revert_run(
+                ctx,
+                target,
+                &RevertOpts {
+                    with_dependents: opts.with_dependents,
+                    metadata_only: opts.metadata_only,
+                    label: None,
+                    force: opts.force,
+                    silent: opts.silent,
+                    policies,
+                },
+            )
+        }
+    }
+}
+
+/// The options `mf log undo` passes on to whichever mechanism it picks.
+pub struct UndoOpts {
+    pub with_dependents: bool,
+    pub metadata_only: bool,
+    pub force: bool,
+    pub silent: bool,
 }
 
 // ── mf rollback (coordinated navigation) ────────────────────────────────────────

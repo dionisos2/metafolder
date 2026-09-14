@@ -16,6 +16,11 @@ use metafolder_core::metarecord::{Field, FieldType, MetaRecord, Value};
 use crate::db::{self, FieldRow};
 use crate::error::DomainError;
 
+/// The `revision.origin` of a revision the daemon writes on the filesystem's
+/// behalf — the watcher's flush and the restoration replay (spec-event-log
+/// "Revision origin"). A client's own write leaves the column NULL.
+pub const ORIGIN_WATCHER: &str = "watcher";
+
 /// Maximum depth of a TreeRef chain (spec-main invariant).
 pub const MAX_TREE_DEPTH: usize = 1000;
 
@@ -96,6 +101,11 @@ pub struct OpRow {
     /// `entity_version_before + 1`.
     pub entity_version_after: Option<u64>,
     pub field_name: Option<String>,
+    /// The operation this one undid, when a revert wrote it (spec-event-log
+    /// "Revert"). `None` for an ordinary write — and for every row of a
+    /// database written before the column existed. Allowed to dangle: pruning
+    /// may remove the operation it names.
+    pub reverts_op_id: Option<i64>,
 }
 
 /// The version `op`'s entity held *before the whole revision* `op` belongs to —
@@ -126,7 +136,7 @@ pub fn get_head(conn: &rusqlite::Connection) -> Result<Option<i64>> {
 
 const OP_COLUMNS: &str =
     "id, parent_id, rev_id, seq, op_type, entity_uuid, entity_version_before, \
-     entity_version_after, field_name";
+     entity_version_after, field_name, reverts_op_id";
 
 fn row_to_op(row: &rusqlite::Row<'_>) -> rusqlite::Result<(OpRow, Vec<u8>)> {
     let entity: Vec<u8> = row.get(5)?;
@@ -141,6 +151,7 @@ fn row_to_op(row: &rusqlite::Row<'_>) -> rusqlite::Result<(OpRow, Vec<u8>)> {
             entity_version_before: row.get::<_, Option<i64>>(6)?.map(|v| v as u64),
             entity_version_after: row.get::<_, Option<i64>>(7)?.map(|v| v as u64),
             field_name: row.get(8)?,
+            reverts_op_id: row.get(9)?,
         },
         entity,
     ))
@@ -229,7 +240,8 @@ pub fn ancestry_ops(conn: &rusqlite::Connection, from: i64) -> Result<Vec<OpRow>
     let mut stmt = conn.prepare_cached(&format!(
         "{ANCESTRY_CTE}
          SELECT o.id, o.parent_id, o.rev_id, o.seq, o.op_type, o.entity_uuid,
-                o.entity_version_before, o.entity_version_after, o.field_name
+                o.entity_version_before, o.entity_version_after, o.field_name,
+                o.reverts_op_id
          FROM chain c JOIN operation o ON o.id = c.id
          ORDER BY c.depth"
     ))?;
@@ -287,7 +299,8 @@ pub fn ancestry_ops_until(
              LIMIT ?3
          )
          SELECT o.id, o.parent_id, o.rev_id, o.seq, o.op_type, o.entity_uuid,
-                o.entity_version_before, o.entity_version_after, o.field_name
+                o.entity_version_before, o.entity_version_after, o.field_name,
+                o.reverts_op_id
          FROM chain c JOIN operation o ON o.id = c.id
          ORDER BY c.depth",
     )?;
@@ -325,7 +338,8 @@ pub fn ancestry_ops_limited(
     let mut stmt = conn.prepare_cached(&format!(
         "{ANCESTRY_CTE}
          SELECT o.id, o.parent_id, o.rev_id, o.seq, o.op_type, o.entity_uuid,
-                o.entity_version_before, o.entity_version_after, o.field_name
+                o.entity_version_before, o.entity_version_after, o.field_name,
+                o.reverts_op_id
          FROM chain c JOIN operation o ON o.id = c.id
          ORDER BY c.depth"
     ))?;
@@ -1040,6 +1054,8 @@ struct PendingOp {
     version_after: Option<u64>,
     before: Vec<FieldRow>,
     after: Vec<FieldRow>,
+    /// The operation this one undoes, when the writer is reverting.
+    reverts_op_id: Option<i64>,
 }
 
 /// Buffered operations are flushed to the database once this many accumulate,
@@ -1279,6 +1295,10 @@ pub struct Writer<'c> {
     /// stable error.
     tree_lost: Vec<(String, Uuid)>,
     tree_lost_seen: HashMap<String, HashSet<Uuid>>,
+    /// The operation the writes recorded from now on are undoing, stamped onto
+    /// each of them as `reverts_op_id` (see [`Self::reverting`]). `None` for
+    /// every ordinary write.
+    reverting: Option<i64>,
 }
 
 impl<'c> Writer<'c> {
@@ -1318,11 +1338,28 @@ impl<'c> Writer<'c> {
             tree_seen: HashMap::new(),
             tree_lost: Vec::new(),
             tree_lost_seen: HashMap::new(),
+            reverting: None,
         })
     }
 
     pub fn rev_id(&self) -> i64 {
         self.rev_id
+    }
+
+    /// Marks this revision as written on the filesystem's behalf rather than at
+    /// a client's request (spec-event-log "Revision origin"). The watcher's
+    /// flush and the restoration replay set it; every other write leaves it
+    /// unset, which is what "a client asked for this" means.
+    ///
+    /// It is the revision, not the operation types, that carries this: a file
+    /// arriving is recorded as a `create_metarecord`, indistinguishable by type
+    /// from a metarecord the user created.
+    pub fn set_origin(&mut self, origin: &str) -> Result<()> {
+        self.tx.execute(
+            "UPDATE revision SET origin = ?1 WHERE id = ?2",
+            params![origin, self.rev_id],
+        )?;
+        Ok(())
     }
 
     /// Read access to the underlying transaction, for lookups (tree cache,
@@ -1416,6 +1453,14 @@ impl<'c> Writer<'c> {
         // The per-revision cache holds types probed under the eager rule; drop
         // it so nothing downstream reads a type this revision is about to move.
         self.field_types.clear();
+    }
+
+    /// Declares that the operations recorded from now on undo `op_id`, which
+    /// each of them records as its `reverts_op_id` (spec-event-log "Revert").
+    /// A revert sets it around each operation it walks; `None` restores the
+    /// ordinary, unattributed write.
+    pub fn reverting(&mut self, op_id: Option<i64>) {
+        self.reverting = op_id;
     }
 
     /// The deferred check: every field name this revision wrote must carry a
@@ -1947,6 +1992,7 @@ impl<'c> Writer<'c> {
             version_after,
             before,
             after,
+            reverts_op_id: self.reverting,
         });
         if self.pending.len() >= FLUSH_THRESHOLD {
             self.flush_pending()?;
@@ -1990,6 +2036,7 @@ impl<'c> Writer<'c> {
                 op.version_before.map_or(Sql::Null, |v| Sql::Integer(v as i64)),
                 op.version_after.map_or(Sql::Null, |v| Sql::Integer(v as i64)),
                 op.field_name.clone().map_or(Sql::Null, Sql::Text),
+                op.reverts_op_id.map_or(Sql::Null, Sql::Integer),
             ]);
             for (is_new, rows) in [(0, &op.before), (1, &op.after)] {
                 for row in rows {
@@ -2016,8 +2063,9 @@ impl<'c> Writer<'c> {
             &self.tx,
             "INSERT INTO operation
                  (id, parent_id, rev_id, seq, op_type, entity_uuid,
-                  entity_version_before, entity_version_after, field_name)",
-            9,
+                  entity_version_before, entity_version_after, field_name,
+                  reverts_op_id)",
+            10,
             &op_rows,
         )?;
         bulk_insert(

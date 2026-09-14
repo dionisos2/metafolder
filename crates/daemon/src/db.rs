@@ -154,6 +154,8 @@ const MIGRATIONS: &[(&str, fn(&Connection) -> Result<()>)] = &[
     ("pending_operation.tracker column", ensure_pending_tracker_column),
     ("metarecord.next_version column", ensure_next_version_column),
     ("operation.entity_version_after column", ensure_entity_version_after_column),
+    ("operation.reverts_op_id column", ensure_reverts_op_id_column),
+    ("revision.origin column", ensure_revision_origin_column),
     ("field.value_name_bytes column", ensure_value_name_bytes_column),
     ("pending_operation path byte columns", ensure_pending_path_bytes_columns),
     ("performance indexes", ensure_perf_indexes),
@@ -409,6 +411,27 @@ fn ensure_entity_version_after_column(conn: &Connection) -> Result<()> {
         "entity_version_after",
         "ALTER TABLE operation ADD COLUMN entity_version_after INTEGER",
     )
+}
+
+/// Adds `operation.reverts_op_id` to databases created before it existed. Left
+/// NULL on existing rows, which reads exactly right: no revert has happened yet
+/// (spec-event-log "reverts_op_id"). Idempotent; a no-op on fresh databases and
+/// on ones with no `operation` yet.
+fn ensure_reverts_op_id_column(conn: &Connection) -> Result<()> {
+    add_column_if_missing(
+        conn,
+        "operation",
+        "reverts_op_id",
+        "ALTER TABLE operation ADD COLUMN reverts_op_id INTEGER REFERENCES operation(id)",
+    )
+}
+
+/// Adds `revision.origin` to databases created before it existed. Left NULL on
+/// existing rows, where the reader falls back to judging a revision by its
+/// operation types (spec-event-log "Revision origin"). Idempotent; a no-op on
+/// fresh databases and on ones with no `revision` yet.
+fn ensure_revision_origin_column(conn: &Connection) -> Result<()> {
+    add_column_if_missing(conn, "revision", "origin", "ALTER TABLE revision ADD COLUMN origin TEXT")
 }
 
 /// Adds `pending_operation.tracker` to databases created before it existed, so
@@ -680,7 +703,11 @@ pub fn init_schema(conn: &Connection) -> Result<()> {
         CREATE TABLE revision (
             id         INTEGER PRIMARY KEY AUTOINCREMENT,
             timestamp  INTEGER NOT NULL,  -- Unix ms
-            label      TEXT
+            label      TEXT,
+            -- Who wrote it: 'watcher' for the revisions the daemon records on
+            -- the filesystem's behalf, NULL for a client's own write
+            -- (spec-event-log, Revision origin).
+            origin     TEXT
         );
 
         CREATE TABLE operation (
@@ -692,7 +719,11 @@ pub fn init_schema(conn: &Connection) -> Result<()> {
             entity_uuid           BLOB    NOT NULL,
             entity_version_before INTEGER,
             entity_version_after  INTEGER,
-            field_name            TEXT
+            field_name            TEXT,
+            -- Set on every operation a revert writes, naming the one it undid
+            -- (spec-event-log, Revert). Allowed to dangle: pruning and the
+            -- retention trim may remove the operation it points at.
+            reverts_op_id         INTEGER REFERENCES operation(id)
         );
         CREATE INDEX idx_operation_parent ON operation(parent_id);
         CREATE INDEX idx_operation_rev    ON operation(rev_id, seq);

@@ -29,7 +29,7 @@ use metafolder_core::sync::MutexExt;
 use crate::db;
 use crate::eligibility;
 use crate::fs_meta;
-use crate::log::{OpType, Writer};
+use crate::log::{self, OpType, Writer};
 use crate::relpath::RelPath;
 use crate::state::RepoState;
 use crate::tree_cache::TreeCache;
@@ -512,7 +512,11 @@ fn flush_pending_once(repo: &RepoState, report: FlushReport) -> Result<FlushStat
         let mut ignored = 0usize;
         let mut applied = 0usize;
         for (_, group) in groups {
-            let writer = repo.writer(&mut conn, None)?;
+            let mut writer = repo.writer(&mut conn, None)?;
+            // The filesystem's doing, not a client's (spec-event-log "Revision
+            // origin"): an arrival is a `create_metarecord` like any other, so
+            // the revision has to say where it came from.
+            writer.set_origin(log::ORIGIN_WATCHER)?;
             let mut apply = Apply {
                 report,
                 writer,
@@ -650,6 +654,9 @@ fn flush_restorations(
     };
 
     let mut writer = Writer::begin_with_retention(conn, None, retention)?;
+    // Re-recording the filesystem truth a skipped navigation step left behind:
+    // the daemon's doing, like the watcher's own flush.
+    writer.set_origin(log::ORIGIN_WATCHER)?;
     for (_, op_type, path, from_path, to_path) in &rows {
         let entity = parse_uuid(path.as_deref().context("restoration op missing entity")?)?;
         match op_type.as_str() {

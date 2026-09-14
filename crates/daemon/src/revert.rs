@@ -221,6 +221,9 @@ pub fn apply(writer: &mut Writer, ops: &[OpRow]) -> Result<usize> {
     let mut remap: HashMap<i64, i64> = HashMap::new();
     let mut done = 0usize;
     for op in ops.iter().rev() {
+        // Everything written for this op names it, so a later reader can tell a
+        // correction from a change (spec-event-log "reverts_op_id").
+        writer.reverting(Some(op.id));
         // Read through the writer's own transaction, so the state the revert
         // is computed from is the state it is written into.
         let before = log::snapshots(writer.connection(), op.id, 0)?;
@@ -276,6 +279,7 @@ pub fn apply(writer: &mut Writer, ops: &[OpRow]) -> Result<usize> {
         }
         done += 1;
     }
+    writer.reverting(None);
     Ok(done)
 }
 

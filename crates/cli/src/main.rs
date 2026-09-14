@@ -405,6 +405,30 @@ enum LogCommand {
         #[arg(long)]
         silent: bool,
     },
+    /// Undo the newest change you made, whichever mechanism that takes
+    Undo {
+        /// "plan" to print what undo would do, without writing anything
+        #[arg(num_args = 0..=1)]
+        args: Vec<String>,
+        /// Also revert whatever blocks the target (its dependency closure)
+        #[arg(long = "with-dependents")]
+        with_dependents: bool,
+        /// Leave out the operations needing a filesystem action
+        #[arg(long = "metadata-only")]
+        metadata_only: bool,
+        /// Policy when the file is present: apply|skip|abort|ask (default apply)
+        #[arg(long = "on-move-available")]
+        on_move_available: Option<String>,
+        /// Policy when the file is missing: apply|skip|abort|ask (default ask)
+        #[arg(long = "on-move-unavailable")]
+        on_move_unavailable: Option<String>,
+        /// Skip the confirmation prompt
+        #[arg(long)]
+        force: bool,
+        /// Suppress informational output
+        #[arg(long)]
+        silent: bool,
+    },
     /// Undo a revision (or an operation) by writing its inverse at HEAD
     Revert {
         /// "plan" to preview, optionally a revision id; or a revision id.
@@ -1337,6 +1361,44 @@ fn dispatch_log(ctx: &Ctx, command: Option<LogCommand>) -> CmdResult {
                     Err(e) => Err(e),
                 }
             }
+        }
+        Some(LogCommand::Undo {
+            args,
+            with_dependents,
+            metadata_only,
+            on_move_available,
+            on_move_unavailable,
+            force,
+            silent,
+        }) => {
+            let plan_only = match args.first().map(String::as_str) {
+                None => false,
+                Some("plan") => true,
+                Some(other) => {
+                    return Err(metafolder_cli::client::CliError::Usage(format!(
+                        "'{other}' is not a valid argument; mf log undo takes no target \
+                         (it finds one) — say 'plan' to preview it"
+                    )))
+                }
+            };
+            let policies = log::RollbackPolicies {
+                on_available: on_move_available
+                    .as_deref()
+                    .map(log::Policy::parse)
+                    .transpose()?
+                    .unwrap_or(log::Policy::Apply),
+                on_unavailable: on_move_unavailable
+                    .as_deref()
+                    .map(log::Policy::parse)
+                    .transpose()?
+                    .unwrap_or(log::Policy::Ask),
+            };
+            log::undo_run(
+                ctx,
+                plan_only,
+                policies,
+                log::UndoOpts { with_dependents, metadata_only, force, silent },
+            )
         }
         Some(LogCommand::Revert {
             args,
