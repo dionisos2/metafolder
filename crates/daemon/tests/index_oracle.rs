@@ -1039,12 +1039,13 @@ fn osm_path_separator_term_defers_and_matches_sql() {
     let _track = o.create(vec![tref("loc", Some(jazz), "take-five.flac")]);
     let _other = o.create(vec![tref("loc", Some(root), "jazz")]);
 
+    o.cache.populate(&o.conn).unwrap();
     for term in ["music/jazz", "root/music", "zz/take"] {
         let q = osm_path_q("loc", &[term]);
         let index = RepoIndex::build(&o.conn).unwrap();
         assert!(index.evaluate(&q).is_err(), "a separator-bearing term must defer: {term:?}");
 
-        let rewritten = query_exec::resolve_index_leaves(&o.conn, &mut o.cache, &q).unwrap();
+        let rewritten = forest_query::resolve_path_leaves(&o.cache, &q).unwrap();
         let (mut sql, _) = query_exec::execute(&o.conn, &mut o.cache, &q, &[], None, None).unwrap();
         let (mut got, _) = index
             .evaluate_page_with_roots(&rewritten, &[], None, None, &QueryRoots::new())
@@ -1059,9 +1060,9 @@ fn osm_path_separator_term_defers_and_matches_sql() {
 #[test]
 fn osm_path_multi_term_via_leaf_rewrite_matches_sql() {
     // A multi-term OSM path is order-sensitive, so the index can't do it alone;
-    // `resolve_index_leaves` pre-resolves it to a UuidIn (without the SQL VALUES
-    // inlining) and the index composes. The set and count must match SQL, and the
-    // ordered semantics must hold (a reversed term order matches nothing here).
+    // the forest walk resolves it to a UuidIn and the index composes. The set
+    // and count must match SQL, and the ordered semantics must hold (a reversed
+    // term order matches nothing here).
     let mut o = Oracle::new();
     let root = o.create(vec![tref("loc", None, "root")]);
     let video = o.create(vec![tref("loc", Some(root), "video")]);
@@ -1069,9 +1070,10 @@ fn osm_path_multi_term_via_leaf_rewrite_matches_sql() {
     let _scifi = o.create(vec![tref("loc", Some(series), "science-fiction")]);
     let _music = o.create(vec![tref("loc", Some(root), "music")]);
 
+    o.cache.populate(&o.conn).unwrap();
     for terms in [vec!["video", "scien"], vec!["scien", "video"], vec!["ser", "vid"]] {
         let q = osm_path_q("loc", &terms);
-        let rewritten = query_exec::resolve_index_leaves(&o.conn, &mut o.cache, &q).unwrap();
+        let rewritten = forest_query::resolve_path_leaves(&o.cache, &q).unwrap();
         let index = RepoIndex::build(&o.conn).unwrap();
         let (mut sql, _) = query_exec::execute(&o.conn, &mut o.cache, &q, &[], None, None).unwrap();
         // A rewritten multi-term OSM path is a bare UuidIn — the index serves it
@@ -1088,9 +1090,9 @@ fn osm_path_multi_term_via_leaf_rewrite_matches_sql() {
 #[test]
 fn finder_shaped_query_via_leaf_rewrite_matches_sql() {
     // The GUI finder runs `or(osm_path(mfr_path), osmd(label), osmd(name))`. The
-    // index can't do the `osmd` (Direct) leaves, but after `resolve_index_leaves`
-    // rewrites them to UuidIn sets, the index serves the whole query — the
-    // single-term osm_path natively — and must agree with the SQL engine.
+    // index serves the whole thing: the single-term osm_path from its term
+    // nodes, the `osmd` (Direct) leaf by running the regex over the field's
+    // distinct values in memory. It must agree with the SQL engine.
     let mut o = Oracle::new();
     let root = o.create(vec![tref("loc", None, "root")]);
     let sci = o.create(vec![tref("loc", Some(root), "science")]);
@@ -1105,10 +1107,10 @@ fn finder_shaped_query_via_leaf_rewrite_matches_sql() {
         ],
     };
 
-    // Rewrite the index-unsupported osmd leaf, exactly as `run_query_filter`
-    // does; the osm-path leaf needs no preparation, the index resolves its term
-    // nodes itself.
-    let rewritten = query_exec::resolve_index_leaves(&o.conn, &mut o.cache, &q).unwrap();
+    // The same preparation `run_query_filter` runs: neither leaf needs a
+    // rewrite here, and that is the point — both are served in memory.
+    o.cache.populate(&o.conn).unwrap();
+    let rewritten = forest_query::resolve_path_leaves(&o.cache, &q).unwrap();
     let roots = QueryRoots::new();
 
     let index = RepoIndex::build(&o.conn).unwrap();
@@ -1476,8 +1478,8 @@ fn same_as_is_served_by_the_index() {
 }
 
 #[test]
-fn resolving_index_leaves_is_deterministic() {
-    // The index cannot serve a multi-term OSM path, so `resolve_index_leaves`
+fn resolving_forest_leaves_is_deterministic() {
+    // The index cannot serve a multi-term OSM path, so the forest resolver
     // rewrites that leaf into the `UuidIn` set it matches. Every page of a
     // paginated query re-runs the rewrite, and the cursor is bound to a hash of
     // the query the index was handed — so the rewrite must be a *function*: the
@@ -1495,6 +1497,7 @@ fn resolving_index_leaves_is_deterministic() {
         o.create(vec![tref("loc", Some(sci), &format!("ep{i}.mkv"))]);
     }
 
+    o.cache.populate(&o.conn).unwrap();
     for q in [
         osm_path_q("loc", &["sci", "ep"]),
         osm_path_q("loc", &["root/science"]),
@@ -1505,8 +1508,8 @@ fn resolving_index_leaves_is_deterministic() {
             ],
         },
     ] {
-        let once = query_exec::resolve_index_leaves(&o.conn, &mut o.cache, &q).unwrap();
-        let twice = query_exec::resolve_index_leaves(&o.conn, &mut o.cache, &q).unwrap();
+        let once = forest_query::resolve_path_leaves(&o.cache, &q).unwrap();
+        let twice = forest_query::resolve_path_leaves(&o.cache, &q).unwrap();
         assert_eq!(
             format!("{once:?}"),
             format!("{twice:?}"),

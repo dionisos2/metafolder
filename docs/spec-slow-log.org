@@ -13,8 +13,8 @@ covers repository load only, and it goes to stderr, which no GUI user ever sees.
 So every repository keeps a **slow-operation log**: one entry per operation that
 took longer than a threshold (2 s by default), carrying enough context to say
 *where* the time went — not that a query was slow, but that it waited three
-seconds for the database lock a watcher flush was holding, then fell back to the
-SQL engine because of a =Matches= leaf.
+seconds for the database lock a watcher flush was holding, then rebuilt the
+bitmap index because a rollback had rewritten HEAD.
 
 Two properties make it a diagnosis tool rather than a metric:
 
@@ -42,13 +42,11 @@ One JSON object per line (JSONL), written when the operation ends:
   {"name": "wait:conn", "ms": 3100, "count": 1, "depth": 0},
   {"name": "prepare", "ms": 12, "count": 1, "depth": 0},
   {"name": "index.refresh", "ms": 40, "count": 1, "depth": 0},
-  {"name": "sql.execute", "ms": 1650, "count": 1, "depth": 0}
+  {"name": "index.refresh", "ms": 1650, "count": 1, "depth": 0}
   ],
   "context": {
   "client": "mfr_path ->* \"/2024\" and rating > 3",
   "query": "{\"type\":\"and\",\"clauses\":[…]}",
-  "engine": "sql",
-  "fallback": "index coverage gap",
   "results": "1240"
   }
   }
@@ -92,11 +90,9 @@ inventing a synonym):
 | =wait:conn=        | waiting for the repository's SQLite connection lock         |
 | =wait:cache=       | waiting for the tree-cache lock                             |
 | =wait:index=       | waiting for the query index lock                            |
-| =prepare=          | resolving path targets/exact nodes, rewriting text leaves   |
+| =prepare=          | resolving path targets/exact nodes and the forest's leaves  |
 | =index.refresh=    | bringing the bitmap index up to the current log HEAD        |
 | =index.evaluate=   | evaluating the page (and count) through the index           |
-| =sql.execute=      | the SQL fallback engine's CTE chain                         |
-| =sql.count=        | the fallback's second pass for a total                       |
 | =assemble=         | assembling the selected fields of a result page             |
 | =resolve.uuids=    | resolving a write's query to its whole match set            |
 | =write.fields=     | the field writes inside the transaction                     |
@@ -210,12 +206,11 @@ phases indented by depth:
 #+BEGIN_SRC
 2026-09-09 14:03:22  4.82s  daemon  POST /repos/:repo/query
     client    mfr_path ->* "/2024" and rating > 3
-    engine    sql (fallback: index coverage gap)
     results   1240
     wait:conn         3.10s
     prepare             12ms
-    index.refresh       40ms
-    sql.execute       1.65s
+    index.refresh     1.65s
+    index.evaluate      40ms
 #+END_SRC
 
 =mf slow clear= asks for confirmation unless =--yes= is given, like every other

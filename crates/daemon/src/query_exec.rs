@@ -215,6 +215,11 @@ pub fn validate_query(q: &Query) -> Result<(), ApiError> {
             FollowTarget::Path(_) => Ok(()),
         },
         Query::SameAs { target, .. } => validate_query(target),
+        // A pattern that does not compile is a property of the IR, not of an
+        // engine: reject it here, so no engine has to be the one that notices.
+        Query::Matches { pattern, .. } => crate::regexp::compile(pattern)
+            .map(|_| ())
+            .map_err(|e| ApiError::bad_request(format!("invalid regex pattern: {e}"))),
         _ => Ok(()),
     }
 }
@@ -295,73 +300,6 @@ pub fn count(conn: &Connection, cache: &mut TreeCache, query: &Query) -> Result<
         .query_row(&sql, rusqlite::params_from_iter(params.iter()), |row| row.get(0))
         .map_err(anyhow::Error::from)?;
     Ok(total as usize)
-}
-
-/// Whether a query node is a text-search leaf the bitmap index cannot evaluate
-/// on its own — `Matches`, `Osm` `Direct`, and multi-/short-term `Osm` `Path`
-/// (single-term `Osm` `Path` the index serves via resolved term nodes). These
-/// are pre-resolved to a `UuidIn` set so an otherwise index-supported query
-/// (e.g. the finder's `or(osm_path, osmd(label), osmd(name))`) is served whole
-/// by the index instead of falling back to SQL.
-fn is_index_text_leaf(q: &Query) -> bool {
-    match q {
-        Query::Matches { .. } => true,
-        Query::Osm { mode: OsmMode::Direct, .. } => true,
-        // An empty Osm Path is `IsPresent` and a single separator-free term is a
-        // subtree union: the index serves both natively. Everything else needs
-        // the assembled path, so it is resolved here.
-        Query::Osm { mode: OsmMode::Path, terms, .. } => {
-            !terms.is_empty() && crate::index::osm_path_indexable(terms).is_none()
-        }
-        _ => false,
-    }
-}
-
-/// Rewrites `q` so every index-unsupported text leaf ([`is_index_text_leaf`]) is
-/// replaced by the `UuidIn` set it matches — evaluated once through the SQL
-/// engine (FTS-pre-filtered, so a selective term is cheap). The result is an
-/// equivalent query the bitmap index can serve end-to-end, with its `count` then
-/// `O(1)` instead of a second SQL scan. Boolean structure and the shapes the
-/// index already handles (comparisons, presence, `Follows`/path, single-term
-/// `Osm` `Path`, `UuidIn`) pass through unchanged; on any evaluation error the
-/// caller keeps the original query and the SQL fallback.
-pub fn resolve_index_leaves(
-    conn: &Connection,
-    cache: &mut TreeCache,
-    q: &Query,
-) -> Result<Query, ApiError> {
-    if is_index_text_leaf(q) {
-        // A multi-/short-term Osm Path resolves to its uuid set directly,
-        // skipping the VALUES inlining `execute` would build; other text leaves
-        // (Matches, Osm Direct) go through the SQL engine.
-        if let Query::Osm { field, terms, mode: OsmMode::Path } = q {
-            return Ok(Query::UuidIn { uuids: osm_path_matches(conn, cache, field, terms)? });
-        }
-        let (uuids, _) = execute(conn, cache, q, &[], None, None)?;
-        return Ok(Query::UuidIn { uuids });
-    }
-    Ok(match q {
-        Query::And { operands } => Query::And {
-            operands: operands
-                .iter()
-                .map(|o| resolve_index_leaves(conn, cache, o))
-                .collect::<Result<_, _>>()?,
-        },
-        Query::Or { operands } => Query::Or {
-            operands: operands
-                .iter()
-                .map(|o| resolve_index_leaves(conn, cache, o))
-                .collect::<Result<_, _>>()?,
-        },
-        Query::Not { operand } => {
-            Query::Not { operand: Box::new(resolve_index_leaves(conn, cache, operand)?) }
-        }
-        Query::SameAs { field, target } => Query::SameAs {
-            field: field.clone(),
-            target: Box::new(resolve_index_leaves(conn, cache, target)?),
-        },
-        other => other.clone(),
-    })
 }
 
 /// Executes a query: returns one page of matching UUIDs in query order plus

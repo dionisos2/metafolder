@@ -3001,17 +3001,14 @@ fn ensure_index<'g>(
 /// — the shared preparation feeding the bitmap index, used by both the paginated
 /// query path ([`run_query_filter`]) and the whole-set resolution
 /// ([`resolve_query_uuids`]). Path targets and exact-node operands resolve to
-/// metarecords through the tree cache; the text leaves the index cannot serve
-/// (Matches, Osm Direct, multi-term Osm Path) are pre-resolved to `UuidIn` sets.
-/// `full_set` forces that rewrite (a whole-set resolution wants every match, so
-/// the SQL early-`limit` optimisation that keeps a bare-leaf *page* cheaper does
-/// not apply); an Osm-Path leaf anywhere in the query forces it too — see
-/// [`crate::index::contains_osm_path`].
+/// metarecords through the tree cache; the leaves the bitmaps cannot serve — a
+/// `:path` predicate, an order-sensitive `osm` path — are resolved against the
+/// same forest and rewritten to `UuidIn` sets (spec-indexing "No operand runs in
+/// SQL").
 fn prepare_indexed_query<'a>(
     conn: &rusqlite::Connection,
     cache: &mut crate::tree_cache::TreeCache,
     query: &MetaQuery,
-    full_set: bool,
 ) -> Result<(crate::index::QueryRoots<'a>, MetaQuery), ApiError> {
     let _phase = slowlog::phase("prepare");
     let mut roots = crate::index::QueryRoots::new();
@@ -3032,18 +3029,9 @@ fn prepare_indexed_query<'a>(
         let node = cache.resolve_path(conn, &field, &path)?;
         roots.node.insert((field, path), node);
     }
-    // `:path` leaves are resolved against the resident forest and rewritten to
-    // the uuid set they match (spec-indexing "No operand runs in SQL"). Always,
-    // and before the text-leaf rewrite below: unlike a text leaf — which the
-    // index serves in memory, so pre-resolving it can cost more than it
-    // saves — an unresolved `:path` leaf sends the whole query to SQL.
+    // The forest's own leaves. A `Matches` or an `osm direct` needs no rewrite:
+    // the index runs the regex over the field's distinct values in memory.
     let indexed = crate::forest_query::resolve_path_leaves(cache, query)?;
-    let has_osm_path = crate::index::contains_osm_path(&indexed);
-    let indexed = if full_set || has_osm_path {
-        query_exec::resolve_index_leaves(conn, cache, &indexed)?
-    } else {
-        indexed
-    };
     Ok((roots, indexed))
 }
 
@@ -3065,30 +3053,33 @@ fn resolve_query_uuids(
     let mut index_guard = slowlog::timed("wait:index", || repo_state.index.lock_recover());
     let index = ensure_index(conn, &mut index_guard, cancel)?;
     crate::query_validate::validate_query_types(query, &|f| index.value_type(f))?;
-    let (roots, indexed) = prepare_indexed_query(conn, cache, query, true)?;
+    let (roots, indexed) = prepare_indexed_query(conn, cache, query)?;
     match slowlog::timed("index.evaluate", || {
         index.evaluate_page_with_roots(&indexed, &[], None, None, &roots)
     }) {
         Ok((uuids, _)) => Ok(uuids),
-        Err(gap) if !gap.is_coverage() => {
-            Err(ApiError::internal(format!("the query index is not in a usable state: {gap}")))
-        }
-        Err(_coverage) => {
-            slowlog::note("engine", "sql");
-            Ok(slowlog::timed("sql.execute", || {
-                query_exec::execute(conn, cache, query, &[], None, None)
-            })?
-            .0)
-        }
+        Err(gap) => Err(index_gap(gap)),
     }
+}
+
+/// A query the index declined, turned into the answer the client gets. There is
+/// no second engine to ask any more (spec-indexing "No operand runs in SQL"), so
+/// only the cursor — the client's own input — can be at fault; anything else is
+/// the daemon failing to serve what it promises, reported as such rather than
+/// absorbed by an engine that would answer slowly.
+fn index_gap(gap: crate::index::Unsupported) -> ApiError {
+    if gap.is_cursor() {
+        return ApiError::bad_request(gap.to_string());
+    }
+    ApiError::internal(format!("the query index cannot serve this query: {gap}"))
 }
 
 /// The index is consulted only while it reflects the current log HEAD; after any
 /// write the HEAD advances and the index is rebuilt before use, so it can never
-/// serve stale results. A query shape the index does not accelerate (`Matches`,
-/// a path-target `Follows`, or a foreign cursor) returns `Unsupported` and the
-/// SQL engine handles it — including its own cursor. Because supportedness is a
-/// property of the query, a paginated session stays on one engine throughout.
+/// serve stale results. Every operand is served from a resident structure — the
+/// bitmaps, or the forest through [`prepare_indexed_query`] — so there is no
+/// second engine to defer to: a shape that comes back `Unsupported` is a daemon
+/// bug (see [`index_gap`]).
 fn run_query_filter(
     repo_state: &RepoState,
     conn: &rusqlite::Connection,
@@ -3125,7 +3116,7 @@ fn run_query_filter(
     let index = ensure_index(conn, &mut index_guard, cancel)?;
     crate::query_validate::validate_query_types(&body.query, &|f| index.value_type(f))?;
 
-    let (mut roots, indexed_query) = prepare_indexed_query(conn, cache, &body.query, false)?;
+    let (mut roots, indexed_query) = prepare_indexed_query(conn, cache, &body.query)?;
     // Full-path sort keys for a `tree_ref` sort key, rebuilt from the resident
     // forest (spec-data-model "Sort specification"). Borrows the cache, so the
     // borrow must end before the SQL fallback below takes it mutably again.
@@ -3162,45 +3153,7 @@ fn run_query_filter(
                 .map(|(uuids, next)| (uuids, next, None))
         }
     });
-    match paged {
-        Ok(page) => {
-            slowlog::note("engine", "index");
-            Ok(page)
-        }
-        // Only a *coverage* gap defers to SQL. A state gap means an accelerator
-        // is not in the state a serving repository guarantees — a daemon bug,
-        // reported rather than papered over by an engine that answers anyway.
-        Err(gap) if !gap.is_coverage() => {
-            Err(ApiError::internal(format!("the query index is not in a usable state: {gap}")))
-        }
-        Err(coverage) => {
-            // Which shape the index could not serve is the answer to "why was
-            // this query slow", so it is recorded, not just the engine.
-            slowlog::note("engine", "sql");
-            slowlog::note("fallback", coverage.to_string());
-            let (uuids, next_cursor) = slowlog::timed("sql.execute", || {
-                query_exec::execute(
-                    conn,
-                    cache,
-                    &body.query,
-                    &body.sort,
-                    body.limit,
-                    body.cursor.as_deref(),
-                )
-            })?;
-            // Counting here means running the whole CTE chain a second time, so
-            // skip it when the page already proves the total: a first page that
-            // came back short is the entire match set.
-            let total = match (body.count, body.cursor.is_none() && next_cursor.is_none()) {
-                (false, _) => None,
-                (true, true) => Some(uuids.len()),
-                (true, false) => Some(slowlog::timed("sql.count", || {
-                    query_exec::count(conn, cache, &body.query)
-                })?),
-            };
-            Ok((uuids, next_cursor, total))
-        }
-    }
+    paged.map_err(index_gap)
 }
 
 fn run_query_inner(

@@ -430,17 +430,32 @@ an index with no second opinion is a risk, and the risk has already materialised
    forest, an operand of the wrong type, an uncompilable pattern. The last three
    are =400=\s, and leaving them to SQL is what keeps a single author for the
    error until increment 3 moves it.
-2. A field seen only through =Nothing= values answers natively (its partition is
-   empty, which is the answer) instead of reporting =Unsupported=.
-3. The type-dependent =400=\s move out of the engines into one validation pass.
-   They are made by =check_aspect= today because it knows the field's type; the
-   index knows it too (=types=, the catalog), so the rejection becomes
-   engine-independent — which is what "one author of the error" was always
-   trying to buy.
-4. The route stops falling back. A coverage gap becomes what a state gap already
-   is: a =500= naming a daemon bug. The =Unsupported= type keeps only its state
-   variant, and =index::eval='s exhaustive match is what guarantees a new IR
-   variant cannot be added without deciding how it is served.
+2. *(done)* A field seen only through =Nothing= values answers natively. It
+   turned out to need no work at all, only a deletion: the encoding is chosen
+   from a *non*-=Nothing= value, so =FieldIndex::Unimplemented= was unreachable
+   and the three =Unsupported= it produced could never be raised. Such a field
+   has no entry, and every caller already reads that as the empty answer — which
+   is what SQL gives.
+3. *(done)* The type-dependent =400=\s move out of the engines into one
+   validation pass (=query_validate::validate_query_types=), parameterised by a
+   =type_of= closure: the index's type map on the serving path, a
+   =SELECT DISTINCT value_type= in the oracle. It runs *before* the preparation,
+   which would otherwise rewrite an invalid leaf into the empty set it matches
+   and answer "no rows" where a =400= is owed. A pattern that does not compile
+   joins =validate_query=, where it belongs: that is a property of the IR, not
+   of an engine.
+4. *(done)* The route stops falling back. A coverage gap becomes what a state
+   gap already is: a =500= naming a daemon bug, and =index::eval='s exhaustive
+   match is what guarantees a new IR variant cannot be added without deciding
+   how it is served. One gap is *not* a bug and gets its own kind: a cursor from
+   another (query, sort) is the client's own input, answered =400= as the SQL
+   engine used to answer it from its cursor encoding.
+
+   The pre-resolution of text leaves goes with it. =Matches= and =osm direct=
+   need no rewrite — the index runs the regex over the field's distinct values
+   in memory — so the only leaf left to resolve is the order-sensitive =osm=
+   path, which the forest already walked; it now goes straight from that walk to
+   a =uuid_in=, with no =VALUES= detour through the SQL compiler.
 5. Later, and separately: =field_text= (the FTS5 trigram table) becomes dead
    weight — it exists to pre-filter a =REGEXP= that no longer runs — and its
    maintenance is on the write path. Dropping it is a persisted-format change

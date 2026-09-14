@@ -152,28 +152,6 @@ pub fn osm_path_indexable(terms: &[String]) -> Option<&str> {
     }
 }
 
-/// Whether `q` contains an `Osm` `Path` leaf at all, served natively or not.
-/// The caller uses it to decide whether resolving the query's text leaves is
-/// worth it, so the choice stays a function of the query *shape* alone.
-///
-/// It answers yes for both kinds on purpose. A natively served one means the
-/// rest of the query is worth keeping on the index. One the index cannot serve
-/// is resolved by a walk of the whole forest, which costs the same with or
-/// without a `limit` — so leaving it to the SQL engine buys nothing and costs a
-/// second walk whenever `count` is asked for.
-pub fn contains_osm_path(q: &Query) -> bool {
-    match q {
-        Query::Osm { mode: metafolder_core::query::OsmMode::Path, .. } => true,
-        Query::And { operands } | Query::Or { operands } => operands.iter().any(contains_osm_path),
-        Query::Not { operand } => contains_osm_path(operand),
-        Query::Follows { target, .. } | Query::FollowsTransitive { target, .. } => {
-            matches!(target, FollowTarget::Condition(c) if contains_osm_path(c))
-        }
-        Query::SameAs { target, .. } => contains_osm_path(target),
-        _ => false,
-    }
-}
-
 /// One sort key's resolved lookups: the field's encoding (for a BSI
 /// representative) and its small sort store (for every other encoding) — or,
 /// on a `tree_ref` field, the tree-cache resolver that rebuilds full-path keys.
@@ -224,11 +202,17 @@ type SortEntry = (Vec<Option<SortRep>>, Uuid);
 /// other is the index not being in the state it is supposed to be in.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Gap {
-    /// A query shape the index does not accelerate *yet* (`Matches`, a
-    /// `Path`-target `Follows`, a multi-term `Osm` path, …). The SQL engine
-    /// answers it, and the oracle battery excludes these shapes. Closing them
-    /// is index work; until then this is coverage debt, named as such.
+    /// A query shape the index does not serve. Nothing answers it any more —
+    /// the SQL engine is off the serving path (spec-indexing "No operand runs
+    /// in SQL") — so this is a daemon bug reported as a `500`, like `State`.
+    /// It survives as its own variant because the two say different things to
+    /// whoever reads the log: work never taught, against an accelerator in the
+    /// wrong state.
     Coverage,
+    /// The cursor does not belong to this (query, sort). The one gap that is
+    /// the *client's* mistake, so the route answers `400` — as the SQL engine
+    /// used to, from its own cursor encoding, when it inherited these.
+    Cursor,
     /// The index or the forest is not in the state the engine requires. Through
     /// the API this cannot happen: a repository serves no data until it is warm
     /// (spec-main "POST /repos/load"), so reaching this is a bug in the daemon,
@@ -245,9 +229,10 @@ pub struct Unsupported {
 }
 
 impl Unsupported {
-    /// Whether the SQL engine should be asked instead.
-    pub fn is_coverage(&self) -> bool {
-        self.gap == Gap::Coverage
+    /// Whether this is the client's cursor mistake (a `400`) rather than a
+    /// daemon bug (a `500`).
+    pub fn is_cursor(&self) -> bool {
+        self.gap == Gap::Cursor
     }
 }
 
@@ -265,6 +250,11 @@ pub(crate) fn unsupported(what: impl Into<String>) -> Unsupported {
 /// An accelerator that is not in the state the engine requires.
 fn not_ready(what: impl Into<String>) -> Unsupported {
     Unsupported { what: what.into(), gap: Gap::State }
+}
+
+/// A cursor this (query, sort) cannot resume from — the client's mistake.
+fn bad_cursor(what: impl Into<String>) -> Unsupported {
+    Unsupported { what: what.into(), gap: Gap::Cursor }
 }
 
 /// Whether a value lands in a BSI encoding (Int / Float / DateTime) — whose
@@ -731,9 +721,11 @@ impl RepoIndex {
             None => None,
             Some(c) => {
                 let (g, entry) =
-                    decode_cursor(c, sort.len()).ok_or_else(|| unsupported("malformed cursor"))?;
+                    decode_cursor(c, sort.len()).ok_or_else(|| bad_cursor("invalid cursor"))?;
                 if g != guard {
-                    return Err(unsupported("cursor does not match this query and sort"));
+                    return Err(bad_cursor(
+                        "invalid cursor: it was issued for a different query or sort",
+                    ));
                 }
                 Some(entry)
             }

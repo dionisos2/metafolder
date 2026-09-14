@@ -5,18 +5,19 @@
 //! that SQL must run the query: the paths live in the resident tree cache, and
 //! SQLite only ever received the *result* of walking it, as a `VALUES` list.
 //!
-//! This module cuts out that detour. Each `:path` leaf is resolved against the
-//! forest and rewritten into the `uuid_in` set it matches, which the index then
-//! combines with every other operand like any other bitmap.
+//! This module cuts out that detour. Each such leaf — a `:path` predicate, and
+//! an order-sensitive `osm` path — is resolved against the forest and rewritten
+//! into the `uuid_in` set it matches, which the index then combines with every
+//! other operand like any other bitmap.
 
 use metafolder_core::metarecord::Value;
-use metafolder_core::query::{Aspect, FollowTarget, Query};
+use metafolder_core::query::{Aspect, FollowTarget, OsmMode, Query};
 use uuid::Uuid;
 
 use crate::error::ApiError;
 use crate::tree_cache::TreeCache;
 
-/// Rewrites every `:path` leaf of `q` into the `uuid_in` set it matches.
+/// Rewrites every forest-served leaf of `q` into the `uuid_in` set it matches.
 ///
 /// A leaf is left untouched — and the query then takes its usual course,
 /// index-declined and SQL-served — whenever the forest cannot answer
@@ -62,9 +63,25 @@ fn rewrite_target(cache: &TreeCache, target: &FollowTarget) -> Result<FollowTarg
     })
 }
 
-/// The uuids a single `:path` leaf matches, or `None` when `q` is not such a
-/// leaf or the forest cannot answer it.
+/// The uuids a single forest leaf matches, or `None` when `q` is not one or the
+/// forest cannot answer it.
 fn path_leaf_matches(cache: &TreeCache, q: &Query) -> Result<Option<Vec<Uuid>>, ApiError> {
+    // An `osm` path the index cannot serve natively — several terms, or one
+    // containing the separator, both order-sensitive. The forest walk carries
+    // the match position down each branch and takes a whole subtree at once
+    // when a branch has consumed every term.
+    if let Query::Osm { field, terms, mode: OsmMode::Path } = q {
+        if !terms.is_empty() && crate::index::osm_path_indexable(terms).is_none() {
+            let mut matched = cache.osm_path_matches(field, terms).map_err(ApiError::from)?;
+            // Sorted for the same reason the `:path` walk sorts: the cursor is
+            // bound to a hash of the rewritten query.
+            if let Some(matched) = matched.as_mut() {
+                matched.sort_unstable();
+            }
+            return Ok(matched);
+        }
+        return Ok(None);
+    }
     let Some((field, pred)) = path_predicate(q) else { return Ok(None) };
     cache.path_matches(field, pred.as_ref()).map_err(ApiError::from)
 }
