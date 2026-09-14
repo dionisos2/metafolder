@@ -11,6 +11,8 @@ use metafolder_daemon::tree_cache::TreeCache;
 use rusqlite::Connection;
 use uuid::Uuid;
 
+mod common;
+
 struct Fixture {
     conn: Connection,
     cache: TreeCache,
@@ -39,17 +41,26 @@ impl Fixture {
     }
 
     fn run(&mut self, query: &Query) -> Vec<Uuid> {
+        common::engines::both(&self.conn, &mut self.cache, query, &[])
+    }
+
+    /// The oracle alone, on whatever state the cache is in. Only for the test
+    /// that asserts the SQL engine's *cold* path (its DB walks) agrees with its
+    /// warm one: the serving path always has a complete forest, and comparing
+    /// against it would populate the cache and erase the very state under test.
+    fn run_cold(&mut self, query: &Query) -> Vec<Uuid> {
         let (uuids, _) =
             query_exec::execute(&self.conn, &mut self.cache, query, &[], None, None).unwrap();
         uuids
     }
 
+    /// A query that may be refused — by both engines, or by neither.
     fn run_result(
         &mut self,
         query: &Query,
     ) -> Result<Vec<Uuid>, metafolder_daemon::error::ApiError> {
-        query_exec::execute(&self.conn, &mut self.cache, query, &[], None, None)
-            .map(|(uuids, _)| uuids)
+        common::engines::validate(&self.conn, query)?;
+        Ok(common::engines::both(&self.conn, &mut self.cache, query, &[]))
     }
 }
 
@@ -230,7 +241,7 @@ fn test_osm_path_agrees_between_cache_states() {
     let cold: Vec<Vec<Uuid>> = BATTERY
         .iter()
         .map(|terms| {
-            let mut hits = f.run(&osm("mfr_path", terms));
+            let mut hits = f.run_cold(&osm("mfr_path", terms));
             hits.sort();
             hits
         })

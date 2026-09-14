@@ -13,6 +13,8 @@
 
 #![allow(dead_code)] // each test binary uses its own subset
 
+pub mod engines;
+
 use std::path::{Path, PathBuf};
 
 use uuid::Uuid;

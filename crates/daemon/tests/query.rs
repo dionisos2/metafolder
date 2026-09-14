@@ -10,6 +10,8 @@ use metafolder_daemon::tree_cache::TreeCache;
 use rusqlite::Connection;
 use uuid::Uuid;
 
+mod common;
+
 struct Fixture {
     conn: Connection,
     cache: TreeCache,
@@ -30,23 +32,16 @@ impl Fixture {
     }
 
     fn run(&mut self, query: &Query) -> Vec<Uuid> {
-        let (uuids, _) =
-            query_exec::execute(&self.conn, &mut self.cache, query, &[], None, None).unwrap();
-        uuids
+        common::engines::both(&self.conn, &mut self.cache, query, &[])
     }
 
-    /// The error message of a query the engine must refuse.
+    /// The error message of a query the engines must refuse.
     fn run_err(&mut self, query: &Query) -> String {
-        match query_exec::execute(&self.conn, &mut self.cache, query, &[], None, None) {
-            Ok(_) => panic!("query should have been rejected"),
-            Err(e) => format!("{e:?}"),
-        }
+        common::engines::both_refuse(&self.conn, &mut self.cache, query)
     }
 
     fn run_sorted(&mut self, query: &Query, sort: &[SortKey]) -> Vec<Uuid> {
-        let (uuids, _) =
-            query_exec::execute(&self.conn, &mut self.cache, query, sort, None, None).unwrap();
-        uuids
+        common::engines::both(&self.conn, &mut self.cache, query, sort)
     }
 }
 

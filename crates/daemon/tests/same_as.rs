@@ -6,8 +6,9 @@ use metafolder_core::metarecord::{Field, Value};
 use metafolder_core::query::{Aspect, Query};
 use metafolder_daemon::db;
 use metafolder_daemon::log::Writer;
-use metafolder_daemon::query_exec;
 use metafolder_daemon::tree_cache::TreeCache;
+
+mod common;
 use rusqlite::Connection;
 use uuid::Uuid;
 
@@ -31,9 +32,7 @@ impl Fixture {
     }
 
     fn run(&mut self, query: &Query) -> Vec<Uuid> {
-        let (uuids, _) =
-            query_exec::execute(&self.conn, &mut self.cache, query, &[], None, None).unwrap();
-        uuids
+        common::engines::both(&self.conn, &mut self.cache, query, &[])
     }
 }
 

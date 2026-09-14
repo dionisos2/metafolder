@@ -207,6 +207,12 @@ pub fn validate_query(q: &Query) -> Result<(), ApiError> {
         | Query::Gt { value, .. }
         | Query::Gte { value, .. } => validate_comparison(value, true),
         Query::And { operands } | Query::Or { operands } => {
+            // An empty combinator has no meaning to give — neither "everything"
+            // nor "nothing" is more right — and it is a property of the IR, so
+            // it is refused here rather than by whichever engine noticed first.
+            if operands.is_empty() {
+                return Err(ApiError::bad_request("'and'/'or' need at least one operand"));
+            }
             operands.iter().try_for_each(validate_query)
         }
         Query::Not { operand } => validate_query(operand),
