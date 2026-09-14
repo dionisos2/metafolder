@@ -12,8 +12,9 @@ whatever the user typed. Today the only way to find out is to run it.
 The obvious fix — have the daemon *refuse* the query shapes it cannot serve from
 the bitmap index, behind an "extended" flag — is the wrong one. The set of
 shapes the index declines is an implementation detail of the accelerator, and it
-is *meant* to move: the =:parent= aspect is about to be added, the adaptive
-planner ([[file:spec-indexing.org][spec-indexing]]) will change it again. Freezing it into user-visible
+is *meant* to move: the =:parent= aspect has just been taken out of it, the
+adaptive planner ([[file:spec-indexing.org][spec-indexing]]) will change it
+again. Freezing it into user-visible
 surface turns every improvement of the index into a contract change, and the
 list is not even the right predicate: "not served by the index" is not the same
 as "slow" — on a small repository the SQL engine answers instantly, while an
@@ -164,18 +165,18 @@ two categories*: =tag ->* "music/jazz"= is a =path.resolve= (the path operand to
 its metarecord) followed by a =follow.transitive= (the expansion from it), where
 =tag ->* (rating > 3)= has no =path.resolve= at all — the sub-query replaces it.
 
-| Category            | Raised by                            | On the SQL path                     | On the index path                 |
-|---------------------+--------------------------------------+-------------------------------------+-----------------------------------|
-| =path.resolve=      | =->= / =->*= path target, exact node | =TreeCache::resolve_path=, no SQL   | the same lookup, in =QueryRoots=  |
-| =bitmap.leaf=       | a comparison / presence leaf         | — (it is the =sql.scan= row)        | union of the operand's buckets    |
-| =bitmap.combine=    | =and= / =or= / =not=                 | =INTERSECT= / =UNION= / =EXCEPT=    | Roaring =&=, =\|=, universe =-=   |
-| =follow.transitive= | =->*=, ~=>*~, 1-term =osm= path      | cache-walked descendants, =VALUES=  | expansion over children bitmaps   |
-| =fts.scan=          | =matches=, =osm= =direct=            | =REGEXP= scan, FTS5-narrowed        | the regex over distinct values    |
-| =sql.scan=          | presence, comparison, =same=, =->=   | one =field= scan per =field_name=   | — (it is the =bitmap.leaf= row)   |
-| =path.assemble=     | the =:path= aspect, multi-term =osm= | per-node paths, matches as =VALUES= | not served (pre-resolved, or SQL) |
-| =sort=              | each =sort= key                      | the =_p{i}= / =_s{i}= CTEs          | one rep per id, then the page     |
-| =count=             | =count: true=                        | the chain re-run as =COUNT(*)=      | =matched.len()=, O(1)             |
-| =assemble=          | always, for the page's uuids         | =versions_for= + =field_rows_for=   | identical (after the choice)      |
+| Category            | Raised by                               | On the SQL path                     | On the index path                 |
+|---------------------+-----------------------------------------+-------------------------------------+-----------------------------------|
+| =path.resolve=      | =->= / =->*= path target, exact node    | =TreeCache::resolve_path=, no SQL   | the same lookup, in =QueryRoots=  |
+| =bitmap.leaf=       | a comparison / presence leaf, =:parent= | — (it is the =sql.scan= row)        | union of the operand's buckets    |
+| =bitmap.combine=    | =and= / =or= / =not=                    | =INTERSECT= / =UNION= / =EXCEPT=    | Roaring =&=, =\|=, universe =-=   |
+| =follow.transitive= | =->*=, ~=>*~, 1-term =osm= path         | cache-walked descendants, =VALUES=  | expansion over children bitmaps   |
+| =fts.scan=          | =matches=, =osm= =direct=               | =REGEXP= scan, FTS5-narrowed        | the regex over distinct values    |
+| =sql.scan=          | presence, comparison, =same=, =->=      | one =field= scan per =field_name=   | — (it is the =bitmap.leaf= row)   |
+| =path.assemble=     | the =:path= aspect, multi-term =osm=    | per-node paths, matches as =VALUES= | not served (pre-resolved, or SQL) |
+| =sort=              | each =sort= key                         | the =_p{i}= / =_s{i}= CTEs          | one rep per id, then the page     |
+| =count=             | =count: true=                           | the chain re-run as =COUNT(*)=      | =matched.len()=, O(1)             |
+| =assemble=          | always, for the page's uuids            | =versions_for= + =field_rows_for=   | identical (after the choice)      |
 
 The SQL column, verbatim — this is what a term of each category stands for:
 
@@ -295,15 +296,15 @@ replaced, by a per-node attribution.
 Each row is one =Unsupported= a leaf can raise; =fallback[]= reports it verbatim,
 with the address of the leaf that raised it.
 
-| Operand / shape                           | Reported as                          | Why the index defers                              |
-|-------------------------------------------+--------------------------------------+---------------------------------------------------|
-| the =:parent= aspect, anywhere            | ="the ':parent' aspect"=             | the parent uuid lives in the tree cache           |
-| the =:path= aspect, anywhere              | ="the ':path' aspect"=               | idem for the assembled path                       |
-| a field seen only through =Nothing=       | ="... field with no indexed values"= | no value partition; empty would be a wrong answer |
-| a shape SQL answers with a =400= (below)  | the matching message                 | the rejection has one author, and it is SQL       |
-| a multi-term =osm= path, not pre-resolved | ="multi-term osm path"=              | ordered matching runs on assembled paths          |
-| an unresolved path target / exact node    | ="path-target follows"=              | only when the caller skipped the preparation      |
-| a cursor from another (query, sort)       | ="cursor does not match ..."=        | SQL then rejects it on its own encoding           |
+| Operand / shape                                | Reported as                          | Why the index defers                              |
+|------------------------------------------------+--------------------------------------+---------------------------------------------------|
+| =:parent= under =!==, an ordered op, =matches= | ="the ':parent' aspect"=             | not a complement, or a regex over a uuid          |
+| the =:path= aspect, anywhere                   | ="the ':path' aspect"=               | the assembled path lives in the forest            |
+| a field seen only through =Nothing=            | ="... field with no indexed values"= | no value partition; empty would be a wrong answer |
+| a shape SQL answers with a =400= (below)       | the matching message                 | the rejection has one author, and it is SQL       |
+| a multi-term =osm= path, not pre-resolved      | ="multi-term osm path"=              | ordered matching runs on assembled paths          |
+| an unresolved path target / exact node         | ="path-target follows"=              | only when the caller skipped the preparation      |
+| a cursor from another (query, sort)            | ="cursor does not match ..."=        | SQL then rejects it on its own encoding           |
 
 The =400= shapes the index hands over rather than answering: an ordered
 comparison on a =bool=, on a reference, or on a bare =tree_ref=; =matches= on a
@@ -321,12 +322,12 @@ The preparation is what makes a query that *reads* like a fallback shape stay on
 the index. It is also why one query can carry both an =fts.scan= and =bitmap.*=
 terms: one leaf ran in SQL, the rest of the tree on bitmaps.
 
-| Preparation step                 | Applies to                          | Effect                               |
-|----------------------------------+-------------------------------------+--------------------------------------|
-| path targets → =QueryRoots.path= | =->= / =->*= with a path target     | a =path.resolve=, not a fallback     |
-| exact nodes → =QueryRoots.node=  | =mfr_path = "/a/b"= and its =!==    | idem — "no such node" ≠ "defer"      |
-| =resolve_index_leaves=           | =matches=, =osmd=, multi-term =osm= | the leaf becomes an inline =uuid_in= |
-| =SortKeys= from the forest       | a =tree_ref= sort key               | the path keys no BSI can hold        |
+| Preparation step                 | Applies to                            | Effect                               |
+|----------------------------------+---------------------------------------+--------------------------------------|
+| path targets → =QueryRoots.path= | =->= / =->*= with a path target       | a =path.resolve=, not a fallback     |
+| exact nodes → =QueryRoots.node=  | =mfr_path = "/a/b"=, =!==, =:parent== | idem — "no such node" ≠ "defer"      |
+| =resolve_index_leaves=           | =matches=, =osmd=, multi-term =osm=   | the leaf becomes an inline =uuid_in= |
+| =SortKeys= from the forest       | a =tree_ref= sort key                 | the path keys no BSI can hold        |
 
 The third one is conditional, and explain must apply the same condition: the text
 leaves are pre-resolved only for a whole-set resolution, or when the query holds

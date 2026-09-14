@@ -429,10 +429,23 @@ resolves the operand to its node through the tree cache and passes it in as
 in that map is load-bearing — an entry mapping to =None= means "resolved, and it
 is no node" (an empty result), a *missing* entry means "nobody resolved it" and
 keeps the operand unsupported, so the shape can never be answered from the
-wrong (=value_name=-based) bitmap. =Neq= on a path is not rewritten and still
-defers to SQL. Without this the whole query fell back to the SQL engine, whose
+wrong (=value_name=-based) bitmap. =Neq= is served from the same entry (as
+"every path-bearing metarecord but this node", which is what SQL's "at least one
+differing row" amounts to on a =tree_ref= field). Without this the whole query fell back to the SQL engine, whose
 =_repo= universe CTE scans every row of the field: "find this one file" was the
-*slowest* query in the repository, not the fastest. The index is built at repository load (best-effort) by
+*slowest* query in the repository, not the fastest. *The =parent= aspect* (=field:parent IS ABSENT= / =IS PRESENT= /
+== "<path>"=, spec-query "Forest roots") is supported as well, and needed no new
+structure: the reverse index already partitions a =tree_ref= field by
+=value_uuid=, and the root sentinel is an ordinary key of that partition. So the
+forest roots are one hash lookup where SQL scans every row of the field, and
+=field:parent = "<path>"= reads the very bucket a path-target =Follows= reads
+(the caller resolves the path into =NodeRoots=, as above). =IS PRESENT= is the
+union of the other buckets — O(rows), but so is its answer, which is "every
+non-root node" — and it is deliberately *not* the complement of the roots: SQL
+reads =value_uuid != x'00…'= row by row, so a multi-position node that is both a
+root and a child satisfies both predicates. =Neq= and the ordered forms keep
+deferring: the first is not a complement either, and the second compares a uuid
+with an operator the SQL predicate itself ignores. The index is built at repository load (best-effort) by
 the background warmup — an observable =load= task (phases =tree cache= then
 =index=) so the GUI shows a load progress bar (see
 [[file:spec-tasks.org][spec-tasks.org]]) — so the first query pays no build cost;

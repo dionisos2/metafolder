@@ -1513,3 +1513,88 @@ fn resolving_index_leaves_is_deterministic() {
         );
     }
 }
+
+#[test]
+fn parent_aspect_presence_matches_sql() {
+    // `field:parent IS ABSENT` is the forest roots, `IS PRESENT` every node
+    // under a real parent (spec-query "Forest roots"). Both are partitions the
+    // reverse index already holds, so neither may defer to the SQL engine.
+    let (mut o, [_root, b, _c, _d]) = forest();
+    let _second_root = o.create(vec![tref("loc", None, "other")]);
+    let _no_loc = o.create(vec![Field::new("kind", s("file"))]);
+    let _nothing = o.create(vec![Field::new("loc", Value::Nothing)]);
+    // A multi-position node: a root *and* a child. It satisfies both
+    // predicates, so neither set is the complement of the other.
+    let _multi = o.create(vec![tref("loc", None, "multi"), tref("loc", Some(b), "multi")]);
+
+    for q in [
+        Query::IsAbsent { field: "loc".into(), aspect: Aspect::Parent },
+        Query::IsPresent { field: "loc".into(), aspect: Aspect::Parent },
+    ] {
+        o.check(&q);
+        o.check_count(&q);
+        o.check(&Query::And { operands: vec![q.clone(), eq("kind", s("dir"))] });
+    }
+
+    // On a field that is not a tree_ref the aspect is a 400, which only the SQL
+    // engine raises: the index must hand the query over, not answer empty.
+    let index = RepoIndex::build(&o.conn).unwrap();
+    assert!(index
+        .evaluate(&Query::IsAbsent { field: "kind".into(), aspect: Aspect::Parent })
+        .is_err());
+}
+
+#[test]
+fn parent_aspect_equality_matches_sql_with_node_roots() {
+    // `field:parent = "<path>"` is the direct children of the node at that path
+    // — the same set as `field -> "<path>"`, spelled as a comparison. The index
+    // serves it from the node the caller resolved through the tree cache.
+    let (mut o, [_root, _b, _c, _d]) = forest();
+    let _unrelated = o.create(vec![Field::new("kind", s("file"))]);
+
+    for path in ["root", "root/b", "root/nope"] {
+        let q = Query::Eq { field: "loc".into(), value: s(path), aspect: Aspect::Parent };
+        let mut targets = Vec::new();
+        collect_node_paths(&q, &mut targets);
+        assert!(!targets.is_empty(), "the collector must see the ':parent' operand in {q:?}");
+        let mut roots = QueryRoots::new();
+        for (field, target) in targets {
+            let node = o.cache.resolve_path(&o.conn, &field, &target).unwrap();
+            roots.node.insert((field, target), node);
+        }
+        let index = RepoIndex::build(&o.conn).unwrap();
+
+        let (mut sql, _) = query_exec::execute(&o.conn, &mut o.cache, &q, &[], None, None).unwrap();
+        let (mut got, _) = index.evaluate_page_with_roots(&q, &[], None, None, &roots).unwrap();
+        sql.sort();
+        got.sort();
+        assert_eq!(got, sql, "':parent' equality divergence on {q:?}");
+        assert_eq!(
+            index.count_with_roots(&q, &roots).unwrap() as usize,
+            query_exec::count(&o.conn, &mut o.cache, &q).unwrap(),
+            "count divergence on {q:?}"
+        );
+    }
+
+    let index = RepoIndex::build(&o.conn).unwrap();
+    // Unresolved (nobody supplied the node): defer, never answer from the
+    // name-based bitmap.
+    assert!(index
+        .evaluate(&Query::Eq { field: "loc".into(), value: s("root/b"), aspect: Aspect::Parent })
+        .is_err());
+    // Out of scope on purpose, and still deferred: `Neq` is not the complement
+    // (a multi-position node is in both), and SQL's ordered form ignores the
+    // operator instead of comparing uuids.
+    let mut roots = QueryRoots::new();
+    let node = o.cache.resolve_path(&o.conn, "loc", "root").unwrap();
+    roots.node.insert(("loc".to_string(), "root".to_string()), node);
+    for q in [
+        Query::Neq { field: "loc".into(), value: s("root"), aspect: Aspect::Parent },
+        Query::Lt { field: "loc".into(), value: s("root"), aspect: Aspect::Parent },
+    ] {
+        assert!(
+            index.evaluate_page_with_roots(&q, &[], None, None, &roots).is_err(),
+            "{q:?} must stay with the SQL engine"
+        );
+    }
+}

@@ -114,8 +114,10 @@ pub fn collect_path_targets(q: &Query, out: &mut Vec<(String, String)>) {
 /// index's type check never consults the entry.
 pub fn collect_node_paths(q: &Query, out: &mut Vec<(String, String)>) {
     match q {
-        Query::Eq { field, value: Value::String(s), aspect: Aspect::Raw }
-        | Query::Neq { field, value: Value::String(s), aspect: Aspect::Raw } => {
+        Query::Eq { field, value: Value::String(s), aspect: Aspect::Raw | Aspect::Parent } => {
+            out.push((field.clone(), s.clone()));
+        }
+        Query::Neq { field, value: Value::String(s), aspect: Aspect::Raw } => {
             out.push((field.clone(), s.clone()));
         }
         Query::And { operands } | Query::Or { operands } => {
@@ -862,14 +864,20 @@ impl RepoIndex {
             // hold (the parent uuid, the assembled path), so they go to the SQL
             // engine — which is also what raises the 400 for an aspect the
             // field's type cannot serve, keeping one answer per query.
-            Query::IsPresent { field, aspect } => {
-                Self::index_servable_aspect(*aspect)?;
-                Ok(self.present_of(field))
-            }
-            Query::IsAbsent { field, aspect } => {
-                Self::index_servable_aspect(*aspect)?;
-                Ok(self.absent_of(field))
-            }
+            Query::IsPresent { field, aspect } => match aspect {
+                Aspect::Parent => self.parent_presence(field, true),
+                _ => {
+                    Self::index_servable_aspect(*aspect)?;
+                    Ok(self.present_of(field))
+                }
+            },
+            Query::IsAbsent { field, aspect } => match aspect {
+                Aspect::Parent => self.parent_presence(field, false),
+                _ => {
+                    Self::index_servable_aspect(*aspect)?;
+                    Ok(self.absent_of(field))
+                }
+            },
             Query::IsUnknown { field } => {
                 // universe − {records with any row of `field`} (present ∪ absent),
                 // matching the SQL `_repo WHERE uuid NOT IN (any field row)`.
@@ -1014,6 +1022,58 @@ impl RepoIndex {
             None => Err(unsupported("path-target follows")),
             Some(roots) => Ok(roots.path.get(&(field.to_string(), path.to_string())).copied()),
         }
+    }
+
+    /// `field:parent IS ABSENT` / `IS PRESENT` (spec-query "Forest roots"):
+    /// answered from the reverse index's parent partition, where the roots are
+    /// the sentinel's own bucket — one hash lookup for the question SQL answers
+    /// by scanning every row of the field.
+    ///
+    /// A field the index does not hold as a forest defers, so the SQL engine
+    /// raises the `400` the aspect deserves on a non-`tree_ref` field; a field
+    /// with no indexed value at all is vacuously empty in both engines.
+    fn parent_presence(&self, field: &str, present: bool) -> Result<RoaringBitmap, Unsupported> {
+        let Some(fi) = self.fields.get(field) else { return Ok(RoaringBitmap::new()) };
+        let bm = if present { fi.tree_parented() } else { fi.tree_roots() };
+        bm.ok_or_else(|| unsupported("the ':parent' aspect"))
+    }
+
+    /// `field:parent = "<path>"`: the direct children of the node the caller
+    /// resolved through the tree cache — the very bucket a path-target
+    /// `Follows` reads, which is what the spec means by "the same set as
+    /// `field -> \"<path>\"`, spelled as a comparison".
+    ///
+    /// Equality only. `Neq` is *not* the complement (SQL asks for one differing
+    /// row, so a multi-position node is in both sets), and an ordered operand
+    /// has no meaning on a uuid — both stay with the SQL engine.
+    fn parent_compare(
+        &self,
+        field: &str,
+        op: CmpOp,
+        value: &Value,
+        roots: Option<&QueryRoots>,
+    ) -> Result<RoaringBitmap, Unsupported> {
+        if !matches!(op, CmpOp::Eq) {
+            return Err(unsupported("the ':parent' aspect"));
+        }
+        let Value::String(path) = value else {
+            return Err(unsupported("the ':parent' aspect"));
+        };
+        let Some(fi) = self.fields.get(field) else { return Ok(RoaringBitmap::new()) };
+        if !fi.supports_transitive() {
+            return Err(unsupported("the ':parent' aspect"));
+        }
+        // A missing entry means nobody resolved this path: defer, exactly as
+        // the exact-node equality does. An entry mapping to `None` resolved to
+        // no node, which is SQL's "0" predicate — an empty result.
+        let Some(resolved) = roots.and_then(|r| r.node.get(&(field.to_string(), path.clone())))
+        else {
+            return Err(unsupported("unresolved ':parent' path"));
+        };
+        Ok(match resolved {
+            None => RoaringBitmap::new(),
+            Some(node) => fi.referrers_of(*node).cloned().unwrap_or_default(),
+        })
     }
 
     fn follows(
@@ -1178,9 +1238,12 @@ impl RepoIndex {
     /// Dispatches a comparison to the field's encoding. A field with no
     /// non-`Nothing` rows has no encoding, so the comparison is empty — exactly
     /// the SQL result (the `value_type` filter excludes every `Nothing` row).
-    /// The aspects the bitmaps can answer: `raw` and `value` read the row's own
-    /// data, which the per-field index holds. `parent` and `path` read the tree
-    /// structure, which lives in the tree cache — those defer to SQL (spec-query
+    /// The aspects this generic gate lets through: `raw` and `value` read the
+    /// row's own data, which the per-field index holds. `path` reads the
+    /// assembled path, which lives in the tree cache, and defers to SQL. So does
+    /// `parent` *here* — its two servable shapes (presence and equality) have
+    /// their own paths ([`Self::parent_presence`], [`Self::parent_compare`]),
+    /// and every other one (a regex over a uuid) belongs to SQL (spec-query
     /// "Field aspects").
     fn index_servable_aspect(aspect: Aspect) -> Result<(), Unsupported> {
         match aspect {
@@ -1200,6 +1263,9 @@ impl RepoIndex {
     ) -> Result<RoaringBitmap, Unsupported> {
         if matches!(value, Value::Nothing) {
             return Err(unsupported("comparison with 'nothing'"));
+        }
+        if aspect == Aspect::Parent {
+            return self.parent_compare(field, op, value, roots);
         }
         Self::index_servable_aspect(aspect)?;
         // A bare ordered comparison on a tree_ref is an error rather than a

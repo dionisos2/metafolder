@@ -159,9 +159,13 @@ metarecord), which is why the roots have their own endpoint
 Note the deliberate reuse of =IS ABSENT=: on a bare field it means "the field
 exists with the value =Nothing=", and under the =parent= aspect it means "the
 component read by the aspect is absent" — the same reading applied one level
-down. =field:parent IS PRESENT= is its complement over the field's rows (every
-non-root node), and =field:parent = <path>= is the same set as
-=field -> "<path>"=, spelled as a comparison rather than as an arrow.
+down. =field:parent IS PRESENT= is its complement *row by row* (every node under a
+real parent) — not over metarecords: a multi-position node, a root in one place
+and a child in another, satisfies both. And =field:parent = <path>= is the same
+set as =field -> "<path>"=, spelled as a comparison rather than as an arrow.
+All three are served by the bitmap index, which partitions a =TreeRef= field by
+parent anyway (see [[file:spec-indexing.org][spec-indexing.org]]), so asking a
+forest for its roots is a lookup and not a scan.
 
 *Sorting is not aspect-aware*: a =TreeRef= sort key always orders on the *whole
 path* (see "Sort specification" in [[file:spec-data-model.org][spec-data-model.org]]).

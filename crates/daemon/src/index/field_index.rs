@@ -199,6 +199,27 @@ impl FieldIndex {
         matches!(self, FieldIndex::Reverse(r) if r.kind == RefKind::TreeRef)
     }
 
+    /// This field's forest roots — the ids whose `tree_ref` parent is the root
+    /// sentinel (`field:parent IS ABSENT`, spec-query "Forest roots"). One hash
+    /// lookup: the sentinel is an ordinary key of the parent partition. `None`
+    /// on any other encoding, where the aspect is a 400 the SQL engine raises.
+    pub fn tree_roots(&self) -> Option<RoaringBitmap> {
+        match self {
+            FieldIndex::Reverse(r) if r.kind == RefKind::TreeRef => Some(r.roots()),
+            _ => None,
+        }
+    }
+
+    /// The ids carrying at least one `tree_ref` row under a *real* parent
+    /// (`field:parent IS PRESENT`). See [`ReverseIndex::parented`] for why this
+    /// is not the complement of [`Self::tree_roots`].
+    pub fn tree_parented(&self) -> Option<RoaringBitmap> {
+        match self {
+            FieldIndex::Reverse(r) if r.kind == RefKind::TreeRef => Some(r.parented()),
+            _ => None,
+        }
+    }
+
     /// The dense ids whose `value_uuid` is `target` (direct referrers / direct
     /// children). `None` outside a follow-capable field.
     pub fn referrers_of(&self, target: Uuid) -> Option<&RoaringBitmap> {
@@ -908,6 +929,26 @@ impl ReverseIndex {
                 }
             }
         }
+    }
+
+    /// The ids whose parent is the root sentinel: this field's forest roots.
+    fn roots(&self) -> RoaringBitmap {
+        self.by_value_uuid.get(&ZERO_UUID).cloned().unwrap_or_default()
+    }
+
+    /// The ids with at least one row under a real parent. Deliberately *not*
+    /// the complement of [`Self::roots`]: SQL reads `value_uuid != x'00…'` row
+    /// by row, so a multi-position node that is both a root and a child
+    /// satisfies both predicates. Unioning the buckets is O(rows), which the
+    /// answer is anyway — it is "every non-root node".
+    fn parented(&self) -> RoaringBitmap {
+        let mut out = RoaringBitmap::new();
+        for (parent, bm) in &self.by_value_uuid {
+            if *parent != ZERO_UUID {
+                out |= bm;
+            }
+        }
+        out
     }
 
     fn eq(&self, value: &Value) -> RoaringBitmap {
