@@ -4,8 +4,31 @@ A pass ran in September 2026: 5 bugs fixed (a broken symlink read as absent, in
 seven places; a copy dereferencing a symlink; a redundant slash naming no tree
 node), 6 refactors, and the sync linking phase taken from 6 reads per record to
 1. What it found and left is listed under "known issues and deferred work" below.
+** DONE one engine on the serving path (September 2026)
+The daemon no longer has a second query engine. Every operand is now served from
+a resident structure — the bitmaps, or the forest through the tree cache — and
+=POST /query= does not fall back: an =Unsupported= shape is a daemon bug (a
+=500=), not a slow answer (spec-indexing "No operand runs in SQL").
+
+What it took, in order: the bitmap index serves =:parent= (a uuid, so a regex and
+an ordering on it are refused, and =!== is served); the forest answers =:path=
+leaves and order-sensitive =osm= paths by rewriting each into the =uuid_in= set it
+matches (=daemon/src/forest_query.rs=) instead of handing SQLite a =VALUES= list;
+type validation moved ahead of any engine (=query_validate.rs=); the SQL engine
+left the daemon for =crates/query-oracle=, a dev-dependency of the daemon and of
+nothing else, where it stays as the *test oracle* the index is validated against
+(the semantics batteries run on both engines). The FTS5 trigram index was dropped
+in the same pass, with a migration.
+
+Three items below shrank or changed shape as a consequence, and two sections of
+=docs/review-followups.md= (§7, §8) now describe a component that is no longer on
+the serving path — see "documentation drift" below.
 ** TODO cut the release (tag, changelog)
 ** TODO adaptive query planner / on-disk index persistence (spec-indexing)
+Both still unbuilt, and the second is now the more visible of the two: with SQL
+off the serving path, a repo answers nothing well until its index is built, and
+the index is rebuilt from scratch at every repo load (=RepoState::warmup=). The
+DB fallback that used to cover that window is gone.
 * TODO known issues and deferred work
 Found by the whole-project review pass and not (yet) fixed. Items already
 written up in =docs/review-followups.md= are referenced by their section rather
@@ -20,37 +43,73 @@ N fsyncs, and — the part that matters — *N revisions of the log*, where ever
 other bulk operation in the project is one revision (see the =write_matches=
 scaffold in =routes.rs=). Undoing a numbering therefore takes N rollbacks.
 
+The read side is already bulk (one paginated =follows= pass over the children,
+one =resolve-tree=); only the write loop is left (=core/src/order.rs=, the
+=client.put= per planned position).
+
 Blocked on a decision: the set layer applies the *same* value to a whole set,
 while each child here gets its own position. It needs an endpoint taking
 =(uuid, value)= pairs — purely additive, so no =API_VERSION= bump.
 
 *** TODO =mf sync plan=: the target-side position lookup is still per-record
 The bulk pass took the linking phase from 6 reads per scope record to 1. The one
-left is =record_at_path=, which asks for the occupant of a position on the
-*other* side — keyed by a path, not by a uuid, and no set endpoint answers that.
+left is =record_at_path= (=core/src/sync/plan.rs=), which asks for the occupant of
+a position on the *other* side, once per identity position.
 
-*** TODO =FollowsTransitive= materialises the whole subtree
-See =docs/review-followups.md= §7 (recursive CTE; the big one).
+*Unblocked since it was written.* It was waiting on a set endpoint able to answer
+"who is at this path", and the =:path= aspect now is one: =field:path = "/a/b"= is
+an exact-node predicate the forest resolves in memory, so N positions are one
+=Or= of =:path= equalities — rewritten into a single =uuid_in= set before the
+index sees it — and =query/fields/resolve-tree= maps the answers back to their
+paths. What is left is the rewrite of the caller, not a missing mechanism.
+
+*** TODO =FollowsTransitive=: linear in the subtree, but no longer in SQL
+=docs/review-followups.md= §7 described the hybrid compilation: a BFS over the DB
+(one =tree_children= query per node) whose result was inlined as =VALUES=
+literals — ~19 Mo of SQL text for 500k descendants. *Both costs are gone*: the
+index expands the subtree by iterative bitmap expansion over the reverse
+(direct-children) index (=index::expand_subtrees=), in memory, with no SQL and no
+per-node round-trip.
+
+What §7 called the real problem stands: the whole subtree is still materialised
+where only the page is wanted. It is now a bitmap union per level rather than a
+DB walk, so the constant is small — and the inherent limit named there has not
+moved: sorting by a field needs the full candidate set anyway, so only unsorted
+queries could ever stop early. Rewrite §7 to match when it is next touched.
 
 ** TODO query API limits
-*** TODO native =In= operator, chunked compound selects, execution timeout
-See =docs/review-followups.md= §8.
+*** TODO the caps are no longer SQLite's, and their rationale needs re-deciding
+=MAX_QUERY_NODES = 2000= and =MAX_COMBINATOR_OPERANDS = 500= now live in
+=query_validate.rs= and are checked before any engine. The second was inherited
+from =SQLITE_MAX_COMPOUND_SELECT=, a limit that no longer applies to anything on
+the serving path: a wide =Or= is N bitmap unions. The first bounded *compilation*
+into a CTE chain that is no longer built.
 
-*** TODO no DSL spelling for a list of UUIDs: =uuid_in [a, b, c]=
-The IR has =UuidIn { uuids }= and the DSL reaches it only one UUID at a time,
-through the bare UUID atom. A set therefore has to be spelled as an =OR= of N
-atoms — N predicate nodes for what the IR holds as one list, which is the shape
-§8 names as the compound-select limit.
+So the open item is not "chunk the compound select" (§8) any more — it is whether
+either cap should stay, and at what value. Keep the rejections in some form: a
+query is still client input and the index is still memory. But the numbers should
+be justified by the engine that runs, not by the one that left.
 
-A bracketed list atom, =uuid_in [3f2a…9b, 7c11…04]=, compiles to the existing
-=UuidIn= node directly. Purely additive to the grammar (=uuid_in= would join
-=osm=/=osmd=/=same= as a word recognised only in operator position, so a field
-named =uuid_in= stays usable), no =API_VERSION= bump — the wire format already
-carries the list. Same accepted spelling as the atom: bare 32-hex, comma
-separated.
+*** TODO execution timeout
+The node cap bounds a query's *compilation*, never its *time*. A small, slow query
+(a =matches= regex over millions of rows, a =->*= across the whole repo) is still
+unbounded. Cancellation exists — a query task polls =cancel()= between phases, so
+a client can stop one — but nothing enforces a deadline on its own. §8's SQLite
+lead (=progress_handler=, =interrupt()=) is obsolete with SQL off the path; the
+place to poll is the index evaluation loop.
 
-Wanted by every shell client that holds a set of uuids and wants to say "these
-ones": today it either loops or builds an N-term =OR=.
+*** TODO no DSL spelling for an explicit list of UUIDs
+Correcting what this entry used to claim: an =Or= of bare UUID atoms is *not* N
+predicate nodes. The parser folds it — when every operand of an =Or= is a
+=UuidIn=, the lists are concatenated into one node (=core/src/dsl.rs=,
+=or_expr_inner=) — so a pasted multi-selection already compiles to the single
+=UuidIn= the IR holds. There is no cost argument left here.
+
+What remains is spelling: N UUIDs cost N =OR= keywords and 33N characters in the
+query box. A bracketed atom, =uuid_in [3f2a…9b, 7c11…04]=, would be purely
+additive to the grammar (=uuid_in= joining =osm=/=osmd=/=same= as a word
+recognised only in operator position) and compile to the same node. Worth doing
+for the shell clients that build such a list, not urgent.
 
 *** TODO the CLI cannot read a scope by batches: no =--cursor=, no =--count=
 The daemon already pages: =POST /query= takes =limit= + an opaque keyset
@@ -101,23 +160,37 @@ aborts, the watcher silently skips. Decide which is right and make both do it.
 wiring is enforced by =tsc=, but no test mounts =metarecord-list= with a broken
 symlink and checks the row is not coloured as an orphan. The harness exists —
 =frontend/tests/metarecord-list-live-update.test.ts= already models "which paths
-are on disk" and now routes =fs_exists=.
+are on disk" and routes =fs_exists=. Still open after orphan detection moved to a
+field (=orphan = true=, =POST /orphans/mark=): the mode and its banner are gone,
+the purple row colouring the test would cover is not.
+
+** TODO documentation drift after the engine unification
+The code comments in =index/mod.rs= were written when an =Unsupported= operand
+meant "the SQL engine will serve it", and some forty mentions of that engine
+remain — =mod.rs:8= still states the caller "falls back to the SQL engine on any
+=Unsupported=", which is now exactly backwards (it is a =500=). The ones that
+compare against the oracle's behaviour are still right; the ones describing a
+fallback path are not, and the two readings are only told apart by already
+knowing the answer.
+=docs/review-followups.md= §7 and §8 have the same problem at document scale.
+Mechanical, worth one pass before the release.
 
 ** TODO structure
-*** TODO =routes.rs= is 4111 lines and 83 handlers
+*** TODO =routes.rs= is 4105 lines and 85 handlers
 Splitting it into =routes/= submodules is filing, not simplification — a large
 mechanical diff. Worth doing for navigability, not for complexity.
 
 *** TODO the big panels are one =mount()= each
-=metarecord-list= 1593 lines over 93 closures, =metarecord-detail= 1473. They all
+=metarecord-list= 1596 lines over 93 closures, =metarecord-detail= 1513. They all
 share the panel instance's state, so extracting anything means passing an
 explicit context: a rewrite, against 71% JS coverage. Not to be started casually.
 
 *** TODO long sequential functions
-=reconcile_full_reported= (334 lines), =query_exec::execute= (206),
-=flush_pending_once= (198). Long but linear — phase sequences over shared state,
-not tangled logic. Extraction would cost ten-parameter signatures for a
-debatable gain; left alone deliberately.
+=reconcile_full_reported= (334 lines), =flush_pending_once= (198). Long but
+linear — phase sequences over shared state, not tangled logic. Extraction would
+cost ten-parameter signatures for a debatable gain; left alone deliberately.
+(=query_exec::execute=, the third of this list, left the daemon with the SQL
+engine.)
 
 ** TODO tooling
 *** TODO test coverage has never been measured here
@@ -139,5 +212,9 @@ Design settled, not coded: [[file:docs/gui-tag-folder-rework.md][docs/gui-tag-fo
 write, so "what is left to ask" is a query rather than bash bookkeeping — which
 removes the in-memory scope, the external sort and =MF_GUI_MAX_ENTRIES=, and
 keeps both the =mf order= walk order and an exact counter. Supersedes
-=docs/review-followups.md= §12 (rewrite it when this lands). Prerequisites, in
-order: =:parent= served by the index, then =mf … --count=.
+=docs/review-followups.md= §12 (rewrite it when this lands).
+
+Prerequisites were =:parent= served by the index, then =mf … --count=. *The first
+is done* (the index serves the aspect, and refuses a regex or an ordering on it);
+only the CLI's batch reading is still missing, which is the =--cursor=/=--count=
+item above. This is now the one thing standing between the design and the code.
