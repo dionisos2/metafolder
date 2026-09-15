@@ -159,7 +159,7 @@ const MIGRATIONS: &[(&str, fn(&Connection) -> Result<()>)] = &[
     ("field.value_name_bytes column", ensure_value_name_bytes_column),
     ("pending_operation path byte columns", ensure_pending_path_bytes_columns),
     ("performance indexes", ensure_perf_indexes),
-    ("field_text trigram index", ensure_field_text),
+    ("drop the legacy full-text index", drop_field_text),
     ("drop the persisted filesystem-event buffer", drop_persisted_fs_events),
     ("rename the order_position_* fields", rename_order_position_fields),
     ("drop duplicate field rows", dedup_field_rows),
@@ -200,8 +200,7 @@ fn migration_done(conn: &Connection, name: &str) -> Result<bool> {
 /// Drops the duplicate field rows a repository written before spec-data-model
 /// "No duplicate rows" may hold: within one metarecord, two rows of the same
 /// name and the same value. The lowest id of each group survives — it is the
-/// row the write path would have kept — and the `field_text` entries of the
-/// dropped ones go with them.
+/// row the write path would have kept.
 ///
 /// This is the one migration no cheap probe can decide: finding out whether a
 /// duplicate exists *is* the full scan. So it runs once and marks itself in
@@ -230,7 +229,6 @@ pub fn dedup_field_rows(conn: &Connection) -> Result<()> {
                        GROUP BY metarecord_uuid, field_name, value_type, value_text,
                                 value_int, value_real, value_uuid, value_ref_repo,
                                 value_name_bytes);
-             DELETE FROM field_text WHERE rowid IN (SELECT id FROM duplicate_field_row);
              DELETE FROM field      WHERE id    IN (SELECT id FROM duplicate_field_row);
              DROP TABLE duplicate_field_row;
              COMMIT;",
@@ -550,38 +548,23 @@ fn ensure_perf_indexes(conn: &Connection) -> Result<()> {
     Ok(())
 }
 
-/// Back-fills the `field_text` trigram FTS index for databases created before it
-/// existed (spec-query "MATCHES via FTS5"). Idempotent; a no-op on fresh
-/// databases (where `init_schema` already created it) and on databases that
-/// already carry it. When absent, the table is created and bulk-loaded from the
-/// existing textual field rows — this same path also serves as a rebuild
-/// (drop + call) if the index ever needs compaction.
-pub fn ensure_field_text(conn: &Connection) -> Result<()> {
-    // Fresh file: no tables yet, `init_schema` runs next and creates it.
-    let has_field: i64 = conn.query_row(
-        "SELECT COUNT(*) FROM sqlite_master WHERE type = 'table' AND name = 'field'",
-        [],
-        |r| r.get(0),
-    )?;
-    if has_field == 0 {
+/// Drops `field_text`, the trigram FTS5 index that pre-filtered the SQL
+/// engine's `REGEXP` scan (spec-query "MATCHES"). No `REGEXP` scan runs any
+/// more — a text predicate is answered from the bitmap index's in-memory value
+/// partition (spec-indexing "No operand runs in SQL") — so the table indexed
+/// nothing anybody reads, while its upkeep sat on the write path, in the same
+/// transaction as every field write.
+///
+/// Nothing is lost: it was derived from `field`, which is untouched. The file
+/// does not shrink until a `VACUUM`, which is deliberately not forced here — it
+/// rewrites the whole database, and the freed pages are reused by the next
+/// writes anyway.
+fn drop_field_text(conn: &Connection) -> Result<()> {
+    if !table_exists(conn, "field_text")? {
         return Ok(());
     }
-    let has_fts: i64 =
-        conn.query_row("SELECT COUNT(*) FROM sqlite_master WHERE name = 'field_text'", [], |r| {
-            r.get(0)
-        })?;
-    if has_fts != 0 {
-        return Ok(());
-    }
-    conn.execute_batch(
-        "CREATE VIRTUAL TABLE field_text USING fts5(
-            text, content='', contentless_delete=1, tokenize='trigram'
-         );
-         INSERT INTO field_text(rowid, text)
-            SELECT id, COALESCE(value_text, value_name) FROM field
-            WHERE value_type IN ('string', 'tree_ref');",
-    )
-    .context("Failed to build the field_text FTS index")?;
+    conn.execute_batch("DROP TABLE field_text;")
+        .context("Failed to drop the legacy field_text index")?;
     Ok(())
 }
 
@@ -686,17 +669,6 @@ pub fn init_schema(conn: &Connection) -> Result<()> {
         CREATE TABLE IF NOT EXISTS migration_state (
             name     TEXT PRIMARY KEY NOT NULL,
             done_at  TEXT NOT NULL                -- ISO-8601 UTC
-        );
-
-        -- Trigram full-text index over the textual field columns, to pre-filter
-        -- MATCHES (regex) before the REGEXP scan (spec-query \"MATCHES via FTS5\").
-        -- Contentless (text not stored twice); rowid = field.id. Maintained in
-        -- the same transaction as every field write (see insert_field_row /
-        -- delete_field_text_*); a superset is always correct because field.id is
-        -- AUTOINCREMENT (never reused), so the REGEXP re-filter excludes any
-        -- stale rowid.
-        CREATE VIRTUAL TABLE field_text USING fts5(
-            text, content='', contentless_delete=1, tokenize='trigram'
         );
 
         -- ── Event log (spec-event-log) ──────────────────────────────────────
@@ -1984,67 +1956,7 @@ pub(crate) fn insert_field_row(
             .map_err(map_unique)?;
         }
     }
-    let id = conn.last_insert_rowid();
-    // Maintain the trigram FTS pre-filter over the columns MATCHES scans
-    // (string `value_text`, tree_ref `value_name`). Same transaction as the
-    // field write; see `field_text` in `init_schema`. The write is an
-    // *upsert* (delete-by-rowid, then insert): log navigation restores rows
-    // with their original id, which may still carry a stale `field_text` entry
-    // — replacing it keeps the rowid unique and the insert idempotent.
-    if let Some(text) = fts_indexable_text(&e) {
-        conn.prepare_cached("DELETE FROM field_text WHERE rowid = ?1")?.execute(params![id])?;
-        conn.prepare_cached("INSERT INTO field_text(rowid, text) VALUES (?1, ?2)")?
-            .execute(params![id, text])?;
-    }
-    Ok(id)
-}
-
-/// The text MATCHES indexes for a field value: the string itself, or a
-/// tree_ref's name component. Other types are not searched by MATCHES, so they
-/// are not indexed.
-fn fts_indexable_text(e: &EncodedValue) -> Option<&str> {
-    match e.value_type {
-        "string" => e.text.as_deref(),
-        "tree_ref" => e.name.as_deref(),
-        _ => None,
-    }
-}
-
-/// Removes the `field_text` entry for one field row (by its id). Called just
-/// before deleting the row from `field`, so the FTS index stays in sync.
-pub(crate) fn delete_field_text_by_id(conn: &Connection, id: i64) -> Result<()> {
-    conn.prepare_cached("DELETE FROM field_text WHERE rowid = ?1")?.execute(params![id])?;
-    Ok(())
-}
-
-/// Removes the `field_text` entries for every row of `(metarecord_uuid, name)`.
-/// Resolves the ids through `field` itself, so it must run *before* the rows are
-/// deleted from `field`.
-pub(crate) fn delete_field_text_by_name(
-    conn: &Connection,
-    metarecord_uuid: Uuid,
-    name: &str,
-) -> Result<()> {
-    conn.prepare_cached(
-        "DELETE FROM field_text WHERE rowid IN \
-         (SELECT id FROM field WHERE metarecord_uuid = ?1 AND field_name = ?2)",
-    )?
-    .execute(params![uuid_to_bytes(metarecord_uuid), name])?;
-    Ok(())
-}
-
-/// Removes the `field_text` entries for every field row of a metarecord. Run
-/// *before* deleting the metarecord (whose `field` rows cascade away).
-pub(crate) fn delete_field_text_by_metarecord(
-    conn: &Connection,
-    metarecord_uuid: Uuid,
-) -> Result<()> {
-    conn.prepare_cached(
-        "DELETE FROM field_text WHERE rowid IN \
-         (SELECT id FROM field WHERE metarecord_uuid = ?1)",
-    )?
-    .execute(params![uuid_to_bytes(metarecord_uuid)])?;
-    Ok(())
+    Ok(conn.last_insert_rowid())
 }
 
 #[cfg(test)]

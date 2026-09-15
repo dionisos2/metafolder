@@ -952,7 +952,7 @@ Two things it deliberately does not do:
 - *No =VACUUM=.* In a steady state the pages a trim frees are the pages the next
   appends write into, so the database settles on a plateau. Returning them to
   the filesystem at every trim would rewrite the whole file — the =field= table
-  and the FTS5 index included — to reach the same steady state. =mf log prune=
+  included — to reach the same steady state. =mf log prune=
   keeps its compaction for when the space is actually wanted back.
 - *No trim per write.* The log is allowed to drift one tenth of the limit past
   it (at least one revision) before a trim runs. Hysteresis, not sloppiness:

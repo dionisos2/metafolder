@@ -255,62 +255,31 @@ adaptive planner) is analysed in its own design document,
 [[file:spec-indexing.org][spec-indexing.org]]. The two baseline indexes
 described there are implemented; the rest is forward-looking.
 
-** MATCHES acceleration via FTS5 (implemented)
+** MATCHES is answered in memory (implemented)
 
-=MATCHES= runs a regex with the =REGEXP= UDF; a full scan of the candidate rows
-costs ~650 ms at 50 k. To accelerate it, an FTS5 trigram virtual table indexes
-the textual field columns and pre-filters the scan to the rows that can match.
+=MATCHES= runs a regex. The question is what it runs it *over*, and the answer
+is not "the rows": the bitmap index holds a complete value → ids partition for
+every field, so the pattern is compiled once and tested against the field's
+*distinct values*, then the matching buckets are unioned
+(=index::text_scan=). A field whose values repeat — a tag, an extension, a
+directory name — is therefore scanned at its cardinality, not its row count. It
+also composes: inside an =And=, the text operand runs *last* and receives the
+running intersection, so "this folder, name matching X" costs the folder rather
+than the repository (spec-indexing "Two kinds of gap").
 
-#+BEGIN_SRC sql
-CREATE VIRTUAL TABLE field_text USING fts5(
-    text, content='', contentless_delete=1, tokenize='trigram'
-);
-#+END_SRC
+Before that, the regex ran as a SQLite =REGEXP= scan of the candidate rows
+(~650 ms at 50 k), pre-filtered by =field_text=, an FTS5 trigram virtual table
+maintained in the same transaction as every field write. Both are gone: the scan
+left with the SQL engine (spec-indexing "No operand runs in SQL"), and the
+pre-filter with it — an index nobody reads whose upkeep sat on the write path.
+Dropping the table is a one-shot migration at open
+(=db.rs=, "drop the legacy full-text index"); nothing is lost, since it was
+derived from =field=.
 
-One =field_text= row is maintained per =field= row that =MATCHES= scans —
-=string= (=value_text=) and =tree_ref= (=value_name=) — with =rowid= equal to
-=field.id=. (=datetime= is named in the original design but =MATCHES= does not
-scan it, so it is not indexed.) The daemon keeps the index in sync inside the
-same transaction as every field write (no triggers; the event log stays the only
-side-channel):
-
-- *Inserts* go through the single chokepoint =db::insert_field_row=, which
-  *upserts* (delete-by-rowid then insert) the indexed text. This is the only
-  maintenance required for *correctness*: because =field.id= is
-  =AUTOINCREMENT= (never reused), a =field_text= that is a *superset* of the
-  live rows is always correct — a stale rowid points at a deleted =field= row,
-  so the =REGEXP= re-check on the live rows excludes it. Missing entries (false
-  negatives) are the only error, and the chokepoint prevents them.
-- *Deletes* drop the matching =field_text= entries at the =Writer='s delete
-  sites (=db::delete_field_text_by_id= / =_by_name= / =_by_metarecord=). This is
-  *best-effort* — only to bound the index size; a missed delete (e.g. on the
-  rarer log-navigation paths) leaves a harmless stale entry.
-- =db::ensure_field_text= builds the index for repositories created before it
-  existed, and doubles as a rebuild/compaction entry point.
-
-Query plan for =MATCHES= (=query_exec=):
-
-1. Extract, from the parsed regex HIR (=regex-syntax=, in =fts.rs=), the longest
-   literal substring of ≥ 3 characters that *every* match must contain. The
-   extraction is *conservative*: alternations, optional/zero-min repetitions and
-   character classes break a literal run, and anything uncertain yields *no*
-   literal. The soundness obligation (the literal is contained in every match)
-   is cross-checked against the full scan by =tests/fts_oracle.rs=.
-2. If a literal exists, restrict the scan:
-   =… AND id IN (SELECT rowid FROM field_text WHERE text MATCH '"<literal>"')=
-   (the literal bound as a quoted phrase), then apply =REGEXP= only to the
-   survivors. (A membership test, not a join: driving from the FTS rowids was
-   measured slower once wrapped in the repository-isolation CTE.)
-3. If no literal can be extracted (e.g. =^.*$=, =cat|dog=, =(?i)…=), fall back to
-   the v1 full scan.
-
-The pre-filter is purely an optimisation — the trigram tokenizer is
-case-insensitive and the match is a sound over-approximation, so =REGEXP= always
-re-checks and results are identical to the full scan. Measured at 50 k: a
-selective literal drops from ~650 ms to tens of ms; a literal whose trigrams are
-common in the corpus still beats the full scan by ~3×; a no-literal pattern is
-unchanged. FTS5 is also the planned acceleration for high-cardinality string
-equality if needed.
+The trigram tokenizer also had a *three-character floor* that the in-memory scan
+does not: the first two keystrokes of a search used to fall off a cliff (808 ms
+for =s= against 23 ms from =sam= onwards), because a shorter term could not be
+pre-filtered at all.
 
 ** Ordered substring matching (OSM, implemented)
 
@@ -335,25 +304,23 @@ Two modes, chosen by the caller (see the DSL functions =osm= / =osmd=):
   Applied to a field that demonstrably holds a non-=tree_ref= value it is
   *rejected with 400* (use =osmd=); a field with no data yields an empty result.
 
-*Execution* (=query_exec=, the SQL engine; the bitmap index reports =Osm=
-=Unsupported= and falls back, as it already does for =Matches=):
+*Execution.* Both modes are answered from resident structures; neither compiles
+to SQL (spec-indexing "No operand runs in SQL").
 
-- =direct= compiles like =Matches= — the =REGEXP= scan (an unanchored
-  =(?i)t1.*t2.*…= built from the regex-escaped terms) pre-filtered by the FTS5
-  trigram index on the ≥ 3-char terms (all bound as one =AND= phrase query). A
-  sound over-approximation; =REGEXP= re-checks order, so the result is identical
-  to a full scan.
-- =path= is *hybrid*, like =FollowsTransitive=: the matching metarecords are
-  computed through the tree cache and inlined as literals. Candidate pruning
-  uses the same trigram index — for each ≥ 3-char term, the nodes whose *name*
-  contains it, expanded to descendants-or-self via the cache; the intersection
-  over those terms is a superset of the matches (a term always lies within one
-  segment), and each candidate's real path is then verified by the ordered check
-  (=osm_ordered_match=). Terms shorter than 3 chars cannot use the trigram index
-  and are enforced only by that final check (with no ≥ 3-char term at all, every
-  path-bearing metarecord of the field is verified). This adds *no persistent
-  state* — no denormalised path text, and a rename/move costs nothing beyond the
-  existing tree-cache upkeep.
+- =direct= is a text predicate like =Matches=: the unanchored =(?i)t1.*t2.*…=
+  built from the regex-escaped terms, run over the field's *distinct values* in
+  memory, narrowed by the candidate set when it sits inside an =And=.
+- =path= is answered by the *forest*. A single separator-free term of any
+  length resolves its "term nodes" — the nodes whose own name contains it — from
+  the in-memory name partition, and the union of their subtrees *is* the match
+  set, with no per-path verification: every descendant's path contains the term.
+  The order-sensitive forms (several terms, or one term containing the
+  separator) are one walk of the resident forest
+  (=TreeCache::osm_path_matches=), carrying the greedy match position down each
+  branch and taking a whole subtree at once when a branch has consumed every
+  term; the result is handed to the bitmap index as a =uuid_in= set
+  (=forest_query=). This adds *no persistent state* — no denormalised path text,
+  and a rename/move costs nothing beyond the existing tree-cache upkeep.
 
 ** Same-value matching (=same=, implemented)
 

@@ -129,7 +129,7 @@ recorded per row):
 | =Int= / =Float= / =DateTime=   | bit-sliced index (BSI), range     | [[*Bit-sliced index (BSI) for ordered/range fields][BSI]]               |
 | =Bool= / low-cardinality =String= | one bitmap per value           | [[*Bitmaps for categorical predicates][categorical bitmaps]]            |
 | =Ref= / =TreeRef=              | reverse (inverted) bitmaps        | [[*Reverse bitmaps for Ref / TreeRef][reverse bitmaps]]                 |
-| high-cardinality =String=      | inverted bitmaps for equality; =Matches= uses the REGEXP scan, pre-filtered by an FTS5 trigram index (implemented, see [[file:spec-query.org][spec-query.org]]) | |
+| high-cardinality =String=      | inverted bitmaps for equality; =Matches= runs the regex over the field's distinct values in memory (see [[file:spec-query.org][spec-query.org]]) | |
 
 A field name has exactly one non-=Nothing= value type repository-wide (see
 [[file:spec-data-model.org][spec-data-model.org]] → "One value type per field
@@ -410,7 +410,7 @@ convention. (Cargo allows the dependency cycle this creates: the oracle depends
 on the daemon for =db=, =tree_cache= and the error type.)
 
 It is exercised by the equivalence batteries (=tests/index_oracle.rs=,
-=tests/fts_oracle.rs=) and by the semantics batteries, which run *both* engines
+=tests/index_oracle.rs=) and by the semantics batteries, which run *both* engines
 through =tests/common/engines.rs= and assert they agree. The reason is written in
 this document's own history: a shape the oracle does not cross-check rots
 unnoticed — =MATCHES= under =:parent= answered the =:value= question, and an
@@ -469,10 +469,14 @@ table only *for a list of uuids*.
    in memory — so the only leaf left to resolve is the order-sensitive =osm=
    path, which the forest already walked; it now goes straight from that walk to
    a =uuid_in=, with no =VALUES= detour through the SQL compiler.
-5. Later, and separately: =field_text= (the FTS5 trigram table) becomes dead
-   weight — it exists to pre-filter a =REGEXP= that no longer runs — and its
-   maintenance is on the write path. Dropping it is a persisted-format change
-   and ships with a migration.
+5. *(done)* =field_text= (the FTS5 trigram table) was dead weight — it existed
+   to pre-filter a =REGEXP= that no longer runs — while its upkeep sat on the
+   write path, in the same transaction as every field write. It is dropped by a
+   one-shot migration at open, and nothing is lost: it was derived from =field=.
+   The regex→literal extraction that fed it (=fts.rs=) and its soundness oracle
+   go with it. The file does not shrink until a =VACUUM=, which is deliberately
+   not forced: it rewrites the whole database, and the freed pages are reused by
+   the next writes.
 
 * Storage model: a derived in-memory cache
 
@@ -501,8 +505,9 @@ is exactly what the SQL =value_type= guard selects. This replaced the FTS5
 trigram pre-filter on the index path: measured on the 50 k bench repo the
 in-memory scan won in every case, including a strong literal on a field with
 50 000 distinct names (28 → 8 ms) and overwhelmingly without one (166 →
-1 ms, where the pre-filter cannot help at all). The pre-filter remains in the
-SQL engine, which stays the oracle.
+1 ms, where the pre-filter cannot help at all). The pre-filter is gone
+altogether now, and so is the table under it: nothing read it, and it was
+maintained on the write path (see the increments above).
 
 Inside an =And=, the text operands are evaluated *last* and receive the running
 intersection as a candidate restriction: a value whose bitmap misses every

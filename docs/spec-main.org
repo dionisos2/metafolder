@@ -182,8 +182,8 @@ metafolder = "/ssd/meta/music/.metafolder"
   index build, the tree cache, the watch placement:
 
   #+BEGIN_SRC
-  [load music] field_text trigram index…
-  [load music] field_text trigram index: 4m12s
+  [load music] build the query index…
+  [load music] build the query index: 4m12s
   #+END_SRC
 
   A phase's duration is reported when it ends, but only past a small threshold

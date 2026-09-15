@@ -104,7 +104,7 @@ makes the table below readable — each category is one system's work.
 |--------------------------------+------------------------------------------+-------------------------------------------------|
 | the forest (=tree_cache=)      | the TreeRef trees: path ↔ node, children | =path.resolve=, =path.assemble=, tree sort keys |
 | the bitmaps (=index/=)         | the per-field roaring / BSI encodings    | =bitmap.leaf=, =bitmap.combine=, =count=        |
-| SQLite (=field=, =field_text=) | the authoritative rows                   | =sql.scan=, the CTE =sort=, =assemble=          |
+| SQLite (=field=)               | the authoritative rows                   | =sql.scan=, the CTE =sort=, =assemble=          |
 
 Only two of them *evaluate a query*: the bitmaps and SQLite. The forest is a
 provider both of them call, which is why =path.resolve= reads "same" on both
@@ -145,11 +145,11 @@ the table exists rather than a single number:
   indexes =(field_name, …)= and never =value_text= / =value_int= / =value_real=,
   so the scan is confined to the rows of that one field name — and =R_f= is
   exactly what =present_of(f).len() + absent_of(f).len()= gives.
-- *The FTS pass is a cliff, not a coefficient.* =fts::required_fts_literal=
-  either extracts a mandatory ≥3-character literal — a trigram lookup over =C=
-  candidates — or does not, and then every row of the field goes through
-  =REGEXP=. Which of the two, and why, is the single most actionable thing this
-  endpoint can report: it is the one the user can fix, by rewriting the pattern.
+- *A text predicate costs values, not rows.* The regex is compiled once and run
+  over the field's *distinct* values (=V_f=), not over its rows (=R_f=) — and on
+  a field whose values repeat (a tag, an extension, a directory name) those are
+  different orders of magnitude. The SQL oracle still scans rows, and that is
+  the one place the two engines' counts genuinely differ.
 
 ** What each category is
 
@@ -171,7 +171,7 @@ its metarecord) followed by a =follow.transitive= (the expansion from it), where
 | =bitmap.leaf=       | a comparison / presence leaf, =:parent= | — (it is the =sql.scan= row)           | union of the operand's buckets        |
 | =bitmap.combine=    | =and= / =or= / =not=                    | =INTERSECT= / =UNION= / =EXCEPT=       | Roaring =&=, =\|=, universe =-=       |
 | =follow.transitive= | =->*=, ~=>*~, 1-term =osm= path         | cache-walked descendants, =VALUES=     | expansion over children bitmaps       |
-| =fts.scan=          | =matches=, =osm= =direct=               | =REGEXP= scan, FTS5-narrowed           | the regex over distinct values        |
+| =fts.scan=          | =matches=, =osm= =direct=               | =REGEXP= scan of the field's rows      | the regex over distinct values        |
 | =sql.scan=          | presence, comparison, =same=, =->=      | one =field= scan per =field_name=      | — (it is the =bitmap.leaf= row)       |
 | =path.assemble=     | the =:path= aspect, multi-term =osm=    | one walk of the forest, then =uuid_in= | the same walk, before the bitmaps run |
 | =sort=              | each =sort= key                         | the =_p{i}= / =_s{i}= CTEs             | one rep per id, then the page         |
@@ -186,12 +186,11 @@ The SQL column, verbatim — this is what a term of each category stands for:
   SELECT DISTINCT metarecord_uuid AS uuid FROM field
    WHERE field_name = ? AND (<value predicate>)
 
-  -- fts.scan: the same scan under REGEXP. The `id IN (...)` line is present only
-  -- when `fts::required_fts_literal` found a mandatory literal of 3+ characters;
-  -- without it every row of the field is re-checked. That is the cliff.
+  -- fts.scan, in the oracle: every row of the field goes through REGEXP. On the
+  -- serving path there is no SQL at all — the regex runs over the field's
+  -- distinct values in memory.
   SELECT DISTINCT metarecord_uuid AS uuid FROM field
    WHERE field_name = ?
-     AND id IN (SELECT rowid FROM field_text WHERE text MATCH ?)
      AND ((value_type = 'string'   AND value_text REGEXP ?) OR
           (value_type = 'tree_ref' AND value_name REGEXP ?))
 

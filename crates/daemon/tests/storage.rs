@@ -2222,13 +2222,53 @@ fn test_an_existing_repository_drops_duplicate_rows_on_open() {
         db::get_field_rows_named(&conn, m.uuid, "tag").unwrap().into_iter().map(|r| r.id).collect();
     assert_eq!(rows, kept, "the first row of each value survives");
     assert_eq!(values_of(&conn, m.uuid, "tag"), vec![s("jazz"), s("live")]);
-    // The FTS pre-filter follows the rows it indexes.
-    assert_eq!(count(&conn, "SELECT COUNT(*) FROM field_text"), 2);
     // ...and the pass records itself, so no later open re-scans `field`.
     assert_eq!(
         count(&conn, "SELECT COUNT(*) FROM migration_state WHERE name = 'dedup-field-rows'"),
         1
     );
+}
+
+#[test]
+fn test_an_existing_repository_drops_the_legacy_fts_index_on_open() {
+    // `field_text` was a trigram FTS5 index maintained on every field write, to
+    // pre-filter the SQL engine's REGEXP scan. No REGEXP scan runs any more —
+    // text predicates are answered from the index's in-memory value partition
+    // (spec-indexing "No operand runs in SQL") — so the table is dead weight
+    // whose upkeep is on the write path. Opening a database that still carries
+    // it drops it, once.
+    let dir = common::TempDir::new("migrate-drop-fts");
+    let path = dir.path().join("db.sqlite");
+
+    let mut conn = db::open_database(&path, "test").unwrap();
+    db::init_schema(&conn).unwrap();
+    let m = create(&mut conn, vec![Field::new("tag", s("jazz"))]);
+    // Re-create the legacy index by hand, as a database written before this
+    // carries it.
+    conn.execute_batch(
+        "CREATE VIRTUAL TABLE IF NOT EXISTS field_text USING fts5(
+             text, content='', contentless_delete=1, tokenize='trigram');
+         INSERT OR REPLACE INTO field_text(rowid, text) VALUES (1, 'jazz');",
+    )
+    .unwrap();
+    assert!(table_exists(&conn, "field_text"), "the fixture must carry the legacy index");
+    drop(conn);
+
+    let mut conn = db::open_database(&path, "test").unwrap();
+    assert!(!table_exists(&conn, "field_text"), "opening must drop it");
+    // The data it indexed is untouched, and writing still works without it.
+    assert_eq!(values_of(&conn, m.uuid, "tag"), vec![s("jazz")]);
+    let m2 = create(&mut conn, vec![Field::new("tag", s("live"))]);
+    assert_eq!(values_of(&conn, m2.uuid, "tag"), vec![s("live")]);
+    assert!(!table_exists(&conn, "field_text"), "and no write re-creates it");
+}
+
+/// Whether the database carries `table`.
+fn table_exists(conn: &rusqlite::Connection, table: &str) -> bool {
+    count(
+        conn,
+        &format!("SELECT COUNT(*) FROM sqlite_master WHERE type = 'table' AND name = '{table}'"),
+    ) > 0
 }
 
 #[test]

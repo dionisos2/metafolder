@@ -564,7 +564,6 @@ pub fn navigate(conn: &mut rusqlite::Connection, target: Option<i64>) -> Result<
             let unapplied = ancestry(&tx, head)?.len();
             tx.execute("DELETE FROM metarecord", [])?;
             // One repo per database file, so emptying it clears the whole FTS index.
-            tx.execute("DELETE FROM field_text", [])?;
             tx.execute("UPDATE log_head SET op_id = NULL WHERE singleton = 1", [])?;
             tx.commit()?;
             return Ok(NavResult {
@@ -1518,7 +1517,6 @@ impl<'c> Writer<'c> {
             return Ok(());
         }
         let version_before = self.bump_version(uuid)?;
-        db::delete_field_text_by_name(&self.tx, uuid, name)?;
         self.tx
             .prepare_cached("DELETE FROM field WHERE metarecord_uuid = ?1 AND field_name = ?2")?
             .execute(params![db::uuid_to_bytes(uuid), name])?;
@@ -1570,9 +1568,6 @@ impl<'c> Writer<'c> {
         let version = db::get_version(&self.tx, uuid)?
             .ok_or_else(|| DomainError::NotFound(format!("Metarecord not found: {uuid}")))?;
         let before = db::get_field_rows(&self.tx, uuid)?;
-        // CASCADE removes the field rows; field_text has no FK, so drop its
-        // entries first (while the field rows still resolve the ids).
-        db::delete_field_text_by_metarecord(&self.tx, uuid)?;
         self.tx
             .execute("DELETE FROM metarecord WHERE uuid = ?1", params![db::uuid_to_bytes(uuid)])?;
         self.log_op(OpType::DeleteRecord, uuid, None, Some(version), before, vec![])?;
@@ -1587,7 +1582,6 @@ impl<'c> Writer<'c> {
         let fields = collapse_duplicate_fields(fields); // spec-data-model "No duplicate rows"
         let version_before = self.bump_version(uuid)?; // errors NotFound if absent
         let before = db::get_field_rows(&self.tx, uuid)?;
-        db::delete_field_text_by_metarecord(&self.tx, uuid)?;
         self.tx
             .prepare_cached("DELETE FROM field WHERE metarecord_uuid = ?1")?
             .execute(params![db::uuid_to_bytes(uuid)])?;
@@ -1627,7 +1621,6 @@ impl<'c> Writer<'c> {
         self.validate_value_type(name, &value)?;
         let version_before = self.bump_version(uuid)?;
         let before = db::get_field_rows_named(&self.tx, uuid, name)?;
-        db::delete_field_text_by_name(&self.tx, uuid, name)?;
         self.tx
             .prepare_cached("DELETE FROM field WHERE metarecord_uuid = ?1 AND field_name = ?2")?
             .execute(params![db::uuid_to_bytes(uuid), name])?;
@@ -1673,7 +1666,6 @@ impl<'c> Writer<'c> {
         let (kept, slot) = collapse_duplicates(&values);
         let version_before = self.bump_version(uuid)?;
         let before = db::get_field_rows_named(&self.tx, uuid, name)?;
-        db::delete_field_text_by_name(&self.tx, uuid, name)?;
         self.tx
             .prepare_cached("DELETE FROM field WHERE metarecord_uuid = ?1 AND field_name = ?2")?
             .execute(params![db::uuid_to_bytes(uuid), name])?;
@@ -1783,7 +1775,6 @@ impl<'c> Writer<'c> {
     ) -> Result<()> {
         let field_id = old.id;
         let v1 = self.bump_version(uuid)?;
-        db::delete_field_text_by_id(&self.tx, field_id)?;
         self.tx.execute("DELETE FROM field WHERE id = ?1", params![field_id])?;
         self.log_op(
             OpType::DeleteField,
@@ -1867,7 +1858,6 @@ impl<'c> Writer<'c> {
     pub fn delete_field(&mut self, uuid: Uuid, field_id: i64) -> Result<()> {
         let old = self.get_owned_row(uuid, field_id)?;
         let version_before = self.bump_version(uuid)?;
-        db::delete_field_text_by_id(&self.tx, field_id)?;
         self.tx.execute("DELETE FROM field WHERE id = ?1", params![field_id])?;
         self.log_op(
             OpType::DeleteField,
@@ -1891,7 +1881,6 @@ impl<'c> Writer<'c> {
         }
         let version_before = self.bump_version(uuid)?;
         for row in &rows {
-            db::delete_field_text_by_id(&self.tx, row.id)?;
             self.tx.execute("DELETE FROM field WHERE id = ?1", params![row.id])?;
         }
         let removed = rows.len();

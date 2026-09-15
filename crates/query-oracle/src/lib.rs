@@ -396,22 +396,11 @@ pub fn osm_name_nodes(conn: &Connection, field: &str, term: &str) -> Result<Vec<
         }
         Ok(out)
     };
-    if term.chars().count() >= 3 {
-        let phrase = metafolder_daemon::fts::match_phrase(term);
-        collect(
-            "SELECT DISTINCT metarecord_uuid FROM field \
-             WHERE field_name = ?1 AND value_type = 'tree_ref' \
-               AND id IN (SELECT rowid FROM field_text WHERE text MATCH ?2) \
-               AND value_name REGEXP ?3",
-            &[&field, &phrase, &pattern],
-        )
-    } else {
-        collect(
-            "SELECT DISTINCT metarecord_uuid FROM field \
-             WHERE field_name = ?1 AND value_type = 'tree_ref' AND value_name REGEXP ?2",
-            &[&field, &pattern],
-        )
-    }
+    collect(
+        "SELECT DISTINCT metarecord_uuid FROM field \
+         WHERE field_name = ?1 AND value_type = 'tree_ref' AND value_name REGEXP ?2",
+        &[&field, &pattern],
+    )
 }
 
 /// Every metarecord with a `tree_ref` value in `field` (the unpruned candidate
@@ -668,8 +657,8 @@ impl<'a> Compiler<'a> {
     }
 
     /// `Matches` (regex), in the two shapes it takes: a `Path` aspect is
-    /// answered from the tree cache and inlined, anything else is a REGEXP scan
-    /// narrowed by the FTS5 trigram pre-filter.
+    /// answered from the tree cache and inlined, anything else is a `REGEXP`
+    /// scan of the field's rows.
     fn matches(&mut self, field: &str, pattern: &str, aspect: Aspect) -> Result<String, ApiError> {
         metafolder_daemon::regexp::compile(pattern)
             .map_err(|e| ApiError::bad_request(format!("invalid regex pattern: {e}")))?;
@@ -681,30 +670,21 @@ impl<'a> Compiler<'a> {
             let matched = self.path_matches(field, &|path: &str| re.is_match(path))?;
             return self.inline_uuids(matched);
         }
-        // Trigram pre-filter (spec-query "MATCHES via FTS5"): when every
-        // match must contain a literal substring (≥ 3 chars), restrict
-        // the REGEXP scan to the rows the FTS index reports containing it
-        // (`id IN (… field_text … MATCH …)`). A sound over-approximation
-        // — REGEXP still re-checks every surviving row, so the result is
-        // identical to the full scan. (Driving from the FTS via a JOIN
-        // was measured *slower* once wrapped in the repo-isolation CTE,
-        // so the membership test is kept as the spec describes.)
+        // A plain scan of the field's rows. It used to be narrowed by a
+        // trigram FTS pre-filter, which existed to make *this* engine bearable
+        // on a large repository; an oracle wants to be obviously right rather
+        // than fast, and the index it pre-filtered from is gone (spec-indexing
+        // "No operand runs in SQL").
         self.push_text(field);
-        let prefilter = match metafolder_daemon::fts::required_fts_literal(pattern) {
-            Some(literal) => {
-                self.push_text(&metafolder_daemon::fts::match_phrase(&literal));
-                "id IN (SELECT rowid FROM field_text WHERE text MATCH ?) AND "
-            }
-            None => "",
-        };
         self.push_text(pattern);
         self.push_text(pattern);
-        Ok(self.add(format!(
+        Ok(self.add(
             "SELECT DISTINCT metarecord_uuid AS uuid FROM field \
-                 WHERE field_name = ? AND {prefilter}\
+                 WHERE field_name = ? AND \
                    ((value_type = 'string' AND value_text REGEXP ?) OR \
                     (value_type = 'tree_ref' AND value_name REGEXP ?))"
-        )))
+                .to_string(),
+        ))
     }
 
     /// `SameAs`: the rows of `field` whose value tuple also occurs among the
@@ -900,31 +880,20 @@ impl<'a> Compiler<'a> {
     }
 
     /// OSM `Direct` mode: an ordered-substring match over the field row's own
-    /// text (`value_text` / `value_name`). Like `Matches`, the `REGEXP` scan is
-    /// pre-filtered by the FTS5 trigram index on the ≥ 3-char terms (a sound
-    /// over-approximation; `REGEXP` re-checks order).
+    /// text (`value_text` / `value_name`), as one `REGEXP` scan of the field's
+    /// rows.
     fn osm_direct(&mut self, field: &str, terms: &[String]) -> Result<String, ApiError> {
         let pattern = osm_regex(terms);
         self.push_text(field);
-        let long: Vec<String> = terms
-            .iter()
-            .filter(|t| t.chars().count() >= 3)
-            .map(|t| metafolder_daemon::fts::match_phrase(t))
-            .collect();
-        let prefilter = if long.is_empty() {
-            ""
-        } else {
-            self.push_text(&long.join(" "));
-            "id IN (SELECT rowid FROM field_text WHERE text MATCH ?) AND "
-        };
         self.push_text(&pattern);
         self.push_text(&pattern);
-        Ok(self.add(format!(
+        Ok(self.add(
             "SELECT DISTINCT metarecord_uuid AS uuid FROM field \
-             WHERE field_name = ? AND {prefilter}\
+             WHERE field_name = ? AND \
                ((value_type = 'string' AND value_text REGEXP ?) OR \
                 (value_type = 'tree_ref' AND value_name REGEXP ?))"
-        )))
+                .to_string(),
+        ))
     }
 
     /// OSM `Path` mode (TreeRef only): an ordered-substring match over the
