@@ -1201,6 +1201,39 @@ pub fn string_field_owners(conn: &Connection, field_name: &str) -> Result<Vec<(U
     Ok(out)
 }
 
+/// Metarecords carrying at least one `Nothing` row for `field` — the set the
+/// `is_absent` predicate returns (spec-query), read straight from the EAV table
+/// so the orphan marker needs no query engine.
+pub fn metarecords_with_absent_field(conn: &Connection, field: &str) -> Result<Vec<Uuid>> {
+    uuid_column(
+        conn,
+        "SELECT DISTINCT metarecord_uuid FROM field
+         WHERE field_name = ?1 AND value_type = 'nothing'",
+        field,
+    )
+}
+
+/// Metarecords carrying at least one `Bool(true)` row for `field` — the set
+/// `field = true` matches, read the same way.
+pub fn metarecords_with_true_flag(conn: &Connection, field: &str) -> Result<Vec<Uuid>> {
+    uuid_column(
+        conn,
+        "SELECT DISTINCT metarecord_uuid FROM field
+         WHERE field_name = ?1 AND value_type = 'bool' AND value_int = 1",
+        field,
+    )
+}
+
+/// Runs a one-parameter query whose single column is a metarecord uuid.
+fn uuid_column(conn: &Connection, sql: &str, field: &str) -> Result<Vec<Uuid>> {
+    let mut stmt = conn.prepare(sql)?;
+    let uuids = stmt
+        .query_map([field], |r| r.get::<_, Vec<u8>>(0))?
+        .map(|r| r.map_err(Into::into).and_then(bytes_to_uuid))
+        .collect::<Result<Vec<Uuid>>>()?;
+    Ok(uuids)
+}
+
 pub fn all_tracked_metarecords(conn: &Connection) -> Result<Vec<Uuid>> {
     let mut stmt = conn.prepare(
         "SELECT DISTINCT metarecord_uuid FROM field

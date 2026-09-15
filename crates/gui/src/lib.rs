@@ -22,6 +22,7 @@ pub mod keybindings;
 pub mod media_support;
 pub mod notifier;
 pub mod order;
+pub mod orphan;
 pub mod proc;
 pub mod recent;
 pub mod reconcile;
@@ -130,6 +131,17 @@ fn register_builtins(registry: &CommandRegistry) {
         (
             "mf:duplicate-scan",
             "Scan the active repository for byte-identical files (mf duplicate scan)",
+            true,
+        ),
+        (
+            "orphan:detect",
+            "Mark the active repository's orphaned metarecords orphan = true (mf orphan detect)",
+            true,
+        ),
+        ("orphan:delete", "Delete the metarecords marked orphan = true (confirmed)", true),
+        (
+            "orphan:detect-delete",
+            "Mark the orphaned metarecords, then delete them (confirmed)",
             true,
         ),
         ("mf:order", "Number a folder's direct children (order_file/order_dir)", true),
@@ -529,6 +541,9 @@ pub fn run(options: Options) {
             commands::grammar_source,
             reconcile::reconcile_run,
             duplicates::duplicate_scan,
+            orphan::orphan_detect,
+            orphan::orphan_count,
+            orphan::orphan_delete,
             sync::sync_status,
             sync::sync_link,
             sync::sync_unlink,

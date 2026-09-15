@@ -336,3 +336,83 @@ fn test_relink_refuses_to_absorb_an_annotated_metarecord() {
     let conn = repo.conn.lock().unwrap();
     assert!(db::get_metarecord(&conn, fresh).unwrap().is_some(), "and it still exists");
 }
+
+// ── Marking orphans (spec-file-tracking "Marking orphans") ───────────────────
+
+/// The metarecords carrying `orphan = true`, sorted — what a query for the
+/// marker would return.
+fn marked(repo: &RepoState) -> Vec<Uuid> {
+    let conn = repo.conn.lock().unwrap();
+    let mut uuids = db::metarecords_with_true_flag(&conn, orphans::ORPHAN_FIELD).unwrap();
+    uuids.sort();
+    uuids
+}
+
+fn sorted(mut uuids: Vec<Uuid>) -> Vec<Uuid> {
+    uuids.sort();
+    uuids
+}
+
+/// Marking covers both populations the user calls "orphan": a stale `mfr_path`
+/// the disk scan proves gone, and a record already orphaned to `Nothing`.
+#[test]
+fn test_mark_flags_stale_paths_and_already_deleted_records() {
+    let (repo, root) = setup("mark-both");
+    write_file(&root, "keep.txt", b"a");
+    write_file(&root, "gone.txt", b"b");
+    write_file(&root, "deleted.txt", b"c");
+    reconcile::reconcile(&repo).unwrap();
+    let keep = resolve(&repo, "/keep.txt").unwrap();
+    let gone = resolve(&repo, "/gone.txt").unwrap();
+    let deleted = resolve(&repo, "/deleted.txt").unwrap();
+
+    // One file disappears behind the daemon's back (stale mfr_path), the other
+    // is orphaned properly (mfr_path = Nothing), as the watcher would.
+    std::fs::remove_file(root.join("gone.txt")).unwrap();
+    std::fs::remove_file(root.join("deleted.txt")).unwrap();
+    orphans::clear_orphans(&repo, &[deleted]).unwrap();
+
+    let result = orphans::mark_orphans(&repo).unwrap();
+    assert_eq!(result, orphans::MarkResult { orphans: 2, marked: 2, unmarked: 0 });
+    assert_eq!(marked(&repo), sorted(vec![gone, deleted]));
+    assert_eq!(field_value(&repo, gone, "orphan"), Some(Value::Bool(true)));
+    assert_eq!(field_value(&repo, keep, "orphan"), None, "a live file is not marked");
+}
+
+/// Re-running writes nothing when nothing changed, and takes the marker back
+/// when the file is there again — the marker is the last run's answer, not a
+/// permanent label.
+#[test]
+fn test_mark_is_idempotent_and_takes_the_marker_back() {
+    let (repo, root) = setup("mark-again");
+    write_file(&root, "gone.txt", b"b");
+    reconcile::reconcile(&repo).unwrap();
+    let gone = resolve(&repo, "/gone.txt").unwrap();
+    std::fs::remove_file(root.join("gone.txt")).unwrap();
+
+    assert_eq!(
+        orphans::mark_orphans(&repo).unwrap(),
+        orphans::MarkResult { orphans: 1, marked: 1, unmarked: 0 }
+    );
+    let version = record_version(&repo, gone);
+    assert_eq!(
+        orphans::mark_orphans(&repo).unwrap(),
+        orphans::MarkResult { orphans: 1, marked: 0, unmarked: 0 },
+        "a second run has nothing to write"
+    );
+    assert_eq!(record_version(&repo, gone), version, "and does not touch the record");
+
+    // The file comes back at the same path: the record is no longer an orphan.
+    write_file(&root, "gone.txt", b"b");
+    assert_eq!(
+        orphans::mark_orphans(&repo).unwrap(),
+        orphans::MarkResult { orphans: 0, marked: 0, unmarked: 1 }
+    );
+    assert_eq!(field_value(&repo, gone, "orphan"), None);
+    assert!(marked(&repo).is_empty());
+}
+
+fn record_version(repo: &RepoState, uuid: Uuid) -> u64 {
+    let conn = repo.conn.lock().unwrap();
+    db::get_metarecord(&conn, uuid).unwrap().unwrap().version
+}

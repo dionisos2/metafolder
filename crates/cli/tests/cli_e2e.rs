@@ -1780,6 +1780,39 @@ fn test_orphan_list_and_clear() {
 }
 
 #[test]
+fn test_orphan_detect_marks_and_unmarks() {
+    let (repo, root) = init_repo("orphan-detect");
+    let file = root.join("gone.txt");
+    std::fs::write(&file, b"data").unwrap();
+    let uuid = mf(&["-u", &repo, "track", file.to_str().unwrap()]).stdout.trim().to_string();
+
+    // Nothing is gone yet: the marker is not written.
+    let out = mf(&["-u", &repo, "orphan", "detect"]);
+    assert_ok(&out);
+    assert!(out.stdout.contains("0 orphan"), "stdout: {}", out.stdout);
+
+    std::fs::remove_file(&file).unwrap();
+    let out = mf(&["-u", &repo, "orphan", "detect"]);
+    assert_ok(&out);
+    assert!(out.stdout.contains("1 orphan"), "stdout: {}", out.stdout);
+    assert!(out.stdout.contains("1 marked"), "stdout: {}", out.stdout);
+
+    // The marker is an ordinary field, so an ordinary query finds it.
+    let out = mf(&["-u", &repo, "metarecord", "-q", "orphan = true", "get"]);
+    assert_ok(&out);
+    assert_eq!(out.stdout.trim(), uuid, "stdout: {}", out.stdout);
+
+    // The file comes back: the next run takes the marker back.
+    std::fs::write(&file, b"data").unwrap();
+    let out = mf(&["-u", &repo, "orphan", "detect"]);
+    assert_ok(&out);
+    assert!(out.stdout.contains("1 unmarked"), "stdout: {}", out.stdout);
+    let out = mf(&["-u", &repo, "metarecord", "-q", "orphan = true", "get"]);
+    assert_ok(&out);
+    assert_eq!(out.stdout.trim(), "", "stdout: {}", out.stdout);
+}
+
+#[test]
 fn test_trash_add_requires_a_running_daemon() {
     // Port 1: nothing listening. The daemon check (repo_info) fails before any
     // filesystem move is attempted, so the path need not even exist.

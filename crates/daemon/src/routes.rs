@@ -105,6 +105,7 @@ pub fn build(state: Arc<AppState>) -> Router {
         .route("/repos/:repo/watch/exceeded", get(watch_exceeded_list).post(watch_exceeded_set))
         .route("/repos/:repo/orphans/scan", post(orphans_scan))
         .route("/repos/:repo/orphans/clear", post(orphans_clear))
+        .route("/repos/:repo/orphans/mark", post(orphans_mark))
         .route("/repos/:repo/orphans/relink", post(orphans_relink))
         .route("/repos/:repo/track", post(track))
         .route("/repos/:repo/slow", get(slow_log).delete(clear_slow_log))
@@ -2483,6 +2484,24 @@ async fn orphans_clear(
         repo_state.ensure_writable()?;
         let cleared = orphans::clear_orphans(repo_state, &uuids)?;
         Ok(Json(json!({ "cleared": cleared })))
+    })
+    .await
+}
+
+/// `POST /repos/:repo/orphans/mark`: flag every orphaned metarecord with
+/// `orphan = true` and take the flag back from records that are not orphaned
+/// any more, in one revision (spec-file-tracking "Marking orphans"). Both
+/// populations count: a stale `mfr_path` the disk scan proves gone, and one
+/// already `Nothing`. Returns `{orphans, marked, unmarked}`.
+async fn orphans_mark(
+    State(state): State<Arc<AppState>>,
+    Path(repo): Path<String>,
+) -> Result<Json<serde_json::Value>, ApiError> {
+    let repo_uuid = parse_uuid(&repo)?;
+    with_repo(&state, repo_uuid, move |repo_state| {
+        repo_state.ensure_writable()?;
+        let result = orphans::mark_orphans(repo_state)?;
+        Ok(Json(serde_json::to_value(result).unwrap_or_default()))
     })
     .await
 }

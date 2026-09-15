@@ -1197,6 +1197,45 @@ cascade both to every descendant — all in one revision. Response:
 ={"cleared": N}=. This is a new, explicit component that writes =Nothing=,
 alongside the watcher and =force= writes; *reconcile still never does*.
 
+** Marking orphans
+
+The scan answers a question; *marking* records the answer. =POST
+/repos/:repo/orphans/mark= flags every orphaned metarecord with =orphan = true=,
+in one revision, and takes the flag back from the records that are not orphaned
+any more. Response: ={"orphans": N, "marked": A, "unmarked": B}= — how many carry
+the marker afterwards, how many were newly flagged, how many were unflagged.
+
+*Both populations count.* "Orphan" here means what the user means by it: a
+record whose =mfr_path= still resolves to a path [[*Orphan scan][the scan]] proves gone, *and*
+one already orphaned to =Nothing= (by the watcher, by =clear=, or by a =force=
+write). The first needs the disk; the second is =is_absent(mfr_path)=. The
+guards are the scan's, unchanged: an unreadable ancestor or an offline mount
+point yields "unknown", so neither a permission drop nor an unplugged drive
+marks anything.
+
+*It writes only the marker.* =mfr_path= is left exactly as it is — marking is
+not clearing, and =clear= stays the one component besides the watcher and
+=force= writes that writes =Nothing=. A detection run is therefore taken back by
+a plain undo.
+
+*The field is the user's, not the daemon's.* =orphan= carries no =mfr_= prefix
+on purpose: it is the answer to a question the user asked at a point in time,
+not a fact the daemon keeps up to date. It must be queryable (=orphan = true=),
+visible in the detail panel, editable and removable by hand — none of which the
+reserved namespace allows (spec-data-model "Reserved fields"). The consequences
+are the ones that come with any user field: a repository whose schema constrains
+=orphan= must accept a =bool= there, and a repository that already uses the name
+for something else gets the ordinary type-lock error rather than a silent
+overwrite.
+
+*The marker is the last run's answer, not a label.* A record that carries it and
+whose file is back is unmarked by the next run. That is what makes acting on the
+marked set — deleting it, typically — safe: the set means "gone as of the last
+detection", and re-running detection is how it is brought up to date. Deleting
+is not a distinct component: the marked set is an ordinary query, so it is
+=POST /query/delete= over ={"type": "eq", "field": "orphan", "value": {"type":
+"bool", "value": true}}= like any other bulk delete.
+
 ** Mount status
 
 #+BEGIN_SRC
@@ -1392,11 +1431,18 @@ With =--relative=, prints the repo-root-relative path instead, starting
 with =/= (the root metarecord itself is =/=). Fails with exit code 1 when the
 metarecord has no =mfr_path= TreeRef (untracked or deleted file).
 
-** =mf orphan {list, clear, relink}=
+** =mf orphan {list, detect, clear, relink}=
 
 Diagnoses and cleans up metarecords whose file is gone (see [[*Orphan scan]]).
 =list= (the default) calls =POST /orphans/scan= and prints =uuid <TAB>
-stale_path=, one per line, or a "no orphans" line. =clear [-y]= scans, prints the
+stale_path=, one per line, or a "no orphans" line.
+
+=detect= calls =POST /orphans/mark= (see [[*Marking orphans]]) and prints
+=N orphan(s): A marked, B unmarked=. Where =list= reports, =detect= writes the
+report into the repository as =orphan = true=, which is what makes it reachable
+from a query — =mf metarecord -q 'orphan = true' get= lists them,
+=mf metarecord -q 'orphan = true' delete= is how they are removed. It is the
+command the GUI's =orphan:detect= drives (spec-gui "Orphans"). =clear [-y]= scans, prints the
 records to stderr, prompts for confirmation (skipped with =-y=), then calls
 =POST /orphans/clear= with the scanned uuids and prints =cleared N=. It is kept
 separate from =mf reconcile= on purpose: detection needs a disk scan, but the

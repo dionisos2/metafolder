@@ -161,6 +161,61 @@ fn is_definitely_gone(root: &Path, rel: &str, cache: &mut HashMap<PathBuf, DirSt
     false
 }
 
+// ── Marking orphans (spec-file-tracking "Marking orphans") ───────────────────
+
+/// The field the mark run maintains. An ordinary *user* field on purpose: it is
+/// the answer to a question the user asked, not a fact the daemon keeps up to
+/// date, so it must be queryable (`orphan = true`), visible in the detail panel
+/// and removable by hand — none of which the `mfr_*` namespace allows.
+pub const ORPHAN_FIELD: &str = "orphan";
+
+/// What a mark run changed.
+#[derive(Debug, Default, serde::Serialize, PartialEq, Eq)]
+pub struct MarkResult {
+    /// Metarecords carrying the marker once the run is over.
+    pub orphans: usize,
+    /// Markers newly written.
+    pub marked: usize,
+    /// Markers taken back: the record is not an orphan any more.
+    pub unmarked: usize,
+}
+
+/// Marks every orphaned metarecord with `orphan = true`, in one revision.
+///
+/// "Orphan" here covers both populations the user means by the word: a record
+/// whose `mfr_path` still resolves to a path the disk scan proves gone (see
+/// [`scan_orphans`]), and one already orphaned to `Nothing` — by the watcher,
+/// by [`clear_orphans`] or by a `force` write. Marking writes *only* the
+/// marker: `mfr_path` is left exactly as it is, so the run is reversible by a
+/// plain undo and `clear` stays the one component that writes `Nothing`.
+///
+/// The marker is the last run's answer, not a permanent label: a record that
+/// carries it and is no longer an orphan (its file came back) is unmarked by
+/// the same pass. That is what makes deleting the marked set safe.
+pub fn mark_orphans(repo: &RepoState) -> Result<MarkResult, ApiError> {
+    // The disk half first — it takes the connection and the cache of its own.
+    let stale: Vec<Uuid> = scan_orphans(repo)?.into_iter().map(|o| o.uuid).collect();
+
+    let mut conn = repo.conn.lock_recover();
+    let mut orphans: std::collections::BTreeSet<Uuid> = stale.into_iter().collect();
+    orphans.extend(db::metarecords_with_absent_field(&conn, "mfr_path")?);
+    let marked: std::collections::BTreeSet<Uuid> =
+        db::metarecords_with_true_flag(&conn, ORPHAN_FIELD)?.into_iter().collect();
+
+    let mut result = MarkResult { orphans: orphans.len(), ..Default::default() };
+    let mut writer = repo.writer(&mut conn, None)?;
+    for &uuid in orphans.difference(&marked) {
+        writer.set_field(uuid, ORPHAN_FIELD, Value::Bool(true))?;
+        result.marked += 1;
+    }
+    for &uuid in marked.difference(&orphans) {
+        writer.delete_fields_named(uuid, ORPHAN_FIELD)?;
+        result.unmarked += 1;
+    }
+    writer.commit()?;
+    Ok(result)
+}
+
 // ── Relinking orphans by fingerprint (spec-file-tracking "Relinking orphans") ─
 
 /// What a relink did.

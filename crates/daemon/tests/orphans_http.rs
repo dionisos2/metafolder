@@ -103,3 +103,55 @@ async fn scan_then_clear_over_http() {
 
     std::fs::remove_dir_all(root).unwrap();
 }
+
+/// `POST /orphans/mark` writes the queryable marker, and the marked set is then
+/// an ordinary query — which is how the GUI's `orphan:delete` removes them
+/// (spec-file-tracking "Marking orphans").
+#[tokio::test]
+async fn mark_then_delete_by_query_over_http() {
+    let (app, repo, root) = setup("mark").await;
+    std::fs::write(root.join("gone.txt"), b"data").unwrap();
+    std::fs::write(root.join("keep.txt"), b"data").unwrap();
+
+    let mut uuids = Vec::new();
+    for name in ["gone.txt", "keep.txt"] {
+        let abs = root.join(name);
+        let (status, body) = request(
+            &app,
+            "POST",
+            &format!("/repos/{repo}/track"),
+            Some(json!({"path": abs.to_str().unwrap()})),
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK, "track failed: {body}");
+        uuids.push(body["uuid"].as_str().unwrap().to_string());
+    }
+    std::fs::remove_file(root.join("gone.txt")).unwrap();
+
+    let (status, marked) =
+        request(&app, "POST", &format!("/repos/{repo}/orphans/mark"), None).await;
+    assert_eq!(status, StatusCode::OK, "mark failed: {marked}");
+    assert_eq!(marked, json!({"orphans": 1, "marked": 1, "unmarked": 0}));
+
+    let (_, gone) =
+        request(&app, "GET", &format!("/repos/{repo}/metarecords/{}", uuids[0]), None).await;
+    assert_eq!(field(&gone, "orphan"), Some(&json!({"type": "bool", "value": true})));
+    let (_, keep) =
+        request(&app, "GET", &format!("/repos/{repo}/metarecords/{}", uuids[1]), None).await;
+    assert_eq!(field(&keep, "orphan"), None, "the live file is untouched");
+
+    let orphan_query = json!({"type": "eq", "field": "orphan",
+                              "value": {"type": "bool", "value": true}});
+    let (status, deleted) = request(
+        &app,
+        "POST",
+        &format!("/repos/{repo}/query/delete"),
+        Some(json!({ "query": orphan_query })),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "delete failed: {deleted}");
+    assert_eq!(deleted["deleted"], 1);
+    let (status, _) =
+        request(&app, "GET", &format!("/repos/{repo}/metarecords/{}", uuids[0]), None).await;
+    assert_eq!(status, StatusCode::NOT_FOUND, "the orphan metarecord is gone");
+}

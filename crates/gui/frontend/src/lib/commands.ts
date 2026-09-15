@@ -1098,6 +1098,34 @@ async function runCommand(name: string, args: string[], ws: string | null): Prom
       // whole-repository scan, and the Rust side posts its own status.
       if (ws) await invoke('duplicate_scan', { wsId: ws });
       return true;
+    case 'orphan:detect':
+      // Mark the orphaned metarecords (spec-file-tracking "Marking orphans").
+      // The Rust side posts its own status; swallow the rejection so an error
+      // is not surfaced twice.
+      if (ws) await invoke('orphan_detect', { wsId: ws }).catch(() => 0);
+      return true;
+    case 'orphan:delete':
+    case 'orphan:detect-delete': {
+      // Deleting is confirmed here rather than in Rust (as `metarecord:trash`
+      // is), which is why the count comes back from detection — or from a
+      // count query when the marked set is taken as it stands.
+      if (!ws) return true;
+      const marked = await (name === 'orphan:delete'
+        ? invoke<number>('orphan_count', { wsId: ws })
+        : invoke<number>('orphan_detect', { wsId: ws })
+      ).catch(() => null);
+      if (marked === null) return true; // already reported
+      if (marked === 0) {
+        await status('No metarecord is marked orphan = true.');
+        return true;
+      }
+      const question =
+        `Delete ${marked} metarecord${marked === 1 ? '' : 's'} marked orphan = true? ` +
+        'Their files are already gone; the metadata goes with them (undo takes it back).';
+      if (!window.confirm(question)) return true;
+      await invoke('orphan_delete', { wsId: ws }).catch(() => 0);
+      return true;
+    }
     case 'metarecord:trash': {
       // Send the selected metarecord's file to the trash (spec-trash.org).
       // Reversible (restore from the trash panel), but confirmed anyway since

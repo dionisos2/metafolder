@@ -728,6 +728,8 @@ enum DuplicateCommand {
 enum OrphanCommand {
     /// List orphaned metarecords (uuid, stale path) — the default
     List,
+    /// Mark every orphaned metarecord with `orphan = true` (and unmark the rest)
+    Detect,
     /// Orphan the scanned records: freeze mfr_path_old, set mfr_path = Nothing
     Clear {
         /// Skip the confirmation prompt
@@ -1145,6 +1147,7 @@ fn dispatch(ctx: &Ctx, command: Command) -> CmdResult {
         Command::Duplicate { command } => dispatch_duplicate(ctx, command),
         Command::Orphan { command } => match command.unwrap_or(OrphanCommand::List) {
             OrphanCommand::List => commands::orphan_list(ctx),
+            OrphanCommand::Detect => commands::orphan_detect(ctx),
             OrphanCommand::Clear { yes } => commands::orphan_clear(ctx, yes),
             OrphanCommand::Relink { json, no_wait, poll_interval } => {
                 commands::orphan_relink(ctx, json, no_wait, poll_interval)

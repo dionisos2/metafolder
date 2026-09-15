@@ -130,12 +130,6 @@ export async function mount(root, metafolder) {
   // mirrors the B zone and is therefore only written while that zone is shown.
   /** @type {string} '' = match all */
   let queryText = '';
-  // Orphan view (spec-file-tracking "Orphan scan"): when on, `queryIR` is a
-  // `uuid_in` set from a daemon disk scan rather than the DSL editor; leaving it
-  // (Exit, or applying/clearing a query) restores the editor-driven query.
-  let orphanMode = false;
-  /** @type {string[]} the uuids the last orphan scan returned */
-  let orphanUuids = [];
   let finderText = ''; // quick OSM filter, AND-ed onto the base query
   /** @type {string[]} */
   let finderFields = defaultFinderFields.slice();
@@ -170,8 +164,6 @@ export async function mount(root, metafolder) {
   const grid = byId(root, 'grid');
   const scroll = byId(root, 'scroll');
   const statusLine = byId(root, 'status-line');
-  const orphanBanner = byId(root, 'orphan-banner');
-  const orphanCountEl = byId(root, 'orphan-count');
   const finderInput = byId(root, 'finder-input', HTMLInputElement);
   const finderFieldsLabel = byId(root, 'finder-fields');
   const queryInput = byId(root, 'query-input', HTMLInputElement);
@@ -774,9 +766,6 @@ export async function mount(root, metafolder) {
   }
 
   async function applyQuery() {
-    // Applying an editor query leaves the orphan view (its uuid_in override).
-    orphanMode = false;
-    orphanBanner.hidden = true;
     queryRan = true;
     queryHistory.push(queryInput.value.trim());
     const ok = await recomputeQuery();
@@ -791,8 +780,6 @@ export async function mount(root, metafolder) {
 
   /** Empties all three search fields and re-runs (empty query = match all). */
   async function clearAllQueries() {
-    orphanMode = false;
-    orphanBanner.hidden = true;
     finderInput.value = '';
     finderText = '';
     queryInput.value = '';
@@ -808,39 +795,14 @@ export async function mount(root, metafolder) {
     await fetchPage(true);
   }
 
-  // ── Orphan view (spec-file-tracking "Orphan scan") ────────────────────────
+  // ── Orphans (spec-file-tracking "Marking orphans") ────────────────────────
 
-  /** Enter (or refresh) the orphan view: scan the disk and show the missing-file
-   *  records via a `uuid_in` query. Exits to the normal view when none remain. */
+  /** Show the metarecords `orphan:detect` marked. No scan, no hidden override:
+   *  the marker is an ordinary field, so this is the query `orphan = true`
+   *  typed into the visible DSL zone — which is exactly the point of the
+   *  command, showing a new user what the detection wrote and where to edit it. */
   async function showOrphans() {
-    const r = repo;
-    if (!r) return;
-    let resp;
-    try {
-      resp = /** @type {{orphans?: {uuid: string}[]}} */ (
-        await daemon.call('POST', `/repos/${r}/orphans/scan`, {})
-      );
-    } catch (error) {
-      await statusBar.error(error);
-      return;
-    }
-    orphanUuids = (resp.orphans ?? []).map((o) => o.uuid);
-    if (orphanUuids.length === 0) {
-      await statusBar.message('No orphans — every tracked file is present.', statusMessageMs);
-      await exitOrphans();
-      return;
-    }
-    orphanMode = true;
-    queryIR = { type: 'uuid_in', uuids: orphanUuids };
-    // The text form of a uuid set is the DSL's bare-UUID atom, OR-ed
-    // (spec-query "Query DSL"). It is long — one atom per orphan — but a script
-    // asking what this view shows must get this view, not the editor's query.
-    queryText = orphanUuids.join(' OR ');
-    const n = orphanUuids.length;
-    orphanCountEl.textContent = `${n} orphaned metarecord${n === 1 ? '' : 's'} — the tracked file is missing`;
-    orphanBanner.hidden = false;
-    queryRan = true;
-    await fetchPage(true);
+    await showQuery('orphan = true');
   }
 
   // ── Duplicates (spec-duplicates "GUI") ────────────────────────────────────
@@ -848,8 +810,7 @@ export async function mount(root, metafolder) {
   /** Show what else is byte-identical to the selected metarecord. The point of
    *  the group model is reaching a file's twins without the caller ever
    *  handling a hash, so this is just `same(...)` typed into the DSL zone —
-   *  visible, editable and composable, not a hidden override like the orphan
-   *  view (whose `uuid_in` set has no DSL spelling). */
+   *  visible, editable and composable. */
   async function showDuplicates() {
     const selected = /** @type {{uuid?: string} | null} */ (
       (await workspace.get('selected_metarecord')) ?? null
@@ -894,40 +855,6 @@ export async function mount(root, metafolder) {
     folderQueryNonce = nonce;
     await showQuery(dsl);
     return true;
-  }
-
-  /** Leave the orphan view and restore the editor-driven query. */
-  async function exitOrphans() {
-    if (orphanMode) orphanMode = false;
-    orphanBanner.hidden = true;
-    await applyQuery();
-  }
-
-  /** Orphan the scanned records (mfr_path_old frozen, mfr_path → Nothing,
-   *  cascading), after confirmation, then re-scan. Invoked from outside the
-   *  orphan view (the command, with no button to click), it scans first — the
-   *  set to clear is whatever a fresh scan finds, and the confirmation names
-   *  its size before anything is written. */
-  async function clearOrphans() {
-    const r = repo;
-    if (!r) return;
-    if (!orphanMode) await showOrphans();
-    if (!orphanMode || orphanUuids.length === 0) return;
-    const n = orphanUuids.length;
-    if (!confirm(`Orphan ${n} metarecord${n === 1 ? '' : 's'}? mfr_path becomes Nothing (its origin is kept in mfr_path_old). This can be rolled back.`)) {
-      return;
-    }
-    try {
-      const resp = /** @type {{cleared?: number}} */ (
-        await daemon.call('POST', `/repos/${r}/orphans/clear`, { uuids: orphanUuids })
-      );
-      await statusBar.message(`Cleared ${resp.cleared ?? 0} orphan(s).`, statusMessageMs);
-    } catch (error) {
-      await statusBar.error(error);
-      return;
-    }
-    await workspace.set('metarecords:dirty', Date.now()); // nudge other panels
-    await showOrphans(); // re-scan: shows any remainder, or exits if none
   }
 
   /** Debounced live mirror of expand(A) into B (preview only — does not run). */
@@ -1245,9 +1172,6 @@ export async function mount(root, metafolder) {
     void applyColumns();
     if (!event.shiftKey) columnsInput.blur();
   });
-  byId(root, 'orphans-btn').addEventListener('click', () => void showOrphans());
-  byId(root, 'orphan-clear').addEventListener('click', () => void clearOrphans());
-  byId(root, 'orphan-exit').addEventListener('click', () => void exitOrphans());
   byId(root, 'bulk-open').addEventListener('click', () => {
     void commands.invoke('metarecord-list:open-bulk-edit');
   });
@@ -1352,17 +1276,9 @@ export async function mount(root, metafolder) {
     label: "Metarecord list: show the selected metarecord's byte-identical twins",
     handler: () => showDuplicates(),
   });
-  void commands.register('metarecord-list:orphans', {
-    label: 'Metarecord list: show orphaned metarecords (tracked file missing)',
+  void commands.register('metarecord-list:show-orphan', {
+    label: 'Metarecord list: show the metarecords marked orphan = true',
     handler: () => showOrphans(),
-  });
-  void commands.register('metarecord-list:orphans-clear', {
-    label: 'Metarecord list: orphan the scanned records (mfr_path → Nothing, confirmed)',
-    handler: () => clearOrphans(),
-  });
-  void commands.register('metarecord-list:orphans-exit', {
-    label: 'Metarecord list: leave the orphan view and restore the query',
-    handler: () => exitOrphans(),
   });
   // Clear-then-edit, one field at a time. The finder is a live filter, so
   // clearing it re-runs immediately (widening the result); the DSL fields wait

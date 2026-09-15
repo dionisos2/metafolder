@@ -1632,6 +1632,23 @@ pub fn orphan_list(ctx: &Ctx) -> Result<i32, CliError> {
     Ok(0)
 }
 
+/// `mf orphan detect` — flag every orphaned metarecord with `orphan = true`
+/// and take the flag back from the records that are no longer orphaned
+/// (spec-file-tracking "Marking orphans"). Unlike `clear` it touches no
+/// `mfr_path`: it only makes the state queryable.
+pub fn orphan_detect(ctx: &Ctx) -> Result<i32, CliError> {
+    let base = ctx.repo_base()?;
+    let resp = ctx.client.post(&format!("{base}/orphans/mark"), &json!({}))?;
+    let count = |key: &str| resp[key].as_u64().unwrap_or(0);
+    println!(
+        "{} orphan(s): {} marked, {} unmarked",
+        count("orphans"),
+        count("marked"),
+        count("unmarked"),
+    );
+    Ok(0)
+}
+
 /// `mf orphan clear` — scan, then orphan the found records (mfr_path_old frozen,
 /// mfr_path → Nothing, cascading). Confirms first unless `yes`.
 pub fn orphan_clear(ctx: &Ctx, yes: bool) -> Result<i32, CliError> {

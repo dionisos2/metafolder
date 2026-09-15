@@ -1,7 +1,8 @@
-// metarecord-list orphan view commands (spec-file-tracking "Orphan scan"):
-// the banner's "Clear all" and "Exit" buttons each have a command, so the whole
-// orphan flow (scan → clear → leave) is reachable from the keyboard and from
-// scripts, not only by clicking.
+// metarecord-list:show-orphan (spec-file-tracking "Marking orphans"): the
+// marked orphans are reached by an ordinary query, `orphan = true`, typed into
+// the visible DSL zone. The command exists to show new users what
+// `orphan:detect` wrote — it detects nothing itself, and touches the disk not
+// at all.
 
 import { beforeEach, describe, expect, test, vi } from 'vitest';
 import { readFileSync } from 'node:fs';
@@ -29,23 +30,15 @@ function shadowFor(): ShadowRoot {
 type Handler = (arg?: unknown) => unknown;
 type Call = { method: string; path: string; body: unknown };
 
-/** Daemon stub: the orphan endpoints answer from `orphans`, everything else is
- *  an empty result. Every call is recorded. */
-function daemonStub(calls: Call[], orphans: () => string[]) {
+/** Daemon stub: every call is recorded, every answer is an empty result. */
+function daemonStub(calls: Call[]) {
   return async (method: string, path: string, body: unknown) => {
     calls.push({ method, path, body });
-    if (path.endsWith('/orphans/scan')) {
-      const found = orphans();
-      return { count: found.length, orphans: found.map((uuid) => ({ uuid, stale_path: `/${uuid}` })) };
-    }
-    if (path.endsWith('/orphans/clear')) {
-      return { cleared: (body as { uuids: string[] }).uuids.length };
-    }
     return { results: [], next_cursor: null };
   };
 }
 
-function stubApi(handlers: Map<string, Handler>, calls: Call[], orphans: () => string[]) {
+function stubApi(handlers: Map<string, Handler>, calls: Call[], queryCalls: unknown[]) {
   const noop = () => {};
   const store = new Map<string, unknown>([['active_repo', 'r']]);
   const statusBar = { message: vi.fn(async () => {}), error: vi.fn(async () => {}) };
@@ -66,7 +59,7 @@ function stubApi(handlers: Map<string, Handler>, calls: Call[], orphans: () => s
       bench: { measure: (_n: string, fn: () => unknown) => fn(), record: noop },
       daemon: {
         request: async () => ({ status: 200, body: null }),
-        call: daemonStub(calls, orphans),
+        call: daemonStub(calls),
         parseQuery: async () => null,
         expandQuery: async () => '',
         resolvePath: async () => '',
@@ -77,7 +70,12 @@ function stubApi(handlers: Map<string, Handler>, calls: Call[], orphans: () => s
         metarecordPaths: async () => [],
       },
       cache: {
-        query: async () => ({ records: [], nextCursor: null, total: 0 }),
+        query: queryCalls
+          ? async (_repo: string, ir: unknown) => {
+              queryCalls.push(ir);
+              return { records: [], nextCursor: null, total: 0 };
+            }
+          : async () => ({ records: [], nextCursor: null, total: 0 }),
         fetchMetarecords: async () => {},
         fetchTreeRefs: async () => {},
         fetchFields: async () => {},
@@ -89,7 +87,16 @@ function stubApi(handlers: Map<string, Handler>, calls: Call[], orphans: () => s
         subscribe: () => () => {},
         REFRESH: Symbol('refresh'),
       },
-      query: { parse: async () => null, expand: async () => '', grammarSource: async () => '' },
+      query: {
+        // The real parser lives in Rust; the marker query is the only DSL these
+        // tests type, so the stub answers exactly it.
+        parse: async (dsl: string) =>
+          dsl === 'orphan = true'
+            ? { type: 'eq', field: 'orphan', value: { type: 'bool', value: true } }
+            : null,
+        expand: async () => '',
+        grammarSource: async () => '',
+      },
       pick: { start: async () => '' },
       config: { pickerSeed: async () => null },
       workspace: {
@@ -118,20 +125,22 @@ function stubApi(handlers: Map<string, Handler>, calls: Call[], orphans: () => s
   };
 }
 
-async function mountPanel(orphans: () => string[]) {
+async function mountPanel() {
   const shadow = shadowFor();
   const handlers = new Map<string, Handler>();
   const calls: Call[] = [];
-  const { api, statusBar, setVar } = stubApi(handlers, calls, orphans);
+  const queryCalls: unknown[] = [];
+  const { api, statusBar, setVar } = stubApi(handlers, calls, queryCalls);
   const mod = await import('../../default-config/panel-types/metarecord-list/main.js');
   await mod.mount(shadow, api as never);
   await new Promise((r) => setTimeout(r, 0)); // let the deferred start settle
   return {
     shadow,
     calls,
+    queryCalls,
     statusBar,
     setVar,
-    banner: shadow.getElementById('orphan-banner') as HTMLElement,
+    normalInput: shadow.getElementById('normal-input') as HTMLInputElement,
     invoke: async (name: string) => {
       const h = handlers.get(name);
       if (!h) throw new Error(`command not registered: ${name}`);
@@ -140,70 +149,38 @@ async function mountPanel(orphans: () => string[]) {
   };
 }
 
-/** The clear calls the panel made, with the uuids they carried. */
-function clearCalls(calls: Call[]) {
-  return calls.filter((c) => c.path.endsWith('/orphans/clear'));
-}
-
-describe('metarecord-list orphan commands', () => {
+describe('metarecord-list:show-orphan', () => {
   beforeEach(() => {
     vi.stubGlobal(
       'fetch',
       vi.fn(async () => new Response('[]', { status: 200 })),
     );
-    vi.stubGlobal('confirm', vi.fn(() => true));
     document.body.replaceChildren();
   });
 
-  test('orphans-clear scans first when the view is not open, then clears', async () => {
-    let found = ['aaa', 'bbb'];
-    const p = await mountPanel(() => found);
+  test('puts `orphan = true` in the visible DSL zone and runs it', async () => {
+    const p = await mountPanel();
     p.calls.length = 0;
-    // The clear is followed by a re-scan; make it come back empty so the view exits.
-    (globalThis.confirm as ReturnType<typeof vi.fn>).mockImplementation(() => {
-      found = [];
-      return true;
+    await p.invoke('metarecord-list:show-orphan');
+
+    expect(p.normalInput.value).toBe('orphan = true');
+    // The query ran, and the panel asked the disk for nothing: showing the
+    // marked set is not detecting it.
+    const last = p.queryCalls.at(-1) as { query: unknown };
+    expect(last.query).toEqual({
+      type: 'eq',
+      field: 'orphan',
+      value: { type: 'bool', value: true },
     });
-    await p.invoke('metarecord-list:orphans-clear');
-    expect(clearCalls(p.calls)).toEqual([
-      { method: 'POST', path: '/repos/r/orphans/clear', body: { uuids: ['aaa', 'bbb'] } },
-    ]);
-    // Other panels are nudged, and the re-scan (now empty) left the view.
-    expect(p.setVar).toHaveBeenCalledWith('metarecords:dirty', expect.any(Number));
-    expect(p.banner.hidden).toBe(true);
+    expect(p.calls.some((c) => c.path.includes('/orphans/'))).toBe(false);
   });
 
-  test('orphans-clear from the open view clears what the view shows', async () => {
-    const p = await mountPanel(() => ['aaa']);
-    await p.invoke('metarecord-list:orphans');
-    expect(p.banner.hidden).toBe(false);
-    p.calls.length = 0;
-    await p.invoke('metarecord-list:orphans-clear');
-    expect(clearCalls(p.calls)).toHaveLength(1);
-    // One scan only: the view already held the scanned set.
-    expect(p.calls.filter((c) => c.path.endsWith('/orphans/scan'))).toHaveLength(1); // the re-scan
-  });
-
-  test('a declined confirmation clears nothing', async () => {
-    vi.stubGlobal('confirm', vi.fn(() => false));
-    const p = await mountPanel(() => ['aaa']);
-    await p.invoke('metarecord-list:orphans-clear');
-    expect(clearCalls(p.calls)).toHaveLength(0);
-  });
-
-  test('nothing to clear reports it and asks for no confirmation', async () => {
-    const p = await mountPanel(() => []);
-    await p.invoke('metarecord-list:orphans-clear');
-    expect(clearCalls(p.calls)).toHaveLength(0);
-    expect(globalThis.confirm).not.toHaveBeenCalled();
-    expect(p.statusBar.message).toHaveBeenCalled();
-  });
-
-  test('orphans-exit leaves the view', async () => {
-    const p = await mountPanel(() => ['aaa']);
-    await p.invoke('metarecord-list:orphans');
-    expect(p.banner.hidden).toBe(false);
-    await p.invoke('metarecord-list:orphans-exit');
-    expect(p.banner.hidden).toBe(true);
+  test('the query is the panel\u2019s, so it stays editable', async () => {
+    const p = await mountPanel();
+    await p.invoke('metarecord-list:show-orphan');
+    // Shown and frozen, like every other GUI-written query (never a hidden
+    // override): the user can narrow it by hand.
+    expect(p.normalInput.value).toBe('orphan = true');
+    expect((p.shadow.getElementById('normal-editor') as HTMLElement).hidden).toBe(false);
   });
 });
