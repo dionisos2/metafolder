@@ -111,8 +111,8 @@ describe('file panel — the volume is set before playback, not after', () => {
       ...s,
       root,
       viewer,
-      run: async (name: string) => {
-        await s.handlers.get(name)!();
+      run: async (name: string, ...args: unknown[]) => {
+        await (s.handlers.get(name)! as (...a: unknown[]) => unknown)(...args);
         await flush();
       },
       /** Browse to another file, as metarecord-list's selection does. */
@@ -128,8 +128,8 @@ describe('file panel — the volume is set before playback, not after', () => {
     const p = await mountPanel('/music/clip.mp4');
     expect(p.video()).toBeNull(); // nothing mounted: the poster is showing
 
-    await p.run('file:volume-down');
-    await p.run('file:volume-down');
+    await p.run('file:volume', 'down');
+    await p.run('file:volume', 'down');
 
     expect(p.statusBar.message).toHaveBeenCalledWith(
       expect.stringContaining('80%'),
@@ -144,7 +144,7 @@ describe('file panel — the volume is set before playback, not after', () => {
     const p = await mountPanel('/music/clip.mp4');
     expect(p.viewer.textContent).not.toMatch(/volume/i); // 100%: nothing to say
 
-    await p.run('file:volume-down');
+    await p.run('file:volume', 'down');
 
     expect(p.viewer.textContent).toMatch(/90\s*%/);
   });
@@ -161,7 +161,7 @@ describe('file panel — the volume is set before playback, not after', () => {
 
   test('the level carries to the next file', async () => {
     const p = await mountPanel('/music/clip.mp4');
-    await p.run('file:volume-down');
+    await p.run('file:volume', 'down');
     await p.run('file:play-pause');
     expect(p.video()?.volume).toBeCloseTo(0.9);
 
@@ -176,12 +176,12 @@ describe('file panel — the volume is set before playback, not after', () => {
     const p = await mountPanel('/music/clip.mp4');
     await p.run('file:play-pause');
 
-    await p.run('file:volume-down');
+    await p.run('file:volume', 'down');
     expect(p.video()?.volume).toBeCloseTo(0.9);
 
     await p.run('file:mute');
     expect(p.video()?.muted).toBe(true);
-    await p.run('file:volume-up'); // louder undoes a mute
+    await p.run('file:volume', 'up'); // louder undoes a mute
     expect(p.video()?.muted).toBe(false);
     expect(p.video()?.volume).toBeCloseTo(1);
   });

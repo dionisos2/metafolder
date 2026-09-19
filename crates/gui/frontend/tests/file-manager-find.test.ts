@@ -159,7 +159,7 @@ describe('file-manager:find', () => {
     await mount(s);
     const complete = s.specs.get('file-manager:find')![0].complete!;
     expect(await complete()).not.toContain('.hidden.txt');
-    await s.handlers.get('file-manager:toggle-hidden')!();
+    await s.handlers.get('file-manager:toggle')!('hidden');
     await new Promise((r) => setTimeout(r, 0));
     expect(await complete()).toContain('.hidden.txt');
   });

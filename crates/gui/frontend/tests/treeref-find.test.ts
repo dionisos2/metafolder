@@ -1,5 +1,5 @@
 // treeref panel: the keyboard pickers of the toolbar — `treeref:find` (jump to
-// a child by name, the shared list-panel find) and `treeref:set-field` (choose
+// a child by name, the shared list-panel find) and `treeref:set field` (choose
 // the explored forest, which must NOT pre-fill the minibuffer: the answer is a
 // new field name, not an edit of the current one).
 
@@ -137,15 +137,18 @@ describe('treeref:find', () => {
   });
 });
 
-describe('treeref:set-field', () => {
+describe('treeref:set field', () => {
   test('completes over the TreeRef fields with an empty minibuffer', async () => {
     const s = stub();
     await mount(s);
-    const args = s.specs.get('treeref:set-field');
-    expect(args).toHaveLength(1);
-    expect(await args![0].complete!()).toEqual(['mfr_path', 'tag']);
+    // The setting is the first argument now, its value the second — so the
+    // field completion is asked for with `field` already collected.
+    const args = s.specs.get('treeref:set');
+    expect(args).toHaveLength(2);
+    expect(await args![0].complete!('', [])).toEqual(['field', 'ref-field']);
+    expect(await args![1].complete!('', ['field'])).toEqual(['mfr_path', 'tag']);
     // No pre-filled current field: the answer replaces it, so nothing has to be
     // erased before typing.
-    expect(args![0].initial).toBeUndefined();
+    expect(args![1].initial!(['field'])).toBe('');
   });
 });

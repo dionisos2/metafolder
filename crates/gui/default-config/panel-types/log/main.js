@@ -470,7 +470,7 @@ export async function mount(root, metafolder) {
         const also = extra > 1 ? ` (and ${extra - 1} more)` : '';
         void statusBar.message(
           `${describeTarget(target)} is blocked by op ${blocker.op_id} in revision #${blocker.rev_id}${also}. ` +
-            `Revert that one first, or run log:revert-with-dependents to undo ${extra} more operation(s) along with it.`,
+            `Revert that one first, or run log:revert with-dependents to undo ${extra} more operation(s) along with it.`,
           statusErrorMs,
         );
       }
@@ -636,39 +636,72 @@ export async function mount(root, metafolder) {
     reveal: true,
     handler: rollback,
   });
+  // Reverting: what is selected by default, or a named widening of it. The
+  // scope is an argument rather than three sibling command names, so a
+  // keybinding reads as what it does (`log:revert with-dependents`).
+  /** @type {Record<string, () => unknown>} */
+  const REVERTS = {
+    op: () => revertOperation(),
+    revision: () => revertRevision(),
+    'with-dependents': () => revertWithDependents(),
+  };
+
   void commands.register('log:revert', {
-    label: 'Log: revert what is selected (revision, or one operation) in place',
+    label: `Log: revert what is selected, or a wider scope (${Object.keys(REVERTS).join(' / ')})`,
     reveal: true,
-    handler: revert,
+    args: [
+      {
+        name: 'scope',
+        optional: true,
+        prompt: () => `Which scope? (${Object.keys(REVERTS).join(' / ')})`,
+        complete: () => Object.keys(REVERTS),
+      },
+    ],
+    // No scope: revert exactly what the selection is — a revision, or one
+    // operation of it.
+    handler: (scope) => {
+      if (scope === undefined) return revert();
+      const run = REVERTS[scope];
+      if (!run) throw new Error(`unknown revert scope: "${scope}"`);
+      return run();
+    },
   });
-  void commands.register('log:revert-op', {
-    label: 'Log: revert the selected operation alone',
-    reveal: true,
-    handler: revertOperation,
-  });
-  void commands.register('log:revert-revision', {
-    label: 'Log: revert the whole revision the selection is in',
-    reveal: true,
-    handler: revertRevision,
-  });
-  void commands.register('log:revert-with-dependents', {
-    label: 'Log: revert what is selected and whatever blocks it',
-    reveal: true,
-    handler: revertWithDependents,
-  });
-  void commands.register('log:prune', {
-    label: 'Log: prune history before the selected revision',
-    reveal: true,
-    handler: prune,
-  });
-  void commands.register('log:mark-checkpoint', {
+
+  void commands.register('log:mark', {
     label: 'Log: set or clear the selected revision label',
     reveal: true,
     handler: markCheckpoint,
   });
-  void commands.register('log:toggle-graph', {
-    label: 'Log: toggle the branch graph view',
-    handler: () => toggleGraph(),
+
+  /** @type {Record<string, () => unknown>} */
+  const LOG_FLAGS = {
+    graph: () => toggleGraph(),
+    ops: () => {
+      const rev = selectedRev();
+      if (rev !== null) selectRevision(rev, { toggleOps: true });
+    },
+  };
+
+  void commands.register('log:toggle', {
+    label: 'Log: toggle a view flag (branch graph / the selected revision’s operations)',
+    args: [
+      {
+        name: 'flag',
+        prompt: () => `Which flag? (${Object.keys(LOG_FLAGS).join(' / ')})`,
+        complete: () => Object.keys(LOG_FLAGS),
+      },
+    ],
+    handler: (flag) => {
+      const run = LOG_FLAGS[flag];
+      if (!run) throw new Error(`unknown flag: "${flag ?? ''}"`);
+      return run();
+    },
+  });
+
+  void commands.register('log:prune', {
+    label: 'Log: prune history before the selected revision',
+    reveal: true,
+    handler: prune,
   });
   void commands.register('log:refresh', { label: 'Log: refresh from the daemon', handler: refresh });
   void commands.register('log:next', { label: 'Log: move the selection down', handler: () => moveBy(1) });
@@ -699,13 +732,6 @@ export async function mount(root, metafolder) {
     },
   });
 
-  void commands.register('log:toggle-ops', {
-    label: 'Log: expand/collapse the selected revision',
-    handler: () => {
-      const rev = selectedRev();
-      if (rev !== null) selectRevision(rev, { toggleOps: true });
-    },
-  });
 
   // Keybindings for this panel live in keybindings.toml (when = "log").
 

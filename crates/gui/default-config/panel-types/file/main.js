@@ -979,41 +979,9 @@ export async function mount(root, metafolder) {
 
   // Zoom commands (also reachable from the command input / a keybinding) and
   // their toolbar buttons. The handlers no-op unless an image/video is shown.
-  void commands.register('file:zoom-in', {
-    label: 'File: zoom in',
-    handler: () => zoomBy(zoomStep),
-  });
-  void commands.register('file:zoom-out', {
-    label: 'File: zoom out',
-    handler: () => zoomBy(1 / zoomStep),
-  });
-  void commands.register('file:zoom-fit', {
-    label: 'File: fit to the available space',
-    handler: zoomFit,
-  });
-  void commands.register('file:zoom-reset', {
-    label: 'File: original size',
-    handler: zoomReset,
-  });
 
   // Document paging. Like the zoom commands, each is a no-op unless a document
   // is being previewed.
-  void commands.register('file:page-next', {
-    label: 'File: next page',
-    handler: () => goToPage((document_?.page ?? 1) + 1),
-  });
-  void commands.register('file:page-prev', {
-    label: 'File: previous page',
-    handler: () => goToPage((document_?.page ?? 1) - 1),
-  });
-  void commands.register('file:page-first', {
-    label: 'File: first page',
-    handler: () => goToPage(1),
-  });
-  void commands.register('file:page-last', {
-    label: 'File: last page',
-    handler: () => goToPage(document_?.pages ?? 1),
-  });
 
   // --- Playback controls -------------------------------------------------
   //
@@ -1053,22 +1021,6 @@ export async function mount(root, metafolder) {
       if (target !== null) media.currentTime = target;
     });
   }
-  void commands.register('file:seek-forward', {
-    label: `File: seek forward ${SEEK_STEP}s`,
-    handler: () => seekBy(SEEK_STEP),
-  });
-  void commands.register('file:seek-backward', {
-    label: `File: seek back ${SEEK_STEP}s`,
-    handler: () => seekBy(-SEEK_STEP),
-  });
-  void commands.register('file:seek-forward-long', {
-    label: `File: seek forward ${SEEK_STEP_LONG}s`,
-    handler: () => seekBy(SEEK_STEP_LONG),
-  });
-  void commands.register('file:seek-backward-long', {
-    label: `File: seek back ${SEEK_STEP_LONG}s`,
-    handler: () => seekBy(-SEEK_STEP_LONG),
-  });
   void commands.register('file:restart', {
     label: 'File: play the media from the start',
     handler: () => withMedia((media) => (media.currentTime = 0)),
@@ -1081,21 +1033,93 @@ export async function mount(root, metafolder) {
       void statusBar.message(`Playback speed ${rate}×`, statusMessageMs);
     });
   }
-  void commands.register('file:speed-up', {
-    label: 'File: play faster',
-    handler: () => withMedia((media) => applySpeed(nextSpeed(media.playbackRate, 1))),
+  // ── Generic transport / view commands ───────────────────────────────────
+  //
+  // One command per family, the variant as its first argument, so a keybinding
+  // names what it does (`file:zoom in`) and a user can bind a step the shipped
+  // defaults never offered (`file:seek +5`).
+
+  /** @type {Record<string, () => unknown>} */
+  const ZOOMS = {
+    in: () => zoomBy(zoomStep),
+    out: () => zoomBy(1 / zoomStep),
+    fit: () => zoomFit(),
+    reset: () => zoomReset(),
+  };
+  /** @type {Record<string, () => unknown>} */
+  const PAGES = {
+    next: () => goToPage((document_?.page ?? 1) + 1),
+    prev: () => goToPage((document_?.page ?? 1) - 1),
+    first: () => goToPage(1),
+    last: () => goToPage(document_?.pages ?? 1),
+  };
+  /** @type {Record<string, () => unknown>} */
+  const SPEEDS = {
+    up: () => withMedia((media) => applySpeed(nextSpeed(media.playbackRate, 1))),
+    down: () => withMedia((media) => applySpeed(nextSpeed(media.playbackRate, -1))),
+    reset: () => applySpeed(1),
+  };
+  /** @type {Record<string, () => unknown>} */
+  const VOLUMES = {
+    up: () => changeVolume(VOLUME_STEP),
+    down: () => changeVolume(-VOLUME_STEP),
+  };
+  /** @type {Record<string, () => unknown>} */
+  const FILE_FLAGS = {
+    'gif-animation': () => setAnimateGifs(!animateGifs),
+  };
+
+  /** Builds the registration options for a one-of-these command. It returns
+   *  the options rather than registering, so every command name stays a
+   *  literal at its `commands.register` call — which is what a grep, and the
+   *  test that checks no keybinding names a dead command, rely on.
+   *  @param {string} noun @param {Record<string, () => unknown>} table */
+  function variant(noun, table, label) {
+    const names = Object.keys(table);
+    return {
+      label: `${label} (${names.join(' / ')})`,
+      args: [
+        {
+          name: noun,
+          prompt: () => `Which? (${names.join(' / ')})`,
+          complete: () => names,
+        },
+      ],
+      /** @param {string} which */
+      handler: (which) => {
+        const run = table[which];
+        if (!run)
+          throw new Error(`unknown ${noun}: "${which ?? ''}" (expected ${names.join(' / ')})`);
+        return run();
+      },
+    };
+  }
+
+  void commands.register('file:zoom', variant('zoom', ZOOMS, 'File: zoom the previewed image/video'));
+  void commands.register('file:page', variant('page', PAGES, 'File: go to a page of the document'));
+  void commands.register('file:speed', variant('speed', SPEEDS, 'File: step the playback rate'));
+  void commands.register('file:volume', variant('volume', VOLUMES, 'File: step the volume'));
+  void commands.register('file:toggle', variant('flag', FILE_FLAGS, 'File: toggle a view flag'));
+
+  void commands.register('file:seek', {
+    label: `File: seek the previewed media by a signed number of seconds (e.g. +${SEEK_STEP}, -${SEEK_STEP_LONG})`,
+    args: [
+      {
+        name: 'seconds',
+        prompt: () => 'Seek by how many seconds? (signed, e.g. +10 or -60)',
+        complete: () => [`+${SEEK_STEP}`, `-${SEEK_STEP}`, `+${SEEK_STEP_LONG}`, `-${SEEK_STEP_LONG}`],
+      },
+    ],
+    handler: (raw) => {
+      const seconds = Number(raw);
+      if (!Number.isFinite(seconds)) throw new Error(`not a number of seconds: "${raw ?? ''}"`);
+      return seekBy(seconds);
+    },
   });
-  void commands.register('file:speed-down', {
-    label: 'File: play slower',
-    handler: () => withMedia((media) => applySpeed(nextSpeed(media.playbackRate, -1))),
-  });
+
   void commands.register('file:back', {
     label: 'File: go up one level (out of a listing, or to the containing folder)',
     handler: navigateBack,
-  });
-  void commands.register('file:speed-reset', {
-    label: 'File: play at normal speed',
-    handler: () => applySpeed(1),
   });
 
   /** Push the panel's level onto whatever is showing: the mounted element, or
@@ -1127,14 +1151,6 @@ export async function mount(root, metafolder) {
       statusMessageMs,
     );
   }
-  void commands.register('file:volume-up', {
-    label: 'File: louder',
-    handler: () => changeVolume(VOLUME_STEP),
-  });
-  void commands.register('file:volume-down', {
-    label: 'File: quieter',
-    handler: () => changeVolume(-VOLUME_STEP),
-  });
   void commands.register('file:mute', {
     label: 'File: mute / unmute',
     handler: () => {
@@ -1153,10 +1169,6 @@ export async function mount(root, metafolder) {
     gifAnimateBox.checked = on;
     void renderViewer();
   }
-  void commands.register('file:toggle-gif-animation', {
-    label: 'File: play/freeze GIF animations',
-    handler: () => setAnimateGifs(!animateGifs),
-  });
   gifAnimateBox.addEventListener('change', () => setAnimateGifs(gifAnimateBox.checked));
 
   // Keybindings for this panel live in keybindings.toml (when = "file").

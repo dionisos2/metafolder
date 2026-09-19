@@ -709,8 +709,8 @@ mod tests {
             );
         }
         // The treeref field picker moved off `f` to make room for it.
-        assert!(table.iter().any(|b| b.keys == ["shift+f"] && b.invocation == "treeref:set-field"));
-        assert!(!f.iter().any(|b| b.invocation == "treeref:set-field"));
+        assert!(table.iter().any(|b| b.keys == ["shift+f"] && b.invocation == "treeref:set field"));
+        assert!(!f.iter().any(|b| b.invocation == "treeref:set field"));
 
         // Fullscreen is a builtin toggle, and now has a key of its own.
         assert!(table.iter().any(|b| b.keys == ["z"] && b.invocation == "panel:fullscreen"));

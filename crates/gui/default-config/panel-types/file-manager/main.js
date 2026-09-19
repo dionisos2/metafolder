@@ -909,21 +909,55 @@ export async function mount(root, metafolder) {
     label: 'File manager: track the selected path (mf_watch = false)',
     handler: addSelected,
   });
-  void commands.register('file-manager:goto-root', {
+  void commands.register('file-manager:root', {
     label: 'File manager: jump to the root (the repo root, or / with no repo)',
     handler: gotoRoot,
   });
+
+  /** @type {Record<string, () => unknown>} */
+  const FM_FLAGS = {
+    root: () => setConstrain(!constrainToRoot),
+    hidden: () => setShowHidden(!showHidden),
+  };
+
+  void commands.register('file-manager:toggle', {
+    label: 'File manager: toggle a view flag (root constraint / hidden dot-entries)',
+    args: [
+      {
+        name: 'flag',
+        prompt: () => `Which flag? (${Object.keys(FM_FLAGS).join(' / ')})`,
+        complete: () => Object.keys(FM_FLAGS),
+      },
+    ],
+    handler: (flag) => {
+      const run = FM_FLAGS[flag];
+      if (!run) throw new Error(`unknown flag: "${flag ?? ''}"`);
+      return run();
+    },
+  });
+
+  /** @type {Record<string, () => unknown>} */
+  const FM_NEW = { folder: () => newFolder(), file: () => newFile() };
+
+  void commands.register('file-manager:new', {
+    label: 'File manager: create a new folder or empty file',
+    args: [
+      {
+        name: 'kind',
+        prompt: () => `Create what? (${Object.keys(FM_NEW).join(' / ')})`,
+        complete: () => Object.keys(FM_NEW),
+      },
+    ],
+    handler: (kind) => {
+      const run = FM_NEW[kind];
+      if (!run) throw new Error(`unknown kind: "${kind ?? ''}" (expected folder / file)`);
+      return run();
+    },
+  });
+
   void commands.register('file-manager:refresh', {
     label: 'File manager: reload the current directory',
     handler: refresh,
-  });
-  void commands.register('file-manager:toggle-root', {
-    label: 'File manager: toggle the root constraint',
-    handler: () => setConstrain(!constrainToRoot),
-  });
-  void commands.register('file-manager:toggle-hidden', {
-    label: 'File manager: show/hide hidden files (dot-entries)',
-    handler: () => setShowHidden(!showHidden),
   });
   void commands.register('file-manager:next', {
     label: 'File manager: move down',
@@ -956,14 +990,6 @@ export async function mount(root, metafolder) {
   void commands.register('file-manager:parent', {
     label: 'File manager: go up one level',
     handler: goUp,
-  });
-  void commands.register('file-manager:new-folder', {
-    label: 'File manager: create a new folder',
-    handler: newFolder,
-  });
-  void commands.register('file-manager:new-file', {
-    label: 'File manager: create a new empty file',
-    handler: newFile,
   });
   void commands.register('file-manager:rename', {
     label: 'File manager: rename the selected entry',

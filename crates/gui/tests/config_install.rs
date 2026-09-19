@@ -221,8 +221,8 @@ fn test_file_manager_root_and_hidden_keybindings() {
             .map(|b| b.invocation.clone())
     };
 
-    assert_eq!(in_fm(&["/"]).as_deref(), Some("file-manager:goto-root"));
-    assert_eq!(in_fm(&["ctrl+h"]).as_deref(), Some("file-manager:toggle-hidden"));
+    assert_eq!(in_fm(&["/"]).as_deref(), Some("file-manager:root"));
+    assert_eq!(in_fm(&["ctrl+h"]).as_deref(), Some("file-manager:toggle hidden"));
 }
 
 // The `file` panel's Backspace: it steps up a level (like the file manager's),
@@ -244,5 +244,5 @@ fn test_file_panel_back_keybinding() {
     };
 
     assert_eq!(in_file(&["backspace"]).as_deref(), Some("file:back"));
-    assert_eq!(in_file(&["shift+backspace"]).as_deref(), Some("file:speed-reset"));
+    assert_eq!(in_file(&["shift+backspace"]).as_deref(), Some("file:speed reset"));
 }

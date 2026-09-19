@@ -132,8 +132,9 @@ describe('file panel — document preview', () => {
 
   test('next/prev walk the pages and stop at both ends', async () => {
     const { handlers, root, viewer } = await mountPanel('/docs/report.pdf');
-    const next = handlers.get('file:page-next')!;
-    const prev = handlers.get('file:page-prev')!;
+    const page = handlers.get('file:page')!;
+    const next = () => page('next');
+    const prev = () => page('prev');
     const src = () => viewer.querySelector('img')!.getAttribute('src') ?? '';
 
     await next();
@@ -157,10 +158,10 @@ describe('file panel — document preview', () => {
 
   test('first/last jump to the ends', async () => {
     const { handlers, viewer } = await mountPanel('/docs/report.pdf');
-    await handlers.get('file:page-last')!();
+    await handlers.get('file:page')!('last');
     await flush();
     expect(viewer.querySelector('img')!.getAttribute('src')).toContain('page=3');
-    await handlers.get('file:page-first')!();
+    await handlers.get('file:page')!('first');
     await flush();
     expect(viewer.querySelector('img')!.getAttribute('src')).toContain('page=1');
   });
@@ -168,7 +169,7 @@ describe('file panel — document preview', () => {
   test('turning a page swaps the image rather than rebuilding the view', async () => {
     const { handlers, viewer } = await mountPanel('/docs/report.pdf');
     const before = viewer.querySelector('img');
-    await handlers.get('file:page-next')!();
+    await handlers.get('file:page')!('next');
     await flush();
     // Same element: the zoom target, and any zoom the user set, survive.
     expect(viewer.querySelector('img')).toBe(before);
@@ -178,7 +179,7 @@ describe('file panel — document preview', () => {
     const { handlers, root, viewer } = await mountPanel('/photos/pic.png');
     expect(root.getElementById('doc-pager')!.hidden).toBe(true);
     const src = viewer.querySelector('img')!.getAttribute('src');
-    await handlers.get('file:page-next')!();
+    await handlers.get('file:page')!('next');
     await flush();
     expect(viewer.querySelector('img')!.getAttribute('src')).toBe(src);
   });

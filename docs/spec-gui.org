@@ -334,7 +334,7 @@ leading verb, so the right command is findable without running it:
   daemon's and the CLI's — =set= / =add= / =remove= / =unset=, with =delete=
   kept for destroying a thing that has an id. Where a panel still names a
   single such edit in the command itself, the verb comes first
-  (=treeref:set-field=).
+  (=treeref:set field=).
 - =row-X= (noun first, the cursor family) — a direct action on the *row under
   the cursor* (keyboard, no minibuffer), e.g. =metarecord:row-next= /
   =row-edit= / =row-delete=. It is deliberately not =field-X=: that would put
@@ -1145,9 +1145,9 @@ Behaviours:
 | =ignore:set <preset>= | Replace the target directory's whole ignore set with a preset's patterns |
 | =log:rollback=       | Rollback to the selected revision              |
 | =log:revert=         | Revert what is selected — the revision, or one operation of it — in place (default =shift+r=) |
-| =log:revert-op=      | Narrow the revert to a single operation (default =shift+o=) |
-| =log:revert-revision= | Widen it back to the whole revision (default =shift+v=) |
-| =log:revert-with-dependents= | Revert it together with whatever blocks it (default =shift+d=) |
+| =log:revert op=      | Narrow the revert to a single operation (default =shift+o=) |
+| =log:revert revision= | Widen it back to the whole revision (default =shift+v=) |
+| =log:revert with-dependents= | Revert it together with whatever blocks it (default =shift+d=) |
 | =log:undo=           | Undo the newest change the user made, on the active repo (default =ctrl+z=) |
 | =log:redo=           | Take the newest undo back, on the active repo (default =ctrl+shift+z=) |
 | =log:prune=          | Prune the event log                            |
@@ -1175,27 +1175,27 @@ Behaviours:
 | =message:clear=           | Clear the =message= panel log for this workspace              |
 | =status:clear=            | Dismiss the transient status-bar message (default =ctrl+l=)   |
 | =file-manager:track=        | Add selected path via =POST .../track= (=mf_watch = false=)   |
-| =file-manager:goto-root=  | Jump to the root in =file-manager= — the =active_repo= root, or =/= with no repo (default =/=) |
+| =file-manager:root=  | Jump to the root in =file-manager= — the =active_repo= root, or =/= with no repo (default =/=) |
 | =file-manager:refresh=    | Reload the current directory in =file-manager=               |
-| =file-manager:toggle-root= | Toggle the "constrain to root" checkbox in =file-manager=    |
-| =file-manager:toggle-hidden= | Toggle the "hidden files" checkbox in =file-manager= (default =ctrl+h=) |
+| =file-manager:toggle root= | Toggle the "constrain to root" checkbox in =file-manager=    |
+| =file-manager:toggle hidden= | Toggle the "hidden files" checkbox in =file-manager= (default =ctrl+h=) |
 | =file-manager:find=       | Jump to an entry of the displayed directory by name (default =f=; see [[*Find an entry]]) |
 | =treeref:find=            | Jump to a child of the displayed node by name (default =f=)   |
 | =trash:find=              | Jump to a trash entry by name (default =f=)                   |
 | =recent:find=             | Jump to a recently-viewed metarecord by name (default =f=)    |
 | =file:back=               | Up one level in the =file= panel: out of a drilled-in listing, or to the folder holding the previewed file (default =backspace=) |
-| =file:zoom-in=            | Enlarge the previewed image/video (default =+=)              |
-| =file:zoom-out=           | Shrink the previewed image/video (default =-=)               |
-| =file:zoom-fit=           | Fit the previewed image/video to the panel (default ~=~)     |
-| =file:zoom-reset=         | Show the previewed image/video at original size (default =0=) |
-| =file:toggle-gif-animation= | Toggle the "animate" checkbox of the =file= GIF preview    |
+| =file:zoom in=            | Enlarge the previewed image/video (default =+=)              |
+| =file:zoom out=           | Shrink the previewed image/video (default =-=)               |
+| =file:zoom fit=           | Fit the previewed image/video to the panel (default ~=~)     |
+| =file:zoom reset=         | Show the previewed image/video at original size (default =0=) |
+| =file:toggle gif-animation= | Toggle the "animate" checkbox of the =file= GIF preview    |
 | =file:play-pause=         | Load the player behind the poster, then play/pause it (default =space=) |
-| =file:seek-forward= / =-backward= | Seek the previewed media ±10 s (default =right= / =left=) |
-| =file:seek-forward-long= / =-backward-long= | Seek ±60 s (default =shift+right= / =shift+left=) |
+| =file:seek +10= / =-backward= | Seek the previewed media ±10 s (default =right= / =left=) |
+| =file:seek +60= / =-backward-long= | Seek ±60 s (default =shift+right= / =shift+left=) |
 | =file:restart=            | Play the previewed media from the start                       |
-| =file:speed-up= / =-down= | Step the playback rate up/down the ladder (default =]= / =[=) |
-| =file:speed-reset=        | Back to normal speed (default =shift+backspace=)              |
-| =file:volume-up= / =-down= | Step the volume ±10 %, before or during playback (default =shift+up= / =shift+down=) |
+| =file:speed up= / =-down= | Step the playback rate up/down the ladder (default =]= / =[=) |
+| =file:speed reset=        | Back to normal speed (default =shift+backspace=)              |
+| =file:volume up= / =-down= | Step the volume ±10 %, before or during playback (default =shift+up= / =shift+down=) |
 | =file:mute=               | Mute/unmute, before or during playback (default =ctrl+m=)     |
 | =metarecord:back=         | Return to the previously shown metarecord (=metarecord-detail=, default =backspace= / =left=) |
 
@@ -2238,7 +2238,7 @@ sniff would reject its encoding (UTF-16 holds NULs).
 GIFs are shown as a still of their first frame by default (an animation
 looping in a preview is more often a distraction than wanted). While a GIF is
 previewed, the media toolbar shows an *animate* checkbox (unchecked by
-default, mirrored by the =file:toggle-gif-animation= command) that plays the
+default, mirrored by the =file:toggle gif-animation= command) that plays the
 real animation; the state persists while browsing other files. If the still
 frame cannot be produced, the animated original is shown as a fallback.
 
@@ -2261,7 +2261,7 @@ browses upwards instead of being a dead end — the way =Backspace= does in
 =file-manager=. The selection is followed again as soon as it changes (or as
 soon as the walk back reaches the selected path). At the filesystem root, and
 with nothing shown, it does nothing. Since plain =Backspace= is taken, mpv's
-"back to normal speed" (=file:speed-reset=) keeps the key with shift.
+"back to normal speed" (=file:speed reset=) keeps the key with shift.
 
 An audio or video file is *not played on sight*: the preview shows its poster
 frame (=GET /thumbnail= for a video, the type glyph for audio, which has no
@@ -2290,10 +2290,10 @@ focused):
 
 | Command           | Default key | Effect                                              |
 |-------------------+-------------+-----------------------------------------------------|
-| =file:zoom-in=    | =+=         | Enlarge by one step                                 |
-| =file:zoom-out=   | =-=         | Shrink by one step                                  |
-| =file:zoom-fit=   | ~=~         | Fit the available space (aspect preserved) — default |
-| =file:zoom-reset= | =0=         | Original (1:1) size                                 |
+| =file:zoom in=    | =+=         | Enlarge by one step                                 |
+| =file:zoom out=   | =-=         | Shrink by one step                                  |
+| =file:zoom fit=   | ~=~         | Fit the available space (aspect preserved) — default |
+| =file:zoom reset= | =0=         | Original (1:1) size                                 |
 
 The step and the bounds of a manual zoom are configurable
 (=[panel-defaults.file].zoom-step= / =zoom-min= / =zoom-max=, defaults 1.25 /
@@ -2390,10 +2390,10 @@ user set survives it.
 
 | Command            | Default key | Effect                |
 |--------------------+-------------+-----------------------|
-| =file:page-next=   | =pagedown=  | Next page             |
-| =file:page-prev=   | =pageup=    | Previous page         |
-| =file:page-first=  | —           | First page            |
-| =file:page-last=   | —           | Last page             |
+| =file:page next=   | =pagedown=  | Next page             |
+| =file:page prev=   | =pageup=    | Previous page         |
+| =file:page first=  | —           | First page            |
+| =file:page last=   | —           | Last page             |
 
 Each is a no-op unless a document is previewed, like the zoom and transport
 commands. =home= / =end= are deliberately *not* bound to first/last page: in
@@ -2454,7 +2454,7 @@ never by scanning the whole repository.
 
 Hidden files (dot-entries) are not listed by default; a *hidden files*
 checkbox in the toolbar (unchecked by default, mirrored by the
-=file-manager:toggle-hidden= command) reveals them. The synthetic =.= / =..=
+=file-manager:toggle hidden= command) reveals them. The synthetic =.= / =..=
 rows are always shown, and navigating directly into a hidden directory
 (e.g. via a seeded start path) still works.
 
@@ -2473,7 +2473,7 @@ disk. Adding files to the DB is only available for paths inside the
 When =active_repo= is =null=, the checkbox is disabled and =file-manager:track=
 returns an error.
 
-The toolbar's root button (and =file-manager:goto-root=, default =/=) jumps to
+The toolbar's root button (and =file-manager:root=, default =/=) jumps to
 the =active_repo= root — but with no repository there is no repo root to jump
 to, and the panel is then a plain disk browser: the button reads *root* instead
 of *repo root* and goes to the filesystem root (=/=). It is never a dead end,
@@ -2539,12 +2539,12 @@ space in the listing offers just =New folder…= / =New file…= / =Paste=.
 | Command                   | Description                                              |
 |---------------------------+----------------------------------------------------------|
 | =file-manager:track=        | Add the selected path to the DB via =POST .../track= (creates metarecord with =mf_watch = false=; parent metarecords created automatically). Error if already tracked (=409=) or outside =active_repo= root. |
-| =file-manager:goto-root=  | Jump to the root directory: the =active_repo= root, or =/= when no repository is active (=/=) |
+| =file-manager:root=  | Jump to the root directory: the =active_repo= root, or =/= when no repository is active (=/=) |
 | =file-manager:refresh=    | Reload the current directory (and tracked status), keeping the cursor |
-| =file-manager:toggle-root= | Toggle the "constrain to root" checkbox                 |
-| =file-manager:toggle-hidden= | Show/hide the dot-entries (=ctrl+h=)                  |
-| =file-manager:new-folder= | Create a new folder in the current directory (name prompted) |
-| =file-manager:new-file=   | Create a new empty file in the current directory (name prompted) |
+| =file-manager:toggle root= | Toggle the "constrain to root" checkbox                 |
+| =file-manager:toggle hidden= | Show/hide the dot-entries (=ctrl+h=)                  |
+| =file-manager:new folder= | Create a new folder in the current directory (name prompted) |
+| =file-manager:new file=   | Create a new empty file in the current directory (name prompted) |
 | =file-manager:rename=     | Rename the selected entry (=F2=; name pre-filled)        |
 | =file-manager:duplicate=  | Copy the selected entry beside itself under a " copy" name (=Ctrl+D=) |
 | =file-manager:copy=       | Copy the selected entry to the shared clipboard (=Ctrl+C=) |
@@ -2562,7 +2562,7 @@ by the daemon. The primary use is observing a tag hierarchy.
 *Field picker*: a dropdown of the repo's TreeRef field names
 (=GET /repos/:repo/fields?type=tree_ref=, [[file:spec-data-model.org][spec-data-model.org]]); =mfr_path= is the
 default, configurable as =[panel-defaults.treeref].field= (see
-[[*Panel defaults]]) and overridden by a stored =treeref:field=. Changing the field resets navigation to the roots. =treeref:set-field=
+[[*Panel defaults]]) and overridden by a stored =treeref:field=. Changing the field resets navigation to the roots. =treeref:set field=
 (=Shift+F=) is its keyboard equivalent: it asks for the field name in the command
 input, completing over the same list, and mirrors the pick back into the
 dropdown. The minibuffer starts *empty* — the answer names another forest, not
@@ -2623,11 +2623,11 @@ mode — which is the reason a dedicated panel type is not needed for it.
 | =treeref:parent=   | Go up one level                              |
 | =treeref:root=     | Jump to the forest roots                     |
 | =treeref:refresh=  | Reload the field lists and current children  |
-| =treeref:set-field= | Explore another TreeRef field (arg: field name, no pre-fill) |
+| =treeref:set field= | Explore another TreeRef field (arg: field name, no pre-fill) |
 | =treeref:find=     | Jump to a loaded child by name (=f=; see [[*Find an entry]]) |
 | =treeref:list-refs= | List the metarecords whose Ref field points at the selected node |
-| =treeref:toggle-scope= | Toggle between =exact= and =+ descendants= |
-| =treeref:set-ref-field= | Choose the Ref field to follow back (arg: field name) |
+| =treeref:toggle scope= | Toggle between =exact= and =+ descendants= |
+| =treeref:set ref-field= | Choose the Ref field to follow back (arg: field name) |
 
 *** =workspace-info= panel type
 
@@ -3023,7 +3023,7 @@ what decides whether undoing it makes sense:
 An expanded operation carrying =reverts_op_id= names the operation it reverted,
 and one that has been reverted is marked =undone=, so a correction and its cause
 are readable from one another in both directions. A =Graph= checkbox
-(command =log:toggle-graph=) switches the presentation, refetching the log:
+(command =log:toggle graph=) switches the presentation, refetching the log:
 
 - Unchecked (default) — calls =GET .../log?mode=active=: the active line
   through HEAD only. After a rollback the most-recent forward continuation
@@ -3035,15 +3035,15 @@ are readable from one another in both directions. A =Graph= checkbox
 
 A click — or =up= / =down= (also =k= / =j=), via =log:prev= / =log:next= —
 moves the selection (over every listed node, in either presentation). A double
-click or =Enter= (=log:toggle-ops=) expands the revision to show its individual
+click or =Enter= (=log:toggle ops=) expands the revision to show its individual
 operations (and collapses it again).
 
 *The selection reaches into an expanded revision.* Its operations are rows of
 their own: the cursor walks them, a click picks one, and a revert then targets
 *that operation alone* (=op_ids=) instead of the whole revision. This is what
 makes "undo just this one field of what I did" a keystroke rather than a trip to
-=mf log revert --op=. =log:revert-op= narrows from a revision row (expanding it
-and, when it holds more than one operation, asking which); =log:revert-revision=
+=mf log revert --op=. =log:revert op= narrows from a revision row (expanding it
+and, when it holds more than one operation, asking which); =log:revert revision=
 widens back.
 
 A status line under the list says how much log there is: the number of
@@ -3069,7 +3069,7 @@ operations" has a visible destination.
   change is the last thing in the log (={"prev_revision": true}=), a revert
   when the watcher has written since. A revert that is blocked, or that needs
   a filesystem action, is *reported* rather than forced: the message names
-  =log:revert-with-dependents= or =mf log undo=, because neither is something
+  =log:revert with-dependents= or =mf log undo=, because neither is something
   to do behind the user's back.
 
   Redo is its mirror — the [[file:spec-event-log.org][spec-event-log.org]]
@@ -3094,7 +3094,7 @@ operations" has a visible destination.
   files. Driving that from the GUI would mean holding a lock across a dialog,
   and a window left open would freeze the repository's writes.
 
-- =log:revert-with-dependents= → the same, on the dependency closure
+- =log:revert with-dependents= → the same, on the dependency closure
   (=with_dependents=true=): the target plus everything blocking it. It always
   confirms, naming how many operations were pulled in — how far a closure
   reaches is exactly what the target does not tell you.
@@ -3110,7 +3110,7 @@ operations" has a visible destination.
   writes a revision per batch of filesystem events, and rolling back past dozens
   of them to undo one rename is not what the user meant.
 
-- =log:mark-checkpoint= → =PATCH .../log/revisions/:rev_id=.
+- =log:mark= → =PATCH .../log/revisions/:rev_id=.
 
 *** Prune log
 

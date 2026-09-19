@@ -116,7 +116,7 @@ export async function mount(root, metafolder) {
   }
 
   /** Switches the explored forest to `name` and reloads from its roots. Shared
-   *  by the drop-down's onChange and the `treeref:set-field` command.
+   *  by the drop-down's onChange and the `treeref:set field` command.
    *  @param {string} name */
   async function setField(name) {
     if (name === field) return;
@@ -425,20 +425,6 @@ export async function mount(root, metafolder) {
   });
   // The drop-down's keyboard equivalent: pick the TreeRef field to explore
   // without leaving the keyboard (spec-gui "treeref panel type").
-  void commands.register('treeref:set-field', {
-    label: 'TreeRef explorer: explore another TreeRef field',
-    args: [
-      {
-        name: 'field',
-        prompt: () => 'TreeRef field to explore?',
-        // Deliberately NOT pre-filled with the current field: the answer names
-        // another forest, so a pre-fill would only have to be erased first (the
-        // drop-down already shows which field is current).
-        complete: () => treeRefFieldNames(),
-      },
-    ],
-    handler: (name) => setField(name.trim()),
-  });
 
   // Jump to a child by name — the shared list-panel find, on the same key as
   // everywhere else. Only the *loaded* children are searched, as in a paged
@@ -450,30 +436,64 @@ export async function mount(root, metafolder) {
     select,
   });
 
-  void commands.register('treeref:list-refs', {
-    label: 'TreeRef explorer: list the metarecords pointing at the selected node',
-    handler: listRefs,
+  // Which forest the explorer browses, and which Ref field it follows back:
+  // two view settings, so one `set` command names the setting as its first
+  // argument and the value as its second.
+  /** @type {Record<string, {prompt: string, initial?: () => string, complete: () => string[]|Promise<string[]>, apply: (v: string) => unknown}>} */
+  const TREEREF_SETTINGS = {
+    field: {
+      prompt: 'TreeRef field to explore?',
+      // Deliberately NOT pre-filled with the current field: the answer names
+      // another forest, so a pre-fill would only have to be erased first (the
+      // drop-down already shows which field is current).
+      complete: () => treeRefFieldNames(),
+      apply: (name) => setField(name.trim()),
+    },
+    'ref-field': {
+      prompt: 'Ref field to follow back into the tree?',
+      initial: () => refField,
+      complete: () => refFieldNames(),
+      apply: (name) => setRefField(name.trim()),
+    },
+  };
+
+  void commands.register('treeref:set', {
+    label: `TreeRef explorer: change a view setting (${Object.keys(TREEREF_SETTINGS).join(' / ')})`,
+    args: [
+      {
+        name: 'setting',
+        prompt: () => `Which setting? (${Object.keys(TREEREF_SETTINGS).join(' / ')})`,
+        complete: () => Object.keys(TREEREF_SETTINGS),
+      },
+      {
+        name: 'value',
+        prompt: (p) => TREEREF_SETTINGS[p[0]]?.prompt ?? 'Value?',
+        initial: (p) => TREEREF_SETTINGS[p[0]]?.initial?.() ?? '',
+        complete: (_partial, p) => TREEREF_SETTINGS[p[0]]?.complete() ?? [],
+      },
+    ],
+    handler: (setting, value) => {
+      const found = TREEREF_SETTINGS[setting];
+      if (!found) throw new Error(`unknown setting: "${setting ?? ''}"`);
+      return found.apply(value);
+    },
   });
-  void commands.register('treeref:toggle-scope', {
-    label: 'TreeRef explorer: toggle between the exact node and its whole subtree',
-    handler: () => {
+
+  void commands.register('treeref:toggle', {
+    label: 'TreeRef explorer: toggle a view flag (scope: the exact node ⇄ its whole subtree)',
+    args: [{ name: 'flag', prompt: () => 'Which flag? (scope)', complete: () => ['scope'] }],
+    handler: (flag) => {
+      if (flag !== 'scope') throw new Error(`unknown flag: "${flag ?? ''}" (expected scope)`);
       scope = scope === 'subtree' ? 'exact' : 'subtree';
       scopeSelect.setValue(scope);
       void workspace.set('treeref:scope', scope);
       renderQueryPreview();
     },
   });
-  void commands.register('treeref:set-ref-field', {
-    label: 'TreeRef explorer: choose the Ref field to follow back',
-    args: [
-      {
-        name: 'field',
-        prompt: () => 'Ref field to follow back into the tree?',
-        initial: () => refField,
-        complete: () => refFieldNames(),
-      },
-    ],
-    handler: (name) => setRefField(name.trim()),
+
+  void commands.register('treeref:list-refs', {
+    label: 'TreeRef explorer: list the metarecords pointing at the selected node',
+    handler: listRefs,
   });
 
   // Keybindings for this panel live in keybindings.toml (when = "treeref").

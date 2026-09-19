@@ -130,20 +130,20 @@ describe('file-manager filesystem operations', () => {
   test('new-folder / new-file create under the current directory', async () => {
     const { handlers, fs } = await mount(null);
     promptSpy.mockReturnValueOnce('My Folder');
-    await handlers.get('file-manager:new-folder')!();
+    await handlers.get('file-manager:new')!('folder');
     expect(fs.mkdir).toHaveBeenCalledWith('/My Folder');
 
     promptSpy.mockReturnValueOnce('note.txt');
-    await handlers.get('file-manager:new-file')!();
+    await handlers.get('file-manager:new')!('file');
     expect(fs.createFile).toHaveBeenCalledWith('/note.txt');
   });
 
   test('a blank or cancelled name cancels the create', async () => {
     const { handlers, fs } = await mount(null);
     promptSpy.mockReturnValueOnce('   '); // whitespace only
-    await handlers.get('file-manager:new-folder')!();
+    await handlers.get('file-manager:new')!('folder');
     promptSpy.mockReturnValueOnce(null); // dialog cancelled
-    await handlers.get('file-manager:new-file')!();
+    await handlers.get('file-manager:new')!('file');
     expect(fs.mkdir).not.toHaveBeenCalled();
     expect(fs.createFile).not.toHaveBeenCalled();
   });
@@ -151,15 +151,15 @@ describe('file-manager filesystem operations', () => {
   test('operations are inert before the panel has opened a directory', async () => {
     const { handlers, fs, trash } = await mount(null, { start: false });
     promptSpy.mockReturnValue('anything');
-    for (const cmd of [
-      'file-manager:new-folder',
-      'file-manager:new-file',
-      'file-manager:rename',
-      'file-manager:duplicate',
-      'file-manager:paste',
-      'file-manager:delete',
-    ]) {
-      await handlers.get(cmd)!();
+    for (const [cmd, arg] of [
+      ['file-manager:new', 'folder'],
+      ['file-manager:new', 'file'],
+      ['file-manager:rename', undefined],
+      ['file-manager:duplicate', undefined],
+      ['file-manager:paste', undefined],
+      ['file-manager:delete', undefined],
+    ] as [string, string | undefined][]) {
+      await (handlers.get(cmd)! as (a?: string) => unknown)(arg);
     }
     expect(fs.mkdir).not.toHaveBeenCalled();
     expect(fs.createFile).not.toHaveBeenCalled();
@@ -267,17 +267,17 @@ describe('file-manager filesystem operations', () => {
     const { handlers, fs, statusBar } = await mount(null);
     fs.mkdir.mockRejectedValueOnce(new Error('permission denied'));
     promptSpy.mockReturnValueOnce('blocked');
-    await handlers.get('file-manager:new-folder')!();
+    await handlers.get('file-manager:new')!('folder');
     expect(statusBar.error).toHaveBeenCalled();
   });
 
   test('navigation, toggles and activation are wired', async () => {
     const { handlers, fs } = await mount('repo-1');
     fs.readDir.mockClear();
-    await handlers.get('file-manager:goto-root')!();
+    await handlers.get('file-manager:root')!();
     await handlers.get('file-manager:refresh')!();
-    await handlers.get('file-manager:toggle-hidden')!();
-    await handlers.get('file-manager:toggle-root')!();
+    await handlers.get('file-manager:toggle')!('hidden');
+    await handlers.get('file-manager:toggle')!('root');
     await handlers.get('file-manager:last')!();
     await handlers.get('file-manager:prev')!();
     // Activate the dir1 row (index 2) — opens it.
@@ -302,7 +302,7 @@ describe('file-manager filesystem operations', () => {
     await handlers.get('file-manager:activate')!();
     expect(root.getElementById('current-path')!.textContent).toBe('/dir1');
 
-    await handlers.get('file-manager:goto-root')!();
+    await handlers.get('file-manager:root')!();
     expect(root.getElementById('current-path')!.textContent).toBe('/');
   });
 
@@ -320,7 +320,7 @@ describe('file-manager filesystem operations', () => {
     await new Promise((r) => setTimeout(r, 0));
     // A create still works, falling back to the built-in message duration.
     promptSpy.mockReturnValueOnce('x');
-    await s.handlers.get('file-manager:new-folder')!();
+    await s.handlers.get('file-manager:new')!('folder');
     expect(s.fs.mkdir).toHaveBeenCalledWith('/x');
   });
 
@@ -341,7 +341,7 @@ describe('file-manager filesystem operations', () => {
     const { handlers, fs, statusBar } = await mount(null);
     fs.createFile.mockRejectedValueOnce(new Error('x'));
     promptSpy.mockReturnValueOnce('f');
-    await handlers.get('file-manager:new-file')!();
+    await handlers.get('file-manager:new')!('file');
     await selectSong(handlers);
     fs.remove.mockRejectedValueOnce(new Error('x'));
     await handlers.get('file-manager:delete')!();

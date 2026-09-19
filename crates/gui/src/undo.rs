@@ -140,7 +140,7 @@ async fn undo(
 
 /// The revert half of an undo: check the plan, then write the inverse at HEAD.
 /// A blocked or filesystem-coordinated revert is *reported*, not forced — the
-/// log panel (`log:revert-with-dependents`) and `mf log undo` are the two ways
+/// log panel (`log:revert with-dependents`) and `mf log undo` are the two ways
 /// through, and neither is something to do behind the user's back.
 async fn revert(
     gui: &Arc<GuiState>,
@@ -178,7 +178,7 @@ async fn revert(
             ws_id,
             &format!(
                 "Cannot take revision {rev_id} back: a later change{where_} overwrote what it wrote. \
-                 Open the log panel and use log:revert-with-dependents to undo both."
+                 Open the log panel and use log:revert with-dependents to undo both."
             ),
             timeouts,
         );

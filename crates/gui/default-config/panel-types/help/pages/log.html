@@ -10,7 +10,7 @@
 <p>
   Move through revisions with <span data-mf-key="log:prev">↑ or k</span> /
   <span data-mf-key="log:next">↓ or j</span>;
-  <span data-mf-key="log:toggle-ops">Enter</span> expands a revision to show its
+  <span data-mf-key="log:toggle ops">Enter</span> expands a revision to show its
   operations, and the same keys then walk through those — the operation under the
   cursor is what a revert aims at. Watcher, reconcile and manual edits all appear
   here.
@@ -68,17 +68,17 @@
   nothing leaves the history, and everything written since stays where it is.
   <span data-mf-key="log:revert">Shift+R</span> (<code>log:revert</code>) reverts
   whatever is selected — the revision, or a single operation of it when the
-  cursor is on one. <span data-mf-key="log:revert-op">Shift+O</span> narrows to
+  cursor is on one. <span data-mf-key="log:revert op">Shift+O</span> narrows to
   one operation from a revision row, and
-  <span data-mf-key="log:revert-revision">Shift+V</span> widens back to the whole
+  <span data-mf-key="log:revert revision">Shift+V</span> widens back to the whole
   revision.
 </p>
 <p>
   A revert can be <strong>blocked</strong>: a later operation overwrote the same
   cell, so undoing this one alone would mean nothing. The panel then selects the
   blocker and says so — revert that one first, or take both together with
-  <span data-mf-key="log:revert-with-dependents">Shift+D</span>
-  (<code>log:revert-with-dependents</code>), which reverts the target and
+  <span data-mf-key="log:revert with-dependents">Shift+D</span>
+  (<code>log:revert with-dependents</code>), which reverts the target and
   everything in its way. When the revert needs to move files on disk, the panel
   hands you the <code>mf log revert</code> line to run instead, so the moves stay
   coordinated with the metadata.
@@ -87,9 +87,9 @@
 <h2>The rest</h2>
 <p>
   <code>log:rollback</code> moves HEAD to the selected revision (a rollback, or a
-  redo forward). <span data-mf-key="log:mark-checkpoint">Shift+L</span> labels a
+  redo forward). <span data-mf-key="log:mark">Shift+L</span> labels a
   revision so you can come back to it by name, and
-  <span data-mf-key="log:toggle-graph">Shift+G</span> draws every branch instead
+  <span data-mf-key="log:toggle graph">Shift+G</span> draws every branch instead
   of the active line. <code>log:prune</code> permanently removes history before
   the selected revision.
 </p>

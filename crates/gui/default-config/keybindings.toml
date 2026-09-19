@@ -218,7 +218,7 @@
   { command = "metarecord-list:open", when = "metarecord-list" },
   { command = "file-manager:activate", when = "file-manager" },
   { command = "treeref:descend", when = "treeref" },
-  { command = "log:toggle-ops", when = "log" },
+  { command = "log:toggle ops", when = "log" },
   { command = "trash:restore", when = "trash" },
   { command = "recent:open", when = "recent" },
   { command = "duplicates:toggle", when = "duplicates" },
@@ -233,14 +233,14 @@
   { command = "duplicates:toggle", when = "duplicates" },
   # In the file panel left/right seek the previewed media (see the transport
   # section below); with no media shown they do nothing.
-  { command = "file:seek-forward", when = "file" },
+  { command = "file:seek +10", when = "file" },
 ]
 "left" = [
   { command = "treeref:parent", when = "treeref" },
   # In metarecord-detail there is nothing to descend into, so left/backspace
   # step back out of a chain of followed references. (Enter stays field-edit.)
   { command = "metarecord:back", when = "metarecord-detail" },
-  { command = "file:seek-backward", when = "file" },
+  { command = "file:seek -10", when = "file" },
 ]
 "backspace" = [
   { command = "treeref:parent", when = "treeref" },
@@ -292,11 +292,11 @@
 # is on (a revision, or one operation of an expanded one), which is the whole
 # point of being able to select an operation.
 "shift+r" = { command = "log:revert", when = "log" }
-"shift+d" = { command = "log:revert-with-dependents", when = "log" }
-"shift+o" = { command = "log:revert-op", when = "log" }
-"shift+v" = { command = "log:revert-revision", when = "log" }
-"shift+l" = { command = "log:mark-checkpoint", when = "log" }
-"shift+g" = { command = "log:toggle-graph", when = "log" }
+"shift+d" = { command = "log:revert with-dependents", when = "log" }
+"shift+o" = { command = "log:revert op", when = "log" }
+"shift+v" = { command = "log:revert revision", when = "log" }
+"shift+l" = { command = "log:mark", when = "log" }
+"shift+g" = { command = "log:toggle graph", when = "log" }
 
 # file-manager: filesystem operations (clipboard, rename, duplicate, create).
 # All scoped to the panel; it has no text-input focus, so these plain
@@ -306,22 +306,22 @@
 "ctrl+v" = { command = "file-manager:paste", when = "file-manager" }
 "f2" = { command = "file-manager:rename", when = "file-manager" }
 "ctrl+d" = { command = "file-manager:duplicate", when = "file-manager" }
-"ctrl+shift+n" = { command = "file-manager:new-folder", when = "file-manager" }
+"ctrl+shift+n" = { command = "file-manager:new folder", when = "file-manager" }
 # Jump to the root — the repository's, or the filesystem's when no repository is
 # active — on the key that means root in a path. `/` is the metarecord-list
 # finder elsewhere, so the two never meet.
 "/" = [
   { command = "metarecord-list:focus finder", when = "metarecord-list" },
-  { command = "file-manager:goto-root", when = "file-manager" },
+  { command = "file-manager:root", when = "file-manager" },
   # The tree explorer browses a forest the way the file manager browses the
   # disk, so "/" means the same there: back to the roots.
   { command = "treeref:root", when = "treeref" },
 ]
 # Show/hide dot-entries, on the combo the desktop file managers use.
-"ctrl+h" = { command = "file-manager:toggle-hidden", when = "file-manager" }
+"ctrl+h" = { command = "file-manager:toggle hidden", when = "file-manager" }
 # Browse the repository root ⇄ the whole filesystem — the other thing this panel
 # toggles, and the only one of the pair that had no key.
-"ctrl+r" = { command = "file-manager:toggle-root", when = "file-manager" }
+"ctrl+r" = { command = "file-manager:toggle root", when = "file-manager" }
 
 # metarecord-list: selection, finder, query editing.
 "space" = [
@@ -368,18 +368,18 @@
 # treeref: pick which TreeRef field's forest the panel explores (the drop-down's
 # keyboard equivalent; the field name completes). It keeps the F key, shifted,
 # now that plain "f" finds a child.
-"shift+f" = { command = "treeref:set-field", when = "treeref" }
+"shift+f" = { command = "treeref:set field", when = "treeref" }
 "s" = [
   { command = "metarecord-list:clear simplified", when = "metarecord-list" },
   # treeref: exact node ⇄ the whole subtree, for the "what points here?" query.
-  { command = "treeref:toggle-scope", when = "treeref" },
+  { command = "treeref:toggle scope", when = "treeref" },
 ]
 
 # treeref: build the "what points at this node?" query and run it in a
 # metarecord-list opened in the other slot ("l"), or pick the Ref field it
 # follows back ("e"). See spec-gui "treeref panel type".
 "l" = { command = "treeref:list-refs", when = "treeref" }
-"e" = { command = "treeref:set-ref-field", when = "treeref" }
+"e" = { command = "treeref:set ref-field", when = "treeref" }
 "q" = { command = "metarecord-list:clear normal", when = "metarecord-list" }
 "c" = { command = "metarecord-list:clear all", when = "metarecord-list" }
 
@@ -390,7 +390,7 @@
   { command = "metarecord:create", when = "metarecord-detail" },
   # New *file*, on the same combo the folder uses without its shift — the
   # sibling had a key and it did not.
-  { command = "file-manager:new-file", when = "file-manager" },
+  { command = "file-manager:new file", when = "file-manager" },
 ]
 
 # Command-input-driven field editing ("m" = metarecord edit; the status bar
@@ -480,34 +480,34 @@
 "y r" = { command = "sync:run", when = "sync" }
 
 # file: image zoom controls.
-"plus" = { command = "file:zoom-in", when = "file" }
-"-" = { command = "file:zoom-out", when = "file" }
-"=" = { command = "file:zoom-fit", when = "file" }
-"0" = { command = "file:zoom-reset", when = "file" }
+"plus" = { command = "file:zoom in", when = "file" }
+"-" = { command = "file:zoom out", when = "file" }
+"=" = { command = "file:zoom fit", when = "file" }
+"0" = { command = "file:zoom reset", when = "file" }
 
 # file: document paging (a PDF preview). No-ops in front of anything else, so
 # the keys stay free for the rest of the panel.
 # (home/end are not taken: in this panel they already jump the metarecord-list
-# to its first/last row, like the arrow keys. file:page-first / file:page-last
+# to its first/last row, like the arrow keys. file:page first / file:page last
 # stay reachable from the command input.)
-"pagedown" = { command = "file:page-next", when = "file" }
-"pageup" = { command = "file:page-prev", when = "file" }
+"pagedown" = { command = "file:page next", when = "file" }
+"pageup" = { command = "file:page prev", when = "file" }
 
 # file: media transport, on the keys a media player uses (mpv's, so the muscle
 # memory carries over). Space, left/right and backspace are in the sections
 # above, alongside the other panels' meaning for those keys. All of them are
 # no-ops unless the preview is actually showing an audio/video file.
-"shift+right" = { command = "file:seek-forward-long", when = "file" }
-"shift+left" = { command = "file:seek-backward-long", when = "file" }
-"]" = { command = "file:speed-up", when = "file" }
-"[" = { command = "file:speed-down", when = "file" }
-"shift+up" = { command = "file:volume-up", when = "file" }
-"shift+down" = { command = "file:volume-down", when = "file" }
+"shift+right" = { command = "file:seek +60", when = "file" }
+"shift+left" = { command = "file:seek -60", when = "file" }
+"]" = { command = "file:speed up", when = "file" }
+"[" = { command = "file:speed down", when = "file" }
+"shift+up" = { command = "file:volume up", when = "file" }
+"shift+down" = { command = "file:volume down", when = "file" }
 # Plain "m" starts the metarecord-edit key sequence, so mute takes ctrl+m.
 "ctrl+m" = { command = "file:mute", when = "file" }
 # mpv resets the speed with backspace; here plain backspace goes up a level
 # (above), so the reset keeps the key with shift.
-"shift+backspace" = { command = "file:speed-reset", when = "file" }
+"shift+backspace" = { command = "file:speed reset", when = "file" }
 
 # Find in panel (spec-gui "Find in panel"): the browser's Ctrl-F over the text
 # the focused panel currently renders. `text-input = true` so it also works
