@@ -45,6 +45,34 @@ export function shortcutsFor(
     .map((binding) => binding.keys.join(' '));
 }
 
+/**
+ * Keybindings whose command does not exist — dead keys.
+ *
+ * A binding is only ever checked when it fires, and a key that runs nothing
+ * says nothing, so a typo or a command renamed out from under a personal
+ * `keybindings.toml` is silently inert. The shipped defaults are guarded by a
+ * test, but the user's own file is merged into theirs by `metafolder-sync-config`
+ * and never validated; this is the runtime half of that guard.
+ *
+ * Only the first token is a name: a binding may pre-fill arguments
+ * (`panel:set type file`), and reading the whole invocation as a name would
+ * report every parameterized binding as dead. Shell invocations (`!…`) name no
+ * command at all.
+ */
+export function deadInvocations(
+  commands: { name: string }[],
+  keytable: { keys: string[]; invocation: string }[],
+): { keys: string; invocation: string }[] {
+  const known = new Set(commands.map((c) => c.name));
+  return keytable
+    .filter((b) => {
+      const invocation = b.invocation.trim();
+      if (invocation === '' || invocation.startsWith('!')) return false;
+      return !known.has(invocation.split(/\s+/)[0]);
+    })
+    .map((b) => ({ keys: b.keys.join(' '), invocation: b.invocation }));
+}
+
 /** A command as the input lists it: the registry entry plus the key combos
  *  bound to *exactly* this invocation. */
 export interface ListedCommand extends CommandDef {

@@ -10,6 +10,7 @@ import {
   discardActiveInput,
   clearArgSpecs,
   collectArgs,
+  deadInvocations,
   filterCommands,
   filterCompletions,
   listedCommands,
@@ -203,6 +204,42 @@ describe('promptsForInput with optional arguments', () => {
     expect(promptsForInput('p:apply')).toBe(true); // `zone` is still missing
     expect(promptsForInput('p:apply finder')).toBe(false); // `stay` never asks
     expect(promptsForInput('p:apply finder stay')).toBe(false);
+  });
+});
+
+describe('deadInvocations', () => {
+  const binding = (keys: string[], invocation: string) => ({ keys, invocation });
+  const command = (name: string) => ({ name, label: name, owner: null, reveal: false, log: true });
+
+  test('a binding naming no command is reported, with its combo', () => {
+    const dead = deadInvocations(
+      [command('panel:swap')],
+      [binding(['x'], 'panel:swap'), binding(['g', 'z'], 'panel:gone')],
+    );
+    expect(dead).toEqual([{ keys: 'g z', invocation: 'panel:gone' }]);
+  });
+
+  test('a pre-filled argument is not part of the name', () => {
+    // `panel:set type file` names `panel:set`; reading the whole invocation as
+    // a name would report every parameterized binding as dead.
+    const dead = deadInvocations([command('panel:set')], [binding(['s', 'f'], 'panel:set type file')]);
+    expect(dead).toEqual([]);
+  });
+
+  test('several combos on one dead command are each reported', () => {
+    const dead = deadInvocations(
+      [],
+      [binding(['a'], 'nope:gone'), binding(['b'], 'nope:gone')],
+    );
+    expect(dead.map((d) => d.keys)).toEqual(['a', 'b']);
+  });
+
+  test('a shell command is not a name', () => {
+    expect(deadInvocations([], [binding(['x'], '!ls -la')])).toEqual([]);
+  });
+
+  test('nothing to report is an empty list', () => {
+    expect(deadInvocations([command('a:b')], [binding(['x'], 'a:b')])).toEqual([]);
   });
 });
 

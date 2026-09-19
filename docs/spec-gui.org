@@ -301,6 +301,17 @@ collection above) or is one of the few builtins that reopen the input by hand
 (e.g. =workspace:rename=). The marker is display-only — it is not part of the
 command name written into the input when a suggestion is accepted.
 
+*Dead keys.* A keybinding whose command does not exist runs nothing and says
+nothing, so a typo — or a command renamed out from under a personal
+=keybindings.toml=, which =metafolder-sync-config= merges but never validates —
+is silently inert. Once the panels have been pre-instantiated (and therefore
+every command name is known: the builtins come from Rust, the panel commands
+from their JavaScript), the shell lists any such binding in the
+[[*Message view][message panel]], combo and invocation. Only the first token of
+an invocation is a name, since a binding may pre-fill arguments. The shipped
+table is checked the same way by a test, so a rename cannot leave a default
+binding dead either.
+
 *Command listing.* The input lists every registered command, plus one entry
 per *bound* parameterized invocation: a keybinding whose invocation carries
 arguments (=metarecord:bulk delete=, =panel:set type file=) earns its own line,
@@ -320,30 +331,53 @@ not per command: =metarecord:bulk set= still has a field and a value to ask
 for and carries it, while =metarecord:bulk delete= is complete and runs on
 Enter.
 
-*Naming convention.* A command's name signals its interaction type through a
-leading verb, so the right command is findable without running it:
-- =open-X= — opens an in-panel *form or overlay* (mouse-oriented), e.g.
-  =metarecord:open-add-field=, =metarecord-list:open-bulk-edit=,
-  =repos:open-init= / =open-retype=.
-- =focus-X= — moves keyboard *focus* to an existing input field of the panel,
-  e.g. =metarecord-list:focus simplified= / =focus columns= / =focus finder=.
-- =<noun> <op>= — a *minibuffer* completion-driven edit, with the operation as
-  the first **argument** rather than part of the name (these declare arguments,
-  so they carry the =…=), e.g. =metarecord:field set=, =metarecord:bulk
-  delete=. One command covers the family; the operation vocabulary is the
-  daemon's and the CLI's — =set= / =add= / =remove= / =unset=, with =delete=
-  kept for destroying a thing that has an id. Where a panel still names a
-  single such edit in the command itself, the verb comes first
-  (=treeref:set field=).
-- =row-X= (noun first, the cursor family) — a direct action on the *row under
-  the cursor* (keyboard, no minibuffer), e.g. =metarecord:row-next= /
-  =row-edit= / =row-delete=. It is deliberately not =field-X=: that would put
-  =metarecord:field-edit= one hyphen away from =metarecord:field edit=, which
-  asks which value to edit instead of taking the one under the cursor.
-- a plain verb (=next=, =refresh=, =toggle-*=, =open=, =activate=, =track=…) —
-  a direct action with no further input.
-So =edit-= is reserved for minibuffer edits and never used for a command that
-merely focuses an input or opens a form.
+*Naming convention.* One rule generates the whole command set:
+
+#+BEGIN_QUOTE
+=<namespace>:<verb> [arguments]=, the verb taken from the closed list below,
+and *whatever varies between sibling commands is an argument, never part of
+the verb*.
+#+END_QUOTE
+
+So there is no =zoom-in= beside =zoom-out=, no =bulk-set-field= beside
+=bulk-delete=: one =zoom=, one =bulk=, each taking what varies. The set stays
+small enough to read, a keybinding says what it does
+(=metarecord:bulk delete=), and adding a variant costs a table entry instead
+of a command. The [[*Command listing][listing]] is what keeps this from
+costing discoverability.
+
+The verbs, grouped by *what they touch* — which is the thing a name must make
+obvious, so that nothing that writes to the repository can be mistaken for
+something that only moves the view:
+
+| touches | verbs |
+|---------+-------|
+| a text zone | =focus <zone>=, =clear <zone>=, =apply <zone> [stay]=, =insert <zone> <text>= |
+| a form, overlay or panel | =open [what]=, =open-X= (a form of this panel), =close=, =cancel=, =reveal <type>= |
+| a view flag | =toggle <flag>= |
+| the cursor or the selection | =next=, =prev=, =first=, =last=, =page <which>=, =find [text]=, =select <toggle\|all\|none>=, and the =row-X= family (the row under the cursor) |
+| a view setting | =set <setting> [value]= |
+| the media player | =play-pause=, =restart=, =mute=, =seek <±s>=, =speed <up\|down\|reset>=, =volume <up\|down>=, =zoom <in\|out\|fit\|reset>= |
+| the repository | =<noun> <op>= with =op= ∈ =set= / =add= / =remove= / =unset= / =delete= (the daemon's and the CLI's vocabulary), and the plain verbs =create=, =delete=, =rename=, =track=, =trash=, =restore=, =prune=, =reconcile=, =rollback=, =undo=, =redo=, =revert [what]=, =mark=, =run=, =load=, =unload=, =stop= |
+
+The screen/repository split therefore reads off the name: *a command that
+writes to the repository carries either =<noun> <op>= or a plain verb from the
+last row; everything else only moves the view.*
+
+Two forms are kept although the rule alone would fold them away, and
+deliberately:
+- =open-X= names a *form belonging to this panel* (=metarecord:open-add-field=,
+  =metarecord-list:open-bulk-edit=, =repos:open-init=). Folding it into
+  =open <what>= would collide with a bare =X:open= that means something else —
+  =repos:open= shows the repos panel, it does not open a form.
+- =row-X= is the cursor family (=metarecord:row-next= / =row-edit= /
+  =row-delete=). It is deliberately not =field-X=: that would put
+  =metarecord:field-edit= one hyphen from =metarecord:field edit=, which asks
+  *which* value to edit instead of taking the one under the cursor.
+
+=edit-= is not a verb. A command that merely focuses an input is =focus=, one
+that opens a form is =open=, and an edit through the minibuffer is =<noun>
+<op>= — so nothing is named for the fact that typing happens.
 
 ** Keybinding
 

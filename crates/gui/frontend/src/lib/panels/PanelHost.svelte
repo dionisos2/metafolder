@@ -1,7 +1,7 @@
 <script lang="ts">
   import { onMount } from 'svelte';
   import { invoke, listen } from '../ipc';
-  import { dispatch, setPanelDispatch } from '../commands';
+  import { deadInvocations, dispatch, setPanelDispatch } from '../commands';
   import { addDefaultMenuItems } from '../keys';
   import { focusedWs, refreshCommands, slotPayload, store } from '../store.svelte';
   import { createPanelApi, type PanelApiInstance } from './api';
@@ -244,10 +244,25 @@
 
     // Pre-instantiate every panel type once (hidden) so all panel commands are
     // registered session-wide. Delayed so the startup layout settles first.
-    const prewarmTimer = setTimeout(() => {
+    const prewarmTimer = setTimeout(async () => {
       const wsId = focusedWs() ?? store.workspaces[0]?.id;
       if (!wsId) return;
       for (const panelType of store.panelTypes) ensureInstance(wsId, panelType);
+      await Promise.all([...instances.values()].map((i) => i.mounted.catch(() => {})));
+      // Every command name is known only now: the builtins come from Rust, the
+      // panel commands from the JavaScript just mounted. A keybinding naming
+      // neither is a dead key — it does nothing and says nothing — so say it
+      // here rather than leave the user pressing it.
+      await refreshCommands();
+      const dead = deadInvocations(store.commands, store.keytable);
+      if (dead.length === 0) return;
+      const lines = dead.map((d) => `  ${d.keys} → ${d.invocation}`).join('\n');
+      await invoke('append_message', {
+        wsId,
+        text: `${dead.length} keybinding${dead.length === 1 ? '' : 's'} name${
+          dead.length === 1 ? 's' : ''
+        } a command that does not exist:\n${lines}`,
+      });
     }, 1000);
 
     const unlisteners: Promise<() => void>[] = [
