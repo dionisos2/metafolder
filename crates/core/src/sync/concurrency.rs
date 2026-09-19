@@ -1,6 +1,6 @@
 //! Concurrency helpers shared across the workspace.
 
-use std::sync::{Mutex, MutexGuard};
+use std::sync::{Mutex, MutexGuard, TryLockError};
 
 /// Mutex locking that survives a poisoned mutex instead of cascading panics.
 ///
@@ -17,6 +17,15 @@ use std::sync::{Mutex, MutexGuard};
 /// mutation is otherwise transactional.
 pub trait MutexExt<T> {
     fn lock_recover(&self) -> MutexGuard<'_, T>;
+
+    /// The guard if the mutex is free *right now*, `None` if another thread
+    /// holds it. Poisoning is reclaimed exactly as [`Self::lock_recover`] does:
+    /// a poisoned-but-free mutex is a guard, not a `None`.
+    ///
+    /// For the reader that has something correct to answer without the lock and
+    /// only loses freshness by not waiting — waiting behind a long write is the
+    /// worse answer, not the safer one.
+    fn try_lock_recover(&self) -> Option<MutexGuard<'_, T>>;
 }
 
 impl<T> MutexExt<T> for Mutex<T> {
@@ -29,6 +38,17 @@ impl<T> MutexExt<T> for Mutex<T> {
                 self.clear_poison();
                 poison.into_inner()
             }
+        }
+    }
+
+    fn try_lock_recover(&self) -> Option<MutexGuard<'_, T>> {
+        match self.try_lock() {
+            Ok(guard) => Some(guard),
+            Err(TryLockError::Poisoned(poison)) => {
+                self.clear_poison();
+                Some(poison.into_inner())
+            }
+            Err(TryLockError::WouldBlock) => None,
         }
     }
 }
@@ -54,6 +74,26 @@ mod tests {
         // Recovery reclaims the guard (with the write the panicking thread made)
         // and clears the poison flag.
         assert_eq!(*m.lock_recover(), 42);
+        assert!(m.lock().is_ok(), "poison flag should be cleared afterwards");
+    }
+
+    #[test]
+    fn try_lock_recover_gives_up_on_a_held_mutex_and_reclaims_a_poisoned_one() {
+        let m = Arc::new(Mutex::new(1));
+        {
+            let _held = m.lock().unwrap();
+            assert!(m.try_lock_recover().is_none(), "a held mutex must not block the caller");
+        }
+        assert_eq!(*m.try_lock_recover().expect("a free mutex gives its guard"), 1);
+
+        let m2 = m.clone();
+        let _ = std::thread::spawn(move || {
+            let _g = m2.lock().unwrap();
+            panic!("boom while holding the lock");
+        })
+        .join();
+        // Poisoned but free: a guard, like `lock_recover`, not a `None`.
+        assert_eq!(*m.try_lock_recover().expect("a poisoned free mutex is reclaimed"), 1);
         assert!(m.lock().is_ok(), "poison flag should be cleared afterwards");
     }
 }

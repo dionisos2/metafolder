@@ -401,11 +401,6 @@ async fn list_fields(
 ) -> Result<Json<serde_json::Value>, ApiError> {
     let repo_uuid = parse_uuid(&repo)?;
     with_repo(&state, repo_uuid, move |repo_state| {
-        // The data-derived catalog comes from the in-memory index (built at
-        // load, refreshed to HEAD) — its `present`/`types` maps already hold
-        // every distinct field name and value type, no DB scan. Mirrors
-        // `run_query_filter`'s index acquisition (conn first, then the index).
-        let conn = slowlog::timed("wait:conn", || repo_state.conn.lock_recover());
         // Extract the schema's declared types into an owned Vec, releasing the
         // schema lock before taking the index lock (never hold both).
         let schema_decls = repo_state
@@ -414,22 +409,36 @@ async fn list_fields(
             .as_ref()
             .map(|s| s.declared_types())
             .unwrap_or_default();
-        // The data-derived catalog is served from the in-memory index. When it
-        // is already warm (present) we bring it up to HEAD first — a forward
-        // delta after a write is incremental and cheap, the same refresh
-        // `run_query_filter` performs. This matters because the GUI re-warms the
-        // catalog on every change it sees, right after a write when the index is
-        // one op stale: serving that from the O(rows) `SELECT DISTINCT` table
-        // scan is a multi-second stall on a large repository. There is no cold
+        // The data-derived catalog comes from the in-memory index (built at
+        // load, refreshed to HEAD) — its `present`/`types` maps already hold
+        // every distinct field name and value type, no DB scan. There is no cold
         // case left to fall back for: the index is built before the repository
         // serves anything (spec-main "POST /repos/load").
-        let data = {
-            let mut index_guard = repo_state.index.lock_recover();
-            let index = index_guard.as_mut().ok_or_else(|| {
-                ApiError::internal("the query index is missing on a ready repository")
-            })?;
-            index.refresh(&conn, &|| false)?;
-            index.field_catalog(None)
+        //
+        // The connection is *tried*, never waited for, and in the same order as
+        // `run_query_filter` takes it (conn, then the index). It is needed only
+        // to bring the index up to HEAD — a forward delta after a write, which
+        // is incremental and cheap, and which matters because the GUI re-warms
+        // the catalog on every change it sees through the log feed. But a long
+        // write holds the connection for its whole transaction (a reconcile:
+        // minutes on a large repository), and while it does there is nothing to
+        // bring the index up to: what that writer has done is not committed, so
+        // the resident catalog *is* the committed state. Waiting for the lock
+        // therefore buys no freshness at all and costs the whole write — a 1 ms
+        // read measured at 255 s behind a reconcile, which is the stall seen on
+        // opening a repository in the GUI.
+        let conn = slowlog::timed("wait:conn", || repo_state.conn.try_lock_recover());
+        let mut index_guard = slowlog::timed("wait:index", || repo_state.index.lock_recover());
+        let data = match conn.as_deref() {
+            // `ensure_index` rather than a refresh of our own: the acquisition
+            // the live-query paths share, so the two cannot drift.
+            Some(conn) => ensure_index(conn, &mut index_guard, &|| false)?.field_catalog(None),
+            None => index_guard
+                .as_ref()
+                .ok_or_else(|| {
+                    ApiError::internal("the query index is missing on a ready repository")
+                })?
+                .field_catalog(None),
         };
         // Merge in the schema (schema-priority, schema-only fields added), then
         // apply the `?type=` filter (so a schema-only field of that type shows).

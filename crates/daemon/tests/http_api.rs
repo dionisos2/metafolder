@@ -1402,3 +1402,65 @@ async fn test_append_duplicate_is_a_no_op_and_by_id_duplicate_is_rejected() {
         .collect();
     assert_eq!(values, vec!["a", "b"]);
 }
+
+// A long write (a reconcile, a big watcher flush) holds the repository's single
+// database connection for its whole transaction — minutes, on a large repo. The
+// field catalog needs that connection only to bring the index up to HEAD, and
+// while a write is in flight there is nothing to bring it up to: what the writer
+// is doing is not committed yet, so the resident catalog *is* the committed
+// state. Queueing behind the connection turned a 1 ms answer into a 255 s one
+// (measured, 50 k metarecords), which is what the GUI's catalog warm hits when a
+// repository is opened while something is writing.
+#[tokio::test]
+async fn list_fields_answers_while_a_writer_holds_the_connection() {
+    let state = std::sync::Arc::new(AppState::new());
+    let app = routes::build(state.clone());
+    let root = temp_dir("fields_busy_conn");
+    let (status, body) =
+        request(&app, "POST", "/repos/init", Some(json!({"root": root.to_str().unwrap()}))).await;
+    assert_eq!(status, StatusCode::OK, "init failed: {body}");
+    let repo = body["repo_uuid"].as_str().unwrap().to_string();
+    let repo_uuid = Uuid::parse_str(&repo).unwrap();
+
+    create_metarecord(
+        &app,
+        &repo,
+        json!([{"name": "tag", "value": {"type": "string", "value": "jazz"}}]),
+    )
+    .await;
+    // Warm the index the way the GUI's first list display does.
+    let (status, _) = request(
+        &app,
+        "POST",
+        &format!("/repos/{repo}/query"),
+        Some(json!({"query": {"type": "is_present", "field": "tag"}})),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+
+    // Hold the connection from another thread, exactly as a running reconcile
+    // does — the request runs while a writer owns the lock.
+    let repo_state = state.repo(repo_uuid).unwrap();
+    let (locked_tx, locked_rx) = std::sync::mpsc::channel();
+    let (release_tx, release_rx) = std::sync::mpsc::channel::<()>();
+    let holder = std::thread::spawn(move || {
+        let _held = repo_state.conn.lock().unwrap();
+        locked_tx.send(()).unwrap();
+        let _ = release_rx.recv();
+    });
+    locked_rx.recv().unwrap();
+
+    let answered = tokio::time::timeout(
+        std::time::Duration::from_secs(5),
+        request(&app, "GET", &format!("/repos/{repo}/fields"), None),
+    )
+    .await;
+    release_tx.send(()).unwrap();
+    holder.join().unwrap();
+
+    let (status, catalog) = answered.expect("GET /fields must not queue behind a running write");
+    assert_eq!(status, StatusCode::OK);
+    let names: Vec<&str> =
+        catalog.as_array().unwrap().iter().map(|e| e["name"].as_str().unwrap()).collect();
+    assert!(names.contains(&"tag"), "the resident catalog must still be served: {catalog}");
+}

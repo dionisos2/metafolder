@@ -752,6 +752,16 @@ it to populate field pickers (e.g.
 the TreeRef-field and Ref-field selectors of the tree-explorer panel, see
 [[file:spec-gui.org][spec-gui.org]]).
 
+The catalog is served from the daemon's resident query index, and *never waits
+for a write*. Bringing that index up to HEAD needs the repository's database
+connection, which a long write (a reconcile, a large watcher flush) holds for its
+whole transaction; the endpoint therefore /tries/ the connection and, when a write
+holds it, answers from the index as it stands. Nothing is lost by that: an
+in-flight write is uncommitted, so the resident catalog already is the committed
+state — and the client sees the write's new names when it re-warms the catalog on
+the change the log feed reports. Waiting instead would trade a millisecond for
+the length of someone else's reconcile.
+
 *** =GET /repos/:repo_uuid/tree/roots=
 
 Lists the *forest roots* of a TreeRef field — the nodes whose direct parent is
