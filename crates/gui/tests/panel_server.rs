@@ -75,6 +75,31 @@ async fn test_user_stylesheet_is_served_to_panels() {
     assert_eq!(String::from_utf8(body).unwrap(), "body { color: teal }");
 }
 
+/// The user command module is served like the stylesheet: a file of the gui
+/// config directory, handed out verbatim so the shell can `import()` it.
+#[tokio::test]
+async fn test_user_commands_module_is_served() {
+    let (_guard, config, router) = setup();
+    std::fs::write(config.commands_js_path(), "export default {};\n").unwrap();
+
+    let (status, content_type, body) = get(&router, "/__commands.js").await;
+    assert_eq!(status, StatusCode::OK);
+    assert!(content_type.starts_with("text/javascript"), "{content_type}");
+    assert_eq!(String::from_utf8(body).unwrap(), "export default {};\n");
+}
+
+/// A missing file is a 404 rather than an empty module: the shell imports it
+/// during boot and the rejection is what stops the GUI, so serving "" would
+/// turn a broken installation into a silently command-less GUI.
+#[tokio::test]
+async fn test_a_missing_user_commands_module_is_404() {
+    let (_guard, config, router) = setup();
+    let _ = std::fs::remove_file(config.commands_js_path());
+
+    let (status, _, _) = get(&router, "/__commands.js").await;
+    assert_eq!(status, StatusCode::NOT_FOUND);
+}
+
 #[tokio::test]
 async fn test_panel_non_html_asset_served_verbatim() {
     let (_guard, config, router) = setup();

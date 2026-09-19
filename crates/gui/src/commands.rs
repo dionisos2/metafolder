@@ -286,6 +286,31 @@ pub fn register_command(
     Ok(())
 }
 
+/// Registers a command defined in the user's `commands.js` (spec-gui "User
+/// commands"). It is a *builtin registered at runtime* — no owner, because its
+/// code lives in the shell realm and not in any panel — so `register_command`,
+/// which always attributes a panel type, cannot express it.
+#[tauri::command]
+pub fn register_user_command(
+    app: AppHandle,
+    name: String,
+    label: String,
+    log: Option<bool>,
+) -> Result<(), String> {
+    app.registry.register_builtin(&name, &label, log.unwrap_or(true));
+    Ok(())
+}
+
+/// Forgets the commands a previous `commands.js` registered, before the module
+/// is re-imported (`config:reload commands`). Without it a command the user
+/// deleted from the file would linger in the listing until a restart.
+#[tauri::command]
+pub fn forget_user_commands(app: AppHandle, names: Vec<String>) {
+    for name in names {
+        app.registry.remove(&name);
+    }
+}
+
 #[tauri::command]
 pub fn suggest_keybinding(
     app: AppHandle,
@@ -709,7 +734,7 @@ pub async fn list_scripts() -> Result<Vec<metafolder_core::scripts::ScriptInfo>,
 /// - `gui/panel-types/` is served from disk per request, so the *server* is
 ///   already live; what is stale is the WebView's module cache, and clearing it
 ///   means tearing down panel instances that are kept for the whole session.
-pub const RELOAD_TARGETS: [&str; 3] = ["keybindings", "style", "grammar"];
+pub const RELOAD_TARGETS: [&str; 4] = ["keybindings", "style", "grammar", "commands"];
 
 /// Resolves a `config:reload` argument, or says what it could have been.
 fn reload_targets(what: &str) -> Result<Vec<&'static str>, String> {
@@ -746,6 +771,12 @@ pub fn config_reload(app: AppHandle, what: String) -> Result<String, String> {
             "grammar" => {
                 *app.grammar.lock_recover() = metafolder_core::simplified::load::load_source()?;
             }
+            // The module lives in the WebView, so Rust only validates that the
+            // file is there; re-importing it is the shell's half, driven by the
+            // frontend case for this command.
+            "commands" => {
+                app.config.load_commands_js()?;
+            }
             _ => unreachable!("reload_targets only yields known targets"),
         }
         done.push(target);
@@ -765,6 +796,31 @@ mod tests {
     #[test]
     fn test_all_covers_every_target() {
         assert_eq!(reload_targets("all").unwrap(), RELOAD_TARGETS.to_vec());
+    }
+
+    /// The shell completes over its own copy of this list; they must agree.
+    ///
+    /// Rust resolves the target and the command input offers it, so a target
+    /// added on one side only is either uncompletable or completes to an
+    /// error. Neither half can see the other at compile time, so the test
+    /// reads the frontend source.
+    #[test]
+    fn test_the_frontend_offers_the_same_reload_targets() {
+        let source = include_str!("../frontend/src/lib/commands.ts");
+        let line = source
+            .lines()
+            .find(|l| l.contains("const RELOAD_TARGETS"))
+            .expect("the frontend declares RELOAD_TARGETS");
+        let offered: Vec<&str> = line
+            .split('[')
+            .nth(1)
+            .and_then(|rest| rest.split(']').next())
+            .expect("RELOAD_TARGETS is an array literal")
+            .split(',')
+            .map(|t| t.trim().trim_matches('\''))
+            .filter(|t| !t.is_empty())
+            .collect();
+        assert_eq!(offered, RELOAD_TARGETS.to_vec());
     }
 
     #[test]

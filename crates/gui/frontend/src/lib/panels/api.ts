@@ -7,7 +7,7 @@
 
 import { createPathResolver } from '../../../../panel-shim/resolve.js';
 import { showMenu } from '../../../../panel-shim/menu.js';
-import { type ArgSpec, registerArgs } from '../commands';
+import { type ArgSpec, registerArgs, withTopLevelInvoke } from '../commands';
 import { invoke as ipcInvoke } from '../ipc';
 import { daemonWork } from '../working';
 import { createCache, type DaemonResponse, type RawFetcher } from './cache';
@@ -85,6 +85,62 @@ function camelCaseKeys(table: Record<string, unknown>): Record<string, unknown> 
     out[key.replace(/-([a-z])/g, (_m, c: string) => c.toUpperCase())] = value;
   }
   return out;
+}
+
+/**
+ * The API a *user command* gets (spec-gui "User commands").
+ *
+ * A user command has no panel: its code lives in the shell realm, and it acts
+ * on whatever workspace is focused when it runs — so `wsId` is read through a
+ * getter rather than captured, and the panel-only members (`panelType`,
+ * `pageSize`, `defaults`, the visibility gate) are dropped rather than faked.
+ * Everything else is the same object panels are handed, which is the point:
+ * there is one API to learn, not two.
+ *
+ * `commands.register` is not offered either — a command file declares its
+ * commands by exporting them, and a second way to do it would only be a way to
+ * get them out of step with the file.
+ */
+export function createUserCommandApi(
+  deps: PanelApiDeps,
+  ctx: { guiServer: string; sessionToken: string; focusedWs: () => string | null },
+): MetafolderApi {
+  const { api } = createPanelApi(deps, {
+    // Read at every call: the focused workspace is wherever the user is when
+    // the command fires, not wherever they were when the file was loaded.
+    get wsId() {
+      return ctx.focusedWs() ?? '';
+    },
+    panelType: '',
+    guiServer: ctx.guiServer,
+    sessionToken: ctx.sessionToken,
+    root: null as unknown as ShadowRoot,
+    visibilityGate: {
+      visible: () => true,
+      whenVisible: (fn: () => unknown) => void fn(),
+      onVisibility: () => {},
+      set: () => {},
+    } as unknown as VisibilityGate,
+  });
+
+  const {
+    panelType: _panelType,
+    pageSize: _pageSize,
+    defaults: _defaults,
+    visible: _visible,
+    onVisibility: _onVisibility,
+    whenVisible: _whenVisible,
+    ...rest
+  } = api as MetafolderApi & Record<string, unknown>;
+
+  return withTopLevelInvoke({
+    ...rest,
+    commands: { invoke: api.commands.invoke, keybindings: api.commands.keybindings },
+    addKeybinding: (invocation: string, combo: string, options: { when?: string } = {}) =>
+      // Global unless the definition says otherwise: there is no panel whose
+      // focus could scope it.
+      api.addKeybinding(invocation, combo, { ...options, when: options.when ?? undefined }),
+  } as unknown as MetafolderApi & { commands: { invoke: (i: string) => unknown } }) as MetafolderApi;
 }
 
 export function createPanelApi(deps: PanelApiDeps, ctx: PanelApiCtx): PanelApiInstance {

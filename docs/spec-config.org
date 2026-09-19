@@ -98,6 +98,14 @@ crates/cli/default-config/config.toml
 There are no =include_str!=/=include_dir!= copies of these in any binary: a
 binary never holds its own defaults (see "No runtime fallback").
 
+*** User commands
+
+=gui/commands.js= is shipped like any other =gui/= default, with two worked
+examples in it. It is a JavaScript module the GUI imports at startup, so it is
+code in the configuration repository — which panel types and the shipped
+scripts already are. A missing file is a startup error, as everywhere else; see
+[[file:spec-gui.org][spec-gui]] "User commands".
+
 *** Shipped scripts
 
 Beside the per-crate subdirectories there is one *crate-agnostic* top-level

@@ -70,6 +70,14 @@ impl CommandRegistry {
         });
     }
 
+    /// Drops a command from the registry. Only the user-command loader uses
+    /// it: a definition deleted from `commands.js` must disappear from the
+    /// listing when the file is reloaded, and every other registration source
+    /// is either static or replaces itself by re-registering.
+    pub fn remove(&self, name: &str) {
+        self.commands.lock_recover().remove(name);
+    }
+
     pub fn get(&self, name: &str) -> Option<CommandDef> {
         self.commands.lock_recover().get(name).cloned()
     }
@@ -152,6 +160,21 @@ mod tests {
 
         let names: Vec<String> = registry.list().into_iter().map(|c| c.name).collect();
         assert_eq!(names, vec!["panel:split", "quit", "workspace:new"]);
+    }
+
+    #[test]
+    fn test_remove_drops_a_user_command() {
+        // `commands.js` is re-imported on reload; a command deleted from the
+        // file has to leave the listing with it.
+        let registry = CommandRegistry::new();
+        registry.register_builtin("user:gone", "Gone", true);
+        registry.register_builtin("user:stays", "Stays", true);
+
+        registry.remove("user:gone");
+
+        assert!(registry.get("user:gone").is_none());
+        assert!(registry.get("user:stays").is_some());
+        registry.remove("user:never-existed"); // no panic
     }
 
     #[test]

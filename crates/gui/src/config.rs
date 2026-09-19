@@ -347,6 +347,20 @@ impl ConfigDir {
         metafolder_core::config::read_required(&self.style_css_path())
     }
 
+    // ── User commands ────────────────────────────────────────────────────
+
+    pub fn commands_js_path(&self) -> PathBuf {
+        self.root.join("commands.js")
+    }
+
+    /// The user's command module (spec-gui "User commands"). A missing file is
+    /// an error, like every other configuration file: a shipped default is
+    /// installed by `metafolder-sync-config`, so its absence means the
+    /// installation is incomplete rather than that the user wants no commands.
+    pub fn load_commands_js(&self) -> Result<String, String> {
+        metafolder_core::config::read_required(&self.commands_js_path())
+    }
+
     // ── Panel types ──────────────────────────────────────────────────────
 
     pub fn panel_types_dir(&self) -> PathBuf {

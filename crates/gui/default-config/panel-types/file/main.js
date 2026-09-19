@@ -1073,7 +1073,8 @@ export async function mount(root, metafolder) {
    *  the options rather than registering, so every command name stays a
    *  literal at its `commands.register` call — which is what a grep, and the
    *  test that checks no keybinding names a dead command, rely on.
-   *  @param {string} noun @param {Record<string, () => unknown>} table */
+   *  @param {string} noun @param {Record<string, () => unknown>} table
+   *  @param {string} label */
   function variant(noun, table, label) {
     const names = Object.keys(table);
     return {

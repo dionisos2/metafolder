@@ -237,6 +237,14 @@ declare namespace Metafolder {
     /** Autocomplete candidates (filtered client-side like command names).
      *  `partial` is the current draft; v1 completions ignore it. */
     complete?(partial: string, prior: string[]): string[] | Promise<string[]>;
+    /** Whether the argument may be left out. Supplied inline it is used;
+     *  omitted it is skipped rather than prompted, so the command falls back
+     *  to its default (`log:revert` vs `log:revert with-dependents`). */
+    optional?: boolean;
+    /** Whether the argument applies at all, given the ones already collected.
+     *  A generic command declares the union of its operations' arguments and
+     *  drops the ones an operation has no use for. */
+    when?(prior: string[]): boolean;
   }
 
   interface CommandOptions {

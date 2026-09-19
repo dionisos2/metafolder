@@ -1193,6 +1193,7 @@ Behaviours:
 | =help:cursor=   | Turn the pointer into =?=; the next click opens the matching help page (escape cancels) |
 | =config:open=        | Open settings (keybindings, style, daemon URL) |
 | =config:reload <what>= | Re-read user configuration without a restart — see [[*Reloading configuration]] |
+| =user:*=             | Whatever =~/.config/metafolder/gui/commands.js= defines — see [[*User commands]] |
 | =devtools:open=      | Open the WebKit inspector (replaces the suppressed native menu's Inspect Element) |
 | =quit=               | Exit the GUI                                   |
 | =command-input:focus command=  | Focus the command input in command mode (default =:=)         |
@@ -1599,6 +1600,62 @@ The =config:open= settings view shows the active CSS path and offers a reload
 button (=config:reload style=); the GUI also auto-reloads on file change via
 inotify.
 
+** User commands
+
+=~/.config/metafolder/gui/commands.js= is a JavaScript module the shell imports
+at startup. Its default export maps a command name to its definition — the key
+*is* the name, so there is no registration call:
+
+#+BEGIN_SRC js
+export default {
+  'user:tag-query': {
+    label: 'Insert a tag filter in the simplified query',
+    args: [{ name: 'tag', prompt: () => 'Tag?', complete: (mf) => tagPaths(mf) }],
+    run: (mf, tag) => mf.invoke(`metarecord-list:insert simplified #=${tag}`),
+  },
+};
+#+END_SRC
+
+Every function is handed =mf= first — the same =metafolder= object panels get
+(see [[*The =metafolder= API]]), so there is one API to learn — and =run= then
+receives the arguments collected inline or through the minibuffer. =label=
+defaults to the name, =log= to true, =args= is an ordinary [[*Command][argument
+declaration]], so a user command gets interactive prompting, the =…= marker and
+the listing's keybinding expansion for free.
+
+A user command is a *builtin registered at runtime*: it has no owner, because
+its code is in the shell realm and not in any panel. Its =mf= is therefore
+scoped to the **focused workspace**, read at each call rather than captured —
+a user command acts wherever the user is when it fires. The panel-only members
+(=panelType=, =pageSize=, =defaults=, the visibility hooks) are absent rather
+than faked, and =commands.register= is not offered: a command file declares its
+commands by exporting them, and a second way to do it could only get out of
+step with the file.
+
+Builtins win a name collision. A =commands.js= entry can add to the command set
+but never silently replace part of it.
+
+A command here is expected to *compose existing commands* through =mf.invoke=.
+Something that cannot be said that way is usually a base command missing rather
+than a reason to reach into the daemon from a config file.
+
+*Failure is loud.* A missing file fails at startup like any other missing
+configuration (=metafolder-sync-config= ships a default, so its absence means
+an incomplete installation). A file that is present but does not parse, or
+whose export is malformed, can only be caught by the WebView — Rust has no
+JavaScript engine — so the shell imports it during boot, *outside* the
+per-module error boundary panels get, and a rejection leaves the initialisation
+banner on screen with the JavaScript error, line and column included. No panel
+is ever mounted, so *no* panel command is registered either and the GUI is
+unusable — configuration is corrected before the GUI runs. (The scripting API
+still answers for the handful of commands Rust serves on its own, such as the
+layout primitives: its listener is installed before the import. Nothing that
+needs a panel, or a user command, exists.)
+
+=config:reload commands= re-imports the module without a restart, forgetting
+the commands the previous version registered first, so a definition deleted
+from the file leaves the listing with it.
+
 ** Reloading configuration
 
 =config:reload <what>= re-reads user configuration without a restart:
@@ -1608,7 +1665,8 @@ inotify.
 | =keybindings= | re-reads =gui/keybindings.toml= and pushes the compiled table; the editor in [[*Configuration][=config:open=]] already applied its own edits live, this is for a file edited *outside* the GUI |
 | =style= | re-reads =gui/style.css= and emits the change, so the shell document *and* every panel's adopted stylesheet follow (the settings view's reload button goes through this) |
 | =grammar= | re-reads =core/query-grammar=; core reads the file on every call, so the GUI's startup snapshot was the only thing making an edit need a restart |
-| =all= | the three above, in that order |
+| =commands= | re-imports =gui/commands.js= (see [[*User commands]]), forgetting what the previous version registered |
+| =all= | the four above, in that order |
 
 Reloading keybindings drops the in-memory suggestions panels contributed with
 =metafolder.addKeybinding=, since the file is the whole table; a panel

@@ -29,9 +29,9 @@ function shadowRoot(): ShadowRoot {
 type Handler = (...args: string[]) => unknown;
 type ArgSpec = {
   name: string;
-  prompt: () => unknown;
-  initial?: () => unknown;
-  complete?: () => string[] | Promise<string[]>;
+  prompt: (prior: string[]) => unknown;
+  initial?: (prior: string[]) => unknown;
+  complete?: (partial: string, prior: string[]) => string[] | Promise<string[]>;
 };
 
 const ROOTS = [
@@ -104,7 +104,7 @@ describe('treeref:find', () => {
     await mount(s);
     const args = s.specs.get('treeref:find');
     expect(args).toHaveLength(1);
-    expect(await args![0].complete!()).toEqual(['music', 'movies', 'notes']);
+    expect(await args![0].complete!('', [])).toEqual(['music', 'movies', 'notes']);
   });
 
   test('an answer moves the cursor onto that child', async () => {

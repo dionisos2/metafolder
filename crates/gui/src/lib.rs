@@ -372,6 +372,12 @@ pub fn run(options: Options) {
     // The simplified-query grammar (shared, in core): expansion is done locally
     // by the GUI backend, never proxied to the daemon (spec-query).
     let grammar = or_exit(metafolder_core::simplified::load::load_source());
+    // The user's command module is read by the WebView, not here, so this is a
+    // presence check: a missing file must fail the way every other missing
+    // configuration file does, before a window exists. A file that is present
+    // but does not parse can only be caught by the shell, which refuses to
+    // finish booting and shows the JavaScript error (spec-gui "User commands").
+    or_exit(config.load_commands_js());
 
     // GUI settings (config.toml), with the CLI flags as optional overrides.
     // A missing config file is fatal (spec-config "No runtime fallback").
@@ -536,6 +542,8 @@ pub fn run(options: Options) {
             commands::expand_query,
             commands::grammar_source,
             commands::config_reload,
+            commands::register_user_command,
+            commands::forget_user_commands,
             reconcile::reconcile_run,
             duplicates::duplicate_scan,
             orphan::orphan_detect,

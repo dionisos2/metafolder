@@ -2,6 +2,7 @@
   import { onMount } from 'svelte';
   import { initStore, store } from './lib/store.svelte';
   import { installKeys } from './lib/keys';
+  import { loadUserCommands } from './lib/userCommands';
   import { installHelpCursorSheet } from './lib/cursor';
   import TabBar from './components/TabBar.svelte';
   import Slot from './components/Slot.svelte';
@@ -19,6 +20,11 @@
   onMount(async () => {
     try {
       await initStore();
+      // After initStore: the module is fetched from the GUI server, whose port
+      // and session token are only known once the initial state has landed.
+      // Deliberately not caught per-module — a broken commands.js must stop
+      // the GUI, not leave it running with commands silently missing.
+      await loadUserCommands();
       installHelpCursorSheet();
       installKeys();
     } catch (error) {

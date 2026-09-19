@@ -10,8 +10,10 @@ import {
   discardActiveInput,
   clearArgSpecs,
   collectArgs,
+  clearUserCommands,
   deadInvocations,
   filterCommands,
+  installUserCommands,
   filterCompletions,
   listedCommands,
   needsMessagePanel,
@@ -20,6 +22,9 @@ import {
   promptsForInput,
   registerArgs,
   resolvePromptValue,
+  runUserCommand,
+  validateUserCommands,
+  withTopLevelInvoke,
   resolveSubmission,
   shortcutsFor,
   shouldLogCommand,
@@ -37,6 +42,7 @@ describe('config:reload argument spec', () => {
       'keybindings',
       'style',
       'grammar',
+      'commands',
       'all',
     ]);
   });
@@ -224,6 +230,98 @@ describe('promptsForInput with optional arguments', () => {
     expect(promptsForInput('p:apply')).toBe(true); // `zone` is still missing
     expect(promptsForInput('p:apply finder')).toBe(false); // `stay` never asks
     expect(promptsForInput('p:apply finder stay')).toBe(false);
+  });
+});
+
+describe('installUserCommands', () => {
+  afterEach(() => {
+    clearArgSpecs();
+    clearUserCommands();
+  });
+
+  const mf = { tag: 'the api' } as never;
+
+  test('each key becomes a registered command, the key being the name', async () => {
+    const registered: [string, string, boolean][] = [];
+    const names = await installUserCommands(
+      { 'user:a': { label: 'A', run: () => {} }, 'user:b': { run: () => {} } },
+      mf,
+      async (name, label, log) => void registered.push([name, label, log]),
+    );
+    expect(names).toEqual(['user:a', 'user:b']);
+    // A missing label falls back to the name; `log` defaults to true.
+    expect(registered).toEqual([
+      ['user:a', 'A', true],
+      ['user:b', 'user:b', true],
+    ]);
+  });
+
+  test('`run` is called with the api first, then the collected arguments', async () => {
+    const seen: unknown[] = [];
+    await installUserCommands(
+      { 'user:a': { run: (...all: unknown[]) => void seen.push(all) } },
+      mf,
+      async () => {},
+    );
+    await runUserCommand('user:a', ['x', 'y']);
+    expect(seen).toEqual([[mf, 'x', 'y']]);
+  });
+
+  test('argument spec functions are handed the api first', async () => {
+    await installUserCommands(
+      {
+        'user:a': {
+          args: [
+            {
+              name: 'tag',
+              prompt: (api: unknown) => `prompt ${(api as { tag: string }).tag}`,
+              initial: (api: unknown) => `initial ${(api as { tag: string }).tag}`,
+              complete: (api: unknown) => [`complete ${(api as { tag: string }).tag}`],
+            },
+          ],
+          run: () => {},
+        },
+      },
+      mf,
+      async () => {},
+    );
+    const spec = argSpecFor('user:a')!;
+    expect(await spec[0].prompt([])).toBe('prompt the api');
+    expect(await spec[0].initial!([])).toBe('initial the api');
+    expect(await spec[0].complete!('', [])).toEqual(['complete the api']);
+  });
+
+  test('an entry without a callable `run` is rejected by name', async () => {
+    await expect(
+      installUserCommands({ 'user:a': { label: 'A' } }, mf, async () => {}),
+    ).rejects.toThrow(/user:a/);
+  });
+
+  test('a malformed module leaves the installed commands alone', async () => {
+    // Found end-to-end: a reload cleared first and imported second, so one bad
+    // edit took away every user command until the file parsed again.
+    await installUserCommands({ 'user:keep': { run: () => {} } }, mf, async () => {});
+    expect(() => validateUserCommands({ 'user:bad': { label: 'no run' } })).toThrow(/user:bad/);
+    expect(await runUserCommand('user:keep', [])).toBe(true);
+  });
+
+  test('a module whose default export is not an object is rejected', async () => {
+    await expect(installUserCommands(null, mf, async () => {})).rejects.toThrow(/object/);
+    await expect(installUserCommands([], mf, async () => {})).rejects.toThrow(/object/);
+  });
+
+  test('the api a user command gets can invoke other commands directly', async () => {
+    // `mf.invoke` is the whole point of a user command — it composes existing
+    // commands — so it must be on the object, not only under `mf.commands`.
+    const calls: string[] = [];
+    const api = { commands: { invoke: (i: string) => void calls.push(i) } };
+    const withInvoke = withTopLevelInvoke(api);
+    withInvoke.invoke('metarecord-list:apply simplified');
+    expect(calls).toEqual(['metarecord-list:apply simplified']);
+  });
+
+  test('runUserCommand reports an unknown name rather than pretending', async () => {
+    expect(await runUserCommand('user:nope', [])).toBe(false);
   });
 });
 

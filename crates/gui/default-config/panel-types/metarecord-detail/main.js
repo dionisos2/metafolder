@@ -891,13 +891,24 @@ export async function mount(root, metafolder) {
   // keybinding can pre-fill any prefix of it (`m s` = `metarecord:field set`).
 
   /**
-   * The operations, keyed by the first argument. `target` describes the second
-   * argument — a field *name*, or one *row* picked by its value label — and
-   * `value` the third, absent when the operation takes none.
+   * @typedef {object} FieldOp
+   * @property {{prompt: string, complete: () => string[] | Promise<string[]>}} target
+   *   the second argument: a field *name*, or one *row* picked by its value label
+   * @property {{prompt: (prior: string[]) => string,
+   *             initial?: (prior: string[]) => string | Promise<string>,
+   *             complete?: (prior: string[]) => string[] | Promise<string[]>}} [value]
+   *   the third argument, absent when the operation takes none
+   * @property {(target: string, value: string) => unknown} run
+   */
+
+  /**
+   * The operations, keyed by the first argument.
    *
    * Every spec function is tolerant of an unknown operation: they run while
    * the arguments are still being collected, outside the dispatcher's error
    * boundary, so `run` is the single place that rejects one.
+   *
+   * @type {Record<string, FieldOp>}
    */
   const FIELD_OPS = {
     set: {
@@ -1099,9 +1110,12 @@ export async function mount(root, metafolder) {
       {
         name: 'value',
         when: (p) => FIELD_OPS[p[0]]?.value !== undefined,
-        prompt: (p) => FIELD_OPS[p[0]].value.prompt(p),
-        initial: (p) => FIELD_OPS[p[0]].value.initial?.(p) ?? '',
-        complete: (_partial, p) => FIELD_OPS[p[0]].value.complete?.(p) ?? [],
+        // Optional-chained throughout, like the specs above: `when` has
+        // already excluded the operations without a value, but these run
+        // outside the dispatcher's error boundary so they must not throw.
+        prompt: (p) => FIELD_OPS[p[0]]?.value?.prompt(p) ?? 'Value?',
+        initial: (p) => FIELD_OPS[p[0]]?.value?.initial?.(p) ?? '',
+        complete: (_partial, p) => FIELD_OPS[p[0]]?.value?.complete?.(p) ?? [],
       },
     ],
     handler: (op, target, value) => {
@@ -1216,11 +1230,19 @@ export async function mount(root, metafolder) {
   // `mf metarecord field`; `delete` is the one that destroys the metarecords
   // themselves (`query/delete`), which is why it names no field.
 
+  /**
+   * @typedef {object} BulkOp
+   * @property {string} [fieldPrompt] the second argument (absent for `delete`)
+   * @property {(prior: string[]) => string} [valuePrompt]
+   *   the third argument (absent for `unset` and `delete`)
+   * @property {(field: string) => string} [confirm] what the confirmation says
+   * @property {(target: BulkTarget, field: string, raw: string) => Promise<void>} run
+   */
+
   /** Bulk operations, keyed by the first argument of `metarecord:bulk`.
-   *  `field` is the second argument (absent for `delete`), `value` the third
-   *  (absent for `unset` and `delete`). Tolerant of an unknown operation for
-   *  the same reason as FIELD_OPS: the spec functions run before the
-   *  dispatcher's error boundary. */
+   *  Tolerant of an unknown operation for the same reason as FIELD_OPS: the
+   *  spec functions run before the dispatcher's error boundary.
+   *  @type {Record<string, BulkOp>} */
   const BULK_OPS = {
     set: {
       fieldPrompt: 'Field to set?',
@@ -1347,13 +1369,13 @@ export async function mount(root, metafolder) {
       {
         name: 'field',
         when: (p) => BULK_OPS[p[0]]?.fieldPrompt !== undefined,
-        prompt: (p) => BULK_OPS[p[0]].fieldPrompt,
+        prompt: (p) => BULK_OPS[p[0]]?.fieldPrompt ?? 'Field?',
         complete: async () => catalogFieldNames(await repoForAdd()),
       },
       {
         name: 'value',
         when: (p) => BULK_OPS[p[0]]?.valuePrompt !== undefined,
-        prompt: (p) => BULK_OPS[p[0]].valuePrompt(p),
+        prompt: (p) => BULK_OPS[p[0]]?.valuePrompt?.(p) ?? 'Value?',
         complete: (_partial, p) => bulkValueCompletion(p[1]),
       },
     ],

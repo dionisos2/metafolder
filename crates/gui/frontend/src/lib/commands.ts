@@ -293,6 +293,121 @@ export function promptsForInput(invocation: string): boolean {
   return false;
 }
 
+// ── User commands (spec-gui "User commands") ───────────────────────────────
+// Commands defined in ~/.config/metafolder/gui/commands.js. They are ordinary
+// *builtins registered at runtime* — no owner, no panel — so they need a
+// handler table of their own, looked up after the builtin switch (a user
+// command must never shadow a builtin) and before the panel fallback.
+
+/** One command as `commands.js` writes it: the key is the name. */
+export interface UserCommand {
+  label?: string;
+  log?: boolean;
+  /** Like ArgSpec, but every function is handed the API first. */
+  args?: {
+    name: string;
+    optional?: boolean;
+    prompt?: (mf: unknown, prior: string[]) => string | Promise<string>;
+    initial?: (mf: unknown, prior: string[]) => string | Promise<string>;
+    complete?: (mf: unknown, partial: string, prior: string[]) => string[] | Promise<string[]>;
+    when?: (mf: unknown, prior: string[]) => boolean;
+  }[];
+  run: (mf: unknown, ...args: string[]) => unknown;
+}
+
+const userHandlers = new Map<string, (...args: string[]) => unknown>();
+
+// Set by the loader at boot. Late-bound because the loader imports this module
+// (for installUserCommands), so importing it back would be a cycle.
+let reloadUserCommands: () => Promise<unknown> = async () => {};
+
+/** Registers how `config:reload commands` re-imports the user module. */
+export function setUserCommandReloader(reload: () => Promise<unknown>): void {
+  reloadUserCommands = reload;
+}
+
+/**
+ * Checks a user module's default export and returns its entries.
+ *
+ * Separate from installing so a caller can find out a file is malformed
+ * *before* tearing down the commands a previous version installed: a bad edit
+ * should cost you the reload, not every command you had.
+ *
+ * Throws naming the offending command; at boot the rejection stops the GUI.
+ */
+export function validateUserCommands(module: unknown): [string, UserCommand][] {
+  if (typeof module !== 'object' || module === null || Array.isArray(module)) {
+    throw new Error('commands.js must default-export an object of command definitions');
+  }
+  const entries = Object.entries(module as Record<string, UserCommand>);
+  for (const [name, command] of entries) {
+    if (typeof (command as UserCommand | undefined)?.run !== 'function') {
+      throw new Error(`commands.js: "${name}" has no \`run\` function`);
+    }
+  }
+  return entries;
+}
+
+export async function installUserCommands(
+  module: unknown,
+  mf: unknown,
+  register: (name: string, label: string, log: boolean) => Promise<void>,
+): Promise<string[]> {
+  const names: string[] = [];
+  for (const [name, command] of validateUserCommands(module)) {
+    if (command.args) {
+      registerArgs(
+        name,
+        command.args.map((spec) => ({
+          name: spec.name,
+          optional: spec.optional,
+          prompt: (prior: string[]) => spec.prompt?.(mf, prior) ?? spec.name,
+          ...(spec.initial ? { initial: (prior: string[]) => spec.initial!(mf, prior) } : {}),
+          ...(spec.complete
+            ? { complete: (partial: string, prior: string[]) => spec.complete!(mf, partial, prior) }
+            : {}),
+          ...(spec.when ? { when: (prior: string[]) => spec.when!(mf, prior) } : {}),
+        })),
+      );
+    }
+    userHandlers.set(name, (...args: string[]) => command.run(mf, ...args));
+    await register(name, command.label ?? name, command.log ?? true);
+    names.push(name);
+  }
+  return names;
+}
+
+/**
+ * Lifts `commands.invoke` to the top of the API object.
+ *
+ * Composing existing commands is what a user command is *for*, so `mf.invoke`
+ * is the one call that should not need a path through the object. Panels keep
+ * `commands.invoke` and get this too — one alias, not two APIs.
+ */
+export function withTopLevelInvoke<T extends { commands: { invoke: (i: string) => unknown } }>(
+  api: T,
+): T & { invoke: (invocation: string) => unknown } {
+  return Object.assign(Object.create(Object.getPrototypeOf(api) as object) as T, api, {
+    invoke: (invocation: string) => api.commands.invoke(invocation),
+  });
+}
+
+/** Runs a user command; false when no such command is installed. */
+export async function runUserCommand(name: string, args: string[]): Promise<boolean> {
+  const handler = userHandlers.get(name);
+  if (!handler) return false;
+  await handler(...args);
+  return true;
+}
+
+/** Drops every installed user command, for `config:reload commands`. */
+export function clearUserCommands(): string[] {
+  const names = [...userHandlers.keys()];
+  for (const name of names) registerArgs(name, []);
+  userHandlers.clear();
+  return names;
+}
+
 /** Test hook: drop every registered arg spec. */
 export function clearArgSpecs(): void {
   argSpecs.clear();
@@ -708,7 +823,7 @@ async function runOrder(path: string): Promise<void> {
 // What the GUI can re-read without a restart. Kept in step with
 // `RELOAD_TARGETS` in crates/gui/src/commands.rs, which is where the
 // omissions (config.toml, panel-types, ignore-presets) are argued.
-const RELOAD_TARGETS = ['keybindings', 'style', 'grammar'];
+const RELOAD_TARGETS = ['keybindings', 'style', 'grammar', 'commands'];
 
 registerArgs('config:reload', [
   {
@@ -1210,6 +1325,9 @@ async function runCommand(name: string, args: string[], ws: string | null): Prom
       return true;
     case 'config:reload': {
       const report = await invoke<string>('config_reload', { what: args[0] });
+      // The command module is the shell's to re-import; Rust has only checked
+      // that the file is readable.
+      if (args[0] === 'commands' || args[0] === 'all') await reloadUserCommands();
       await status(report, 'info');
       return true;
     }
@@ -1436,7 +1554,10 @@ async function runCommand(name: string, args: string[], ws: string | null): Prom
       return true;
   }
 
-  // Not a shell builtin: a command registered by a panel type.
+  // Not a shell builtin: a user command, then a panel's. Builtins win, so a
+  // commands.js entry can add to the set but never quietly replace part of it.
+  if (await runUserCommand(name, args)) return true;
+
   const command = store.commands.find((c) => c.name === name);
   if (command && command.owner && panelDispatch) {
     await panelDispatch(command, args);
