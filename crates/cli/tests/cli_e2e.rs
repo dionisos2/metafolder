@@ -543,6 +543,73 @@ fn test_get_predicate_with_limit_and_sort() {
 }
 
 #[test]
+fn test_get_count_prints_the_total() {
+    let (repo, _root) = init_repo("get_count");
+    create_metarecord(&repo, &["rating:int=1"]);
+    create_metarecord(&repo, &["rating:int=2"]);
+    create_metarecord(&repo, &["rating:int=3"]);
+
+    // A query scope: the number of matches on one line, and no uuid.
+    let out = mf(&["-u", &repo, "metarecord", "-q", "rating > 1", "get", "--count"]);
+    assert_ok(&out);
+    assert_eq!(out.stdout.trim(), "2", "stdout: {}", out.stdout);
+
+    // No selector is the whole repository, like the listing it replaces — the
+    // answer must be that listing's length (root metarecord included).
+    let all = mf(&["-u", &repo, "metarecord", "get"]);
+    assert_ok(&all);
+    let out = mf(&["-u", &repo, "metarecord", "get", "--count"]);
+    assert_ok(&out);
+    assert_eq!(out.stdout.trim(), all.stdout.lines().count().to_string());
+
+    // An empty set counts zero; it is not an error and prints no blank uuid.
+    let out = mf(&["-u", &repo, "metarecord", "-q", "rating > 99", "get", "--count"]);
+    assert_ok(&out);
+    assert_eq!(out.stdout.trim(), "0", "stdout: {}", out.stdout);
+}
+
+#[test]
+fn test_get_count_ignores_the_page_size() {
+    // The point of `--count` is that it costs one round-trip whatever the scope:
+    // a page smaller than the answer must not truncate it (nor page for it).
+    let (repo, _root) = init_repo("count_page");
+    for i in 0..5 {
+        create_metarecord(&repo, &[&format!("rating:int={i}")]);
+    }
+    let cfg = temp_dir("count_cfg");
+    let cli = cfg.path().join("metafolder").join("cli");
+    std::fs::create_dir_all(&cli).unwrap();
+    std::fs::write(cli.join("config.toml"), "[settings]\npage-size = 2\n").unwrap();
+
+    let out = mf_full(
+        &["-u", &repo, "metarecord", "-q", "rating >= 0", "get", "--count"],
+        None,
+        &[("XDG_CONFIG_HOME", cfg.path().to_str().unwrap())],
+        true,
+    );
+    assert_ok(&out);
+    assert_eq!(out.stdout.trim(), "5", "stdout: {}", out.stdout);
+}
+
+#[test]
+fn test_get_count_rejects_a_uuid_selector_and_the_output_flags() {
+    let (repo, _root) = init_repo("count_usage");
+    let uuid = create_metarecord(&repo, &["x:int=1"]);
+
+    // `-i` addresses one metarecord: counting it answers its own question.
+    let out = mf(&["-u", &repo, "metarecord", "-i", &uuid, "get", "--count"]);
+    assert_eq!(out.code, 2, "stdout: {}\nstderr: {}", out.stdout, out.stderr);
+
+    // A count has no rows, so it shapes none.
+    for flag in [vec!["--select", "x"], vec!["--limit", "2"], vec!["--resolve-tree", "mfr_path"]] {
+        let mut args = vec!["-u", &repo, "metarecord", "get", "--count"];
+        args.extend(flag.iter().copied());
+        let out = mf(&args);
+        assert_eq!(out.code, 2, "{flag:?} should conflict with --count: {}", out.stderr);
+    }
+}
+
+#[test]
 fn test_list_prints_uuids_one_per_line() {
     let (repo, _root) = init_repo("list");
     let a = create_metarecord(&repo, &["x:int=1"]);

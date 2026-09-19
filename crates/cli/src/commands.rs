@@ -415,13 +415,8 @@ pub fn delete(ctx: &Ctx, target: &str, force: bool) -> Result<i32, CliError> {
         }
         Target::Predicate(query) => {
             if !force {
-                // Count for the prompt via COUNT(*) (limit+count), without
-                // loading every UUID.
-                let resp = ctx.client.post(
-                    &format!("{base}/query"),
-                    &json!({"query": query, "limit": 1, "count": true}),
-                )?;
-                let matched = resp["total"].as_u64().unwrap_or(0);
+                // Count for the prompt without loading every UUID.
+                let matched = query_total(ctx, &query)?;
                 if matched == 0 {
                     println!("0");
                     return Ok(0);
@@ -554,6 +549,19 @@ pub fn query(ctx: &Ctx, args: &QueryArgs) -> Result<i32, CliError> {
 /// matches the whole universe. There is no list endpoint.
 fn match_all_query() -> Json {
     json!({"type": "is_unknown", "field": "__never__"})
+}
+
+/// How many metarecords a query matches, in **one** round-trip: the daemon
+/// counts through the bitmap index (O(1)) and answers a `total`, so nothing
+/// proportional to the scope crosses the wire. The `limit: 1` is the envelope's
+/// price — the bare-array response has nowhere to carry a total, so the daemon
+/// rejects `count` without a `limit` (routes.rs, `run_query_inner`).
+fn query_total<Q: serde::Serialize>(ctx: &Ctx, query: &Q) -> Result<u64, CliError> {
+    let base = ctx.repo_base()?;
+    let resp = ctx
+        .client
+        .post(&format!("{base}/query"), &json!({"query": query, "limit": 1, "count": true}))?;
+    Ok(resp["total"].as_u64().unwrap_or(0))
 }
 
 /// Runs an already-built query and prints it the way `args` asks — uuids,
@@ -739,6 +747,7 @@ pub fn metarecord_get(
     select: Option<&str>,
     sort: &[String],
     limit: Option<usize>,
+    count: bool,
     values: bool,
     tsv: bool,
     resolve_tree: Option<&str>,
@@ -749,6 +758,22 @@ pub fn metarecord_get(
     // carried it.
     if tsv && select.is_none() && resolve_tree.is_none() {
         return Err(CliError::Usage("--tsv requires --select with a field list".into()));
+    }
+    // `--count` answers about the *set*, so it takes the selectors that name one
+    // (a query, or none for the whole repository) and prints a single number.
+    // `-i` names one metarecord, whose count is its own question.
+    if count {
+        if by_id {
+            return Err(CliError::Usage(
+                "mf metarecord get --count takes a query selector (-q) or none, not -i".into(),
+            ));
+        }
+        let query = match selector {
+            None => match_all_query(),
+            Some(predicate) => parse_dsl(predicate)?,
+        };
+        println!("{}", query_total(ctx, &query)?);
+        return Ok(0);
     }
     if let Some(field) = resolve_tree {
         let selector = selector.ok_or_else(|| {

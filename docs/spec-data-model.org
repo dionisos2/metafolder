@@ -960,6 +960,13 @@ DSL — the value is escaped, so a name with quotes cannot inject. Bare
 selector the tagging scripts use instead of hand-quoting =title = "$X"=.
 
 =--select=, =--sort=, =--limit=, =--values= override the default output shape.
+=--count= replaces it: it prints *how many* metarecords the selector matches, on
+one line, and no UUID. It is one round-trip whatever the size of the scope — the
+daemon counts through the bitmap index (=count: true= on =POST /query=, O(1)) —
+so a walk that needs "how many are left" after every answer does not pay for the
+list it is not printing. Query selectors only: =-i= names a single metarecord,
+so =--count= with it is a usage error (exit 2), as it is with the flags that
+shape rows (=--select=, =--values=, =--tsv=, =--sort=, =--limit=).
 =--select a,b,c --tsv= prints *one tab-separated row per metarecord* — the first
 value of each selected field, in order, empty for an absent field — the compact
 dump the scripts consume (e.g. the tag vocabulary).

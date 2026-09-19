@@ -517,6 +517,11 @@ enum MetarecordVerb {
         /// Stop after N metarecords
         #[arg(long)]
         limit: Option<usize>,
+        /// Print how many metarecords the selector matches, instead of them.
+        /// One round-trip, exact, and O(1) on the index — the count a walk
+        /// needs per question. Query selectors only (-q, or none).
+        #[arg(long, conflicts_with_all = ["select", "values", "sort", "limit", "tsv", "resolve_tree"])]
+        count: bool,
         /// Print the selected field's raw values, one per line
         #[arg(long, requires = "select")]
         values: bool,
@@ -1262,12 +1267,13 @@ fn dispatch_metarecord(
         select: None,
         sort: Vec::new(),
         limit: None,
+        count: false,
         values: false,
         tsv: false,
         resolve_tree: None,
     });
     match verb {
-        MetarecordVerb::Get { select, sort, limit, values, tsv, resolve_tree } => {
+        MetarecordVerb::Get { select, sort, limit, count, values, tsv, resolve_tree } => {
             commands::metarecord_get(
                 ctx,
                 selector.as_deref(),
@@ -1275,6 +1281,7 @@ fn dispatch_metarecord(
                 select.as_deref(),
                 &sort,
                 limit,
+                count,
                 values,
                 tsv,
                 resolve_tree.as_deref(),

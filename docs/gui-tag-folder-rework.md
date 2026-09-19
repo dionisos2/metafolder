@@ -123,11 +123,15 @@ folder on `m`.)
    `QueryRoots.node` exactly as `->*` path targets and exact-node equality are —
    and there is no SQL engine left to fall to (spec-indexing "No operand runs in
    SQL").
-2. **`mf … --count`.** The CLI exposes no count at all; counting by counting
-   lines is O(scope) output per question and defeats the design. See the roadmap
-   item on CLI paging — the `--count` half is a prerequisite here, the `--cursor`
-   half is not (this walk never pages: the answered entries leave the set, so
+2. ~~**`mf … --count`.**~~ ✅ *Done (September 2026).* The CLI exposed no count
+   at all, and counting by counting lines is O(scope) output per question, which
+   defeats the design. `mf metarecord [-q …] get --count` now prints the match
+   count in one round-trip (`count: true` on `POST /query`, O(1) on the index),
+   for query selectors only. The `--cursor` half of that roadmap item is *not* a
+   prerequisite (this walk never pages: the answered entries leave the set, so
    "the first undecided" is always the right next question).
+
+Both prerequisites are met: the script can be written.
 
 ## Behaviour changes to write into the script header
 
