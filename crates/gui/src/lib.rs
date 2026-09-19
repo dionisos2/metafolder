@@ -100,6 +100,11 @@ fn register_builtins(registry: &CommandRegistry) {
         ("message:clear", "Clear the workspace message log", true),
         ("status:clear", "Clear the status bar message", false),
         ("config:open", "Open the settings view", true),
+        (
+            "config:reload",
+            "Re-read user configuration without a restart (keybindings / style / grammar / all)",
+            true,
+        ),
         ("devtools:open", "Open the WebKit web inspector", true),
         ("quit", "Exit the GUI", true),
         ("daemon:set", "Change a daemon setting (url)", true),
@@ -366,7 +371,7 @@ pub fn run(options: Options) {
     let keybindings = or_exit(config.load_keybindings());
     // The simplified-query grammar (shared, in core): expansion is done locally
     // by the GUI backend, never proxied to the daemon (spec-query).
-    let (grammar, grammar_source) = or_exit(metafolder_core::simplified::load::load_source());
+    let grammar = or_exit(metafolder_core::simplified::load::load_source());
 
     // GUI settings (config.toml), with the CLI flags as optional overrides.
     // A missing config file is fatal (spec-config "No runtime fallback").
@@ -418,8 +423,8 @@ pub fn run(options: Options) {
                 registry,
                 config: config.clone(),
                 keybindings: keybindings.clone(),
-                grammar,
-                grammar_source,
+                grammar: Mutex::new(grammar),
+
                 gui_port,
                 page_sizes: page_sizes.clone(),
                 picker_seeds: picker_seeds.clone(),
@@ -530,6 +535,7 @@ pub fn run(options: Options) {
             commands::parse_query,
             commands::expand_query,
             commands::grammar_source,
+            commands::config_reload,
             reconcile::reconcile_run,
             duplicates::duplicate_scan,
             orphan::orphan_detect,

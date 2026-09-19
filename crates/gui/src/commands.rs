@@ -21,11 +21,12 @@ pub struct App {
     pub config: Arc<ConfigDir>,
     /// Shared with the GUI HTTP server (temporary /gui/input bindings).
     pub keybindings: Arc<Mutex<KeybindingSet>>,
-    /// The simplified-query grammar (read-only), for local query expansion.
-    pub grammar: metafolder_core::simplified::grammar::Grammar,
-    /// The raw grammar source as loaded at startup, for display in the help
-    /// panel's query page (spec-gui "Help").
-    pub grammar_source: String,
+    /// The simplified-query grammar and its raw source, for local query
+    /// expansion and for display in the help panel's query page (spec-gui
+    /// "Help"). Behind a lock because `config:reload grammar` swaps them:
+    /// core re-reads the file on every `load_source`, so the GUI holding a
+    /// snapshot was the only thing making an edit need a restart.
+    pub grammar: Mutex<(metafolder_core::simplified::grammar::Grammar, String)>,
     pub gui_port: u16,
     /// Per-panel progressive-loading page sizes (config.toml `[page-size]`).
     pub page_sizes: crate::config::PageSizes,
@@ -458,12 +459,12 @@ pub fn parse_query(dsl: String) -> Result<Value, String> {
     serde_json::to_value(query).map_err(|e| format!("cannot serialize the query: {e}"))
 }
 
-/// Returns the simplified-query grammar source as loaded at startup, for the
-/// help panel's query page (spec-gui "Help"). A snapshot: it does not re-read
-/// the file (the grammar in effect is the one loaded at startup).
+/// Returns the source of the simplified-query grammar in effect, for the help
+/// panel's query page (spec-gui "Help"). It does not re-read the file —
+/// `config:reload grammar` does that, and swaps both halves together.
 #[tauri::command]
 pub fn grammar_source(app: AppHandle) -> String {
-    app.grammar_source.clone()
+    app.grammar.lock_recover().1.clone()
 }
 
 /// Expands simplified-language text to normal DSL text locally, via the shared
@@ -475,7 +476,8 @@ pub fn expand_query(app: AppHandle, text: String) -> Result<String, String> {
         .duration_since(std::time::UNIX_EPOCH)
         .map(|d| d.as_millis() as i64)
         .unwrap_or(0);
-    metafolder_core::simplified::engine::expand_at(&app.grammar, &text, now_ms)
+    let grammar = app.grammar.lock_recover();
+    metafolder_core::simplified::engine::expand_at(&grammar.0, &text, now_ms)
 }
 
 // ── Value picker (spec-gui "Value picker") ─────────────────────────────────
@@ -688,4 +690,92 @@ pub async fn list_scripts() -> Result<Vec<metafolder_core::scripts::ScriptInfo>,
     tauri::async_runtime::spawn_blocking(metafolder_core::scripts::list_scripts)
         .await
         .map_err(|e| format!("blocking task failed: {e}"))
+}
+
+// ── Reloading the user configuration (spec-gui "Reloading configuration") ──
+
+/// What `config:reload` can re-read while the GUI runs, in the order `all`
+/// applies them.
+///
+/// The list is short on purpose. Three config files are *not* here and the
+/// omissions are deliberate:
+/// - `core/ignore-presets.toml` is already live — `crate::ignore::load_presets`
+///   reads it on every invocation, so nothing is cached to refresh.
+/// - `gui/config.toml` is only half reloadable: `gui-port` bound the HTTP
+///   server and `[settings]` was consumed when the polling tasks were spawned,
+///   while `[page-size]` / `[panels]` / `[panel-defaults]` are frozen into each
+///   panel instance at mount. Refreshing the reloadable half alone would leave
+///   the GUI in a state no config file describes.
+/// - `gui/panel-types/` is served from disk per request, so the *server* is
+///   already live; what is stale is the WebView's module cache, and clearing it
+///   means tearing down panel instances that are kept for the whole session.
+pub const RELOAD_TARGETS: [&str; 3] = ["keybindings", "style", "grammar"];
+
+/// Resolves a `config:reload` argument, or says what it could have been.
+fn reload_targets(what: &str) -> Result<Vec<&'static str>, String> {
+    if what == "all" {
+        return Ok(RELOAD_TARGETS.to_vec());
+    }
+    RELOAD_TARGETS.iter().find(|t| **t == what).map(|t| vec![*t]).ok_or_else(|| {
+        format!("unknown reload target: \"{what}\" (expected {} / all)", RELOAD_TARGETS.join(" / "))
+    })
+}
+
+/// Re-reads user configuration without a restart, and reports what it did.
+///
+/// Each target swaps the value the GUI holds and pushes whatever the frontend
+/// keeps a copy of. `style` emits the change rather than returning the CSS,
+/// because the panels' adopted stylesheet listens for the event and the shell
+/// document alone is not the whole picture.
+#[tauri::command]
+pub fn config_reload(app: AppHandle, what: String) -> Result<String, String> {
+    let mut done: Vec<&str> = Vec::new();
+    for target in reload_targets(&what)? {
+        match target {
+            "keybindings" => {
+                let set = app.config.load_keybindings()?;
+                *app.keybindings.lock_recover() = set;
+                // Through push_keytable, not push_keybindings: a script's
+                // temporary bindings are layered on top and must survive.
+                crate::server::gui_api::push_keytable(&app.gui, &app.keybindings);
+            }
+            "style" => {
+                let css = app.config.load_style()?;
+                app.gui.notify(crate::events::STYLE_CHANGED, serde_json::json!({ "css": css }));
+            }
+            "grammar" => {
+                *app.grammar.lock_recover() = metafolder_core::simplified::load::load_source()?;
+            }
+            _ => unreachable!("reload_targets only yields known targets"),
+        }
+        done.push(target);
+    }
+    Ok(format!("reloaded {}", done.join(", ")))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_a_named_target_resolves_to_itself() {
+        assert_eq!(reload_targets("grammar").unwrap(), vec!["grammar"]);
+    }
+
+    #[test]
+    fn test_all_covers_every_target() {
+        assert_eq!(reload_targets("all").unwrap(), RELOAD_TARGETS.to_vec());
+    }
+
+    #[test]
+    fn test_an_unknown_target_names_the_alternatives() {
+        // The command input completes over these, but a script or a keybinding
+        // can name anything — so the error has to teach rather than just refuse.
+        let error = reload_targets("panels").unwrap_err();
+        assert!(error.contains("panels"), "{error}");
+        for target in RELOAD_TARGETS {
+            assert!(error.contains(target), "{error} does not mention {target}");
+        }
+        assert!(error.contains("all"), "{error}");
+    }
 }

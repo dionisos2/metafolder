@@ -704,6 +704,20 @@ async function runOrder(path: string): Promise<void> {
   await status(report.message, 'info');
 }
 
+// ── Reloading the user configuration ───────────────────────────────────────
+// What the GUI can re-read without a restart. Kept in step with
+// `RELOAD_TARGETS` in crates/gui/src/commands.rs, which is where the
+// omissions (config.toml, panel-types, ignore-presets) are argued.
+const RELOAD_TARGETS = ['keybindings', 'style', 'grammar'];
+
+registerArgs('config:reload', [
+  {
+    name: 'target',
+    prompt: () => `Reload what? (${[...RELOAD_TARGETS, 'all'].join(' / ')})`,
+    complete: () => [...RELOAD_TARGETS, 'all'],
+  },
+]);
+
 registerArgs('script:run', [
   { name: 'script', prompt: () => 'Run script:', complete: () => scriptCandidates() },
 ]);
@@ -1194,6 +1208,11 @@ async function runCommand(name: string, args: string[], ws: string | null): Prom
     case 'message:clear':
       if (ws) await invoke('clear_messages', { wsId: ws });
       return true;
+    case 'config:reload': {
+      const report = await invoke<string>('config_reload', { what: args[0] });
+      await status(report, 'info');
+      return true;
+    }
     case 'config:open':
       store.ui.configOpen = true;
       return true;

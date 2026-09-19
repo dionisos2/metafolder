@@ -29,6 +29,26 @@ import type { LayoutView } from '../src/lib/types';
 // Runs before any clearArgSpecs() (called in the argSpecs-registry suite below):
 // the `recent` builtin registers its argument spec at module load, so the
 // command input collects the metarecord pick interactively.
+describe('config:reload argument spec', () => {
+  test('completes over the reloadable targets plus `all`', async () => {
+    const spec = argSpecFor('config:reload');
+    expect(spec).toHaveLength(1);
+    expect(await spec![0].complete!('', [])).toEqual([
+      'keybindings',
+      'style',
+      'grammar',
+      'all',
+    ]);
+  });
+
+  test('the target is optional: invoked bare it asks, never refuses', async () => {
+    // Bare `config:reload` is the discoverable form; it must prompt rather
+    // than fail, which is what the ellipsis in the listing promises.
+    expect(promptsForInput('config:reload')).toBe(true);
+    expect(promptsForInput('config:reload grammar')).toBe(false);
+  });
+});
+
 describe('recent builtin', () => {
   test('registers its metarecord argument spec at module load', () => {
     expect(argSpecFor('recent')?.map((s) => s.name)).toEqual(['metarecord']);

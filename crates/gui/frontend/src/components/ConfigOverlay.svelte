@@ -1,6 +1,7 @@
 <script lang="ts">
   import { invoke } from '../lib/ipc';
-  import { applyStyle, store } from '../lib/store.svelte';
+  import { store } from '../lib/store.svelte';
+  import { dispatch } from '../lib/commands';
   import type { Binding, ConfigInfo } from '../lib/types';
 
   let combo = $state('');
@@ -19,7 +20,10 @@
   });
 
   async function reloadStyle() {
-    applyStyle(await invoke<string>('load_style'));
+    // Through the command, not `load_style`: that only refreshed the shell
+    // document and left every panel's adopted stylesheet on the old CSS,
+    // because the panels follow the `style-changed` event instead.
+    await dispatch('config:reload style');
   }
 
   function close() {

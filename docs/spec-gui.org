@@ -1192,6 +1192,7 @@ Behaviours:
 | =help:open [text]=   | Open the =help= panel for a topic (an exact name opens its page; else search) |
 | =help:cursor=   | Turn the pointer into =?=; the next click opens the matching help page (escape cancels) |
 | =config:open=        | Open settings (keybindings, style, daemon URL) |
+| =config:reload <what>= | Re-read user configuration without a restart — see [[*Reloading configuration]] |
 | =devtools:open=      | Open the WebKit inspector (replaces the suppressed native menu's Inspect Element) |
 | =quit=               | Exit the GUI                                   |
 | =command-input:focus command=  | Focus the command input in command mode (default =:=)         |
@@ -1595,7 +1596,38 @@ globally to the WebView. The stylesheet is shipped and installed by
 =metafolder-sync-config= (see [[file:spec-config.org][spec-config]]); a missing
 or unreadable file is a startup error, not a fall back to an embedded default.
 The =config:open= settings view shows the active CSS path and offers a reload
-button; the GUI also auto-reloads on file change via inotify.
+button (=config:reload style=); the GUI also auto-reloads on file change via
+inotify.
+
+** Reloading configuration
+
+=config:reload <what>= re-reads user configuration without a restart:
+
+| =what= | effect |
+|--------+--------|
+| =keybindings= | re-reads =gui/keybindings.toml= and pushes the compiled table; the editor in [[*Configuration][=config:open=]] already applied its own edits live, this is for a file edited *outside* the GUI |
+| =style= | re-reads =gui/style.css= and emits the change, so the shell document *and* every panel's adopted stylesheet follow (the settings view's reload button goes through this) |
+| =grammar= | re-reads =core/query-grammar=; core reads the file on every call, so the GUI's startup snapshot was the only thing making an edit need a restart |
+| =all= | the three above, in that order |
+
+Reloading keybindings drops the in-memory suggestions panels contributed with
+=metafolder.addKeybinding=, since the file is the whole table; a panel
+re-registers them when it is next instantiated. A script's temporary bindings
+survive — the push layers them back on.
+
+Three configuration files are deliberately *not* reloadable, and the reasons
+are worth stating because their absence looks like an oversight:
+- =core/ignore-presets.toml= is *already* live: it is read on every invocation
+  and nothing caches it, so there would be nothing to refresh.
+- =gui/config.toml= is only half reloadable. =gui-port= bound the HTTP server
+  and =[settings]= was consumed when the polling tasks were spawned; =[page-size]=,
+  =[panels]= and =[panel-defaults]= are frozen into each panel instance when it
+  mounts. Refreshing the other half alone would leave the GUI in a state no
+  configuration file describes, which is worse than asking for a restart.
+- =gui/panel-types/= is served from disk per request, so the *server* side is
+  already live; what is stale is the WebView's module cache, and clearing it
+  means tearing down panel instances that are deliberately kept for the whole
+  session (and sub-modules like =./columns.js= would still not be re-imported).
 
 ** Panel type system
 
