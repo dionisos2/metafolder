@@ -144,7 +144,7 @@
   { command = "trash:next", when = "trash" },
   { command = "recent:next", when = "recent" },
   { command = "duplicates:next", when = "duplicates" },
-  { command = "metarecord:field-next", when = "metarecord-detail" },
+  { command = "metarecord:row-next", when = "metarecord-detail" },
 ]
 "up" = [
   { command = "metarecord-list:prev", when = "file" },
@@ -156,7 +156,7 @@
   { command = "trash:prev", when = "trash" },
   { command = "recent:prev", when = "recent" },
   { command = "duplicates:prev", when = "duplicates" },
-  { command = "metarecord:field-prev", when = "metarecord-detail" },
+  { command = "metarecord:row-prev", when = "metarecord-detail" },
 ]
 
 # Vim-style down / up.
@@ -168,7 +168,7 @@
   { command = "trash:next", when = "trash" },
   { command = "recent:next", when = "recent" },
   { command = "duplicates:next", when = "duplicates" },
-  { command = "metarecord:field-next", when = "metarecord-detail" },
+  { command = "metarecord:row-next", when = "metarecord-detail" },
 ]
 "k" = [
   { command = "metarecord-list:prev", when = "metarecord-list" },
@@ -178,7 +178,7 @@
   { command = "trash:prev", when = "trash" },
   { command = "recent:prev", when = "recent" },
   { command = "duplicates:prev", when = "duplicates" },
-  { command = "metarecord:field-prev", when = "metarecord-detail" },
+  { command = "metarecord:row-prev", when = "metarecord-detail" },
 ]
 
 # Jump to first / last row.
@@ -222,7 +222,7 @@
   { command = "trash:restore", when = "trash" },
   { command = "recent:open", when = "recent" },
   { command = "duplicates:toggle", when = "duplicates" },
-  { command = "metarecord:field-edit", when = "metarecord-detail" },
+  { command = "metarecord:row-edit", when = "metarecord-detail" },
 ]
 
 # Right / left: descend into / go up (open in the other panel for lists).
@@ -384,7 +384,7 @@
 "c" = { command = "metarecord-list:clear-queries", when = "metarecord-list" }
 
 # metarecord-detail: field actions and record creation.
-"d" = { command = "metarecord:field-delete", when = "metarecord-detail" }
+"d" = { command = "metarecord:row-delete", when = "metarecord-detail" }
 "a" = { command = "metarecord:open-add-field", when = "metarecord-detail" }
 "ctrl+n" = [
   { command = "metarecord:create", when = "metarecord-detail" },
@@ -400,45 +400,76 @@
 # family is reachable whether the list or the detail panel is focused. Each
 # command still collects its arguments (field / value / type) in the command
 # input, with completion (see spec-gui "Interactive command arguments").
-# Mnemonics: s=set, a=add, v=value(edit), d=delete, n=name, t=type, b=bulk.
+# Mnemonics: s=set, a=add, v=value(edit), d=delete(a value), u=unset, n=name,
+# t=type, b=bulk. Both families are one command with the operation as its first
+# argument (`metarecord:field` / `metarecord:bulk`), so each binding here is
+# that command with the operation pre-filled — the remaining arguments (field /
+# value / type) are still collected in the command input, with completion.
+# These pre-filled invocations are exactly what the command-input listing
+# expands, so every one of them is discoverable there with its combo.
 "m s" = [
-  { command = "metarecord:set-field", when = "metarecord-detail" },
-  { command = "metarecord:set-field", when = "metarecord-list" },
+  { command = "metarecord:field set", when = "metarecord-detail" },
+  { command = "metarecord:field set", when = "metarecord-list" },
 ]
 "m a" = [
-  { command = "metarecord:add-field-value", when = "metarecord-detail" },
-  { command = "metarecord:add-field-value", when = "metarecord-list" },
+  { command = "metarecord:field add", when = "metarecord-detail" },
+  { command = "metarecord:field add", when = "metarecord-list" },
 ]
 "m v" = [
-  { command = "metarecord:edit-field-value", when = "metarecord-detail" },
-  { command = "metarecord:edit-field-value", when = "metarecord-list" },
+  { command = "metarecord:field edit", when = "metarecord-detail" },
+  { command = "metarecord:field edit", when = "metarecord-list" },
 ]
 "m d" = [
-  { command = "metarecord:delete-field-value", when = "metarecord-detail" },
-  { command = "metarecord:delete-field-value", when = "metarecord-list" },
+  { command = "metarecord:field remove", when = "metarecord-detail" },
+  { command = "metarecord:field remove", when = "metarecord-list" },
+]
+# `unset` removes the field entirely (every row → unknown), where `remove`
+# takes one value out of it. The per-record family had no unset until the two
+# scopes were given the same operation set.
+"m u" = [
+  { command = "metarecord:field unset", when = "metarecord-detail" },
+  { command = "metarecord:field unset", when = "metarecord-list" },
 ]
 "m n" = [
-  { command = "metarecord:edit-field-name", when = "metarecord-detail" },
-  { command = "metarecord:edit-field-name", when = "metarecord-list" },
+  { command = "metarecord:field rename", when = "metarecord-detail" },
+  { command = "metarecord:field rename", when = "metarecord-list" },
 ]
 "m t" = [
-  { command = "metarecord:edit-field-type", when = "metarecord-detail" },
-  { command = "metarecord:edit-field-type", when = "metarecord-list" },
+  { command = "metarecord:field retype", when = "metarecord-detail" },
+  { command = "metarecord:field retype", when = "metarecord-list" },
 ]
-# Bulk edits act on the list selection / current query. From the list, "m b"
-# opens the bulk-edit operation picker (set / append / remove / unset / delete);
-# it then delegates to the per-operation command, which collects its field/value
-# in the command input with completion. From the detail panel the per-operation
-# commands are bound directly (there is no umbrella there).
-"m b" = { command = "metarecord-list:bulk-edit", when = "metarecord-list" }
-"m m s" = { command = "metarecord:bulk-set-field", when = "metarecord-detail" }
-"m m a" = { command = "metarecord:bulk-add-field-value", when = "metarecord-detail" }
-"m m r" = { command = "metarecord:bulk-remove-field", when = "metarecord-detail" }
-# The other two bulk operations the umbrella picker offers, on the same prefix:
-# "v" removes one value of a field (where "r" removes the field), "d" deletes the
-# metarecords themselves (confirmed, naming the count).
-"m m v" = { command = "metarecord:bulk-remove-value", when = "metarecord-detail" }
-"m m d" = { command = "metarecord:bulk-delete", when = "metarecord-detail" }
+# Bulk operations act on the list selection / current query. "m b" runs the
+# command bare, so it asks for the operation; the "m m <op>" sequences name it
+# up front. The key layout is unchanged from when these were eleven separate
+# commands — only what they invoke changed — and they now work from either
+# panel, like the per-record family above (a command reaches its panel whatever
+# is focused, so the old list/detail split was an artifact of ownership).
+"m b" = [
+  { command = "metarecord:bulk", when = "metarecord-list" },
+  { command = "metarecord:bulk", when = "metarecord-detail" },
+]
+"m m s" = [
+  { command = "metarecord:bulk set", when = "metarecord-detail" },
+  { command = "metarecord:bulk set", when = "metarecord-list" },
+]
+"m m a" = [
+  { command = "metarecord:bulk add", when = "metarecord-detail" },
+  { command = "metarecord:bulk add", when = "metarecord-list" },
+]
+# "r" removes the field entirely (unset), "v" takes one value out of it, "d"
+# deletes the metarecords themselves (confirmed, naming the count).
+"m m r" = [
+  { command = "metarecord:bulk unset", when = "metarecord-detail" },
+  { command = "metarecord:bulk unset", when = "metarecord-list" },
+]
+"m m v" = [
+  { command = "metarecord:bulk remove", when = "metarecord-detail" },
+  { command = "metarecord:bulk remove", when = "metarecord-list" },
+]
+"m m d" = [
+  { command = "metarecord:bulk delete", when = "metarecord-detail" },
+  { command = "metarecord:bulk delete", when = "metarecord-list" },
+]
 
 # sync (spec-sync): the four steps of a cross-repo sync, on the prefix that
 # names it. The panel's own source claimed these lived here long before they

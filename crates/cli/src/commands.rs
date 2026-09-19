@@ -358,7 +358,7 @@ pub fn add(ctx: &Ctx, target: &str, spec: &str, force: bool) -> Result<i32, CliE
         }
         Target::Predicate(query) => {
             let body = json!({"query": query, "name": name, "value": value, "force": force});
-            let resp = ctx.client.post(&format!("{base}/query/fields/append"), &body)?;
+            let resp = ctx.client.post(&format!("{base}/query/fields/add"), &body)?;
             println!("{}", resp["updated"].as_u64().unwrap_or(0));
         }
     }
@@ -1260,7 +1260,7 @@ fn tag_batch_append(
     tag_uuid: &str,
 ) -> Result<u64, CliError> {
     let body = json!({"query": query, "name": field, "value": {"type": "ref", "value": tag_uuid}});
-    let resp = ctx.client.post(&format!("{base}/query/fields/append"), &body)?;
+    let resp = ctx.client.post(&format!("{base}/query/fields/add"), &body)?;
     Ok(resp["updated"].as_u64().unwrap_or(0))
 }
 

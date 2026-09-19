@@ -847,8 +847,8 @@ async fn test_batch_set_multi_value() {
 }
 
 #[tokio::test]
-async fn test_batch_append() {
-    let (app, repo, root) = setup("append").await;
+async fn test_batch_add() {
+    let (app, repo, root) = setup("add").await;
     for genre in ["jazz", "jazz", "rock"] {
         create(
             &app,
@@ -858,11 +858,11 @@ async fn test_batch_append() {
         .await;
     }
 
-    // Append a tag row to every jazz metarecord (multi-map: never replaces).
+    // Add a tag row to every jazz metarecord (multi-map: never replaces).
     let (status, body) = request(
         &app,
         "POST",
-        &format!("/repos/{repo}/query/fields/append"),
+        &format!("/repos/{repo}/query/fields/add"),
         Some(json!({
             "query": {"type": "eq", "field": "genre", "value": {"type": "string", "value": "jazz"}},
             "name": "tag",
@@ -870,14 +870,14 @@ async fn test_batch_append() {
         })),
     )
     .await;
-    assert_eq!(status, StatusCode::OK, "append failed: {body}");
+    assert_eq!(status, StatusCode::OK, "add failed: {body}");
     assert_eq!(body, json!({"updated": 2}));
 
-    // A second append adds a second row rather than replacing the first.
+    // A second add appends a second row rather than replacing the first.
     let (_, body2) = request(
         &app,
         "POST",
-        &format!("/repos/{repo}/query/fields/append"),
+        &format!("/repos/{repo}/query/fields/add"),
         Some(json!({
             "query": {"type": "eq", "field": "genre", "value": {"type": "string", "value": "jazz"}},
             "name": "tag",
@@ -904,7 +904,7 @@ async fn test_batch_append() {
     let (status, _) = request(
         &app,
         "POST",
-        &format!("/repos/{repo}/query/fields/append"),
+        &format!("/repos/{repo}/query/fields/add"),
         Some(json!({
             "query": {"type": "is_present", "field": "genre"},
             "name": "mfr_size",
@@ -913,6 +913,31 @@ async fn test_batch_append() {
     )
     .await;
     assert_eq!(status, StatusCode::BAD_REQUEST);
+
+    std::fs::remove_dir_all(root).unwrap();
+}
+
+/// The set layer speaks one vocabulary with the CLI and the GUI:
+/// `set` / `add` / `remove` / `unset`. The row-appending route was once
+/// `append`, the only verb of the four that diverged from `mf metarecord
+/// field add`; the old spelling is gone rather than aliased, so a client
+/// built against it fails loudly (hence the `API_VERSION` bump).
+#[tokio::test]
+async fn test_batch_append_route_is_gone() {
+    let (app, repo, root) = setup("append-gone").await;
+
+    let (status, _) = request(
+        &app,
+        "POST",
+        &format!("/repos/{repo}/query/fields/append"),
+        Some(json!({
+            "query": {"type": "is_present", "field": "genre"},
+            "name": "tag",
+            "value": {"type": "string", "value": "a"}
+        })),
+    )
+    .await;
+    assert_eq!(status, StatusCode::NOT_FOUND);
 
     std::fs::remove_dir_all(root).unwrap();
 }
@@ -1161,7 +1186,7 @@ async fn test_query_sort_on_tree_ref_uses_the_full_path() {
 /// spec-data-model "No duplicate rows": appending a value a match already holds
 /// changes nothing and is not counted.
 #[tokio::test]
-async fn test_batch_append_of_an_existing_value_is_a_no_op() {
+async fn test_batch_add_of_an_existing_value_is_a_no_op() {
     let (app, repo, _root) = setup("append_dup").await;
     for genre in ["jazz", "jazz", "rock"] {
         create(
@@ -1178,7 +1203,7 @@ async fn test_batch_append_of_an_existing_value_is_a_no_op() {
             request(
                 &app,
                 "POST",
-                &format!("/repos/{repo}/query/fields/append"),
+                &format!("/repos/{repo}/query/fields/add"),
                 Some(json!({
                     "query": {"type": "is_present", "field": "genre"},
                     "name": "tag",
@@ -1190,12 +1215,12 @@ async fn test_batch_append_of_an_existing_value_is_a_no_op() {
     };
 
     let (status, body) = append("a").await;
-    assert_eq!(status, StatusCode::OK, "append failed: {body}");
+    assert_eq!(status, StatusCode::OK, "add failed: {body}");
     assert_eq!(body, json!({"updated": 3}));
 
     // Re-running the same append is a no-op on every match.
     let (status, body) = append("a").await;
-    assert_eq!(status, StatusCode::OK, "append failed: {body}");
+    assert_eq!(status, StatusCode::OK, "add failed: {body}");
     assert_eq!(body, json!({"updated": 0}), "nothing gained a row");
 
     // Each metarecord still holds exactly one `tag` row.

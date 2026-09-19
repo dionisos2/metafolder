@@ -47,26 +47,28 @@
 </p>
 
 <h2>Editing</h2>
-<p>Move between fields with <span data-mf-key="metarecord:field-prev">↑ or k</span> /
-  <span data-mf-key="metarecord:field-next">↓ or j</span>. Then:</p>
+<p>Move between fields with <span data-mf-key="metarecord:row-prev">↑ or k</span> /
+  <span data-mf-key="metarecord:row-next">↓ or j</span>. Then:</p>
 <table>
   <tbody>
-    <tr><td><span data-mf-key="metarecord:field-edit">Enter</span></td><td>edit the field value under the cursor</td></tr>
-    <tr><td><span data-mf-key="metarecord:open-add-field">a</span> / <span data-mf-key="metarecord:field-delete">d</span></td><td>add a field / delete the field under the cursor</td></tr>
+    <tr><td><span data-mf-key="metarecord:row-edit">Enter</span></td><td>edit the field value under the cursor</td></tr>
+    <tr><td><span data-mf-key="metarecord:open-add-field">a</span> / <span data-mf-key="metarecord:row-delete">d</span></td><td>add a field / delete the field under the cursor</td></tr>
     <tr><td><span data-mf-key="metarecord:create">Ctrl+n</span></td><td>create a new record (an edit is saved as it is confirmed)</td></tr>
   </tbody>
 </table>
 <p>
   The command-input <code>m</code> family does the same from either the detail or
   the list panel, with completion:
-  <span data-mf-key="metarecord:set-field">m s</span> set,
-  <span data-mf-key="metarecord:add-field-value">m a</span> add value,
-  <span data-mf-key="metarecord:edit-field-value">m v</span> edit value,
-  <span data-mf-key="metarecord:delete-field-value">m d</span> delete value,
-  <span data-mf-key="metarecord:edit-field-name">m n</span> rename,
-  <span data-mf-key="metarecord:edit-field-type">m t</span> retype. See the
+  <span data-mf-key="metarecord:field set">m s</span> set,
+  <span data-mf-key="metarecord:field add">m a</span> add value,
+  <span data-mf-key="metarecord:field edit">m v</span> edit value,
+  <span data-mf-key="metarecord:field remove">m d</span> remove one value,
+  <span data-mf-key="metarecord:field unset">m u</span> unset the field,
+  <span data-mf-key="metarecord:field rename">m n</span> rename,
+  <span data-mf-key="metarecord:field retype">m t</span> retype. See the
   <a data-help-page="keybindings">keyboard shortcuts</a> for the full family
-  (including the <code>m b *</code> bulk edits that act on the list selection).
+  (including the <code>m m *</code> bulk operations that act on the list
+  selection).
 </p>
 
 <p>

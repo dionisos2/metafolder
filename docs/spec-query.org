@@ -483,9 +483,9 @@ metarecord. Body =value= sets one row, =values= (a list) sets several at once
 Response ={"updated": <count>}=. Repeated values in =values= are collapsed to
 their first occurrence (spec-data-model "No duplicate rows").
 
-**** =POST /repos/:repo_uuid/query/fields/append=
+**** =POST /repos/:repo_uuid/query/fields/add=
 
-Appends one row to every match (multi-map; never replaces). Body
+Adds one row to every match (multi-map; appends, never replaces). Body
 ={"query", "name", "value", "force"?}= → ={"updated": <count>}=. A match that
 already holds that =(name, value)= is left untouched — appending a duplicate is a
 no-op (spec-data-model "No duplicate rows") — so =updated= counts the matches
@@ -494,7 +494,7 @@ that actually gained a row, and re-running the same append yields =0=.
 **** =POST /repos/:repo_uuid/query/fields/remove=
 
 Removes the row equal to =(name, value)= from each match — the *inverse of*
-append — as one =DeleteField= op per metarecord (at most one row per match, since
+add — as one =DeleteField= op per metarecord (at most one row per match, since
 a metarecord holds no duplicate). Other rows of the same name and
 non-matching metarecords are untouched. Body ={"query", "name", "value"}= →
 ={"updated": <count>}= (metarecords actually changed).

@@ -269,12 +269,18 @@ invocation is echoed to the workspace [[*Message view][message panel]] as
 keystroke-level actions do not flood the log.
 
 A command may *declare its arguments*. Each declared argument carries up to
-three functions, all evaluated *lazily* when the argument is asked for (never
+four functions, all evaluated *lazily* when the argument is asked for (never
 at registration) and all receiving the arguments already collected so far: a
 =prompt= (the text shown in the command input), an optional =initial= (a
 pre-filled, editable value — e.g. the current value of the field being
-edited), and an optional =complete= (the candidate list offered by the
-input's autocomplete). Because =initial= is a function and not a constant, it
+edited), an optional =complete= (the candidate list offered by the
+input's autocomplete), and an optional =when= (whether the argument applies at
+all). =when= is what lets *one* command cover a family of operations: the
+declared arguments are the union of what any operation takes, and the ones an
+operation has no use for are dropped — =metarecord:bulk delete= names no
+field, =metarecord:bulk unset= no value. Because it only ever sees *prior*
+arguments, it is always decidable by the time the argument is reached, and a
+dropped argument consumes no inline token either. Because =initial= is a function and not a constant, it
 can read live state at the moment of the prompt. When a command with declared
 arguments is invoked with fewer parameters than declared (from a keybinding,
 the command input, or =POST /gui/command=), the command input collects the
@@ -282,7 +288,7 @@ missing arguments one at a time: for each, it shows the =prompt=, pre-fills
 =initial=, offers =complete= (filtered like command suggestions), and waits.
 =Escape= at any point abandons the whole invocation. Parameters supplied
 inline skip their prompt, so a fully-specified invocation
-(=metarecord:edit-field-value tag musique/jazz=) runs without prompting — the
+(=metarecord:field edit tag musique/jazz=) runs without prompting — the
 interactive collection is a fallback for the missing tail, not a separate
 mode.
 
@@ -295,6 +301,25 @@ collection above) or is one of the few builtins that reopen the input by hand
 (e.g. =workspace:rename=). The marker is display-only — it is not part of the
 command name written into the input when a suggestion is accepted.
 
+*Command listing.* The input lists every registered command, plus one entry
+per *bound* parameterized invocation: a keybinding whose invocation carries
+arguments (=metarecord:bulk delete=, =panel:set-type file=) earns its own line,
+showing its combo. This is what keeps a generic command's genericity from
+costing discoverability. Naming an operation as an argument instead of in the
+command name would otherwise hide it — =metarecord:bulk set= is not findable by
+typing =set= if only =metarecord:bulk= is listed — while listing every
+combination a command accepts would bury the list under variations nobody uses.
+Keying the expansion to the keybinding table answers both: whatever the user
+put on a key is discoverable by reading the list, and the rest is found through
+the operation's own prompt. It also makes every shortcut visible in one place,
+parameterized ones included. Combos are attached by *exact* invocation, so a
+bare entry does not collect its variants' keys — =panel:set-type= otherwise
+listed all fourteen of them on one line, with nothing saying which combo went
+with which panel type. Consequently the =…= marker is computed per *entry*,
+not per command: =metarecord:bulk set= still has a field and a value to ask
+for and carries it, while =metarecord:bulk delete= is complete and runs on
+Enter.
+
 *Naming convention.* A command's name signals its interaction type through a
 leading verb, so the right command is findable without running it:
 - =open-X= — opens an in-panel *form or overlay* (mouse-oriented), e.g.
@@ -302,13 +327,19 @@ leading verb, so the right command is findable without running it:
   =repos:open-init= / =open-retype=.
 - =focus-X= — moves keyboard *focus* to an existing input field of the panel,
   e.g. =metarecord-list:focus-query= / =focus-columns= / =focus-finder=.
-- =edit-= / =set-= / =add-= / =delete-X= (verb first) — a *minibuffer*
-  completion-driven edit (these declare arguments, so they carry the =…=),
-  e.g. =metarecord:edit-field-value=, =metarecord:set-field=,
-  =metarecord:bulk-set-field=.
-- =field-X= (noun first, the cursor family) — a direct action on the *row under
-  the cursor* (keyboard, no minibuffer), e.g. =metarecord:field-next= /
-  =field-edit= / =field-delete=.
+- =<noun> <op>= — a *minibuffer* completion-driven edit, with the operation as
+  the first **argument** rather than part of the name (these declare arguments,
+  so they carry the =…=), e.g. =metarecord:field set=, =metarecord:bulk
+  delete=. One command covers the family; the operation vocabulary is the
+  daemon's and the CLI's — =set= / =add= / =remove= / =unset=, with =delete=
+  kept for destroying a thing that has an id. Where a panel still names a
+  single such edit in the command itself, the verb comes first
+  (=treeref:set-field=).
+- =row-X= (noun first, the cursor family) — a direct action on the *row under
+  the cursor* (keyboard, no minibuffer), e.g. =metarecord:row-next= /
+  =row-edit= / =row-delete=. It is deliberately not =field-X=: that would put
+  =metarecord:field-edit= one hyphen away from =metarecord:field edit=, which
+  asks which value to edit instead of taking the one under the cursor.
 - a plain verb (=next=, =refresh=, =toggle-*=, =open=, =activate=, =track=…) —
   a direct action with no further input.
 So =edit-= is reserved for minibuffer edits and never used for a command that
@@ -799,7 +830,7 @@ tag    = 'path'
 author = 'full_name'
 #+END_SRC
 
-For a =ref= field with a seed, the =set-field=/=add-field-value= value argument
+For a =ref= field with a seed, the =metarecord:field set=/=add= value argument
 (=m s= / =m a=) completes against the *seed field's forest* and, on commit,
 resolves the typed path to the owning metarecord's uuid through
 =POST …/tree/resolve-path= on the seed field (the same call =tree_ref= values
@@ -1083,22 +1114,12 @@ Behaviours:
 | =panel:fullscreen=   | Toggle showing only the focused panel fullscreen (default =z=; escape also exits) |
 | =metarecord:create=       | Create a new metarecord immediately and select it (=metarecord-detail=) |
 | =metarecord:delete=       | Delete the selected metarecord                      |
-| =metarecord:field-next= / =metarecord:field-prev= | Move the field-row cursor (=metarecord-detail=) |
-| =metarecord:field-edit=   | Edit the field row under the cursor                 |
-| =metarecord:field-delete= | Delete the field row under the cursor               |
+| =metarecord:row-next= / =metarecord:row-prev= | Move the field-row cursor (=metarecord-detail=) |
+| =metarecord:row-edit=   | Edit the field row under the cursor                 |
+| =metarecord:row-delete= | Delete the field row under the cursor               |
 | =metarecord:cancel-edit=  | Cancel the current field edit or add form           |
-| =metarecord:set-field [field] [value]= | Overwrite a field on the current metarecord (all its values) |
-| =metarecord:add-field-value [field] [value]= | Add one value to a field (multi-map) on the current metarecord; a value it already holds is a no-op (spec-data-model "No duplicate rows") |
-| =metarecord:edit-field-value [value] [new]= | Edit one value on the current metarecord (select by value) |
-| =metarecord:delete-field-value [value]= | Delete one value on the current metarecord (select by value) |
-| =metarecord:edit-field-name [field] [new-name]= | Rename a field (all its values) on the current metarecord |
-| =metarecord:edit-field-type [field] [type]= | Change a field's type on the current metarecord |
-| =metarecord:bulk-set-field [field] [value]= | Overwrite a field on the selection (or current query) |
-| =metarecord:bulk-add-field-value [field] [value]= | Add a value to a field on the selection (or current query) |
-| =metarecord:bulk-remove-value [field] [value]= | Remove one value from a field on the selection (or current query) |
-| =metarecord:bulk-remove-field [field]= | Remove a field entirely from the selection (or current query) |
-| =metarecord:bulk-delete= | Delete the metarecords in the selection (or current query); the files stay on disk |
-| =metarecord-list:bulk-edit [operation]= | Keyboard flow: pick a bulk operation (set/append/remove/unset/delete), then delegate to its command |
+| =metarecord:field <op> [target] [value]= | Field operation on the *current* metarecord. =op= is =set= (overwrite every value), =add= (append one value — a value it already holds is a no-op, spec-data-model "No duplicate rows"), =edit= (change one value, selected by value), =remove= (drop one value, selected by value), =unset= (remove the field entirely → /unknown/), =rename= (all its values), =retype= (all its values). =target= names a field for =set=/=add=/=unset=/=rename=/=retype=, and one value for =edit=/=remove= |
+| =metarecord:bulk <op> [field] [value]= | The same over the *selection*, or the current query when nothing is checked. =op= is =set= / =add= / =remove= / =unset= — the daemon's set-layer routes =POST /query/fields/{set,add,remove,unset}= — plus =delete=, which deletes the metarecords themselves (=POST /query/delete=; the files stay on disk) and so names no field |
 | =metarecord-list:open-bulk-edit= | Mouse flow: open the in-panel bulk edit / delete form |
 | =metarecord-list:set-mode <mode>= | Switch metarecord-list display mode        |
 | =metarecord-list:set-page-size <n>= | Set the metarecord-list pagination page size |
@@ -1186,14 +1207,13 @@ Behaviours:
 | =metarecord:back=         | Return to the previously shown metarecord (=metarecord-detail=, default =backspace= / =left=) |
 
 A field whose only value is =Nothing= (an *explicit absence*, distinct from
-the field not existing) is still a first-class target of the =edit-field-*=
-commands: its name is offered by the completion of =edit-field-name=,
-=edit-field-type= and =edit-field-value=. Renaming moves the Nothing row with
-the rest of the field. Because a =Nothing= value carries no type, giving such
-a field a value first *establishes a type*: =edit-field-value= uses the field's
-single established type when one is known (from the schema or from other
-records) and otherwise asks which type to use; =edit-field-type= on an
-otherwise-empty field likewise asks for a value to attach to the chosen type.
+the field not existing) is still a first-class target of =metarecord:field=:
+its name is offered by the completion of =rename=, =retype= and =edit=.
+Renaming moves the Nothing row with the rest of the field. Because a =Nothing=
+value carries no type, giving such a field a value first *establishes a type*:
+=edit= uses the field's single established type when one is known (from the
+schema or from other records) and otherwise asks which type to use; =retype= on
+an otherwise-empty field likewise asks for a value to attach to the chosen type.
 
 ** Input history
 
@@ -1279,10 +1299,10 @@ Within =metarecord-list=:
 Within =metarecord-detail= (every action is also a command, so the panel is
 fully keyboard-drivable):
 - =Down= / =Up= (or =j= / =k=) move the field-row cursor
-  (=metarecord:field-next= / =metarecord:field-prev=).
-- =Enter= on a row starts inline editing (=metarecord:field-edit=); in the
+  (=metarecord:row-next= / =metarecord:row-prev=).
+- =Enter= on a row starts inline editing (=metarecord:row-edit=); in the
   inline editor =Enter= confirms and =Escape= cancels.
-- =d= deletes the field row under the cursor (=metarecord:field-delete=, with
+- =d= deletes the field row under the cursor (=metarecord:row-delete=, with
   confirmation).
 - =a= opens the add-field form (=metarecord:open-add-field=); =Ctrl-n= creates a new
   metarecord (=metarecord:create=) and selects it.
@@ -1304,31 +1324,30 @@ alike. When a
 value command targets a field whose value type cannot be determined
 automatically (no row on the record, nothing in the schema-aware catalog), the
 type is *asked* through the command input rather than silently defaulting to
-=string= — for the direct =set-field= / =add-field-value= and for the bulk
-=bulk-set-field= / =bulk-add-field-value= / =bulk-remove-value= alike. The set
-is =set-field=,
-=add-field-value=, =edit-field-value=, =delete-field-value=, =edit-field-name=,
-=edit-field-type= on the current metarecord, and the bulk family —
-=bulk-set-field=, =bulk-add-field-value=, =bulk-remove-value=,
-=bulk-remove-field=, =bulk-delete= — over the checkbox selection
-(=selected_metarecords=) or, when it is empty, the current query. The default
+=string= — for =metarecord:field set= / =add= and for =metarecord:bulk set= /
+=add= / =remove= alike. The two commands are =metarecord:field <op>= on the
+current metarecord (=set=, =add=, =edit=, =remove=, =unset=, =rename=,
+=retype=) and =metarecord:bulk <op>= (=set=, =add=, =remove=, =unset=,
+=delete=) over the checkbox selection (=selected_metarecords=) or, when it is
+empty, the current query. The default
 suggestions bind them under an =m= sequence prefix (=m s= set, =m a= add, =m v=
-edit a value, =m d= delete a value, =m n= rename, =m t= retype), active in both
+edit a value, =m d= remove a value, =m u= unset, =m n= rename, =m t= retype,
+and =m b= / =m m <op>= for the bulk half), active in both
 the =metarecord-list= and =metarecord-detail= panels so the family is reachable
 whether the list or the detail is focused.
 
-For bulk edits the =metarecord-list= panel offers two entry points. The
-*mouse-oriented* one is an in-panel form (operation picker + typed value widget +
+For bulk edits there are two entry points. The *mouse-oriented* one is an
+in-panel =metarecord-list= form (operation picker + typed value widget +
 =force=), opened by the footer "edit / delete on query…" button
 (=metarecord-list:open-bulk-edit=). The *keyboard-oriented* one is
-=metarecord-list:bulk-edit= (bound to =m b=): it collects the *operation* in the
-command input (completion over =set / append / remove / unset / delete=), then
-delegates to the matching per-operation bulk command, which collects its own
-field/value arguments with completion. Each query-scoped bulk command counts its
-matches (daemon-side =count=) and names that number in its confirmation. The
-=metarecord-detail= panel binds the per-operation bulk commands directly instead
-(=m m s= set, =m m a= add, =m m r= remove the field, =m m v= remove one value,
-=m m d= delete the metarecords).
+=metarecord:bulk= itself: invoked bare (=m b=) it collects the operation in the
+command input, and a keybinding may name the operation up front (=m m s= set,
+=m m a= add, =m m v= remove one value, =m m r= unset the field, =m m d= delete
+the metarecords) — the same command either way, since arguments supplied inline
+skip their prompt. Both families are bound in the list *and* the detail panel:
+a command reaches its panel whatever is focused, so which panel registered it
+is not a scope. A bulk operation counts its matches (daemon-side =count=) and
+names that number in its confirmation.
 
 Keybindings are stored in =~/.config/metafolder/gui/keybindings.toml=
 (see [[*Keybinding]] for the =when= and =text-input= scope dimensions).
@@ -2183,7 +2202,7 @@ At the bottom of the panel:
 - /New metarecord/ button (or =metarecord:create= command) → creates a metarecord
   *immediately* with =POST .../metarecords= and sets it as =selected_metarecord=,
   so the ordinary field-editing commands (=metarecord:open-add-field=,
-  =metarecord:set-field=, the =m …= sequence) apply to a live record from the
+  =metarecord:field set=, the =m …= sequence) apply to a live record from the
   start — there is no staged, not-yet-saved draft. The command first prompts for
   a schema type (blank = an empty record; a type seeds its template fields, one
   atomic create); the linked =metarecord-list= panel (if any) refreshes. To

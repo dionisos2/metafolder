@@ -309,7 +309,7 @@ first row does not already say.
 
 Every write enforces this by *collapsing*, never by failing:
 
-- *append* (=POST …/metarecords/:uuid/fields=, =POST /query/fields/append=) of a
+- *append* (=POST …/metarecords/:uuid/fields=, =POST /query/fields/add=) of a
   value the metarecord already carries under that name is a *no-op*: no row, no
   =version= bump, no logged operation. The metarecord is returned unchanged, and
   the =updated= count of the set form counts only the metarecords that actually
@@ -889,13 +889,23 @@ The repo-scoped data commands form a tree (=metarecord=, =field=) whose verbs
 follow one pattern at every level:
 
 - =get= reads; =set= replaces *everything at that level*; =add= creates a new
-  element (with a fresh id/UUID); =delete= removes one element.
+  element (with a fresh id/UUID); =remove= takes one back out *by value*;
+  =delete= destroys one addressed *by its id* (or UUID).
 
-So =get= is the inverse of =set=, and =add= the inverse of =delete=. =set= at the
-metarecord level replaces all of its fields; at the field-name level, all rows of
-that name; at the row level, the one row. =add= lives only where new ids are
-born (a metarecord, or a row under a field name), so the by-id =field= group has
-no =add=.
+So =get= is the inverse of =set=, and =add= the inverse of =remove= (by value)
+and of =delete= (by id). The two removal verbs are not synonyms: =remove= names
+a value inside a multi-map and leaves the other rows of that name alone, while
+=delete= destroys a thing that has an id — a metarecord (=mf metarecord
+delete=), a field row (=mf field delete <id>=). Keeping them apart is what stops
+"take this tag off the record" from reading like "destroy the record"; the same
+four verbs name the daemon's set layer (=POST
+/query/fields/{set,add,remove,unset}=) and the GUI's =metarecord:field= /
+=metarecord:bulk= operations, so one word means one thing in all three.
+
+=set= at the metarecord level replaces all of its fields; at the field-name
+level, all rows of that name; at the row level, the one row. =add= lives only
+where new ids are born (a metarecord, or a row under a field name), so the by-id
+=field= group has no =add=.
 
 ** Daemon- and repo-management groups
 
@@ -1018,8 +1028,8 @@ Field operations scoped to the selected metarecord(s) (the selector is required)
 - =set <spec> [<spec> ...]= — replaces *all* rows of the field with the given
   value set (one or several — multi-map; the specs must share one name), in *one*
   log operation per metarecord;
-- =add <spec>= — appends one row (inverse of =delete=);
-- =delete <spec>= — removes the row(s) equal to the spec's =(name, value)=
+- =add <spec>= — appends one row (inverse of =remove=);
+- =remove <spec>= — removes the row(s) equal to the spec's =(name, value)=
   (inverse of =add=); other rows of the same name, and non-matching metarecords,
   are kept;
 - =unset <name>= — removes the field *entirely* (all rows → /unknown/), distinct
@@ -1055,7 +1065,7 @@ Verbs (the selector precedes the verb, as for =mf metarecord=):
 
 =add=/=deny=/=mixed= auto-create the tag entry when the vocabulary lacks it. The
 write is applied across the whole selector set through the batch field endpoints
-(=POST …/query/fields/{append,remove}=), one call per set — no per-record loop.
+(=POST …/query/fields/{add,remove}=), one call per set — no per-record loop.
 So a whole subtree is tagged with =mf tag -q 'mfr_path ->* "/dir"' add <path>=.
 
 Their idempotence is the daemon's: appending a ref a record already carries is a
@@ -1119,7 +1129,7 @@ the log shows and rollback reverses:
 | =metarecord set=              | one =SetRecord= (all fields before→after)     |
 | =field set <name>= (n values) | one =SetField= (all rows of the name)         |
 | =field add=                   | one =AppendField= (none if the value is already there) |
-| =field delete= (by value)     | one =DeleteField= (the removed rows)          |
+| =field remove= (by value)     | one =DeleteField= (the removed rows)          |
 | =field unset=                 | one =DeleteField= (all rows of the name)      |
 | =field set <id>= / =delete=   | one row-scoped op (keeps the row id)          |
 

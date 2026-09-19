@@ -45,6 +45,51 @@ export function shortcutsFor(
     .map((binding) => binding.keys.join(' '));
 }
 
+/** A command as the input lists it: the registry entry plus the key combos
+ *  bound to *exactly* this invocation. */
+export interface ListedCommand extends CommandDef {
+  shortcuts: string[];
+}
+
+/**
+ * What the command input offers: every registered command, plus one entry per
+ * *bound* parameterized invocation (spec-gui "Command listing").
+ *
+ * A pre-filled variant earns a line only when a key runs it. That is what
+ * keeps the two goals from fighting: every keybinding — parameterized ones
+ * included — becomes discoverable by reading the list, while the operations
+ * nobody bound stay out of it and are found through the argument prompt
+ * instead. So a generic command paying for its genericity with a longer list
+ * only pays for what the user actually put on a key.
+ *
+ * Combos are matched *exactly* here, unlike `shortcutsFor`: the bare entry
+ * must not collect its variants' combos. `panel:set-type` used to print all
+ * fourteen of them on one line with nothing saying which went with which panel
+ * type — the expansion turns that into fourteen findable rows.
+ */
+export function listedCommands(
+  commands: CommandDef[],
+  keytable: { keys: string[]; invocation: string }[],
+): ListedCommand[] {
+  const combosFor = (invocation: string) =>
+    keytable.filter((b) => b.invocation === invocation).map((b) => b.keys.join(' '));
+
+  const listed = new Map<string, ListedCommand>();
+  for (const command of commands) {
+    listed.set(command.name, { ...command, shortcuts: combosFor(command.name) });
+  }
+  for (const binding of keytable) {
+    const invocation = binding.invocation.trim();
+    const space = invocation.indexOf(' ');
+    if (space < 0) continue; // bare invocation: the registry already listed it
+    if (listed.has(invocation)) continue; // a previous combo already added it
+    const base = listed.get(invocation.slice(0, space));
+    if (!base) continue; // bound to something no panel registered
+    listed.set(invocation, { ...base, name: invocation, shortcuts: combosFor(invocation) });
+  }
+  return [...listed.values()];
+}
+
 /** Whether an invocation of `name` should be echoed to the message panel.
  *  Looks the command up in the registry; commands not found default to
  *  logging. */
@@ -140,6 +185,12 @@ export interface ArgSpec {
    *  client-side like command names). `partial` is the current draft, so a
    *  future dynamic mode can narrow on it; the v1 completions ignore it. */
   complete?: (partial: string, prior: string[]) => string[] | Promise<string[]>;
+  /** Whether this argument applies at all, given the ones already collected.
+   *  A generic command declares one spec per argument any of its operations
+   *  can take, and drops the irrelevant ones here: `metarecord:bulk delete`
+   *  names no field, `metarecord:bulk unset` no value. Absent ⇒ always asked.
+   *  It sees only prior arguments, so it is always decidable when reached. */
+  when?: (prior: string[]) => boolean;
 }
 
 /** One argument's resolved prompt, handed to the prompt driver.
@@ -182,13 +233,29 @@ export function argSpecFor(name: string): ArgSpec[] | undefined {
 // autocomplete's "…" marker matches what actually happens.
 const MINIBUFFER_PROMPT_BUILTINS = new Set(['workspace:rename']);
 
-/** Whether invoking `name` reopens the minibuffer to collect input, rather than
- *  acting immediately (spec-gui "Command"). Drives the trailing "…" the
- *  autocomplete shows — the menu-item ellipsis convention. The signal is the
- *  interactive-argument mechanism (a registered ArgSpec, the minibuffer
- *  completion path) plus the few builtins that reopen the input by hand. */
-export function promptsForInput(name: string): boolean {
-  return argSpecFor(name) !== undefined || MINIBUFFER_PROMPT_BUILTINS.has(name);
+/** Whether invoking `invocation` reopens the minibuffer to collect input,
+ *  rather than acting immediately (spec-gui "Command"). Drives the trailing
+ *  "…" the autocomplete shows — the menu-item ellipsis convention. The signal
+ *  is the interactive-argument mechanism (a registered ArgSpec, the minibuffer
+ *  completion path) plus the few builtins that reopen the input by hand.
+ *
+ *  It takes a whole invocation, not just a name, because the listing carries
+ *  pre-filled entries: `metarecord:bulk set` still has a field and a value to
+ *  ask for and earns its "…", while `metarecord:bulk delete` is complete and
+ *  runs on Enter. */
+export function promptsForInput(invocation: string): boolean {
+  const [name, ...args] = invocation.split(/\s+/).filter(Boolean);
+  const specs = argSpecFor(name);
+  if (specs === undefined) return args.length === 0 && MINIBUFFER_PROMPT_BUILTINS.has(name);
+  // Walk the specs the way collectArgs will: the first one that survives
+  // `when` and has no inline token behind it is a prompt.
+  let used = 0;
+  for (const spec of specs) {
+    if (spec.when && !spec.when(args.slice(0, used))) continue;
+    if (used < args.length) used += 1;
+    else return true;
+  }
+  return false;
 }
 
 /** Test hook: drop every registered arg spec. */
@@ -689,15 +756,21 @@ export async function collectArgs(
   promptFn: ArgPromptFn,
 ): Promise<string[] | null> {
   const result: string[] = [];
+  // Index into `provided`, distinct from the spec index: a spec dropped by
+  // `when` consumes no token, so the tokens stay aligned with the arguments
+  // actually asked for.
+  let used = 0;
   for (let i = 0; i < specs.length; i++) {
+    const spec = specs[i];
+    if (spec.when && !spec.when(result)) continue;
     const isLast = i === specs.length - 1;
-    if (i < provided.length) {
+    if (used < provided.length) {
       // Inline-provided: the last declared argument absorbs the remaining
       // tokens so a value may contain spaces without quoting.
-      result.push(isLast ? provided.slice(i).join(' ') : provided[i]);
+      result.push(isLast ? provided.slice(used).join(' ') : provided[used]);
+      used += 1;
       continue;
     }
-    const spec = specs[i];
     // `prompt` and `initial` are awaited — they are what the input shows and
     // pre-fills. `complete` is NOT: it is handed over as it comes (an array, or
     // a promise the driver resolves once the input is already open), so a slow

@@ -875,80 +875,89 @@ export async function mount(root, metafolder) {
   }
 
   /** @param {string} prompt */
-  const nameArg = (prompt) => ({ name: 'field', prompt: () => prompt, complete: () => editableFieldNames() });
 
-  void commands.register('metarecord:set-field', {
-    label: 'Set a field on this metarecord (overwrite all its values)',
-    reveal: true,
-    args: [
-      { name: 'field', prompt: () => 'Field to set?', complete: () => completableFieldNames() },
-      {
-        name: 'value',
-        prompt: (p) => `Value for "${p[0]}"?`,
+  // ── Field operations on the current metarecord ──────────────────────────
+  //
+  // One command, the operation as its first argument (spec-gui "Command"):
+  // `metarecord:field set tag jazz`. The vocabulary is the daemon's set layer
+  // and the CLI's — set / add / remove / unset — plus rename and retype, which
+  // have no set-layer route of their own. `delete` is deliberately absent
+  // here: it destroys a thing that has an id, and destroying this metarecord
+  // is `metarecord:delete`.
+  //
+  // The declared arguments are the *union* of what the operations take, and
+  // `when` drops the ones an operation has no use for. So a fully-specified
+  // invocation never prompts, a bare one asks only what it needs, and a
+  // keybinding can pre-fill any prefix of it (`m s` = `metarecord:field set`).
+
+  /**
+   * The operations, keyed by the first argument. `target` describes the second
+   * argument — a field *name*, or one *row* picked by its value label — and
+   * `value` the third, absent when the operation takes none.
+   *
+   * Every spec function is tolerant of an unknown operation: they run while
+   * the arguments are still being collected, outside the dispatcher's error
+   * boundary, so `run` is the single place that rejects one.
+   */
+  const FIELD_OPS = {
+    set: {
+      target: { prompt: 'Field to set?', complete: () => completableFieldNames() },
+      value: {
+        prompt: (p) => `Value for "${p[1]}"?`,
         initial: async (p) => {
           const cur = requireCurrent();
           const rows = (metarecord?.fields ?? []).filter(
-            (f) => f.name === p[0] && f.value.type !== 'nothing',
+            (f) => f.name === p[1] && f.value.type !== 'nothing',
           );
-          return rows.length === 1 ? rawOfValue(cur.repo, cur.uuid, p[0], rows[0].value) : '';
+          return rows.length === 1 ? rawOfValue(cur.repo, cur.uuid, p[1], rows[0].value) : '';
         },
-        complete: (_partial, p) => valueCompletionFor(p[0]),
+        complete: (p) => valueCompletionFor(p[1]),
       },
-    ],
-    handler: async (field, raw) => {
-      const cur = requireCurrent();
-      const type = await resolveOrAskType(cur.repo, field);
-      if (type === null) return; // user cancelled the type pick
-      const value = await parseValueForField(cur.repo, field, type, raw);
-      const force = isReserved(field) ? { force: true } : {};
-      await daemon.call('PUT', api(`/fields/${encodeURIComponent(field)}`), { value, ...force });
-      await load();
-      await dirty();
-    },
-  });
-
-  void commands.register('metarecord:add-field-value', {
-    label: 'Add a value to a field on this metarecord (multi-map)',
-    reveal: true,
-    args: [
-      { name: 'field', prompt: () => 'Field to add a value to?', complete: () => completableFieldNames() },
-      {
-        name: 'value',
-        prompt: (p) => `Value to add to "${p[0]}"?`,
-        complete: (_partial, p) => valueCompletionFor(p[0]),
+      run: async (field, raw) => {
+        const cur = requireCurrent();
+        const type = await resolveOrAskType(cur.repo, field);
+        if (type === null) return; // user cancelled the type pick
+        const value = await parseValueForField(cur.repo, field, type, raw);
+        const force = isReserved(field) ? { force: true } : {};
+        await daemon.call('PUT', api(`/fields/${encodeURIComponent(field)}`), { value, ...force });
+        await load();
+        await dirty();
       },
-    ],
-    handler: async (field, raw) => {
-      const cur = requireCurrent();
-      const type = await resolveOrAskType(cur.repo, field);
-      if (type === null) return; // user cancelled the type pick
-      const value = await parseValueForField(cur.repo, field, type, raw);
-      const force = isReserved(field) ? { force: true } : {};
-      await daemon.call('POST', api('/fields'), { name: field, value, ...force });
-      await load();
-      await dirty();
     },
-  });
 
-  void commands.register('metarecord:edit-field-value', {
-    label: 'Edit one value on this metarecord (select by value)',
-    reveal: true,
-    args: [
-      { name: 'value', prompt: () => 'Which value to edit?', complete: () => valueChoices() },
-      {
-        name: 'new-value',
+    add: {
+      target: { prompt: 'Field to add a value to?', complete: () => completableFieldNames() },
+      value: {
+        prompt: (p) => `Value to add to "${p[1]}"?`,
+        complete: (p) => valueCompletionFor(p[1]),
+      },
+      run: async (field, raw) => {
+        const cur = requireCurrent();
+        const type = await resolveOrAskType(cur.repo, field);
+        if (type === null) return; // user cancelled the type pick
+        const value = await parseValueForField(cur.repo, field, type, raw);
+        const force = isReserved(field) ? { force: true } : {};
+        await daemon.call('POST', api('/fields'), { name: field, value, ...force });
+        await load();
+        await dirty();
+      },
+    },
+
+    edit: {
+      target: { prompt: 'Which value to edit?', complete: () => valueChoices() },
+      value: {
         prompt: (p) => {
-          const r = rowForLabel(p[0]);
+          const r = rowForLabel(p[1]);
           return r ? `New value for "${r.name}"?` : 'New value?';
         },
         initial: async (p) => {
           const cur = requireCurrent();
-          const r = rowForLabel(p[0]);
+          const r = rowForLabel(p[1]);
           return r ? rawOfValue(cur.repo, cur.uuid, r.name, r.value) : '';
         },
-        complete: async (_partial, p) => {
+        complete: async (p) => {
           const cur = requireCurrent();
-          const r = rowForLabel(p[0]);
+          const r = rowForLabel(p[1]);
           if (!r) return [];
           // A Nothing row carries no type of its own: fall back to the field's
           // established one, so re-giving an absent bool a value still completes.
@@ -956,107 +965,149 @@ export async function mount(root, metafolder) {
           return completionPaths(cur.repo, r.name, type);
         },
       },
-    ],
-    handler: async (label, raw) => {
-      const cur = requireCurrent();
-      const row = rowForLabel(label);
-      if (!row) throw new Error(`no field value matching "${label}"`);
-      // A Nothing row carries no type: establish one (its single known type, or
-      // ask) before parsing the value the user just typed.
-      let type = row.value.type;
-      if (type === 'nothing') {
-        const established = await establishType(cur.repo, row.name);
-        if (established === null) return; // user cancelled the type pick
-        type = established;
-      }
-      const value = await parseValueForField(cur.repo, row.name, type, raw);
-      const force = isReserved(row.name) ? { force: true } : {};
-      await daemon.call('PATCH', `/repos/${cur.repo}/fields/${row.id}`, { value, ...force });
-      await load();
-      await dirty();
+      run: async (label, raw) => {
+        const cur = requireCurrent();
+        const row = rowForLabel(label);
+        if (!row) throw new Error(`no field value matching "${label}"`);
+        // A Nothing row carries no type: establish one (its single known type,
+        // or ask) before parsing the value the user just typed.
+        let type = row.value.type;
+        if (type === 'nothing') {
+          const established = await establishType(cur.repo, row.name);
+          if (established === null) return; // user cancelled the type pick
+          type = established;
+        }
+        const value = await parseValueForField(cur.repo, row.name, type, raw);
+        const force = isReserved(row.name) ? { force: true } : {};
+        await daemon.call('PATCH', `/repos/${cur.repo}/fields/${row.id}`, { value, ...force });
+        await load();
+        await dirty();
+      },
     },
-  });
 
-  void commands.register('metarecord:delete-field-value', {
-    label: 'Delete one value on this metarecord (select by value)',
-    reveal: true,
-    args: [{ name: 'value', prompt: () => 'Which value to delete?', complete: () => valueChoices() }],
-    handler: async (label) => {
-      const cur = requireCurrent();
-      const row = rowForLabel(label);
-      if (!row) throw new Error(`no field value matching "${label}"`);
-      await daemon.call(
-        'DELETE',
-        `/repos/${cur.repo}/fields/${row.id}`,
-        isReserved(row.name) ? { force: true } : null,
-      );
-      await load();
-      await dirty();
+    remove: {
+      target: { prompt: 'Which value to remove?', complete: () => valueChoices() },
+      run: async (label) => {
+        const cur = requireCurrent();
+        const row = rowForLabel(label);
+        if (!row) throw new Error(`no field value matching "${label}"`);
+        await daemon.call(
+          'DELETE',
+          `/repos/${cur.repo}/fields/${row.id}`,
+          isReserved(row.name) ? { force: true } : null,
+        );
+        await load();
+        await dirty();
+      },
     },
-  });
 
-  void commands.register('metarecord:edit-field-name', {
-    label: 'Rename a field on this metarecord (all its values)',
-    reveal: true,
-    args: [
-      nameArg('Field to rename?'),
-      { name: 'new-name', prompt: (p) => `Rename "${p[0]}" to?`, initial: (p) => p[0] },
-    ],
-    handler: async (field, newName) => {
-      const cur = requireCurrent();
-      // Rename every row of this field, Nothing rows included — an explicit
-      // absence should move with the field, not be orphaned under the old name.
-      const rows = (metarecord?.fields ?? []).filter((f) => f.name === field);
-      if (rows.length === 0) throw new Error(`no field "${field}"`);
-      const force = isReserved(field) || isReserved(newName) ? { force: true } : {};
-      for (const r of rows) {
-        await daemon.call('PATCH', `/repos/${cur.repo}/fields/${r.id}`, { name: newName, ...force });
-      }
-      await load();
-      await dirty();
+    unset: {
+      // The current-scope mirror of `metarecord:bulk unset`, which the
+      // per-record family was missing: every row of the name goes, and the
+      // field becomes *unknown* — distinct from setting it to Nothing.
+      target: { prompt: 'Field to remove entirely?', complete: () => editableFieldNames() },
+      run: async (field) => {
+        const cur = requireCurrent();
+        const rows = (metarecord?.fields ?? []).filter((f) => f.name === field);
+        if (rows.length === 0) throw new Error(`no field "${field}"`);
+        await daemon.call(
+          'DELETE',
+          api(`/fields/${encodeURIComponent(field)}`),
+          isReserved(field) ? { force: true } : null,
+        );
+        await load();
+        await dirty();
+      },
     },
-  });
 
-  void commands.register('metarecord:edit-field-type', {
-    label: 'Change a field type on this metarecord (all its values)',
-    reveal: true,
-    args: [
-      nameArg('Field to retype?'),
-      {
-        name: 'type',
-        prompt: (p) => `New type for "${p[0]}"?`,
+    rename: {
+      target: { prompt: 'Field to rename?', complete: () => editableFieldNames() },
+      value: { prompt: (p) => `Rename "${p[1]}" to?`, initial: (p) => p[1] },
+      run: async (field, newName) => {
+        const cur = requireCurrent();
+        // Rename every row of this field, Nothing rows included — an explicit
+        // absence should move with the field, not be orphaned under the old name.
+        const rows = (metarecord?.fields ?? []).filter((f) => f.name === field);
+        if (rows.length === 0) throw new Error(`no field "${field}"`);
+        const force = isReserved(field) || isReserved(newName) ? { force: true } : {};
+        for (const r of rows) {
+          await daemon.call('PATCH', `/repos/${cur.repo}/fields/${r.id}`, {
+            name: newName,
+            ...force,
+          });
+        }
+        await load();
+        await dirty();
+      },
+    },
+
+    retype: {
+      target: { prompt: 'Field to retype?', complete: () => editableFieldNames() },
+      value: {
+        prompt: (p) => `New type for "${p[1]}"?`,
         // A concrete row's type, else the established/schema type for the name.
-        initial: (p) => fieldTypeOf(p[0]),
+        initial: (p) => fieldTypeOf(p[1]),
         complete: () => TYPES.filter((t) => t !== 'nothing'),
       },
-    ],
-    handler: async (field, type) => {
-      const cur = requireCurrent();
-      if (!(/** @type {readonly string[]} */ (TYPES)).includes(type))
-        throw new Error(`unknown value type "${type}"`);
-      const all = (metarecord?.fields ?? []).filter((f) => f.name === field);
-      if (all.length === 0) throw new Error(`no field "${field}"`);
-      const concrete = all.filter((f) => f.value.type !== 'nothing');
-      const force = isReserved(field) ? { force: true } : {};
-      if (concrete.length === 0) {
-        // A field whose only value is Nothing has nothing to re-encode: a type
-        // is only meaningful with a value, so ask for one and set it (this is
-        // the type step already chosen above, now given a value).
-        const raw = window.prompt(`Value for "${field}" (${type})?`);
-        if (raw === null) return;
-        const value = await parseValueForField(cur.repo, field, type, raw);
-        for (const r of all) {
-          await daemon.call('PATCH', `/repos/${cur.repo}/fields/${r.id}`, { value, ...force });
-        }
-      } else {
-        for (const r of concrete) {
-          const raw = await rawOfValue(cur.repo, cur.uuid, field, r.value);
+      run: async (field, type) => {
+        const cur = requireCurrent();
+        if (!(/** @type {readonly string[]} */ (TYPES)).includes(type))
+          throw new Error(`unknown value type "${type}"`);
+        const all = (metarecord?.fields ?? []).filter((f) => f.name === field);
+        if (all.length === 0) throw new Error(`no field "${field}"`);
+        const concrete = all.filter((f) => f.value.type !== 'nothing');
+        const force = isReserved(field) ? { force: true } : {};
+        if (concrete.length === 0) {
+          // A field whose only value is Nothing has nothing to re-encode: a type
+          // is only meaningful with a value, so ask for one and set it (this is
+          // the type step already chosen above, now given a value).
+          const raw = window.prompt(`Value for "${field}" (${type})?`);
+          if (raw === null) return;
           const value = await parseValueForField(cur.repo, field, type, raw);
-          await daemon.call('PATCH', `/repos/${cur.repo}/fields/${r.id}`, { value, ...force });
+          for (const r of all) {
+            await daemon.call('PATCH', `/repos/${cur.repo}/fields/${r.id}`, { value, ...force });
+          }
+        } else {
+          for (const r of concrete) {
+            const raw = await rawOfValue(cur.repo, cur.uuid, field, r.value);
+            const value = await parseValueForField(cur.repo, field, type, raw);
+            await daemon.call('PATCH', `/repos/${cur.repo}/fields/${r.id}`, { value, ...force });
+          }
         }
-      }
-      await load();
-      await dirty();
+        await load();
+        await dirty();
+      },
+    },
+  };
+
+  const FIELD_OPERATIONS = Object.keys(FIELD_OPS);
+
+  void commands.register('metarecord:field', {
+    label: `Field operation on this metarecord (${FIELD_OPERATIONS.join(' / ')})`,
+    reveal: true,
+    args: [
+      {
+        name: 'operation',
+        prompt: () => `Operation? (${FIELD_OPERATIONS.join(' / ')})`,
+        complete: () => FIELD_OPERATIONS,
+      },
+      {
+        name: 'target',
+        prompt: (p) => FIELD_OPS[p[0]]?.target.prompt ?? 'Field?',
+        complete: (_partial, p) => FIELD_OPS[p[0]]?.target.complete() ?? [],
+      },
+      {
+        name: 'value',
+        when: (p) => FIELD_OPS[p[0]]?.value !== undefined,
+        prompt: (p) => FIELD_OPS[p[0]].value.prompt(p),
+        initial: (p) => FIELD_OPS[p[0]].value.initial?.(p) ?? '',
+        complete: (_partial, p) => FIELD_OPS[p[0]].value.complete?.(p) ?? [],
+      },
+    ],
+    handler: (op, target, value) => {
+      const spec = FIELD_OPS[op];
+      if (!spec) throw new Error(`unknown field operation: "${op}"`);
+      return spec.run(target, value);
     },
   });
 
@@ -1158,135 +1209,160 @@ export async function mount(root, metafolder) {
     return confirm(`${action} on ${t.count} metarecord${t.count === 1 ? '' : 's'}?`);
   }
 
-  void commands.register('metarecord:bulk-set-field', {
-    label: 'Set a field on the selected metarecords (or current query)',
-    args: [
-      { name: 'field', prompt: () => 'Field to set?', complete: async () => catalogFieldNames(await repoForAdd()) },
-      { name: 'value', prompt: (p) => `Value for "${p[0]}"?`, complete: (_partial, p) => bulkValueCompletion(p[0]) },
-    ],
-    handler: async (field, raw) => {
-      const t = await bulkTarget();
-      if (!(await confirmBulk(t, `Set "${field}"`))) return;
-      const type = await establishType(t.repo, field);
-      if (type === null) return; // user cancelled the type pick
-      const value = await parseValueForField(t.repo, field, type, raw);
-      const force = isReserved(field) ? { force: true } : {};
-      const resp = /** @type {{updated?: number}} */ (
-        await daemon.call('POST', `/repos/${t.repo}/query/fields/set`, {
-          query: t.query,
-          name: field,
-          value,
-          ...force,
-        })
-      );
-      const n = resp.updated ?? t.count;
-      void statusBar.message(`"${field}" set on ${n} metarecord${n === 1 ? '' : 's'}.`, statusMessageMs);
-      await dirty();
-    },
-  });
+  // One command for the whole family, the operation as its first argument —
+  // the set-layer mirror of `metarecord:field`, over the selection or the
+  // current query instead of the shown metarecord. Same vocabulary as the
+  // daemon routes it calls (`query/fields/{set,add,remove,unset}`) and as
+  // `mf metarecord field`; `delete` is the one that destroys the metarecords
+  // themselves (`query/delete`), which is why it names no field.
 
-  void commands.register('metarecord:bulk-add-field-value', {
-    label: 'Add a field value on the selected metarecords (or current query)',
-    args: [
-      { name: 'field', prompt: () => 'Field to add a value to?', complete: async () => catalogFieldNames(await repoForAdd()) },
-      { name: 'value', prompt: (p) => `Value to add to "${p[0]}"?`, complete: (_partial, p) => bulkValueCompletion(p[0]) },
-    ],
-    handler: async (field, raw) => {
-      const t = await bulkTarget();
-      if (!(await confirmBulk(t, `Add a value to "${field}"`))) return;
-      const type = await establishType(t.repo, field);
-      if (type === null) return; // user cancelled the type pick
-      const value = await parseValueForField(t.repo, field, type, raw);
-      const force = isReserved(field) ? { force: true } : {};
-      const resp = /** @type {{updated?: number}} */ (
-        await daemon.call('POST', `/repos/${t.repo}/query/fields/append`, {
-          query: t.query,
-          name: field,
-          value,
-          ...force,
-        })
-      );
-      const n = resp.updated ?? t.count;
-      void statusBar.message(`Value added to "${field}" on ${n} metarecord${n === 1 ? '' : 's'}.`, statusMessageMs);
-      await dirty();
+  /** Bulk operations, keyed by the first argument of `metarecord:bulk`.
+   *  `field` is the second argument (absent for `delete`), `value` the third
+   *  (absent for `unset` and `delete`). Tolerant of an unknown operation for
+   *  the same reason as FIELD_OPS: the spec functions run before the
+   *  dispatcher's error boundary. */
+  const BULK_OPS = {
+    set: {
+      fieldPrompt: 'Field to set?',
+      valuePrompt: (p) => `Value for "${p[1]}"?`,
+      confirm: (field) => `Set "${field}"`,
+      run: async (t, field, raw) => {
+        const value = await bulkValue(t, field, raw);
+        if (value === null) return;
+        const n = await bulkCall(t, 'set', { name: field, value }, field);
+        void statusBar.message(
+          `"${field}" set on ${n} metarecord${n === 1 ? '' : 's'}.`,
+          statusMessageMs,
+        );
+      },
     },
-  });
 
-  void commands.register('metarecord:bulk-remove-field', {
-    label: 'Remove a field from the selected metarecords (or current query)',
-    args: [
-      { name: 'field', prompt: () => 'Field to remove?', complete: async () => catalogFieldNames(await repoForAdd()) },
-    ],
-    handler: async (field) => {
-      const t = await bulkTarget();
-      if (!(await confirmBulk(t, `Remove "${field}"`))) return;
-      const force = isReserved(field) ? { force: true } : {};
-      const resp = /** @type {{updated?: number}} */ (
-        await daemon.call('POST', `/repos/${t.repo}/query/fields/unset`, {
-          query: t.query,
-          name: field,
-          ...force,
-        })
-      );
-      const n = resp.updated ?? t.count;
-      void statusBar.message(`"${field}" removed from ${n} metarecord${n === 1 ? '' : 's'}.`, statusMessageMs);
-      await dirty();
+    add: {
+      fieldPrompt: 'Field to add a value to?',
+      valuePrompt: (p) => `Value to add to "${p[1]}"?`,
+      confirm: (field) => `Add a value to "${field}"`,
+      run: async (t, field, raw) => {
+        const value = await bulkValue(t, field, raw);
+        if (value === null) return;
+        const n = await bulkCall(t, 'add', { name: field, value }, field);
+        void statusBar.message(
+          `Value added to "${field}" on ${n} metarecord${n === 1 ? '' : 's'}.`,
+          statusMessageMs,
+        );
+      },
     },
-  });
 
-  void commands.register('metarecord:bulk-remove-value', {
-    label: 'Remove a specific field value on the selected metarecords (or current query)',
+    remove: {
+      fieldPrompt: 'Field to remove a value from?',
+      valuePrompt: (p) => `Value to remove from "${p[1]}"?`,
+      confirm: (field) => `Remove a value from "${field}"`,
+      run: async (t, field, raw) => {
+        const value = await bulkValue(t, field, raw);
+        if (value === null) return;
+        const n = await bulkCall(t, 'remove', { name: field, value }, field);
+        void statusBar.message(
+          `Value removed from "${field}" on ${n} metarecord${n === 1 ? '' : 's'}.`,
+          statusMessageMs,
+        );
+      },
+    },
+
+    unset: {
+      fieldPrompt: 'Field to remove?',
+      confirm: (field) => `Remove "${field}"`,
+      run: async (t, field) => {
+        const n = await bulkCall(t, 'unset', { name: field }, field);
+        void statusBar.message(
+          `"${field}" removed from ${n} metarecord${n === 1 ? '' : 's'}.`,
+          statusMessageMs,
+        );
+      },
+    },
+
+    delete: {
+      // No field, no value: this one destroys the metarecords. It confirms on
+      // its own terms (never skipped, count named) rather than through
+      // confirmBulk, because it is not undoable from the UI.
+      run: async (t) => {
+        if (t.count === 0) {
+          void statusBar.message('No metarecords match — nothing to delete.', statusMessageMs);
+          return;
+        }
+        if (
+          !confirm(
+            `Delete ${t.count} metarecord${t.count === 1 ? '' : 's'}? ` +
+              `This removes the metarecords (any files stay on disk).`,
+          )
+        )
+          return;
+        const resp = /** @type {{deleted?: number}} */ (
+          await daemon.call('POST', `/repos/${t.repo}/query/delete`, { query: t.query })
+        );
+        const deleted = resp.deleted ?? 0;
+        void statusBar.message(
+          `Deleted ${deleted} metarecord${deleted === 1 ? '' : 's'}.`,
+          statusMessageMs,
+        );
+        await dirty();
+      },
+    },
+  };
+
+  const BULK_OPERATIONS = Object.keys(BULK_OPS);
+
+  /** Parses the raw text into a value of the field's established type, asking
+   *  for the type when none is known. Null means the user cancelled.
+   *  @param {BulkTarget} t @param {string} field @param {string} raw */
+  async function bulkValue(t, field, raw) {
+    const type = await establishType(t.repo, field);
+    if (type === null) return null; // user cancelled the type pick
+    return parseValueForField(t.repo, field, type, raw);
+  }
+
+  /** One set-layer call over the target, returning the number of metarecords
+   *  the daemon reports changed (falling back to the target count).
+   *  @param {BulkTarget} t @param {string} route @param {object} body
+   *  @param {string} field */
+  async function bulkCall(t, route, body, field) {
+    const force = isReserved(field) ? { force: true } : {};
+    const resp = /** @type {{updated?: number}} */ (
+      await daemon.call('POST', `/repos/${t.repo}/query/fields/${route}`, {
+        query: t.query,
+        ...body,
+        ...force,
+      })
+    );
+    await dirty();
+    return resp.updated ?? t.count;
+  }
+
+  void commands.register('metarecord:bulk', {
+    label: `Bulk operation on the selected metarecords or current query (${BULK_OPERATIONS.join(' / ')})`,
     args: [
       {
+        name: 'operation',
+        prompt: () => `Operation? (${BULK_OPERATIONS.join(' / ')})`,
+        complete: () => BULK_OPERATIONS,
+      },
+      {
         name: 'field',
-        prompt: () => 'Field to remove a value from?',
+        when: (p) => BULK_OPS[p[0]]?.fieldPrompt !== undefined,
+        prompt: (p) => BULK_OPS[p[0]].fieldPrompt,
         complete: async () => catalogFieldNames(await repoForAdd()),
       },
-      { name: 'value', prompt: (p) => `Value to remove from "${p[0]}"?`, complete: (_partial, p) => bulkValueCompletion(p[0]) },
+      {
+        name: 'value',
+        when: (p) => BULK_OPS[p[0]]?.valuePrompt !== undefined,
+        prompt: (p) => BULK_OPS[p[0]].valuePrompt(p),
+        complete: (_partial, p) => bulkValueCompletion(p[1]),
+      },
     ],
-    handler: async (field, raw) => {
+    handler: async (op, field, raw) => {
+      const spec = BULK_OPS[op];
+      if (!spec) throw new Error(`unknown bulk operation: "${op}"`);
       const t = await bulkTarget();
-      if (!(await confirmBulk(t, `Remove a value from "${field}"`))) return;
-      const type = await establishType(t.repo, field);
-      if (type === null) return; // user cancelled the type pick
-      const value = await parseValueForField(t.repo, field, type, raw);
-      const force = isReserved(field) ? { force: true } : {};
-      const resp = /** @type {{updated?: number}} */ (
-        await daemon.call('POST', `/repos/${t.repo}/query/fields/remove`, {
-          query: t.query,
-          name: field,
-          value,
-          ...force,
-        })
-      );
-      const n = resp.updated ?? t.count;
-      void statusBar.message(`Value removed from "${field}" on ${n} metarecord${n === 1 ? '' : 's'}.`, statusMessageMs);
-      await dirty();
-    },
-  });
-
-  void commands.register('metarecord:bulk-delete', {
-    label: 'Delete the selected metarecords (or current query) — the files stay on disk',
-    handler: async () => {
-      const t = await bulkTarget();
-      if (t.count === 0) {
-        void statusBar.message('No metarecords match — nothing to delete.', statusMessageMs);
-        return;
-      }
-      // Always confirm, naming the count: deletion is not undoable from the UI.
-      if (
-        !confirm(
-          `Delete ${t.count} metarecord${t.count === 1 ? '' : 's'}? ` +
-            `This removes the metarecords (any files stay on disk).`,
-        )
-      )
-        return;
-      const resp = /** @type {{deleted?: number}} */ (
-        await daemon.call('POST', `/repos/${t.repo}/query/delete`, { query: t.query })
-      );
-      const deleted = resp.deleted ?? 0;
-      void statusBar.message(`Deleted ${deleted} metarecord${deleted === 1 ? '' : 's'}.`, statusMessageMs);
-      await dirty();
+      if (spec.confirm && !(await confirmBulk(t, spec.confirm(field)))) return;
+      await spec.run(t, field, raw);
     },
   });
 
@@ -1375,21 +1451,21 @@ export async function mount(root, metafolder) {
 
   // Keyboard editing (spec-gui): every field/metarecord operation is a command,
   // so the panel is fully drivable without the mouse.
-  void commands.register('metarecord:field-next', {
+  void commands.register('metarecord:row-next', {
     label: 'Move the field cursor down',
     log: false,
     handler: () => moveCursor(1),
   });
-  void commands.register('metarecord:field-prev', {
+  void commands.register('metarecord:row-prev', {
     label: 'Move the field cursor up',
     log: false,
     handler: () => moveCursor(-1),
   });
-  void commands.register('metarecord:field-edit', {
+  void commands.register('metarecord:row-edit', {
     label: 'Edit the field under the cursor',
     handler: editCursorRow,
   });
-  void commands.register('metarecord:field-delete', {
+  void commands.register('metarecord:row-delete', {
     label: 'Delete the field under the cursor',
     handler: deleteCursorRow,
   });

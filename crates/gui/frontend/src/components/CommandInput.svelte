@@ -10,7 +10,7 @@
     resolvePromptValue,
     resolveSubmission,
     setEditingTarget,
-    shortcutsFor,
+    listedCommands,
   } from '../lib/commands';
   import { focusedWs, store } from '../lib/store.svelte';
   import { createTickGate } from '../lib/tick';
@@ -155,7 +155,7 @@
           }))
         : mode === 'bash'
           ? bashCandidates.map((name) => ({ name, label: '' }))
-          : filterCommands(store.commands, draft),
+          : filterCommands(listedCommands(store.commands, store.keytable), draft),
   );
   // The best-ranked matches are listed (filterCompletions caps prompt
   // candidates so a huge set stays cheap to render); the CSS max-height makes
@@ -410,8 +410,8 @@
                 >{/if}</span
             >
             <span class="label">{suggestion.label}</span>
-            {#if shortcutsFor(store.keytable, suggestion.name).length > 0}
-              <span class="shortcut">{shortcutsFor(store.keytable, suggestion.name).join(', ')}</span>
+            {#if 'shortcuts' in suggestion && suggestion.shortcuts.length > 0}
+              <span class="shortcut">{suggestion.shortcuts.join(', ')}</span>
             {/if}
           </button>
         </li>

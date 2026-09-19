@@ -590,7 +590,7 @@ enum FieldVerb {
         force: bool,
     },
     /// Remove the row(s) equal to the spec (inverse of add)
-    Delete {
+    Remove {
         /// Field spec name:type[=value]
         spec: String,
         #[arg(long, short = 'f')]
@@ -1306,7 +1306,7 @@ fn dispatch_metarecord(
                 }
                 FieldVerb::Set { specs, force } => commands::field_set(ctx, &sel, &specs, force),
                 FieldVerb::Add { spec, force } => commands::add(ctx, &sel, &spec, force),
-                FieldVerb::Delete { spec, force } => commands::remove(ctx, &sel, &spec, force),
+                FieldVerb::Remove { spec, force } => commands::remove(ctx, &sel, &spec, force),
                 FieldVerb::Unset { name, force } => commands::field_unset(ctx, &sel, &name, force),
             }
         }

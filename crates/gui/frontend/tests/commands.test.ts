@@ -12,6 +12,7 @@ import {
   collectArgs,
   filterCommands,
   filterCompletions,
+  listedCommands,
   needsMessagePanel,
   orderFolderPath,
   parseInvocation,
@@ -188,6 +189,78 @@ describe('needsMessagePanel', () => {
   test('no focused workspace: never needed', () => {
     const l = layout(slot(false, null, null), slot(false, null, null));
     expect(needsMessagePanel(l, null)).toBe(false);
+  });
+});
+
+describe('listedCommands', () => {
+  const binding = (keys: string[], invocation: string) => ({
+    keys,
+    invocation,
+    when: null,
+    text_input: false,
+  });
+  const command = (name: string, label = name) => ({
+    name,
+    label,
+    owner: 'metarecord-detail',
+    reveal: false,
+    log: true,
+  });
+
+  const commands = [command('metarecord:bulk', 'Bulk edit'), command('metarecord-list:next')];
+  const keytable = [
+    binding(['m', 'b'], 'metarecord:bulk'),
+    binding(['m', 'm', 'd'], 'metarecord:bulk delete'),
+    binding(['m', 'm', 's'], 'metarecord:bulk set'),
+    binding(['down'], 'metarecord-list:next'),
+    binding(['j'], 'metarecord-list:next'),
+  ];
+
+  test('every registered command is listed', () => {
+    const names = listedCommands(commands, keytable).map((c) => c.name);
+    expect(names).toContain('metarecord:bulk');
+    expect(names).toContain('metarecord-list:next');
+  });
+
+  test('a bound parameterized invocation earns its own entry', () => {
+    const names = listedCommands(commands, keytable).map((c) => c.name);
+    expect(names).toContain('metarecord:bulk delete');
+    expect(names).toContain('metarecord:bulk set');
+  });
+
+  test('an unbound parameter combination is not listed', () => {
+    // `unset` is a valid operation of the generic command, but no key runs it:
+    // it stays discoverable through the operation prompt, not the listing.
+    const names = listedCommands(commands, keytable).map((c) => c.name);
+    expect(names).not.toContain('metarecord:bulk unset');
+  });
+
+  test('the bare entry shows only the combos bound to it exactly', () => {
+    // Without this the bare command would collect every parameterized combo —
+    // `panel:set-type` used to print 14 of them on one line, with nothing
+    // saying which combo went with which panel type.
+    const listed = listedCommands(commands, keytable);
+    expect(listed.find((c) => c.name === 'metarecord:bulk')?.shortcuts).toEqual(['m b']);
+    expect(listed.find((c) => c.name === 'metarecord:bulk delete')?.shortcuts).toEqual(['m m d']);
+  });
+
+  test('several combos on one invocation make one entry', () => {
+    const listed = listedCommands(commands, keytable);
+    const next = listed.filter((c) => c.name === 'metarecord-list:next');
+    expect(next).toHaveLength(1);
+    expect(next[0].shortcuts).toEqual(['down', 'j']);
+  });
+
+  test('an expanded entry inherits the base command label and owner', () => {
+    const listed = listedCommands(commands, keytable);
+    const entry = listed.find((c) => c.name === 'metarecord:bulk delete');
+    expect(entry?.label).toBe('Bulk edit');
+    expect(entry?.owner).toBe('metarecord-detail');
+  });
+
+  test('a binding on an unregistered command is ignored', () => {
+    const listed = listedCommands(commands, [binding(['z'], 'nope:gone param')]);
+    expect(listed.map((c) => c.name)).not.toContain('nope:gone param');
   });
 });
 
@@ -430,6 +503,51 @@ describe('collectArgs', () => {
       initial: 'current-tag',
       completions: ['tag/a', 'tag/b'],
     });
+  });
+
+  // A generic command carries one spec per argument any of its operations can
+  // take, and `when` drops the ones the chosen operation has no use for:
+  // `metarecord:bulk delete` names no field, `metarecord:bulk unset` no value.
+  const operation = (): ArgSpec => ({
+    name: 'operation',
+    prompt: () => 'Operation?',
+    complete: () => ['set', 'unset', 'delete'],
+  });
+  const fieldUnlessDelete = (): ArgSpec => ({
+    ...field(),
+    when: (prior) => prior[0] !== 'delete',
+  });
+  const valueWhenSet = (): ArgSpec => ({
+    ...value(),
+    when: (prior) => prior[0] === 'set',
+  });
+  const bulkSpecs = () => [operation(), fieldUnlessDelete(), valueWhenSet()];
+
+  test('a spec whose `when` is false is never prompted', async () => {
+    const { fn, requests } = scriptedPrompt([]);
+    const result = await collectArgs(bulkSpecs(), ['delete'], fn);
+    expect(result).toEqual(['delete']);
+    expect(requests).toEqual([]);
+  });
+
+  test('`when` skips an argument mid-way and still prompts the later ones', async () => {
+    const { fn, requests } = scriptedPrompt(['tag']);
+    const result = await collectArgs(bulkSpecs(), ['unset'], fn);
+    expect(result).toEqual(['unset', 'tag']);
+    expect(requests.map((r) => r.argName)).toEqual(['field']);
+  });
+
+  test('inline arguments stay aligned with the specs that survive `when`', async () => {
+    // 'delete' skips the field spec, so the tokens after it must not be read
+    // as a field — there is no second argument to fill.
+    const { fn } = scriptedPrompt([]);
+    expect(await collectArgs(bulkSpecs(), ['set', 'tag', 'jazz'], fn)).toEqual([
+      'set',
+      'tag',
+      'jazz',
+    ]);
+    expect(await collectArgs(bulkSpecs(), ['unset', 'tag'], fn)).toEqual(['unset', 'tag']);
+    expect(fn).not.toHaveBeenCalled();
   });
 
   test('Escape (null) abandons the whole invocation and stops prompting', async () => {

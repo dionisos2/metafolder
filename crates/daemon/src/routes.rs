@@ -71,7 +71,7 @@ pub fn build(state: Arc<AppState>) -> Router {
         .route("/repos/:repo/query", post(run_query))
         .route("/repos/:repo/query/delete", post(delete_by_query))
         .route("/repos/:repo/query/fields/set", post(batch_set))
-        .route("/repos/:repo/query/fields/append", post(batch_append))
+        .route("/repos/:repo/query/fields/add", post(batch_add))
         .route("/repos/:repo/query/fields/remove", post(batch_remove))
         .route("/repos/:repo/query/fields/unset", post(batch_unset))
         .route("/repos/:repo/query/fields/resolve-tree", post(query_resolve_tree))
@@ -590,7 +590,7 @@ where
 }
 
 /// Shared scaffold for the set-layer field-write handlers (`batch_set`,
-/// `batch_append`, `batch_remove`, `batch_unset`): runs on the blocking pool,
+/// `batch_add`, `batch_remove`, `batch_unset`): runs on the blocking pool,
 /// gates on repository writability and on the field name being writable,
 /// resolves the query to its match set, then opens **one** logged [`Writer`]
 /// and lets `write` mutate each match in turn — the whole batch is a single
@@ -3298,10 +3298,11 @@ async fn batch_set(
     .await
 }
 
-/// Runs the query server-side and appends one field row to every match in a
+/// Runs the query server-side and adds one field row to every match in a
 /// single transaction (one revision) — the bulk form of `POST
-/// /metarecords/:uuid/fields`. Multi-map: never replaces existing rows.
-async fn batch_append(
+/// /metarecords/:uuid/fields`, and the set-layer half of `mf metarecord field
+/// add`. Multi-map: appends, never replaces existing rows.
+async fn batch_add(
     State(state): State<Arc<AppState>>,
     Path(repo): Path<String>,
     payload: Result<Json<BatchSetBody>, JsonRejection>,
@@ -3320,7 +3321,7 @@ async fn batch_append(
 
 /// Runs the query server-side and removes every field row equal to
 /// `(name, value)` from each match in a single transaction (one revision) — the
-/// inverse of `batch_append`. `updated` counts the metarecords actually changed
+/// inverse of `batch_add`. `updated` counts the metarecords actually changed
 /// (those that carried at least one matching row).
 async fn batch_remove(
     State(state): State<Arc<AppState>>,

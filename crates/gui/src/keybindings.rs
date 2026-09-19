@@ -575,6 +575,68 @@ mod tests {
         }
     }
 
+    /// The field-editing families are one command each, with the operation as
+    /// the first argument; every `m` binding is that command with the
+    /// operation pre-filled. The listing expands exactly these, so a binding
+    /// that names no operation would also hide that operation from the
+    /// command input (spec-gui "Command listing").
+    #[test]
+    fn test_shipped_defaults_prefill_the_field_operations() {
+        let defaults = include_str!("../default-config/keybindings.toml");
+        let table = KeybindingSet::from_sources(defaults, "").unwrap().compiled();
+        let bound = |keys: &[&str]| -> Vec<String> {
+            table
+                .iter()
+                .filter(|b| b.keys == keys)
+                .map(|b| b.invocation.clone())
+                .collect::<Vec<_>>()
+        };
+
+        for (keys, invocation) in [
+            (["m", "s"], "metarecord:field set"),
+            (["m", "a"], "metarecord:field add"),
+            (["m", "v"], "metarecord:field edit"),
+            (["m", "d"], "metarecord:field remove"),
+            (["m", "u"], "metarecord:field unset"),
+            (["m", "n"], "metarecord:field rename"),
+            (["m", "t"], "metarecord:field retype"),
+        ] {
+            let found = bound(&keys);
+            assert!(
+                found.iter().all(|i| i == invocation) && !found.is_empty(),
+                "{keys:?} should run `{invocation}`, got {found:?}"
+            );
+            // Reachable from either panel: a command dispatches to its own
+            // panel whatever is focused, so the family is not list-only.
+            let scopes: Vec<_> =
+                table.iter().filter(|b| b.keys == keys).filter_map(|b| b.when.clone()).collect();
+            assert!(
+                scopes.contains(&"metarecord-list".to_string())
+                    && scopes.contains(&"metarecord-detail".to_string()),
+                "{keys:?} is missing a panel scope: {scopes:?}"
+            );
+        }
+
+        // `m b` asks for the operation; `m m <op>` names it up front. Both are
+        // the same command, so the prefix must stay free of an exact binding.
+        let bulk_bare = bound(&["m", "b"]);
+        assert!(!bulk_bare.is_empty() && bulk_bare.iter().all(|i| i == "metarecord:bulk"));
+        assert!(bound(&["m", "m"]).is_empty(), "an exact `m m` would shadow every `m m <op>`");
+        for (keys, invocation) in [
+            (["m", "m", "s"], "metarecord:bulk set"),
+            (["m", "m", "a"], "metarecord:bulk add"),
+            (["m", "m", "v"], "metarecord:bulk remove"),
+            (["m", "m", "r"], "metarecord:bulk unset"),
+            (["m", "m", "d"], "metarecord:bulk delete"),
+        ] {
+            let found = bound(&keys);
+            assert!(
+                found.iter().all(|i| i == invocation) && !found.is_empty(),
+                "{keys:?} should run `{invocation}`, got {found:?}"
+            );
+        }
+    }
+
     #[test]
     fn test_shipped_defaults_bind_find_per_panel_and_fullscreen() {
         // "Find an entry" (spec-gui): every list panel with a row cursor puts

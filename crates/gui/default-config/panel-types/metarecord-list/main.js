@@ -18,7 +18,6 @@ import {
 import { fileMenuItems, metarecordMenuItems } from '/__file-actions.js';
 import { attachHistory } from '/__history.js';
 import { latestOnly } from '/__coalesce.js';
-import { BULK_OPERATIONS, bulkCommandFor } from './bulk-ops.js';
 import {
   parseColumns,
   isSortable,
@@ -181,7 +180,7 @@ export async function mount(root, metafolder) {
     value: 'set',
     options: [
       { value: 'set', label: 'Set (replace all rows)' },
-      { value: 'append', label: 'Append (add a row)' },
+      { value: 'add', label: 'Add (append a row)' },
       { value: 'remove', label: 'Remove (delete matching rows)' },
       { value: 'unset', label: 'Unset (remove the field)' },
       { value: 'delete', label: 'Delete metarecords' },
@@ -953,7 +952,7 @@ export async function mount(root, metafolder) {
     void fetchPage(true);
   }
 
-  // ── Bulk edit (set/append/remove a field over the whole query result) ────
+  // ── Bulk edit (set/add/remove a field over the whole query result) ────
 
   /** @type {Widget|null} the value editor following the picked type */
   let bulkWidget = null;
@@ -965,7 +964,7 @@ export async function mount(root, metafolder) {
   /** @type {Record<string, {path: string, verb: string, prep: string, valueless?: boolean, noField?: boolean}>} */
   const BULK_OPS = {
     set: { path: 'query/fields/set', verb: 'Set', prep: 'on' },
-    append: { path: 'query/fields/append', verb: 'Append', prep: 'to' },
+    add: { path: 'query/fields/add', verb: 'Add', prep: 'to' },
     remove: { path: 'query/fields/remove', verb: 'Remove', prep: 'from' },
     unset: { path: 'query/fields/unset', verb: 'Unset', prep: 'from', valueless: true },
     delete: { path: 'query/delete', verb: 'Delete', prep: '', valueless: true, noField: true },
@@ -1347,17 +1346,6 @@ export async function mount(root, metafolder) {
     label: 'Metarecord list: open the bulk edit / delete form (set/append/remove/unset/delete)',
     reveal: true,
     handler: () => toggleBulkForm(),
-  });
-  void commands.register('metarecord-list:bulk-edit', {
-    label: 'Metarecord list: bulk edit / delete on the current query (pick an operation)',
-    args: [
-      {
-        name: 'operation',
-        prompt: () => 'Operation? (set / append / remove / unset / delete)',
-        complete: () => BULK_OPERATIONS,
-      },
-    ],
-    handler: (operation) => commands.invoke(bulkCommandFor(operation)),
   });
   void commands.register('metarecord-list:set-page-size', {
     label: 'Metarecord list: set the page size (results per fetch)',

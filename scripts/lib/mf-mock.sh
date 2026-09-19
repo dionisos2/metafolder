@@ -253,7 +253,7 @@ case "$sig" in
     "tag "*" add "*|"tag "*" deny "*|"tag "*" mixed "*|"tag "*" remove "*) exit 0 ;;
     # Field and record writes.
     "metarecord "*" field set "*|"metarecord "*" field add "*) exit 0 ;;
-    "metarecord "*" field delete "*|"metarecord "*" field unset "*) exit 0 ;;
+    "metarecord "*" field remove "*|"metarecord "*" field unset "*) exit 0 ;;
     "metarecord "*" set "*|"metarecord add "*|"metarecord "*" delete") exit 0 ;;
     # Reads a test did not stub: an empty result is a legitimate answer.
     "metarecord "*" get"*|"metarecord get"*|"field "*|"path "*) exit 0 ;;

@@ -624,7 +624,7 @@ fn test_add_with_predicate_appends_to_matches() {
 fn test_remove_by_uuid_drops_only_matching_value_rows() {
     let (repo, _root) = init_repo("remove_uuid");
     let uuid = create_metarecord(&repo, &["tag:string=test", "tag:string=keep"]);
-    let out = mf(&["-u", &repo, "metarecord", "-i", &uuid, "field", "delete", "tag:string=test"]);
+    let out = mf(&["-u", &repo, "metarecord", "-i", &uuid, "field", "remove", "tag:string=test"]);
     assert_ok(&out);
     assert_eq!(out.stdout.trim(), "1");
     let entries = get_entries(&repo, &uuid);
@@ -632,6 +632,26 @@ fn test_remove_by_uuid_drops_only_matching_value_rows() {
     let tags: Vec<&serde_json::Value> = fields.iter().filter(|f| f["name"] == "tag").collect();
     assert_eq!(tags.len(), 1, "only the matching-value row is removed");
     assert_eq!(tags[0]["value"]["value"], "keep");
+}
+
+/// One vocabulary across the daemon, the CLI and the GUI: `set` / `add` /
+/// `remove` / `unset` take a *value* out of a multi-map field, while `delete`
+/// stays reserved for destroying an entity (`mf metarecord delete`, and the
+/// row-addressed `mf field delete <id>`). The field-level verb used to be
+/// `delete`, which collided with that meaning; it is gone rather than aliased.
+#[test]
+fn test_field_delete_verb_is_gone() {
+    let (repo, _root) = init_repo("field_delete_gone");
+    let uuid = create_metarecord(&repo, &["tag:string=test"]);
+
+    let out = mf(&["-u", &repo, "metarecord", "-i", &uuid, "field", "delete", "tag:string=test"]);
+    assert_eq!(out.code, 2, "unknown verb is a usage error.\nstderr: {}", out.stderr);
+
+    // The row-addressed form keeps `delete`: it destroys a directly-named row,
+    // it does not take a value out of a multi-map.
+    let entries = get_entries(&repo, &uuid);
+    let id = entries[0]["fields"][0]["id"].as_i64().unwrap();
+    assert_ok(&mf(&["-u", &repo, "field", "delete", &id.to_string()]));
 }
 
 #[test]
@@ -647,7 +667,7 @@ fn test_remove_by_predicate_prints_changed_count() {
         "-q",
         "tag IS PRESENT",
         "field",
-        "delete",
+        "remove",
         "tag:string=test",
     ]);
     assert_ok(&out);
