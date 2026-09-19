@@ -52,11 +52,11 @@ pub struct RepoState {
     /// separate from `conn` so progress reads never block behind a running
     /// reconcile.
     pub tasks: crate::tasks::TaskRegistry,
-    /// Derived in-memory query accelerator (spec-indexing). Rebuilt from the
-    /// `field` table whenever the log HEAD it was built at no longer matches
-    /// the current HEAD (it carries no incremental maintenance yet), and only
-    /// consulted while fresh — so it never serves stale results. `None` until
-    /// the first query builds it.
+    /// Derived in-memory query accelerator (spec-indexing). Built at load by
+    /// [`Self::warmup`], then kept at the log HEAD by every commit
+    /// ([`Self::settle_index`]) so no reader inherits an accumulated delta;
+    /// a read still refreshes it ([`crate::index::RepoIndex::refresh`]), which
+    /// is where the rebuild a commit declines to do finally happens.
     pub index: Mutex<Option<crate::index::RepoIndex>>,
     /// Percentage of the kernel's watch limit this repository may spend
     /// (`[settings] watch-budget-share`).
@@ -293,6 +293,9 @@ impl RepoState {
         conn: &Connection,
         effects: &crate::log::WriteEffects,
     ) -> anyhow::Result<()> {
+        // Unconditional: every revision moves HEAD, whatever it touched, and the
+        // index is behind by exactly that much.
+        self.settle_index(conn);
         if effects.touches_tree() {
             let _phase = metafolder_core::slowlog::phase("settle.tree");
             let mut cache = self.lock_cache();
@@ -308,6 +311,37 @@ impl RepoState {
             self.refresh_watches(conn);
         }
         Ok(())
+    }
+
+    /// Brings the resident query index up to the revision just committed on
+    /// `conn` — incrementally, or not at all.
+    ///
+    /// The index used to be refreshed only when something read it, so each write
+    /// left it further behind and the next reader paid the whole accumulated
+    /// catch-up. Past [`crate::index`]'s rebuild bound that catch-up is a full
+    /// rebuild — one scan of the `field` table, inside somebody's request: the
+    /// minute-long `GET /repos/:repo/fields` seen on opening a repository, whose
+    /// time was entirely in `index.refresh` with the connection free.
+    ///
+    /// What it deliberately does *not* do is rebuild. A rebuild here would hold
+    /// the connection for that whole scan, which is the mistake the tree cache
+    /// already made and stopped making (see [`Self::settle`]). It declines
+    /// instead, and the next reader rebuilds — a case that stops arising once
+    /// every commit catches up, since the delta is then one revision.
+    ///
+    /// A failure is logged, never propagated: the revision is already committed,
+    /// and an index left stale is slow, not wrong.
+    pub fn settle_index(&self, conn: &Connection) {
+        let _phase = metafolder_core::slowlog::phase("settle.index");
+        let mut guard = self.index.lock_recover();
+        let Some(index) = guard.as_mut() else { return };
+        if let Err(e) = index.refresh_incremental(conn) {
+            crate::diagnostics::warn_for(
+                "index",
+                format!("could not bring the query index up to the new revision: {e:#}"),
+                self.uuid(),
+            );
+        }
     }
 
     /// Recomputes the watcher's eligible-directory set after a manual write that

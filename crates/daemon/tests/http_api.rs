@@ -1464,3 +1464,57 @@ async fn list_fields_answers_while_a_writer_holds_the_connection() {
         catalog.as_array().unwrap().iter().map(|e| e["name"].as_str().unwrap()).collect();
     assert!(names.contains(&"tag"), "the resident catalog must still be served: {catalog}");
 }
+
+// The resident query index used to be brought up to HEAD only on the read path,
+// so every write left it further behind and the next reader paid the catch-up.
+// Past `REBUILD_OVER` accumulated operations that catch-up is no longer
+// incremental but a full rebuild — one scan of the whole `field` table, inside
+// the request (measured: 10.3 s on 50 k metarecords, and over a minute on a
+// large cold repository, all of it in `index.refresh`). A commit must therefore
+// leave the index at HEAD, while it still holds the connection, so the delta
+// never gets the chance to accumulate.
+#[tokio::test]
+async fn a_write_leaves_the_query_index_at_head() {
+    use metafolder_daemon::db;
+
+    let state = std::sync::Arc::new(AppState::new());
+    let app = routes::build(state.clone());
+    let root = temp_dir("index_settles_on_write");
+    let (status, body) =
+        request(&app, "POST", "/repos/init", Some(json!({"root": root.to_str().unwrap()}))).await;
+    assert_eq!(status, StatusCode::OK, "init failed: {body}");
+    let repo = body["repo_uuid"].as_str().unwrap().to_string();
+    let repo_uuid = Uuid::parse_str(&repo).unwrap();
+
+    let created = create_metarecord(
+        &app,
+        &repo,
+        json!([{"name": "tag", "value": {"type": "string", "value": "jazz"}}]),
+    )
+    .await;
+    let uuid = created["uuid"].as_str().unwrap().to_string();
+    let (status, _) = request(
+        &app,
+        "PUT",
+        &format!("/repos/{repo}/metarecords/{uuid}/fields/rating"),
+        Some(json!({"value": {"type": "int", "value": 5}})),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+
+    // No read in between: the write itself must have settled the index.
+    let repo_state = state.repo(repo_uuid).unwrap();
+    let head = {
+        let conn = repo_state.conn.lock().unwrap();
+        db::current_head(&conn).unwrap()
+    };
+    let built = repo_state.index.lock().unwrap().as_ref().and_then(|i| i.built_at_head());
+    assert_eq!(built, head, "the commit must leave the index at HEAD, not the next reader");
+
+    // And the catch-up is real, not just a bookkeeping bump.
+    let (status, catalog) = request(&app, "GET", &format!("/repos/{repo}/fields"), None).await;
+    assert_eq!(status, StatusCode::OK);
+    let names: Vec<&str> =
+        catalog.as_array().unwrap().iter().map(|e| e["name"].as_str().unwrap()).collect();
+    assert!(names.contains(&"rating"), "the settled index must hold the new field: {catalog}");
+}

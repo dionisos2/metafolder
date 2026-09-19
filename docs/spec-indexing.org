@@ -616,10 +616,27 @@ every such query cost O(total log length) — the same query answering in 0.5 ms
 warm and 90 ms after any write, on a 50 k-operation log, whatever it matched.
 Neither must it read up to the =REBUILD_OVER= budget just because the budget
 allows it. A rewritten history (rollback / prune), an unrecognised op, or
-an oversized delta falls back to a full rebuild — always correct. The replay
-happens lazily on the read path, not on the write path, but the effect is the
-spec's "single write path updates both": every write advances HEAD, and the next
-query reconciles the index to it. Pagination is *keyset*: the cursor encodes the
+an oversized delta falls back to a full rebuild — always correct.
+
+The replay happens on *both* paths. Every commit catches the index up before
+releasing the connection (=RepoState::settle_index=, next to the tree-cache and
+watch-set settling it already did), and a read still refreshes before it
+evaluates. The write side is deliberately *incremental-only*: a rebuild there
+would hold the connection for a scan of the whole =field= table, which is the
+mistake the tree cache made and stopped making, so a commit facing an oversized
+delta declines and leaves it to the next reader. Catching up per commit is what
+makes that case rare — the delta is then one revision, and =REBUILD_OVER= is not
+reached by accumulation.
+
+Leaving the catch-up to readers alone was measurably wrong: a daemon writing
+unattended (watcher flushes all night, no query) handed the first reader the
+whole accumulated delta, and past the rebuild bound that is a full rebuild
+*inside their request*. Measured on 50 k metarecords: =GET /repos/:repo/fields=
+at 10.3 s, every millisecond of it in =index.refresh=, with the connection free
+— and over a minute on a larger, colder repository, which is what opening a
+repository in the GUI looked like. The same 50 000 operations written in ten
+committed batches now leave that read at 1.2 ms, each batch having paid ≈ 0.6 s
+of =settle.index=; an ordinary one-field write pays nothing measurable. Pagination is *keyset*: the cursor encodes the
 last entry's sort key (one representative per key) and uuid, so the next page
 resumes strictly after it — stable under concurrent inserts/deletes, and the
 same thing the oracle's own cursor encoding does. A request asking for =count= gets the page and the total from a

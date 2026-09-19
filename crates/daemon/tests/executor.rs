@@ -1459,3 +1459,25 @@ fn test_a_watcher_revision_records_its_origin() {
         .unwrap();
     assert_eq!(origin, None, "an ordinary write is nobody's but the writer's");
 }
+
+// The watcher's flushes are what accumulate unattended: a daemon that has been
+// writing all night hands the first reader of the morning the whole delta, and
+// past `REBUILD_OVER` operations that is a full index rebuild inside their
+// request. The flush holds the connection anyway — it brings the index up with
+// it, like the tree cache it already keeps in step.
+#[test]
+fn test_flush_leaves_the_query_index_at_head() {
+    let (repo, root, _) = setup("index_settle");
+    repo.warmup(&|_, _, _| {}).unwrap();
+    write_file(&root, "a.txt", b"hello");
+    enqueue(&repo, &[FsEvent::Create("/a.txt".into())]);
+
+    executor::flush_pending(&repo).unwrap();
+
+    let head = {
+        let conn = repo.conn.lock().unwrap();
+        db::current_head(&conn).unwrap()
+    };
+    let built = repo.index.lock().unwrap().as_ref().and_then(|i| i.built_at_head());
+    assert_eq!(built, head, "the flush must leave the index at HEAD, not the next reader");
+}

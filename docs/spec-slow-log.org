@@ -99,6 +99,7 @@ inventing a synonym):
 | =validate.schema=  | schema delta validation                                     |
 | =commit=           | committing the transaction (the WAL fsync lands here)       |
 | =settle.tree=      | settling or rebuilding the tree cache after a write         |
+| =settle.index=     | catching the query index up to the revision just committed  |
 | =settle.watches=   | recomputing the watched-directory set                       |
 | =watcher.compact=  | compacting a buffered event batch before applying it        |
 | =watcher.apply=    | applying one group of compacted events                      |

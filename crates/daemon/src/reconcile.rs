@@ -440,6 +440,11 @@ pub fn reconcile_full_reported(
     }
 
     writer.commit()?;
+    // Like every other commit, with the connection still held (see
+    // `RepoState::settle_index`). A whole-repository reconcile writes far more
+    // than the incremental bound, so this usually declines and the next reader
+    // rebuilds — but a small one settles, and the rule is the same everywhere.
+    repo.settle_index(&conn);
     Ok(result)
 }
 
@@ -593,6 +598,11 @@ pub fn reconcile_metarecord_reported(
     }
 
     writer.commit()?;
+    // Like every other commit, with the connection still held (see
+    // `RepoState::settle_index`). A whole-repository reconcile writes far more
+    // than the incremental bound, so this usually declines and the next reader
+    // rebuilds — but a small one settles, and the rule is the same everywhere.
+    repo.settle_index(&conn);
     Ok(result)
 }
 

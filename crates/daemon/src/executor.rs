@@ -555,6 +555,11 @@ fn flush_pending_once(repo: &RepoState, report: FlushReport) -> Result<FlushStat
         Ok((revisions, ignored))
     })();
     drop(applying);
+    // Whatever the outcome: each group committed on its own, so a batch that
+    // stopped half way still moved HEAD. The connection is still held here,
+    // which is the whole point — the flush brings the index up with it rather
+    // than leaving the delta to pile up for the next reader.
+    repo.settle_index(&conn);
 
     match work {
         Ok((revisions, ignored)) => {

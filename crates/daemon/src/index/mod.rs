@@ -453,25 +453,39 @@ impl RepoIndex {
     /// that triggered one can be stopped (spec-tasks "Cancellation"). The
     /// incremental path is bounded (`REBUILD_OVER` ops) and runs to completion.
     pub fn refresh(&mut self, conn: &Connection, cancel: &dyn Fn() -> bool) -> anyhow::Result<()> {
-        let head = db::current_head(conn)?;
-        if head == self.built_at_head {
-            return Ok(());
-        }
-        let delta = match head {
-            Some(current) => self.forward_delta(conn, current)?,
-            None => None, // HEAD reset to empty: not a forward extension.
-        };
-        match delta {
-            // Incremental, unless dead dense ids (deleted metarecords, never
-            // reused) have piled up — a rebuild re-interns only the live set
-            // and reclaims them.
-            Some(delta) if !self.tombstones_heavy() => {
-                self.apply_ops(conn, &delta)?;
-                self.built_at_head = head;
-            }
-            _ => *self = Self::build_reported(conn, &|_, _| {}, cancel)?,
+        if !self.refresh_incremental(conn)? {
+            *self = Self::build_reported(conn, &|_, _| {}, cancel)?;
         }
         Ok(())
+    }
+
+    /// The incremental half of [`Self::refresh`]: brings the index up to HEAD
+    /// when the catch-up is a forward replay, and **leaves it untouched**
+    /// otherwise, reporting whether it is now at HEAD.
+    ///
+    /// This is what a writer calls once its revision is committed
+    /// ([`crate::state::RepoState::settle_index`]). A writer must not rebuild:
+    /// a rebuild is one scan of the whole `field` table with the connection
+    /// held, which is precisely what the tree cache stopped doing on the write
+    /// path. Declining leaves the rebuild to the next reader — and since every
+    /// commit catches up, the delta is one revision and that case stops
+    /// arising.
+    pub fn refresh_incremental(&mut self, conn: &Connection) -> anyhow::Result<bool> {
+        let head = db::current_head(conn)?;
+        if head == self.built_at_head {
+            return Ok(true);
+        }
+        // HEAD reset to empty: not a forward extension.
+        let Some(current) = head else { return Ok(false) };
+        let Some(delta) = self.forward_delta(conn, current)? else { return Ok(false) };
+        // Dead dense ids (deleted metarecords, never reused) have piled up; only
+        // a rebuild re-interns the live set and reclaims them.
+        if self.tombstones_heavy() {
+            return Ok(false);
+        }
+        self.apply_ops(conn, &delta)?;
+        self.built_at_head = head;
+        Ok(true)
     }
 
     /// The operations strictly between `built_at_head` and `current_head` along
