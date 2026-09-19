@@ -134,7 +134,7 @@ panel is not the displayed one (no scroll event ever fires there). The default p
 (=[page-size].metarecord-list= in =config.toml=, default 100) — the smallest of
 the list panels, as each row needs several daemon round-trips (TreeRef path
 resolution, ref-target metarecords) and parsing. It is further overridable per
-workspace: =metarecord-list:set-page-size <n>= persists it in the
+workspace: =metarecord-list:set page-size <n>= persists it in the
 =metarecord-list:page-size= workspace variable (also settable by scripts);
 invalid stored values fall back to the config default.
 
@@ -244,7 +244,7 @@ registered command, and every edit zone has a command that focuses (or
 opens) it. So each top-level action button in a panel or the shell maps to a
 command (the button invokes it), and each text input has a focus command —
 the command input (=command-input:activate=), the metarecord-list query and
-columns inputs (=metarecord-list:focus-query=, =metarecord-list:focus-columns=),
+columns inputs (=metarecord-list:focus simplified=, =metarecord-list:focus columns=),
 the workspace rename (=workspace:rename=), the metarecord-detail add-field
 form (=metarecord:open-add-field=). Shell controls map to the panel commands
 (=panel:set-type=, =panel:swap=, =panel:split=, =panel:hide=). Transient
@@ -326,7 +326,7 @@ leading verb, so the right command is findable without running it:
   =metarecord:open-add-field=, =metarecord-list:open-bulk-edit=,
   =repos:open-init= / =open-retype=.
 - =focus-X= — moves keyboard *focus* to an existing input field of the panel,
-  e.g. =metarecord-list:focus-query= / =focus-columns= / =focus-finder=.
+  e.g. =metarecord-list:focus simplified= / =focus columns= / =focus finder=.
 - =<noun> <op>= — a *minibuffer* completion-driven edit, with the operation as
   the first **argument** rather than part of the name (these declare arguments,
   so they carry the =…=), e.g. =metarecord:field set=, =metarecord:bulk
@@ -348,7 +348,7 @@ merely focuses an input or opens a form.
 ** Keybinding
 
 A mapping from a key combo (e.g. =ctrl+k=, =alt+x=, =g g= for a two-key
-sequence) to a command invocation string (e.g. =metarecord-list:set-mode grid=).
+sequence) to a command invocation string (e.g. =metarecord-list:set mode grid=).
 Keybindings are loaded from a configuration file and can be edited at runtime.
 No keybinding is hard-coded; the defaults ship in the default config file.
 
@@ -1121,27 +1121,20 @@ Behaviours:
 | =metarecord:field <op> [target] [value]= | Field operation on the *current* metarecord. =op= is =set= (overwrite every value), =add= (append one value — a value it already holds is a no-op, spec-data-model "No duplicate rows"), =edit= (change one value, selected by value), =remove= (drop one value, selected by value), =unset= (remove the field entirely → /unknown/), =rename= (all its values), =retype= (all its values). =target= names a field for =set=/=add=/=unset=/=rename=/=retype=, and one value for =edit=/=remove= |
 | =metarecord:bulk <op> [field] [value]= | The same over the *selection*, or the current query when nothing is checked. =op= is =set= / =add= / =remove= / =unset= — the daemon's set-layer routes =POST /query/fields/{set,add,remove,unset}= — plus =delete=, which deletes the metarecords themselves (=POST /query/delete=; the files stay on disk) and so names no field |
 | =metarecord-list:open-bulk-edit= | Mouse flow: open the in-panel bulk edit / delete form |
-| =metarecord-list:set-mode <mode>= | Switch metarecord-list display mode        |
-| =metarecord-list:set-page-size <n>= | Set the metarecord-list pagination page size |
-| =metarecord-list:focus-finder=        | Focus the finder (quick OSM filter) in metarecord-list |
-| =metarecord-list:focus-query=  | Focus the query input in metarecord-list        |
-| =metarecord-list:focus-columns= | Focus the columns input in metarecord-list     |
-| =metarecord-list:edit-simplified= | Unfreeze the normal DSL editor (zone B) and focus the simplified query field (zone A) |
-| =metarecord-list:edit-normal=  | Open, freeze and focus the normal DSL editor (zone B) for hand-editing |
-| =metarecord-list:clear-queries= | Clear all three search fields (finder + simplified + normal) and re-run (match all) |
-| =metarecord-list:clear-edit-finder= | Clear the finder and focus it (re-runs live) |
-| =metarecord-list:clear-edit-simplified= | Clear the simplified query field, unfreeze zone B and focus it |
-| =metarecord-list:clear-edit-normal= | Open the normal DSL editor, clear it, freeze and focus it |
-| =metarecord-list:submit-finder= | Re-run the finder filter and leave the field (blur); the Enter binding, vs =apply-finder= which keeps focus |
-| =metarecord-list:show-orphan= | Put the query =orphan = true= in the DSL zone and run it: the metarecords the last =orphan:detect= marked. It detects nothing and reads no disk — it exists to show what detection wrote, and where to edit it — see [[file:spec-file-tracking.org][spec-file-tracking.org]] "Marking orphans" |
+| =metarecord-list:set <setting> <value>= | Change a view setting: =mode= (=table= / =grid=) or =page-size= (results per fetch) |
+| =metarecord-list:focus <zone>= | Move the keyboard focus to a zone (=finder= / =simplified= / =normal= / =columns=). =simplified= unfreezes zone B first and =normal= reveals and freezes it, because a shown-and-frozen B is what the query runs — focusing a zone the query ignores would hand the user an inert field |
+| =metarecord-list:clear <zone\|all>= | Empty a zone and focus it; =all= empties the three search fields and re-runs (an empty query matches everything) |
+| =metarecord-list:apply <zone> [stay]= | Commit a zone's content. It leaves the zone afterwards — so the panel accelerators resume without a separate Escape — unless =stay= is given, and only ever gives up a focus that zone itself holds |
+| =metarecord-list:insert <zone> <text>= | Splice text into a zone at the caret, replacing the selection. It prepares the query rather than running it: =apply= runs it. The one command that writes into a text zone |
+| =metarecord-list:query <what>= | Run a canned query in the visible DSL zone, shown and frozen so it stays editable and composable: =duplicates= (the selection's byte-identical twins, =same(mfr_duplicate_group, <uuid>)=) or =orphans= (=orphan = true=, the metarecords the last =orphan:detect= marked — it detects nothing and reads no disk, it shows what detection wrote, see [[file:spec-file-tracking.org][spec-file-tracking.org]] "Marking orphans") |
+| =metarecord-list:toggle <flag>= | Flip a view flag (=normal=: show/hide the normal DSL editor) |
 | =file-manager:reveal-folder= | Open the selected metarecord's folder in the file manager, replacing the focused panel (directory → itself, file → containing folder with the file highlighted) — see [[*Cross-panel selection]] |
-| =metarecord-list:list-folder= | List the selected metarecord's folder in =metarecord-list=, replacing the focused panel (directory → itself, file → its containing folder): the query =mfr_path -> "<folder>"= lands in the DSL zone, frozen, so it stays visible and editable — see [[*Cross-panel selection]] |
+| =metarecord-list:folder= | List the selected metarecord's folder in =metarecord-list=, replacing the focused panel (directory → itself, file → its containing folder): the query =mfr_path -> "<folder>"= lands in the DSL zone, frozen, so it stays visible and editable — see [[*Cross-panel selection]] |
 | =reconcile:run=      | Trigger reconcile on the active repo           |
 | =mf:duplicate-scan=  | Scan the active repo for byte-identical files and record the groups — the GUI half of =mf duplicate scan=; progress in the [[*Task bar]], summary in the status bar (see [[*Duplicates]]) |
 | =orphan:detect=      | Mark the active repo's orphaned metarecords =orphan = true= and unmark the rest (=POST /orphans/mark=) — the GUI half of =mf orphan detect=; the count lands in the status bar and the message log |
 | =orphan:delete=      | Delete the metarecords carrying the marker (=POST /query/delete= over =orphan = true=), after a confirmation naming the count. Detection is *not* re-run: what is marked is what goes |
 | =orphan:detect-delete= | =orphan:detect= then =orphan:delete=, one confirmation between the two — the convenience form for "find the records whose file is gone and be rid of them" |
-| =metarecord-list:duplicates= | Set the query to the selected metarecord's byte-identical twins — =same(mfr_duplicate_group, <uuid>)= — in the DSL zone, so it stays visible and editable |
 | =mf:order [folder]= | Number a folder's direct children (=order_file= / =order_dir=) and mark the folder =order_numbered= — the GUI half of =mf order=; the folder is collected in the minibuffer, pre-filled with the target directory and completing over the repository's tracked directories — see [[*Order a folder's children]] |
 | =script:run [name]=  | Run an installed helper script — completes over the scripts in =~/.config/metafolder/scripts/=, the description taken from each script's =# Summary:= header; the chosen script runs as a subprocess (output in the =message= panel) — see [[file:spec-config.org][spec-config.org]] "Shipped scripts" |
 | =metarecord:trash=   | Send the selected metarecord's file to the trash (confirmed; default =delete=) — see [[file:spec-trash.org][spec-trash.org]] "GUI" |
@@ -1276,15 +1269,15 @@ uppercase, so a zone cannot traverse out of the history directory.
 Every command is reachable from the keyboard. No command requires the mouse.
 
 Within =metarecord-list=:
-- =/= focuses the finder (=metarecord-list:focus-finder=); =Ctrl+/= the structural query
-  editor (=metarecord-list:focus-query=).
+- =/= focuses the finder (=metarecord-list:focus finder=); =Ctrl+/= the structural query
+  editor (=metarecord-list:focus simplified=).
 - Two families edit the three search fields (in addition to =/= and =Ctrl+/=),
   both scoped to the panel: an =e= chord edits a field (focus, keep content),
   the bare field letter clears it first. The field letter is shared: =f= finder,
   =s= simplified query (=e s= / =s= *unfreeze* B — a frozen B stays
   authoritative, so typing in A would otherwise change nothing), =q= the normal
   DSL (opens + freezes it). So =e f= / =e s= / =e q= to edit, =f= / =s= / =q= to
-  clear-then-edit, and =c= clears all three at once (=clear-queries=).
+  clear-then-edit, and =c= clears all three at once (=clear all=).
 - =Enter= in any of the search fields applies and *leaves* the field (blur), so
   the panel accelerators resume without a separate =Escape=; =Shift+Enter=
   applies but keeps the focus for another edit.
@@ -1293,7 +1286,7 @@ Within =metarecord-list=:
   =selected_paths= is non-empty), opening the slot if hidden. See
   [[*Cross-panel selection]].
 - =Space= toggles selection for multi-select (updates =selected_metarecords=).
-- =Ctrl+Space= clears the multi-selection (=metarecord-list:select-none=,
+- =Ctrl+Space= clears the multi-selection (=metarecord-list:select none=,
   resets =selected_metarecords= to =[]=).
 
 Within =metarecord-detail= (every action is also a command, so the panel is
@@ -1438,7 +1431,7 @@ has ever been mounted.
   variable (with a nonce so an identical repeated topic still re-triggers). If
   =text= is an *exact name* — a page id, an alias, or a =panel:command= (the
   command's verb is tried first, then its panel-type prefix, so e.g.
-  =metarecord-list:focus-query= and =focus-query= both reach the queries page) —
+  =metarecord-list:focus= and =focus-query= both reach the queries page) —
   that page opens directly; otherwise the text greps across all pages. Prefixing
   =text= with =#= forces grep even on an exact name.
 - =help:help-cursor= arms a "click-to-help" mode: a =?= pointer (a
@@ -1996,12 +1989,12 @@ Default display mode: =table= with columns =mfr_path:path= (resolved path),
 =mfr_type=, =&version= — configurable as
 =[panel-defaults.metarecord-list].columns= (see [[*Panel defaults]]), and
 overridden by the stored =metarecord-list:columns= of the workspace. The
-=metarecord-list:set-mode= command switches between display modes; grid mode
+=metarecord-list:set mode= command switches between display modes; grid mode
 names each tile with =[panel-defaults.metarecord-list].grid-name-column=
 (default =mfr_path:path=).
 
 The columns input is a separate row below the query editor, with its own
-/Apply/ button (=metarecord-list:focus-columns= focuses it). The panel always
+/Apply/ button (=metarecord-list:focus columns= focuses it). The panel always
 queries with =select: '*'=, so applying new columns is a pure re-render — no
 request.
 
@@ -2057,7 +2050,7 @@ A search box at the top of the panel — the /finder/ — is an incremental
 [[file:spec-query.org][OSM]] (ordered-substring) filter, the ergonomic way to
 find a metarecord by a fragment of its name/label and/or path. As the user
 types (debounced), it re-runs the query; the terms are the input split on
-whitespace. =metarecord-list:focus-finder= focuses it (default keybinding =/=; the
+whitespace. =metarecord-list:focus finder= focuses it (default keybinding =/=; the
 structural query editor moves to =Ctrl+/=). The finder and the query input
 each keep a per-repository input history (see [[*Input history]]); an entry is
 recorded on explicit submission (=Enter= / the apply commands), not by the
@@ -2109,7 +2102,7 @@ forms, so the user can write quickly *and* drop to the full DSL when a query is
 too specific for the simplified surface — and learn the mapping by watching it.
 
 - *Zone A (simplified)* is always visible and has its own /Apply/ button;
-  =metarecord-list:focus-query= focuses it; =metarecord-list:edit-simplified=
+  =metarecord-list:focus simplified= focuses it — and unfreezes B first,
   (=e s=) focuses it *and* unfreezes B first, so what is typed in A drives the
   query again. An empty zone A matches all.
 - *Zone B (normal DSL)* below A is *revealed by default* — the expanded DSL is
@@ -2142,12 +2135,12 @@ can be set by scripts:
 
 *Run a query from another panel*: the panel also honours a
 =metarecord-list:query-request= workspace variable (={ dsl, nonce }=), set by
-=metarecord-list:list-folder= (a folder's contents) or by =treeref:list-refs=
+=metarecord-list:folder= (a folder's contents) or by =treeref:list-refs=
 (what points at a tree node) — it puts the DSL in zone B, *shown and frozen*,
 and runs it. A
 query the GUI wrote is a starting point, not a mode: frozen zone B leaves it
 visible, hand-editable and composable (the same choice
-=metarecord-list:duplicates= and =metarecord-list:show-orphan= make). The
+=metarecord-list:query= makes). The
 request is honoured both when the panel mounts and
 while it is already mounted, the =nonce= making an identical repeated request
 re-trigger while the same request acts only once. See
@@ -2675,7 +2668,7 @@ path to tell a directory from a file and navigates there (honouring the request
 both when it mounts and while already mounted, the =nonce= guaranteeing an
 identical repeated request re-triggers while the same request acts only once).
 
-*List folder*: the builtin command =metarecord-list:list-folder= (and the
+*List folder*: the builtin command =metarecord-list:folder= (and the
 right-click menu item "Open folder in metarecord-list", offered by every panel
 showing metarecords — the file manager included, where "and now show me these as
 metarecords" is exactly the question) is the mirror image: it shows the same
@@ -2786,7 +2779,7 @@ emptied (dropping it when one copy is left) as the daemon does. Nothing deletes
 a file implicitly and nothing picks a survivor for you — the surviving copy is
 always the row the cursor is on.
 
-=metarecord-list:duplicates= works from the other direction: it sets the
+=metarecord-list:query duplicates= works from the other direction: it sets the
 panel's DSL query to =same(mfr_duplicate_group, <selected uuid>)=
 ([[file:spec-query.org][spec-query.org]] "Same-value matching"), which is how a
 file's twins are reached without the caller ever handling a hash. It writes the
@@ -2888,7 +2881,7 @@ downstream is then a plain query (spec-file-tracking "Marking orphans"):
   log, and nudges the panels (=metarecords:dirty=). It writes the marker and
   nothing else: =mfr_path= is left alone, so a detection run is taken back by a
   plain =log:undo=.
-- =metarecord-list:show-orphan= — the query =orphan = true= in the visible DSL
+- =metarecord-list:query orphans= — the query =orphan = true= in the visible DSL
   zone. No scan, no daemon write: it shows what detection last wrote, which is
   also how a new user finds out what detection *did*.
 - =orphan:delete= — deletes the marked metarecords (=POST /query/delete= over the
@@ -3639,7 +3632,7 @@ Mechanism:
 Because a panel's render happens asynchronously inside its iframe, the
 =POST /gui/command= call alone cannot time it — the harness's per-phase reports,
 not the command's resolution, are the source of truth for render cost. The
-=metarecord-list:page-next= command loads the next page on demand (the
+=metarecord-list:page next= command loads the next page on demand (the
 scriptable equivalent of scrolling to the bottom) so paging can be driven
 reproducibly.
 

@@ -169,17 +169,17 @@ fn test_search_field_editing_keybindings() {
     );
 
     // Edit family (focus, keep content): e f / e s / e q.
-    assert_eq!(mlist(&["e", "f"]).as_deref(), Some("metarecord-list:focus-finder"));
-    assert_eq!(mlist(&["e", "s"]).as_deref(), Some("metarecord-list:edit-simplified"));
-    assert_eq!(mlist(&["e", "q"]).as_deref(), Some("metarecord-list:edit-normal"));
+    assert_eq!(mlist(&["e", "f"]).as_deref(), Some("metarecord-list:focus finder"));
+    assert_eq!(mlist(&["e", "s"]).as_deref(), Some("metarecord-list:focus simplified"));
+    assert_eq!(mlist(&["e", "q"]).as_deref(), Some("metarecord-list:focus normal"));
 
     // Clear-then-edit family: the bare field letter clears and edits that
     // field, and `c` clears all three. All scoped to the list, so the single
     // letters do nothing in any other panel.
-    assert_eq!(mlist(&["f"]).as_deref(), Some("metarecord-list:clear-edit-finder"));
-    assert_eq!(mlist(&["s"]).as_deref(), Some("metarecord-list:clear-edit-simplified"));
-    assert_eq!(mlist(&["q"]).as_deref(), Some("metarecord-list:clear-edit-normal"));
-    assert_eq!(mlist(&["c"]).as_deref(), Some("metarecord-list:clear-queries"));
+    assert_eq!(mlist(&["f"]).as_deref(), Some("metarecord-list:clear finder"));
+    assert_eq!(mlist(&["s"]).as_deref(), Some("metarecord-list:clear simplified"));
+    assert_eq!(mlist(&["q"]).as_deref(), Some("metarecord-list:clear normal"));
+    assert_eq!(mlist(&["c"]).as_deref(), Some("metarecord-list:clear all"));
 
     // Finder Enter leaves the field (submit-finder); Shift+Enter re-runs but
     // keeps focus (apply-finder). Both are focus-scoped to the finder input.
@@ -187,12 +187,12 @@ fn test_search_field_editing_keybindings() {
         .iter()
         .find(|b| b.keys == ["enter"] && b.focus.as_deref() == Some("finder"))
         .map(|b| b.invocation.clone());
-    assert_eq!(enter_finder.as_deref(), Some("metarecord-list:submit-finder"));
+    assert_eq!(enter_finder.as_deref(), Some("metarecord-list:apply finder"));
     let shift_enter_finder = compiled
         .iter()
         .find(|b| b.keys == ["shift+enter"] && b.focus.as_deref() == Some("finder"))
         .map(|b| b.invocation.clone());
-    assert_eq!(shift_enter_finder.as_deref(), Some("metarecord-list:apply-finder"));
+    assert_eq!(shift_enter_finder.as_deref(), Some("metarecord-list:apply finder stay"));
 }
 
 #[test]

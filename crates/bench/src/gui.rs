@@ -589,7 +589,7 @@ impl Gui {
         settle().await;
         self.bench_clear().await?;
         for _ in 0..STEPS {
-            self.command("metarecord-list:page-next").await;
+            self.command("metarecord-list:page next").await;
             tokio::time::sleep(STEP).await;
         }
         settle().await;

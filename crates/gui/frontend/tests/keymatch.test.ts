@@ -135,11 +135,11 @@ describe('createMatcher', () => {
     const matcher = createMatcher([
       b(['enter'], 'editing:confirm', null, true),
       b(['enter'], 'metarecord-list:open', 'metarecord-list'),
-      b(['enter'], 'metarecord-list:apply-finder', null, false, 'finder'),
+      b(['enter'], 'metarecord-list:apply finder stay', null, false, 'finder'),
     ]);
     expect(
       matcher.feed('enter', { panelType: 'metarecord-list', textInput: true, focus: 'finder' }),
-    ).toEqual({ invocation: 'metarecord-list:apply-finder' });
+    ).toEqual({ invocation: 'metarecord-list:apply finder stay' });
   });
 
   test('strict binding wins over text-input=true when both would fire', () => {

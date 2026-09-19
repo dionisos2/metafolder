@@ -120,7 +120,7 @@ fn register_builtins(registry: &CommandRegistry) {
             true,
         ),
         (
-            "metarecord-list:list-folder",
+            "metarecord-list:folder",
             "List the selected metarecord's folder in the metarecord list (focused panel)",
             true,
         ),

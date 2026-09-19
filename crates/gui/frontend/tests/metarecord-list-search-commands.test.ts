@@ -116,15 +116,15 @@ async function mountPanel(initial: Record<string, unknown> = {}) {
     normalToggle: el<HTMLButtonElement>('normal-toggle'),
     normalFreeze: el('normal-freeze'),
     columns: el('columns-input'),
-    invoke: async (name: string, arg?: unknown) => {
+    invoke: async (name: string, ...args: unknown[]) => {
       const h = handlers.get(name);
       if (!h) throw new Error(`command not registered: ${name}`);
-      await h(arg);
+      await (h as (...a: unknown[]) => unknown)(...args);
     },
   };
 }
 
-describe('search-field editing commands', () => {
+describe('zone commands', () => {
   beforeEach(() => {
     vi.stubGlobal(
       'fetch',
@@ -148,11 +148,13 @@ describe('search-field editing commands', () => {
     expect(p.normalToggle.textContent).toBe('Show normal DSL');
   });
 
-  test('edit-normal opens + freezes + focuses the normal DSL editor', async () => {
+  // ── focus ───────────────────────────────────────────────────────────────
+
+  test('focus normal opens + freezes + focuses the normal DSL editor', async () => {
     const p = await mountPanel({ 'metarecord-list:normal-shown': false });
     expect(p.normalEditor.hidden).toBe(true);
 
-    await p.invoke('metarecord-list:edit-normal');
+    await p.invoke('metarecord-list:focus', 'normal');
 
     expect(p.normalEditor.hidden).toBe(false);
     expect(p.normalFreeze.checked).toBe(true);
@@ -160,74 +162,93 @@ describe('search-field editing commands', () => {
     expect(p.shadow.activeElement).toBe(p.normal);
   });
 
-  test('clear-queries empties all three fields', async () => {
+  test('focus simplified unfreezes the normal editor first', async () => {
+    // Without the unfreeze the focused field is inert: a shown-and-frozen
+    // zone B is what the query runs, and zone A feeds nothing.
     const p = await mountPanel();
-    p.finder.value = 'foo';
-    p.query.value = 'rating>3';
-    p.normal.value = 'rating gt 3';
-
-    await p.invoke('metarecord-list:clear-queries');
-
-    expect(p.finder.value).toBe('');
-    expect(p.query.value).toBe('');
-    expect(p.normal.value).toBe('');
-  });
-
-  test('clear-edit-simplified empties the simplified field and focuses it', async () => {
-    const p = await mountPanel();
-    p.query.value = 'rating>3';
-
-    await p.invoke('metarecord-list:clear-edit-simplified');
-
-    expect(p.query.value).toBe('');
-    expect(p.shadow.activeElement).toBe(p.query);
-  });
-
-  test('edit-simplified unfreezes the normal editor and focuses the simplified field', async () => {
-    const p = await mountPanel();
-    await p.invoke('metarecord-list:edit-normal'); // shows + freezes zone B
+    await p.invoke('metarecord-list:focus', 'normal');
     expect(p.normalFreeze.checked).toBe(true);
 
-    await p.invoke('metarecord-list:edit-simplified');
+    await p.invoke('metarecord-list:focus', 'simplified');
 
     expect(p.normalFreeze.checked).toBe(false);
     expect(p.normal.readOnly).toBe(true);
     expect(p.shadow.activeElement).toBe(p.query);
   });
 
-  test('clear-edit-simplified unfreezes the normal editor too', async () => {
+  test('focus finder and focus columns move the focus', async () => {
     const p = await mountPanel();
-    await p.invoke('metarecord-list:edit-normal');
+    await p.invoke('metarecord-list:focus', 'finder');
+    expect(p.shadow.activeElement).toBe(p.finder);
+    await p.invoke('metarecord-list:focus', 'columns');
+    expect(p.shadow.activeElement).toBe(p.columns);
+  });
+
+  test('an unknown zone is an error, not a silent no-op', async () => {
+    const p = await mountPanel();
+    await expect(p.invoke('metarecord-list:focus', 'nope')).rejects.toThrow(/unknown zone/);
+  });
+
+  // ── clear ───────────────────────────────────────────────────────────────
+
+  test('clear all empties the three search fields', async () => {
+    const p = await mountPanel();
+    p.finder.value = 'foo';
+    p.query.value = 'rating>3';
+    p.normal.value = 'rating gt 3';
+
+    await p.invoke('metarecord-list:clear', 'all');
+
+    expect(p.finder.value).toBe('');
+    expect(p.query.value).toBe('');
+    expect(p.normal.value).toBe('');
+  });
+
+  test('clear simplified empties it, unfreezes zone B and focuses it', async () => {
+    const p = await mountPanel();
+    await p.invoke('metarecord-list:focus', 'normal');
     p.query.value = 'rating>3';
 
-    await p.invoke('metarecord-list:clear-edit-simplified');
+    await p.invoke('metarecord-list:clear', 'simplified');
 
-    expect(p.normalFreeze.checked).toBe(false);
     expect(p.query.value).toBe('');
+    expect(p.normalFreeze.checked).toBe(false);
     expect(p.shadow.activeElement).toBe(p.query);
   });
 
-  test('clear-edit-finder empties the finder and focuses it', async () => {
+  test('clear finder empties the finder and focuses it', async () => {
     const p = await mountPanel();
     p.finder.value = 'foo';
 
-    await p.invoke('metarecord-list:clear-edit-finder');
+    await p.invoke('metarecord-list:clear', 'finder');
 
     expect(p.finder.value).toBe('');
     expect(p.shadow.activeElement).toBe(p.finder);
   });
 
-  test('clear-edit-normal opens, clears, freezes and focuses the normal editor', async () => {
+  test('clear normal opens, clears, freezes and focuses the normal editor', async () => {
     const p = await mountPanel();
     p.normal.value = 'rating gt 3';
 
-    await p.invoke('metarecord-list:clear-edit-normal');
+    await p.invoke('metarecord-list:clear', 'normal');
 
     expect(p.normalEditor.hidden).toBe(false);
     expect(p.normalFreeze.checked).toBe(true);
     expect(p.normal.value).toBe('');
     expect(p.shadow.activeElement).toBe(p.normal);
   });
+
+  test('clear columns empties the columns field — the zone that had no clear', async () => {
+    const p = await mountPanel();
+    p.columns.value = 'name rating';
+
+    await p.invoke('metarecord-list:clear', 'columns');
+
+    expect(p.columns.value).toBe('');
+    expect(p.shadow.activeElement).toBe(p.columns);
+  });
+
+  // ── apply ───────────────────────────────────────────────────────────────
 
   test('Enter in the simplified field leaves it (blur); Shift+Enter keeps focus', async () => {
     const p = await mountPanel();
@@ -244,14 +265,83 @@ describe('search-field editing commands', () => {
     expect(p.shadow.activeElement).toBe(p.query);
   });
 
-  test('submit-finder blurs the finder; apply-finder keeps it focused', async () => {
+  test('apply leaves the zone; `stay` keeps the focus in it', async () => {
+    // The finder is the one zone whose Enter is a keybinding rather than a
+    // hard-coded handler, so both behaviours have to survive as commands —
+    // as one verb with a modifier, not two verbs.
     const p = await mountPanel();
 
     p.finder.focus();
-    await p.invoke('metarecord-list:apply-finder');
+    await p.invoke('metarecord-list:apply', 'finder', 'stay');
     expect(p.shadow.activeElement).toBe(p.finder);
 
-    await p.invoke('metarecord-list:submit-finder');
+    await p.invoke('metarecord-list:apply', 'finder');
     expect(p.shadow.activeElement).not.toBe(p.finder);
+  });
+
+  test('apply on an unfocused zone does not steal or drop the focus', async () => {
+    const p = await mountPanel();
+    p.query.focus();
+
+    await p.invoke('metarecord-list:apply', 'columns');
+
+    expect(p.shadow.activeElement).toBe(p.query);
+  });
+
+  // ── insert ──────────────────────────────────────────────────────────────
+
+  test('insert splices at the caret and leaves the caret after the text', async () => {
+    const p = await mountPanel();
+    p.query.value = 'ab';
+    p.query.focus();
+    p.query.setSelectionRange(1, 1);
+
+    await p.invoke('metarecord-list:insert', 'simplified', '#=jazz');
+
+    expect(p.query.value).toBe('a#=jazzb');
+    expect(p.query.selectionStart).toBe(7);
+  });
+
+  test('insert replaces the selection', async () => {
+    const p = await mountPanel();
+    p.query.value = 'old text';
+    p.query.focus();
+    p.query.setSelectionRange(0, 3);
+
+    await p.invoke('metarecord-list:insert', 'simplified', 'new');
+
+    expect(p.query.value).toBe('new text');
+  });
+
+  test('insert into the simplified zone unfreezes zone B', async () => {
+    // Otherwise the inserted text changes nothing: a shown-and-frozen zone B
+    // is what runs.
+    const p = await mountPanel();
+    await p.invoke('metarecord-list:focus', 'normal');
+    expect(p.normalFreeze.checked).toBe(true);
+
+    await p.invoke('metarecord-list:insert', 'simplified', '#=jazz');
+
+    expect(p.normalFreeze.checked).toBe(false);
+  });
+
+  test('insert fires a bubbling input event so the live preview refreshes', async () => {
+    // Assigning `.value` fires nothing, so the debounced expand(A) -> B mirror
+    // would keep showing a stale expansion (panel-shim/history.js does the same).
+    const p = await mountPanel();
+    const seen: string[] = [];
+    p.query.addEventListener('input', () => seen.push(p.query.value));
+
+    await p.invoke('metarecord-list:insert', 'simplified', 'rating>3');
+
+    expect(seen).toEqual(['rating>3']);
+  });
+
+  test('insert does not run the query — it prepares it', async () => {
+    const p = await mountPanel();
+    await p.invoke('metarecord-list:insert', 'simplified', 'rating>3');
+    expect(p.query.value).toBe('rating>3');
+    // Nothing was persisted: only `apply` commits.
+    expect(p.shadow.activeElement).toBe(p.query);
   });
 });

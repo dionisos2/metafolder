@@ -211,7 +211,7 @@
   # In the finder, Enter re-runs the filter AND leaves the field (blur), so the
   # panel accelerators work again without a separate Escape. Shift+Enter (below)
   # re-runs but keeps the focus for another edit.
-  { command = "metarecord-list:submit-finder", focus = "finder" },
+  { command = "metarecord-list:apply finder", focus = "finder" },
   # In the find bar, Enter walks to the next match (shift+Enter the previous),
   # the way a browser's find behaves.
   { command = "find:next", focus = "find" },
@@ -311,7 +311,7 @@
 # active — on the key that means root in a path. `/` is the metarecord-list
 # finder elsewhere, so the two never meet.
 "/" = [
-  { command = "metarecord-list:focus-finder", when = "metarecord-list" },
+  { command = "metarecord-list:focus finder", when = "metarecord-list" },
   { command = "file-manager:goto-root", when = "file-manager" },
   # The tree explorer browses a forest the way the file manager browses the
   # disk, so "/" means the same there: back to the roots.
@@ -325,13 +325,13 @@
 
 # metarecord-list: selection, finder, query editing.
 "space" = [
-  { command = "metarecord-list:select-toggle", when = "metarecord-list" },
+  { command = "metarecord-list:select toggle", when = "metarecord-list" },
   # In the file panel, space is the media player's play/pause (see the
   # transport section below).
   { command = "file:play-pause", when = "file" },
 ]
-"ctrl+space" = { command = "metarecord-list:select-none", when = "metarecord-list" }
-"ctrl+/" = { command = "metarecord-list:focus-query", when = "metarecord-list" }
+"ctrl+space" = { command = "metarecord-list:select none", when = "metarecord-list" }
+"ctrl+/" = { command = "metarecord-list:focus simplified", when = "metarecord-list" }
 
 # Editing the three search fields by chord (in addition to `/` and `ctrl+/`).
 # Two mnemonic families, both `when = "metarecord-list"` so the `e`/`c` prefixes
@@ -344,12 +344,12 @@
 # editor). c a clears all three at once. Shift+Enter in the finder re-runs but
 # keeps the focus.
 "shift+enter" = [
-  { command = "metarecord-list:apply-finder", focus = "finder" },
+  { command = "metarecord-list:apply finder stay", focus = "finder" },
   { command = "find:prev", focus = "find" },
 ]
-"e f" = { command = "metarecord-list:focus-finder", when = "metarecord-list" }
-"e s" = { command = "metarecord-list:edit-simplified", when = "metarecord-list" }
-"e q" = { command = "metarecord-list:edit-normal", when = "metarecord-list" }
+"e f" = { command = "metarecord-list:focus finder", when = "metarecord-list" }
+"e s" = { command = "metarecord-list:focus simplified", when = "metarecord-list" }
+"e q" = { command = "metarecord-list:focus normal", when = "metarecord-list" }
 # "f" = find. In the list panels it jumps to a row by name, completing over
 # what the panel displays and filtered by ordered substring like every other
 # picker (spec-gui "Find an entry"); in metarecord-list — whose rows come from
@@ -357,7 +357,7 @@
 # the daemon the same question. Ctrl+f is the other find: it highlights
 # rendered text without moving any cursor (spec-gui "Find in panel").
 "f" = [
-  { command = "metarecord-list:clear-edit-finder", when = "metarecord-list" },
+  { command = "metarecord-list:clear finder", when = "metarecord-list" },
   { command = "file-manager:find", when = "file-manager" },
   { command = "treeref:find", when = "treeref" },
   { command = "trash:find", when = "trash" },
@@ -370,7 +370,7 @@
 # now that plain "f" finds a child.
 "shift+f" = { command = "treeref:set-field", when = "treeref" }
 "s" = [
-  { command = "metarecord-list:clear-edit-simplified", when = "metarecord-list" },
+  { command = "metarecord-list:clear simplified", when = "metarecord-list" },
   # treeref: exact node ⇄ the whole subtree, for the "what points here?" query.
   { command = "treeref:toggle-scope", when = "treeref" },
 ]
@@ -380,8 +380,8 @@
 # follows back ("e"). See spec-gui "treeref panel type".
 "l" = { command = "treeref:list-refs", when = "treeref" }
 "e" = { command = "treeref:set-ref-field", when = "treeref" }
-"q" = { command = "metarecord-list:clear-edit-normal", when = "metarecord-list" }
-"c" = { command = "metarecord-list:clear-queries", when = "metarecord-list" }
+"q" = { command = "metarecord-list:clear normal", when = "metarecord-list" }
+"c" = { command = "metarecord-list:clear all", when = "metarecord-list" }
 
 # metarecord-detail: field actions and record creation.
 "d" = { command = "metarecord:row-delete", when = "metarecord-detail" }

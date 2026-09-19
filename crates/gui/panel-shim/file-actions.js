@@ -366,7 +366,7 @@ export function metarecordMenuItems({
     // which is precisely where "and now show me these as metarecords" is asked.
     items.push({
       label: 'Open folder in metarecord-list',
-      action: () => void commands.invoke('metarecord-list:list-folder'),
+      action: () => void commands.invoke('metarecord-list:folder'),
     });
   }
   items.push({ label: 'Copy UUID', action: () => void copyText(uuid) }, ...trailing);

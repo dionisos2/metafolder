@@ -700,6 +700,14 @@ export async function mount(root, metafolder) {
     await workspace.set('selected_metarecords', [...checked]);
   }
 
+  /** Check every loaded row. The bulk commands then act on an explicit set
+   *  rather than on the query, which is what makes the confirmation exact. */
+  async function checkAll() {
+    checked = new Set(metarecords.map((e) => e.uuid));
+    render();
+    await workspace.set('selected_metarecords', [...checked]);
+  }
+
   async function clearChecked() {
     if (checked.size === 0) return;
     checked = new Set();
@@ -1108,10 +1116,10 @@ export async function mount(root, metafolder) {
   const detachScroll = pager.attach(scroll);
 
   byId(root, 'query-apply').addEventListener('click', () => {
-    void commands.invoke('metarecord-list:apply-query');
+    void commands.invoke('metarecord-list:apply simplified');
   });
   byId(root, 'columns-apply').addEventListener('click', () => {
-    void commands.invoke('metarecord-list:apply-columns');
+    void commands.invoke('metarecord-list:apply columns');
   });
   // Enter applies AND leaves the field (blur) so the panel accelerators resume;
   // Shift+Enter applies but keeps the focus for another edit.
@@ -1198,137 +1206,225 @@ export async function mount(root, metafolder) {
     label: 'Metarecord list: move the selection to the last loaded row',
     handler: () => setCursor(metarecords.length - 1),
   });
-  void commands.register('metarecord-list:page-next', {
-    label: 'Metarecord list: load the next page (same as scrolling to the bottom)',
-    handler: () => (nextCursor ? fetchPage(false) : undefined),
+  void commands.register('metarecord-list:page', {
+    label: 'Metarecord list: load a page (next)',
+    args: [{ name: 'which', prompt: () => 'Which page? (next)', complete: () => ['next'] }],
+    handler: (which) => {
+      // Only forward: the list grows as it scrolls, it does not paginate back.
+      if (which !== 'next') throw new Error(`unknown page: "${which ?? ''}" (expected next)`);
+      return nextCursor ? fetchPage(false) : undefined;
+    },
   });
-  void commands.register('metarecord-list:select-toggle', {
-    label: 'Metarecord list: toggle multi-selection',
-    handler: () => toggleChecked(),
-  });
-  void commands.register('metarecord-list:select-none', {
-    label: 'Metarecord list: clear the multi-selection',
-    handler: () => clearChecked(),
+
+  /** @type {Record<string, () => unknown>} */
+  const SELECTIONS = {
+    toggle: () => toggleChecked(),
+    all: () => checkAll(),
+    none: () => clearChecked(),
+  };
+
+  void commands.register('metarecord-list:select', {
+    label: 'Metarecord list: change the multi-selection (toggle / all / none)',
+    args: [
+      {
+        name: 'what',
+        prompt: () => `Select what? (${Object.keys(SELECTIONS).join(' / ')})`,
+        complete: () => Object.keys(SELECTIONS),
+      },
+    ],
+    handler: (what) => {
+      const run = SELECTIONS[what];
+      if (!run) throw new Error(`unknown selection: "${what ?? ''}"`);
+      return run();
+    },
   });
   void commands.register('metarecord-list:open', {
     label: 'Metarecord list: open the selection in the other panel',
     handler: () => openSelected(),
   });
-  void commands.register('metarecord-list:set-mode', {
-    label: 'Metarecord list: switch display mode (table | grid)',
-    handler: (newMode) => {
-      mode = newMode === 'grid' ? 'grid' : 'table';
-      bodyEl.classList.toggle('grid', mode === 'grid');
+  // ── Zones ───────────────────────────────────────────────────────────────
+  //
+  // The panel's four text zones are driven by four commands — `focus`,
+  // `clear`, `apply`, `insert` — each taking the zone as its first argument,
+  // rather than one command per (verb, zone) pair. The table below is the
+  // single place a zone's quirks live, so a new zone costs one entry instead
+  // of four commands.
+  //
+  // The quirk that matters most: while zone B is *shown and frozen* it is what
+  // the query runs (`recomputeQuery`), so anything that hands the user zone A
+  // must unfreeze B first or the field it just focused feeds nothing.
+  // Unfreezing discards a hand-edited B, which re-mirrors expand(A) — that is
+  // the accepted trade in spec-gui "Query editor".
+
+  /**
+   * @typedef {object} Zone
+   * @property {HTMLInputElement} input       the element focus lands on
+   * @property {() => unknown} apply          commit the zone's content
+   * @property {() => unknown} [enter]        run before focusing it
+   * @property {() => unknown} [clear]        empty it (focus follows)
+   */
+  /** @type {Record<string, Zone>} */
+  const ZONES = {
+    finder: {
+      input: finderInput,
+      // The explicit re-run also records the text in the finder's input
+      // history; the debounced keystroke path does not.
+      apply: () => applyFinder({ record: true }),
+      clear: async () => {
+        finderInput.value = '';
+        // A live filter: clearing it re-runs at once, widening the result.
+        await applyFinder();
+      },
+    },
+    simplified: {
+      input: queryInput,
+      enter: () => setNormalFrozen(false),
+      apply: () => applyQuery(),
+      clear: async () => {
+        queryInput.value = '';
+        queryError.textContent = '';
+        await setNormalFrozen(false);
+      },
+    },
+    normal: {
+      input: normalInput,
+      enter: async () => {
+        await setNormalShown(true);
+        await setNormalFrozen(true);
+      },
+      apply: () => applyQuery(),
+      clear: async () => {
+        await setNormalShown(true);
+        await setNormalFrozen(true);
+        normalInput.value = '';
+        normalError.textContent = '';
+      },
+    },
+    columns: {
+      input: columnsInput,
+      apply: () => applyColumns(),
+      clear: () => {
+        columnsInput.value = '';
+      },
+    },
+  };
+
+  const ZONE_NAMES = Object.keys(ZONES);
+
+  /** @param {string} name */
+  function zone(name) {
+    const found = ZONES[name];
+    if (!found) throw new Error(`unknown zone: "${name ?? ''}" (expected ${ZONE_NAMES.join(' / ')})`);
+    return found;
+  }
+
+  /** @param {string} verb @param {string[]} [extra] */
+  const zoneArg = (verb, extra = []) => ({
+    name: 'zone',
+    prompt: () => `Which zone to ${verb}? (${[...ZONE_NAMES, ...extra].join(' / ')})`,
+    complete: () => [...ZONE_NAMES, ...extra],
+  });
+
+  void commands.register('metarecord-list:focus', {
+    label: `Metarecord list: focus a zone (${ZONE_NAMES.join(' / ')})`,
+    args: [zoneArg('focus')],
+    handler: async (name) => {
+      const z = zone(name);
+      await z.enter?.();
+      z.input.focus();
     },
   });
-  void commands.register('metarecord-list:focus-finder', {
-    label: 'Metarecord list: focus the finder (quick ordered-substring filter)',
-    handler: () => finderInput.focus(),
-  });
-  void commands.register('metarecord-list:apply-finder', {
-    label: 'Metarecord list: re-run the finder filter now (bypass the debounce)',
-    // The explicit re-run (Enter in the finder) also records the text in the
-    // finder's input history; the debounced keystroke path does not.
-    handler: () => applyFinder({ record: true }),
-  });
-  void commands.register('metarecord-list:focus-query', {
-    label: 'Metarecord list: focus the query input',
-    handler: () => queryInput.focus(),
-  });
-  void commands.register('metarecord-list:toggle-normal', {
-    label: 'Metarecord list: show/hide the normal DSL editor',
-    handler: () => setNormalShown(!normalShown),
-  });
-  void commands.register('metarecord-list:focus-columns', {
-    label: 'Metarecord list: focus the columns input',
-    handler: () => columnsInput.focus(),
-  });
-  // Open the normal-DSL editor, freeze it (so it drives the query and is
-  // editable), and focus it for hand-editing — the counterpart of focus-finder
-  // / focus-query for the third search field.
-  void commands.register('metarecord-list:edit-normal', {
-    label: 'Metarecord list: open, freeze and focus the normal DSL editor',
-    handler: async () => {
-      await setNormalShown(true);
-      await setNormalFrozen(true);
-      normalInput.focus();
+
+  void commands.register('metarecord-list:clear', {
+    label: `Metarecord list: clear a zone (${ZONE_NAMES.join(' / ')} / all)`,
+    args: [zoneArg('clear', ['all'])],
+    handler: async (name) => {
+      // `all` resets the three search fields at once and re-runs; an empty
+      // query matches everything, so it goes back to the whole repository.
+      if (name === 'all') return clearAllQueries();
+      const z = zone(name);
+      await z.clear?.();
+      z.input.focus();
     },
   });
-  // Focus the simplified query field for hand-editing — and unfreeze the normal
-  // DSL editor first: while B is frozen it is authoritative, so typing in A
-  // would have no effect on the query (spec-gui "Query editor"). Unfreezing
-  // discards any manual edit to B, which re-mirrors expand(A).
-  void commands.register('metarecord-list:edit-simplified', {
-    label: 'Metarecord list: unfreeze the normal DSL editor and focus the simplified query field',
-    handler: async () => {
-      await setNormalFrozen(false);
-      queryInput.focus();
+
+  void commands.register('metarecord-list:apply', {
+    label: `Metarecord list: apply a zone's content (${ZONE_NAMES.join(' / ')})`,
+    args: [
+      zoneArg('apply'),
+      // Enter in a zone normally leaves it, so the panel accelerators resume
+      // without a separate Escape; `stay` is the keep-the-focus variant
+      // (Shift+Enter). One verb with a modifier, not two verbs.
+      { name: 'stay', optional: true, prompt: () => 'Stay in the zone? (stay)' },
+    ],
+    handler: async (name, stay) => {
+      const z = zone(name);
+      await z.apply();
+      // Only ever gives up a focus the zone itself holds: applying from a
+      // button must not pull the caret out of whatever the user is typing in.
+      if (stay !== 'stay' && root.activeElement === z.input) z.input.blur();
     },
   });
-  // Clear all three search fields (finder + simplified + normal) and re-run —
-  // an empty query matches everything, so this resets to the full repo.
-  void commands.register('metarecord-list:clear-queries', {
-    label: 'Metarecord list: clear the finder, simplified and normal query fields',
-    handler: () => clearAllQueries(),
-  });
-  void commands.register('metarecord-list:duplicates', {
-    label: "Metarecord list: show the selected metarecord's byte-identical twins",
-    handler: () => showDuplicates(),
-  });
-  void commands.register('metarecord-list:show-orphan', {
-    label: 'Metarecord list: show the metarecords marked orphan = true',
-    handler: () => showOrphans(),
-  });
-  // Clear-then-edit, one field at a time. The finder is a live filter, so
-  // clearing it re-runs immediately (widening the result); the DSL fields wait
-  // for an explicit Enter, matching their normal type-then-apply flow.
-  void commands.register('metarecord-list:clear-edit-finder', {
-    label: 'Metarecord list: clear the finder and focus it',
-    handler: async () => {
-      finderInput.value = '';
-      finderInput.focus();
-      await applyFinder();
+
+  void commands.register('metarecord-list:insert', {
+    label: `Metarecord list: insert text into a zone (${ZONE_NAMES.join(' / ')})`,
+    args: [
+      zoneArg('insert into'),
+      { name: 'text', prompt: (p) => `Text to insert into the ${p[0]} zone?` },
+    ],
+    handler: async (name, text) => {
+      const z = zone(name);
+      // Same unfreeze as `focus`: inserting into a zone the query ignores
+      // would look like a no-op.
+      await z.enter?.();
+      const input = z.input;
+      const from = input.selectionStart ?? input.value.length;
+      const to = input.selectionEnd ?? from;
+      input.value = input.value.slice(0, from) + text + input.value.slice(to);
+      const caret = from + text.length;
+      input.setSelectionRange(caret, caret);
+      input.focus();
+      // Assigning `.value` fires nothing, so the debounced expand(A) → B
+      // mirror would keep showing a stale expansion (panel-shim/history.js
+      // dispatches this for the same reason).
+      input.dispatchEvent(new Event('input', { bubbles: true }));
+      // Deliberately does not run: inserting prepares the query, `apply` runs it.
     },
   });
-  void commands.register('metarecord-list:clear-edit-simplified', {
-    label: 'Metarecord list: clear the simplified query field, unfreeze zone B and focus it',
-    handler: async () => {
-      queryInput.value = '';
-      queryError.textContent = '';
-      // Same reason as `edit-simplified`: a frozen B would ignore the field we
-      // just handed the focus to.
-      await setNormalFrozen(false);
-      queryInput.focus();
+
+  // Canned queries: each puts its DSL in the zone, shown and frozen, so it
+  // stays visible, editable and composable rather than being a mode.
+  /** @type {Record<string, () => unknown>} */
+  const CANNED_QUERIES = {
+    duplicates: () => showDuplicates(),
+    orphans: () => showOrphans(),
+  };
+
+  void commands.register('metarecord-list:query', {
+    label: 'Metarecord list: run a canned query (duplicates / orphans)',
+    args: [
+      {
+        name: 'what',
+        prompt: () => `Which query? (${Object.keys(CANNED_QUERIES).join(' / ')})`,
+        complete: () => Object.keys(CANNED_QUERIES),
+      },
+    ],
+    handler: (what) => {
+      const run = CANNED_QUERIES[what];
+      if (!run) throw new Error(`unknown query: "${what ?? ''}"`);
+      return run();
     },
   });
-  void commands.register('metarecord-list:clear-edit-normal', {
-    label: 'Metarecord list: open the normal DSL editor, clear it, freeze and focus it',
-    handler: async () => {
-      await setNormalShown(true);
-      await setNormalFrozen(true);
-      normalInput.value = '';
-      normalError.textContent = '';
-      normalInput.focus();
+
+  void commands.register('metarecord-list:toggle', {
+    label: 'Metarecord list: toggle a view flag (normal)',
+    args: [{ name: 'flag', prompt: () => 'Which flag? (normal)', complete: () => ['normal'] }],
+    handler: (flag) => {
+      if (flag !== 'normal') throw new Error(`unknown flag: "${flag ?? ''}" (expected normal)`);
+      return setNormalShown(!normalShown);
     },
   });
-  // Enter in the finder: re-run the filter AND leave the field (blur), so the
-  // panel accelerators resume without a separate Escape. `apply-finder` (bound
-  // to Shift+Enter) is the stay-focused variant.
-  void commands.register('metarecord-list:submit-finder', {
-    label: 'Metarecord list: re-run the finder filter and leave the field',
-    handler: async () => {
-      await applyFinder({ record: true });
-      finderInput.blur();
-    },
-  });
-  void commands.register('metarecord-list:apply-query', {
-    label: 'Metarecord list: apply the query',
-    handler: () => applyQuery(),
-  });
-  void commands.register('metarecord-list:apply-columns', {
-    label: 'Metarecord list: apply the displayed columns',
-    handler: () => applyColumns(),
-  });
+
   void commands.register('metarecord-list:refresh', {
     label: 'Metarecord list: reload from the daemon',
     handler: () => {
@@ -1337,22 +1433,54 @@ export async function mount(root, metafolder) {
     },
   });
   // Two entry points to bulk editing (spec-gui "metarecord-list panel type"):
-  //  · `open-bulk-edit` — mouse-oriented: the in-panel form (op picker + value
-  //    widget), opened by the footer button.
-  //  · `bulk-edit` — keyboard-oriented: collects the operation in the command
-  //    input (completion), then delegates to the per-operation completion
-  //    command, which collects its own field/value. Bound to `m b`.
+  // this one is the mouse-oriented half — the in-panel form (op picker + value
+  // widget), opened by the footer button. The keyboard half is
+  // `metarecord:bulk <op>`, which lives with the commands that perform it.
   void commands.register('metarecord-list:open-bulk-edit', {
-    label: 'Metarecord list: open the bulk edit / delete form (set/append/remove/unset/delete)',
+    label: 'Metarecord list: open the bulk edit / delete form (set/add/remove/unset/delete)',
     reveal: true,
     handler: () => toggleBulkForm(),
   });
-  void commands.register('metarecord-list:set-page-size', {
-    label: 'Metarecord list: set the page size (results per fetch)',
-    handler: async (raw) => {
-      const n = Math.floor(Number(raw));
-      if (!Number.isFinite(n) || n < 1) throw new Error(`invalid page size: "${raw ?? ''}"`);
-      await workspace.set('metarecord-list:page-size', n);
+  // View settings: what is displayed, not what is stored. `set` names the
+  // setting as its first argument, so a new one costs a table entry.
+  /** @type {Record<string, {values?: string[], apply: (value: string) => unknown}>} */
+  const SETTINGS = {
+    mode: {
+      values: ['table', 'grid'],
+      apply: (value) => {
+        if (value !== 'table' && value !== 'grid')
+          throw new Error(`unknown mode: "${value ?? ''}" (expected table / grid)`);
+        mode = value;
+        bodyEl.classList.toggle('grid', mode === 'grid');
+      },
+    },
+    'page-size': {
+      apply: async (raw) => {
+        const n = Math.floor(Number(raw));
+        if (!Number.isFinite(n) || n < 1) throw new Error(`invalid page size: "${raw ?? ''}"`);
+        await workspace.set('metarecord-list:page-size', n);
+      },
+    },
+  };
+
+  void commands.register('metarecord-list:set', {
+    label: `Metarecord list: change a view setting (${Object.keys(SETTINGS).join(' / ')})`,
+    args: [
+      {
+        name: 'setting',
+        prompt: () => `Which setting? (${Object.keys(SETTINGS).join(' / ')})`,
+        complete: () => Object.keys(SETTINGS),
+      },
+      {
+        name: 'value',
+        prompt: (p) => `Value for "${p[0]}"?`,
+        complete: (_partial, p) => SETTINGS[p[0]]?.values ?? [],
+      },
+    ],
+    handler: (setting, value) => {
+      const found = SETTINGS[setting];
+      if (!found) throw new Error(`unknown setting: "${setting ?? ''}"`);
+      return found.apply(value);
     },
   });
 

@@ -32,7 +32,7 @@ pub struct BindingSpec {
 pub struct CompiledBinding {
     /// Normalized combo sequence, e.g. `["g", "g"]` or `["ctrl+k"]`.
     pub keys: Vec<String>,
-    /// Command invocation string, e.g. `"metarecord-list:set-mode grid"`.
+    /// Command invocation string, e.g. `"metarecord-list:set mode grid"`.
     pub invocation: String,
     /// Panel type scope; `None` = global.
     pub when: Option<String>,
@@ -395,13 +395,13 @@ mod tests {
         assert_eq!(finder.invocation, "metarecord-list:next");
 
         // Overriding the focus-scoped one leaves the when-scoped one intact.
-        let user = r#""down" = { command = "metarecord-list:apply-finder", focus = "finder" }"#;
+        let user = r#""down" = { command = "metarecord-list:apply finder stay", focus = "finder" }"#;
         let set = KeybindingSet::from_sources(defaults, user).unwrap();
         let downs: Vec<_> = set.compiled().into_iter().filter(|b| b.keys == ["down"]).collect();
         assert_eq!(downs.len(), 2);
         assert_eq!(
             downs.iter().find(|b| b.focus.as_deref() == Some("finder")).unwrap().invocation,
-            "metarecord-list:apply-finder"
+            "metarecord-list:apply finder stay"
         );
         assert_eq!(
             downs.iter().find(|b| b.when.as_deref() == Some("metarecord-list")).unwrap().invocation,
@@ -573,6 +573,62 @@ mod tests {
         for name in ["find:in-panel", "find:next", "find:prev", "find:close"] {
             assert!(registry.list().iter().any(|c| c.name == name), "missing builtin {name}");
         }
+    }
+
+    /// Every command a shipped keybinding names must exist.
+    ///
+    /// The registry is filled from two places that cannot see each other: the
+    /// builtins, listed in Rust, and the panel commands, registered by each
+    /// panel type's JavaScript at runtime. A keybinding naming neither is dead
+    /// — the key does nothing and says nothing — and nothing else in the build
+    /// catches it, because the two halves are only ever brought together in a
+    /// running GUI. So this test reads the panel sources the way the shell
+    /// would, and checks the shipped table against the union.
+    ///
+    /// It is the guard for a mass rename: an invocation left on an old name
+    /// fails here instead of silently going dead in someone's GUI.
+    #[test]
+    fn test_every_shipped_binding_names_an_existing_command() {
+        let registry = crate::command_registry::CommandRegistry::default();
+        crate::register_builtins(&registry);
+        let mut known: std::collections::HashSet<String> =
+            registry.list().into_iter().map(|c| c.name).collect();
+
+        // Panel commands: `commands.register('<name>'` and the shared
+        // `registerFind(metafolder, '<name>'` helper (panel-shim/find-entry.js).
+        let panels = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("default-config")
+            .join("panel-types");
+        let mut sources = 0;
+        for entry in std::fs::read_dir(&panels).expect("panel-types/ is readable") {
+            let main_js = entry.unwrap().path().join("main.js");
+            let Ok(source) = std::fs::read_to_string(&main_js) else { continue };
+            sources += 1;
+            for (marker, offset) in [("commands.register('", 19), ("registerFind(metafolder, '", 26)] {
+                let mut rest = source.as_str();
+                while let Some(at) = rest.find(marker) {
+                    rest = &rest[at + offset..];
+                    if let Some(end) = rest.find('\'') {
+                        known.insert(rest[..end].to_string());
+                    }
+                }
+            }
+        }
+        assert!(sources >= 12, "expected the shipped panel types, found {sources}");
+
+        let defaults = include_str!("../default-config/keybindings.toml");
+        let table = KeybindingSet::from_sources(defaults, "").unwrap().compiled();
+        assert!(table.len() > 100, "the shipped table looks truncated: {}", table.len());
+
+        // A binding may pre-fill arguments, so only the first token is a name.
+        let mut dead: Vec<String> = table
+            .iter()
+            .map(|b| b.invocation.split_whitespace().next().unwrap_or("").to_string())
+            .filter(|name| !name.is_empty() && !known.contains(name))
+            .collect();
+        dead.sort();
+        dead.dedup();
+        assert!(dead.is_empty(), "keybindings name commands that do not exist: {dead:?}");
     }
 
     /// The field-editing families are one command each, with the operation as

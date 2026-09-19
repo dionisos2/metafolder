@@ -44,7 +44,7 @@ describe('resolvePage', () => {
 
   test('a namespaced command falls back to its panel-type prefix', () => {
     // No `set-page-size` alias: the `metarecord-list` prefix wins.
-    expect(resolvePage(MANIFEST, 'metarecord-list:set-page-size')?.id).toBe('metarecord-list');
+    expect(resolvePage(MANIFEST, 'metarecord-list:set page-size')?.id).toBe('metarecord-list');
     expect(resolvePage(MANIFEST, 'repos:open')?.id).toBe('repos');
   });
 

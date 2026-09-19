@@ -1,4 +1,4 @@
-// metarecord-list:show-orphan (spec-file-tracking "Marking orphans"): the
+// metarecord-list:query orphans (spec-file-tracking "Marking orphans"): the
 // marked orphans are reached by an ordinary query, `orphan = true`, typed into
 // the visible DSL zone. The command exists to show new users what
 // `orphan:detect` wrote — it detects nothing itself, and touches the disk not
@@ -141,15 +141,15 @@ async function mountPanel() {
     statusBar,
     setVar,
     normalInput: shadow.getElementById('normal-input') as HTMLInputElement,
-    invoke: async (name: string) => {
+    invoke: async (name: string, ...args: unknown[]) => {
       const h = handlers.get(name);
       if (!h) throw new Error(`command not registered: ${name}`);
-      await h();
+      await (h as (...a: unknown[]) => unknown)(...args);
     },
   };
 }
 
-describe('metarecord-list:show-orphan', () => {
+describe('metarecord-list:query orphans', () => {
   beforeEach(() => {
     vi.stubGlobal(
       'fetch',
@@ -161,7 +161,7 @@ describe('metarecord-list:show-orphan', () => {
   test('puts `orphan = true` in the visible DSL zone and runs it', async () => {
     const p = await mountPanel();
     p.calls.length = 0;
-    await p.invoke('metarecord-list:show-orphan');
+    await p.invoke('metarecord-list:query', 'orphans');
 
     expect(p.normalInput.value).toBe('orphan = true');
     // The query ran, and the panel asked the disk for nothing: showing the
@@ -177,7 +177,7 @@ describe('metarecord-list:show-orphan', () => {
 
   test('the query is the panel\u2019s, so it stays editable', async () => {
     const p = await mountPanel();
-    await p.invoke('metarecord-list:show-orphan');
+    await p.invoke('metarecord-list:query', 'orphans');
     // Shown and frozen, like every other GUI-written query (never a hidden
     // override): the user can narrow it by hand.
     expect(p.normalInput.value).toBe('orphan = true');

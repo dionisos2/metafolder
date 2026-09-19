@@ -185,6 +185,13 @@ export interface ArgSpec {
    *  client-side like command names). `partial` is the current draft, so a
    *  future dynamic mode can narrow on it; the v1 completions ignore it. */
   complete?: (partial: string, prior: string[]) => string[] | Promise<string[]>;
+  /** Whether the argument may simply be left out. An optional argument is
+   *  used when the invocation supplies it and skipped — never prompted for —
+   *  when it does not, so the command falls back to its default:
+   *  `metarecord-list:apply finder` leaves the zone, `… finder stay` does not.
+   *  Only a trailing run of arguments can sensibly be optional, since they are
+   *  filled positionally. */
+  optional?: boolean;
   /** Whether this argument applies at all, given the ones already collected.
    *  A generic command declares one spec per argument any of its operations
    *  can take, and drops the irrelevant ones here: `metarecord:bulk delete`
@@ -253,7 +260,7 @@ export function promptsForInput(invocation: string): boolean {
   for (const spec of specs) {
     if (spec.when && !spec.when(args.slice(0, used))) continue;
     if (used < args.length) used += 1;
-    else return true;
+    else if (!spec.optional) return true;
   }
   return false;
 }
@@ -489,7 +496,7 @@ async function defaultTargetDir(repo: string): Promise<string> {
   });
 }
 
-// ── List a folder in the metarecord list (the `metarecord-list:list-folder`
+// ── List a folder in the metarecord list (the `metarecord-list:folder`
 // builtin) ─────────────────────────────────────────────────────────────────
 // The mirror image of `file-manager:reveal-folder`: instead of showing a
 // metarecord's folder on the disk, it shows the folder's *metarecords* — the
@@ -771,6 +778,8 @@ export async function collectArgs(
       used += 1;
       continue;
     }
+    // Nothing left to fill it with: an optional argument is absent, not asked.
+    if (spec.optional) continue;
     // `prompt` and `initial` are awaited — they are what the input shows and
     // pre-fills. `complete` is NOT: it is handed over as it comes (an array, or
     // a promise the driver resolves once the input is already open), so a slow
@@ -1253,7 +1262,7 @@ async function runCommand(name: string, args: string[], ws: string | null): Prom
       await invoke('panel_set_type', { slot: store.layout.focused, panelType: 'file-manager' });
       return true;
     }
-    case 'metarecord-list:list-folder': {
+    case 'metarecord-list:folder': {
       // The metarecord-list counterpart of `file-manager:reveal-folder`: show
       // the metarecords of the selection's folder, replacing the focused panel.
       if (ws) await listFolder(ws);

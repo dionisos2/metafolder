@@ -119,9 +119,9 @@ describe('parseInvocation', () => {
   });
 
   test('command with parameters', () => {
-    expect(parseInvocation('metarecord-list:set-mode grid')).toEqual({
-      name: 'metarecord-list:set-mode',
-      args: ['grid'],
+    expect(parseInvocation('metarecord-list:set mode grid')).toEqual({
+      name: 'metarecord-list:set',
+      args: ['mode', 'grid'],
     });
     expect(parseInvocation('answer:send left')).toEqual({
       name: 'answer:send',
@@ -189,6 +189,20 @@ describe('needsMessagePanel', () => {
   test('no focused workspace: never needed', () => {
     const l = layout(slot(false, null, null), slot(false, null, null));
     expect(needsMessagePanel(l, null)).toBe(false);
+  });
+});
+
+describe('promptsForInput with optional arguments', () => {
+  afterEach(() => clearArgSpecs());
+
+  test('a fully-optional tail means the invocation runs as typed', () => {
+    registerArgs('p:apply', [
+      { name: 'zone', prompt: () => 'Zone?' },
+      { name: 'stay', optional: true, prompt: () => 'Stay?' },
+    ]);
+    expect(promptsForInput('p:apply')).toBe(true); // `zone` is still missing
+    expect(promptsForInput('p:apply finder')).toBe(false); // `stay` never asks
+    expect(promptsForInput('p:apply finder stay')).toBe(false);
   });
 });
 
@@ -273,7 +287,7 @@ describe('shortcutsFor', () => {
   });
   const table = [
     binding(['alt+t'], 'workspace:new'),
-    binding(['ctrl+g'], 'metarecord-list:set-mode grid'),
+    binding(['ctrl+g'], 'metarecord-list:set mode grid'),
     binding(['down'], 'metarecord-list:next'),
     binding(['j'], 'metarecord-list:next'),
     binding(['g', 'g'], 'metarecord-list:goto-top'),
@@ -284,7 +298,7 @@ describe('shortcutsFor', () => {
   });
 
   test('parameterized invocations count for the bare command', () => {
-    expect(shortcutsFor(table, 'metarecord-list:set-mode')).toEqual(['ctrl+g']);
+    expect(shortcutsFor(table, 'metarecord-list:set mode')).toEqual(['ctrl+g']);
   });
 
   test('several bindings are all listed', () => {
@@ -548,6 +562,33 @@ describe('collectArgs', () => {
     ]);
     expect(await collectArgs(bulkSpecs(), ['unset', 'tag'], fn)).toEqual(['unset', 'tag']);
     expect(fn).not.toHaveBeenCalled();
+  });
+
+  // An optional trailing argument: supplied inline it is used, omitted it is
+  // simply absent — the command falls back to its default rather than stopping
+  // to ask. `metarecord-list:apply <zone> [stay]`, `log:revert [what]`.
+  const stay = (): ArgSpec => ({
+    name: 'stay',
+    optional: true,
+    prompt: () => 'Stay?',
+  });
+
+  test('an optional argument supplied inline is collected', async () => {
+    const { fn } = scriptedPrompt([]);
+    expect(await collectArgs([field(), stay()], ['tag', 'stay'], fn)).toEqual(['tag', 'stay']);
+    expect(fn).not.toHaveBeenCalled();
+  });
+
+  test('an optional argument left out is skipped, never prompted', async () => {
+    const { fn } = scriptedPrompt([]);
+    expect(await collectArgs([field(), stay()], ['tag'], fn)).toEqual(['tag']);
+    expect(fn).not.toHaveBeenCalled();
+  });
+
+  test('a required argument before an optional one is still prompted', async () => {
+    const { fn, requests } = scriptedPrompt(['tag']);
+    expect(await collectArgs([field(), stay()], [], fn)).toEqual(['tag']);
+    expect(requests.map((r) => r.argName)).toEqual(['field']);
   });
 
   test('Escape (null) abandons the whole invocation and stops prompting', async () => {

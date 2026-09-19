@@ -47,7 +47,7 @@ trap cleanup EXIT
 # (PanelHost keeps one live iframe per workspace×panel-type, so re-showing a
 # type in the same workspace does not reload it). Each scenario drops its own
 # workspace when done (drop_ws) so only its panels are ever alive — otherwise a
-# panel command like metarecord-list:page-next is ambiguous across the leftover
+# panel command like metarecord-list:page next is ambiguous across the leftover
 # list panels of earlier scenarios.
 new_ws() { mfg workspace new --repo "$REPO"; }
 drop_ws() { mfg workspace rm "$1" >/dev/null 2>&1 || true; }
@@ -184,7 +184,7 @@ scenario_paging() {
     settle
     clear_bench
     for ((i = 0; i < STEPS; i++)); do
-        mfg command metarecord-list:page-next >/dev/null 2>&1 || true
+        mfg command metarecord-list:page next >/dev/null 2>&1 || true
         sleep "$STEP"
     done
     settle

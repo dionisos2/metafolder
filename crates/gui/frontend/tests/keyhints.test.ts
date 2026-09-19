@@ -77,16 +77,16 @@ describe('bindingMatches', () => {
 
 describe('keysFor', () => {
   const table = [
-    bind(['f'], 'metarecord-list:clear-edit-finder', 'metarecord-list'),
+    bind(['f'], 'metarecord-list:clear finder', 'metarecord-list'),
     bind(['f'], 'file-manager:find', 'file-manager'),
     bind(['f'], 'treeref:find', 'treeref'),
-    bind(['/'], 'metarecord-list:focus-finder', 'metarecord-list'),
-    bind(['e', 'f'], 'metarecord-list:focus-finder', 'metarecord-list'),
+    bind(['/'], 'metarecord-list:focus finder', 'metarecord-list'),
+    bind(['e', 'f'], 'metarecord-list:focus finder', 'metarecord-list'),
     bind(['ctrl+f'], 'find:in-panel'),
   ];
 
   test('every combo bound to the command, in table order', () => {
-    expect(keysFor(table, 'metarecord-list:focus-finder')).toEqual(['/', 'e f']);
+    expect(keysFor(table, 'metarecord-list:focus finder')).toEqual(['/', 'e f']);
   });
 
   test('several commands are asked at once, their keys deduplicated', () => {

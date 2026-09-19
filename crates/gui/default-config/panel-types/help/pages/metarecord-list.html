@@ -8,7 +8,7 @@
 <p>
   The search box at the top is the <strong>finder</strong>: a fast, incremental
   filter that narrows the list as you type. Press
-  <span data-mf-key="metarecord-list:focus-finder">/</span> to focus it.
+  <span data-mf-key="metarecord-list:focus finder">/</span> to focus it.
   Each whitespace-separated word must appear <em>as a substring, in order</em>
   (&ldquo;ordered substring&rdquo;): <code>scien fic</code> matches
   <code>science-fiction</code>, and <code>conf gui</code> matches a path
@@ -30,9 +30,9 @@
   <strong>Enter</strong> (or <em>Apply</em>) to run it; an empty query lists
   everything. <em>Show normal DSL</em> reveals the expanded query, which you can
   freeze to edit by hand. Focus it with
-  <span data-mf-key="metarecord-list:focus-query">Ctrl+/</span>, or with
-  <span data-mf-key="metarecord-list:edit-simplified">e s</span> /
-  <span data-mf-key="metarecord-list:clear-edit-simplified">c s</span> (clear
+  <span data-mf-key="metarecord-list:focus simplified">Ctrl+/</span>, or with
+  <span data-mf-key="metarecord-list:focus simplified">e s</span> /
+  <span data-mf-key="metarecord-list:clear simplified">c s</span> (clear
   first), which also unfreeze the DSL editor so the simplified text drives the
   query again.
 </p>
@@ -66,7 +66,7 @@
 <h2>Listing a folder</h2>
 <p>
   <em>Open folder in metarecord-list</em> in any right-click menu (and the
-  <code>metarecord-list:list-folder</code> command) fills the query with the
+  <code>metarecord-list:folder</code> command) fills the query with the
   contents of the selected item&rsquo;s folder &mdash; the folder itself when a
   directory is selected, otherwise the folder containing the file. It writes
   <code>mfr_path -&gt; &quot;/the/folder&quot;</code> into the frozen DSL box, so
