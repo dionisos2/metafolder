@@ -115,14 +115,14 @@ folder on `m`.)
 
 ## Prerequisites
 
-1. **`:parent` served by the bitmap index.** The step query is
-   `mfr_path:parent = "<P>"`, and `index_servable_aspect` (`index/mod.rs`)
-   reports `Unsupported` for `:parent` and `:path` — the tree structure lives in
-   the tree cache, not in the bitmaps. Without this, every step *and every count*
-   of this walk is served by `query_exec`. The index already receives the tree
-   through `QueryRoots` for `->*` path targets and exact-node equality; serving
-   `:parent` equality the same way (the children of a caller-resolved node) is
-   the same shape of fix.
+1. ~~**`:parent` served by the bitmap index.**~~ ✅ *Done (September 2026).* The
+   step query is `mfr_path:parent = "<P>"`, and the index used to report
+   `Unsupported` for `:parent`, so every step *and every count* of this walk fell
+   to the SQL engine. It now serves the aspect from the reverse index's parent
+   partition — the children of a caller-resolved node, passed in through
+   `QueryRoots.node` exactly as `->*` path targets and exact-node equality are —
+   and there is no SQL engine left to fall to (spec-indexing "No operand runs in
+   SQL").
 2. **`mf … --count`.** The CLI exposes no count at all; counting by counting
    lines is O(scope) output per question and defeats the design. See the roadmap
    item on CLI paging — the `--count` half is a prerequisite here, the `--cursor`

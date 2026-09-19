@@ -3,11 +3,15 @@
 //! A field name holds exactly one non-`Nothing` value type repository-wide (the
 //! data-model invariant), so the encoding is unambiguous and chosen from the
 //! first non-`Nothing` value seen. Each encoding answers a comparison against
-//! the SAME row semantics the SQL `scalar_predicate` implements
-//! (the SQL oracle's `scalar_predicate`), including multi-map "some value
-//! satisfies": a
-//! metarecord matches if *any* of its rows satisfies the predicate, so an
-//! answer is a union of the per-value bitmaps that match.
+//! the SAME row semantics the oracle's `scalar_predicate` implements, including
+//! multi-map "some value satisfies": a metarecord matches if *any* of its rows
+//! satisfies the predicate, so an answer is a union of the per-value bitmaps
+//! that match.
+//!
+//! "SQL" below always names that oracle (`metafolder-query-oracle`, a
+//! dev-dependency) — the *semantics reference* these encodings are checked
+//! against, never a fallback: no query is served by it (spec-indexing "No
+//! operand runs in SQL").
 
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -189,7 +193,8 @@ impl FieldIndex {
     /// This field's forest roots — the ids whose `tree_ref` parent is the root
     /// sentinel (`field:parent IS ABSENT`, spec-query "Forest roots"). One hash
     /// lookup: the sentinel is an ordinary key of the parent partition. `None`
-    /// on any other encoding, where the aspect is a 400 the SQL engine raises.
+    /// on any other encoding, where the aspect is a 400 `query_validate` raises
+    /// before the index runs.
     pub fn tree_roots(&self) -> Option<RoaringBitmap> {
         match self {
             FieldIndex::Reverse(r) if r.kind == RefKind::TreeRef => Some(r.roots()),
@@ -466,8 +471,9 @@ impl CategoricalIndex {
     /// Ordered comparison. Only a string operand is meaningful (it compares
     /// `value_text` lexicographically, matching SQLite's BINARY collation on
     /// UTF-8 — identical to Rust `str` ordering). A bool operand with an ordered
-    /// op is rejected by SQL, so it is `Unsupported`; any other operand type
-    /// finds no rows in a categorical field, hence empty.
+    /// op is rejected upfront by `query_validate`, so it is `Unsupported` here
+    /// as a backstop; any other operand type finds no rows in a categorical
+    /// field, hence empty.
     fn ordered(&self, value: &Value, op: CmpOp) -> Result<RoaringBitmap, Unsupported> {
         match value {
             Value::String(s) => {
@@ -842,7 +848,7 @@ impl ReverseIndex {
     /// The ids whose `value_name` satisfies `keep` — the in-memory equivalent of
     /// a `value_name REGEXP` scan (`tree_ref` only). It walks the *distinct*
     /// names, so it costs the field's cardinality and not its row count, which
-    /// is what lets the text predicates leave the SQL engine.
+    /// is what let the text predicates leave SQL behind.
     ///
     /// `restrict` narrows the answer to a candidate set: a name whose ids are
     /// all outside it cannot contribute, so `keep` is never called for it. That
@@ -986,7 +992,8 @@ impl ReverseIndex {
                 }
                 Ok(out)
             }
-            // Ordered comparison on a reference value is rejected by SQL.
+            // Ordered comparison on a reference value is rejected upfront by
+            // `query_validate`; this is the backstop.
             Value::Ref(_)
             | Value::RefBase(_)
             | Value::TreeRef { .. }

@@ -51,8 +51,8 @@ export function finderClause(terms, targets) {
   return ops.length === 1 ? ops[0] : { type: 'or', operands: ops };
 }
 
-/** Client mirror of the daemon's ordered-substring check (`osm_ordered_match`,
- *  query_exec.rs): every term must appear as a substring, in order and
+/** Client mirror of the shared ordered-substring check (`osm_ordered_match`,
+ *  core/src/query.rs): every term must appear as a substring, in order and
  *  non-overlapping, case-insensitive on both sides; an empty term list matches
  *  everything. No `/` barrier — that is a property of path-mode term
  *  construction, not of this check.

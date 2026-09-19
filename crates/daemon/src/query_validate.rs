@@ -3,11 +3,10 @@
 //! The engine-independent checks live next door in [`validate_query`]:
 //! they read the IR alone. These ones need to know what a field holds — whether
 //! it is a `tree_ref` forest — which is why they used to be made by the SQL
-//! compiler, the only place that asked the database. It is not the only place
-//! that knows any more: the bitmap index carries the same map, so the rejection
-//! is made once, before any engine runs, and no longer depends on which one
-//! would have run (spec-query "Field aspects", spec-indexing "No operand runs in
-//! SQL").
+//! compiler, the only place that asked the database. The bitmap index carries
+//! the same map, so the rejection is made once, before the index runs, and it
+//! no longer depends on what would have served the query (spec-query "Field
+//! aspects", spec-indexing "No operand runs in SQL").
 //!
 //! `type_of` answers "what does this field hold", as one of the `value_type`
 //! spellings (`"tree_ref"`, `"string"`, …), or `None` for a field with no data —
@@ -49,8 +48,8 @@ fn aspect_name(aspect: Aspect) -> &'static str {
 }
 
 /// Rejects every shape whose validity depends on the field's type, anywhere in
-/// `q`. Runs before any engine, so the answer is the same whichever one would
-/// have served the query.
+/// `q`. Runs before the index sees the query, so the rejection is a property of
+/// the query and not of what evaluates it.
 pub fn validate_query_types(
     q: &Query,
     type_of: &dyn Fn(&str) -> Option<String>,
@@ -158,21 +157,25 @@ fn check_operand(field: &str, aspect: Aspect, value: &Value) -> Result<(), ApiEr
 }
 
 /// Upper bound on the number of nodes in a single query. A safety valve
-/// against a query that is cheap to send but expensive to *compile* (a wide
-/// `And`/`Or`, deep nesting): it would otherwise build a giant CTE chain and
-/// tie up a blocking thread before any row is read. Generous on purpose —
+/// against a query that is cheap to send but expensive to *walk* (a wide
+/// `And`/`Or`, deep nesting) before any data is read. Generous on purpose —
 /// realistic hand- or UI-built queries are well under it; a membership filter
-/// over a very large value list (an `Or` of many `Eq`) should be decomposed
-/// (and a future native `In` operator would make it O(1) nodes — see
-/// docs/review-followups.md).
+/// over a very large value list (an `Or` of many `Eq`) should be decomposed. A
+/// membership filter over *uuids* already is one node: `uuid_in`, which the DSL
+/// folds an `Or` of bare uuid atoms into. (A native `In` over field values
+/// would do the same for them — see docs/review-followups.md §8.)
 pub const MAX_QUERY_NODES: usize = 2000;
 
-/// Maximum number of operands in a single `And`/`Or`. Each operand becomes one
-/// term of a SQLite compound `SELECT` (`UNION`/`INTERSECT`), bounded by
-/// `SQLITE_MAX_COMPOUND_SELECT` (default 500); beyond it SQLite fails the whole
-/// statement with an opaque "too many terms in compound SELECT" error, so we
-/// reject early with a clear message. (Nest or decompose, or use a future
-/// native `In` operator — see docs/review-followups.md §8.)
+/// Maximum number of operands in a single `And`/`Or`.
+///
+/// The number is SQLite's: an operand used to become one term of a compound
+/// `SELECT` (`UNION`/`INTERSECT`), and past `SQLITE_MAX_COMPOUND_SELECT`
+/// (default 500) the statement failed with an opaque "too many terms in
+/// compound SELECT". Nothing on the serving path compiles to SQL any more
+/// (spec-indexing "No operand runs in SQL") — a wide `Or` is N bitmap unions —
+/// so the cap now stands only as a safety valve, at a value inherited from a
+/// constraint that no longer binds. Whether it should stay, and at what value,
+/// is open (roadmap, "query API limits"). Nest or decompose past it.
 pub const MAX_COMBINATOR_OPERANDS: usize = 500;
 
 /// Total number of nodes in a query tree, counting boolean operands and follow
@@ -220,12 +223,12 @@ pub fn too_wide_message(got: usize) -> String {
 
 /// Rejects an over-large query before compiling it (spec-query "Limits").
 ///
-/// Both limits are checked here, and this must run *before the engine is
-/// chosen*: whether a query is too large is a property of the query, not of
-/// which engine ends up serving it. The width limit used to live only inside
-/// the SQL compiler, so a wide `or` of index-servable leaves was accepted while
-/// the same `or` with one `matches` leaf — which forces the SQL fallback — was
-/// rejected. A client cannot see that routing decision, so it saw the limit
+/// Both limits are checked here, and this must run *before evaluation*:
+/// whether a query is too large is a property of the query, not of what serves
+/// it. The width limit used to live inside the SQL compiler alone, so back when
+/// the daemon had two engines a wide `or` of index-servable leaves was accepted
+/// while the same `or` with one `matches` leaf — which forced the SQL fallback
+/// — was rejected. A client cannot see a routing decision, so it saw the limit
 /// flicker on and off.
 pub fn check_query_size(q: &Query) -> Result<(), ApiError> {
     let n = node_count(q);
@@ -241,9 +244,9 @@ pub fn check_query_size(q: &Query) -> Result<(), ApiError> {
     Ok(())
 }
 
-/// Validates a query's comparison nodes *upfront* — independent of which engine
-/// (bitmap index or SQL) runs it — and rejects the ones with no well-defined,
-/// useful meaning (spec-query "Comparison validity"):
+/// Validates a query's comparison nodes *upfront*, before anything evaluates
+/// them, and rejects the ones with no well-defined, useful meaning (spec-query
+/// "Comparison validity"):
 ///
 /// - a comparison against `Nothing` (use `is_absent` / `is_unknown` instead);
 /// - an *ordered* comparison (`<` `<=` `>` `>=`) on a value type that has no
@@ -251,10 +254,10 @@ pub fn check_query_size(q: &Query) -> Result<(), ApiError> {
 ///   stays allowed on them, and ordered comparison stays allowed on strings,
 ///   numbers and datetimes.
 ///
-/// This is the single source of truth: the SQL engine's per-row checks and the
-/// index's `Unsupported` branches for these shapes are now defensive backstops.
-/// Callers run this before touching either engine so the rejection never has to
-/// emerge from an engine-selection fallback.
+/// This is the single source of truth: the index's `Unsupported` branches for
+/// these shapes — and the oracle's per-row checks — are now defensive
+/// backstops. Callers run it before the index sees the query, so a rejection is
+/// never something an engine happens to notice.
 pub fn validate_query(q: &Query) -> Result<(), ApiError> {
     match q {
         Query::Eq { value, .. } | Query::Neq { value, .. } => validate_comparison(value, false),
@@ -350,8 +353,8 @@ mod tests {
     #[test]
     fn query_size_check_also_bounds_combinator_width() {
         // The width limit is checked upfront, next to the node limit, so it
-        // holds whichever engine ends up serving the query — it used to live
-        // only inside the SQL compiler, where the index path never reached it.
+        // holds for every query — it used to live inside the SQL compiler
+        // alone, where the index path never reached it.
         let leaf = || Query::IsPresent { field: "x".into(), aspect: Aspect::Raw };
         let wide = |n: usize| Query::Or { operands: (0..n).map(|_| leaf()).collect() };
 

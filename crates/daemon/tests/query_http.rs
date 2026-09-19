@@ -90,9 +90,10 @@ async fn test_query_returns_uuids_by_default() {
 
 #[tokio::test]
 async fn test_invalid_regex_is_rejected() {
-    // `matches` is served by the bitmap index now, so the index sees the pattern
-    // first. An unusable one must still reach the user as a 400 and not as an
-    // empty result: the index defers, and the SQL engine reports it.
+    // `matches` is served by the bitmap index, so the index would see the
+    // pattern first. An unusable one must still reach the user as a 400 and not
+    // as an empty result — nor as the 500 an index decline is now — so
+    // `query_validate` compiles it upfront and rejects it there.
     let (app, repo, root) = setup("badregex").await;
     create(&app, &repo, json!([{"name": "label", "value": {"type": "string", "value": "x"}}]))
         .await;
@@ -229,9 +230,9 @@ async fn test_exact_node_path_query_is_served_by_the_index() {
     // `mfr_path = "/a/b.txt"` — "find this one file". The route resolves the
     // node through the tree cache and hands it to the bitmap index, so this must
     // return exactly the metarecord at that path (and nothing for a path that is
-    // no node), the same answer the SQL engine gives. Without the node seed the
-    // index reports Unsupported and the whole query falls back to a full scan,
-    // which is correct but the reason this shape used to be slow.
+    // no node), the same answer the oracle gives. Without the node seed the
+    // index reports Unsupported — which used to mean a fall back to a full SQL
+    // scan (correct, and the reason this shape was slow) and now means a 500.
     let (app, repo, root) = setup("exactnode").await;
     let tref = |parent: Option<&str>, name: &str| {
         json!([{"name": "mfr_path",
@@ -1213,13 +1214,13 @@ async fn test_batch_append_of_an_existing_value_is_a_no_op() {
 
 #[tokio::test]
 async fn test_multi_term_osm_path_paginates() {
-    // A multi-term OSM path is not indexable as such: `resolve_index_leaves`
-    // rewrites the leaf into the `UuidIn` set it matches, and the index serves
-    // that. The rewrite runs again on every page, so the *set it produces must
-    // be stable* — the cursor guard hashes the rewritten query, and a set that
-    // comes back in a different order makes page 2 look like a cursor from some
-    // other query. The index then defers, the SQL engine is handed a cursor it
-    // cannot decode, and the user gets a 400 halfway through a search.
+    // A multi-term OSM path is not indexable as such:
+    // `forest_query::resolve_path_leaves` rewrites the leaf into the `UuidIn`
+    // set it matches, and the index serves that. The rewrite runs again on every
+    // page, so the *set it produces must be stable* — the cursor guard hashes
+    // the rewritten query, and a set that comes back in a different order makes
+    // page 2 look like a cursor from some other query, so the user gets a 400
+    // halfway through a search.
     let (app, repo, root) = setup("osmpage").await;
 
     let node = |parent: Option<&str>, name: &str| {

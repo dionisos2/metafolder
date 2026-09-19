@@ -1,9 +1,10 @@
 //! The forest as a query provider (spec-indexing "No operand runs in SQL").
 //!
 //! The `:path` aspect reads a component no bitmap holds — the path assembled
-//! from the forest root — so the bitmap index declines it. It does not follow
-//! that SQL must run the query: the paths live in the resident tree cache, and
-//! SQLite only ever received the *result* of walking it, as a `VALUES` list.
+//! from the forest root — so the bitmap index declines it. It did not follow
+//! that SQL had to run the query: the paths live in the resident tree cache,
+//! and SQLite only ever received the *result* of walking it, as a `VALUES`
+//! list.
 //!
 //! This module cuts out that detour. Each such leaf — a `:path` predicate, and
 //! an order-sensitive `osm` path — is resolved against the forest and rewritten
@@ -19,11 +20,14 @@ use crate::tree_cache::TreeCache;
 
 /// Rewrites every forest-served leaf of `q` into the `uuid_in` set it matches.
 ///
-/// A leaf is left untouched — and the query then takes its usual course,
-/// index-declined and SQL-served — whenever the forest cannot answer
-/// authoritatively: an incomplete cache, a field with no forest (where `:path`
-/// is a `400` the SQL engine raises), an operand of the wrong type, or a
-/// pattern that does not compile (a `400` as well).
+/// A leaf is left untouched whenever the forest cannot answer authoritatively:
+/// an incomplete cache, an operand of the wrong type, or a pattern that does
+/// not compile. Those last two are `400`s raised upstream by
+/// `query_validate`, before this runs; an incomplete cache cannot happen on the
+/// serving path (a repository serves nothing until it is warm), and the index
+/// declining the untouched leaf then reports the daemon bug it is. A field
+/// with no forest at all is the one benign case: the leaf matches nothing and
+/// the walk says so.
 pub fn resolve_path_leaves(cache: &TreeCache, q: &Query) -> Result<Query, ApiError> {
     if let Some(matched) = path_leaf_matches(cache, q)? {
         return Ok(Query::UuidIn { uuids: matched });
@@ -90,7 +94,7 @@ fn path_leaf_matches(cache: &TreeCache, q: &Query) -> Result<Option<Vec<Uuid>>, 
 type PathPredicate<'a> = (&'a str, Box<dyn Fn(&str) -> bool + 'a>);
 
 /// The `(field, predicate on the assembled path)` a `:path` leaf reads, mirror
-/// for mirror of what the SQL compiler builds for the same node.
+/// for mirror of what the oracle's SQL compiler builds for the same node.
 fn path_predicate(q: &Query) -> Option<PathPredicate<'_>> {
     use metafolder_core::query::Query as Q;
     let (field, value, op): (&String, &Value, Op) = match q {

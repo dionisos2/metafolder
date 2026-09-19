@@ -1,11 +1,17 @@
 //! Equivalence oracle for the in-memory bitmap index (spec-indexing.org).
 //!
-//! Every query in the battery is run through BOTH the SQL engine
-//! (`query_exec::execute`, the oracle) and `RepoIndex::evaluate`, asserting an
-//! identical result *set* (order is irrelevant — sorting is a later increment).
-//! Fixtures are crafted to exercise the correctness pitfalls: present/absent
-//! overlap, multi-map min/max, the exclusively-owned universe, ZERO_UUID tree
-//! roots.
+//! Every query in the battery is run through BOTH `RepoIndex::evaluate` — the
+//! serving path — and the SQL oracle (`metafolder-query-oracle`, aliased
+//! `query_exec` below), asserting an identical result *set* (order is
+//! irrelevant except where a test says otherwise). Fixtures are crafted to
+//! exercise the correctness pitfalls: present/absent overlap, multi-map
+//! min/max, the exclusively-owned universe, ZERO_UUID tree roots.
+//!
+//! "the SQL engine" in this file always means that oracle: it is a
+//! dev-dependency and a *reference implementation*, never something a request
+//! falls back to (spec-indexing "No operand runs in SQL"). Where a test asserts
+//! the index declines a shape, what follows the decline is a `500`, not a
+//! second engine.
 
 use metafolder_core::metarecord::{Field, Value};
 use metafolder_core::query::{Aspect, FollowTarget, OsmMode, Query};
@@ -662,11 +668,12 @@ fn reverse_tree_follows_transitive() {
 }
 
 #[test]
-fn exact_node_path_equality_defers_to_sql_without_roots() {
+fn exact_node_path_equality_declines_without_roots() {
     // On a tree_ref field, an Eq/Neq string operand is an exact-node match
-    // resolved through the tree cache — outside the index. With
-    // no caller-resolved node it must report Unsupported so the route falls back
-    // to SQL (rather than answer with the wrong value_name-based bitmap).
+    // resolved through the tree cache — outside the index. With no
+    // caller-resolved node it must report Unsupported (rather than answer with
+    // the wrong value_name-based bitmap); the route resolves every one of them,
+    // so a decline here would be a daemon bug reported as such.
     let (o, _) = forest();
     let index = RepoIndex::build(&o.conn).unwrap();
     assert!(index.evaluate(&eq("loc", s("root/b"))).is_err());
@@ -780,8 +787,8 @@ fn exact_node_path_inequality_matches_sql_with_node_roots() {
 fn reverse_tree_follows_path_target_matches_sql() {
     // The path-target shape the GUI uses (`mfr_path ->* "/dir"`): the index
     // serves it once the caller resolves the path to its root through the tree
-    // cache. Each path must agree with the SQL engine, and an unresolved path
-    // (no roots supplied) must stay `Unsupported` so the route falls back.
+    // cache. Each path must agree with the oracle, and an unresolved path
+    // (no roots supplied) must stay `Unsupported` rather than answer wrongly.
     let (mut o, [_root, _b, _c, _d]) = forest();
     // shape: 0 = Follows, 1 = FollowsTransitive strict, 2 = FollowsTransitive
     // inclusive (`=>*`, the subtree including its root).
@@ -1322,8 +1329,10 @@ fn tree_ref_sort_matches_sql_engine() {
 
 #[test]
 fn tree_ref_sort_without_a_resident_forest_is_unsupported() {
-    // No resolver (or an unpopulated cache) ⇒ the index refuses the sort and the
-    // caller falls back to the SQL engine, which rebuilds the paths in SQL.
+    // No resolver (or an unpopulated cache) ⇒ the index refuses the sort. On the
+    // serving path that cannot happen (a repository serves nothing until its
+    // forest is resident), so it is a `Gap::State` — a 500 naming a daemon bug,
+    // not a fall back.
     let o = tree_sorted();
     let index = RepoIndex::build(&o.conn).unwrap();
     let all =
@@ -1524,7 +1533,7 @@ fn resolving_forest_leaves_is_deterministic() {
 fn parent_aspect_presence_matches_sql() {
     // `field:parent IS ABSENT` is the forest roots, `IS PRESENT` every node
     // under a real parent (spec-query "Forest roots"). Both are partitions the
-    // reverse index already holds, so neither may defer to the SQL engine.
+    // reverse index already holds, so neither may be declined.
     let (mut o, [_root, b, _c, _d]) = forest();
     let _second_root = o.create(vec![tref("loc", None, "other")]);
     let _no_loc = o.create(vec![Field::new("kind", s("file"))]);
@@ -1595,11 +1604,12 @@ fn parent_aspect_equality_matches_sql_with_node_roots() {
     assert!(index
         .evaluate(&Query::Eq { field: "loc".into(), value: s("root/b"), aspect: Aspect::Parent })
         .is_err());
-    // Out of scope on purpose, and still deferred: `Neq` is not the complement
-    // (a multi-position node is in both), and SQL's ordered form ignores the
-    // operator instead of comparing uuids.
-    // An ordered operand (and a regex) under `:parent` is a 400 the SQL engine
-    // raises — the index defers rather than answering from a uuid comparison.
+    // Out of scope on purpose, and still declined: `Neq` is not the complement
+    // (a multi-position node is in both), and the oracle's ordered form ignores
+    // the operator instead of comparing uuids.
+    // An ordered operand (and a regex) under `:parent` is a 400 `query_validate`
+    // raises upfront — the index declines rather than answering from a uuid
+    // comparison, which is the backstop behind that rejection.
     let mut roots = QueryRoots::new();
     let node = o.cache.resolve_path(&o.conn, "loc", "root").unwrap();
     roots.node.insert(("loc".to_string(), "root".to_string()), node);
@@ -1609,7 +1619,7 @@ fn parent_aspect_equality_matches_sql_with_node_roots() {
     ] {
         assert!(
             index.evaluate_page_with_roots(&q, &[], None, None, &roots).is_err(),
-            "{q:?} must stay with the SQL engine"
+            "{q:?} must be declined, not answered"
         );
     }
 }

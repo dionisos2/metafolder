@@ -745,6 +745,14 @@ be loaded (=404= otherwise).
 
 *** Per-repo primitives
 
+- =GET /repos/:repo/metarecords/:uuid/mf-sync= — the record's *effective*
+  =mf_sync= mode, ={"mf_sync": "internal" | "external"}=. The field is
+  inherited down the =mfr_path= tree (see
+  [[*Metadata versus content: the =mf_sync= field]]), so the answer is the
+  nearest ancestor's value and not the record's own row — which is why it is an
+  endpoint rather than a field read. A record with no path at all answers
+  =internal=. The run phase calls it before every content operation: an
+  =external= record gets its metadata synced and its file left alone.
 - Single-record write endpoints (field =POST=/=PUT=/=DELETE=, whole-record
   =PUT=, and metarecord =DELETE=) accept an optional =expected_version=
   query parameter: the write is rejected with =409= if the metarecord's

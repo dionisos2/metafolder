@@ -525,7 +525,8 @@ unconditionally, and the only thing the budget bought was a second, slower code
 path that had to stay correct. Path reconstruction for a =tree_ref= sort needs
 the forest in memory (the index holds the forest inverted — name → ids, parent →
 children — which cannot walk *up* from a node), so exceeding the budget also
-silently degraded sorting to the SQL engine.
+silently degraded sorting to the SQL engine of the time (there is none now:
+spec-indexing "No operand runs in SQL").
 
 One policy, then: both accelerators are resident, or the repository does not
 serve (spec-main "POST /repos/load"). The setting is retired; a configuration

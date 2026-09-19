@@ -1,6 +1,14 @@
 #+TITLE: Metafolder — Query Cost Estimation (=query/explain=)
 #+OPTIONS: toc:2 num:t
 
+* Status
+
+*Not implemented.* This is a design document: there is no =query/explain= route
+and no cost model in the code. What it describes the daemon *doing* is therefore
+a proposal; what it describes the daemon *being* (one engine, three providers,
+the preparation) is current, and is specified in
+[[file:spec-indexing.org][spec-indexing]] and [[file:spec-query.org][spec-query]].
+
 * Overview
 
 A client cannot tell, before sending a query, whether it will come back in a
@@ -17,16 +25,18 @@ adaptive planner ([[file:spec-indexing.org][spec-indexing]]) will change it
 again. Freezing it into user-visible
 surface turns every improvement of the index into a contract change, and the
 list is not even the right predicate: "not served by the index" is not the same
-as "slow" — on a small repository the SQL engine answers instantly, while an
-index-served query over a large one can still cost.
+as "slow" — and since the index is now the only thing that serves a filter
+([[file:spec-indexing.org][spec-indexing]] "No operand runs in SQL"), a shape it
+declines is a =500=, not a slow answer. What is left to describe is *cost*, and
+an index-served query over a large repository can cost a great deal.
 
 So the daemon **describes** instead of refusing, and the client decides:
 
 : POST /repos/:repo/query/explain
 
-answers, *without running the query*, which engine would serve it, which leaves
-force that choice, what the work decomposes into, and — as an indication, not a
-promise — how long it should take. A client then drops its counter, warns, or
+answers, *without running the query*, what the work decomposes into — which
+provider does which part, and how much of it — and, as an indication rather than
+a promise, how long it should take. A client then drops its counter, warns, or
 refuses to run, on its own terms.
 
 ** Non-goals
@@ -37,16 +47,17 @@ refuses to run, on its own terms.
   is not an input to this feature and this feature does not write to it.
 - *No promise of a duration.* The estimate is a band derived from declared
   constants (see [[*Calibration]]), and it is explicitly marked as such.
-- *Not a planner.* Explain describes the plan the engines will actually use. It
-  does not choose one — though its cost model is the piece the adaptive planner
+- *Not a planner.* Explain describes the work the daemon will actually do. It
+  chooses nothing — though its cost model is the piece the adaptive planner
   will need, which is why the two must share it (see [[*Where the model is
   computed]]).
 
 * Where the model is computed
 
-The symbolic cost is built **while the query is compiled**, as a by-product of
-the compilation that would run anyway — not by a second traversal written for
-explain.
+The symbolic cost is built **while the query is prepared and classified**, as a
+by-product of work that would run anyway — not by a second traversal written for
+explain. (Nothing is "compiled" any more: there is no SQL to build, only the
+preparation and the index's own walk of the IR.)
 
 This is a hard constraint, not a preference. Supportedness is currently
 discovered *by evaluating*: the =Unsupported= comes out of =index::eval=. An
@@ -56,10 +67,12 @@ So:
 
 - the leaf-supportedness decision is extracted as a **pure function** of
   =(query leaf, index metadata, caller-resolved seeds)=, called by both
-  =index::eval= and explain;
-- =query_exec='s compiler annotates each node it compiles with its cost term, so
-  the SQL side of the model is produced by the code that builds the SQL;
-- explain runs compilation and classification, and stops there.
+  =index::eval= and explain — it no longer decides *where* a leaf runs, only
+  whether the daemon can serve it at all, but it is still one decision and must
+  stay one implementation;
+- each node is annotated with its cost term by the code that would do its work,
+  not by a parallel classifier written for explain;
+- explain runs the preparation and the classification, and stops there.
 
 It is *not* computed in the DSL parser. The parser lives in =core= and produces
 the IR; it knows nothing about the repository, and every term of the model needs
@@ -68,9 +81,12 @@ cardinalities. The cost is a property of (IR × data), one step after the parse.
 ** Fast by construction
 
 Explain must never do the work it describes. Concretely it may not evaluate a
-predicate, may not run the FTS pass (it *reports* that one is needed), and may
+predicate, may not run a text scan (it *reports* that one is needed), and may
 not walk the forest — path and node seeds resolve through the resident tree cache
-like any query preparation, which is a hash lookup.
+like any query preparation, which is a hash lookup. Note that this rules out
+pre-resolving a =:path= leaf, which the real preparation *does* do (it walks the
+forest): explain reports the walk as a =path.assemble= term instead of
+performing it.
 
 Its bound is =O(query nodes) + O(path operands)=, independent of the repository
 size. A client may call it before every query.
@@ -89,33 +105,33 @@ already knows in O(1) unless stated otherwise.
 | =N=    | rows returned (=limit=, else =K=)                    | exact once =K= is estimated    |
 | =T_n=  | size of the subtree at node =n=                      | from the resident forest       |
 | =D=    | depth of the forest (bounded at 1000)                | exact                          |
-| =C=    | candidate rows an FTS trigram lookup returns         | *estimated*                    |
 
-=K= and =C= are the two the daemon cannot know without doing the work. They are
-reported as estimates, and every term that depends on them inherits that flag —
-a client that needs a hard answer reads the terms that do not.
+=K= is the one the daemon cannot know without doing the work. It is reported as
+an estimate, and every term that depends on it inherits that flag — a client
+that needs a hard answer reads the terms that do not.
 
-* Three providers, two engines
+* Three providers, one engine
 
-A query is served by three resident systems, not two, and naming them is what
-makes the table below readable — each category is one system's work.
+A query is served by three resident systems, and naming them is what makes the
+table below readable — each category is one system's work.
 
 | Provider                       | Holds                                    | Executes                                        |
 |--------------------------------+------------------------------------------+-------------------------------------------------|
 | the forest (=tree_cache=)      | the TreeRef trees: path ↔ node, children | =path.resolve=, =path.assemble=, tree sort keys |
-| the bitmaps (=index/=)         | the per-field roaring / BSI encodings    | =bitmap.leaf=, =bitmap.combine=, =count=        |
-| SQLite (=field=)               | the authoritative rows                   | =sql.scan=, the CTE =sort=, =assemble=          |
+| the bitmaps (=index/=)         | the per-field roaring / BSI encodings    | =bitmap.leaf=, =bitmap.combine=, =sort=, =count= |
+| SQLite (=field=)               | the authoritative rows                   | =assemble= — and nothing else                   |
 
-Only two of them *evaluate a query*: the bitmaps and SQLite. The forest is a
-provider both of them call, which is why =path.resolve= reads "same" on both
-sides of the cost table — and why "cache-walked descendants" appears below in a
-column headed SQL: the SQL engine walks the forest in memory like everyone else,
-and hands SQLite only the resulting uuids, as inline literals.
+Only one of them *evaluates a filter*: the bitmaps. The forest answers the two
+leaves no bitmap can hold (the =:path= aspect, an order-sensitive =osm= path) by
+rewriting each into the uuid set it matches, before evaluation, and resolves the
+path seeds and the =tree_ref= sort keys. SQLite is asked for rows *by uuid*, once
+the answer is known: it holds the authoritative data but takes no part in
+deciding what matches ([[file:spec-indexing.org][spec-indexing]] "No operand
+runs in SQL").
 
-Two categories are one question answered by two different providers, and they are
-the two whose count changes with the engine: =follow.transitive= (a forest walk,
-or a bitmap expansion) and =fts.scan= (SQLite =REGEXP= over rows, or an in-memory
-scan of distinct values).
+This is why the model prices by *provider*: the cost of a query is which of the
+three does how much work, and that is a property of the query's shape rather
+than of a routing decision.
 
 * The cost table
 
@@ -123,17 +139,17 @@ One row per category. =count= is the contract: it is derived from the query and
 the parameters above and does not depend on the machine. =constant= is
 calibration ([[*Calibration]]).
 
-| Category            | Count                              | Index path                  | SQL path                     | Constant  |
-|---------------------+------------------------------------+-----------------------------+------------------------------+-----------|
-| =path.resolve=      | one per path / exact-node operand  | forest lookup, O(1)         | same                         | =t_path=  |
-| =bitmap.leaf=       | =R_f= (equality) / =V_f= (ordered) | bucket union                | —                            | =t_bit=   |
-| =bitmap.combine=    | Σ operand cardinalities            | AND/OR/NOT over containers  | —                            | =t_bit=   |
-| =follow.transitive= | =D= ops (index) / =T_n= rows (SQL) | iterative bitmap expansion  | materialises the subtree §7  | =t_bit= / =t_row= |
-| =fts.scan=          | =C= with a literal, else =R_f=     | value scan or pre-resolved  | same pass                    | =t_regexp= |
-| =sql.scan=          | =R_f= per value predicate          | —                           | no index on the value columns | =t_row=  |
-| =sort=              | =K= reps + =K log K=               | BSI representatives         | window functions             | =t_sort=  |
-| =count=             | 0 (index) / one full filter (SQL)  | O(1) from the bitmap        | re-runs the CTE chain        | —         |
-| =assemble=          | =N= × selected fields              | row read + serialisation    | same                         | =t_row=   |
+| Category            | Count                              | What runs                         | Constant  |
+|---------------------+------------------------------------+-----------------------------------+-----------|
+| =path.resolve=      | one per path / exact-node operand  | forest lookup, O(1)               | =t_path=  |
+| =bitmap.leaf=       | =R_f= (equality) / =V_f= (ordered) | bucket union                      | =t_bit=   |
+| =bitmap.combine=    | Σ operand cardinalities            | AND/OR/NOT over containers        | =t_bit=   |
+| =follow.transitive= | =D= expansions over =T_n= bits     | iterative bitmap expansion        | =t_bit=   |
+| =text.scan=         | =V_f=                              | the regex over distinct values    | =t_regexp= |
+| =path.assemble=     | nodes of the field × average depth | one walk of the resident forest   | =t_path=  |
+| =sort=              | =K= reps + =K log K=               | BSI / store representatives       | =t_sort=  |
+| =count=             | 0                                  | O(1) from the result bitmap       | —         |
+| =assemble=          | =N= × selected fields              | row read + serialisation (SQLite) | =t_row=   |
 
 Three of these rows are the ones that surprise people, and they are the reason
 the table exists rather than a single number:
@@ -141,94 +157,61 @@ the table exists rather than a single number:
 - *Bitmap work is not O(M).* A Roaring =AND= costs the cardinality of the
   containers it touches. A selective query is cheap, and a model that prices
   every bitmap pass at =M= would say the opposite.
-- *An SQL value predicate is O(R_f), not O(M) and not O(all field rows).* =db.rs=
-  indexes =(field_name, …)= and never =value_text= / =value_int= / =value_real=,
-  so the scan is confined to the rows of that one field name — and =R_f= is
-  exactly what =present_of(f).len() + absent_of(f).len()= gives.
 - *A text predicate costs values, not rows.* The regex is compiled once and run
   over the field's *distinct* values (=V_f=), not over its rows (=R_f=) — and on
   a field whose values repeat (a tag, an extension, a directory name) those are
-  different orders of magnitude. The SQL oracle still scans rows, and that is
-  the one place the two engines' counts genuinely differ.
+  different orders of magnitude. (The oracle, which scans rows, is where the
+  =R_f= figure still means something: =tests/index_oracle.rs= only asserts the
+  *answer*, never the cost.)
+- *=path.assemble= is a walk of the forest, not of the match set.* A =:path=
+  comparison or an order-sensitive =osm= path rebuilds the path of every node of
+  the field before testing any of them, and it happens in the *preparation*,
+  before a single bitmap is touched. It is the one term that can dominate a
+  query whose every other leaf is O(1).
 
 ** What each category is
 
 The table above prices the work; this one says what the work *is*: which query
-shape raises a category, and what each engine runs for it. It is the answer to
-"what is a =path.resolve=", and to "why does this query carry an =fts.scan=".
+shape raises a category, and which provider runs it. It is the answer to "what is
+a =path.resolve=", and to "why does this query carry a =text.scan=".
 
-Two things it is easy to misread. *The tree cache is neither engine*: it is one
-in-memory structure both paths use, so "cache-walked" appears in the SQL column
-without meaning the index served the query — the SQL engine does that work in
-memory too and hands SQLite only its result, as literals. And *one leaf can raise
-two categories*: =tag ->* "music/jazz"= is a =path.resolve= (the path operand to
-its metarecord) followed by a =follow.transitive= (the expansion from it), where
+One thing it is easy to misread: *one leaf can raise two categories*.
+=tag ->* "music/jazz"= is a =path.resolve= (the path operand to its metarecord)
+followed by a =follow.transitive= (the expansion from it), where
 =tag ->* (rating > 3)= has no =path.resolve= at all — the sub-query replaces it.
 
-| Category            | Raised by                               | On the SQL path                        | On the index path                     |
-|---------------------+-----------------------------------------+----------------------------------------+---------------------------------------|
-| =path.resolve=      | =->= / =->*= path target, exact node    | =TreeCache::resolve_path=, no SQL      | the same lookup, in =QueryRoots=      |
-| =bitmap.leaf=       | a comparison / presence leaf, =:parent= | — (it is the =sql.scan= row)           | union of the operand's buckets        |
-| =bitmap.combine=    | =and= / =or= / =not=                    | =INTERSECT= / =UNION= / =EXCEPT=       | Roaring =&=, =\|=, universe =-=       |
-| =follow.transitive= | =->*=, ~=>*~, 1-term =osm= path         | cache-walked descendants, =VALUES=     | expansion over children bitmaps       |
-| =fts.scan=          | =matches=, =osm= =direct=               | =REGEXP= scan of the field's rows      | the regex over distinct values        |
-| =sql.scan=          | presence, comparison, =same=, =->=      | one =field= scan per =field_name=      | — (it is the =bitmap.leaf= row)       |
-| =path.assemble=     | the =:path= aspect, multi-term =osm=    | one walk of the forest, then =uuid_in= | the same walk, before the bitmaps run |
-| =sort=              | each =sort= key                         | the =_p{i}= / =_s{i}= CTEs             | one rep per id, then the page         |
-| =count=             | =count: true=                           | the chain re-run as =COUNT(*)=         | =matched.len()=, O(1)                 |
-| =assemble=          | always, for the page's uuids            | =versions_for= + =field_rows_for=      | identical (after the choice)          |
+| Category            | Raised by                               | Provider | What runs                                     |
+|---------------------+-----------------------------------------+----------+-----------------------------------------------|
+| =path.resolve=      | =->= / =->*= path target, exact node    | forest   | =TreeCache::resolve_path=, into =QueryRoots=  |
+| =bitmap.leaf=       | a comparison / presence leaf, =:parent= | bitmaps  | union of the operand's buckets                |
+| =bitmap.combine=    | =and= / =or= / =not=                    | bitmaps  | Roaring =&=, =\|=, universe =-=               |
+| =follow.transitive= | =->*=, ~=>*~, 1-term =osm= path         | bitmaps  | expansion over the children bitmaps           |
+| =text.scan=         | =matches=, =osm= =direct=               | bitmaps  | the regex over the field's distinct values    |
+| =path.assemble=     | the =:path= aspect, order-sensitive =osm= | forest | one walk, then the leaf becomes a =uuid_in=   |
+| =sort=              | each =sort= key                         | bitmaps  | one rep per id, then the page (tree keys: forest) |
+| =count=             | =count: true=                           | bitmaps  | =matched.len()=, O(1)                         |
+| =assemble=          | always, for the page's uuids            | SQLite   | =versions_for= + =field_rows_for=             |
 
-The SQL column, verbatim — this is what a term of each category stands for:
+Only the last row reaches SQLite, and it is addressed by uuid:
 
 #+BEGIN_SRC sql
-  -- sql.scan: one leaf. `(field_name, ...)` is indexed and the value columns are
-  -- not, so this reads the rows of that one field name, whatever the predicate.
-  SELECT DISTINCT metarecord_uuid AS uuid FROM field
-   WHERE field_name = ? AND (<value predicate>)
-
-  -- fts.scan, in the oracle: every row of the field goes through REGEXP. On the
-  -- serving path there is no SQL at all — the regex runs over the field's
-  -- distinct values in memory.
-  SELECT DISTINCT metarecord_uuid AS uuid FROM field
-   WHERE field_name = ?
-     AND ((value_type = 'string'   AND value_text REGEXP ?) OR
-          (value_type = 'tree_ref' AND value_name REGEXP ?))
-
-  -- follow.transitive: hybrid. The forest work happens in the tree cache and
-  -- only its result reaches SQL, as inline literals. (path.assemble no longer
-  -- reaches SQL at all: its walk rewrites the leaf to a `uuid_in` set.)
-  SELECT column1 AS uuid FROM (VALUES (x'<uuid>'), (x'<uuid>'), ...)
-
-  -- sort, per key: the representative row (min asc / max desc) of the *filtered*
-  -- universe, plus `_p{i}` reassembling a tree_ref's whole path.
-  _s{i} AS (SELECT uuid, present, grp, vnum, vtext, vblob FROM (
-              SELECT _res.uuid, ...,
-                     ROW_NUMBER() OVER (PARTITION BY _res.uuid
-                                        ORDER BY <grp> <dir>, <num> <dir>, ...) AS rn
-                FROM _res LEFT JOIN field ON field.metarecord_uuid = _res.uuid
-                                         AND field.field_name = ?
-                                         AND field.value_type != 'nothing'
-                          LEFT JOIN _p{i} ON <terminal>) WHERE rn = 1)
+  -- assemble: the page's rows, for uuids already decided.
+  SELECT metarecord_uuid, field_name, value_type, ... FROM field
+   WHERE metarecord_uuid IN (…)
 #+END_SRC
 
-The code calls this a *seed* (=expand_subtrees= grows a frontier from it,
-=prepare_indexed_query= resolves "the query's index seeds"), and the category was
-named after it. It is =path.resolve= here: only =->= / =->*= is seeded from, and
+The relational form of each *filter* category still exists in
+=crates/query-oracle=, where it is the equivalence oracle
+(=tests/index_oracle.rs=) and not a plan: its =_repo= universe CTE, its per-leaf
+=field= scan and its window-function sorts describe what the index is checked
+against, never what a request runs. An explain term therefore has no SQL to
+quote, which is the point of the model being written per provider.
+
+The code calls a resolved path a *seed* (=expand_subtrees= grows a frontier from
+it, =prepare_indexed_query= resolves "the query's index seeds"), and the category
+was named after it. It is =path.resolve=: only =->= / =->*= is seeded from, and
 an exact-node =mfr_path = "/a/b"= resolves a path the very same way and then
 traverses nothing.
-
-Two rows read differently on the two engines, and that is where an estimate goes
-wrong if the distinction is dropped:
-
-- =fts.scan= *is not the same work on both sides.* SQL re-checks *rows* (=R_f=,
-  or =C= behind the trigram pre-filter); the index tests *values* (=V_f=), with
-  no FTS involved at all. On a field whose values repeat — a tag, an extension, a
-  directory name — those are different orders of magnitude, and only the SQL form
-  has the literal/no-literal cliff.
-- =path.assemble= *is a walk of the forest, not of the match set.* A =:path=
-  comparison or a multi-term =osm= path rebuilds the path of every node of the
-  field before testing any of them, on either engine. It has no row in the cost
-  table yet (see [[*Open questions]]).
 
 ** Totals
 
@@ -240,97 +223,64 @@ wrong if the distinction is dropped:
 repository. =duration= is =relative= priced with the local constants, and is
 reported as a *band*, never a figure: a user reads "1.5 s" as a promise.
 
-* Which engine runs it
+* How a query is served
 
-=engine= is the first thing the response says, and it does not report a
-preference: the daemon *always* tries the bitmap index, and the SQL engine is
-its fallback (=routes::run_query_filter=). "Both are possible" is therefore not
-a decision point — the index wins whenever it can answer, and what explain has
-to describe is the outcome of a three-step rule.
+There is one engine, so explain has no routing decision to report — no =engine=
+field and no =fallback[]=. (An earlier draft of this document carried both, from
+the period when the index had a SQL fallback; they went with it. The terms stay,
+and their attribution was always per node.) What explain describes is the
+outcome of two steps.
 
-1. *Preparation*, engine-independent (=prepare_indexed_query=): the path seeds
-   are resolved through the tree cache, and some text leaves are rewritten to
-   the uuid set they match.
-2. *The index is tried* on the prepared query. Every IR variant is handled
-   there; what is left to SQL is a property of an *operand* — an unresolved
-   path, a pattern the index cannot compile, a comparison the encoding cannot
-   answer — never of a node type.
-3. *A coverage gap falls back*, and only a coverage gap: the query re-runs on
-   the SQL engine, from the *original* query (the un-prepared one). A *state*
-   gap — an accelerator not in the shape a serving repository guarantees — is a
-   =500=, never a silent fallback to an engine that would answer anyway.
+1. *Preparation* (=routes::prepare_indexed_query=): the path seeds are resolved
+   through the tree cache, and the leaves the bitmaps cannot hold are rewritten
+   into the uuid set the forest says they match.
+2. *The index evaluates* the prepared query. Every IR variant is handled there —
+   the match in =index::eval= is exhaustive on purpose.
 
-The choice is a function of the query shape alone: the =count= flag does not
-change the preparation, precisely so that page 1 and page 2 cannot land on
-different engines and reject each other's cursor. Explain's answer is stable for
-a whole paginated session.
+The preparation is a function of the query shape alone: the =count= flag does
+not change it, precisely so page 1 and page 2 cannot be evaluating different
+queries and reject each other's cursor (which is bound to a hash of the
+rewritten query). Explain's answer is stable for a whole paginated session.
 
-** The engine choice is going away
+** What the preparation carries
 
-The rule above describes a transition, not the destination. SQL serves a filter
-only where a resident structure does not yet, and that list is being closed:
-[[file:spec-indexing.org][spec-indexing]] "No operand runs in SQL" settles that
-every operand is answered by the bitmaps or by the forest, and that SQLite reads
-and writes fields *for a list of uuids* and nothing else.
+| Preparation step                     | Applies to                                | Effect                              |
+|--------------------------------------+-------------------------------------------+-------------------------------------|
+| path targets → =QueryRoots.path=     | =->= / =->*= with a path target           | a =path.resolve=                    |
+| exact nodes → =QueryRoots.node=      | =mfr_path = "/a/b"=, =!==, =:parent==     | idem — "no such node" ≠ "unresolved" |
+| =forest_query::resolve_path_leaves=  | the =:path= aspect, order-sensitive =osm= | a =path.assemble=; the leaf becomes a =uuid_in= |
+| =SortKeys= from the forest           | a =tree_ref= sort key                     | the path keys no BSI can hold       |
 
-Which is why this model prices by *provider* and not by engine. When the last
-leaf leaves SQL, the categories do not move — =path.assemble= is still the
-forest's work and =assemble= still SQLite's — but two fields of the response
-become vestigial: =engine=, which would always read =index=, and =fallback[]=,
-which would always be empty. They stay while the fallback does, as the honest
-report of what ran; explain then loses them and keeps the terms, whose
-attribution is already per node.
+The third is where a query's cost can be decided before any bitmap is touched:
+the rewrite is unconditional, and it walks the forest. A =matches= or an =osm=
+=direct= leaf needs no rewrite at all — the index runs the regex over the
+field's distinct values — which is why those raise a =text.scan= and not a
+=path.assemble=.
 
-One thing the composition question turned out not to need: a way to combine an
-operand served in SQL with one served from the cache. The currency for it exists
-— a uuid set is both a bitmap and a =VALUES= list — but there is nothing left to
-compose once no operand runs in SQL. The bridge is a transition artefact too.
+** What the index can still decline
 
-** What forces the SQL path
+A shape the index declines is a *daemon bug*, answered =500=
+([[file:spec-indexing.org][spec-indexing]] "Three kinds of gap"), so none of these
+is a plan explain can describe — it reports them as the error they are. They are
+listed because explain must not *invent* a term for them:
 
-Each row is one =Unsupported= a leaf can raise; =fallback[]= reports it verbatim,
-with the address of the leaf that raised it.
+| Operand / shape                           | Reported as                          | Why it cannot happen through the API                |
+|-------------------------------------------+--------------------------------------+-----------------------------------------------------|
+| a =:path= leaf the forest could not answer | ="the ':path' aspect"=              | the forest is resident on any serving repository    |
+| an order-sensitive =osm= path, not rewritten | ="multi-term osm path"=            | idem — the preparation rewrites it                  |
+| an unresolved path target / exact node    | ="path-target follows"=              | only if a caller skipped the preparation            |
+| a =tree_ref= sort with no resident forest | ="tree_ref sort without a resident forest"= | a state gap, same reason                     |
 
-| Operand / shape                           | Reported as                          | Why the index defers                               |
-|-------------------------------------------+--------------------------------------+----------------------------------------------------|
-| a =:path= leaf the forest cannot resolve  | ="the ':path' aspect"=               | an incomplete forest; otherwise it is pre-resolved |
-| a field seen only through =Nothing=       | ="... field with no indexed values"= | no value partition; empty would be a wrong answer  |
-| a shape SQL answers with a =400= (below)  | the matching message                 | the rejection has one author, and it is SQL        |
-| a multi-term =osm= path, not pre-resolved | ="multi-term osm path"=              | ordered matching runs on assembled paths           |
-| an unresolved path target / exact node    | ="path-target follows"=              | only when the caller skipped the preparation       |
-| a cursor from another (query, sort)       | ="cursor does not match ..."=        | SQL then rejects it on its own encoding            |
+The one gap that is *not* a bug is a cursor from another (query, sort): that is
+the client's own input, answered =400=.
 
-The =400= shapes the index hands over rather than answering: an ordered
+The type-dependent and IR-level =400=\s are raised before any of this, by
+=query_validate= (spec-query "Comparison validity", "Field aspects"): an ordered
 comparison on a =bool=, on a reference, or on a bare =tree_ref=; =matches= on a
 bare =tree_ref=; an ordered operator or =matches= under =:parent=, which reads a
 uuid; an =osm= path on a non-=tree_ref= field; an empty =and= / =or=; a pattern
-that does not compile. The index could report several of them itself,
-and deliberately does not — one query, one author of its error.
-
-The *state* gaps are not in this table on purpose: ="tree_ref sort without a
-resident forest"=, or a missing index on a repository that is serving, are daemon
-bugs. They are a =500=, and explain reports them as such rather than as a plan.
-
-** What keeps a query on the index
-
-The preparation is what makes a query that *reads* like a fallback shape stay on
-the index. It is also why one query can carry both an =fts.scan= and =bitmap.*=
-terms: one leaf ran in SQL, the rest of the tree on bitmaps.
-
-| Preparation step                 | Applies to                            | Effect                               |
-|----------------------------------+---------------------------------------+--------------------------------------|
-| path targets → =QueryRoots.path= | =->= / =->*= with a path target       | a =path.resolve=, not a fallback     |
-| exact nodes → =QueryRoots.node=  | =mfr_path = "/a/b"=, =!==, =:parent== | idem — "no such node" ≠ "defer"      |
-| =resolve_index_leaves=           | =matches=, =osmd=, multi-term =osm=   | the leaf becomes an inline =uuid_in= |
-| =SortKeys= from the forest       | a =tree_ref= sort key                 | the path keys no BSI can hold        |
-
-The third one is conditional, and explain must apply the same condition: the text
-leaves are pre-resolved only for a whole-set resolution, or when the query holds
-an =osm= path leaf. Elsewhere a =matches= leaf is served by the index's own
-in-memory value scan — which is why the two are one category with two counts.
-
-A client reading =engine: "index"= next to a non-empty =fts.scan= term is looking
-at exactly this: the query is index-served, and one leaf was paid for in SQL.
+that does not compile. Explain runs the same pass, so it is a dry run of those
+=400=\s too — one query, one author of its error.
 
 * State is reported, never estimated
 
@@ -363,19 +313,13 @@ exactly what would be sent. =verbose= (bool, default =false=) adds the
 attribution of each term to the leaves that cause it.
 
 An invalid query is rejected here exactly as it would be by =query= itself:
-=validate_query= runs upfront, engine-independently, so explain is also a dry run
-of the =400= (a comparison with =nothing=, an ordered comparison on a =bool= or
-a reference, =MATCHES= on a =tree_ref= without an aspect, an over-wide
-combinator).
+=query_validate= runs upfront, before anything evaluates the query, so explain
+is also a dry run of the =400= (a comparison with =nothing=, an ordered
+comparison on a =bool= or a reference, =MATCHES= on a =tree_ref= without an
+aspect, an over-wide combinator).
 
 #+BEGIN_SRC json
   {
-    "engine": "sql",
-    "fallback": [
-      {"leaf": "mfr_path:parent = \"/music/live\"",
-       "at": "and[1]",
-       "why": "the ':parent' aspect"}
-    ],
     "parameters": {
       "metarecords": 512340,
       "result": {"value": 1830, "estimated": true},
@@ -385,9 +329,9 @@ combinator).
       "relative": 61200,
       "duration_ms": {"low": 240, "high": 900, "calibrated": true},
       "terms": [
-        {"category": "sql.scan", "count": 512340, "constant_ms": 0.0008,
+        {"category": "path.assemble", "count": 512340, "constant_ms": 0.01,
          "ms": 410, "estimated": false,
-         "leaves": ["mfr_path:parent = \"/music/live\""]},
+         "leaves": ["mfr_path:path MATCHES \"live$\""]},
         {"category": "sort", "count": 1830, "constant_ms": 0.002,
          "ms": 4, "estimated": true, "leaves": ["sort mfr_path"]}
       ]
@@ -417,8 +361,8 @@ configuration (=~/.config/metafolder/daemon/config.toml=, shipped default in
   [query-cost]
   # milliseconds per unit of the corresponding count
   bit = 0.000002      # per element of a bitmap pass
-  row = 0.0008        # per field row scanned or serialised
-  regexp = 0.004      # per candidate re-checked
+  row = 0.0008        # per field row read back and serialised
+  regexp = 0.004      # per distinct value tested
   sort = 0.002        # per sorted element
   path = 0.01         # per path resolved through the forest
 #+END_SRC
@@ -453,13 +397,12 @@ is what a client should gate on anyway.
   should multiply leaf selectivities and mark the result estimated rather than
   pretend to more.
 - *=T_n= without walking.* A subtree size is O(subtree) to count unless the tree
-  cache keeps sizes at its nodes. Until it does, the =follow.transitive= SQL term
-  is an estimate too.
-- *Pricing =path.assemble=.* The =:path= aspect and a multi-term =osm= path walk
-  the whole forest to rebuild paths before testing them, on either engine. The
-  cost table has no row for it, so a query whose only expensive leaf is a path
-  comparison is currently under-priced; it needs a count (nodes of the field ×
-  average depth) and a constant of its own.
+  cache keeps sizes at its nodes. Until it does, the =follow.transitive= term is
+  an estimate too.
+- *Counting =path.assemble=.* The category has a row and a constant
+  (=t_path=), but its count — nodes of the field × average depth — is not
+  something the forest reports in O(1) today. Either the tree cache grows the
+  two numbers, or the term is marked estimated like =K=.
 - *Exposing =weight_i=.* Keeping the weights internal makes =relative= a black
   box; publishing them makes them contract. Start internal, publish if a client
   needs to reproduce the arithmetic.

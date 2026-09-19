@@ -164,16 +164,57 @@ are on disk" and routes =fs_exists=. Still open after orphan detection moved to 
 field (=orphan = true=, =POST /orphans/mark=): the mode and its banner are gone,
 the purple row colouring the test would cover is not.
 
-** TODO documentation drift after the engine unification
-The code comments in =index/mod.rs= were written when an =Unsupported= operand
-meant "the SQL engine will serve it", and some forty mentions of that engine
-remain — =mod.rs:8= still states the caller "falls back to the SQL engine on any
-=Unsupported=", which is now exactly backwards (it is a =500=). The ones that
-compare against the oracle's behaviour are still right; the ones describing a
-fallback path are not, and the two readings are only told apart by already
-knowing the answer.
-=docs/review-followups.md= §7 and §8 have the same problem at document scale.
-Mechanical, worth one pass before the release.
+** DONE documentation drift after the engine unification (September 2026)
+One pass over every mention of the departed engine, fixing the ones that
+described a *fallback path* and leaving the ones that compare against the
+oracle's behaviour — now spelled "the oracle" wherever the two readings were
+only told apart by already knowing the answer. =index/mod.rs= (its header first:
+it said the caller "falls back to the SQL engine on any =Unsupported="; it is a
+=500=), =field_index.rs= (with a header note saying that "SQL" throughout names
+the oracle), =forest_query.rs=, =query_validate.rs=, =routes.rs=, =db.rs=, and
+the test batteries that asserted a routing decision rather than an answer.
+
+The =400=\s were the subtler half: a dozen comments said the index "hands over"
+an invalid pattern, an ordered operator under =:parent=, an =osm path= on a
+non-forest field — to an engine that would raise the error. Every one of those
+rejections now happens in =query_validate=, *before* the index runs, and the
+=Unsupported= branches behind them are backstops. A comment that still promised
+a fallback promised a =500=.
+
+Documents: =spec-query= ("Compilation" → "Evaluation"; the =Limits= rationale,
+which was SQLite's compound-select cap), =spec-indexing= ("Two kinds of gap"
+rewritten and renamed "Three" — the coverage list is paid to zero, and =Cursor=
+named as the third kind — plus the increments put in the past tense),
+=spec-query-cost= (the
+largest: it priced a two-engine world — "Three providers, two engines" → "one
+engine", the =SQL path= column and the =sql.scan= category dropped, =fts.scan=
+renamed =text.scan= since the FTS5 table is gone, =engine= / =fallback[]=
+removed from the response as the document itself said they should be, and a
+=Status= header saying the endpoint is unimplemented), =spec-data-model=,
+=spec-file-tracking=, =gui-tag-folder-rework= (its first prerequisite marked
+done), and =review-followups= §7 / §8.
+
+Found while doing it, and *not* a documentation fix — see the new item below.
+
+** TODO the read side is no longer link-aware
+Found during the documentation pass above, and the one thing in it that is not
+about words. Reads used to exclude *link metarecords* — a metarecord owned by
+more than one repository — because the SQL engine's =_repo= universe CTE
+demanded *exclusive* ownership (=COUNT(*) = 1= over =metarecord_db=). That CTE
+left with the engine: the bitmap index's universe is
+=SELECT uuid FROM metarecord= (=RepoIndex::build= via =db::list_entries=), every
+metarecord of the database.
+
+*No consequence today* — links are =:v2:=, nothing creates one, and a
+metarecord has exactly one owner, so the two expressions select the same set.
+It matters because of *when* it would break: the day links arrive, the serving
+path and the oracle would disagree silently, and the equivalence battery would
+not catch it (there is no link in any fixture to reveal it). The =metarecord_db=
+join belongs back in the universe — or a fixture with a link belongs in the
+battery — before that work starts, not after.
+
+Recorded at =index/mod.rs= (the =universe= field) and in
+=docs/review-followups.md= §9, which claimed the opposite.
 
 ** TODO structure
 *** TODO =routes.rs= is 4105 lines and 85 handlers

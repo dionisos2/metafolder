@@ -5,8 +5,9 @@
 
 The query system allows filtering metadata metarecords by field values, presence,
 and graph relationships. Queries are represented as a recursive JSON structure
-and compiled to SQL on the daemon side. The CLI provides a human-friendly DSL
-that compiles to this representation.
+and evaluated in memory on the daemon side, against the bitmap index and the
+TreeRef forest (see "Evaluation"). The CLI provides a human-friendly DSL that
+compiles to this representation.
 
 * Concepts
 
@@ -35,7 +36,7 @@ CLI provides a DSL that compiles to this representation.
 Every predicate that reads a value — the presence trio, the comparisons and
 =Matches= — also carries an optional =aspect= key (=value=, =parent= or =path=;
 omitted for the default =raw=) naming *which component* of the value it reads.
-See "Field aspects" under [[*Compilation]].
+See [[*Field aspects]].
 
 =UuidIn= is the bridge between the resource layer (a single thing at its URL)
 and the set layer: it lets the =/query/*= operations target an *explicit set of
@@ -47,24 +48,29 @@ than one request per UUID. The DSL spells it as a *bare UUID atom* (see
 
 * Daemon
 
-** Compilation
+** Evaluation
 
-Queries are compiled to a CTE chain in SQL. Each query node becomes one CTE;
-the universe CTE enumerates the =metarecord= table (every metarecord of the
-repository database).
+A query is *not* compiled to SQL. Every operand is answered from a resident
+structure — the bitmap/BSI index, or the TreeRef forest through the tree cache
+— and SQLite is only asked for the rows of the metarecords that came out
+([[file:spec-indexing.org][spec-indexing.org]] "No operand runs in SQL"). There
+is no second engine and no fallback: a shape the index cannot serve is a daemon
+bug, answered =500=, not a slow answer.
 
-Exception: =FollowsTransitive= on a =TreeRef= field is executed as a hybrid
-operation — the daemon first collects the descendant UUID set iteratively via
-the tree cache, then injects it as an =IN= clause into the surrounding SQL query
-rather than emitting a CTE.
+The two leaves no bitmap can hold — the =:path= aspect, and an order-sensitive
+=osm= path — are resolved against the forest *before* evaluation and rewritten
+into the =uuid_in= set they match (=daemon/src/forest_query.rs=), which the
+index then combines with every other operand. =Path=-target
+=Follows=/=FollowsTransitive= (=mfr_path ->* "/dir"=, with or without a sort)
+resolve their root through the tree cache and expand it by iterative bitmap
+expansion.
 
-This describes the *SQL engine*, which is the fallback — and only for the
-index's *coverage* gaps, never for its state (see
-[[file:spec-indexing.org][spec-indexing.org]] "Two kinds of gap"). The common queries —
-including =Path=-target =Follows=/=FollowsTransitive= such as
-=mfr_path ->* "/dir"= with a sort — are served entirely in memory by the bitmap
-index (the path is resolved to a root through the tree cache, the descendants
-by bitmap expansion); see [[file:spec-indexing.org][spec-indexing.org]].
+The relational form of each operand still exists, as
+=crates/query-oracle= — the *test oracle* the index is validated against
+(=tests/index_oracle.rs=, and the semantics batteries, which run both). It is a
+dev-dependency of the daemon and of nothing else, so no shipped binary links
+it, and no request is ever served by it. Where this document says "in SQL" of a
+semantics, it describes that oracle.
 
 =Follows= takes either a condition (sub-query) or a path string as right-hand
 side. With a condition, it matches metarecords whose =value_uuid= (the =Ref=
@@ -146,10 +152,11 @@ remove. So =path:value < "m"= and =path:path MATCHES "^music/"= are the
 spellings; bare =path < "m"= and =path MATCHES "jazz"= are errors naming the two
 candidates. (=~= is the *simplified* language's spelling of =MATCHES=, not the
 normal DSL's — the lexer rejects it there.) The
-check depends on the field's value type, so it is made by the engines (which
-know the type) rather than by the pure IR pass of "Comparison validity" below —
-but both engines make it identically, so the rejection never depends on which
-one would have run.
+check depends on the field's value type, so it is made by
+=query_validate::validate_query_types= — which reads the type from the index's
+field catalogue — rather than by the pure IR pass of "Comparison validity"
+below. It still runs *before* evaluation, so the rejection is a property of the
+query and not of what serves it.
 
 *Forest roots.* =field:parent IS ABSENT= matches the nodes whose =TreeRef=
 parent is the root sentinel — the roots of that field's forest. This is the only
@@ -184,11 +191,14 @@ path* (see "Sort specification" in [[file:spec-data-model.org][spec-data-model.o
 A predicate selects, and selecting by name — anywhere in the tree — is a useful
 thing to ask; an order by name alone is not, it just interleaves every directory.
 
-=Matches= uses a SQLite user-defined function =REGEXP= (registered at connection
-setup) backed by the =regex= crate, and is *case-sensitive* (=(?i)= at the front
-of the pattern opts out; =Osm= is the case-insensitive operator). On a =TreeRef=
-field it requires an aspect (above): =field:value MATCHES …= applies the regex
-to the leaf name, =field:path MATCHES …= to the assembled path.
+=Matches= is backed by the =regex= crate and is *case-sensitive* (=(?i)= at the
+front of the pattern opts out; =Osm= is the case-insensitive operator). On a
+=TreeRef= field it requires an aspect (above): =field:value MATCHES …= applies
+the regex to the leaf name, =field:path MATCHES …= to the assembled path. The
+pattern is run over the field's distinct values in memory (see "MATCHES is
+answered in memory"); the same =regex= crate is registered on the SQLite
+connection as a =REGEXP= user-defined function, which is what the oracle uses,
+so the two cannot diverge.
 
 ** Comparison typing
 
@@ -206,8 +216,8 @@ different type.
 *** Comparison validity
 
 Two comparison shapes have no well-defined, useful meaning and are rejected with
-=400= *upfront*, before any engine runs, so the rejection never depends on which
-engine (bitmap index or SQL) would have handled the query:
+=400= *upfront*, before anything evaluates the query, so the rejection is a
+property of the query and not of how it happens to be served:
 
 - A comparison whose operand is =Nothing= (=eq=/=neq= or ordered). Absence is
   expressed with =IsAbsent= / =IsUnknown=, not =eq nothing=.
@@ -217,34 +227,44 @@ engine (bitmap index or SQL) would have handled the query:
   on =String= (lexicographic), the numeric domain and =DateTime= is allowed.
 
 The validation is a single pure pass over the query IR
-(=query_exec::validate_query=); the per-row checks in the SQL engine and the
-index's =Unsupported= branches for these shapes are defensive backstops.
+(=query_validate::validate_query=); the index's =Unsupported= branches for these
+shapes — and the oracle's per-row checks — are defensive backstops. The
+rejections that need the field's *stored type* (the tree-only aspects on a
+field that holds something else, =osm= =path= on a non-=tree_ref= field, a
+=:path= operand that is not a string) are the same kind of upfront pass, one
+step later: they read the type from the index's own field catalogue
+(=query_validate::validate_query_types=), still before evaluation.
 
 *** Limits
 
-A query is cheap to *send* and can be expensive to *compile*, so two bounds are
+A query is cheap to *send* and can be expensive to *walk*, so two bounds are
 checked upfront — next to "Comparison validity" above and for the same reason:
-whether a query is too large is a property of the query, never of the engine
-that happens to serve it. Both are rejected with =400= and a message naming the
-limit and the value seen.
+whether a query is too large is a property of the query, never of how it is
+served. Both are rejected with =400= and a message naming the limit and the
+value seen (=query_validate::check_query_size=).
 
 - =MAX_QUERY_NODES= (2000) — the total number of nodes in the query tree,
-  counting boolean operands and follow/same sub-conditions. A wide or deep
-  =And=/=Or= would otherwise build a giant CTE chain, and tie up a blocking
-  thread, before a single row is read.
+  counting boolean operands and follow/same sub-conditions. A safety valve
+  against a query that costs more to prepare than to send.
 - =MAX_COMBINATOR_OPERANDS= (500) — the operands of any *single* =And=/=Or=,
-  wherever it sits in the tree. Each becomes one term of a SQLite compound
-  =SELECT=, bounded by =SQLITE_MAX_COMPOUND_SELECT= (default 500); past it
-  SQLite fails the statement with an opaque "too many terms in compound SELECT",
-  so the limit is stated in our own words instead.
+  wherever it sits in the tree.
+
+The second number is SQLite's, and it no longer stands for anything on the
+serving path: an operand used to become one term of a compound =SELECT=,
+bounded by =SQLITE_MAX_COMPOUND_SELECT= (default 500), where a wide =Or= is now
+N bitmap unions. Both caps therefore remain as safety valves at values inherited
+from a constraint that has gone; whether they should stay, and at what value, is
+open (roadmap, "query API limits").
 
 Both are generous: a hand-written or UI-built query is far below them. What runs
 into them is membership — "this field is one of these N values" — spelled as an
-=Or= of N =Eq=. Decompose it, or use =uuid_in= when the N values are uuids; a
-native =In= operator would make that shape O(1) nodes (docs/review-followups.md).
+=Or= of N =Eq=. Decompose it, or use =uuid_in= when the N values are uuids (the
+DSL folds an =Or= of bare UUID atoms into a single =uuid_in= node on its own); a
+native =In= over field values would do the same for them
+(docs/review-followups.md §8).
 
 Neither bounds *execution* time: a small query can still be slow (a =Matches=
-regex over millions of rows, a =->*= over the whole repository). That is a
+regex over a huge cardinality, a =->*= over the whole repository). That is a
 separate concern, tracked with the same note.
 
 ** Indexing & scaling
@@ -265,7 +285,7 @@ every field, so the pattern is compiled once and tested against the field's
 directory name — is therefore scanned at its cardinality, not its row count. It
 also composes: inside an =And=, the text operand runs *last* and receives the
 running intersection, so "this folder, name matching X" costs the folder rather
-than the repository (spec-indexing "Two kinds of gap").
+than the repository (spec-indexing "Three kinds of gap").
 
 Before that, the regex ran as a SQLite =REGEXP= scan of the candidate rows
 (~650 ms at 50 k), pre-filtered by =field_text=, an FTS5 trigram virtual table
@@ -372,8 +392,8 @@ existing "walk the distinct values, test against a restriction" pattern that
 already serves the text predicates. The cost is the field's *cardinality*, not
 its row count.
 
-The SQL fallback is the same statement in relational form: the rows of =field=
-whose value tuple appears among the =field= rows of the target set.
+The oracle states the same thing relationally: the rows of =field= whose value
+tuple appears among the =field= rows of the target set.
 
 ** HTTP API
 
@@ -396,7 +416,7 @@ Request body:
 }
 #+END_SRC
 
-=query= is a =Query= JSON object (see [[*Query Language]]).
+=query= is a =Query= JSON object (see [[*Concepts]]).
 
 =sort=, =limit= and =cursor= are optional and enable sorted/paginated
 results; their semantics (including the response envelope used when =limit=
@@ -438,7 +458,8 @@ writes; single, directly-addressed things use the resource endpoints in
 
 The field writes are each *one log operation per affected metarecord* (see
 [[file:spec-data-model.org][spec-data-model.org]] "Log granularity"); a write to a protected field name
-without =force= returns =400= ([[*Protected fields]]).
+without =force= returns =400= ([[file:spec-data-model.org][spec-data-model.org]]
+"Reserved fields").
 
 **** =POST /repos/:repo_uuid/query/delete=
 
@@ -577,8 +598,7 @@ uuid      := 32 ASCII hexadecimal characters
 - A field reference may carry an *aspect*, =field:aspect=, naming which
   component of the value the predicate reads — =raw= (the default), =value=,
   =parent= or =path=. It compiles to the =aspect= key of the IR node (omitted
-  when =raw=). See the "Field aspects" section under [[*Compilation]] for the
-  semantics; the DSL accepts the four names on any predicate that reads a value
+  when =raw=). See [[*Field aspects]] for the semantics; the DSL accepts the four names on any predicate that reads a value
   and rejects an unknown one, while the *type*-dependent rules (=parent=/=path=
   are =TreeRef=-only, and a =TreeRef= ordered comparison or =MATCHES= requires
   an explicit aspect) are enforced by the daemon, which alone knows the field's

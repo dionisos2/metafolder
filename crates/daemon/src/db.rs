@@ -97,9 +97,13 @@ fn configure_connection(conn: &Connection) -> Result<()> {
     // enough room so the recurring statements never evict each other.
     conn.set_prepared_statement_cache_capacity(64);
 
-    // REGEXP user-defined function backing the `Matches` query operator.
-    // Compiled patterns are cached: a scan calls the UDF once per row, and
-    // recompiling the regex each time dominates the query cost.
+    // REGEXP user-defined function. Nothing the daemon serves calls it any
+    // more — a `Matches` runs over the index's distinct values in memory
+    // (spec-indexing "No operand runs in SQL") — but it is what the test oracle
+    // (`metafolder-query-oracle`) scans with, and the oracle opens its
+    // connection through here, so the two forms share one `regexp::compile`
+    // and cannot diverge. Compiled patterns are cached: a scan calls the UDF
+    // once per row, and recompiling the regex each time dominates its cost.
     let regex_cache: std::sync::Mutex<std::collections::HashMap<String, regex::Regex>> =
         std::sync::Mutex::new(std::collections::HashMap::new());
     conn.create_scalar_function(

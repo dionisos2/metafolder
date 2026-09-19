@@ -2966,7 +2966,7 @@ async fn run_query(
     with_repo(&state, repo_uuid, move |repo_state| {
         // Register an observation-only task (spec-tasks): the result travels
         // with this response, so the task carries no result payload and its
-        // counts stay unknown (the heavy part is opaque SQL).
+        // counts stay unknown (the heavy part is one opaque evaluation).
         let task = repo_state.tasks.start(TaskKind::Query);
         repo_state.tasks.mark_running(task);
         repo_state.tasks.set_progress(task, "querying", None, None);
@@ -2992,13 +2992,9 @@ async fn run_query(
 /// `count`.
 type QueryPage = (Vec<Uuid>, Option<String>, Option<usize>);
 
-/// Resolves a query's page (and optional total) through the in-memory bitmap
-/// index when it is applicable, falling back to the SQL engine otherwise.
-///
-/// Bring the repo's in-memory index up to the current HEAD (building it on the
-/// first use), then hand back a shared reference to it. The single acquisition
-/// point for the two live-query call sites (`field_catalog` and
-/// `run_query_filter`) so they cannot drift.
+/// Brings the repo's in-memory index up to the current HEAD, then hands back a
+/// shared reference to it. The single acquisition point for the two live-query
+/// call sites (`field_catalog` and `run_query_filter`) so they cannot drift.
 fn ensure_index<'g>(
     conn: &rusqlite::Connection,
     guard: &'g mut Option<crate::index::RepoIndex>,
@@ -3041,7 +3037,8 @@ fn prepare_indexed_query<'a>(
     // Exact-node `Eq`/`Neq` operands (`mfr_path = "/a/b.txt"`): resolved through
     // the same cache, but the entry is always inserted — including a `None` for a
     // path that is no node — so the index can tell "resolved to nothing" (empty
-    // result) from "nobody resolved it" (defer to SQL).
+    // result) from "nobody resolved it" (a daemon bug, since this loop resolves
+    // every one of them).
     let mut node_paths = Vec::new();
     crate::index::collect_node_paths(query, &mut node_paths);
     for (field, path) in node_paths {
@@ -3058,7 +3055,8 @@ fn prepare_indexed_query<'a>(
 /// set-layer counterpart of [`run_query_filter`] (batch field writes, query
 /// delete, tree resolution) which operate on the whole match set rather than a
 /// page. Shares [`prepare_indexed_query`] so these writes get the same bitmap
-/// acceleration as reads; an unsupported shape falls back to the SQL engine.
+/// acceleration as reads; an unsupported shape is reported by [`index_gap`],
+/// there being nothing else to ask.
 fn resolve_query_uuids(
     repo_state: &RepoState,
     conn: &rusqlite::Connection,
@@ -3107,8 +3105,8 @@ fn run_query_filter(
     cancel: &dyn Fn() -> bool,
 ) -> Result<QueryPage, ApiError> {
     // Reject ill-defined comparisons and over-large queries upfront, before
-    // choosing an engine, so neither rejection depends on the index→SQL
-    // fallback path (spec-query "Limits", "Comparison validity").
+    // anything is evaluated, so neither rejection depends on how the query
+    // happens to be served (spec-query "Limits", "Comparison validity").
     crate::query_validate::validate_query(&body.query)?;
     crate::query_validate::check_query_size(&body.query)?;
     // The rejections that need the field's type follow, as soon as the index is
@@ -3126,19 +3124,19 @@ fn run_query_filter(
         .collect();
 
     // Resolve the query's index seeds (Path targets, exact-node operands) and
-    // pre-resolve the text leaves the index cannot serve. The engine choice must
-    // be a function of the query *shape* alone (`full_set = false` here): the
-    // list asks for `count` on the first page only, and if that toggled the
-    // preparation, page 1 and page 2 could run on different engines and reject
-    // each other's cursor.
+    // rewrite the leaves the bitmaps cannot serve into the `uuid_in` sets the
+    // forest says they match. The preparation must be a function of the query
+    // *shape* alone: the list asks for `count` on the first page only, and if
+    // that changed what is prepared, page 1 and page 2 would be evaluating
+    // different queries and would reject each other's cursor (which is bound to
+    // a hash of the rewritten query).
     let mut index_guard = slowlog::timed("wait:index", || repo_state.index.lock_recover());
     let index = ensure_index(conn, &mut index_guard, cancel)?;
     crate::query_validate::validate_query_types(&body.query, &|f| index.value_type(f))?;
 
     let (mut roots, indexed_query) = prepare_indexed_query(conn, cache, &body.query)?;
     // Full-path sort keys for a `tree_ref` sort key, rebuilt from the resident
-    // forest (spec-data-model "Sort specification"). Borrows the cache, so the
-    // borrow must end before the SQL fallback below takes it mutably again.
+    // forest (spec-data-model "Sort specification").
     let sort_keys = crate::tree_cache::SortKeys::new(cache);
     roots.keys = Some(&sort_keys);
     // The index build/refresh above is the heavy phase on a large repo; if a

@@ -55,115 +55,117 @@ disponibles dans les deux situations. Implémenté dans `cli/src/log.rs`
 (`decide_move` ne tente le `mv` que si le fichier est présent), spec mise à jour
 (`spec-event-log.org` : section « skip » + « Policies for move_file »).
 
-## 7. `FollowsTransitive` : coût O(taille du sous-arbre) — ⏳ DIFFÉRÉ (gros chantier)
+## 7. `FollowsTransitive` : coût O(taille du sous-arbre) — ✅ les deux coûts levés / ⏳ la linéarité reste
 
-**Constat.** `Query::FollowsTransitive` (l'opérateur DSL `->*`, « tous les
-descendants de ce nœud dans la forêt TreeRef ») est compilé de façon *hybride*
-(`crates/daemon/src/query_exec.rs`, nœud `FollowsTransitive`) :
+**Mise à jour (septembre 2026).** Les deux coûts décrits ci-dessous ont disparu
+avec l'unification du moteur (spec-indexing « No operand runs in SQL ») : il n'y
+a plus de compilation SQL du tout, et la forêt est **résidente en entier**
+depuis le chargement du dépôt.
 
-1. la **racine** est résolue via le tree cache (`resolve_path`, fallback DB) —
-   bon marché ;
-2. les **descendants** sont collectés par `TreeCache::descendants`
-   (`tree_cache.rs`), qui **marche la base** en BFS (`db::tree_children`, une
-   requête SQL par nœud) — **pas l'arène mémoire** ;
-3. le `Vec<Uuid>` obtenu est **inliné en littéraux** dans le SQL :
+**Constat (historique).** `Query::FollowsTransitive` (l'opérateur DSL `->*`,
+« tous les descendants de ce nœud dans la forêt TreeRef ») était compilé de
+façon *hybride* par l'ancien `query_exec.rs` :
+
+1. la **racine** résolue via le tree cache — bon marché ;
+2. les **descendants** collectés par `TreeCache::descendants`, qui **marchait la
+   base** en BFS (`db::tree_children`, une requête SQL par nœud) ;
+3. le `Vec<Uuid>` obtenu **inliné en littéraux** dans le SQL :
    `SELECT column1 AS uuid FROM (VALUES (x'…'),(x'…'),…)`.
 
-Deux coûts, tous deux **linéaires en la taille du sous-arbre** (non bornée par
-`max_nodes` du cache, c'est la taille réelle en DB) :
+D'où deux coûts linéaires en la taille du sous-arbre : **(a)** un texte SQL
+géant (~19 Mo pour 500k descendants, ≈38 Mo à 1M), et **(b)** N allers-retours
+`tree_children`.
 
-- **(a) Texte SQL géant.** Chaque littéral ≈ 38 octets ⇒ ~19 Mo de SQL pour
-  500k descendants (≈38 Mo à 1M), construit en `String` puis parsé par SQLite.
-  Risque de buter sur `SQLITE_MAX_SQL_LENGTH` (défaut ~1 Go) sur de très gros
-  sous-arbres, coût mémoire/CPU lourd bien avant.
-- **(b) N requêtes `tree_children`.** Un aller-retour SQLite par nœud du
-  sous-arbre.
+**Ce qui les a remplacés.** L'expansion se fait par **itération de bitmaps** sur
+l'index inverse (enfants directs) — `index::expand_subtrees` — entièrement en
+mémoire : pas de texte SQL, pas d'aller-retour par nœud, et le résultat *est*
+déjà un bitmap qui s'intersecte nativement avec les autres prédicats. Les pistes
+listées à l'époque (`carray`, table TEMP, CTE récursive) sont donc sans objet :
+elles corrigeaient une compilation SQL qui n'existe plus.
 
-**Le vrai problème de fond (à régler plus tard).** On **matérialise tout le
-sous-arbre** alors qu'on ne veut en général que la **page** demandée (~100
-résultats triés). Le coût devrait dépendre de la taille de page, pas du dossier.
-L'approche actuelle « matérialiser puis filtrer/paginer en aval » devra
-probablement être revue vers une **intégration dans la requête paginée/triée**
-(push-down). Limite inhérente à garder en tête : dès qu'on **trie par un
-champ**, il faut de toute façon l'ensemble complet des candidats pour choisir le
-top-N — la linéarité n'est totalement évitable que pour les requêtes **sans
-tri** (où une CTE en flux peut s'arrêter tôt sous `LIMIT`).
+**Le vrai problème de fond (inchangé).** On **matérialise tout le sous-arbre**
+alors qu'on ne veut en général que la **page** demandée (~100 résultats triés).
+C'est maintenant une union de bitmaps par niveau plutôt qu'une marche en base —
+la constante est petite — mais le coût dépend toujours du dossier et non de la
+page. Limite inhérente à garder en tête : dès qu'on **trie par un champ**, il
+faut de toute façon l'ensemble complet des candidats pour choisir le top-N — la
+linéarité n'est évitable que pour les requêtes **sans tri**.
 
-**Pourquoi le cache ne peut pas servir tel quel** (utile pour le design futur).
-La map `children` d'un nœud en cache est **partielle** : `resolve_path` n'insère
-que les enfants rencontrés sur un chemin déjà résolu, et un *miss* sur un enfant
-signifie « pas en cache », **pas** « n'existe pas ». Il n'y a **aucun marqueur
-« tous les enfants chargés »**. Énumérer les descendants depuis l'arène
-raterait donc silencieusement des nœuds → résultats faux. Seule la DB est
-autoritaire sur la liste complète des enfants.
-
-**Pistes (par ordre de complétude) :**
-
-| Approche | Corrige (a) littéraux | Corrige (b) N requêtes | Coût |
-|---|---|---|---|
-| `carray` / `rarray(?)` (feature rusqlite `array`) | ✅ | ❌ | feature + variante `SqlValue::Array` + `array::load_module` |
-| table TEMP (insert par lots) | ✅ | ❌ | gestion du cycle de vie (DROP après exécution, y compris sur erreur) |
-| **CTE récursive** (`WITH RECURSIVE … JOIN field …`) | ✅ | ✅ | refonte du nœud en SQL pur ; racine = param (cas `Path`) ou sous-CTE (cas `Condition`) ; `UNION` (pas `ALL`) pour dédup + anti-cycle |
-
-La CTE récursive est la plus complète (corrige (a) **et** (b), pas de
-matérialisation Rust) et reste compatible avec les deux formes de racine
-(`Path` / `Condition`). C'est elle qu'il faudra viser si on intègre la
-traversée dans la requête paginée.
+**Périmé : « le cache ne peut pas servir tel quel ».** L'argument était que la
+map `children` d'un nœud était *partielle* (`resolve_path` n'insérait que les
+enfants rencontrés) et qu'aucun marqueur ne disait « tous les enfants chargés ».
+Les deux ont été levés : `TreeCache::populate` charge **toute** la forêt en un
+seul scan au chargement du dépôt, et `is_complete()` est ce marqueur. C'est ce
+qui rend l'énumération en mémoire autoritaire — et ce qui a permis à la forêt de
+répondre elle-même aux feuilles `:path` / `osm` ordonné (`forest_query.rs`).
 
 **Idée utilisateur : compteur d'enfants dénormalisé.** Stocker en DB le nombre
-d'enfants par `(field_name, parent_uuid)`, incrémenté/décrémenté à chaque
-ajout/retrait de `tree_ref`. Bénéfices : éviter la requête `tree_children` pour
-les **feuilles** (compteur = 0 — souvent la majorité des nœuds), et permettre au
-cache de **détecter la complétude** (taille de la map `children` == compteur DB
-⇒ l'arène a tous les enfants ⇒ énumération sans DB). Limites/coûts à peser :
-ne corrige **pas** la linéarité de fond (on visite quand même chaque nœud) ; et
-la maintenance du compteur doit passer par le `log::Writer` (chaque write
-TreeRef) **et** être restaurée exactement par le rollback (charge de cohérence
-non triviale) ; la détection de complétude côté cache devrait aussi invalider le
-flag « complet » à l'éviction d'un enfant.
+d'enfants par `(field_name, parent_uuid)` avait deux bénéfices : éviter la
+requête `tree_children` pour les feuilles, et permettre au cache de détecter la
+complétude. **Les deux sont obsolètes** (plus de `tree_children` sur le chemin
+de lecture, complétude connue). Ne corrigeait de toute façon **pas** la
+linéarité de fond, et coûtait une maintenance dans `log::Writer` restaurée
+exactement par le rollback : à ne pas ressortir sans un nouveau motif.
 
-**Pointeurs code :** `query_exec.rs` (nœud `FollowsTransitive`),
-`tree_cache.rs` (`descendants`, `resolve_path`), `db.rs` (`tree_children`).
+**Pointeurs code :** `index/mod.rs` (`expand_subtrees`, nœud
+`FollowsTransitive`), `tree_cache.rs` (`populate`, `descendants`,
+`resolve_path`), `forest_query.rs`.
 `docs/spec-query.org` pour la sémantique de `->*`.
 
-## 8. Limites de requête — ✅ borne de nœuds / ⏳ reste
+## 8. Limites de requête — ✅ les deux bornes / ⏳ leur valeur, et le timeout
 
-**Fait.** Borne du **nombre total de nœuds** d'une requête à `MAX_QUERY_NODES =
-2000` (`query_exec.rs`), vérifiée avant compilation dans `execute`/`count` →
-rejet 400 (« query too large … decompose it »). Garde-fou contre une requête
-bon marché à envoyer mais coûteuse à *compiler* (un `And`/`Or` large ou
-profond construirait une chaîne de CTE géante avant toute lecture). Généreuse :
-les requêtes réalistes sont très en-dessous. Tests : `query_exec` (unit
-`node_count`/`check_query_size`) + `tests/query.rs` (`test_oversized_query_is_rejected`).
+**Fait.** Les deux bornes vivent maintenant dans `query_validate.rs` et sont
+vérifiées **avant toute évaluation**, donc identiquement pour toute requête :
+
+- `MAX_QUERY_NODES = 2000` — nombre total de nœuds → rejet 400 (« query too
+  large … decompose it »).
+- `MAX_COMBINATOR_OPERANDS = 500` — opérandes d'un même `And`/`Or` → rejet 400
+  (« a single 'and'/'or' may have at most 500 operands… nest or decompose it »).
+
+Tests : unités `node_count` / `check_query_size` / `query_size_check_also_bounds_combinator_width`
+dans `query_validate.rs`, plus `tests/query.rs` (`test_oversized_query_is_rejected`,
+`test_wide_combinator_is_rejected_with_clear_message`, qui vérifie aussi que 500
+pile s'exécute).
 
 **⏳ Reste à faire (différé) :**
 
-- **Opérateur `In { field, values }` natif.** Aujourd'hui « ce champ vaut l'une
-  de ces N valeurs » s'écrit `Or` de N `Eq` = ~2N nœuds. Un `In` natif
-  compilerait en **un** `IN (…)` SQL (ou un join carray/table-temp, cf. §7) →
-  O(1) nœuds, et rendrait la borne indolore pour l'appartenance.
-- **Plafond `SQLITE_MAX_COMPOUND_SELECT` (défaut 500).** ✅ *Message propre fait* :
-  `combine` rejette désormais un `And`/`Or` de plus de
-  `MAX_COMBINATOR_OPERANDS = 500` opérandes avec une erreur claire (« a single
-  'and'/'or' may have at most 500 operands… nest or decompose it »), au lieu de
-  l'erreur cryptique de SQLite (test `test_wide_combinator_is_rejected_with_clear_message`
-  vérifie aussi que 500 pile s'exécute). ⏳ *Reste* : pour **supporter** les
-  listes larges plutôt que les rejeter, **chunker** le compound en lots
-  imbriqués (≤ 500 par niveau) — ou, mieux, l'opérateur `In` natif ci-dessus.
+- **La valeur des deux plafonds est à redécider.** 500 était
+  `SQLITE_MAX_COMPOUND_SELECT` : chaque opérande devenait un terme d'un compound
+  `SELECT`. Plus rien ne compile en SQL sur le chemin de service (spec-indexing
+  « No operand runs in SQL ») — un `Or` large est N unions de bitmaps — donc la
+  borne subsiste comme garde-fou à une valeur héritée d'une contrainte qui n'a
+  plus cours. Le chunking du compound, lui, est **sans objet**.
+- **Opérateur `In { field, values }` natif.** « Ce champ vaut l'une de ces N
+  valeurs » s'écrit encore `Or` de N `Eq` = ~2N nœuds. Un `In` natif serait
+  O(1) nœud, et rendrait la borne indolore pour l'appartenance. *Le cas des
+  uuids est déjà réglé* : `uuid_in` existe, et le DSL replie tout seul un `Or`
+  d'atomes UUID nus en un unique nœud.
 - **Timeout d'exécution.** La borne de nœuds ne couvre que le coût de
-  *compilation* ; une requête petite mais lente (`Matches` regex sur des
-  millions de lignes, `->*` sur tout le repo — cf. §7) n'est pas bornée en
-  *temps*. Piste : `progress_handler` SQLite (interrompt après N pas de VM) ou
-  `Connection::interrupt()` depuis un watchdog après une deadline wall-clock.
+  *préparation* ; une requête petite mais lente (`matches` sur une forte
+  cardinalité, `->*` sur tout le repo — cf. §7) n'est pas bornée en *temps*. Le
+  `Connection::interrupt()` évoqué à l'époque ne suffit plus : il n'arrête
+  qu'une instruction SQLite, et l'évaluation est maintenant du Rust en mémoire.
+  Ce qui existe : l'annulation coopérative des tâches (`spec-tasks`), que
+  `run_query_filter` interroge entre les phases. Ce qui manque : une *deadline*
+  qui la déclenche toute seule.
 
 ## 9. Link metarecords : écritures non « link-aware » — ⏳ DIFFÉRÉ (v2)
 
 **Contexte.** Un *link metarecord* est possédé par **plusieurs** repos (plusieurs
 lignes `metarecord_db` pour le même `metarecord_uuid`). C'est un concept **v2,
 non implémenté** : aujourd'hui chaque metarecord a un seul propriétaire et chaque
-repo est sa propre base, donc **aucune corruption actuelle**. Les **lectures**
-sont déjà link-aware (le CTE `_repo` de `query_exec` exige la propriété
-**exclusive**, `COUNT(*) = 1` → les links sont invisibles aux requêtes).
+repo est sa propre base, donc **aucune corruption actuelle**.
+
+⚠️ **Les lectures ne sont plus link-aware** (septembre 2026). Elles l'étaient
+par le CTE `_repo` de `query_exec`, qui exigeait la propriété **exclusive**
+(`COUNT(*) = 1` → links invisibles aux requêtes) ; ce moteur a quitté le daemon
+pour `crates/query-oracle`, et l'univers de l'index bitmap est simplement
+`SELECT uuid FROM metarecord` (`index::RepoIndex::build` via `db::list_entries`).
+Sans conséquence aujourd'hui (un seul propriétaire par metarecord), mais c'est
+**la ligne à corriger en premier** quand les links arriveront : l'oracle et le
+chemin de service divergeraient silencieusement, et c'est précisément le genre
+d'écart que la batterie d'équivalence ne verrait pas (aucun link n'existe pour
+le révéler).
 
 **Constat (les écritures ne le sont pas).** Aucune opération d'écriture ne
 vérifie l'exclusivité de propriété ni « tous les repos propriétaires chargés » :
@@ -196,8 +198,9 @@ Concrètement :
 Non implémentable maintenant : le modèle de stockage/sync des links est v2 et
 non défini ; un garde-fou serait du code mort (rien ne crée de link). À traiter
 lors de la conception des links (`docs/spec-sync.org`). **Pointeurs :**
-`log.rs` (`delete_metarecord`, `navigate`, `prune`), `query_exec.rs` (CTE
-`_repo`, le modèle d'exclusivité de référence), `db.rs` (`metarecord_db`).
+`log.rs` (`delete_metarecord`, `navigate`, `prune`), `index/mod.rs` (le champ
+`universe`), `crates/query-oracle` (CTE `_repo`, le modèle d'exclusivité de
+référence), `db.rs` (`metarecord_db`, `list_entries`).
 
 ## 10. Le log du mock `mf` perd les frontières d'arguments — ⏳ DIFFÉRÉ (coût > gain)
 

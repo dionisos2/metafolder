@@ -1,7 +1,7 @@
 //! Scale measurement for the bitmap index (spec-indexing "What to measure
 //! before committing"): build cost, resident memory, and bitmap-vs-SQL query
 //! latency over a synthetic repo. It also doubles as an equivalence test at
-//! scale — every timed query asserts the same result set as the SQL engine.
+//! scale — every timed query asserts the same result set as the SQL oracle.
 //!
 //! Ignored by default (it builds tens of thousands of rows). Run with:
 //!   cargo test -p metafolder-daemon --test index_bench --release -- --ignored --nocapture

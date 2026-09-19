@@ -10,10 +10,11 @@ two SQL [[*Baseline indexes (implemented)][baseline indexes]] *and* the
 in-memory roaring-bitmap / BSI query accelerator described under
 [[*The proposed architecture][The proposed architecture]]
 (=crates/daemon/src/index/=, built at repo load, refreshed to HEAD per query,
-validated by =tests/index_oracle.rs=). Still forward-looking (tagged =:v2:= or
-later): the *adaptive planner* / cost model, on-disk index persistence, and the
-larger-scale refinements. When in doubt, =crates/daemon/src/index/= is the
-authority on what exists.
+validated by =tests/index_oracle.rs=) — which is now the *only* thing that
+serves a filter ([[*No operand runs in SQL]], done). Still forward-looking
+(tagged =:v2:= or later): the *adaptive planner* / cost model, on-disk index
+persistence, and the larger-scale refinements. When in doubt,
+=crates/daemon/src/index/= is the authority on what exists.
 
 Numbers below come from =crates/bench= run against the two persistent data
 folders (=benchmarks/bench_data= ≈ 5 101 and =benchmarks/bench_data_big= ≈
@@ -73,8 +74,8 @@ that produced this document):
 4. *Exact COUNT of a large filtered set is O(m), irreducible in SQL.* A B-tree
    does not store sub-tree cardinalities, so counting a range means enumerating
    it. A top-k can stop early; a COUNT cannot. (Implemented choice: counts are
-   *exact*, served O(1) from the result bitmap when the index accelerates the
-   query, and only fall back to the O(n) SQL =COUNT(*)= otherwise — see
+   *exact* and served O(1) from the result bitmap, which is what takes the
+   wall away: the set is materialised as a bitmap before it is counted — see
    [[*Counts are exact (implemented)]]. The "approximate / k+" route below is
    the theoretical escape hatch, not what is built.)
 
@@ -218,9 +219,9 @@ level, unioning into a result bitmap.
 Each descendant is visited once → *O(sub-tree)*, the same cost as today's
 tree-cache walk. Two wins over today: it stays in bitmap algebra — the
 descendant set *is* a bitmap that ANDs natively with the other predicate
-bitmaps, removing the current hybrid that injects a UUID =IN= clause into SQL —
-and it reuses the =TreeRef= reverse index (the tree cache is then only needed to
-resolve ="/A" → id(A)=). This is fine for the common case (browsing a normal
+bitmaps, which removed the hybrid that used to inject a UUID =IN= clause into
+SQL — and it reuses the =TreeRef= reverse index (the tree cache is then only
+needed to resolve ="/A" → id(A)=). This is fine for the common case (browsing a normal
 folder of thousands of files is sub-millisecond).
 
 ** The tree as a range dimension                                  :future:
@@ -289,24 +290,31 @@ invariant violation, reported as such — a =State= gap — and not a reason to 
 back. It costs nothing in
 steady-state memory and is paid only by the queries that sort on a tree field.
 
-** Two kinds of gap (implemented)
+** Three kinds of gap (implemented)
 
-The bitmap engine declines a query for one of two reasons, and they are not
-interchangeable:
+The bitmap engine declines a query for one of three reasons, and they are not
+interchangeable — two are daemon bugs and one is the client's own input:
 
-- *Coverage* — a query shape the index does not serve. The list has shrunk to
-  the =:path= aspect, a multi-term =Osm= path that was not pre-resolved, a field
-  seen only through =Nothing= values, and a foreign or malformed cursor
-  (=Matches=, =Path=-target follows, exact-node equality and the =:parent=
-  aspect were all coverage gaps and are now served). The SQL engine answers
-  these, and the oracle battery excludes them. This is *debt*, named so it can
-  be paid down — and it is being paid to zero, see [[*No operand runs in SQL]].
+- *Coverage* — a query shape the index does not serve. The list has been paid
+  to zero ([[*No operand runs in SQL]]): =Matches=, =Path=-target follows,
+  exact-node equality and the =:parent= aspect are served natively; the
+  =:path= aspect and an order-sensitive =Osm= path are rewritten into their
+  =uuid_in= set by the forest before the index sees them; a field seen only
+  through =Nothing= values has no entry and reads as the empty answer. Nothing
+  answers a coverage gap any more, so one is a daemon bug, reported =500=.
 - *State* — an accelerator is not in the state the engine requires (no index, a
-  non-resident forest). This cannot be reached through the API: a repository
-  serves no data until both are built (spec-main "POST /repos/load"). Reaching
-  it is a daemon bug, and it is reported as =500= rather than absorbed by an
-  engine that would answer anyway — a silent fall back here is exactly how a
-  performance collapse hides.
+  non-resident forest). This cannot be reached through the API either: a
+  repository serves no data until both are built (spec-main "POST /repos/load").
+
+  The two stay distinct variants (=Gap::Coverage= / =Gap::State=) because they
+  say different things to whoever reads the log — work never taught, against an
+  accelerator in the wrong state — not because they are answered differently.
+- *Cursor* — the third kind, and the only one that is *not* a daemon bug: a
+  cursor from another (query, sort) is the client's own input, answered =400=.
+
+Reporting the first two rather than absorbing them is the point: a silent fall
+back to an engine that would answer anyway is exactly how a performance collapse
+hides.
 
 ** Counts are exact (implemented)
 
@@ -314,11 +322,12 @@ The original design proposed *approximate* / "k+" counts to dodge the COUNT wall
 That option was **not** adopted: =count= is always **exact**. The bitmap index
 returns it in *O(1)* from the result bitmap (=RoaringBitmap::len()=,
 =RepoIndex::count_with_roots=) — the COUNT wall does not apply because the result
-set is already materialised as a bitmap; the SQL fallback returns an exact
-=COUNT(*)= which is O(n) (the wall, for shapes the index does not accelerate).
-Counts are opt-in per request (=count: true=, requires =limit=) but never
-approximate. The "estimated count" idea is retained below only as the theoretical
-escape hatch if a future shape is both unindexable and count-heavy.
+set is already materialised as a bitmap, and since no query is served any other
+way the wall is gone rather than avoided (the oracle's =COUNT(*)=, which is
+O(n), is what the wall looks like). Counts are opt-in per request (=count:
+true=, requires =limit=) but never approximate. The "estimated count" idea is
+retained below only as the theoretical escape hatch if a future shape is both
+unindexable and count-heavy.
 
 ** What we explicitly do NOT build
 
@@ -367,25 +376,27 @@ replace the bitmap/BSI/reverse-bitmap core.
 
 * No operand runs in SQL
 
-*Decision.* Every *operand* of a query is answered by a resident structure — the
-bitmaps or the forest — and the SQL engine serves no part of a filter. What
-reaches SQLite is a list of uuids and the rows to read or write for it.
+*Decision — done (September 2026).* Every *operand* of a query is answered by a
+resident structure — the bitmaps or the forest — and no part of a filter runs in
+SQL. What reaches SQLite is a list of uuids and the rows to read or write for
+it. All five increments below have landed; what follows records why, and in what
+order.
 
-The argument is that nothing is missing to do it. The bitmaps already hold a
+The argument was that nothing was missing to do it. The bitmaps already held a
 complete value → ids partition for *every* field, strings included
 (=CategoricalIndex.by_value= keys on the string itself), the numeric BSIs, and
 both the parent and name partitions of a =tree_ref=. The forest is eagerly
-populated at load. The two shapes still compiled to SQL — the =:path= aspect and
-a multi-term =Osm= path — are already computed *in the tree cache* by
-=path_matches= / =osm_path_matches=; they merely happen to be called from the
-SQL compiler and to hand back their answer as a =VALUES= list. So this is a
-wiring problem, not a data problem, and it costs no extra memory: the forest a
-path predicate walks is the one the =tree_ref= sort already walks.
+populated at load. The two shapes still compiled to SQL at the time — the
+=:path= aspect and a multi-term =Osm= path — were already computed *in the tree
+cache* by =path_matches= / =osm_path_matches=; they merely happened to be called
+from the SQL compiler and to hand back their answer as a =VALUES= list. So it
+was a wiring problem, not a data problem, and it cost no extra memory: the
+forest a path predicate walks is the one the =tree_ref= sort already walks.
 
-What this buys is not one query's speed but the *floor*: a compiled query always
-carries =_repo= (=SELECT uuid FROM metarecord=) and an =O(R_f)= scan per leaf, so
-falling back has always meant paying the repository's size — twice when =count=
-is asked. Removing the fallback removes the floor.
+What this bought is not one query's speed but the *floor*: a compiled query
+always carries =_repo= (=SELECT uuid FROM metarecord=) and an =O(R_f)= scan per
+leaf, so falling back meant paying the repository's size — twice when =count=
+was asked. Removing the fallback removed the floor.
 
 ** What SQL keeps
 
@@ -395,10 +406,12 @@ Reading and writing *fields for a list of uuids*: =versions_for=,
 =field= table remains the authoritative store — the bitmaps are a derived cache
 and nothing changes there ([[*Storage model: a derived in-memory cache]]).
 
-=query_exec= therefore loses its compiler, its =_repo= CTE, its sort CTEs, its
-cursors, and its =&mut TreeCache=: **the SQL layer stops knowing about the
-forest**, which is the coupling that made "which engine" and "which provider"
-two different questions.
+The daemon therefore keeps no query compiler at all — no =_repo= CTE, no sort
+CTEs, no SQL cursors, and nothing taking a =&mut TreeCache= to build a =VALUES=
+list: **the SQL layer stopped knowing about the forest**, which was the coupling
+that made "which engine" and "which provider" two different questions. (The
+compiler still exists in =crates/query-oracle=, with all of that intact — see
+below.)
 
 ** It stays as the oracle, outside the daemon
 
@@ -409,9 +422,10 @@ and the daemon's own sources hold no query compiler at all, which is what makes
 convention. (Cargo allows the dependency cycle this creates: the oracle depends
 on the daemon for =db=, =tree_cache= and the error type.)
 
-It is exercised by the equivalence batteries (=tests/index_oracle.rs=,
-=tests/index_oracle.rs=) and by the semantics batteries, which run *both* engines
-through =tests/common/engines.rs= and assert they agree. The reason is written in
+It is exercised by the equivalence battery (=tests/index_oracle.rs=) and by the
+semantics batteries (=tests/query.rs=, =tests/osm.rs=, =tests/same_as.rs=),
+which run *both* engines through =tests/common/engines.rs= and assert they
+agree. The reason is written in
 this document's own history: a shape the oracle does not cross-check rots
 unnoticed — =MATCHES= under =:parent= answered the =:value= question, and an
 ordered operator under it compared for equality, for as long as the index
@@ -431,18 +445,19 @@ table only *for a list of uuids*.
    of the resident forest (=TreeCache::path_matches=, the =osm_path_matches=
    walk with an arbitrary predicate and no subtree shortcut) and rewritten into
    the =uuid_in= set it matches, in =prepare_indexed_query= next to the seeds.
-   The rewrite is unconditional, unlike the text-leaf one: an unresolved =:path=
-   leaf sends the *whole* query to SQL, where a text leaf is served in memory
-   anyway. =:path= *presence* needs no walk at all — a node has a path exactly
-   when it has a =tree_ref= row, so it is the raw presence, which the index now
-   answers directly. The order-sensitive =Osm= path already walked the forest
-   (=TreeCache::osm_path_matches=); only its =VALUES= detour through the SQL
-   compiler remains, and it goes with the compiler.
-   A leaf is left alone — and the query takes its old course — exactly where the
-   forest cannot answer authoritatively: an incomplete cache, a field with no
-   forest, an operand of the wrong type, an uncompilable pattern. The last three
-   are =400=\s, and leaving them to SQL is what keeps a single author for the
-   error until increment 3 moves it.
+   The rewrite was made unconditional, unlike the text-leaf one of the time: an
+   unresolved =:path= leaf sent the *whole* query to SQL, where a text leaf was
+   served in memory anyway. =:path= *presence* needs no walk at all — a node has
+   a path exactly when it has a =tree_ref= row, so it is the raw presence, which
+   the index answers directly. The order-sensitive =Osm= path already walked the
+   forest (=TreeCache::osm_path_matches=); its =VALUES= detour through the SQL
+   compiler went with the compiler.
+   A leaf is left alone exactly where the forest cannot answer authoritatively:
+   an incomplete cache, an operand of the wrong type, an uncompilable pattern.
+   The last two are =400=\s, and they moved to =query_validate= in increment 3,
+   which is where the single author for the error now is; an incomplete cache
+   cannot happen on the serving path. A field with *no* forest is the benign
+   case: the walk answers the empty set, which is what the field matches.
 2. *(done)* A field seen only through =Nothing= values answers natively. It
    turned out to need no work at all, only a deletion: the encoding is chosen
    from a *non*-=Nothing= value, so =FieldIndex::Unimplemented= was unreachable
@@ -457,8 +472,8 @@ table only *for a list of uuids*.
    and answer "no rows" where a =400= is owed. A pattern that does not compile
    joins =validate_query=, where it belongs: that is a property of the IR, not
    of an engine.
-4. *(done)* The route stops falling back. A coverage gap becomes what a state
-   gap already is: a =500= naming a daemon bug, and =index::eval='s exhaustive
+4. *(done)* The route stopped falling back. A coverage gap became what a state
+   gap already was: a =500= naming a daemon bug, and =index::eval='s exhaustive
    match is what guarantees a new IR variant cannot be added without deciding
    how it is served. One gap is *not* a bug and gets its own kind: a cursor from
    another (query, sort) is the client's own input, answered =400= as the SQL
@@ -467,8 +482,8 @@ table only *for a list of uuids*.
    The pre-resolution of text leaves goes with it. =Matches= and =osm direct=
    need no rewrite — the index runs the regex over the field's distinct values
    in memory — so the only leaf left to resolve is the order-sensitive =osm=
-   path, which the forest already walked; it now goes straight from that walk to
-   a =uuid_in=, with no =VALUES= detour through the SQL compiler.
+   path, which the forest already walked; it goes straight from that walk to a
+   =uuid_in=, with no =VALUES= detour.
 5. *(done)* =field_text= (the FTS5 trigram table) was dead weight — it existed
    to pre-filter a =REGEXP= that no longer runs — while its upkeep sat on the
    write path, in the same transaction as every field write. It is dropped by a
@@ -492,9 +507,11 @@ behind a mutex and carries the =log_head.op_id= it was built at. The query route
 never serves stale results; *every* node type of the IR goes through it (filter /
 sort / count / paginate) — the match in =eval= is exhaustive on purpose, so a
 new node type cannot be added without deciding whether the index serves it. What
-still falls back to the SQL engine, cursors included, is a property of the
-*operand*, not of the node type: an unresolved path, a pattern that will not
-compile, a comparison the field's encoding cannot answer.
+it can still decline is a property of the *operand*, not of the node type: an
+unresolved path, a pattern that will not compile, a comparison the field's
+encoding cannot answer. None of those can reach it through the API — the route
+resolves the paths and =query_validate= rejects the rest first — so a decline is
+a daemon bug ([[*Three kinds of gap (implemented)]]).
 
 The text predicates (=Matches=, =Osm= =Direct=, and the "term nodes" of an =Osm=
 =Path=) are answered by scanning the field's *distinct values* — the
@@ -546,7 +563,8 @@ is no node" (an empty result), a *missing* entry means "nobody resolved it" and
 keeps the operand unsupported, so the shape can never be answered from the
 wrong (=value_name=-based) bitmap. =Neq= is served from the same entry (as
 "every path-bearing metarecord but this node", which is what SQL's "at least one
-differing row" amounts to on a =tree_ref= field). Without this the whole query fell back to the SQL engine, whose
+differing row" amounts to on a =tree_ref= field). Without this the whole query
+fell back to the SQL engine of the time, whose
 =_repo= universe CTE scans every row of the field: "find this one file" was the
 *slowest* query in the repository, not the fastest. *The =parent= aspect* (=field:parent IS ABSENT= / =IS PRESENT= /
 == "<path>"=, spec-query "Forest roots") is supported as well, and needed no new
@@ -560,8 +578,9 @@ non-root node" — and it is deliberately *not* the complement of the roots: SQL
 reads =value_uuid != x'00…'= row by row, so a multi-position node that is both a
 root and a child satisfies both predicates. =Neq= is the same union with the
 resolved node excluded instead of the sentinel (and nothing excluded when the
-path is no node, which is SQL's =NOT (0)=). The shapes that stay with SQL are
-the ones it *rejects*: an ordered operator or =Matches= under =parent= reads a
+path is no node, which is a =NOT (0)= predicate). The shapes the index does not
+serve under =parent= are the ones that are *rejected*, upfront by
+=query_validate=: an ordered operator or =Matches= there reads a
 uuid and is a =400= (spec-query "Field aspects") — until that rule existed both
 were answered silently and wrongly, the regex against =value_name= and the
 ordered operator as equality, which no oracle caught because the index refused
@@ -590,8 +609,8 @@ happens lazily on the read path, not on the write path, but the effect is the
 spec's "single write path updates both": every write advances HEAD, and the next
 query reconciles the index to it. Pagination is *keyset*: the cursor encodes the
 last entry's sort key (one representative per key) and uuid, so the next page
-resumes strictly after it — stable under concurrent inserts/deletes, matching the
-SQL engine. A request asking for =count= gets the page and the total from a
+resumes strictly after it — stable under concurrent inserts/deletes, and the
+same thing the oracle's own cursor encoding does. A request asking for =count= gets the page and the total from a
 *single* evaluation; evaluating twice doubled the cost of every counted query,
 and the list asks for a count on its first page. The sort itself is
 column-major — one flat run of representatives and one of uuids, ordered through
@@ -675,6 +694,6 @@ The design rests on assumptions that must be validated with =crates/bench=
 - Whether the tree-scoped composite sort index is worth its write cost, or
   whether filter-first + BSI is fast enough for folder browsing at 2 M.
 - (Resolved) Exact-count UX: counts are exact and opt-in (=count: true=),
-  served O(1) from the result bitmap when the query is index-accelerated and by
-  the O(n) SQL =COUNT(*)= otherwise. The approximate/background-count idea was
+  served O(1) from the result bitmap — every query being index-served, there is
+  no O(n) =COUNT(*)= left to fall to. The approximate/background-count idea was
   not adopted.

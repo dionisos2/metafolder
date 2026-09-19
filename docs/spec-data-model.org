@@ -120,8 +120,8 @@ Until this check existed, taking a parent's position away left its children
 naming a node that no longer existed — *detached*: reachable by uuid, but under
 no parent and in no roots map, so =GET /tree/roots= and path reconstruction
 disagreed about them ever after. Repositories written before it may still hold
-one; the query engines agree about them (=tests/index_oracle.rs=), and this
-lists them:
+one; the index and the oracle agree about them (=tests/index_oracle.rs=), and
+this lists them:
 
 #+BEGIN_SRC sql
 SELECT c.field_name, hex(c.metarecord_uuid), c.value_name, hex(c.value_uuid)
@@ -219,7 +219,7 @@ re-opening never re-derives bytes from the (now possibly lossy) text.
 Rename (same parent, new name): update =value_name= of one row — O(1).
 Move (different parent): update =value_uuid= of one row — O(1).
 
-Path-to-UUID resolution is accelerated by the *Tree Cache* (see [[*Tree Cache]]).
+Path-to-UUID resolution is accelerated by the *Tree Cache* (see [[file:spec-file-tracking.org][spec-file-tracking.org]] "Tree Cache").
 
 =Nothing= is distinct from the field simply not existing:
 - field present with =Nothing= value → "this field does not apply" (IsAbsent)
@@ -368,8 +368,8 @@ The stored fields for a file/directory metarecord are:
 | =mfr_hash_size=    | mfr    | Int        | The file's size when the stored hashes were computed; written and cleared with them |
 | =mfr_mount=        | mfr    | String     | Present on a *directory* metarecord that is a mount point: best-effort identity of the mounted volume (see [[file:spec-file-tracking.org][spec-file-tracking.org]] "Mount points"). Its presence, not its value, marks the mount point; never cleared by the daemon |
 | =mfr_duplicate_group= | mfr | Ref        | The =duplicate_group= metarecord this file belongs to; present ⟹ the file exists and had a byte-identical twin at the last scan (see [[file:spec-duplicates.org][spec-duplicates.org]]) |
-| =mf_watch=         | mf     | Bool       | Opt-in watch flag; controls whether this metarecord and its descendants are tracked (see [[*Watch and Ignore]])  |
-| =mf_ignore=        | mf     | String     | Regex pattern (multi-map: one row per pattern); controls which paths are excluded (see [[*Watch and Ignore]]) |
+| =mf_watch=         | mf     | Bool       | Opt-in watch flag; controls whether this metarecord and its descendants are tracked (see [[file:spec-file-tracking.org][spec-file-tracking.org]] "Watch and Ignore")  |
+| =mf_ignore=        | mf     | String     | Regex pattern (multi-map: one row per pattern); controls which paths are excluded (see [[file:spec-file-tracking.org][spec-file-tracking.org]] "Watch and Ignore") |
 | =mf_sync=          | mf     | String     | =internal= (default) / =external=: whether metafolder or an external tool owns this metarecord's content during cross-repo sync; inherited down the =mfr_path= tree (see [[file:spec-sync.org][spec-sync.org]]) |
 
 The user schema feature defines one additional reserved =mf_*= field:
@@ -416,7 +416,7 @@ freely by the user (no =force= required). They are still reserved: any unknown
 =mf_*= field name is rejected with =400= to prevent typos from silently having
 no effect.
 
-Direct lookup by path uses the tree cache (see [[*Tree Cache]]); on cache
+Direct lookup by path uses the tree cache (see [[file:spec-file-tracking.org][spec-file-tracking.org]] "Tree Cache"); on cache
 miss, the daemon resolves each component iteratively via the
 =(field_name, value_uuid, value_name_bytes)= index.
 
@@ -570,16 +570,19 @@ before =/=). The multi-map rule applies to paths like to any other value: a
 metarecord at several locations sorts on its smallest path ascending, its
 largest descending.
 
-Implementation note: both engines reduce a path to one *sort key* — its
+Implementation note: the index and the oracle both reduce a path to one
+*sort key* — its
 components joined by =U+0001=, a separator below every character a name may
 hold, which makes a plain byte comparison of two keys the component-wise
 comparison above. The key is internal (compared, and carried inside opaque
 cursors; never displayed). It is never stored: renaming a directory changes the
 path of its whole subtree while touching a single field row, so a materialised
 key would go stale behind the index's incremental refresh. The in-memory index
-rebuilds it from the (resident) tree cache, memoising ancestors; the SQL engine
-rebuilds it with a recursive CTE, and takes over whenever the forest is not
-fully resident.
+rebuilds it from the (resident) tree cache, memoising ancestors. A repository
+that serves at all has a resident forest (spec-main "POST /repos/load"), so
+there is no second path: a =tree_ref= sort without one is a daemon bug, reported
+as such. (The oracle rebuilds the same key with a recursive CTE, which is what
+the equivalence battery compares against.)
 
 *** Response envelope
 
@@ -742,8 +745,10 @@ Since a field name has a single non-=Nothing= value type repository-wide ([[*One
 each name appears at most once. =Nothing= rows are excluded (an explicit
 absence is not a usable value). An optional =?type=<value_type>= query
 parameter restricts the result to one value type (=tree_ref=, =ref=, =string=,
-…). The isolation matches a query's universe — only metarecords owned
-exclusively by this repository. The GUI uses it to populate field pickers (e.g.
+…). The isolation matches a query's universe — every metarecord of this
+repository's database (which, one owner per metarecord, is the same set as
+"owned exclusively by it"; see the roadmap item on link-awareness). The GUI uses
+it to populate field pickers (e.g.
 the TreeRef-field and Ref-field selectors of the tree-explorer panel, see
 [[file:spec-gui.org][spec-gui.org]]).
 
@@ -758,6 +763,21 @@ literally named =""= (as =mfr_path='s repo-root metarecord is); the roots
 themselves — e.g. the top-level nodes of a tag tree — are otherwise
 unreachable. The tree-explorer panel ([[file:spec-gui.org][spec-gui.org]]) starts here, then descends
 with =Follows{field, target: \{uuid_in: [node]\}\}=.
+
+*** =GET /repos/:repo_uuid/tree/children=
+
+The step down from a node: the *direct children* of one node of a TreeRef
+forest. =?field=<field>= selects the forest, =?uuid=<hex>= the parent node (both
+required; the root sentinel's children are [[*=GET /repos/:repo_uuid/tree/roots=][the roots]]). Response
+=[{"uuid": "<hex>", "name": "<name>"}, ...]= ordered by name — the same shape as
+=tree/roots=, so a caller descending a tree reads one format.
+
+It is served from the resident tree cache (=TreeCache::children_of=), which is
+why it exists next to the query layer rather than inside it: "the children of
+this node" is also =field:parent = "<path>"= (spec-query "Field aspects"), but
+that form resolves a *path* and returns uuids to be assembled, where a tree
+walker already holds the parent's uuid and wants the names it descends by. The
+file-manager panel's tracked listing is one call of this per directory opened.
 
 *** =POST /repos/:repo_uuid/tree/resolve-path=
 

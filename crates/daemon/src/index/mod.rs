@@ -1,20 +1,24 @@
-//! In-memory bitmap/BSI query index (spec-indexing.org), increment 1.
+//! In-memory bitmap/BSI query index (spec-indexing.org).
 //!
 //! A *derived, read-only* accelerator built from the `field` table. It answers
 //! a [`Query`] as a `RoaringBitmap` of dense metarecord ids and is validated
-//! against the SQL engine (the `metafolder-query-oracle` dev crate) by an
-//! equivalence oracle
-//! (`tests/index_oracle.rs`). It is built at repo load and refreshed to HEAD
-//! per query (`run_query_filter`), which falls back to the SQL engine on any
-//! `Unsupported` shape. Shapes the index cannot resolve on its own are handled
-//! with caller-supplied seeds ([`QueryRoots`]): `Path`-target follows resolve to
-//! a root metarecord through the tree cache, and a single-term `Osm` `Path`
-//! resolves to its "term nodes" (name-substring matches) through FTS, which the
-//! index then expands into a subtree union — the exact match set, no per-path
-//! check. Text predicates (`Matches`, `Osm` `Direct`) run their regex over the
-//! field's *distinct values* in memory; the leaves no bitmap can answer — the
-//! `:path` aspect, an order-sensitive `Osm` `Path` — are resolved against the
-//! forest and handed in as `UuidIn` sets (`crate::forest_query`). Not
+//! against the SQL oracle (the `metafolder-query-oracle` dev crate) by an
+//! equivalence battery (`tests/index_oracle.rs`). The oracle is a *test
+//! fixture*, not a second engine: nothing falls back to it, and a shape that
+//! comes back `Unsupported` is a daemon bug, not a slow answer (see [`Gap`],
+//! spec-indexing "No operand runs in SQL").
+//!
+//! It is built at repo load and refreshed to HEAD per query
+//! (`run_query_filter`). Shapes it cannot resolve on its own are handled with
+//! caller-supplied seeds ([`QueryRoots`]): `Path`-target follows resolve to a
+//! root metarecord through the tree cache, and a single-term `Osm` `Path`
+//! resolves to its "term nodes" (the nodes whose *name* contains the term) by
+//! scanning the in-memory name partition, which the index then expands into a
+//! subtree union — the exact match set, no per-path check. Text predicates
+//! (`Matches`, `Osm` `Direct`) run their regex over the field's *distinct
+//! values* in memory; the leaves no bitmap can answer — the `:path` aspect, an
+//! order-sensitive `Osm` `Path` — are resolved against the forest and rewritten
+//! into `UuidIn` sets before the index sees them (`crate::forest_query`). Not
 //! persisted — rebuilt each session.
 
 pub mod field_index;
@@ -44,7 +48,7 @@ pub struct SortBy {
 /// `Follows`/`FollowsTransitive` nodes of a query. The index has no tree
 /// structure of its own, so the caller resolves path targets through the (now
 /// eagerly populated) tree cache and hands the roots in; a path absent from the
-/// map resolved to nothing and yields an empty result, matching the SQL engine.
+/// map resolved to nothing and yields an empty result, matching the oracle.
 pub type PathRoots = HashMap<(String, String), Uuid>;
 
 /// Pre-resolved `(field, path)` → the metarecord at exactly that TreeRef path,
@@ -54,7 +58,8 @@ pub type PathRoots = HashMap<(String, String), Uuid>;
 /// hands the node in. Unlike the other two maps the value is an `Option`: an
 /// entry mapping to `None` says "the caller resolved this path and it is not a
 /// node" (an empty result), while a *missing* entry says "nobody resolved it",
-/// which keeps the operand `Unsupported` and defers to the SQL engine.
+/// which keeps the operand `Unsupported` — a daemon bug on the serving path,
+/// where `routes::prepare_indexed_query` resolves every one of them.
 pub type NodeRoots = HashMap<(String, String), Option<Uuid>>;
 
 /// The caller-resolved seeds a query needs the index to evaluate the shapes it
@@ -109,7 +114,7 @@ pub fn collect_path_targets(q: &Query, out: &mut Vec<(String, String)>) {
 /// is a node match rather than a `value_name` compare (spec-query "Exact-node
 /// equality"). The caller resolves each through the tree cache into
 /// [`NodeRoots`]; the index then answers `mfr_path = "/a/b.txt"` from a single
-/// interned id instead of deferring the whole query to a full SQL scan.
+/// interned id, where the oracle scans every row of the field.
 ///
 /// A `/`-bearing operand on a plain *string* field is ordinary literal equality
 /// and is collected too — harmlessly, since it resolves to no node and the
@@ -139,8 +144,9 @@ pub fn collect_node_paths(q: &Query, out: &mut Vec<(String, String)>) {
 /// Whether a `terms` list is the single term the index serves natively for
 /// `Osm` `Path`: the union of the subtrees rooted at the nodes whose name
 /// contains it *is* the match set, no ordered verification needed. Any length —
-/// the name scan is in memory, so the FTS trigram's three-character floor no
-/// longer applies.
+/// the name scan runs in memory over the distinct names, so no minimum term
+/// length applies (the FTS trigram index that once imposed a three-character
+/// floor is gone).
 ///
 /// Two shapes are excluded. Several terms are order-sensitive. And a term
 /// *containing the separator* (`path = "music/jazz"` is one term, the tag
@@ -199,9 +205,12 @@ type SortEntry = (Vec<Option<SortRep>>, Uuid);
 
 /// Why the bitmap path declined a query, and what the caller may do about it.
 ///
-/// The two reasons used to be one, and both led to the SQL engine. They are not
-/// the same thing at all: one is work the index has not been taught yet, the
-/// other is the index not being in the state it is supposed to be in.
+/// Three reasons, which used to be one: back when the daemon had a second
+/// engine they all led to it. They are not the same thing at all — work the
+/// index has not been taught, the index not being in the state it is supposed
+/// to be in, and a cursor the client brought from another query. Only the last
+/// is the user's doing, and it is the only one that is not a `500`
+/// (spec-indexing "Three kinds of gap").
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Gap {
     /// A query shape the index does not serve. Nothing answers it any more —
@@ -277,8 +286,15 @@ fn stores_sort_rep(value: &Value) -> bool {
 
 pub struct RepoIndex {
     registry: IdRegistry,
-    /// All interned ids — the exclusively-owned universe (`_repo`). Complement
-    /// base for `Not` / `IsUnknown`.
+    /// All interned ids: every metarecord of this repository's database
+    /// (`db::list_entries`). Complement base for `Not` / `IsUnknown`.
+    ///
+    /// The oracle's `_repo` CTE additionally demands *exclusive* ownership
+    /// (`COUNT(*) = 1` over `metarecord_db`), which selects the same set today
+    /// — a metarecord has exactly one owner, link metarecords being `:v2:` and
+    /// unimplemented. If they land, this is the line that has to reinstate the
+    /// check: it is the read-side link-awareness, and it is no longer on the
+    /// serving path (docs/review-followups.md §9).
     universe: RoaringBitmap,
     /// Per field name: ids with ≥1 non-`Nothing` row.
     present: HashMap<String, RoaringBitmap>,
@@ -627,7 +643,7 @@ impl RepoIndex {
     }
 
     /// Number of metarecords matching `q` — `O(1)` from the result bitmap,
-    /// where the SQL `COUNT` is `O(n)` (the irreducible count wall).
+    /// where a SQL `COUNT` is `O(n)` (the irreducible count wall).
     pub fn count(&self, q: &Query) -> Result<u64, Unsupported> {
         Ok(self.eval(q, None)?.len())
     }
@@ -650,11 +666,12 @@ impl RepoIndex {
 
     /// Evaluates a query into one sorted, paginated page and the cursor for the
     /// next one (present only when `limit` is set and more rows remain).
-    /// Reproduces the SQL sort semantics: per key the multi-map representative
-    /// (min ascending / max descending), the fixed type-group precedence,
-    /// metarecords lacking the field last, uuid tiebreak. The cursor is an
-    /// opaque offset bound to a hash of (query, sort) — reused against a
-    /// different query/sort it is rejected, matching the SQL engine.
+    /// Reproduces the specified sort semantics (spec-data-model "Sort
+    /// specification"): per key the multi-map representative (min ascending /
+    /// max descending), the fixed type-group precedence, metarecords lacking
+    /// the field last, uuid tiebreak. The cursor is an opaque offset bound to a
+    /// hash of (query, sort) — reused against a different query/sort it is
+    /// rejected, as it is in the oracle.
     pub fn evaluate_page(
         &self,
         q: &Query,
@@ -828,13 +845,14 @@ impl RepoIndex {
     /// Evaluates a query to the bitmap of matching dense ids. `roots` is
     /// `Some(map)` once the caller has resolved the query's `Path` targets (see
     /// [`PathRoots`]); `None` means they have not, so a `Path` target is
-    /// reported `Unsupported` and the caller falls back to the SQL engine.
+    /// reported `Unsupported` — which on the serving path is a daemon bug, the
+    /// route having resolved them before it evaluates anything.
     ///
     /// Every variant of the IR is handled here — the match is exhaustive on
     /// purpose, so a new one cannot be added without deciding whether the index
-    /// serves it. What is left to the SQL engine is now a property of the
-    /// *operand* (an unresolved path, a pattern that will not compile, a
-    /// comparison the encoding cannot answer), never of the node type.
+    /// serves it. What comes back `Unsupported` is a property of the *operand*
+    /// (an unresolved path, a pattern that will not compile, a comparison the
+    /// encoding cannot answer), never of the node type.
     fn eval(&self, q: &Query, roots: Option<&QueryRoots>) -> Result<RoaringBitmap, Unsupported> {
         self.eval_within(q, roots, None)
     }
@@ -855,9 +873,10 @@ impl RepoIndex {
     ) -> Result<RoaringBitmap, Unsupported> {
         match q {
             // The `parent`/`path` aspects read a component the bitmaps do not
-            // hold (the parent uuid, the assembled path), so they go to the SQL
-            // engine — which is also what raises the 400 for an aspect the
-            // field's type cannot serve, keeping one answer per query.
+            // hold (the parent uuid, the assembled path), so each has its own
+            // path here. The 400 for an aspect the field's type cannot serve is
+            // raised upstream by `query_validate`, before any of this runs, so
+            // there is one answer per query whatever serves it.
             Query::IsPresent { field, aspect } => match aspect {
                 Aspect::Parent => self.parent_presence(field, true),
                 Aspect::Path => self.path_presence(field, true),
@@ -876,7 +895,7 @@ impl RepoIndex {
             },
             Query::IsUnknown { field } => {
                 // universe − {records with any row of `field`} (present ∪ absent),
-                // matching the SQL `_repo WHERE uuid NOT IN (any field row)`.
+                // matching the oracle's `_repo WHERE uuid NOT IN (any field row)`.
                 let mut r = self.universe.clone();
                 r -= &self.present_of(field);
                 r -= &self.absent_of(field);
@@ -957,16 +976,17 @@ impl RepoIndex {
 
             Query::Matches { field, pattern, aspect } => {
                 Self::index_servable_aspect(*aspect)?;
-                // `raw` on a tree_ref is an error, not a name match: leave it to
-                // the SQL engine, which rejects it (spec-query "Field aspects").
-                // Under `value` the scan is the ordinary name scan.
+                // `raw` on a tree_ref is an error, not a name match — rejected
+                // upstream by `query_validate` (spec-query "Field aspects"), so
+                // this is a backstop. Under `value` the scan is the ordinary
+                // name scan.
                 if *aspect == Aspect::Raw && self.types.get(field) == Some(&"tree_ref") {
                     return Err(unsupported("MATCHES on a tree_ref field needs an aspect"));
                 }
                 self.text_scan(field, pattern, restrict)
             }
             // OSM `Direct` matches the row's own text with the very regex the
-            // SQL engine hands its `REGEXP` UDF, so the two cannot drift — in
+            // oracle hands its `REGEXP` UDF, so the two cannot drift — in
             // particular over `.`, which does not cross a newline.
             Query::Osm { field, terms, mode: metafolder_core::query::OsmMode::Direct } => {
                 self.text_scan(field, &crate::query_result::osm_regex(terms), restrict)
@@ -985,9 +1005,10 @@ impl RepoIndex {
 
     /// A regex text predicate (`Matches`, OSM `Direct`) answered by scanning the
     /// field's *distinct* values in memory — its cardinality, not its row count,
-    /// and no SQL at all. An invalid or oversized pattern is left to the SQL
-    /// engine, which reports it as a 400. A field with no indexed value matches
-    /// nothing, which is what SQL answers too.
+    /// and no SQL at all. An invalid or oversized pattern is a `400` raised
+    /// upstream by `query_validate`, so the `Unsupported` here is a backstop. A
+    /// field with no indexed value matches nothing, which is what the oracle
+    /// answers too.
     fn text_scan(
         &self,
         field: &str,
@@ -1006,8 +1027,9 @@ impl RepoIndex {
     /// a `Condition` target is evaluated to its match set.
     /// The root metarecord a `Path` target resolves to, looked up in the
     /// caller-supplied `roots`. `None` roots means the caller did not resolve
-    /// path targets, so this shape is `Unsupported` (fall back to SQL); a path
-    /// absent from a supplied map resolved to nothing (`Ok(None)`, empty result).
+    /// path targets, so this shape is `Unsupported` (a daemon bug on the
+    /// serving path); a path absent from a supplied map resolved to nothing
+    /// (`Ok(None)`, empty result).
     fn resolved_root(
         &self,
         field: &str,
@@ -1022,12 +1044,13 @@ impl RepoIndex {
 
     /// `field:parent IS ABSENT` / `IS PRESENT` (spec-query "Forest roots"):
     /// answered from the reverse index's parent partition, where the roots are
-    /// the sentinel's own bucket — one hash lookup for the question SQL answers
-    /// by scanning every row of the field.
+    /// the sentinel's own bucket — one hash lookup for the question the oracle
+    /// answers by scanning every row of the field.
     ///
-    /// A field the index does not hold as a forest defers, so the SQL engine
-    /// raises the `400` the aspect deserves on a non-`tree_ref` field; a field
-    /// with no indexed value at all is vacuously empty in both engines.
+    /// The `400` the aspect deserves on a non-`tree_ref` field is raised
+    /// upstream by `query_validate`, so a field the index does not hold as a
+    /// forest reaching here is a backstop; a field with no indexed value at all
+    /// is vacuously empty in both engines.
     fn parent_presence(&self, field: &str, present: bool) -> Result<RoaringBitmap, Unsupported> {
         let Some(fi) = self.fields.get(field) else { return Ok(RoaringBitmap::new()) };
         let bm = if present { fi.tree_parents_except(Some(ZERO_UUID)) } else { fi.tree_roots() };
@@ -1037,7 +1060,8 @@ impl RepoIndex {
     /// `field:path IS PRESENT` / `IS ABSENT`: a node has an assembled path
     /// exactly when it has a `tree_ref` row, so the aspect adds nothing to read
     /// and this is the raw presence — once the field is known to be a forest.
-    /// On anything else `:path` is a `400`, which the SQL engine raises.
+    /// On anything else `:path` is a `400`, raised upstream by
+    /// `query_validate`.
     fn path_presence(&self, field: &str, present: bool) -> Result<RoaringBitmap, Unsupported> {
         if self.types.get(field).is_some_and(|t| *t != "tree_ref") {
             return Err(unsupported("the ':path' aspect"));
@@ -1052,9 +1076,9 @@ impl RepoIndex {
     ///
     /// `Neq` is the mirror: every node under *another* parent — a forest root
     /// included, and everybody when the path resolves to nothing. It is not the
-    /// complement of `Eq` (SQL asks for one differing row, so a multi-position
-    /// node is in both sets). A regex or an ordered operand reads a uuid and is
-    /// a `400`, which the SQL engine is the one to raise.
+    /// complement of `Eq` (the predicate asks for one differing row, so a
+    /// multi-position node is in both sets). A regex or an ordered operand
+    /// reads a uuid and is a `400`, raised upstream by `query_validate`.
     fn parent_compare(
         &self,
         field: &str,
@@ -1072,9 +1096,9 @@ impl RepoIndex {
         if !fi.supports_transitive() {
             return Err(unsupported("the ':parent' aspect"));
         }
-        // A missing entry means nobody resolved this path: defer, exactly as
-        // the exact-node equality does. An entry mapping to `None` resolved to
-        // no node, which is SQL's "0" predicate — an empty result.
+        // A missing entry means nobody resolved this path: `Unsupported`,
+        // exactly as the exact-node equality is. An entry mapping to `None`
+        // resolved to no node, a "0" predicate — an empty result.
         let Some(resolved) = roots.and_then(|r| r.node.get(&(field.to_string(), path.clone())))
         else {
             return Err(unsupported("unresolved ':parent' path"));
@@ -1084,7 +1108,7 @@ impl RepoIndex {
                 None => RoaringBitmap::new(),
                 Some(node) => fi.referrers_of(*node).cloned().unwrap_or_default(),
             },
-            // `*resolved` is `None` for a path that is no node: SQL's predicate
+            // `*resolved` is `None` for a path that is no node: the predicate
             // is then `NOT (0)`, every row of the field — which is exactly what
             // excluding no bucket gives.
             _ => fi.tree_parents_except(*resolved).unwrap_or_default(),
@@ -1133,7 +1157,7 @@ impl RepoIndex {
         // target that is the single metarecord resolved through the tree cache;
         // for a condition it is the sub-query's match set. (Resolve the seed
         // before the index-support check so an unsupported sub-query still
-        // surfaces, matching the SQL fallback contract.)
+        // surfaces rather than being masked by an empty answer.)
         let frontier = match target {
             FollowTarget::Path(p) => match self.resolved_root(field, p, roots)? {
                 Some(root) => match self.registry.id(root) {
@@ -1187,15 +1211,15 @@ impl RepoIndex {
     /// order-sensitive and stays `Unsupported` (the caller resolves it).
     fn osm_path(&self, field: &str, terms: &[String]) -> Result<RoaringBitmap, Unsupported> {
         // `osm` path mode is tree_ref-only: a field holding any other type is a
-        // user error the SQL engine reports as a 400 with the "use osmd" hint
-        // (spec-query). Defer to it rather than answering with an empty bitmap,
-        // which would turn that mistake into a silent "no rows". A field with no
-        // values at all is vacuously empty in both engines.
+        // user error `query_validate` reports as a 400 with the "use osmd" hint
+        // (spec-query), before this runs. Decline rather than answer with an
+        // empty bitmap, which would turn that mistake into a silent "no rows".
+        // A field with no values at all is vacuously empty in both engines.
         if self.types.get(field).is_some_and(|t| *t != "tree_ref") {
             return Err(unsupported("osm path on a non-tree_ref field"));
         }
         // A blank query (the search box emptied) matches every metarecord with a
-        // path in this forest — the SQL engine scans for `value_type='tree_ref'`,
+        // path in this forest — the oracle scans for `value_type='tree_ref'`,
         // which on a tree_ref field is exactly the `present` set.
         if terms.is_empty() {
             return Ok(self.present_of(field));
@@ -1208,11 +1232,12 @@ impl RepoIndex {
             return Ok(RoaringBitmap::new());
         }
         // The "term nodes" — those whose *name* contains the term — resolved
-        // from the in-memory name partition. The SQL engine finds them with
+        // from the in-memory name partition. The oracle finds them with
         // `value_name REGEXP '(?i)<escaped term>'`, so use that very regex on
         // each distinct name: same case folding, same escaping, no divergence.
-        // It also works below the FTS trigram's three-character floor, which is
-        // where the first keystrokes of a search used to fall off a cliff.
+        // It also works below the three-character floor of the old FTS trigram
+        // index, where the first keystrokes of a search used to fall off a
+        // cliff.
         let re = crate::regexp::compile(&format!("(?i){}", regex::escape(term)))
             .map_err(|e| unsupported(format!("osm term is not a usable pattern: {e}")))?;
         let seeds = fi.scan_names(&|name| re.is_match(name), None);
@@ -1252,14 +1277,15 @@ impl RepoIndex {
 
     /// Dispatches a comparison to the field's encoding. A field with no
     /// non-`Nothing` rows has no encoding, so the comparison is empty — exactly
-    /// the SQL result (the `value_type` filter excludes every `Nothing` row).
-    /// The aspects this generic gate lets through: `raw` and `value` read the
-    /// row's own data, which the per-field index holds. `path` reads the
-    /// assembled path, which lives in the tree cache, and defers to SQL. So does
-    /// `parent` *here* — its two servable shapes (presence and equality) have
-    /// their own paths ([`Self::parent_presence`], [`Self::parent_compare`]),
-    /// and every other one (a regex over a uuid) belongs to SQL (spec-query
-    /// "Field aspects").
+    /// the oracle's result (the `value_type` filter excludes every `Nothing`
+    /// row). The aspects this generic gate lets through: `raw` and `value` read
+    /// the row's own data, which the per-field index holds. `path` reads the
+    /// assembled path, which lives in the tree cache, so it is declined here and
+    /// answered before the index runs, by `crate::forest_query` rewriting the
+    /// leaf into a `uuid_in` set. So is `parent` *here* — its two servable
+    /// shapes (presence and equality) have their own paths
+    /// ([`Self::parent_presence`], [`Self::parent_compare`]), and every other
+    /// one (a regex over a uuid) is a `400` (spec-query "Field aspects").
     fn index_servable_aspect(aspect: Aspect) -> Result<(), Unsupported> {
         match aspect {
             Aspect::Raw | Aspect::Value => Ok(()),
@@ -1284,7 +1310,8 @@ impl RepoIndex {
         }
         Self::index_servable_aspect(aspect)?;
         // A bare ordered comparison on a tree_ref is an error rather than a
-        // name compare: hand it to the SQL engine, which says so.
+        // name compare — a `400` raised upstream by `query_validate`, so this
+        // is a backstop.
         if aspect == Aspect::Raw
             && !matches!(op, CmpOp::Eq | CmpOp::Neq)
             && self.types.get(field) == Some(&"tree_ref")
@@ -1296,21 +1323,20 @@ impl RepoIndex {
         // node match. The resolution lives in the tree cache, not
         // the index, so both `Eq` and `Neq` are served only from a caller-supplied
         // [`NodeRoots`] entry (`Neq` as "present minus the node", below); without
-        // one, defer to the SQL engine rather than answer with the (wrong,
-        // value_name-based) bitmap. A string field keeps literal equality (the
-        // index handles it).
+        // one, decline rather than answer with the (wrong, value_name-based)
+        // bitmap. A string field keeps literal equality (the index handles it).
         if matches!(op, CmpOp::Eq | CmpOp::Neq) && aspect == Aspect::Raw {
             if let Value::String(s) = value {
                 if self.types.get(field) == Some(&"tree_ref") {
-                    // A missing entry means nobody resolved this path: defer.
+                    // A missing entry means nobody resolved this path: decline.
                     let resolved = roots.and_then(|r| r.node.get(&(field.to_string(), s.clone())));
                     let Some(node) = resolved else {
                         return Err(unsupported("exact-node tree_ref path equality"));
                     };
                     // The node itself, restricted to the metarecords that do
-                    // carry a value for this field — the SQL match is on a
+                    // carry a value for this field — the match is on a
                     // `field_name` row of type tree_ref, so a node whose rows
-                    // are all `Nothing` matches nothing there either. An entry
+                    // are all `Nothing` matches nothing either. An entry
                     // mapping to `None` resolved to no node: no match at all.
                     let eq = match node {
                         Some(node) => match self.registry.id(*node) {
@@ -1322,7 +1348,7 @@ impl RepoIndex {
                     if matches!(op, CmpOp::Eq) {
                         return Ok(eq);
                     }
-                    // `Neq` is *not* the complement: SQL asks for ≥1 non-Nothing
+                    // `Neq` is *not* the complement: it asks for ≥1 non-Nothing
                     // row that is not the `Eq` match, so a metarecord with no
                     // value for the field is in neither. On a tree_ref field
                     // that is every path-bearing metarecord but the node.
@@ -1414,7 +1440,7 @@ impl RepoIndex {
 // ── Pagination cursor ───────────────────────────────────────────────────────
 
 /// A deterministic hash binding a cursor to its (query, sort) so a token from
-/// one query cannot be replayed against another (matches the SQL engine).
+/// one query cannot be replayed against another (matches the oracle).
 fn page_guard(q: &Query, sort: &[SortBy]) -> u64 {
     let mut h: u64 = 0xcbf2_9ce4_8422_2325;
     let mut feed = |bytes: &[u8]| {

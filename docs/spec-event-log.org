@@ -644,7 +644,7 @@ state:
   redo (forward) step it is the =is_new=0= snapshot (pre-move). No filesystem
   check is needed. Skip is meant for a file that is still present but could not
   be moved, so the rewind keeps the metadata truthful; when the file is *gone*,
-  the CLI uses =step {}= instead (see [[*Policies for move_file]]).
+  the CLI uses =step {}= instead (see [[*Policies for =move_file=]]).
 - =file_deleted= skip: restoration sets =mfr_path= to =Nothing= (re-metarecords
   the deletion since the file is still absent).
 - =file_modified= skip: restoration clears =mfr_partial_hash= and
@@ -1831,7 +1831,7 @@ Target forms:
 4. Otherwise prints the plan, asks for confirmation unless =--force=, then calls
    =POST /revert/start= and, for each operation:
    - a =move= action: checks whether the file is at =from=, applies the relevant
-     policy (the same four as =mf rollback=, see [[*Policies for move_file]]),
+     policy (the same four as =mf rollback=, see [[*Policies for =move_file=]]),
      and adds the operation to the =apply= list when the =mv= succeeded. An
      occupied destination goes to the trash-bin first, as in a rollback, so no
      byte is lost.

@@ -17,7 +17,8 @@
 //!   #5 exact-node path (`mfr_path = "/a/b.txt"`): a full SQL scan (old) vs the
 //!      bitmap index seeded with the node resolved through the tree cache (new).
 //!   #6 OSM path: the forest walk backing the multi-term form, phase by phase.
-//!   #7 the text predicates still served by the SQL engine.
+//!   #7 the text predicates, timed on the oracle's row scan — the baseline the
+//!      index's in-memory value scan replaced.
 //!
 //! Run against the persistent 50k-file tree:
 //!   cargo test -p metafolder-daemon --test perf_bench --release -- --ignored --nocapture
@@ -192,7 +193,9 @@ fn bench_index_build_and_folder_query() {
     let new_query = follows();
 
     // OLD: the daemon rejected this from the index (Matches) and ran it in the
-    // SQL engine, whose REGEXP UDF scans every mfr_path row.
+    // SQL engine of the time, whose REGEXP UDF scans every mfr_path row. That
+    // engine is now the test oracle, which is what makes the baseline
+    // reproducible here.
     let mut cache = repo.cache.lock().unwrap();
     let t = Instant::now();
     let (old_hits, _) =
@@ -369,7 +372,7 @@ fn bench_index_build_and_folder_query() {
     }
     drop(cache);
 
-    // ── #7: the text predicates the SQL engine still serves ─────────────────
+    // ── #7: the text predicates, on the oracle's row scan (the old baseline) ─
     let mut cache = repo.cache.lock().unwrap();
     for (label, q) in [
         (
@@ -399,7 +402,7 @@ fn bench_index_build_and_folder_query() {
     ] {
         let t = Instant::now();
         let (hits, _) = query_exec::execute(&conn, &mut cache, &q, &[], None, None).unwrap();
-        eprintln!("#7 {label:<24} via SQL : {:?}  ({} hits)", t.elapsed(), hits.len());
+        eprintln!("#7 {label:<24} via the oracle's SQL : {:?}  ({} hits)", t.elapsed(), hits.len());
     }
     drop(cache);
 
