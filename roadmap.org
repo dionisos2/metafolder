@@ -24,11 +24,15 @@ Three items below shrank or changed shape as a consequence, and two sections of
 =docs/review-followups.md= (§7, §8) now describe a component that is no longer on
 the serving path — see "documentation drift" below.
 ** TODO cut the release (tag, changelog)
-** TODO adaptive query planner / on-disk index persistence (spec-indexing)
-Both still unbuilt, and the second is now the more visible of the two: with SQL
-off the serving path, a repo answers nothing well until its index is built, and
-the index is rebuilt from scratch at every repo load (=RepoState::warmup=). The
-DB fallback that used to cover that window is gone.
+** TODO on-disk index persistence (spec-indexing)
+Still unbuilt, and more visible since the unification: with SQL off the serving
+path, a repo answers nothing well until its index is built, and the index is
+rebuilt from scratch at every repo load (=RepoState::warmup=). The DB fallback
+that used to cover that window is gone.
+
+(The *adaptive planner* shared this item and is no longer on the roadmap: with
+one way to answer each operand there is no plan to choose. The design stays in
+spec-indexing as a record — see its =Status=.)
 * TODO known issues and deferred work
 Found by the whole-project review pass and not (yet) fixed. Items already
 written up in =docs/review-followups.md= are referenced by their section rather

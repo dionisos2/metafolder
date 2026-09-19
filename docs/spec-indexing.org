@@ -12,9 +12,20 @@ in-memory roaring-bitmap / BSI query accelerator described under
 (=crates/daemon/src/index/=, built at repo load, refreshed to HEAD per query,
 validated by =tests/index_oracle.rs=) — which is now the *only* thing that
 serves a filter ([[*No operand runs in SQL]], done). Still forward-looking
-(tagged =:v2:= or later): the *adaptive planner* / cost model, on-disk index
-persistence, and the larger-scale refinements. When in doubt,
-=crates/daemon/src/index/= is the authority on what exists.
+(tagged =:v2:= or later): on-disk index persistence and the larger-scale
+refinements. When in doubt, =crates/daemon/src/index/= is the authority on what
+exists.
+
+*The adaptive planner is not planned* (off the roadmap, September 2026). It was
+the part of this design that chose an *access path*, and choosing presupposed
+alternatives: an operand could run on the bitmaps or in SQL, over the forest or
+over rows. Since [[*No operand runs in SQL]] there is exactly one way to answer
+each operand, so there is no plan to pick. The one ordering decision left —
+"bitmap work first, text scans over what survives" — is a fixed heuristic that
+needs no statistics and is already implemented
+([[*Storage model: a derived in-memory cache]]). The passages below that assume
+a planner are kept as the design record they are, in case a future shape (the
+=:future:= tree-as-range trick, say) ever brings alternatives back.
 
 Numbers below come from =crates/bench= run against the two persistent data
 folders (=benchmarks/bench_data= ≈ 5 101 and =benchmarks/bench_data_big= ≈
@@ -235,7 +246,7 @@ cannot prune the walk — a non-file directory may still contain file descendant
 If metarecord ids are assigned in tree order (DFS pre-order) — or each node
 carries a nested-set interval — a sub-tree =/A= becomes a *contiguous id range*,
 i.e. a range bitmap. The transitive filter then never enumerates the sub-tree;
-it is a range test the planner intersects with the most selective operand:
+it is a range test the engine intersects with the most selective operand:
 
 #+begin_example
   mfr_path ->* /A  AND  mfr_type = file  AND  date ≥ T
@@ -528,9 +539,10 @@ maintained on the write path (see the increments above).
 
 Inside an =And=, the text operands are evaluated *last* and receive the running
 intersection as a candidate restriction: a value whose bitmap misses every
-candidate is skipped without running the predicate. This is the minimal form of
-the adaptive planner deferred below — no statistics, just "bitmap work first,
-scans afterwards, over what is left". It is what makes "this folder, name
+candidate is skipped without running the predicate. This is the whole of the
+planning the engine does — no statistics, just "bitmap work first, scans
+afterwards, over what is left" — and, the adaptive planner being off the
+roadmap ([[*Status]]), the whole of what is intended. It is what makes "this folder, name
 matching X" cost the folder rather than the repository (207 → 10 ms). The
 membership test probes from the smaller of the two bitmaps: =is_disjoint= merges
 the containers, so its cost follows the *bigger* side, and this runs once per
@@ -680,8 +692,9 @@ The design rests on assumptions that must be validated with =crates/bench=
 - *Rust libraries*: maturity of =croaring= / =roaring-rs=; whether a BSI layer
   exists or must be built on top of roaring.
 - *Real query distributions*: how often queries fall in the easy (aligned /
-  sparse / small-m) regime vs the intrinsically hard one, to confirm the
-  adaptive planner's default (filter-first) is the common path.
+  sparse / small-m) regime vs the intrinsically hard one, to confirm that
+  filter-first — which the engine always does, having no alternative — is right
+  for the common path.
 
 * Open questions
 

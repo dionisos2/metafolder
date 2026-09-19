@@ -20,9 +20,9 @@ whatever the user typed. Today the only way to find out is to run it.
 The obvious fix — have the daemon *refuse* the query shapes it cannot serve from
 the bitmap index, behind an "extended" flag — is the wrong one. The set of
 shapes the index declines is an implementation detail of the accelerator, and it
-is *meant* to move: the =:parent= aspect has just been taken out of it, the
-adaptive planner ([[file:spec-indexing.org][spec-indexing]]) will change it
-again. Freezing it into user-visible
+is *meant* to move: the =:parent= aspect has just been taken out of it, and the
+forest's rewrite took the =:path= leaves out with it. Freezing it into
+user-visible
 surface turns every improvement of the index into a contract change, and the
 list is not even the right predicate: "not served by the index" is not the same
 as "slow" — and since the index is now the only thing that serves a filter
@@ -47,10 +47,12 @@ refuses to run, on its own terms.
   is not an input to this feature and this feature does not write to it.
 - *No promise of a duration.* The estimate is a band derived from declared
   constants (see [[*Calibration]]), and it is explicitly marked as such.
-- *Not a planner.* Explain describes the work the daemon will actually do. It
-  chooses nothing — though its cost model is the piece the adaptive planner
-  will need, which is why the two must share it (see [[*Where the model is
-  computed]]).
+- *Not a planner.* Explain describes the work the daemon will actually do, and
+  chooses nothing — there is nothing to choose, one way answering each operand
+  ([[file:spec-indexing.org][spec-indexing]] "No operand runs in SQL"). The
+  adaptive planner this cost model was once meant to feed is not planned
+  either, which removes explain's second customer: the model now exists for
+  clients alone, and that is the only thing it has to be right for.
 
 * Where the model is computed
 
