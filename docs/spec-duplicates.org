@@ -468,9 +468,10 @@ reconcile and sync independently of duplicate detection.
   outcome, not an error — what it found is kept.
 - =metarecord-list:duplicates= — sets the panel's DSL query to
   =same(mfr_duplicate_group, <selected uuid>)=: "show me what else is identical
-  to this". It is a *visible, editable* query rather than a hidden override
-  like the orphan view, whose =uuid_in= set has no DSL spelling; so it composes
-  with everything else the box can express.
+  to this". It is a *visible, editable* query rather than a hidden override, so
+  it composes with everything else the box can express. (Every set the GUI can
+  hand a panel is spellable in the box now — an explicit list of uuids included,
+  =uuid_in(…)=.)
 - *duplicates panel* (=panel:set type duplicates=, default =t u=) — the groups,
   worst-reclaimable first, collapsed; =Enter= expands one into its members'
   paths, =+= marking a member that shares an inode with another. Highlighting a

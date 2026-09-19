@@ -43,8 +43,9 @@ and the set layer: it lets the =/query/*= operations target an *explicit set of
 UUIDs* instead of a predicate. JSON: ={"type": "uuid_in", "uuids": ["<32hex>", ...]}=
 (an empty list matches nothing). It is the canonical way to read or write *several
 named metarecords at once* in one request — e.g. a GUI multi-selection — rather
-than one request per UUID. The DSL spells it as a *bare UUID atom* (see
-[[*Query DSL]]).
+than one request per UUID. The DSL spells it two ways, both compiling to this
+one node: a *bare UUID atom* for a single metarecord, and the list form
+=uuid_in(<uuid>, <uuid>, …)= for a set (see [[*Query DSL]]).
 
 * Daemon
 
@@ -259,8 +260,8 @@ open (roadmap, "query API limits").
 Both are generous: a hand-written or UI-built query is far below them. What runs
 into them is membership — "this field is one of these N values" — spelled as an
 =Or= of N =Eq=. Decompose it, or use =uuid_in= when the N values are uuids (the
-DSL folds an =Or= of bare UUID atoms into a single =uuid_in= node on its own); a
-native =In= over field values would do the same for them
+DSL spells it =uuid_in(…)=, and folds an =Or= of bare UUID atoms into the same
+single node on its own); a native =In= over field values would do the same for them
 (docs/review-followups.md §8).
 
 Neither bounds *execution* time: a small query can still be slow (a =Matches=
@@ -652,6 +653,19 @@ uuid      := 32 ASCII hexadecimal characters
     form of =->= expresses "the field references *this* metarecord" as
     =tag -> (3f2a…9b)=, served in memory by the bitmap index (a =Follows= over a
     one-element =UuidIn=). This is why the DSL has no =Ref= *value* literal.
+- =uuid_in(<uuid>, <uuid>, …)= is the *list form* of the same atom: it compiles to
+  the very =UuidIn= node a chain of bare atoms folds into, and exists purely for
+  spelling — N uuids cost one keyword and a comma each instead of N =OR=
+  keywords, which is what a client building a query out of a multi-selection
+  writes. Like =osm=/=osmd=/=same= it is recognised only when immediately
+  followed by =(=, so a field named =uuid_in= stays usable as a predicate. The
+  elements take the bare 32-hex form and nothing else (same rule, same errors, as
+  the atom). A *trailing comma* is accepted — a loop that appends ="<uuid>, "=
+  emits one — and an *empty list*, =uuid_in()=, is the empty set: it matches
+  nothing, so an empty selection needs no special case in the client. Being a
+  =UuidIn= like the atom, it folds with one: =uuid_in(3f2a…9b) OR 7c11…04= is a
+  single node. The simplified language has no list form of its own; there the
+  boolean skeleton's =+= already joins pasted uuids (=3f2a…9b + 7c11…04=).
 - A *datetime literal* is =@= followed by either a quoted ISO-8601 string
   (=@"2024-01-01"=, =@"2024-01-01 12:30:00"=; any form =core::date::iso_to_ms=
   accepts, UTC) or a bare integer of Unix milliseconds (=@1704067200000=). It
@@ -675,6 +689,8 @@ mf_schema = "tag" AND (osm(path, "musi jazz") OR osmd(label, "jazz"))
 8f3a2b1c4d5e6f708192a3b4c5d6e7f8            # one metarecord, by UUID
 8f3a2b1c4d5e6f708192a3b4c5d6e7f8 OR 47ab0000000000000000000000000001
 8f3a2b1c4d5e6f708192a3b4c5d6e7f8 AND rating > 3
+uuid_in(8f3a2b1c4d5e6f708192a3b4c5d6e7f8, 47ab0000000000000000000000000001)
+uuid_in(8f3a2b1c4d5e6f708192a3b4c5d6e7f8, 47ab0000000000000000000000000001) AND rating > 3
 tag -> (8f3a2b1c4d5e6f708192a3b4c5d6e7f8)   # records referencing that tag
 same(mfr_duplicate_group, 8f3a2b1c4d5e6f708192a3b4c5d6e7f8)  # its byte-identical twins
 same(mfr_meta_artist, mfr_path = "/music/a.flac")             # same artist as that file
@@ -910,7 +926,10 @@ the normal DSL's own UUID atom (see [[*Query DSL]]), so the identifier the GUI
 copies works in the simplified box too — one form in both languages, no sigil.
 =tag->UUID= (or any ref field) selects the records pointing *at* it, the
 =Follows= form the tag macros above build by path. No other rule can start with
-a =UUID= token, so its position among the alternatives is immaterial.
+a =UUID= token, so its position among the alternatives is immaterial. Several
+pasted uuids need no list form here: the boolean skeleton's =+= already joins
+them (=3f2a…9b + 7c11…04=), and the normal DSL folds the =OR= it expands to into
+one =uuid_in= node.
 
 The date macros read as English: =modified younger 3d= (modified within the last
 three days) → =mfr_mtime > @<now − 3 days>=; =created older 2 weeks= →

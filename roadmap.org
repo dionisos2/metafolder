@@ -102,18 +102,20 @@ a client can stop one — but nothing enforces a deadline on its own. §8's SQLi
 lead (=progress_handler=, =interrupt()=) is obsolete with SQL off the path; the
 place to poll is the index evaluation loop.
 
-*** TODO no DSL spelling for an explicit list of UUIDs
-Correcting what this entry used to claim: an =Or= of bare UUID atoms is *not* N
-predicate nodes. The parser folds it — when every operand of an =Or= is a
-=UuidIn=, the lists are concatenated into one node (=core/src/dsl.rs=,
-=or_expr_inner=) — so a pasted multi-selection already compiles to the single
-=UuidIn= the IR holds. There is no cost argument left here.
+*** DONE a DSL spelling for an explicit list of UUIDs (September 2026)
+There was never a cost argument here: an =Or= of bare UUID atoms is *not* N
+predicate nodes — the parser folds it, concatenating the lists whenever every
+operand of an =Or= is a =UuidIn= (=core/src/dsl.rs=, =or_expr_inner=) — only a
+spelling one, N =OR= keywords for N uuids in the query box.
 
-What remains is spelling: N UUIDs cost N =OR= keywords and 33N characters in the
-query box. A bracketed atom, =uuid_in [3f2a…9b, 7c11…04]=, would be purely
-additive to the grammar (=uuid_in= joining =osm=/=osmd=/=same= as a word
-recognised only in operator position) and compile to the same node. Worth doing
-for the shell clients that build such a list, not urgent.
+Shipped as =uuid_in(<uuid>, <uuid>, …)=, compiling to that same single node. The
+form is the =osm=/=osmd=/=same= one, a word recognised only when immediately
+followed by =(=, and *not* the bracketed =uuid_in [...]= this entry used to
+propose: brackets would spend two of the free punctuation characters the DSL
+deliberately keeps in reserve, and the named-operator precedent spends none. A
+trailing comma is accepted (a loop emits one) and =uuid_in()= is the empty set,
+so a client with an empty selection needs no special case. The simplified
+language gets nothing: =+= already joins pasted uuids there.
 
 *** TODO the CLI cannot read a scope by batches: no =--cursor=, no =--count=
 The daemon already pages: =POST /query= takes =limit= + an opaque keyset

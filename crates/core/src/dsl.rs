@@ -502,6 +502,8 @@ impl Parser {
             self.osm_call(mode)
         } else if self.peek_same_call() {
             self.same_call()
+        } else if self.peek_uuid_in_call() {
+            self.uuid_in_call()
         } else if let Some(uuid) = self.peek_uuid_atom() {
             self.next();
             Ok(Query::UuidIn { uuids: vec![uuid] })
@@ -540,6 +542,64 @@ impl Parser {
     fn peek_same_call(&self) -> bool {
         matches!(self.peek(), Some(Tok::Ident(name)) if name == "same")
             && self.tokens.get(self.pos + 1) == Some(&Tok::LParen)
+    }
+
+    /// `uuid_in` is a function-call operator too, recognised only when the
+    /// identifier is immediately followed by `(` — so a field literally named
+    /// `uuid_in` stays usable as an ordinary predicate.
+    fn peek_uuid_in_call(&self) -> bool {
+        matches!(self.peek(), Some(Tok::Ident(name)) if name == "uuid_in")
+            && self.tokens.get(self.pos + 1) == Some(&Tok::LParen)
+    }
+
+    /// `"uuid_in" "(" [ uuid { "," uuid } [","] ] ")"` — an explicit set of
+    /// metarecords, the same `UuidIn` node a chain of bare atoms folds into
+    /// (spec-query "Query DSL"). It buys spelling, not evaluation: N uuids cost
+    /// one keyword and a comma each instead of N `OR`s, which is what a client
+    /// building the list out of a multi-selection writes. A trailing comma is
+    /// accepted (a loop emits one) and an empty list is the empty set — an
+    /// empty selection selects nothing, so the client needs no special case.
+    fn uuid_in_call(&mut self) -> Result<Query, String> {
+        self.next(); // the `uuid_in` identifier
+        self.expect(Tok::LParen)?;
+        let mut uuids = Vec::new();
+        loop {
+            if self.peek() == Some(&Tok::RParen) {
+                self.next();
+                return Ok(Query::UuidIn { uuids });
+            }
+            uuids.push(self.uuid_in_element()?);
+            match self.next() {
+                Some(Tok::Comma) => {}
+                Some(Tok::RParen) => return Ok(Query::UuidIn { uuids }),
+                Some(tok) => {
+                    return Err(format!(
+                        "expected ',' or ')' in uuid_in(...), got {}",
+                        describe(&tok)
+                    ))
+                }
+                None => return Err("expected ',' or ')' in uuid_in(...)".into()),
+            }
+        }
+    }
+
+    /// One element of a `uuid_in(...)` list: the bare 32-hex form and nothing
+    /// else, so the errors a bare atom earns are the errors it earns here.
+    fn uuid_in_element(&mut self) -> Result<uuid::Uuid, String> {
+        match self.next() {
+            Some(Tok::Hex(text)) => {
+                uuid::Uuid::try_parse(&text).map_err(|_| truncated_uuid_error(&text))
+            }
+            Some(Tok::Ident(name)) if looks_like_truncated_uuid(&name) => {
+                Err(truncated_uuid_error(&name))
+            }
+            Some(Tok::Str(s)) if uuid::Uuid::parse_str(&s).is_ok() => Err(format!(
+                "a quoted string is not a UUID: write it unquoted ({})",
+                uuid::Uuid::parse_str(&s).expect("checked above").as_simple()
+            )),
+            Some(tok) => Err(format!("expected a UUID in uuid_in(...), got {}", describe(&tok))),
+            None => Err("expected a UUID in uuid_in(...)".into()),
+        }
     }
 
     /// `"same" "(" field "," query ")"` — the second argument is a whole query
@@ -1561,6 +1621,94 @@ mod tests {
                 msg.contains("UUID"),
                 "'{input}' should be reported as a truncated UUID: {msg}"
             );
+        }
+    }
+
+    // ── the explicit-set atom `uuid_in(...)` ────────────────────────────────
+
+    #[test]
+    fn test_uuid_in_list_call() {
+        // The same node a chain of bare atoms folds into, spelled once.
+        assert_eq!(ok(&format!("uuid_in({U1}, {U2})")), uuid_in(&[U1, U2]));
+        assert_eq!(ok(&format!("uuid_in({U1})")), uuid_in(&[U1]));
+        assert_eq!(ok(&format!("uuid_in( {U1} ,{U2} )")), uuid_in(&[U1, U2]));
+        assert_eq!(ok(&format!("uuid_in({}, {U2})", U1.to_uppercase())), uuid_in(&[U1, U2]));
+    }
+
+    #[test]
+    fn test_uuid_in_accepts_a_trailing_comma() {
+        // A client building the list with a loop emits one.
+        assert_eq!(ok(&format!("uuid_in({U1}, {U2},)")), uuid_in(&[U1, U2]));
+        assert_eq!(ok(&format!("uuid_in({U1},)")), uuid_in(&[U1]));
+    }
+
+    #[test]
+    fn test_uuid_in_empty_list_is_the_empty_set() {
+        // An empty selection selects nothing — no special case for the client.
+        assert_eq!(ok("uuid_in()"), Query::UuidIn { uuids: vec![] });
+    }
+
+    #[test]
+    fn test_uuid_in_composes_like_any_atom() {
+        assert_eq!(
+            ok(&format!("uuid_in({U1}, {U2}) AND rating > 3")),
+            Query::And {
+                operands: vec![
+                    uuid_in(&[U1, U2]),
+                    Query::Gt { field: "rating".into(), value: Value::Int(3), aspect: Aspect::Raw }
+                ]
+            }
+        );
+        assert_eq!(
+            ok(&format!("NOT uuid_in({U1})")),
+            Query::Not { operand: Box::new(uuid_in(&[U1])) }
+        );
+        assert_eq!(
+            ok(&format!("tag -> (uuid_in({U1}, {U2}))")),
+            Query::Follows {
+                field: "tag".into(),
+                target: FollowTarget::Condition(Box::new(uuid_in(&[U1, U2]))),
+            }
+        );
+        assert_eq!(
+            ok(&format!("same(mfr_duplicate_group, uuid_in({U1}, {U2}))")),
+            same("mfr_duplicate_group", uuid_in(&[U1, U2]))
+        );
+        // It is a `UuidIn` like a bare atom, so the `Or` fold still applies.
+        assert_eq!(ok(&format!("uuid_in({U1}) OR {U2}")), uuid_in(&[U1, U2]));
+    }
+
+    #[test]
+    fn test_field_named_uuid_in_still_usable() {
+        // `uuid_in` is special only when immediately followed by '(' — the
+        // osm/osmd/same rule.
+        assert_eq!(
+            ok(r#"uuid_in = "x""#),
+            Query::Eq {
+                field: "uuid_in".into(),
+                value: Value::String("x".into()),
+                aspect: Aspect::Raw,
+            }
+        );
+        assert_eq!(
+            ok("uuid_in IS PRESENT"),
+            Query::IsPresent { field: "uuid_in".into(), aspect: Aspect::Raw }
+        );
+    }
+
+    #[test]
+    fn test_uuid_in_rejects_bad_shapes() {
+        err(&format!("uuid_in({U1} {U2})")); // missing comma
+        err(&format!("uuid_in({U1}")); // unterminated
+        err("uuid_in(rating > 3)"); // not a UUID
+        err(&format!("uuid_in(,{U1})")); // leading comma
+                                         // A quoted UUID is still not a UUID, and the message names the form.
+        let msg = err(&format!(r#"uuid_in("{U1}")"#));
+        assert!(msg.contains(U1), "message should show the bare form: {msg}");
+        // A half-pasted identifier is reported as such, inside the list too.
+        for half in ["8f3a2b1c4d5e", "abcdefabcdef"] {
+            let msg = err(&format!("uuid_in({U1}, {half})"));
+            assert!(msg.contains("truncated"), "'{half}' should read as truncated: {msg}");
         }
     }
 

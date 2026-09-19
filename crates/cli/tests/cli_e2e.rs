@@ -483,6 +483,29 @@ fn test_get_with_predicate() {
 }
 
 #[test]
+fn test_get_with_a_uuid_in_list() {
+    // The DSL list form reaches the daemon as the `uuid_in` IR node: the shell
+    // spelling of a multi-selection (spec-query "Query DSL").
+    let (repo, _root) = init_repo("get_uuid_in");
+    let a = create_metarecord(&repo, &["x:int=1"]);
+    let b = create_metarecord(&repo, &["x:int=2"]);
+    let _c = create_metarecord(&repo, &["x:int=3"]);
+
+    let out = mf(&["-u", &repo, "metarecord", "-q", &format!("uuid_in({a}, {b})"), "get"]);
+    assert_ok(&out);
+    let mut lines: Vec<&str> = out.stdout.lines().collect();
+    lines.sort_unstable();
+    let mut want = vec![a.as_str(), b.as_str()];
+    want.sort_unstable();
+    assert_eq!(lines, want, "stdout: {}", out.stdout);
+
+    // An empty list is the empty set, not an error.
+    let out = mf(&["-u", &repo, "metarecord", "-q", "uuid_in()", "get"]);
+    assert_ok(&out);
+    assert_eq!(out.stdout.trim(), "", "uuid_in() should select nothing");
+}
+
+#[test]
 fn test_get_predicate_with_limit_and_sort() {
     let (repo, _root) = init_repo("get_limit_sort");
     create_metarecord(&repo, &["rating:int=1"]);

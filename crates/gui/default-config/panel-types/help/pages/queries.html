@@ -194,6 +194,14 @@ path:parent IS ABSENT           the roots of the tag hierarchy</pre>
 </p>
 <pre>tag -&gt; (8f3a2b1c4d5e6f708192a3b4c5d6e7f8)</pre>
 <p>
+  For <strong>several</strong> metarecords, <code>uuid_in(…)</code> takes a
+  comma-separated list — the same thing as chaining <code>OR</code>, without the
+  keyword between each pair (a trailing comma is fine, and
+  <code>uuid_in()</code> matches nothing):
+</p>
+<pre>uuid_in(8f3a2b1c4d5e6f708192a3b4c5d6e7f8, 47ab0000000000000000000000000001)
+uuid_in(8f3a2b1c4d5e6f708192a3b4c5d6e7f8, 47ab0000000000000000000000000001) AND rating &gt; 3</pre>
+<p>
   The <a data-help-page="simplified-query">simplified box</a> takes it too — the
   shipped grammar passes a pasted UUID straight through, and
   <code>tag-&gt;&lt;uuid&gt;</code> there is the same <code>-&gt;</code> form as
