@@ -12,12 +12,17 @@
 use std::path::Path;
 use std::sync::Arc;
 
+use axum::body::Body;
+use axum::http::{Request, StatusCode};
+use axum::Router;
+use http_body_util::BodyExt;
 use metafolder_core::metarecord::Value;
 use metafolder_daemon::executor::{self, FsEvent};
 use metafolder_daemon::log::Writer;
 use metafolder_daemon::mount::{self, MountState};
-use metafolder_daemon::state::RepoState;
-use metafolder_daemon::{db, orphans, reconcile, repo, watcher};
+use metafolder_daemon::state::{AppState, RepoState};
+use metafolder_daemon::{db, orphans, reconcile, repo, routes, watcher};
+use tower::util::ServiceExt;
 use uuid::Uuid;
 
 mod common;
@@ -215,4 +220,147 @@ fn the_executor_drops_an_event_landing_in_an_offline_mount() {
         "an unplugged volume's file was orphaned by a watcher event"
     );
     assert_eq!(field_value(&repo, b, "mfr_path"), Some(Value::Nothing));
+}
+
+// ── Mount status while the repository is busy ────────────────────────────────
+//
+// A long write — a reconcile, a big watcher flush — holds *both* the database
+// connection and the tree cache for its whole transaction (minutes, on a large
+// repository). `GET /repos/:repo/mounts` used to take the two blocking, and the
+// GUI asks for them on every directory listing: measured behind a full reconcile
+// on a 50 k-metarecord repository, one call took 151 385 ms, all of it in
+// `wait:conn`.
+//
+// Waiting buys nothing. What the request needs from the database is the
+// *declared set* — which metarecords carry `mfr_mount`, and where they sit —
+// and a writer in flight has committed none of its changes, so the set as the
+// reader last saw it *is* the committed one. The volatile half (is the volume
+// plugged in right now?) is read from the disk on every request either way.
+
+/// Initialises a repository inside an `AppState`, with the watch flag and the
+/// default ignore patterns of [`setup`], and returns the router beside it.
+fn setup_app(prefix: &str) -> (Router, Arc<AppState>, Arc<RepoState>, String, TempDir) {
+    let root = TempDir::new(&format!("mount_{prefix}"));
+    let state = Arc::new(AppState::new());
+    let uuid = state.init_repo(&root, None, None, false).unwrap();
+    let repo = state.repo(uuid).unwrap();
+    let root_uuid = {
+        let conn = repo.conn.lock().unwrap();
+        db::find_tree_child(&conn, "mfr_path", None, "").unwrap().unwrap()
+    };
+    {
+        let mut conn = repo.conn.lock().unwrap();
+        let mut w = Writer::begin(&mut conn, None).unwrap();
+        w.set_field(root_uuid, "mf_watch", Value::Bool(true)).unwrap();
+        for pattern in DEFAULT_PATTERNS {
+            w.append_field(root_uuid, "mf_ignore", Value::String((*pattern).into())).unwrap();
+        }
+        w.commit().unwrap();
+    }
+    (routes::build(state.clone()), state, repo, uuid.as_simple().to_string(), root)
+}
+
+/// `GET /repos/:repo/mounts`, answered or timed out.
+async fn get_mounts(app: &Router, repo: &str) -> Option<serde_json::Value> {
+    let request = Request::builder()
+        .method("GET")
+        .uri(format!("/repos/{repo}/mounts"))
+        .body(Body::empty())
+        .unwrap();
+    let response =
+        tokio::time::timeout(std::time::Duration::from_secs(5), app.clone().oneshot(request))
+            .await
+            .ok()?
+            .unwrap();
+    assert_eq!(response.status(), StatusCode::OK);
+    let bytes =
+        tokio::time::timeout(std::time::Duration::from_secs(5), response.into_body().collect())
+            .await
+            .ok()?
+            .unwrap()
+            .to_bytes();
+    Some(serde_json::from_slice(&bytes).unwrap())
+}
+
+/// Holds the connection and the tree cache from another thread, exactly as a
+/// running reconcile does. Dropping the returned handle releases them.
+struct Busy {
+    release: std::sync::mpsc::Sender<()>,
+    thread: Option<std::thread::JoinHandle<()>>,
+}
+
+impl Busy {
+    fn hold(repo: Arc<RepoState>) -> Busy {
+        let (locked_tx, locked_rx) = std::sync::mpsc::channel();
+        let (release, release_rx) = std::sync::mpsc::channel::<()>();
+        let thread = std::thread::spawn(move || {
+            let _conn = repo.conn.lock().unwrap();
+            let _cache = repo.cache.lock().unwrap();
+            locked_tx.send(()).unwrap();
+            let _ = release_rx.recv();
+        });
+        locked_rx.recv().unwrap();
+        Busy { release, thread: Some(thread) }
+    }
+}
+
+impl Drop for Busy {
+    fn drop(&mut self) {
+        let _ = self.release.send(());
+        if let Some(t) = self.thread.take() {
+            let _ = t.join();
+        }
+    }
+}
+
+#[tokio::test]
+async fn mount_status_answers_while_a_write_holds_the_repository() {
+    let (app, _state, repo, repo_id, root) = setup_app("busy");
+    write_file(&root, "/vol/a.txt", b"content");
+    reconcile::reconcile(&repo).unwrap();
+    let vol = resolve(&repo, "/vol").unwrap();
+    declare_mount(&repo, vol, "uuid:1234-ABCD");
+
+    // A first call with the repository free: the ordinary path.
+    let free = get_mounts(&app, &repo_id).await.expect("the free call must answer");
+    assert_eq!(free["mounts"].as_array().unwrap().len(), 1, "{free}");
+
+    let _busy = Busy::hold(repo.clone());
+    let body = get_mounts(&app, &repo_id)
+        .await
+        .expect("GET /mounts must not queue behind a running write");
+    let mounts = body["mounts"].as_array().unwrap();
+    assert_eq!(mounts.len(), 1, "the declared set must still be served: {body}");
+    assert_eq!(mounts[0]["path"], "/vol");
+    assert_eq!(mounts[0]["expected"], "uuid:1234-ABCD");
+    // The disk half is probed on every request, busy or not.
+    assert_eq!(mounts[0]["state"], "offline");
+}
+
+#[tokio::test]
+async fn mount_status_answers_on_a_freshly_loaded_repository_that_is_busy() {
+    let (app, state, repo, repo_id, root) = setup_app("busy_cold");
+    write_file(&root, "/vol/a.txt", b"content");
+    reconcile::reconcile(&repo).unwrap();
+    let vol = resolve(&repo, "/vol").unwrap();
+    declare_mount(&repo, vol, "label:PHOTOS");
+    drop(repo);
+
+    // Reload it, so nothing has ever read the mount points on this repo state:
+    // the load must leave them resident, or the first listing of a repository
+    // opened while a reconcile runs loses the distinction altogether.
+    state.unload_repo(Uuid::parse_str(&repo_id).unwrap()).unwrap();
+    let uuid = state
+        .load_repo(metafolder_daemon::repo::RepoLocator::Root(root.path().to_path_buf()))
+        .unwrap();
+    let repo = state.repo(uuid).unwrap();
+    repo.warm(&|_, _, _| {}).unwrap();
+
+    let _busy = Busy::hold(repo.clone());
+    let body = get_mounts(&app, &uuid.as_simple().to_string())
+        .await
+        .expect("GET /mounts must not queue behind a running write");
+    let mounts = body["mounts"].as_array().unwrap();
+    assert_eq!(mounts.len(), 1, "the load must leave the declared set resident: {body}");
+    assert_eq!(mounts[0]["expected"], "label:PHOTOS");
 }

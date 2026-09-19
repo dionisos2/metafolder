@@ -119,21 +119,64 @@ pub struct MountPoint {
     pub state: MountState,
 }
 
-/// Every declared mount point of the repository, with its current state.
-pub fn declared(conn: &Connection, cache: &mut TreeCache, root: &Path) -> Result<Vec<MountPoint>> {
+/// A declared mount point as the *database* knows it: a [`MountPoint`] without
+/// the half that depends on the disk.
+///
+/// Split out because this is the half a reader can hold on to. It changes only
+/// when a write declares or removes a mount point, whereas the state is probed
+/// afresh on every request — so a reader that cannot take the repository right
+/// now (a long write holds the connection and the tree cache for its whole
+/// transaction) still has the committed set in hand, and answers from it
+/// (see [`crate::state::RepoState::declared_mounts`]).
+#[derive(Debug, Clone)]
+pub struct DeclaredMount {
+    pub uuid: Uuid,
+    /// Repo-root-relative path, or `None` when `mfr_path` no longer resolves.
+    pub path: Option<String>,
+    /// The stored `mfr_mount` value.
+    pub expected: String,
+}
+
+/// The repository's declared mount points, read from the database: every
+/// metarecord carrying [`FIELD`], with the path it sits at.
+pub fn declared_set(conn: &Connection, cache: &mut TreeCache) -> Result<Vec<DeclaredMount>> {
     let mut out = Vec::new();
     for (uuid, expected) in crate::db::string_field_owners(conn, FIELD)? {
         let path = cache.path_of(conn, "mfr_path", uuid)?;
-        let current = path.as_deref().and_then(|rel| probe(&abs_of(root, rel)));
-        let state = match &current {
-            None => MountState::Offline,
-            Some(current) if *current == expected => MountState::Online,
-            Some(_) => MountState::Mismatch,
-        };
-        out.push(MountPoint { uuid, path, expected, current, state });
+        out.push(DeclaredMount { uuid, path, expected });
     }
-    out.sort_by(|a, b| a.path.cmp(&b.path));
     Ok(out)
+}
+
+/// The state of each declared mount point, probed against the disk right now
+/// (one `lstat` pair per mount point, no walk). Ordered by path.
+pub fn states(declared: &[DeclaredMount], root: &Path) -> Vec<MountPoint> {
+    let mut out: Vec<MountPoint> = declared
+        .iter()
+        .map(|m| {
+            let current = m.path.as_deref().and_then(|rel| probe(&abs_of(root, rel)));
+            let state = match &current {
+                None => MountState::Offline,
+                Some(current) if *current == m.expected => MountState::Online,
+                Some(_) => MountState::Mismatch,
+            };
+            MountPoint {
+                uuid: m.uuid,
+                path: m.path.clone(),
+                expected: m.expected.clone(),
+                current,
+                state,
+            }
+        })
+        .collect();
+    out.sort_by(|a, b| a.path.cmp(&b.path));
+    out
+}
+
+/// Every declared mount point of the repository, with its current state — the
+/// two halves in one step, for a caller that already holds the repository.
+pub fn declared(conn: &Connection, cache: &mut TreeCache, root: &Path) -> Result<Vec<MountPoint>> {
+    Ok(states(&declared_set(conn, cache)?, root))
 }
 
 /// The absolute path of a repo-root-relative `mfr_path` string.

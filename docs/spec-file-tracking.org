@@ -1272,6 +1272,31 @@ This is the endpoint a client uses to explain a subtree that looks empty or
 stale, instead of presenting it as deleted — see
 [[file:spec-gui.org][spec-gui.org]] "Unmounted volumes".
 
+*** Answering while the repository is busy
+
+The call takes neither the database connection nor the tree cache: it *tries*
+them, and answers without them when a write holds them. A client asks for the
+mount points on every listing it draws, and a long write — a reconcile, a big
+watcher flush — owns the repository for its whole transaction, so waiting turned
+a two-millisecond answer into a measured 151-second one.
+
+The wait bought no freshness. The answer has two halves, and only one of them
+comes from the database: the *declared set* — which metarecords carry
+=mfr_mount=, and where they sit. A writer in flight has committed none of its
+changes, so the set as the daemon last read it is the committed set; it is kept
+resident, filled when the repository loads and refreshed by every call that does
+get the repository. The other half — is a volume mounted there right now, and
+which one — is read from the disk on every request, busy or not. So =state=,
+=current= and the freezing decision that follows from them are never stale;
+only a mount point *declared by the write currently running* is missing, and it
+appears as soon as that write commits.
+
+The same reasoning frees =GET /repos/:repo_uuid/fields= (see
+[[file:spec-data-model.org][spec-data-model.org]]). It does not generalise to the
+rest of the API: an endpoint that reads metarecord data has nothing resident to
+answer from, and for those the fix is to stop holding the repository for minutes
+at a time.
+
 ** Watch status, pause and resume
 
 #+BEGIN_SRC

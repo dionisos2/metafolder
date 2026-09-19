@@ -2376,15 +2376,35 @@ impl Default for ReconcileBody {
 /// (spec-file-tracking "Mount status"). Read-only and cheap: one stat pair per
 /// mount point, no walk. It is how a client explains a subtree that looks empty
 /// or stale ("volume not mounted") instead of showing it as deleted.
+///
+/// Neither the connection nor the tree cache is waited for. A long write holds
+/// both for its whole transaction — a reconcile: minutes on a large repository
+/// — and the GUI asks for the mount points on *every* directory listing, so
+/// queueing turned a 2 ms answer into a measured 151 s one. The wait would buy
+/// no freshness: the database half of the answer is the declared set, and a
+/// writer in flight has committed none of its changes, so the resident set
+/// ([`RepoState::declared_mounts`], filled by the load and refreshed by every
+/// unblocked call) *is* the committed one. The half that must be current — is
+/// the volume plugged in? — comes from the disk on every request either way.
 async fn mounts(
     State(state): State<Arc<AppState>>,
     Path(repo): Path<String>,
 ) -> Result<Json<serde_json::Value>, ApiError> {
     let repo_uuid = parse_uuid(&repo)?;
     with_repo(&state, repo_uuid, move |repo_state| {
-        let conn = slowlog::timed("wait:conn", || repo_state.conn.lock_recover());
-        let mut cache = slowlog::timed("wait:cache", || repo_state.lock_cache());
-        let mounts = crate::mount::declared(&conn, &mut cache, &repo_state.config.root)?;
+        // Tried in the order every writer takes them (connection, then tree
+        // cache); nothing blocks, so no order could deadlock either.
+        let conn = slowlog::timed("wait:conn", || repo_state.conn.try_lock_recover());
+        let cache = slowlog::timed("wait:cache", || repo_state.try_lock_cache());
+        let declared = match (conn, cache) {
+            (Some(conn), Some(mut cache)) => {
+                let set = Arc::new(crate::mount::declared_set(&conn, &mut cache)?);
+                repo_state.set_declared_mounts(Arc::clone(&set));
+                set
+            }
+            _ => repo_state.declared_mounts(),
+        };
+        let mounts = crate::mount::states(&declared, &repo_state.config.root);
         Ok(Json(json!({ "mounts": mounts })))
     })
     .await

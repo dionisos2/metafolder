@@ -58,6 +58,13 @@ pub struct RepoState {
     /// a read still refreshes it ([`crate::index::RepoIndex::refresh`]), which
     /// is where the rebuild a commit declines to do finally happens.
     pub index: Mutex<Option<crate::index::RepoIndex>>,
+    /// The repository's declared mount points as of the last read that could
+    /// take the repository (spec-file-tracking "Mount status"). Filled by the
+    /// load and refreshed by every unblocked `GET …/mounts`; served as it stands
+    /// while a long write holds the connection and the tree cache, where waiting
+    /// for them would buy no freshness — a writer in flight has committed
+    /// nothing, so this *is* the committed set.
+    declared_mounts: Mutex<Arc<Vec<crate::mount::DeclaredMount>>>,
     /// Percentage of the kernel's watch limit this repository may spend
     /// (`[settings] watch-budget-share`).
     watch_budget_share: u8,
@@ -161,6 +168,7 @@ impl RepoState {
             rollback_lock: Mutex::new(None),
             tasks: crate::tasks::TaskRegistry::new(repo_uuid),
             index: Mutex::new(None),
+            declared_mounts: Mutex::new(Arc::new(Vec::new())),
             ready: std::sync::atomic::AtomicBool::new(false),
             watch_budget_share: settings.watch_budget_share,
             starved_watches: std::sync::atomic::AtomicBool::new(false),
@@ -241,6 +249,35 @@ impl RepoState {
                 guard
             }
         }
+    }
+
+    /// [`Self::lock_cache`] if the tree cache is free right now, `None` if a
+    /// write holds it — for the reader that has a resident answer and only
+    /// loses freshness by not waiting.
+    pub fn try_lock_cache(&self) -> Option<MutexGuard<'_, TreeCache>> {
+        match self.cache.try_lock() {
+            Ok(guard) => Some(guard),
+            Err(std::sync::TryLockError::Poisoned(poison)) => {
+                self.cache.clear_poison();
+                let mut guard = poison.into_inner();
+                guard.clear();
+                Some(guard)
+            }
+            Err(std::sync::TryLockError::WouldBlock) => None,
+        }
+    }
+
+    /// The resident declared mount points (see the field): the answer
+    /// `GET …/mounts` falls back on while the repository is busy.
+    pub fn declared_mounts(&self) -> Arc<Vec<crate::mount::DeclaredMount>> {
+        Arc::clone(&self.declared_mounts.lock_recover())
+    }
+
+    /// Replaces the resident declared mount points with a set just read from
+    /// the database. Takes the `Arc` the caller keeps, so the answer it serves
+    /// and the one it leaves behind are the same snapshot.
+    pub fn set_declared_mounts(&self, mounts: Arc<Vec<crate::mount::DeclaredMount>>) {
+        *self.declared_mounts.lock_recover() = mounts;
     }
 
     /// True while a coordinated rollback navigation holds the lock.
@@ -449,6 +486,16 @@ impl RepoState {
             p.detail(format!("{} nodes, from the index scan", forest.len()));
             self.lock_cache().populate_from_forest(forest);
         }
+
+        // The declared mount points, read once here so they are resident from
+        // the start: a repository is very often opened *while* something writes
+        // to it (the load's own event replay, an auto-reconcile), and the first
+        // listing must not be the one that loses the unavailable-volume marking.
+        // A handful of rows off an indexed field — no phase of its own.
+        self.set_declared_mounts(Arc::new(crate::mount::declared_set(
+            &conn,
+            &mut self.lock_cache(),
+        )?));
         Ok(())
     }
 
