@@ -2,7 +2,7 @@
 <p>
   A single-line text input, always visible just above the status bar. It is how
   you run commands, type shell commands, and answer scripts. Press the configured
-  key (<span data-mf-key="command-input:activate">:</span>, bound to <code>command-input:activate</code>) to
+  key (<span data-mf-key="command-input:focus command">:</span>, bound to <code>command-input:focus command</code>) to
   give it the keyboard focus; <strong>Escape</strong> removes the focus while
   keeping whatever you had typed.
 </p>
@@ -17,7 +17,7 @@
 <ul>
   <li>
     A <strong>command</strong> — a command name optionally followed by
-    space-separated parameters (for example <code>panel:set-type file</code>).
+    space-separated parameters (for example <code>panel:set type file</code>).
   </li>
   <li>
     A <strong>shell command</strong> — anything prefixed with <code>!</code>
@@ -56,14 +56,14 @@
   <li><span data-mf-key="editing:confirm">Enter</span> — <code>editing:confirm</code> (run the command).</li>
   <li><span data-mf-key="editing:unfocus">Escape</span> — <code>editing:unfocus</code> (keep the draft, drop focus).</li>
   <li><span data-mf-key="editing:discard">Ctrl+q</span> — <code>editing:discard</code> (clear the draft and unfocus).</li>
-  <li><span data-mf-key="editing:goto-line-start">Ctrl+a</span> / <span data-mf-key="editing:goto-line-end">Ctrl+e</span> — <code>editing:goto-line-start</code> / <code>editing:goto-line-end</code>.</li>
+  <li><span data-mf-key="editing:goto line-start">Ctrl+a</span> / <span data-mf-key="editing:goto line-end">Ctrl+e</span> — <code>editing:goto line-start</code> / <code>editing:goto line-end</code>.</li>
 </ul>
 <p>
   These same keys also drive a focused text field inside a panel (a query box, an
   inline editor), not only the command input.
 </p>
 
-<h2 id="shell">Running shell commands with <span data-mf-key="bash-input:activate">!</span></h2>
+<h2 id="shell">Running shell commands with <span data-mf-key="command-input:focus bash">!</span></h2>
 <p>
   A line starting with <code>!</code> is run as a subprocess (via
   <code>sh -c</code>) in the background. Its <code>stdout</code>/<code>stderr</code>

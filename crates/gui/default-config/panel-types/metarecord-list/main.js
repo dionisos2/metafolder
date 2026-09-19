@@ -719,7 +719,7 @@ export async function mount(root, metafolder) {
     const metarecord = metarecords[cursorIndex];
     if (!metarecord) return;
     const paths = pathsOf(metarecord);
-    await commands.invoke(`panel:reveal-other ${paths.length > 0 ? 'file' : 'metarecord-detail'}`);
+    await commands.invoke(`panel:reveal ${paths.length > 0 ? 'file' : 'metarecord-detail'}`);
   }
 
   // ── Query (two-zone editor) ─────────────────────────────────────────────

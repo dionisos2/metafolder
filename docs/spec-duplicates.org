@@ -459,7 +459,7 @@ reconcile and sync independently of duplicate detection.
 
 * GUI
 
-- =mf:duplicate-scan= — the GUI half of =mf duplicate scan= (hence the =mf:=
+- =mf:duplicate scan= — the GUI half of =mf duplicate scan= (hence the =mf:=
   prefix, spec-gui "Naming"), run with the shared task progress bar exactly as
   =reconcile:run= is. Its *options stay CLI-only*, as =mf trash prune='s
   size/age selectors do: the command runs the ordinary whole-repository scan,
@@ -471,7 +471,7 @@ reconcile and sync independently of duplicate detection.
   to this". It is a *visible, editable* query rather than a hidden override
   like the orphan view, whose =uuid_in= set has no DSL spelling; so it composes
   with everything else the box can express.
-- *duplicates panel* (=panel:set-type duplicates=, default =t u=) — the groups,
+- *duplicates panel* (=panel:set type duplicates=, default =t u=) — the groups,
   worst-reclaimable first, collapsed; =Enter= expands one into its members'
   paths, =+= marking a member that shares an inode with another. Highlighting a
   row publishes it as =selected_metarecord=: a member, or *the group metarecord

@@ -87,7 +87,10 @@ fn normalize_chord(chord: &str) -> Result<String, String> {
 
 /// Commands whose keybinding a script may never take over: they are the user's
 /// only ways out of a script's question (spec-gui "Reserved keys").
-const RESERVED_COMMANDS: [&str; 2] = ["command-input:activate", "script-keys:toggle"];
+// `command-input:focus` is listed bare so both of its modes are covered: the
+// match below also accepts an invocation that pre-fills arguments, and a script
+// must be unable to take over `!` any more than `:`.
+const RESERVED_COMMANDS: [&str; 2] = ["command-input:focus", "script-keys:toggle"];
 
 /// The combos a script's `mf gui input` may not await: whatever opens the
 /// command input, whatever toggles the script keys, `escape` (which always
@@ -395,7 +398,8 @@ mod tests {
         assert_eq!(finder.invocation, "metarecord-list:next");
 
         // Overriding the focus-scoped one leaves the when-scoped one intact.
-        let user = r#""down" = { command = "metarecord-list:apply finder stay", focus = "finder" }"#;
+        let user =
+            r#""down" = { command = "metarecord-list:apply finder stay", focus = "finder" }"#;
         let set = KeybindingSet::from_sources(defaults, user).unwrap();
         let downs: Vec<_> = set.compiled().into_iter().filter(|b| b.keys == ["down"]).collect();
         assert_eq!(downs.len(), 2);
@@ -556,7 +560,7 @@ mod tests {
         // the find bar's own focus so they never shadow a panel's Enter.
         assert!(table
             .iter()
-            .any(|b| b.keys == ["ctrl+f"] && b.invocation == "find:in-panel" && b.text_input));
+            .any(|b| b.keys == ["ctrl+f"] && b.invocation == "find:open" && b.text_input));
         assert!(enter
             .iter()
             .any(|b| b.focus.as_deref() == Some("find") && b.invocation == "find:next"));
@@ -570,8 +574,36 @@ mod tests {
         // keys would dispatch into nothing.
         let registry = crate::command_registry::CommandRegistry::default();
         crate::register_builtins(&registry);
-        for name in ["find:in-panel", "find:next", "find:prev", "find:close"] {
+        for name in ["find:open", "find:next", "find:prev", "find:close"] {
             assert!(registry.list().iter().any(|c| c.name == name), "missing builtin {name}");
+        }
+    }
+
+    /// Both ways into the command input are reserved from scripts.
+    ///
+    /// They used to be two commands (`command-input:activate` and
+    /// `bash-input:activate`) and are now one with the mode as its argument,
+    /// which is exactly the shape that can silently narrow a reservation: a
+    /// list naming `command-input:focus command` would leave `!` takeable
+    /// while looking correct.
+    #[test]
+    fn test_both_command_input_modes_are_reserved_from_scripts() {
+        let defaults = include_str!("../default-config/keybindings.toml");
+        let compiled = KeybindingSet::from_sources(defaults, "").unwrap().compiled();
+        let reserved = reserved_combos(&compiled);
+
+        for mode in ["command", "bash"] {
+            let combo = compiled
+                .iter()
+                .find(|b| {
+                    b.invocation == format!("command-input:focus {mode}") && b.keys.len() == 1
+                })
+                .map(|b| b.keys[0].clone())
+                .unwrap_or_else(|| panic!("nothing opens the input in {mode} mode"));
+            assert!(
+                is_reserved(&reserved, &combo),
+                "`{combo}` opens the input in {mode} mode but a script could take it"
+            );
         }
     }
 
@@ -604,7 +636,9 @@ mod tests {
             let main_js = entry.unwrap().path().join("main.js");
             let Ok(source) = std::fs::read_to_string(&main_js) else { continue };
             sources += 1;
-            for (marker, offset) in [("commands.register('", 19), ("registerFind(metafolder, '", 26)] {
+            for (marker, offset) in
+                [("commands.register('", 19), ("registerFind(metafolder, '", 26)]
+            {
                 let mut rest = source.as_str();
                 while let Some(at) = rest.find(marker) {
                     rest = &rest[at + offset..];
@@ -713,10 +747,11 @@ mod tests {
         assert!(!f.iter().any(|b| b.invocation == "treeref:set field"));
 
         // Fullscreen is a builtin toggle, and now has a key of its own.
-        assert!(table.iter().any(|b| b.keys == ["z"] && b.invocation == "panel:fullscreen"));
+        assert!(table.iter().any(|b| b.keys == ["z"] && b.invocation == "panel:toggle fullscreen"));
         let registry = crate::command_registry::CommandRegistry::default();
         crate::register_builtins(&registry);
-        assert!(registry.list().iter().any(|c| c.name == "panel:fullscreen"));
+        // The registry holds the command; the binding pre-fills its argument.
+        assert!(registry.list().iter().any(|c| c.name == "panel:toggle"));
     }
 
     // ── Compilation ──────────────────────────────────────────────────────
@@ -746,8 +781,8 @@ mod tests {
         // take (spec-gui "Reserved keys"): whatever opens the command input,
         // whatever toggles the script keys, and escape.
         let defaults = r#"
-":" = { command = "command-input:activate" }
-"ctrl+p" = { command = "command-input:activate" }
+":" = { command = "command-input:focus command" }
+"ctrl+p" = { command = "command-input:focus command" }
 "tab" = { command = "script-keys:toggle" }
 "y" = { command = "metarecord-list:next" }
 "g g" = { command = "metarecord-list:goto-top" }
@@ -773,7 +808,7 @@ mod tests {
         // A multi-chord sequence cannot be a script key at all (a script awaits
         // single presses), so it never enters the reserved set.
         let defaults = r#"
-"g c" = { command = "command-input:activate" }
+"g c" = { command = "command-input:focus command" }
 "#;
         let set = KeybindingSet::from_sources(defaults, "").unwrap();
         // Only the two literals remain: they are reserved whatever is bound.

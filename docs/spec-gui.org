@@ -243,11 +243,11 @@ Discoverability rule: every interactive control's action is reachable as a
 registered command, and every edit zone has a command that focuses (or
 opens) it. So each top-level action button in a panel or the shell maps to a
 command (the button invokes it), and each text input has a focus command —
-the command input (=command-input:activate=), the metarecord-list query and
+the command input (=command-input:focus command=), the metarecord-list query and
 columns inputs (=metarecord-list:focus simplified=, =metarecord-list:focus columns=),
 the workspace rename (=workspace:rename=), the metarecord-detail add-field
 form (=metarecord:open-add-field=). Shell controls map to the panel commands
-(=panel:set-type=, =panel:swap=, =panel:split=, =panel:hide=). Transient
+(=panel:set type=, =panel:swap=, =panel:split=, =panel:hide=). Transient
 controls *inside* a flow already opened by a command — a form's =Cancel=, a
 folder picker's navigation, a form's submit — and inherently positional
 controls — an individual tab or a specific slot's =×= (their action is
@@ -265,7 +265,7 @@ Each command carries a =log= flag (default =true=): when set, every
 invocation is echoed to the workspace [[*Message view][message panel]] as
 =​> name args= before the command runs. Panels register commands with
 =log= (=metafolder.commands.register=); the builtin editing primitives
-(=editing:*=, =command-input:activate=) register with =log: false= so
+(=editing:*=, =command-input:focus command=) register with =log: false= so
 keystroke-level actions do not flood the log.
 
 A command may *declare its arguments*. Each declared argument carries up to
@@ -303,7 +303,7 @@ command name written into the input when a suggestion is accepted.
 
 *Command listing.* The input lists every registered command, plus one entry
 per *bound* parameterized invocation: a keybinding whose invocation carries
-arguments (=metarecord:bulk delete=, =panel:set-type file=) earns its own line,
+arguments (=metarecord:bulk delete=, =panel:set type file=) earns its own line,
 showing its combo. This is what keeps a generic command's genericity from
 costing discoverability. Naming an operation as an argument instead of in the
 command name would otherwise hide it — =metarecord:bulk set= is not findable by
@@ -313,7 +313,7 @@ Keying the expansion to the keybinding table answers both: whatever the user
 put on a key is discoverable by reading the list, and the rest is found through
 the operation's own prompt. It also makes every shortcut visible in one place,
 parameterized ones included. Combos are attached by *exact* invocation, so a
-bare entry does not collect its variants' keys — =panel:set-type= otherwise
+bare entry does not collect its variants' keys — =panel:set type= otherwise
 listed all fourteen of them on one line, with nothing saying which combo went
 with which panel type. Consequently the =…= marker is computed per *entry*,
 not per command: =metarecord:bulk set= still has a field and a value to ask
@@ -420,7 +420,7 @@ when the same combo maps to a different command depending on the focused panel
 
 #+BEGIN_SRC toml
 "escape"  = { command = "editing:unfocus",         text-input = true              }
-"ctrl+a"  = { command = "editing:goto-line-start", text-input = true              }
+"ctrl+a"  = { command = "editing:goto line-start", text-input = true              }
 "ctrl+e"  = { command = "my-panel:edit",           when = "my-panel", text-input = true }
 "ctrl+t"  = { command = "workspace:new"                                            }
 
@@ -466,7 +466,7 @@ that escape stops the script (see [[*Script keys]]).
 A single-line text input permanently visible just above the status bar,
 with two modes distinguished by the prompt character. A configurable
 keybinding gives it keyboard focus in either mode (default suggestions:
-=:= for *command mode*, =!= for *bash mode* — =bash-input:activate=);
+=:= for *command mode*, =!= for *bash mode* — =command-input:focus bash=);
 =Escape= removes the focus (the draft is kept). There is one command input;
 it targets the focused slot's workspace. Content (text and cursor position)
 is per-workspace *and per-mode*: switching the focused slot to a different
@@ -650,7 +650,7 @@ Four combos are the user's way out of a question, and a script may not take
 them: =escape=, =backspace=, whatever activates the command input (=:=), and
 whatever toggles the script keys (=tab=). The two literals are reserved
 unconditionally; the other two are derived from the compiled keybinding table,
-so rebinding =command-input:activate= moves the reservation with it.
+so rebinding =command-input:focus command= moves the reservation with it.
 =POST /gui/input= *rejects* a wait that asks for one of them (=400=), rather
 than accepting a question the GUI would not honour.
 
@@ -766,7 +766,7 @@ The log is read with =mf slow=; the GUI does not display it.
 The GUI connects to the daemon on 127.0.0.1 at the port configured by the user:
 =daemon-port= in =~/.config/metafolder/gui/config.toml= (default =7523=, the
 daemon's own default port — so a fresh install connects with no flag),
-overridable at launch with =--daemon-port=. At runtime the =daemon:set-url=
+overridable at launch with =--daemon-port=. At runtime the =daemon:set url=
 command can repoint the proxy at an arbitrary URL (a power-user override).
 
 On startup (and whenever the URL changes) the GUI calls =GET /health=. If the
@@ -914,14 +914,14 @@ workspace rather than the focused slot's.
 | =workspace:goto=         | Move BOTH panels to workspace N (1-based; N is a parameter) |
 | =workspace:next=         | Move BOTH panels to the next workspace (wraps)   |
 | =workspace:prev=         | Move BOTH panels to the previous workspace       |
-| =workspace:next-in-slot= | Assign the next workspace to the focused slot only (wraps) |
-| =workspace:prev-in-slot= | Assign the previous workspace to the focused slot only |
+| =workspace:next slot= | Assign the next workspace to the focused slot only (wraps) |
+| =workspace:prev slot= | Assign the previous workspace to the focused slot only |
 
 Default keybinding suggestions: =t= for =workspace:new=, =w= for
 =workspace:close=, =n= / =p= for =workspace:next= / =workspace:prev=, =1= … =9=
 for =workspace:goto=. The default navigation keys move both panels together:
 the two slots only end up on different workspaces through an explicit tab
-click or the focused-slot =workspace:next-in-slot= / =workspace:prev-in-slot=
+click or the focused-slot =workspace:next slot= / =workspace:prev slot=
 commands (no default binding). Command names never bake in a parameter —
 =workspace:goto= takes N as an argument.
 
@@ -948,11 +948,11 @@ already shown in the other slot, the new slot gets no panel type and the
 type picker is presented. No workspace is silently created, except when
 the layout has no focused workspace at all (the only meaningful split
 then). =panel:unsplit= hides the non-focused slot; the
-workspace remains in the tab bar. =panel:split-toggle= splits when a single
+workspace remains in the tab bar. =panel:toggle split= splits when a single
 slot is visible and unsplits when both are — the everyday command; default
-suggestions: =v= for =panel:split-toggle=, =u= for =panel:unsplit=, =o= for
-=panel:focus-next=, =x= for =panel:swap=. The focused slot has a visible indicator (border
-highlight — theme-controlled); focus switches via =panel:focus-next=.
+suggestions: =v= for =panel:toggle split=, =u= for =panel:unsplit=, =o= for
+=panel:focus next=, =x= for =panel:swap=. The focused slot has a visible indicator (border
+highlight — theme-controlled); focus switches via =panel:focus next=.
 
 *Per-workspace panel count.* Each workspace remembers whether it was last
 shown with one or two panels, and the navigation commands that move both
@@ -964,15 +964,15 @@ single panel. The count is recorded only while the workspace *owns the window*
 — it occupies the focused slot with the other slot hidden or showing the same
 workspace — so =panel:split= / =panel:unsplit= and closing a slot update it,
 while a mixed layout (the two slots on different workspaces, reachable through
-a tab click or the focused-slot =workspace:next-in-slot= /
-=workspace:prev-in-slot=) records nothing and leaves each workspace's
+a tab click or the focused-slot =workspace:next slot= /
+=workspace:prev slot=) records nothing and leaves each workspace's
 remembered count untouched. Only the count is per-workspace; the divider
 width ratio remains window state (see [[*Panel slot]]).
 
 Each slot has a thin header bar showing the current panel type name and the
 repo indicator. The header contains a dropdown that lists all available panel
 types (built-in and custom); selecting one switches the displayed panel type
-for that slot. The same switch is available via =panel:set-type <name>= and
+for that slot. The same switch is available via =panel:set type <name>= and
 configurable keybindings.
 
 The header also carries the mouse equivalents of the layout commands: when
@@ -982,9 +982,9 @@ button* (=×=) hides that slot — its own slot, unlike =panel:unsplit= which
 hides the non-focused one — and a *swap button* (=⇄=, =panel:swap=)
 exchanges the panel types of the two slots. The hidden slot's workspace
 assignment is remembered either way. A *fullscreen button* (=⛶=,
-=panel:fullscreen=) focuses the slot and enters fullscreen.
+=panel:toggle fullscreen=) focuses the slot and enters fullscreen.
 
-*Fullscreen*: =panel:fullscreen= toggles an immersive mode showing only the
+*Fullscreen*: =panel:toggle fullscreen= toggles an immersive mode showing only the
 focused panel — the tab bar, command input, status bar, slot header and the
 other slot are all hidden, and the OS window itself goes fullscreen (like a
 video player). It is bound to =z= by default — the key that zooms a pane in a
@@ -1092,7 +1092,7 @@ Behaviours:
 
 | Command              | Description                                    |
 |----------------------+------------------------------------------------|
-| =daemon:set-url=     | Change daemon URL                              |
+| =daemon:set url=     | Change daemon URL                              |
 | =repos:open=         | Switch focused panel slot to =repos= for repo selection |
 | =repos:open-init=         | Open init-repo form                            |
 | =repos:load=              | Pick a folder and load the repository in it     |
@@ -1102,22 +1102,22 @@ Behaviours:
 | =workspace:goto=     | Move both panels to workspace N (parameter)    |
 | =workspace:next=     | Move both panels to the next workspace         |
 | =workspace:prev=     | Move both panels to the previous workspace     |
-| =workspace:next-in-slot= | Assign the next workspace to the focused slot only |
-| =workspace:prev-in-slot= | Assign the previous workspace to the focused slot only |
+| =workspace:next slot= | Assign the next workspace to the focused slot only |
+| =workspace:prev slot= | Assign the previous workspace to the focused slot only |
 | =panel:split=        | Show the right slot (focused workspace if unassigned) |
 | =panel:unsplit=      | Hide the non-focused slot (workspace preserved) |
 | =panel:hide=         | Hide the focused slot (workspace preserved)    |
-| =panel:split-toggle= | Split when one slot is visible, unsplit when both are |
-| =panel:focus-next=   | Move focus to the other slot                   |
-| =panel:set-type <name>= | Switch focused slot to the named panel type |
+| =panel:toggle split= | Split when one slot is visible, unsplit when both are |
+| =panel:focus next=   | Move focus to the other slot                   |
+| =panel:set type <name>= | Switch focused slot to the named panel type |
 | =panel:swap=         | Exchange the two slots' panel types            |
-| =panel:fullscreen=   | Toggle showing only the focused panel fullscreen (default =z=; escape also exits) |
+| =panel:toggle fullscreen=   | Toggle showing only the focused panel fullscreen (default =z=; escape also exits) |
 | =metarecord:create=       | Create a new metarecord immediately and select it (=metarecord-detail=) |
 | =metarecord:delete=       | Delete the selected metarecord                      |
 | =metarecord:row-next= / =metarecord:row-prev= | Move the field-row cursor (=metarecord-detail=) |
 | =metarecord:row-edit=   | Edit the field row under the cursor                 |
 | =metarecord:row-delete= | Delete the field row under the cursor               |
-| =metarecord:cancel-edit=  | Cancel the current field edit or add form           |
+| =metarecord:cancel=  | Cancel the current field edit or add form           |
 | =metarecord:field <op> [target] [value]= | Field operation on the *current* metarecord. =op= is =set= (overwrite every value), =add= (append one value — a value it already holds is a no-op, spec-data-model "No duplicate rows"), =edit= (change one value, selected by value), =remove= (drop one value, selected by value), =unset= (remove the field entirely → /unknown/), =rename= (all its values), =retype= (all its values). =target= names a field for =set=/=add=/=unset=/=rename=/=retype=, and one value for =edit=/=remove= |
 | =metarecord:bulk <op> [field] [value]= | The same over the *selection*, or the current query when nothing is checked. =op= is =set= / =add= / =remove= / =unset= — the daemon's set-layer routes =POST /query/fields/{set,add,remove,unset}= — plus =delete=, which deletes the metarecords themselves (=POST /query/delete=; the files stay on disk) and so names no field |
 | =metarecord-list:open-bulk-edit= | Mouse flow: open the in-panel bulk edit / delete form |
@@ -1128,10 +1128,10 @@ Behaviours:
 | =metarecord-list:insert <zone> <text>= | Splice text into a zone at the caret, replacing the selection. It prepares the query rather than running it: =apply= runs it. The one command that writes into a text zone |
 | =metarecord-list:query <what>= | Run a canned query in the visible DSL zone, shown and frozen so it stays editable and composable: =duplicates= (the selection's byte-identical twins, =same(mfr_duplicate_group, <uuid>)=) or =orphans= (=orphan = true=, the metarecords the last =orphan:detect= marked — it detects nothing and reads no disk, it shows what detection wrote, see [[file:spec-file-tracking.org][spec-file-tracking.org]] "Marking orphans") |
 | =metarecord-list:toggle <flag>= | Flip a view flag (=normal=: show/hide the normal DSL editor) |
-| =file-manager:reveal-folder= | Open the selected metarecord's folder in the file manager, replacing the focused panel (directory → itself, file → containing folder with the file highlighted) — see [[*Cross-panel selection]] |
+| =file-manager:reveal= | Open the selected metarecord's folder in the file manager, replacing the focused panel (directory → itself, file → containing folder with the file highlighted) — see [[*Cross-panel selection]] |
 | =metarecord-list:folder= | List the selected metarecord's folder in =metarecord-list=, replacing the focused panel (directory → itself, file → its containing folder): the query =mfr_path -> "<folder>"= lands in the DSL zone, frozen, so it stays visible and editable — see [[*Cross-panel selection]] |
 | =reconcile:run=      | Trigger reconcile on the active repo           |
-| =mf:duplicate-scan=  | Scan the active repo for byte-identical files and record the groups — the GUI half of =mf duplicate scan=; progress in the [[*Task bar]], summary in the status bar (see [[*Duplicates]]) |
+| =mf:duplicate scan=  | Scan the active repo for byte-identical files and record the groups — the GUI half of =mf duplicate scan=; progress in the [[*Task bar]], summary in the status bar (see [[*Duplicates]]) |
 | =orphan:detect=      | Mark the active repo's orphaned metarecords =orphan = true= and unmark the rest (=POST /orphans/mark=) — the GUI half of =mf orphan detect=; the count lands in the status bar and the message log |
 | =orphan:delete=      | Delete the metarecords carrying the marker (=POST /query/delete= over =orphan = true=), after a confirmation naming the count. Detection is *not* re-run: what is marked is what goes |
 | =orphan:detect-delete= | =orphan:detect= then =orphan:delete=, one confirmation between the two — the convenience form for "find the records whose file is gone and be rid of them" |
@@ -1151,22 +1151,22 @@ Behaviours:
 | =log:undo=           | Undo the newest change the user made, on the active repo (default =ctrl+z=) |
 | =log:redo=           | Take the newest undo back, on the active repo (default =ctrl+shift+z=) |
 | =log:prune=          | Prune the event log                            |
-| =find:in-panel [text]= | Open the find bar over the focused panel (default =ctrl+f=) — see [[*Find in panel]] |
+| =find:open [text]= | Open the find bar over the focused panel (default =ctrl+f=) — see [[*Find in panel]] |
 | =find:next= / =find:prev= | Go to the next / previous find match (wrapping) |
 | =find:close=         | Close the find bar and unpaint its matches     |
-| =help=               | Open the =help= panel (alias of =help:help=)   |
-| =help:help [text]=   | Open the =help= panel for a topic (an exact name opens its page; else search) |
-| =help:help-cursor=   | Turn the pointer into =?=; the next click opens the matching help page (escape cancels) |
+| =help=               | Open the =help= panel (alias of =help:open=)   |
+| =help:open [text]=   | Open the =help= panel for a topic (an exact name opens its page; else search) |
+| =help:cursor=   | Turn the pointer into =?=; the next click opens the matching help page (escape cancels) |
 | =config:open=        | Open settings (keybindings, style, daemon URL) |
 | =devtools:open=      | Open the WebKit inspector (replaces the suppressed native menu's Inspect Element) |
 | =quit=               | Exit the GUI                                   |
-| =command-input:activate=  | Focus the command input in command mode (default =:=)         |
-| =bash-input:activate=     | Focus the command input in bash mode (default =!=)            |
+| =command-input:focus command=  | Focus the command input in command mode (default =:=)         |
+| =command-input:focus bash=     | Focus the command input in bash mode (default =!=)            |
 | =editing:unfocus=         | Remove focus from the active text input (=text-input = true=) |
 | =editing:discard=         | Clear the active text input, then remove focus (default =ctrl+q=; =text-input = true=) — the command input when it holds the focus, otherwise the focused panel input |
 | =editing:confirm=         | Confirm the current text input (=text-input = true=) — the *command input only*: elsewhere the key is left to the panel form's own handler |
-| =editing:goto-line-start= | Move cursor to start of line (=text-input = true=)            |
-| =editing:goto-line-end=   | Move cursor to end of line (=text-input = true=)              |
+| =editing:goto line-start= | Move cursor to start of line (=text-input = true=)            |
+| =editing:goto line-end=   | Move cursor to end of line (=text-input = true=)              |
 | =answer:send <value>=     | Resolve the current =POST /gui/input= wait with =<value>=     |
 | =script-keys:toggle=      | Give the keys a script's question awaits back to the GUI, or take them again (default =tab=; see [[*Script keys]]) |
 | =script:stop [<task>]=    | Stop a running script — its whole process group. No argument: the script asking the current question |
@@ -1381,7 +1381,7 @@ or third-party, including the =help= pages it was first asked for.
 - Its scope is one panel's *loaded* DOM — like a browser's find, and unlike a
   query. Rows a paged list has not fetched are not searched; that is what the
   finder and the query editor are for (see [[*Finder (quick filter)]]).
-- =find:in-panel <text>= searches =text= directly, so a script can drive the
+- =find:open <text>= searches =text= directly, so a script can drive the
   find bar through =mf gui command= like any other command.
 
 ** Find an entry
@@ -1426,7 +1426,7 @@ In-app help is a dedicated =help= panel type plus three shell builtins. The
 builtins are *builtins* (not panel commands) so they work before the help panel
 has ever been mounted.
 
-- =help= / =help:help [text]= open the =help= panel in the focused slot. The
+- =help= / =help:open [text]= open the =help= panel in the focused slot. The
   optional =text= is handed to the panel through the =help.request= workspace
   variable (with a nonce so an identical repeated topic still re-triggers). If
   =text= is an *exact name* — a page id, an alias, or a =panel:command= (the
@@ -1434,7 +1434,7 @@ has ever been mounted.
   =metarecord-list:focus= and =focus-query= both reach the queries page) —
   that page opens directly; otherwise the text greps across all pages. Prefixing
   =text= with =#= forces grep even on an exact name.
-- =help:help-cursor= arms a "click-to-help" mode: a =?= pointer (a
+- =help:cursor= arms a "click-to-help" mode: a =?= pointer (a
   =mf-help-cursor= class on the document element) until the next click, which is
   swallowed and resolved to a help topic instead of reaching its target. Escape
   cancels. Resolution walks the click's =composedPath()= (piercing panel Shadow
@@ -1462,8 +1462,8 @@ drift from =keybindings.toml= the way a hand-written key did. Rules
 - The attribute holds one invocation, or several separated by commas — the union
   of their keys, deduplicated, in table order. Several is how a generic row is
   written ("move the cursor down" means the =:next= command of every list panel).
-- A bare command name matches every invocation of it (so =panel:set-type= alone
-  would list all of them); a fuller one (=panel:set-type treeref=) matches only
+- A bare command name matches every invocation of it (so =panel:set type= alone
+  would list all of them); a fuller one (=panel:set type treeref=) matches only
   itself. Same rule as the command input's shortcut display.
 - Combos are spelled as the pages spell them: modifiers capitalised
   (=Ctrl+Shift+z=), arrows as arrows, a sequence as its combos in order (=t l=).
@@ -1501,7 +1501,7 @@ items from their own row/record menu directly.
 
 Right-clicking anywhere else shows the *default menu*: =Copy= (the text
 selection at open time; disabled when nothing is selected), the everyday
-layout commands (=panel:split-toggle=, =panel:swap=) and =devtools:open=.
+layout commands (=panel:toggle split=, =panel:swap=) and =devtools:open=.
 The shell installs it for its own areas (tab bar, slot headers, status
 bar) and the shim installs one per panel document. It stands down where a
 more specific right-click behaviour exists: editable text fields, the tab
@@ -2485,7 +2485,7 @@ existing metadata metarecord in the active repo, =workspace.selected_metarecord=
 updated; otherwise it is set to =null=.
 
 *Reveal*: the panel also honours a =file-manager:reveal-path= workspace variable
-(={ path, nonce }=), set by =file-manager:reveal-folder= from another panel — it
+(={ path, nonce }=), set by =file-manager:reveal= from another panel — it
 stats the path, navigates to the folder (its parent for a file, highlighting the
 file), and drops the root constraint if the target lies outside the repo. See
 [[*Cross-panel selection]].
@@ -2656,7 +2656,7 @@ checks whether any field is being edited. If so, an alert is shown:
 ="Unsaved changes — discard and switch metarecord? [Confirm / Cancel]"=. The switch
 proceeds only if the user confirms.
 
-*Reveal folder*: the builtin command =file-manager:reveal-folder= (and the
+*Reveal folder*: the builtin command =file-manager:reveal= (and the
 right-click menu item "Open folder in file manager" in =metarecord-list= and
 =metarecord-detail=) opens the selected metarecord's folder in the file manager,
 *replacing the focused panel* — the folder itself when the metarecord is a
@@ -2701,7 +2701,7 @@ It receives:
 - Every command invocation dispatched in this workspace, echoed as
   =​> name args= before the command runs — unless the command opted out of
   logging at registration (see "Command", the =log= flag). Basic editing
-  primitives (=editing:*=, =command-input:activate=) opt out to avoid noise.
+  primitives (=editing:*=, =command-input:focus command=) opt out to avoid noise.
 - stdout/stderr of shell commands run via =!= in this workspace (echoed as
   =$ command=).
 - Reconcile progress and results triggered from this workspace.
@@ -2745,7 +2745,7 @@ completion:
 
 ** Duplicates
 
-=mf:duplicate-scan= is the GUI half of =mf duplicate scan= (see
+=mf:duplicate scan= is the GUI half of =mf duplicate scan= (see
 [[file:spec-duplicates.org][spec-duplicates.org]]): it calls
 =POST .../duplicates/scan= (202 + task id) and, like =reconcile:run=, polls the
 task only to know when it ends — live progress belongs to the [[*Task bar]].
@@ -2761,7 +2761,7 @@ The =full= phase reports *bytes* rather than files (see
 [[file:spec-tasks.org][spec-tasks.org]] "Duplicate scan progress phases"), so the
 task bar formats this phase's counts as a size.
 
-The *duplicates panel* (=panel:set-type duplicates=, suggested default =t u=)
+The *duplicates panel* (=panel:set type duplicates=, suggested default =t u=)
 lists the groups — reclaimable space, size, member count, hash — worst first,
 each expanding to its members' paths with a marker on those sharing an inode
 with another member. It is an ordinary query view over
@@ -3237,7 +3237,7 @@ external control rather than a modal wait.
 
 Request body:
 #+BEGIN_SRC json
-{"invocation": "panel:set-type file", "timeout_ms": null}
+{"invocation": "panel:set type file", "timeout_ms": null}
 #+END_SRC
 
 Responses: ={"event": "ok"}= / ={"event": "error", "message": "unknown command: …"}=
@@ -3520,7 +3520,7 @@ API — see [[*Custom panel type trust model]]); a throw in =mount= is contained
 by an error boundary, but a panel can otherwise touch shared state.
 
 A corollary: the same panel type cannot be displayed in both slots for the
-same workspace (one instance cannot render twice); =panel:set-type= rejects
+same workspace (one instance cannot render twice); =panel:set type= rejects
 this with a status bar error.
 
 ** Daemon access

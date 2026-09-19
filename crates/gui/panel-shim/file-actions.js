@@ -347,18 +347,18 @@ export function metarecordMenuItems({
   if (revealDetail) {
     items.push({
       label: 'Open in panel metarecord-detail',
-      action: () => void commands.invoke('panel:reveal-other metarecord-detail'),
+      action: () => void commands.invoke('panel:reveal metarecord-detail'),
     });
   }
   if (hasFile) {
     items.push({
       label: 'Open in panel file',
-      action: () => void commands.invoke('panel:reveal-other file'),
+      action: () => void commands.invoke('panel:reveal file'),
     });
     if (revealFolder) {
       items.push({
         label: 'Open folder in file manager',
-        action: () => void commands.invoke('file-manager:reveal-folder'),
+        action: () => void commands.invoke('file-manager:reveal'),
       });
     }
     // The metarecord-list counterpart: the folder's *metarecords* rather than

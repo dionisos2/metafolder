@@ -706,13 +706,13 @@ impl GuiState {
         })
     }
 
-    /// `workspace:next-in-slot` — assigns the next workspace (tab order,
+    /// `workspace:next slot` — assigns the next workspace (tab order,
     /// wrapping) to the focused slot only.
     pub fn workspace_next_in_slot(&self) -> Result<(), String> {
         self.workspace_step_in_slot(1)
     }
 
-    /// `workspace:prev-in-slot` — assigns the previous workspace (wrapping) to
+    /// `workspace:prev slot` — assigns the previous workspace (wrapping) to
     /// the focused slot only.
     pub fn workspace_prev_in_slot(&self) -> Result<(), String> {
         self.workspace_step_in_slot(-1)
@@ -738,8 +738,8 @@ impl GuiState {
 
     /// Steps the focused-slot workspace by `direction` (wrapping); `both`
     /// moves the two panels together (keyboard navigation), otherwise only
-    /// the focused slot (the explicit `workspace:next-in-slot` /
-    /// `workspace:prev-in-slot` commands).
+    /// the focused slot (the explicit `workspace:next slot` /
+    /// `workspace:prev slot` commands).
     fn step(&self, direction: isize, both: bool) -> Result<(), String> {
         self.mutate(|inner| {
             if inner.workspaces.is_empty() {
@@ -820,7 +820,7 @@ impl GuiState {
         })
     }
 
-    /// `panel:split-toggle` — splits when one slot is visible, unsplits
+    /// `panel:toggle split` — splits when one slot is visible, unsplits
     /// when both are.
     pub fn panel_split_toggle(&self) -> Result<(), String> {
         let both_visible = {
@@ -883,7 +883,7 @@ impl GuiState {
         })
     }
 
-    /// `panel:focus-next` — moves focus to the other slot if visible.
+    /// `panel:focus next` — moves focus to the other slot if visible.
     pub fn focus_next(&self) {
         self.update(|inner| {
             let other = inner.focused.other();
@@ -909,7 +909,7 @@ impl GuiState {
         })
     }
 
-    /// `panel:set-type` — switches the panel type displayed in a slot.
+    /// `panel:set type` — switches the panel type displayed in a slot.
     /// Rejected when the other slot already shows the same panel type of
     /// the same workspace (one iframe per (workspace, panel type)).
     pub fn set_panel_type(&self, slot_id: SlotId, panel_type: &str) -> Result<(), String> {

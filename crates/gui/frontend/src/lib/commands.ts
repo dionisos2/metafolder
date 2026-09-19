@@ -63,7 +63,7 @@ export interface ListedCommand extends CommandDef {
  * only pays for what the user actually put on a key.
  *
  * Combos are matched *exactly* here, unlike `shortcutsFor`: the bare entry
- * must not collect its variants' combos. `panel:set-type` used to print all
+ * must not collect its variants' combos. `panel:set type` used to print all
  * fourteen of them on one line with nothing saying which went with which panel
  * type — the expansion turns that into fourteen findable rows.
  */
@@ -115,7 +115,7 @@ export function filterCommands<C extends { name: string }>(commands: C[], query:
 
 /** What the command input runs on Enter (command mode only): the
  *  highlighted suggestion when the list is non-empty, otherwise the raw
- *  typed text. Commands with arguments (e.g. `panel:set-type file`) empty
+ *  typed text. Commands with arguments (e.g. `panel:set type file`) empty
  *  the suggestion list, so they fall through to the typed text. */
 export function resolveSubmission(
   draft: string,
@@ -498,7 +498,7 @@ async function defaultTargetDir(repo: string): Promise<string> {
 
 // ── List a folder in the metarecord list (the `metarecord-list:folder`
 // builtin) ─────────────────────────────────────────────────────────────────
-// The mirror image of `file-manager:reveal-folder`: instead of showing a
+// The mirror image of `file-manager:reveal`: instead of showing a
 // metarecord's folder on the disk, it shows the folder's *metarecords* — the
 // query `mfr_path -> "<folder>"`, written into the list's normal DSL zone so it
 // stays visible, editable and composable (spec-gui "Cross-panel selection").
@@ -1044,13 +1044,16 @@ export async function dispatch(invocation: string): Promise<DispatchResult> {
  */
 async function runCommand(name: string, args: string[], ws: string | null): Promise<boolean> {
   switch (name) {
-    case 'command-input:activate':
-      // The input is always visible: activation means focusing it.
-      store.ui.commandInputFocusTick += 1;
-      return true;
-    case 'bash-input:activate':
-      // Same input, bash mode: `!` prompt, the line runs as a shell command.
-      store.ui.bashInputFocusTick += 1;
+    case 'command-input:focus':
+      // One widget, two modes: command (`:`) and bash (`!`, the line runs as a
+      // shell command). It is always visible, so focusing is all there is to
+      // do. Default to the command mode when nothing is named.
+      if (args[0] === 'bash') store.ui.bashInputFocusTick += 1;
+      else if (args[0] === undefined || args[0] === 'command') store.ui.commandInputFocusTick += 1;
+      else {
+        await status(`unknown mode: "${args[0]}" (expected command / bash)`);
+        return true;
+      }
       return true;
     // editing:* acts on the shell command input (editingTarget) when set,
     // otherwise on the deep-focused panel input (replacing the old per-iframe
@@ -1067,12 +1070,16 @@ async function runCommand(name: string, args: string[], ws: string | null): Prom
     case 'editing:confirm':
       editingTarget?.confirm();
       return true;
-    case 'editing:goto-line-start': {
-      if (editingTarget) editingTarget.lineStart();
-      else (deepActiveElement() as HTMLInputElement | null)?.setSelectionRange?.(0, 0);
-      return true;
-    }
-    case 'editing:goto-line-end': {
+    case 'editing:goto': {
+      if (args[0] !== 'line-start' && args[0] !== 'line-end') {
+        await status(`unknown target: "${args[0] ?? ''}" (expected line-start / line-end)`);
+        return true;
+      }
+      if (args[0] === 'line-start') {
+        if (editingTarget) editingTarget.lineStart();
+        else (deepActiveElement() as HTMLInputElement | null)?.setSelectionRange?.(0, 0);
+        return true;
+      }
       if (editingTarget) {
         editingTarget.lineEnd();
       } else {
@@ -1099,12 +1106,7 @@ async function runCommand(name: string, args: string[], ws: string | null): Prom
       }
       if (ws) await invoke('workspace_rename', { wsId: ws, name: args.join(' ') });
       return true;
-    case 'workspace:next-in-slot':
-      await invoke('workspace_next_in_slot');
-      return true;
-    case 'workspace:prev-in-slot':
-      await invoke('workspace_prev_in_slot');
-      return true;
+
     case 'workspace:goto': {
       // The 1-based workspace position is the parameter (no longer baked
       // into the command name). Moves BOTH panels.
@@ -1112,11 +1114,13 @@ async function runCommand(name: string, args: string[], ws: string | null): Prom
       if (Number.isInteger(n)) await invoke('workspace_goto', { n });
       return true;
     }
+    // Bare, both panels move together so the two slots never drift onto
+    // different workspaces unnoticed; `slot` moves only the focused one.
     case 'workspace:next':
-      await invoke('workspace_next');
+      await invoke(args[0] === 'slot' ? 'workspace_next_in_slot' : 'workspace_next');
       return true;
     case 'workspace:prev':
-      await invoke('workspace_prev');
+      await invoke(args[0] === 'slot' ? 'workspace_prev_in_slot' : 'workspace_prev');
       return true;
     case 'panel:split':
       await invoke('panel_split');
@@ -1127,22 +1131,30 @@ async function runCommand(name: string, args: string[], ws: string | null): Prom
     case 'panel:hide':
       await invoke('slot_hide', { slot: store.layout.focused });
       return true;
-    case 'panel:split-toggle':
-      await invoke('panel_split_toggle');
+    case 'panel:toggle':
+      if (args[0] === 'split') await invoke('panel_split_toggle');
+      else if (args[0] === 'fullscreen') await setFullscreen(!store.ui.fullscreen);
+      else await status(`unknown flag: "${args[0] ?? ''}" (expected split / fullscreen)`);
       return true;
-    case 'panel:focus-next':
-      await invoke('panel_focus_next');
+    case 'panel:focus':
+      // `next` is the other slot; `left`/`right` name one outright, so a
+      // keybinding can reach a slot without knowing which one holds the focus.
+      if (args[0] === undefined || args[0] === 'next') await invoke('panel_focus_next');
+      else if (args[0] === 'left' || args[0] === 'right')
+        await invoke('focus_slot', { slot: args[0] });
+      else await status(`unknown slot: "${args[0]}" (expected next / left / right)`);
       return true;
-    case 'panel:set-type':
-      if (args[0]) await invoke('panel_set_type', { slot: store.layout.focused, panelType: args[0] });
+    case 'panel:set':
+      if (args[0] !== 'type') {
+        await status(`unknown setting: "${args[0] ?? ''}" (expected type)`);
+        return true;
+      }
+      if (args[1]) await invoke('panel_set_type', { slot: store.layout.focused, panelType: args[1] });
       return true;
     case 'panel:swap':
       await invoke('panel_swap');
       return true;
-    case 'panel:fullscreen':
-      await setFullscreen(!store.ui.fullscreen);
-      return true;
-    case 'panel:reveal-other': {
+    case 'panel:reveal': {
       // Shows the given panel type for the SAME workspace in the other
       // slot, opening it if hidden (spec-gui "Cross-panel selection").
       if (!args[0] || !ws) return true;
@@ -1174,7 +1186,11 @@ async function runCommand(name: string, args: string[], ws: string | null): Prom
     case 'reconcile:run':
       if (ws) await invoke('reconcile_run', { wsId: ws });
       return true;
-    case 'mf:duplicate-scan':
+    case 'mf:duplicate':
+      if (args[0] !== 'scan') {
+        await status(`unknown operation: "${args[0] ?? ''}" (expected scan)`);
+        return true;
+      }
       // The GUI half of `mf duplicate scan` (spec-duplicates "GUI"). Options
       // stay CLI-only, as `mf trash prune`'s do: this runs the ordinary
       // whole-repository scan, and the Rust side posts its own status.
@@ -1242,7 +1258,7 @@ async function runCommand(name: string, args: string[], ws: string | null): Prom
       // args[0] is the picked "<name> — <root>" line (or a bare name/uuid).
       if (ws && args[0]) await openRepoInWorkspace(args[0], ws);
       return true;
-    case 'file-manager:reveal-folder': {
+    case 'file-manager:reveal': {
       // Open the folder of the current selection in the file manager, replacing
       // the focused panel: the folder itself when a directory is selected, or
       // the folder containing the selected file. The file manager (which reads
@@ -1263,7 +1279,7 @@ async function runCommand(name: string, args: string[], ws: string | null): Prom
       return true;
     }
     case 'metarecord-list:folder': {
-      // The metarecord-list counterpart of `file-manager:reveal-folder`: show
+      // The metarecord-list counterpart of `file-manager:reveal`: show
       // the metarecords of the selection's folder, replacing the focused panel.
       if (ws) await listFolder(ws);
       return true;
@@ -1292,7 +1308,7 @@ async function runCommand(name: string, args: string[], ws: string | null): Prom
       await runScript(path, ws);
       return true;
     }
-    case 'find:in-panel':
+    case 'find:open':
       openFind(args[0]);
       return true;
     case 'find:next':
@@ -1306,7 +1322,7 @@ async function runCommand(name: string, args: string[], ws: string | null): Prom
       return true;
 
     case 'help':
-    case 'help:help': {
+    case 'help:open': {
       // Open the help panel for an optional topic. The topic (raw arg text) is
       // handed to the panel through a workspace var; the `nonce` makes an
       // identical repeated topic still re-trigger the panel's onChange.
@@ -1316,12 +1332,12 @@ async function runCommand(name: string, args: string[], ws: string | null): Prom
       await invoke('panel_set_type', { slot: store.layout.focused, panelType: 'help' });
       return true;
     }
-    case 'help:help-cursor':
+    case 'help:cursor':
       // Arm the `?` cursor: the next click (or escape) is intercepted in keys.ts.
       store.ui.helpCursorActive = true;
       setHelpCursor(true);
       return true;
-    case 'daemon:set-url':
+    case 'daemon:set url':
       if (args[0]) {
         const connected = await invoke<boolean>('daemon_set_url', { url: args[0] });
         store.daemonUrl = args[0];

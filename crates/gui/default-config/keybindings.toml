@@ -13,8 +13,8 @@
 
 # Command input (spec default suggestions): `:` for commands, `!` for the
 # bash input (the same widget in shell mode, with Tab bash completion).
-":" = { command = "command-input:activate" }
-"!" = { command = "bash-input:activate" }
+":" = { command = "command-input:focus command" }
+"!" = { command = "command-input:focus bash" }
 
 # A script's question (spec-gui "Script keys"): `tab` hands the keys the script
 # awaits back to the panels — and takes them again — without abandoning the
@@ -30,8 +30,8 @@
   { command = "find:close", focus = "find" },
 ]
 "ctrl+q" = { command = "editing:discard", text-input = true }
-"ctrl+a" = { command = "editing:goto-line-start", text-input = true }
-"ctrl+e" = { command = "editing:goto-line-end", text-input = true }
+"ctrl+a" = { command = "editing:goto line-start", text-input = true }
+"ctrl+e" = { command = "editing:goto line-end", text-input = true }
 
 # Dismiss the transient status-bar message (works while typing too).
 "ctrl+l" = { command = "status:clear", text-input = true }
@@ -39,8 +39,8 @@
 # Workspaces (spec default suggestions: t, w, 1..9). n/p and the digits move
 # BOTH panels together so the two slots never drift onto different
 # workspaces unnoticed; splitting across workspaces needs an explicit tab
-# click or the focused-slot workspace:next-in-slot /
-# workspace:prev-in-slot commands.
+# click or the focused-slot workspace:next slot /
+# workspace:prev slot commands.
 "ctrl+t" = { command = "workspace:new" }
 "ctrl+w" = { command = "workspace:close" }
 "n" = { command = "workspace:next" }
@@ -71,38 +71,38 @@
 "ctrl+escape" = { command = "pick:cancel" }
 
 # Panel slots. panel:split is available via the command input.
-"v" = { command = "panel:split-toggle" }
+"v" = { command = "panel:toggle split" }
 # `panel:unsplit` lives on `u` (not `c`) so `c` is free for the metarecord-list
 # clear-then-edit family below — which ended up on the single keys f/s/q, with
 # `c` itself clearing all three.
 "u" = { command = "panel:unsplit" }
-"o" = { command = "panel:focus-next" }
+"o" = { command = "panel:focus next" }
 "x" = { command = "panel:swap" }
 # Zoom the focused panel to the whole window and back — the key tmux zooms a
 # pane with. Escape also leaves fullscreen.
-"z" = { command = "panel:fullscreen" }
+"z" = { command = "panel:toggle fullscreen" }
 
 # Panel type switching: "t" then one letter (the status bar lists the
 # continuations while the sequence is pending; escape cancels it).
-"t l" = { command = "panel:set-type metarecord-list" }
-"t d" = { command = "panel:set-type metarecord-detail" }
-"t f" = { command = "panel:set-type file" }
-"t m" = { command = "panel:set-type file-manager" }
-"t o" = { command = "panel:set-type log" }
-"t r" = { command = "panel:set-type repos" }
-"t g" = { command = "panel:set-type message" }
-"t w" = { command = "panel:set-type workspace-info" }
-"t t" = { command = "panel:set-type treeref" }
-"t b" = { command = "panel:set-type trash" }
-"t y" = { command = "panel:set-type sync" }
-"t h" = { command = "panel:set-type help" }
-"t v" = { command = "panel:set-type recent" }
-"t u" = { command = "panel:set-type duplicates" }
+"t l" = { command = "panel:set type metarecord-list" }
+"t d" = { command = "panel:set type metarecord-detail" }
+"t f" = { command = "panel:set type file" }
+"t m" = { command = "panel:set type file-manager" }
+"t o" = { command = "panel:set type log" }
+"t r" = { command = "panel:set type repos" }
+"t g" = { command = "panel:set type message" }
+"t w" = { command = "panel:set type workspace-info" }
+"t t" = { command = "panel:set type treeref" }
+"t b" = { command = "panel:set type trash" }
+"t y" = { command = "panel:set type sync" }
+"t h" = { command = "panel:set type help" }
+"t v" = { command = "panel:set type recent" }
+"t u" = { command = "panel:set type duplicates" }
 
 # Help (spec-gui "Help"). "h" then a letter; F1 also arms the help cursor.
-"h h" = { command = "help:help" }
-"h c" = { command = "help:help-cursor" }
-"f1" = { command = "help:help-cursor", text-input = true }
+"h h" = { command = "help:open" }
+"h c" = { command = "help:cursor" }
+"f1" = { command = "help:cursor", text-input = true }
 
 # Go to a recently-viewed metarecord ("g" = go): opens the `recent` picker in
 # the command input, filtered by ordered substring like the finder. Global
@@ -476,7 +476,7 @@
 # did — it was the one panel type with no keybinding at all.
 "y s" = { command = "sync:status", when = "sync" }
 "y p" = { command = "sync:plan", when = "sync" }
-"y w" = { command = "sync:show", when = "sync" }
+"y w" = { command = "sync:open", when = "sync" }
 "y r" = { command = "sync:run", when = "sync" }
 
 # file: image zoom controls.
@@ -514,7 +514,7 @@
 # from inside a panel's own search box, and pressing it again re-focuses the
 # find bar and selects what is in it. Enter / shift+Enter / escape while the
 # bar has the focus are the focus-scoped entries in the sections above.
-"ctrl+f" = { command = "find:in-panel", text-input = true }
+"ctrl+f" = { command = "find:open", text-input = true }
 
 # Panel types can still suggest their own keybindings at runtime
 # (metafolder.addKeybinding) — useful for third-party panels. Those are the

@@ -11,7 +11,7 @@
   async function fullscreenMe(event: Event) {
     event.stopPropagation();
     if (!isFocused) await invoke('focus_slot', { slot: id });
-    await dispatch('panel:fullscreen');
+    await dispatch('panel:toggle fullscreen');
   }
 
   const payload = $derived(slotPayload(id));
@@ -108,7 +108,7 @@
       {/if}
       <button
         class="slot-button"
-        title="show only this panel fullscreen (panel:fullscreen; escape exits)"
+        title="show only this panel fullscreen (panel:toggle fullscreen; escape exits)"
         onclick={fullscreenMe}>⛶</button
       >
     </span>

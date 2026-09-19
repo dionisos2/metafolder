@@ -400,7 +400,7 @@ export function mount(root, metafolder) {
   }
 
   byId(root, 'refresh').addEventListener('click', () => void load());
-  byId(root, 'scan').addEventListener('click', () => void commands.invoke('mf:duplicate-scan'));
+  byId(root, 'scan').addEventListener('click', () => void commands.invoke('mf:duplicate scan'));
 
   void commands.register('duplicates:refresh', {
     label: 'Duplicates: reload the groups',

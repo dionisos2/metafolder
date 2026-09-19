@@ -1,4 +1,4 @@
-//! `mf:duplicate-scan` (spec-duplicates "GUI"): scans the workspace's active
+//! `mf:duplicate scan` (spec-duplicates "GUI"): scans the workspace's active
 //! repo for byte-identical files, with a busy status while it runs, a summary
 //! in the status bar and the full result in the message log.
 //!

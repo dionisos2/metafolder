@@ -61,7 +61,7 @@ export function stepFind(delta: number) {
 
 /** Opens the bar (or re-focuses its input when it is already open) and runs
  *  `needle` — the last one when it is omitted, so Ctrl-F twice in a row keeps
- *  the search. An explicit needle is what `find:in-panel <text>` (and a script
+ *  the search. An explicit needle is what `find:open <text>` (and a script
  *  driving it through the GUI API) searches for. */
 export function openFind(needle?: string) {
   const find = store.ui.find;

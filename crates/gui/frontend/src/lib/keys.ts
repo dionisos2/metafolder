@@ -198,7 +198,7 @@ export function installKeys() {
         (slot: string) => slotPayload(slot as SlotId).panel_type,
       );
       deactivateHelpCursor();
-      if (topic) void dispatch(`help:help "${topic}"`);
+      if (topic) void dispatch(`help:open "${topic}"`);
     },
     { capture: true },
   );

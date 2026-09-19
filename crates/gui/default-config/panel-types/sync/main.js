@@ -437,7 +437,7 @@ export function mount(root, metafolder) {
 
   void commands.register('sync:status', { label: 'Sync: show the pair status', handler: () => doStatus() });
   void commands.register('sync:plan', { label: 'Sync: compute the plan', handler: () => doPlan() });
-  void commands.register('sync:show', { label: 'Sync: show the plan overlay', handler: () => doShow() });
+  void commands.register('sync:open', { label: 'Sync: show the plan overlay', handler: () => doShow() });
   void commands.register('sync:run', { label: 'Sync: run the plan', handler: () => doRun() });
 
   // Keybindings for this panel live in keybindings.toml (when = "sync").

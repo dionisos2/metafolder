@@ -114,7 +114,7 @@ export function mount(root, metafolder) {
     if (!row || !repo) return;
     await workspace.set('selected_metarecord', { uuid: row.uuid, repo });
     await workspace.set('selected_paths', row.absPaths);
-    await commands.invoke(`panel:reveal-other ${row.absPaths.length > 0 ? 'file' : 'metarecord-detail'}`);
+    await commands.invoke(`panel:reveal ${row.absPaths.length > 0 ? 'file' : 'metarecord-detail'}`);
   }
 
   async function load() {

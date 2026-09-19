@@ -42,7 +42,7 @@ function taggedCommands(): { page: string; command: string }[] {
     const text = readFileSync(join(pagesDir, file), 'utf8');
     for (const m of text.matchAll(/data-mf-key="([^"]+)"/g)) {
       for (const entry of m[1].split(',')) {
-        // An invocation may carry arguments (`panel:set-type treeref`); the
+        // An invocation may carry arguments (`panel:set type treeref`); the
         // command is its first word.
         const command = entry.trim().split(/\s+/)[0];
         if (command) out.push({ page: file, command });

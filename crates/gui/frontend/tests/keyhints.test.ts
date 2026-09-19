@@ -59,15 +59,15 @@ describe('bindingMatches', () => {
   });
 
   test('a parameterised invocation matches its bare command name', () => {
-    expect(bindingMatches(bind(['t', 'l'], 'panel:set-type metarecord-list'), 'panel:set-type')).toBe(
+    expect(bindingMatches(bind(['t', 'l'], 'panel:set type metarecord-list'), 'panel:set type')).toBe(
       true,
     );
   });
 
   test('a fuller query matches only that exact invocation', () => {
-    const b = bind(['t', 'l'], 'panel:set-type metarecord-list');
-    expect(bindingMatches(b, 'panel:set-type metarecord-list')).toBe(true);
-    expect(bindingMatches(b, 'panel:set-type treeref')).toBe(false);
+    const b = bind(['t', 'l'], 'panel:set type metarecord-list');
+    expect(bindingMatches(b, 'panel:set type metarecord-list')).toBe(true);
+    expect(bindingMatches(b, 'panel:set type treeref')).toBe(false);
   });
 
   test('a command name is not a prefix of another command', () => {
@@ -82,7 +82,7 @@ describe('keysFor', () => {
     bind(['f'], 'treeref:find', 'treeref'),
     bind(['/'], 'metarecord-list:focus finder', 'metarecord-list'),
     bind(['e', 'f'], 'metarecord-list:focus finder', 'metarecord-list'),
-    bind(['ctrl+f'], 'find:in-panel'),
+    bind(['ctrl+f'], 'find:open'),
   ];
 
   test('every combo bound to the command, in table order', () => {
@@ -101,7 +101,7 @@ describe('keysFor', () => {
 });
 
 describe('applyKeyHints', () => {
-  const table = [bind(['f'], 'treeref:find', 'treeref'), bind(['ctrl+f'], 'find:in-panel')];
+  const table = [bind(['f'], 'treeref:find', 'treeref'), bind(['ctrl+f'], 'find:open')];
 
   function page(html: string) {
     const host = document.createElement('div');
@@ -117,7 +117,7 @@ describe('applyKeyHints', () => {
   });
 
   test('several keys are one <kbd> each', () => {
-    const host = page('<span data-mf-key="treeref:find, find:in-panel">?</span>');
+    const host = page('<span data-mf-key="treeref:find, find:open">?</span>');
     applyKeyHints(host, table);
     expect(host.textContent).toBe('f or Ctrl+f');
     expect([...host.querySelectorAll('kbd')].map((k) => k.textContent)).toEqual(['f', 'Ctrl+f']);
@@ -133,7 +133,7 @@ describe('applyKeyHints', () => {
   test('every tagged element is filled, and untagged markup is untouched', () => {
     const host = page(
       '<p><span data-mf-key="treeref:find">x</span> and <code>mfr_path</code> ' +
-        'and <span data-mf-key="find:in-panel">y</span></p>',
+        'and <span data-mf-key="find:open">y</span></p>',
     );
     applyKeyHints(host, table);
     expect(host.textContent).toBe('f and mfr_path and Ctrl+f');

@@ -251,7 +251,7 @@ describe('listedCommands', () => {
 
   test('the bare entry shows only the combos bound to it exactly', () => {
     // Without this the bare command would collect every parameterized combo —
-    // `panel:set-type` used to print 14 of them on one line, with nothing
+    // `panel:set type` used to print 14 of them on one line, with nothing
     // saying which combo went with which panel type.
     const listed = listedCommands(commands, keytable);
     expect(listed.find((c) => c.name === 'metarecord:bulk')?.shortcuts).toEqual(['m b']);
@@ -650,7 +650,7 @@ describe('resolveSubmission', () => {
   });
 
   test('falls back to the typed text when there is no suggestion', () => {
-    expect(resolveSubmission('panel:set-type file', [], 0)).toBe('panel:set-type file');
+    expect(resolveSubmission('panel:set type file', [], 0)).toBe('panel:set type file');
     expect(resolveSubmission('!ls', [], 0)).toBe('!ls');
   });
 });

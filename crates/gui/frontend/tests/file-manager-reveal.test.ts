@@ -1,6 +1,6 @@
 // file-manager "reveal a folder" flow (spec-gui "Cross-panel selection"): the
 // panel honours a `file-manager:reveal-path` workspace variable — set by the
-// `file-manager:reveal-folder` command from another panel — navigating to the
+// `file-manager:reveal` command from another panel — navigating to the
 // metarecord's folder (its parent for a file, highlighting the file), both when
 // it mounts and while already mounted, guarded by the request nonce.
 

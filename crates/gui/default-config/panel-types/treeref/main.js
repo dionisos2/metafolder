@@ -200,7 +200,7 @@ export async function mount(root, metafolder) {
       dsl: currentQueryDsl(),
       nonce: Date.now(),
     });
-    await commands.invoke('panel:reveal-other metarecord-list');
+    await commands.invoke('panel:reveal metarecord-list');
   }
 
   // ── Navigation ──────────────────────────────────────────────────────────

@@ -78,44 +78,35 @@ fn register_builtins(registry: &CommandRegistry) {
     // message panel. Basic editing primitives (which fire on nearly every
     // keystroke) opt out to keep the log readable.
     for (name, label, log) in [
-        ("command-input:activate", "Focus the command input", false),
-        ("bash-input:activate", "Focus the bash (shell) input", false),
+        ("command-input:focus", "Focus the command input (command / bash mode)", false),
         ("editing:unfocus", "Leave the focused text input", false),
         ("editing:discard", "Clear and leave the focused text input", false),
         ("editing:confirm", "Confirm the focused text input", false),
-        ("editing:goto-line-start", "Move the cursor to the line start", false),
-        ("editing:goto-line-end", "Move the cursor to the line end", false),
+        ("editing:goto", "Move the cursor to the line start / line end", false),
         ("workspace:new", "Create a workspace and show it in both slots", true),
         ("workspace:close", "Close the focused slot's workspace", true),
         ("workspace:rename", "Rename the focused slot's workspace", true),
         ("workspace:goto", "Move both panels to workspace number N", true),
-        ("workspace:next", "Move both panels to the next workspace", true),
-        ("workspace:prev", "Move both panels to the previous workspace", true),
-        ("workspace:next-in-slot", "Show the next workspace in the focused slot only", true),
-        ("workspace:prev-in-slot", "Show the previous workspace in the focused slot only", true),
+        ("workspace:next", "Move to the next workspace (`slot`: the focused slot only)", true),
+        ("workspace:prev", "Move to the previous workspace (`slot`: the focused slot only)", true),
         ("panel:split", "Show the second panel slot", true),
         ("panel:unsplit", "Hide the non-focused panel slot", true),
         ("panel:hide", "Hide the focused panel slot", true),
-        ("panel:split-toggle", "Split when single, unsplit when split", true),
-        ("panel:focus-next", "Focus the other panel slot", true),
-        ("panel:set-type", "Switch the focused slot's panel type", true),
+        ("panel:toggle", "Toggle a layout flag (split / fullscreen)", true),
+        ("panel:focus", "Focus a panel slot (next / left / right)", true),
+        ("panel:set", "Change a layout setting (type)", true),
         ("panel:swap", "Exchange the two slots' panel types", true),
-        ("panel:reveal-other", "Show a panel type for this workspace in the other slot", true),
-        (
-            "panel:fullscreen",
-            "Toggle showing only the focused panel fullscreen (z; escape exits)",
-            true,
-        ),
+        ("panel:reveal", "Show a panel type for this workspace in the other slot", true),
         ("message:clear", "Clear the workspace message log", true),
         ("status:clear", "Clear the status bar message", false),
         ("config:open", "Open the settings view", true),
         ("devtools:open", "Open the WebKit web inspector", true),
         ("quit", "Exit the GUI", true),
-        ("daemon:set-url", "Change the daemon URL", true),
+        ("daemon:set", "Change a daemon setting (url)", true),
         ("repos:open", "Open the repository panel in the focused slot", true),
         ("repos:switch", "Open a loaded repository in the current or a new workspace", true),
         (
-            "file-manager:reveal-folder",
+            "file-manager:reveal",
             "Open the selected metarecord's folder in the file manager (focused panel)",
             true,
         ),
@@ -129,7 +120,7 @@ fn register_builtins(registry: &CommandRegistry) {
         ("script:run", "Run an installed helper script", true),
         ("reconcile:run", "Reconcile the active repository with the filesystem", true),
         (
-            "mf:duplicate-scan",
+            "mf:duplicate",
             "Scan the active repository for byte-identical files (mf duplicate scan)",
             true,
         ),
@@ -160,15 +151,15 @@ fn register_builtins(registry: &CommandRegistry) {
         // Find in panel (spec-gui "Find in panel"). `log=false`: stepping
         // through matches is a keystroke-level action, not a command worth a
         // message-log line.
-        ("find:in-panel", "Find text in the focused panel (optional text)", false),
+        ("find:open", "Find text in the focused panel (optional text)", false),
         ("find:next", "Go to the next find match", false),
         ("find:prev", "Go to the previous find match", false),
         ("find:close", "Close the find bar", false),
         // Help (spec-gui "Help"). `log=false`: the help-cursor drives these on
         // every click, which would otherwise flood the message log.
         ("help", "Open the help panel (optional topic)", false),
-        ("help:help", "Open help for a topic", false),
-        ("help:help-cursor", "Click an element to open its help", false),
+        ("help:open", "Open help for a topic", false),
+        ("help:cursor", "Click an element to open its help", false),
     ] {
         registry.register_builtin(name, label, log);
     }
@@ -609,7 +600,7 @@ mod tests {
     fn test_workspace_and_fullscreen_commands_are_builtins() {
         let registry = CommandRegistry::new();
         register_builtins(&registry);
-        for name in ["workspace:next", "workspace:prev", "workspace:goto", "panel:fullscreen"] {
+        for name in ["workspace:next", "workspace:prev", "workspace:goto", "panel:toggle"] {
             assert!(registry.get(name).is_some(), "{name} registered");
         }
         // The parameter-in-name form is gone.
@@ -622,7 +613,7 @@ mod tests {
         // (panel commands only register at mount), so they are shell builtins.
         let registry = CommandRegistry::new();
         register_builtins(&registry);
-        for name in ["help", "help:help", "help:help-cursor"] {
+        for name in ["help", "help:open", "help:cursor"] {
             let def = registry.get(name).unwrap_or_else(|| panic!("{name} registered"));
             assert_eq!(def.owner, None, "{name} is a builtin");
         }

@@ -526,7 +526,7 @@ describe('installDefaultContextMenu', () => {
 
     rightClick(target());
     itemByLabel('Split / unsplit').click();
-    expect(dispatch).toHaveBeenCalledWith('panel:split-toggle');
+    expect(dispatch).toHaveBeenCalledWith('panel:toggle split');
 
     rightClick(target());
     itemByLabel('Open web inspector').click();

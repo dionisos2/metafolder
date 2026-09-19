@@ -1376,7 +1376,7 @@ export async function mount(root, metafolder) {
   byId(root, 'new-metarecord-placeholder').addEventListener('click', invoke('metarecord:create'));
   byId(root, 'delete-metarecord').addEventListener('click', invoke('metarecord:delete'));
   byId(root, 'watch-reconcile').addEventListener('click', () => {
-    void commands.invoke(needsWatch() ? 'metarecord:watch-reconcile' : 'metarecord:reconcile');
+    void commands.invoke(needsWatch() ? 'metarecord:reconcile watch' : 'metarecord:reconcile');
   });
   byId(root, 'show-add').addEventListener('click', invoke('metarecord:open-add-field'));
   byId(root, 'add-append').addEventListener('click', () => void addField(false));
@@ -1429,13 +1429,17 @@ export async function mount(root, metafolder) {
     label: 'Delete the selected metarecord',
     handler: deleteEntry,
   });
-  void commands.register('metarecord:watch-reconcile', {
-    label: 'Enable tracking and reconcile the selected metarecord',
-    handler: watchAndReconcile,
-  });
   void commands.register('metarecord:reconcile', {
-    label: "Reconcile the selected metarecord's subtree",
-    handler: reconcileScoped,
+    label: "Reconcile the selected metarecord's subtree (`watch`: start tracking it first)",
+    args: [
+      {
+        name: 'watch',
+        optional: true,
+        prompt: () => 'Start tracking it first? (watch)',
+        complete: () => ['watch'],
+      },
+    ],
+    handler: (watch) => (watch === 'watch' ? watchAndReconcile() : reconcileScoped()),
   });
   void commands.register('metarecord:open-add-field', {
     label: 'Open the add-field form on the selected metarecord',
@@ -1469,7 +1473,7 @@ export async function mount(root, metafolder) {
     label: 'Delete the field under the cursor',
     handler: deleteCursorRow,
   });
-  void commands.register('metarecord:cancel-edit', {
+  void commands.register('metarecord:cancel', {
     label: 'Cancel the current field edit or add form',
     log: false,
     handler: () => {
@@ -1502,7 +1506,7 @@ export async function mount(root, metafolder) {
           label: needsWatch() ? 'Enable tracking & reconcile' : 'Reconcile',
           action: () =>
             void commands.invoke(
-              needsWatch() ? 'metarecord:watch-reconcile' : 'metarecord:reconcile',
+              needsWatch() ? 'metarecord:reconcile watch' : 'metarecord:reconcile',
             ),
         },
         { label: 'Delete metarecord', action: () => void commands.invoke('metarecord:delete') },

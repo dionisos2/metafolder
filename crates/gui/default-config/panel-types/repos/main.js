@@ -452,7 +452,7 @@ export async function mount(root, metafolder) {
       const current = await workspace.get('active_repo');
       if (current === null) {
         await workspace.adoptRepo(repoUuid);
-        await commands.invoke('panel:set-type metarecord-list');
+        await commands.invoke('panel:set type metarecord-list');
       } else {
         await commands.invoke(`workspace:new ${repoUuid}`);
       }
@@ -471,7 +471,7 @@ export async function mount(root, metafolder) {
     const current = await workspace.get('active_repo');
     if (current === null) {
       await workspace.adoptRepo(repoUuid);
-      await commands.invoke('panel:set-type metarecord-list');
+      await commands.invoke('panel:set type metarecord-list');
     } else {
       void statusBar.message(
         `Repository ready: ${repoUuid.slice(0, 8)}… (open it from the list)`,
@@ -648,7 +648,7 @@ export async function mount(root, metafolder) {
     },
   });
 
-  void commands.register('repos:stop-task', {
+  void commands.register('repos:stop', {
     label: "Repos: stop one of the active repository's running tasks",
     args: [
       {
@@ -665,7 +665,7 @@ export async function mount(root, metafolder) {
     },
   });
 
-  void commands.register('repos:resume-watch', {
+  void commands.register('repos:resume', {
     label: 'Repos: resume tracking on the active repository',
     handler: async () => {
       await resumeWatch((await activeRepo()).uuid);

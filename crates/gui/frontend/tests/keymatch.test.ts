@@ -162,8 +162,8 @@ describe('createMatcher', () => {
   });
 
   test('a pending result carries the continuation candidates (hint display)', () => {
-    const list = b(['s', 'l'], 'panel:set-type metarecord-list');
-    const detail = b(['s', 'd'], 'panel:set-type metarecord-detail');
+    const list = b(['s', 'l'], 'panel:set type metarecord-list');
+    const detail = b(['s', 'd'], 'panel:set type metarecord-detail');
     const matcher = createMatcher([list, detail, b(['x'], 'cut')]);
     expect(matcher.feed('s', noInput)).toEqual({
       pending: true,
@@ -186,7 +186,7 @@ describe('createMatcher', () => {
   });
 
   test('a pending prefix swallows an unrelated single-key binding (s then t)', () => {
-    const setType = b(['s', 'l'], 'panel:set-type metarecord-list');
+    const setType = b(['s', 'l'], 'panel:set type metarecord-list');
     const tab = b(['t'], 'workspace:new');
     const matcher = createMatcher([setType, tab]);
     expect(matcher.feed('s', noInput)).toMatchObject({ pending: true, prefix: ['s'] });

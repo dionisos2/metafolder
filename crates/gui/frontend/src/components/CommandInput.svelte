@@ -94,7 +94,7 @@
     }
   });
 
-  /** command-input:activate / bash-input:activate: focus the always-visible
+  /** command-input:focus command / command-input:focus bash: focus the always-visible
    *  input in the given mode, swapping the per-mode drafts. */
   function activate(target: 'command' | 'bash') {
     if (mode !== target) {
@@ -116,7 +116,7 @@
 
   // Only the ticks are tracked: reading element/draft without untrack would
   // re-run these (and steal the focus) on every draft swap, e.g. when
-  // panel:focus-next changes the focused workspace.
+  // panel:focus next changes the focused workspace.
   //
   // The gates make the effects react to a *change* of the counter only. The
   // counters live in the module-level store and survive this component, which
@@ -383,7 +383,7 @@
   /** User edits invalidate the last Tab's candidates; a leading `!` in
    *  command mode switches to bash mode (continuity with the old
    *  `!command` syntax of the single input). A bare `!` restores the
-   *  workspace's bash draft — like bash-input:activate — while a pasted
+   *  workspace's bash draft — like command-input:focus bash — while a pasted
    *  `!command` keeps the pasted line. */
   function onInput() {
     bashCandidates = [];

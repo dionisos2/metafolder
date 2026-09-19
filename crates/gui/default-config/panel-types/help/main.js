@@ -2,7 +2,7 @@
 // pages/index.json, offers a grep search box on top, and resolves an exact
 // name (a page id, an alias, or a `panel:command`) straight to its page. The
 // shell hands a requested topic in via the `help.request` workspace var (set by
-// the `help` / `help:help` builtins and the help-cursor click resolution).
+// the `help` / `help:open` builtins and the help-cursor click resolution).
 
 import { byId, el } from '/__ui.js';
 import { resolvePage, filterPages } from '/__help.js';

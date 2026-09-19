@@ -426,7 +426,7 @@ export function installDefaultContextMenu(target, dispatch) {
       { header: 'Text' },
       { label: 'Copy', disabled: selection === '', action: () => void copyText(selection) },
       { header: 'View' },
-      { label: 'Split / unsplit', action: () => void dispatch('panel:split-toggle') },
+      { label: 'Split / unsplit', action: () => void dispatch('panel:toggle split') },
       { label: 'Swap panel types', action: () => void dispatch('panel:swap') },
       { label: 'Open web inspector', action: () => void dispatch('devtools:open') },
     );

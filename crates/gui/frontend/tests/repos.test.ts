@@ -259,7 +259,7 @@ describe('repos panel', () => {
     expect((shadow.getElementById('init-error') as HTMLElement).textContent).toBe('');
     // A workspace with no repository adopts the new one and opens the list.
     expect(vars.get('active_repo')).toBe(daemon.repos[0].repo_uuid);
-    expect(dispatch).toHaveBeenCalledWith('panel:set-type metarecord-list');
+    expect(dispatch).toHaveBeenCalledWith('panel:set type metarecord-list');
   });
 
   test('a failed load shows the daemon error in the form, not a blank panel', async () => {
