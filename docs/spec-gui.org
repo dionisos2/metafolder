@@ -2695,7 +2695,7 @@ space in the listing offers just =New folder…= / =New file…= / =Paste=.
 | =file-manager:copy=       | Copy the selected entry to the shared clipboard (=Ctrl+C=) |
 | =file-manager:cut=        | Cut the selected entry to the shared clipboard (=Ctrl+X=) |
 | =file-manager:paste=      | Paste the clipboard into the current directory (=Ctrl+V=; copy or move) |
-| =file-manager:delete=     | Delete the selected entry (=Delete=): to the repo trash when a repo is active, else permanently; confirmed |
+| =file-manager:delete=     | Delete the selected entry (=Delete=): to the repo trash when a repo is active, else permanently; confirmed. A *tracked* entry has its metarecords captured and deleted like any other trashing (spec-trash "What trashing does, in order") — the GUI is the path most deletions take, and must not be the one that still leaves orphans |
 | =file-manager:find=       | Move the cursor onto an entry of the current directory (=f=), its name collected in the command input — the shared list-panel find, see [[*Find an entry]]. Only the displayed directory is searched (hidden entries only when they are shown), and a directory is selected, not entered. |
 
 *** =treeref= panel type

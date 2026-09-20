@@ -44,10 +44,18 @@ operations; a watcher =Remove= on a directory with N descendants produces N+1
 
 ** Revision origin
 
-A revision records /who asked for it/: =revision.origin= is =watcher= for the
-revisions the daemon writes on the filesystem's behalf — the watcher's flush and
-the restoration replay that follows a skipped navigation step — and =NULL= for
-every write a client requested.
+A revision records /who asked for it/. =revision.origin= is:
+
+- =watcher= for the revisions the daemon writes on the filesystem's behalf — the
+  watcher's flush and the restoration replay that follows a skipped navigation
+  step;
+- =trash= for the metarecord deletion a trashing writes
+  ([[file:spec-trash.org][spec-trash.org]] "Deleting the metarecords");
+- =NULL= for every other write a client requested.
+
+The origin is set by the daemon, from *which endpoint was called* — never from a
+value a client supplies. A client able to name its own origin could pass its
+writes off as the daemon's and put them out of reach of [[*Undo]].
 
 It is the revision that carries this, not the operation types, because the types
 cannot express it. A file *arriving* is recorded as a =create_metarecord= plus
@@ -59,6 +67,13 @@ by type alone would read every arrival as the user's work.
 The distinction exists for [[*Undo]], which must not rewind past what the
 filesystem really did. It is also displayed: the GUI's log panel dims the
 watcher's revisions (spec-gui "Event log").
+
+Only =watcher= carries that disqualification — *not* "any origin that is set".
+=trash= exists precisely so that a trashing can be told apart from an ordinary
+deletion by a client deciding whether to bring bytes back, while remaining an
+ordinary, undoable revision the user asked for. Reading the rule as "the origin
+is not NULL, so it is the daemon's" would make trashing the one destructive
+operation that cannot be taken back — which is the opposite of the point.
 
 A database written before the column existed has =NULL= everywhere; a reader
 falls back to the operation types there, which is sound (the watcher does write
@@ -311,8 +326,10 @@ undoes that one:
 
 A revision is *not* a candidate when:
 
-- it is the daemon's (=origin = 'watcher'= — see [[*Revision origin]]; on a
-  pre-migration database, when all its operations are watcher types);
+- it is the daemon's — and that means =origin = 'watcher'= exactly, not merely
+  an origin that is set (see [[*Revision origin]]); on a pre-migration database,
+  when all its operations are watcher types. A revision stamped =trash= *is* a
+  candidate: the user asked for it;
 - it is *itself* a revert (any of its operations carries =reverts_op_id=).
   Undoing an undo is a redo, and the next undo would put it back: this is the
   rule that makes undo repeatable instead of a two-state oscillation;
@@ -612,7 +629,7 @@ an operation is reversible in the current context. That responsibility belongs
 to the CLI, which has access to the filesystem state, user permissions, and
 interactive input.
 
-Three op types require attention at rollback time:
+Four op types require attention at rollback time:
 
 - =file_moved=: the CLI checks whether the file still exists at its current
   location before executing the =mv=. If the file is gone or inaccessible,
@@ -631,6 +648,27 @@ Three op types require attention at rollback time:
   =step {"skip": true}= (metadata rewinds) and, if some other content for the
   record is trashed, prints a =mf trash restore= hint. See
   [[file:spec-trash.org][spec-trash.org]] "rollback auto-restore".
+- =delete_metarecord=, in a revision stamped =origin = 'trash'=: the metarecord
+  was not merely deleted, it was *trashed*, and its bytes are in the trash-bin
+  (see [[file:spec-trash.org][spec-trash.org]] "Undo, rollback and redo"). The
+  inverse recreates the metarecord from the operation's own snapshots — the
+  daemon's half — while the CLI moves the file back out of the trash and consumes
+  the entry. The entry is found by *the metarecord it holds*, not by an id
+  recorded on the operation: an undo consumes the entry and a later redo makes a
+  new one, so a recorded id would name something that no longer exists. Only one
+  live entry can ever hold a given metarecord, since after a trashing the
+  metarecord is gone and nothing can trash it again until it returns.
+
+  With no entry holding it — the trash was pruned, or the entry deleted by hand —
+  the step is skipped: the metadata rewinds, the bytes stay gone, and the CLI
+  says so. A rollback is never blocked by content the user chose to discard.
+
+  Applied *forward* (redo), the same operation means "trash this file again": the
+  bytes go back into the trash, in a **new** entry, and the metarecords are
+  deleted again. Re-applying only the metadata half would delete the metarecords
+  and leave the file in place, where the watcher would track it afresh — a
+  duplicate of what was just undone.
+
   For this correlation the daemon exposes, on each *inverse* step's op JSON
   (omitted on forward/redo steps, so auto-restore never fires while re-applying
   a deletion), both =entity_version_before= — the version *this* step moved away

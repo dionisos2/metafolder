@@ -1171,6 +1171,15 @@ unwatched* keeps a live-looking =mfr_path= and no =mfr_path_old= — invisible t
 query, which sees only the database, never the disk. The *orphan scan* is the
 diagnostic for exactly this state, and *clear* is its cleanup.
 
+An orphan is therefore a file that went away **without being asked to**: removed
+with =rm=, by another tool, or while nothing was watching. A deletion that went
+through metafolder is not one of them — trashing captures the metarecords and
+deletes them outright (see [[file:spec-trash.org][spec-trash.org]] "Overview"),
+so it leaves nothing behind to scan for. That is what makes acting on the scan's
+answer safe: everything it reports is genuinely gone, with no copy of the bytes
+anywhere, rather than something the user put in the trash and could still want
+back.
+
 *Scan* (=POST /repos/:repo/orphans/scan=, read-only). Driven by the *tracked
 set*, not the eligible tree: every metarecord that still resolves an =mfr_path=
 is checked against the disk, so a subtree deleted while unwatched is still found.

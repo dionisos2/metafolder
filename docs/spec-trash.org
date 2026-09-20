@@ -9,18 +9,33 @@ that would overwrite or delete a file — rollback today (see
 [[file:spec-sync.org][spec-sync.org]], v2). It guarantees no byte is ever lost: the destroyed content is
 set aside, and the user decides later whether to bring it back or discard it.
 
-The trash-bin is filesystem state managed *entirely by the clients* — the CLI
-and the GUI (the daemon never touches files); it lives under =internal/=,
-excluded from tracking like =db.sqlite=. The daemon's only involvement is
-exposing the repo's =internal_dir= in =GET /repos/:repo= so a client can locate
-it without guessing the =.metafolder= location. The shared filesystem layer
-(=TrashDir=: locate, move, list, restore, prune) lives in =crates/core=
-(=metafolder_core::trash=); each client adds its own glue (resolving a
-metarecord to a path, re-linking after a restore).
+*The trash takes the metarecord with the bytes.* Trashing captures the
+metarecord — and, for a directory, its whole subtree — into the entry, and then
+*deletes it from the repository*. Restoring puts it back at its original UUID.
 
-Restoration is always an explicit act (=mf trash restore=), never automatic: an
-operation only ever *moves victims into* the trash, and the log/navigation are
-never coupled to it.
+That is a deliberate reversal of an earlier design in which trashing left the
+metarecord behind, orphaned (=mfr_path = Nothing=), for the watcher to record.
+Two things were wrong with it. The orphan polluted every query, count and
+listing for as long as the entry survived; and =mf orphan detect= /
+=orphan:delete= would destroy it — presented to the user as a safe cleanup —
+while the bytes were still sitting in the trash, recoverable. The metadata was
+the one part of the promise the trash did not keep.
+
+So the invariant is now: **a metarecord dies with its bytes, never before.**
+=prune= is the single point of destruction, and "orphan" recovers its strict
+meaning — a file that went away without being asked to (see
+[[file:spec-file-tracking.org][spec-file-tracking.org]] "Orphan scan").
+
+The trash-bin is filesystem state managed by the clients — the CLI and the GUI;
+it lives under =internal/=, excluded from tracking like =db.sqlite=. The daemon
+still never touches a file. It now owns exactly one half of the operation, the
+half that is its own: deleting the metarecords, through a single endpoint
+([[*Deleting the metarecords]]). The shared layer (=TrashDir=: locate, move,
+list, restore, prune, capture, recreate) lives in =crates/core=
+(=metafolder_core::trash=); each client adds its own glue.
+
+Restoring the *bytes* is always an explicit act — =mf trash restore=, or a
+rollback that walks back over the trashing. Nothing restores them on its own.
 
 * Layout
 
@@ -50,20 +65,45 @@ CREATE TABLE entry (
   reason TEXT,                   -- rollback | sync | manual
   revision INTEGER,              -- op id that trashed it, or NULL
   metarecord TEXT,               -- the record it belonged to, or NULL
-  version INTEGER                -- the record's version when trashed (rollback correlation)
+  version INTEGER                -- the record's version when trashed (provenance)
 );
-CREATE TABLE node (              -- the trashed subtree: one row per metarecord
+CREATE TABLE node (              -- the captured metarecords: one row each
   entry_id TEXT REFERENCES entry(id) ON DELETE CASCADE,
-  uuid TEXT, parent TEXT, name TEXT  -- its original mfr_path TreeRef
+  uuid TEXT, parent TEXT, name TEXT, -- its original mfr_path TreeRef
+  fields TEXT,                       -- its fields, as JSON (NULL: pre-capture entry)
+  trashed INTEGER                    -- 1: deleted with the entry; 0: an ancestor
 );
 #+END_SRC
 
+=fields= holds the metarecord's fields exactly as the daemon renders them and
+exactly as they will be sent back to =POST …/metarecords/bulk=. It is *JSON*,
+which the rest of the system deliberately avoids: =field= and =op_snapshot=
+decompose a value into typed columns because the daemon *queries* those columns.
+Nothing queries these. They leave the daemon as JSON and return to it as JSON,
+so decomposing them would be work in the service of no question.
+
+=trashed= is what keeps a restore from resurrecting more than it should. The
+capture reaches past the trashed subtree: it also walks *up*, recording the
+ancestors, so that a restore can rebuild the chain if those were orphaned in the
+meantime. Those ancestors are not being trashed — the parent directory stays —
+so they are captured with =trashed = 0=, are never deleted, and are never
+recreated. Only =trashed = 1= nodes are the entry's own.
+
+The index has no schema-version mechanism: =open()= issues =CREATE TABLE IF NOT
+EXISTS= and nothing else. Columns added later therefore need an explicit
+=PRAGMA table_info= probe followed by =ALTER TABLE=, in the shape the daemon's
+own migrations use. A database written before =fields= existed reads it as
+=NULL=, which is exactly the "nothing captured" case a restore must already
+handle.
+
 The blob is moved *before* the row is written, so a row always implies its blob;
 an index failure only ever leaks an unindexed blob, swept by =prune --all=.
-=reason=/=revision=/=metarecord=/=version= are provenance: they let the user (and
-rollback) correlate a trashed version with the operation that displaced it, but
-restoration itself is driven purely by =original_path=. The =node= rows let a
-restore re-link the *whole* trashed subtree (see "Restore").
+=reason=/=revision=/=version= are provenance: they let the user see which
+operation displaced a given version, but nothing routes on them. =metarecord= is
+different — it is the *key* a rollback uses to find the entry holding a given
+metarecord ([[*Finding the entry]]). Where the bytes go back is not their
+business either: that is =original_path= alone. The =node= rows are what let a
+restore rebuild the *whole* trashed subtree ([[*Restoring]]).
 
 * Moving into and out of the trash
 
@@ -76,46 +116,127 @@ trashed: a directory is moved as one blob (which is itself a directory), with
 its subtree intact, and its recorded =size= is the recursive total; a symlink is
 trashed as the link itself (the rename moves the link, not its target; its size
 is the link's). Restoring moves the blob back to =original_path= (or an explicit
-target) and deletes the entry. Trashing a directory naturally cascades: its
-tracked children disappear too, and the watcher records that like any other
-removal; restoring the directory brings the whole subtree back.
+target) and deletes the entry. Trashing a directory naturally cascades: the
+whole subtree goes with it, metarecords included; restoring the directory brings
+all of it back.
 
-Trashing itself never touches the data model — that stays the watcher's job
-(and where watching is off, the frozen metadata is left alone). *Restoring*,
-however, re-links the entry's recorded =metarecord= authoritatively: if that
-metarecord is *orphaned* (its =mfr_path= is =Nothing= or absent — the state a
-deletion leaves), the CLI writes its =mfr_path= to the restored location (a
-=force= write, since =mfr_path= is reserved).
+** What trashing does, in order
+
+Trashing is three steps, and the order is not free:
+
+1. *Capture.* The client reads the target metarecord, walks up to record its
+   ancestors, and walks down the =mfr_path= forest to record every descendant —
+   each with its fields ([[*Layout]]). All of it through the daemon's ordinary
+   read endpoints, before anything is touched.
+2. *Delete the metarecords* — the trashed set only, never the ancestors — in one
+   revision ([[*Deleting the metarecords]]).
+3. *Move the bytes* into =internal/trash/=.
+
+Deleting before moving is what keeps the watcher out of it. When the file
+disappears, the watcher looks the path up in the forest, finds nothing there any
+more, and has nothing to orphan: the removal is a no-op. The reverse order would
+have the watcher orphan the records in the gap between the two steps, writing a
+revision that says something that is about to stop being true.
+
+The capture must come first for the obvious reason — once the metarecords are
+gone there is nothing left to read.
+
+A trashing is *one revision*, so it is one thing to undo
+([[*Undo, rollback and redo]]).
+
+** Deleting the metarecords
+
+: POST /repos/:repo_uuid/metarecords/trash
+
+Body ={"uuids": [...], "force": false}=. Deletes the given metarecords in a
+single revision stamped =revision.origin = 'trash'=
+([[file:spec-event-log.org][spec-event-log.org]] "Revision origin"). Response:
+={"deleted": N}=.
+
+This is the trash-bin's *only* daemon endpoint, and it exists because the
+operation has two halves that belong to different owners: the bytes are the
+client's business, the data model is the daemon's. Neither reaches into the
+other's.
+
+The origin is fixed by *which endpoint was called*, never by a parameter. A
+client that could name its own origin could disguise its writes as the daemon's
+and make them un-undoable; the stamp has to stay the daemon's word. That is why
+this is a separate endpoint rather than a flag on =POST …/query/delete=.
+
+Each deleted metarecord also *leaves its duplicate group*, exactly as orphaning
+one does (spec-duplicates "Leaving a group"). Skipping that would leave the
+group metarecords counting members that no longer exist.
+
+*** Refusing to break a reference
+
+A metarecord that other metarecords point at cannot be deleted without leaving
+those references dangling. The endpoint therefore *refuses* — =409=, nothing
+written — when any metarecord in the set is referenced from *outside* the set,
+naming the referrers. =force= overrides it.
+
+Only references from outside count. A subtree's own internal references travel
+with it and come back together on a restore, so refusing on those would make it
+impossible to trash a folder whose files reference each other — which would empty
+the guard of its purpose.
+
+The check is served from the index's reverse maps: the repository's =ref= and
+=tree_ref= field names come from the field catalogue (a handful), and each one
+answers "who points at this set" with one bitmap lookup per target. It is
+proportional to the number of reference-typed *fields*, not to the number of
+rows — it must never become a scan of the value columns (spec-main, the
+=INDEXED BY= invariant).
+
+*Not covered*: =ExternalRef= and =RefBase= values do not populate those reverse
+maps, so an inbound reference of either kind is not detected. An =ExternalRef=
+comes from another repository, whose sync state lives outside the data model
+anyway; the gap is accepted, and named here rather than left to be discovered.
+
+** Restoring
+
+Restoring is the inverse, and it runs in the mirror order: metadata first, bytes
+second.
+
+1. *Recreate* every =trashed= node the repository no longer holds, at its
+   original UUID and with its captured fields, through
+   =POST …/metarecords/bulk= — parent before child, since the forest refuses a
+   =TreeRef= whose parent has no row yet (spec-data-model "Bulk creation").
+   Recreating carries no version: a version is a hash of the metarecord's
+   content, so a metarecord recreated at its UUID with its fields *is* at the
+   version it had (spec-data-model "Version").
+2. *Re-link* the nodes that still exist. A metarecord that survived the trashing
+   — an ancestor, or one the user recreated — keeps its identity; if it is
+   orphaned (=mfr_path= absent or =Nothing=), its =mfr_path= is written back to
+   the restored location (a =force= write, =mfr_path= being reserved).
+3. *Move the blob back* to =original_path=, and consume the entry.
 
 Ordering matters, and is the crux of correctness. The restore target is always
-*free* (an occupied one is refused), so the re-link is always done *before* the
-file is moved into place: the metarecord then already claims the path, so when
-the watcher sees the arrival it finds the path tracked (=resolve= → refresh) and
-neither fingerprint-searches nor creates a metarecord. This is what makes restore
-reliable — a freshly tracked file has *no stored full hash*, so the watcher's
-fingerprint search cannot re-home it and would otherwise =create= a *duplicate*.
-(If the move then fails, the metarecord points at a not-yet-present file until
-the restore is retried — no content is lost, the blob stays in the trash.)
+*free* (an occupied one is refused), so the metadata is in place *before* the
+file arrives: the path is then tracked, so when the watcher sees the arrival it
+finds it (=resolve= → refresh) and neither fingerprint-searches nor creates a
+metarecord. This is what makes restore reliable — a freshly tracked file has *no
+stored full hash*, so the watcher's fingerprint search could not re-home it and
+would =create= a *duplicate* instead. (If the move then fails, the metarecords
+point at a not-yet-present file until the restore is retried — no content is
+lost, the blob stays in the trash.)
 
-The re-link is a *no-op when the metarecord still carries an =mfr_path=* (a
-watch-off repo never cleared it — nothing to fix, and the frozen metadata is
-respected), and it is skipped with a note when the restored path lies outside
-the repo or its parent directory is untracked. The restore itself is never
-blocked by a re-link failure.
+The re-link half is a *no-op when the metarecord still carries an =mfr_path=*,
+and it is skipped with a note when the restored path lies outside the repo or its
+parent directory is untracked. The restore itself is never blocked by a re-link
+failure.
+
+*An entry captured before this design* has no =fields= on its nodes. Nothing can
+be recreated from it, so it restores exactly as it used to: re-link what still
+exists, and leave the rest to the watcher. No entry is migrated.
 
 That =mfr_path=-still-present state has a second, transient cause in a *watched*
-repo: right after a trash, the metarecord is still linked because the watcher's
-=file_deleted= has not flushed yet (it is buffered for the quiet period). A
-restore that races that window would then find =mfr_path= present, skip the
-re-link, and let the buffered =file_deleted= (about to fire) orphan the record
-while the paired arrival creates a duplicate. The watcher closes this race: a
-buffered =Remove=/=RenameFrom= whose path *exists again on disk at flush time*
-is recognised as an *undone deletion* (the file was recreated, or a
-trash→restore round-trip put it back) and is skipped — the record stays linked
-and the arrival in the same batch is reconciled as a plain refresh. This is a
-general watcher property (any fast delete→recreate at one path collapses to a
-refresh, consistent with the batching-window compaction), so restore is reliable
-whether or not it beats the watcher. See [[file:spec-file-tracking.org][spec-file-tracking.org]] "Event batching".
+repo: a metarecord the trashing did not delete (an ancestor) whose own removal is
+still buffered. The watcher closes the race: a buffered =Remove=/=RenameFrom=
+whose path *exists again on disk at flush time* is recognised as an *undone
+deletion* (the file was recreated, or a trash→restore round-trip put it back) and
+is skipped — the record stays linked and the arrival in the same batch is
+reconciled as a plain refresh. This is a general watcher property (any fast
+delete→recreate at one path collapses to a refresh, consistent with the
+batching-window compaction). See [[file:spec-file-tracking.org][spec-file-tracking.org]] "Event batching".
 
 Restore never overwrites a file: an occupied target is refused outright (no
 =--force=) — *except* a directory blob onto an existing directory, which is
@@ -124,46 +245,54 @@ recursively; a leaf that would overwrite an existing file refuses the whole
 restore up front). To bring a file back over an occupied path, move the occupant
 aside first.
 
-* Rollback auto-restore
+* Undo, rollback and redo
 
-A deletion that went through the trash is *fully reversible by rollback*: the
-log records a =file_deleted=, but the bytes survive in the trash, so rollback
-can put them back. This closes the loop with =mf trash -f= (and, in v2, with
-sync overwrites recorded as =file_modified=).
+A trashing is an ordinary revision the user asked for, so it is *undoable* —
+which it was not before. Under the old design the metadata half was the
+watcher's =file_deleted=, and undo skips the daemon's own revisions by its first
+exclusion rule, so a trashing could not be taken back at all
+([[file:spec-event-log.org][spec-event-log.org]] "Undo"). Now the trashing writes
+its own revision, and =origin = 'trash'= is deliberately *not* =watcher=: only
+=watcher= disqualifies a revision from being undone.
 
-The correlation is by *metarecord version*, not by timestamp — the version is
-exactly what a rollback restores, so it pins the historical state
-unambiguously even when a record has been trashed several times:
+** Two ways back, and what each is for
 
-- When =mf trash -f= trashes a path, it records the metarecord's current
-  =version= on the entry (the "file present" version, before the watcher
-  records the deletion).
-- During rollback, for a =file_deleted=/=file_modified= inverse step, the CLI
-  looks for a trash entry whose =metarecord= and =version= equal the op's
-  =entity_uuid= and =entity_version_before_revision= (see
-  [[file:spec-event-log.org][spec-event-log.org]] "Filesystem coordination"). On a match it moves the file
-  back and lets the daemon apply the real inverse (=step {}=), which restores
-  =mfr_path= and the version to match. With no match the step is skipped as
-  before, plus a =mf trash restore= hint.
+- =mf trash restore <id>= — the client recreates the metarecords from the
+  captured fields and moves the bytes back ([[*Restoring]]).
+- *undo / rollback* — the *daemon* recreates the metarecords, by the log's own
+  inverse of the =delete_metarecord= operations; the *client* moves the bytes
+  back from the trash and consumes the entry.
 
-The correlated version is the record's version *before the whole revision*, not
-before the individual operation. One filesystem event can write several fields
-of one record — orphaning writes =mfr_path_old= as well as =mfr_path=, each its
-own operation with its own =entity_version_before= — while the trash entry only
-ever saw the version the record held before any of it. Matching per operation
-would make every op of the revision but one miss, so the file would come back
-while the record that owns it stayed orphaned (and the watcher would then track
-the restored file as a duplicate). Every operation of the revision therefore
-carries the same =entity_version_before_revision= and reaches the same
-decision.
+Each stays in its own domain: the daemon never touches a file, the client never
+recreates a metarecord behind the daemon's back. They converge because both end
+with the same metarecords at the same UUIDs and the bytes at the original path.
 
-The restored file's arrival is buffered by the rollback lock and, once the
-navigation's inverse has re-established =mfr_path=, reconciled as a plain
-refresh — no duplicate, and no reliance on a fingerprint (a freshly tracked
-file has no stored full hash). A concurrent write to the metarecord between the
-trash and the watcher's =file_deleted= would shift =entity_version_before= and
-make the match miss — safe: it degrades to the skip + hint, never a wrong
-restore.
+The capture in the entry is *not* redundant with the log, and this is why it has
+to exist: **the log is prunable** (=mf log prune=) and the trash promises
+durability. Once a trashing has been pruned out of the log there is no inverse
+left to apply, and =mf trash restore= is the only way back. It must not depend on
+history the user is free to discard.
+
+** Finding the entry
+
+On an inverse step over a =delete_metarecord= written by a trashing, the client
+looks for the *live entry that holds that metarecord*. Not by an id recorded on
+the operation: after an undo (which consumes the entry) and a redo (which trashes
+again, into a fresh entry), a recorded id would name an entry that no longer
+exists. There can never be two live entries for one metarecord — after a trashing
+the metarecord is gone, so nothing can trash it again until it comes back.
+
+If no entry holds it — the trash was pruned, or the entry was deleted by hand —
+the step is skipped: the metadata rewinds and the bytes stay gone, with a note
+saying so. A rollback is never blocked by content the user has chosen to discard.
+
+** Redo
+
+The *forward* direction of a trashing is "trash this file again": the bytes move
+back into the trash, into a **new** entry, and the metarecords are deleted again.
+Re-applying only the metadata half would delete the metarecords and leave the
+file in place, where the watcher would immediately track it afresh — a duplicate
+of the thing that was just undone.
 
 * Retention
 
@@ -173,16 +302,21 @@ The trash grows without bound until pruned; pruning is the retention mechanism
 automatic expiry — a lost byte is worse than a full disk the user can see and
 clear.
 
+Pruning now destroys the *metadata* too: the captured metarecords go with the
+blob. That is the point of the design — the metarecord dies with its bytes, and
+=prune= is where both die. Until then, a metarecord that is not in the
+repository is not lost, it is in the trash.
+
 * =mf trash=
 
-Manages the repository's trash-bin. Purely a CLI filesystem operation — the
-trash location comes from =GET /repos/:repo= (=internal_dir=); no daemon
-endpoint is involved. This is not v2 (unlike cross-repo sync): rollback already
-routes overwrites through the trash.
+Manages the repository's trash-bin. The bytes are the CLI's own business — the
+trash location comes from =GET /repos/:repo= (=internal_dir=) — and the metadata
+half goes through the one endpoint the daemon owns
+([[*Deleting the metarecords]]).
 
 #+BEGIN_SRC
 mf trash [list]
-mf trash -f <path>
+mf trash -f <path> [--force]
 mf trash restore <id>
 mf trash prune (-s <size> | -d <duration> | --all) [--dry-run]
 #+END_SRC
@@ -192,30 +326,27 @@ entry — id, original path (a trailing =/= marks a directory), size, age (from
 =trashed_at=), reason — newest first.
 
 =-f=/=--file <path>= manually trashes a *tracked* file or directory — a safe
-delete (=reason=manual=, the entry records the path's metarecord). It errors,
-*before moving anything*, if the daemon is unreachable or the path has no
-metarecord (the CLI resolves =path -> mfr_path= metarecord through =POST …/query=
-with the exact-path idiom =mfr_path -> "/parent" AND mfr_path = "name"=, using
-the =root= from =GET /repos/:repo=). A directory is trashed whole, its subtree
-included; in a watched repo the ensuing disappearance(s) are recorded as
-=file_deleted= like any other, and =mf trash restore= brings the subtree back.
-=-f= cannot be combined with a subcommand.
+delete (=reason=manual=). It errors, *before touching anything*, if the daemon is
+unreachable or the path has no metarecord (the CLI resolves =path -> mfr_path=
+metarecord through =POST …/query= with the exact-path idiom
+=mfr_path -> "/parent" AND mfr_path = "name"=, using the =root= from
+=GET /repos/:repo=). A directory is trashed whole, subtree and metarecords
+included. =-f= cannot be combined with a subcommand.
 
-The metadata update is the watcher's job, and =mf trash -f= deliberately does
-*not* do it itself: a tracked file is, by construction, watched (=mf_watch= is
-inherited down the =mfr_path= tree), so the watcher records the deletion. Where
-watching has been turned *off* — which is done precisely to freeze the
-metarecords against external file movements — the metadata is intentionally left
-untouched (=mfr_path= stays as recorded); a later reconcile or re-enabled watch
-picks it up. Either way the file's bytes are safe in the trash.
+It captures the metarecords, deletes them, and moves the bytes, in that order
+([[*What trashing does, in order]]). Unlike the design it replaces, this holds
+whether or not the subtree is watched: a repository with =mf_watch= off used to
+keep a metarecord pointing at a file that was no longer there — a stale claim
+only an orphan scan would ever find — and now does not.
 
-=restore <id>= moves the blob back to its =original_path= and removes the entry.
-An occupied target is refused — never overwritten — except a directory that
-*merges* into an existing directory (move a file occupant aside first). Because
-the target is therefore free (or a mergeable directory), the associated
-metarecords are re-linked *before* the move (see above), making restore
-deterministic; in a watched repo the arrival is then reconciled as a plain
-refresh, and nothing is written to the event log.
+=--force= trashes anyway when something outside the trashed set still references
+one of its metarecords ([[*Refusing to break a reference]]). Without it the
+refusal names the referrers and nothing is touched.
+
+=restore <id>= recreates the metarecords, re-links what survived, and moves the
+blob back to its =original_path=, then removes the entry ([[*Restoring]]). An
+occupied target is refused — never overwritten — except a directory that
+*merges* into an existing directory (move a file occupant aside first).
 
 =prune= permanently deletes entries; exactly one selector is required:
 - =-s=/=--size <size>= — delete oldest first until the total is at/under the
@@ -236,30 +367,30 @@ The GUI exposes the same trash-bin (spec-gui.org), driving the shared
 =metafolder_core::trash= layer through Tauri commands (=trash_list=,
 =trash_selected_metarecord=, =trash_path=, =trash_restore=, =trash_remove=,
 =trash_empty=); like the CLI it locates =internal_dir=/=root= through
-=GET /repos/:repo= and re-links a restored metarecord through the daemon —
-there is still *no daemon trash endpoint*.
+=GET /repos/:repo= and goes through the same single daemon endpoint for the
+metadata half.
 
 - *Send to the trash* — the =metarecord:trash= command (a shell builtin) sends
   the workspace's =selected_metarecord='s file to the trash (=reason=manual=,
-  recording the metarecord and its current =version=, exactly like =mf trash
-  -f=). It is bound to =Delete= in the panels that carry a metarecord selection
-  (=metarecord-list=, =metarecord-detail=, =treeref=) and offered as
-  a *Trash file* context-menu item in the metarecord panels. Because =Delete= is
-  a bare key, the action is *confirmed* even though it is reversible. The
-  metadata update is still the watcher's job (as for =mf trash -f=): the file's
-  bytes are safe regardless.
+  capturing and deleting the metarecord, exactly like =mf trash -f=). It is
+  bound to =Delete= in the panels that carry a metarecord selection
+  (=metarecord-list=, =metarecord-detail=, =treeref=) and offered as a *Trash
+  file* context-menu item in the metarecord panels. Because =Delete= is a bare
+  key, the action is *confirmed* even though it is reversible.
 
 - *file-manager delete* — the =file-manager= panel deletes the *highlighted
-  filesystem entry* (=Delete=, or the context menu), tracked or not, through
-  =trash_path= (=reason=manual=, no metarecord correlation), since it operates on
-  the disk directly (spec-gui "file-manager panel type"). A raw-path entry
-  restores its bytes to the original location, where any still-stale metarecord
-  again points. With no active repository there is nowhere to restore from, so
-  the removal is permanent (=metafolder.fs.remove=). Both are confirmed.
+  filesystem entry* (=Delete=, or the context menu) through =trash_path=. When
+  the entry is *tracked* it resolves the metarecord and captures and deletes it
+  like every other trashing: the GUI is the path most deletions actually take,
+  and it must not be the one that still leaves orphans behind. An *untracked*
+  entry has nothing to capture and is trashed as bytes alone. With no active
+  repository there is nowhere to restore from, so the removal is permanent
+  (=metafolder.fs.remove=). All are confirmed.
 
 - *trash panel* (=panel:set type trash=, default =t b=) — lists the entries
   (name, size, age, reason, path), newest first, and offers *Restore* (=Enter=;
-  re-links the metarecord before moving the file back, as the CLI does),
+  recreates and re-links the metarecords before moving the file back, as the
+  CLI does),
   *Delete* one entry permanently (=Delete=), and *Empty trash* — the two
   destructive actions confirmed. =f= jumps to an entry by name, each candidate
   carrying the path it was trashed from (spec-gui "Find an entry"). Prune by
