@@ -15,6 +15,7 @@ use metafolder_core::metarecord::{Field, FieldType, MetaRecord, Value};
 
 use crate::db::{self, FieldRow};
 use crate::error::DomainError;
+use crate::version;
 
 /// The `revision.origin` of a revision the daemon writes on the filesystem's
 /// behalf — the watcher's flush and the restoration replay (spec-event-log
@@ -109,7 +110,11 @@ pub struct OpRow {
 }
 
 /// The version `op`'s entity held *before the whole revision* `op` belongs to —
-/// the lowest `entity_version_before` among that revision's operations on it.
+/// the `entity_version_before` of the revision's *first* operation on it.
+///
+/// Selected by `seq`, and not as the smallest of the revision's values: a
+/// version is a content hash and carries no order (spec-data-model "Version"),
+/// so "before the revision" is a position in the revision, not a minimum.
 ///
 /// One event can write several fields of one record (orphaning writes both
 /// `mfr_path` and `mfr_path_old`), and each operation then restores to its own
@@ -122,12 +127,16 @@ pub fn entity_version_before_revision(
     conn: &rusqlite::Connection,
     op: &OpRow,
 ) -> Result<Option<u64>> {
-    let min: Option<i64> = conn.query_row(
-        "SELECT MIN(entity_version_before) FROM operation WHERE rev_id = ?1 AND entity_uuid = ?2",
-        params![op.rev_id, db::uuid_to_bytes(op.entity_uuid)],
-        |r| r.get(0),
-    )?;
-    Ok(min.map(|v| v as u64))
+    use rusqlite::OptionalExtension as _;
+    let first: Option<Option<i64>> = conn
+        .query_row(
+            "SELECT entity_version_before FROM operation \
+             WHERE rev_id = ?1 AND entity_uuid = ?2 ORDER BY seq LIMIT 1",
+            params![op.rev_id, db::uuid_to_bytes(op.entity_uuid)],
+            |r| r.get(0),
+        )
+        .optional()?;
+    Ok(first.flatten().map(|v| v as u64))
 }
 
 pub fn get_head(conn: &rusqlite::Connection) -> Result<Option<i64>> {
@@ -763,29 +772,24 @@ fn enqueue_restoration(tx: &Transaction<'_>, op: &OpRow, dir: NavDir) -> Result<
     Ok(())
 }
 
-fn restore_version(tx: &Transaction<'_>, uuid: Uuid, version: Option<u64>) -> Result<()> {
-    if let Some(version) = version {
-        tx.prepare_cached("UPDATE metarecord SET version = ?1 WHERE uuid = ?2")?
-            .execute(params![version as i64, db::uuid_to_bytes(uuid)])?;
-    }
+/// Writes a metarecord's version. The value is always derived from the
+/// metarecord's own rows — by [`version::apply`] on a write, by
+/// [`version::of_rows`] once navigation has restored them — never invented and
+/// never read back from the log (spec-event-log "Field ID and version
+/// stability").
+fn set_version(tx: &Transaction<'_>, uuid: Uuid, version: u64) -> Result<()> {
+    tx.prepare_cached("UPDATE metarecord SET version = ?1 WHERE uuid = ?2")?
+        .execute(params![version as i64, db::uuid_to_bytes(uuid)])?;
     Ok(())
 }
 
-/// The `next_version` allocator value to give a metarecord being *re-created* by
-/// navigation (its row, and thus its allocator, had been deleted): one past the
-/// highest version the record ever held across the whole log, so a subsequent
-/// fresh write can never reuse a number an earlier state already used
-/// (spec-data-model "next_version"). `floor` is the version being restored.
-fn recompute_next_version(tx: &Transaction<'_>, uuid: Uuid, floor: u64) -> Result<u64> {
-    let max_seen: Option<i64> = tx.query_row(
-        "SELECT MAX(v) FROM (
-             SELECT entity_version_before AS v FROM operation WHERE entity_uuid = ?1
-             UNION ALL
-             SELECT entity_version_after FROM operation WHERE entity_uuid = ?1)",
-        params![db::uuid_to_bytes(uuid)],
-        |r| r.get(0),
-    )?;
-    Ok(floor.max(max_seen.unwrap_or(0) as u64) + 1)
+/// Recomputes a metarecord's version from the rows it currently holds. This is
+/// what navigation uses: restoring the rows restores the version with them, so
+/// there is no second source of truth that could disagree with the content.
+fn resync_version(tx: &Transaction<'_>, uuid: Uuid) -> Result<()> {
+    let rows = db::get_field_rows(tx, uuid)?;
+    // A no-op when the step removed the metarecord: the UPDATE matches no row.
+    set_version(tx, uuid, version::of_rows(uuid, &rows))
 }
 
 /// Undoes one operation (spec-event-log "Inverse operations"). Field rows
@@ -800,11 +804,9 @@ fn apply_inverse(tx: &Transaction<'_>, op: &OpRow) -> Result<()> {
             )?;
         }
         "delete_metarecord" => {
-            let version = op.entity_version_before.unwrap_or(0);
-            let next = recompute_next_version(tx, entity, version)?;
             tx.execute(
-                "INSERT INTO metarecord (uuid, version, next_version) VALUES (?1, ?2, ?3)",
-                params![db::uuid_to_bytes(entity), version as i64, next as i64],
+                "INSERT INTO metarecord (uuid, version) VALUES (?1, 0)",
+                params![db::uuid_to_bytes(entity)],
             )?;
             for row in snapshots(tx, op.id, 0)? {
                 db::insert_field_row(tx, entity, &row.name, &row.value, Some(row.id))?;
@@ -819,7 +821,6 @@ fn apply_inverse(tx: &Transaction<'_>, op: &OpRow) -> Result<()> {
             for row in snapshots(tx, op.id, 0)? {
                 db::insert_field_row(tx, entity, &row.name, &row.value, Some(row.id))?;
             }
-            restore_version(tx, entity, op.entity_version_before)?;
         }
         // All set-field-shaped operations (one field name, full replacement).
         "set_field" | "file_deleted" | "file_moved" | "file_modified" => {
@@ -829,31 +830,25 @@ fn apply_inverse(tx: &Transaction<'_>, op: &OpRow) -> Result<()> {
             for row in snapshots(tx, op.id, 0)? {
                 db::insert_field_row(tx, entity, &row.name, &row.value, Some(row.id))?;
             }
-            restore_version(tx, entity, op.entity_version_before)?;
         }
         "append_field" => {
             for row in snapshots(tx, op.id, 1)? {
                 tx.execute("DELETE FROM field WHERE id = ?1", params![row.id])?;
             }
-            restore_version(tx, entity, op.entity_version_before)?;
         }
         "delete_field" => {
             for row in snapshots(tx, op.id, 0)? {
                 db::insert_field_row(tx, entity, &row.name, &row.value, Some(row.id))?;
             }
-            restore_version(tx, entity, op.entity_version_before)?;
         }
         "unknown" => anyhow::bail!("cannot navigate across an 'unknown' operation (op {})", op.id),
         other => anyhow::bail!("unsupported op_type '{other}' in the log"),
     }
-    Ok(())
-}
-
-/// The version an op restores on *forward* (redo) application: the stored
-/// after-version, falling back to `before + 1` for pre-migration rows (which
-/// carry no after-version but never sit across a rollback gap).
-fn forward_version(op: &OpRow) -> Option<u64> {
-    op.entity_version_after.or(op.entity_version_before.map(|v| v + 1))
+    // The version is not restored from the log: it is a function of the rows
+    // this step has just put back (spec-event-log "Field ID and version
+    // stability"). `entity_version_before`/`after` are provenance, and nothing
+    // reads them to decide what to write.
+    resync_version(tx, entity)
 }
 
 /// Replays one operation forward (redo).
@@ -861,10 +856,9 @@ fn apply_forward(tx: &Transaction<'_>, op: &OpRow) -> Result<()> {
     let entity = op.entity_uuid;
     match op.op_type.as_str() {
         "create_metarecord" => {
-            let next = recompute_next_version(tx, entity, 0)?;
             tx.execute(
-                "INSERT INTO metarecord (uuid, version, next_version) VALUES (?1, 0, ?2)",
-                params![db::uuid_to_bytes(entity), next as i64],
+                "INSERT INTO metarecord (uuid, version) VALUES (?1, 0)",
+                params![db::uuid_to_bytes(entity)],
             )?;
             for row in snapshots(tx, op.id, 1)? {
                 db::insert_field_row(tx, entity, &row.name, &row.value, Some(row.id))?;
@@ -884,7 +878,6 @@ fn apply_forward(tx: &Transaction<'_>, op: &OpRow) -> Result<()> {
             for row in snapshots(tx, op.id, 1)? {
                 db::insert_field_row(tx, entity, &row.name, &row.value, Some(row.id))?;
             }
-            restore_version(tx, entity, forward_version(op))?;
         }
         "set_field" | "file_deleted" | "file_moved" | "file_modified" => {
             let field = op.field_name.as_deref().context("set-shaped op without field_name")?;
@@ -893,24 +886,25 @@ fn apply_forward(tx: &Transaction<'_>, op: &OpRow) -> Result<()> {
             for row in snapshots(tx, op.id, 1)? {
                 db::insert_field_row(tx, entity, &row.name, &row.value, Some(row.id))?;
             }
-            restore_version(tx, entity, forward_version(op))?;
         }
         "append_field" => {
             for row in snapshots(tx, op.id, 1)? {
                 db::insert_field_row(tx, entity, &row.name, &row.value, Some(row.id))?;
             }
-            restore_version(tx, entity, forward_version(op))?;
         }
         "delete_field" => {
             for row in snapshots(tx, op.id, 0)? {
                 tx.execute("DELETE FROM field WHERE id = ?1", params![row.id])?;
             }
-            restore_version(tx, entity, forward_version(op))?;
         }
         "unknown" => anyhow::bail!("cannot navigate across an 'unknown' operation (op {})", op.id),
         other => anyhow::bail!("unsupported op_type '{other}' in the log"),
     }
-    Ok(())
+    // The version is not restored from the log: it is a function of the rows
+    // this step has just put back (spec-event-log "Field ID and version
+    // stability"). `entity_version_before`/`after` are provenance, and nothing
+    // reads them to decide what to write.
+    resync_version(tx, entity)
 }
 
 // ── Pruning (spec-event-log "Log pruning") ────────────────────────────────────
@@ -1516,7 +1510,7 @@ impl<'c> Writer<'c> {
         if before.is_empty() {
             return Ok(());
         }
-        let version_before = self.bump_version(uuid)?;
+        let version_before = self.current_version(uuid)?;
         self.tx
             .prepare_cached("DELETE FROM field WHERE metarecord_uuid = ?1 AND field_name = ?2")?
             .execute(params![db::uuid_to_bytes(uuid), name])?;
@@ -1544,9 +1538,12 @@ impl<'c> Writer<'c> {
         for f in &fields {
             self.validate_tree_ref(uuid, &f.name, &f.value)?;
         }
+        // Seeded with the metarecord's own term; `log_op` then adds the terms
+        // of the rows created below, so a fresh record's version describes its
+        // initial fields like any other (spec-data-model "Version").
         self.tx
-            .prepare_cached("INSERT INTO metarecord (uuid, version) VALUES (?1, 0)")?
-            .execute(params![db::uuid_to_bytes(uuid)])?;
+            .prepare_cached("INSERT INTO metarecord (uuid, version) VALUES (?1, ?2)")?
+            .execute(params![db::uuid_to_bytes(uuid), version::base(uuid) as i64])?;
 
         let mut after = Vec::with_capacity(fields.len());
         let mut out_fields = Vec::with_capacity(fields.len());
@@ -1560,7 +1557,8 @@ impl<'c> Writer<'c> {
         }
 
         self.log_op(OpType::CreateRecord, uuid, None, None, vec![], after)?;
-        Ok(MetaRecord { uuid, version: 0, fields: out_fields })
+        let version = self.current_version(uuid)?;
+        Ok(MetaRecord { uuid, version, fields: out_fields })
     }
 
     /// Deletes a metarecord and all its rows.
@@ -1580,7 +1578,7 @@ impl<'c> Writer<'c> {
     /// every old row is dropped, including reserved ones not in `fields`.
     pub fn set_record(&mut self, uuid: Uuid, fields: Vec<Field>) -> Result<MetaRecord> {
         let fields = collapse_duplicate_fields(fields); // spec-data-model "No duplicate rows"
-        let version_before = self.bump_version(uuid)?; // errors NotFound if absent
+        let version_before = self.current_version(uuid)?; // errors NotFound if absent
         let before = db::get_field_rows(&self.tx, uuid)?;
         self.tx
             .prepare_cached("DELETE FROM field WHERE metarecord_uuid = ?1")?
@@ -1619,7 +1617,7 @@ impl<'c> Writer<'c> {
     ) -> Result<()> {
         self.validate_tree_ref(uuid, name, &value)?;
         self.validate_value_type(name, &value)?;
-        let version_before = self.bump_version(uuid)?;
+        let version_before = self.current_version(uuid)?;
         let before = db::get_field_rows_named(&self.tx, uuid, name)?;
         self.tx
             .prepare_cached("DELETE FROM field WHERE metarecord_uuid = ?1 AND field_name = ?2")?
@@ -1664,7 +1662,7 @@ impl<'c> Writer<'c> {
         // Each value is written once; a repeat points back at its first
         // occurrence so the returned ids still pair with `values`.
         let (kept, slot) = collapse_duplicates(&values);
-        let version_before = self.bump_version(uuid)?;
+        let version_before = self.current_version(uuid)?;
         let before = db::get_field_rows_named(&self.tx, uuid, name)?;
         self.tx
             .prepare_cached("DELETE FROM field WHERE metarecord_uuid = ?1 AND field_name = ?2")?
@@ -1695,7 +1693,7 @@ impl<'c> Writer<'c> {
         if let Some(existing) = db::duplicate_row_id(&self.tx, uuid, name, &value)? {
             return Ok(Appended::AlreadyPresent(existing));
         }
-        let version_before = self.bump_version(uuid)?;
+        let version_before = self.current_version(uuid)?;
         let id = db::insert_field_row(&self.tx, uuid, name, &value, None)?;
         let after = vec![FieldRow { id, name: name.to_string(), value }];
         self.log_op(OpType::AppendField, uuid, Some(name), Some(version_before), vec![], after)?;
@@ -1774,7 +1772,7 @@ impl<'c> Writer<'c> {
         value: Value,
     ) -> Result<()> {
         let field_id = old.id;
-        let v1 = self.bump_version(uuid)?;
+        let v1 = self.current_version(uuid)?;
         self.tx.execute("DELETE FROM field WHERE id = ?1", params![field_id])?;
         self.log_op(
             OpType::DeleteField,
@@ -1785,7 +1783,7 @@ impl<'c> Writer<'c> {
             vec![],
         )?;
 
-        let v2 = self.bump_version(uuid)?;
+        let v2 = self.current_version(uuid)?;
         db::insert_field_row(&self.tx, uuid, new_name, &value, Some(field_id))?;
         let after = vec![FieldRow { id: field_id, name: new_name.to_string(), value }];
         self.log_op(OpType::AppendField, uuid, Some(new_name), Some(v2), vec![], after)?;
@@ -1857,7 +1855,7 @@ impl<'c> Writer<'c> {
     /// Removes the single row identified by `field_id`.
     pub fn delete_field(&mut self, uuid: Uuid, field_id: i64) -> Result<()> {
         let old = self.get_owned_row(uuid, field_id)?;
-        let version_before = self.bump_version(uuid)?;
+        let version_before = self.current_version(uuid)?;
         self.tx.execute("DELETE FROM field WHERE id = ?1", params![field_id])?;
         self.log_op(
             OpType::DeleteField,
@@ -1879,7 +1877,7 @@ impl<'c> Writer<'c> {
         if rows.is_empty() {
             return Ok(0);
         }
-        let version_before = self.bump_version(uuid)?;
+        let version_before = self.current_version(uuid)?;
         for row in &rows {
             self.tx.execute("DELETE FROM field WHERE id = ?1", params![row.id])?;
         }
@@ -1931,20 +1929,13 @@ impl<'c> Writer<'c> {
 
     // ── Internals ────────────────────────────────────────────────────────────
 
-    /// Assigns the entity its next version from the per-metarecord `next_version`
-    /// allocator (never reused, even across rollback gaps — spec-data-model), and
-    /// returns the value *before* the bump. The assigned (after) version is read
-    /// back by `log_op` from the row itself.
-    fn bump_version(&self, uuid: Uuid) -> Result<u64> {
-        let before = db::get_version(&self.tx, uuid)?
-            .ok_or_else(|| DomainError::NotFound(format!("Metarecord not found: {uuid}")))?;
-        self.tx
-            .prepare_cached(
-                "UPDATE metarecord SET version = next_version, next_version = next_version + 1 \
-                 WHERE uuid = ?1",
-            )?
-            .execute(params![db::uuid_to_bytes(uuid)])?;
-        Ok(before)
+    /// The entity's version as it stands, i.e. the version this write is about
+    /// to move away from. It is only *read* here: the new version is derived
+    /// from the rows the write moves, in `log_op`, which is the single place a
+    /// version is assigned.
+    fn current_version(&self, uuid: Uuid) -> Result<u64> {
+        db::get_version(&self.tx, uuid)?
+            .ok_or_else(|| DomainError::NotFound(format!("Metarecord not found: {uuid}")).into())
     }
 
     /// Fetches a field row, checking it belongs to the given metarecord.
@@ -1968,10 +1959,20 @@ impl<'c> Writer<'c> {
         before: Vec<FieldRow>,
         after: Vec<FieldRow>,
     ) -> Result<()> {
-        // The entity's current version (read after the data change) is the value
-        // this op assigned; redo restores it exactly. `None` when the op removed
-        // the metarecord (delete): there is no forward version to restore.
-        let version_after = db::get_version(&self.tx, entity)?;
+        // The version follows the rows this op moved: subtract the terms of
+        // what it removed, add the terms of what it inserted (spec-data-model
+        // "Version"). This is the single place a version is assigned. `None`
+        // when the op removed the metarecord itself — there is no row left to
+        // carry a version, and nothing for a redo to restore.
+        let version_after = match db::get_version(&self.tx, entity)? {
+            Some(current) => {
+                let (add, sub) = version::delta(&before, &after);
+                let assigned = version::apply(current, add, sub);
+                set_version(&self.tx, entity, assigned)?;
+                Some(assigned)
+            }
+            None => None,
+        };
         self.observe_effects(op_type, &before, &after, entity);
         self.pending.push(PendingOp {
             op_type,

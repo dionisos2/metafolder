@@ -314,7 +314,7 @@ async fn test_rollback_by_id_and_redo() {
         create(&app, &repo, json!([{"name": "n", "value": {"type": "int", "value": 1}}])).await;
     let uuid = entry["uuid"].as_str().unwrap().to_string();
     let v1 = patch(&app, &repo, &uuid, "n", json!({"type": "int", "value": 2})).await;
-    assert_eq!(v1["version"], 1);
+    assert_ne!(v1["version"], entry["version"], "the write moves the version");
 
     let log = get_log(&app, &repo, "").await;
     let head_before = log["head"].as_i64().unwrap();
@@ -343,7 +343,7 @@ async fn test_rollback_by_id_and_redo() {
 
     let (_, after) = request(&app, "GET", &format!("/repos/{repo}/metarecords/{uuid}"), None).await;
     assert_eq!(after["fields"][0]["value"]["value"], 1, "old value restored");
-    assert_eq!(after["version"], 0, "version restored exactly");
+    assert_eq!(after["version"], entry["version"], "and the version with it");
 
     // Redo: navigate forward to the previous head.
     let (status, body) = request(
@@ -358,7 +358,7 @@ async fn test_rollback_by_id_and_redo() {
     let (_, redone) =
         request(&app, "GET", &format!("/repos/{repo}/metarecords/{uuid}"), None).await;
     assert_eq!(redone["fields"][0]["value"]["value"], 2);
-    assert_eq!(redone["version"], 1);
+    assert_eq!(redone["version"], v1["version"]);
 
     std::fs::remove_dir_all(root).unwrap();
 }
@@ -479,7 +479,7 @@ async fn test_set_record_is_one_op_and_rolls_back_exactly() {
     let new_fields = after["fields"].as_array().unwrap();
     assert_eq!(new_fields.len(), 1);
     assert_eq!(new_fields[0]["name"].as_str().unwrap(), "c");
-    assert_eq!(after["version"].as_u64().unwrap(), version_before + 1);
+    assert_ne!(after["version"].as_u64().unwrap(), version_before, "the write moves the version");
 
     // Exactly one new revision, whose single operation is set_metarecord.
     let (_, log_after) = request(&app, "GET", &format!("/repos/{repo}/log"), None).await;

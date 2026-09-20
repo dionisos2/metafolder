@@ -489,12 +489,21 @@ fn test_reconcile_folds_mime_into_creation() {
     let pic = resolve(&repo, "/pic.png").unwrap();
     assert_eq!(field_value(&repo, pic, "mfr_mime"), Some(Value::String("image/png".into())));
     // mfr_mime is written as part of the create operation, not as a separate
-    // field write: the record is born at version 0 with no follow-up op.
-    let version = {
+    // field write. Asserted on the log itself: the record must carry exactly one
+    // operation, its own creation.
+    let ops: Vec<String> = {
         let conn = repo.conn.lock().unwrap();
-        db::get_version(&conn, pic).unwrap().unwrap()
+        let mut stmt = conn
+            .prepare("SELECT op_type FROM operation WHERE entity_uuid = ?1 ORDER BY id")
+            .unwrap();
+        let rows = stmt.query_map([db::uuid_to_bytes(pic)], |r| r.get::<_, String>(0)).unwrap();
+        rows.map(|r| r.unwrap()).collect()
     };
-    assert_eq!(version, 0, "mfr_mime must be set at creation, not as a separate write");
+    assert_eq!(
+        ops,
+        ["create_metarecord"],
+        "mfr_mime must be set at creation, not as a separate write"
+    );
 
     std::fs::remove_dir_all(root).unwrap();
 }

@@ -311,7 +311,7 @@ async fn test_create_get_delete_metarecord() {
     )
     .await;
     let uuid = created["uuid"].as_str().unwrap();
-    assert_eq!(created["version"], 0);
+    assert!(created["version"].is_u64(), "the create reports the version it stored");
     assert!(created.get("db_ids").is_none(), "db_ids is removed from the wire form");
     assert_eq!(created["fields"].as_array().unwrap().len(), 3);
     assert!(created["fields"][0]["id"].is_i64(), "fields must carry their row id");
@@ -430,7 +430,7 @@ async fn test_patch_sets_field_and_bumps_version() {
     )
     .await;
     assert_eq!(status, StatusCode::OK);
-    assert_eq!(updated["version"], 1);
+    assert_ne!(updated["version"], created["version"], "the write moves the version");
     let tags: Vec<&Value> =
         updated["fields"].as_array().unwrap().iter().filter(|f| f["name"] == "tag").collect();
     assert_eq!(tags.len(), 1, "set_field must collapse the multi-map");
@@ -1263,35 +1263,35 @@ async fn test_expected_version_precondition() {
     let uuid = m["uuid"].as_str().unwrap().to_string();
     let base = format!("/repos/{repo}/metarecords/{uuid}");
 
-    // The freshly created record is at version 0.
+    // Whatever version the freshly created record is at.
     let (status, got) = request(&app, "GET", &base, None).await;
     assert_eq!(status, StatusCode::OK);
-    assert_eq!(got["version"], 0);
+    let v0 = got["version"].as_u64().unwrap();
 
     // Mismatched precondition → 409, and nothing is written.
     let (status, _) = request(
         &app,
         "PUT",
-        &format!("{base}/fields/rating?expected_version=99"),
+        &format!("{base}/fields/rating?expected_version={}", v0.wrapping_add(1)),
         Some(json!({"value": {"type": "int", "value": 5}})),
     )
     .await;
     assert_eq!(status, StatusCode::CONFLICT);
     let (_, got) = request(&app, "GET", &base, None).await;
-    assert_eq!(got["version"], 0, "a rejected write must not bump the version");
+    assert_eq!(got["version"].as_u64(), Some(v0), "a rejected write must not move the version");
     assert_eq!(got["fields"][0]["value"]["value"], 1, "value unchanged after 409");
 
     // Matching precondition → the write goes through and bumps the version.
     let (status, _) = request(
         &app,
         "PUT",
-        &format!("{base}/fields/rating?expected_version=0"),
+        &format!("{base}/fields/rating?expected_version={v0}"),
         Some(json!({"value": {"type": "int", "value": 5}})),
     )
     .await;
     assert_eq!(status, StatusCode::OK);
     let (_, got) = request(&app, "GET", &base, None).await;
-    assert_eq!(got["version"], 1);
+    assert_ne!(got["version"].as_u64(), Some(v0));
     assert_eq!(got["fields"][0]["value"]["value"], 5);
 }
 

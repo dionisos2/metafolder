@@ -547,8 +547,10 @@ impl Field {
 /// a metarecord.
 ///
 /// A metarecord belongs to the repository whose database holds it (one database
-/// per repository); ownership is implicit, not a field. `version` is a monotonic
-/// write counter managed exclusively by the daemon.
+/// per repository); ownership is implicit, not a field. `version` is a hash of
+/// the metarecord's own content, managed exclusively by the daemon: it carries
+/// no ordering, and clients compare it only for equality (spec-data-model
+/// "Version").
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct MetaRecord {
     #[serde(with = "hex_uuid")]
@@ -564,7 +566,9 @@ impl Default for MetaRecord {
 }
 
 impl MetaRecord {
-    /// A fresh metarecord with a new random UUID, version 0, and no fields.
+    /// A fresh metarecord with a new random UUID and no fields. `version` is
+    /// left at 0: a client does not compute versions — the daemon assigns the
+    /// real one when the metarecord is written (spec-data-model "Version").
     pub fn new() -> Self {
         Self { uuid: Uuid::new_v4(), version: 0, fields: Vec::new() }
     }

@@ -542,7 +542,9 @@ fn test_list_records_sorts_by_uuid() {
 fn test_create_record_initial_state() {
     let mut conn = test_conn();
     let m = create(&mut conn, vec![Field::new("rating", Value::Int(5))]);
-    assert_eq!(m.version, 0);
+    assert_eq!(Some(m.version), db::get_version(&conn, m.uuid).unwrap());
+    assert_eq!(m.version, version_of_content(&conn, m.uuid), "the create reports what it stored");
+    assert_ne!(m.version, version::base(m.uuid), "and the field it carries is in there");
     assert_eq!(m.fields.len(), 1);
     assert!(m.fields[0].id.is_some());
 }
@@ -599,7 +601,8 @@ fn test_set_field_replaces_multimap_and_bumps_version() {
     let got = db::get_metarecord(&conn, m.uuid).unwrap().unwrap();
     let tags = got.get_all("tag");
     assert_eq!(tags, vec![&Value::String("blues".into())]);
-    assert_eq!(got.version, 1, "version must be incremented by the write");
+    assert_ne!(got.version, m.version, "the write moves the version");
+    assert_eq!(got.version, version_of_content(&conn, m.uuid));
 
     // Log: before-snapshot has the two old rows, after-snapshot the new one.
     let op_id: i64 = conn
@@ -626,7 +629,7 @@ fn test_set_field_replaces_multimap_and_bumps_version() {
             r.get(0)
         })
         .unwrap();
-    assert_eq!(version_before, Some(0));
+    assert_eq!(version_before, Some(m.version), "the state the op moved away from");
 }
 
 #[test]
@@ -649,7 +652,8 @@ fn test_append_field_keeps_existing_rows() {
 
     let got = db::get_metarecord(&conn, m.uuid).unwrap().unwrap();
     assert_eq!(got.get_all("tag").len(), 2);
-    assert_eq!(got.version, 1);
+    assert_ne!(got.version, m.version);
+    assert_eq!(got.version, version_of_content(&conn, m.uuid));
 }
 
 #[test]
@@ -703,7 +707,8 @@ fn test_delete_field_removes_single_row() {
 
     let got = db::get_metarecord(&conn, m.uuid).unwrap().unwrap();
     assert_eq!(got.get_all("tag"), vec![&Value::String("live".into())]);
-    assert_eq!(got.version, 1);
+    assert_ne!(got.version, m.version);
+    assert_eq!(got.version, version_of_content(&conn, m.uuid));
 }
 
 // ── Writer: delete entry ──────────────────────────────────────────────────────
@@ -787,8 +792,11 @@ fn test_multiple_ops_in_one_revision_chain() {
         conn.query_row("SELECT op_id FROM log_head WHERE singleton = 1", [], |r| r.get(0)).unwrap();
     assert_eq!(head, Some(rows[2].0));
 
-    // Version was bumped once per op.
-    assert_eq!(db::get_metarecord(&conn, m.uuid).unwrap().unwrap().version, 3);
+    // The version describes the state the three ops left behind.
+    assert_eq!(
+        db::get_metarecord(&conn, m.uuid).unwrap().unwrap().version,
+        version_of_content(&conn, m.uuid)
+    );
 }
 
 #[test]
@@ -837,7 +845,6 @@ fn test_large_revision_chain_across_bulk_chunks() {
         .query_row("SELECT COUNT(*) FROM op_snapshot WHERE is_new = 1", [], |r| r.get(0))
         .unwrap();
     assert_eq!(snapshots, N);
-    assert_eq!(db::get_metarecord(&conn, m.uuid).unwrap().unwrap().version, N as u64);
 }
 
 #[test]
@@ -1267,9 +1274,10 @@ fn test_op_type_string_roundtrip() {
     assert!(OpType::parse("bogus").is_none());
 }
 
-// ── next_version allocator (spec-data-model) ────────────────────────────────
+// ── The version is a content hash (spec-data-model "Version") ───────────────
 
 use metafolder_daemon::log;
+use metafolder_daemon::version;
 
 mod common;
 use common::TempDir;
@@ -1281,36 +1289,110 @@ fn set_field(conn: &mut Connection, uuid: Uuid, name: &str, v: Value) {
     w.commit().unwrap();
 }
 
-#[test]
-fn test_next_version_gaps_after_rollback() {
-    // A version number is never reused for a different state: after rolling back
-    // and writing again, the new write gets a fresh number, not the one the
-    // rolled-back write had.
-    let mut conn = test_conn();
-    let m = create(&mut conn, vec![]);
-    assert_eq!(db::get_version(&conn, m.uuid).unwrap(), Some(0));
-
-    set_field(&mut conn, m.uuid, "a", Value::Int(1)); // -> version 1
-    let head_v1 = log::get_head(&conn).unwrap();
-    assert_eq!(db::get_version(&conn, m.uuid).unwrap(), Some(1));
-
-    set_field(&mut conn, m.uuid, "a", Value::Int(2)); // -> version 2
-    assert_eq!(db::get_version(&conn, m.uuid).unwrap(), Some(2));
-
-    log::navigate(&mut conn, head_v1).unwrap(); // roll back to the version-1 state
-    assert_eq!(db::get_version(&conn, m.uuid).unwrap(), Some(1));
-
-    set_field(&mut conn, m.uuid, "a", Value::Int(3)); // fresh write must get 3, not 2
-    assert_eq!(db::get_version(&conn, m.uuid).unwrap(), Some(3));
+/// The version the metarecord's current rows dictate, computed from outside the
+/// write path. Everything below compares what the daemon *stored* against what
+/// the content *says* — two routes to the same answer.
+fn version_of_content(conn: &Connection, uuid: Uuid) -> u64 {
+    version::of_rows(uuid, &db::get_field_rows(conn, uuid).unwrap())
 }
 
 #[test]
-fn test_entity_version_after_recorded() {
-    // Every operation records the version it produced; on a linear chain it is
-    // exactly entity_version_before + 1.
+fn test_stored_version_always_describes_the_stored_content() {
+    // The invariant everything else rests on. A write assigns the version
+    // incrementally, from the rows it moves; this checks that shortcut against
+    // a full recompute, after every kind of write.
+    let mut conn = test_conn();
+    let m = create(&mut conn, vec![Field::new("a", Value::Int(1))]);
+    assert_eq!(db::get_version(&conn, m.uuid).unwrap(), Some(version_of_content(&conn, m.uuid)));
+
+    set_field(&mut conn, m.uuid, "b", Value::String("x".into()));
+    assert_eq!(db::get_version(&conn, m.uuid).unwrap(), Some(version_of_content(&conn, m.uuid)));
+
+    {
+        let mut w = Writer::begin(&mut conn, None).unwrap();
+        w.append_field(m.uuid, "tag", Value::String("jazz".into())).unwrap();
+        w.commit().unwrap();
+    }
+    assert_eq!(db::get_version(&conn, m.uuid).unwrap(), Some(version_of_content(&conn, m.uuid)));
+
+    set_field(&mut conn, m.uuid, "a", Value::Nothing);
+    assert_eq!(db::get_version(&conn, m.uuid).unwrap(), Some(version_of_content(&conn, m.uuid)));
+}
+
+#[test]
+fn test_a_value_put_back_restores_the_version() {
+    // The property the counter could not have: changing a field and changing it
+    // back leaves the metarecord in the state it was in, so it leaves the
+    // version there too. This is what lets sync say "nothing to propagate".
     let mut conn = test_conn();
     let m = create(&mut conn, vec![]);
+
     set_field(&mut conn, m.uuid, "a", Value::Int(1));
+    let at_one = db::get_version(&conn, m.uuid).unwrap();
+
+    set_field(&mut conn, m.uuid, "a", Value::Int(2));
+    assert_ne!(db::get_version(&conn, m.uuid).unwrap(), at_one);
+
+    set_field(&mut conn, m.uuid, "a", Value::Int(1));
+    assert_eq!(db::get_version(&conn, m.uuid).unwrap(), at_one);
+}
+
+#[test]
+fn test_rollback_and_redo_land_on_the_version_the_content_dictates() {
+    // Navigation restores the rows; the version follows them. Nothing is
+    // replayed from the log, so a rewind cannot leave a metarecord carrying a
+    // version that describes some other state.
+    let mut conn = test_conn();
+    let m = create(&mut conn, vec![]);
+
+    set_field(&mut conn, m.uuid, "a", Value::Int(1));
+    let head_v1 = log::get_head(&conn).unwrap();
+    let at_one = db::get_version(&conn, m.uuid).unwrap();
+
+    set_field(&mut conn, m.uuid, "a", Value::Int(2));
+    let head_v2 = log::get_head(&conn).unwrap();
+    let at_two = db::get_version(&conn, m.uuid).unwrap();
+
+    log::navigate(&mut conn, head_v1).unwrap();
+    assert_eq!(db::get_version(&conn, m.uuid).unwrap(), at_one);
+    assert_eq!(db::get_version(&conn, m.uuid).unwrap(), Some(version_of_content(&conn, m.uuid)));
+
+    log::navigate(&mut conn, head_v2).unwrap();
+    assert_eq!(db::get_version(&conn, m.uuid).unwrap(), at_two);
+    assert_eq!(db::get_version(&conn, m.uuid).unwrap(), Some(version_of_content(&conn, m.uuid)));
+}
+
+#[test]
+fn test_a_write_after_a_rollback_reuses_the_version_of_the_state_it_recreates() {
+    // The opposite of what the allocator guaranteed, and the point of the
+    // change: a version names a *state*, not a write. Rolling back and writing
+    // the value the rolled-back write had put there returns to that state, so
+    // it returns to its version.
+    let mut conn = test_conn();
+    let m = create(&mut conn, vec![]);
+
+    set_field(&mut conn, m.uuid, "a", Value::Int(1));
+    let head_v1 = log::get_head(&conn).unwrap();
+    set_field(&mut conn, m.uuid, "a", Value::Int(2));
+    let at_two = db::get_version(&conn, m.uuid).unwrap();
+
+    log::navigate(&mut conn, head_v1).unwrap();
+    set_field(&mut conn, m.uuid, "a", Value::Int(2));
+    assert_eq!(db::get_version(&conn, m.uuid).unwrap(), at_two);
+}
+
+#[test]
+fn test_entity_version_columns_name_the_states_around_the_operation() {
+    // `entity_version_before`/`after` are provenance, not authority: nothing
+    // reads them to decide what to write. They must still agree with the states
+    // they name, or a client correlating an operation with something it
+    // observed from outside the revision would be misled.
+    let mut conn = test_conn();
+    let m = create(&mut conn, vec![]);
+    let before_write = db::get_version(&conn, m.uuid).unwrap().unwrap();
+
+    set_field(&mut conn, m.uuid, "a", Value::Int(1));
+    let after_write = db::get_version(&conn, m.uuid).unwrap().unwrap();
 
     let (before, after): (Option<i64>, Option<i64>) = conn
         .query_row(
@@ -1320,55 +1402,70 @@ fn test_entity_version_after_recorded() {
             |r| Ok((r.get(0)?, r.get(1)?)),
         )
         .unwrap();
-    assert_eq!(before, Some(0));
-    assert_eq!(after, Some(1));
+    assert_eq!(before.map(|v| v as u64), Some(before_write));
+    assert_eq!(after.map(|v| v as u64), Some(after_write));
 }
 
 #[test]
-fn test_redo_restores_stored_after_version_across_a_gap() {
-    // After a rollback gap, a write's assigned version is not before + 1; redoing
-    // that write must land on the exact number it assigned (entity_version_after),
-    // not the recomputed before + 1.
+fn test_migration_converts_counter_versions_and_empties_the_log() {
     let mut conn = test_conn();
-    let m = create(&mut conn, vec![]);
-    set_field(&mut conn, m.uuid, "a", Value::Int(1)); // v1
-    let head_v1 = log::get_head(&conn).unwrap();
-    set_field(&mut conn, m.uuid, "a", Value::Int(2)); // v2, next_version now 3
+    let m = create(&mut conn, vec![Field::new("a", Value::Int(1))]);
+    let empty = create(&mut conn, vec![]);
+    set_field(&mut conn, m.uuid, "b", Value::String("x".into()));
 
-    log::navigate(&mut conn, head_v1).unwrap(); // back to v1 (next_version still 3)
-    set_field(&mut conn, m.uuid, "a", Value::Int(3)); // v3 (before=1, after=3 — a gap)
-    let head_v3 = log::get_head(&conn).unwrap();
-    assert_eq!(db::get_version(&conn, m.uuid).unwrap(), Some(3));
+    // Put the database back in its pre-migration shape: the allocator column,
+    // counter versions, and a log the migration has to discard.
+    conn.execute_batch(
+        "ALTER TABLE metarecord ADD COLUMN next_version INTEGER NOT NULL DEFAULT 1;
+         UPDATE metarecord SET version = 2, next_version = 3;
+         DELETE FROM migration_state WHERE name = 'version-is-a-content-hash';",
+    )
+    .unwrap();
+    assert_eq!(db::get_version(&conn, m.uuid).unwrap(), Some(2));
+    assert!(count(&conn, "SELECT COUNT(*) FROM operation") > 0, "there is a log to discard");
 
-    log::navigate(&mut conn, head_v1).unwrap(); // roll the v3 write back
-    assert_eq!(db::get_version(&conn, m.uuid).unwrap(), Some(1));
-    log::navigate(&mut conn, head_v3).unwrap(); // redo it: must restore 3, not 2
-    assert_eq!(db::get_version(&conn, m.uuid).unwrap(), Some(3));
+    db::migrate_version_to_content_hash(&conn).unwrap();
+
+    // Every version now describes the content it sits on — including a
+    // metarecord with no field at all, which gets its base term.
+    assert_eq!(db::get_version(&conn, m.uuid).unwrap(), Some(version_of_content(&conn, m.uuid)));
+    assert_eq!(db::get_version(&conn, empty.uuid).unwrap(), Some(version::base(empty.uuid)));
+
+    // The log is gone: its version columns hold counters, and a navigation step
+    // replaying one would leave a metarecord describing some other state.
+    assert_eq!(count(&conn, "SELECT COUNT(*) FROM operation"), 0);
+    assert_eq!(count(&conn, "SELECT COUNT(*) FROM revision"), 0);
+    assert_eq!(count(&conn, "SELECT COUNT(*) FROM op_snapshot"), 0);
+    let head: Option<i64> =
+        conn.query_row("SELECT op_id FROM log_head WHERE singleton = 1", [], |r| r.get(0)).unwrap();
+    assert_eq!(head, None, "HEAD is back to the empty state");
+
+    // And the allocator itself is gone.
+    assert!(conn.prepare("SELECT next_version FROM metarecord").is_err());
 }
 
 #[test]
-fn test_recreate_metarecord_recomputes_next_version() {
-    // Navigating across a delete recreates the record; its next_version must
-    // resume above every version it ever held, so a later fresh write cannot
-    // reuse a number an earlier state already used.
+fn test_recreating_a_metarecord_restores_its_content_version() {
+    // Navigating across a delete recreates the record. There is no allocator to
+    // rebuild and no stored number to replay: the restored rows say what the
+    // version is.
     let mut conn = test_conn();
     let m = create(&mut conn, vec![]);
-    set_field(&mut conn, m.uuid, "a", Value::Int(1)); // v1
-    set_field(&mut conn, m.uuid, "a", Value::Int(2)); // v2, next_version now 3
+    set_field(&mut conn, m.uuid, "a", Value::Int(1));
+    set_field(&mut conn, m.uuid, "a", Value::Int(2));
     let head_v2 = log::get_head(&conn).unwrap();
+    let at_two = db::get_version(&conn, m.uuid).unwrap();
 
     {
         let mut w = Writer::begin(&mut conn, None).unwrap();
-        w.delete_metarecord(m.uuid).unwrap(); // record gone (allocator gone with it)
+        w.delete_metarecord(m.uuid).unwrap();
         w.commit().unwrap();
     }
     assert_eq!(db::get_version(&conn, m.uuid).unwrap(), None);
 
-    log::navigate(&mut conn, head_v2).unwrap(); // undo the delete: record restored at v2
-    assert_eq!(db::get_version(&conn, m.uuid).unwrap(), Some(2));
-
-    set_field(&mut conn, m.uuid, "a", Value::Int(9)); // must get 3, not reuse 1
-    assert_eq!(db::get_version(&conn, m.uuid).unwrap(), Some(3));
+    log::navigate(&mut conn, head_v2).unwrap();
+    assert_eq!(db::get_version(&conn, m.uuid).unwrap(), at_two);
+    assert_eq!(db::get_version(&conn, m.uuid).unwrap(), Some(version_of_content(&conn, m.uuid)));
 }
 
 // ── Bounded log reading (efficient log listing for huge repos) ──────────────────
@@ -2077,7 +2174,7 @@ fn test_append_of_an_identical_field_is_a_no_op() {
     assert_eq!(id, existing_id, "the row that already holds the value is returned");
     assert_eq!(values_of(&conn, m.uuid, "tag"), vec![s("jazz")]);
     let got = db::get_metarecord(&conn, m.uuid).unwrap().unwrap();
-    assert_eq!(got.version, 0, "a no-op must not bump the version");
+    assert_eq!(got.version, m.version, "a no-op must not move the version");
     assert_eq!(
         count(&conn, "SELECT COUNT(*) FROM operation WHERE op_type = 'append_field'"),
         0,

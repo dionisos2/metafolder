@@ -156,7 +156,6 @@ pub fn open_database(path: &Path, who: &str) -> Result<Connection> {
 const MIGRATIONS: &[(&str, fn(&Connection) -> Result<()>)] = &[
     ("migrate legacy table names", migrate_legacy_table_names),
     ("pending_operation.tracker column", ensure_pending_tracker_column),
-    ("metarecord.next_version column", ensure_next_version_column),
     ("operation.entity_version_after column", ensure_entity_version_after_column),
     ("operation.reverts_op_id column", ensure_reverts_op_id_column),
     ("revision.origin column", ensure_revision_origin_column),
@@ -167,10 +166,14 @@ const MIGRATIONS: &[(&str, fn(&Connection) -> Result<()>)] = &[
     ("drop the persisted filesystem-event buffer", drop_persisted_fs_events),
     ("rename the order_position_* fields", rename_order_position_fields),
     ("drop duplicate field rows", dedup_field_rows),
+    // Last: every migration above can change a metarecord's content, and this
+    // one hashes that content.
+    ("convert versions to content hashes", migrate_version_to_content_hash),
 ];
 
 /// The name a one-shot migration records itself under in `migration_state`.
 const DEDUP_MIGRATION: &str = "dedup-field-rows";
+const VERSION_HASH_MIGRATION: &str = "version-is-a-content-hash";
 
 /// Records a one-shot migration as done. Creates `migration_state` if the
 /// database predates it (`init_schema` creates it for fresh ones).
@@ -216,6 +219,73 @@ fn migration_done(conn: &Connection, name: &str) -> Result<bool> {
 /// revision. The log's own snapshots keep the ids they recorded, so rolling
 /// back to a revision that held a duplicate restores it — history stays what it
 /// was (spec-data-model "No duplicate rows").
+/// Converts `metarecord.version` from the monotonic counter it used to be into
+/// the content hash it now is (spec-data-model "Version"), and **empties the
+/// event log**.
+///
+/// The versions are recomputed in one pass over the `field` table: the terms of
+/// a metarecord's rows are summed by owner, then every metarecord — including
+/// one with no row at all — is given its base term plus that sum.
+///
+/// The log is discarded rather than converted because it cannot be converted
+/// cheaply *and* safely: its `entity_version_*` columns hold allocator
+/// counters, so a navigation step restoring one would leave the metarecord
+/// describing itself with a number that is not the hash of the state just
+/// restored — the first rollback would desynchronise every record it touched,
+/// and sync would read the result as a phantom change. The repository's *data*
+/// is untouched; only the ability to rewind it is.
+///
+/// Runs last among the migrations: every one before it can change a
+/// metarecord's content, and this one hashes that content.
+pub fn migrate_version_to_content_hash(conn: &Connection) -> Result<()> {
+    if migration_done(conn, VERSION_HASH_MIGRATION)? {
+        return Ok(());
+    }
+    if table_exists(conn, "metarecord")? {
+        let mut sums: HashMap<Uuid, u64> = HashMap::new();
+        if table_exists(conn, "field")? {
+            for_each_field_row(conn, |uuid, row| {
+                let acc = sums.entry(uuid).or_insert(0);
+                *acc = acc.wrapping_add(crate::version::row(&row.name, &row.value));
+                Ok(())
+            })?;
+        }
+        let uuids = {
+            let mut stmt = conn.prepare("SELECT uuid FROM metarecord")?;
+            let raw: Vec<Vec<u8>> =
+                stmt.query_map([], |r| r.get(0))?.collect::<rusqlite::Result<_>>()?;
+            raw.into_iter().map(bytes_to_uuid).collect::<Result<Vec<Uuid>>>()?
+        };
+        // `defer_foreign_keys` for the log teardown below: `log_head.op_id` and
+        // `operation.parent_id` both point into `operation`, so any order of
+        // row deletions passes through a transiently dangling reference.
+        // Deferring moves the check to the commit, where nothing dangles.
+        conn.execute_batch("BEGIN; PRAGMA defer_foreign_keys = ON;")?;
+        {
+            let mut set =
+                conn.prepare_cached("UPDATE metarecord SET version = ?1 WHERE uuid = ?2")?;
+            for uuid in uuids {
+                let sum = sums.get(&uuid).copied().unwrap_or(0);
+                let v = crate::version::apply(crate::version::base(uuid), sum, 0);
+                set.execute(params![v as i64, uuid_to_bytes(uuid)])?;
+            }
+        }
+        if table_exists(conn, "log_head")? {
+            conn.execute_batch("UPDATE log_head SET op_id = NULL;")?;
+        }
+        for table in ["op_snapshot", "operation", "revision"] {
+            if table_exists(conn, table)? {
+                conn.execute_batch(&format!("DELETE FROM {table};"))?;
+            }
+        }
+        if column_exists(conn, "metarecord", "next_version")? {
+            conn.execute_batch("ALTER TABLE metarecord DROP COLUMN next_version;")?;
+        }
+        conn.execute_batch("COMMIT;")?;
+    }
+    mark_migration_done(conn, VERSION_HASH_MIGRATION)
+}
+
 pub fn dedup_field_rows(conn: &Connection) -> Result<()> {
     if migration_done(conn, DEDUP_MIGRATION)? {
         return Ok(());
@@ -387,25 +457,11 @@ fn add_column_if_missing(
     conn.execute_batch(migration).with_context(|| format!("Failed to add {table}.{column} column"))
 }
 
-/// Adds `metarecord.next_version` (the per-record monotonic version allocator,
-/// spec-data-model) to databases created before it existed. Back-fills each
-/// existing row to `version + 1`: legacy databases have no rollback gaps
-/// encoded, so the current version is the correct allocator high-water mark.
-/// Idempotent; a no-op on fresh databases and on ones with no `metarecord` yet.
-fn ensure_next_version_column(conn: &Connection) -> Result<()> {
-    add_column_if_missing(
-        conn,
-        "metarecord",
-        "next_version",
-        "ALTER TABLE metarecord ADD COLUMN next_version INTEGER NOT NULL DEFAULT 1;
-         UPDATE metarecord SET next_version = version + 1;",
-    )
-}
-
 /// Adds `operation.entity_version_after` to databases created before it existed.
-/// Left NULL on existing rows: forward (redo) application falls back to
-/// `entity_version_before + 1` for NULL, exactly the pre-migration behaviour.
-/// Idempotent; a no-op on fresh databases and on ones with no `operation` yet.
+/// Left NULL on existing rows, which no longer needs a fallback: the
+/// content-hash migration empties the log, so every row that survives to be
+/// read was written with the column. Idempotent; a no-op on fresh databases and
+/// on ones with no `operation` yet.
 fn ensure_entity_version_after_column(conn: &Connection) -> Result<()> {
     add_column_if_missing(
         conn,
@@ -626,8 +682,7 @@ pub fn init_schema(conn: &Connection) -> Result<()> {
         -- ── Data tables (spec-data-model) ───────────────────────────────────
         CREATE TABLE metarecord (
             uuid         BLOB    PRIMARY KEY NOT NULL,  -- 16-byte UUID
-            version      INTEGER NOT NULL DEFAULT 0,    -- current version (from next_version)
-            next_version INTEGER NOT NULL DEFAULT 1     -- monotonic allocator; never restored
+            version      INTEGER NOT NULL DEFAULT 0     -- content hash of the fields
         );
 
         CREATE TABLE field (
@@ -770,7 +825,7 @@ pub fn get_metarecord(conn: &Connection, uuid: Uuid) -> Result<Option<MetaRecord
     Ok(Some(MetaRecord { uuid, version, fields }))
 }
 
-/// Returns the version counter of a metarecord, or None if it does not exist.
+/// Returns the version of a metarecord, or None if it does not exist.
 pub fn get_version(conn: &Connection, uuid: Uuid) -> Result<Option<u64>> {
     let v: Option<i64> = conn
         .prepare_cached("SELECT version FROM metarecord WHERE uuid = ?1")?
