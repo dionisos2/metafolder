@@ -82,18 +82,6 @@ moved: sorting by a field needs the full candidate set anyway, so only unsorted
 queries could ever stop early. Rewrite §7 to match when it is next touched.
 
 ** TODO query API limits
-*** TODO the caps are no longer SQLite's, and their rationale needs re-deciding
-=MAX_QUERY_NODES = 2000= and =MAX_COMBINATOR_OPERANDS = 500= now live in
-=query_validate.rs= and are checked before any engine. The second was inherited
-from =SQLITE_MAX_COMPOUND_SELECT=, a limit that no longer applies to anything on
-the serving path: a wide =Or= is N bitmap unions. The first bounded *compilation*
-into a CTE chain that is no longer built.
-
-So the open item is not "chunk the compound select" (§8) any more — it is whether
-either cap should stay, and at what value. Keep the rejections in some form: a
-query is still client input and the index is still memory. But the numbers should
-be justified by the engine that runs, not by the one that left.
-
 *** TODO execution timeout
 The node cap bounds a query's *compilation*, never its *time*. A small, slow query
 (a =matches= regex over millions of rows, a =->*= across the whole repo) is still
@@ -140,15 +128,6 @@ the cursor is what should be exposed rather than a =--offset=.
 Two caveats to spell out in the spec when it is done: a cursor is bound to a
 hash of (query, sort) and is rejected by any other request shape, and a record
 edited between two pages moves with its sort key like any keyset paging.
-
-** TODO =POST /repos/:repo/query/explain=: what will this query cost, before running it
-Specified in [[file:docs/spec-query-cost.org][docs/spec-query-cost.org]] — not implemented. A client decides (drop a
-per-question counter, warn, refuse) instead of the daemon refusing query shapes:
-the set of shapes the bitmap index declines is an implementation detail that must
-keep moving, so it must not become user-visible surface. The spec covers the
-symbolic cost model (built during compilation, one implementation shared with
-=index::eval=), the parameter/cost tables, the calibration constants, and the
-separation between the query's intrinsic cost and the moment's state.
 
 ** TODO correctness, minor
 *** TODO =daemon/src/sync.rs= =locate()= uses =Path::exists()=
