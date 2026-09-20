@@ -22,6 +22,16 @@ use crate::version;
 /// "Revision origin"). A client's own write leaves the column NULL.
 pub const ORIGIN_WATCHER: &str = "watcher";
 
+/// `revision.origin` for the metarecord deletion a trashing writes
+/// (spec-trash "Deleting the metarecords").
+///
+/// Deliberately *not* `watcher`: a trashing is a write the user asked for and
+/// must stay undoable, and only `watcher` disqualifies a revision from being
+/// undone (spec-event-log "Revision origin"). It is a distinct value only so
+/// that a client walking a rollback knows the bytes of a deleted metarecord are
+/// in the trash-bin rather than gone.
+pub const ORIGIN_TRASH: &str = "trash";
+
 /// Maximum depth of a TreeRef chain (spec-main invariant).
 pub const MAX_TREE_DEPTH: usize = 1000;
 

@@ -18,7 +18,7 @@ use uuid::Uuid;
 use metafolder_core::metarecord::{Field, FieldType, MetaRecord, Value, ZERO_UUID};
 use metafolder_core::sync::MutexExt;
 
-use metafolder_core::query::Query as MetaQuery;
+use metafolder_core::query::{FollowTarget, Query as MetaQuery};
 use metafolder_core::slowlog;
 
 use crate::db;
@@ -45,6 +45,7 @@ pub fn build(state: Arc<AppState>) -> Router {
         // ── Resource layer (single, directly-addressed) ──────────────────────
         .route("/repos/:repo/metarecords", post(create_record_endpoint))
         .route("/repos/:repo/metarecords/bulk", post(bulk_create_endpoint))
+        .route("/repos/:repo/metarecords/trash", post(trash_delete_endpoint))
         .route(
             "/repos/:repo/metarecords/:uuid",
             get(get_record_endpoint).put(put_metarecord).delete(delete_record_endpoint),
@@ -3477,6 +3478,135 @@ struct CreateBody {
     /// Rejected with 409 if a metarecord already has it.
     #[serde(default)]
     uuid: Option<String>,
+}
+
+#[derive(Deserialize)]
+struct TrashDeleteBody {
+    uuids: Vec<String>,
+    /// Delete even when something outside the set still references one of them.
+    #[serde(default)]
+    force: bool,
+}
+
+/// The metarecords, outside `targets`, that hold a reference to one of them.
+///
+/// Served from the index's reverse maps: the repository's reference-typed field
+/// names come from the catalogue (a handful), and each one answers "who points
+/// at this set" with one bitmap lookup per target. Proportional to the number of
+/// reference-typed *fields*, never to the number of rows — it must not become a
+/// scan of the value columns (spec-main, the `INDEXED BY` invariant).
+///
+/// `ExternalRef` and `RefBase` values do not populate those reverse maps, so an
+/// inbound reference of either kind is not seen. The gap is named in spec-trash
+/// "Refusing to break a reference" rather than left to be discovered.
+fn inbound_referrers(
+    repo_state: &RepoState,
+    conn: &rusqlite::Connection,
+    cache: &mut crate::tree_cache::TreeCache,
+    targets: &[Uuid],
+) -> Result<Vec<Uuid>, ApiError> {
+    // Scoped: `resolve_query_uuids` takes the index lock itself.
+    let fields: Vec<String> = {
+        let mut guard = slowlog::timed("wait:index", || repo_state.index.lock_recover());
+        let index = ensure_index(conn, &mut guard, &|| false)?;
+        ["ref", "tree_ref"]
+            .iter()
+            .flat_map(|ty| index.field_catalog(Some(ty)))
+            .map(|(name, _)| name)
+            .collect()
+    };
+    let in_set: std::collections::HashSet<Uuid> = targets.iter().copied().collect();
+    let mut referrers: Vec<Uuid> = Vec::new();
+    // Chunked so the combinator-width cap cannot be reached by a repository
+    // with an implausible number of reference fields.
+    for chunk in fields.chunks(128) {
+        let operands: Vec<MetaQuery> = chunk
+            .iter()
+            .map(|field| MetaQuery::Follows {
+                field: field.clone(),
+                target: FollowTarget::Condition(Box::new(MetaQuery::UuidIn {
+                    uuids: targets.to_vec(),
+                })),
+            })
+            .collect();
+        let query = match operands.len() {
+            0 => continue,
+            1 => operands.into_iter().next().expect("one operand"),
+            _ => MetaQuery::Or { operands },
+        };
+        for uuid in resolve_query_uuids(repo_state, conn, cache, &query, &|| false)? {
+            // A reference from inside the set travels with it and comes back on
+            // a restore: only the ones from outside would be left dangling.
+            if !in_set.contains(&uuid) && !referrers.contains(&uuid) {
+                referrers.push(uuid);
+            }
+        }
+    }
+    Ok(referrers)
+}
+
+/// `POST /repos/:repo/metarecords/trash`: deletes metarecords on the
+/// trash-bin's behalf, in one revision stamped `origin = 'trash'`
+/// (spec-trash "Deleting the metarecords").
+///
+/// The trash-bin's two halves have different owners: the bytes are the client's
+/// business, the data model is the daemon's, and neither reaches into the
+/// other's. This is the daemon's half.
+///
+/// The origin is fixed by *which endpoint was called*, never by a parameter — a
+/// client able to name its own origin could pass its writes off as the daemon's
+/// and put them out of reach of undo. That is why this is a route of its own
+/// rather than a flag on `POST …/query/delete`.
+///
+/// No record-count cap: uuids are 32 characters each, so axum's 2 MiB body
+/// limit already bounds a call at tens of thousands of them, and a trashing has
+/// to be *one* revision — paging it would break the thing it is for.
+async fn trash_delete_endpoint(
+    State(state): State<Arc<AppState>>,
+    Path(repo): Path<String>,
+    payload: Result<Json<TrashDeleteBody>, JsonRejection>,
+) -> Result<Json<serde_json::Value>, ApiError> {
+    let Json(body) = payload?;
+    let repo_uuid = parse_uuid(&repo)?;
+    let uuids: Vec<Uuid> =
+        body.uuids.iter().map(|u| parse_uuid(u)).collect::<Result<_, ApiError>>()?;
+
+    with_repo(&state, repo_uuid, move |repo_state| {
+        repo_state.ensure_writable()?;
+        let mut conn = slowlog::timed("wait:conn", || repo_state.conn.lock_recover());
+
+        if !body.force {
+            let mut cache = slowlog::timed("wait:cache", || repo_state.lock_cache());
+            let referrers = inbound_referrers(repo_state, &conn, &mut cache, &uuids)?;
+            drop(cache);
+            if !referrers.is_empty() {
+                let named: Vec<String> =
+                    referrers.iter().take(10).map(|u| u.as_simple().to_string()).collect();
+                return Err(ApiError::conflict(format!(
+                    "{} metarecord(s) outside the set still reference it: {} — \
+                     use force to trash it anyway",
+                    referrers.len(),
+                    named.join(", ")
+                )));
+            }
+        }
+
+        let mut writer = repo_state.writer(&mut conn, None)?;
+        writer.set_origin(crate::log::ORIGIN_TRASH)?;
+        let _phase = slowlog::phase("write.trash_delete");
+        for uuid in &uuids {
+            // Every way of ceasing to be a live duplicate goes through here, so
+            // a group never outlives its members (spec-duplicates).
+            crate::duplicates::leave_group(&mut writer, crate::log::OpType::SetField, *uuid)?;
+            writer.delete_metarecord(*uuid)?;
+        }
+        let effects = writer.effects();
+        slowlog::timed("commit", || writer.commit())?;
+        repo_state.settle(&conn, &effects)?;
+        slowlog::note("deleted", uuids.len().to_string());
+        Ok(Json(json!({ "deleted": uuids.len() })))
+    })
+    .await
 }
 
 /// The most metarecords one bulk create may carry. A cap in the shape of

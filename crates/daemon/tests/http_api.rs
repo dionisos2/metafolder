@@ -1807,3 +1807,165 @@ async fn test_bulk_create_reserved_field_needs_force() {
 
     std::fs::remove_dir_all(root).unwrap();
 }
+
+// ── Trashing: deleting metarecords on the trash-bin's behalf ────────────────
+
+fn trash_uri(repo: &str) -> String {
+    format!("/repos/{repo}/metarecords/trash")
+}
+
+/// The origin stamped on the newest revision of the log.
+async fn newest_revision_origin(app: &Router, repo: &str) -> Value {
+    let (status, body) = request(app, "GET", &format!("/repos/{repo}/log"), None).await;
+    assert_eq!(status, StatusCode::OK, "log failed: {body}");
+    let revisions = body["revisions"].as_array().unwrap();
+    revisions.last().expect("at least one revision")["origin"].clone()
+}
+
+#[tokio::test]
+async fn test_trash_delete_writes_one_revision_stamped_trash() {
+    // A trashing is one revision — one thing to undo — and it says who asked
+    // for it, so a rollback later knows the bytes are in the trash-bin.
+    let (app, repo, root) = app_with_repo("trash_stamp").await;
+    let uuids: Vec<String> = {
+        let mut v = Vec::new();
+        for i in 0..3 {
+            let m = create_metarecord(
+                &app,
+                &repo,
+                json!([{"name": "tag", "value": {"type": "string", "value": format!("t{i}")}}]),
+            )
+            .await;
+            v.push(m["uuid"].as_str().unwrap().to_string());
+        }
+        v
+    };
+    let before = revision_count(&app, &repo).await;
+
+    let (status, body) =
+        request(&app, "POST", &trash_uri(&repo), Some(json!({"uuids": uuids}))).await;
+    assert_eq!(status, StatusCode::OK, "trash delete failed: {body}");
+    assert_eq!(body["deleted"], 3);
+
+    assert_eq!(revision_count(&app, &repo).await, before + 1, "one revision for the whole set");
+    assert_eq!(newest_revision_origin(&app, &repo).await, json!("trash"));
+    for u in &uuids {
+        let (status, _) =
+            request(&app, "GET", &format!("/repos/{repo}/metarecords/{u}"), None).await;
+        assert_eq!(status, StatusCode::NOT_FOUND);
+    }
+
+    std::fs::remove_dir_all(root).unwrap();
+}
+
+#[tokio::test]
+async fn test_trash_delete_refuses_a_reference_from_outside_the_set() {
+    // Deleting a referenced metarecord would leave the reference dangling. The
+    // refusal names the referrer, and nothing is written.
+    let (app, repo, root) = app_with_repo("trash_refs").await;
+    let target = create_metarecord(&app, &repo, json!([])).await;
+    let target_uuid = target["uuid"].as_str().unwrap().to_string();
+    let referrer = create_metarecord(
+        &app,
+        &repo,
+        json!([{"name": "see_also", "value": {"type": "ref", "value": target_uuid}}]),
+    )
+    .await;
+    let referrer_uuid = referrer["uuid"].as_str().unwrap();
+
+    let (status, body) =
+        request(&app, "POST", &trash_uri(&repo), Some(json!({"uuids": [target_uuid]}))).await;
+    assert_eq!(status, StatusCode::CONFLICT, "a referenced metarecord must be refused: {body}");
+    assert!(
+        body["error"].as_str().unwrap().contains(referrer_uuid),
+        "the refusal must name the referrer: {body}"
+    );
+
+    let (status, _) =
+        request(&app, "GET", &format!("/repos/{repo}/metarecords/{target_uuid}"), None).await;
+    assert_eq!(status, StatusCode::OK, "nothing is written on a refusal");
+
+    std::fs::remove_dir_all(root).unwrap();
+}
+
+#[tokio::test]
+async fn test_trash_delete_ignores_references_from_within_the_set() {
+    // A subtree's own internal references travel with it and come back
+    // together. Refusing on those would make it impossible to trash a folder
+    // whose files reference each other.
+    let (app, repo, root) = app_with_repo("trash_internal_refs").await;
+    let target = create_metarecord(&app, &repo, json!([])).await;
+    let target_uuid = target["uuid"].as_str().unwrap().to_string();
+    let referrer = create_metarecord(
+        &app,
+        &repo,
+        json!([{"name": "see_also", "value": {"type": "ref", "value": target_uuid}}]),
+    )
+    .await;
+    let referrer_uuid = referrer["uuid"].as_str().unwrap().to_string();
+
+    let (status, body) = request(
+        &app,
+        "POST",
+        &trash_uri(&repo),
+        Some(json!({"uuids": [referrer_uuid, target_uuid]})),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "an internal reference must not refuse: {body}");
+    assert_eq!(body["deleted"], 2);
+
+    std::fs::remove_dir_all(root).unwrap();
+}
+
+#[tokio::test]
+async fn test_trash_delete_force_breaks_the_reference() {
+    let (app, repo, root) = app_with_repo("trash_force").await;
+    let target = create_metarecord(&app, &repo, json!([])).await;
+    let target_uuid = target["uuid"].as_str().unwrap().to_string();
+    create_metarecord(
+        &app,
+        &repo,
+        json!([{"name": "see_also", "value": {"type": "ref", "value": target_uuid}}]),
+    )
+    .await;
+
+    let (status, body) = request(
+        &app,
+        "POST",
+        &trash_uri(&repo),
+        Some(json!({"uuids": [target_uuid], "force": true})),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "force must override the refusal: {body}");
+    assert_eq!(body["deleted"], 1);
+
+    std::fs::remove_dir_all(root).unwrap();
+}
+
+#[tokio::test]
+async fn test_trash_delete_refuses_when_a_tree_child_would_dangle() {
+    // A TreeRef child points at its parent: deleting the parent alone would
+    // leave the child's position unresolvable.
+    let (app, repo, root) = app_with_repo("trash_tree_refs").await;
+    let parent = create_metarecord(
+        &app,
+        &repo,
+        json!([{"name": "cat", "value": {"type": "tree_ref",
+                                         "value": {"parent": null, "name": "animals"}}}]),
+    )
+    .await;
+    let parent_uuid = parent["uuid"].as_str().unwrap().to_string();
+    create_metarecord(
+        &app,
+        &repo,
+        json!([{"name": "cat", "value": {"type": "tree_ref",
+                                         "value": {"parent": parent_uuid, "name": "cats"}}}]),
+    )
+    .await;
+
+    let (status, body) =
+        request(&app, "POST", &trash_uri(&repo), Some(json!({"uuids": [parent_uuid]}))).await;
+    assert_eq!(status, StatusCode::CONFLICT, "a tree child must hold its parent back: {body}");
+
+    std::fs::remove_dir_all(root).unwrap();
+}
