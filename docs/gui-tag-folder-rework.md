@@ -1,9 +1,14 @@
 # `gui-tag-folder.sh` — the query is the walk state
 
-Settled design, not yet coded. It **supersedes** `review-followups.md` §12
-("Les scripts de tagging tiennent tout le scope en mémoire"), whose conclusion —
-that paging costs either the walk order or the exact total — is wrong: this
-design keeps both. Rewrite §12 when this lands.
+**Status: shipped (September 2026).** The script is written this way;
+`review-followups.md` §12 has been rewritten to match, and the spec-gui section
+"A query is the scope" now carries the walk. What follows is the design as it
+was settled, with the four places the implementation departed from it recorded
+inline, each marked *Shipped as*.
+
+It **superseded** `review-followups.md` §12 ("Les scripts de tagging tiennent
+tout le scope en mémoire"), whose conclusion — that paging costs either the walk
+order or the exact total — was wrong: this design keeps both.
 
 ## What is wrong today
 
@@ -49,6 +54,13 @@ At folder `P`:
 1. the first undecided direct child **in scope**, `--sort order_dir` /
    `order_file` then `mfr_path` → ask it. (This is what keeps `mf order`
    numbering honoured: an album is walked by track number.)
+
+   *Shipped as:* two queries, dirs then files, so a folder is asked before the
+   files beside it. And the repository root is **nobody's child**, so at the
+   walk root the dir query asks for the forest root as well —
+   `(mfr_path:parent = "" OR mfr_path:parent IS ABSENT)`. Its path is the empty
+   string, which sorts first, so the root is the first question when it is in
+   scope; every other node is reached as its parent's child.
 2. none? the first undecided in-scope **descendant** of `P`, by path → take its
    *parent* as the new current folder and descend there without asking.
 3. neither? go up one component. Above the walk root, the walk is done.
@@ -96,9 +108,13 @@ does not move into the GUI. It is offered **again at the next run's start** if
 markers remain for this tag ("resume where you were / ask them again"), which is
 where the choice is actually informed. `--redo` ignores them.
 
-One call: `mf metarecord -q '<scope> AND gui_tag_skipped -> (…)' field delete
-gui_tag_skipped:ref=<tag-uuid>` — `delete` removes that row only, `unset` would
-remove every tag's marker.
+One call: `mf metarecord -q '<scope> AND gui_tag_skipped -> (…)' field remove
+gui_tag_skipped:ref=<tag-uuid>` — `remove` takes the row out *by value*, `unset`
+would remove every tag's marker.
+
+*Shipped as:* `remove`, not `delete`, which the line above named. The verb tree
+is `get`⁻¹`set` and `add`⁻¹`remove` (by value) / `add`⁻¹`delete` (by id): a
+marker has no id in hand here, only its value.
 
 ## The counter
 
@@ -112,6 +128,13 @@ in scope, so the *count* query carries a `NOT mfr_path ->* "<path>"` per skipped
 folder. That list is bounded by how many times a human presses `s`, not by the
 size of the scope. (The *step* query needs no such clause: the walk only enters a
 folder on `m`.)
+
+*Shipped as:* the **step query carries the same clauses**. The parenthetical
+above overlooks rule 2 — the walk also enters a folder by descending to the
+parent of an open descendant, which is exactly how it would reach the files
+under a folder the user had just declined to open. Without the clause the
+counter and the walk would disagree, and skipping a folder would stop meaning
+"leave this alone". One predicate, used by both queries.
 
 ## Prerequisites
 
@@ -133,6 +156,20 @@ folder on `m`.)
 
 Both prerequisites are met: the script can be written.
 
+## `--redo`
+
+Not in the original design, and it needs saying: `--redo` drops both the decided
+and the skipped clauses, so **nothing the answer writes narrows the query** and
+the walk would ask the same entry for ever. It therefore keeps its own memory of
+what it has settled — a `uuid_in` list of the entries already asked, and a
+`NOT mfr_path ->* "<path>"` per folder answered whole. Both are bounded by
+keypresses, like the skipped-folder list, and both are restored by `back`.
+
+The same `uuid_in` list catches one case in a normal run: a skip whose marker
+cannot be written because the tag is not in the vocabulary yet (`mf tag` creates
+the entry on the first *write*, and a run may skip before it tags anything).
+The skip then holds for this run only, and the run says so once.
+
 ## Behaviour changes to write into the script header
 
 The header currently promises the opposite of two of these:
@@ -152,3 +189,11 @@ scattered scope (rule 2), a skipped folder excluded from the count but not from
 the walk of its siblings, the per-tag isolation of `gui_tag_skipped`, cleanup
 offered on `q` and on the next start, `--redo` ignoring markers, and `back`
 across a skip.
+
+*Shipped as:* 128 assertions over 33 cases. The suite declares the walk as the
+**successive answers to the step queries** (`walk_children` / `walk_descendants`
+queues that empty as the real set would) instead of as a scope listing, since
+what the mocked `mf` can pin is the question asked, not its resolution. The real
+semantics — that the daemon resolves the subsumption, the root spelling and the
+`:parent` step the way the walk assumes — stay pinned by
+`scripts/test-scripts-integration.sh` against an actual daemon.

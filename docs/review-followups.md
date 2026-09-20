@@ -226,9 +226,11 @@ ont besoin de précision. Migration incrémentale, pas de big bang.
 ## 11. `mf path` par question dans les scripts de tagging — ⏳ DIFFÉRÉ (demande une surface CLI)
 
 **Constat.** `gui-tag-folder.sh` appelle `mf path "$uuid"` pour l'aperçu à chaque
-question alors que `PATH_OF[$uuid]` (le chemin *relatif*) est déjà en mémoire ;
-`gui-tag-pair.sh` fait de même. Il ne manque que la **racine absolue du dépôt**
-pour reconstruire le chemin absolu sans aller-retour.
+question alors qu'il vient de lire le chemin *relatif* du même metarecord
+(`--resolve-tree mfr_path`) ; `gui-tag-pair.sh` fait de même. Il ne manque que la
+**racine absolue du dépôt** pour reconstruire le chemin absolu sans aller-retour.
+(La refonte de §12 n'y change rien : elle a supprimé la carte `PATH_OF` lue
+d'avance, pas le besoin du chemin absolu pour l'aperçu.)
 
 **Pourquoi c'est différé.** Le coût est d'un aller-retour HTTP par *question*,
 donc par touche pressée par un humain — invisible à côté du temps de réponse.
@@ -243,40 +245,37 @@ absolu est pire. La correction propre est d'ajouter `mf repo root` (ou un
 `--root` à `mf repo list`), puis de le lire une fois par run — petite addition
 de surface CLI à peser, pas un refactor de script.
 
-## 12. Les scripts de tagging tiennent tout le scope en mémoire — ⏳ BORNÉ, refonte différée
+## 12. `gui-tag-folder.sh` tenait tout le scope en mémoire — ✅ FAIT (sept. 2026)
 
-**Constat.** `gui-tag-folder.sh` (`collect`), `gui-tag-classify.sh` et
-`gui-tag-pair.sh` lisent **tout** leur scope avant la première question, dans
-des tableaux associatifs bash (`RANK`, `KIND`, `PATH_OF`, `DECIDED`,
-`SUBTREE`…). Le scope EST donc la mémoire du run. Le daemon, lui, n'a jamais vu
-de requête non bornée — la CLI pagine déjà par `page-size` (500) et suit les
-curseurs — mais la CLI accumule le tout et le script le garde.
+**Constat (historique).** `gui-tag-folder.sh` (`collect`) lisait **tout** son
+scope avant la première question — sept lectures, puis des tableaux associatifs
+bash (`RANK`, `KIND`, `PATH_OF`, `DECIDED`, `SUBTREE`…). Le scope ÉTAIT la
+mémoire du run, et `MF_GUI_MAX_ENTRIES` (20000) n'était qu'une borne : un gros
+scope échouait bruyamment au lieu d'échouer lentement.
 
-**Ce qui est fait (sept. 2026).** Une borne explicite,
-`MF_GUI_MAX_ENTRIES` (défaut 20000, `lib/mf-gui.sh`), passée en `--limit` sur la
-lecture *ordonnée* et vérifiée par `mf_check_scope_size` : au-delà, le run
-refuse en nommant la borne et en rappelant que **la requête est le scope**
-(la narrower est une fonctionnalité documentée). La vérification tombe avant la
-lecture `--resolve-tree`, qui ne prend pas de limite (elle résout toute la
-requête en un aller-retour) et qui est la plus chère.
+**Ce que disait cette section, et qui était faux.** « Paginer coûterait soit
+l'ordre du walk, soit le total exact : les deux exigent l'ensemble complet. »
+Non : **la requête est l'état du walk**. Une réponse est déjà une écriture, donc
+« ce qu'il reste à demander » est une *requête*, pas une comptabilité. Chaque
+étape pose UNE question avec `--limit 1` sur
 
-**Pourquoi ce n'est qu'une borne.** Le walk a besoin d'un tri *global*
-(profondeur, parent, dossiers avant fichiers, rang du daemon) pour produire son
-ordre, et d'un TOTAL connu d'avance pour que la barre de progression soit
-exacte. Les deux exigent l'ensemble complet. Avancer par pages demanderait de
-renoncer à l'un ou à l'autre.
+    <scope> AND <pas encore décidé> AND <pas sauté>
 
-**La vraie refonte (à faire).** Descendre niveau par niveau, en ne chargeant que
-ce qui sera réellement demandé :
+et chaque réponse sort son sujet de cet ensemble — un dossier répondu en bloc y
+emmène tout son sous-arbre, puisque le tag est écrit dessus. L'ordre vient du
+`--sort` de la requête (donc `mf order` est respecté), et le total vient d'un
+`--count`, exact et O(1) sur l'index. On garde les deux.
 
-1. lire les **dossiers** seuls (bien moins nombreux) et construire l'arbre ;
-2. ne lire les **fichiers d'un dossier** que lorsqu'on y descend, c'est-à-dire
-   seulement si le dossier n'a pas été réglé en bloc.
+**Livré.** Le walk est en profondeur d'abord et ne tient qu'une chaîne, le
+dossier courant (*le chemin EST la pile*) ; `DECIDED`/`PRUNED`/`SUBTREE`/`RANK`/
+`KIND`/`PATH_OF`/`ENTRIES`/`WALK`/`STEPS`, le `sort` externe et la borne de
+scope ont disparu. Un saut (`s`) est désormais *enregistré* (champ
+`gui_tag_skipped`, un ref vers l'entrée du tag : un marqueur par tag), donc il
+survit au run, s'annule par `back` comme toute autre réponse, et est proposé au
+nettoyage en fin de run puis au démarrage suivant. Prérequis levés en chemin :
+`:parent` servi par l'index, puis `mf … --count`.
 
-Bénéfice double : un « oui » sur un dossier de 100 000 fichiers ne les lit
-**jamais**, et la mémoire devient proportionnelle à la profondeur, pas au scope.
-Coût : le TOTAL n'est plus connu d'avance — la barre devient indéterminée, ou
-bornée par le nombre de dossiers avec un compteur de fichiers qui s'affine. Le
-compteur « N left » (déjà subtree-aware, cf. `SUBTREE`/`prune_subtree`) devrait
-suivre le même modèle. À décider avant de coder : ce que la barre montre quand
-le total est inconnu.
+Conception : [gui-tag-folder-rework.md](gui-tag-folder-rework.md). Les deux
+autres scripts (`gui-tag-classify.sh`, `gui-tag-pair.sh`) lisent toujours leur
+scope d'avance — mais ils classent UN metarecord (classify) ou une paire
+(pair), pas un sous-arbre : la borne y suffit.

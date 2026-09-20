@@ -7,16 +7,31 @@
 #   y (oui)   -> `mf tag add` on the entry; for a folder, on its whole subtree
 #                too — *intersected with the query*, which is the scope.
 #   n (non)   -> `mf tag deny` on the same scope.
-#   m (mixed) -> `mf tag mixed` on the folder only; its children stay in the
-#                walk and are asked in turn.
+#   m (mixed) -> `mf tag mixed` on the folder only; the walk then descends into
+#                it and asks its children in turn.
 #   s (skip)  -> leave this entry alone: no tag op, and for a folder nothing
-#                under it is asked either — the subtree is left for another run.
+#                under it is asked either. The skip is RECORDED (a
+#                `gui_tag_skipped` marker), so it survives the run and is
+#                offered for cleanup at the end and at the next run's start.
 #
-# The arrow keys answer as well: → yes, ← no, ↑ mixed, ↓ skip.
+# The arrow keys answer as well: → yes, ← no, ↑ mixed, ↓ skip. Backspace (or
+# `b`) takes the previous answer back — including a skip.
 #
-# THE QUERY IS THE SCOPE. A "yes" on a folder never reaches a metarecord the
-# query excludes: the subtree op is `(<query>) AND mfr_path ->* "<path>"`. So
-# narrowing the list in the GUI narrows what this script can touch.
+# THE QUERY IS THE WALK STATE. An answer is already a write, so "what is left
+# to ask" is a *query*, not bookkeeping: each step asks ONE question with
+# `--limit 1` over
+#
+#     <scope> AND <not yet decided> AND <not skipped>
+#
+# and every answer removes its subject from that set — a y/n on a folder writes
+# the tag over `(scope) AND mfr_path ->* "<path>"`, so the whole subtree leaves
+# at once. Nothing is read up front, nothing is held in bash, and there is no
+# scope cap: the cost is two or three small round-trips per question, each
+# behind a human keypress. See docs/gui-tag-folder-rework.md.
+#
+# THE QUERY IS ALSO THE SCOPE. A "yes" on a folder never reaches a metarecord
+# the query excludes: the subtree op is `(<query>) AND mfr_path ->* "<path>"`.
+# So narrowing the list in the GUI narrows what this script can touch.
 #
 # Where the query comes from, in order: the QUERY argument; else what the GUI
 # is showing (`mf gui query` — the checkbox selection, else the list's query
@@ -24,29 +39,25 @@
 # into `mfr_path =>* "<folder>"` (the folder and its whole subtree). An empty
 # query means every metarecord, and is left as such rather than wrapped.
 #
-# ORDER. The whole scope is read in four round-trips — ordered uuids and
-# uuid→path for each of the two kinds — instead of one listing per folder. The
-# walk then goes level by level (a folder before what it contains), folders
-# before files, and within one folder in the order the daemon returned:
-# `--sort order_dir` / `--sort order_file` first, then `--sort mfr_path`. So a
-# folder that `mf order` has numbered is walked in its own order (an album by
-# track number), and everything else alphabetically by path. The script never
-# runs `mf order` itself: numbering is a deliberate act, and its date-based
-# fallback would be a worse walking order than the alphabetical one.
+# ORDER. Depth first, a folder before what it holds. At the current folder P:
+#   1. the first undecided direct child in scope — folders first, each kind by
+#      `order_dir`/`order_file` then by path, so a folder `mf order` has
+#      numbered is walked in its own order (an album by track number);
+#   2. none? the first undecided in-scope *descendant* of P, by path: the walk
+#      moves to its parent and descends there without asking. This is what
+#      reaches a SCATTERED scope — the query may exclude /a and hold
+#      /a/b/c.txt — and it skips every empty level in one step;
+#   3. neither? up one component. Above the repository root, the walk is done.
+# Coming back up finds the siblings left behind. The script never runs
+# `mf order` itself: numbering is a deliberate act, and its date-based fallback
+# would be a worse walking order than the alphabetical one.
 #
-# Because the scope is read up front, the total is known before the first
-# question and the progress bar is exact.
-#
-# Resumable: an entry whose answer is already recorded is not asked again. The
-# record carries the tag (`tag`, exactly or through a more specific tag), carries
-# its negation (`negative_tag`, exactly or through a more general one), or is a
-# `mixed_tag` folder — which is walked into straight away, no question. Those
-# three sets are read over the whole scope in one round-trip each, with the
-# subsumption spelled in the query, so a resume costs three calls and not three
-# per entry. So a
-# run interrupted halfway (skip, stop, Escape) is continued by re-running the
-# same command, and only the open questions come back. `--redo` asks everything
-# again, decided or not — the way to revise a wrong answer over a subtree.
+# Resumable, and that too is the query: an entry already decided is not in it.
+# The record carries the tag (`tag`, exactly or through a more specific one),
+# carries its negation (`negative_tag`, exactly or through a more general one),
+# or is a `mixed_tag` folder — the walk enters the last by descending into it,
+# so it is never re-asked. `--redo` asks everything again, decided or not — the
+# way to revise a wrong answer over a subtree — and ignores the skip markers.
 #
 # `mf tag` owns the tag model: it creates the entry if the vocabulary lacks it,
 # adds the ref idempotently, and applies the subsumption/exclusivity rewrites
@@ -64,7 +75,7 @@ HERE=$(cd "$(dirname "$0")" && pwd)
 # shellcheck source=lib/mf-gui.sh
 source "$HERE/lib/mf-gui.sh"
 
-# `--redo`: ask every entry again, ignoring the answers already recorded.
+# `--redo`: ask every entry again, ignoring what is already decided or skipped.
 # (`&&` here would end the script under `set -e` whenever the flag is absent.)
 REDO=0
 if [ "${1:-}" = "--redo" ]; then
@@ -87,8 +98,8 @@ case $TAG in *\"*) mf_die "tag names must not contain double quotes" ;; esac
 # The scope. Resolved BEFORE the session takeover: `mf gui query` answers for
 # the focused workspace, and the scratch workspace the session opens publishes
 # nothing.
-# SCOPE is read by mf_gui_scoped / mf_gui_scope_get, in lib/mf-gui.sh (a
-# sourced file this check does not follow from here).
+# SCOPE is read by mf_gui_scoped, in lib/mf-gui.sh (a sourced file this check
+# does not follow from here).
 # shellcheck disable=SC2034
 if [ "$QUERY_GIVEN" = 1 ]; then
     SCOPE=$QUERY_ARG
@@ -100,49 +111,9 @@ mf_gui_session_open metarecord-detail
 
 TMP=$(mf_gui_tmpdir)
 
-declare -A PATH_OF RANK KIND
-
-# Read one kind of the scope: the uuids in walking order, and their paths.
-# Two round-trips per kind, whatever the size — `--sort` and `--resolve-tree`
-# are exclusive, so the order comes from one call and the paths from the other.
-#
-# `mfr_path IS PRESENT` keeps out what has no place in a tree walk: a deleted
-# file keeps its metarecord with `mfr_path = Nothing` (spec-file-tracking), so
-# it still answers `mfr_type = "file"` while resolving to no path at all.
-# Without the filter such a record entered the walk with an empty path — which
-# sorts as the repository root, so it was asked about FIRST, in a question
-# naming no file and with a preview that could not move off whatever the panels
-# already held.
-collect() { # <dir|file> <order field>
-    local kind=$1 field=$2 i=0 uuid path
-    local scope
-    scope=$(mf_gui_scoped "mfr_type = \"$kind\" AND mfr_path IS PRESENT")
-    # Through files rather than `< <(mf …)`: a process substitution throws the
-    # exit status away, so a refused query or a stopped daemon came back as an
-    # empty walk and the script announced "the query matches no tracked
-    # metarecord" — reporting an error as an answer.
-    # Bounded, and checked BEFORE the path read below: `--resolve-tree` resolves
-    # the whole query in one round-trip and takes no limit, so the cheap ordered
-    # read is where an oversized scope has to be caught. One past the cap is
-    # asked for, so "more than the cap" is distinguishable from "exactly it".
-    local -a ordered=()
-    mf_into "$TMP/order.$kind" metarecord -q "$scope" get \
-        --sort "$field" --sort mfr_path --limit "$((MF_GUI_MAX_ENTRIES + 1))"
-    mapfile -t ordered <"$TMP/order.$kind"
-    COLLECTED=$((COLLECTED + ${#ordered[@]}))
-    mf_check_scope_size "$COLLECTED" "tracked metarecords"
-    for uuid in ${ordered+"${ordered[@]}"}; do
-        [ -n "$uuid" ] || continue
-        i=$((i + 1))
-        RANK[$uuid]=$i
-        KIND[$uuid]=$kind
-    done
-    mf_into "$TMP/paths.$kind" metarecord -q "$scope" get --resolve-tree mfr_path --tsv
-    while IFS=$'\t' read -r uuid path; do
-        [ -n "$uuid" ] || continue
-        PATH_OF[$uuid]=$path
-    done <"$TMP/paths.$kind"
-}
+# ── The question set, as a predicate ─────────────────────────────────────────
+# Everything below builds one predicate: "in scope, and still to be asked". It
+# is the walk's whole memory, which is why it is spelled once here.
 
 # TAG and its ancestors, as an alternation over a tag entry's path: a more
 # general "no" denies the tag we are asking about.
@@ -155,129 +126,227 @@ neg_paths() { # <tag> -> path = "a/b" OR path = "a"
     printf '%s' "${out% OR }"
 }
 
-# What TAG already answers for, read as three SETS — one round-trip each for
-# the whole scope. Reading it per entry instead cost three daemon calls before
-# every question, which on a resume is the whole walk spent re-reading answers
-# it already has.
-#
-# Subsumption moves into the query, spelled exactly as the per-record reads
-# spelled it: a positive on TAG *or any tag below it* implies TAG; a negative
-# on TAG *or any tag above it* denies it; only an exact mixed marker is one.
-# `mf tag` applies the same rules when writing, so the two agree.
-declare -A DECIDED
-load_decided() {
-    [ "$REDO" = 0 ] || return 0
-    # Weakest first: a record that is both mixed and denied reads as denied,
-    # and one that is also tagged reads as tagged — the precedence the per-entry
-    # reads had when they stopped at the first hit.
-    local pair answer pred uuid
-    for pair in \
-        "m:mixed_tag -> (mf_schema = \"tag\" AND path = \"$TAG\")" \
-        "n:negative_tag -> (mf_schema = \"tag\" AND ($(neg_paths "$TAG")))" \
-        "y:tag -> (mf_schema = \"tag\" AND path =>* \"$TAG\")"; do
-        answer=${pair%%:*}
-        pred=${pair#*:}
-        # Through a file for the same reason as `collect`, and here the silent
-        # failure was worse: an empty answer set is indistinguishable from "you
-        # have answered nothing yet", so a --resume run would quietly ask every
-        # question again.
-        mf_into "$TMP/decided.$answer" metarecord -q "$(mf_gui_scoped "$pred")" get
-        while read -r uuid; do
-            [ -n "$uuid" ] || continue
-            DECIDED[$uuid]=$answer
-        done <"$TMP/decided.$answer"
+TAG_ESC=$(mf_dsl_str "$TAG")
+# Subsumption is spelled in the query, so the daemon owns it: a positive on TAG
+# *or any tag below it* implies TAG; a negative on TAG *or any tag above it*
+# denies it; only an exact mixed marker is one.
+DECIDED_PRED="NOT (tag -> (mf_schema = \"tag\" AND path =>* \"$TAG_ESC\")"
+DECIDED_PRED+=" OR negative_tag -> (mf_schema = \"tag\" AND ($(neg_paths "$TAG_ESC")))"
+DECIDED_PRED+=" OR mixed_tag -> (mf_schema = \"tag\" AND path = \"$TAG_ESC\"))"
+# The skip marker: a ref to the tag's own vocabulary entry, not a boolean.
+# Fields are a multi-map, so one record carries one marker per tag and a skip
+# left by a run on `music` does not silently skip the same entry for `jazz`.
+# One clause, whatever the number of skips.
+SKIP_PRED="gui_tag_skipped -> (mf_schema = \"tag\" AND path = \"$TAG_ESC\")"
+
+# Folder subtrees this run leaves alone: skipped folders (their subtree is
+# still undecided and in scope, so nothing else would take it out), and under
+# `--redo` the folders answered whole (where the decided clause is not there to
+# do it). Bounded by how many times a human presses a key, not by the scope.
+CLOSED_DIRS=()
+# Entries this run has settled that the query cannot see: everything under
+# `--redo`, and a skip that could not be recorded for want of a vocabulary
+# entry. Also bounded by keypresses.
+EXCLUDED=()
+
+# "In scope and still to be asked", as one predicate. Ends with `mfr_path IS
+# PRESENT`: a deleted file keeps its metarecord with `mfr_path = Nothing`
+# (spec-file-tracking), which has no place in a tree walk — it cannot be shown,
+# and it would be counted as something left to ask about for ever.
+open_pred() {
+    local parts=() uuid dir joined=""
+    if [ "$REDO" = 0 ]; then
+        parts+=("$DECIDED_PRED" "NOT $SKIP_PRED")
+    fi
+    if [ "${#EXCLUDED[@]}" -gt 0 ]; then
+        local list=""
+        for uuid in "${EXCLUDED[@]}"; do list+="$uuid, "; done
+        parts+=("NOT uuid_in(${list%, })")
+    fi
+    for dir in ${CLOSED_DIRS+"${CLOSED_DIRS[@]}"}; do
+        parts+=("NOT mfr_path ->* \"$(mf_dsl_str "$dir")\"")
     done
+    parts+=("mfr_path IS PRESENT")
+    for uuid in "${parts[@]}"; do joined+="$uuid AND "; done
+    printf '%s' "${joined% AND }"
 }
 
-# The running total across both kinds: the cap is on what the run holds, not on
-# either query.
-COLLECTED=0
-collect dir order_dir
-collect file order_file
+# ── The walk's four questions to the daemon ──────────────────────────────────
+# Each is bounded — a `--limit 1`, a `--count`, or one record by uuid — and each
+# goes through mf_into, so a refused query or a stopped daemon is fatal instead
+# of reading back as "nothing left to ask".
 
-load_decided
+first_line() { head -n1 "$1"; }
 
-# One sortable line per entry: depth, parent path, kind (folders first), then
-# the daemon's own rank. Sorting on that gives the walk its order — level by
-# level, a folder before its contents, folders before files.
-ENTRIES=()
-for uuid in "${!RANK[@]}"; do
-    # No path, no place in the walk. The two round-trips above are separate
-    # queries, so one can hold a record the other does not; and the repository
-    # root's path is the EMPTY string, which is why this tests for the key
-    # rather than for a non-empty value.
-    [ -n "${PATH_OF[$uuid]+set}" ] || continue
-    path=${PATH_OF[$uuid]}
-    # The depth is the number of "/" in the path (the root's "" is 0). Spelled
-    # with parameter expansion rather than `awk`: this loop runs once per
-    # metarecord in the scope, and one process per entry is seconds of pure
-    # forking on a scope of any size — the whole cost of getting to the first
-    # question.
-    slashes=${path//[!\/]/}
-    depth=${#slashes}
-    parent=${path%/*}
-    krank=1
-    [ "${KIND[$uuid]}" = dir ] && krank=0
-    # The parent is prefixed so the field is never empty: a tab is IFS
-    # *whitespace*, so `read` collapses two consecutive ones and an empty middle
-    # field would shift every field after it (the root's parent is "").
-    ENTRIES+=("$depth	.$parent	$krank	${RANK[$uuid]}	$uuid")
-done
+# One component up. A path with no separator left is directly under the
+# repository root, whose own path is the empty string — spelled as a `case` and
+# not as `${p%/*}`, which leaves such a path UNCHANGED and would walk up for
+# ever.
+parent_path() { # <path>
+    case $1 in */*) printf '%s' "${1%/*}" ;; *) printf '' ;; esac
+}
 
-TOTAL=${#ENTRIES[@]}
-[ "$TOTAL" -gt 0 ] || mf_die "the query matches no tracked metarecord"
+# The direct children of the current folder. The repository root is nobody's
+# child, so at the walk root the forest root is asked for beside them; its path
+# is the empty string, which sorts first, so it is the first question.
+parent_clause() {
+    if [ -z "$CURRENT" ]; then
+        printf '(mfr_path:parent = "" OR mfr_path:parent IS ABSENT)'
+    else
+        printf 'mfr_path:parent = "%s"' "$(mf_dsl_str "$CURRENT")"
+    fi
+}
 
-# How many walk entries lie strictly under each folder. Answering a folder whole
-# settles its entire subtree at once, so that is the number the "N left" counter
-# has to drop by — decrementing by one per entry made it say a folder of ten
-# thousand files was still ahead after it had just been answered.
-#
-# Counted by walking each entry's own ancestors, once, with parameter expansion:
-# one pass over the scope, no process and no prefix scan per folder.
-# Keys carry a "." prefix, as the parent field of the walk line does: the
-# repository root's path is the EMPTY string, and bash rejects an empty
-# associative-array subscript — which is precisely the folder whose subtree is
-# the whole scope.
-declare -A SUBTREE
-for uuid in "${!PATH_OF[@]}"; do
-    ancestor=${PATH_OF[$uuid]}
-    while [ "${ancestor%/*}" != "$ancestor" ]; do
-        ancestor=${ancestor%/*}
-        SUBTREE[.$ancestor]=$((${SUBTREE[.$ancestor]:-0} + 1))
-    done
-done
+# Folders first, then everything else. A LEAF is spelled "not a folder" rather
+# than `mfr_type = "file"`: a symlink is tracked as `mfr_type = "symlink"`
+# (fs_meta.rs, which never dereferences one), so the narrow form would leave it
+# reachable by rule 2 and by nothing else — the walk would descend to its parent,
+# find no child to ask, and descend again, for ever, with no key pressed.
+first_child() { # <dir|leaf>
+    local kind=$1 order=order_dir type='mfr_type = "dir"'
+    if [ "$kind" != dir ]; then
+        order=order_file
+        type='NOT mfr_type = "dir"'
+    fi
+    mf_into "$TMP/step" metarecord \
+        -q "$(mf_gui_scoped "$(open_pred) AND $type AND $(parent_clause)")" \
+        get --sort "$order" --sort mfr_path --limit 1
+    first_line "$TMP/step"
+}
 
-# The walk order, materialised in a file rather than read from a pipe. Leaving
-# the walk early (stop, Escape, a failed tag op) closes its input, and a `sort`
-# still writing then dies of SIGPIPE — which the ERR trap reported as an error,
-# so a deliberate stop looked like a crash. A file has no writer to kill.
-WALK="$TMP/walk"
-printf '%s\n' "${ENTRIES[@]}" | sort -t$'\t' -k1,1n -k2,2 -k3,3n -k4,4n >"$WALK"
+# Rule 2: the first open descendant, by path. Sorting by path is sorting in DFS
+# order, so it is the first entry the walk should reach — and its parent is the
+# level to descend to, every empty level above it skipped in one step.
+first_descendant() {
+    mf_into "$TMP/step" metarecord \
+        -q "$(mf_gui_scoped "$(open_pred) AND mfr_path ->* \"$(mf_dsl_str "$CURRENT")\"")" \
+        get --sort mfr_path --limit 1
+    first_line "$TMP/step"
+}
 
-# Apply T over a node and its subtree, the subtree narrowed to the scope.
+# How many entries are left to ask about: exact, O(1) on the index, and it drops
+# by a whole subtree the moment a folder is answered whole.
+open_count() {
+    mf_into "$TMP/count" metarecord -q "$(mf_gui_scoped "$(open_pred)")" get --count
+    first_line "$TMP/count"
+}
+
+tree_path() { # <uuid> -> its root-relative path ("" for the repository root)
+    mf_into "$TMP/path" metarecord -i "$1" get --resolve-tree mfr_path
+    first_line "$TMP/path"
+}
+
+num() { case ${1:-} in '' | *[!0-9]*) printf 0 ;; *) printf '%s' "$1" ;; esac; }
+
+# ── The skip markers ─────────────────────────────────────────────────────────
+
+# The tag's vocabulary entry, which a marker refs. It may not exist yet (`mf
+# tag` creates it on the first write), and "no such tag" must read the same as
+# "no skips" — not as an error.
+read_tag_uuid() {
+    mf_into "$TMP/tag" metarecord -q "mf_schema = \"tag\" AND path = \"$TAG_ESC\"" get --limit 1
+    first_line "$TMP/tag"
+}
+
+marker_count() {
+    mf_into "$TMP/markers" metarecord -q "$(mf_gui_scoped "$SKIP_PRED")" get --count
+    first_line "$TMP/markers"
+}
+
+# Skipped FOLDERS from an earlier run: their subtree is still undecided and in
+# scope, so it has to be closed again or the files under a folder the user
+# deliberately left alone are asked one by one.
+load_closed_dirs() {
+    local dir
+    mf_into "$TMP/skipped" metarecord \
+        -q "$(mf_gui_scoped "mfr_type = \"dir\" AND $SKIP_PRED")" get --resolve-tree mfr_path
+    while read -r dir; do
+        if [ -n "$dir" ]; then CLOSED_DIRS+=("$dir"); fi
+    done <"$TMP/skipped"
+}
+
+# `remove` takes the row out by value, so only this tag's marker goes; `unset`
+# would remove every tag's.
+clear_markers() {
+    [ -n "$TAG_UUID" ] || return 0
+    mf metarecord -q "$(mf_gui_scoped "$SKIP_PRED")" \
+        field remove "gui_tag_skipped:ref=$TAG_UUID" >/dev/null \
+        || mf_gui_report "could not clear the skip markers"
+    MARKERS=0
+}
+
+TAG_UUID=$(read_tag_uuid)
+MARKERS=0        # skip markers this tag is known to carry
+
+# Leftover markers are offered at the START, which is where the choice is
+# actually informed: resume where you were, or ask those entries again.
+if [ "$REDO" = 0 ]; then
+    LEFT=$(num "$(marker_count)")
+    if [ "$LEFT" -gt 0 ]; then
+        MARKERS=$LEFT
+        case "$(mf_gui_ask_answer \
+            "$LEFT entries were skipped in an earlier run — ask them again?   [y] ask again   [n] keep them skipped" \
+            y n)" in
+            y) clear_markers ;;
+            n) load_closed_dirs ;;
+            *) mf_die "cancelled" ;;
+        esac
+    fi
+fi
+
+# ── The walk ─────────────────────────────────────────────────────────────────
+
+# The two empty cases read differently, and the run must not confuse them: a
+# query that matches nothing is a mistake to report, while a query whose every
+# entry is already decided or skipped is a run that has nothing left to do —
+# which is what a resumed walk looks like once it is finished. The second count
+# is only asked when the first is zero, so the ordinary run pays nothing for it.
+scope_count() {
+    mf_into "$TMP/scope" metarecord -q "$(mf_gui_scoped "mfr_path IS PRESENT")" get --count
+    first_line "$TMP/scope"
+}
+
+TOTAL=$(num "$(open_count)")
+if [ "$TOTAL" -eq 0 ]; then
+    [ "$(num "$(scope_count)")" -gt 0 ] || mf_die "the query matches no tracked metarecord"
+    if [ "$MARKERS" -gt 0 ]; then
+        case "$(mf_gui_ask_answer \
+            "nothing left to ask about '$TAG' — forget the $MARKERS skips, so the next run asks them again?   [y] forget   [n] keep" \
+            y n)" in
+            y) clear_markers ;;
+        esac
+    fi
+    mf_gui_finish "nothing left to ask about '$TAG': the query is fully decided."
+    exit 0
+fi
+
+# Apply TAG over a node and its subtree, the subtree narrowed to the scope.
 apply_tree() { # <uuid> <path> <verb: add|deny>
     mf tag -i "$1" "$3" "$TAG" >/dev/null \
         && mf tag -q "$(mf_gui_scoped "mfr_path ->* \"$(mf_dsl_str "$2")\"")" "$3" "$TAG" \
             >/dev/null
 }
 
-# Subtrees that are settled: a folder answered yes/no (its whole subtree took
-# the answer) or skipped (deliberately left alone). Nothing under them is asked.
-PRUNED=()
-is_pruned() { # <path>
-    local path=$1 root
-    for root in ${PRUNED+"${PRUNED[@]}"}; do
-        case "$path/" in "$root/"*) return 0 ;; esac
-    done
-    return 1
-}
-
-# Settle a folder's whole subtree: nothing under it is asked, and REMAINING —
-# what the question's counter reports — drops by everything it covers. The two
-# are one call so they can never drift apart.
-prune_subtree() { # <path>
-    PRUNED+=("$1")
-    REMAINING=$((REMAINING - ${SUBTREE[.$1]:-0}))
+# Record a skip: the marker (so it survives the run) and, for a folder, the
+# subtree it closes. The marker needs the vocabulary entry — when the tag has
+# never been written anywhere there is nothing to point at, and the skip then
+# holds for this run only.
+record_skip() { # <uuid> <path> <dir|file>
+    [ -n "$TAG_UUID" ] || TAG_UUID=$(read_tag_uuid)
+    if [ -n "$TAG_UUID" ]; then
+        if mf metarecord -i "$1" field add "gui_tag_skipped:ref=$TAG_UUID" >/dev/null; then
+            MARKERS=$((MARKERS + 1))
+        else
+            STOP="cannot record the skip of '$2'"
+            return 0
+        fi
+    else
+        EXCLUDED+=("$1")
+        [ "$WARNED_SKIP" = 1 ] || mf_gui_report \
+            "'$TAG' is not in the tag vocabulary yet: skips hold for this run only"
+        WARNED_SKIP=1
+    fi
+    if [ "$3" = dir ]; then CLOSED_DIRS+=("$2"); fi
 }
 
 # How the walk ended: "" = still going, "user" = stopped, anything else is an
@@ -286,172 +355,151 @@ prune_subtree() { # <path>
 # indistinguishable from Escape and end the run with a cheerful "stopped."
 STOP=""
 SKIPPED=0
-# What the question's counter reports: entries still to be *considered*. It
-# drops by one per entry looked at, and by a whole subtree the moment a folder
-# is settled — unlike DONE, which counts every entry the walk steps over and so
-# drives the progress bar to its total.
-REMAINING=$TOTAL
-ALREADY=0
-DONE=0
+WARNED_SKIP=0
+CURRENT=""       # the current folder — THE PATH IS THE STACK: going up is
+                 # trimming one component, so the walk holds nothing else.
 
-# The progress bar is STEPPED, not smooth. Every report is a process and a
-# round-trip, and a resume walks past entries it has already answered without
-# stopping at any of them — one report each would cost more than the walk. An
-# entry that is actually asked always reports (that is where the user is
-# looking); a skipped one reports only once every percent or so of the scope,
-# and the last entry always does, so the bar still reaches the end.
-STEP=$((TOTAL / 100))
-[ "$STEP" -ge 1 ] || STEP=1
-LAST_REPORT=0
-report_progress() { # <done> <phase>
-    LAST_REPORT=$1
-    mf_gui_progress --done "$1" --total "$TOTAL" --phase "$2"
-}
-report_step() { # <done> <phase>   — only when a step has gone by
-    if [ $(($1 - LAST_REPORT)) -ge "$STEP" ] || [ "$1" -eq "$TOTAL" ]; then
-        report_progress "$1" "$2"
-    fi
-}
-
-# Read as an ARRAY rather than streamed, so the walk can step *backwards*: the
-# back key returns to the previous question, which means re-reading a line
-# already consumed. The scope is bounded (MF_GUI_MAX_ENTRIES), so holding it is
-# the same memory the path/rank maps already cost.
-mapfile -t STEPS <"$WALK"
-
-# One frame per answered question, pushed before the answer is applied: where
-# the walk was, the counters as they stood, how many pruned roots there were,
-# and the operation the history was on. Going back pops one and restores all of
-# it — the writes through the event log, which puts back the exact field rows
-# and versions, the rest by assignment.
+# One frame per answer, pushed before it is applied: the history's position (so
+# the writes can be undone exactly), where the walk stood, and the sizes of the
+# two lists an answer can grow. Going back pops one and restores all of it —
+# the writes through the event log, which puts back the exact field rows and
+# versions, the rest by assignment. Undoing the write is what re-opens the
+# entry: it comes back into the query on its own.
 BACK_STACK=()
 
-# `depth`, `parent`, `krank` and `rank` are the sort key and are not read again
-# here; only the uuid is.
-# shellcheck disable=SC2034
-STEP_INDEX=0
-while [ "$STEP_INDEX" -lt "${#STEPS[@]}" ]; do
-    IFS=$'\t' read -r depth parent krank rank uuid <<<"${STEPS[$STEP_INDEX]}"
-    STEP_INDEX=$((STEP_INDEX + 1))
+while :; do
     [ -z "$STOP" ] || break
-    [ -n "$uuid" ] || continue
-    path=${PATH_OF[$uuid]-}
-    kind=${KIND[$uuid]}
-    # Counted before the prune test, not after: TOTAL counts every entry, so a
-    # DONE that skipped the pruned ones never reached it — the "the last entry
-    # always reports" rule never fired, and the "N left" counter claimed a
-    # folder answered whole was still ahead.
-    # The counters as they stand *before* this entry is considered. A back frame
-    # restores these, so returning here re-walks the entry from a clean state;
-    # frames taken after the decrements below would subtract twice, and the
-    # "N left" counter went negative.
-    pre_done=$DONE
-    pre_remaining=$REMAINING
-    pre_already=$ALREADY
-    pre_skipped=$SKIPPED
-    pre_pruned=${#PRUNED[@]}
-    DONE=$((DONE + 1))
-    # A settled subtree is walked over, not asked about — but it still has to
-    # report, or the bar stops wherever the last question was and never reaches
-    # its total. `report_step` throttles, so this costs one call per percent.
-    if is_pruned "$path"; then
-        report_step "$DONE" "$path"
+
+    kind="dir"
+    uuid=$(first_child dir)
+    if [ -z "$uuid" ]; then
+        kind="leaf"
+        uuid=$(first_child leaf)
+    fi
+
+    if [ -z "$uuid" ]; then
+        # Rule 2: descend to the parent of the first open descendant, asking
+        # nothing on the way. Rule 3: up one component, and above the
+        # repository root the walk is done.
+        deep=$(first_descendant)
+        if [ -n "$deep" ]; then
+            deep_path=$(tree_path "$deep")
+            # Descending has to move, or the same query answers the same entry
+            # for ever — and nothing in this branch waits for a key, so the run
+            # would spin in silence. It cannot happen while the two queries
+            # agree (an open descendant of P whose parent is P is a direct
+            # child, which the step above asks for); if they ever stop agreeing,
+            # this says so instead of hanging.
+            next_folder=$(parent_path "$deep_path")
+            if [ -z "$deep_path" ] || [ "$next_folder" = "$CURRENT" ]; then
+                STOP="'${deep_path:-?}' is in the query but not in the walk"
+                break
+            fi
+            CURRENT=$next_folder
+            continue
+        fi
+        [ -n "$CURRENT" ] || break
+        CURRENT=$(parent_path "$CURRENT")
         continue
     fi
-    # Past the prune test this entry is one the run actually considers, so it
-    # comes off the counter. Entries skipped just above were already discounted,
-    # as a block, when their folder was settled.
-    REMAINING=$((REMAINING - 1))
-    # Already answered in an earlier run: no question, no tag op. A folder that
-    # took the answer whole settles its subtree; a mixed one does not — that is
-    # where its remaining questions live. The answer is a lookup in the sets
-    # read up front, so it is free: read it before reporting, and the report
-    # can then say whether this entry is one the user will be asked about.
-    prior=${DECIDED[$uuid]-}
-    case $prior in
-        y | n)
-            ALREADY=$((ALREADY + 1))
-            report_step "$DONE" "$path"
-            [ "$kind" = dir ] && prune_subtree "$path"
-            continue
-            ;;
-        m)
-            ALREADY=$((ALREADY + 1))
-            report_step "$DONE" "$path"
-            continue
-            ;;
-    esac
-    report_progress "$DONE" "$path"
+
+    path=$(tree_path "$uuid")
+    disp=${path:-/}
+    remaining=$(num "$(open_count)")
+    done_now=$((TOTAL - remaining + 1))
+    [ "$done_now" -ge 1 ] || done_now=1
+    [ "$done_now" -le "$TOTAL" ] || done_now=$TOTAL
+    mf_gui_progress --done "$done_now" --total "$TOTAL" --phase "$disp"
     mf_gui_show_file "$(mf path "$uuid" 2>/dev/null || true)"
-    counter="$REMAINING left"
-    # Everything the answer is about to change, noted before it changes: the
-    # history's position (so the writes can be undone exactly), the walk
-    # position, the counters, and how many pruned roots stood. `back` pops this.
-    frame_head=$(mf_log_head)
-    frame="$((STEP_INDEX - 1))	$pre_done	$pre_remaining	$pre_already	$pre_skipped	$pre_pruned	$frame_head"
+    counter="$((remaining - 1)) left"
+
     back_hint=""
     [ "${#BACK_STACK[@]}" -gt 0 ] && back_hint="   [b ⌫] back"
     if [ "$kind" = dir ]; then
         answer=$(mf_gui_ask_answer \
-            "'$path' has tag '$TAG'?   [y →] oui   [n ←] non   [m ↑] mixed   [s ↓] skip$back_hint   [q] stop   — $counter" \
+            "'$disp' has tag '$TAG'?   [y →] oui   [n ←] non   [m ↑] mixed   [s ↓] skip$back_hint   [q] stop   — $counter" \
             y n m s b q)
     else
         answer=$(mf_gui_ask_answer \
-            "'$path' has tag '$TAG'?   [y →] oui   [n ←] non   [s ↓] skip$back_hint   [q] stop   — $counter" \
+            "'$disp' has tag '$TAG'?   [y →] oui   [n ←] non   [s ↓] skip$back_hint   [q] stop   — $counter" \
             y n s b q)
     fi
-    # Back: undo the previous answer and ask it again. Nothing to go back to on
-    # the first question, so the key is simply re-asked for.
+
+    # Back: undo the previous answer and let the query bring its entry back.
+    # Nothing to go back to on the first question, so the key is re-asked for.
     if [ "$answer" = b ]; then
         if [ "${#BACK_STACK[@]}" -eq 0 ]; then
             mf_gui_report "nothing to go back to"
-            STEP_INDEX=$((STEP_INDEX - 1))
             continue
         fi
-        IFS=$'\t' read -r b_index b_done b_remaining b_already b_skipped b_pruned b_head \
+        IFS=$'\t' read -r b_head b_current b_closed b_excluded b_markers b_skipped \
             <<<"${BACK_STACK[-1]}"
         unset "BACK_STACK[-1]"
         mf_log_back_to "$b_head"
-        STEP_INDEX=$b_index
-        DONE=$b_done
-        REMAINING=$b_remaining
-        ALREADY=$b_already
+        CURRENT=${b_current#.}
+        while [ "${#CLOSED_DIRS[@]}" -gt "$b_closed" ]; do unset "CLOSED_DIRS[-1]"; done
+        while [ "${#EXCLUDED[@]}" -gt "$b_excluded" ]; do unset "EXCLUDED[-1]"; done
+        MARKERS=$b_markers
         SKIPPED=$b_skipped
-        # Re-open whatever that answer had settled: the subtree comes back into
-        # the walk, which is what makes the question answerable differently.
-        while [ "${#PRUNED[@]}" -gt "$b_pruned" ]; do unset "PRUNED[-1]"; done
         continue
     fi
-    BACK_STACK+=("$frame")
+
+    frame_head=$(mf_log_head)
+    # The folder is prefixed so the field is never empty: a tab is IFS
+    # *whitespace*, so `read` collapses two consecutive ones, and the walk
+    # root's path — the empty string — would shift every field after it.
+    BACK_STACK+=("$frame_head	.$CURRENT	${#CLOSED_DIRS[@]}	${#EXCLUDED[@]}	$MARKERS	$SKIPPED")
+
     case $answer in
-        y)
+        y | n)
+            verb=add
+            [ "$answer" = y ] || verb=deny
             if [ "$kind" = dir ]; then
-                if apply_tree "$uuid" "$path" add; then prune_subtree "$path"; else STOP="cannot tag '$path'"; fi
+                if apply_tree "$uuid" "$path" "$verb"; then
+                    # Under --redo the decided clause is not there to take the
+                    # subtree out of the walk, so the run remembers it itself.
+                    if [ "$REDO" = 1 ]; then CLOSED_DIRS+=("$path"); fi
+                else
+                    STOP="cannot tag '$disp'"
+                fi
             else
-                mf tag -i "$uuid" add "$TAG" >/dev/null || STOP="cannot tag '$path'"
-            fi
-            ;;
-        n)
-            if [ "$kind" = dir ]; then
-                if apply_tree "$uuid" "$path" deny; then prune_subtree "$path"; else STOP="cannot untag '$path'"; fi
-            else
-                mf tag -i "$uuid" deny "$TAG" >/dev/null || STOP="cannot untag '$path'"
+                mf tag -i "$uuid" "$verb" "$TAG" >/dev/null || STOP="cannot tag '$disp'"
             fi
             ;;
         m)
-            # The children stay in the walk; only the marker is written.
-            mf tag -i "$uuid" mixed "$TAG" >/dev/null || STOP="cannot mark '$path' mixed"
+            # Only the marker is written; the walk then descends into it, which
+            # is where its remaining questions are.
+            if mf tag -i "$uuid" mixed "$TAG" >/dev/null; then
+                CURRENT=$path
+            else
+                STOP="cannot mark '$disp' mixed"
+            fi
             ;;
         s)
             SKIPPED=$((SKIPPED + 1))
-            [ "$kind" = dir ] && prune_subtree "$path"
+            record_skip "$uuid" "$path" "$kind"
             ;;
         *) STOP=user ;;
     esac
+    # Under --redo nothing the answer wrote narrows the query (the decided
+    # clause is gone), so the entry is held out by uuid.
+    if [ "$REDO" = 1 ] && [ "$answer" != s ]; then EXCLUDED+=("$uuid"); fi
 done
 
+mf_gui_progress --done "$TOTAL" --total "$TOTAL"
+
+# The markers are offered for cleanup on every exit that can still ask. Escape
+# kills the script, so nothing runs there; that is fine.
+if [ "$MARKERS" -gt 0 ]; then
+    case "$(mf_gui_ask_answer \
+        "$MARKERS entries are skipped — forget the skips, so the next run asks them again?   [y] forget   [n] keep" \
+        y n)" in
+        y) clear_markers ;;
+    esac
+fi
+
 case $STOP in
-    "")   mf_gui_finish "done tagging '$TAG' ($SKIPPED skipped, $ALREADY already decided)." ;;
-    user) mf_gui_finish "stopped tagging '$TAG' ($SKIPPED skipped, $ALREADY already decided)." ;;
+    "")   mf_gui_finish "done tagging '$TAG' ($SKIPPED skipped)." ;;
+    user) mf_gui_finish "stopped tagging '$TAG' ($SKIPPED skipped)." ;;
     *)    mf_gui_finish "tagging '$TAG' aborted: $STOP"; exit 1 ;;
 esac

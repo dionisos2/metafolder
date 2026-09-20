@@ -3556,13 +3556,35 @@ An empty query means every metarecord and is used as such, never wrapped
 (=() AND …= is not a query). The scope is resolved *before* the session
 takeover, since the scratch workspace publishes nothing.
 
-Reading the whole scope up front — =--sort order_dir=/=order_file= then
-=--sort mfr_path= for the order, =--resolve-tree mfr_path --tsv= for the
-paths, one pair per kind — replaces the per-folder listing. So the total is
-known before the first question, and the walk goes level by level, folders
-before files, each folder in =mf order='s numbering when it has one and
-alphabetically otherwise. A script never runs =mf order= itself: numbering is a
+*The query is also the walk state.* An answer is a *write*, so "what is left to
+ask" is a query rather than bash bookkeeping: =gui-tag-folder.sh= asks one
+question per step with =--limit 1= over =<scope> AND <not yet decided> AND <not
+skipped>=, and every answer takes its subject out of that set — a folder
+answered whole takes its subtree with it, since the tag is written over it.
+Nothing is read up front, nothing is held in an array, and there is no scope
+cap; the counter is a =--count= over the same predicate, so it is exact and
+drops by a whole subtree at once.
+
+The walk is depth-first and holds one string, the current folder — *the path is
+the stack*, going up is trimming one component. At folder =P=: the first
+undecided direct child in scope (folders first, each kind by
+=--sort order_dir=/=order_file= then =--sort mfr_path=, so a folder =mf order=
+has numbered is walked in its own order); else the first undecided in-scope
+*descendant* of =P= by path, whose parent becomes the current folder — which is
+what reaches a *scattered* scope, where =/a= is excluded and =/a/b/c.txt= is
+not, skipping every empty level in one step; else up one component, and above
+the repository root the walk is done. The repository root is nobody's child, so
+the first step asks for the forest root (=mfr_path:parent IS ABSENT=) beside the
+root's own children. A script never runs =mf order= itself: numbering is a
 deliberate act, and its date-based fallback would walk worse than alphabetical.
+
+A *skip* is recorded like any other answer, as a =gui_tag_skipped= field
+holding a *ref to the tag entry* — one marker per tag, so a skip on =music=
+never silences the same entry for =jazz=, and one clause
+(=NOT gui_tag_skipped -> (…)=) in the query whatever the number of skips. It
+therefore survives the run, is undone by =back= like any other answer, and is
+offered for cleanup when the run ends and again at the next run's start, which
+is where the choice is informed.
 
 =gui-unwatch-folder.sh= is the deliberate exception: a query matches
 metarecords that already exist, and the folder to stop watching often has none

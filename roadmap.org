@@ -254,18 +254,30 @@ pattern. An environment limit, not a defect of the script.
 
 ** TODO shipped tagging scripts
 *** TODO deferred items from the scripts pass
-See =docs/review-followups.md= §10 (mock =mf= argument boundaries), §11 (=mf path=
-per question), §12 (level-by-level walk — *superseded*, see below).
+See =docs/review-followups.md= §10 (mock =mf= argument boundaries) and §11
+(=mf path= per question — one round-trip per *keypress*, waiting on a CLI that
+prints a repository's root). §12 is done, below.
 
-*** TODO =gui-tag-folder.sh=: the query is the walk state
-Design settled, not coded: [[file:docs/gui-tag-folder-rework.md][docs/gui-tag-folder-rework.md]]. An answer is already a
-write, so "what is left to ask" is a query rather than bash bookkeeping — which
-removes the in-memory scope, the external sort and =MF_GUI_MAX_ENTRIES=, and
-keeps both the =mf order= walk order and an exact counter. Supersedes
-=docs/review-followups.md= §12 (rewrite it when this lands).
+*** DONE =gui-tag-folder.sh=: the query is the walk state (September 2026)
+Coded to [[file:docs/gui-tag-folder-rework.md][docs/gui-tag-folder-rework.md]], which now records the four places the
+implementation departed from it. An answer is already a write, so "what is left
+to ask" is a query rather than bash bookkeeping: one question per step with
+=--limit 1= over =<scope> AND <undecided> AND <not skipped>=, a =--count= for
+the counter, and a walk holding one string — the current folder, since *the path
+is the stack*. Gone with it: the in-memory scope, =DECIDED=/=PRUNED=/=SUBTREE=/
+=RANK=/=KIND=/=PATH_OF=/=ENTRIES=/=WALK=/=STEPS=, the external =sort=, and
+=MF_GUI_MAX_ENTRIES= for this script — while the =mf order= walk order and the
+exact counter both stay.
 
-Prerequisites were =:parent= served by the index, then =mf … --count=. *Both are
-done* (the index serves the aspect, and refuses a regex or an ordering on it;
-=--count= shipped in September 2026 — the =--cursor= half of that item is not a
-prerequisite, this walk never pages). Nothing stands between the design and the
-code any more.
+Two things the design did not have. A *skip* is now recorded (a
+=gui_tag_skipped= field holding a ref to the tag entry, one marker per tag), so
+it survives the run, is undone by =back= like any other answer, and is offered
+for cleanup at the end and again at the next run's start. And =--redo=, which
+drops the clauses that would narrow the query, keeps its own =uuid_in= list of
+what it has asked — bounded by keypresses, like the skipped-folder list.
+
+Prerequisites, both met on the way: =:parent= served by the index, then
+=mf … --count=. =docs/review-followups.md= §12 is rewritten, and its conclusion
+("paging costs either the walk order or the exact total") is recorded there as
+wrong. The other two tagging scripts still read their scope up front — they
+classify one metarecord or a pair, not a subtree, so the bound suffices.

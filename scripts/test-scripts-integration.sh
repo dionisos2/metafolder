@@ -51,6 +51,7 @@ INNER=$(uuid_of /sub/inner.txt)
 SUB=$(uuid_of /sub)
 
 has_tag() { df_tags "$1" | grep -qxF -- "$2"; }   # <uuid> <tagpath>
+has_no_tag() { ! has_tag "$1" "$2"; }
 has_neg() { df_neg  "$1" | grep -qxF -- "$2"; }
 
 # Sanity: the fixture is what we think it is.
@@ -154,6 +155,42 @@ assert "resume: and an undecided file is still asked" \
     [ "$(hy_log | grep -c "'/top.txt' has tag 'wide/narrow'")" -eq 1 ]
 assert "resume: the decided sets are read once each, not per entry" \
     [ "$(hy_log | grep -c '^metarecord -i .* field get ')" -eq 0 ]
+
+# ── gui-tag-folder: a skip is recorded, honoured, then cleaned up ───────────
+# The mocked suite pins the shapes. Only a real daemon can say that a
+# `gui_tag_skipped` ref really takes the record out of the walk's query
+# (`NOT gui_tag_skipped -> (mf_schema = "tag" AND path = "<tag>")`), that a
+# `--count` over the same predicate then answers zero, and that `field remove`
+# puts the record back.
+hy_reset
+# The marker refs the tag's vocabulary entry, and `mf tag` only creates that on
+# a first write — so give the tag an entry on a record OUTSIDE the scope.
+df_mf tag -i "$INNER" add skiptag >/dev/null 2>&1
+hy_query 'mfr_path = "/top.txt"'
+hy_input s n                    # skip the only entry, then keep the marker
+run_script "$FOLDER" skiptag
+assert "skip: the marker is recorded on the record" \
+    [ "$(df_mf metarecord -i "$TOP" field get gui_tag_skipped 2>/dev/null | grep -c .)" -eq 1 ]
+assert "skip: and nothing was tagged" has_no_tag "$TOP" skiptag
+
+hy_reset
+hy_query 'mfr_path = "/top.txt"'
+hy_input n n                    # keep them skipped; nothing left, keep them again
+run_script "$FOLDER" skiptag
+assert "skip: the next run does not ask it again" \
+    [ "$(hy_log | grep -c "'/top.txt' has tag 'skiptag'")" -eq 0 ]
+assert "skip: it reports a decided query, not an empty one" \
+    [ "$(hy_log | grep -c 'gui message nothing left to ask')" -ge 1 ]
+
+hy_reset
+hy_query 'mfr_path = "/top.txt"'
+hy_input y y                    # ask them again, then answer yes
+run_script "$FOLDER" skiptag
+assert "skip: cleared, the entry is asked again" \
+    [ "$(hy_log | grep -c "'/top.txt' has tag 'skiptag'")" -eq 1 ]
+assert "skip: and answering it tags the record" has_tag "$TOP" skiptag
+assert "skip: the marker is gone" \
+    [ "$(df_mf metarecord -i "$TOP" field get gui_tag_skipped 2>/dev/null | grep -c .)" -eq 0 ]
 
 # ── gui-tag-pair: y then n over the two files ────────────────────────────────
 # The GUI shows everything (the empty query), which is the scope this walk had
