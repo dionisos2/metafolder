@@ -106,11 +106,10 @@ pub struct TrashEntry {
     pub subtree: Vec<TrashedNode>,
 }
 
-/// One metarecord displaced by a trashing, with its original `mfr_path` TreeRef.
-/// A directory trashing orphans its whole subtree (the watcher cascades
-/// `Nothing`); recording each node lets a restore re-link the *entire* tree
-/// exactly where it was, not just the top metarecord (spec-trash "Restore").
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+/// One metarecord captured by a trashing, with its original `mfr_path` TreeRef
+/// and its content, so a restore can put the *whole* tree back exactly where it
+/// was (spec-trash "Restoring").
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct TrashedNode {
     /// Metarecord uuid (32-char lowercase hex).
     pub uuid: String,
@@ -119,6 +118,17 @@ pub struct TrashedNode {
     pub parent: Option<String>,
     /// The TreeRef name (the path component).
     pub name: String,
+    /// The metarecord's fields, as the daemon renders them and as they will be
+    /// sent back to `POST …/metarecords/bulk`. `None` on an entry captured
+    /// before the capture existed: nothing can be recreated from it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub fields: Option<Json>,
+    /// Whether this node is the trashing's own — the target or one of its
+    /// descendants — as opposed to an *ancestor* recorded for context. The
+    /// capture reaches past the trashed subtree so a restore can rebuild the
+    /// chain; those ancestors are not being trashed, and deleting or recreating
+    /// them would take out the parent directories (spec-trash "Layout").
+    pub trashed: bool,
 }
 
 /// Orders a trashed subtree parent-before-child, so re-linking each node finds
@@ -221,7 +231,9 @@ impl TrashDir {
                  entry_id TEXT NOT NULL REFERENCES entry(id) ON DELETE CASCADE,
                  uuid     TEXT NOT NULL,
                  parent   TEXT,
-                 name     TEXT NOT NULL
+                 name     TEXT NOT NULL,
+                 fields   TEXT,
+                 trashed  INTEGER NOT NULL DEFAULT 1
              );
              CREATE INDEX IF NOT EXISTS idx_node_entry ON node(entry_id);
              -- `list` order and `prune -d/-s` both drive off trashed_at, so an
@@ -229,7 +241,17 @@ impl TrashDir {
              CREATE INDEX IF NOT EXISTS idx_entry_trashed_at ON entry(trashed_at);",
         )
         .map_err(|e| sqlite_err("initialise the trash index", e))?;
+        ensure_node_columns(&conn)?;
         Ok(conn)
+    }
+
+    /// Opens the index for reading and brings its schema up to date. Reads go
+    /// through here too: a database written before a column existed must not
+    /// make every `list` fail.
+    fn open_existing_migrated(&self) -> Result<Option<Connection>, TrashError> {
+        let Some(conn) = self.open_existing()? else { return Ok(None) };
+        ensure_node_columns(&conn)?;
+        Ok(Some(conn))
     }
 
     /// Opens the index only if it already exists, so reads on a never-created
@@ -247,8 +269,9 @@ impl TrashDir {
     /// The entry `id` (with its subtree); used by callers that re-link the
     /// metarecords after a restore.
     pub fn entry(&self, id: &str) -> Result<TrashEntry, TrashError> {
-        let conn =
-            self.open_existing()?.ok_or_else(|| TrashError(format!("no trash entry '{id}'")))?;
+        let conn = self
+            .open_existing_migrated()?
+            .ok_or_else(|| TrashError(format!("no trash entry '{id}'")))?;
         load_entry(&conn, id)?.ok_or_else(|| TrashError(format!("no trash entry '{id}'")))
     }
 
@@ -343,10 +366,14 @@ impl TrashDir {
             .map_err(|e| sqlite_err("clear the subtree", e))?;
         {
             let mut stmt = tx
-                .prepare("INSERT INTO node (entry_id, uuid, parent, name) VALUES (?1, ?2, ?3, ?4)")
+                .prepare(
+                    "INSERT INTO node (entry_id, uuid, parent, name, fields, trashed) \
+                     VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
+                )
                 .map_err(|e| sqlite_err("prepare", e))?;
             for n in &subtree {
-                stmt.execute(params![id, n.uuid, n.parent, n.name])
+                let fields = n.fields.as_ref().map(Json::to_string);
+                stmt.execute(params![id, n.uuid, n.parent, n.name, fields, n.trashed])
                     .map_err(|e| sqlite_err("record the subtree", e))?;
             }
         }
@@ -355,7 +382,7 @@ impl TrashDir {
 
     /// All entries, oldest first.
     pub fn entries(&self) -> Result<Vec<TrashEntry>, TrashError> {
-        let Some(conn) = self.open_existing()? else {
+        let Some(conn) = self.open_existing_migrated()? else {
             return Ok(Vec::new());
         };
         let mut stmt = conn
@@ -369,17 +396,12 @@ impl TrashDir {
 
         // Group every node by entry in one pass, avoiding a query per entry.
         let mut nodes_stmt = conn
-            .prepare("SELECT entry_id, uuid, parent, name FROM node")
+            .prepare("SELECT entry_id, uuid, parent, name, fields, trashed FROM node")
             .map_err(|e| sqlite_err("prepare", e))?;
         let mut by_entry: std::collections::HashMap<String, Vec<TrashedNode>> =
             std::collections::HashMap::new();
         let rows = nodes_stmt
-            .query_map([], |r| {
-                Ok((
-                    r.get::<_, String>(0)?,
-                    TrashedNode { uuid: r.get(1)?, parent: r.get(2)?, name: r.get(3)? },
-                ))
-            })
+            .query_map([], |r| Ok((r.get::<_, String>(0)?, node_from_row(r, 1)?)))
             .map_err(|e| sqlite_err("read the trash", e))?;
         for row in rows {
             let (entry_id, node) = row.map_err(|e| sqlite_err("read the trash", e))?;
@@ -574,6 +596,20 @@ fn row_to_entry(r: &rusqlite::Row) -> rusqlite::Result<TrashEntry> {
 }
 
 /// Loads the entry `id` (with its subtree), or `None` if it does not exist.
+/// Reads a `node` row starting at column `base` (uuid, parent, name, fields,
+/// trashed). A `fields` blob that will not parse is read as absent rather than
+/// failing the whole listing: the entry's bytes are still restorable.
+fn node_from_row(r: &rusqlite::Row<'_>, base: usize) -> rusqlite::Result<TrashedNode> {
+    let raw: Option<String> = r.get(base + 3)?;
+    Ok(TrashedNode {
+        uuid: r.get(base)?,
+        parent: r.get(base + 1)?,
+        name: r.get(base + 2)?,
+        fields: raw.and_then(|t| serde_json::from_str(&t).ok()),
+        trashed: r.get::<_, Option<bool>>(base + 4)?.unwrap_or(true),
+    })
+}
+
 fn load_entry(conn: &Connection, id: &str) -> Result<Option<TrashEntry>, TrashError> {
     let mut entry = conn
         .query_row(&format!("SELECT {ENTRY_COLS} FROM entry WHERE id = ?1"), [id], row_to_entry)
@@ -581,12 +617,10 @@ fn load_entry(conn: &Connection, id: &str) -> Result<Option<TrashEntry>, TrashEr
         .map_err(|e| sqlite_err("read the trash entry", e))?;
     if let Some(e) = &mut entry {
         let mut stmt = conn
-            .prepare("SELECT uuid, parent, name FROM node WHERE entry_id = ?1")
+            .prepare("SELECT uuid, parent, name, fields, trashed FROM node WHERE entry_id = ?1")
             .map_err(|err| sqlite_err("prepare", err))?;
         e.subtree = stmt
-            .query_map([id], |r| {
-                Ok(TrashedNode { uuid: r.get(0)?, parent: r.get(1)?, name: r.get(2)? })
-            })
+            .query_map([id], |r| node_from_row(r, 0))
             .map_err(|err| sqlite_err("read the subtree", err))?
             .collect::<rusqlite::Result<_>>()
             .map_err(|err| sqlite_err("read the subtree", err))?;
@@ -818,7 +852,36 @@ fn copy_across(from: &Path, to: &Path) -> io::Result<()> {
 
 /// Reads a metarecord JSON (`{uuid, fields}`) into a [`TrashedNode`] — its uuid
 /// plus its first `mfr_path` TreeRef — or None when it has no present tree_ref.
-fn subtree_node(record: &Json) -> Option<TrashedNode> {
+/// Adds the `node` columns a database written before them lacks.
+///
+/// The trash index has no schema-version mechanism of its own — `open()` issues
+/// `CREATE TABLE IF NOT EXISTS` and nothing else — so a column added later needs
+/// an explicit probe, in the shape the daemon's own migrations use. Idempotent,
+/// and a no-op on a database that has never created the table.
+fn ensure_node_columns(conn: &Connection) -> Result<(), TrashError> {
+    let mut stmt = conn
+        .prepare("SELECT name FROM pragma_table_info('node')")
+        .map_err(|e| sqlite_err("probe the trash index", e))?;
+    let have: Vec<String> = stmt
+        .query_map([], |r| r.get::<_, String>(0))
+        .map_err(|e| sqlite_err("probe the trash index", e))?
+        .collect::<rusqlite::Result<_>>()
+        .map_err(|e| sqlite_err("probe the trash index", e))?;
+    if have.is_empty() {
+        return Ok(()); // no `node` table yet: `open()` creates it complete.
+    }
+    for (column, ddl) in [
+        ("fields", "ALTER TABLE node ADD COLUMN fields TEXT"),
+        ("trashed", "ALTER TABLE node ADD COLUMN trashed INTEGER NOT NULL DEFAULT 1"),
+    ] {
+        if !have.iter().any(|c| c == column) {
+            conn.execute_batch(ddl).map_err(|e| sqlite_err(&format!("add node.{column}"), e))?;
+        }
+    }
+    Ok(())
+}
+
+fn subtree_node(record: &Json, trashed: bool) -> Option<TrashedNode> {
     let uuid = record["uuid"].as_str()?;
     let mfr = record["fields"].as_array()?.iter().find(|f| f["name"] == "mfr_path")?;
     let value = &mfr["value"];
@@ -829,6 +892,8 @@ fn subtree_node(record: &Json) -> Option<TrashedNode> {
         uuid: uuid.to_string(),
         parent: value["value"]["parent"].as_str().map(str::to_owned),
         name: value["value"]["name"].as_str()?.to_string(),
+        fields: Some(record["fields"].clone()),
+        trashed,
     })
 }
 
@@ -859,7 +924,9 @@ fn capture_ancestors(
     for _ in 0..1000 {
         let Some(uuid) = parent else { break };
         let rec = client.get(&format!("/repos/{repo}/metarecords/{uuid}"))?;
-        let Some(node) = subtree_node(&rec) else { break };
+        // An ancestor is captured for context, never trashed: the parent
+        // directories stay where they are.
+        let Some(node) = subtree_node(&rec, false) else { break };
         if node.parent.is_none() {
             break; // the forest root is always live
         }
@@ -869,10 +936,16 @@ fn capture_ancestors(
     Ok(nodes)
 }
 
-/// Captures the metarecords to record on a trash entry so a restore can re-link
-/// the whole tree: the target `top` (a metarecord JSON `{uuid, fields}` at repo-
-/// relative path `rel`), its ancestor directories, and its descendants. Empty
-/// when `top` carries no present `mfr_path`.
+/// Captures the metarecords a trash entry has to remember: the target `top` (a
+/// metarecord JSON `{uuid, fields}` at repo-relative path `rel`) and its
+/// descendants — which the trashing deletes and a restore recreates — plus its
+/// ancestor directories, which it does *not*. Empty when `top` carries no
+/// present `mfr_path`.
+///
+/// The ancestors are recorded so a restore can rebuild the chain if they were
+/// orphaned in the meantime; they are marked `trashed = false` so that nothing
+/// downstream deletes or recreates the parent directories
+/// (spec-trash "Layout").
 pub fn capture_nodes(
     client: &dyn DaemonClient,
     repo: &str,
@@ -880,7 +953,7 @@ pub fn capture_nodes(
     rel: &str,
 ) -> Result<Vec<TrashedNode>, DaemonError> {
     let mut nodes = Vec::new();
-    let Some(top_node) = subtree_node(top) else { return Ok(nodes) };
+    let Some(top_node) = subtree_node(top, true) else { return Ok(nodes) };
     nodes.push(top_node.clone());
     // Ancestors, so restoring this item re-links its parent directories if they
     // were trashed too; live ancestors are skipped at re-link time.
@@ -890,13 +963,15 @@ pub fn capture_nodes(
     let query = json!({"type": "follows_transitive", "field": "mfr_path", "target": target});
     let mut cursor: Option<String> = None;
     loop {
-        let mut body = json!({"query": query, "select": ["mfr_path"], "limit": 500});
+        // `"*"`: the whole metarecord, because the capture has to carry back
+        // everything a restore will recreate, not just the tree position.
+        let mut body = json!({"query": query, "select": "*", "limit": 500});
         if let Some(c) = &cursor {
             body["cursor"] = json!(c);
         }
         let page = client.post(&format!("/repos/{repo}/query"), &body)?;
         for obj in page["results"].as_array().into_iter().flatten() {
-            if let Some(node) = subtree_node(obj) {
+            if let Some(node) = subtree_node(obj, true) {
                 nodes.push(node);
             }
         }
@@ -1037,6 +1112,81 @@ fn relink_after_restore(
 /// else the single-`metarecord` fallback resolved from the restored repo-
 /// relative path `rel`. Called *before* the blob is moved into place, so the
 /// metarecords already claim their paths and the watcher sees a plain refresh.
+/// Deletes the metarecords a trashing takes with it, in one revision the daemon
+/// stamps `origin = 'trash'` (spec-trash "Deleting the metarecords").
+///
+/// Only the nodes marked `trashed` — never the captured ancestors, which are the
+/// parent directories and stay. `force` trashes anyway when something outside
+/// the set still references one of them; without it the daemon refuses and names
+/// the referrers.
+///
+/// Called *before* the bytes are moved: when the file then disappears the
+/// watcher looks its path up in the forest, finds nothing, and has nothing to
+/// orphan (spec-trash "What trashing does, in order").
+pub fn delete_trashed(
+    client: &dyn DaemonClient,
+    repo: &str,
+    subtree: &[TrashedNode],
+    force: bool,
+) -> Result<usize, DaemonError> {
+    let uuids: Vec<&str> = subtree.iter().filter(|n| n.trashed).map(|n| n.uuid.as_str()).collect();
+    if uuids.is_empty() {
+        return Ok(0);
+    }
+    let body = json!({"uuids": uuids, "force": force});
+    let resp = client.post(&format!("/repos/{repo}/metarecords/trash"), &body)?;
+    Ok(resp["deleted"].as_u64().unwrap_or(0) as usize)
+}
+
+/// How many metarecords one bulk create may carry (the daemon's own cap).
+const BULK_CREATE_CHUNK: usize = 1000;
+
+/// Recreates every captured metarecord the repository no longer holds, at its
+/// original UUID and with its captured fields (spec-trash "Restoring").
+///
+/// *Every* captured node, ancestors included — `trashed` governs what a trashing
+/// deletes, not what a restore puts back. An ancestor is normally still there
+/// and `skip_existing` passes over it; but when the parent directory was trashed
+/// in its own right afterwards, recreating it is exactly what lets this restore
+/// rebuild the chain its file hangs from.
+///
+/// Parent before child, since the forest refuses a `TreeRef` whose parent has no
+/// row yet — `relink_order` already computes that order. `skip_existing` because
+/// a node may have come back on its own (a redo, a partial restore retried);
+/// `force` because `mfr_path` is reserved.
+///
+/// Recreating carries no version: a version is a hash of the metarecord's
+/// content, so a metarecord recreated at its UUID with its fields *is* at the
+/// version it had (spec-data-model "Version").
+///
+/// An entry captured before the fields were recorded has nothing to recreate and
+/// sends nothing; the restore falls back to re-linking alone.
+pub fn recreate_subtree(
+    client: &dyn DaemonClient,
+    repo: &str,
+    subtree: &[TrashedNode],
+) -> Result<usize, DaemonError> {
+    let records: Vec<Json> = relink_order(subtree)
+        .iter()
+        .filter_map(|n| n.fields.as_ref().map(|f| json!({"uuid": n.uuid, "fields": f})))
+        .collect();
+    let mut created = 0usize;
+    for chunk in records.chunks(BULK_CREATE_CHUNK) {
+        let body = json!({"metarecords": chunk, "force": true, "skip_existing": true});
+        match client.post(&format!("/repos/{repo}/metarecords/bulk"), &body) {
+            Ok(resp) => created += resp["created"].as_u64().unwrap_or(0) as usize,
+            // A forest rejection: the recorded parent is no longer a live node
+            // (its directory's metarecord was deleted meanwhile), or the
+            // position is taken. The same classification the re-link pass uses
+            // — and the same conclusion: the bytes come back regardless, and a
+            // restore is never blocked by metadata it could not put back.
+            Err(e) if is_benign_relink_error(&e) => continue,
+            Err(e) => return Err(e),
+        }
+    }
+    Ok(created)
+}
+
 pub fn restore_relink(
     client: &dyn DaemonClient,
     repo: &str,
@@ -1044,6 +1194,11 @@ pub fn restore_relink(
     rel: &str,
 ) -> Result<(), DaemonError> {
     if !entry.subtree.is_empty() {
+        // Metadata first, bytes second: recreate what the trashing deleted, then
+        // re-link whatever survived it (an ancestor, or a node the user put
+        // back). A recreated node already carries its `mfr_path`, so the re-link
+        // pass sees it as linked and leaves it alone.
+        recreate_subtree(client, repo, &entry.subtree)?;
         relink_subtree(client, repo, &entry.subtree)
     } else if let Some(metarecord) = &entry.metarecord {
         relink_after_restore(client, repo, metarecord, rel)
@@ -1097,7 +1252,13 @@ mod tests {
 
     #[test]
     fn restore_relink_skips_benign_forest_rejections_but_surfaces_others() {
-        let node = TrashedNode { uuid: "0a".into(), parent: None, name: "f".into() };
+        let node = TrashedNode {
+            uuid: "0a".into(),
+            parent: None,
+            name: "f".into(),
+            fields: None,
+            trashed: true,
+        };
         let entry = entry_with_subtree(vec![node]);
         let orphan = json!({"uuid": "0a", "fields": []}); // no present mfr_path
         let put = |msg: &'static str, status| Mock {
@@ -1140,6 +1301,149 @@ mod tests {
         let uuids: Vec<String> =
             capture_nodes(&mock, "r", &top, "A").unwrap().into_iter().map(|n| n.uuid).collect();
         assert!(uuids.contains(&"top".to_string()) && uuids.contains(&"c".to_string()));
+    }
+
+    /// A `DaemonClient` that records every request it is given, so a test can
+    /// assert what was actually sent.
+    struct Recorder {
+        seen: std::cell::RefCell<Vec<(String, String, Option<Json>)>>,
+    }
+    impl DaemonClient for Recorder {
+        fn request(
+            &self,
+            method: &str,
+            path: &str,
+            body: Option<&Json>,
+        ) -> Result<Json, DaemonError> {
+            self.seen.borrow_mut().push((method.to_string(), path.to_string(), body.cloned()));
+            Ok(json!({"created": 0, "skipped": 0, "uuids": []}))
+        }
+    }
+
+    fn node_with(
+        uuid: &str,
+        parent: Option<&str>,
+        trashed: bool,
+        fields: Option<Json>,
+    ) -> TrashedNode {
+        TrashedNode {
+            uuid: uuid.into(),
+            parent: parent.map(str::to_owned),
+            name: uuid.into(),
+            fields,
+            trashed,
+        }
+    }
+
+    #[test]
+    fn capture_nodes_records_the_fields_and_marks_only_what_is_trashed() {
+        // The capture reaches past the trashed subtree: it walks *up* to record
+        // the ancestors so a restore can rebuild the chain. Those are not being
+        // trashed — deleting them would take out the parent directories.
+        let top = json!({"uuid": "top", "fields": [
+            {"name": "mfr_path", "value": {"type": "tree_ref", "value": {"parent": "anc", "name": "A"}}},
+            {"name": "tag", "value": {"type": "string", "value": "jazz"}}]});
+        let child = json!({"uuid": "c", "fields": [
+            {"name": "mfr_path", "value": {"type": "tree_ref", "value": {"parent": "top", "name": "b"}}}]});
+        // Not the forest root — that one is always live and deliberately never
+        // captured; the walk stops at it.
+        let ancestor = json!({"uuid": "anc", "fields": [
+            {"name": "mfr_path", "value": {"type": "tree_ref", "value": {"parent": "root", "name": "dir"}}}]});
+        let mock = Mock {
+            rules: vec![
+                ("GET /repos/r/metarecords/anc", Ok(ancestor)),
+                ("POST /repos/r/query", Ok(json!({"results": [child], "next_cursor": null}))),
+            ],
+        };
+        let nodes = capture_nodes(&mock, "r", &top, "A").unwrap();
+        let by = |u: &str| nodes.iter().find(|n| n.uuid == u).expect("captured").clone();
+
+        assert!(by("top").trashed, "the target goes");
+        assert!(by("c").trashed, "and so does its descendant");
+        assert!(!by("anc").trashed, "but the ancestor stays");
+
+        assert!(by("top").fields.is_some(), "the target's fields are captured");
+        let fields = by("top").fields.unwrap();
+        assert!(
+            fields.as_array().unwrap().iter().any(|f| f["name"] == "tag"),
+            "every field, not just mfr_path: {fields}"
+        );
+    }
+
+    #[test]
+    fn recreate_subtree_sends_every_captured_node_parent_first() {
+        // Ancestors included: `trashed` says what a trashing *deletes*, not what
+        // a restore puts back. An ancestor is usually still there and
+        // `skip_existing` passes over it — but if its own directory was trashed
+        // since, recreating it is what rebuilds the chain.
+        let subtree = vec![
+            node_with("child", Some("top"), true, Some(json!([{"name": "tag"}]))),
+            node_with("top", Some("anc"), true, Some(json!([{"name": "tag"}]))),
+            node_with("anc", None, false, Some(json!([]))),
+        ];
+        let rec = Recorder { seen: std::cell::RefCell::new(Vec::new()) };
+        recreate_subtree(&rec, "r", &subtree).unwrap();
+
+        let seen = rec.seen.borrow();
+        assert_eq!(seen.len(), 1, "one bulk call");
+        let (method, path, body) = &seen[0];
+        assert_eq!(method, "POST");
+        assert_eq!(path, "/repos/r/metarecords/bulk");
+        let body = body.as_ref().unwrap();
+        assert_eq!(body["force"], json!(true), "mfr_path is reserved");
+        assert_eq!(body["skip_existing"], json!(true), "a node may have come back already");
+        let sent: Vec<&str> = body["metarecords"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|m| m["uuid"].as_str().unwrap())
+            .collect();
+        assert_eq!(sent, ["anc", "top", "child"], "every node, each after its parent");
+    }
+
+    #[test]
+    fn recreate_subtree_sends_nothing_for_an_entry_captured_before_fields_existed() {
+        // An old entry has no captured fields: there is nothing to recreate, and
+        // it must fall back to re-linking alone rather than send empty records.
+        let subtree = vec![node_with("top", None, true, None)];
+        let rec = Recorder { seen: std::cell::RefCell::new(Vec::new()) };
+        recreate_subtree(&rec, "r", &subtree).unwrap();
+        assert!(rec.seen.borrow().is_empty(), "no call at all");
+    }
+
+    #[test]
+    fn the_node_table_gains_its_columns_on_a_database_that_predates_them() {
+        // The trash index has no migration mechanism of its own — only
+        // `CREATE TABLE IF NOT EXISTS` — so the columns need an explicit probe.
+        let base = tmp();
+        let dir = TrashDir::new(base.join("trash"));
+        std::fs::create_dir_all(base.join("trash")).unwrap();
+        {
+            let conn = Connection::open(dir.db_path()).unwrap();
+            conn.execute_batch(
+                "CREATE TABLE entry (
+                     id TEXT PRIMARY KEY, original_path TEXT NOT NULL,
+                     original_name TEXT NOT NULL, trashed_at INTEGER NOT NULL,
+                     size INTEGER NOT NULL, is_dir INTEGER NOT NULL,
+                     reason TEXT NOT NULL, revision INTEGER, metarecord TEXT,
+                     version INTEGER);
+                 CREATE TABLE node (
+                     entry_id TEXT NOT NULL REFERENCES entry(id) ON DELETE CASCADE,
+                     uuid TEXT NOT NULL, parent TEXT, name TEXT NOT NULL);
+                 INSERT INTO entry VALUES ('e', '/x', 'x', 0, 0, 0, 'manual', NULL, NULL, NULL);
+                 INSERT INTO node VALUES ('e', 'u', NULL, 'x');",
+            )
+            .unwrap();
+        }
+
+        // Writing through the normal path must migrate rather than fail.
+        dir.attach_subtree("e", vec![node_with("u", None, true, Some(json!([])))]).unwrap();
+        let entry = dir.entry("e").unwrap();
+        assert_eq!(entry.subtree.len(), 1);
+        assert!(entry.subtree[0].trashed);
+        assert_eq!(entry.subtree[0].fields, Some(json!([])));
+
+        fs::remove_dir_all(&base).ok();
     }
 
     fn tmp() -> PathBuf {
@@ -1281,6 +1585,8 @@ mod tests {
             uuid: u.into(),
             parent: p.map(str::to_owned),
             name: u.into(),
+            fields: None,
+            trashed: true,
         };
         // Given in child-first order; the top's parent (`root`) is outside the set.
         let subtree =
@@ -1296,6 +1602,8 @@ mod tests {
             uuid: u.into(),
             parent: p.map(str::to_owned),
             name: u.into(),
+            fields: None,
+            trashed: true,
         };
         // "orphan"'s parent is neither outside the set nor present in it.
         let subtree = vec![node("orphan", Some("gone")), node("top", None)];
@@ -1314,8 +1622,20 @@ mod tests {
         assert!(entry.subtree.is_empty(), "fresh entry has no subtree yet");
 
         let nodes = vec![
-            TrashedNode { uuid: "top".into(), parent: Some("root".into()), name: "dir".into() },
-            TrashedNode { uuid: "child".into(), parent: Some("top".into()), name: "a.txt".into() },
+            TrashedNode {
+                uuid: "top".into(),
+                parent: Some("root".into()),
+                name: "dir".into(),
+                fields: None,
+                trashed: true,
+            },
+            TrashedNode {
+                uuid: "child".into(),
+                parent: Some("top".into()),
+                name: "a.txt".into(),
+                fields: None,
+                trashed: true,
+            },
         ];
         trash.attach_subtree(&entry.id, nodes.clone()).unwrap();
 

@@ -66,6 +66,9 @@ enum Command {
         /// Move a tracked file into the trash (errors if it has no metarecord)
         #[arg(short = 'f', long = "file", value_name = "PATH")]
         file: Option<PathBuf>,
+        /// Trash even when something outside still references its metarecords
+        #[arg(long)]
+        force: bool,
         #[command(subcommand)]
         command: Option<TrashCommand>,
     },
@@ -1126,7 +1129,7 @@ fn dispatch(ctx: &Ctx, command: Command) -> CmdResult {
         }
         Command::Log { command } => dispatch_log(ctx, command),
         Command::Slow { command } => dispatch_slow(ctx, command),
-        Command::Trash { file, command } => dispatch_trash(ctx, file, command),
+        Command::Trash { file, force, command } => dispatch_trash(ctx, file, force, command),
         Command::Watch { command } => {
             match command.unwrap_or(WatchCommand::Status { json: false }) {
                 WatchCommand::Status { json } => commands::watch_status(ctx, json),
@@ -1549,14 +1552,24 @@ fn dispatch_slow(ctx: &Ctx, command: Option<SlowCommand>) -> CmdResult {
     }
 }
 
-fn dispatch_trash(ctx: &Ctx, file: Option<PathBuf>, command: Option<TrashCommand>) -> CmdResult {
+fn dispatch_trash(
+    ctx: &Ctx,
+    file: Option<PathBuf>,
+    force: bool,
+    command: Option<TrashCommand>,
+) -> CmdResult {
     if let Some(path) = file {
         if command.is_some() {
             return Err(metafolder_cli::client::CliError::Usage(
                 "mf trash -f <file> cannot be combined with a subcommand".into(),
             ));
         }
-        return commands::trash_add(ctx, &path);
+        return commands::trash_add(ctx, &path, force);
+    }
+    if force {
+        return Err(metafolder_cli::client::CliError::Usage(
+            "mf trash --force only applies to -f <file>".into(),
+        ));
     }
     match command.unwrap_or(TrashCommand::List) {
         TrashCommand::List => commands::trash_list(ctx),

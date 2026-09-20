@@ -2371,7 +2371,7 @@ pub fn ignore_list(ctx: &Ctx, dir: Option<&Path>) -> Result<i32, CliError> {
 /// `mf trash -f <path>`: move a tracked file into the trash. Errors if the
 /// daemon is unreachable (via `repo_info`) or the file has no metarecord.
 /// The metarecord check runs *before* the file is moved.
-pub fn trash_add(ctx: &Ctx, path: &Path) -> Result<i32, CliError> {
+pub fn trash_add(ctx: &Ctx, path: &Path, force: bool) -> Result<i32, CliError> {
     let info = ctx.repo_info()?;
     let root = info["root"]
         .as_str()
@@ -2388,14 +2388,20 @@ pub fn trash_add(ctx: &Ctx, path: &Path) -> Result<i32, CliError> {
             CliError::Op(format!("no metarecord is associated with {}", abs.display()))
         })?;
 
-    // The top record: its version (for rollback correlation) and the whole
-    // subtree, captured *before* the move while every metarecord is still linked
-    // so a restore can re-link the directory and everything under it.
+    // Capture first: once the metarecords are gone there is nothing left to
+    // read. This takes the target and everything under it — which the trashing
+    // deletes — plus its ancestors, which it does not.
     let rec = client
         .request("GET", &format!("/repos/{repo}/metarecords/{uuid}"), None)
         .map_err(trash_daemon_err)?;
     let version = rec["version"].as_u64();
     let subtree = metafolder_core::trash::capture_nodes(&client, &repo, &rec, &rel)
+        .map_err(trash_daemon_err)?;
+
+    // Then the metadata half, then the bytes (spec-trash "What trashing does,
+    // in order"): deleting before moving is what leaves the watcher nothing to
+    // orphan when the file disappears.
+    metafolder_core::trash::delete_trashed(&client, &repo, &subtree, force)
         .map_err(trash_daemon_err)?;
 
     let entry = trash.trash_path(&abs, Reason::Manual, None, Some(uuid), version)?;

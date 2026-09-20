@@ -82,12 +82,16 @@ decompose a value into typed columns because the daemon *queries* those columns.
 Nothing queries these. They leave the daemon as JSON and return to it as JSON,
 so decomposing them would be work in the service of no question.
 
-=trashed= is what keeps a restore from resurrecting more than it should. The
-capture reaches past the trashed subtree: it also walks *up*, recording the
-ancestors, so that a restore can rebuild the chain if those were orphaned in the
-meantime. Those ancestors are not being trashed — the parent directory stays —
-so they are captured with =trashed = 0=, are never deleted, and are never
-recreated. Only =trashed = 1= nodes are the entry's own.
+=trashed= says what the trashing *deletes*. The capture reaches past the trashed
+subtree: it also walks *up*, recording the ancestors, so a restore can rebuild
+the chain. Those ancestors are not being trashed — the parent directory stays —
+so they are captured with =trashed = 0= and are never deleted.
+
+It does *not* say what a restore puts back. A restore recreates every captured
+node the repository no longer holds, ancestors included: normally they are still
+there and the recreation passes over them, but when the parent directory was
+trashed in its own right afterwards, recreating it is exactly what lets the file
+hang from its chain again.
 
 The index has no schema-version mechanism: =open()= issues =CREATE TABLE IF NOT
 EXISTS= and nothing else. Columns added later therefore need an explicit
@@ -196,13 +200,18 @@ anyway; the gap is accepted, and named here rather than left to be discovered.
 Restoring is the inverse, and it runs in the mirror order: metadata first, bytes
 second.
 
-1. *Recreate* every =trashed= node the repository no longer holds, at its
-   original UUID and with its captured fields, through
+1. *Recreate* every captured node the repository no longer holds — ancestors
+   included, see [[*Layout]] — at its original UUID and with its captured
+   fields, through
    =POST …/metarecords/bulk= — parent before child, since the forest refuses a
    =TreeRef= whose parent has no row yet (spec-data-model "Bulk creation").
    Recreating carries no version: a version is a hash of the metarecord's
    content, so a metarecord recreated at its UUID with its fields *is* at the
    version it had (spec-data-model "Version").
+   A recreation the forest refuses — the recorded parent is no longer a live
+   node, or the position has been taken since — is *skipped*, not fatal. The
+   bytes come back either way, and a restore is never blocked by metadata it
+   could not put back.
 2. *Re-link* the nodes that still exist. A metarecord that survived the trashing
    — an ancestor, or one the user recreated — keeps its identity; if it is
    orphaned (=mfr_path= absent or =Nothing=), its =mfr_path= is written back to

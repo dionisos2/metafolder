@@ -335,7 +335,14 @@ pub fn rollback_run(
                 // let the daemon apply the real inverse; otherwise skip (the
                 // metadata rewinds) and hint at any recoverable content.
                 "file_deleted" | "file_modified" => {
-                    decide_deleted(&op, &trash, &mut trash_entries, &mut restored, silent)?
+                    decide_deleted(&op, &trash, &mut trash_entries, &mut restored, silent, false)?
+                }
+                // A metarecord deleted *by a trashing*: the entry that holds it
+                // is the one to bring back. Correlated by the metarecord alone —
+                // an undo consumes the entry and a redo makes a new one, so no
+                // id recorded at trash time would still name it.
+                "delete_metarecord" if op["origin"] == "trash" => {
+                    decide_deleted(&op, &trash, &mut trash_entries, &mut restored, silent, true)?
                 }
                 _ => false,
             };
@@ -452,6 +459,7 @@ fn decide_deleted(
     entries: &mut Vec<TrashEntry>,
     restored: &mut HashSet<String>,
     silent: bool,
+    by_metarecord_only: bool,
 ) -> Result<bool, CliError> {
     let entity = op["entity_uuid"].as_str().unwrap_or_default();
 
@@ -476,8 +484,11 @@ fn decide_deleted(
         .as_u64()
         .or_else(|| op["entity_version_before"].as_u64());
     let pos = entries.iter().position(|e| {
+        // A trashing's own deletion needs no version: it deleted the metarecord
+        // outright, so the live entry holding it is unambiguous — nothing can
+        // trash it again until it comes back.
         let is_top = e.metarecord.as_deref() == Some(entity)
-            && version.is_some_and(|v| e.version == Some(v));
+            && (by_metarecord_only || version.is_some_and(|v| e.version == Some(v)));
         let is_descendant =
             e.metarecord.as_deref() != Some(entity) && e.subtree.iter().any(|n| n.uuid == entity);
         is_top || is_descendant
@@ -1255,7 +1266,8 @@ mod tests {
 
         // Matching entity + version → restore, no skip, entry consumed.
         let op = deleted_op("rec-1", Some(4));
-        let skip = decide_deleted(&op, &trash, &mut entries, &mut HashSet::new(), true).unwrap();
+        let skip =
+            decide_deleted(&op, &trash, &mut entries, &mut HashSet::new(), true, false).unwrap();
         assert!(!skip, "a matching trash entry must be auto-restored (step {{}})");
         assert_eq!(std::fs::read(&file).unwrap(), b"content", "the file is back");
         assert!(entries.is_empty(), "the consumed entry is removed");
@@ -1285,7 +1297,7 @@ mod tests {
         // Navigated first: the revision's *last* op, restoring to version 1.
         let mut op = deleted_op("rec-1", Some(1));
         op["entity_version_before_revision"] = json!(0);
-        let skip = decide_deleted(&op, &trash, &mut entries, &mut restored, true).unwrap();
+        let skip = decide_deleted(&op, &trash, &mut entries, &mut restored, true, false).unwrap();
         assert!(!skip, "the pre-revision version matches the trash entry: restore, don't skip");
         assert_eq!(std::fs::read(&file).unwrap(), b"content", "the file is back");
         assert!(entries.is_empty(), "the entry is consumed once");
@@ -1294,7 +1306,7 @@ mod tests {
         // already back, so it applies the real inverse too.
         let mut op = deleted_op("rec-1", Some(0));
         op["entity_version_before_revision"] = json!(0);
-        let skip = decide_deleted(&op, &trash, &mut entries, &mut restored, true).unwrap();
+        let skip = decide_deleted(&op, &trash, &mut entries, &mut restored, true, false).unwrap();
         assert!(!skip, "the record's content is restored: apply the inverse");
         std::fs::remove_dir_all(&base).ok();
     }
@@ -1320,6 +1332,7 @@ mod tests {
             &mut entries,
             &mut HashSet::new(),
             true,
+            false,
         )
         .unwrap();
         assert!(skip);
@@ -1332,6 +1345,7 @@ mod tests {
             &mut entries,
             &mut HashSet::new(),
             true,
+            false,
         )
         .unwrap();
         assert!(skip);
@@ -1644,9 +1658,14 @@ fn coordinated_revert(
                         json!({"from": op["filesystem"]["from"], "to": op["filesystem"]["to"]});
                     decide_move(&step, &opts.policies, &trash, opts.silent)?
                 }
-                Some("restore_content") => {
-                    decide_deleted(op, &trash, &mut trash_entries, &mut restored, opts.silent)?
-                }
+                Some("restore_content") => decide_deleted(
+                    op,
+                    &trash,
+                    &mut trash_entries,
+                    &mut restored,
+                    opts.silent,
+                    op["op_type"] == "delete_metarecord",
+                )?,
                 _ => false,
             };
             if !leave_out {

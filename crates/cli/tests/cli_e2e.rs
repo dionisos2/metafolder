@@ -2038,18 +2038,8 @@ fn test_trash_restore_skips_a_taken_tree_position() {
     let m1 = mf(&["-u", &repo, "track", file.to_str().unwrap()]).stdout.trim().to_string();
     assert_ok(&mf(&["-u", &repo, "trash", "-f", file.to_str().unwrap()]));
 
-    // Orphan the original, then let a *different* metarecord claim A.txt's slot.
-    assert_ok(&mf(&[
-        "-u",
-        &repo,
-        "metarecord",
-        "-i",
-        &m1,
-        "field",
-        "unset",
-        "mfr_path",
-        "--force",
-    ]));
+    // The original's metarecord went with the bytes. Let a *different* one
+    // claim A.txt's slot while the bytes sit in the trash.
     let root_uuid = mf(&["-u", &repo, "metarecord", "-q", "mfr_type = \"dir\"", "get"])
         .stdout
         .trim()
@@ -2071,8 +2061,9 @@ fn test_trash_restore_skips_a_taken_tree_position() {
     let out = mf(&["-u", &repo, "trash", "restore", &entry_id]);
     assert_ok(&out); // the conflict is skipped, not a hard error
     assert_eq!(std::fs::read(&file).unwrap(), b"data");
-    // m1 stays orphaned (skipped); m2 keeps the position.
-    assert_ne!(mf(&["-u", &repo, "path", &m1]).code, 0, "m1 left orphaned");
+    // m1 cannot be recreated — its position is taken — and that is skipped
+    // rather than failing the restore; m2 keeps the slot.
+    assert_ne!(mf(&["-u", &repo, "path", &m1]).code, 0, "m1 not put back");
     assert!(mf(&["-u", &repo, "path", &m2]).stdout.contains("A.txt"), "m2 keeps the slot");
 }
 
@@ -2214,13 +2205,12 @@ fn test_trash_restore_tolerates_an_unavailable_ancestor() {
         .to_string();
     assert!(is_hex_uuid(&b) && is_hex_uuid(&a));
 
-    // Trash the file (captures ancestor A while live), then orphan B and delete
-    // A's metarecord — as sweeping orphans would. B first: a position may not be
-    // removed while something is still placed under it (spec-data-model
-    // "Referential integrity of a forest").
+    // Trash the file (capturing ancestor A while live, and taking B's own
+    // metarecord with it), then delete A's metarecord. B can no longer be
+    // recreated: the parent its capture names is not a live node any more.
     assert_ok(&mf(&["-u", &repo, "trash", "-f", dir.join("B.txt").to_str().unwrap()]));
-    assert_ok(&mf(&["-u", &repo, "metarecord", "-i", &b, "field", "unset", "mfr_path", "--force"]));
     assert_ok(&mf(&["-u", &repo, "metarecord", "-i", &a, "delete"]));
+    let _ = &b;
 
     let id = repo_trash(&root).entries().unwrap()[0].id.clone();
     let out = mf(&["-u", &repo, "trash", "restore", &id]);
@@ -2228,24 +2218,48 @@ fn test_trash_restore_tolerates_an_unavailable_ancestor() {
     assert_eq!(std::fs::read(dir.join("B.txt")).unwrap(), b"b");
 }
 
-// Restoring an entry whose recorded metarecord was deleted meanwhile (e.g. the
-// user swept orphans) must still bring the bytes back — re-linking a gone
-// metarecord is simply skipped (the watcher makes a fresh one), not an error.
+// Trashing a directory takes the whole subtree's metarecords with it, and
+// restoring brings every one of them back at its own uuid — the guarantee the
+// old design could not make, since it left the subtree orphaned for anything
+// sweeping orphans to destroy (spec-trash "Overview").
 #[test]
-fn test_trash_restore_tolerates_a_deleted_metarecord() {
-    let (repo, root) = init_repo("trashgone");
-    let file = root.join("f.txt");
-    std::fs::write(&file, b"data").unwrap();
-    let uuid = mf(&["-u", &repo, "track", file.to_str().unwrap()]).stdout.trim().to_string();
-    assert!(is_hex_uuid(&uuid));
-    assert_ok(&mf(&["-u", &repo, "trash", "-f", file.to_str().unwrap()]));
-    // The user deletes the (now stale) metarecord.
-    assert_ok(&mf(&["-u", &repo, "metarecord", "-i", &uuid, "delete"]));
+fn test_trash_and_restore_a_directory_round_trips_the_whole_subtree() {
+    let (repo, root) = init_repo("trashsubtree");
+    let dir = root.join("D");
+    std::fs::create_dir_all(&dir).unwrap();
+    std::fs::write(dir.join("one.txt"), b"1").unwrap();
+    std::fs::write(dir.join("two.txt"), b"2").unwrap();
+    let one = mf(&["-u", &repo, "track", dir.join("one.txt").to_str().unwrap()])
+        .stdout
+        .trim()
+        .to_string();
+    let two = mf(&["-u", &repo, "track", dir.join("two.txt").to_str().unwrap()])
+        .stdout
+        .trim()
+        .to_string();
+    let d = mf(&["-u", &repo, "metarecord", "-q", "mfr_path:value = \"D\"", "get"])
+        .stdout
+        .trim()
+        .to_string();
+    assert!(is_hex_uuid(&one) && is_hex_uuid(&two) && is_hex_uuid(&d));
+
+    assert_ok(&mf(&["-u", &repo, "trash", "-f", dir.to_str().unwrap()]));
+    for uuid in [&d, &one, &two] {
+        assert_ne!(
+            mf(&["-u", &repo, "metarecord", "-i", uuid, "get"]).code,
+            0,
+            "the whole subtree goes, not just the directory"
+        );
+    }
 
     let entry_id = repo_trash(&root).entries().unwrap()[0].id.clone();
-    let out = mf(&["-u", &repo, "trash", "restore", &entry_id]);
-    assert_ok(&out); // not a hard error just because the metarecord is gone
-    assert_eq!(std::fs::read(&file).unwrap(), b"data");
+    assert_ok(&mf(&["-u", &repo, "trash", "restore", &entry_id]));
+    assert_eq!(std::fs::read(dir.join("one.txt")).unwrap(), b"1");
+    assert_eq!(std::fs::read(dir.join("two.txt")).unwrap(), b"2");
+    for uuid in [&d, &one, &two] {
+        assert_ok(&mf(&["-u", &repo, "metarecord", "-i", uuid, "get"]));
+    }
+    assert!(mf(&["-u", &repo, "path", &one]).stdout.contains("D/one.txt"), "back in place");
 }
 
 // Restoring a nested file whose parent directory was *also* trashed re-links
@@ -2267,32 +2281,10 @@ fn test_trash_restore_relinks_ancestors_of_a_nested_file() {
         .to_string();
     assert!(is_hex_uuid(&b_uuid) && is_hex_uuid(&a_uuid));
 
-    // Trash the file (captures its ancestor A while A is still live), then the
-    // directory; orphan both metarecords as the watcher's cascade would.
+    // Trash the file (capturing its ancestor A while A is still live), then the
+    // directory. Each trashing takes its own metarecords with it.
     assert_ok(&mf(&["-u", &repo, "trash", "-f", dir.join("B.txt").to_str().unwrap()]));
-    assert_ok(&mf(&[
-        "-u",
-        &repo,
-        "metarecord",
-        "-i",
-        &b_uuid,
-        "field",
-        "unset",
-        "mfr_path",
-        "--force",
-    ]));
     assert_ok(&mf(&["-u", &repo, "trash", "-f", dir.to_str().unwrap()]));
-    assert_ok(&mf(&[
-        "-u",
-        &repo,
-        "metarecord",
-        "-i",
-        &a_uuid,
-        "field",
-        "unset",
-        "mfr_path",
-        "--force",
-    ]));
     assert!(!dir.exists());
 
     // Restore the file: the recreated parent directory A is re-linked to the
@@ -2349,18 +2341,12 @@ fn test_trash_restore_relinks_the_metarecord() {
     assert!(is_hex_uuid(&uuid));
 
     assert_ok(&mf(&["-u", &repo, "trash", "-f", file.to_str().unwrap()]));
-    // Orphan the metarecord (mfr_path unset), mimicking a watched-repo deletion.
-    assert_ok(&mf(&[
-        "-u",
-        &repo,
-        "metarecord",
-        "-i",
-        &uuid,
-        "field",
-        "unset",
-        "mfr_path",
-        "--force",
-    ]));
+    // The metarecord goes with the bytes: no orphan is left behind.
+    assert_ne!(
+        mf(&["-u", &repo, "metarecord", "-i", &uuid, "get"]).code,
+        0,
+        "deleted, not orphaned"
+    );
     let entry_id = repo_trash(&root).entries().unwrap()[0].id.clone();
 
     let out = mf(&["-u", &repo, "trash", "restore", &entry_id]);
@@ -2393,18 +2379,11 @@ fn test_trash_restore_relinks_a_top_level_file() {
     assert!(is_hex_uuid(&root_uuid), "one dir (the fs root), got: {root_uuid}");
 
     assert_ok(&mf(&["-u", &repo, "trash", "-f", file.to_str().unwrap()]));
-    // Orphan the metarecord (mfr_path unset), mimicking a watched-repo deletion.
-    assert_ok(&mf(&[
-        "-u",
-        &repo,
-        "metarecord",
-        "-i",
-        &uuid,
-        "field",
-        "unset",
-        "mfr_path",
-        "--force",
-    ]));
+    assert_ne!(
+        mf(&["-u", &repo, "metarecord", "-i", &uuid, "get"]).code,
+        0,
+        "deleted, not orphaned"
+    );
     let entry_id = repo_trash(&root).entries().unwrap()[0].id.clone();
 
     assert_ok(&mf(&["-u", &repo, "trash", "restore", &entry_id]));

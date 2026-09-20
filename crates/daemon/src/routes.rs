@@ -1533,6 +1533,13 @@ fn action_op_json(
     // entry's recorded version to auto-restore the exact file the deletion
     // displaced (spec-trash "rollback auto-restore"). Omitted on forward (redo)
     // steps, so auto-restore never fires while re-applying a deletion.
+    // Who wrote the revision this operation belongs to. A `delete_metarecord`
+    // a *trashing* wrote is not an ordinary deletion: its bytes are in the
+    // trash-bin, and the client brings them back (spec-trash "Undo, rollback
+    // and redo").
+    if let Some(origin) = crate::log::revision_origin(conn, op.rev_id)? {
+        value["origin"] = json!(origin);
+    }
     if matches!(dir, crate::log::NavDir::Inverse) {
         if let Some(v) = op.entity_version_before {
             value["entity_version_before"] = json!(v);

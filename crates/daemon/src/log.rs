@@ -149,6 +149,19 @@ pub fn entity_version_before_revision(
     Ok(first.flatten().map(|v| v as u64))
 }
 
+/// The `origin` stamped on a revision, if any (spec-event-log "Revision
+/// origin"). A rollback step exposes it so a client can tell an ordinary
+/// deletion from a trashing, whose bytes are in the trash-bin.
+pub fn revision_origin(conn: &rusqlite::Connection, rev_id: i64) -> Result<Option<String>> {
+    use rusqlite::OptionalExtension as _;
+    Ok(conn
+        .query_row("SELECT origin FROM revision WHERE id = ?1", params![rev_id], |r| {
+            r.get::<_, Option<String>>(0)
+        })
+        .optional()?
+        .flatten())
+}
+
 pub fn get_head(conn: &rusqlite::Connection) -> Result<Option<i64>> {
     Ok(conn.query_row("SELECT op_id FROM log_head WHERE singleton = 1", [], |r| r.get(0))?)
 }
