@@ -286,8 +286,14 @@ arguments is invoked with fewer parameters than declared (from a keybinding,
 the command input, or =POST /gui/command=), the command input collects the
 missing arguments one at a time: for each, it shows the =prompt=, pre-fills
 =initial=, offers =complete= (filtered like command suggestions), and waits.
-=Escape= at any point abandons the whole invocation. Parameters supplied
-inline skip their prompt, so a fully-specified invocation
+=Escape= at any point abandons the whole invocation. A panel command's
+declared arguments belong to the *panel instance* that registered them, not to
+the command name: a panel type is mounted once per workspace, every instance
+registers the same names, and the four functions read the state of the one
+that declared them. The prompts come from the instance of the *focused*
+workspace — the same one the handler runs on — so a completion list can never
+be another workspace's. Parameters supplied inline skip their prompt, so a
+fully-specified invocation
 (=metarecord:field edit tag musique/jazz=) runs without prompting — the
 interactive collection is a fallback for the missing tail, not a separate
 mode.
@@ -390,6 +396,15 @@ The user's =keybindings.toml= contains only their customisations and
 overrides; it does not need to list every binding. The GUI engine supplies all
 defaults separately and merges them at startup, with the user file taking
 precedence.
+
+A combo is a key name, optionally prefixed by modifiers in the order
+=ctrl+alt+shift+meta=; a sequence separates its combos with spaces. =shift= is
+written only where the keyboard does not already spell it: the character a
+shifted key *produces* is the key name (=:=, not =shift+;=), so =shift= is
+carried only by keys whose shifted form is not a distinct character — a special
+key (=shift+enter=, =shift+left=), a key held with another modifier
+(=ctrl+shift+z=), and a **letter** (=shift+f=), whose shifted form differs only
+in case and would otherwise collapse onto the unshifted binding.
 
 Each keybinding has three independent scope dimensions:
 
@@ -1228,7 +1243,7 @@ Behaviours:
 | =file:play-pause=         | Load the player behind the poster, then play/pause it (default =space=) |
 | =file:seek +10= / =-backward= | Seek the previewed media ±10 s (default =right= / =left=) |
 | =file:seek +60= / =-backward-long= | Seek ±60 s (default =shift+right= / =shift+left=) |
-| =file:restart=            | Play the previewed media from the start                       |
+| =file:restart=            | Play the previewed media from the start (default =r=)         |
 | =file:speed up= / =-down= | Step the playback rate up/down the ladder (default =]= / =[=) |
 | =file:speed reset=        | Back to normal speed (default =shift+backspace=)              |
 | =file:volume up= / =-down= | Step the volume ±10 %, before or during playback (default =shift+up= / =shift+down=) |
@@ -1258,6 +1273,11 @@ handling — *not* =keybindings.toml=; note that a user binding of =ctrl+p= /
   readline-style: the in-progress draft is kept at the newest position and
   restored when walking past it; any real edit resets the walk (the edited
   text becomes the new draft). Entries are fetched at the start of each walk.
+  *Leaving the zone ends the walk*: the position cannot outlive the focus,
+  since the text it belongs to does not either (the shell restores the
+  workspace's stored draft on blur), so the first =ctrl+p= after coming back
+  recalls the newest entry again rather than the one after wherever the
+  previous walk stopped.
 - =ctrl+r= — an fzf-style search overlay anchored to the input, with its own
   search field: entries are listed newest first, deduplicated, and filtered
   by client-side ordered-substring matching (the [[file:spec-query.org][OSM]]
@@ -2477,11 +2497,12 @@ The previewed audio/video is driven from the keyboard as a media player is,
 on mpv's keys so the muscle memory carries over — play/pause (=space=), seek
 ±10 s (=left= / =right=) and ±60 s (=shift+left= / =shift+right=), playback
 rate up/down a fixed ladder (=]= / =[=, =backspace= to return to 1×), volume
-±10 % (=shift+up= / =shift+down=) and mute (=ctrl+m=, since a bare =m= opens
-the metarecord-edit key sequence). Each has a command
-(=file:play-pause=, =file:seek-*=, =file:restart=, =file:speed-*=,
-=file:volume-*=, =file:mute=), so all of them are rebindable and reachable from
-the command input.
+±10 % (=shift+up= / =shift+down=), mute (=ctrl+m=, since a bare =m= opens
+the metarecord-edit key sequence) and back to the start (=r=: the key that
+refreshes a list panel means "play it again" where there is no list to
+re-read). Each has a command (=file:play-pause=, =file:seek-*=, =file:restart=,
+=file:speed-*=, =file:volume-*=, =file:mute=), so all of them are rebindable
+and reachable from the command input.
 
 Every one of them is a *no-op when the preview holds no media* — an image, a
 text file, a directory listing — so binding them inside the =file= panel is

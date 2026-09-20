@@ -178,6 +178,7 @@ function setup() {
       invoke,
       dispatch: async () => {},
       registerHandler: () => {},
+      registerArgs: () => {},
       onCommandsChanged: () => {},
       addDefaultMenuItems: () => {},
     },

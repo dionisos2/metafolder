@@ -46,6 +46,14 @@ describe('comboFromEvent', () => {
     expect(comboFromEvent({ key: ':', shiftKey: true })).toBe(':');
   });
 
+  test('keeps shift on a letter pressed alone (shift+f, not f)', () => {
+    // Shift+F yields key "F": the character is cased, so the shift is NOT
+    // baked into it the way it is for ":" — the binding table spells the
+    // combo "shift+f" and the event must normalize to the same thing.
+    expect(comboFromEvent({ key: 'F', shiftKey: true })).toBe('shift+f');
+    expect(comboFromEvent({ key: 'K', shiftKey: true })).toBe('shift+k');
+  });
+
   test('maps special keys to the Rust-side names', () => {
     expect(comboFromEvent({ key: 'Escape' })).toBe('escape');
     expect(comboFromEvent({ key: 'ArrowLeft' })).toBe('left');

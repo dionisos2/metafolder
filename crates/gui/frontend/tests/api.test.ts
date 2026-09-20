@@ -10,6 +10,7 @@ function setup() {
   const invoke = vi.fn(async (_cmd: string, _args?: unknown) => ({ status: 200, body: null }) as unknown);
   const dispatch = vi.fn(async (_invocation: string) => {});
   const registerHandler = vi.fn();
+  const registerArgs = vi.fn();
   const onCommandsChanged = vi.fn();
   const addDefaultMenuItems = vi.fn();
 
@@ -25,7 +26,7 @@ function setup() {
   };
 
   const instance = createPanelApi(
-    { invoke, dispatch, registerHandler, onCommandsChanged, addDefaultMenuItems },
+    { invoke, dispatch, registerHandler, registerArgs, onCommandsChanged, addDefaultMenuItems },
     {
       wsId: 'ws-1',
       panelType: 'metarecord-list',
@@ -36,7 +37,7 @@ function setup() {
     },
   );
   const api = instance.api as any;
-  return { instance, api, invoke, dispatch, registerHandler, onCommandsChanged, addDefaultMenuItems, visibilityGate };
+  return { instance, api, invoke, dispatch, registerHandler, registerArgs, onCommandsChanged, addDefaultMenuItems, visibilityGate };
 }
 
 describe('panel api — sync', () => {
@@ -102,7 +103,7 @@ describe('panel api — identity', () => {
     const noop = vi.fn();
     const gate = { get visible() { return false; }, set() {}, whenVisible: vi.fn() };
     const instance = createPanelApi(
-      { invoke: vi.fn(), dispatch: vi.fn(), registerHandler: noop, onCommandsChanged: noop, addDefaultMenuItems: noop },
+      { invoke: vi.fn(), dispatch: vi.fn(), registerHandler: noop, registerArgs: noop, onCommandsChanged: noop, addDefaultMenuItems: noop },
       {
         wsId: 'ws-1',
         panelType: 'metarecord-list',
@@ -130,7 +131,7 @@ describe('panel api — identity', () => {
     const noop = vi.fn();
     const gate = { get visible() { return false; }, set() {}, whenVisible: vi.fn() };
     const instance = createPanelApi(
-      { invoke: vi.fn(), dispatch: vi.fn(), registerHandler: noop, onCommandsChanged: noop, addDefaultMenuItems: noop },
+      { invoke: vi.fn(), dispatch: vi.fn(), registerHandler: noop, registerArgs: noop, onCommandsChanged: noop, addDefaultMenuItems: noop },
       {
         wsId: 'ws-1',
         panelType: 'metarecord-list',
@@ -230,11 +231,14 @@ describe('panel api — commands & keybindings', () => {
     expect(onCommandsChanged).toHaveBeenCalled();
   });
 
-  test('register forwards declared args to the interactive-arg registry', () => {
-    const { api } = setup();
+  test('register forwards declared args to this instance, not a global registry', () => {
+    const { api, registerArgs } = setup();
     const args = [{ name: 'field', prompt: () => 'Field?' }];
     api.commands.register('metarecord:set-field', { label: 'Set', args });
-    expect(argSpecFor('metarecord:set-field')).toBe(args);
+    // Per instance, like the handler: the spec closes over *this* panel's
+    // state, so another workspace's instance must not overwrite it.
+    expect(registerArgs).toHaveBeenCalledWith('metarecord:set-field', args);
+    expect(argSpecFor('metarecord:set-field')).toBeUndefined();
     clearArgSpecs();
   });
 

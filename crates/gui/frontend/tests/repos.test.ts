@@ -166,6 +166,7 @@ function setup(options: { activeRepo?: string | null } = {}) {
       invoke,
       dispatch,
       registerHandler: (name, handler) => handlers.set(name, handler),
+      registerArgs: () => {},
       onCommandsChanged: () => {},
       addDefaultMenuItems: () => {},
     },

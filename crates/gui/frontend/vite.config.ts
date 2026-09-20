@@ -83,7 +83,15 @@ export default defineConfig({
       // its tests are the first to drive the treeref and recent panels, taking
       // statements 68.8 → 70.5 and functions 58.5 → 60.8 while branches went
       // 83.4 → 82.3 — the same trade, so the branch floor follows to 82.
-      thresholds: { statements: 65, branches: 82, functions: 53, lines: 65 },
+      //
+      // And once more with the first test to call `dispatch` itself: running it
+      // runs `runCommand`, whose switch over every shell builtin was until then
+      // code v8 had never seen. commands.ts alone went 29.2 → 38.3 statements
+      // and 93.4 → 62.6 branches on that one call — the denominator is the
+      // whole switch, the numerator one case. Overall: statements 71.1 → 71.6,
+      // functions 59.0 → 59.7, branches 83.1 → 81.4, so the branch floor
+      // follows to 81.
+      thresholds: { statements: 65, branches: 81, functions: 53, lines: 65 },
     },
   },
 });

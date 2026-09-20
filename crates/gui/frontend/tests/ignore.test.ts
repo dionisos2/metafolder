@@ -21,6 +21,7 @@ function setup() {
       invoke,
       dispatch: vi.fn(async () => {}),
       registerHandler: vi.fn(),
+      registerArgs: vi.fn(),
       onCommandsChanged: vi.fn(),
       addDefaultMenuItems: vi.fn(),
     },

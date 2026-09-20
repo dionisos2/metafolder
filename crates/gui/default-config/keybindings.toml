@@ -262,6 +262,9 @@
   { command = "duplicates:refresh", when = "duplicates" },
   { command = "log:refresh", when = "log" },
   { command = "metarecord-list:refresh", when = "metarecord-list" },
+  # In the file panel there is nothing to re-list: "refresh" means play the
+  # media from the start again.
+  { command = "file:restart", when = "file" },
 ]
 
 # Delete: send the selected metarecord's file to the trash (spec-trash.org),

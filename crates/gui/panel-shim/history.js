@@ -134,6 +134,8 @@ export function attachHistory(input, { zone, read, append, getRepo, container })
   let nav = null;
   /** @type {Promise<void>|null} in-flight nav-session load (collapses rapid ctrl-p) */
   let starting = null;
+  /** Bumped by every reset, so a load still in flight knows it is stale. */
+  let epoch = 0;
   let applying = false; // true while dispatching our own `input` event
   /** @type {Overlay|null} */
   let overlay = null;
@@ -175,14 +177,22 @@ export function attachHistory(input, { zone, read, append, getRepo, container })
     return nav.index === nav.list.length ? nav.draft : nav.list[nav.index];
   }
 
+  /** Ends the walk in progress: the next ctrl-p starts again from the newest
+   *  entry, with whatever the input holds as the draft. */
+  function resetNav() {
+    nav = null;
+    epoch += 1;
+  }
+
   /** @param {string} zoneName */
   async function ensureNav(zoneName) {
     if (nav) return;
     if (!starting) {
+      const loading = epoch;
       starting = loadEntries(zoneName).then((list) => {
         starting = null;
-        // A real edit may have landed while loading; it wins (nav stays off
-        // only if it reset us after this assignment — see onInput).
+        // A real edit or a blur may have landed while loading; it wins.
+        if (loading !== epoch) return;
         nav = { list, index: list.length, draft: input.value };
       });
     }
@@ -329,7 +339,15 @@ export function attachHistory(input, { zone, read, append, getRepo, container })
   }
 
   function onInput() {
-    if (!applying) nav = null; // a real edit becomes the new draft
+    if (!applying) resetNav(); // a real edit becomes the new draft
+  }
+
+  // Leaving the zone ends the walk. The position cannot outlive the focus:
+  // the value it belongs to does not survive either — the shell restores the
+  // workspace's stored draft behind our back on blur — so a kept index would
+  // recall the *second* entry on the first ctrl-p after coming back.
+  function onBlur() {
+    resetNav();
   }
 
   /** @param {string} text */
@@ -355,10 +373,12 @@ export function attachHistory(input, { zone, read, append, getRepo, container })
   function detach() {
     input.removeEventListener('keydown', /** @type {EventListener} */ (onKeydown));
     input.removeEventListener('input', onInput);
+    input.removeEventListener('blur', onBlur);
     overlay?.close();
   }
 
   input.addEventListener('keydown', /** @type {EventListener} */ (onKeydown));
   input.addEventListener('input', onInput);
+  input.addEventListener('blur', onBlur);
   return { push, detach };
 }

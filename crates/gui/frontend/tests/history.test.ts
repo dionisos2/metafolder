@@ -142,6 +142,25 @@ describe('ctrl-p / ctrl-n navigation', () => {
     expect(input.value).toBe('edited'); // the new draft is the edited text
   });
 
+  test('leaving the zone restarts the walk at the newest entry', async () => {
+    const input = makeInput();
+    attach(input);
+    press(input, 'p', { ctrlKey: true });
+    await flush();
+    expect(input.value).toBe('three');
+    // Leaving the zone ends the walk: the shell restores the stored draft
+    // behind our back, so a position kept across the blur would recall the
+    // *second* entry on the way back in.
+    input.focus();
+    input.blur();
+    press(input, 'p', { ctrlKey: true });
+    await flush();
+    expect(input.value).toBe('three');
+    press(input, 'p', { ctrlKey: true });
+    await flush();
+    expect(input.value).toBe('two');
+  });
+
   test('a disabled zone (function returning null) leaves keys untouched', async () => {
     const input = makeInput();
     const { store } = attach(input, { zone: () => null });

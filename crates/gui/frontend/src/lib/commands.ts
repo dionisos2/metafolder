@@ -249,7 +249,30 @@ export type ArgPromptFn = (request: ArgPromptRequest) => Promise<string | null>;
 // Frontend-side registry of declared argument specs, keyed by command name.
 // The Rust `CommandDef` only lists names/labels; the arg functions are live
 // JS and stay here (module-global, like `panelDispatch`/`editingTarget`).
+//
+// This registry holds the specs that have *one* owner: the shell builtins and
+// the user commands. A panel command does not — it is registered once per
+// mounted instance, one per workspace × panel type, all under the same name —
+// so its specs live with its handler, per instance, and are reached through
+// the `PanelArgSource` below.
 const argSpecs = new Map<string, ArgSpec[]>();
+
+/** The focused workspace's panel instances, as the argument machinery needs
+ *  them. `prepare` mounts the instance owning a command — a workspace that has
+ *  never shown that panel type has none, and its arguments would go
+ *  uncollected — and `resolve` reads that instance's declared arguments.
+ *  Installed by PanelHost. */
+export interface PanelArgSource {
+  prepare(name: string): Promise<void>;
+  resolve(name: string): ArgSpec[] | undefined;
+}
+
+let panelArgs: PanelArgSource | null = null;
+
+/** Registers (or, with null, removes) the panel-instance argument source. */
+export function setPanelArgs(source: PanelArgSource | null): void {
+  panelArgs = source;
+}
 
 /** Declares (or, with an empty list, clears) a command's argument spec.
  *  Re-registration replaces the previous spec (panels re-register on
@@ -259,8 +282,20 @@ export function registerArgs(name: string, args: ArgSpec[]): void {
   else argSpecs.set(name, args);
 }
 
+/** The spec to prompt with, asked of the focused panel instance first: a spec
+ *  closes over the state of the panel that declared it, and every workspace
+ *  has its own instance of the same command. Reading them by name alone
+ *  offered the focused workspace whatever instance had mounted last —
+ *  completions from one workspace against a handler running on another.
+ *
+ *  A panel also mirrors its specs into the registry below, which is what this
+ *  falls back to. Those carry the right *shape* (argument names, `when`,
+ *  `optional`) with the wrong instance's closures, so they answer the
+ *  synchronous question — does this command prompt? — for a panel the focused
+ *  workspace has not mounted. Anything that will actually run the functions
+ *  awaits `prepare` first (see `dispatch`). */
 export function argSpecFor(name: string): ArgSpec[] | undefined {
-  return argSpecs.get(name);
+  return panelArgs?.resolve(name) ?? argSpecs.get(name);
 }
 
 // Builtins that reopen the command input to collect a value but do not declare
@@ -408,9 +443,10 @@ export function clearUserCommands(): string[] {
   return names;
 }
 
-/** Test hook: drop every registered arg spec. */
+/** Test hook: drop every registered arg spec, panel source included. */
 export function clearArgSpecs(): void {
   argSpecs.clear();
+  panelArgs = null;
 }
 
 // ── Recently-viewed metarecords picker (the `recent` builtin) ───────────────
@@ -1161,6 +1197,12 @@ export async function dispatch(invocation: string): Promise<DispatchResult> {
   // Interactive arguments (spec-gui "Command"): a command declaring arguments
   // invoked with fewer than declared collects the missing tail through the
   // command input. Escape (null) abandons the whole invocation silently.
+  // A panel command's spec belongs to the focused workspace's instance of the
+  // owning panel, so that instance is mounted before the spec is read — the
+  // same one `runCommand` will hand the collected arguments to.
+  // (`if`, not `?.`: awaiting the undefined of an absent source would defer
+  // the rest of the dispatch by a microtask for nothing.)
+  if (panelArgs) await panelArgs.prepare(name);
   const specs = argSpecFor(name);
   if (specs) {
     const collected = await collectArgs(specs, args, promptForArg);

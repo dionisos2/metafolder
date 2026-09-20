@@ -12,6 +12,7 @@ import {
   collectArgs,
   clearUserCommands,
   deadInvocations,
+  dispatch,
   filterCommands,
   installUserCommands,
   filterCompletions,
@@ -21,6 +22,7 @@ import {
   parseInvocation,
   promptsForInput,
   registerArgs,
+  setPanelArgs,
   resolvePromptValue,
   runUserCommand,
   validateUserCommands,
@@ -587,6 +589,50 @@ describe('argSpecs registry', () => {
     registerArgs('p:cmd', [spec('a')]);
     registerArgs('p:cmd', []);
     expect(argSpecFor('p:cmd')).toBeUndefined();
+  });
+
+  // A panel command is registered once per *instance* — one per workspace ×
+  // panel type — and every instance registers the same name. The arg spec
+  // carries live closures reading that instance's state, so a name-keyed
+  // global registry hands the focused workspace the completions of whichever
+  // instance mounted last: the panel handler runs on your workspace while the
+  // minibuffer offers another one's list. The resolver is asked first.
+  test('the panel resolver wins over the global registry', () => {
+    const mine = [spec('mine')];
+    registerArgs('p:cmd', [spec('someone-else')]);
+    setPanelArgs({
+      prepare: async () => {},
+      resolve: (name) => (name === 'p:cmd' ? mine : undefined),
+    });
+    expect(argSpecFor('p:cmd')).toBe(mine);
+    setPanelArgs(null);
+    expect(argSpecFor('p:cmd')?.map((a) => a.name)).toEqual(['someone-else']);
+  });
+
+  test('a command the panel resolver does not know falls back to the global registry', () => {
+    // The mirrored spec: the right shape with another instance's closures,
+    // which is all the synchronous "does it prompt?" probe needs.
+    const args = [spec('target')];
+    registerArgs('recent-ish', args);
+    setPanelArgs({ prepare: async () => {}, resolve: () => undefined });
+    expect(argSpecFor('recent-ish')).toBe(args);
+    setPanelArgs(null);
+  });
+
+  test('dispatch mounts the owning panel instance before reading its spec', async () => {
+    // Order matters: a workspace that has never shown the owning panel has no
+    // instance, so reading the spec first would collect no arguments at all.
+    const calls: string[] = [];
+    setPanelArgs({
+      prepare: async (name) => void calls.push(`prepare:${name}`),
+      resolve: (name) => {
+        calls.push(`resolve:${name}`);
+        return undefined;
+      },
+    });
+    await dispatch('p:panel-cmd');
+    expect(calls).toEqual(['prepare:p:panel-cmd', 'resolve:p:panel-cmd']);
+    setPanelArgs(null);
   });
 });
 

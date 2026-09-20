@@ -152,9 +152,10 @@
         ? filterCompletions(store.ui.promptCompletions, draft).map((name) => ({
             name,
             label: '',
+            shortcuts: [],
           }))
         : mode === 'bash'
-          ? bashCandidates.map((name) => ({ name, label: '' }))
+          ? bashCandidates.map((name) => ({ name, label: '', shortcuts: [] }))
           : filterCommands(listedCommands(store.commands, store.keytable), draft),
   );
   // The best-ranked matches are listed (filterCompletions caps prompt
@@ -410,7 +411,7 @@
                 >{/if}</span
             >
             <span class="label">{suggestion.label}</span>
-            {#if 'shortcuts' in suggestion && suggestion.shortcuts.length > 0}
+            {#if suggestion.shortcuts.length > 0}
               <span class="shortcut">{suggestion.shortcuts.join(', ')}</span>
             {/if}
           </button>

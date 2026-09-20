@@ -65,14 +65,17 @@ export function comboFromEvent(event) {
   const parts = [];
   if (event.ctrlKey) parts.push('ctrl');
   if (event.altKey) parts.push('alt');
-  // For a bare printable character shift is already baked into the key
-  // (":" not "shift+;"), so it carries no explicit modifier. But a special
-  // key (raw.length > 1) or a letter pressed with another modifier (e.g.
-  // Ctrl+Shift+Z, whose key is the unhelpful "Z") keeps shift, otherwise
-  // the combo would collapse onto its non-shift sibling (ctrl+z).
+  // For a bare printable character shift is usually already baked into the
+  // key (":" not "shift+;"), so it carries no explicit modifier. A *cased*
+  // character is the exception: Shift+F yields "F", which lowercases to the
+  // same "f" the unshifted key gives, so dropping the modifier would collapse
+  // "shift+f" onto "f" and no shift+<letter> binding could ever fire. A
+  // special key (raw.length > 1) and any other modifier (Ctrl+Shift+Z, whose
+  // key is the unhelpful "Z") keep shift for the same reason.
+  const cased = raw.length === 1 && raw.toLowerCase() !== raw.toUpperCase();
   if (
     event.shiftKey &&
-    (raw.length > 1 || event.ctrlKey || event.altKey || event.metaKey)
+    (raw.length > 1 || cased || event.ctrlKey || event.altKey || event.metaKey)
   )
     parts.push('shift');
   if (event.metaKey) parts.push('meta');

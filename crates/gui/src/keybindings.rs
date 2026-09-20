@@ -746,6 +746,14 @@ mod tests {
         assert!(table.iter().any(|b| b.keys == ["shift+f"] && b.invocation == "treeref:set field"));
         assert!(!f.iter().any(|b| b.invocation == "treeref:set field"));
 
+        // `r` is "do the view again" in every panel that has a view: the list
+        // panels re-read their rows, the file panel plays the media from the
+        // start (there is no list there to re-read).
+        let r: Vec<_> = table.iter().filter(|b| b.keys == ["r"]).collect();
+        assert!(r
+            .iter()
+            .any(|b| b.when.as_deref() == Some("file") && b.invocation == "file:restart"));
+
         // Fullscreen is a builtin toggle, and now has a key of its own.
         assert!(table.iter().any(|b| b.keys == ["z"] && b.invocation == "panel:toggle fullscreen"));
         let registry = crate::command_registry::CommandRegistry::default();

@@ -1,10 +1,17 @@
 <script lang="ts">
   import { onMount } from 'svelte';
   import { invoke, listen } from '../ipc';
-  import { deadInvocations, dispatch, setPanelDispatch } from '../commands';
+  import {
+    deadInvocations,
+    dispatch,
+    registerArgs,
+    setPanelArgs,
+    setPanelDispatch,
+  } from '../commands';
   import { addDefaultMenuItems } from '../keys';
   import { focusedWs, refreshCommands, slotPayload, store } from '../store.svelte';
   import { createPanelApi, type PanelApiInstance } from './api';
+  import { createPanelArgSource } from './argSource';
   import { setFindRootProvider } from './roots';
   import { helpCursorSheet } from '../cursor';
   import type { CommandDef, SlotId } from '../types';
@@ -29,6 +36,16 @@
   const instances = new Map<string, PanelInstance>();
   // Panel command handlers, keyed `${wsId}|${panelType}|${name}`.
   const panelHandlers = new Map<string, (...args: string[]) => unknown>();
+  // A panel command's declared arguments, per instance like its handler —
+  // the prompt/completion functions read the state of the panel that declared
+  // them (lib/panels/argSource.ts).
+  const panelArgSource = createPanelArgSource({
+    focusedWs,
+    ownerOf: (name) => store.commands.find((command) => command.name === name)?.owner ?? undefined,
+    ensureMounted: async (wsId, panelType) => {
+      await ensureInstance(wsId, panelType)?.mounted.catch(() => {});
+    },
+  });
   let visibleSlots = new Map<string, SlotId>(); // instance key -> slot
 
   const base = `http://127.0.0.1:${store.guiPort}`;
@@ -71,6 +88,13 @@
         invoke,
         dispatch,
         registerHandler: (name, handler) => panelHandlers.set(`${key}|${name}`, handler),
+        registerArgs: (name, args) => {
+          panelArgSource.register(key, name, args);
+          // Mirrored by name too: the autocomplete asks synchronously whether
+          // a command prompts, and the answer must hold for a panel this
+          // workspace has never mounted. Shape only — see `argSpecFor`.
+          registerArgs(name, args);
+        },
         onCommandsChanged: () => void refreshCommands(),
         // Scope this panel's provider to its own host: the default menu is
         // shell-wide, so without this every mounted panel instance (each tab's
@@ -162,6 +186,7 @@
     for (const handlerKey of [...panelHandlers.keys()]) {
       if (handlerKey.startsWith(`${key}|`)) panelHandlers.delete(handlerKey);
     }
+    panelArgSource.forget(key);
     instance.host.remove();
     instances.delete(key);
   }
@@ -286,6 +311,11 @@
       }),
     ];
 
+    // The focused workspace's instance answers for a panel command's declared
+    // arguments — the same instance `setPanelDispatch` below runs the handler
+    // on, so the prompts and the work are one panel's.
+    setPanelArgs(panelArgSource);
+
     // Commands owned by panel types (spec-gui: lazy hidden instantiation;
     // reveal switches a slot to the owning panel type).
     setPanelDispatch(async (command: CommandDef, args: string[]) => {
@@ -314,6 +344,7 @@
       resizeObserver?.disconnect();
       for (const unlisten of unlisteners) void unlisten.then((fn) => fn());
       setPanelDispatch(null);
+      setPanelArgs(null);
       setFindRootProvider(null);
     };
   });

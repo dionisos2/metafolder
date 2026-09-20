@@ -7,7 +7,7 @@
 
 import { createPathResolver } from '../../../../panel-shim/resolve.js';
 import { showMenu } from '../../../../panel-shim/menu.js';
-import { type ArgSpec, registerArgs, withTopLevelInvoke } from '../commands';
+import { type ArgSpec, withTopLevelInvoke } from '../commands';
 import { invoke as ipcInvoke } from '../ipc';
 import { daemonWork } from '../working';
 import { createCache, type DaemonResponse, type RawFetcher } from './cache';
@@ -43,6 +43,10 @@ export interface PanelApiDeps {
   dispatch: (invocation: string) => Promise<unknown>;
   /** Stores a panel command handler in the shell-side registry (per instance). */
   registerHandler: (name: string, handler: (...args: string[]) => unknown) => void;
+  /** Stores a panel command's declared arguments, per instance like the
+   *  handler: the spec's prompt/completion functions read this panel's state,
+   *  and every workspace mounts its own instance under the same name. */
+  registerArgs: (name: string, args: ArgSpec[]) => void;
   /** Refreshes the shell's command list after a panel registers a command. */
   onCommandsChanged: () => void;
   /** Adds a provider to the shell's single default context menu. */
@@ -478,7 +482,7 @@ export function createPanelApi(deps: PanelApiDeps, ctx: PanelApiCtx): PanelApiIn
         // Declared arguments are collected interactively by the command input
         // when missing (spec-gui "Command"); the spec functions stay in the
         // shell realm alongside the panel.
-        if (args) registerArgs(name, args);
+        if (args) deps.registerArgs(name, args);
         const result = invoke('register_command', {
           panelType: ctx.panelType,
           name,
