@@ -611,3 +611,50 @@ async fn test_schema_reload() {
 
     std::fs::remove_dir_all(root).unwrap();
 }
+
+/// A bulk create is one transaction: a schema violation anywhere in the batch
+/// rolls all of it back, and the `violations` array names the offending
+/// metarecord (spec-data-model "POST …/metarecords/bulk").
+#[tokio::test]
+async fn test_bulk_create_violation_rolls_the_whole_batch_back() {
+    let (app, repo, root) = setup_with_schema("bulk_violation", film_schema()).await;
+    let good = uuid::Uuid::new_v4().as_simple().to_string();
+    let bad = uuid::Uuid::new_v4().as_simple().to_string();
+
+    let (status, body) = request(
+        &app,
+        "POST",
+        &format!("/repos/{repo}/metarecords/bulk"),
+        Some(json!({"metarecords": [
+            {"uuid": good, "fields": [
+                {"name": "mf_schema", "value": {"type": "string", "value": "film"}},
+                {"name": "name", "value": {"type": "string", "value": "Alien"}},
+                {"name": "rating", "value": {"type": "int", "value": 5}}
+            ]},
+            // Two `rating` rows on a film: the schema caps it at one. A
+            // constraint only the schema knows — the field-type registry is
+            // happy with two int rows.
+            {"uuid": bad, "fields": [
+                {"name": "mf_schema", "value": {"type": "string", "value": "film"}},
+                {"name": "name", "value": {"type": "string", "value": "Solaris"}},
+                {"name": "rating", "value": {"type": "int", "value": 4}},
+                {"name": "rating", "value": {"type": "int", "value": 2}}
+            ]}
+        ]})),
+    )
+    .await;
+    assert_eq!(status, StatusCode::BAD_REQUEST, "the batch must be refused: {body}");
+    assert_eq!(
+        body["violations"][0]["kind"], "max_cardinality",
+        "violations array expected, got {body}"
+    );
+    assert_eq!(body["violations"][0]["metarecord_uuid"], bad, "the violation names its record");
+
+    for uuid in [&good, &bad] {
+        let (status, _) =
+            request(&app, "GET", &format!("/repos/{repo}/metarecords/{uuid}"), None).await;
+        assert_eq!(status, StatusCode::NOT_FOUND, "nothing of the batch is written");
+    }
+
+    std::fs::remove_dir_all(root).unwrap();
+}

@@ -1518,3 +1518,292 @@ async fn a_write_leaves_the_query_index_at_head() {
         catalog.as_array().unwrap().iter().map(|e| e["name"].as_str().unwrap()).collect();
     assert!(names.contains(&"rating"), "the settled index must hold the new field: {catalog}");
 }
+
+// ── Bulk creation (spec-data-model "POST …/metarecords/bulk") ────────────────
+
+/// The number of revisions the repository's log holds.
+async fn revision_count(app: &Router, repo: &str) -> usize {
+    let (status, body) = request(app, "GET", &format!("/repos/{repo}/log"), None).await;
+    assert_eq!(status, StatusCode::OK, "log failed: {body}");
+    body["revisions"].as_array().unwrap().len()
+}
+
+fn bulk_uri(repo: &str) -> String {
+    format!("/repos/{repo}/metarecords/bulk")
+}
+
+#[tokio::test]
+async fn test_bulk_create_writes_one_revision_at_the_supplied_uuids() {
+    // The whole point of the endpoint: N metarecords, one revision — not N
+    // revisions and N fsyncs.
+    let (app, repo, root) = app_with_repo("bulk_one_revision").await;
+    let before = revision_count(&app, &repo).await;
+
+    let uuids: Vec<String> = (0..5).map(|_| Uuid::new_v4().as_simple().to_string()).collect();
+    let records: Vec<Value> = uuids
+        .iter()
+        .enumerate()
+        .map(|(i, u)| {
+            json!({"uuid": u, "fields": [
+                {"name": "tag", "value": {"type": "string", "value": format!("t{i}")}}
+            ]})
+        })
+        .collect();
+
+    let (status, body) =
+        request(&app, "POST", &bulk_uri(&repo), Some(json!({"metarecords": records}))).await;
+    assert_eq!(status, StatusCode::OK, "bulk create failed: {body}");
+    assert_eq!(body["created"], 5);
+    assert_eq!(body["skipped"], 0);
+    assert_eq!(
+        body["uuids"].as_array().unwrap().iter().map(|u| u.as_str().unwrap()).collect::<Vec<_>>(),
+        uuids,
+        "uuids come back in the order given"
+    );
+
+    assert_eq!(revision_count(&app, &repo).await, before + 1, "one revision for the whole batch");
+    for u in &uuids {
+        let (status, _) =
+            request(&app, "GET", &format!("/repos/{repo}/metarecords/{u}"), None).await;
+        assert_eq!(status, StatusCode::OK, "metarecord {u} must exist");
+    }
+
+    std::fs::remove_dir_all(root).unwrap();
+}
+
+#[tokio::test]
+async fn test_bulk_create_at_the_same_uuid_restores_the_original_version() {
+    // The property the whole trash redesign rests on: a version is a hash of
+    // the metarecord's content, so recreating one at its uuid with its fields
+    // gives it back the exact version it had. Nothing carries the version.
+    let (app, repo, root) = app_with_repo("bulk_version").await;
+    let uuid = Uuid::new_v4().as_simple().to_string();
+    let fields = json!([
+        {"name": "tag", "value": {"type": "string", "value": "jazz"}},
+        {"name": "rating", "value": {"type": "int", "value": 4}}
+    ]);
+
+    let (status, created) = request(
+        &app,
+        "POST",
+        &format!("/repos/{repo}/metarecords"),
+        Some(json!({"uuid": uuid, "fields": fields})),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "create failed: {created}");
+    let original = created["version"].as_u64().unwrap();
+
+    let (status, _) =
+        request(&app, "DELETE", &format!("/repos/{repo}/metarecords/{uuid}"), None).await;
+    assert_eq!(status, StatusCode::NO_CONTENT);
+
+    let (status, body) = request(
+        &app,
+        "POST",
+        &bulk_uri(&repo),
+        Some(json!({"metarecords": [{"uuid": uuid, "fields": fields}]})),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "bulk create failed: {body}");
+
+    let (_, got) = request(&app, "GET", &format!("/repos/{repo}/metarecords/{uuid}"), None).await;
+    assert_eq!(
+        got["version"].as_u64().unwrap(),
+        original,
+        "the version comes back with the content"
+    );
+
+    std::fs::remove_dir_all(root).unwrap();
+}
+
+#[tokio::test]
+async fn test_bulk_create_conflicts_on_an_existing_uuid_and_writes_nothing() {
+    // All-or-nothing: the batch is one transaction, so a single taken uuid
+    // leaves the repository exactly as it was.
+    let (app, repo, root) = app_with_repo("bulk_conflict").await;
+    let taken = Uuid::new_v4().as_simple().to_string();
+    let fresh = Uuid::new_v4().as_simple().to_string();
+    let (status, _) = request(
+        &app,
+        "POST",
+        &format!("/repos/{repo}/metarecords"),
+        Some(json!({"uuid": taken, "fields": []})),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    let before = revision_count(&app, &repo).await;
+
+    let (status, body) = request(
+        &app,
+        "POST",
+        &bulk_uri(&repo),
+        Some(json!({"metarecords": [
+            {"uuid": fresh, "fields": []},
+            {"uuid": taken, "fields": []}
+        ]})),
+    )
+    .await;
+    assert_eq!(status, StatusCode::CONFLICT, "an existing uuid is a conflict: {body}");
+
+    let (status, _) =
+        request(&app, "GET", &format!("/repos/{repo}/metarecords/{fresh}"), None).await;
+    assert_eq!(status, StatusCode::NOT_FOUND, "the record before the conflict is rolled back too");
+    assert_eq!(revision_count(&app, &repo).await, before, "a failed batch writes no revision");
+
+    std::fs::remove_dir_all(root).unwrap();
+}
+
+#[tokio::test]
+async fn test_bulk_create_skip_existing_leaves_the_existing_one_alone() {
+    // What both known callers need: a subtree restore meets nodes the watcher
+    // already re-tracked, and sync's bare-record creation swallows "already
+    // exists" by hand today.
+    let (app, repo, root) = app_with_repo("bulk_skip").await;
+    let taken = Uuid::new_v4().as_simple().to_string();
+    let fresh = Uuid::new_v4().as_simple().to_string();
+    let (status, existing) = request(
+        &app,
+        "POST",
+        &format!("/repos/{repo}/metarecords"),
+        Some(json!({"uuid": taken, "fields": [
+            {"name": "tag", "value": {"type": "string", "value": "keep"}}
+        ]})),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+
+    let (status, body) = request(
+        &app,
+        "POST",
+        &bulk_uri(&repo),
+        Some(json!({"skip_existing": true, "metarecords": [
+            {"uuid": taken, "fields": [{"name": "tag", "value": {"type": "string", "value": "clobber"}}]},
+            {"uuid": fresh, "fields": []}
+        ]})),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "skip_existing must not conflict: {body}");
+    assert_eq!(body["created"], 1);
+    assert_eq!(body["skipped"], 1);
+
+    let (_, got) = request(&app, "GET", &format!("/repos/{repo}/metarecords/{taken}"), None).await;
+    assert_eq!(got["version"], existing["version"], "a skipped metarecord is untouched");
+    assert_eq!(got["fields"][0]["value"]["value"], "keep");
+    let (status, _) =
+        request(&app, "GET", &format!("/repos/{repo}/metarecords/{fresh}"), None).await;
+    assert_eq!(status, StatusCode::OK);
+
+    std::fs::remove_dir_all(root).unwrap();
+}
+
+#[tokio::test]
+async fn test_bulk_create_generates_uuids_when_absent() {
+    // A general bulk create, not a restore tool: an omitted uuid is drawn by
+    // the daemon, and the response is how the caller learns it.
+    let (app, repo, root) = app_with_repo("bulk_generated").await;
+    let (status, body) = request(
+        &app,
+        "POST",
+        &bulk_uri(&repo),
+        Some(json!({"metarecords": [{"fields": []}, {"fields": []}]})),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "bulk create failed: {body}");
+    assert_eq!(body["created"], 2);
+    let uuids = body["uuids"].as_array().unwrap();
+    assert_eq!(uuids.len(), 2);
+    assert_ne!(uuids[0], uuids[1]);
+    for u in uuids {
+        let (status, _) = request(
+            &app,
+            "GET",
+            &format!("/repos/{repo}/metarecords/{}", u.as_str().unwrap()),
+            None,
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK);
+    }
+
+    std::fs::remove_dir_all(root).unwrap();
+}
+
+#[tokio::test]
+async fn test_bulk_create_applies_records_in_order_so_a_parent_precedes_its_child() {
+    // The forest rejects a TreeRef whose parent has no row, so the order given
+    // is the order applied and the caller sorts parent-first
+    // (`core::trash::relink_order` is that helper).
+    let (app, repo, root) = app_with_repo("bulk_order").await;
+    let parent = Uuid::new_v4().as_simple().to_string();
+    let child = Uuid::new_v4().as_simple().to_string();
+    let parent_record = json!({"uuid": parent, "fields": [
+        {"name": "cat", "value": {"type": "tree_ref", "value": {"parent": null, "name": "animals"}}}
+    ]});
+    let child_record = json!({"uuid": child, "fields": [
+        {"name": "cat", "value": {"type": "tree_ref", "value": {"parent": parent, "name": "cats"}}}
+    ]});
+
+    // Child first: the parent does not exist yet.
+    let (status, body) = request(
+        &app,
+        "POST",
+        &bulk_uri(&repo),
+        Some(json!({"metarecords": [child_record.clone(), parent_record.clone()]})),
+    )
+    .await;
+    assert_eq!(status, StatusCode::BAD_REQUEST, "a child before its parent is rejected: {body}");
+    let (status, _) =
+        request(&app, "GET", &format!("/repos/{repo}/metarecords/{parent}"), None).await;
+    assert_eq!(status, StatusCode::NOT_FOUND, "and nothing of the batch survives");
+
+    // Parent first: accepted.
+    let (status, body) = request(
+        &app,
+        "POST",
+        &bulk_uri(&repo),
+        Some(json!({"metarecords": [parent_record, child_record]})),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "parent-first must be accepted: {body}");
+    assert_eq!(body["created"], 2);
+
+    std::fs::remove_dir_all(root).unwrap();
+}
+
+#[tokio::test]
+async fn test_bulk_create_rejects_a_batch_over_the_cap() {
+    let (app, repo, root) = app_with_repo("bulk_cap").await;
+    let records: Vec<Value> = (0..1001).map(|_| json!({"fields": []})).collect();
+    let (status, body) =
+        request(&app, "POST", &bulk_uri(&repo), Some(json!({"metarecords": records}))).await;
+    assert_eq!(status, StatusCode::BAD_REQUEST);
+    assert!(
+        body["error"].as_str().unwrap().contains("1000"),
+        "the error must name the limit: {body}"
+    );
+    assert_eq!(revision_count(&app, &repo).await, 1, "nothing is attempted past the cap");
+
+    std::fs::remove_dir_all(root).unwrap();
+}
+
+#[tokio::test]
+async fn test_bulk_create_reserved_field_needs_force() {
+    let (app, repo, root) = app_with_repo("bulk_reserved").await;
+    let record = json!({"fields": [{"name": "mfr_size", "value": {"type": "int", "value": 1}}]});
+
+    let (status, _) =
+        request(&app, "POST", &bulk_uri(&repo), Some(json!({"metarecords": [record.clone()]})))
+            .await;
+    assert_eq!(status, StatusCode::BAD_REQUEST, "mfr_* needs force");
+
+    let (status, body) = request(
+        &app,
+        "POST",
+        &bulk_uri(&repo),
+        Some(json!({"force": true, "metarecords": [record]})),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "force must let it through: {body}");
+    assert_eq!(body["created"], 1);
+
+    std::fs::remove_dir_all(root).unwrap();
+}

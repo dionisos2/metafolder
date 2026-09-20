@@ -738,6 +738,52 @@ carrying that =TreeRef= name). The filesystem root (=value_uuid = x'00...00'=,
 metarecord may carry several =mfr_path= rows (multi-map = several locations).
 Response: the full metadata object (=id= on each field).
 
+*** =POST /repos/:repo_uuid/metarecords/bulk=
+
+Creates *many* metarecords, each at its own optional caller-supplied UUID, in a
+*single revision*. The one-at-a-time form costs a revision — and an =fsync= —
+per metarecord, which is the difference between restoring a directory from the
+trash-bin and giving up on it.
+
+#+BEGIN_SRC json
+{"metarecords": [{"uuid": "<32hex>", "fields": [{"name", "value"}, ...]}, ...],
+ "force": false,
+ "skip_existing": false}
+#+END_SRC
+
+- =uuid= is optional per metarecord: omitted, the daemon draws one, exactly as
+  the single-record form does. The endpoint is a general bulk create.
+- =force= applies to the whole batch (reserved-field override, as on the
+  single-record form).
+- =skip_existing= makes a UUID that is already taken a *skip* instead of a
+  refusal. Without it, a caller that cannot know in advance whether a metarecord
+  survives — a subtree restore meeting a node the watcher has re-tracked — would
+  have to precede every batch with a filtering query.
+
+Response: ={"created": N, "skipped": M, "uuids": [...]}=, the UUIDs in the order
+given (which is how a caller learns the ones the daemon drew).
+
+*Nothing carries a version.* A version is a hash of the metarecord's content
+([[*Version]]), so recreating a metarecord at its UUID with its fields gives it
+back exactly the version it had. Field row =id=s are freshly allocated — they are
+storage identity, not content.
+
+*All-or-nothing*, like every other batch writer: one revision, one transaction,
+and the first refusal — a taken UUID (=409=), a reserved field without =force=,
+a schema violation (=400= with the =violations= array, each naming its
+=metarecord_uuid=) — rolls the whole batch back. A half-applied restore would be
+worse than none.
+
+*Order is significant, and it is the caller's to get right.* Metarecords are
+applied in the order given, and the forest refuses a =TreeRef= whose parent has
+no row yet ([[*Referential integrity of a forest]]), so a subtree must arrive
+parent-first.
+
+*Limits.* At most 1000 metarecords per call; beyond that the call is refused with
+=400= naming the limit, before any work. The request body is capped
+independently (2 MiB), so a batch of metarecords carrying many fields reaches
+that first — callers page, as the trash-bin's own subtree capture already does.
+
 *** =GET /repos/:repo_uuid/metarecords/:uuid=
 
 Returns one metarecord with all its fields. Each field carries its DB-row =id=

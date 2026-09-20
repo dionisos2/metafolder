@@ -44,6 +44,7 @@ pub fn build(state: Arc<AppState>) -> Router {
         .route("/repos/:repo/unload", post(unload_repo))
         // ── Resource layer (single, directly-addressed) ──────────────────────
         .route("/repos/:repo/metarecords", post(create_record_endpoint))
+        .route("/repos/:repo/metarecords/bulk", post(bulk_create_endpoint))
         .route(
             "/repos/:repo/metarecords/:uuid",
             get(get_record_endpoint).put(put_metarecord).delete(delete_record_endpoint),
@@ -3476,6 +3477,114 @@ struct CreateBody {
     /// Rejected with 409 if a metarecord already has it.
     #[serde(default)]
     uuid: Option<String>,
+}
+
+/// The most metarecords one bulk create may carry. A cap in the shape of
+/// [`ELIGIBILITY_MAX_PATHS`]: checked before any work, and the error names it so
+/// the caller knows what to page by. Bodies are capped independently by axum's
+/// 2 MiB `Json` limit, so a caller with fat metarecords pages sooner than this.
+const BULK_CREATE_MAX_RECORDS: usize = 1000;
+
+#[derive(Deserialize)]
+struct BulkCreateRecord {
+    fields: Vec<Field>,
+    /// Optional caller-supplied UUID, as on the single-record form.
+    #[serde(default)]
+    uuid: Option<String>,
+}
+
+#[derive(Deserialize)]
+struct BulkCreateBody {
+    metarecords: Vec<BulkCreateRecord>,
+    /// Applies to every metarecord of the batch: the one caller that needs it
+    /// (restoring `mfr_path` from the trash) needs it uniformly.
+    #[serde(default)]
+    force: bool,
+    /// A UUID already taken is skipped and counted, instead of failing the
+    /// batch. What a subtree restore needs when the watcher has re-tracked a
+    /// node already, and what sync's bare-record creation does by hand today.
+    #[serde(default)]
+    skip_existing: bool,
+}
+
+/// `POST /repos/:repo/metarecords/bulk`: creates many metarecords, each at its
+/// own (optional) caller-supplied UUID, in **one revision**
+/// (spec-data-model "Bulk creation").
+///
+/// All-or-nothing, like every other batch writer here: one [`Writer`], one
+/// transaction, and the first refusal rolls the whole batch back. Records are
+/// applied **in the order given** — the forest rejects a `TreeRef` whose parent
+/// has no row yet, so a subtree must arrive parent-first.
+///
+/// Nothing carries a version: a metarecord's version is a hash of its content
+/// (spec-data-model "Version"), so recreating one at its UUID with its fields
+/// gives it back exactly the version it had.
+async fn bulk_create_endpoint(
+    State(state): State<Arc<AppState>>,
+    Path(repo): Path<String>,
+    payload: Result<Json<BulkCreateBody>, JsonRejection>,
+) -> Result<Json<serde_json::Value>, ApiError> {
+    let Json(body) = payload?;
+    let repo_uuid = parse_uuid(&repo)?;
+    if body.metarecords.len() > BULK_CREATE_MAX_RECORDS {
+        return Err(ApiError::bad_request(format!(
+            "too many metarecords in one bulk create: {} (limit {BULK_CREATE_MAX_RECORDS}) — \
+             send them in several calls",
+            body.metarecords.len()
+        )));
+    }
+    // Parsed up front so a malformed uuid costs no repository work.
+    let supplied: Vec<Option<Uuid>> = body
+        .metarecords
+        .iter()
+        .map(|r| r.uuid.as_deref().map(parse_uuid).transpose())
+        .collect::<Result<_, _>>()?;
+
+    with_repo(&state, repo_uuid, move |repo_state| {
+        repo_state.ensure_writable()?;
+        for record in &body.metarecords {
+            for field in &record.fields {
+                check_writable(&field.name, body.force)?;
+            }
+        }
+        let mut conn = slowlog::timed("wait:conn", || repo_state.conn.lock_recover());
+        let mut writer = repo_state.writer(&mut conn, None)?;
+        let writing = slowlog::phase("write.bulk_create");
+        let mut created = 0usize;
+        let mut skipped = 0usize;
+        let mut uuids: Vec<String> = Vec::with_capacity(body.metarecords.len());
+        for (record, supplied) in body.metarecords.into_iter().zip(supplied) {
+            let touched: Vec<String> = record.fields.iter().map(|f| f.name.clone()).collect();
+            let made = match supplied {
+                Some(uuid) => {
+                    if db::get_version(writer.connection(), uuid)?.is_some() {
+                        if body.skip_existing {
+                            skipped += 1;
+                            uuids.push(uuid.as_simple().to_string());
+                            continue;
+                        }
+                        return Err(ApiError::conflict(format!(
+                            "metarecord already exists: {uuid}"
+                        )));
+                    }
+                    writer.create_metarecord_with_uuid(uuid, record.fields)?
+                }
+                None => writer.create_metarecord(record.fields)?,
+            };
+            slowlog::timed("validate.schema", || {
+                validate_schema(repo_state, writer.connection(), made.uuid, &touched)
+            })?;
+            created += 1;
+            uuids.push(made.uuid.as_simple().to_string());
+        }
+        drop(writing);
+        let effects = writer.effects();
+        slowlog::timed("commit", || writer.commit())?;
+        repo_state.settle(&conn, &effects)?;
+        slowlog::note("created", created.to_string());
+        Ok(Json(json!({ "created": created, "skipped": skipped, "uuids": uuids })))
+    })
+    .await
 }
 
 async fn create_record_endpoint(

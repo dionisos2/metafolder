@@ -238,12 +238,14 @@ async fn test_inverse_step_exposes_the_pre_revision_version() {
     .await;
     assert_eq!(status, StatusCode::OK, "{body}");
     assert_eq!(body["op"]["entity_uuid"], uuid, "{body}");
-    // The last op of the revision is navigated first: it restores to a version
+    // The last op of the revision is navigated first: it names a version
     // *inside* the revision, while the pre-revision version is the record's
-    // state before any of it.
-    assert!(
-        body["op"]["entity_version_before"].as_u64().unwrap() > before,
-        "the first inverse step restores to an intra-revision version: {body}"
+    // state before any of it. Different, not greater — a version is a content
+    // hash and carries no order (spec-data-model "Version").
+    assert_ne!(
+        body["op"]["entity_version_before"].as_u64(),
+        Some(before),
+        "the first inverse step names an intra-revision version: {body}"
     );
     assert_eq!(
         body["op"]["entity_version_before_revision"].as_u64(),
