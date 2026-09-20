@@ -44,7 +44,7 @@ names what the fields are.
 | Field     | Type       | Description                                              |
 |-----------+------------+----------------------------------------------------------|
 | =uuid=    | UUID       | Stable identifier for this metarecord                         |
-| =version= | u64        | Monotonic write counter, managed by the daemon           |
+| =version= | u64        | Content hash of the metarecord's fields, daemon-computed |
 | =fields=  | list       | Ordered list of =Field= values                           |
 
 Fields form a *multi-map*: multiple fields with the same name are allowed.
@@ -53,6 +53,91 @@ Ownership is implicit: every metarecord belongs to the repository whose
 database holds it (one database per repository). Cross-repo sync state (links
 between metarecords of two repositories) lives outside the data model, in a
 dedicated sync database — see [[file:spec-sync.org][spec-sync.org]].
+
+*** Version
+
+A metarecord's =version= is a *hash of its own content*: the multiset of its
+=(name, type, value)= field triples, plus its =uuid=. It is not a counter, and
+it carries no ordering — two versions are only ever compared for *equality*.
+
+That equality is the whole point, in both directions:
+
+- equal versions ⇒ identical field states (so a cached copy is still valid);
+- identical field states ⇒ equal versions (so a value changed and changed back
+  is correctly reported as unchanged).
+
+Both hold *by construction*, across the whole history of a metarecord and across
+every branch of the log, with nothing to maintain and nothing to restore. This
+is what cross-repo sync's change detection rests on
+([[file:spec-sync.org][spec-sync.org]]) and what makes the version a reliable
+cache key.
+
+**** What the hash covers
+
+The =(name, type, value)= triple is hashed *as one unit*, so moving a value from
+one field name to another, or retyping it, changes the version.
+
+- The multiset is hashed *order-independently*: field rows have no meaningful
+  order, and two metarecords carrying the same rows must hash alike.
+- =Value::Nothing= is content like any other value: a row holding it contributes
+  to the hash, while an absent field contributes nothing. The two states are
+  distinct in the data model and must stay distinct here.
+- =field.id= is *excluded*. A row id is storage identity, not content; including
+  it would re-couple the version to the physical rows and defeat the invariant
+  above (navigation restores ids exactly, so the version must not depend on
+  them).
+- The metarecord's =uuid= is *included*, as a base term, so that two metarecords
+  carrying identical fields still hash differently and each record's version
+  values live in their own domain. A metarecord with no fields therefore has a
+  version of its own rather than a shared zero.
+- Repository ownership (=metarecord_db=) is *excluded*: it is not part of the
+  metadata the version describes.
+
+**** Incremental maintenance
+
+Recomputing the hash from every row on every write would make a bulk write
+(reconcile, a watcher flush) re-read each record it touches. The hash is
+therefore *additive*: the version is the sum, modulo 2⁶⁴, of the per-row hashes
+and the uuid term. A write subtracts the hash of each row it removes and adds
+the hash of each row it inserts — cost proportional to the rows actually
+touched, not to the size of the metarecord.
+
+Addition, not XOR. Two equal terms cancel under XOR, so a metarecord holding the
+same row twice would hash exactly like one holding it never — and
+[[*No duplicate rows]], which forbids that state, is held by the write path
+alone: there is deliberately no unique index over the value columns to enforce
+it. A hash whose correctness depends on an invariant nothing checks is a hash
+that fails silently, and it would fail in the worst possible direction: sync
+would read "unchanged". Summation degrades gracefully instead — a duplicated row
+simply makes the record hash differently.
+
+The 64-bit width is sized for the comparison that is actually made. Versions are
+only ever compared *within one metarecord's own history* (against a sync
+baseline, or an =expected_version= precondition), never across a repository, so
+a collision would require two states of the *same* record to hash alike.
+
+**** Migration
+
+An existing repository drops =next_version=, recomputes every metarecord's
+=version= from its own rows, and *empties the event log* — the =revision=,
+=operation= and =op_snapshot= rows, with =log_head.op_id= set back to =NULL=.
+Buffered watcher events (=pending_operation=) are not log rows and are kept.
+
+The log is discarded rather than converted because it cannot be converted
+cheaply *and* safely: its =entity_version_*= columns hold allocator counters, so
+a navigation step restoring one would leave the metarecord describing itself
+with a number that is not the hash of the state just restored — the first
+rollback would desynchronise every record it touched, and sync would read the
+result as a phantom change. The historical hashes could in principle be
+recomputed from =op_snapshot=, but that buys a rewind capability no repository
+needs at this stage of the project. The repository's *data* is untouched; only
+the ability to rewind it is. Trash entries recorded before the migration keep
+their blobs and restore normally, but lose their rollback auto-restore
+correlation, which is a recorded version.
+
+This bumps =API_VERSION=. The wire shape does not change — =version= is still an
+integer, and =expected_version= still takes one — but its meaning does: a client
+that ordered two versions would now be comparing hashes.
 
 ** Field and Value
 
@@ -460,18 +545,16 @@ collision among 1 billion metarecords is ≈ 10⁻¹⁹ — negligible in practi
 #+BEGIN_SRC sql
 CREATE TABLE metarecord (
     uuid          BLOB    PRIMARY KEY NOT NULL,  -- 16-byte UUID
-    version       INTEGER NOT NULL DEFAULT 0,    -- current version (assigned from next_version)
-    next_version  INTEGER NOT NULL DEFAULT 1     -- monotonic version allocator; never restored
+    version       INTEGER NOT NULL DEFAULT 0     -- content hash of the fields (see "Version")
 );
 
--- Version allocation: every field write sets version = next_version and
--- increments next_version. Rollback/redo restore =version= exactly but never
--- touch =next_version=, so a fresh write after a rollback gets a number that
--- was never used before (versions have gaps after a rollback). Invariant:
--- within one metarecord's whole history, across all log branches, a given
--- version number denotes exactly one field state — equal versions imply
--- identical states. Cross-repo sync's change detection relies on this
--- ([[file:spec-sync.org][spec-sync.org]]).
+-- The version is a hash of the metarecord's own content, materialized here so
+-- that a read never recomputes it and maintained incrementally by every write
+-- (see "Version"). It is stored as the i64 bit pattern of the u64 hash.
+-- Equal versions imply identical field states and identical field states imply
+-- equal versions, by construction — there is no allocator to keep monotonic and
+-- nothing for navigation to restore. Cross-repo sync's change detection relies
+-- on this ([[file:spec-sync.org][spec-sync.org]]).
 
 CREATE TABLE field (
     id              INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -706,6 +789,13 @@ differs from the given value. This
 is the optimistic-concurrency primitive used by cross-repo sync propagation
 ([[file:spec-sync.org][spec-sync.org]]) so a concurrent user write is never silently overwritten;
 ordinary clients may use it for the same purpose.
+
+Because the version is a content hash ([[*Version]]), this guard is
+*content-based*: a write conditioned on =H= succeeds even if the metarecord went
+from =H= to some other state and back to =H= in between. That is the intended
+reading — the precondition asks "is the state I read still the state I am
+writing against", and a byte-identical state is that state. Nothing is silently
+overwritten, which is what the guard exists to prevent.
 
 *** =GET /repos/:repo_uuid/metarecords/:uuid/fields/:name/resolve-tree=
 

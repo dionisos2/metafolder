@@ -72,16 +72,18 @@ reconcile, observable queries, the task registry — are part of version 1.
   recorded in the event log and can only be modified when both repositories
   of the pair are simultaneously loaded in the same daemon instance
   (see [[file:spec-sync.org][spec-sync.org]]). [v2]
-- The =version= counter on a metadata metarecord is managed exclusively by the
-  daemon and cannot be set directly by users. Versions are assigned from a
-  per-metarecord monotonic allocator (=next_version=) that rollback never
-  restores: a version number is never reused for a different state, so equal
-  versions imply identical field states — even across rollback/redo cycles.
+- The =version= of a metadata metarecord is managed exclusively by the daemon
+  and cannot be set directly by users. It is a *hash of the metarecord's own
+  content* (see spec-data-model "Version"), carrying no ordering and compared
+  only for equality: equal versions imply identical field states and identical
+  field states imply equal versions, by construction, on every branch of the log
+  and across rollback/redo cycles. Nothing restores a version — restoring the
+  field rows restores it.
 - A repository database must be held under an exclusive SQLite lock for the
   entire lifetime of the daemon connection (=PRAGMA locking_mode = EXCLUSIVE=).
   This prevents a second daemon instance from loading the same repo
   simultaneously, which would cause version drift and watcher conflicts (e.g.
-  one daemon's watcher updating =mfr_path= and bumping =version= while the other
+  one daemon's watcher updating =mfr_path= and moving =version= while the other
   is committing a sync). A load that finds the lock already held is refused
   *immediately* — the lock belongs to a live daemon and waiting for it is
   pointless — with a =409 Conflict= naming the cause: another metafolder daemon

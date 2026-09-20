@@ -407,8 +407,8 @@ CREATE TABLE operation (
     seq                   INTEGER NOT NULL,    -- ordering within the revision (1-based, for display)
     op_type               TEXT    NOT NULL,    -- see Operation types
     entity_uuid           BLOB    NOT NULL,    -- UUID of the affected metadata metarecord
-    entity_version_before INTEGER,             -- metadata.version before this op; restored on inverse
-    entity_version_after  INTEGER,             -- metadata.version after this op; restored on redo
+    entity_version_before INTEGER,             -- metadata.version before this op (provenance, not authority)
+    entity_version_after  INTEGER,             -- metadata.version after this op (provenance, not authority)
     field_name            TEXT,                -- for field operations; NULL otherwise
     reverts_op_id         INTEGER REFERENCES operation(id)  -- see Revert
 );
@@ -506,20 +506,28 @@ primary key: =INSERT INTO field (id, …) VALUES (?, …)=. This ensures that
 operations on other branches that reference the same =field_id= remain valid
 after navigating across that operation's boundary.
 
-The =metadata.version= counter is likewise saved and restored via the
-=entity_version_before= / =entity_version_after= columns on =operation=: the
-inverse sets =metadata.version= back to =entity_version_before=, the forward
-action to =entity_version_after= — both exactly. (The after value must be
-recorded because versions are assigned from the =next_version= allocator,
-not computed as before + 1 — see [[file:spec-data-model.org][spec-data-model.org]].) This ensures that
-=version= remains a reliable cache key across rollback/redo cycles.
+=metadata.version=, by contrast, is *not* restored from the log — it is
+*recomputed*. The version is a hash of the metarecord's content
+([[file:spec-data-model.org][spec-data-model.org]] "Version"), so restoring the
+field rows restores the version with them: navigation recomputes it from the
+rows it has just put back, for each metarecord it touched, and what it obtains
+is necessarily the version that state carried when it was first written. This is
+what keeps =version= a reliable cache key across rollback/redo cycles.
 
-=next_version= itself is deliberately *not* restored by navigation — its
-monotonicity across branches is what guarantees that version numbers are
-never reused for different states. When navigation recreates a metarecord
-whose row (and thus =next_version=) had been deleted, =next_version= is
-recomputed as 1 + the maximum version recorded for that entity across the
-whole =operation= table.
+The contrast with =field.id= is the point. A row id is an identifier the log
+must carry, because nothing else determines it. A version is a *function of the
+state*, so carrying it would only create a second source of truth that could
+disagree with the rows. There is no allocator to keep monotonic across branches,
+nothing to rebuild when navigation recreates a metarecord whose row had been
+deleted, and no way for a version to describe a state other than the one it
+sits on.
+
+=entity_version_before= / =entity_version_after= remain on every operation —
+both hashes are known at write time and cost nothing to record — but they are
+*provenance, not authority*: they say which state an operation moved away from
+and towards, which is what a client correlating an operation with something
+observed from outside the revision needs ([[*Filesystem coordination]]). No
+navigation step reads them to decide what to write.
 
 ** Normal write flow
 
@@ -530,8 +538,9 @@ Every API call that modifies metadata:
 3. For each change (first to last):
    a. Records the before state: reads the affected =field= rows and the current
       =metadata.version=, to be written as =op_snapshot= rows (=is_new=0=).
-   b. Applies the change to the data tables (=metadata.version= is assigned
-      from =next_version=, which is incremented).
+   b. Applies the change to the data tables (=metadata.version= is updated
+      incrementally from the rows added and removed — see
+      [[file:spec-data-model.org][spec-data-model.org]] "Version").
    c. Records the after state: reads the resulting =field= rows, written as
       =op_snapshot= rows (=is_new=1=).
    d. Inserts one =operation= row with:
@@ -539,7 +548,7 @@ Every API call that modifies metadata:
       - =rev_id= = the revision created in step 2
       - =seq= = incrementing from 1
       - =entity_version_before= = the version recorded in step 3a
-      - =entity_version_after= = the version assigned in step 3b
+      - =entity_version_after= = the version the record holds after step 3b
    e. Inserts the =op_snapshot= rows for this operation.
    f. Updates the running HEAD to this new operation's =id=.
 4. Writes the final =log_head.op_id= to the singleton row.
@@ -587,7 +596,7 @@ deleted and =log_head.op_id= is set to =NULL=.
 | =op_type=        | Inverse action                                                                                    |
 |------------------+---------------------------------------------------------------------------------------------------|
 | =create_metarecord=   | Delete the metarecord and all its =field= rows                                                      |
-| =delete_metarecord=   | Recreate =metadata= (with =entity_version_before=) and =field= rows from snapshots                 |
+| =delete_metarecord=   | Recreate =metadata= and =field= rows from snapshots; the version follows the restored rows        |
 | =set_field=      | Delete current rows for =(uuid, field_name)=; insert =is_new=0= snapshot rows with original ids  |
 | =append_field=   | Delete the field row whose =id= matches the =is_new=1= snapshot =field_id=                        |
 | =delete_field=   | Insert the =is_new=0= snapshot row with its original =field_id=                                   |
@@ -624,12 +633,18 @@ Three op types require attention at rollback time:
   [[file:spec-trash.org][spec-trash.org]] "rollback auto-restore".
   For this correlation the daemon exposes, on each *inverse* step's op JSON
   (omitted on forward/redo steps, so auto-restore never fires while re-applying
-  a deletion), both =entity_version_before= — the version *this* step restores
-  to — and =entity_version_before_revision= — the lowest of them across the
-  revision's operations on that record, i.e. the version anything outside the
-  revision (a trash entry) observed. One event may write several fields of one
-  record, so only the latter is a stable correlation key: every operation of the
-  revision carries the same value and therefore reaches the same decision.
+  a deletion), both =entity_version_before= — the version *this* step moved away
+  from — and =entity_version_before_revision= — the =entity_version_before= of
+  the revision's *first* operation on that record, ordered by =seq=, i.e. the
+  version anything outside the revision (a trash entry) observed. One event may
+  write several fields of one record, so only the latter is a stable correlation
+  key: every operation of the revision carries the same value and therefore
+  reaches the same decision.
+
+  It is selected by =seq=, and not as the smallest of the revision's values,
+  because versions are content hashes and carry no order
+  ([[file:spec-data-model.org][spec-data-model.org]] "Version"): "before the
+  revision" is a position in the revision, not a minimum.
 
 When =skip: true= is used, the daemon *still applies the step's metadata change*
 (the inverse on a rollback step, the forward action on a redo step — maintaining
@@ -860,9 +875,14 @@ There is no restoration operation in a revert, and no correcting branch.
 *** Field ids and versions
 
 A revert is a new write and behaves like one: the rows it inserts take fresh
-=field.id= values from the =AUTOINCREMENT= sequence, and the entities it touches
-take fresh versions from =next_version=. It does *not* restore the ids and
-versions the reverted operation held.
+=field.id= values from the =AUTOINCREMENT= sequence. It does *not* restore the
+ids the reverted operation held.
+
+Versions need no such rule, and this is where a content hash shows its hand: the
+entities a revert touches end up with the version their new content dictates. If
+a revert happens to restore a metarecord to a state it already held, it recovers
+that state's version too — which is correct, because it *is* that state. Only
+the =field.id= values differ, and they are not content.
 
 That is deliberate, and the contrast with [[*Field ID and version stability]] is
 the point. Navigation recreates a state the log already described, so it can and

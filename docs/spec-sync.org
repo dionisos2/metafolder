@@ -39,7 +39,7 @@ absent from the event log, and are not subject to rollback.
 - Sync state is bookkeeping, not user data: it lives outside the data model
   and the event log, so the log, rollback, queries and the index are entirely
   unaffected by sync. (A rollback still moves the linked metarecords' own
-  =version= counters, which change detection accounts for — see
+  =version= hashes, which change detection accounts for — see
   [[*Version-based change detection]].)
 
 ** The sync database
@@ -202,12 +202,13 @@ On the next sync, for each linked pair:
 | equal                        | different                    | Only B changed   | Propagate B → A |
 | different                    | different                    | Both changed     | Conflict        |
 
-"Different" rather than "greater": a rollback can restore a *smaller*
-=E_X.version=; any difference from the recorded value means the metarecord
-changed relative to the last sync point. Equality, conversely, proves the
-state is unchanged — a version number is never reused for a different state
-(the per-metarecord =next_version= allocator, which navigation never
-restores; see [[file:spec-data-model.org][spec-data-model.org]]). A rollback can also make a linked
+"Different" rather than "greater": a version is a *hash of the metarecord's
+content* and carries no order at all ([[file:spec-data-model.org][spec-data-model.org]] "Version"). Any
+difference from the recorded value means the metarecord is in a different state
+than at the last sync point; equality proves it is in the same one. Both
+directions hold by construction, which is exactly what this table needs — and
+a rollback, which puts a record back into an earlier state, correctly restores
+that state's version with it. A rollback can also make a linked
 metarecord *disappear* (undo its creation); that is indistinguishable from a
 deliberate deletion, which is why deletion propagation is never silent (see
 [[*Metarecord deletion propagation]]).
@@ -217,10 +218,13 @@ The version test is a cheap pre-filter, not the definition of change:
 - A *conflict* is a field changed on both sides *to different values* (after
   ref translation). Both sides changed to the *same* value → the field is
   simply in sync; nothing to propagate.
-- A changed version whose *effective diff* is empty (only excluded =mfr_*=
-  fields moved — see [[*Field coverage and diff semantics]] — or a stat-only
-  attribute change) means the link is in sync: the run simply records the
-  fresh versions instead of reporting a change or a conflict. This also
+- A changed version whose *effective diff* is empty means the link is in sync:
+  the run simply records the fresh versions instead of reporting a change or a
+  conflict. What still reaches this case is a change to a field the diff
+  excludes — an =mfr_*= field moved by a stat-only attribute change, see
+  [[*Field coverage and diff semantics]]. What no longer reaches it is a field
+  edited and put back by hand: that leaves the content, and therefore the
+  version, exactly as it was. This also
   makes crash recovery benign: a crash between metadata propagation and
   sync-commit re-detects the link as "changed on both sides", but the values
   are equal, so the next run just records the versions.
@@ -426,9 +430,9 @@ metarecords (see [[*The plan repo]]):
    did *not* happen. =run= does *not* re-plan: the reviewed (and possibly
    edited) plan is exactly what executes, minus what has since changed.
 
-The per-operation baseline check is the freshness guard. Because a version
-number is never reused for a different state (the =next_version= allocator,
-see [[*Version-based change detection]]), a record still at its baseline is in
+The per-operation baseline check is the freshness guard. Because a version is a
+hash of the record's content (see [[*Version-based change detection]]), a
+record still at its baseline is in
 the exact state the plan was computed from, so that operation's decisions —
 including a resolved conflict — are still valid, and =run= re-reads current
 field values instead of embedding them in the plan (equal version ⇒
