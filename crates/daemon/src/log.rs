@@ -117,6 +117,14 @@ pub struct OpRow {
     /// database written before the column existed. Allowed to dangle: pruning
     /// may remove the operation it names.
     pub reverts_op_id: Option<i64>,
+    /// The `origin` of the revision this operation belongs to (spec-event-log
+    /// "Revision origin"), carried along so a reader never has to go back to
+    /// the revision for it. `None` for a revision nothing stamped.
+    ///
+    /// It is what separates two operations the op type alone cannot: an
+    /// ordinary `delete_metarecord` touches no file, while the one a *trashing*
+    /// wrote has its bytes waiting in the trash-bin.
+    pub origin: Option<String>,
 }
 
 /// The version `op`'s entity held *before the whole revision* `op` belongs to —
@@ -149,26 +157,25 @@ pub fn entity_version_before_revision(
     Ok(first.flatten().map(|v| v as u64))
 }
 
-/// The `origin` stamped on a revision, if any (spec-event-log "Revision
-/// origin"). A rollback step exposes it so a client can tell an ordinary
-/// deletion from a trashing, whose bytes are in the trash-bin.
-pub fn revision_origin(conn: &rusqlite::Connection, rev_id: i64) -> Result<Option<String>> {
-    use rusqlite::OptionalExtension as _;
-    Ok(conn
-        .query_row("SELECT origin FROM revision WHERE id = ?1", params![rev_id], |r| {
-            r.get::<_, Option<String>>(0)
-        })
-        .optional()?
-        .flatten())
-}
-
 pub fn get_head(conn: &rusqlite::Connection) -> Result<Option<i64>> {
     Ok(conn.query_row("SELECT op_id FROM log_head WHERE singleton = 1", [], |r| r.get(0))?)
 }
 
-const OP_COLUMNS: &str =
-    "id, parent_id, rev_id, seq, op_type, entity_uuid, entity_version_before, \
-     entity_version_after, field_name, reverts_op_id";
+/// The `operation` columns `row_to_op` reads, qualified with `alias` — the
+/// table's name or its alias in the query.
+///
+/// One source of truth on purpose: six queries read this row shape, three of
+/// them through a CTE join that has to qualify every name. A column added to
+/// one list and not the others is not a compile error, it is an "Invalid
+/// column index" the first time that path runs.
+fn op_columns(alias: &str) -> String {
+    format!(
+        "{alias}.id, {alias}.parent_id, {alias}.rev_id, {alias}.seq, {alias}.op_type, \
+         {alias}.entity_uuid, {alias}.entity_version_before, {alias}.entity_version_after, \
+         {alias}.field_name, {alias}.reverts_op_id, \
+         (SELECT origin FROM revision WHERE revision.id = {alias}.rev_id)"
+    )
+}
 
 fn row_to_op(row: &rusqlite::Row<'_>) -> rusqlite::Result<(OpRow, Vec<u8>)> {
     let entity: Vec<u8> = row.get(5)?;
@@ -184,6 +191,7 @@ fn row_to_op(row: &rusqlite::Row<'_>) -> rusqlite::Result<(OpRow, Vec<u8>)> {
             entity_version_after: row.get::<_, Option<i64>>(7)?.map(|v| v as u64),
             field_name: row.get(8)?,
             reverts_op_id: row.get(9)?,
+            origin: row.get(10)?,
         },
         entity,
     ))
@@ -192,7 +200,10 @@ fn row_to_op(row: &rusqlite::Row<'_>) -> rusqlite::Result<(OpRow, Vec<u8>)> {
 pub fn get_op(conn: &rusqlite::Connection, id: i64) -> Result<Option<OpRow>> {
     use rusqlite::OptionalExtension as _;
     let row = conn
-        .prepare_cached(&format!("SELECT {OP_COLUMNS} FROM operation WHERE id = ?1"))?
+        .prepare_cached(&format!(
+            "SELECT {} FROM operation WHERE id = ?1",
+            op_columns("operation")
+        ))?
         .query_row(params![id], row_to_op)
         .optional()?;
     row.map(|(mut op, entity)| {
@@ -204,7 +215,8 @@ pub fn get_op(conn: &rusqlite::Connection, id: i64) -> Result<Option<OpRow>> {
 
 /// All operations, in insertion order.
 pub fn all_ops(conn: &rusqlite::Connection) -> Result<Vec<OpRow>> {
-    let mut stmt = conn.prepare(&format!("SELECT {OP_COLUMNS} FROM operation ORDER BY id"))?;
+    let mut stmt =
+        conn.prepare(&format!("SELECT {} FROM operation ORDER BY id", op_columns("operation")))?;
     let ops = stmt
         .query_map([], row_to_op)?
         .map(|r| {
@@ -229,8 +241,10 @@ pub fn ops_since_count(conn: &rusqlite::Connection, op_id: i64) -> Result<i64> {
 }
 
 pub fn ops_since(conn: &rusqlite::Connection, op_id: i64) -> Result<Vec<OpRow>> {
-    let mut stmt =
-        conn.prepare(&format!("SELECT {OP_COLUMNS} FROM operation WHERE id > ?1 ORDER BY id"))?;
+    let mut stmt = conn.prepare(&format!(
+        "SELECT {} FROM operation WHERE id > ?1 ORDER BY id",
+        op_columns("operation")
+    ))?;
     let ops = stmt
         .query_map([op_id], row_to_op)?
         .map(|r| {
@@ -269,11 +283,10 @@ pub fn ancestry(conn: &rusqlite::Connection, from: i64) -> Result<Vec<i64>> {
 /// Full operation rows of the ancestor chain from `from` (inclusive) up to
 /// the root, in that order.
 pub fn ancestry_ops(conn: &rusqlite::Connection, from: i64) -> Result<Vec<OpRow>> {
+    let cols = op_columns("o");
     let mut stmt = conn.prepare_cached(&format!(
         "{ANCESTRY_CTE}
-         SELECT o.id, o.parent_id, o.rev_id, o.seq, o.op_type, o.entity_uuid,
-                o.entity_version_before, o.entity_version_after, o.field_name,
-                o.reverts_op_id
+         SELECT {cols}
          FROM chain c JOIN operation o ON o.id = c.id
          ORDER BY c.depth"
     ))?;
@@ -321,7 +334,8 @@ pub fn ancestry_ops_until(
     // `c.id <> ?2` stops the expansion once the anchor is reached, so the anchor
     // itself is the last row produced and its parent is never visited. `max + 1`
     // rows leaves room for that trailing anchor row on a maximal delta.
-    let mut stmt = conn.prepare_cached(
+    let cols = op_columns("o");
+    let mut stmt = conn.prepare_cached(&format!(
         "WITH RECURSIVE chain(id, depth) AS (
              SELECT ?1, 0
              UNION ALL
@@ -330,12 +344,10 @@ pub fn ancestry_ops_until(
              WHERE o.parent_id IS NOT NULL AND c.id <> ?2
              LIMIT ?3
          )
-         SELECT o.id, o.parent_id, o.rev_id, o.seq, o.op_type, o.entity_uuid,
-                o.entity_version_before, o.entity_version_after, o.field_name,
-                o.reverts_op_id
+         SELECT {cols}
          FROM chain c JOIN operation o ON o.id = c.id
-         ORDER BY c.depth",
-    )?;
+         ORDER BY c.depth"
+    ))?;
     let mut ops = stmt
         .query_map(params![from, until, max as i64 + 1], row_to_op)?
         .map(|r| {
@@ -367,11 +379,10 @@ pub fn ancestry_ops_limited(
     from: i64,
     max: usize,
 ) -> Result<Vec<OpRow>> {
+    let cols = op_columns("o");
     let mut stmt = conn.prepare_cached(&format!(
         "{ANCESTRY_CTE}
-         SELECT o.id, o.parent_id, o.rev_id, o.seq, o.op_type, o.entity_uuid,
-                o.entity_version_before, o.entity_version_after, o.field_name,
-                o.reverts_op_id
+         SELECT {cols}
          FROM chain c JOIN operation o ON o.id = c.id
          ORDER BY c.depth"
     ))?;

@@ -341,7 +341,7 @@ pub fn rollback_run(
                 // is the one to bring back. Correlated by the metarecord alone —
                 // an undo consumes the entry and a redo makes a new one, so no
                 // id recorded at trash time would still name it.
-                "delete_metarecord" if op["origin"] == "trash" => {
+                "delete_metarecord" if op["revision_origin"] == "trash" => {
                     decide_deleted(&op, &trash, &mut trash_entries, &mut restored, silent, true)?
                 }
                 _ => false,

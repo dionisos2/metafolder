@@ -268,13 +268,24 @@ its own revision, and =origin = 'trash'= is deliberately *not* =watcher=: only
 
 - =mf trash restore <id>= — the client recreates the metarecords from the
   captured fields and moves the bytes back ([[*Restoring]]).
-- *undo / rollback* — the *daemon* recreates the metarecords, by the log's own
-  inverse of the =delete_metarecord= operations; the *client* moves the bytes
-  back from the trash and consumes the entry.
+- *undo / rollback / revert* — the *daemon* recreates the metarecords, by the
+  log's own inverse of the =delete_metarecord= operations; the *client* moves
+  the bytes back from the trash and consumes the entry. A rollback rewinds HEAD
+  and a revert writes the inverse forward, but the division of labour is the
+  same in both.
 
 Each stays in its own domain: the daemon never touches a file, the client never
 recreates a metarecord behind the daemon's back. They converge because both end
 with the same metarecords at the same UUIDs and the bytes at the original path.
+
+Which means the daemon has to *say* a file is involved, and the operation type
+cannot: an ordinary =delete_metarecord= touches no file at all. The revision's
+=origin = 'trash'= is what separates the two. The daemon carries it on every
+operation it hands out — a rollback step exposes it as =revision_origin=, and a
+revert plan turns it into the =restore_content= filesystem action it already
+uses for =file_deleted=. A client that ignores it rewinds the metadata and
+leaves the bytes in the trash; it does not corrupt anything, it just does half
+the job.
 
 The capture in the entry is *not* redundant with the log, and this is why it has
 to exist: **the log is prunable** (=mf log prune=) and the trash promises

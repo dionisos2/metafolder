@@ -188,6 +188,13 @@ pub fn fs_action(op: &OpRow) -> Option<FsAction> {
     match op.op_type.as_str() {
         "file_moved" => Some(FsAction::Move),
         "file_deleted" | "file_modified" => Some(FsAction::RestoreContent),
+        // A trashing deletes the metarecord outright, and its bytes are in the
+        // trash-bin: putting the record back means putting the file back with
+        // it. The op type cannot say so — an ordinary `delete_metarecord`
+        // touches no file — so the revision's origin does.
+        "delete_metarecord" if op.origin.as_deref() == Some("trash") => {
+            Some(FsAction::RestoreContent)
+        }
         _ => None,
     }
 }
@@ -306,5 +313,45 @@ fn remember_fields(remap: &mut HashMap<i64, i64>, old: &[FieldRow], new: &[Field
         if let Some(id) = written.and_then(|f| f.id) {
             remap.insert(row.id, id);
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn op(op_type: &str, origin: Option<&str>) -> OpRow {
+        OpRow {
+            id: 1,
+            parent_id: None,
+            rev_id: 1,
+            seq: 0,
+            op_type: op_type.into(),
+            entity_uuid: uuid::Uuid::nil(),
+            entity_version_before: None,
+            entity_version_after: None,
+            field_name: None,
+            reverts_op_id: None,
+            origin: origin.map(str::to_string),
+        }
+    }
+
+    // A trashing deletes the metarecord outright, so reverting it has to bring
+    // the *bytes* back too — they are sitting in the trash-bin, and only the
+    // client can move them. Nothing in the op type says so: an ordinary
+    // `delete_metarecord` touches no file at all. The revision's origin is what
+    // separates the two (spec-trash "Undo, rollback and redo").
+    #[test]
+    fn a_trashing_s_metarecord_deletion_asks_for_the_content_back() {
+        assert!(matches!(
+            fs_action(&op("delete_metarecord", Some("trash"))),
+            Some(FsAction::RestoreContent)
+        ));
+    }
+
+    #[test]
+    fn an_ordinary_metarecord_deletion_touches_no_file() {
+        assert!(fs_action(&op("delete_metarecord", None)).is_none());
+        assert!(fs_action(&op("delete_metarecord", Some("watcher"))).is_none());
     }
 }

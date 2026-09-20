@@ -2262,6 +2262,30 @@ fn test_trash_and_restore_a_directory_round_trips_the_whole_subtree() {
     assert!(mf(&["-u", &repo, "path", &one]).stdout.contains("D/one.txt"), "back in place");
 }
 
+// Reverting a trashing brings the *bytes* back too, not just the metarecord.
+// A revert writes the inverse forward rather than rewinding HEAD, and nothing
+// in `delete_metarecord` says a file is involved — an ordinary one touches no
+// file at all. The revision's `origin` is what tells the client to go looking
+// in the trash-bin (spec-trash "Undo, rollback and redo").
+#[test]
+fn test_revert_of_a_trashing_brings_the_file_back() {
+    let (repo, root) = init_repo("trashrevert");
+    let file = root.join("r.txt");
+    std::fs::write(&file, b"data").unwrap();
+    let uuid = mf(&["-u", &repo, "track", file.to_str().unwrap()]).stdout.trim().to_string();
+    assert!(is_hex_uuid(&uuid));
+
+    assert_ok(&mf(&["-u", &repo, "trash", "-f", file.to_str().unwrap()]));
+    assert!(!file.exists());
+    assert_eq!(repo_trash(&root).entries().unwrap().len(), 1);
+
+    assert_ok(&mf(&["-u", &repo, "log", "revert", "--force"]));
+    assert_eq!(std::fs::read(&file).unwrap(), b"data", "the bytes come back");
+    assert_ok(&mf(&["-u", &repo, "metarecord", "-i", &uuid, "get"]));
+    assert!(mf(&["-u", &repo, "path", &uuid]).stdout.contains("r.txt"), "and its place");
+    assert!(repo_trash(&root).entries().unwrap().is_empty(), "the entry is consumed");
+}
+
 // Restoring a nested file whose parent directory was *also* trashed re-links
 // the original ancestor directory metarecords too (captured at trash time), so
 // the recreated parent directory is tracked by the original metarecord rather

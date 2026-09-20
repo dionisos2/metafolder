@@ -126,31 +126,82 @@ fn first_mfr_path(
         .map(str::to_string))
 }
 
+/// Trashes `abs`, taking the repository's metarecords for it with it. Returns
+/// the trashed basename.
+///
+/// This is the whole of the GUI's trashing, whichever way the user reached it:
+/// the file-manager deletes a raw path and the metarecord panel deletes a
+/// selected record, but a *tracked* path has to lose its metarecords either way.
+/// Otherwise the file vanishes, the watcher finds a metarecord pointing at
+/// nothing, and it orphans the very record the redesign stopped orphaning.
+///
+/// `root` places `abs` inside the repository, which is what lets a metarecord be
+/// looked up for it; a path outside (or a `uuid` already in hand) skips that
+/// step. `uuid` is the record when the caller already knows it, otherwise the
+/// path is resolved.
+///
+/// The order is the spec's (spec-trash "What trashing does, in order"): capture
+/// while everything is still linked, delete through the daemon, and only then
+/// move the bytes — deleting before moving is what leaves the watcher nothing
+/// to orphan when the file disappears. An untracked path has no metarecord and
+/// only its bytes move.
+pub fn trash_tracked(
+    base: &str,
+    repo: &str,
+    internal: &str,
+    abs: &Path,
+    root: Option<&Path>,
+    uuid: Option<String>,
+) -> Result<String, String> {
+    let client = BlockingClient::new(base.to_string());
+    // The path the repository knows this file by. `strip_prefix` fails for a
+    // path outside the root — nothing there is tracked.
+    let rel = root.and_then(|r| abs.strip_prefix(r).ok()).map(|p| p.to_string_lossy().into_owned());
+    let uuid = match (uuid, &rel) {
+        (Some(u), _) => Some(u),
+        (None, Some(rel)) => {
+            metafolder_core::trash::metarecord_at_path(&client, repo, rel).map_err(|e| e.message)?
+        }
+        (None, None) => None,
+    };
+
+    let mut version = None;
+    let mut subtree = Vec::new();
+    if let (Some(uuid), Some(rel)) = (&uuid, &rel) {
+        // Capture first: once the metarecords are gone there is nothing left to
+        // read. This takes the target and everything under it — which the
+        // trashing deletes — plus its ancestors, which it does not.
+        let record =
+            client.get(&format!("/repos/{repo}/metarecords/{uuid}")).map_err(|e| e.message)?;
+        version = record["version"].as_u64();
+        subtree = metafolder_core::trash::capture_nodes(&client, repo, &record, rel)
+            .map_err(|e| e.message)?;
+        // Then the metadata half, then the bytes. Not forced: something else
+        // still pointing at this record is a refusal the user should see, not
+        // a reference the GUI silently breaks on their behalf.
+        metafolder_core::trash::delete_trashed(&client, repo, &subtree, false)
+            .map_err(|e| e.message)?;
+    }
+
+    let dir = trash_dir(internal);
+    let entry = dir.trash_path(abs, Reason::Manual, None, uuid, version).map_err(|e| e.0)?;
+    if !subtree.is_empty() {
+        dir.attach_subtree(&entry.id, subtree).map_err(|e| e.0)?;
+    }
+    Ok(entry.original_name)
+}
+
 /// Blocking worker behind [`trash_selected_metarecord`]: resolves the selected
-/// metarecord's file, captures its subtree, and moves it into the trash.
-/// Returns the trashed basename.
+/// metarecord's file, then trashes it through [`trash_tracked`].
 fn trash_selected_blocking(base: String, uuid: String, repo: String) -> Result<String, String> {
-    let client = BlockingClient::new(base);
+    let client = BlockingClient::new(base.clone());
     let info = client.get(&format!("/repos/{repo}")).map_err(|e| e.message)?;
     let (root, internal) = root_and_internal(&info)?;
 
     let rel = first_mfr_path(&client, &repo, &uuid)?
         .ok_or("the selected metarecord has no file (already deleted)")?;
     let abs = abs_path(&root, &rel);
-    let name =
-        abs.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_else(|| rel.clone());
-
-    // The top record's version (rollback correlation) and the whole subtree,
-    // captured *before* the move while every metarecord is still linked.
-    let record = client.get(&format!("/repos/{repo}/metarecords/{uuid}")).map_err(|e| e.message)?;
-    let version = record["version"].as_u64();
-    let subtree = metafolder_core::trash::capture_nodes(&client, &repo, &record, &rel)
-        .map_err(|e| e.message)?;
-
-    let dir = trash_dir(&internal);
-    let entry = dir.trash_path(&abs, Reason::Manual, None, Some(uuid), version).map_err(|e| e.0)?;
-    dir.attach_subtree(&entry.id, subtree).map_err(|e| e.0)?;
-    Ok(name)
+    trash_tracked(&base, &repo, &internal, &abs, Some(Path::new(&root)), Some(uuid))
 }
 
 /// Blocking worker behind [`trash_restore`]: validates the restore, re-links the
@@ -232,11 +283,14 @@ pub async fn trash_selected_metarecord(
     result.map(|_| ())
 }
 
-/// Sends a raw filesystem path (tracked or not) to the repo's trash. Used by the
-/// file-manager panel's delete, which operates on the disk directly (spec-gui
-/// "file-manager panel type"): the blob is captured as a manual entry with no
-/// metarecord correlation, so a later restore just puts the bytes back where any
-/// stale metarecord still points. Returns the trashed basename.
+/// Sends a raw filesystem path to the repo's trash. Used by the file-manager
+/// panel's delete, which operates on the disk directly (spec-gui "file-manager
+/// panel type").
+///
+/// Operating on a path does not mean operating behind the repository's back: if
+/// a metarecord tracks that path it is trashed along with the bytes, exactly as
+/// deleting the record itself would (spec-trash). An untracked path has none and
+/// only its bytes move. Returns the trashed basename.
 #[tauri::command]
 pub async fn trash_path(
     app: tauri::State<'_, Arc<App>>,
@@ -244,12 +298,10 @@ pub async fn trash_path(
     path: String,
 ) -> Result<String, String> {
     let info = repo_info(&app.daemon, &repo).await?;
-    let (_root, internal) = root_and_internal(&info)?;
+    let (root, internal) = root_and_internal(&info)?;
+    let base = app.daemon.base_url();
     tokio::task::spawn_blocking(move || {
-        let entry = trash_dir(&internal)
-            .trash_path(Path::new(&path), Reason::Manual, None, None, None)
-            .map_err(|e| e.0)?;
-        Ok(entry.original_name)
+        trash_tracked(&base, &repo, &internal, Path::new(&path), Some(Path::new(&root)), None)
     })
     .await
     .map_err(|e| format!("trash task panicked: {e}"))?

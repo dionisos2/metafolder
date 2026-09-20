@@ -1536,9 +1536,10 @@ fn action_op_json(
     // Who wrote the revision this operation belongs to. A `delete_metarecord`
     // a *trashing* wrote is not an ordinary deletion: its bytes are in the
     // trash-bin, and the client brings them back (spec-trash "Undo, rollback
-    // and redo").
-    if let Some(origin) = crate::log::revision_origin(conn, op.rev_id)? {
-        value["origin"] = json!(origin);
+    // and redo"). Spelled out in full: the revert plan already uses `origin`
+    // for whether an operation was requested or dragged in as a dependent.
+    if let Some(origin) = &op.origin {
+        value["revision_origin"] = json!(origin);
     }
     if matches!(dir, crate::log::NavDir::Inverse) {
         if let Some(v) = op.entity_version_before {
