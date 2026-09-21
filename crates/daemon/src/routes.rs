@@ -2051,14 +2051,12 @@ async fn rollback_step(
             // table per *operation* — a navigation of a thousand of them, which
             // is what one "back" over a tagged folder is, then pays a thousand
             // scans of the whole repository under the connection lock.
-            {
-                let mut cache = repo_state.lock_cache();
-                if cache.cells_are_settleable(&conn, &cells)? {
-                    cache.apply_cells(&conn, &cells)?;
-                } else {
-                    cache.populate(&conn)?;
-                }
-            }
+            //
+            // A step is only part of a revision, and may well restore a child
+            // before its parent; the cache holds such a node until the position
+            // it waits for arrives, so the order the operations come in is not
+            // this caller's problem.
+            repo_state.lock_cache().apply_cells(&conn, &cells)?;
             let next = crate::log::nav_path(&conn, new_head, target)?;
             if let Some((op, dir)) = next.first() {
                 let mut cache = slowlog::timed("wait:cache", || repo_state.lock_cache());

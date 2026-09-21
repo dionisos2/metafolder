@@ -39,6 +39,11 @@ struct Node {
     name: TreeName,
     uuid: Uuid,
     parent: Option<usize>,
+    /// The metarecord this node's position names as its parent, when that
+    /// metarecord holds no position of its own and there is therefore no node
+    /// to hang from. `None` once the node is linked — under a parent or in the
+    /// roots map — so a waiting node is never mistaken for a root.
+    waiting_for: Option<Uuid>,
     children: HashMap<Vec<u8>, usize>,
     last_used: u64,
 }
@@ -50,17 +55,22 @@ struct FieldTree {
     /// Cached nodes by metarecord UUID. A metarecord with several positions
     /// (multi-map TreeRef) can have several nodes.
     by_uuid: HashMap<Uuid, Vec<usize>>,
+    /// Nodes waiting for a parent, by the metarecord uuid they wait for. What
+    /// makes the upkeep independent of the order positions arrive in: a child
+    /// settled before its parent is linked when the parent shows up, so no
+    /// producer has to sort its work — and none of them can
+    /// (see [`TreeCache::adopt`]).
+    waiting: HashMap<Uuid, Vec<usize>>,
 }
 
 /// One `(field name, metarecord)` TreeRef cell being settled by
-/// [`TreeCache::apply_cells`]: the nodes it had, the positions the database now
-/// holds for it, and whether it has been placed yet.
+/// [`TreeCache::apply_cells`]: the nodes it had and the positions the database
+/// now holds for it.
 struct Cell<'a> {
     field: &'a str,
     uuid: Uuid,
     was: Vec<usize>,
     target: db::TreePositions,
-    placed: bool,
 }
 
 /// What resolving one path component yielded.
@@ -159,63 +169,16 @@ impl TreeCache {
         // grouped by uuid, so `by_uuid` preserves position order (id order).
         let mut created: Vec<(usize, Option<Uuid>, String)> = Vec::with_capacity(rows.len());
         for row in &rows {
-            let node = Node {
-                name: row.name.clone(),
-                uuid: row.uuid,
-                parent: None,
-                children: HashMap::new(),
-                last_used: self.clock,
-            };
-            let idx = match self.free.pop() {
-                Some(slot) => {
-                    self.arena[slot] = Some(node);
-                    slot
-                }
-                None => {
-                    self.arena.push(Some(node));
-                    self.arena.len() - 1
-                }
-            };
-            self.live += 1;
-            self.fields
-                .entry(row.field_name.clone())
-                .or_default()
-                .by_uuid
-                .entry(row.uuid)
-                .or_default()
-                .push(idx);
+            let idx = self.insert_bare(&row.field_name, &row.name, row.uuid);
             created.push((idx, row.parent, row.field_name.clone()));
         }
         // Pass 2: link each node under its parent's first position (directories
-        // are single-position in practice), or into the roots map. A child
-        // whose parent has no TreeRef row is left detached (data-integrity edge).
+        // are single-position in practice), or into the roots map. A child whose
+        // parent has no TreeRef row of its own is left *waiting* for it — the
+        // data-integrity edge, and the state a position restored before its
+        // parent's passes through.
         for (idx, parent, field) in created {
-            let norm = self.normalize(&self.node(idx).name.clone());
-            match parent {
-                None => {
-                    let prev = self.fields.entry(field).or_default().roots.insert(norm, idx);
-                    debug_assert!(
-                        prev.is_none() || prev == Some(idx),
-                        "two distinct roots share a normalized name in tree cache populate"
-                    );
-                }
-                Some(p) => {
-                    let Some(&pidx) = self
-                        .fields
-                        .get(&field)
-                        .and_then(|ft| ft.by_uuid.get(&p))
-                        .and_then(|v| v.first())
-                    else {
-                        continue;
-                    };
-                    self.node_mut(idx).parent = Some(pidx);
-                    let prev = self.node_mut(pidx).children.insert(norm, idx);
-                    debug_assert!(
-                        prev.is_none() || prev == Some(idx),
-                        "two distinct children share a normalized name under one parent in populate"
-                    );
-                }
-            }
+            self.link(&field, idx, parent);
         }
         self.complete = true;
     }
@@ -307,7 +270,7 @@ impl TreeCache {
                     else {
                         return Ok(None);
                     };
-                    self.insert_node(field, Some(cur), &name, uuid)
+                    self.insert_node_at(field, Some(cur), &name, uuid)
                 }
             };
             self.touch(cur);
@@ -602,25 +565,21 @@ impl TreeCache {
         out
     }
 
-    /// Notifies the cache that a metarecord was inserted under `parent`.
+    /// Notifies the cache that a metarecord was inserted under `parent`. An
+    /// uncached parent does not lose the position: it waits for it
+    /// ([`Self::link`]).
     pub fn apply_insert(&mut self, field: &str, parent: Option<Uuid>, name: &TreeName, uuid: Uuid) {
         self.clock += 1;
-        match parent {
-            None => {
-                let norm = self.normalize(name);
-                if self.fields.get(field).is_none_or(|ft| !ft.roots.contains_key(&norm)) {
-                    self.insert_node(field, None, name, uuid);
-                }
+        let norm = self.normalize(name);
+        let taken = match parent.and_then(|p| self.first_node_of(field, p)) {
+            Some(parent_idx) => self.node(parent_idx).children.contains_key(&norm),
+            None if parent.is_none() => {
+                self.fields.get(field).is_some_and(|ft| ft.roots.contains_key(&norm))
             }
-            Some(p) => {
-                let Some(parent_idx) = self.first_node_of(field, p) else {
-                    return; // Parent not cached: nothing to maintain.
-                };
-                let norm = self.normalize(name);
-                if !self.node(parent_idx).children.contains_key(&norm) {
-                    self.insert_node(field, Some(parent_idx), name, uuid);
-                }
-            }
+            None => false,
+        };
+        if !taken {
+            self.insert_node(field, parent, name, uuid);
         }
     }
 
@@ -650,36 +609,10 @@ impl TreeCache {
         }
         let idx = nodes[0];
         self.detach(field, idx);
-
-        let new_parent_idx = match new_parent {
-            None => None,
-            Some(p) => match self.first_node_of(field, p) {
-                Some(pi) => Some(pi),
-                None => {
-                    // Destination not cached: drop the subtree entirely. (In
-                    // complete mode every parent is cached, so this only fires
-                    // once already degraded; mark it so reads stay correct.)
-                    self.complete = false;
-                    self.remove_subtree_detached(field, idx);
-                    return;
-                }
-            },
-        };
-
-        let norm = self.normalize(new_name);
-        {
-            let node = self.node_mut(idx);
-            node.name = new_name.clone();
-            node.parent = new_parent_idx;
-        }
-        match new_parent_idx {
-            None => {
-                self.fields.get_mut(field).unwrap().roots.insert(norm, idx);
-            }
-            Some(pi) => {
-                self.node_mut(pi).children.insert(norm, idx);
-            }
-        }
+        self.node_mut(idx).name = new_name.clone();
+        // A destination that holds no position yet used to cost the subtree —
+        // dropped, and the whole cache declared incomplete. It waits instead.
+        self.link(field, idx, new_parent);
     }
 
     /// Notifies the cache that a metarecord left the tree; drops its subtree.
@@ -692,8 +625,9 @@ impl TreeCache {
 
     /// Brings the cache back in step with the database after a *manual* API
     /// write, reconciling only the `(field name, metarecord)` TreeRef **cells**
-    /// that revision changed — in write order, so a parent written before its
-    /// child is placed first.
+    /// that revision changed. The order they arrive in does not matter: a cell
+    /// settled before the one that gives its parent a position waits for it
+    /// ([`Self::link`]) and is linked when it arrives.
     ///
     /// Manual writes bypass the incremental upkeep the watcher does, so the
     /// cache used to be rebuilt by a full [`Self::populate`] after every one of
@@ -714,71 +648,12 @@ impl TreeCache {
     /// by *normalized* bytes while the database's uniqueness is on the exact
     /// ones), and which of the two survives then depends on the order they are
     /// placed in. A load has the same collision, and resolves it by row id.
-    /// Whether settling `cells` in place would land the forest exactly where a
-    /// rebuild would — the promise [`Self::apply_cells`] makes for a whole
-    /// revision, asked here for a batch that is only *part* of one.
-    ///
-    /// A coordinated navigation step commits one operation per transaction, so
-    /// it hands over one cell at a time where a revision hands over all of
-    /// them. That is fine until an operation restores a *child* before the
-    /// operation that restores its parent: the child is placed detached — in
-    /// the arena, under no parent — and nothing re-links it when the parent
-    /// arrives one step later, because that step settles the parent's cell and
-    /// not the child's. The subtree then reads as untracked, and the next
-    /// watcher flush tracks it a second time.
-    ///
-    /// The mirror case is a node the batch *creates* while children of it are
-    /// already resident and detached — the step after the one above. Placing it
-    /// would link the node and leave its children where they were, so a cell
-    /// with no node yet is settleable only when the forest hangs nothing under
-    /// it.
-    ///
-    /// So the question is asked before placing anything, and a batch that
-    /// cannot answer it is rebuilt instead of half-settled. A parent that is
-    /// itself in the batch counts as present: [`Self::apply_cells`] waits for
-    /// it (phase 2).
-    pub fn cells_are_settleable(
-        &self,
-        conn: &Connection,
-        cells: &[(String, Uuid)],
-    ) -> Result<bool> {
-        if !self.complete {
-            return Ok(false);
-        }
-        let uuids: Vec<Uuid> = {
-            let mut seen = HashSet::with_capacity(cells.len());
-            cells.iter().map(|(_, uuid)| *uuid).filter(|uuid| seen.insert(*uuid)).collect()
-        };
-        let positions = db::tree_positions_for(conn, &uuids)?;
-        for ((_, field), target) in &positions {
-            for (parent, _) in target {
-                let Some(parent) = parent else { continue };
-                let in_batch = cells.iter().any(|(f, u)| f == field && u == parent);
-                if !in_batch && self.first_node_of(field, *parent).is_none() {
-                    return Ok(false);
-                }
-            }
-        }
-        for (field, uuid) in cells {
-            if self.first_node_of(field, *uuid).is_none()
-                && db::has_tree_children(conn, field, *uuid)?
-            {
-                return Ok(false);
-            }
-        }
-        Ok(true)
-    }
-
     pub fn apply_cells(&mut self, conn: &Connection, cells: &[(String, Uuid)]) -> Result<bool> {
         if !self.complete {
             return Ok(false);
         }
         self.clock += 1;
         let mut batch = Vec::with_capacity(cells.len());
-        let mut in_batch: HashSet<(&str, Uuid)> = HashSet::with_capacity(cells.len());
-        for (field, uuid) in cells {
-            in_batch.insert((field.as_str(), *uuid));
-        }
         // One batched read for the whole revision. Asked per cell, this was the
         // whole cost of settling a large one — 13x a rebuild on a batch the size
         // of the forest, which is what dropping the cell list past a threshold
@@ -805,53 +680,19 @@ impl TreeCache {
                 self.node_mut(idx).parent = None;
             }
             let target = positions.remove(&(*uuid, field.clone())).unwrap_or_default();
-            batch.push(Cell { field, uuid: *uuid, was: nodes, target, placed: false });
+            batch.push(Cell { field, uuid: *uuid, was: nodes, target });
         }
 
-        // Phase 2 — place each cell, waiting for any parent that is itself part
-        // of the batch: until it has been placed, the arena index its children
-        // must hang from is not settled. The parent relation is acyclic (writes
-        // that would close a cycle are refused), so each pass places at least
-        // one cell and the loop closes; a leftover could only come from a
-        // corrupted forest, and is placed rather than left dangling.
-        let mut remaining = batch.len();
-        while remaining > 0 {
-            let mut progress = false;
-            for i in 0..batch.len() {
-                if batch[i].placed || !self.parents_ready(&batch, i, &in_batch) {
-                    continue;
-                }
-                self.place(&mut batch, i);
-                remaining -= 1;
-                progress = true;
-            }
-            if !progress {
-                for i in 0..batch.len() {
-                    if !batch[i].placed {
-                        self.place(&mut batch, i);
-                    }
-                }
-                break;
-            }
+        // Phase 2 — place each cell, in any order. A cell placed before the one
+        // that gives its parent a position waits for it and is linked when it
+        // arrives ([`Self::link`], [`Self::adopt`]), so this pass no longer has
+        // to sort the batch by the parent relation — and a producer that hands
+        // over *part* of a revision, one operation at a time, is settled just
+        // as correctly as one that hands over all of it.
+        for i in 0..batch.len() {
+            self.place(&mut batch, i);
         }
         Ok(true)
-    }
-
-    /// Whether every parent `batch[i]` needs is settled: outside the batch (so
-    /// its nodes are where they already were) or placed by this pass.
-    fn parents_ready(
-        &self,
-        batch: &[Cell<'_>],
-        i: usize,
-        in_batch: &HashSet<(&str, Uuid)>,
-    ) -> bool {
-        batch[i].target.iter().all(|(parent, _)| match parent {
-            None => true,
-            Some(p) => {
-                !in_batch.contains(&(batch[i].field, *p))
-                    || batch.iter().any(|c| c.uuid == *p && c.field == batch[i].field && c.placed)
-            }
-        })
     }
 
     /// Gives `batch[i]` the positions the database now holds for it.
@@ -867,74 +708,28 @@ impl TreeCache {
         let target = std::mem::take(&mut batch[i].target);
         let mut kept = Vec::with_capacity(target.len());
         for (pos, (parent, name)) in target.iter().enumerate() {
-            // A parent with no cached node of its own leaves the child detached,
-            // exactly as a load does: in the arena and findable by uuid, under
-            // no parent and in no roots map.
-            let parent_idx = parent.and_then(|p| self.first_node_of(&field, p));
             let idx = match was.get(pos) {
                 Some(&idx) => {
-                    let node = self.node_mut(idx);
-                    node.name = name.clone();
-                    node.parent = parent_idx;
+                    self.node_mut(idx).name = name.clone();
                     idx
                 }
-                None => self.insert_detached(&field, parent_idx, name, uuid),
+                None => self.insert_bare(&field, name, uuid),
             };
-            if parent.is_some() && parent_idx.is_none() {
-                kept.push(idx);
-                continue; // Detached: linked to nothing, but still resident.
-            }
-            let norm = self.normalize(name);
-            match parent_idx {
-                None => {
-                    self.fields.entry(field.clone()).or_default().roots.insert(norm, idx);
-                }
-                Some(pi) => {
-                    self.node_mut(pi).children.insert(norm, idx);
-                }
-            }
+            self.link(&field, idx, *parent);
             kept.push(idx);
         }
         for &idx in was.iter().skip(target.len()) {
             self.remove_subtree_detached(&field, idx);
         }
-        let entry = self.fields.entry(field).or_default();
+        let entry = self.fields.entry(field.clone()).or_default();
         if kept.is_empty() {
             entry.by_uuid.remove(&uuid);
         } else {
+            // Before adopting: whoever waits for this metarecord hangs from its
+            // *first* position, and that list is what names it.
             entry.by_uuid.insert(uuid, kept);
+            self.adopt(&field, uuid);
         }
-        batch[i].placed = true;
-    }
-
-    /// Creates a node registered by uuid but linked nowhere; the caller links it.
-    fn insert_detached(
-        &mut self,
-        field: &str,
-        parent: Option<usize>,
-        name: &TreeName,
-        uuid: Uuid,
-    ) -> usize {
-        let node = Node {
-            name: name.clone(),
-            uuid,
-            parent,
-            children: HashMap::new(),
-            last_used: self.clock,
-        };
-        let idx = match self.free.pop() {
-            Some(slot) => {
-                self.arena[slot] = Some(node);
-                slot
-            }
-            None => {
-                self.arena.push(Some(node));
-                self.arena.len() - 1
-            }
-        };
-        self.live += 1;
-        self.fields.entry(field.to_string()).or_default();
-        idx
     }
 
     /// Drops every cached node.
@@ -1074,7 +869,7 @@ impl TreeCache {
                     let Some(uuid) = found else {
                         return Ok(None);
                     };
-                    self.insert_node(field, Some(cur), name, uuid)
+                    self.insert_node_at(field, Some(cur), name, uuid)
                 }
             };
             self.touch(cur);
@@ -1208,16 +1003,23 @@ impl TreeCache {
     /// `MAX_TREE_DEPTH` like its DB counterpart: the forest invariant forbids
     /// cycles, but a corrupted in-memory forest must degrade (return the partial
     /// path) rather than spin forever.
-    fn path_of_at(&self, mut idx: usize) -> String {
+    /// The full path of a node, or `None` when the walk up reaches a node that
+    /// is still *waiting* for its parent: that subtree hangs from a metarecord
+    /// with no position of its own, so it is in no path at all — the same
+    /// answer the database fallback gives for a stale parent.
+    fn path_of_at(&self, mut idx: usize) -> Option<String> {
         let mut components = Vec::new();
         for _ in 0..MAX_TREE_DEPTH {
             let node = self.node(idx);
+            if node.waiting_for.is_some() {
+                return None;
+            }
             components.push(node.name.display().into_owned());
             match node.parent {
                 Some(p) => idx = p,
                 None => {
                     components.reverse();
-                    return components.join("/");
+                    return Some(components.join("/"));
                 }
             }
         }
@@ -1226,12 +1028,12 @@ impl TreeCache {
             format!("BUG: parent chain exceeds {MAX_TREE_DEPTH}; returning partial path"),
         );
         components.reverse();
-        components.join("/")
+        Some(components.join("/"))
     }
 
     fn path_of_in_cache(&self, field: &str, uuid: Uuid) -> Option<String> {
         let idx = self.first_node_of(field, uuid)?;
-        Some(self.path_of_at(idx))
+        self.path_of_at(idx)
     }
 
     /// In-memory equivalent of the DB [`Self::paths_of`], one root-relative
@@ -1246,13 +1048,16 @@ impl TreeCache {
         let mut paths = Vec::new();
         for &idx in idxs {
             let node = self.node(idx);
+            if node.waiting_for.is_some() {
+                continue;
+            }
             match node.parent {
                 None => paths.push(node.name.display().into_owned()),
                 Some(p) => {
                     // Mirror `path_of_at`: the empty repo-root contributes a
                     // leading "/", so a filesystem path round-trips with the DSL
                     // / `resolve_path` (a named-root forest has no leading "/").
-                    let parent_path = self.path_of_at(p);
+                    let Some(parent_path) = self.path_of_at(p) else { continue };
                     paths.push(format!("{parent_path}/{}", node.name.display()));
                 }
             }
@@ -1265,17 +1070,16 @@ impl TreeCache {
         self.node_mut(idx).last_used = clock;
     }
 
-    fn insert_node(
-        &mut self,
-        field: &str,
-        parent: Option<usize>,
-        name: &TreeName,
-        uuid: Uuid,
-    ) -> usize {
+    /// Creates a node for one position, registered by uuid and linked nowhere.
+    /// Every way of putting a position into the forest goes through this and
+    /// then [`Self::link`] — the load included — so there is one description of
+    /// what a position becomes.
+    fn insert_bare(&mut self, field: &str, name: &TreeName, uuid: Uuid) -> usize {
         let node = Node {
             name: name.clone(),
             uuid,
-            parent,
+            parent: None,
+            waiting_for: None,
             children: HashMap::new(),
             last_used: self.clock,
         };
@@ -1290,16 +1094,6 @@ impl TreeCache {
             }
         };
         self.live += 1;
-
-        let norm = self.normalize(name);
-        match parent {
-            None => {
-                self.fields.entry(field.to_string()).or_default().roots.insert(norm, idx);
-            }
-            Some(pi) => {
-                self.node_mut(pi).children.insert(norm, idx);
-            }
-        }
         self.fields
             .entry(field.to_string())
             .or_default()
@@ -1310,23 +1104,153 @@ impl TreeCache {
         idx
     }
 
-    /// Unlinks a node from its parent (or the roots map), without freeing it.
-    fn detach(&mut self, field: &str, idx: usize) {
-        let (parent, norm) = {
-            let node = self.node(idx);
-            (node.parent, self.normalize(&node.name))
-        };
+    /// Links `idx` where its position says: under `parent`'s first node, or in
+    /// the roots map when it has no parent. When the parent metarecord holds no
+    /// position yet there is nothing to link to, and the node *waits* for it —
+    /// resident, findable by uuid, in no path, which is exactly where a fresh
+    /// load leaves it.
+    ///
+    /// The node must be unlinked (fresh, or [`Self::detach`]ed) when this is
+    /// called.
+    fn link(&mut self, field: &str, idx: usize, parent: Option<Uuid>) {
         match parent {
+            None => self.link_at(field, idx, None),
+            Some(p) => match self.first_node_of(field, p) {
+                Some(pi) => self.link_at(field, idx, Some(pi)),
+                None => {
+                    let node = self.node_mut(idx);
+                    node.parent = None;
+                    node.waiting_for = Some(p);
+                    self.fields
+                        .entry(field.to_string())
+                        .or_default()
+                        .waiting
+                        .entry(p)
+                        .or_default()
+                        .push(idx);
+                }
+            },
+        }
+    }
+
+    /// [`Self::link`] to a node already in hand — the lazy DB fallback walks
+    /// down from a *node*, and a multi-position parent would not resolve back
+    /// to the one it descended through.
+    fn link_at(&mut self, field: &str, idx: usize, parent_idx: Option<usize>) {
+        let norm = self.normalize(&self.node(idx).name.clone());
+        {
+            let node = self.node_mut(idx);
+            node.parent = parent_idx;
+            node.waiting_for = None;
+        }
+        match parent_idx {
+            Some(pi) => {
+                let prev = self.node_mut(pi).children.insert(norm, idx);
+                debug_assert!(
+                    prev.is_none_or(|p| p == idx),
+                    "two distinct children share a normalized name under one parent"
+                );
+            }
             None => {
+                let prev =
+                    self.fields.entry(field.to_string()).or_default().roots.insert(norm, idx);
+                debug_assert!(
+                    prev.is_none_or(|p| p == idx),
+                    "two distinct roots share a normalized name"
+                );
+            }
+        }
+    }
+
+    /// Links everything that was waiting for `uuid`, now that it has a node.
+    ///
+    /// No recursion: a node that waits is still the root of its own resident
+    /// subtree — its children found *it* and hung from it — so linking it
+    /// brings the whole subtree along.
+    fn adopt(&mut self, field: &str, uuid: Uuid) {
+        let Some(waiting) = self.fields.get_mut(field).and_then(|ft| ft.waiting.remove(&uuid))
+        else {
+            return;
+        };
+        for idx in waiting {
+            // The node may have been freed, or re-placed elsewhere, since it
+            // was listed: only one that is still waiting for *this* uuid moves.
+            if self.arena.get(idx).is_none_or(Option::is_none) {
+                continue;
+            }
+            if self.node(idx).waiting_for != Some(uuid) {
+                continue;
+            }
+            self.link(field, idx, Some(uuid));
+        }
+    }
+
+    /// Creates a position and links it in one go.
+    fn insert_node(
+        &mut self,
+        field: &str,
+        parent: Option<Uuid>,
+        name: &TreeName,
+        uuid: Uuid,
+    ) -> usize {
+        let idx = self.insert_bare(field, name, uuid);
+        self.link(field, idx, parent);
+        self.adopt(field, uuid);
+        idx
+    }
+
+    /// [`Self::insert_node`] under a node already in hand.
+    fn insert_node_at(
+        &mut self,
+        field: &str,
+        parent_idx: Option<usize>,
+        name: &TreeName,
+        uuid: Uuid,
+    ) -> usize {
+        let idx = self.insert_bare(field, name, uuid);
+        self.link_at(field, idx, parent_idx);
+        self.adopt(field, uuid);
+        idx
+    }
+
+    /// Unlinks a node from wherever it hangs — its parent, the roots map, or
+    /// the waiting index — without freeing it or its subtree.
+    fn detach(&mut self, field: &str, idx: usize) {
+        let (parent, waiting_for, norm) = {
+            let node = self.node(idx);
+            (node.parent, node.waiting_for, self.normalize(&node.name))
+        };
+        match (parent, waiting_for) {
+            (Some(pi), _) => {
+                self.node_mut(pi).children.remove(&norm);
+            }
+            // Waiting for a parent that has no node: it was never in the roots
+            // map, and removing the *root of that name* would evict a stranger.
+            (None, Some(p)) => {
+                self.stop_waiting(field, idx, p);
+            }
+            (None, None) => {
                 if let Some(ft) = self.fields.get_mut(field) {
                     ft.roots.remove(&norm);
                 }
             }
-            Some(pi) => {
-                self.node_mut(pi).children.remove(&norm);
-                let parent_node = self.node(pi);
-                if parent_node.children.is_empty() {}
+        }
+    }
+
+    /// Takes `idx` out of the waiting index. An arena slot is reused after a
+    /// free, so a stale entry here would hand a later node's index to the
+    /// wrong parent.
+    fn stop_waiting(&mut self, field: &str, idx: usize, parent: Uuid) {
+        if let Some(ft) = self.fields.get_mut(field) {
+            if let Some(list) = ft.waiting.get_mut(&parent) {
+                list.retain(|&n| n != idx);
+                if list.is_empty() {
+                    ft.waiting.remove(&parent);
+                }
             }
+        }
+        if let Some(Some(node)) = self.arena.get_mut(idx) {
+            node.waiting_for = None;
         }
     }
 
@@ -1339,6 +1263,9 @@ impl TreeCache {
     fn remove_subtree_detached(&mut self, field: &str, idx: usize) {
         let mut stack = vec![idx];
         while let Some(i) = stack.pop() {
+            if let Some(p) = self.arena[i].as_ref().and_then(|n| n.waiting_for) {
+                self.stop_waiting(field, i, p);
+            }
             let Some(node) = self.arena[i].take() else {
                 continue;
             };

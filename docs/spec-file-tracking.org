@@ -557,8 +557,7 @@ only for a cache built directly, as unit tests do.
 The watcher and reconcile keep the cache in step as they go. A *manual API
 write* does not pass through them, so after committing a revision the daemon
 settles the cache against what that revision changed: the =(field name,
-metarecord)= TreeRef **cells** it touched, listed in write order and never
-truncated.
+metarecord)= TreeRef **cells** it touched, never truncated.
 
 Settling is in two phases, which together are what make it able to reproduce any
 write rather than most of them:
@@ -567,10 +566,8 @@ write rather than most of them:
    off them. Emptying all of the name slots before filling any is what makes the
    order the names are taken and released in irrelevant — two siblings that swap
    names have no valid one-at-a-time order.
-2. *Place* each cell at the positions the database now holds for it, waiting for
-   any parent that is itself part of the batch (until it is placed, the node its
-   children must hang from is not settled). The parent relation is acyclic, so
-   the pass closes.
+2. *Place* each cell at the positions the database now holds for it, in any
+   order — a cell whose parent is not settled yet *waits* for it (below).
 
 A metarecord's nodes are reused *in order*, so the first one — the one a full
 load hangs its children under — keeps its subtree through a rename, a move, or a
@@ -596,22 +593,19 @@ taking back a tag applied to a folder of two thousand files then meant two
 thousand scans of the whole =field= table under the connection lock (six
 minutes, against one second for the write it was undoing).
 
-A step is nevertheless only *part* of a revision, and two shapes cannot be
-settled from a part — both of them a parent and a child split across two steps,
-which is what undoing a whole deleted subtree looks like:
+A step is nevertheless only *part* of a revision, and a part cannot be ordered:
+undoing a whole deleted subtree restores a child before the operation that
+restores its parent. So the forest does not require an order. A position whose
+parent metarecord holds no position of its own is *waiting*: the node is
+resident and findable by uuid, it is in no path — which is exactly where a fresh
+load leaves it, and what the database fallback answers for a stale parent — and
+the field's waiting index links it the moment that parent gets a position.
 
-1. the step places a child whose *parent has no node yet*: the child is placed
-   detached, and the step that restores the parent settles the parent's cell,
-   not the child's, so nothing ever re-links it;
-2. the step places a node that resident *children are already waiting for* — the
-   mirror image, one step later.
-
-A half-settled forest there reads as *untracked*, and the next watcher flush
-tracks the subtree a second time. So the step asks first (=cells_are_settleable=
-— the parents of the positions it is about to place must be resident, and a cell
-with no node yet must have nothing hanging under it in the database) and rebuilds
-when the answer is no. Both questions are index seeks, and a step that moves no
-TreeRef at all asks neither.
+That is what makes every producer interchangeable. A load, a watcher event, a
+manual write's cells and a navigation step all put a position into the forest
+the same way: create the node, link it where its position says, adopt whatever
+was waiting for it. None of them has to sort its work by the parent relation,
+and the settling of a whole revision no longer does either.
 
 Rebuilding on *every* TreeRef write is what this replaced. It cost one full scan
 of the =field= table per write — seconds on a large repository — with the

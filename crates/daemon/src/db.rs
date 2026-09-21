@@ -950,20 +950,6 @@ pub fn tree_positions_for(
     Ok(out)
 }
 
-/// Whether any `tree_ref` row of `field` names `uuid` as its parent — i.e.
-/// whether the forest hangs anything under that metarecord. One index seek
-/// (`idx_field_reverse`), no scan.
-pub fn has_tree_children(conn: &Connection, field: &str, uuid: Uuid) -> Result<bool> {
-    let found: Option<i64> = conn
-        .prepare_cached(
-            "SELECT 1 FROM field \
-             WHERE field_name = ?1 AND value_uuid = ?2 AND value_type = 'tree_ref' LIMIT 1",
-        )?
-        .query_row(rusqlite::params![field, uuid_to_bytes(uuid)], |r| r.get(0))
-        .optional()?;
-    Ok(found.is_some())
-}
-
 /// Versions of several metarecords in chunked `IN (…)` queries — the batched
 /// form of [`get_version`]. An unknown uuid is absent from the map.
 pub fn versions_for(

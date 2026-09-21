@@ -1029,28 +1029,88 @@ fn test_populating_keeps_a_name_s_exact_bytes() {
     );
 }
 
-// ── One cell at a time (spec-file-tracking "Upkeep after a write") ───────────
-// A coordinated navigation step commits one operation per transaction, so the
-// cache is handed *part* of a revision where a write hands it all of it.
-// `cells_are_settleable` is what says whether that part can be settled in
-// place. The two shapes that cannot — a child placed before its parent, and a
-// node placed while resident children wait for it — are only reachable through
-// a navigation, which writes rows the Writer would refuse, so they are pinned
-// there (`rollback_http.rs`, `cli_e2e.rs`); here is the ordinary case it must
-// not make more expensive.
+// ── Waiting for a parent (spec-file-tracking "Upkeep after a write") ────────
+// A node whose parent holds no position of its own cannot be linked to
+// anything. It stays resident and findable by uuid — exactly where a fresh load
+// leaves it — and the forest must bring it back the moment that parent gets a
+// position, whichever mechanism does it. Without that, the order positions
+// arrive in decides whether a subtree is reachable, and an operation-by-
+// operation upkeep (a navigation step, an event) has no such order to offer.
+
+/// A forest holding one node under a parent that has no position.
+fn orphan_forest(child: Uuid, ghost: Uuid) -> Vec<db::TreeRow> {
+    vec![db::TreeRow {
+        field_name: "mfr_path".into(),
+        uuid: child,
+        parent: Some(ghost),
+        name: TreeName::from("file.mp3"),
+    }]
+}
 
 #[test]
-fn test_an_ordinary_move_of_a_resident_node_is_settleable() {
+fn test_a_node_waiting_for_a_parent_is_adopted_when_it_arrives() {
+    let conn = test_conn();
+    let (file, ghost) = (Uuid::new_v4(), Uuid::new_v4());
+    let mut cache = TreeCache::new(false);
+    cache.populate_from_forest(orphan_forest(file, ghost));
+    assert_eq!(cache.len(), 1, "the node is resident, as a load leaves it");
+    assert_eq!(cache.paths_of(&conn, "mfr_path", file).unwrap(), Vec::<String>::new());
+
+    cache.apply_insert("mfr_path", None, &TreeName::from("music"), ghost);
+
+    assert_eq!(cache.resolve_path(&conn, "mfr_path", "music/file.mp3").unwrap(), Some(file));
+    assert_eq!(cache.children_of(&conn, "mfr_path", ghost).unwrap().len(), 1);
+}
+
+#[test]
+fn test_an_insert_under_an_unknown_parent_keeps_the_node() {
+    let conn = test_conn();
+    let (file, ghost) = (Uuid::new_v4(), Uuid::new_v4());
+    let mut cache = TreeCache::new(false);
+    cache.populate_from_forest(Vec::new());
+
+    // The child first, its parent second: the reverse of the order a load sees,
+    // and the order a rollback undoing a deleted subtree produces.
+    cache.apply_insert("mfr_path", Some(ghost), &TreeName::from("file.mp3"), file);
+    cache.apply_insert("mfr_path", None, &TreeName::from("music"), ghost);
+
+    assert_eq!(cache.resolve_path(&conn, "mfr_path", "music/file.mp3").unwrap(), Some(file));
+}
+
+#[test]
+fn test_a_waiting_node_that_moves_stops_waiting() {
+    let conn = test_conn();
+    let (file, ghost) = (Uuid::new_v4(), Uuid::new_v4());
+    let mut cache = TreeCache::new(false);
+    cache.populate_from_forest(orphan_forest(file, ghost));
+
+    // It is given a real home before its ghost parent ever shows up; the
+    // parent's later arrival must not claim it back.
+    cache.apply_insert("mfr_path", None, &TreeName::from("music"), ghost);
+    cache.apply_rename("mfr_path", file, None, &TreeName::from("file.mp3"));
+    cache.apply_insert("mfr_path", None, &TreeName::from("other"), Uuid::new_v4());
+
+    assert_eq!(cache.resolve_path(&conn, "mfr_path", "file.mp3").unwrap(), Some(file));
+    assert!(cache.children_of(&conn, "mfr_path", ghost).unwrap().is_empty());
+}
+
+// ── One cell at a time (spec-file-tracking "Upkeep after a write") ───────────
+// A coordinated navigation step commits one operation per transaction, so the
+// cache is handed *part* of a revision where a write hands it all of it. It
+// must land where a rebuild would anyway — the waiting index is what makes the
+// order irrelevant (see above).
+
+#[test]
+fn test_a_cell_settled_before_its_parents_still_lands() {
     let mut conn = test_conn();
     let (mut cache, root, _music, jazz, _file) = warm_tree(&mut conn);
 
     // The node is already in the forest, keeps its children through the move,
-    // and its new parent is resident: nothing to rebuild.
+    // and its new parent is resident: the ordinary case, settled in place.
     let mut w = Writer::begin(&mut conn, None).unwrap();
     w.set_field(jazz, "mfr_path", Value::TreeRef { parent: Some(root), name: "jazz".into() })
         .unwrap();
     w.commit().unwrap();
-    assert!(cache.cells_are_settleable(&conn, &[("mfr_path".into(), jazz)]).unwrap());
     assert!(cache.apply_cells(&conn, &[("mfr_path".into(), jazz)]).unwrap());
     assert_matches_fresh(&conn, &mut cache);
 }
