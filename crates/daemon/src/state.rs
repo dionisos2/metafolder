@@ -323,8 +323,11 @@ impl RepoState {
     /// throughout, so nothing else could be read while a single field was
     /// being set. Nothing rebuilds it here any more, whatever the write: the
     /// only rebuilds left are the initial load, an explicit one, and the paths
-    /// that rewrite history wholesale (rollback, the restore replay, the
-    /// resync after an abandoned flush).
+    /// that rewrite history wholesale *in one transaction* (the atomic
+    /// rollback, the restore replay, the resync after an abandoned flush). A
+    /// coordinated navigation *step* is not one of them — it applies a single
+    /// operation, which names its own cells, and a rebuild per operation is
+    /// what made going back over a large write cost minutes.
     pub fn settle(
         &self,
         conn: &Connection,

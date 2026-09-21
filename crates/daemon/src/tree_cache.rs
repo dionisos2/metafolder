@@ -714,6 +714,61 @@ impl TreeCache {
     /// by *normalized* bytes while the database's uniqueness is on the exact
     /// ones), and which of the two survives then depends on the order they are
     /// placed in. A load has the same collision, and resolves it by row id.
+    /// Whether settling `cells` in place would land the forest exactly where a
+    /// rebuild would — the promise [`Self::apply_cells`] makes for a whole
+    /// revision, asked here for a batch that is only *part* of one.
+    ///
+    /// A coordinated navigation step commits one operation per transaction, so
+    /// it hands over one cell at a time where a revision hands over all of
+    /// them. That is fine until an operation restores a *child* before the
+    /// operation that restores its parent: the child is placed detached — in
+    /// the arena, under no parent — and nothing re-links it when the parent
+    /// arrives one step later, because that step settles the parent's cell and
+    /// not the child's. The subtree then reads as untracked, and the next
+    /// watcher flush tracks it a second time.
+    ///
+    /// The mirror case is a node the batch *creates* while children of it are
+    /// already resident and detached — the step after the one above. Placing it
+    /// would link the node and leave its children where they were, so a cell
+    /// with no node yet is settleable only when the forest hangs nothing under
+    /// it.
+    ///
+    /// So the question is asked before placing anything, and a batch that
+    /// cannot answer it is rebuilt instead of half-settled. A parent that is
+    /// itself in the batch counts as present: [`Self::apply_cells`] waits for
+    /// it (phase 2).
+    pub fn cells_are_settleable(
+        &self,
+        conn: &Connection,
+        cells: &[(String, Uuid)],
+    ) -> Result<bool> {
+        if !self.complete {
+            return Ok(false);
+        }
+        let uuids: Vec<Uuid> = {
+            let mut seen = HashSet::with_capacity(cells.len());
+            cells.iter().map(|(_, uuid)| *uuid).filter(|uuid| seen.insert(*uuid)).collect()
+        };
+        let positions = db::tree_positions_for(conn, &uuids)?;
+        for ((_, field), target) in &positions {
+            for (parent, _) in target {
+                let Some(parent) = parent else { continue };
+                let in_batch = cells.iter().any(|(f, u)| f == field && u == parent);
+                if !in_batch && self.first_node_of(field, *parent).is_none() {
+                    return Ok(false);
+                }
+            }
+        }
+        for (field, uuid) in cells {
+            if self.first_node_of(field, *uuid).is_none()
+                && db::has_tree_children(conn, field, *uuid)?
+            {
+                return Ok(false);
+            }
+        }
+        Ok(true)
+    }
+
     pub fn apply_cells(&mut self, conn: &Connection, cells: &[(String, Uuid)]) -> Result<bool> {
         if !self.complete {
             return Ok(false);

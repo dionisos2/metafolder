@@ -1028,3 +1028,29 @@ fn test_populating_keeps_a_name_s_exact_bytes() {
         Some(literal)
     );
 }
+
+// ── One cell at a time (spec-file-tracking "Upkeep after a write") ───────────
+// A coordinated navigation step commits one operation per transaction, so the
+// cache is handed *part* of a revision where a write hands it all of it.
+// `cells_are_settleable` is what says whether that part can be settled in
+// place. The two shapes that cannot — a child placed before its parent, and a
+// node placed while resident children wait for it — are only reachable through
+// a navigation, which writes rows the Writer would refuse, so they are pinned
+// there (`rollback_http.rs`, `cli_e2e.rs`); here is the ordinary case it must
+// not make more expensive.
+
+#[test]
+fn test_an_ordinary_move_of_a_resident_node_is_settleable() {
+    let mut conn = test_conn();
+    let (mut cache, root, _music, jazz, _file) = warm_tree(&mut conn);
+
+    // The node is already in the forest, keeps its children through the move,
+    // and its new parent is resident: nothing to rebuild.
+    let mut w = Writer::begin(&mut conn, None).unwrap();
+    w.set_field(jazz, "mfr_path", Value::TreeRef { parent: Some(root), name: "jazz".into() })
+        .unwrap();
+    w.commit().unwrap();
+    assert!(cache.cells_are_settleable(&conn, &[("mfr_path".into(), jazz)]).unwrap());
+    assert!(cache.apply_cells(&conn, &[("mfr_path".into(), jazz)]).unwrap());
+    assert_matches_fresh(&conn, &mut cache);
+}

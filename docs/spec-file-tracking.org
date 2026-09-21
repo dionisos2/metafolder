@@ -583,9 +583,35 @@ merely handled).
 
 *The cache is never rebuilt by a write.* It is built once at load, and rebuilt
 only where history is rewritten wholesale and there is nothing incremental to
-say: a rollback or a coordinated navigation step, the replay of a skipped
-restoration, and the resync after a flush that was abandoned mid-way (the writes
-roll back, the in-memory cache does not).
+say: an atomic rollback (=POST /rollback=, which applies the whole path in one
+transaction), the replay of a skipped restoration, and the resync after a flush
+that was abandoned mid-way (the writes roll back, the in-memory cache does not).
+
+A *coordinated navigation step* is not one of them, though it rewrites history
+too: it applies exactly one operation, and that operation names the cells it
+moves — the field names its snapshots hold a =tree_ref= row for, on its own
+metarecord — so it settles like any other write. It has to: the client is handed
+one operation at a time, so a rebuild there is paid once per operation, and
+taking back a tag applied to a folder of two thousand files then meant two
+thousand scans of the whole =field= table under the connection lock (six
+minutes, against one second for the write it was undoing).
+
+A step is nevertheless only *part* of a revision, and two shapes cannot be
+settled from a part — both of them a parent and a child split across two steps,
+which is what undoing a whole deleted subtree looks like:
+
+1. the step places a child whose *parent has no node yet*: the child is placed
+   detached, and the step that restores the parent settles the parent's cell,
+   not the child's, so nothing ever re-links it;
+2. the step places a node that resident *children are already waiting for* — the
+   mirror image, one step later.
+
+A half-settled forest there reads as *untracked*, and the next watcher flush
+tracks the subtree a second time. So the step asks first (=cells_are_settleable=
+— the parents of the positions it is about to place must be resident, and a cell
+with no node yet must have nothing hanging under it in the database) and rebuilds
+when the answer is no. Both questions are index seeks, and a step that moves no
+TreeRef at all asks neither.
 
 Rebuilding on *every* TreeRef write is what this replaced. It cost one full scan
 of the =field= table per write — seconds on a large repository — with the

@@ -177,6 +177,124 @@ async fn test_start_step_undoes_last_revision() {
     assert_eq!(rating(&app, &repo, &uuid).await, Some(3));
 }
 
+/// A navigation step settles the tree cache against the cells it rewrote
+/// (spec-file-tracking "Upkeep after a write"), instead of rebuilding the whole
+/// forest once per operation. The forest it leaves must be the one a rebuild
+/// would have left: undoing a rename puts the node back under its old name,
+/// undoing a move puts it back under its old parent.
+#[tokio::test]
+async fn test_navigation_step_settles_the_tree_cache() {
+    let (app, repo, _root) = setup("treecache").await;
+    let treeref = |parent: Option<&str>, name: &str| {
+        json!([{"name": "cat",
+            "value": {"type": "tree_ref", "value": {"parent": parent, "name": name}}}])
+    };
+    let path_of = |app: Router, repo: String, uuid: String| async move {
+        let (status, body) = request(
+            &app,
+            "GET",
+            &format!("/repos/{repo}/metarecords/{uuid}/fields/cat/resolve-tree"),
+            None,
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK, "resolve-tree failed: {body}");
+        body["paths"][0].as_str().unwrap_or_default().to_string()
+    };
+
+    let all = create(&app, &repo, treeref(None, "all")).await;
+    let other = create(&app, &repo, treeref(None, "other")).await;
+    let music = create(&app, &repo, treeref(Some(&all), "music")).await;
+    let track = create(&app, &repo, treeref(Some(&music), "track")).await;
+    assert_eq!(path_of(app.clone(), repo.clone(), track.clone()).await, "all/music/track");
+
+    // One revision that renames `music` and re-parents it at the same time.
+    set(
+        &app,
+        &repo,
+        &music,
+        "cat",
+        json!({"type": "tree_ref", "value": {"parent": other, "name": "jazz"}}),
+    )
+    .await;
+    assert_eq!(path_of(app.clone(), repo.clone(), track.clone()).await, "other/jazz/track");
+
+    // Step back over it: the subtree follows the node home.
+    let (status, body) = request(
+        &app,
+        "POST",
+        &format!("/repos/{repo}/rollback/start"),
+        Some(json!({"target": {"prev_revision": true}})),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    loop {
+        let (status, body) =
+            request(&app, "POST", &format!("/repos/{repo}/rollback/step"), Some(json!({}))).await;
+        assert_eq!(status, StatusCode::OK, "{body}");
+        if body["op"].is_null() {
+            break;
+        }
+    }
+    assert_eq!(path_of(app.clone(), repo.clone(), music.clone()).await, "all/music");
+    assert_eq!(path_of(app.clone(), repo.clone(), track).await, "all/music/track");
+}
+
+/// The mirror of the test above, and the shape that only a *navigation* can
+/// produce: one revision deletes a whole subtree, so undoing it restores a
+/// child before the step that restores its parent. The cache cannot settle that
+/// in place — the child would stay detached and the subtree would read as
+/// untracked — so the step rebuilds instead (spec-file-tracking "Upkeep after a
+/// write"). What must hold, either way, is that the forest is whole at the end.
+#[tokio::test]
+async fn test_navigation_restores_a_subtree_deleted_in_one_revision() {
+    let (app, repo, _root) = setup("treesubtree").await;
+    let treeref = |parent: Option<&str>, name: &str| {
+        json!([{"name": "cat",
+            "value": {"type": "tree_ref", "value": {"parent": parent, "name": name}}}])
+    };
+    let all = create(&app, &repo, treeref(None, "all")).await;
+    let music = create(&app, &repo, treeref(Some(&all), "music")).await;
+    let track = create(&app, &repo, treeref(Some(&music), "track")).await;
+
+    // One revision, the whole subtree: the order the operations are written in
+    // is the deletion's, and the navigation walks it backwards.
+    let (status, body) = request(
+        &app,
+        "POST",
+        &format!("/repos/{repo}/query/delete"),
+        Some(json!({"query": {"type": "uuid_in", "uuids": [all, music, track]}})),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "delete failed: {body}");
+
+    let (status, body) = request(
+        &app,
+        "POST",
+        &format!("/repos/{repo}/rollback/start"),
+        Some(json!({"target": {"prev_revision": true}})),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    loop {
+        let (status, body) =
+            request(&app, "POST", &format!("/repos/{repo}/rollback/step"), Some(json!({}))).await;
+        assert_eq!(status, StatusCode::OK, "{body}");
+        if body["op"].is_null() {
+            break;
+        }
+    }
+
+    let (status, body) = request(
+        &app,
+        "GET",
+        &format!("/repos/{repo}/metarecords/{track}/fields/cat/resolve-tree"),
+        None,
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "resolve-tree failed: {body}");
+    assert_eq!(body["paths"], json!(["all/music/track"]), "the subtree is whole again");
+}
+
 // An orphaning revision writes several fields of one record (`mfr_path` and
 // `mfr_path_old`), so each operation restores to its own version.
 // `entity_version_before_revision` is the record's version before the *whole*

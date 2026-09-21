@@ -1838,8 +1838,17 @@ Target forms:
 *** Behaviour
 
 1. Calls =GET /rollback/plan/summary= and displays a summary.
-2. Calls =POST /rollback/start= to enter lock mode.
-3. For each operation:
+2. *If the summary holds no operation type that could need a filesystem
+   decision* — nothing among =file_moved=, =file_deleted=, =file_modified= and
+   =delete_metarecord= (the last because a summary counts types and cannot say
+   which revision wrote them, and only a *trashing* leaves a file to bring
+   back) — the whole navigation is a single =POST /rollback=, and the steps
+   below are not run. One call, one transaction, instead of one round-trip per
+   operation: a "yes" on a folder writes one operation per file under it, so
+   taking that answer back (=mf log undo=, or a classification walk's *back*
+   key — spec-gui "Reserved keys") stepped once over the network per file.
+3. Calls =POST /rollback/start= to enter lock mode.
+4. For each operation:
    - =move_file=: checks whether the file exists at =from=, applies the
      relevant policy (see below), then calls =step {}= or =step {"skip":true}=.
    - =file_deleted=, =file_modified=: if the trash-bin holds the content this
@@ -1848,8 +1857,8 @@ Target forms:
      =step {"skip": true}= — no filesystem action is possible and the
      restoration op corrects the metadata on the new branch.
    - All other types: calls =step {}=.
-4. On completion (=op= is =null=): displays a summary and exits.
-5. On error or user interrupt: calls =POST /rollback/abort= before exiting.
+5. On completion (=op= is =null=): displays a summary and exits.
+6. On error or user interrupt: calls =POST /rollback/abort= before exiting.
 
 *** Policies for =move_file=
 

@@ -328,12 +328,36 @@ pub fn ancestry_ops_until(
     until: i64,
     max: usize,
 ) -> Result<Option<Vec<OpRow>>> {
+    Ok(match delta_until(conn, from, until, max)? {
+        Delta::Found(ops) => Some(ops),
+        Delta::Budget | Delta::Unrelated => None,
+    })
+}
+
+/// What a bounded ancestor walk found. [`ancestry_ops_until`] flattens the two
+/// failures into `None`; they are kept apart here for the caller that *widens*
+/// its budget ([`linear_path`]), which has to tell "not far enough yet" from
+/// "not on this chain at all" — the first is a reason to look again, the second
+/// is the answer.
+enum Delta {
+    /// The chain from `from` (inclusive) down to — but excluding — the anchor.
+    Found(Vec<OpRow>),
+    /// The budget ran out before the anchor was met; it may still be further
+    /// down the chain.
+    Budget,
+    /// The walk reached the root of the history without meeting the anchor, so
+    /// the anchor is not an ancestor of `from` at all.
+    Unrelated,
+}
+
+fn delta_until(conn: &rusqlite::Connection, from: i64, until: i64, max: usize) -> Result<Delta> {
     if from == until {
-        return Ok(Some(Vec::new()));
+        return Ok(Delta::Found(Vec::new()));
     }
     // `c.id <> ?2` stops the expansion once the anchor is reached, so the anchor
     // itself is the last row produced and its parent is never visited. `max + 1`
-    // rows leaves room for that trailing anchor row on a maximal delta.
+    // rows leaves room for that trailing anchor row on a maximal delta — and is
+    // what tells a truncated walk from one that ran out of history.
     let cols = op_columns("o");
     let mut stmt = conn.prepare_cached(&format!(
         "WITH RECURSIVE chain(id, depth) AS (
@@ -360,10 +384,13 @@ pub fn ancestry_ops_until(
         // The anchor closed the walk: drop it, the delta is what sits on top.
         Some(last) if last.id == until => {
             ops.pop();
-            Ok(Some(ops))
+            Ok(Delta::Found(ops))
         }
-        // Ran out of budget, or reached the root without meeting the anchor.
-        _ => Ok(None),
+        // Every row the budget allowed, and still no anchor.
+        _ if ops.len() > max => Ok(Delta::Budget),
+        // The walk stopped on a row with no parent (or `from` does not exist):
+        // the anchor is nowhere on this chain.
+        _ => Ok(Delta::Unrelated),
     }
 }
 
@@ -689,6 +716,63 @@ fn step_paths(
     })
 }
 
+/// The first budget [`linear_path`] walks with, and the factor it widens by.
+/// Small enough that the ordinary case — undoing the answer just given — reads
+/// a handful of rows, and geometric so that a large delta still costs O(delta)
+/// in total rather than one walk per widening.
+const LINEAR_BUDGET: usize = 256;
+const LINEAR_WIDEN: usize = 8;
+
+/// The path between two operations that lie on one chain — the whole of a
+/// rollback, and the whole of a redo — or `None` when they sit on diverging
+/// branches and only the LCA answers.
+///
+/// This is the bounded half of [`nav_path`], and the reason it exists is the
+/// *coordinated* navigation: it asks for the path again before every single
+/// step, so a walk to the root of the log there is paid once per operation
+/// undone. Going back over a tag applied to a folder of a thousand files then
+/// costs a thousand walks over the whole history — the "back" key of a
+/// classification walk (spec-gui "Reserved keys") taking minutes to answer.
+///
+/// The budget widens instead of being guessed: [`Delta::Budget`] means "look
+/// further", [`Delta::Unrelated`] means "not this way", and only two
+/// `Unrelated`s — the genuinely divergent case — fall back to the LCA.
+fn linear_path(
+    conn: &rusqlite::Connection,
+    head: i64,
+    target: i64,
+) -> Result<Option<Vec<(OpRow, NavDir)>>> {
+    let (mut backward, mut forward) = (true, true);
+    let mut budget = LINEAR_BUDGET;
+    while backward || forward {
+        if backward {
+            match delta_until(conn, head, target, budget)? {
+                // The target is an ancestor: unapply everything above it,
+                // newest first.
+                Delta::Found(ops) => {
+                    return Ok(Some(ops.into_iter().map(|op| (op, NavDir::Inverse)).collect()))
+                }
+                Delta::Unrelated => backward = false,
+                Delta::Budget => {}
+            }
+        }
+        if forward {
+            match delta_until(conn, target, head, budget)? {
+                // The target is a descendant: re-apply the chain down to it,
+                // oldest first.
+                Delta::Found(mut ops) => {
+                    ops.reverse();
+                    return Ok(Some(ops.into_iter().map(|op| (op, NavDir::Forward)).collect()));
+                }
+                Delta::Unrelated => forward = false,
+                Delta::Budget => {}
+            }
+        }
+        budget = budget.saturating_mul(LINEAR_WIDEN);
+    }
+    Ok(None)
+}
+
 /// The full ordered list of operations to process to move HEAD from `head` to
 /// `target`: each unapply op (most recent first) as [`NavDir::Inverse`], then
 /// each apply op (oldest first) as [`NavDir::Forward`]. Empty when already at
@@ -700,6 +784,14 @@ pub fn nav_path(
 ) -> Result<Vec<(OpRow, NavDir)>> {
     if head == target {
         return Ok(vec![]);
+    }
+    // Almost every navigation is along one chain — a rollback to an ancestor of
+    // HEAD, a redo to a descendant of it — and that path can be read without
+    // ever walking to the root of the log.
+    if let (Some(h), Some(t)) = (head, target) {
+        if let Some(path) = linear_path(conn, h, t)? {
+            return Ok(path);
+        }
     }
     let (unapply, apply) = step_paths(conn, head, target)?;
     let mut out = Vec::with_capacity(unapply.len() + apply.len());
@@ -718,22 +810,30 @@ pub fn nav_path(
     Ok(out)
 }
 
+/// The TreeRef cells a write or a navigation step moved: `(field name,
+/// metarecord)` pairs, the unit the tree cache settles
+/// ([`crate::tree_cache::TreeCache::apply_cells`]).
+pub type TreeCells = Vec<(String, Uuid)>;
+
 /// Applies the *first* operation on the path from the current HEAD toward
-/// `target` (one atomic step) and advances HEAD. Returns the new HEAD. When
-/// `skip` is set and the operation is a file op, a restoration entry is
-/// enqueued in `pending_operation` (replayed as a new branch once the lock is
-/// released — spec-event-log "skip").
+/// `target` (one atomic step) and advances HEAD. Returns the new HEAD and the
+/// TreeRef cells the step rewrote, for the caller's tree cache
+/// ([`crate::tree_cache::TreeCache::apply_cells`]). When `skip` is set and the
+/// operation is a file op, a restoration entry is enqueued in
+/// `pending_operation` (replayed as a new branch once the lock is released —
+/// spec-event-log "skip").
 pub fn coordinated_step(
     conn: &mut rusqlite::Connection,
     target: Option<i64>,
     skip: bool,
-) -> Result<Option<i64>> {
+) -> Result<(Option<i64>, TreeCells)> {
     let head = get_head(conn)?;
     let path = nav_path(conn, head, target)?;
     let Some((op, dir)) = path.into_iter().next() else {
-        return Ok(head); // Already at the target.
+        return Ok((head, vec![])); // Already at the target.
     };
     let tx = conn.transaction()?;
+    let cells = tree_cells_of(&tx, &op)?;
     if skip {
         enqueue_restoration(&tx, &op, dir)?;
     }
@@ -749,7 +849,25 @@ pub fn coordinated_step(
     };
     tx.execute("UPDATE log_head SET op_id = ?1 WHERE singleton = 1", params![new_head])?;
     tx.commit()?;
-    Ok(new_head)
+    Ok((new_head, cells))
+}
+
+/// The TreeRef cells one operation moves, whichever way it is applied: the
+/// field names its snapshots hold a `tree_ref` row for, on its own metarecord.
+///
+/// Both sides of the snapshot are read, so a cell counts whether the operation
+/// put a position there, took one away, or replaced it — which is exactly the
+/// list [`crate::tree_cache::TreeCache::apply_cells`] settles. An operation
+/// that moved no position at all reports nothing and costs the cache nothing.
+fn tree_cells_of(conn: &rusqlite::Connection, op: &OpRow) -> Result<TreeCells> {
+    let mut stmt = conn.prepare_cached(
+        "SELECT DISTINCT field_name FROM op_snapshot \
+         WHERE op_id = ?1 AND value_type = 'tree_ref'",
+    )?;
+    let names = stmt
+        .query_map(params![op.id], |row| row.get::<_, String>(0))?
+        .collect::<rusqlite::Result<Vec<String>>>()?;
+    Ok(names.into_iter().map(|name| (name, op.entity_uuid)).collect())
 }
 
 /// Enqueues the restoration operation for a skipped file op: a synthetic

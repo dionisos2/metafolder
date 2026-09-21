@@ -2044,10 +2044,21 @@ async fn rollback_step(
 
         let done = {
             let mut conn = slowlog::timed("wait:conn", || repo_state.conn.lock_recover());
-            let new_head = crate::log::coordinated_step(&mut conn, target, skip)?;
-            // The step rewrote tree positions arbitrarily: rebuild the cache
-            // from the new state (keeps it complete; `populate` clears first).
-            repo_state.lock_cache().populate(&conn)?;
+            let (new_head, cells) = crate::log::coordinated_step(&mut conn, target, skip)?;
+            // The step says which TreeRef cells it rewrote, and the cache
+            // settles exactly those (spec-file-tracking "Upkeep after a
+            // write"). Rebuilding here instead is one scan of the `field`
+            // table per *operation* — a navigation of a thousand of them, which
+            // is what one "back" over a tagged folder is, then pays a thousand
+            // scans of the whole repository under the connection lock.
+            {
+                let mut cache = repo_state.lock_cache();
+                if cache.cells_are_settleable(&conn, &cells)? {
+                    cache.apply_cells(&conn, &cells)?;
+                } else {
+                    cache.populate(&conn)?;
+                }
+            }
             let next = crate::log::nav_path(&conn, new_head, target)?;
             if let Some((op, dir)) = next.first() {
                 let mut cache = slowlog::timed("wait:cache", || repo_state.lock_cache());

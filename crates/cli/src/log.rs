@@ -287,6 +287,33 @@ pub fn rollback_plan(ctx: &Ctx, target: TargetArgs) -> Result<i32, CliError> {
     Ok(0)
 }
 
+/// The stored op types whose navigation needs a decision about the
+/// *filesystem* — a file to move, a file to bring back from the trash — and so
+/// the coordinated protocol, where the daemon hands the client one operation at
+/// a time (spec-event-log "Coordinated navigation").
+///
+/// `delete_metarecord` is in the list although only the ones a *trashing* wrote
+/// carry a file: the plan summary counts stored op types and cannot say which
+/// revision wrote them, so the whole type takes the careful road.
+const FILESYSTEM_OPS: &[&str] =
+    &["file_moved", "file_deleted", "file_modified", "delete_metarecord"];
+
+/// Whether a plan summary's operations all rewind inside the database, with
+/// nothing on disk to decide. Those can be navigated in one atomic call
+/// (`POST /rollback`) instead of one round-trip — and one transaction — per
+/// operation.
+///
+/// This is what "back" costs in a classification walk (spec-gui "Reserved
+/// keys"): a "yes" on a folder writes one operation per file under it, so
+/// taking it back stepped a thousand times over the network to undo a single
+/// keypress. An unreadable summary is *not* metadata-only: the careful road is
+/// the one that is always correct.
+fn rewinds_in_the_database_alone(summary: &Json) -> bool {
+    summary["by_type"]
+        .as_object()
+        .is_some_and(|by_type| !by_type.keys().any(|t| FILESYSTEM_OPS.contains(&t.as_str())))
+}
+
 /// `mf rollback [<target>]`: drives the coordinated navigation, executing the
 /// `mv` for each `move_file` step per the configured policies.
 pub fn rollback_run(
@@ -298,15 +325,29 @@ pub fn rollback_run(
     let base = ctx.repo_base()?;
     let body = target.clone().into_body()?;
 
-    if !silent {
-        let summary =
-            ctx.client.get(&format!("{base}/rollback/plan/summary"), &target.into_query()?)?;
-        let total = summary["total_operations"].as_i64().unwrap_or(0);
-        if total == 0 {
+    // The summary is read whatever the verbosity: it is what says whether this
+    // navigation touches the filesystem at all.
+    let summary =
+        ctx.client.get(&format!("{base}/rollback/plan/summary"), &target.into_query()?)?;
+    let total = summary["total_operations"].as_i64().unwrap_or(0);
+    if total == 0 {
+        if !silent {
             println!("Nothing to do — already at the target.");
-            return Ok(0);
         }
+        return Ok(0);
+    }
+    if !silent {
         eprintln!("Navigating {total} operations.");
+    }
+
+    if rewinds_in_the_database_alone(&summary) {
+        let result = ctx.client.post(&format!("{base}/rollback"), &body)?;
+        if !silent {
+            let processed = result["operations_unapplied"].as_i64().unwrap_or(0)
+                + result["operations_applied"].as_i64().unwrap_or(0);
+            println!("Rollback complete: {processed} operations processed.");
+        }
+        return Ok(0);
     }
 
     // The trash-bin catches any file a `move_file` step would overwrite, so no
@@ -1112,6 +1153,29 @@ fn fmt_second(ms: i64) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// "Back" in a classification walk (spec-gui "Reserved keys") undoes a
+    /// whole subtree of tag writes. Nothing in that touches a file, so the
+    /// navigation goes in one atomic call — one round-trip per record is what
+    /// made going back take minutes.
+    #[test]
+    fn a_plan_with_no_file_operation_is_navigated_in_one_call() {
+        let plan = |by_type| json!({"total_operations": 3, "by_type": by_type});
+        assert!(rewinds_in_the_database_alone(&plan(json!({"set_field": 2, "append_field": 1}))));
+        assert!(rewinds_in_the_database_alone(&plan(json!({"create_metarecord": 3}))));
+
+        // A moved, deleted or modified file needs the client to decide about
+        // the filesystem, one operation at a time.
+        for op_type in ["file_moved", "file_deleted", "file_modified"] {
+            let by_type = json!({"set_field": 1, op_type: 1});
+            assert!(!rewinds_in_the_database_alone(&plan(by_type)), "{op_type}");
+        }
+        // A deleted metarecord may be a trashing whose file has to come back.
+        assert!(!rewinds_in_the_database_alone(&plan(json!({"delete_metarecord": 1}))));
+
+        // Nothing to read: the careful road, never the fast one.
+        assert!(!rewinds_in_the_database_alone(&json!({})));
+    }
 
     /// `mf log list` shows the last twenty revisions; it must ask the daemon
     /// for those, not for the whole log. Fetching everything and trimming it

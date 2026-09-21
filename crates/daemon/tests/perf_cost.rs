@@ -19,7 +19,7 @@
 
 use metafolder_core::metarecord::{Field, Value};
 use metafolder_daemon::db;
-use metafolder_daemon::log::{Retention, Writer};
+use metafolder_daemon::log::{self, Retention, Writer};
 use metafolder_daemon::log_view::{listing, LogQuery, Mode};
 use rusqlite::Connection;
 
@@ -228,4 +228,59 @@ fn trimming_the_log_does_not_scan_the_operations_it_keeps() {
         .filter(|(sql, table)| table == "operation" && sql != "SELECT COUNT(*) FROM operation")
         .collect();
     assert!(scanned.is_empty(), "the trim scanned the whole log:\n{}", cost.report(&conn));
+}
+
+// ── Going back (spec-gui "Reserved keys") ────────────────────────────────────
+// A walk that writes as it goes takes an answer back by navigating the history
+// to where it stood before it (`mf log rollback --id`), one coordinated step
+// per operation written. Both assertions below are about *one* such step: what
+// it costs must depend on the operation it applies, and on nothing else — not
+// on the history behind it, and not on how much of the navigation is left.
+
+/// The target the head operation's parent is, i.e. "take back the last thing
+/// written".
+fn one_step_back(conn: &Connection) -> Option<i64> {
+    let head = log::get_head(conn).unwrap().expect("a non-empty log");
+    log::get_op(conn, head).unwrap().expect("the head operation").parent_id
+}
+
+/// The operation `n` steps below HEAD, as a navigation target.
+fn steps_back(conn: &Connection, n: usize) -> Option<i64> {
+    let head = log::get_head(conn).unwrap().expect("a non-empty log");
+    let chain = log::ancestry(conn, head).unwrap();
+    Some(chain[n])
+}
+
+#[test]
+fn one_navigation_step_does_not_read_the_whole_log() {
+    let mut conn = repo_with_log(400);
+    let target = one_step_back(&conn);
+    let (_, cost) = measure_mut(&mut conn, |c| log::coordinated_step(c, target, false).unwrap());
+    assert_eq!(
+        cost.full_scans(&conn),
+        Vec::<(String, String)>::new(),
+        "undoing one operation looked at a whole table:\n{}",
+        cost.report(&conn)
+    );
+}
+
+#[test]
+fn a_navigation_step_costs_the_same_however_far_the_target_is() {
+    let mut near = repo_with_log(400);
+    let mut far = repo_with_log(400);
+    let near_target = steps_back(&near, 5);
+    let far_target = steps_back(&far, 80);
+    let (_, near_cost) =
+        measure_mut(&mut near, |c| log::coordinated_step(c, near_target, false).unwrap());
+    let (_, far_cost) =
+        measure_mut(&mut far, |c| log::coordinated_step(c, far_target, false).unwrap());
+    assert_eq!(
+        near_cost.count(),
+        far_cost.count(),
+        "one step cost more when the target was further away — the path behind \
+         it is being read at every step, which makes a navigation of N \
+         operations cost N²:\n— 5 away —\n{}\n— 80 away —\n{}",
+        near_cost.report(&near),
+        far_cost.report(&far)
+    );
 }
