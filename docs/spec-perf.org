@@ -1,0 +1,193 @@
+#+TITLE: Metafolder — Performance Regression Specification
+#+OPTIONS: toc:2 num:t
+
+* Overview
+
+Metafolder has had the same failure mode several times: a change that is correct
+— and passes every test — makes an operation an order of magnitude slower, and
+nobody notices until the interface feels wrong weeks later. The log so far:
+one query per metarecord on the index build, a write per transaction in the
+watcher flush ([[file:spec-slow-log.org][spec-slow-log.org]] was born of that one), a full-forest rebuild on
+every =tree_ref= write, one HTTP request per metarecord in =mf sync plan=, a
+process fork per entry in the shipped scripts.
+
+Every one of those was found *after the fact*, by a user noticing. The suite
+specified here is the other direction: the numbers are taken on purpose, kept,
+and compared against what they were.
+
+It is **not** a metrics system and not a profiler: the slow-operation log
+([[file:spec-slow-log.org][spec-slow-log.org]]) already answers "where did the time go in *this* run". This
+answers a different question — "is this slower than it was last month, and by
+how much".
+
+* Two layers, for two different failure modes
+
+A performance regression comes in two shapes, and only one of them can be caught
+by a clock.
+
+** Cost assertions — the shape of the work
+
+An algorithmic regression changes *how much work* an operation does: a query per
+row instead of one query, a full table scan where an index lookup was enough, a
+walk over the whole log to serve a bounded window. That is visible without any
+clock at all, and a clock is the wrong instrument for it: a timing assertion
+tight enough to catch a 3× regression is loose enough to fail on a loaded
+machine ([[file:spec-slow-log.org][spec-slow-log.org]]'s own tests taught us that — see the test-suite notes
+in =CLAUDE.md=).
+
+So the first layer measures **counters, not durations**:
+
+- the number of SQL statements an operation executes, and
+- the set of those statements whose query plan scans a whole table.
+
+Both are exact, reproducible and machine-independent, so they run in the
+ordinary =cargo test= suite and in =scripts/check.sh=, and a regression fails the
+build like any other broken test.
+
+Two assertions carry the layer:
+
+1. **Growth invariance.** The same operation is run against a repository of size
+   =N= and of size =16N=. A bounded read (=GET /log?limit=50=, a point lookup, a
+   limited query) must execute the *same number of statements* on both. A count
+   that grows with the data is the N+1 family, caught at =N= = a few thousand
+   rows in under a second.
+
+2. **The full-scan whitelist.** Every statement the operation ran is replayed
+   through =EXPLAIN QUERY PLAN=; those whose plan contains a =SCAN= of a table
+   (as opposed to a =SEARCH= through an index) are compared against an explicit
+   list written into the test. A new full scan on a hot path fails, and the fix
+   is either an index or an argued addition to the list — the point is that
+   nobody adds one by accident.
+
+** Timed benchmarks — the size of the work
+
+The rest is a clock, and a clock needs a baseline. The second layer runs a fixed
+list of scenarios, records the numbers with enough context to be comparable
+(machine, profile, commit), appends them to a history, and compares the run
+against that history. It is slow (minutes), so it is never part of =check.sh=:
+it is run on purpose, before and after a change that could plausibly cost
+something.
+
+* The timed suite
+
+** What is measured
+
+Each scenario has a **stable identifier** — the string that joins a measurement
+to the ones taken before it. Renaming a scenario starts a new history; that is
+deliberate, and preferable to silently comparing two different things.
+
+Scenarios are grouped by area, with the identifier =<area>.<name>=, and each one
+is run at one or more **data sizes**, so a regression in complexity is visible as
+a change of shape and not only of value.
+
+| Scenario                 | What it measures                                                    |
+|--------------------------+---------------------------------------------------------------------|
+| =log.window_ops=         | =GET /log?mode=active&limit=50= — the GUI log panel's window        |
+| =log.window_revisions=   | =GET /log?mode=active&revisions=20= — what =mf log list= asks for   |
+| =log.undo_window=        | =GET /log?mode=linear&limit=500= — the window =mf log undo= reads   |
+| =log.change_feed=        | =GET /log/since= — the delta every client polls for invalidation    |
+| =log.whole_tree=         | =GET /log?mode=tree= — the unbounded read the graph needs           |
+| =query.count=            | a count over every metarecord (O(1) from the index)                 |
+| =query.page=             | the first hundred results of a broad query                          |
+| =query.sorted_page=      | the same, sorted — the BSI path                                     |
+| =query.folder=           | opening a directory (=mfr_path ->* "/dir0"=)                        |
+| =metarecord.get=         | one metarecord by uuid: the point read everything else is built on  |
+| =metarecord.write=       | one field write, index settle included                              |
+
+Sizes are =S= (2 100 metarecords, 500 revisions), =M= (21 000 / 5 000) and,
+behind =--big=, =L= (105 000 / 50 000). The revision count is as much the point
+as the metarecord count: reading the log back is a different problem from
+reading the data, and it is the one that has regressed in practice.
+
+=log.whole_tree= is in the list although it is *expected* to grow with the log:
+a graph cannot be drawn without every branch. It is measured so that the day it
+grows faster than the log does, the number says so.
+
+** Where the data comes from
+
+Two sources, because they answer different questions:
+
+- **Synthetic** (the default): repositories generated by the harness itself from
+  a fixed seed — the same tree, the same field values, the same log, on any
+  machine, today and in a year. This is what the history is built from.
+- **Real** (=benchmarks/bench_data=, =benchmarks/bench_data_big=): the
+  consume-only folders the existing bench already uses. Representative in a way
+  no generator is (real names, real sizes, real nesting), but they exist only on
+  the developer's machine, so they are measured when present and skipped
+  otherwise.
+
+** The history
+
+One line of JSON per measurement, appended to =benchmarks/history/<machine>.jsonl=
+and committed. One file per machine, because comparing a laptop's numbers with a
+desktop's is worse than having no baseline at all.
+
+#+BEGIN_SRC json
+  {
+  "at": "2026-09-21T10:12:03Z",
+  "commit": "6cbe41d",
+  "dirty": false,
+  "machine": "thinkpad",
+  "cpu": "AMD Ryzen 7 5800U",
+  "cores": 16,
+  "profile": "release",
+  "rustc": "1.83.0",
+  "scenario": "log.list_bounded",
+  "size": "L",
+  "unit": "ms",
+  "median": 41.2,
+  "min": 39.8,
+  "runs": 5
+  }
+#+END_SRC
+
+- =median= over =runs= repetitions is the comparable number; =min= is kept
+  because it is the least noisy estimate of the true cost and moves when the
+  median's noise does not.
+- =dirty= marks a run taken on an uncommitted tree: usable to compare against
+  the run before it, but never a baseline to keep.
+
+** The comparison
+
+A run is compared against the **median of the last =k= (default 5) recorded
+values** for the same =(machine, profile, scenario, size)=. A scenario is
+reported as a regression when it is slower than that baseline by more than a
+threshold (default 30 %), and as an improvement when it is faster by as much.
+
+Two rules keep that verdict honest:
+
+- **A noise floor of one millisecond.** A relative change alone is not a
+  verdict: the fast scenarios move by a third between two runs of the same
+  binary (0.6 ms → 0.85 ms is +40 % and means nothing). A regression has to
+  clear both the threshold *and* a millisecond of absolute difference. A suite
+  that cries regression every run is a suite nobody runs.
+- **A dirty baseline is better than none.** A clean run always outranks a dirty
+  one, but a change is worked on with a dirty tree — which is exactly when the
+  comparison is wanted. So where a scenario has no clean measurement recorded,
+  the dirty ones are its baseline.
+
+The exit status is non-zero when any scenario regressed, so the suite can gate a
+release without a human reading the table. =--no-history= takes the measurement
+without appending it (a run on a dirty tree, an experiment).
+
+* CLI
+
+#+BEGIN_SRC bash
+  scripts/bench.sh                  # the standard suite: synthetic data, release
+  scripts/bench.sh --quick          # the small sizes only, for a fast answer
+  scripts/bench.sh --real           # also the persistent data folders
+  scripts/bench.sh --filter log.    # only the scenarios whose id starts with log.
+  scripts/bench.sh --no-history     # measure and compare, record nothing
+  scripts/bench.sh --report         # print the history, no measurement
+#+END_SRC
+
+* What is deliberately not here
+
+- **No CI gate on timings.** The timed layer is never run by =check.sh=: a
+  machine-dependent measurement that fails a build teaches people to ignore
+  failing builds.
+- **No percentiles, no sampling, no aggregation across machines.** The history
+  is a list of numbers taken the same way on the same machine.
+- **No comparison against an absolute target.** "Under 100 ms" is a product
+  decision that belongs in a spec for the feature; this suite only compares a
+  measurement to its own past.

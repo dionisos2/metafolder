@@ -2243,6 +2243,7 @@ version = "0.3.0"
 dependencies = [
  "anyhow",
  "metafolder-core",
+ "metafolder-daemon",
  "reqwest 0.12.28",
  "serde",
  "serde_json",

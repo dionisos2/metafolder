@@ -11,6 +11,34 @@ SQLite schema, the `.metafolder/` layout, the config file format) ships with a
 conversion path that migrates existing repositories and configuration rather
 than breaking them.
 
+## [Unreleased]
+
+### Performance
+- **Reading the log back is bounded again.** A listing of the most recent
+  operations read every row of the `revision` table to build its timestamp map,
+  so the cost of showing fifty operations grew with the whole log: 330 ms on a
+  repository with 200 000 revisions, where the window itself is 12 KB. It now
+  reads only the revisions of the operations it returns (15 ms on the same log).
+- **`mf log list` asks for what it displays.** It fetched the *entire* log and
+  trimmed it to twenty revisions locally — seven seconds of daemon time and two
+  minutes of formatting on that same repository. `GET /log` gained a
+  `revisions=N` parameter (whole revisions, most recent first), which is what
+  the command now sends: 14 ms.
+- A bounded log read that also filters (`metarecord_uuid`, `since`, `until`)
+  now widens its walk until it has what was asked for: asking for the last ten
+  operations of one metarecord answers with them instead of with "none of the
+  repository's last ten operations are yours".
+
+### Added
+- **Performance-regression suite** (`docs/spec-perf.org`), in two layers:
+  - *cost assertions* (`crates/daemon/tests/perf_cost.rs`), which count SQL
+    statements and read query plans instead of a clock — they run in the
+    ordinary `cargo test` pass and cannot flake under load;
+  - *timed benchmarks* (`scripts/bench.sh`, `metafolder-bench regression`) over
+    generated repositories, with a per-machine history kept in
+    `benchmarks/history/<machine>.jsonl` and every run compared against the
+    median of the last five.
+
 ## [0.3.0] — 2026-08-16
 
 First tagged release. Summarises the capability set built since the initial

@@ -20,6 +20,7 @@
 //! so the folders are left exactly as found.
 
 mod gui;
+mod regression;
 
 use std::path::{Path, PathBuf};
 use std::process::{Child, Command, Stdio};
@@ -122,9 +123,9 @@ pub(crate) fn spawn_isolated_daemon(port: u16) -> Result<Child> {
 }
 
 /// A spawned daemon, killed when dropped.
-struct Daemon {
+pub(crate) struct Daemon {
     _proc: Child,
-    url: String,
+    pub(crate) url: String,
 }
 
 impl Drop for Daemon {
@@ -134,7 +135,7 @@ impl Drop for Daemon {
     }
 }
 
-fn daemon_start(port: u16) -> Result<Daemon> {
+pub(crate) fn daemon_start(port: u16) -> Result<Daemon> {
     Ok(Daemon { _proc: spawn_isolated_daemon(port)?, url: format!("http://127.0.0.1:{port}") })
 }
 
@@ -608,11 +609,25 @@ async fn main() -> Result<()> {
     let mut small = PathBuf::from(DEFAULT_SMALL_DIR);
     let mut big = PathBuf::from(DEFAULT_BIG_DIR);
     let mut rest: Vec<String> = Vec::new();
+    let mut opts = regression::Options::default();
     let mut it = args.into_iter();
     while let Some(a) = it.next() {
         match a.as_str() {
             "--small" => small = it.next().context("--small needs a path")?.into(),
-            "--big" => big = it.next().context("--big needs a path")?.into(),
+            "--big" if mode.as_deref() != Some("regression") => {
+                big = it.next().context("--big needs a path")?.into()
+            }
+            // Regression-suite options (spec-perf "CLI").
+            "--quick" => opts.quick = true,
+            "--big" => opts.big = true,
+            "--real" => opts.real = true,
+            "--no-history" => opts.no_history = true,
+            "--report" => opts.report = true,
+            "--filter" => opts.filter = Some(it.next().context("--filter needs a prefix")?),
+            "--tolerance" => {
+                opts.tolerance =
+                    it.next().context("--tolerance needs a fraction")?.parse::<f64>()?
+            }
             s if mode.is_none() && !s.starts_with('-') => mode = Some(s.to_string()),
             _ => rest.push(a),
         }
@@ -622,7 +637,15 @@ async fn main() -> Result<()> {
         "data" => run_data_suite(&small, &big, false).await,
         "gui" => run_data_suite(&small, &big, true).await,
         "attach" => gui::run(&rest).await,
-        other => bail!("unknown mode '{other}' (expected: data | gui | attach)"),
+        "regression" => {
+            let code = regression::run(&opts).await?;
+            // A regression is a non-zero exit, so a script can gate on it.
+            if code != 0 {
+                std::process::exit(code);
+            }
+            Ok(())
+        }
+        other => bail!("unknown mode '{other}' (expected: data | gui | attach | regression)"),
     }
 }
 

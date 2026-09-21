@@ -142,6 +142,15 @@ make test          # or: scripts/run-tests.sh [extra cargo test args]
 # the other test tools live in devDependencies, so `npm test` fails without it:
 npm --prefix crates/gui/frontend install   # once (or after package.json changes)
 npm --prefix crates/gui/frontend test
+
+# Performance. Two layers (docs/spec-perf.org): the cost assertions run in the
+# ordinary suite above — they count SQL statements and read query plans, never
+# a clock, so they catch an N+1 or a new full table scan without flaking. The
+# timed benchmarks are separate, slow, and keep a per-machine history in
+# benchmarks/history/ that every run is compared against:
+scripts/bench.sh            # the standard suite (generated repositories)
+scripts/bench.sh --quick    # the small size only
+scripts/bench.sh --report   # what the history holds, no measurement
 ```
 
 ## Running the daemon
