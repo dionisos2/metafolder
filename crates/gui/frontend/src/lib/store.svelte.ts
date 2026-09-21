@@ -69,9 +69,19 @@ export const store = $state({
     promptText: null as string | null,
     /// Completions offered by the active prompt's autocomplete.
     promptCompletions: [] as string[],
-    /// Pre-filled, editable draft for the active prompt (an argument's
-    /// `initial` value). Empty for script prompts.
-    promptInitial: '',
+    /// The workspaces the prompt belongs to: the ones the asking script owns
+    /// (an argument collection owns the workspace it was invoked from). The
+    /// command input shows the prompt only while one of them is on screen and
+    /// is an ordinary command line meanwhile (spec-gui "Ownership of a
+    /// script's workspaces"). Empty = owned by nobody, always shown.
+    promptWorkspaces: [] as string[],
+    /// The asking script's run id, when a script asked.
+    promptTask: null as string | null,
+    /// The answer typed so far, seeded with an argument's `initial` value
+    /// (empty for script prompts). It lives here rather than in the input
+    /// component so a prompt put away by a tab switch comes back with what
+    /// was already typed.
+    promptDraft: '',
     /// When set, the active prompt is resolved *in the frontend* (an
     /// interactive argument collection) by calling this with the entered
     /// text, or null on cancel — instead of the Rust `prompt_resolve`
@@ -163,6 +173,43 @@ export function inputWaitAnswer(
 ): string | null {
   if (!wait || !combo) return null;
   return wait.keys.find((k) => k.toLowerCase() === combo) ?? null;
+}
+
+/** Maps a `prompt-requested` payload to the prompt state: its text, the values
+ *  its autocomplete offers, and the workspaces the asking script owns. Pure, so
+ *  it is unit-tested. */
+export function promptRequestState(payload: {
+  prompt: string;
+  completions?: string[];
+  workspaces?: string[];
+  task?: string | null;
+}): { text: string; completions: string[]; workspaces: string[]; task: string | null } {
+  return {
+    text: payload.prompt,
+    completions: payload.completions ?? [],
+    workspaces: payload.workspaces ?? [],
+    task: payload.task ?? null,
+  };
+}
+
+/** The prompt text the command input should show, given the waiting prompt,
+ *  the workspaces it belongs to and the ones on screen — null when no prompt
+ *  waits, or when the one that does is put away by a tab switch (spec-gui
+ *  "Ownership of a script's workspaces"). Pure, so it is unit-tested. */
+export function promptShown(
+  text: string | null,
+  owned: string[],
+  visible: string[],
+): string | null {
+  if (text === null) return null;
+  return ownedByVisible(owned, visible) ? text : null;
+}
+
+/** The waiting prompt's text while it is on screen (see [[promptShown]]): what
+ *  the command input renders as its prompt character, and what tells it the
+ *  line it holds is an answer rather than a command. */
+export function activePromptText(): string | null {
+  return promptShown(store.ui.promptText, store.ui.promptWorkspaces, visibleWorkspaces());
 }
 
 /** The question the keys should currently act on: the live input wait, but only
@@ -368,10 +415,22 @@ export async function initStore() {
     store.daemonApiVersion = event.payload.daemon_api_version ?? null;
     store.guiApiVersion = event.payload.gui_api_version ?? null;
   });
-  await listen<{ prompt: string; completions?: string[] }>('prompt-requested', (event) => {
-    store.ui.promptText = event.payload.prompt;
-    store.ui.promptCompletions = event.payload.completions ?? [];
-    store.ui.commandInputFocusTick += 1;
+  // A script's `POST /gui/prompt`: the command input takes the question, but
+  // only while one of the workspaces that script owns is on screen — the
+  // input focuses itself on its own when the prompt is (or becomes) visible,
+  // so nothing here steals the keyboard for a question the user cannot see.
+  await listen<{
+    prompt: string;
+    completions?: string[];
+    workspaces?: string[];
+    task?: string | null;
+  }>('prompt-requested', (event) => {
+    const prompt = promptRequestState(event.payload);
+    store.ui.promptText = prompt.text;
+    store.ui.promptCompletions = prompt.completions;
+    store.ui.promptWorkspaces = prompt.workspaces;
+    store.ui.promptTask = prompt.task;
+    store.ui.promptDraft = '';
   });
   // A script's `POST /gui/input` wait: keep its question in a dedicated bar,
   // never on the status line where an error would overwrite it.

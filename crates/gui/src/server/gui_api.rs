@@ -572,9 +572,16 @@ pub async fn post_prompt(
     let Some(receiver) = state.input.begin_prompt() else {
         return error_response(StatusCode::CONFLICT, "another input wait is active");
     };
+    // The prompt belongs to the workspaces the asking script owns, like its
+    // question bar: the command input gives the line back to the user while
+    // none of them is on screen (spec-gui "Ownership of a script's
+    // workspaces").
     state.gui.notify(
         events::PROMPT_REQUESTED,
-        json!({ "prompt": body.prompt, "completions": body.completions }),
+        json!({ "prompt": body.prompt,
+                "completions": body.completions,
+                "workspaces": script_workspaces(&state, body.task.as_deref()),
+                "task": body.task }),
     );
     let _guard = WaitGuard::begin(&state, body.task.clone(), false);
 

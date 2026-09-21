@@ -645,14 +645,24 @@ script session may hold the input-wait lock at a time.
 Everything a script puts on screen belongs to the *workspaces that script
 owns*: the workspace it was launched from, plus every workspace it creates
 (=POST /gui/workspaces= carrying its run id — a script that opens two scratch
-workspaces owns both). Its question bar and its [[*Task bar]] entry are shown
-only while at least one owned workspace is in a visible slot, so switching tab
-puts the script's questions away instead of leaving them over unrelated
-panels. A wait with no run id is owned by nobody and is always shown.
+workspaces owns both). Its question bar, its =POST /gui/prompt= question in the
+command input and its [[*Task bar]] entry are shown only while at least one
+owned workspace is in a visible slot, so switching tab puts the script's
+questions away instead of leaving them over unrelated panels. A wait with no
+run id is owned by nobody and is always shown.
 
 The keys follow the bar: while the question is put away, they are not
 intercepted either — the panel now in front of the user keeps its own =y=, and
 escape does not stop a script whose question is off screen.
+
+The command input follows the same rule, and the line follows the question: a
+prompt put away gives the input back to the user — its own prompt character,
+its own per-workspace draft, its history and =Enter= running commands again —
+while the answer typed so far is kept and restored, with the focus, when an
+owned workspace returns to a slot. The script keeps waiting throughout; nothing
+is cancelled by looking elsewhere. An [[*Interactive command arguments (command
+mode)][interactive argument collection]] belongs in the same way to the
+workspace its command was invoked from.
 
 *** Working vs. awaiting an answer
 
@@ -1133,7 +1143,9 @@ Behaviours:
   [[*Command input]]). =Tab= completes via bash itself (see [[*Bash completion
   (bash mode)]]). A leading =!= typed in command mode switches to bash mode.
 - When a script calls =POST /gui/prompt=, the command input grabs the focus
-  (in command mode) and shows the script-supplied prompt text.
+  (in command mode) and shows the script-supplied prompt text — while one of
+  the workspaces that script owns is on screen; switching to another workspace
+  hands the line back (see [[*Ownership of a script's workspaces]]).
 - Both modes keep a per-repository input history — =ctrl+p=/=ctrl+n= walk,
   =ctrl+r= searches (see [[*Input history]]).
 

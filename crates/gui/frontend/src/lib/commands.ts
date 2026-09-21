@@ -1141,11 +1141,17 @@ async function promptForArg(request: ArgPromptRequest): Promise<string | null> {
     return null;
   }
   return new Promise<string | null>((resolve) => {
+    const ws = focusedWs();
     store.ui.promptResolver = resolve;
     store.ui.promptText = request.prompt;
     store.ui.promptCompletions = [];
-    store.ui.promptInitial = request.initial;
-    store.ui.commandInputFocusTick += 1;
+    // The collection belongs to the workspace the command was invoked from:
+    // switching tab puts its question away with the rest of that workspace's
+    // work (spec-gui "Ownership of a script's workspaces"). The command input
+    // focuses itself when the prompt is on screen.
+    store.ui.promptWorkspaces = ws === null ? [] : [ws];
+    store.ui.promptTask = null;
+    store.ui.promptDraft = request.initial;
     // Pending candidates land later; ignore them if the user has meanwhile
     // answered or cancelled and another prompt owns the input.
     if (Array.isArray(request.completions)) {

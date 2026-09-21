@@ -590,6 +590,62 @@ async fn test_a_workspace_created_without_a_task_is_owned_by_nobody() {
 }
 
 #[tokio::test]
+async fn test_prompt_carries_the_script_workspaces() {
+    // A script's text prompt belongs to the workspaces that script owns, exactly
+    // like its question bar: the command input gives the line back to the user
+    // while none of them is on screen (spec-gui "Ownership of a script's
+    // workspaces"), and shows the prompt again when one returns.
+    let ctx = setup().await;
+    ctx.gui.script_begin("script-9", "ws-1", "gui-tag-folder.sh");
+    let (status, body) =
+        request(&ctx.router, "POST", "/gui/workspaces", Some(json!({"task": "script-9"}))).await;
+    assert_eq!(status, StatusCode::OK);
+    let scratch = body["id"].as_str().unwrap().to_string();
+    ctx.notifier.clear();
+
+    let router = ctx.router.clone();
+    let waiting = tokio::spawn(async move {
+        request(
+            &router,
+            "POST",
+            "/gui/prompt",
+            Some(json!({"prompt": "Tag: ", "task": "script-9"})),
+        )
+        .await
+    });
+    tokio::time::sleep(Duration::from_millis(100)).await;
+
+    let prompts = ctx.notifier.payloads(events::PROMPT_REQUESTED);
+    let raised = prompts.last().expect("a prompt-requested event");
+    assert_eq!(raised["workspaces"], json!(["ws-1", scratch]));
+    assert_eq!(raised["task"], json!("script-9"));
+
+    assert!(ctx.input.resolve_prompt(true, Some("jazz".into())));
+    let _ = waiting.await.unwrap();
+}
+
+#[tokio::test]
+async fn test_a_prompt_with_no_run_id_is_owned_by_nobody() {
+    // A prompt the GUI never launched (a script run from a terminal) belongs to
+    // no workspace and is therefore always shown.
+    let ctx = setup().await;
+    ctx.notifier.clear();
+    let router = ctx.router.clone();
+    let waiting = tokio::spawn(async move {
+        request(&router, "POST", "/gui/prompt", Some(json!({"prompt": "Tag: "}))).await
+    });
+    tokio::time::sleep(Duration::from_millis(100)).await;
+
+    let prompts = ctx.notifier.payloads(events::PROMPT_REQUESTED);
+    let raised = prompts.last().expect("a prompt-requested event");
+    assert_eq!(raised["workspaces"], json!([]));
+    assert_eq!(raised["task"], json!(null));
+
+    assert!(ctx.input.resolve_prompt(false, None));
+    let _ = waiting.await.unwrap();
+}
+
+#[tokio::test]
 async fn test_prompt_marks_the_script_waiting_too() {
     let ctx = setup().await;
     ctx.gui.script_begin("script-8", "ws-1", "gui-tag-folder.sh");

@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { onMount, tick, untrack } from 'svelte';
+  import { tick, untrack } from 'svelte';
   import { commonPrefix, insertCandidate } from '../lib/bash';
   import { invoke } from '../lib/ipc';
   import {
@@ -12,7 +12,7 @@
     setEditingTarget,
     listedCommands,
   } from '../lib/commands';
-  import { focusedWs, store } from '../lib/store.svelte';
+  import { activePromptText, focusedWs, store } from '../lib/store.svelte';
   import { createTickGate } from '../lib/tick';
   import { attachHistory } from '../../../panel-shim/history.js';
 
@@ -32,6 +32,16 @@
   let bashCandidates = $state<string[]>([]);
   let bashWord = $state('');
   let bashPoint = $state(0);
+  /** The prompt that owns the input right now — a script's POST /gui/prompt or
+   *  an interactive argument collection — but only while one of the workspaces
+   *  it belongs to is on screen. A prompt put away by a tab switch leaves an
+   *  ordinary command line behind (spec-gui "Ownership of a script's
+   *  workspaces"), so every question below is asked of this, never of
+   *  `store.ui.promptText`. */
+  const promptText = $derived(activePromptText());
+  /** Whether the line currently holds the prompt's answer rather than a
+   *  workspace draft. */
+  let promptOwned = $state(false);
 
   function draftsOf(which: 'command' | 'bash') {
     return which === 'bash' ? store.bashDrafts : store.inputDrafts;
@@ -47,7 +57,7 @@
     if (!element || !containerEl) return;
     const attached = attachHistory(element, {
       zone: () =>
-        store.ui.promptText !== null ? null : mode === 'bash' ? 'shell:bash' : 'shell:command',
+        promptText !== null ? null : mode === 'bash' ? 'shell:bash' : 'shell:command',
       read: (repo: string, zone: string) => invoke('history_read', { repo, zone }),
       append: (repo: string, zone: string, entry: string) =>
         invoke('history_append', { repo, zone, entry }),
@@ -70,17 +80,39 @@
     void tick().then(() => element?.setSelectionRange(position, position));
   }
 
-  // The draft is per-workspace and per-mode (spec-gui "Command input"):
-  // switching the focused slot to another workspace restores that
-  // workspace's draft for the current mode.
+  // The line belongs either to the prompt on screen or to the focused
+  // workspace's draft for the current mode (spec-gui "Command input"): on every
+  // change of owner the outgoing text is stashed and the incoming one restored.
+  // Switching the focused slot to another workspace therefore restores that
+  // workspace's draft — and puts a script's question away, keeping what was
+  // typed for when its workspace comes back, rather than leaving the answer of
+  // an invisible script over the user's own command line.
   $effect(() => {
     const ws = focusedWs();
-    if (ws !== currentWs) {
-      if (currentWs !== null) draftsOf(mode)[currentWs] = draft;
-      draft = (ws !== null && draftsOf(mode)[ws]) || '';
+    const prompt = promptText !== null;
+    untrack(() => {
+      if (prompt === promptOwned && ws === currentWs) return;
+      // Only a prompt merely put away keeps its text: a resolved one cleared it.
+      if (promptOwned) {
+        if (store.ui.promptText !== null) store.ui.promptDraft = draft;
+      } else if (currentWs !== null) {
+        draftsOf(mode)[currentWs] = draft;
+      }
       currentWs = ws;
+      promptOwned = prompt;
       bashCandidates = [];
-    }
+      selectedIndex = 0;
+      if (prompt) {
+        // A prompt owns the command line, never the bash one, and takes the
+        // keyboard: its question is the whole point, and it is on screen.
+        mode = 'command';
+        draft = store.ui.promptDraft;
+        element?.focus();
+        setCursorSoon(draft.length);
+      } else {
+        draft = (ws !== null && draftsOf(mode)[ws]) || '';
+      }
+    });
   });
 
   // Pick up drafts injected by commands (e.g. bare `workspace:rename`). Suspended
@@ -88,7 +120,7 @@
   // `initial` value is not clobbered by a stale workspace draft.
   $effect(() => {
     const ws = currentWs;
-    if (store.ui.promptText !== null) return;
+    if (promptText !== null) return;
     if (ws !== null && store.inputDrafts[ws] !== undefined && !focused && mode === 'command') {
       draft = store.inputDrafts[ws];
     }
@@ -97,17 +129,13 @@
   /** command-input:focus command / command-input:focus bash: focus the always-visible
    *  input in the given mode, swapping the per-mode drafts. */
   function activate(target: 'command' | 'bash') {
-    if (mode !== target) {
+    // A prompt on screen owns the line: `!` cannot take it away, and the
+    // pre-filled answer it is holding is not a workspace draft to swap out.
+    if (promptText === null && mode !== target) {
       if (currentWs !== null) draftsOf(mode)[currentWs] = draft;
       mode = target;
       draft = (currentWs !== null && draftsOf(target)[currentWs]) || '';
       bashCandidates = [];
-      selectedIndex = 0;
-    }
-    // A frontend prompt (interactive argument collection) pre-fills its
-    // editable `initial` value, overriding the restored draft.
-    if (store.ui.promptText !== null && store.ui.promptResolver !== null) {
-      draft = store.ui.promptInitial;
       selectedIndex = 0;
     }
     element?.focus();
@@ -133,12 +161,6 @@
     if (!bashFocusGate(store.ui.bashInputFocusTick)) return;
     untrack(() => activate('bash'));
   });
-  // …with one exception: a prompt that is already waiting when this component
-  // is created still owns the input (it was raised while the chrome was hidden
-  // in fullscreen), so it does get the focus — its question is the whole point.
-  onMount(() => {
-    if (store.ui.promptText !== null) untrack(() => activate('command'));
-  });
 
   // While a script prompt is active, the list offers the prompt's
   // completions (values, not commands) instead of the command registry.
@@ -148,7 +170,7 @@
   const matches = $derived(
     !focused
       ? []
-      : store.ui.promptText !== null
+      : promptText !== null
         ? filterCompletions(store.ui.promptCompletions, draft).map((name) => ({
             name,
             label: '',
@@ -166,7 +188,7 @@
   // The suggestion list holds command names only when the command input is in
   // its plain command mode (not a script/argument prompt, not bash completion).
   // The "…" prompt marker is meaningful only there.
-  const listingCommands = $derived(store.ui.promptText === null && mode === 'command');
+  const listingCommands = $derived(promptText === null && mode === 'command');
 
   // Typing returns the selection to the best (first) match.
   $effect(() => {
@@ -185,7 +207,7 @@
     // In a prompt, index -1 is the minibuffer itself (no completion
     // highlighted): Up past the top deselects so Enter submits the typed
     // free value. Command/bash mode keep a highlight always (spec-gui).
-    const min = store.ui.promptText !== null ? -1 : 0;
+    const min = promptText !== null ? -1 : 0;
     const span = suggestions.length - min;
     selectedIndex = ((((selectedIndex - min + delta) % span) + span) % span) + min;
     scrollSelectionIntoView();
@@ -201,7 +223,7 @@
    *  completion is a final value: no trailing space. A bash candidate
    *  replaces only the completed word. */
   function acceptSuggestion(name: string) {
-    if (store.ui.promptText === null && mode === 'bash') {
+    if (promptText === null && mode === 'bash') {
       const insertion = insertCandidate(draft, bashPoint, bashWord, name, true);
       draft = insertion.text;
       bashCandidates = [];
@@ -210,7 +232,7 @@
       setCursorSoon(insertion.cursor);
       return;
     }
-    draft = store.ui.promptText !== null ? name : name + ' ';
+    draft = promptText !== null ? name : name + ' ';
     selectedIndex = 0;
     element?.focus();
   }
@@ -271,14 +293,16 @@
     const resolver = store.ui.promptResolver;
     store.ui.promptText = null;
     store.ui.promptCompletions = [];
-    store.ui.promptInitial = '';
+    store.ui.promptWorkspaces = [];
+    store.ui.promptTask = null;
+    store.ui.promptDraft = '';
     store.ui.promptResolver = null;
     if (resolver) resolver(confirm ? (text ?? '') : null);
     else void invoke('prompt_resolve', { confirm, text: confirm ? text : null });
   }
 
   function cancelPrompt() {
-    if (store.ui.promptText === null) return;
+    if (promptText === null) return;
     resolvePrompt(false, null);
   }
 
@@ -305,13 +329,13 @@
   async function submit(raw = false) {
     const input = draft;
     const picked =
-      store.ui.promptText === null ? resolveSubmission(input, suggestions, selectedIndex) : input;
+      promptText === null ? resolveSubmission(input, suggestions, selectedIndex) : input;
     const promptValue = resolvePromptValue(input, suggestions, selectedIndex, raw);
     draft = '';
     bashCandidates = [];
     const ws = currentWs;
     if (ws !== null) draftsOf(mode)[ws] = '';
-    if (store.ui.promptText !== null) {
+    if (promptText !== null) {
       // Prompt (script POST /gui/prompt or interactive argument collection):
       // confirm with the resolved value (highlighted completion or, on
       // Ctrl-Enter / a deselected list, the typed text). The resolver routes
@@ -347,7 +371,7 @@
       unfocus();
     } else if (event.key === 'Tab') {
       event.preventDefault();
-      if (mode === 'bash' && store.ui.promptText === null) void completeBash();
+      if (mode === 'bash' && promptText === null) void completeBash();
       else completeTab();
     } else if (event.key === 'ArrowDown') {
       event.preventDefault();
@@ -388,7 +412,7 @@
    *  `!command` keeps the pasted line. */
   function onInput() {
     bashCandidates = [];
-    if (mode === 'command' && store.ui.promptText === null && draft.startsWith('!')) {
+    if (mode === 'command' && promptText === null && draft.startsWith('!')) {
       const rest = draft.slice(1);
       mode = 'bash';
       draft = rest !== '' ? rest : (currentWs !== null && store.bashDrafts[currentWs]) || '';
@@ -420,7 +444,7 @@
     </ul>
   {/if}
   <div class="line">
-    <span class="prompt">{store.ui.promptText ?? (mode === 'bash' ? '!' : ':')}</span>
+    <span class="prompt">{promptText ?? (mode === 'bash' ? '!' : ':')}</span>
     <input
       bind:this={element}
       bind:value={draft}
@@ -432,7 +456,7 @@
       spellcheck="false"
       autocomplete="off"
     />
-    {#if store.ui.promptText !== null && suggestions.length > 0}
+    {#if promptText !== null && suggestions.length > 0}
       <span class="hint" title="Enter picks the highlighted value; Ctrl-Enter keeps what you typed">⏎ pick · ⌃⏎ new</span>
     {/if}
   </div>
