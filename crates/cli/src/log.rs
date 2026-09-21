@@ -577,9 +577,18 @@ pub struct LogArgs {
     pub all: bool,
 }
 
-pub fn log(ctx: &Ctx, args: &LogArgs) -> Result<i32, CliError> {
-    let base = ctx.repo_base()?;
-    let mut query: Vec<(&str, String)> = Vec::new();
+/// The number of revisions (or, with `--ops`, of operations) a listing shows
+/// when none was asked for.
+const DEFAULT_LOG_WINDOW: usize = 20;
+
+/// The query string `mf log list` sends.
+///
+/// The bound matters: the listing displays a window, and asking the daemon for
+/// the whole log to show twenty revisions of it makes every listing cost the
+/// size of the log (spec-perf). `--all` and the graph are the deliberate
+/// exceptions — the graph cannot be drawn without every branch.
+fn log_query(args: &LogArgs) -> Result<Vec<(&'static str, String)>, CliError> {
+    let mut query: Vec<(&'static str, String)> = Vec::new();
     // `--graph` and `--tree` need every branch; the default shows the active
     // line through HEAD (ancestry + the most-recent forward continuation).
     let mode = if args.graph || args.tree { "tree" } else { "active" };
@@ -593,6 +602,19 @@ pub fn log(ctx: &Ctx, args: &LogArgs) -> Result<i32, CliError> {
     if let Some(until) = &args.until {
         query.push(("until", parse_timestamp(until)?.to_string()));
     }
+    if !args.all && !args.graph && !args.tree {
+        let window = args.limit.unwrap_or(DEFAULT_LOG_WINDOW);
+        // `--ops` counts operations, the default counts revisions — each asks
+        // for exactly what it displays.
+        let key = if args.ops { "limit" } else { "revisions" };
+        query.push((key, window.to_string()));
+    }
+    Ok(query)
+}
+
+pub fn log(ctx: &Ctx, args: &LogArgs) -> Result<i32, CliError> {
+    let base = ctx.repo_base()?;
+    let query = log_query(args)?;
     let resp = ctx.client.get(&format!("{base}/log"), &query)?;
 
     let head = resp["head"].as_i64();
@@ -632,7 +654,7 @@ pub fn log(ctx: &Ctx, args: &LogArgs) -> Result<i32, CliError> {
     // in tree mode), reconstructed from parent_id.
     let on_head_path = head_path(&ops, head);
 
-    let limit = if args.all { None } else { args.limit.or(Some(20)) };
+    let limit = if args.all { None } else { Some(args.limit.unwrap_or(DEFAULT_LOG_WINDOW)) };
 
     if groups.is_empty() {
         println!("(empty history)");
@@ -1090,6 +1112,35 @@ fn fmt_second(ms: i64) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// `mf log list` shows the last twenty revisions; it must ask the daemon
+    /// for those, not for the whole log. Fetching everything and trimming it
+    /// here made the listing cost grow with the log — seven seconds of daemon
+    /// time and two minutes of formatting on a 200 000-operation repository
+    /// (spec-perf).
+    #[test]
+    fn log_list_bounds_what_it_asks_the_daemon_for() {
+        let q = log_query(&LogArgs::default()).unwrap();
+        assert!(
+            q.contains(&("revisions", "20".to_string())),
+            "the default listing must bound the read by revisions: {q:?}"
+        );
+        assert!(q.contains(&("mode", "active".to_string())));
+
+        // `--ops` counts operations, so it bounds operations.
+        let q = log_query(&LogArgs { ops: true, limit: Some(5), ..LogArgs::default() }).unwrap();
+        assert!(q.contains(&("limit", "5".to_string())), "{q:?}");
+        assert!(!q.iter().any(|(k, _)| *k == "revisions"), "{q:?}");
+
+        // `--all` asks for everything, on purpose.
+        let q = log_query(&LogArgs { all: true, ..LogArgs::default() }).unwrap();
+        assert!(!q.iter().any(|(k, _)| *k == "limit" || *k == "revisions"), "{q:?}");
+
+        // The graph needs every branch: no bound, and the tree mode.
+        let q = log_query(&LogArgs { graph: true, ..LogArgs::default() }).unwrap();
+        assert!(q.contains(&("mode", "tree".to_string())));
+        assert!(!q.iter().any(|(k, _)| *k == "limit" || *k == "revisions"), "{q:?}");
+    }
 
     #[test]
     fn parse_timestamp_is_iso_by_default_and_at_for_raw_ms() {
