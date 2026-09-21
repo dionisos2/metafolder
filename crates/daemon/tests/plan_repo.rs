@@ -3,7 +3,7 @@
 //! describe a pending sync. The daemon delta is thin — a repo can be created as
 //! `system` (hidden from `GET /repos`) and holds abstract records (no
 //! `mfr_path`) with ordinary `plan_*` user fields, including cross-repo
-//! `ExternalRef` values. Orchestration (what to write) is the CLI's job (v2).
+//! `ExternalRef` values. Orchestration (what to write) is the CLI's job.
 
 use axum::body::Body;
 use axum::http::{Request, StatusCode};

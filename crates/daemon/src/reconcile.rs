@@ -29,7 +29,7 @@ use crate::tree_cache::TreeCache;
 #[derive(Debug, Serialize)]
 pub struct CandidateMatch {
     pub path: String,
-    /// `"partial_hash"` (strong), `"size"` (weak), or `"similarity"` (v2).
+    /// `"partial_hash"` (strong), `"size"` (weak), or `"similarity"`.
     pub fingerprint: &'static str,
     /// Similarity score in [0, 1] for `"similarity"` matches (spec-file-tracking
     /// "File Similarity"); absent for fingerprint matches.
@@ -321,7 +321,7 @@ pub fn reconcile_full_reported(
         states.push(state);
     }
 
-    // Step 4 — similarity phase (v2): for each still-unmatched orphan and each
+    // Step 4 — similarity phase: for each still-unmatched orphan and each
     // still-unmatched new path of the same kind, append score-based candidates.
     if let Some(threshold) = threshold {
         reporter.progress("similarity", None, None);

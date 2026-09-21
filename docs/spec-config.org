@@ -157,8 +157,8 @@ a new source checkout), not from any long-running process.
 Inputs:
 - =--source <dir>= — the source checkout whose =crates/*/default-config/= and
   =scripts/shipped/= are gathered. Defaults to the current working directory
-  (the git-checkout install case). [v2: a binary-only install would embed the
-  defaults instead.]
+  (the git-checkout install case). [Deferred: a binary-only install would embed
+  the defaults instead — see [[*Open questions]].]
 - =--config-dir <dir>= — target. Defaults to =~/.config/metafolder/=.
 
 ** First run (repository absent)
@@ -262,7 +262,7 @@ configuration never touches git.
   =remove_user_keybinding= as override mutators) in favour of direct file edits.
 - =load_grammar='s install-if-missing and =load_style='s fallback.
 
-* Open questions / v2
+* Open questions
 
 - *Binary-only install.* Installing from a pre-built binary or OS package, with
   no source checkout to read =default-config/= from, needs the defaults

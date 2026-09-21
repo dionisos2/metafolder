@@ -3,8 +3,9 @@
 > **⚠️ Document historique.** Ce fichier consigne les décisions d'origine du
 > projet et **ne reflète plus l'implémentation actuelle** : le modèle `Value`
 > a évolué (plus de `Date`/`Duration`, ajout de `TreeRef`/`RefBase`/
-> `ExternalRef`), le schéma SQLite (`metarecord`/`metarecord_db` et non
-> `metadata`/`db_id`), le GUI (Tauri v2 + Svelte 5, pas `egui`), la sync
+> `ExternalRef`), le schéma SQLite (`metarecord`/`field` et non
+> `metadata`/`db_id` ; la propriété d'un metarecord est implicite, c'est le
+> fichier de base qui le porte), le GUI (Tauri v2 + Svelte 5, pas `egui`), la sync
 > (commande `mf sync` complète, pas des primitives à scripter) et les noms de
 > commandes (`mf …`, pas `metafolder validate`/`rollback`). La référence à jour
 > est `docs/spec-*.org` (+ `README.md` et `CLAUDE.md`). Conservé pour la trace

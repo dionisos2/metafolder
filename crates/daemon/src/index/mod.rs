@@ -289,12 +289,10 @@ pub struct RepoIndex {
     /// All interned ids: every metarecord of this repository's database
     /// (`db::list_entries`). Complement base for `Not` / `IsUnknown`.
     ///
-    /// The oracle's `_repo` CTE additionally demands *exclusive* ownership
-    /// (`COUNT(*) = 1` over `metarecord_db`), which selects the same set today
-    /// — a metarecord has exactly one owner, link metarecords being `:v2:` and
-    /// unimplemented. If they land, this is the line that has to reinstate the
-    /// check: it is the read-side link-awareness, and it is no longer on the
-    /// serving path (docs/review-followups.md §9).
+    /// This is the whole universe, with nothing to filter out: ownership is
+    /// implicit in which database file holds a metarecord (one repository per
+    /// file), so a metarecord has exactly one owner and a second one is not
+    /// representable. The oracle's `_repo` CTE is the same expression.
     universe: RoaringBitmap,
     /// Per field name: ids with ≥1 non-`Nothing` row.
     present: HashMap<String, RoaringBitmap>,

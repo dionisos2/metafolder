@@ -182,27 +182,46 @@ removed from the response as the document itself said they should be, and a
 =spec-file-tracking=, =gui-tag-folder-rework= (its first prerequisite marked
 done), and =review-followups= §7 / §8.
 
-Found while doing it, and *not* a documentation fix — see the new item below.
+Found while doing it, and *not* a documentation fix — see the item below.
 
-** TODO the read side is no longer link-aware
-Found during the documentation pass above, and the one thing in it that is not
-about words. Reads used to exclude *link metarecords* — a metarecord owned by
-more than one repository — because the SQL engine's =_repo= universe CTE
-demanded *exclusive* ownership (=COUNT(*) = 1= over =metarecord_db=). That CTE
-left with the engine: the bitmap index's universe is
-=SELECT uuid FROM metarecord= (=RepoIndex::build= via =db::list_entries=), every
-metarecord of the database.
+** DONE the "link-aware reads" item was about a concept that no longer exists
+Raised by the documentation pass above and *wrong the day it was written*. It
+claimed reads had stopped excluding *link metarecords* — a metarecord owned by
+more than one repository — because the departed SQL engine's =_repo= CTE
+demanded exclusive ownership (=COUNT(*) = 1= over =metarecord_db=) and the
+bitmap index's universe is =SELECT uuid FROM metarecord=.
 
-*No consequence today* — links are =:v2:=, nothing creates one, and a
-metarecord has exactly one owner, so the two expressions select the same set.
-It matters because of *when* it would break: the day links arrive, the serving
-path and the oracle would disagree silently, and the equivalence battery would
-not catch it (there is no link in any fixture to reveal it). The =metarecord_db=
-join belongs back in the universe — or a fixture with a link belongs in the
-battery — before that work starts, not after.
+Neither half holds. The multi-owner concept was retired when sync was
+redesigned: links live in the per-pair sync database, outside the data model
+(see [[file:docs/spec-sync.org][spec-sync.org]]), so the ownership table and
+=MetaRecord.db_ids= became a singleton and were removed outright in =6357e5b=
+(August 2026) — ownership is implicit in which database file holds a
+metarecord, and a second owner is not representable. The oracle kept in
+=crates/query-oracle= was updated in the same commit: its =_repo= CTE *is*
+=SELECT uuid FROM metarecord=, the same universe the index builds, so there is
+nothing for the two to disagree about.
 
-Recorded at =index/mod.rs= (the =universe= field) and in
-=docs/review-followups.md= §9, which claimed the opposite.
+What was left was stale prose describing a future nobody plans any more:
+=index/mod.rs= (the =universe= doc comment), =docs/review-followups.md= §9,
+=spec-data-model= (the version-hash exclusion list and the field-catalog
+universe), =spec-indexing= (a baseline index on a table that no longer exists)
+and =decisions.md=. Cleared, together with the =:v2:= version tags that dated
+from the same era (see [[*DONE the =:v2:= tags meant version 0.2]]).
+
+** DONE the =:v2:= tags meant version 0.2
+A notation error, cleared in September 2026. Headings tagged =:v2:= and
+passages marked =[v2]= were meant to read "deferred to version *0.2*"; they
+read as "version 2", a release that does not exist in this project's numbering.
+0.2 and 0.3 shipped in the meantime, and with them most of what carried the
+tag — =mf sync= above all, whose whole spec was still headed =:v2:=.
+
+Every occurrence is gone. =spec-main= "Version scope" now says these documents
+describe 0.3 and that deferred work is tagged =:deferred:= and *named*, instead
+of pointing at a version number; =spec-sync= loses the tag on its overview and
+on =mf sync= (both implemented) and keeps =:deferred:= on "Performance
+concerns"; =spec-indexing= (on-disk persistence), =spec-config= (binary-only
+install) and =spec-trash= (sync as a future caller) say what is missing in
+words. The =CLAUDE.md= sentences that repeated the tag went with them.
 
 ** TODO structure
 *** TODO =routes.rs= is 4105 lines and 85 handlers

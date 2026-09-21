@@ -4,9 +4,9 @@
 * Overview
 
 A single trash-bin per repository, shared by *every* metafolder file operation
-that would overwrite or delete a file — rollback today (see
-[[file:spec-event-log.org][spec-event-log.org]] "Filesystem coordination"), cross-repo sync tomorrow (see
-[[file:spec-sync.org][spec-sync.org]], v2). It guarantees no byte is ever lost: the destroyed content is
+that would overwrite or delete a file — rollback (see
+[[file:spec-event-log.org][spec-event-log.org]] "Filesystem coordination") and cross-repo sync (see
+[[file:spec-sync.org][spec-sync.org]]). It guarantees no byte is ever lost: the destroyed content is
 set aside, and the user decides later whether to bring it back or discard it.
 
 *The trash takes the metarecord with the bytes.* Trashing captures the

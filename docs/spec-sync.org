@@ -1,7 +1,7 @@
 #+TITLE: Metafolder — Cross-repo Synchronisation Specification
 #+OPTIONS: toc:2 num:t
 
-* Overview                                                               :v2:
+* Overview
 
 The daemon provides low-level primitives for cross-repo sync. Orchestration
 (deciding what to link, in which order, and running the file operations)
@@ -843,7 +843,7 @@ be loaded (=404= otherwise).
   commit, the link columns are updated and the =snapshot_field= rows
   replaced. Returns ={ "committed": N }=.
 
-** Performance concerns                                                   :v2:
+** Performance concerns                                             :deferred:
 
 =internal= transfers/moves are native (=fs::copy= / =fs::rename=), one call
 per record, no process spawn — so a large batch of small files costs syscalls,
@@ -859,11 +859,12 @@ file operations.
    batch corresponds to file transfers (idempotent, but slow to re-transfer
    if the batch is large).
 
-2. *Tree-cache rebuilds during =mfr_path= propagation*: every manual TreeRef
-   write currently triggers a full tree-cache rebuild in the target repo —
-   propagating paths for N records is O(N) rebuilds. Batching the rebuild
-   (one per metadata batch) is an optimisation to evaluate with the
-   benchmark.
+2. *Tree-cache rebuilds during =mfr_path= propagation*: /resolved, September
+   2026/. A manual TreeRef write used to trigger a full tree-cache rebuild in
+   the target repo, making a propagation of N records cost O(N) full scans of
+   the =field= table. No write rebuilds the cache any more — it is reconciled
+   cell by cell from what the revision named (=RepoState::settle=) — so there
+   is nothing left to batch.
 
 * CLI
 
@@ -871,7 +872,7 @@ The orchestration described in [[*Two-phase sync process]] and
 [[*Sync intentions]] lives in the CLI; the daemon only provides the primitives
 listed in [[*HTTP API]].
 
-** =mf sync=                                                              :v2:
+** =mf sync=
 
 #+BEGIN_SRC
 mf sync plan <repo_a> <repo_b> --intents <file> [--host <repo>] [--on-conflict <policy>]

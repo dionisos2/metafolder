@@ -41,17 +41,23 @@ running in the user's browser — which can reach =127.0.0.1= — out.
 
 ** Version scope
 
-Features tagged =:v2:= on headings or marked =[v2]= inline are deferred to
-version 2. Version 1 covers: CRUD, =TreeRef= / tree cache, file watcher (basic
-events), reconcile (fingerprint phase only), query language, reserved fields
-(=mfr_*= / =mf_*=), the watch/ignore system, the user schema
-([[file:spec-schema.org][spec-schema.org]]), cursor pagination, and the
-daemon-side event log ([[file:spec-event-log.org][spec-event-log.org]]):
-logged write flow, =pending_operation= buffer, atomic metadata-only rollback,
-log reading and pruning. The coordinated navigation protocol and the
-log/rollback/prune CLI (originally v2) are now implemented as well. Background
-tasks and progress reporting ([[file:spec-tasks.org][spec-tasks.org]]) — async
-reconcile, observable queries, the task registry — are part of version 1.
+These specifications describe version *0.3*, the current one. Everything they
+describe is implemented unless the passage says otherwise: work still to come
+is tagged =:deferred:= on a heading, or says so in place, and names what is
+missing rather than a version number.
+
+(An earlier draft tagged deferred work =:v2:=, which read as "version 2" but
+meant version *0.2*. The notation outlived its meaning — 0.2 and 0.3 shipped,
+and most of what carried the tag with them — so it is gone.)
+
+Implemented: CRUD, =TreeRef= / tree cache, file watcher, reconcile, query
+language, reserved fields (=mfr_*= / =mf_*=), the watch/ignore system, the user
+schema ([[file:spec-schema.org][spec-schema.org]]), cursor pagination, the
+daemon-side event log ([[file:spec-event-log.org][spec-event-log.org]]) with
+the coordinated navigation protocol and the =mf log= CLI, background tasks and
+progress reporting ([[file:spec-tasks.org][spec-tasks.org]]), the trash-bin
+([[file:spec-trash.org][spec-trash.org]]) and cross-repo sync
+([[file:spec-sync.org][spec-sync.org]]).
 
 ** Key invariants
 
@@ -71,7 +77,7 @@ reconcile, observable queries, the task registry — are part of version 1.
   in per-pair sync databases under =.metafolder/internal/=; it is never
   recorded in the event log and can only be modified when both repositories
   of the pair are simultaneously loaded in the same daemon instance
-  (see [[file:spec-sync.org][spec-sync.org]]). [v2]
+  (see [[file:spec-sync.org][spec-sync.org]]).
 - The =version= of a metadata metarecord is managed exclusively by the daemon
   and cannot be set directly by users. It is a *hash of the metarecord's own
   content* (see spec-data-model "Version"), carrying no ordering and compared
@@ -468,7 +474,7 @@ section; this section defines the conventions shared by all commands.
 | [[file:spec-event-log.org][spec-event-log.org]]     | =mf log {list,rollback,prune}=                     |
 | [[file:spec-trash.org][spec-trash.org]]             | =mf trash {list,restore,prune}=                   |
 | [[file:spec-tasks.org][spec-tasks.org]]             | =mf task {list,show}=                              |
-| [[file:spec-sync.org][spec-sync.org]]               | =mf sync= (v2)                                    |
+| [[file:spec-sync.org][spec-sync.org]]               | =mf sync {plan,run,show,status,link,unlink}=      |
 | [[file:spec-duplicates.org][spec-duplicates.org]]   | =mf duplicate {list,scan,clear}=                  |
 
 ** Global options

@@ -90,8 +90,6 @@ one field name to another, or retyping it, changes the version.
   carrying identical fields still hash differently and each record's version
   values live in their own domain. A metarecord with no fields therefore has a
   version of its own rather than a shared zero.
-- Repository ownership (=metarecord_db=) is *excluded*: it is not part of the
-  metadata the version describes.
 
 **** Incremental maintenance
 
@@ -882,8 +880,8 @@ each name appears at most once. =Nothing= rows are excluded (an explicit
 absence is not a usable value). An optional =?type=<value_type>= query
 parameter restricts the result to one value type (=tree_ref=, =ref=, =string=,
 …). The isolation matches a query's universe — every metarecord of this
-repository's database (which, one owner per metarecord, is the same set as
-"owned exclusively by it"; see the roadmap item on link-awareness). The GUI uses
+repository's database, ownership being implicit in which database file holds a
+metarecord. The GUI uses
 it to populate field pickers (e.g.
 the TreeRef-field and Ref-field selectors of the tree-explorer panel, see
 [[file:spec-gui.org][spec-gui.org]]).

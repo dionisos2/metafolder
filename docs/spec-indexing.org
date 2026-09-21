@@ -11,9 +11,8 @@ in-memory roaring-bitmap / BSI query accelerator described under
 [[*The proposed architecture][The proposed architecture]]
 (=crates/daemon/src/index/=, built at repo load, refreshed to HEAD per query,
 validated by =tests/index_oracle.rs=) — which is now the *only* thing that
-serves a filter ([[*No operand runs in SQL]], done). Still forward-looking
-(tagged =:v2:= or later): on-disk index persistence and the larger-scale
-refinements. When in doubt, =crates/daemon/src/index/= is the authority on what
+serves a filter ([[*No operand runs in SQL]], done). Still forward-looking:
+on-disk index persistence and the larger-scale refinements. When in doubt, =crates/daemon/src/index/= is the authority on what
 exists.
 
 *The adaptive planner is not planned* (off the roadmap, September 2026). It was
@@ -99,18 +98,20 @@ of magnitude.
 
 * Baseline indexes (implemented)
 
-Two indexes, added in the daemon schema (=crates/daemon/src/db.rs=), created by
-=init_schema= and back-filled on open for existing repositories
-(=ensure_perf_indexes=, idempotent):
+Two indexes on the EAV table, added in the daemon schema
+(=crates/daemon/src/db.rs=), created by =init_schema= and back-filled on open
+for existing repositories (=ensure_perf_indexes=, idempotent):
 
-| Index                     | Definition                              | Fixes                                |
-|---------------------------+-----------------------------------------+--------------------------------------|
-| =idx_field_name=          | =field(field_name, metarecord_uuid)=    | predicate seeks the field_name range instead of scanning the EAV table; covers the =DISTINCT metarecord_uuid= projection |
-| =idx_metarecord_db_uuid=  | =metarecord_db(db_id, metarecord_uuid)= | listing seeks by keyset, reads rows already ordered — no temp b-tree per page. Obsolete once =metarecord_db= is removed (see [[file:spec-sync.org][spec-sync.org]]): the listing keyset then seeks =metarecord(uuid)= (the primary key) directly |
+| Index                  | Definition                           | Fixes                                |
+|------------------------+--------------------------------------+--------------------------------------|
+| =idx_field_name=       | =field(field_name, metarecord_uuid)= | predicate seeks the field_name range instead of scanning the EAV table; covers the =DISTINCT metarecord_uuid= projection |
+| =idx_field_name_type=  | =field(field_name, value_type)=      | the field catalogue and its =?type== filter read a name's value type without touching the rows |
 
-=list_entries_page= emits a *conditional* keyset (the cursor predicate is
-omitted on the first page) so the composite index can seek; folding it into
-=(?=NULL OR uuid > ?)= would defeat the seek.
+The listing needs no index of its own: ownership being implicit in which
+database file holds a metarecord, =list_entries_page= reads =metarecord=
+directly and its keyset seeks the primary key. It emits that keyset
+*conditionally* (the cursor predicate is omitted on the first page) so the seek
+happens; folding it into =(?=NULL OR uuid > ?)= would defeat it.
 
 Result: the LIST path is fixed (=list LIMIT 100= ≈ constant across sizes,
 20 ms @ 50 k); the full paginated traversal is now ~linear instead of

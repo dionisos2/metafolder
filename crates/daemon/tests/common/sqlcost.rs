@@ -50,15 +50,8 @@ pub struct SqlCost {
 /// The tables a full scan is a finding on. A scan of a recursive CTE's own
 /// working table is not one, so the check names the real tables instead of
 /// looking for the word `SCAN`.
-const TABLES: &[&str] = &[
-    "operation",
-    "revision",
-    "op_snapshot",
-    "field",
-    "metarecord",
-    "metarecord_db",
-    "pending_operation",
-];
+const TABLES: &[&str] =
+    &["operation", "revision", "op_snapshot", "field", "metarecord", "pending_operation"];
 
 impl SqlCost {
     /// How many statements ran.

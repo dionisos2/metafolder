@@ -149,58 +149,33 @@ pile s'exécute).
   `run_query_filter` interroge entre les phases. Ce qui manque : une *deadline*
   qui la déclenche toute seule.
 
-## 9. Link metarecords : écritures non « link-aware » — ⏳ DIFFÉRÉ (v2)
+## 9. Link metarecords : le concept n'existe plus — ✅ SANS OBJET (sept. 2026)
 
-**Contexte.** Un *link metarecord* est possédé par **plusieurs** repos (plusieurs
-lignes `metarecord_db` pour le même `metarecord_uuid`). C'est un concept **v2,
-non implémenté** : aujourd'hui chaque metarecord a un seul propriétaire et chaque
-repo est sa propre base, donc **aucune corruption actuelle**.
+**Constat d'origine (juin 2026).** Un *link metarecord* aurait été possédé par
+**plusieurs** repos (plusieurs lignes `metarecord_db` pour le même
+`metarecord_uuid`). Les lectures l'excluaient (le CTE `_repo` de `query_exec`
+exigeait `COUNT(*) = 1`), mais aucune écriture n'était « link-aware » :
+`delete_metarecord`, `navigate`/`prune` et `set_field` opéraient sur l'entité
+entière, sans contrôle de propriété. Le point était classé « à traiter lors de
+la conception des links ».
 
-⚠️ **Les lectures ne sont plus link-aware** (septembre 2026). Elles l'étaient
-par le CTE `_repo` de `query_exec`, qui exigeait la propriété **exclusive**
-(`COUNT(*) = 1` → links invisibles aux requêtes) ; ce moteur a quitté le daemon
-pour `crates/query-oracle`, et l'univers de l'index bitmap est simplement
-`SELECT uuid FROM metarecord` (`index::RepoIndex::build` via `db::list_entries`).
-Sans conséquence aujourd'hui (un seul propriétaire par metarecord), mais c'est
-**la ligne à corriger en premier** quand les links arriveront : l'oracle et le
-chemin de service divergeraient silencieusement, et c'est précisément le genre
-d'écart que la batterie d'équivalence ne verrait pas (aucun link n'existe pour
-le révéler).
+**Ce qui s'est passé.** Cette conception a eu lieu, et elle a *supprimé le
+concept*. La sync cross-repo a été entièrement revue : un lien entre deux
+metarecords est une ligne de la base de sync **par paire**, hors du modèle de
+données (`docs/spec-sync.org` — un lien n'est pas un metarecord, n'apparaît
+dans aucune requête, ni dans le journal). La table de propriété et
+`MetaRecord.db_ids` sont donc devenus un singleton inutile, et ont été
+**supprimés** par `6357e5b` (août 2026) : la propriété est implicite, c'est le
+fichier de base qui porte le metarecord, et un second propriétaire n'est plus
+représentable. Le CTE `_repo` de l'oracle (`crates/query-oracle`) a été aligné
+dans le même commit sur `SELECT uuid FROM metarecord`, exactement l'univers que
+construit l'index bitmap.
 
-**Constat (les écritures ne le sont pas).** Aucune opération d'écriture ne
-vérifie l'exclusivité de propriété ni « tous les repos propriétaires chargés » :
-
-- `log::Writer::delete_metarecord` : `DELETE FROM metarecord WHERE uuid = ?1` →
-  supprime **l'entité entière** (CASCADE efface **toutes** les lignes
-  `metarecord_db`, donc tous les copropriétaires).
-- `log::navigate`/`prune` (vers l'état vide) : le `SELECT` est cadré
-  `WHERE db_id = ?1`, mais le `DELETE` porte sur `metarecord` → efface aussi les
-  copropriétaires (c'est le **M4** de l'audit).
-- `set_field` / écritures de champ : opèrent sur le `uuid` sans contrôle de
-  propriété.
-
-Donc si un link existait, une suppression/rollback dans le repo A détruirait le
-metarecord partagé avec B, et une modif de champ s'appliquerait à la donnée
-partagée sans coordination.
-
-**Invariant voulu (à appliquer quand les links arrivent).** Aucune modification
-sur un link tant que **tous** les repos propriétaires ne sont pas chargés (pour
-que le changement soit cohérent/visible des deux côtés et géré par le daemon).
-Concrètement :
-- **suppression** cadrée par propriétaire : retirer la ligne `metarecord_db` du
-  repo courant ; ne supprimer l'entité `metarecord` que quand le **dernier**
-  propriétaire la retire ;
-- **modification** d'un metarecord partagé : refusée tant que les repos
-  propriétaires ne sont pas tous chargés (ou coordonnée entre les repos
-  chargés) ;
-- cohérent avec les lectures qui excluent déjà les links.
-
-Non implémentable maintenant : le modèle de stockage/sync des links est v2 et
-non défini ; un garde-fou serait du code mort (rien ne crée de link). À traiter
-lors de la conception des links (`docs/spec-sync.org`). **Pointeurs :**
-`log.rs` (`delete_metarecord`, `navigate`, `prune`), `index/mod.rs` (le champ
-`universe`), `crates/query-oracle` (CTE `_repo`, le modèle d'exclusivité de
-référence), `db.rs` (`metarecord_db`, `list_entries`).
+Il n'y a donc **rien à rendre link-aware** : ni divergence lecture/oracle, ni
+invariant d'écriture à rétablir. L'avertissement de septembre 2026 qui figurait
+ici (« les lectures ne sont plus link-aware ») décrivait un état déjà disparu
+un mois plus tôt ; il est retiré, avec la prose correspondante dans
+`index/mod.rs`, `roadmap.org`, `spec-data-model` et `spec-indexing`.
 
 ## 10. Le log du mock `mf` perd les frontières d'arguments — ⏳ DIFFÉRÉ (coût > gain)
 
