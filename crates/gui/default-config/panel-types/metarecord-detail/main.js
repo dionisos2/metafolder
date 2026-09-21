@@ -18,6 +18,7 @@ import { fileMenuItems, metarecordMenuItems } from '/__file-actions.js';
 import { createAnnotator } from './annotations.js';
 import { completionSourceField, resolveRefValue } from './ref-completion.js';
 import { createNavHistory } from './nav-history.js';
+import { settledType, splitTypeValue } from './field-args.js';
 
 /**
  * The selected metarecord's identity, as the other panels publish it.
@@ -664,6 +665,13 @@ export async function mount(root, metafolder) {
     return names;
   }
 
+  /** Whether every row of `field` on the displayed record is a Nothing — a
+   *  field that is explicitly absent, with no value to re-encode. */
+  function onlyNothingRows(/** @type {string} */ field) {
+    const rows = (metarecord?.fields ?? []).filter((f) => f.name === field);
+    return rows.length > 0 && rows.every((f) => f.value.type === 'nothing');
+  }
+
   /** Distinct field names *including* fields whose only value is Nothing, so
    *  edit-field-name/type/value can act on a field that is currently absent
    *  (an explicit Nothing row still carries a db id to edit). */
@@ -756,36 +764,63 @@ export async function mount(root, metafolder) {
     return 'string';
   }
 
-  /** The value type to use when giving a currently-Nothing field a value: its
-   *  single established type when known (from the schema or other records),
-   *  otherwise the user's pick among the concrete types — the "edit-field-type
-   *  first" step. Returns null if the user cancels. @param {string} repo
-   *  @param {string} field @returns {Promise<Metafolder.Value['type']|null>} */
-  async function establishType(repo, field) {
-    await cache.fetchFields(repo);
-    const known = cache.fieldType(repo, field);
-    if (typeof known === 'string' && known !== 'nothing')
-      return /** @type {Metafolder.Value['type']} */ (known);
-    const concrete = TYPES.filter((t) => t !== 'nothing');
-    const answer = window.prompt(`Type for "${field}" (${concrete.join(', ')}):`, 'string');
-    if (answer === null) return null;
-    const type = answer.trim();
-    if (!(/** @type {readonly string[]} */ (concrete)).includes(type))
-      throw new Error(`unknown value type "${type}"`);
-    return /** @type {Metafolder.Value['type']} */ (type);
+  /** The concrete value types a type argument completes over — every type but
+   *  `nothing`, which is an absence and carries no value to parse. */
+  const CONCRETE_TYPES = TYPES.filter((t) => t !== 'nothing');
+
+  /** Makes `repo`'s field catalogue readable *synchronously*, fetching it only
+   *  when the cache holds none. The type argument's `when` consults it and
+   *  cannot await, so a cold cache would have it ask for a type the repository
+   *  already knows; every path that leads to that decision warms it first.
+   *  @param {string|null} repo */
+  async function warmFieldCatalog(repo) {
+    if (repo && cache.readFields(repo) === cache.REFRESH) await cache.fetchFields(repo);
   }
 
-  /** The type to write for `field` on set/add: the current record's own row
-   *  type when present, otherwise the established type or, when none is known, a
-   *  type asked from the user — never a silent `string` fallback (spec-gui
-   *  "metarecord-detail panel type"). Returns null if the user cancels the ask.
-   *  @param {string} repo @param {string} field */
-  async function resolveOrAskType(repo, field) {
-    const existing = (metarecord?.fields ?? []).find(
-      (f) => f.name === field && f.value.type !== 'nothing',
+  /** The field an operation's target names: the target itself, or the name of
+   *  the row it picked by value. @param {string} op @param {string} target */
+  function targetName(op, target) {
+    if (!FIELD_OPS[op]?.byValue) return target;
+    return rowForLabel(target)?.name ?? target;
+  }
+
+  /** The type `op` would write on `target` without asking — read from live
+   *  state alone, since this is what the type argument's `when` decides on.
+   *  @param {string} op @param {string} target */
+  function settledTypeFor(op, target) {
+    const picked = FIELD_OPS[op]?.byValue ? rowForLabel(target) : null;
+    const name = picked?.name ?? target;
+    const catalog = current ? cache.fieldType(current.repo, name) : null;
+    return settledType({
+      rows: metarecord?.fields ?? [],
+      name,
+      catalog: typeof catalog === 'string' ? catalog : null,
+      picked,
+    });
+  }
+
+  /** The type the value argument is parsed as, given the arguments collected
+   *  before it: the one just picked when it was asked for, else the settled
+   *  one. @param {string[]} prior */
+  function typeForPrior(prior) {
+    return prior.length > 2 ? prior[2] : settledTypeFor(prior[0], prior[1]);
+  }
+
+  /** The type of a write whose invocation carried none — the fully inline case,
+   *  where the argument machinery never ran. Fetches the catalogue before
+   *  giving up, and refuses rather than falling back to `string`: a value
+   *  written under a guessed type is a wrong value.
+   *  @param {string} op @param {string} target */
+  async function requireType(op, target) {
+    const direct = settledTypeFor(op, target);
+    if (direct) return direct;
+    await warmFieldCatalog(current?.repo ?? null);
+    const warmed = settledTypeFor(op, target);
+    if (warmed) return warmed;
+    throw new Error(
+      `no type known for "${targetName(op, target)}" — name one: ` +
+        `metarecord:field ${op} <field> <type> <value>`,
     );
-    if (existing) return existing.value.type;
-    return establishType(repo, field);
   }
 
   /** Builds a Value of `type` from a one-line raw string. tree_ref is special:
@@ -867,11 +902,13 @@ export async function mount(root, metafolder) {
     return source ? treePathsForField(repo, source) : [];
   }
 
-  /** Value completion for a set/add value arg (record-or-catalog type lookup).
-   *  @param {string} field */
-  async function valueCompletionFor(field) {
+  /** Value completion for a set/add value arg, over the type that value will
+   *  be written as — the one the type argument just collected, when it was
+   *  asked for, so the completion offers the right forest.
+   *  @param {string} field @param {string|null} type */
+  async function valueCompletionFor(field, type) {
     const cur = requireCurrent();
-    return completionPaths(cur.repo, field, await fieldTypeOf(field));
+    return completionPaths(cur.repo, field, type ?? (await fieldTypeOf(field)));
   }
 
   /** @param {string} prompt */
@@ -894,11 +931,21 @@ export async function mount(root, metafolder) {
    * @typedef {object} FieldOp
    * @property {{prompt: string, complete: () => string[] | Promise<string[]>}} target
    *   the second argument: a field *name*, or one *row* picked by its value label
+   * @property {boolean} [byValue] whether `target` picks a row by its value
+   * @property {{always?: boolean, prompt?: (prior: string[]) => string,
+   *             initial?: (prior: string[]) => string | Promise<string>}} [type]
+   *   the type argument, present when the operation writes a value. Asked only
+   *   when nothing settles the field's type, unless `always` — which is
+   *   `retype`, whose whole point is to name a new one
    * @property {{prompt: (prior: string[]) => string,
+   *             when?: (prior: string[]) => boolean,
    *             initial?: (prior: string[]) => string | Promise<string>,
    *             complete?: (prior: string[]) => string[] | Promise<string[]>}} [value]
-   *   the third argument, absent when the operation takes none
-   * @property {(target: string, value: string) => unknown} run
+   *   the last argument, absent when the operation takes none — and, with its
+   *   own `when`, taken only in some of its cases
+   * @property {(target: string, value: string, type: string) => unknown} run
+   *   `type` is the collected or settled value type, empty for the operations
+   *   that write no value
    */
 
   /**
@@ -912,6 +959,7 @@ export async function mount(root, metafolder) {
    */
   const FIELD_OPS = {
     set: {
+      type: {},
       target: { prompt: 'Field to set?', complete: () => completableFieldNames() },
       value: {
         prompt: (p) => `Value for "${p[1]}"?`,
@@ -922,12 +970,10 @@ export async function mount(root, metafolder) {
           );
           return rows.length === 1 ? rawOfValue(cur.repo, cur.uuid, p[1], rows[0].value) : '';
         },
-        complete: (p) => valueCompletionFor(p[1]),
+        complete: (p) => valueCompletionFor(p[1], typeForPrior(p)),
       },
-      run: async (field, raw) => {
+      run: async (field, raw, type) => {
         const cur = requireCurrent();
-        const type = await resolveOrAskType(cur.repo, field);
-        if (type === null) return; // user cancelled the type pick
         const value = await parseValueForField(cur.repo, field, type, raw);
         const force = isReserved(field) ? { force: true } : {};
         await daemon.call('PUT', api(`/fields/${encodeURIComponent(field)}`), { value, ...force });
@@ -937,15 +983,14 @@ export async function mount(root, metafolder) {
     },
 
     add: {
+      type: {},
       target: { prompt: 'Field to add a value to?', complete: () => completableFieldNames() },
       value: {
         prompt: (p) => `Value to add to "${p[1]}"?`,
-        complete: (p) => valueCompletionFor(p[1]),
+        complete: (p) => valueCompletionFor(p[1], typeForPrior(p)),
       },
-      run: async (field, raw) => {
+      run: async (field, raw, type) => {
         const cur = requireCurrent();
-        const type = await resolveOrAskType(cur.repo, field);
-        if (type === null) return; // user cancelled the type pick
         const value = await parseValueForField(cur.repo, field, type, raw);
         const force = isReserved(field) ? { force: true } : {};
         await daemon.call('POST', api('/fields'), { name: field, value, ...force });
@@ -955,6 +1000,8 @@ export async function mount(root, metafolder) {
     },
 
     edit: {
+      type: {},
+      byValue: true,
       target: { prompt: 'Which value to edit?', complete: () => valueChoices() },
       value: {
         prompt: (p) => {
@@ -970,24 +1017,16 @@ export async function mount(root, metafolder) {
           const cur = requireCurrent();
           const r = rowForLabel(p[1]);
           if (!r) return [];
-          // A Nothing row carries no type of its own: fall back to the field's
-          // established one, so re-giving an absent bool a value still completes.
-          const type = r.value.type === 'nothing' ? await fieldTypeOf(r.name) : r.value.type;
+          // A Nothing row carries no type of its own: the type argument was
+          // asked for it, so the completion follows that pick.
+          const type = typeForPrior(p) ?? (await fieldTypeOf(r.name));
           return completionPaths(cur.repo, r.name, type);
         },
       },
-      run: async (label, raw) => {
+      run: async (label, raw, type) => {
         const cur = requireCurrent();
         const row = rowForLabel(label);
         if (!row) throw new Error(`no field value matching "${label}"`);
-        // A Nothing row carries no type: establish one (its single known type,
-        // or ask) before parsing the value the user just typed.
-        let type = row.value.type;
-        if (type === 'nothing') {
-          const established = await establishType(cur.repo, row.name);
-          if (established === null) return; // user cancelled the type pick
-          type = established;
-        }
         const value = await parseValueForField(cur.repo, row.name, type, raw);
         const force = isReserved(row.name) ? { force: true } : {};
         await daemon.call('PATCH', `/repos/${cur.repo}/fields/${row.id}`, { value, ...force });
@@ -997,6 +1036,7 @@ export async function mount(root, metafolder) {
     },
 
     remove: {
+      byValue: true,
       target: { prompt: 'Which value to remove?', complete: () => valueChoices() },
       run: async (label) => {
         const cur = requireCurrent();
@@ -1053,14 +1093,24 @@ export async function mount(root, metafolder) {
     },
 
     retype: {
-      target: { prompt: 'Field to retype?', complete: () => editableFieldNames() },
-      value: {
+      // The one operation whose type is never settled: naming a new one is
+      // what it does. So its type argument is always asked — the same
+      // argument, the same completion, one prompt of its own.
+      type: {
+        always: true,
         prompt: (p) => `New type for "${p[1]}"?`,
         // A concrete row's type, else the established/schema type for the name.
         initial: (p) => fieldTypeOf(p[1]),
-        complete: () => TYPES.filter((t) => t !== 'nothing'),
       },
-      run: async (field, type) => {
+      target: { prompt: 'Field to retype?', complete: () => editableFieldNames() },
+      value: {
+        // A field whose only value is Nothing has nothing to re-encode: a type
+        // is only meaningful with a value, so the new type is followed by one.
+        when: (p) => onlyNothingRows(p[1]),
+        prompt: (p) => `Value for "${p[1]}" (${p[2]})?`,
+        complete: (p) => valueCompletionFor(p[1], p[2]),
+      },
+      run: async (field, raw, type) => {
         const cur = requireCurrent();
         if (!(/** @type {readonly string[]} */ (TYPES)).includes(type))
           throw new Error(`unknown value type "${type}"`);
@@ -1069,11 +1119,6 @@ export async function mount(root, metafolder) {
         const concrete = all.filter((f) => f.value.type !== 'nothing');
         const force = isReserved(field) ? { force: true } : {};
         if (concrete.length === 0) {
-          // A field whose only value is Nothing has nothing to re-encode: a type
-          // is only meaningful with a value, so ask for one and set it (this is
-          // the type step already chosen above, now given a value).
-          const raw = window.prompt(`Value for "${field}" (${type})?`);
-          if (raw === null) return;
           const value = await parseValueForField(cur.repo, field, type, raw);
           for (const r of all) {
             await daemon.call('PATCH', `/repos/${cur.repo}/fields/${r.id}`, { value, ...force });
@@ -1104,12 +1149,36 @@ export async function mount(root, metafolder) {
       },
       {
         name: 'target',
-        prompt: (p) => FIELD_OPS[p[0]]?.target.prompt ?? 'Field?',
+        // Awaited before the prompt opens, which is what makes the catalogue
+        // resident in time for the type argument below to decide on it.
+        prompt: async (p) => {
+          await warmFieldCatalog(current?.repo ?? null);
+          return FIELD_OPS[p[0]]?.target.prompt ?? 'Field?';
+        },
         complete: (_partial, p) => FIELD_OPS[p[0]]?.target.complete() ?? [],
       },
       {
+        name: 'type',
+        // Only when nothing settles it — and *before* the value, which is
+        // parsed as it (spec-gui "metarecord-detail panel type"). An operation
+        // whose type is settled takes no such argument, so the value stays the
+        // third token: `metarecord:field set tag jazz` still runs unprompted,
+        // while a brand-new field spells its type out between the two.
+        when: (p) => {
+          const spec = FIELD_OPS[p[0]]?.type;
+          return spec !== undefined && (spec.always === true || settledTypeFor(p[0], p[1]) === null);
+        },
+        prompt: (p) =>
+          FIELD_OPS[p[0]]?.type?.prompt?.(p) ?? `Type for "${targetName(p[0], p[1])}"?`,
+        initial: (p) => FIELD_OPS[p[0]]?.type?.initial?.(p) ?? '',
+        complete: () => CONCRETE_TYPES,
+      },
+      {
         name: 'value',
-        when: (p) => FIELD_OPS[p[0]]?.value !== undefined,
+        when: (p) => {
+          const spec = FIELD_OPS[p[0]]?.value;
+          return spec !== undefined && (spec.when?.(p) ?? true);
+        },
         // Optional-chained throughout, like the specs above: `when` has
         // already excluded the operations without a value, but these run
         // outside the dispatcher's error boundary so they must not throw.
@@ -1118,10 +1187,15 @@ export async function mount(root, metafolder) {
         complete: (_partial, p) => FIELD_OPS[p[0]]?.value?.complete?.(p) ?? [],
       },
     ],
-    handler: (op, target, value) => {
+    handler: async (op, ...rest) => {
       const spec = FIELD_OPS[op];
       if (!spec) throw new Error(`unknown field operation: "${op}"`);
-      return spec.run(target, value);
+      const target = rest.shift() ?? '';
+      const { type, value } = splitTypeValue(rest);
+      // `when` dropped the type argument when it was settled, so an invocation
+      // that carries none is one whose type must be read back from the record.
+      const typed = spec.type !== undefined;
+      return spec.run(target, value, typed ? (type ?? (await requireType(op, target))) : '');
     },
   });
 
@@ -1152,11 +1226,38 @@ export async function mount(root, metafolder) {
 
   /** Value completion for a bulk value arg (repo-wide type lookup); mirrors the
    *  direct-command completion, ref completion seeds included.
-   *  @param {string} field */
-  async function bulkValueCompletion(field) {
+   *  @param {string} field @param {string|null} type */
+  async function bulkValueCompletion(field, type) {
     const repo = await repoForAdd();
     if (!repo) return [];
-    return completionPaths(repo, field, await catalogType(repo, field));
+    return completionPaths(repo, field, type ?? (await catalogType(repo, field)));
+  }
+
+  // The repo the bulk arguments were last warmed against. The type argument's
+  // `when` is synchronous and `repoForAdd()` is not, so the field argument's
+  // prompt — which is awaited, and always comes first — leaves it here.
+  /** @type {string|null} */
+  let bulkArgRepo = null;
+
+  /** The type a bulk write on `field` would use without asking: the repo's
+   *  catalogue alone. The displayed metarecord says nothing here — a bulk
+   *  operation writes to *other* records. @param {string} field */
+  function settledBulkType(field) {
+    const repo = bulkArgRepo ?? current?.repo ?? null;
+    const catalog = repo ? cache.fieldType(repo, field) : null;
+    return settledType({ name: field, catalog: typeof catalog === 'string' ? catalog : null });
+  }
+
+  /** The type of a bulk write whose invocation carried none — the inline case.
+   *  Refuses rather than guessing `string` (spec-gui "metarecord-detail panel
+   *  type"). @param {string} repo @param {string} field */
+  async function requireBulkType(repo, field) {
+    await warmFieldCatalog(repo);
+    const known = cache.fieldType(repo, field);
+    if (typeof known === 'string' && known !== 'nothing') return known;
+    throw new Error(
+      `no type known for "${field}" — name one: metarecord:bulk <op> <field> <type> <value>`,
+    );
   }
 
   /** Counts the metarecords a query matches (daemon-side COUNT, no page load).
@@ -1233,10 +1334,13 @@ export async function mount(root, metafolder) {
   /**
    * @typedef {object} BulkOp
    * @property {string} [fieldPrompt] the second argument (absent for `delete`)
+   * @property {boolean} [typed] whether the operation writes a value, and so
+   *   needs a type — asked as an argument when the catalogue settles none
    * @property {(prior: string[]) => string} [valuePrompt]
    *   the third argument (absent for `unset` and `delete`)
    * @property {(field: string) => string} [confirm] what the confirmation says
-   * @property {(target: BulkTarget, field: string, raw: string) => Promise<void>} run
+   * @property {(target: BulkTarget, field: string, raw: string,
+   *             type: string|null) => Promise<void>} run
    */
 
   /** Bulk operations, keyed by the first argument of `metarecord:bulk`.
@@ -1245,12 +1349,12 @@ export async function mount(root, metafolder) {
    *  @type {Record<string, BulkOp>} */
   const BULK_OPS = {
     set: {
+      typed: true,
       fieldPrompt: 'Field to set?',
       valuePrompt: (p) => `Value for "${p[1]}"?`,
       confirm: (field) => `Set "${field}"`,
-      run: async (t, field, raw) => {
-        const value = await bulkValue(t, field, raw);
-        if (value === null) return;
+      run: async (t, field, raw, type) => {
+        const value = await bulkValue(t, field, raw, type);
         const n = await bulkCall(t, 'set', { name: field, value }, field);
         void statusBar.message(
           `"${field}" set on ${n} metarecord${n === 1 ? '' : 's'}.`,
@@ -1260,12 +1364,12 @@ export async function mount(root, metafolder) {
     },
 
     add: {
+      typed: true,
       fieldPrompt: 'Field to add a value to?',
       valuePrompt: (p) => `Value to add to "${p[1]}"?`,
       confirm: (field) => `Add a value to "${field}"`,
-      run: async (t, field, raw) => {
-        const value = await bulkValue(t, field, raw);
-        if (value === null) return;
+      run: async (t, field, raw, type) => {
+        const value = await bulkValue(t, field, raw, type);
         const n = await bulkCall(t, 'add', { name: field, value }, field);
         void statusBar.message(
           `Value added to "${field}" on ${n} metarecord${n === 1 ? '' : 's'}.`,
@@ -1275,12 +1379,12 @@ export async function mount(root, metafolder) {
     },
 
     remove: {
+      typed: true,
       fieldPrompt: 'Field to remove a value from?',
       valuePrompt: (p) => `Value to remove from "${p[1]}"?`,
       confirm: (field) => `Remove a value from "${field}"`,
-      run: async (t, field, raw) => {
-        const value = await bulkValue(t, field, raw);
-        if (value === null) return;
+      run: async (t, field, raw, type) => {
+        const value = await bulkValue(t, field, raw, type);
         const n = await bulkCall(t, 'remove', { name: field, value }, field);
         void statusBar.message(
           `Value removed from "${field}" on ${n} metarecord${n === 1 ? '' : 's'}.`,
@@ -1332,13 +1436,12 @@ export async function mount(root, metafolder) {
 
   const BULK_OPERATIONS = Object.keys(BULK_OPS);
 
-  /** Parses the raw text into a value of the field's established type, asking
-   *  for the type when none is known. Null means the user cancelled.
-   *  @param {BulkTarget} t @param {string} field @param {string} raw */
-  async function bulkValue(t, field, raw) {
-    const type = await establishType(t.repo, field);
-    if (type === null) return null; // user cancelled the type pick
-    return parseValueForField(t.repo, field, type, raw);
+  /** Parses the raw text into a value of the type the invocation carries, or
+   *  of the field's established one when it named none.
+   *  @param {BulkTarget} t @param {string} field @param {string} raw
+   *  @param {string|null} type */
+  async function bulkValue(t, field, raw, type) {
+    return parseValueForField(t.repo, field, type ?? (await requireBulkType(t.repo, field)), raw);
   }
 
   /** One set-layer call over the target, returning the number of metarecords
@@ -1369,22 +1472,38 @@ export async function mount(root, metafolder) {
       {
         name: 'field',
         when: (p) => BULK_OPS[p[0]]?.fieldPrompt !== undefined,
-        prompt: (p) => BULK_OPS[p[0]]?.fieldPrompt ?? 'Field?',
+        // Awaited, so the repo and its catalogue are both resident by the time
+        // the type argument below decides — synchronously — whether to ask.
+        prompt: async (p) => {
+          bulkArgRepo = await repoForAdd();
+          await warmFieldCatalog(bulkArgRepo);
+          return BULK_OPS[p[0]]?.fieldPrompt ?? 'Field?';
+        },
         complete: async () => catalogFieldNames(await repoForAdd()),
+      },
+      {
+        name: 'type',
+        // Same rule as `metarecord:field`: asked only when nothing settles it,
+        // and before the value it types.
+        when: (p) => BULK_OPS[p[0]]?.typed === true && settledBulkType(p[1]) === null,
+        prompt: (p) => `Type for "${p[1]}"?`,
+        complete: () => CONCRETE_TYPES,
       },
       {
         name: 'value',
         when: (p) => BULK_OPS[p[0]]?.valuePrompt !== undefined,
         prompt: (p) => BULK_OPS[p[0]]?.valuePrompt?.(p) ?? 'Value?',
-        complete: (_partial, p) => bulkValueCompletion(p[1]),
+        complete: (_partial, p) => bulkValueCompletion(p[1], p.length > 2 ? p[2] : null),
       },
     ],
-    handler: async (op, field, raw) => {
+    handler: async (op, ...rest) => {
       const spec = BULK_OPS[op];
       if (!spec) throw new Error(`unknown bulk operation: "${op}"`);
+      const field = rest.shift() ?? '';
+      const { type, value } = splitTypeValue(rest);
       const t = await bulkTarget();
       if (spec.confirm && !(await confirmBulk(t, spec.confirm(field)))) return;
-      await spec.run(t, field, raw);
+      await spec.run(t, field, value, type);
     },
   });
 

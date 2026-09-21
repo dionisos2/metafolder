@@ -84,6 +84,13 @@ export default defineConfig({
       // statements 68.8 → 70.5 and functions 58.5 → 60.8 while branches went
       // 83.4 → 82.3 — the same trade, so the branch floor follows to 82.
       //
+      // The first test to drive metarecord-detail — the biggest panel, mounted
+      // until now only by panel-mount.test.ts, which gives it no selection so
+      // `load()` returns at once and most of the panel never runs — made the
+      // same trade one more time: statements 71.6 → 73.1 and functions
+      // 59.7 → 63.5, against branches 81.4 → 80.5. The branch floor follows to
+      // 80.
+      //
       // And once more with the first test to call `dispatch` itself: running it
       // runs `runCommand`, whose switch over every shell builtin was until then
       // code v8 had never seen. commands.ts alone went 29.2 → 38.3 statements
@@ -91,7 +98,7 @@ export default defineConfig({
       // whole switch, the numerator one case. Overall: statements 71.1 → 71.6,
       // functions 59.0 → 59.7, branches 83.1 → 81.4, so the branch floor
       // follows to 81.
-      thresholds: { statements: 65, branches: 81, functions: 53, lines: 65 },
+      thresholds: { statements: 65, branches: 80, functions: 53, lines: 65 },
     },
   },
 });
