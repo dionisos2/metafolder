@@ -80,6 +80,13 @@ const SCENARIOS: &[&str] = &[
     // One metarecord, and one write (which pays for the index settle).
     "metarecord.get",
     "metarecord.write",
+    // The forest: the paths a listing resolves for the page it shows, a write
+    // that moves a position (which pays for the tree-cache upkeep), and opening
+    // the repository at all — the one operation that touches everything the
+    // daemon keeps in memory.
+    "tree.resolve_page",
+    "tree.write",
+    "repo.load",
 ];
 
 /// Everything a scenario needs to run.
@@ -88,7 +95,19 @@ struct Ctx {
     repo: Uuid,
     /// A metarecord that exists, for the point scenarios.
     sample: String,
+    /// A page of them, for the scenarios a listing drives.
+    page: Vec<String>,
+    /// Where the repository is, for the one scenario that closes it.
+    dir: PathBuf,
     head: i64,
+}
+
+/// Makes each run of a scenario that writes a *different* write: setting a
+/// TreeRef to the name it already holds moves no position, and would measure
+/// the upkeep of nothing.
+fn next_name(prefix: &str) -> String {
+    static N: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+    format!("{prefix}{}", N.fetch_add(1, std::sync::atomic::Ordering::Relaxed))
 }
 
 async fn run_scenario(id: &str, ctx: &Ctx) -> Result<()> {
@@ -165,6 +184,44 @@ async fn run_scenario(id: &str, ctx: &Ctx) -> Result<()> {
                 .send()
                 .await?
                 .error_for_status()?;
+        }
+        "tree.resolve_page" => {
+            post(
+                &format!("{url}/repos/{repo}/query/fields/resolve-tree"),
+                &json!({
+                    "query": {"type": "uuid_in", "uuids": ctx.page},
+                    "field": "mfr_path",
+                }),
+            )
+            .await?;
+        }
+        // A position moved in a forest of its own, so what is measured is the
+        // *upkeep*, not the size of the tree it happens in. It is the scenario
+        // that says whether a write is paying for a rebuild: settling one cell
+        // costs the cell, rebuilding costs the repository, and on M and L those
+        // are not the same number.
+        "tree.write" => {
+            post(
+                &format!("{url}/repos/{repo}/query/fields/set"),
+                &json!({
+                    "query": {"type": "uuid_in", "uuids": [ctx.sample]},
+                    "name": "bench_tree",
+                    "value": {
+                        "type": "tree_ref",
+                        "value": {"parent": null, "name": next_name("bench-")},
+                    },
+                }),
+            )
+            .await?;
+        }
+        // Closing the repository and opening it again: the tree cache built,
+        // the index built, the schema read, the migrations checked. The pages
+        // stay in the operating system's cache, so this measures the work and
+        // not the disk — which is the repeatable half, and the half a change
+        // can regress.
+        "repo.load" => {
+            post(&format!("{url}/repos/{repo}/unload"), &json!({})).await?;
+            load_and_wait(url, &ctx.dir).await?;
         }
         other => anyhow::bail!("unknown scenario '{other}'"),
     }
@@ -287,7 +344,7 @@ pub async fn run(opts: &Options) -> Result<i32> {
     let mut records = Vec::new();
     for (size, dir) in &repos {
         let repo = load_repo(&daemon, dir).await?;
-        let ctx = context_for(&daemon, repo).await?;
+        let ctx = context_for(&daemon, repo, dir).await?;
         println!("── size {size} ({})", dir.display());
         for id in SCENARIOS {
             if let Some(filter) = &opts.filter {
@@ -433,8 +490,15 @@ fn ensure_repo(dir: &Path, shape: &synth::Shape) -> Result<bool> {
 /// by asking for what it is about to measure, which needs no assumption about
 /// the task listing's shape.
 async fn load_repo(daemon: &Daemon, dir: &Path) -> Result<Uuid> {
+    load_and_wait(&daemon.url, dir).await
+}
+
+/// Loads a repository and waits until it answers a query — the load returns as
+/// soon as the uuid is known and warms the repository in the background
+/// (spec-main "POST /repos/load"), so "loaded" means "serving", not "accepted".
+async fn load_and_wait(url: &str, dir: &Path) -> Result<Uuid> {
     let v: serde_json::Value = client()
-        .post(format!("{}/repos/load", daemon.url))
+        .post(format!("{url}/repos/load"))
         .json(&json!({ "root": dir }))
         .send()
         .await?
@@ -445,7 +509,7 @@ async fn load_repo(daemon: &Daemon, dir: &Path) -> Result<Uuid> {
     let deadline = Instant::now() + Duration::from_secs(900);
     loop {
         let response = client()
-            .post(format!("{}/repos/{repo}/query", daemon.url))
+            .post(format!("{url}/repos/{repo}/query"))
             .json(&json!({"query": present("mfr_path"), "limit": 1}))
             .send()
             .await?;
@@ -462,21 +526,23 @@ async fn load_repo(daemon: &Daemon, dir: &Path) -> Result<Uuid> {
 
 /// The per-repository facts the scenarios need: one existing metarecord, and
 /// the log's HEAD.
-async fn context_for(daemon: &Daemon, repo: Uuid) -> Result<Ctx> {
+async fn context_for(daemon: &Daemon, repo: Uuid, dir: &Path) -> Result<Ctx> {
     let url = daemon.url.clone();
-    let page: serde_json::Value = client()
+    let body: serde_json::Value = client()
         .post(format!("{url}/repos/{repo}/query"))
-        .json(&json!({"query": present("mfr_path"), "limit": 1}))
+        .json(&json!({"query": present("mfr_path"), "limit": 100}))
         .send()
         .await?
         .error_for_status()?
         .json()
         .await?;
-    let sample = page["results"]
+    let page: Vec<String> = body["results"]
         .as_array()
-        .and_then(|a| a.first())
-        .and_then(|v| v.as_str().map(str::to_string))
-        .context("the repository has no metarecord to read")?;
+        .context("the repository has no metarecord to read")?
+        .iter()
+        .filter_map(|v| v.as_str().map(str::to_string))
+        .collect();
+    let sample = page.first().cloned().context("the repository has no metarecord to read")?;
     let log: serde_json::Value = client()
         .get(format!("{url}/repos/{repo}/log?mode=active&limit=1"))
         .send()
@@ -485,7 +551,7 @@ async fn context_for(daemon: &Daemon, repo: Uuid) -> Result<Ctx> {
         .json()
         .await?;
     let head = log["head"].as_i64().unwrap_or(0);
-    Ok(Ctx { url, repo, sample, head })
+    Ok(Ctx { url, repo, sample, page, dir: dir.to_path_buf(), head })
 }
 
 // ─── The machine, the build ───────────────────────────────────────────────────

@@ -93,6 +93,9 @@ a change of shape and not only of value.
 | =query.folder=           | opening a directory (=mfr_path ->* "/dir0"=)                        |
 | =metarecord.get=         | one metarecord by uuid: the point read everything else is built on  |
 | =metarecord.write=       | one field write, index settle included                              |
+| =tree.resolve_page=      | the paths of a hundred metarecords — what a listing resolves per page |
+| =tree.write=             | one write that *moves a position*, tree-cache upkeep included       |
+| =repo.load=              | closing the repository and opening it again, warmup included        |
 
 Sizes are =S= (2 100 metarecords, 500 revisions), =M= (21 000 / 5 000) and,
 behind =--big=, =L= (105 000 / 50 000). The revision count is as much the point
@@ -102,6 +105,21 @@ reading the data, and it is the one that has regressed in practice.
 =log.whole_tree= is in the list although it is *expected* to grow with the log:
 a graph cannot be drawn without every branch. It is measured so that the day it
 grows faster than the log does, the number says so.
+
+=tree.write= moves a position in a forest of its own, so what it measures is the
+*upkeep* and not the size of the tree the write happens in. That is the point:
+settling one cell costs the cell, rebuilding the forest costs the repository,
+and the day a write starts paying for a rebuild again the two are different
+numbers on =M= and =L= while looking identical on =S=.
+
+=repo.load= is the only scenario that measures something other than one request:
+it unloads the repository and loads it again, waiting until it answers a query —
+the load returns as soon as the uuid is known and warms in the background, so
+"loaded" means "serving". It covers what nothing else does — the tree cache
+built, the index built, the schema read, the migrations checked — and it is the
+only place those show up at all. The database's pages stay in the operating
+system's cache across the unload, so it measures the work and not the disk,
+which is the repeatable half.
 
 ** Where the data comes from
 
