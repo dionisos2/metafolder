@@ -121,6 +121,13 @@ pub fn build(dir: &Path, shape: &Shape) -> Result<Uuid> {
         writer.commit()?;
     }
 
+    // Fold the write-ahead log back into the database before handing it over.
+    // Without this the first run after a generation measures a repository whose
+    // every page is still in a multi-megabyte WAL, and reads it three times
+    // slower than every run after it — a difference of the harness, not of the
+    // code under test.
+    conn.pragma_update(None, "wal_checkpoint", "TRUNCATE")?;
+
     drop(conn);
     Ok(repo_uuid)
 }

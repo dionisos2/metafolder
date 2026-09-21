@@ -253,10 +253,17 @@ pub async fn run(opts: &Options) -> Result<i32> {
     // are rebuilt when their shape (or the wire version, which moves with the
     // schema) changes.
     let mut repos: Vec<(String, PathBuf)> = Vec::new();
+    let mut generated = false;
     for shape in &shapes {
         let dir = root.join("target/bench-data").join(shape.label);
-        ensure_repo(&dir, shape)?;
+        generated |= ensure_repo(&dir, shape)?;
         repos.push((shape.label.to_string(), dir));
+    }
+    if generated {
+        println!(
+            "\nnote: a repository was generated just now, so its pages are still cold —\n\
+             \x20     run the suite again for a number worth keeping as a baseline."
+        );
     }
     if opts.real {
         for (label, dir) in
@@ -389,7 +396,8 @@ fn report(path: &Path) -> Result<i32> {
 // ─── Repositories ─────────────────────────────────────────────────────────────
 
 /// Builds the generated repository if it is missing or of a different shape.
-fn ensure_repo(dir: &Path, shape: &synth::Shape) -> Result<()> {
+/// Returns whether it had to build it.
+fn ensure_repo(dir: &Path, shape: &synth::Shape) -> Result<bool> {
     let stamp_path = dir.join(".bench-shape");
     let stamp = format!(
         "{}:{}:{}:{}:api{}",
@@ -401,7 +409,7 @@ fn ensure_repo(dir: &Path, shape: &synth::Shape) -> Result<()> {
     );
     if std::fs::read_to_string(&stamp_path).is_ok_and(|s| s.trim() == stamp) {
         println!("reusing {} ({stamp})", dir.display());
-        return Ok(());
+        return Ok(false);
     }
     if dir.exists() {
         std::fs::remove_dir_all(dir)?;
@@ -413,7 +421,7 @@ fn ensure_repo(dir: &Path, shape: &synth::Shape) -> Result<()> {
     synth::build(dir, shape)?;
     std::fs::write(&stamp_path, &stamp)?;
     println!("{:.1}s", t.elapsed().as_secs_f64());
-    Ok(())
+    Ok(true)
 }
 
 /// Loads a repository and waits until it can serve data.
