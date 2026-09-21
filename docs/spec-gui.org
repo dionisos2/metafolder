@@ -737,10 +737,10 @@ than accepting a question the GUI would not honour.
 =escape= is the way out of the *run*; =backspace= is the way out of an *answer
 already given*. It does not end anything: it resolves the wait with the value
 =back=, and the script decides what that means — only the script knows what its
-last answer wrote. A script that supports it lists =b= among the keys it awaits
-(so the letter works too, and the question can advertise it); one that does not
-is simply asked again, so the key is never a silent no-op and never falls into a
-default branch that would stop the run.
+last answer wrote. A script that supports it lists =u= (undo) among the keys it
+awaits (so the letter works too, and the question can advertise it); one that
+does not is simply asked again, so the key is never a silent no-op and never
+falls into a default branch that would stop the run.
 
 The shipped walks implement it through the event log, which is what makes it
 exact: the operation id is noted before each answer (=mf log head=), and going

@@ -15,7 +15,7 @@
 #                offered for cleanup at the end and at the next run's start.
 #
 # The arrow keys answer as well: → yes, ← no, ↑ mixed, ↓ skip. Backspace (or
-# `b`) takes the previous answer back — including a skip.
+# `u`, for undo) takes the previous answer back — including a skip.
 #
 # THE QUERY IS THE WALK STATE. An answer is already a write, so "what is left
 # to ask" is a *query*, not bookkeeping: each step asks ONE question with
@@ -414,20 +414,20 @@ while :; do
     counter="$((remaining - 1)) left"
 
     back_hint=""
-    [ "${#BACK_STACK[@]}" -gt 0 ] && back_hint="   [b ⌫] back"
+    [ "${#BACK_STACK[@]}" -gt 0 ] && back_hint="   [u ⌫] back"
     if [ "$kind" = dir ]; then
         answer=$(mf_gui_ask_answer \
             "'$disp' has tag '$TAG'?   [y →] oui   [n ←] non   [m ↑] mixed   [s ↓] skip$back_hint   [q] stop   — $counter" \
-            y n m s b q)
+            y n m s u q)
     else
         answer=$(mf_gui_ask_answer \
             "'$disp' has tag '$TAG'?   [y →] oui   [n ←] non   [s ↓] skip$back_hint   [q] stop   — $counter" \
-            y n s b q)
+            y n s u q)
     fi
 
     # Back: undo the previous answer and let the query bring its entry back.
     # Nothing to go back to on the first question, so the key is re-asked for.
-    if [ "$answer" = b ]; then
+    if [ "$answer" = u ]; then
         if [ "${#BACK_STACK[@]}" -eq 0 ]; then
             mf_gui_report "nothing to go back to"
             continue

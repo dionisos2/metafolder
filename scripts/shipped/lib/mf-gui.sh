@@ -273,7 +273,7 @@ mf_gui_scope_into() { # <outfile> <get args...>
 
 # ── Going back (spec-gui "Reserved keys") ────────────────────────────────────
 # `backspace` during a question always resolves the wait with `back`, and
-# mf_gui_ask_answer turns that into the letter `b` for a script that offers it.
+# mf_gui_ask_answer turns that into the letter `u` for a script that offers it.
 # What "back" means is the script's own business, but for a walk that writes as
 # it goes the answer is always the same: return the repository to where it was
 # before the answer, and ask again. These two helpers are that.
@@ -333,16 +333,16 @@ _mf_gui_arrow_for() { # <letter> -> its arrow key, or nothing
 # `backspace` is reserved the same way, and always resolves the wait with the
 # value `back`: the way out of an answer *already given*, where escape is the
 # way out of the run. What going back means is the script's business — only it
-# knows what its last answer wrote — so a script that supports it lists `b`
-# among its letters and gets `b` here. One that does not simply asks the same
-# question again, so the key is never a silent no-op and never lands in a
+# knows what its last answer wrote — so a script that supports it lists `u`
+# (undo) among its letters and gets `u` here. One that does not simply asks the
+# same question again, so the key is never a silent no-op and never lands in a
 # default branch that would stop the run.
 mf_gui_ask_answer() { # <message> <letter>...
     local msg=$1 letter arrow pressed
     shift
     local keys=() supports_back=0
     for letter in "$@"; do
-        [ "$letter" = b ] && supports_back=1
+        [ "$letter" = u ] && supports_back=1
         keys+=("$letter")
         arrow=$(_mf_gui_arrow_for "$letter")
         [ -n "$arrow" ] && keys+=("$arrow")
@@ -350,7 +350,7 @@ mf_gui_ask_answer() { # <message> <letter>...
     while :; do
         pressed=$(mf_gui_ask "$msg" "${keys[@]}")
         if [ "$pressed" = back ]; then
-            [ "$supports_back" = 1 ] && { printf 'b\n'; return 0; }
+            [ "$supports_back" = 1 ] && { printf 'u\n'; return 0; }
             continue          # not offered here: ask again rather than guess
         fi
         break

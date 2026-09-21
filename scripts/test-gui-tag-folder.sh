@@ -532,7 +532,7 @@ assert "up: the sibling left behind is found on the way up" [ "$(asked /a/b/z.tx
 
 # ── Case 20: going back undoes the previous answer and asks it again ────────
 # `backspace` during a question resolves the wait with `back` (spec-gui
-# "Reserved keys"); the letter `b` is its typed twin. The answer is undone
+# "Reserved keys"); the letter `u` (undo) is its typed twin. The answer is undone
 # through the event log — which restores the exact rows — and the entry, open
 # once more, is what the next step query returns.
 mock_reset
@@ -546,7 +546,7 @@ mock_queue heads 10 11 12 13 14 15
 mock_prompt '/top'
 #   a.txt yes, then BACK at b.txt's question — which undoes it and re-asks —
 #   then a.txt no, b.txt yes.
-mock_input y b n y
+mock_input y u n y
 bash "$SCRIPT" music >/dev/null; code=$?
 assert "back: exits 0" [ "$code" -eq 0 ]
 assert "back: the undone answer was rolled back through the log" \
@@ -573,7 +573,7 @@ mock_respond 'log head' '@queue:heads2'
 mock_queue heads2 20 21 22 23 24 25
 mock_prompt '/top'
 #   sub skipped, BACK at the next question, sub answered m this time, then done
-mock_input s b m n
+mock_input s u m n
 out=$(bash "$SCRIPT" music); code=$?
 assert "back skip: exits 0" [ "$code" -eq 0 ]
 assert "back skip: the marker write was rolled back" \
@@ -592,7 +592,7 @@ walk_path dir-top /top
 walk_counts 1 1 1
 mock_respond 'log head' '7'
 mock_prompt '/top'
-mock_input b y
+mock_input u y
 out=$(bash "$SCRIPT" music 2>&1); code=$?
 assert "back at the start: exits 0" [ "$code" -eq 0 ]
 assert_contains "back at the start: says there is nothing to go back to" "$out" "nothing to go back to"
