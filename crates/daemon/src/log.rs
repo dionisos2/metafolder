@@ -810,15 +810,10 @@ pub fn nav_path(
     Ok(out)
 }
 
-/// The TreeRef cells a write or a navigation step moved: `(field name,
-/// metarecord)` pairs, the unit the tree cache settles
-/// ([`crate::tree_cache::TreeCache::apply_cells`]).
-pub type TreeCells = Vec<(String, Uuid)>;
-
 /// Applies the *first* operation on the path from the current HEAD toward
-/// `target` (one atomic step) and advances HEAD. Returns the new HEAD and the
-/// TreeRef cells the step rewrote, for the caller's tree cache
-/// ([`crate::tree_cache::TreeCache::apply_cells`]). When `skip` is set and the
+/// `target` (one atomic step) and advances HEAD. Returns the new HEAD and what
+/// the step did to the forest, for the caller's tree cache
+/// ([`crate::tree_cache::TreeCache::apply_ops`]). When `skip` is set and the
 /// operation is a file op, a restoration entry is enqueued in
 /// `pending_operation` (replayed as a new branch once the lock is released —
 /// spec-event-log "skip").
@@ -826,14 +821,14 @@ pub fn coordinated_step(
     conn: &mut rusqlite::Connection,
     target: Option<i64>,
     skip: bool,
-) -> Result<(Option<i64>, TreeCells)> {
+) -> Result<(Option<i64>, Vec<TreeOp>)> {
     let head = get_head(conn)?;
     let path = nav_path(conn, head, target)?;
     let Some((op, dir)) = path.into_iter().next() else {
         return Ok((head, vec![])); // Already at the target.
     };
     let tx = conn.transaction()?;
-    let cells = tree_cells_of(&tx, &op)?;
+    let tree = nav_tree_ops(&tx, &op, dir)?;
     if skip {
         enqueue_restoration(&tx, &op, dir)?;
     }
@@ -849,25 +844,23 @@ pub fn coordinated_step(
     };
     tx.execute("UPDATE log_head SET op_id = ?1 WHERE singleton = 1", params![new_head])?;
     tx.commit()?;
-    Ok((new_head, cells))
+    Ok((new_head, tree))
 }
 
-/// The TreeRef cells one operation moves, whichever way it is applied: the
-/// field names its snapshots hold a `tree_ref` row for, on its own metarecord.
-///
-/// Both sides of the snapshot are read, so a cell counts whether the operation
-/// put a position there, took one away, or replaced it — which is exactly the
-/// list [`crate::tree_cache::TreeCache::apply_cells`] settles. An operation
-/// that moved no position at all reports nothing and costs the cache nothing.
-fn tree_cells_of(conn: &rusqlite::Connection, op: &OpRow) -> Result<TreeCells> {
-    let mut stmt = conn.prepare_cached(
-        "SELECT DISTINCT field_name FROM op_snapshot \
-         WHERE op_id = ?1 AND value_type = 'tree_ref'",
-    )?;
-    let names = stmt
-        .query_map(params![op.id], |row| row.get::<_, String>(0))?
-        .collect::<rusqlite::Result<Vec<String>>>()?;
-    Ok(names.into_iter().map(|name| (name, op.entity_uuid)).collect())
+/// What one navigation step does to the forest: the same description a
+/// [`Writer`] records for its own writes ([`tree_ops_of`]), derived from the
+/// operation's snapshots instead — which carry both the rows it put in place
+/// and the rows it replaced, so nothing has to be read back afterwards.
+fn nav_tree_ops(conn: &rusqlite::Connection, op: &OpRow, dir: NavDir) -> Result<Vec<TreeOp>> {
+    let Some(op_type) = OpType::parse(&op.op_type) else {
+        return Ok(Vec::new());
+    };
+    let before = snapshots(conn, op.id, 0)?;
+    let after = snapshots(conn, op.id, 1)?;
+    Ok(match dir {
+        NavDir::Forward => tree_ops_of(op_type, &before, &after, op.entity_uuid),
+        NavDir::Inverse => inverse_tree_ops(op_type, &before, &after, op.entity_uuid),
+    })
 }
 
 /// Enqueues the restoration operation for a skipped file op: a synthetic
@@ -1207,16 +1200,162 @@ struct PendingOp {
 /// keeping the Writer's memory bounded on huge revisions (e.g. reconcile).
 pub const FLUSH_THRESHOLD: usize = 4096;
 
+/// One position of a TreeRef field: the metarecord it hangs under (`None` for a
+/// root of the forest), the name component it contributes, and the `field` row
+/// that holds it.
+///
+/// The row id is not decoration: a metarecord's positions are ordered by it —
+/// a load reads them that way, and the first one is where the forest hangs this
+/// metarecord's children — so an operation that puts a position *back* under
+/// its original id (a navigation, an edit by row id) has to be settled at that
+/// place in the order, not at the end.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct TreePos {
+    pub row: i64,
+    pub parent: Option<Uuid>,
+    pub name: metafolder_core::metarecord::TreeName,
+}
+
+/// The row id of a position whose producer does not know one: the watcher's
+/// incremental upkeep, which works from filesystem events and not from rows.
+/// Sorts last, so it never displaces a position that has a real id — which is
+/// all that is asked of it, `mfr_path` holding one position per metarecord.
+pub const UNKNOWN_ROW: i64 = i64::MAX;
+
+/// What one operation does to one `(field name, metarecord)` cell of the
+/// forest — all the tree cache needs to follow a write, taken from the rows the
+/// operation moved rather than read back from the database afterwards.
+///
+/// There is one variant per *shape* of operation, not per op type: a field set,
+/// a record created, replaced or deleted all say "the cell now holds exactly
+/// this", while an append and a field deletion name only the positions they
+/// move and leave the rest of the cell alone.
+#[derive(Debug, Clone, PartialEq)]
+pub enum TreeOp {
+    /// The cell holds exactly these positions now — `[]` when the write took
+    /// its last one away, or gave the field another type.
+    Set { field: String, uuid: Uuid, positions: Vec<TreePos> },
+    /// These join whatever the cell already holds.
+    Add { field: String, uuid: Uuid, positions: Vec<TreePos> },
+    /// These leave it; the cell keeps the rest.
+    Remove { field: String, uuid: Uuid, positions: Vec<TreePos> },
+}
+
+impl TreeOp {
+    pub fn field(&self) -> &str {
+        match self {
+            TreeOp::Set { field, .. }
+            | TreeOp::Add { field, .. }
+            | TreeOp::Remove { field, .. } => field,
+        }
+    }
+
+    pub fn uuid(&self) -> Uuid {
+        match self {
+            TreeOp::Set { uuid, .. } | TreeOp::Add { uuid, .. } | TreeOp::Remove { uuid, .. } => {
+                *uuid
+            }
+        }
+    }
+}
+
+/// The TreeRef positions among `rows`, paired with the field name each belongs
+/// to, in row order.
+fn tree_positions(rows: &[FieldRow]) -> Vec<(&str, TreePos)> {
+    rows.iter()
+        .filter_map(|row| match &row.value {
+            Value::TreeRef { parent, name } => Some((
+                row.name.as_str(),
+                TreePos { row: row.id, parent: *parent, name: name.clone() },
+            )),
+            _ => None,
+        })
+        .collect()
+}
+
+/// What one operation does to the forest, from the rows it moved.
+///
+/// This is the single description of an operation's effect on the tree, shared
+/// by the two producers that have one: a [`Writer`], which calls it as it
+/// records each operation, and the coordinated navigation, which calls it on an
+/// operation read back from the log ([`inverse_tree_ops`]).
+pub fn tree_ops_of(
+    op_type: OpType,
+    before: &[FieldRow],
+    after: &[FieldRow],
+    entity: Uuid,
+) -> Vec<TreeOp> {
+    let group = |rows: &[FieldRow]| -> Vec<(String, Vec<TreePos>)> {
+        let mut out: Vec<(String, Vec<TreePos>)> = Vec::new();
+        for (field, pos) in tree_positions(rows) {
+            match out.iter_mut().find(|(f, _)| f == field) {
+                Some((_, positions)) => positions.push(pos),
+                None => out.push((field.to_string(), vec![pos])),
+            }
+        }
+        out
+    };
+    match op_type {
+        // These two name the rows they move and nothing else.
+        OpType::AppendField => group(after)
+            .into_iter()
+            .map(|(field, positions)| TreeOp::Add { field, uuid: entity, positions })
+            .collect(),
+        OpType::DeleteField => group(before)
+            .into_iter()
+            .map(|(field, positions)| TreeOp::Remove { field, uuid: entity, positions })
+            .collect(),
+        // Every other shape replaces whole cells: `after` is what each of them
+        // holds now. A field that only appears in `before` had its last
+        // position taken away, and is replaced by nothing.
+        _ => {
+            let mut settled = group(after);
+            for (field, _) in group(before) {
+                if !settled.iter().any(|(f, _)| *f == field) {
+                    settled.push((field, Vec::new()));
+                }
+            }
+            settled
+                .into_iter()
+                .map(|(field, positions)| TreeOp::Set { field, uuid: entity, positions })
+                .collect()
+        }
+    }
+}
+
+/// What *undoing* one operation does to the forest: the same description, with
+/// the two sides of the snapshot exchanged. An append undone is a removal and a
+/// deletion undone is an append; every other shape is symmetric already, since
+/// it reads only the side it lands on.
+pub fn inverse_tree_ops(
+    op_type: OpType,
+    before: &[FieldRow],
+    after: &[FieldRow],
+    entity: Uuid,
+) -> Vec<TreeOp> {
+    let flipped = match op_type {
+        OpType::AppendField => OpType::DeleteField,
+        OpType::DeleteField => OpType::AppendField,
+        other => other,
+    };
+    tree_ops_of(flipped, after, before, entity)
+}
+
 /// What a committed revision obliges its caller to bring back in step — the
 /// in-memory state a transaction cannot update itself (see
 /// `RepoState::settle`). Read off the writer *before* `commit` consumes it.
 #[derive(Debug, Default, Clone)]
 pub struct WriteEffects {
-    /// The TreeRef cells the revision changed, each once, in write order — so a
-    /// parent written before its child is settled first. Never truncated: the
-    /// cache settles a batch of any size, and a revision that changed the whole
-    /// forest is exactly the one whose cache upkeep must not be guessed at.
-    tree: Vec<(String, Uuid)>,
+    /// What the revision did to the forest, one entry per operation that moved
+    /// a position, in write order. Never truncated: the cache settles a batch
+    /// of any size, and a revision that changed the whole forest is exactly the
+    /// one whose cache upkeep must not be guessed at.
+    ///
+    /// Not deduplicated either, unlike the cells this replaced: an `Add` and a
+    /// `Remove` say what they move, so two operations on one cell are two
+    /// changes and the order they are applied in is the order they were
+    /// written in.
+    tree: Vec<TreeOp>,
     /// Whether the revision wrote a field that decides which directories are
     /// watched.
     watch: bool,
@@ -1230,8 +1369,8 @@ impl WriteEffects {
         !self.tree.is_empty()
     }
 
-    /// The changed cells, in write order.
-    pub fn tree_cells(&self) -> &[(String, Uuid)] {
+    /// What the revision did to the forest, in write order.
+    pub fn tree_ops(&self) -> &[TreeOp] {
         &self.tree
     }
 
@@ -1429,15 +1568,11 @@ pub struct Writer<'c> {
     /// operations are recorded rather than read back off `pending` — which the
     /// flush above empties, so a long revision used to forget its early writes.
     effects: WriteEffects,
-    /// The cells already listed in `effects`, for the "each once" rule. A set
-    /// rather than a scan of the list: a watcher flush writes one `mfr_path` op
-    /// per file, and asking the list each time made a batch quadratic in itself.
-    /// Keyed by field name so the membership test allocates nothing.
-    tree_seen: HashMap<String, HashSet<Uuid>>,
     /// The cells a *manual* operation took a `tree_ref` row from, checked once
     /// at commit (see [`Self::check_forest_integrity`]). Deduplicated through
-    /// `tree_seen`'s sibling index; the list itself keeps write order for a
-    /// stable error.
+    /// its own index — a watcher flush writes one `mfr_path` op per file, and
+    /// scanning the list each time made a batch quadratic in itself; the list
+    /// keeps write order for a stable error.
     tree_lost: Vec<(String, Uuid)>,
     tree_lost_seen: HashMap<String, HashSet<Uuid>>,
     /// The operation the writes recorded from now on are undoing, stamped onto
@@ -1480,7 +1615,6 @@ impl<'c> Writer<'c> {
             deferred_types: None,
             retention,
             effects: WriteEffects::default(),
-            tree_seen: HashMap::new(),
             tree_lost: Vec::new(),
             tree_lost_seen: HashMap::new(),
             reverting: None,
@@ -1546,25 +1680,14 @@ impl<'c> Writer<'c> {
                 self.tree_lost_seen.entry(row.name.clone()).or_default().insert(entity);
             }
         }
-        for row in before.iter().chain(after) {
-            self.note_effect(row, entity);
-        }
-    }
-
-    /// One row's contribution to [`WriteEffects`].
-    fn note_effect(&mut self, row: &FieldRow, entity: Uuid) {
         const DECIDES_WATCHES: &[&str] =
             &["mf_watch", "mf_ignore", crate::eligibility::WATCH_EXCEEDED];
-        if DECIDES_WATCHES.contains(&row.name.as_str()) {
-            self.effects.watch = true;
+        for row in before.iter().chain(after) {
+            if DECIDES_WATCHES.contains(&row.name.as_str()) {
+                self.effects.watch = true;
+            }
         }
-        if !matches!(row.value, Value::TreeRef { .. })
-            || self.tree_seen.get(row.name.as_str()).is_some_and(|seen| seen.contains(&entity))
-        {
-            return;
-        }
-        self.effects.tree.push((row.name.clone(), entity));
-        self.tree_seen.entry(row.name.clone()).or_default().insert(entity);
+        self.effects.tree.extend(tree_ops_of(op_type, before, after, entity));
     }
 
     /// The other half of [`Self::validate_tree_ref`]: a `tree_ref` reference is

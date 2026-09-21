@@ -555,19 +555,42 @@ only for a cache built directly, as unit tests do.
 *** Upkeep after a write
 
 The watcher and reconcile keep the cache in step as they go. A *manual API
-write* does not pass through them, so after committing a revision the daemon
-settles the cache against what that revision changed: the =(field name,
-metarecord)= TreeRef **cells** it touched, never truncated.
+write* does not pass through them, so a committed revision says what it did to
+the forest and the daemon settles the cache against that.
+
+What it says is one entry per operation that moved a TreeRef position, in write
+order, never truncated — and it is *derived from the rows the operation moved*,
+not read back from the database afterwards. There is one shape per kind of
+operation:
+
+- a field set, and a record created, replaced or deleted, say =Set=: the cell
+  holds exactly these positions now (none, when the write took its last one
+  away or gave the field another type);
+- an append says =Add= and a row deletion says =Remove=: they name the positions
+  they move and leave the rest of the cell alone.
+
+Each position carries the =field= row that holds it. That is what keeps a cell
+in the order a load would read it in: positions are ordered by row id, the first
+one is where the forest hangs this metarecord's children, and an operation that
+puts a row *back* under its original id — a navigation, an edit by row id —
+belongs at that place in the order rather than at the end.
+
+The same description serves the *coordinated navigation*, derived from an
+operation read back out of the log: its snapshots carry both the rows it put in
+place and the rows it replaced, and undoing one is applying it with the two
+sides exchanged (an append undone is a removal). So the cache has one way of
+following a write, whoever wrote it.
 
 Settling is in two phases, which together are what make it able to reproduce any
-write rather than most of them:
+revision rather than most of them:
 
-1. *Unlink* every cell being settled, keeping the nodes and the subtrees hanging
-   off them. Emptying all of the name slots before filling any is what makes the
-   order the names are taken and released in irrelevant — two siblings that swap
-   names have no valid one-at-a-time order.
-2. *Place* each cell at the positions the database now holds for it, in any
-   order — a cell whose parent is not settled yet *waits* for it (below).
+1. *Unlink* every cell the run touches, keeping the nodes and the subtrees
+   hanging off them, and remember what each held. Emptying all of the name slots
+   before filling any is what makes the order the names are taken and released
+   in irrelevant — two siblings that swap names have no valid one-at-a-time
+   order — and the remembered positions are what an =Add= or a =Remove= needs.
+2. *Place* each operation's cell, in order, against what the operations before
+   it left there.
 
 A metarecord's nodes are reused *in order*, so the first one — the one a full
 load hangs its children under — keeps its subtree through a rename, a move, or a
@@ -585,11 +608,10 @@ transaction), the replay of a skipped restoration, and the resync after a flush
 that was abandoned mid-way (the writes roll back, the in-memory cache does not).
 
 A *coordinated navigation step* is not one of them, though it rewrites history
-too: it applies exactly one operation, and that operation names the cells it
-moves — the field names its snapshots hold a =tree_ref= row for, on its own
-metarecord — so it settles like any other write. It has to: the client is handed
-one operation at a time, so a rebuild there is paid once per operation, and
-taking back a tag applied to a folder of two thousand files then meant two
+too: it applies exactly one operation, and an operation says what it did to the
+forest (above), so it settles like any other write. It has to: the client is
+handed one operation at a time, so a rebuild there is paid once per operation,
+and taking back a tag applied to a folder of two thousand files then meant two
 thousand scans of the whole =field= table under the connection lock (six
 minutes, against one second for the write it was undoing).
 

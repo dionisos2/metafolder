@@ -339,7 +339,7 @@ impl RepoState {
         if effects.touches_tree() {
             let _phase = metafolder_core::slowlog::phase("settle.tree");
             let mut cache = self.lock_cache();
-            if !cache.apply_cells(conn, effects.tree_cells())? {
+            if !cache.apply_ops(effects.tree_ops()) {
                 // Only before the repository's initial load, which through the
                 // API cannot happen: it serves nothing until the forest is
                 // resident (spec-main "POST /repos/load").

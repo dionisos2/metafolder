@@ -427,10 +427,10 @@ fn bench_index_build_and_folder_query() {
         let old = t.elapsed();
 
         let t = Instant::now();
-        let settled = cache.apply_cells(&conn, effects.tree_cells()).unwrap();
+        let settled = cache.apply_ops(effects.tree_ops());
         let new = t.elapsed();
         assert!(settled, "a resident cache settles any batch");
-        assert_eq!(effects.tree_cells().len(), 1, "one changed cell");
+        assert_eq!(effects.tree_ops().len(), 1, "one change to the forest");
 
         eprintln!("\n#8 tree cache after one manual TreeRef write:");
         eprintln!("   OLD  rebuild the whole forest : {old:?}");
@@ -496,18 +496,54 @@ fn bench_bulk_settle_against_rebuild() {
     }
     let effects = w.effects();
     w.commit().unwrap();
-    let cells = effects.tree_cells().to_vec();
-    assert_eq!(cells.len(), FOREST);
+    let ops = effects.tree_ops().to_vec();
+    assert_eq!(ops.len(), FOREST);
 
     let t = Instant::now();
     cache.populate(&conn).unwrap();
     let rebuilt = t.elapsed();
 
     let t = Instant::now();
-    assert!(cache.apply_cells(&conn, &cells).unwrap());
+    assert!(cache.apply_ops(&ops));
     let settled = t.elapsed();
 
     eprintln!("\n#9 a revision changing all {FOREST} cells of a {FOREST}-node forest:");
     eprintln!("   rebuild the forest : {rebuilt:?}");
     eprintln!("   settle the cells   : {settled:?}");
+}
+
+/// What building the forest at load costs, on its own: no database, just the
+/// linking. Run it before and after changing how the load places nodes.
+///   cargo test -p metafolder-daemon --test perf_bench -- --ignored --nocapture forest_load
+#[test]
+#[ignore = "manual perf benchmark"]
+fn bench_forest_load() {
+    use metafolder_core::metarecord::TreeName;
+    use metafolder_daemon::tree_cache::TreeCache;
+
+    const N: usize = 200_000;
+    let root = Uuid::new_v4();
+    let mut rows = Vec::with_capacity(N);
+    rows.push(db::TreeRow {
+        id: 1,
+        field_name: "t".into(),
+        uuid: root,
+        parent: None,
+        name: TreeName::from("r"),
+    });
+    for i in 1..N {
+        rows.push(db::TreeRow {
+            id: i as i64 + 1,
+            field_name: "t".into(),
+            uuid: Uuid::new_v4(),
+            parent: Some(root),
+            name: TreeName::from(format!("n{i}")),
+        });
+    }
+
+    let t = Instant::now();
+    let mut cache = TreeCache::new(false);
+    cache.populate_from_forest(rows);
+    eprintln!("\nforest load of {N} nodes: {:?}", t.elapsed());
+    assert_eq!(cache.len(), N);
 }

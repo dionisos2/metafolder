@@ -709,6 +709,15 @@ fn assert_matches_fresh(conn: &Connection, cache: &mut TreeCache) {
 /// Sets one TreeRef field of `uuid` through a `Writer` (a manual API write) and
 /// brings `cache` back in step the way the routes do. Returns what `apply_cell`
 /// reported: false means it declined, and the caller must rebuild.
+/// Commits a writer and brings `cache` back in step exactly as
+/// `RepoState::settle` does: through what the revision says it did to the
+/// forest, with no second look at the database.
+fn commit_and_settle(w: Writer<'_>, cache: &mut TreeCache) -> bool {
+    let effects = w.effects();
+    w.commit().unwrap();
+    cache.apply_ops(effects.tree_ops())
+}
+
 fn manual_set(
     conn: &mut Connection,
     cache: &mut TreeCache,
@@ -718,8 +727,7 @@ fn manual_set(
 ) -> bool {
     let mut w = Writer::begin(conn, None).unwrap();
     w.set_field(uuid, field, value).unwrap();
-    w.commit().unwrap();
-    cache.apply_cells(conn, &[(field.to_string(), uuid)]).unwrap()
+    commit_and_settle(w, cache)
 }
 
 /// A populated cache over the standard filesystem tree.
@@ -798,8 +806,7 @@ fn test_manual_unset_of_a_leaf_drops_its_node() {
 
     let mut w = Writer::begin(&mut conn, None).unwrap();
     w.delete_fields_named(file, "mfr_path").unwrap();
-    w.commit().unwrap();
-    assert!(cache.apply_cells(&conn, &[("mfr_path".into(), file)]).unwrap());
+    assert!(commit_and_settle(w, &mut cache));
 
     assert_eq!(cache.resolve_path(&conn, "mfr_path", "/music/jazz/file.mp3").unwrap(), None);
     assert_matches_fresh(&conn, &mut cache);
@@ -841,10 +848,7 @@ fn test_a_parent_and_its_child_written_by_one_revision() {
         .unwrap();
     w.set_field(child, "mfr_path", Value::TreeRef { parent: Some(parent), name: "a.txt".into() })
         .unwrap();
-    w.commit().unwrap();
-
-    let cells = [("mfr_path".to_string(), parent), ("mfr_path".to_string(), child)];
-    assert!(cache.apply_cells(&conn, &cells).unwrap());
+    assert!(commit_and_settle(w, &mut cache));
     assert_eq!(cache.resolve_path(&conn, "mfr_path", "/docs/a.txt").unwrap(), Some(child));
     assert_matches_fresh(&conn, &mut cache);
 }
@@ -864,11 +868,7 @@ fn test_a_child_settled_before_its_parent_still_lands() {
         .unwrap();
     w.set_field(child, "mfr_path", Value::TreeRef { parent: Some(parent), name: "a.txt".into() })
         .unwrap();
-    w.commit().unwrap();
-
-    // Deliberately the wrong way round.
-    let cells = [("mfr_path".to_string(), child), ("mfr_path".to_string(), parent)];
-    assert!(cache.apply_cells(&conn, &cells).unwrap());
+    assert!(commit_and_settle(w, &mut cache));
     assert_eq!(cache.resolve_path(&conn, "mfr_path", "/docs/a.txt").unwrap(), Some(child));
     assert_matches_fresh(&conn, &mut cache);
 }
@@ -897,10 +897,7 @@ fn test_two_siblings_swapping_names_in_one_revision() {
         .unwrap();
     w.set_field(music, "mfr_path", Value::TreeRef { parent: Some(root), name: "films".into() })
         .unwrap();
-    w.commit().unwrap();
-
-    let cells = [("mfr_path".to_string(), music), ("mfr_path".to_string(), films)];
-    assert!(cache.apply_cells(&conn, &cells).unwrap());
+    assert!(commit_and_settle(w, &mut cache));
     assert_eq!(cache.resolve_path(&conn, "mfr_path", "/films").unwrap(), Some(music));
     assert_eq!(cache.resolve_path(&conn, "mfr_path", "/music").unwrap(), Some(films));
     assert!(
@@ -933,9 +930,7 @@ fn test_a_cell_gaining_a_second_position_keeps_its_subtree() {
     let mut w = Writer::begin(&mut conn, None).unwrap();
     w.append_field(animals, "tag", Value::TreeRef { parent: Some(other), name: "beasts".into() })
         .unwrap();
-    w.commit().unwrap();
-
-    assert!(cache.apply_cells(&conn, &[("tag".into(), animals)]).unwrap());
+    assert!(commit_and_settle(w, &mut cache));
     assert_eq!(cache.paths_of(&conn, "tag", animals).unwrap(), vec!["animals", "pets/beasts"]);
     assert_eq!(
         cache.path_of(&conn, "tag", cat).unwrap(),
@@ -954,17 +949,14 @@ fn test_a_cell_losing_its_second_position_keeps_its_subtree() {
     let mut w = Writer::begin(&mut conn, None).unwrap();
     w.append_field(animals, "tag", Value::TreeRef { parent: Some(other), name: "beasts".into() })
         .unwrap();
-    w.commit().unwrap();
-    cache.apply_cells(&conn, &[("tag".into(), animals)]).unwrap();
+    commit_and_settle(w, &mut cache);
 
     // Back to a single position.
     let rows = db::get_field_rows_named(&conn, animals, "tag").unwrap();
     let second = rows.last().unwrap().id;
     let mut w = Writer::begin(&mut conn, None).unwrap();
     w.delete_field(animals, second).unwrap();
-    w.commit().unwrap();
-
-    assert!(cache.apply_cells(&conn, &[("tag".into(), animals)]).unwrap());
+    assert!(commit_and_settle(w, &mut cache));
     assert_eq!(cache.paths_of(&conn, "tag", animals).unwrap(), vec!["animals"]);
     assert_eq!(cache.path_of(&conn, "tag", cat).unwrap(), Some("animals/cat".to_string()));
     assert_matches_fresh(&conn, &mut cache);
@@ -981,16 +973,13 @@ fn test_the_first_position_moving_carries_the_subtree() {
     let mut w = Writer::begin(&mut conn, None).unwrap();
     w.append_field(animals, "tag", Value::TreeRef { parent: Some(other), name: "beasts".into() })
         .unwrap();
-    w.commit().unwrap();
-    cache.apply_cells(&conn, &[("tag".into(), animals)]).unwrap();
+    commit_and_settle(w, &mut cache);
 
     let rows = db::get_field_rows_named(&conn, animals, "tag").unwrap();
     let first = rows.first().unwrap().id;
     let mut w = Writer::begin(&mut conn, None).unwrap();
     w.replace_field(animals, first, Value::TreeRef { parent: None, name: "fauna".into() }).unwrap();
-    w.commit().unwrap();
-
-    assert!(cache.apply_cells(&conn, &[("tag".into(), animals)]).unwrap());
+    assert!(commit_and_settle(w, &mut cache));
     assert_eq!(cache.path_of(&conn, "tag", cat).unwrap(), Some("fauna/cat".to_string()));
     assert_matches_fresh(&conn, &mut cache);
 }
@@ -1000,10 +989,12 @@ fn test_an_incomplete_cache_asks_for_a_rebuild() {
     let mut conn = test_conn();
     let (root, ..) = build_tree(&mut conn);
     let mut cache = TreeCache::new(false);
-    // Never populated: what it holds is not the whole forest, so the cell it is
-    // asked about tells it nothing about the rest. Only reachable before the
+    // Never populated: what it holds is not the whole forest, so what one
+    // revision did tells it nothing about the rest. Only reachable before the
     // repository's initial load — through the API it never happens.
-    assert!(!cache.apply_cells(&conn, &[("mfr_path".into(), root)]).unwrap());
+    let mut w = Writer::begin(&mut conn, None).unwrap();
+    w.set_field(root, "mfr_path", Value::TreeRef { parent: None, name: "".into() }).unwrap();
+    assert!(!commit_and_settle(w, &mut cache));
 }
 
 #[test]
@@ -1040,6 +1031,7 @@ fn test_populating_keeps_a_name_s_exact_bytes() {
 /// A forest holding one node under a parent that has no position.
 fn orphan_forest(child: Uuid, ghost: Uuid) -> Vec<db::TreeRow> {
     vec![db::TreeRow {
+        id: 1,
         field_name: "mfr_path".into(),
         uuid: child,
         parent: Some(ghost),
@@ -1110,7 +1102,6 @@ fn test_a_cell_settled_before_its_parents_still_lands() {
     let mut w = Writer::begin(&mut conn, None).unwrap();
     w.set_field(jazz, "mfr_path", Value::TreeRef { parent: Some(root), name: "jazz".into() })
         .unwrap();
-    w.commit().unwrap();
-    assert!(cache.apply_cells(&conn, &[("mfr_path".into(), jazz)]).unwrap());
+    assert!(commit_and_settle(w, &mut cache));
     assert_matches_fresh(&conn, &mut cache);
 }

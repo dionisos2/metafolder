@@ -394,6 +394,7 @@ impl RepoIndex {
                 (forest.as_deref_mut(), &row.value)
             {
                 sink.push(db::TreeRow {
+                    id: row.id,
                     field_name: row.name.clone(),
                     uuid,
                     parent: *parent,

@@ -2044,7 +2044,7 @@ async fn rollback_step(
 
         let done = {
             let mut conn = slowlog::timed("wait:conn", || repo_state.conn.lock_recover());
-            let (new_head, cells) = crate::log::coordinated_step(&mut conn, target, skip)?;
+            let (new_head, tree) = crate::log::coordinated_step(&mut conn, target, skip)?;
             // The step says which TreeRef cells it rewrote, and the cache
             // settles exactly those (spec-file-tracking "Upkeep after a
             // write"). Rebuilding here instead is one scan of the `field`
@@ -2056,7 +2056,7 @@ async fn rollback_step(
             // before its parent; the cache holds such a node until the position
             // it waits for arrives, so the order the operations come in is not
             // this caller's problem.
-            repo_state.lock_cache().apply_cells(&conn, &cells)?;
+            repo_state.lock_cache().apply_ops(&tree);
             let next = crate::log::nav_path(&conn, new_head, target)?;
             if let Some((op, dir)) = next.first() {
                 let mut cache = slowlog::timed("wait:cache", || repo_state.lock_cache());

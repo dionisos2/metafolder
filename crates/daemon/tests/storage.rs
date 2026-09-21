@@ -1769,7 +1769,7 @@ fn pad_operations(w: &mut Writer, uuid: Uuid, n: usize) {
 }
 
 #[test]
-fn test_a_revision_reports_the_tree_cells_it_changed_in_write_order() {
+fn test_a_revision_reports_what_it_did_to_the_forest_in_write_order() {
     let mut conn = test_conn();
     let root = create(&mut conn, vec![Field::new("p", tree_ref(None, "r"))]).uuid;
     let a = create(&mut conn, vec![]).uuid;
@@ -1784,11 +1784,69 @@ fn test_a_revision_reports_the_tree_cells_it_changed_in_write_order() {
 
     assert!(effects.touches_tree());
     assert!(!effects.touches_watch());
+    let moved: Vec<(&str, Uuid)> =
+        effects.tree_ops().iter().map(|op| (op.field(), op.uuid())).collect();
     assert_eq!(
-        effects.tree_cells(),
-        [("p".to_string(), a), ("p".to_string(), b)],
-        "each changed cell once, in the order it was written"
+        moved,
+        [("p", a), ("p", b)],
+        "what each operation moved, in the order it was written"
     );
+}
+
+/// One description per *shape* of operation, and it has to be the right one:
+/// a set replaces the cell, an append and a row deletion name only what they
+/// move. Getting that wrong is invisible on a single-position field and loses
+/// a position on a multi-map one.
+#[test]
+fn test_each_shape_of_operation_says_what_it_did_to_the_forest() {
+    use metafolder_daemon::log::TreeOp;
+
+    let mut conn = test_conn();
+    let root = create(&mut conn, vec![Field::new("p", tree_ref(None, "r"))]).uuid;
+    let a = create(&mut conn, vec![Field::new("p", tree_ref(Some(root), "a"))]).uuid;
+
+    // A set replaces the cell.
+    let mut w = Writer::begin(&mut conn, None).unwrap();
+    w.set_field(a, "p", tree_ref(Some(root), "a2")).unwrap();
+    let effects = w.effects();
+    w.commit().unwrap();
+    assert!(matches!(effects.tree_ops(), [TreeOp::Set { positions, .. }] if positions.len() == 1));
+
+    // An append adds to it.
+    let mut w = Writer::begin(&mut conn, None).unwrap();
+    w.append_field(a, "p", tree_ref(Some(root), "a3")).unwrap();
+    let effects = w.effects();
+    w.commit().unwrap();
+    assert!(matches!(effects.tree_ops(), [TreeOp::Add { positions, .. }] if positions.len() == 1));
+
+    // Deleting one row takes that position out, and names it.
+    let rows = metafolder_daemon::db::get_field_rows_named(&conn, a, "p").unwrap();
+    let second = rows.last().unwrap().id;
+    let mut w = Writer::begin(&mut conn, None).unwrap();
+    w.delete_field(a, second).unwrap();
+    let effects = w.effects();
+    w.commit().unwrap();
+    match effects.tree_ops() {
+        [TreeOp::Remove { positions, .. }] => {
+            assert_eq!(positions.len(), 1);
+            assert_eq!(positions[0].row, second, "the row it moved, by id");
+        }
+        other => panic!("expected one Remove, got {other:?}"),
+    }
+
+    // Deleting the metarecord empties every cell it held.
+    let mut w = Writer::begin(&mut conn, None).unwrap();
+    w.delete_metarecord(a).unwrap();
+    let effects = w.effects();
+    w.commit().unwrap();
+    assert!(matches!(effects.tree_ops(), [TreeOp::Set { positions, .. }] if positions.is_empty()));
+
+    // A write that moves no position says nothing at all.
+    let mut w = Writer::begin(&mut conn, None).unwrap();
+    w.set_field(root, "note", Value::String("x".into())).unwrap();
+    let effects = w.effects();
+    w.commit().unwrap();
+    assert!(effects.tree_ops().is_empty());
 }
 
 #[test]
@@ -1806,7 +1864,8 @@ fn test_a_tree_cell_survives_a_flush_of_the_operation_buffer() {
     let effects = w.effects();
     w.commit().unwrap();
 
-    assert_eq!(effects.tree_cells(), [("p".to_string(), a)]);
+    assert_eq!(effects.tree_ops().len(), 1);
+    assert_eq!((effects.tree_ops()[0].field(), effects.tree_ops()[0].uuid()), ("p", a));
 }
 
 #[test]
@@ -1835,7 +1894,7 @@ fn test_a_revision_touching_neither_asks_for_no_refresh() {
 
     assert!(!effects.touches_tree());
     assert!(!effects.touches_watch());
-    assert!(effects.tree_cells().is_empty());
+    assert!(effects.tree_ops().is_empty());
 }
 
 #[test]
@@ -1857,7 +1916,7 @@ fn test_a_large_revision_lists_every_cell_it_changed() {
     w.commit().unwrap();
 
     assert!(effects.touches_tree());
-    assert_eq!(effects.tree_cells().len(), N, "every changed cell, none dropped");
+    assert_eq!(effects.tree_ops().len(), N, "every position moved, none dropped");
 }
 
 /// A `tree_ref` value, spelled once for the tests above.

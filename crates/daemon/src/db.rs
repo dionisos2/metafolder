@@ -1720,6 +1720,11 @@ pub fn distinct_field_names(
 /// One TreeRef position: the metarecord, the field name whose forest it belongs
 /// to, its parent (`None` = a forest root) and the name component it contributes.
 pub struct TreeRow {
+    /// The `field` row that holds this position. A metarecord's positions are
+    /// ordered by it, and a load reads them in that order, so the cache keeps
+    /// it: an incremental settle has to land the cell in the same order a
+    /// rebuild would.
+    pub id: i64,
     pub field_name: String,
     pub uuid: Uuid,
     pub parent: Option<Uuid>,
@@ -1735,7 +1740,7 @@ pub struct TreeRow {
 /// then `id`). Used to populate the tree cache in a single scan at load time
 /// instead of walking the forest node by node.
 pub const FOREST_SQL: &str = "SELECT field_name, metarecord_uuid, value_uuid, \
-     value_name, value_name_bytes FROM field INDEXED BY idx_field_tree \
+     value_name, value_name_bytes, id FROM field INDEXED BY idx_field_tree \
      WHERE value_type = 'tree_ref' ORDER BY field_name, metarecord_uuid, id";
 
 /// See [`FOREST_SQL`]. `INDEXED BY` because the forest is a *slice* of the EAV
@@ -1754,13 +1759,15 @@ pub fn load_tree_forest(conn: &Connection) -> Result<Vec<TreeRow>> {
             r.get::<_, Vec<u8>>(2)?,
             r.get::<_, Option<String>>(3)?,
             r.get::<_, Option<Vec<u8>>>(4)?,
+            r.get::<_, i64>(5)?,
         ))
     })?;
     let mut out = Vec::new();
     for row in rows {
-        let (field_name, uuid, parent, name, name_bytes) = row?;
+        let (field_name, uuid, parent, name, name_bytes, id) = row?;
         let parent = bytes_to_uuid(parent)?;
         out.push(TreeRow {
+            id,
             field_name,
             uuid: bytes_to_uuid(uuid)?,
             parent: if parent == ZERO_UUID { None } else { Some(parent) },
