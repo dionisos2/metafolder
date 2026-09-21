@@ -66,7 +66,6 @@ struct Node {
     row: i64,
     place: Placement,
     children: HashMap<Vec<u8>, usize>,
-    last_used: u64,
 }
 
 #[derive(Default)]
@@ -116,7 +115,6 @@ pub struct TreeCache {
     arena: Vec<Option<Node>>,
     free: Vec<usize>,
     fields: HashMap<String, FieldTree>,
-    clock: u64,
     live: usize,
     case_insensitive: bool,
     misses: u64,
@@ -134,7 +132,6 @@ impl TreeCache {
             arena: Vec::new(),
             free: Vec::new(),
             fields: HashMap::new(),
-            clock: 0,
             live: 0,
             case_insensitive,
             misses: 0,
@@ -174,7 +171,6 @@ impl TreeCache {
     /// current contents.
     pub fn populate_from_forest(&mut self, rows: Vec<db::TreeRow>) {
         self.clear();
-        self.clock += 1;
         // The same two steps every other producer uses — create the node, link
         // it where its position says — in two passes, so a child's parent is in
         // the arena by the time it is linked. The order the rows arrive in does
@@ -234,7 +230,6 @@ impl TreeCache {
         path: &str,
         form: PathForm,
     ) -> Result<Option<Uuid>> {
-        self.clock += 1;
         // A node's name is never empty — only the filesystem forest's root has
         // one, and it is always the first component. So an empty component
         // *after* the first can only come from a redundant slash, and dropping
@@ -268,7 +263,6 @@ impl TreeCache {
                 self.insert_node(field, None, &name, uuid)
             }
         };
-        self.touch(cur);
 
         for comp in &comps[1..] {
             cur = match self.pick(cur, comp, form) {
@@ -288,7 +282,6 @@ impl TreeCache {
                     self.insert_node_at(field, Some(cur), &name, uuid)
                 }
             };
-            self.touch(cur);
         }
 
         let uuid = self.node(cur).uuid;
@@ -584,7 +577,6 @@ impl TreeCache {
     /// uncached parent does not lose the position: it waits for it
     /// ([`Self::link`]).
     pub fn apply_insert(&mut self, field: &str, parent: Option<Uuid>, name: &TreeName, uuid: Uuid) {
-        self.clock += 1;
         let norm = self.normalize(name);
         let taken = match parent.and_then(|p| self.first_node_of(field, p)) {
             Some(parent_idx) => self.node(parent_idx).children.contains_key(&norm),
@@ -607,7 +599,6 @@ impl TreeCache {
         new_parent: Option<Uuid>,
         new_name: &TreeName,
     ) {
-        self.clock += 1;
         let nodes = self.fields.get(field).and_then(|ft| ft.by_uuid.get(&uuid)).cloned();
         let Some(nodes) = nodes else {
             return;
@@ -662,7 +653,6 @@ impl TreeCache {
         if !self.complete {
             return false;
         }
-        self.clock += 1;
 
         // Phase 1 — unlink every cell the run touches, keeping the nodes and
         // the subtrees hanging off them, and remember what each held. Emptying
@@ -874,7 +864,6 @@ impl TreeCache {
         field: &str,
         rel: &crate::relpath::RelPath,
     ) -> Result<Option<Uuid>> {
-        self.clock += 1;
         let mut cur = match self.root_node(conn, field)? {
             Some(idx) => idx,
             None => return Ok(None),
@@ -911,7 +900,6 @@ impl TreeCache {
                     self.insert_node_at(field, Some(cur), name, uuid)
                 }
             };
-            self.touch(cur);
         }
         let uuid = self.node(cur).uuid;
         Ok(Some(uuid))
@@ -922,7 +910,6 @@ impl TreeCache {
         let empty = TreeName::default();
         let norm = self.normalize(&empty);
         if let Some(idx) = self.fields.get(field).and_then(|ft| ft.roots.get(&norm)).copied() {
-            self.touch(idx);
             return Ok(Some(idx));
         }
         if self.complete {
@@ -933,7 +920,6 @@ impl TreeCache {
             return Ok(None);
         };
         let idx = self.insert_node(field, None, &empty, uuid);
-        self.touch(idx);
         Ok(Some(idx))
     }
 
@@ -1087,11 +1073,6 @@ impl TreeCache {
         idxs.iter().filter_map(|&idx| self.path_of_at(idx)).collect()
     }
 
-    fn touch(&mut self, idx: usize) {
-        let clock = self.clock;
-        self.node_mut(idx).last_used = clock;
-    }
-
     /// Creates a node for one position, registered by uuid and linked nowhere.
     /// Every way of putting a position into the forest goes through this and
     /// then [`Self::link`] — the load included — so there is one description of
@@ -1103,7 +1084,6 @@ impl TreeCache {
             row,
             place: Placement::Unlinked,
             children: HashMap::new(),
-            last_used: self.clock,
         };
         let idx = match self.free.pop() {
             Some(slot) => {
