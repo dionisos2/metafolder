@@ -1162,6 +1162,33 @@ fn test_migrating_an_already_migrated_repository_is_a_no_op() {
 }
 
 #[test]
+fn test_an_existing_repository_gains_the_reverts_index_on_open() {
+    let dir = common::TempDir::new("migrate-reverts-index");
+    let path = dir.path().join("db.sqlite");
+    let mut conn = db::open_database(&path, "test").unwrap();
+    db::init_schema(&conn).unwrap();
+    create(&mut conn, vec![Field::new("kind", Value::String("file".into()))]);
+
+    // A repository written before `operation.reverts_op_id` was indexed. It is
+    // the deletes that need it: the column is a foreign key back into
+    // `operation`, so without the index every delete scans the whole log to
+    // check nothing still points at the row — the retention trim and
+    // `mf log prune` then cost O(deleted x log).
+    conn.execute_batch("DROP INDEX idx_operation_reverts;").unwrap();
+    assert!(query_plan(&conn, "DELETE FROM operation WHERE id = 1").contains("SCAN operation"));
+    drop(conn);
+
+    // Opening it back-fills the index.
+    let conn = db::open_database(&path, "test").unwrap();
+    let plan = query_plan(&conn, "DELETE FROM operation WHERE id = 1");
+    assert!(
+        plan.contains("idx_operation_reverts"),
+        "the foreign key is still unindexed after the migration: {plan}"
+    );
+    assert!(!plan.contains("SCAN operation"), "deleting an operation still scans the log: {plan}");
+}
+
+#[test]
 fn test_tree_ref_cycle_rejected() {
     let mut conn = test_conn();
     let a = create(

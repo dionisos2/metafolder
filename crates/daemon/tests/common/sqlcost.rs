@@ -144,6 +144,12 @@ fn scanned_tables(conn: &Connection, sql: &str) -> Vec<String> {
 /// Nesting is not supported (one measurement at a time per thread), and a
 /// panic inside `f` leaves the callback installed — the test is over anyway.
 pub fn measure<T>(conn: &mut Connection, f: impl FnOnce(&Connection) -> T) -> (T, SqlCost) {
+    measure_mut(conn, |c| f(c))
+}
+
+/// [`measure`] for an operation that writes: the closure is handed the
+/// connection mutably, so it can open a transaction of its own.
+pub fn measure_mut<T>(conn: &mut Connection, f: impl FnOnce(&mut Connection) -> T) -> (T, SqlCost) {
     CAPTURED.with(|c| *c.borrow_mut() = Some(Vec::new()));
     conn.profile(Some(record));
     let out = f(conn);

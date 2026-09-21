@@ -458,6 +458,8 @@ CREATE TABLE log_head (
 CREATE INDEX idx_operation_parent ON operation(parent_id);
 CREATE INDEX idx_operation_rev    ON operation(rev_id, seq);
 CREATE INDEX idx_operation_entity ON operation(entity_uuid, id);
+-- Not for reading, for deleting: see `reverts_op_id` below.
+CREATE INDEX idx_operation_reverts ON operation(reverts_op_id);
 
 -- Restoration ops awaiting commit (rollback `skip`). Execution is suspended
 -- during rollback lock; they survive a daemon crash and are replayed on
@@ -490,6 +492,17 @@ path branches on it, and it is allowed to dangle: [[*Log pruning]] and a retenti
 goes back to clear the column. A database written before the column existed is
 migrated by adding it (=ALTER TABLE operation ADD COLUMN=), which leaves every
 existing operation with =NULL=: no revert has happened yet.
+
+It nevertheless carries an index (=idx_operation_reverts=), and not for any of
+its readers — none of them looks an operation up by what it reverts. The index
+is what makes *deleting* an operation cheap. Being a foreign key back into
+=operation=, every delete has to establish that no row still points at the one
+going away; unindexed, SQLite answers that by scanning the whole table, once per
+deleted row, so a trim or a prune costs O(deleted × log) rather than
+O(deleted) — two hours instead of eight seconds on a log of 300 000 operations.
+A repository written before the index picks it up at the next load, before any
+migration that deletes from the log runs. Pinned by the cost assertion
+=trimming_the_log_does_not_scan_the_operations_it_keeps= ([[file:spec-perf.org][spec-perf.org]]).
 
 *** Snapshot rows (=op_snapshot=)
 

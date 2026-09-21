@@ -597,6 +597,15 @@ fn ensure_perf_indexes(conn: &Connection) -> Result<()> {
          CREATE INDEX IF NOT EXISTS idx_field_name_type ON field(field_name, value_type);",
     )
     .context("Failed to ensure performance indexes")?;
+    // The self-referencing foreign key's index (see `init_schema`). Guarded on
+    // its own: `operation` is younger than `field`, so a database can reach
+    // this point without it.
+    if table_exists(conn, "operation")? {
+        conn.execute_batch(
+            "CREATE INDEX IF NOT EXISTS idx_operation_reverts ON operation(reverts_op_id);",
+        )
+        .context("Failed to index operation.reverts_op_id")?;
+    }
     // Back-fill the single-mfr_path invariant on existing databases too.
     // Best-effort: a repo that predates it with a duplicate mfr_path keeps
     // opening (the index simply is not created until the duplicate is resolved).
@@ -759,6 +768,13 @@ pub fn init_schema(conn: &Connection) -> Result<()> {
         CREATE INDEX idx_operation_parent ON operation(parent_id);
         CREATE INDEX idx_operation_rev    ON operation(rev_id, seq);
         CREATE INDEX idx_operation_entity ON operation(entity_uuid, id);
+        -- Not for reading: nothing looks an operation up by what it reverts.
+        -- This is what makes *deleting* one cheap. `reverts_op_id` points back
+        -- into `operation`, so every delete has to ask whether a row still
+        -- points at the one going away; unindexed, SQLite answers that by
+        -- scanning the table, once per deleted row. The retention trim and
+        -- `mf log prune` then cost O(deleted x log) instead of O(deleted).
+        CREATE INDEX idx_operation_reverts ON operation(reverts_op_id);
 
         CREATE TABLE op_snapshot (
             op_id          INTEGER NOT NULL REFERENCES operation(id) ON DELETE CASCADE,

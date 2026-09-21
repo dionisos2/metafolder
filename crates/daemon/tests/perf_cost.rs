@@ -19,12 +19,12 @@
 
 use metafolder_core::metarecord::{Field, Value};
 use metafolder_daemon::db;
-use metafolder_daemon::log::Writer;
+use metafolder_daemon::log::{Retention, Writer};
 use metafolder_daemon::log_view::{listing, LogQuery, Mode};
 use rusqlite::Connection;
 
 mod common;
-use common::sqlcost::{measure, SqlCost};
+use common::sqlcost::{measure, measure_mut, SqlCost};
 
 /// A repository whose log holds `revisions` revisions of one operation each —
 /// the shape a long-lived repository ends up with, where almost every write is
@@ -197,4 +197,35 @@ fn a_filtered_bounded_read_looks_past_the_window_for_matches() {
     for op in ops {
         assert_eq!(op["entity_uuid"].as_str().unwrap(), target.uuid.as_simple().to_string());
     }
+}
+
+/// The retention trim deletes a bounded slice of the oldest operations. Doing
+/// so must not read the operations it *keeps*, once per row deleted.
+///
+/// `operation.reverts_op_id` is a self-referencing foreign key. Unindexed,
+/// SQLite answers "does any row still point at the one I am deleting?" by
+/// scanning the whole table — per deleted row. The trim then costs
+/// O(deleted × log) instead of O(deleted), which is invisible on a test
+/// repository and hours on a real one: the same scan is what made the
+/// `convert versions to content hashes` migration (one `DELETE FROM
+/// operation`) take over two hours on a log of 300 000 operations.
+#[test]
+fn trimming_the_log_does_not_scan_the_operations_it_keeps() {
+    let mut conn = repo_with_log(120);
+    let (_, cost) = measure_mut(&mut conn, |c| {
+        let retention = Retention { revisions: 20, keep_labels: false };
+        let mut w = Writer::begin_with_retention(c, None, retention).unwrap();
+        w.create_metarecord(vec![Field::new("kind", Value::String("new".into()))]).unwrap();
+        w.commit().unwrap();
+    });
+
+    // `SELECT COUNT(*) FROM operation` is the whitelisted exception: a count
+    // over a primary key is a covering-index scan, and the trim needs the total
+    // to decide whether there is anything to cut at all.
+    let scanned: Vec<_> = cost
+        .full_scans(&conn)
+        .into_iter()
+        .filter(|(sql, table)| table == "operation" && sql != "SELECT COUNT(*) FROM operation")
+        .collect();
+    assert!(scanned.is_empty(), "the trim scanned the whole log:\n{}", cost.report(&conn));
 }
