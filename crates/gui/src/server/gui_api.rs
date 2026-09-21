@@ -200,13 +200,23 @@ pub async fn put_panel_view(
     }
 
     // type=file + path: select that file (spec-gui PUT /gui/panels).
+    //
+    // The two variables are ONE selection, and the metarecord goes first —
+    // like every panel that publishes the pair. A consumer reacting to
+    // `selected_paths` reads `selected_metarecord` right then (the `file`
+    // panel, to know which metarecord holds the playback position of what it
+    // is about to show), so it must already be the matching one. The lookup is
+    // therefore done BEFORE either write, not between them: two daemon
+    // round-trips in that gap left every consumer holding the *previous*
+    // metarecord alongside the new path — a whole `gui-tag-folder` walk, one
+    // `view file --path` per question, ran one answer behind.
     if body.panel_type == "file" {
         if let Some(path) = &body.path {
-            if let Err(error) = state.gui.set_var(&ws_id, "selected_paths", json!([path])) {
-                return map_state_error(error);
-            }
             let entry = lookup_record_by_path(&state, &ws_id, path).await;
             if let Err(error) = state.gui.set_var(&ws_id, "selected_metarecord", entry) {
+                return map_state_error(error);
+            }
+            if let Err(error) = state.gui.set_var(&ws_id, "selected_paths", json!([path])) {
                 return map_state_error(error);
             }
         }

@@ -321,6 +321,42 @@ async fn test_panel_view_file_top_level_folder_resolves_metarecord() {
     );
 }
 
+/// The selection is a PAIR, and it is published metarecord-first. A consumer
+/// reacting to `selected_paths` reads `selected_metarecord` right then (the
+/// `file` panel does exactly that, to know which metarecord holds the playback
+/// position of what it is about to show), so publishing the paths first hands
+/// it the PREVIOUS metarecord — it shows one file and believes it is another.
+/// `gui-tag-folder` walks a whole folder through this endpoint, one
+/// `view file --path` per question, so every question inherited the answer
+/// before it.
+#[tokio::test]
+async fn test_panel_view_file_publishes_the_metarecord_before_the_paths() {
+    let seen = Arc::new(std::sync::Mutex::new(Vec::new()));
+    let url = spawn_recording_daemon(seen.clone()).await;
+    let ctx = setup_with_daemon(&url).await;
+
+    let ws = ctx.gui.create_workspace(Some("feedfacefeedfacefeedfacefeedface".into()));
+    ctx.gui.tab_assign(&ws, metafolder_gui::state::layout::SlotId::Left).unwrap();
+    ctx.notifier.clear();
+
+    let (status, _) = request(
+        &ctx.router,
+        "PUT",
+        "/gui/panels/left/view",
+        Some(json!({"type": "file", "path": "/tmp/stub/projets/note.txt"})),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+
+    let keys: Vec<String> = ctx
+        .notifier
+        .payloads(events::WORKSPACE_VAR_CHANGED)
+        .iter()
+        .filter_map(|payload| payload["key"].as_str().map(str::to_string))
+        .collect();
+    assert_eq!(keys, vec!["selected_metarecord".to_string(), "selected_paths".to_string()]);
+}
+
 // ── Messages ──────────────────────────────────────────────────────────────
 
 #[tokio::test]

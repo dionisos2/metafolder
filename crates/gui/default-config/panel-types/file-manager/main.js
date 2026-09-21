@@ -358,12 +358,18 @@ export async function mount(root, metafolder) {
       !repo || !selected || trackedPaths.has(selected.path) || !trackable(selected.path);
   }
 
+  // The metarecord goes FIRST, then the paths: the pair is one selection, and
+  // a consumer reacting to `selected_paths` reads `selected_metarecord` right
+  // then (the `file` panel, for the playback position of the file it is about
+  // to show). Publishing the paths first handed it the PREVIOUS row's
+  // metarecord — the preview showing one file while the position was read from
+  // and written to another.
   const propagateSelection = latestOnly(async () => {
     const item = listing[cursorIndex];
     if (!item) return;
-    await workspace.set('selected_paths', [item.path]);
     const uuid = trackedPaths.get(item.path);
     await workspace.set('selected_metarecord', uuid ? { uuid, repo } : null);
+    await workspace.set('selected_paths', [item.path]);
   });
 
   /** @param {number} index */
