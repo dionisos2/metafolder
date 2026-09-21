@@ -11,6 +11,7 @@ pub mod forest_query;
 pub mod fs_meta;
 pub mod index;
 pub mod log;
+pub mod log_view;
 pub mod metadata;
 pub mod metadata_map;
 pub mod mount;

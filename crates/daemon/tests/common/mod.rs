@@ -14,6 +14,7 @@
 #![allow(dead_code)] // each test binary uses its own subset
 
 pub mod engines;
+pub mod sqlcost;
 
 use std::path::{Path, PathBuf};
 

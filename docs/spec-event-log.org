@@ -1135,7 +1135,8 @@ Query parameters:
 |----------------------+------------+--------------------------------------------------------------------------------------|
 | =mode=               | =linear=   | =linear=: HEAD ancestry only (root → HEAD); =active=: the line through HEAD (ancestry + forward to the most-recent leaf); =tree=: all branches |
 | =metarecord_uuid=         | —          | Only operations whose =entity_uuid= matches this metarecord UUID                          |
-| =limit=              | —          | Maximum number of operations to return (applied after filtering; most recent first)  |
+| =limit=              | —          | Maximum number of operations to return (the most recent ones)                        |
+| =revisions=          | —          | Maximum number of *revisions* to return, whole (the most recent ones)                |
 | =since=              | —          | Include only operations in revisions with timestamp ≥ T (Unix ms)                    |
 | =until=              | —          | Include only operations in revisions with timestamp ≤ T (Unix ms)                    |
 | =include_snapshots=  | =false=    | If =true=, each operation includes =snapshots_before= and =snapshots_after= arrays   |
@@ -1157,6 +1158,28 @@ case, checked with an indexed lookup) and otherwise falls back to the full
 computation so a rolled-back redo future is still surfaced. The observable
 result is unchanged — the most recent =limit= operations of the selected line.
 GUI clients use this to page the log list ("Show more" grows the window).
+
+=revisions= is the same bound counted in revisions, for the clients that
+display a history *by revision* rather than by operation (=mf log list= groups
+operations under theirs). Without it such a client has no bound it can use: a
+revision holds anything from one operation to the tens of thousands a reconcile
+writes, so asking for operations either fetches far too many or cuts a revision
+in half. Revisions are returned *whole* — an operation is never shown without
+its siblings — and the newest ones first, so a window of twenty revisions costs
+the twenty revisions and not the log behind them.
+
+**A bound is a bound on what is returned, not a promise to stop looking.** When
+the request also filters (=metarecord_uuid=, =since=, =until=), the walk widens
+geometrically until it has what was asked for or reaches the root: asking for
+the last ten operations of one metarecord answers with its last ten operations,
+however far back they are, and not with "none of the last ten operations of the
+repository happen to be yours". Finding them quickly costs almost nothing;
+finding nothing costs one full walk.
+
+The whole-log costs left are the two totals below and =mode=tree=, which is
+unbounded by construction (a graph needs every branch). Everything else a
+bounded read does is proportional to the window (spec-perf, pinned by
+=crates/daemon/tests/perf_cost.rs=).
 
 Response body:
 #+BEGIN_SRC json

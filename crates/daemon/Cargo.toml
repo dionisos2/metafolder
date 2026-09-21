@@ -32,6 +32,11 @@ lofty = "0.25.0"
 nom-exif = "3.6.2"
 
 [dev-dependencies]
+# SQLite's own profile callback, which the cost assertions count statements
+# with (spec-perf, `tests/common/sqlcost.rs`). A pure-Rust feature of rusqlite:
+# it changes nothing in the bundled SQLite, and it is a dev-dependency because
+# no shipped binary installs a callback.
+rusqlite = { version = "0.31", features = ["trace"] }
 # The SQL engine, kept as the oracle the index is validated against
 # (spec-indexing "It stays as the oracle"). A dev-dependency cycle, which cargo
 # allows: nothing but the tests links it.

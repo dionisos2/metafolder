@@ -995,60 +995,15 @@ fn op_json(
     op: &crate::log::OpRow,
     include_snapshots: bool,
 ) -> Result<serde_json::Value, ApiError> {
-    let mut value = json!({
-        "id": op.id,
-        "parent_id": op.parent_id,
-        "rev_id": op.rev_id,
-        "seq": op.seq,
-        "op_type": op.op_type,
-        "entity_uuid": hex(op.entity_uuid),
-        "field_name": op.field_name,
-        "reverts_op_id": op.reverts_op_id,
-    });
-    if include_snapshots {
-        value["snapshots_before"] = snapshots_json(conn, op.id, 0)?;
-        value["snapshots_after"] = snapshots_json(conn, op.id, 1)?;
-    }
-    Ok(value)
+    Ok(crate::log_view::op_json(conn, op, include_snapshots)?)
 }
 
-/// Snapshot rows in their raw column form (spec-event-log examples).
 fn snapshots_json(
     conn: &rusqlite::Connection,
     op_id: i64,
     is_new: i64,
 ) -> Result<serde_json::Value, ApiError> {
-    let blob_hex = |b: Vec<u8>| b.iter().map(|x| format!("{x:02x}")).collect::<String>();
-    let mut out = Vec::new();
-    for row in crate::log::snapshots(conn, op_id, is_new)? {
-        // Raw column form (spec-event-log examples), null columns omitted.
-        let encoded = db::encode_value(&row.value);
-        let mut snapshot = json!({
-            "field_id": row.id,
-            "field_name": row.name,
-            "value_type": encoded.value_type,
-        });
-        if let Some(text) = encoded.text {
-            snapshot["value_text"] = json!(text);
-        }
-        if let Some(int) = encoded.int {
-            snapshot["value_int"] = json!(int);
-        }
-        if let Some(real) = encoded.real {
-            snapshot["value_real"] = json!(real);
-        }
-        if let Some(uuid) = encoded.uuid {
-            snapshot["value_uuid"] = json!(blob_hex(uuid));
-        }
-        if let Some(repo) = encoded.ref_repo {
-            snapshot["value_ref_repo"] = json!(blob_hex(repo));
-        }
-        if let Some(name) = encoded.name {
-            snapshot["value_name"] = json!(name);
-        }
-        out.push(snapshot);
-    }
-    Ok(serde_json::Value::Array(out))
+    Ok(crate::log_view::snapshots_json(conn, op_id, is_new)?)
 }
 
 fn revision_json(conn: &rusqlite::Connection, rev_id: i64) -> Result<serde_json::Value, ApiError> {
@@ -1070,6 +1025,10 @@ fn revision_json(conn: &rusqlite::Connection, rev_id: i64) -> Result<serde_json:
 struct LogParams {
     #[serde(default)]
     mode: Option<String>,
+    /// Cap on the number of *revisions* returned (whole ones), for a client
+    /// that displays a history by revision rather than by operation.
+    #[serde(default)]
+    revisions: Option<usize>,
     #[serde(default)]
     metarecord_uuid: Option<String>,
     #[serde(default)]
@@ -1088,119 +1047,24 @@ async fn get_log(
     Query(params): Query<LogParams>,
 ) -> Result<Json<serde_json::Value>, ApiError> {
     let repo_uuid = parse_uuid(&repo)?;
-    let entity_filter = params.metarecord_uuid.as_deref().map(parse_uuid).transpose()?;
+    let mode_name = params.mode.as_deref().unwrap_or("linear");
+    let mode = crate::log_view::Mode::parse(mode_name).ok_or_else(|| {
+        ApiError::bad_request(format!(
+            "invalid mode '{mode_name}' (expected 'linear', 'active' or 'tree')"
+        ))
+    })?;
+    let query = crate::log_view::LogQuery {
+        mode,
+        limit: params.limit,
+        revisions: params.revisions,
+        entity: params.metarecord_uuid.as_deref().map(parse_uuid).transpose()?,
+        since: params.since,
+        until: params.until,
+        include_snapshots: params.include_snapshots.unwrap_or(false),
+    };
     with_repo(&state, repo_uuid, move |repo_state| {
         let conn = slowlog::timed("wait:conn", || repo_state.conn.lock_recover());
-        let head = crate::log::get_head(&conn)?;
-        let mode = params.mode.as_deref().unwrap_or("linear");
-        let limit = params.limit;
-
-        let mut ops: Vec<crate::log::OpRow> = match mode {
-            "tree" => crate::log::all_ops(&conn)?,
-            "linear" => match head {
-                None => vec![],
-                Some(head) => {
-                    // With a limit, bound the ancestry walk so a huge log is not
-                    // read in full (spec-event-log "limit"): most recent first,
-                    // then reversed to oldest-first.
-                    let mut chain = match limit {
-                        Some(l) => crate::log::ancestry_ops_limited(&conn, head, l)?,
-                        None => crate::log::ancestry_ops(&conn, head)?,
-                    };
-                    chain.reverse(); // root → HEAD, oldest first
-                    chain
-                }
-            },
-            // The active line through HEAD: ancestry plus the forward
-            // continuation to the most-recent leaf (keeps the redo future
-            // visible, hides divergent branches).
-            "active" => match head {
-                None => vec![],
-                Some(head) => match limit {
-                    // Fast path: a limited request whose HEAD has no forward
-                    // continuation (the common case — no rollback) has an active
-                    // line equal to its ancestry, so bound that instead of
-                    // scanning every operation to rebuild forward branches
-                    // (`active_line_ops` loads the whole log).
-                    Some(l) if !crate::log::has_children(&conn, head)? => {
-                        let mut chain = crate::log::ancestry_ops_limited(&conn, head, l)?;
-                        chain.reverse();
-                        chain
-                    }
-                    _ => crate::log::active_line_ops(&conn, head)?,
-                },
-            },
-            other => {
-                return Err(ApiError::bad_request(format!(
-                    "invalid mode '{other}' (expected 'linear', 'active' or 'tree')"
-                )))
-            }
-        };
-
-        // Revision timestamps, for since/until filtering.
-        let mut rev_meta: std::collections::HashMap<i64, (i64, Option<String>, Option<String>)> =
-            std::collections::HashMap::new();
-        {
-            let mut stmt = conn
-                .prepare("SELECT id, timestamp, label, origin FROM revision")
-                .map_err(anyhow::Error::from)?;
-            let rows = stmt
-                .query_map([], |r| Ok((r.get::<_, i64>(0)?, r.get(1)?, r.get(2)?, r.get(3)?)))
-                .map_err(anyhow::Error::from)?;
-            for row in rows {
-                let (id, ts, label, origin) = row.map_err(anyhow::Error::from)?;
-                rev_meta.insert(id, (ts, label, origin));
-            }
-        }
-
-        ops.retain(|op| {
-            if let Some(filter) = entity_filter {
-                if op.entity_uuid != filter {
-                    return false;
-                }
-            }
-            let ts = rev_meta.get(&op.rev_id).map(|(ts, _, _)| *ts).unwrap_or(0);
-            params.since.is_none_or(|s| ts >= s) && params.until.is_none_or(|u| ts <= u)
-        });
-        // `limit` keeps the most recent operations.
-        if let Some(limit) = params.limit {
-            if ops.len() > limit {
-                ops.drain(..ops.len() - limit);
-            }
-        }
-
-        let include_snapshots = params.include_snapshots.unwrap_or(false);
-        let mut op_values = Vec::with_capacity(ops.len());
-        let mut seen_revs = std::collections::HashSet::new();
-        let mut revisions = Vec::new();
-        for op in &ops {
-            op_values.push(op_json(&conn, op, include_snapshots)?);
-            if seen_revs.insert(op.rev_id) {
-                if let Some((ts, label, origin)) = rev_meta.get(&op.rev_id) {
-                    revisions.push(json!({
-                        "id": op.rev_id, "timestamp": ts, "label": label, "origin": origin,
-                    }));
-                }
-            }
-        }
-        // Repository-wide totals, so a client showing a bounded window (the GUI
-        // log panel fetches only the most recent `limit` operations) can still
-        // report how much log there is. Two counts off the primary keys — not
-        // the size of the returned window, and unaffected by `limit`/`mode`.
-        let total_operations: i64 = conn
-            .query_row("SELECT COUNT(*) FROM operation", [], |r| r.get(0))
-            .map_err(anyhow::Error::from)?;
-        let total_revisions: i64 = conn
-            .query_row("SELECT COUNT(*) FROM revision", [], |r| r.get(0))
-            .map_err(anyhow::Error::from)?;
-
-        Ok(Json(json!({
-            "head": head,
-            "operations": op_values,
-            "revisions": revisions,
-            "total_operations": total_operations,
-            "total_revisions": total_revisions,
-        })))
+        Ok(Json(crate::log_view::listing(&conn, &query)?))
     })
     .await
 }
