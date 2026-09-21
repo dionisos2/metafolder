@@ -210,13 +210,24 @@ pub async fn put_panel_view(
     // round-trips in that gap left every consumer holding the *previous*
     // metarecord alongside the new path — a whole `gui-tag-folder` walk, one
     // `view file --path` per question, ran one answer behind.
+    //
+    // An EMPTY path is not "leave it alone" (that is an absent `path`) but
+    // "there is no file": it CLEARS the pair. A script showing the entry it is
+    // asking about, one `view file --path` per question, reaches entries with
+    // no file to show — a record with no `mfr_path`, a path that no longer
+    // resolves — and leaving the previous question's file on screen presents
+    // it as the answer to this one.
     if body.panel_type == "file" {
         if let Some(path) = &body.path {
-            let entry = lookup_record_by_path(&state, &ws_id, path).await;
+            let (entry, paths) = if path.is_empty() {
+                (Value::Null, json!([]))
+            } else {
+                (lookup_record_by_path(&state, &ws_id, path).await, json!([path]))
+            };
             if let Err(error) = state.gui.set_var(&ws_id, "selected_metarecord", entry) {
                 return map_state_error(error);
             }
-            if let Err(error) = state.gui.set_var(&ws_id, "selected_paths", json!([path])) {
+            if let Err(error) = state.gui.set_var(&ws_id, "selected_paths", paths) {
                 return map_state_error(error);
             }
         }

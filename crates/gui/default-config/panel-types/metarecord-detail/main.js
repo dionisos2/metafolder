@@ -54,6 +54,16 @@ export async function mount(root, metafolder) {
   /** @type {string|null} uuid last recorded in the recently-viewed list, to
    *  avoid re-touching the same record on a `metarecords:dirty` reload. */
   let lastViewedUuid = null;
+  /** @type {string[]} the DISPLAYED record's own file path(s), resolved from
+   *  its `mfr_path` — deliberately NOT mirrored from `selected_paths`. The two
+   *  are independent variables and a panel may move `selected_metarecord`
+   *  alone (a reference followed here, a treeref node, a duplicates row), so
+   *  the mirror kept naming the record we came FROM: the right-click menu said
+   *  one record in its "Metarecord" half and renamed/trashed another in its
+   *  "File" half. Emptied on every load and refilled from the loaded record,
+   *  so the worst case is a menu without file actions, never one aimed at the
+   *  wrong file. */
+  let currentPaths = [];
   /** @type {number|null} field id being edited, or null */
   let editingField = null;
   let cursorIndex = -1; // keyboard cursor over the field rows (-1 = none)
@@ -389,6 +399,9 @@ export async function mount(root, metafolder) {
   async function loadNow() {
     showError('');
     cursorIndex = -1;
+    // The previous record's paths are wrong from here on: drop them before
+    // anything can read them, and let fillPaths put the new ones back.
+    currentPaths = [];
     const selection = current;
     if (!selection) {
       metarecord = null;
@@ -422,7 +435,36 @@ export async function mount(root, metafolder) {
     orphanNote.hidden = true;
     mountNote.hidden = true;
     render();
+    void fillPaths(selection);
     void fillOrphanNote();
+  }
+
+  /** @type {{shown: Metafolder.Metarecord|null, promise: Promise<string[]>}} */
+  let pathsMemo = { shown: null, promise: Promise.resolve([]) };
+
+  /** The loaded record's absolute file path(s), resolved once per load — the
+   *  file actions, the unmounted-volume note and the orphan note all want
+   *  them, and each used to ask the daemon for itself. Keyed on the loaded
+   *  object, so a `metarecords:dirty` reload (a rename, say) re-resolves.
+   *  @param {string} repo @param {Metafolder.Metarecord} shown */
+  function recordPaths(repo, shown) {
+    if (pathsMemo.shown !== shown) {
+      pathsMemo = { shown, promise: daemon.metarecordPaths(repo, shown).catch(() => []) };
+    }
+    return pathsMemo.promise;
+  }
+
+  /** Resolves the loaded record's own file path(s) for the file actions. Like
+   *  `fillOrphanNote`, it is fired and forgotten with a guard: a selection
+   *  that moved on while the daemon answered must not have its paths
+   *  overwritten by the previous record's.
+   *  @param {Selection} selection */
+  async function fillPaths(selection) {
+    const shown = metarecord;
+    if (!shown) return;
+    const paths = await recordPaths(selection.repo, shown);
+    if (metarecord !== shown) return;
+    currentPaths = paths;
   }
 
   /**
@@ -443,7 +485,7 @@ export async function mount(root, metafolder) {
       return;
     }
     const state = await orphanState(metarecord, {
-      metarecordPaths: (m) => daemon.metarecordPaths(selection.repo, m),
+      metarecordPaths: (m) => recordPaths(selection.repo, m),
       // `fs.exists`, not `fs.stat`: stat follows a symlink, so a broken one
       // read as gone and noted a present file as orphaned.
       exists: (path) => metafolder.fs.exists(path),
@@ -465,7 +507,7 @@ export async function mount(root, metafolder) {
     if (mounts.length === 0) return null;
     const [rootDir, paths] = await Promise.all([
       daemon.repoRoot(repo),
-      daemon.metarecordPaths(repo, shown),
+      recordPaths(repo, shown),
     ]);
     if (paths.length === 0) return null;
     const found = paths.map((abs) => offlineMountFor(mounts, relativeTo(rootDir, abs)));
@@ -1667,18 +1709,6 @@ export async function mount(root, metafolder) {
     }
     return items;
   });
-
-  // The selected file's absolute path(s), mirrored from the workspace so the
-  // right-click file menu can target it (the source panel publishes them with
-  // the selection).
-  /** @type {string[]} */
-  let currentPaths = [];
-  /** @param {unknown} value */
-  function setCurrentPaths(value) {
-    currentPaths = Array.isArray(value) ? value.filter((p) => typeof p === 'string') : [];
-  }
-  workspace.onChange('selected_paths', setCurrentPaths);
-  setCurrentPaths(await workspace.get('selected_paths'));
 
   workspace.onChange('selected_metarecord', (value) => {
     if (!confirmDiscardIfEditing()) {

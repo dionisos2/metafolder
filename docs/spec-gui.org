@@ -3406,8 +3406,15 @@ When =type= is =file= and =path= is provided, =selected_metarecord= is set to
 the matching metadata metarecord (or =null= if the file is untracked) and
 =selected_paths= is set to =[path]= — *in that order*, the lookup done before
 either write (see [[*The selection is a pair, published metarecord-first]]).
+
 Omitting =path= leaves =selected_paths= unchanged and the =file= panel type
-displays whatever path was already active.
+displays whatever path was already active. An *empty* =path= is a third thing:
+it CLEARS the pair (=selected_metarecord= to =null=, =selected_paths= to =[]=),
+so the panel shows "no file selected". A script that previews the entry it is
+asking about, one =view file --path= per question, reaches entries with no file
+to show — a record with no =mfr_path=, a path that no longer resolves — and
+"leave it alone" there means the *previous* question's file stays on screen,
+presented as the subject of this one.
 
 Response: =200 OK=, body ={}=.
 

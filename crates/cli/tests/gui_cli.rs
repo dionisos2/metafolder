@@ -321,6 +321,22 @@ fn test_gui_view_set_and_get() {
     assert_eq!(out.stdout.trim(), "entry-list");
 }
 
+/// An empty `--path` is a value, not an absent option: it travels as `""` and
+/// tells the GUI to CLEAR the selection (spec-gui `PUT /gui/panels/:slot/view`).
+/// A shipped script that previews the entry it is asking about needs to say
+/// "no file" — dropping the option would mean "leave it alone", which leaves
+/// the previous question's file on screen.
+#[test]
+fn test_gui_view_forwards_an_empty_path() {
+    let gui = stub();
+    assert_ok(&mf_gui(&gui, &["view", "left", "file", "--path", ""]));
+    let requests = gui.recorded.all();
+    assert_eq!(
+        requests[0],
+        ("PUT".into(), "/gui/panels/left/view".into(), json!({"type": "file", "path": ""}))
+    );
+}
+
 #[test]
 fn test_gui_message_with_workspace_and_timeout() {
     let gui = stub();

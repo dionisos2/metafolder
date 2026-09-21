@@ -709,4 +709,29 @@ assert "decided: nothing is asked" [ "$(mock_count 'gui input*')" -eq 0 ]
 assert "decided: the scope is counted only when the open set is empty" \
     [ "$(mock_count 'metarecord -q *mfr_path IS PRESENT get --count')" -eq 2 ]
 
+# ── Case 28: an entry whose file cannot be resolved CLEARS the preview ──────
+# The preview is set from `mf path <uuid>`, which can come back empty — a
+# record with no resolvable `mfr_path`, a repository unloaded mid-run. Showing
+# nothing was a no-op, so the PREVIOUS entry's file stayed on screen while the
+# question asked about this one: the wrong file, presented as the subject.
+mock_reset
+setup_top
+walk_children "" file file-a file-b
+walk_path file-a /a.txt
+walk_path file-b /b.txt
+mock_respond 'path file-a' '/abs/a.txt'   # the first entry previews fine
+# file-b has no `path` row: `mf path file-b` answers nothing, as the real one
+# does for a record it cannot resolve.
+walk_counts 2 2 1
+mock_prompt '/top'
+mock_input y y
+bash "$SCRIPT" music >/dev/null; code=$?
+assert "unresolved preview: exits 0" [ "$code" -eq 0 ]
+assert "unresolved preview: the resolvable entry is shown" \
+    [ "$(mock_count 'gui view left file --path /abs/a.txt')" -eq 1 ]
+assert "unresolved preview: the unresolvable one clears the panel" \
+    [ "$(mock_count 'gui view left file --path ')" -eq 1 ]
+assert "unresolved preview: both questions were asked" \
+    [ "$(mock_count 'gui input*')" -eq 2 ]
+
 assert_summary

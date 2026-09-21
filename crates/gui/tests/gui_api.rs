@@ -357,6 +357,31 @@ async fn test_panel_view_file_publishes_the_metarecord_before_the_paths() {
     assert_eq!(keys, vec!["selected_metarecord".to_string(), "selected_paths".to_string()]);
 }
 
+/// An EMPTY `path` clears the selection instead of leaving the previous one on
+/// screen. A shipped script shows the entry it is asking about with one
+/// `mf gui view left file --path <abs>` per question, and an entry may have no
+/// file to show (a record with no `mfr_path`, a path that no longer resolves).
+/// Omitting `path` means "leave it alone", which in that spot is the previous
+/// *question's* file still on screen, presented as the answer to this one —
+/// so "no file" has to be sayable.
+#[tokio::test]
+async fn test_panel_view_file_with_an_empty_path_clears_the_selection() {
+    let ctx = setup().await;
+    ctx.gui.set_var("ws-1", "selected_paths", json!(["/tmp/previous.jpg"])).unwrap();
+    ctx.gui.set_var("ws-1", "selected_metarecord", json!({"uuid": "aa", "repo": "r"})).unwrap();
+
+    let (status, _) = request(
+        &ctx.router,
+        "PUT",
+        "/gui/panels/left/view",
+        Some(json!({"type": "file", "path": ""})),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(ctx.gui.get_var("ws-1", "selected_paths").unwrap(), json!([]));
+    assert_eq!(ctx.gui.get_var("ws-1", "selected_metarecord").unwrap(), Value::Null);
+}
+
 // ── Messages ──────────────────────────────────────────────────────────────
 
 #[tokio::test]

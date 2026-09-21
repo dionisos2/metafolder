@@ -108,8 +108,17 @@ mf_gui_session_open() {
 
 # Show a file in the session's left `file` panel (also publishes
 # selected_metarecord, which the right detail panel follows).
+#
+# An EMPTY path CLEARS the panel; it is not a no-op. A caller shows the entry
+# it is asking about, and an entry may have no file to show — a record with no
+# `mfr_path`, a `mf path` that cannot resolve one, a repository that went away.
+# Doing nothing there leaves the PREVIOUS entry's file on screen, offered as
+# the answer to the current question; an empty panel says "no file" instead.
+# A failing call is reported for the same reason: a preview silently stuck one
+# entry behind is worse than a visible complaint.
 mf_gui_show_file() {
-    [ -n "${1:-}" ] && mf gui view left file --path "$1" >/dev/null 2>&1 || :
+    mf gui view left file --path "${1:-}" >/dev/null 2>&1 \
+        || mf_gui_report "could not update the file panel${1:+ (\"$1\")}"
 }
 
 # ── Argument prompts (GUI completion) ─────────────────────────────────────────
