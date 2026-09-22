@@ -41,6 +41,7 @@ const COALESCE_JS: &str = include_str!("../../panel-shim/coalesce.js");
 const SELECT_JS: &str = include_str!("../../panel-shim/select.js");
 const FILE_ACTIONS_JS: &str = include_str!("../../panel-shim/file-actions.js");
 const IGNORE_JS: &str = include_str!("../../panel-shim/ignore.js");
+const WATCHED_JS: &str = include_str!("../../panel-shim/watched.js");
 const FIND_ENTRY_JS: &str = include_str!("../../panel-shim/find-entry.js");
 const KEYHINTS_JS: &str = include_str!("../../panel-shim/keyhints.js");
 
@@ -62,6 +63,7 @@ pub fn build_router(state: ServerState) -> Router {
     Router::new()
         .route("/__ui.js", get(|| async { javascript(UI_JS) }))
         .route("/__ignore.js", get(|| async { javascript(IGNORE_JS) }))
+        .route("/__watched.js", get(|| async { javascript(WATCHED_JS) }))
         .route("/__menu.js", get(|| async { javascript(MENU_JS) }))
         .route("/__mounts.js", get(|| async { javascript(MOUNTS_JS) }))
         .route("/__orphan.js", get(|| async { javascript(ORPHAN_JS) }))

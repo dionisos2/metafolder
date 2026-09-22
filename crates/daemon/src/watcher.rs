@@ -233,6 +233,13 @@ impl WatcherHandle {
         self.inner.watched_count()
     }
 
+    /// A snapshot of the absolute paths currently watched — what
+    /// `POST /repos/:repo/watch/check` answers against (the live set, not the
+    /// placement's target: a starved directory is absent).
+    pub fn watched_set(&self) -> HashSet<PathBuf> {
+        self.inner.watched.lock_recover().clone()
+    }
+
     /// Brings the watch set in line with the repository's eligibility, within
     /// the budget `cap` (`None` = uncapped).
     pub fn refresh(
@@ -553,6 +560,231 @@ fn exclusion_of(
             inherited
         }
     }
+}
+
+// ── Watch check (spec-file-tracking "Watch check") ───────────────────────────
+
+/// Why [`explain_watched`] decided the way it did — what stands between the
+/// path and the watcher recording a change at it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum WatchedReason {
+    /// The path is tracked and the watch on its covering directory reports it.
+    Watched,
+    /// Not tracked at all: the eligibility algorithm said no (the path itself,
+    /// or — for an entry — its containing directory).
+    Untracked,
+    /// Tracked, but inside a subtree carrying `mfr_watch_exceeded = true`: the
+    /// budget's frontier, or a deliberate `mf watch exceeded set`.
+    Excluded,
+    /// Under a declared mount point with nothing mounted: frozen until the
+    /// volume returns (spec-file-tracking "Offline subtrees").
+    Offline,
+    /// Inside the daemon's own runtime directory: never watched, whatever the
+    /// eligibility says.
+    Internal,
+    /// Tracked, eligible, not excluded, not offline — yet the covering
+    /// directory holds no watch right now: the kernel refused (starved).
+    Unwatched,
+}
+
+impl WatchedReason {
+    /// The wire form used by `POST /repos/:repo/watch/check`.
+    pub fn as_str(self) -> &'static str {
+        match self {
+            WatchedReason::Watched => "watched",
+            WatchedReason::Untracked => "untracked",
+            WatchedReason::Excluded => "excluded",
+            WatchedReason::Offline => "offline",
+            WatchedReason::Internal => "internal",
+            WatchedReason::Unwatched => "unwatched",
+        }
+    }
+}
+
+/// The watched state of one path, as `POST /repos/:repo/watch/check` reports
+/// it. The eligibility explanations are carried along so a client can show
+/// *why* without a second call.
+#[derive(Debug, Clone)]
+pub struct WatchedStatus {
+    pub watched: bool,
+    pub reason: WatchedReason,
+    /// The directory whose watch covers the path (`""` is the repository
+    /// root): itself for a directory, its containing directory for anything
+    /// else. The watch set's truth is about directories — this is what the
+    /// answer was computed against.
+    pub watched_dir: String,
+    /// The path's own eligibility dry run (what `POST /eligibility` answers).
+    pub eligibility: eligibility::Explanation,
+    /// The covering directory's own eligibility dry run — `eligibility` for a
+    /// directory path, its containing directory's otherwise. A file whose name
+    /// no pattern matches can still be unwatchable because its directory is
+    /// pruned (cascading skip), and only this tells the two apart.
+    pub dir_eligibility: eligibility::Explanation,
+    /// The path of the metarecord carrying the `mfr_watch_exceeded = true`
+    /// that excludes it ([`WatchedReason::Excluded`] only).
+    pub excluded_by: Option<String>,
+    /// The offline mount point the path sits under
+    /// ([`WatchedReason::Offline`] only).
+    pub offline_mount: Option<String>,
+}
+
+/// The watched state of a batch of repo-root-relative paths, answering
+/// `POST /repos/:repo/watch/check`. `watched` is the *live watch set's* truth —
+/// one step past eligibility: a change at a path is recorded when the path is
+/// eligible AND the covering directory holds a watch, so a tracked file inside
+/// an excluded subtree or on an unplugged volume is still not watched, and the
+/// reason says which. Read-only; one shared [`EligibilityCache`] and one
+/// offline-mounts snapshot serve the whole batch.
+pub fn explain_watched(
+    conn: &Connection,
+    cache: &mut TreeCache,
+    root: &Path,
+    internal_dir: &Path,
+    watched: &HashSet<PathBuf>,
+    rel_paths: &[String],
+) -> Result<Vec<WatchedStatus>> {
+    let mut ec = EligibilityCache::default();
+    let mut offline = None;
+    rel_paths
+        .iter()
+        .map(|rel| {
+            explain_watched_one(
+                conn,
+                cache,
+                root,
+                internal_dir,
+                watched,
+                rel,
+                &mut ec,
+                &mut offline,
+            )
+        })
+        .collect()
+}
+
+/// [`explain_watched`] for one path. The reason ladder follows the placement
+/// walk's own order — eligibility first (the path, then its covering
+/// directory), then the structural skips (the daemon's internals, an unplugged
+/// volume, a recorded exclusion), and "starved" only when nothing else
+/// explains the absence of a watch.
+#[allow(clippy::too_many_arguments)]
+fn explain_watched_one(
+    conn: &Connection,
+    cache: &mut TreeCache,
+    root: &Path,
+    internal_dir: &Path,
+    watched: &HashSet<PathBuf>,
+    rel_path: &str,
+    ec: &mut EligibilityCache,
+    offline: &mut Option<crate::mount::OfflineMounts>,
+) -> Result<WatchedStatus> {
+    let is_dir = dir_like(conn, cache, root, rel_path)?;
+    let cover = if is_dir { rel_path.to_string() } else { parent_of(rel_path) };
+    let watched_dir = watched.contains(&abs_of(root, &cover));
+    let eligibility = eligibility::explain_cached(conn, cache, rel_path, ec)?;
+    let dir_eligibility = if is_dir {
+        eligibility.clone()
+    } else {
+        eligibility::explain_cached(conn, cache, &cover, ec)?
+    };
+    let watched = watched_dir && eligibility.eligible;
+    let (reason, excluded_by, offline_mount) = if watched {
+        (WatchedReason::Watched, None, None)
+    } else if !eligibility.eligible || !dir_eligibility.eligible {
+        // Two cases, one verdict: the path itself is untracked (the common
+        // one — mf_watch or a pattern decided), or only its covering
+        // directory is (a pattern matched the directory alone, so the walk
+        // pruned it and the file beneath can never be reached).
+        (WatchedReason::Untracked, None, None)
+    } else if abs_of(root, &cover).starts_with(internal_dir) {
+        (WatchedReason::Internal, None, None)
+    } else {
+        let mounts = offline
+            .get_or_insert_with(|| crate::mount::offline(conn, cache, root).unwrap_or_default());
+        if let Some(mount) = mounts.paths().iter().find(|m| covers(m, &cover)) {
+            (WatchedReason::Offline, None, Some((*mount).clone()))
+        } else if let Some(by) = excluded_by(conn, cache, ec, &cover)? {
+            (WatchedReason::Excluded, Some(by), None)
+        } else {
+            (WatchedReason::Unwatched, None, None)
+        }
+    };
+    Ok(WatchedStatus {
+        watched,
+        reason,
+        watched_dir: cover,
+        eligibility,
+        dir_eligibility,
+        excluded_by,
+        offline_mount,
+    })
+}
+
+/// Whether the path denotes a directory: the disk first (symlink metadata —
+/// a symlinked directory is never watched, matching the walk's
+/// `file_type().is_dir()`), the metarecord's `mfr_type` when the path is gone
+/// (an orphan's stale path still says what it was), else a file — a
+/// not-yet-existing path is treated as the file that would appear there.
+fn dir_like(conn: &Connection, cache: &mut TreeCache, root: &Path, rel: &str) -> Result<bool> {
+    if std::fs::symlink_metadata(abs_of(root, rel))
+        .map(|md| md.file_type().is_dir())
+        .unwrap_or(false)
+    {
+        return Ok(true);
+    }
+    match cache.resolve_path(conn, "mfr_path", rel)? {
+        Some(uuid) => Ok(db::string_fields(conn, uuid, "mfr_type")?
+            .first()
+            .map(|t| t == "dir")
+            .unwrap_or(false)),
+        None => Ok(false),
+    }
+}
+
+/// The parent directory of a repo-root-relative path (`""` for the root and
+/// for a top-level entry — the root's own parent).
+fn parent_of(rel: &str) -> String {
+    match rel.rfind('/') {
+        Some(0) | None => String::new(),
+        Some(i) => rel[..i].to_string(),
+    }
+}
+
+/// The absolute path of a repo-root-relative `rel` (`""` is the root itself).
+fn abs_of(root: &Path, rel: &str) -> PathBuf {
+    if rel.is_empty() {
+        root.to_path_buf()
+    } else {
+        root.join(rel.trim_start_matches('/'))
+    }
+}
+
+/// Whether the offline mount point `m` is `rel` or an ancestor of it.
+fn covers(m: &str, rel: &str) -> bool {
+    rel == m || (rel.len() > m.len() && rel.starts_with(m) && rel.as_bytes()[m.len()] == b'/')
+}
+
+/// The nearest metarecord on the ancestor chain of `rel` (itself included)
+/// defining `mfr_watch_exceeded = true` — the subtree root the placement walk
+/// left unwatched, whether the budget recorded it or the user set it. `None`
+/// when nothing excludes the path: the nearest definition decides, and an
+/// unmetarecorded prefix carries none of its own.
+fn excluded_by(
+    conn: &Connection,
+    cache: &mut TreeCache,
+    ec: &mut EligibilityCache,
+    rel: &str,
+) -> Result<Option<String>> {
+    let comps: Vec<&str> = rel.split('/').collect();
+    for i in (0..comps.len()).rev() {
+        let prefix = comps[..=i].join("/");
+        if let Some(uuid) = cache.resolve_path(conn, "mfr_path", &prefix)? {
+            if let Some(exceeded) = eligibility::cached_watch_exceeded(conn, ec, uuid)? {
+                return Ok(if exceeded { Some(prefix) } else { None });
+            }
+        }
+    }
+    Ok(None)
 }
 
 /// Converts an absolute path to the internal repo-root-relative form, keeping

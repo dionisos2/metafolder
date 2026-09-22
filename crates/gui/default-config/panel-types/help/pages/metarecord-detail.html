@@ -46,6 +46,22 @@
   before pasting.
 </p>
 
+<h2>Watched or not</h2>
+<p>
+  A line under the metarecord head states whether the daemon records a change
+  at this record's file: dim when it does
+  (&ldquo;watched — changes under &hellip; are recorded&rdquo;), amber with
+  the reason when it does not — the path may be untracked, inside a subtree
+  the watch budget excluded, on an unplugged volume, or the kernel may be
+  refusing watches. It asks the daemon's <em>live</em> watch set (one call per
+  load), so it is a step past the fields: a record inheriting
+  <code>mf_watch = true</code> reads as watched even though it carries no
+  <code>mf_watch</code> of its own — and the <em>Watch and reconcile</em>
+  button is only offered for a record that is genuinely not watched. The
+  <a data-help-page="metarecord-list">list panel</a> marks the same state per
+  row, and <code>mf watch check</code> answers it from the command line.
+</p>
+
 <h2>Editing</h2>
 <p>Move between fields with <span data-mf-key="metarecord:row-prev">↑ or k</span> /
   <span data-mf-key="metarecord:row-next">↓ or j</span>. Then:</p>

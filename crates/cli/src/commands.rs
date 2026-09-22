@@ -2121,6 +2121,130 @@ pub fn watch_status(ctx: &Ctx, raw_json: bool) -> Result<i32, CliError> {
     print_watch(&resp, raw_json)
 }
 
+// ── Watch check (spec-file-tracking "Watch check") ────────────────────────────
+
+/// Repo-root-relative form (leading slash, `""` is the root) of a CLI path
+/// argument: an existing path is canonicalised and made relative to the
+/// repository root; a leading-slash path that is gone from disk is taken as
+/// already repo-root-relative (an orphan's stale path). Anything else is a
+/// usage error.
+fn watch_check_rel(root: &Path, raw: &str) -> Result<String, CliError> {
+    if let Ok(abs) = std::fs::canonicalize(raw) {
+        let rel = repo_rel(root, &abs)?;
+        return Ok(if rel.is_empty() { String::new() } else { format!("/{rel}") });
+    }
+    if raw.starts_with('/') {
+        return Ok(raw.trim_end_matches('/').to_string());
+    }
+    Err(CliError::Usage(format!(
+        "{raw}: no such file, and a repo-root-relative path must start with '/'"
+    )))
+}
+
+/// A repo-root-relative path from the response, with `""` (the root) shown as
+/// `/` — the empty string would read as nothing.
+fn shown_path<'a>(entry: &'a serde_json::Value, key: &str) -> &'a str {
+    match entry[key].as_str() {
+        Some(s) if !s.is_empty() => s,
+        _ => "/",
+    }
+}
+
+/// One eligibility explanation, as a phrase a person can act on.
+fn eligibility_phrase(entry: &serde_json::Value, reason_key: &str) -> String {
+    match entry[reason_key].as_str() {
+        Some("no_watch") => "no mf_watch on it or its ancestors (tracking is opt-in)".into(),
+        Some("watch_false") => {
+            format!("mf_watch = false inherited from {}", shown_path(entry, "watch_scope"))
+        }
+        Some("ignored") => format!(
+            "matches the mf_ignore pattern {:?} of {}",
+            entry["pattern"].as_str().unwrap_or("?"),
+            shown_path(entry, "ignore_source")
+        ),
+        _ => format!("not tracked ({:?})", entry[reason_key].as_str().unwrap_or("unknown")),
+    }
+}
+
+/// Why `POST /watch/check` says a path is not watched, as one phrase.
+fn not_watched_phrase(entry: &serde_json::Value) -> String {
+    match entry["reason"].as_str() {
+        Some("untracked") => {
+            // The path itself, or — for a pattern that matched its directory
+            // alone — the directory it can never be reached through.
+            if entry["eligible"].as_bool() == Some(false) {
+                eligibility_phrase(entry, "eligibility_reason")
+            } else {
+                format!(
+                    "its directory {} is untracked: {}",
+                    shown_path(entry, "watched_dir"),
+                    eligibility_phrase(entry, "dir_eligibility_reason")
+                )
+            }
+        }
+        Some("excluded") => format!(
+            "inside {} (mfr_watch_exceeded — deliberate `mf watch exceeded set`, \
+             or the watch budget's frontier)",
+            entry["excluded_by"].as_str().unwrap_or("?")
+        ),
+        Some("offline") => format!(
+            "on the volume mounted at {}, which is unplugged",
+            entry["offline_mount"].as_str().unwrap_or("?")
+        ),
+        Some("internal") => {
+            "inside the daemon's own runtime directory (.metafolder/internal)".into()
+        }
+        Some("unwatched") => format!(
+            "no watch on {} right now — the watch budget may be exhausted (`mf watch status`)",
+            shown_path(entry, "watched_dir")
+        ),
+        _ => "unknown state".into(),
+    }
+}
+
+/// `mf watch check <path>…`: whether the watcher records a change at each path
+/// (spec-file-tracking "Watch check"). One line per path; the exit code is 1
+/// ("found problems") when any path is not watched, so a script can assert on
+/// watchability the way `mf schema check` does on violations.
+pub fn watch_check(ctx: &Ctx, paths: &[String], raw_json: bool) -> Result<i32, CliError> {
+    if paths.is_empty() {
+        return Err(CliError::Usage("at least one path is required".into()));
+    }
+    let base = ctx.repo_base()?;
+    let info = ctx.repo_info()?;
+    let root = info["root"]
+        .as_str()
+        .ok_or_else(|| CliError::Op("daemon did not report the repo root".into()))?;
+    let rels = paths
+        .iter()
+        .map(|raw| watch_check_rel(Path::new(root), raw))
+        .collect::<Result<Vec<_>, _>>()?;
+    let resp = ctx.client.request(
+        "POST",
+        &format!("{base}/watch/check"),
+        &[],
+        Some(&json!({ "paths": rels })),
+    )?;
+    if raw_json {
+        print_pretty(&resp);
+        return Ok(0);
+    }
+    let results = resp["results"].as_array().cloned().unwrap_or_default();
+    let mut unwatched = 0usize;
+    for entry in &results {
+        let path = entry["path"].as_str().unwrap_or_default();
+        let shown = if path.is_empty() { "/" } else { path };
+        if entry["watched"].as_bool().unwrap_or(false) {
+            let dir = shown_path(entry, "watched_dir");
+            println!("watched      \t{shown}\t(changes under {dir} are recorded)");
+        } else {
+            unwatched += 1;
+            println!("NOT watched  \t{shown}\t— {}", not_watched_phrase(entry));
+        }
+    }
+    Ok(if unwatched > 0 { 1 } else { 0 })
+}
+
 pub fn watch_pause(ctx: &Ctx, raw_json: bool) -> Result<i32, CliError> {
     let base = ctx.repo_base()?;
     let resp = ctx.client.post(&format!("{base}/watch/pause"), &json!({}))?;

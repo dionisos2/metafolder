@@ -1436,6 +1436,94 @@ Evaluating a path costs an ancestor-chain walk served by the tree cache; the
 call compiles each pattern once for the whole batch (the reconcile walk's
 =EligibilityCache=), so a directory listing is one request.
 
+** Watch check
+
+#+BEGIN_SRC
+POST /repos/:repo_uuid/watch/check
+#+END_SRC
+
+The watcher's own answer for a list of paths: *would a change at each be
+recorded?* Where [[*Eligibility explain]] runs the tracking algorithm, this
+consults the *live watch set* ([[*File Watcher]]) — one step past eligibility,
+because the two can disagree, and the difference is exactly what a client
+showing "is this file watched?" must not flatten away:
+
+- a tracked file under a directory the budget's frontier excluded
+  (=mfr_watch_exceeded=, [[*The watch budget]]) is still not watched;
+- a tracked file under a directory a pattern matched *alone* (=p= re-anchored
+  matches nothing, the directory does) is untracked all the same: the walk
+  pruned its directory, so no watch can ever cover it;
+- a tracked file on a declared mount point with nothing mounted is not watched
+  while the volume is away ([[*Offline subtrees]]);
+- everything under =.metafolder/internal/= is never watched, whatever the
+  fields say — the walk's hard skip, not a decision;
+- and a tracked file whose directory *should* be watched may still hold no
+  watch: the kernel refused it (starved, [[*Two different failures]]).
+
+"Watched" for a *directory* is its own watch (events inside it are reported);
+for anything else it is its containing directory's watch (the entry itself is).
+The answer is the live set's truth, not the placement's target — a starved
+directory is absent from both alike. Ingestion being *paused* does not change
+the answer: the watches stay placed, the events buffer.
+
+Request body: repo-root-relative paths (leading slash, =""= is the root), at
+most 1000 per call, one request per directory listing. Response: one result
+per path, in the order given.
+
+#+BEGIN_SRC json
+{"results": [
+  {"path": "/music/track.flac", "watched": true,  "reason": "watched",
+   "watched_dir": "/music",
+   "eligible": true, "eligibility_reason": "tracked", "watch_scope": "",
+   "ignore_source": null, "pattern": null,
+   "dir_eligible": true, "dir_eligibility_reason": "tracked",
+   "dir_watch_scope": "", "dir_ignore_source": null, "dir_pattern": null,
+   "excluded_by": null, "offline_mount": null},
+  {"path": "/target/debug/deps/x.o", "watched": false, "reason": "untracked",
+   "watched_dir": "/target/debug/deps",
+   "eligible": false, "eligibility_reason": "ignored", "watch_scope": "",
+   "ignore_source": "", "pattern": "(^|/)target/…",
+   "dir_eligible": false, "dir_eligibility_reason": "ignored", "dir_watch_scope": "",
+   "dir_ignore_source": "", "dir_pattern": "(^|/)target/…",
+   "excluded_by": null, "offline_mount": null}
+]}
+#+END_SRC
+
+- =watched= — whether the watcher records a change at the path: eligible *and*
+  covered by a watch.
+- =reason= — =watched=; =untracked= (the path itself or its covering directory
+  is not tracked); =excluded= (inside a subtree carrying =mfr_watch_exceeded=);
+  =offline= (its mount point is unplugged); =internal= (under the daemon's own
+  runtime directory); =unwatched= (tracked and uncovered for no recorded
+  reason: starved).
+- =watched_dir= — the directory whose watch covers the path (the path itself
+  for a directory, its containing directory otherwise; =""= is the root).
+  Whether it *is* watched is the =watched= bit; the field is always present so
+  a client can say what the answer was computed against.
+- =eligible= / =eligibility_reason= / =watch_scope= / =ignore_source= /
+  =pattern= — the path's own [[*Eligibility explain]] dry run, in the same
+  shape that endpoint answers.
+- =dir_eligible= / =dir_eligibility_reason= / =dir_watch_scope= /
+  =dir_ignore_source= / =dir_pattern= — the covering directory's own dry run
+  (identical to the path's when the path is a directory). The reason ladder
+  names the path's own verdict first, then the directory's.
+- =excluded_by= — the path of the metarecord carrying the
+  =mfr_watch_exceeded = true= that excludes it, nearest definition along the
+  ancestor chain; set only for =reason = "excluded"=.
+- =offline_mount= — the offline mount point the path sits under; set only for
+  =reason = "offline"=.
+
+A path is *watched* when =watched= is true; every other reason is why it is
+not, ordered as the placement walk itself decides (eligibility, then the
+structural skips, then the unexplained remainder).
+
+The GUI marks unwatched records in the
+[[file:spec-gui.org][spec-gui.org]] metarecord-list (amber, reason on hover)
+and states the verdict in metarecord-detail; the CLI command is =check= under
+[[*mf watch {status, pause, resume, check, exceeded}]]. Both treat a missing
+answer (daemon down, or older than the endpoint) as "unknown", never as
+"unwatched".
+
 ** Effective ignore set
 
 #+BEGIN_SRC
@@ -1554,10 +1642,11 @@ unless =-y= is given.
 There is no =mf mount add=: mount points are detected, not declared. Mounting a
 volume and running =mf reconcile= is what records one.
 
-** =mf watch {status, pause, resume, exceeded}=
+** =mf watch {status, pause, resume, check, exceeded}=
 
 Controls the ingestion of filesystem events for the repository (see
-[[*Pausing ingestion]]) and the watch budget (see [[*The watch budget]]).
+[[*Pausing ingestion]]), the watch budget (see [[*The watch budget]]), and the
+watch state of individual paths (see [[*Watch check]]).
 
 =status= (the default) calls =GET /watch= and prints one line — =running= or
 =paused=, the number of buffered events and the number of watched directories:
@@ -1574,6 +1663,22 @@ refusing watches to a daemon that has not reached its own ceiling.
 uncommitted group is abandoned, its events stay buffered) and keeps the executor
 from starting another. =resume= calls =POST /watch/resume= and prints how many
 events are about to be applied. =--json= prints the raw body for all three.
+
+=check <path>…= calls =POST /watch/check= (see [[*Watch check]]) and prints one
+line per path, watched or not and why:
+
+#+BEGIN_SRC
+watched      	/docs/note.txt	(changes under /docs are recorded)
+NOT watched  	/build/out.o	— matches the mf_ignore pattern "(^|/)build(/.*)?$" of /
+NOT watched  	/archive/x.tgz	— inside /archive (mfr_watch_exceeded — deliberate `mf watch exceeded set`, or the watch budget's frontier)
+#+END_SRC
+
+Paths are OS-native absolute (or current-directory-relative) filesystem paths,
+canonicalised and made repo-root-relative; a leading-slash path that is gone
+from disk is taken as already repo-root-relative (an orphan's stale path). The
+exit code is 1 ("found problems") when any path is not watched, so a script can
+assert on watchability the way =mf schema check= does on violations. =--json=
+prints the raw response body.
 
 =exceeded= manages =mfr_watch_exceeded=, the subtrees left unwatched for want of
 budget. It is named after the field rather than after an intention, because it

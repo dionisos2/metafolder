@@ -105,6 +105,7 @@ pub fn build(state: Arc<AppState>) -> Router {
         .route("/repos/:repo/watch/pause", post(watch_pause))
         .route("/repos/:repo/watch/resume", post(watch_resume))
         .route("/repos/:repo/watch/exceeded", get(watch_exceeded_list).post(watch_exceeded_set))
+        .route("/repos/:repo/watch/check", post(watch_check))
         .route("/repos/:repo/orphans/scan", post(orphans_scan))
         .route("/repos/:repo/orphans/clear", post(orphans_clear))
         .route("/repos/:repo/orphans/mark", post(orphans_mark))
@@ -2354,6 +2355,77 @@ async fn watch_resume(
     let repo_state = state.repo(repo_uuid)?;
     repo_state.resume_ingestion();
     Ok(Json(watch_view(&repo_state)))
+}
+
+#[derive(Deserialize)]
+struct WatchCheckBody {
+    paths: Vec<String>,
+}
+
+/// `POST /repos/:repo/watch/check`: the watcher's own answer for a batch of
+/// repo-root-relative paths — would a change at each be recorded?
+/// (spec-file-tracking "Watch check"). Where `POST /eligibility` explains the
+/// tracking algorithm, this consults the *live watch set*: a tracked path
+/// inside a watch-excluded subtree, under `.metafolder/internal/`, or on an
+/// unplugged volume is still not watched, and the response names why.
+async fn watch_check(
+    State(state): State<Arc<AppState>>,
+    Path(repo): Path<String>,
+    payload: Result<Json<WatchCheckBody>, JsonRejection>,
+) -> Result<Json<serde_json::Value>, ApiError> {
+    let Json(body) = payload?;
+    let repo_uuid = parse_uuid(&repo)?;
+    if body.paths.len() > ELIGIBILITY_MAX_PATHS {
+        return Err(ApiError::bad_request(format!(
+            "at most {ELIGIBILITY_MAX_PATHS} paths per call, got {}",
+            body.paths.len()
+        )));
+    }
+    for path in &body.paths {
+        if !path.is_empty() && !path.starts_with('/') {
+            return Err(ApiError::bad_request(format!(
+                "path must be repo-root-relative with a leading slash: {path:?}"
+            )));
+        }
+    }
+    with_repo(&state, repo_uuid, move |repo_state| {
+        let watched = repo_state.watched_dir_set();
+        let conn = slowlog::timed("wait:conn", || repo_state.conn.lock_recover());
+        let mut cache = slowlog::timed("wait:cache", || repo_state.lock_cache());
+        let statuses = crate::watcher::explain_watched(
+            &conn,
+            &mut cache,
+            &repo_state.config.root,
+            repo_state.internal_dir().as_path(),
+            &watched,
+            &body.paths,
+        )?;
+        let mut results = Vec::with_capacity(statuses.len());
+        for (path, s) in body.paths.iter().zip(&statuses) {
+            let e = &s.eligibility;
+            let d = &s.dir_eligibility;
+            results.push(json!({
+                "path": path,
+                "watched": s.watched,
+                "reason": s.reason.as_str(),
+                "watched_dir": s.watched_dir,
+                "eligible": e.eligible,
+                "eligibility_reason": e.reason.as_str(),
+                "watch_scope": e.watch_scope,
+                "ignore_source": e.ignore_source,
+                "pattern": e.pattern,
+                "dir_eligible": d.eligible,
+                "dir_eligibility_reason": d.reason.as_str(),
+                "dir_watch_scope": d.watch_scope,
+                "dir_ignore_source": d.ignore_source,
+                "dir_pattern": d.pattern,
+                "excluded_by": s.excluded_by,
+                "offline_mount": s.offline_mount,
+            }));
+        }
+        Ok(Json(json!({ "results": results })))
+    })
+    .await
 }
 
 /// `POST /repos/:repo/orphans/scan`: read-only disk scan for tracked

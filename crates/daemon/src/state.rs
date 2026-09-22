@@ -1,6 +1,6 @@
 //! In-memory daemon state: the set of loaded repositories.
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex, MutexGuard};
 
@@ -434,6 +434,13 @@ impl RepoState {
     /// shared with every other program on the machine that watches files.
     pub fn watched_dirs(&self) -> usize {
         self.handles.lock_recover().as_ref().map_or(0, |h| h.watcher.watched())
+    }
+
+    /// The absolute paths of the directories currently watched, as a snapshot
+    /// (what `POST /watch/check` answers against). Empty while the repository's
+    /// watcher is not running.
+    pub fn watched_dir_set(&self) -> HashSet<PathBuf> {
+        self.handles.lock_recover().as_ref().map_or_else(HashSet::new, |h| h.watcher.watched_set())
     }
 
     /// Warms the in-memory accelerators of a freshly loaded repository:

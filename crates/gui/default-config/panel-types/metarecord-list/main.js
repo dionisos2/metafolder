@@ -18,6 +18,7 @@ import {
 import { fileMenuItems, metarecordMenuItems } from '/__file-actions.js';
 import { attachHistory } from '/__history.js';
 import { latestOnly } from '/__coalesce.js';
+import { fetchWatched, summarizeWatched } from '/__watched.js';
 import {
   parseColumns,
   isSortable,
@@ -157,6 +158,11 @@ export async function mount(root, metafolder) {
   let mode = 'table';
   /** @type {Map<string, Promise<OrphanState>>} uuid -> orphan state */
   let orphanCache = new Map();
+  /** @type {Map<string, {watched: boolean, title: string}>} uuid -> the
+   *  watch-state summary of the metarecord's paths, filled per page in
+   *  prepareNow (one batch daemon call). A missing entry is "unknown" —
+   *  no paths, or the daemon did not answer — and marks nothing. */
+  let watchByUuid = new Map();
 
   const bodyEl = qs(root, '.mf-panel-body');
   const rows = byId(root, 'rows');
@@ -260,6 +266,28 @@ export async function mount(root, metafolder) {
         ),
       ),
     );
+    // Phase 3: the watch state of the page's paths, one batch call (a daemon
+    // without the endpoint — or a down one — leaves every row unmarked; a
+    // fetch failure must not read as "unwatched"). The per-uuid summary is
+    // "watched when any of its paths is", decided by /__watched.js.
+    const watchRels = new Set();
+    for (const m of subset) {
+      if (!hasTreeRef(m, 'mfr_path')) continue;
+      const rels = cache.readTreeRef(r, 'mfr_path', m.uuid);
+      if (rels === REFRESH) continue;
+      for (const rel of rels) watchRels.add(rel);
+    }
+    const byPath = await fetchWatched(daemon, r, [...watchRels]);
+    for (const m of subset) {
+      const rels = hasTreeRef(m, 'mfr_path') ? cache.readTreeRef(r, 'mfr_path', m.uuid) : [];
+      if (rels === REFRESH || rels.length === 0) {
+        watchByUuid.delete(m.uuid); // nothing to judge (a deleted record, say)
+        continue;
+      }
+      const summary = summarizeWatched(rels.map((rel) => byPath.get(rel)));
+      if (summary) watchByUuid.set(m.uuid, summary);
+      else watchByUuid.delete(m.uuid);
+    }
     fillFromCache(subset);
   }
 
@@ -386,6 +414,7 @@ export async function mount(root, metafolder) {
         metarecords = [];
         nextCursor = null;
         orphanCache = new Map();
+        watchByUuid = new Map();
         void refreshMounts(); // a volume may have been plugged in or pulled out
       }
       // The query actually run (base + finder clause). Published on every reset
@@ -574,6 +603,28 @@ export async function mount(root, metafolder) {
     });
   }
 
+  /** Marks the row/card when the watcher will not record a change at the
+   *  tracked file: amber, with the reason on hover (spec-file-tracking "Watch
+   *  check"). A watched record — the normal case — stays unmarked; the reason
+   *  is still on hover. The verdict comes from the page's batch fetch
+   *  (prepareNow), so this is a synchronous read: an entry missing means
+   *  "unknown" (no paths, or no answer) and marks nothing.
+   *  @param {HTMLElement} node @param {Metafolder.Metarecord} metarecord */
+  function fillWatched(node, metarecord) {
+    if (!hasTreeRef(metarecord, 'mfr_path') || !pathsResolved(metarecord)) return;
+    const info = watchByUuid.get(metarecord.uuid);
+    if (!info) return;
+    if (info.watched) {
+      if (!node.title) node.title = info.title; // hover only: watched is the norm
+      return;
+    }
+    // Yield to the stronger signals: an orphan (purple) and an unplugged
+    // volume (amber, its own label) explain themselves better.
+    if (node.classList.contains('orphan') || node.classList.contains('unmounted')) return;
+    node.classList.add('unwatched');
+    node.title = info.title;
+  }
+
   function render() {
     bench.measure('mf:list:render', renderNow);
   }
@@ -596,6 +647,7 @@ export async function mount(root, metafolder) {
           columns.map((column) => el('td', {}, cellText(column, metarecord))),
         );
         fillOrphan(tr, metarecord);
+        fillWatched(tr, metarecord);
         return tr;
       }),
     );
@@ -623,6 +675,7 @@ export async function mount(root, metafolder) {
           ),
         );
         fillOrphan(card, metarecord);
+        fillWatched(card, metarecord);
         return card;
       }),
     );
@@ -1559,6 +1612,7 @@ export async function mount(root, metafolder) {
       total = null;
       cursorIndex = -1;
       orphanCache = new Map();
+      watchByUuid = new Map();
       mounts = [];
       void refreshMounts();
       if (checked.size > 0) {

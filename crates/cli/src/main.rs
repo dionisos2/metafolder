@@ -105,12 +105,13 @@ enum Command {
         command: Option<MountCommand>,
     },
     /// Watcher ingestion: show, pause or resume the recording of filesystem
-    /// events
+    /// events, and check whether a path is watched
     ///
     /// A flush can be long — a directory of a hundred thousand files arrives as
     /// one batch — and while it runs the repository answers nothing else.
     /// `pause` stops the flush in progress and keeps the executor from starting
-    /// another; the events stay buffered, and `resume` applies them.
+    /// another; the events stay buffered, and `resume` applies them. `check`
+    /// answers a different question: would a change at this file be recorded?
     Watch {
         #[command(subcommand)]
         command: Option<WatchCommand>,
@@ -800,6 +801,16 @@ enum WatchCommand {
         #[arg(long)]
         json: bool,
     },
+    /// Report whether the watcher records a change at each path
+    Check {
+        /// Absolute filesystem paths (an existing path is canonicalised and
+        /// made repo-root-relative; a leading-slash path that is gone from
+        /// disk is taken as repo-root-relative — an orphan's stale path)
+        paths: Vec<String>,
+        /// Print the raw JSON response body
+        #[arg(long)]
+        json: bool,
+    },
     /// Stop the flush in progress and pause ingestion (nothing is lost)
     Pause {
         /// Print the raw JSON response body
@@ -1133,6 +1144,7 @@ fn dispatch(ctx: &Ctx, command: Command) -> CmdResult {
         Command::Watch { command } => {
             match command.unwrap_or(WatchCommand::Status { json: false }) {
                 WatchCommand::Status { json } => commands::watch_status(ctx, json),
+                WatchCommand::Check { paths, json } => commands::watch_check(ctx, &paths, json),
                 WatchCommand::Pause { json } => commands::watch_pause(ctx, json),
                 WatchCommand::Resume { json } => commands::watch_resume(ctx, json),
                 WatchCommand::Exceeded { command, json } => {

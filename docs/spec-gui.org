@@ -147,6 +147,20 @@ by default) with a tooltip giving the reason; =metarecord-detail= shows a
 one-line note under the metarecord head. A metarecord with no =mfr_path=
 field at all is not a file metarecord and is never marked.
 
+Not-watched metarecords are made visible the same way (spec-file-tracking
+"Watch check"): =metarecord-list= colours the row/card amber
+(=--mf-warning=) with the reason on hover — a record *watched* through any of
+its paths stays unmarked, its reason still on hover — and =metarecord-detail=
+always states the verdict in a note under the head, dim when watched, amber
+with the reason when not. The verdict asks the daemon's live watch set
+(=POST /repos/:repo/watch/check=, one batch call per page in the list, one
+per load in the detail) and covers the states eligibility cannot: a watch
+budget exclusion, an unplugged volume, the daemon's own runtime directory. A
+metarecord with no =mfr_path= at all, or one whose answer has not landed (the
+daemon down, or older than the endpoint), is left unmarked: "unknown" never
+reads as "unwatched". The amber yields to the stronger signals — the orphan
+purple and the unplugged-volume note keep their own marking.
+
 ** Workspace variables
 
 A reactive, per-workspace key-value store shared across all panel types

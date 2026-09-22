@@ -4,6 +4,7 @@
 import { byId, el, formatValue, valueEl } from '/__ui.js';
 import { orphanState, orphanLabel } from '/__orphan.js';
 import { fetchMounts, offlineMountFor, relativeTo, unavailableLabel } from '/__mounts.js';
+import { fetchWatched, summarizeWatched } from '/__watched.js';
 import {
   createTypePicker,
   parseRawValue,
@@ -79,6 +80,7 @@ export async function mount(root, metafolder) {
   const metarecordHead = byId(root, 'metarecord-head');
   const orphanNote = byId(root, 'orphan-note');
   const mountNote = byId(root, 'mount-note');
+  const watchNote = byId(root, 'watch-note');
   const errorBox = byId(root, 'error');
   const addForm = byId(root, 'add-form');
   const addValueSlot = byId(root, 'add-value');
@@ -227,6 +229,7 @@ export async function mount(root, metafolder) {
     if (metarecord === null) {
       orphanNote.hidden = true;
       mountNote.hidden = true;
+      watchNote.hidden = true;
     }
     placeholder.classList.toggle('hidden', hasContent);
     content.classList.toggle('hidden', !hasContent);
@@ -248,6 +251,11 @@ export async function mount(root, metafolder) {
 
   function needsWatch() {
     if (!metarecord) return false;
+    // The watcher's own answer when it has landed: it knows about inheritance,
+    // the ignore patterns, the exclusions and the budget — the raw field only
+    // says what THIS record carries, so a record inheriting `mf_watch = true`
+    // would otherwise read as unwatched.
+    if (watchMemo.shown === metarecord && watchMemo.info) return !watchMemo.info.watched;
     const watch = metarecord.fields.find((f) => f.name === 'mf_watch');
     return !watch || watch.value.type !== 'bool' || watch.value.value !== true;
   }
@@ -434,9 +442,11 @@ export async function mount(root, metafolder) {
     }
     orphanNote.hidden = true;
     mountNote.hidden = true;
+    watchNote.hidden = true;
     render();
     void fillPaths(selection);
     void fillOrphanNote();
+    void fillWatchNote();
   }
 
   /** @type {{shown: Metafolder.Metarecord|null, promise: Promise<string[]>}} */
@@ -512,6 +522,60 @@ export async function mount(root, metafolder) {
     if (paths.length === 0) return null;
     const found = paths.map((abs) => offlineMountFor(mounts, relativeTo(rootDir, abs)));
     return found.every(Boolean) ? found[0] : null;
+  }
+
+  // ── Watch note (spec-file-tracking "Watch check") ─────────────────────────
+
+  /** The fetched watch state of the displayed record. Keyed on the loaded
+   *  object (a `metarecords:dirty` reload re-resolves), like pathsMemo.
+   *  `info` is null when there is nothing to judge — no paths, or the daemon
+   *  did not answer — and the note then says nothing. */
+  /** @type {{shown: Metafolder.Metarecord|null, info: {watched: boolean, title: string}|null}} */
+  let watchMemo = { shown: null, info: null };
+
+  /** Fills the watch note: the watcher's own answer for the displayed record's
+   *  paths — would a change at the file be recorded? Shown for both states
+   *  (the point is seeing which one it is); a record with no paths (nothing
+   *  to watch) and a failed fetch show nothing. Fires once per load, guarded
+   *  like the other fills: a selection that moved on must not have its note
+   *  overwritten by the previous record's answer. */
+  async function fillWatchNote() {
+    const selection = current;
+    if (!metarecord || !selection) return;
+    const shown = metarecord;
+    if (watchMemo.shown === shown) return; // already answered for this record
+    // The record's own repo-root-relative positions, straight from the shared
+    // cache (the same resolution the list panel marks with): `mfr_path` is a
+    // multi-map, so a record may sit at several paths. An invalidated ref says
+    // nothing about the watch — leave the note hidden and decide on a later
+    // load, like the orphan note does.
+    await cache.fetchTreeRefs(selection.repo, 'mfr_path', [shown.uuid]).catch(() => {});
+    const rels = cache.readTreeRef(selection.repo, 'mfr_path', shown.uuid);
+    let info = null;
+    if (rels !== cache.REFRESH && rels.length > 0) {
+      const byPath = await fetchWatched(daemon, selection.repo, rels);
+      info = summarizeWatched(rels.map((rel) => byPath.get(rel)));
+    }
+    if (metarecord !== shown) return;
+    watchMemo = { shown, info };
+    applyWatchNote(info);
+    // The reconcile button's label follows the fetched answer (needsWatch):
+    // "Watch and reconcile" only when the record is genuinely not watched.
+    render();
+  }
+
+  /** @param {string} text @param {boolean} watched */
+  function showWatchNote(text, watched) {
+    watchNote.textContent = text;
+    watchNote.classList.toggle('watched', watched);
+    watchNote.classList.toggle('unwatched', !watched);
+    watchNote.hidden = false;
+  }
+
+  /** @param {{watched: boolean, title: string}|null} info */
+  function applyWatchNote(info) {
+    if (info) showWatchNote(info.title, info.watched);
+    else watchNote.hidden = true;
   }
 
   /** @param {Field} field @param {Metafolder.Value} newValue */

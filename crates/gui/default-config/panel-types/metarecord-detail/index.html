@@ -49,6 +49,18 @@
         color: var(--mf-orphan, #b07ad6);
         margin-bottom: 8px;
       }
+      /* watch note: whether the watcher records a change at this record's
+         file. Both states are shown — the point is seeing which one it is —
+         dim when it does, amber with the reason when it does not. */
+      #watch-note {
+        margin-bottom: 8px;
+      }
+      #watch-note.watched {
+        color: var(--mf-fg-dim, #8a8a96);
+      }
+      #watch-note.unwatched {
+        color: var(--mf-warning, #d6a75e);
+      }
       table {
         width: 100%;
         border-collapse: collapse;
@@ -152,6 +164,7 @@
       <div class="metarecord-head" id="metarecord-head"></div>
       <div id="mount-note" hidden></div>
       <div id="orphan-note" hidden></div>
+      <div id="watch-note" hidden></div>
       <table>
         <tbody id="field-rows"></tbody>
       </table>

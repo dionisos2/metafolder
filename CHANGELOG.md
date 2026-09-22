@@ -13,6 +13,27 @@ than breaking them.
 
 ## [Unreleased]
 
+### Added
+- **Watched-or-not is visible where files are.** "Is this file watched?" used
+  to mean re-implementing the tracking algorithm in one's head and still
+  missing the cases eligibility cannot see — a watch budget exclusion, an
+  unplugged volume, the daemon's own runtime directory, a starved kernel
+  budget. `POST /repos/:repo/watch/check` now answers for a batch of
+  repo-root-relative paths against the *live* watch set, with the reason and
+  both eligibility dry runs (the path's and its covering directory's)
+  (spec-file-tracking "Watch check"). Built on it:
+  - *`mf watch check <path>…`* — one line per path (watched, or not watched
+    and why), exit code 1 when any path is not watched, so a script can assert
+    on watchability;
+  - the **metarecord-list** marks rows and cards whose tracked file is not
+    watched in amber (theme variable `--mf-warning`), with the reason on
+    hover — watched rows stay unmarked, their reason on hover too;
+  - the **metarecord-detail** states the verdict in a note under the
+    metarecord head (dim when watched, amber with the reason when not), and
+    the *Watch and reconcile* button now follows the fetched answer instead of
+    the record's raw `mf_watch` field — a record inheriting
+    `mf_watch = true` no longer reads as unwatched.
+
 ### Performance
 - **Reading the log back is bounded again.** A listing of the most recent
   operations read every row of the `revision` table to build its timestamp map,

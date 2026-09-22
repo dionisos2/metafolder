@@ -107,7 +107,10 @@
     "id": "metarecord-list",
     "title": "Metarecord list panel",
     "file": "metarecord-list.html",
-    "aliases": ["columns", "metarecords", "finder", "find", "quick-filter"]
+    "aliases": [
+      "columns", "metarecords", "finder", "find", "quick-filter",
+      "watched", "watch", "not-watched"
+    ]
   },
   {
     "id": "file-manager",
@@ -125,7 +128,10 @@
     "id": "metarecord-detail",
     "title": "Metarecord detail panel",
     "file": "metarecord-detail.html",
-    "aliases": ["detail", "field", "fields", "edit-field", "value", "types", "nothing"]
+    "aliases": [
+      "detail", "field", "fields", "edit-field", "value", "types", "nothing",
+      "watched", "watch", "not-watched"
+    ]
   },
   {
     "id": "repos",
