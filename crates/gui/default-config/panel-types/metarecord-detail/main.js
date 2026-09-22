@@ -1092,7 +1092,7 @@ export async function mount(root, metafolder) {
       type: {},
       target: { prompt: 'Field to add a value to?', complete: () => completableFieldNames() },
       value: {
-        prompt: (p) => `Value to add to "${p[1]}"?`,
+        prompt: (p) => `Value to add to "${p[2]}"?`,
         complete: (p) => valueCompletionFor(p[1], typeForPrior(p)),
       },
       run: async (field, raw, type) => {
@@ -1164,7 +1164,7 @@ export async function mount(root, metafolder) {
       // field becomes *unknown* — distinct from setting it to Nothing.
       target: { prompt: 'Field to remove entirely?', complete: () => editableFieldNames() },
       run: async (field) => {
-        const cur = requireCurrent();
+        requireCurrent(); // a guard: unset acts on the displayed record's panel state
         const rows = (metarecord?.fields ?? []).filter((f) => f.name === field);
         if (rows.length === 0) throw new Error(`no field "${field}"`);
         await daemon.call(
@@ -1305,12 +1305,15 @@ export async function mount(root, metafolder) {
     },
   });
 
-  // ── Bulk field-editing commands (selection / current query) ─────────────
-  // These act on the checkbox selection (`selected_metarecords`) when it is
-  // non-empty, else on the query the list actually shows — metarecord-list
-  // publishes its *effective* query IR (base query AND the live finder clause)
-  // as `metarecord-list:effective-query`. If that var is absent (the list has
-  // not run), fall back to parsing the base query text.
+  // ── Bulk field-editing commands (target argument: selection / query) ────
+  // These take an explicit target as their first argument: `selection` acts on
+  // the checkbox selection (`selected_metarecords`), `query` on the query the
+  // list actually shows — metarecord-list publishes its *effective* query IR
+  // (base query AND the live finder clause) as `metarecord-list:effective-query`.
+  // If that var is absent (the list has not run), fall back to parsing the base
+  // query text. There is no implicit choice between the two: a missing
+  // selection used to fall through to the query, which silently re-targeted a
+  // bulk write the user thought was scoped to their checks.
 
   /** @typedef {{repo: string, query: unknown, count: number, explicit: boolean, desc: string}} BulkTarget */
 
@@ -1375,25 +1378,11 @@ export async function mount(root, metafolder) {
     return result.total ?? 0;
   }
 
-  /** Resolves what a bulk command targets: the explicit checkbox selection, or
-   *  the current query as a fallback. `count` is always the number of
-   *  metarecords the target holds (the selection size, or a COUNT of the
-   *  query), so confirmations can name it. `explicit` distinguishes a
-   *  deliberate checkbox pick (acts immediately) from a broad query (confirmed
-   *  first). @returns {Promise<BulkTarget>} */
-  async function bulkTarget() {
-    const repo = await repoForAdd();
-    if (!repo) throw new Error('no active repository');
-    const selected = /** @type {string[]} */ ((await workspace.get('selected_metarecords')) ?? []);
-    if (selected.length > 0) {
-      return {
-        repo,
-        query: { type: 'uuid_in', uuids: selected },
-        count: selected.length,
-        explicit: true,
-        desc: `${selected.length} selected metarecord${selected.length === 1 ? '' : 's'}`,
-      };
-    }
+  /** The query the list actually shows, with its match count — the `query`
+   *  target of a bulk command. `all` is the MATCH_ALL tautology, so prompts and
+   *  confirmations can say "every metarecord" rather than a bare count.
+   *  @param {string} repo @returns {Promise<{query: unknown, count: number, all: boolean}>} */
+  async function bulkQueryTarget(repo) {
     // The query the list actually shows (finder narrowing included), else — if
     // the list has not published one yet — its base query text.
     const effective = await workspace.get('metarecord-list:effective-query');
@@ -1414,28 +1403,76 @@ export async function mount(root, metafolder) {
       query = dsl === '' ? MATCH_ALL : await daemon.parseQuery(dsl);
     }
     const count = await countMatches(repo, query);
+    return { query, count, all };
+  }
+
+  /** Resolves what a bulk command targets, by its argument: `selection` acts
+   *  on the checked records, `query` on what the list shows. `count` is always
+   *  the number of metarecords the target holds (the selection size, or a
+   *  COUNT of the query), so confirmations can name it. `explicit` says a
+   *  deliberate checkbox pick (acts immediately) apart from a broad query
+   *  (confirmed first) — and an empty selection is nothing to do, never a
+   *  detour onto the query. @param {string} target
+   *  @returns {Promise<BulkTarget>} */
+  async function bulkTarget(target) {
+    const repo = await repoForAdd();
+    if (!repo) throw new Error('no active repository');
+    if (target === 'selection') {
+      const selected = /** @type {string[]} */ ((await workspace.get('selected_metarecords')) ?? []);
+      return {
+        repo,
+        query: { type: 'uuid_in', uuids: selected },
+        count: selected.length,
+        explicit: true,
+        desc: `${selected.length} selected metarecord${selected.length === 1 ? '' : 's'}`,
+      };
+    }
+    const { query, count, all } = await bulkQueryTarget(repo);
     return { repo, query, count, explicit: false, desc: all ? 'ALL metarecords' : 'the current query' };
   }
 
-  /** A broad query-scope bulk write (no explicit selection) is confirmed first,
-   *  naming the number of metarecords it will affect; an explicit checkbox
-   *  selection acts immediately. Returns false when there is nothing to act on
-   *  (and says so). @param {BulkTarget} t @param {string} action */
+  /** The target argument's prompt names what each choice would act on — the
+   *  checked count and the query's match count — so the answer is read with
+   *  its consequence. Falls back to a plain prompt when the counts cannot be
+   *  read (no active repository, or the daemon does not answer).
+   *  @returns {Promise<string>} */
+  async function bulkTargetPrompt() {
+    try {
+      const repo = await repoForAdd();
+      if (!repo) return 'Target? (selection / query)';
+      const checked = ((await workspace.get('selected_metarecords')) ?? []).length;
+      const { count, all } = await bulkQueryTarget(repo);
+      const matches = all ? `ALL metarecords (${count})` : `${count} matching`;
+      return `Target? (selection = ${checked} checked · query = ${matches})`;
+    } catch {
+      return 'Target? (selection / query)';
+    }
+  }
+
+  /** A broad query-scope bulk write (target `query`) is confirmed first, naming
+   *  the number of metarecords it will affect; an explicit checkbox selection
+   *  acts immediately. Either way an empty target is nothing to do — an empty
+   *  selection is *not* a detour onto the query — and says so. Returns false
+   *  when there is nothing to act on. @param {BulkTarget} t @param {string} action */
   async function confirmBulk(t, action) {
-    if (t.explicit) return true;
     if (t.count === 0) {
-      void statusBar.message('No metarecords match — nothing to do.', statusMessageMs);
+      void statusBar.message(
+        t.explicit ? 'No metarecords are checked — nothing to do.' : 'No metarecords match — nothing to do.',
+        statusMessageMs,
+      );
       return false;
     }
+    if (t.explicit) return true;
     return confirm(`${action} on ${t.count} metarecord${t.count === 1 ? '' : 's'}?`);
   }
 
-  // One command for the whole family, the operation as its first argument —
-  // the set-layer mirror of `metarecord:field`, over the selection or the
-  // current query instead of the shown metarecord. Same vocabulary as the
-  // daemon routes it calls (`query/fields/{set,add,remove,unset}`) and as
-  // `mf metarecord field`; `delete` is the one that destroys the metarecords
-  // themselves (`query/delete`), which is why it names no field.
+  // One command for the whole family, the target and the operation as its
+  // first two arguments — the set-layer mirror of `metarecord:field`, over the
+  // target the invocation names (the selection or the current query) instead of
+  // the shown metarecord. Same vocabulary as the daemon routes it calls
+  // (`query/fields/{set,add,remove,unset}`) and as `mf metarecord field`;
+  // `delete` is the one that destroys the metarecords themselves
+  // (`query/delete`), which is why it names no field.
 
   /**
    * @typedef {object} BulkOp
@@ -1449,7 +1486,7 @@ export async function mount(root, metafolder) {
    *             type: string|null) => Promise<void>} run
    */
 
-  /** Bulk operations, keyed by the first argument of `metarecord:bulk`.
+  /** Bulk operations, keyed by the second argument of `metarecord:bulk`.
    *  Tolerant of an unknown operation for the same reason as FIELD_OPS: the
    *  spec functions run before the dispatcher's error boundary.
    *  @type {Record<string, BulkOp>} */
@@ -1457,7 +1494,7 @@ export async function mount(root, metafolder) {
     set: {
       typed: true,
       fieldPrompt: 'Field to set?',
-      valuePrompt: (p) => `Value for "${p[1]}"?`,
+      valuePrompt: (p) => `Value for "${p[2]}"?`,
       confirm: (field) => `Set "${field}"`,
       run: async (t, field, raw, type) => {
         const value = await bulkValue(t, field, raw, type);
@@ -1472,7 +1509,7 @@ export async function mount(root, metafolder) {
     add: {
       typed: true,
       fieldPrompt: 'Field to add a value to?',
-      valuePrompt: (p) => `Value to add to "${p[1]}"?`,
+      valuePrompt: (p) => `Value to add to "${p[2]}"?`,
       confirm: (field) => `Add a value to "${field}"`,
       run: async (t, field, raw, type) => {
         const value = await bulkValue(t, field, raw, type);
@@ -1487,7 +1524,7 @@ export async function mount(root, metafolder) {
     remove: {
       typed: true,
       fieldPrompt: 'Field to remove a value from?',
-      valuePrompt: (p) => `Value to remove from "${p[1]}"?`,
+      valuePrompt: (p) => `Value to remove from "${p[2]}"?`,
       confirm: (field) => `Remove a value from "${field}"`,
       run: async (t, field, raw, type) => {
         const value = await bulkValue(t, field, raw, type);
@@ -1517,7 +1554,12 @@ export async function mount(root, metafolder) {
       // confirmBulk, because it is not undoable from the UI.
       run: async (t) => {
         if (t.count === 0) {
-          void statusBar.message('No metarecords match — nothing to delete.', statusMessageMs);
+          void statusBar.message(
+            t.explicit
+              ? 'No metarecords are checked — nothing to delete.'
+              : 'No metarecords match — nothing to delete.',
+            statusMessageMs,
+          );
           return;
         }
         if (
@@ -1568,8 +1610,24 @@ export async function mount(root, metafolder) {
   }
 
   void commands.register('metarecord:bulk', {
-    label: `Bulk operation on the selected metarecords or current query (${BULK_OPERATIONS.join(' / ')})`,
+    label: `Bulk operation on the selection or the current query (${BULK_OPERATIONS.join(' / ')})`,
     args: [
+      {
+        name: 'target',
+        // What the operation acts on, named up front rather than inferred from
+        // whether anything is checked: an inferred target is how a bulk write
+        // meant for the checks landed on the whole query (or the reverse).
+        // Pre-filled with the old implicit precedence, so the common answer is
+        // still Enter — but visible and editable.
+        prompt: () => bulkTargetPrompt(),
+        initial: async () => {
+          const selected = /** @type {string[]} */ (
+            (await workspace.get('selected_metarecords')) ?? []
+          );
+          return selected.length > 0 ? 'selection' : 'query';
+        },
+        complete: () => ['selection', 'query'],
+      },
       {
         name: 'operation',
         prompt: () => `Operation? (${BULK_OPERATIONS.join(' / ')})`,
@@ -1577,13 +1635,13 @@ export async function mount(root, metafolder) {
       },
       {
         name: 'field',
-        when: (p) => BULK_OPS[p[0]]?.fieldPrompt !== undefined,
+        when: (p) => BULK_OPS[p[1]]?.fieldPrompt !== undefined,
         // Awaited, so the repo and its catalogue are both resident by the time
         // the type argument below decides — synchronously — whether to ask.
         prompt: async (p) => {
           bulkArgRepo = await repoForAdd();
           await warmFieldCatalog(bulkArgRepo);
-          return BULK_OPS[p[0]]?.fieldPrompt ?? 'Field?';
+          return BULK_OPS[p[1]]?.fieldPrompt ?? 'Field?';
         },
         complete: async () => catalogFieldNames(await repoForAdd()),
       },
@@ -1591,23 +1649,28 @@ export async function mount(root, metafolder) {
         name: 'type',
         // Same rule as `metarecord:field`: asked only when nothing settles it,
         // and before the value it types.
-        when: (p) => BULK_OPS[p[0]]?.typed === true && settledBulkType(p[1]) === null,
-        prompt: (p) => `Type for "${p[1]}"?`,
+        when: (p) => BULK_OPS[p[1]]?.typed === true && settledBulkType(p[2]) === null,
+        prompt: (p) => `Type for "${p[2]}"?`,
         complete: () => CONCRETE_TYPES,
       },
       {
         name: 'value',
-        when: (p) => BULK_OPS[p[0]]?.valuePrompt !== undefined,
-        prompt: (p) => BULK_OPS[p[0]]?.valuePrompt?.(p) ?? 'Value?',
-        complete: (_partial, p) => bulkValueCompletion(p[1], p.length > 2 ? p[2] : null),
+        when: (p) => BULK_OPS[p[1]]?.valuePrompt !== undefined,
+        prompt: (p) => BULK_OPS[p[1]]?.valuePrompt?.(p) ?? 'Value?',
+        complete: (_partial, p) => bulkValueCompletion(p[2], p.length > 3 ? p[3] : null),
       },
     ],
-    handler: async (op, ...rest) => {
+    handler: async (target, op, ...rest) => {
+      if (target !== 'selection' && target !== 'query') {
+        throw new Error(
+          `unknown target "${target}" — metarecord:bulk <selection|query> <op> [field] [type] [value]`,
+        );
+      }
       const spec = BULK_OPS[op];
       if (!spec) throw new Error(`unknown bulk operation: "${op}"`);
       const field = rest.shift() ?? '';
       const { type, value } = splitTypeValue(rest);
-      const t = await bulkTarget();
+      const t = await bulkTarget(target);
       if (spec.confirm && !(await confirmBulk(t, spec.confirm(field)))) return;
       await spec.run(t, field, value, type);
     },
