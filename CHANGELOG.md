@@ -39,6 +39,22 @@ than breaking them.
     `benchmarks/history/<machine>.jsonl` and every run compared against the
     median of the last five.
 
+### Changed
+- **`scripts/prune-target.sh` prunes superseded `incremental/` caches too.**
+  Cargo keeps one incremental-compilation cache directory per crate generation
+  under `<profile>/incremental/`, keyed by a hash encoding that matches
+  nothing in `deps/`, and never removes what an older generation left behind —
+  on a rebuilt tree this grows to be the bulk of `target/`. A third pass now
+  counts instead of matching: a crate name keeps at most one cache dir per
+  surviving `deps/` generation (the most recently used) and loses its whole
+  cache when nothing in `deps/` survives. The cap fires when the name's
+  generation set is known to have changed — a gain since the previous run, or
+  a first run with no recorded state — so a name that merely lost a
+  generation keeps its cache until its next build, and `--dry-run` shows that
+  truth. Deleting a cache dir costs a recompile, never correctness. To adopt
+  the pass on a `target/` that predates it, delete `target/.prune-target-state`
+  once: the next run re-baselines and reclaims the superseded caches.
+
 ## [0.3.0] — 2026-08-16
 
 First tagged release. Summarises the capability set built since the initial

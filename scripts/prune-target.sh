@@ -4,7 +4,7 @@
 # cargo never garbage-collects target/: every dependency bump, feature-set
 # change or rustc update writes new hash-named artifacts NEXT TO the old ones
 # (see rust-lang/cargo#13136 for the still-unimplemented native GC). This
-# script removes what those events superseded, with two passes:
+# script removes what those events superseded, with three passes:
 #
 #   1. Diff pass — a state file remembers the artifact hashes seen per crate
 #      name on the previous run. When a crate name gained a NEW hash since
@@ -17,6 +17,15 @@
 #      contains that exact version, the artifact is orphaned and deleted.
 #      Workspace crates and test binaries have local sources only and are
 #      never touched by this pass.
+#   3. Incremental pass — cargo keeps one incremental-compilation cache dir
+#      per crate generation under <profile>/incremental/, keyed by a different
+#      hash encoding than deps/ (c_metadata vs c_extra_filename), so a dir
+#      cannot be matched to its artifacts by name; the count is what is
+#      reliable. A name with no surviving generation in deps/ loses its whole
+#      cache, and a name whose generation set is known to have changed (a
+#      gain since the previous run, or a first run with no recorded state)
+#      keeps one dir per surviving generation (the most recently used) and
+#      loses the older ones. A deleted cache dir costs a recompile.
 #
 # Usage: scripts/prune-target.sh [--dry-run] [TARGET_DIR]
 #   TARGET_DIR defaults to ./target; Cargo.lock is expected next to it.
@@ -25,7 +34,10 @@
 #
 # Run it right after a successful build (the fresh artifacts are then the
 # "new" generation). First run only records state. Generic: no metafolder
-# assumption, works on any cargo project.
+# assumption, works on any cargo project. A target/ that predates the
+# incremental pass still holds cache dirs for generations this script's state
+# never knew: delete the state file once, so the next run's first-run cap
+# reclaims them.
 
 set -euo pipefail
 
@@ -34,7 +46,7 @@ target_dir=target
 for arg in "$@"; do
     case "$arg" in
         --dry-run) dry_run=1 ;;
-        -h|--help) sed -n '2,28p' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
+        -h|--help) sed -n '2,39p' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
         *) target_dir=$arg ;;
     esac
 done
@@ -63,13 +75,46 @@ scan() {
     done | sort -u
 }
 
+# ---- deps-only scan (pass 3) ------------------------------------------------
+# Like scan(), but deps/ only: a generation survives in deps/ or not at all —
+# a leftover .fingerprint or build/ dir whose rlib is gone cannot use an
+# incremental cache, so it must not keep one alive either.
+deps_scan() {
+    local p profile entry base
+    for p in "$target_dir"/*/; do
+        [ -d "$p/deps" ] || continue
+        profile=$(basename "$p")
+        for entry in "$p"deps/*; do
+            [ -e "$entry" ] || continue
+            base=$(basename "$entry")
+            base=${base%%.*}
+            if [[ $base =~ ^(.+)-([0-9a-f]{16})$ ]]; then
+                echo "$profile|${BASH_REMATCH[1]}|${BASH_REMATCH[2]}"
+            fi
+        done
+    done | sort -u
+}
+
 # ---- deletion helper --------------------------------------------------------
 # Removes every artifact kind for (profile, stem, hash), bridging the lib
 # prefix both ways (libfoo rlibs vs foo .d/fingerprint/build entries).
 declare -a doomed=()
+declare -A doomed_gen=()    # "profile|name|hash" triples some pass doomed
+# The crate name behind an artifact stem: drop the lib prefix and unify the
+# separator, so libfoo_bar, foo_bar.d and an incremental/ foo_bar-h dir all
+# land on one name. (A lib crate and a bin crate can then collide — e.g. a
+# lib "rarian" and a bin "librarian" — which only ever over-counts the
+# surviving generations: a few extra cache dirs survive. Never destructive.)
+norm_name() {
+    local n=$1
+    n=${n#lib}
+    n=${n//_/-}
+    printf '%s' "$n"
+}
 mark() {
     local profile=$1 stem=$2 hash=$3 alt s path
     if [[ $stem == lib?* ]]; then alt=${stem#lib}; else alt=lib$stem; fi
+    doomed_gen["$profile|$(norm_name "$stem")|$hash"]=1
     for s in "$stem" "$alt"; do
         for path in "$target_dir/$profile/deps/$s-$hash" \
                     "$target_dir/$profile/deps/$s-$hash".* \
@@ -81,14 +126,22 @@ mark() {
     return 0
 }
 
+# Same, for a path that needs no stem/hash bridging (incremental cache dirs).
+mark_path() {
+    [ -e "$1" ] && doomed+=("$1")
+    return 0
+}
+
 current=$(scan)
 
 # ---- pass 1: diff against the previous run's state --------------------------
+declare -A gained=()    # "profile|name": the name gained a hash absent from state
 if [ -f "$state_file" ]; then
     # Names that gained a hash absent from the previous state...
     while IFS='|' read -r profile stem hash; do
         [ -n "$stem" ] || continue
         if ! grep -qxF "$profile|$stem|$hash" "$state_file"; then
+            gained["$profile|$(norm_name "$stem")"]=1
             # ...get their previously-seen, still-present hashes pruned.
             while IFS='|' read -r _ _ old_hash; do
                 [ "$old_hash" != "$hash" ] || continue
@@ -124,6 +177,72 @@ if [ -f "$lock_file" ]; then
     done
 else
     echo "note: $lock_file not found, skipping the Cargo.lock pass" >&2
+fi
+
+# ---- pass 3: incremental/ cache dirs beyond the surviving generations -------
+# incremental/ is keyed by a different hash encoding than deps/, so a dir
+# cannot be matched to its artifacts by name; the COUNT is reliable — one dir
+# per crate generation. Two rules doom a cache dir, counted from deps/ minus
+# what the passes above just doomed (a doomed generation does not survive):
+#   - the name has no surviving generation at all: nothing can use the cache;
+#   - the name's generation set is known to have changed — it gained a
+#     generation this run, or there is no previous state at all (first run):
+#     it keeps one dir per surviving generation, the most recently used, and
+#     loses the older ones. The gain trigger matters on later runs: a name
+#     that merely LOST a generation (its artifacts were pruned, nothing
+#     rebuilt yet) keeps its cache — the next build may still rejoin it, and
+#     --dry-run must show that truth. A first run has no state to lose from:
+#     any dir beyond the surviving count predates this script, which will
+#     never observe the transition that superseded it.
+declare -A ngen=()      # "profile|name" -> surviving generations in deps/
+declare -A seen_gen=()  # "profile|name|hash" dedup across artifact kinds
+while IFS='|' read -r profile stem hash; do
+    [ -n "$stem" ] || continue
+    name=$(norm_name "$stem")
+    key="$profile|$name|$hash"
+    [ -n "${doomed_gen[$key]+x}" ] && continue
+    [ -n "${seen_gen[$key]+x}" ] && continue
+    seen_gen[$key]=1
+    name_key=${key%|*}                          # "profile|name"
+    ngen[$name_key]=$(( ${ngen[$name_key]:-0} + 1 ))
+done < <(deps_scan)
+
+# Group the cache dirs per (profile, name), remembering each one's mtime —
+# "most recently used" is the only order the different hash encoding allows.
+declare -A inc_dirs=()  # "profile|name" -> "mtime<TAB>dir" lines
+for p in "$target_dir"/*/; do
+    [ -d "${p}incremental" ] || continue
+    profile=$(basename "$p")
+    while IFS=$'\t' read -r mtime base; do
+        [[ $base == *-* ]] || continue          # no hash suffix: leave it alone
+        name=$(norm_name "${base%-*}")
+        inc_dirs["$profile|$name"]+="${mtime}"$'\t'"${base}"$'\n'
+    done < <(find "${p}incremental" -mindepth 1 -maxdepth 1 -type d -printf '%T@\t%f\n')
+done
+
+if [ ${#inc_dirs[@]} -gt 0 ]; then
+    for name_key in "${!inc_dirs[@]}"; do
+        profile=${name_key%%|*}
+        n=${ngen[$name_key]:-0}
+        if [ "$n" -eq 0 ]; then
+            # no surviving generation: no artifact of this name can use a cache
+            while IFS=$'\t' read -r _ base; do
+                [ -n "$base" ] || continue
+                mark_path "$target_dir/$profile/incremental/$base"
+            done <<<"${inc_dirs[$name_key]}"
+            continue
+        fi
+        # The cap fires when the name's generation set is known to have
+        # changed: a gain this run — or a first run, with no recorded state
+        # (see the pass header above).
+        [ -n "${gained[$name_key]+x}" ] || [ ! -f "$state_file" ] || continue
+        keep=0
+        while IFS=$'\t' read -r _ base; do
+            [ -n "$base" ] || continue
+            keep=$(( keep + 1 ))
+            [ "$keep" -le "$n" ] || mark_path "$target_dir/$profile/incremental/$base"
+        done < <(printf '%s' "${inc_dirs[$name_key]}" | sort -rn)
+    done
 fi
 
 # ---- execute and report ------------------------------------------------------

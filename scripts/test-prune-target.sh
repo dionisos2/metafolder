@@ -188,4 +188,87 @@ case "$freed" in
 esac
 cd "$tmp"
 
+echo "== scenario 7: incremental dirs beyond the surviving generations are pruned"
+# incremental/ is keyed by a DIFFERENT hash encoding than deps/ (cargo's
+# c_metadata vs c_extra_filename), so a dir cannot be matched to its artifact
+# by name. What is reliable is the count: cargo writes exactly one incremental
+# dir per generation of a crate, so a name with one surviving generation in
+# deps/ may keep exactly one dir — the most recently used.
+make_target
+mkdir -p "target/debug/incremental/bitflags-1aaaaaaaaaaaa" \
+         "target/debug/incremental/bitflags-2bbbbbbbbbbbb" \
+         "target/debug/incremental/bitflags-3ccccccccccccc" \
+         "target/debug/incremental/serde-4ddddddddddddd"
+touch -d "2020-01-01" "target/debug/incremental/bitflags-1aaaaaaaaaaaa"
+touch -d "2020-01-02" "target/debug/incremental/bitflags-2bbbbbbbbbbbb"
+touch -d "2020-01-03" "target/debug/incremental/bitflags-3ccccccccccccc"
+"$prune" >/dev/null                    # state with both bitflags variants
+rm "target/debug/deps/libbitflags-$h_new.rlib" "target/debug/deps/bitflags-$h_new.d"
+rm -rf "target/debug/.fingerprint/bitflags-$h_new"
+"$prune" >/dev/null                    # state: bitflags has only h_old
+touch "target/debug/deps/libbitflags-$h_new.rlib"   # a build produced a new one
+"$prune" >/dev/null
+# h_old is gone, h_new survives: one generation, so one incremental dir.
+[ -e "target/debug/incremental/bitflags-3ccccccccccccc" ] \
+    || fail "the most recently used incremental dir must stay"
+[ ! -e "target/debug/incremental/bitflags-1aaaaaaaaaaaa" ] \
+    || fail "a superseded incremental dir should be pruned"
+[ ! -e "target/debug/incremental/bitflags-2bbbbbbbbbbbb" ] \
+    || fail "a superseded incremental dir should be pruned"
+[ -e "target/debug/incremental/serde-4ddddddddddddd" ] \
+    || fail "serde keeps its single generation, its incremental dir must stay"
+ok "incremental prune"
+
+echo "== scenario 8: an incremental dir whose crate is gone entirely is pruned"
+# The lock pass removed every artifact of this name; nothing can use its cache.
+make_target
+mkdir -p "target/debug/incremental/toml-5eeeeeeeeeeeee"
+"$prune" >/dev/null
+[ -e "target/debug/incremental/toml-5eeeeeeeeeeeee" ] \
+    || fail "toml 1.0.6 survives in Cargo.lock, its incremental dir must stay"
+rm -f target/debug/deps/libtoml-*.rlib target/debug/deps/toml-*.d
+"$prune" >/dev/null
+[ ! -e "target/debug/incremental/toml-5eeeeeeeeeeeee" ] \
+    || fail "no surviving generation means no incremental dir"
+ok "orphaned incremental dir"
+
+echo "== scenario 9: --dry-run deletes no incremental dir"
+make_target
+mkdir -p "target/debug/incremental/bitflags-1aaaaaaaaaaaa" \
+         "target/debug/incremental/bitflags-2bbbbbbbbbbbb"
+touch -d "2020-01-01" "target/debug/incremental/bitflags-1aaaaaaaaaaaa"
+"$prune" >/dev/null
+rm "target/debug/deps/libbitflags-$h_new.rlib" "target/debug/deps/bitflags-$h_new.d"
+rm -rf "target/debug/.fingerprint/bitflags-$h_new"
+"$prune" >/dev/null
+touch "target/debug/deps/libbitflags-$h_new.rlib"
+"$prune" --dry-run >/dev/null
+[ -e "target/debug/incremental/bitflags-1aaaaaaaaaaaa" ] \
+    || fail "--dry-run must not delete an incremental dir"
+ok "dry run leaves incremental alone"
+
+echo "== scenario 10: the first run also caps a name's incremental dirs"
+# No state file yet, so nothing "gained" anything — but dirs beyond the
+# surviving generations are dead caches all the same: they predate this
+# script, which will never observe the transition that superseded them. Same
+# rule, evaluated against the surviving generations alone.
+make_target
+mkdir -p "target/debug/incremental/bitflags-1aaaaaaaaaaaa" \
+         "target/debug/incremental/bitflags-2bbbbbbbbbbbb" \
+         "target/debug/incremental/bitflags-3ccccccccccccc" \
+         "target/debug/incremental/serde-4ddddddddddddd"
+touch -d "2020-01-01" "target/debug/incremental/bitflags-1aaaaaaaaaaaa"
+touch -d "2020-01-02" "target/debug/incremental/bitflags-2bbbbbbbbbbbb"
+touch -d "2020-01-03" "target/debug/incremental/bitflags-3ccccccccccccc"
+"$prune" >/dev/null
+[ -e "target/debug/incremental/bitflags-3ccccccccccccc" ] \
+    || fail "the most recently used incremental dir must stay"
+[ -e "target/debug/incremental/bitflags-2bbbbbbbbbbbb" ] \
+    || fail "bitflags has two surviving generations, its second dir must stay"
+[ ! -e "target/debug/incremental/bitflags-1aaaaaaaaaaaa" ] \
+    || fail "a dir beyond the surviving generations should be pruned"
+[ -e "target/debug/incremental/serde-4ddddddddddddd" ] \
+    || fail "serde keeps its single generation, its incremental dir must stay"
+ok "first-run cap"
+
 echo "all prune-target tests passed"
