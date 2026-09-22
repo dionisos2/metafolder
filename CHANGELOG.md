@@ -75,6 +75,22 @@ than breaking them.
   truth. Deleting a cache dir costs a recompile, never correctness. To adopt
   the pass on a `target/` that predates it, delete `target/.prune-target-state`
   once: the next run re-baselines and reclaims the superseded caches.
+- **Bulk commands name their target instead of inferring it.** The GUI's bulk
+  writes inferred what they would act on from whether anything happened to be
+  checked — a checkbox selection when non-empty, else the whole query — so a
+  bulk edit meant for the checked rows could silently land on the query (or
+  the reverse), and the list panel's bulk form disagreed with the command by
+  always acting on the query. Both entry points now ask: `metarecord:bulk`
+  takes the target as its first argument (`selection` or `query`, asked with
+  completion, pre-filled with what a checked selection means and naming what
+  each choice would act on), an empty selection is "nothing to do" rather
+  than a detour onto the query, and an old positional invocation fails loudly
+  with the new syntax in the error; the list panel's form gained a target
+  drop-down (default: the query it has always shown). `m m <op>` pre-fills
+  target and operation (selection-scoped), `m b` asks both, and the shipped
+  scripts ask the same question before reading the scope — with `mf gui
+  query` now printing only the list's query and the checked UUIDs split into
+  their own `mf gui selected` (one per line, nothing checked = no output).
 
 ## [0.3.0] — 2026-08-16
 

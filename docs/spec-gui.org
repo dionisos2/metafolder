@@ -1215,8 +1215,8 @@ Behaviours:
 | =metarecord:row-delete= | Delete the field row under the cursor               |
 | =metarecord:cancel=  | Cancel the current field edit or add form           |
 | =metarecord:field <op> [target] [type] [value]= | Field operation on the *current* metarecord. =op= is =set= (overwrite every value), =add= (append one value — a value it already holds is a no-op, spec-data-model "No duplicate rows"), =edit= (change one value, selected by value), =remove= (drop one value, selected by value), =unset= (remove the field entirely → /unknown/), =rename= (all its values), =retype= (all its values). =target= names a field for =set=/=add=/=unset=/=rename=/=retype=, and one value for =edit=/=remove=. =type= is taken only when the operation writes a value and nothing settles its type (always for =retype=, which is the operation that names one) — see "The type is an argument" below |
-| =metarecord:bulk <op> [field] [type] [value]= | The same over the *selection*, or the current query when nothing is checked. =op= is =set= / =add= / =remove= / =unset= — the daemon's set-layer routes =POST /query/fields/{set,add,remove,unset}= — plus =delete=, which deletes the metarecords themselves (=POST /query/delete=; the files stay on disk) and so names no field |
-| =metarecord-list:open-bulk-edit= | Mouse flow: open the in-panel bulk edit / delete form |
+| =metarecord:bulk <target> <op> [field] [type] [value]= | The same over the target the invocation names: =selection= (the checkbox selection, =selected_metarecords=) or =query= (the current query — the *effective* one, finder included; when the list has not run, its base query text, and the empty one reads as every metarecord). The target is asked first when not named — completed over =selection= / =query=, pre-filled with what a checked selection would mean, and naming what each choice would act on; there is no fall-through, so an empty selection is nothing to do rather than the query. An old positional invocation (=metarecord:bulk set …=) fails loudly with the new syntax in the error. =op= is =set= / =add= / =remove= / =unset= — the daemon's set-layer routes =POST /query/fields/{set,add,remove,unset}= — plus =delete=, which deletes the metarecords themselves (=POST /query/delete=; the files stay on disk) and so names no field |
+| =metarecord-list:open-bulk-edit= | Mouse flow: open the in-panel bulk edit / delete form, whose target drop-down names the same two choices (the checked selection, or the query shown — the default) |
 | =metarecord-list:set <setting> <value>= | Change a view setting: =mode= (=table= / =grid=) or =page-size= (results per fetch) |
 | =metarecord-list:focus <zone>= | Move the keyboard focus to a zone (=finder= / =simplified= / =normal= / =columns=). =simplified= unfreezes zone B first and =normal= reveals and freezes it, because a shown-and-frozen B is what the query runs — focusing a zone the query ignores would hand the user an inert field |
 | =metarecord-list:clear <zone\|all>= | Empty a zone and focus it; =all= empties the three search fields and re-runs (an empty query matches everything) |
@@ -1437,9 +1437,15 @@ it does — and when the field it retypes holds nothing but an explicit =Nothing
 there is no value to re-encode, so the new type is followed by the value that
 gives it meaning. The two commands are =metarecord:field <op>= on the
 current metarecord (=set=, =add=, =edit=, =remove=, =unset=, =rename=,
-=retype=) and =metarecord:bulk <op>= (=set=, =add=, =remove=, =unset=,
-=delete=) over the checkbox selection (=selected_metarecords=) or, when it is
-empty, the current query. The default
+=retype=) and =metarecord:bulk <target> <op>= (=set=, =add=, =remove=,
+=unset=, =delete=) over the target the invocation names — the checkbox
+selection (=selected_metarecords=) or the current query, asked first with
+completion (pre-filled with what a checked selection means, so the common
+answer is still Enter, and naming what each choice would act on: the checked
+count and the query's match count). There is no inferred target: a selection
+that silently widens to the whole query — or the reverse — was exactly the
+confusion the argument removed, so an empty selection is "nothing to do" and a
+broad query is what =query= spells. The default
 suggestions bind them under an =m= sequence prefix (=m s= set, =m a= add, =m v=
 edit a value, =m d= remove a value, =m u= unset, =m n= rename, =m t= retype,
 and =m b= / =m m <op>= for the bulk half), active in both
@@ -1447,14 +1453,17 @@ the =metarecord-list= and =metarecord-detail= panels so the family is reachable
 whether the list or the detail is focused.
 
 For bulk edits there are two entry points. The *mouse-oriented* one is an
-in-panel =metarecord-list= form (operation picker + typed value widget +
-=force=), opened by the footer "edit / delete on query…" button
-(=metarecord-list:open-bulk-edit=). The *keyboard-oriented* one is
-=metarecord:bulk= itself: invoked bare (=m b=) it collects the operation in the
-command input, and a keybinding may name the operation up front (=m m s= set,
-=m m a= add, =m m v= remove one value, =m m r= unset the field, =m m d= delete
-the metarecords) — the same command either way, since arguments supplied inline
-skip their prompt. Both families are bound in the list *and* the detail panel:
+in-panel =metarecord-list= form (target drop-down + operation picker + typed
+value widget + =force=), opened by the footer "Edit / delete…" button
+(=metarecord-list:open-bulk-edit=); its target defaults to the query, the scope
+that flow has always acted on. The *keyboard-oriented* one is
+=metarecord:bulk= itself: invoked bare (=m b=) it collects the target and then
+the operation in the command input, and a keybinding may name both up front
+(=m m s= set on the selection, =m m a= add, =m m v= remove one value, =m m r=
+unset the field, =m m d= delete the metarecords — the fastest bulk flow, the
+checked selection; the query-scoped one goes through =m b=) — the same command
+either way, since arguments supplied inline skip their prompt. Both families
+are bound in the list *and* the detail panel:
 a command reaches its panel whatever is focused, so which panel registered it
 is not a scope. A bulk operation counts its matches (daemon-side =count=) and
 names that number in its confirmation.
@@ -2270,8 +2279,10 @@ aspect names the columns and the query DSL use. The aspect is *explicit* in the
 default config (=field:path= / =field:value=), so it never depends on the async
 field catalog; a bare =field= (no aspect) auto-detects from the catalog
 (=tree_ref= → path, else value). An unknown field just contributes nothing, so a target list
-is always safe. The bulk-edit and the result count operate on this *effective*
-(finder-filtered) query. The panel publishes it (as the query IR actually run)
+is always safe. The bulk-edit and the result count operate on the target the
+form names: this *effective* (finder-filtered) query by default, or the checked
+selection spelled with the same =uuid_in= IR the detail panel's bulk commands
+write. The panel publishes the effective query (as the query IR actually run)
 in the =metarecord-list:effective-query= workspace variable on every fetch, so
 another panel — the =metarecord-detail= bulk field-edit commands — can target
 exactly what the list shows, the live finder narrowing included.
@@ -3612,7 +3623,8 @@ scripts need neither =curl= nor =jq=. The GUI base URL comes from
 |------------------------------------------------------+--------------------------------------------------------------------|
 | =mf gui status=                                      | =GET /gui/status=, pretty-printed JSON                             |
 | =mf gui repo=                                        | Prints the active repo of the focused workspace (exit 1 if none)   |
-| =mf gui query [--workspace <id>]=                    | Prints the query a script should run on: the checkbox selection (=selected_metarecords=, bare UUIDs OR-ed), else =metarecord-list:effective-query-text= — the precedence of the bulk commands; an empty line = every metarecord; exit 1 when the list has not run (never read as "all") |
+| =mf gui query [--workspace <id>]=                    | Prints the query the metarecord list shows (=metarecord-list:effective-query-text=, finder included); an empty line = every metarecord; exit 1 when the list has not run (never read as "all") |
+| =mf gui selected [--workspace <id>]=                 | Prints the checked metarecords' UUIDs (=selected_metarecords=), one per line; no output when nothing is checked (a real state, not a failure). The half of the old selection-first precedence that grew into its own command, so a script asks which set it wants instead of inheriting one |
 | =mf gui workspace new [--repo <uuid>]=               | Creates a workspace, prints its id                                 |
 | =mf gui workspace rm <id>=                           | Closes a workspace                                                 |
 | =mf gui layout [<slot> [<ws or ->]]=                 | Prints both slots / one slot / assigns (=-= hides the slot)        |
@@ -3640,9 +3652,13 @@ argument *or*, when omitted, from the GUI completion.
 A shipped script that acts on a set takes that set as a *query*, and the query
 is the boundary: =gui-tag-folder.sh= answering "yes" on a folder applies to
 =(<query>) AND mfr_path ->* "<path>"=, never to a metarecord the query excludes.
-The query comes from, in order: the argument; else =mf gui query= (what the GUI
-shows — the checkbox selection, else the list's query with its finder
-narrowing); else the folder completion, turned into =mfr_path =>* "<folder>"=.
+The query comes from, in order: the argument; else *asked* — the checked
+selection (=mf gui selected=, spelled as the bare-UUID OR query, refused when
+empty rather than falling through) or the list's query with its finder
+narrowing (=mf gui query=), the same question the GUI's bulk commands ask,
+so a script and a bulk edit target the same set by the same decision; when the
+list has published nothing, the folder completion, turned into
+=mfr_path =>* "<folder>"=.
 An empty query means every metarecord and is used as such, never wrapped
 (=() AND …= is not a query). The scope is resolved *before* the session
 takeover, since the scratch workspace publishes nothing.
