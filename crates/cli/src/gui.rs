@@ -114,42 +114,30 @@ pub fn repo(ctx: &GuiCtx) -> Result<i32, CliError> {
     Ok(0)
 }
 
-/// What a script should run on, from the two variables a workspace publishes —
-/// the same precedence as metarecord-detail's bulk commands (`bulkTarget`), so a
-/// script and a bulk edit never target two different sets:
+/// What a script should run on when it wants the list's query: the query the
+/// metarecord list actually shows, finder included
+/// (`metarecord-list:effective-query-text`) — the empty string being "match
+/// all".
 ///
-/// 1. a non-empty checkbox selection (`selected_metarecords`), spelled with the
-///    DSL's bare-UUID atom, OR-ed;
-/// 2. else the query the list shows, finder included
-///    (`metarecord-list:effective-query-text`) — the empty string being "match
-///    all".
-///
-/// `None` when neither was published: the list has not run. That is *not*
-/// "match all" — answering "everything" there would turn a script loose on the
-/// whole repository.
-pub(crate) fn resolve_query(selection: &Json, text: &Json) -> Option<String> {
-    let uuids: Vec<&str> =
-        selection.as_array().into_iter().flatten().filter_map(Json::as_str).collect();
-    if !uuids.is_empty() {
-        return Some(uuids.join(" OR "));
-    }
+/// `None` when the list has not published one. That is *not* "match all" —
+/// answering "everything" there would turn a script loose on the whole
+/// repository. The checkbox selection has its own command (`mf gui selected`);
+/// neither command second-guesses the other.
+pub(crate) fn query_text(text: &Json) -> Option<String> {
     text.as_str().map(|text| text.trim().to_string())
 }
 
-/// `mf gui query [--workspace <id>]` — prints the query a script should start
-/// on (see [`resolve_query`]); an empty line means every metarecord.
+/// `mf gui query [--workspace <id>]` — prints the query the metarecord list
+/// shows (see [`query_text`]); an empty line means every metarecord.
 pub fn query(ctx: &GuiCtx, workspace: Option<&str>) -> Result<i32, CliError> {
     let workspace = match workspace {
         Some(id) => id.to_string(),
         None => focused_workspace(&ctx.client.get("/gui/status", &[])?)?.to_string(),
     };
-    let var = |key: &str| -> Result<Json, CliError> {
-        let resp = ctx.client.get(&format!("/gui/workspaces/{workspace}/vars/{key}"), &[])?;
-        Ok(resp["value"].clone())
-    };
-    let selection = var("selected_metarecords")?;
-    let text = var("metarecord-list:effective-query-text")?;
-    match resolve_query(&selection, &text) {
+    let resp = ctx.client.get(&format!(
+        "/gui/workspaces/{workspace}/vars/metarecord-list:effective-query-text"
+    ), &[])?;
+    match query_text(&resp["value"]) {
         Some(query) => {
             println!("{query}");
             Ok(0)
@@ -159,6 +147,25 @@ pub fn query(ctx: &GuiCtx, workspace: Option<&str>) -> Result<i32, CliError> {
              pass the query explicitly"
         ))),
     }
+}
+
+/// `mf gui selected [--workspace <id>]` — prints the checkbox selection's
+/// UUIDs, one per line; no output when nothing is checked (a real state, not
+/// a failure). The half of the old `mf gui query` precedence that grew into
+/// its own command, so a script asks which it wants instead of inheriting one.
+pub fn selected(ctx: &GuiCtx, workspace: Option<&str>) -> Result<i32, CliError> {
+    let workspace = match workspace {
+        Some(id) => id.to_string(),
+        None => focused_workspace(&ctx.client.get("/gui/status", &[])?)?.to_string(),
+    };
+    let resp =
+        ctx.client.get(&format!("/gui/workspaces/{workspace}/vars/selected_metarecords"), &[])?;
+    if let Some(uuid) = resp["value"].as_array() {
+        for uuid in uuid.iter().filter_map(Json::as_str) {
+            println!("{uuid}");
+        }
+    }
+    Ok(0)
 }
 
 pub fn workspace_new(ctx: &GuiCtx, repo: Option<&str>) -> Result<i32, CliError> {
@@ -377,26 +384,19 @@ mod tests {
     }
 
     #[test]
-    fn test_query_selection_wins_over_the_query_text() {
-        let text = resolve_query(&json!(["aa", "bb"]), &json!("rating > 3"));
-        assert_eq!(text, Some("aa OR bb".to_string()));
-    }
-
-    #[test]
-    fn test_query_an_empty_selection_falls_through_to_the_text() {
-        let text = resolve_query(&json!([]), &json!("rating > 3"));
+    fn test_query_the_list_text_is_the_answer() {
+        let text = query_text(&json!("  rating > 3  "));
         assert_eq!(text, Some("rating > 3".to_string()));
     }
 
     #[test]
     fn test_query_match_all_is_the_empty_text() {
-        assert_eq!(resolve_query(&Json::Null, &json!("")), Some(String::new()));
+        assert_eq!(query_text(&json!("")), Some(String::new()));
     }
 
     #[test]
     fn test_query_nothing_published_is_none_not_match_all() {
-        assert_eq!(resolve_query(&Json::Null, &Json::Null), None);
-        assert_eq!(resolve_query(&json!([]), &Json::Null), None);
+        assert_eq!(query_text(&Json::Null), None);
     }
 
     #[test]

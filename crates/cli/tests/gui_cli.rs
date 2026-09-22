@@ -465,7 +465,7 @@ fn test_gui_prompt_cancel_fails() {
     assert_eq!(out.stdout, "");
 }
 
-// ── mf gui query (spec-gui "CLI: mf gui") ─────────────────────────────────────
+// ── mf gui query / mf gui selected (spec-gui "CLI: mf gui") ───────────────────
 
 const SEL_A: &str = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
 const SEL_B: &str = "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb";
@@ -503,13 +503,13 @@ fn test_gui_query_prints_what_the_focused_workspace_shows() {
 }
 
 #[test]
-fn test_gui_query_prefers_the_checkbox_selection_like_the_bulk_commands() {
-    // Same precedence as metarecord-detail's bulk edits: a deliberate selection
-    // beats the query, so a script and a bulk command never target two sets.
+fn test_gui_query_prints_the_query_even_when_records_are_checked() {
+    // The selection has its own command (`mf gui selected`); `mf gui query` is
+    // what the list shows, whatever is checked — no precedence to second-guess.
     let gui = stub();
     let out = mf_gui(&gui, &["query", "--workspace", "ws-2"]);
     assert_ok(&out);
-    assert_eq!(out.stdout, format!("{SEL_A} OR {SEL_B}\n"));
+    assert_eq!(out.stdout, "x = 1\n");
 }
 
 #[test]
@@ -537,6 +537,40 @@ fn test_gui_query_fails_when_the_list_has_not_run() {
 fn test_gui_query_on_an_unknown_workspace_fails() {
     let gui = stub();
     let out = mf_gui(&gui, &["query", "--workspace", "ws-404"]);
+    assert_eq!(out.code, 1, "stdout: {} stderr: {}", out.stdout, out.stderr);
+    assert!(out.stderr.contains("unknown workspace"), "stderr: {}", out.stderr);
+}
+
+// ── mf gui selected ───────────────────────────────────────────────────────────
+
+#[test]
+fn test_gui_selected_prints_the_checked_uuids_one_per_line() {
+    // The selection half of the old combined precedence, as its own command:
+    // one UUID per line, so a script can count, filter, or join them into the
+    // bare-UUID OR query the bulk commands spell.
+    let gui = stub();
+    let out = mf_gui(&gui, &["selected", "--workspace", "ws-2"]);
+    assert_ok(&out);
+    assert_eq!(out.stdout, format!("{SEL_A}\n{SEL_B}\n"));
+}
+
+#[test]
+fn test_gui_selected_prints_nothing_when_nothing_is_checked() {
+    // An empty selection is a real state, not a failure: no lines, exit 0. A
+    // workspace whose list never ran publishes no selection variable either —
+    // the same answer, since there is nothing to check.
+    let gui = stub();
+    for ws in ["ws-3", "ws-4"] {
+        let out = mf_gui(&gui, &["selected", "--workspace", ws]);
+        assert_ok(&out);
+        assert_eq!(out.stdout, "", "ws-{ws}: nothing checked");
+    }
+}
+
+#[test]
+fn test_gui_selected_on_an_unknown_workspace_fails() {
+    let gui = stub();
+    let out = mf_gui(&gui, &["selected", "--workspace", "ws-404"]);
     assert_eq!(out.code, 1, "stdout: {} stderr: {}", out.stdout, out.stderr);
     assert!(out.stderr.contains("unknown workspace"), "stderr: {}", out.stderr);
 }
