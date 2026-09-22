@@ -310,9 +310,9 @@ const MINIBUFFER_PROMPT_BUILTINS = new Set(['workspace:rename']);
  *  completion path) plus the few builtins that reopen the input by hand.
  *
  *  It takes a whole invocation, not just a name, because the listing carries
- *  pre-filled entries: `metarecord:bulk set` still has a field and a value to
- *  ask for and earns its "…", while `metarecord:bulk delete` is complete and
- *  runs on Enter. */
+ *  pre-filled entries: `metarecord:bulk selection set` still has a field and a
+ *  value to ask for and earns its "…", while `metarecord:bulk selection
+ *  delete` is complete and runs on Enter. */
 export function promptsForInput(invocation: string): boolean {
   const [name, ...args] = invocation.split(/\s+/).filter(Boolean);
   const specs = argSpecFor(name);

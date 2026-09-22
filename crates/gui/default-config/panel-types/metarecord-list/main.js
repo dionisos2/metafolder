@@ -1080,7 +1080,7 @@ export async function mount(root, metafolder) {
     if (!bulkName.hidden) bulkName.focus();
   }
 
-  // Clicking "Edit / delete on query" again (or re-invoking the command) closes
+  // Clicking "Edit / delete…" again (or re-invoking the command) closes
   // the form when it is already open, rather than re-opening it.
   function toggleBulkForm() {
     if (bulkForm.classList.contains('open')) bulkForm.classList.remove('open');
