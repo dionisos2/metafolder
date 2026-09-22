@@ -41,13 +41,17 @@ function shadowFor(): ShadowRoot {
 }
 
 /** Mounts the panel on a metarecord holding `fields`, with `catalog` as the
- *  repo's field catalogue (the schema-aware `GET /repos/:repo/fields`). */
-async function mountPanel(fields: Field[], catalog: Record<string, string> = {}) {
+ *  repo's field catalogue (the schema-aware `GET /repos/:repo/fields`), and
+ *  `vars` published as workspace variables (e.g. `selected_metarecords`). */
+async function mountPanel(fields: Field[], catalog: Record<string, string> = {}, vars: Record<string, unknown> = {}) {
   const specs = new Map<string, Spec>();
   const calls: Call[] = [];
   const noop = () => {};
   const REFRESH = Symbol('refresh');
-  const store = new Map<string, unknown>([['selected_metarecord', { uuid: UUID, repo: REPO }]]);
+  const store = new Map<string, unknown>([
+    ['selected_metarecord', { uuid: UUID, repo: REPO }],
+    ...Object.entries(vars),
+  ]);
   const api = {
     ready: Promise.resolve(),
     workspaceId: 'ws-1',
@@ -67,6 +71,11 @@ async function mountPanel(fields: Field[], catalog: Record<string, string> = {})
         calls.push({ method, path, body });
         if (method === 'GET' && path === `/repos/${REPO}/metarecords/${UUID}`)
           return { uuid: UUID, version: 1, fields };
+        // A bulk target's COUNT — two matches, whatever the query — and the bulk
+        // writes themselves report back the changed rows.
+        if (body && (body as { count?: boolean }).count === true) return { total: 2 };
+        if (method === 'POST' && path.endsWith('/query/delete')) return { deleted: 2 };
+        if (method === 'POST' && path.includes('/query/fields/')) return { updated: 2 };
         return null;
       },
       parseQuery: async () => null,
@@ -125,17 +134,20 @@ async function mountPanel(fields: Field[], catalog: Record<string, string> = {})
 }
 
 /** Collects `invocation`'s missing arguments, answering each prompt in turn
- *  with `answers`; returns the prompts that were shown and the final arguments. */
+ *  with `answers`; returns the prompts that were shown, the final arguments,
+ *  and each prompt's recorded `initial` (pre-filled) value. */
 async function collect(spec: Spec, provided: string[], answers: string[]) {
   const prompts: string[] = [];
   const completions: (string[] | Promise<string[]>)[] = [];
+  const initials: (string | undefined)[] = [];
   const queue = [...answers];
   const args = await collectArgs(spec.args ?? [], provided, async (request) => {
     prompts.push(request.prompt);
     completions.push(request.completions);
+    initials.push(request.initial);
     return queue.shift() ?? null;
   });
-  return { prompts, args, completions };
+  return { prompts, args, completions, initials };
 }
 
 beforeEach(() => {
@@ -248,28 +260,123 @@ describe('metarecord:field — the type is an argument', () => {
   });
 });
 
-describe('metarecord:bulk — the type is an argument', () => {
+describe('metarecord:bulk — the target is the first argument', () => {
   test('an unsettled type is asked before the value', async () => {
     const { specs } = await mountPanel([]);
     const { prompts, args } = await collect(
       specs.get('metarecord:bulk')!,
-      ['set'],
+      ['selection', 'set'],
       ['rating', 'int', '5'],
     );
     expect(prompts).toEqual(['Field to set?', 'Type for "rating"?', 'Value for "rating"?']);
-    expect(args).toEqual(['set', 'rating', 'int', '5']);
+    expect(args).toEqual(['selection', 'set', 'rating', 'int', '5']);
   });
 
   test('a catalogued type is not asked', async () => {
     const { specs } = await mountPanel([], { rating: 'int' });
-    const { prompts } = await collect(specs.get('metarecord:bulk')!, ['set'], ['rating', '5']);
+    const { prompts } = await collect(specs.get('metarecord:bulk')!, ['selection', 'set'], [
+      'rating',
+      '5',
+    ]);
     expect(prompts).toEqual(['Field to set?', 'Value for "rating"?']);
   });
 
   test('unset takes neither a type nor a value', async () => {
     const { specs } = await mountPanel([], { rating: 'int' });
-    const { prompts, args } = await collect(specs.get('metarecord:bulk')!, ['unset'], ['rating']);
+    const { prompts, args } = await collect(specs.get('metarecord:bulk')!, ['selection', 'unset'], [
+      'rating',
+    ]);
     expect(prompts).toEqual(['Field to remove?']);
-    expect(args).toEqual(['unset', 'rating']);
+    expect(args).toEqual(['selection', 'unset', 'rating']);
+  });
+
+  test('delete takes no field at all', async () => {
+    const { specs } = await mountPanel([]);
+    const { prompts, args } = await collect(specs.get('metarecord:bulk')!, ['query', 'delete'], []);
+    expect(prompts).toEqual([]);
+    expect(args).toEqual(['query', 'delete']);
+  });
+
+  test('a bare invocation asks the target first, with completion and a pre-fill', async () => {
+    const { specs } = await mountPanel([], { rating: 'int' });
+    const { prompts, args, completions, initials } = await collect(
+      specs.get('metarecord:bulk')!,
+      [],
+      ['selection', 'set', 'rating', '5'],
+    );
+    expect(prompts[0]).toMatch(/^Target\?/);
+    expect(await completions[0]).toEqual(['selection', 'query']);
+    // Nothing is checked, so the pre-fill is the query — the old implicit
+    // default, now a visible, editable answer instead of a silent fallback.
+    expect(initials[0]).toBe('query');
+    expect(prompts.slice(1)).toEqual([
+      'Operation? (set / add / remove / unset / delete)',
+      'Field to set?',
+      'Value for "rating"?',
+    ]);
+    expect(args).toEqual(['selection', 'set', 'rating', '5']);
+  });
+
+  test('the target prompt names what each choice would act on', async () => {
+    // Two checked records; the list has published nothing, so the query branch
+    // reads as ALL metarecords (the daemon stub answers no COUNT — 0).
+    const { specs } = await mountPanel([], { rating: 'int' }, { selected_metarecords: ['a', 'b'] });
+    const { prompts, initials } = await collect(specs.get('metarecord:bulk')!, [], [
+      'selection',
+      'set',
+      'rating',
+      '5',
+    ]);
+    expect(prompts[0]).toBe('Target? (selection = 2 checked · query = ALL metarecords (2))');
+    // A checked selection pre-fills `selection`.
+    expect(initials[0]).toBe('selection');
+  });
+
+  test('an inline target and operation are not asked again', async () => {
+    const { specs } = await mountPanel([], { rating: 'int', tag: 'string' });
+    const { prompts, args } = await collect(specs.get('metarecord:bulk')!, ['query', 'add'], [
+      'tag',
+      'jazz',
+    ]);
+    expect(prompts).toEqual(['Field to add a value to?', 'Value to add to "tag"?']);
+    expect(args).toEqual(['query', 'add', 'tag', 'jazz']);
+  });
+
+  test('an unknown target is refused, naming the new syntax', async () => {
+    // What the old positional form reads as — `metarecord:bulk set rating 5`
+    // lands here with target "set" — must fail loudly, not silently re-target.
+    const { specs } = await mountPanel([]);
+    await expect(specs.get('metarecord:bulk')!.handler('set', 'rating', '5')).rejects.toThrow(
+      'unknown target "set"',
+    );
+  });
+
+  test('an empty selection is nothing to do, never the query', async () => {
+    const { specs, calls } = await mountPanel([]);
+    await specs.get('metarecord:bulk')!.handler('selection', 'delete');
+    expect(calls.filter((c) => c.method === 'POST')).toEqual([]);
+  });
+
+  test('the selection target spells the checked UUIDs as the query', async () => {
+    const { specs, calls } = await mountPanel([], {}, { selected_metarecords: ['uuid-a', 'uuid-b'] });
+    vi.stubGlobal('confirm', vi.fn(() => true));
+    await specs.get('metarecord:bulk')!.handler('selection', 'delete');
+    const post = calls.find((c) => c.method === 'POST' && c.path.endsWith('/query/delete'));
+    expect(post?.body).toEqual({ query: { type: 'uuid_in', uuids: ['uuid-a', 'uuid-b'] } });
+  });
+
+  test('the query target runs over the effective query', async () => {
+    const { specs, calls } = await mountPanel(
+      [],
+      { rating: 'int' },
+      { 'metarecord-list:effective-query': { type: 'match', field: 'rating', op: '>', value: 3 } },
+    );
+    vi.stubGlobal('confirm', vi.fn(() => true));
+    await specs.get('metarecord:bulk')!.handler('query', 'unset', 'rating');
+    const post = calls.find((c) => c.method === 'POST' && c.path.endsWith('/query/fields/unset'));
+    expect(post?.body).toEqual({
+      query: { type: 'match', field: 'rating', op: '>', value: 3 },
+      name: 'rating',
+    });
   });
 });

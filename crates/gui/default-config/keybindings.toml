@@ -399,17 +399,20 @@
 # Command-input-driven field editing ("m" = metarecord edit; the status bar
 # lists the continuations while the sequence is pending). Bound under BOTH main
 # panels: the "current metarecord" is the highlighted list row (which the detail
-# panel mirrors), and the bulk edits act on the list selection — so the whole
+# panel mirrors), and the bulk edits name a target (the checked selection, or
+# the query the list shows) — so the whole
 # family is reachable whether the list or the detail panel is focused. Each
 # command still collects its arguments (field / value / type) in the command
 # input, with completion (see spec-gui "Interactive command arguments").
 # Mnemonics: s=set, a=add, v=value(edit), d=delete(a value), u=unset, n=name,
-# t=type, b=bulk. Both families are one command with the operation as its first
-# argument (`metarecord:field` / `metarecord:bulk`), so each binding here is
-# that command with the operation pre-filled — the remaining arguments (field /
-# value / type) are still collected in the command input, with completion.
-# These pre-filled invocations are exactly what the command-input listing
-# expands, so every one of them is discoverable there with its combo.
+# t=type, b=bulk. The per-record family is one command with the operation as
+# its first argument (`metarecord:field`), the bulk one carries a target first
+# and the operation second (`metarecord:bulk <target> <op>`), so each binding
+# here is that command with those arguments pre-filled — the remaining
+# arguments (field / value / type) are still collected in the command input,
+# with completion. These pre-filled invocations are exactly what the
+# command-input listing expands, so every one of them is discoverable there
+# with its combo.
 "m s" = [
   { command = "metarecord:field set", when = "metarecord-detail" },
   { command = "metarecord:field set", when = "metarecord-list" },
@@ -441,37 +444,40 @@
   { command = "metarecord:field retype", when = "metarecord-detail" },
   { command = "metarecord:field retype", when = "metarecord-list" },
 ]
-# Bulk operations act on the list selection / current query. "m b" runs the
-# command bare, so it asks for the operation; the "m m <op>" sequences name it
-# up front. The key layout is unchanged from when these were eleven separate
-# commands — only what they invoke changed — and they now work from either
-# panel, like the per-record family above (a command reaches its panel whatever
-# is focused, so the old list/detail split was an artifact of ownership).
+# Bulk operations act on a target they name: `selection` (the checked rows) or
+# `query` (what the list shows). "m b" runs the command bare, so it asks for
+# the target and then the operation; the "m m <op>" sequences name BOTH up
+# front — targeting the checked selection, the fastest bulk flow, while "m b"
+# covers the query-scoped one (and every other combination) through the
+# prompts. The key layout is unchanged from when these were eleven separate
+# commands — only what they invoke changed — and they work from either panel,
+# like the per-record family above (a command reaches its panel whatever is
+# focused, so the old list/detail split was an artifact of ownership).
 "m b" = [
   { command = "metarecord:bulk", when = "metarecord-list" },
   { command = "metarecord:bulk", when = "metarecord-detail" },
 ]
 "m m s" = [
-  { command = "metarecord:bulk set", when = "metarecord-detail" },
-  { command = "metarecord:bulk set", when = "metarecord-list" },
+  { command = "metarecord:bulk selection set", when = "metarecord-detail" },
+  { command = "metarecord:bulk selection set", when = "metarecord-list" },
 ]
 "m m a" = [
-  { command = "metarecord:bulk add", when = "metarecord-detail" },
-  { command = "metarecord:bulk add", when = "metarecord-list" },
+  { command = "metarecord:bulk selection add", when = "metarecord-detail" },
+  { command = "metarecord:bulk selection add", when = "metarecord-list" },
 ]
 # "r" removes the field entirely (unset), "v" takes one value out of it, "d"
 # deletes the metarecords themselves (confirmed, naming the count).
 "m m r" = [
-  { command = "metarecord:bulk unset", when = "metarecord-detail" },
-  { command = "metarecord:bulk unset", when = "metarecord-list" },
+  { command = "metarecord:bulk selection unset", when = "metarecord-detail" },
+  { command = "metarecord:bulk selection unset", when = "metarecord-list" },
 ]
 "m m v" = [
-  { command = "metarecord:bulk remove", when = "metarecord-detail" },
-  { command = "metarecord:bulk remove", when = "metarecord-list" },
+  { command = "metarecord:bulk selection remove", when = "metarecord-detail" },
+  { command = "metarecord:bulk selection remove", when = "metarecord-list" },
 ]
 "m m d" = [
-  { command = "metarecord:bulk delete", when = "metarecord-detail" },
-  { command = "metarecord:bulk delete", when = "metarecord-list" },
+  { command = "metarecord:bulk selection delete", when = "metarecord-detail" },
+  { command = "metarecord:bulk selection delete", when = "metarecord-list" },
 ]
 
 # sync (spec-sync): the four steps of a cross-repo sync, on the prefix that

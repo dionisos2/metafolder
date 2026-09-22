@@ -193,6 +193,17 @@ export async function mount(root, metafolder) {
     ],
     onChange: () => syncBulkOpUi(),
   });
+  // What the operation acts on, chosen rather than inferred: the checked
+  // selection, or the query the list shows (its historical scope, and the
+  // default). Inferring from whether anything happens to be checked is how a
+  // bulk write meant for the checks landed on the whole query.
+  const bulkTarget = createSelect(byId(root, 'bulk-target'), {
+    value: 'query',
+    options: [
+      { value: 'query', label: 'Query shown' },
+      { value: 'selection', label: 'Checked selection' },
+    ],
+  });
   const bulkName = byId(root, 'bulk-name', HTMLInputElement);
   const bulkValueSlot = byId(root, 'bulk-value');
   const bulkForce = byId(root, 'bulk-force', HTMLInputElement);
@@ -1094,19 +1105,31 @@ export async function mount(root, metafolder) {
     try {
       if (!repo) throw new Error('no active repository');
       const op = BULK_OPS[bulkOp.get() ?? 'set'] ?? BULK_OPS.set;
-      // Bulk actions target the effective (finder-filtered) set — you act on
-      // what you see.
-      const effQ = effectiveQuery();
-      const n = await countMatches();
+      // The target the form names: the checked selection, spelled with the
+      // same IR atom the detail panel's bulk commands use, or the effective
+      // (finder-filtered) set — you act on what you see.
+      const onSelection = bulkTarget.get() === 'selection';
+      const checked = /** @type {string[]} */ (
+        onSelection ? ((await workspace.get('selected_metarecords')) ?? []) : []
+      );
+      const effQ = onSelection ? { type: 'uuid_in', uuids: checked } : (effectiveQuery() ?? MATCH_ALL);
+      const n = onSelection ? checked.length : await countMatches();
+      // Nothing to act on says so — an empty selection is NOT a detour onto
+      // the query.
+      if (n === 0) {
+        void statusBar.message(
+          onSelection
+            ? 'No metarecords are checked — nothing to do.'
+            : 'No metarecords match — nothing to do.',
+          statusMessageMs,
+        );
+        return;
+      }
 
       if (op.noField) {
         // Delete the matched metarecords themselves. This removes the
         // metarecords; any associated files stay on disk (untracked). Confirm
         // with the count since it is not undoable from the UI.
-        if (n === 0) {
-          void statusBar.message('No metarecords match — nothing to delete.', statusMessageMs);
-          return;
-        }
         if (
           !confirm(
             `Delete ${n} metarecord${n === 1 ? '' : 's'}? This removes the metarecords ` +

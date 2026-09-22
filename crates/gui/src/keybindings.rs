@@ -707,17 +707,18 @@ mod tests {
             );
         }
 
-        // `m b` asks for the operation; `m m <op>` names it up front. Both are
-        // the same command, so the prefix must stay free of an exact binding.
+        // `m b` asks for the target and then the operation; `m m <op>` names both up
+        // front, targeting the checked selection. Both are the same command, so
+        // the prefix must stay free of an exact binding.
         let bulk_bare = bound(&["m", "b"]);
         assert!(!bulk_bare.is_empty() && bulk_bare.iter().all(|i| i == "metarecord:bulk"));
         assert!(bound(&["m", "m"]).is_empty(), "an exact `m m` would shadow every `m m <op>`");
         for (keys, invocation) in [
-            (["m", "m", "s"], "metarecord:bulk set"),
-            (["m", "m", "a"], "metarecord:bulk add"),
-            (["m", "m", "v"], "metarecord:bulk remove"),
-            (["m", "m", "r"], "metarecord:bulk unset"),
-            (["m", "m", "d"], "metarecord:bulk delete"),
+            (["m", "m", "s"], "metarecord:bulk selection set"),
+            (["m", "m", "a"], "metarecord:bulk selection add"),
+            (["m", "m", "v"], "metarecord:bulk selection remove"),
+            (["m", "m", "r"], "metarecord:bulk selection unset"),
+            (["m", "m", "d"], "metarecord:bulk selection delete"),
         ] {
             let found = bound(&keys);
             assert!(

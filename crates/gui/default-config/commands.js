@@ -60,6 +60,6 @@ export default {
         complete: () => ['1', '2', '3', '4', '5'],
       },
     ],
-    run: (mf, rating) => mf.invoke(`metarecord:bulk set rating ${rating}`),
+    run: (mf, rating) => mf.invoke(`metarecord:bulk selection set rating ${rating}`),
   },
 };
