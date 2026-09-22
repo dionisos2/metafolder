@@ -209,30 +209,53 @@ mf_gui_path_uuid() { # <treepath>
 # on a folder's subtree is intersected with it, so a metarecord the query
 # excludes is never touched.
 
-# The scope to use when the script was given no query: what the GUI is showing
-# (`mf gui query` — the checkbox selection, else the list's query with its
-# finder narrowing), else a folder chosen from the completion, turned into the
+# The scope to use when the script was given no query: ASKED — act on the
+# checked selection, or on the query the list shows — like the GUI's bulk
+# commands, which name their target instead of inferring it from whether
+# anything happens to be checked (a checkbox selection that silently widens to
+# the whole query is exactly the confusion this removes). The selection is
+# spelled as the bare-UUID OR query the bulk commands write. When the list has
+# published nothing, a folder chosen from the completion becomes the
 # inclusive-subtree query `mfr_path =>* "<folder>"`.
 #
-# Prints the query (an EMPTY line means every metarecord — a real answer, not a
-# failure) and returns non-zero when the user cancels the folder prompt.
+# Prints the query (an EMPTY line means every metarecord — a real answer, not
+# a failure) and returns non-zero when the user cancels or answers for a
+# selection that is empty.
 #
-# Call it BEFORE mf_gui_session_open: `mf gui query` answers for the focused
-# workspace, and the scratch workspace the session opens publishes nothing.
+# Call it BEFORE mf_gui_session_open: both `mf gui` reads answer for the
+# focused workspace, and the scratch workspace the session opens publishes
+# nothing.
 mf_gui_default_scope() { # [<folder prompt>]
-    local scope folder
-    if scope=$(mf gui query 2>/dev/null); then
-        printf '%s' "$scope"
-        return 0
-    fi
-    folder=$(mf_gui_prompt_folder "${1:-Folder: }") || return 1
-    [ -n "$folder" ] || return 1
-    printf 'mfr_path =>* "%s"' "$(mf_dsl_str "$(mf_gui_query_path "$folder")")"
+    local scope folder checked answer
+    answer=$(mf_gui_ask_answer \
+        "Act on the checked selection (y), or the query the list shows (n)?" y n)
+    case $answer in
+        y)
+            checked=$(mf gui selected 2>/dev/null) || checked=""
+            if [ -z "$checked" ]; then
+                mf_gui_report "nothing is checked — check some, or run again and answer n"
+                return 1
+            fi
+            printf '%s' "$(printf '%s\n' "$checked" | awk '
+                { printf "%s%s", (NR > 1 ? " OR " : ""), $0 }')"
+            ;;
+        n)
+            if scope=$(mf gui query 2>/dev/null); then
+                printf '%s' "$scope"
+                return 0
+            fi
+            folder=$(mf_gui_prompt_folder "${1:-Folder: }") || return 1
+            [ -n "$folder" ] || return 1
+            printf 'mfr_path =>* "%s"' "$(mf_dsl_str "$(mf_gui_query_path "$folder")")"
+            ;;
+        *)
+            # escape: the question could not be answered at all — a closed
+            # GUI, a refused wait — and the caller stops like on any
+            # cancellation.
+            return 1 ;;
+    esac
 }
 
-# `mf metarecord … get` over $SCOPE. An empty scope is the whole repository and
-# must be spelled by *omitting* the selector: `-q ""` is not a query (the DSL
-# rejects an empty predicate).
 mf_gui_scope_get() { # <get args...>
     if [ -z "${SCOPE:-}" ]; then
         mf metarecord get "$@"

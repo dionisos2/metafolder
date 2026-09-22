@@ -260,7 +260,7 @@ case "$sig" in
     "track "*|"order "*|"orphan "*|"reconcile"*) exit 0 ;;
     # The GUI scripting API, whose output every caller discards.
     "gui message"*|"gui progress"*|"gui view "*|"gui layout "*) exit 0 ;;
-    "gui workspace "*|"gui repo"*|"gui query"*|"gui status"*) exit 0 ;;
+    "gui workspace "*|"gui repo"*|"gui query"*|"gui selected"*|"gui status"*) exit 0 ;;
 esac
 
 echo "mf-mock: unrecognised command 'mf $sig'" >&2

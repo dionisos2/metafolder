@@ -33,11 +33,13 @@
 # the query excludes: the subtree op is `(<query>) AND mfr_path ->* "<path>"`.
 # So narrowing the list in the GUI narrows what this script can touch.
 #
-# Where the query comes from, in order: the QUERY argument; else what the GUI
-# is showing (`mf gui query` — the checkbox selection, else the list's query
-# with its finder narrowing); else a folder chosen from the completion, turned
-# into `mfr_path =>* "<folder>"` (the folder and its whole subtree). An empty
-# query means every metarecord, and is left as such rather than wrapped.
+# Where the query comes from, in order: the QUERY argument; else ASKED — the
+# checked selection, or the query the list shows (the GUI's bulk commands ask
+# the same way, so a script and a bulk edit target the same set by the same
+# decision); when the list has published nothing, a folder chosen from the
+# completion, turned into `mfr_path =>* "<folder>"` (the folder and its whole
+# subtree). An empty query means every metarecord, and is left as such rather
+# than wrapped.
 #
 # ORDER. Depth first, a folder before what it holds. At the current folder P:
 #   1. the first undecided direct child in scope — folders first, each kind by
@@ -95,9 +97,9 @@ mf_gui_bind_repo
 [ -n "$TAG" ] || mf_die "empty tag name"
 case $TAG in *\"*) mf_die "tag names must not contain double quotes" ;; esac
 
-# The scope. Resolved BEFORE the session takeover: `mf gui query` answers for
-# the focused workspace, and the scratch workspace the session opens publishes
-# nothing.
+# The scope. Resolved BEFORE the session takeover (the scope question and both
+# `mf gui` reads answer for the focused workspace, and the scratch workspace
+# the session opens publishes nothing).
 # SCOPE is read by mf_gui_scoped, in lib/mf-gui.sh (a sourced file this check
 # does not follow from here).
 # shellcheck disable=SC2034

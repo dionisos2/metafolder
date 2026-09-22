@@ -40,7 +40,7 @@ mock_reset
 setup_gui
 mock_prompt 'music/jazz'                     # the tag being applied
 mock_respond 'metarecord -q * get --limit*' $'u1\nu2\nu3\nu4\nu5'
-mock_input y n s q                       # f1=yes f2=no f3=skip f4=STOP
+mock_input n y n s q  # f1=yes f2=no f3=skip f4=STOP
 out=$(bash "$SCRIPT"); code=$?
 
 assert "walk: exits 0" [ "$code" -eq 0 ]
@@ -81,6 +81,7 @@ mock_reset
 setup_gui
 mock_prompt 'music'
 mock_respond 'metarecord -q * get --limit*' ''         # empty universe
+mock_input n
 out=$(bash "$SCRIPT"); code=$?
 assert "empty: exits 0" [ "$code" -eq 0 ]
 assert_contains "empty: zeroed summary" "$out" "0 yes, 0 no, 0 skipped"
@@ -94,7 +95,7 @@ mock_reset
 setup_gui
 mock_prompt 'music/jazz'
 mock_respond 'metarecord -q * get --limit*' $'u1\nu2\nu3'
-mock_input right left down                    # → yes, ← no, ↓ skip
+mock_input n right left down  # → yes, ← no, ↓ skip
 out=$(bash "$SCRIPT"); code=$?
 assert "arrows: exits 0" [ "$code" -eq 0 ]
 assert "arrows: right adds" [ "$(mock_count 'tag -i u1 add music/jazz')" -eq 1 ]
@@ -118,13 +119,36 @@ G='mfr_path ->* "/music"'
 setup_gui "$G"
 mock_prompt 'music/jazz'
 mock_respond 'metarecord -q * get --limit*' 'u1'
-mock_input y
+mock_input n y
 out=$(bash "$SCRIPT"); code=$?
 assert "scope: exits 0" [ "$code" -eq 0 ]
 pred=$(mock_calls_matching 'metarecord -q * get --limit*')
 assert_contains "scope: the predicate is narrowed to what the GUI shows" "$pred" "($G) AND"
 assert "scope: no folder prompt when a query is published" \
     [ "$(mock_count 'gui prompt Folder*')" -eq 0 ]
+
+# ── Case 5b: answering y targets the checked selection ──────────────────────
+mock_reset
+setup_gui
+mock_respond 'gui selected' 'u1'
+mock_prompt 'music/jazz'
+mock_respond 'metarecord -q * get --limit*' 'u1'
+mock_input y y            # the scope: the selection; then yes on the file
+out=$(bash "$SCRIPT"); code=$?
+assert "selected: exits 0" [ "$code" -eq 0 ]
+pred=$(mock_calls_matching 'metarecord -q * get --limit*')
+assert_contains "selected: the predicate is the selection's UUIDs" "$pred" '(u1) AND'
+assert "selected: the list's query is never read" [ "$(mock_count 'gui query')" -eq 0 ]
+
+# ── Case 5c: y on an empty selection is a refusal, never the query ──────────
+mock_reset
+setup_gui
+mock_respond 'gui selected' ''
+mock_input y              # the scope: the selection — which is empty
+err=$(bash "$SCRIPT" music/jazz 2>&1 >/dev/null); code=$?
+assert "no selection: non-zero exit" [ "$code" -ne 0 ]
+assert_contains "no selection: says nothing is checked" "$err" "nothing is checked"
+assert "no selection: the list's query is never read" [ "$(mock_count 'gui query')" -eq 0 ]
 
 # ── Case 6: an explicit query argument wins, and skips the GUI ──────────────
 mock_reset
@@ -144,7 +168,7 @@ setup_gui @exit:1
 mock_respond 'metarecord -q mfr_type = "dir" get*' '/music'
 mock_prompt 'music/jazz' '/music'      # the tag, then the folder
 mock_respond 'metarecord -q * get --limit*' 'u1'
-mock_input y
+mock_input n y
 bash "$SCRIPT" >/dev/null; code=$?
 assert "fallback: exits 0" [ "$code" -eq 0 ]
 pred=$(mock_calls_matching 'metarecord -q * get --limit*')
@@ -156,6 +180,7 @@ mock_reset
 setup_gui
 mock_prompt 'music'
 mock_respond 'metarecord -q * get --limit*' ''
+mock_input n              # the scope: the query (everything)
 bash "$SCRIPT" >/dev/null; code=$?
 assert "all: exits 0" [ "$code" -eq 0 ]
 assert "all: no empty parentheses in the predicate" [ "$(mock_count 'metarecord -q () AND*')" -eq 0 ]

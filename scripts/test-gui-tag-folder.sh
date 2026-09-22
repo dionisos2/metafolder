@@ -110,7 +110,7 @@ walk_children "" dir dir-top
 walk_path dir-top /top
 walk_counts 1 1
 mock_prompt '/top'
-mock_input y
+mock_input n y
 out=$(bash "$SCRIPT" music); code=$?
 assert "yes: exits 0" [ "$code" -eq 0 ]
 assert "yes: tags the node" [ "$(mock_count 'tag -i dir-top add music')" -eq 1 ]
@@ -137,7 +137,7 @@ walk_children "" dir dir-top
 walk_path dir-top /top
 walk_counts 1 1
 mock_prompt '/top'
-mock_input n
+mock_input n n
 bash "$SCRIPT" music >/dev/null; code=$?
 assert "no: exits 0" [ "$code" -eq 0 ]
 assert "no: denies the node" [ "$(mock_count 'tag -i dir-top deny music')" -eq 1 ]
@@ -157,7 +157,7 @@ walk_path file-b /top/b.txt
 walk_counts 5 5 4 2 1
 mock_prompt '/top'
 #   top=m  sub=y (whole subtree)  a.txt=y  b.txt=n
-mock_input m y y n
+mock_input n m y y n
 out=$(bash "$SCRIPT" music); code=$?
 assert "mixed: exits 0" [ "$code" -eq 0 ]
 assert "mixed: marks the parent mixed" [ "$(mock_count 'tag -i dir-top mixed music')" -eq 1 ]
@@ -180,7 +180,7 @@ walk_path dir-sub /top/sub
 walk_path file-z /top/z.txt
 walk_counts 3 3 2 1
 mock_prompt '/top'
-mock_input m s s
+mock_input n m s s
 out=$(bash "$SCRIPT" music); code=$?
 assert "order: exits 0" [ "$code" -eq 0 ]
 order=$(mock_calls_matching "gui input --prompt '*' has tag*" \
@@ -213,13 +213,46 @@ mock_respond 'gui query' "$G"
 walk_children "" file file-a
 walk_path file-a /x/a.txt
 walk_counts 1 1
-mock_input y
+mock_input n y
 out=$(bash "$SCRIPT" music); code=$?
 assert "gui query: exits 0" [ "$code" -eq 0 ]
 assert "gui query: asks the GUI what it shows" [ "$(mock_count 'gui query')" -ge 1 ]
 assert "gui query: no folder prompt when one is published" [ "$(mock_count 'gui prompt*')" -eq 0 ]
 assert "gui query: the walk is narrowed to it" [ "$(mock_count "metarecord -q ($G) AND *")" -ge 1 ]
 assert "gui query: the record is tagged" [ "$(mock_count 'tag -i file-a add music')" -eq 1 ]
+
+# ── Case 6b: answering y targets the checked selection ──────────────────────
+# The GUI's bulk commands ask the same question; a script and a bulk edit now
+# target the same set by the same decision, spelled as the bare-UUID OR query
+# the bulk commands write.
+mock_reset
+setup_gui
+mock_respond 'gui selected' 'file-a'
+walk_children "" file file-a
+walk_path file-a /x/a.txt
+walk_counts 1 1
+mock_input y y           # the scope: the selection; then yes on the record
+out=$(bash "$SCRIPT" music); code=$?
+assert "selected: exits 0" [ "$code" -eq 0 ]
+assert "selected: the scope question is asked" \
+    [ "$(mock_count 'gui input --prompt *checked selection*')" -eq 1 ]
+assert "selected: the checked records are read" [ "$(mock_count 'gui selected')" -eq 1 ]
+assert "selected: the list's query is never read" [ "$(mock_count 'gui query')" -eq 0 ]
+assert "selected: the walk is narrowed to the selection" \
+    [ "$(mock_count 'metarecord -q (file-a) AND *')" -ge 1 ]
+assert "selected: the record is tagged" [ "$(mock_count 'tag -i file-a add music')" -eq 1 ]
+
+# ── Case 6c: y on an empty selection is a refusal, never the query ──────────
+mock_reset
+setup_gui
+mock_respond 'gui selected' ''
+mock_input y              # the scope: the selection — which is empty
+out=$(bash "$SCRIPT" music 2>&1); code=$?
+assert "no selection: non-zero exit" [ "$code" -ne 0 ]
+assert_contains "no selection: says nothing is checked" "$out" "nothing is checked"
+assert "no selection: the walk never starts" \
+    [ "$(mock_count 'gui input --prompt *has tag*')" -eq 0 ]
+assert "no selection: the list's query is never read" [ "$(mock_count 'gui query')" -eq 0 ]
 
 # ── Case 7: an empty scope (the GUI shows everything) is not narrowed ────────
 mock_reset
@@ -228,7 +261,7 @@ mock_respond 'gui query' ''
 walk_children "" file file-a
 walk_path file-a /x/a.txt
 walk_counts 1 1
-mock_input y
+mock_input n y
 bash "$SCRIPT" music >/dev/null; code=$?
 assert "all: exits 0" [ "$code" -eq 0 ]
 assert "all: no empty parentheses in the query" [ "$(mock_count 'metarecord -q () AND*')" -eq 0 ]
@@ -246,7 +279,7 @@ walk_children "" dir dir-root
 walk_path dir-root ''
 walk_counts 1 1
 mock_prompt '/'
-mock_input y
+mock_input n y
 bash "$SCRIPT" roottag >/dev/null; code=$?
 assert "root: exits 0" [ "$code" -eq 0 ]
 assert "root: the scope uses the empty-string form" \
@@ -275,7 +308,7 @@ walk_path file-b /top/b.txt
 walk_counts 3 3 1
 mock_prompt '/top'
 #   top=m  b.txt=s (skipped), then the cleanup offer at the end: keep them
-mock_input m s n
+mock_input n m s n
 out=$(bash "$SCRIPT" music); code=$?
 assert "skip: exits 0" [ "$code" -eq 0 ]
 assert "skip: no tag op on the skipped entry" [ "$(mock_count 'tag -i file-b *')" -eq 0 ]
@@ -300,7 +333,7 @@ walk_path file-b /top/b.txt
 walk_counts 4 4 3 1
 mock_prompt '/top'
 #   top=m  sub=s (skipped folder)  b.txt=y, then keep the markers
-mock_input m s y n
+mock_input n m s y n
 out=$(bash "$SCRIPT" music); code=$?
 assert "skip dir: exits 0" [ "$code" -eq 0 ]
 assert "skip dir: the folder is marked, not tagged" \
@@ -321,7 +354,7 @@ walk_children "" file file-a
 walk_path file-a /top/a.txt
 walk_counts 1 1
 mock_prompt '/top'
-mock_input s y          # skip the only entry, then ACCEPT the cleanup
+mock_input n s y          # skip the only entry, then ACCEPT the cleanup
 out=$(bash "$SCRIPT" music); code=$?
 assert "cleanup: exits 0" [ "$code" -eq 0 ]
 assert "cleanup: the offer names what it will forget" \
@@ -340,7 +373,7 @@ walk_children "" file file-a
 walk_path file-a /top/a.txt
 walk_counts 1 1
 mock_prompt '/top'
-mock_input s n          # skip, then DECLINE the cleanup
+mock_input n s n          # skip, then DECLINE the cleanup
 bash "$SCRIPT" music >/dev/null
 assert "cleanup declined: nothing is removed" \
     [ "$(mock_count 'metarecord -q * field remove gui_tag_skipped*')" -eq 0 ]
@@ -357,7 +390,7 @@ walk_children "" file file-a
 walk_path file-a /top/a.txt
 walk_counts 1 1
 mock_prompt '/top'
-mock_input n y n        # "ask them again" = no, keep; then y on the file; then keep at the end
+mock_input n n y n        # "ask them again" = no, keep; then y on the file; then keep at the end
 out=$(bash "$SCRIPT" music); code=$?
 assert "resume offer: exits 0" [ "$code" -eq 0 ]
 assert "resume offer: the run starts by saying how many are skipped" \
@@ -376,7 +409,7 @@ walk_children "" file file-a
 walk_path file-a /top/a.txt
 walk_counts 1 1
 mock_prompt '/top'
-mock_input y y          # "ask them again" = yes, then answer the file
+mock_input n y y          # "ask them again" = yes, then answer the file
 bash "$SCRIPT" music >/dev/null
 assert "ask again: the markers are cleared" \
     [ "$(mock_count 'metarecord -q * field remove gui_tag_skipped:ref=tag-music')" -eq 1 ]
@@ -390,7 +423,7 @@ walk_children "" dir dir-top
 walk_path dir-top /top
 walk_counts 2 2
 mock_prompt '/top'
-mock_input q
+mock_input n q
 out=$(bash "$SCRIPT" music 2>"$MF_MOCK_DIR/err"); code=$?
 err=$(cat "$MF_MOCK_DIR/err")
 assert "stop: exits 0" [ "$code" -eq 0 ]
@@ -425,7 +458,7 @@ walk_children "" file file-a
 walk_path file-a /top/a.txt
 walk_counts 1 1
 mock_prompt '/top'
-mock_input y
+mock_input n y
 bash "$SCRIPT" music/jazz >/dev/null; code=$?
 assert "open: exits 0" [ "$code" -eq 0 ]
 assert "open: a positive on the tag or below is not asked again" \
@@ -449,7 +482,7 @@ walk_path file-a /top/a.txt
 walk_path file-b /top/b.txt
 walk_counts 2 2 1
 mock_prompt '/top'
-mock_input y y
+mock_input n y y
 bash "$SCRIPT" --redo music >/dev/null; code=$?
 assert "redo: exits 0" [ "$code" -eq 0 ]
 assert "redo: the decided clause is gone" [ "$(mock_count '*NOT (tag -> *')" -eq 0 ]
@@ -475,7 +508,7 @@ walk_path file-y /top/y.txt
 #   whole removes x.txt, so the question after it says nothing is left.
 walk_counts 4 4 3 1
 mock_prompt '/top'
-mock_input m y y
+mock_input n m y y
 bash "$SCRIPT" music >/dev/null; code=$?
 assert "count: exits 0" [ "$code" -eq 0 ]
 assert "count: the total comes from one --count call, up front" \
@@ -502,7 +535,7 @@ walk_descendants "" file-deep
 walk_children /a/b file file-deep
 walk_path file-deep /a/b/deep.txt
 walk_counts 1 1
-mock_input y
+mock_input n y
 out=$(bash "$SCRIPT" music); code=$?
 assert "scattered: exits 0" [ "$code" -eq 0 ]
 assert "scattered: the walk asks for the first open descendant" \
@@ -524,7 +557,7 @@ walk_children /a/b file file-z
 walk_path file-d /a/b/c/d.txt
 walk_path file-z /a/b/z.txt
 walk_counts 2 2 1
-mock_input y y
+mock_input n y y
 out=$(bash "$SCRIPT" music); code=$?
 assert "up: exits 0" [ "$code" -eq 0 ]
 assert "up: the deep file is asked" [ "$(asked /a/b/c/d.txt)" -eq 1 ]
@@ -546,7 +579,7 @@ mock_queue heads 10 11 12 13 14 15
 mock_prompt '/top'
 #   a.txt yes, then BACK at b.txt's question — which undoes it and re-asks —
 #   then a.txt no, b.txt yes.
-mock_input y u n y
+mock_input n y u n y
 bash "$SCRIPT" music >/dev/null; code=$?
 assert "back: exits 0" [ "$code" -eq 0 ]
 assert "back: the undone answer was rolled back through the log" \
@@ -573,7 +606,7 @@ mock_respond 'log head' '@queue:heads2'
 mock_queue heads2 20 21 22 23 24 25
 mock_prompt '/top'
 #   sub skipped, BACK at the next question, sub answered m this time, then done
-mock_input s u m n
+mock_input n s u m n
 out=$(bash "$SCRIPT" music); code=$?
 assert "back skip: exits 0" [ "$code" -eq 0 ]
 assert "back skip: the marker write was rolled back" \
@@ -592,7 +625,7 @@ walk_path dir-top /top
 walk_counts 1 1 1
 mock_respond 'log head' '7'
 mock_prompt '/top'
-mock_input u y
+mock_input n u y
 out=$(bash "$SCRIPT" music 2>&1); code=$?
 assert "back at the start: exits 0" [ "$code" -eq 0 ]
 assert_contains "back at the start: says there is nothing to go back to" "$out" "nothing to go back to"
@@ -607,7 +640,7 @@ walk_path dir-top /top
 walk_counts 1 1
 mock_respond 'tag -i dir-top add music' '@exit:1'
 mock_prompt '/top'
-mock_input y
+mock_input n y
 out=$(bash "$SCRIPT" music 2>"$MF_MOCK_DIR/err"); code=$?
 err=$(cat "$MF_MOCK_DIR/err")
 assert "tag failure: non-zero exit" [ "$code" -ne 0 ]
@@ -622,7 +655,7 @@ walk_children "" dir dir-top
 walk_path dir-top /top
 walk_counts 1 1
 mock_prompt '/top'
-mock_input @fail
+mock_input n @fail      # the scope is answered, the walk's question fails
 out=$(bash "$SCRIPT" music 2>"$MF_MOCK_DIR/err"); code=$?
 err=$(cat "$MF_MOCK_DIR/err")
 assert_contains "unanswerable: explains itself" "$err" "could not be answered"
@@ -639,7 +672,7 @@ walk_children "" file file-a
 walk_path file-a /top/a.txt
 walk_counts 1 1
 mock_prompt '/top'
-mock_input y
+mock_input n y
 bash "$SCRIPT" music >/dev/null; code=$?
 assert "orphan: exits 0" [ "$code" -eq 0 ]
 unfiltered=$(mock_calls_matching 'metarecord -q * get --sort*' | grep -vc 'mfr_path IS PRESENT' || true)
@@ -658,7 +691,7 @@ walk_children "" leaf link-a
 walk_path link-a /top/a.lnk
 walk_counts 1 1
 mock_prompt '/top'
-mock_input y
+mock_input n y
 out=$(bash "$SCRIPT" music); code=$?
 assert "symlink: exits 0" [ "$code" -eq 0 ]
 assert "symlink: the leaf query asks for everything that is not a folder" \
@@ -679,20 +712,24 @@ walk_descendants "" ghost
 walk_path ghost /ghost.txt
 walk_counts 1
 mock_prompt '/top'
+mock_input n             # the scope: the query, then the folder
 out=$(bash "$SCRIPT" music 2>&1); code=$?
 assert "stuck descent: non-zero exit" [ "$code" -ne 0 ]
 assert_contains "stuck descent: names the entry it cannot reach" "$out" "/ghost.txt"
-assert "stuck descent: nothing was asked" [ "$(mock_count 'gui input*')" -eq 0 ]
+assert "stuck descent: nothing was asked" \
+    [ "$(mock_count 'gui input --prompt *has tag*')" -eq 0 ]
 
 # ── Case 26: an empty scope is refused before the first question ────────────
 mock_reset
 setup_top
 walk_counts 0 0          # nothing open, and nothing in the scope either
 mock_prompt '/top'
+mock_input n             # the scope: the query, then the folder
 out=$(bash "$SCRIPT" music 2>&1); code=$?
 assert "empty: non-zero exit" [ "$code" -ne 0 ]
 assert_contains "empty: says the query matches nothing" "$out" "no tracked metarecord"
-assert "empty: nothing is asked" [ "$(mock_count 'gui input*')" -eq 0 ]
+assert "empty: nothing is asked" \
+    [ "$(mock_count 'gui input --prompt *has tag*')" -eq 0 ]
 
 # ── Case 27: a fully decided scope is a finished run, not an empty query ────
 # What a resumed walk looks like once there is nothing left: the scope holds
@@ -702,10 +739,12 @@ mock_reset
 setup_top
 walk_counts 0 4          # nothing open, but four records in the scope
 mock_prompt '/top'
+mock_input n             # the scope: the query, then the folder
 out=$(bash "$SCRIPT" music); code=$?
 assert "decided: exits 0" [ "$code" -eq 0 ]
 assert_contains "decided: says the query is fully decided" "$out" "nothing left to ask"
-assert "decided: nothing is asked" [ "$(mock_count 'gui input*')" -eq 0 ]
+assert "decided: nothing is asked" \
+    [ "$(mock_count 'gui input --prompt *has tag*')" -eq 0 ]
 assert "decided: the scope is counted only when the open set is empty" \
     [ "$(mock_count 'metarecord -q *mfr_path IS PRESENT get --count')" -eq 2 ]
 
@@ -724,7 +763,7 @@ mock_respond 'path file-a' '/abs/a.txt'   # the first entry previews fine
 # does for a record it cannot resolve.
 walk_counts 2 2 1
 mock_prompt '/top'
-mock_input y y
+mock_input n y y
 bash "$SCRIPT" music >/dev/null; code=$?
 assert "unresolved preview: exits 0" [ "$code" -eq 0 ]
 assert "unresolved preview: the resolvable entry is shown" \
@@ -732,6 +771,6 @@ assert "unresolved preview: the resolvable entry is shown" \
 assert "unresolved preview: the unresolvable one clears the panel" \
     [ "$(mock_count 'gui view left file --path ')" -eq 1 ]
 assert "unresolved preview: both questions were asked" \
-    [ "$(mock_count 'gui input*')" -eq 2 ]
+    [ "$(mock_count 'gui input*')" -eq 3 ]  # the scope question, then two entries
 
 assert_summary

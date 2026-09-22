@@ -16,9 +16,11 @@
 # Skipped files come back on the next run.
 #
 # THE QUERY IS THE SCOPE (spec-gui "A query is the scope"), as in
-# gui-tag-folder.sh: given as the argument, else what the GUI shows
-# (`mf gui query`), else a folder chosen from the completion. An empty query is
-# every file, which is what this script used to do unconditionally.
+# gui-tag-folder.sh: given as the argument, else ASKED — the checked
+# selection, or the query the list shows, like the GUI's bulk commands; when
+# the list has published nothing, a folder chosen from the completion. An
+# empty query is every file, which is what this script used to do
+# unconditionally.
 #
 # Both arguments are optional: a missing tag is asked in the GUI with
 # completion over the vocabulary, a missing query resolved as above.

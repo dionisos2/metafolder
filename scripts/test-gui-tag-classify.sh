@@ -100,7 +100,7 @@ mock_reset
 G='mfr_type = "file"'
 setup_common "$G"
 mock_respond "metarecord -q $G get --sort mfr_path*" 'rec-1'
-mock_input q
+mock_input n q
 out=$(bash "$SCRIPT"); code=$?
 assert "gui scope: exits 0" [ "$code" -eq 0 ]
 assert "gui scope: asks the GUI what it shows" [ "$(mock_count 'gui query')" -ge 1 ]
@@ -108,13 +108,35 @@ assert "gui scope: no folder prompt when one is published" \
     [ "$(mock_count 'gui prompt*')" -eq 0 ]
 assert_contains "gui scope: classifies the matching record" "$out" "rec-1"
 
+# ── Case 5b: answering y targets the checked selection ──────────────────────
+mock_reset
+setup_common
+mock_respond 'gui selected' 'rec-1'
+mock_input y q            # the scope: the selection; then stop the walk
+out=$(bash "$SCRIPT"); code=$?
+assert "selected: exits 0" [ "$code" -eq 0 ]
+assert "selected: the scope is the checked record's UUID" \
+    [ "$(mock_count 'metarecord -q rec-1 get --sort mfr_path*')" -ge 1 ]
+assert "selected: the list's query is never read" [ "$(mock_count 'gui query')" -eq 0 ]
+assert_contains "selected: classifies the checked record" "$out" "rec-1"
+
+# ── Case 5c: y on an empty selection is a refusal, never the query ──────────
+mock_reset
+setup_common
+mock_respond 'gui selected' ''
+mock_input y              # the scope: the selection — which is empty
+err=$(bash "$SCRIPT" 2>&1 >/dev/null); code=$?
+assert "no selection: non-zero exit" [ "$code" -ne 0 ]
+assert_contains "no selection: says nothing is checked" "$err" "nothing is checked"
+assert "no selection: the list's query is never read" [ "$(mock_count 'gui query')" -eq 0 ]
+
 # ── Case 6: nothing published falls back to the folder completion ───────────
 mock_reset
 setup_common
 mock_respond 'metarecord -q mfr_type = "dir" get*' '/some/dir'      # completion
 mock_respond 'metarecord -q mfr_path =>* "/some/dir" get --sort mfr_path*' 'rec-1'
 mock_prompt '/some/dir'
-mock_input q
+mock_input n q
 out=$(bash "$SCRIPT"); code=$?
 assert "fallback: exits 0" [ "$code" -eq 0 ]
 assert "fallback: the folder becomes an inclusive-subtree query" \
@@ -124,6 +146,7 @@ assert "fallback: the folder becomes an inclusive-subtree query" \
 mock_reset
 setup_common
 mock_respond 'metarecord -q mfr_type = "dir" get*' '/some/dir'
+mock_input n              # the scope: the query, then the folder
 mock_prompt @cancel
 err=$(bash "$SCRIPT" 2>&1 >/dev/null); code=$?
 assert "prompt-cancel: non-zero exit" [ "$code" -ne 0 ]

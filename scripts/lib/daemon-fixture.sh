@@ -105,13 +105,18 @@ case "$sig" in
                        printf '%s\n' "$v"; exit 0
                    fi
                    exit 1 ;;
-    "gui query"*)  # What the GUI is showing. Nothing is published unless a
+    "gui query"*)  # What the list is showing. Nothing is published unless a
                    # test says so (`hy_query`), and "nothing published" is an
                    # EXIT 1 — distinct from the empty line that means "every
                    # metarecord", which would silently widen a script's scope to
                    # the whole repository.
                    [ -f "$HY_DIR/query" ] || exit 1
                    cat "$HY_DIR/query"; exit 0 ;;
+    "gui selected"*)  # The checked records, one UUID per line; nothing checked
+                      # (or no list at all) prints nothing, exit 0 — a real
+                      # state, set with `hy_selected`.
+                      [ -f "$HY_DIR/selected" ] && cat "$HY_DIR/selected"
+                      exit 0 ;;
     "gui "*)       exit 0 ;;   # layout/view/message/workspace: no-op success
     *)             exec "$HYBRID_REAL_MF" -p "$HYBRID_PORT" "$@" ;;
 esac
@@ -120,10 +125,13 @@ SHIM
     PATH="$bin:$PATH"; export PATH
 }
 
-hy_reset() { : >"$HY_DIR/log"; rm -f "$HY_DIR/input" "$HY_DIR/prompt" "$HY_DIR/query"; }
+hy_reset() { : >"$HY_DIR/log"; rm -f "$HY_DIR/input" "$HY_DIR/prompt" "$HY_DIR/query" "$HY_DIR/selected"; }
 # What `mf gui query` answers (the query the GUI is showing). Unset = exit 1,
 # "nothing published"; an empty string = the empty query, every metarecord.
 hy_query() { printf '%s\n' "${1-}" >"$HY_DIR/query"; }
+# What `mf gui selected` answers (the checked UUIDs, one per line). Unset =
+# nothing printed; the empty value means nothing is checked.
+hy_selected() { if [ $# -gt 0 ]; then printf '%s\n' "$@" >"$HY_DIR/selected"; else rm -f "$HY_DIR/selected"; fi; }
 hy_input() { local k; for k in "$@"; do printf '%s\n' "$k" >>"$HY_DIR/input"; done; }
 hy_prompt() { local v; for v in "$@"; do printf '%s\n' "$v" >>"$HY_DIR/prompt"; done; }
 hy_log() { cat "$HY_DIR/log"; }

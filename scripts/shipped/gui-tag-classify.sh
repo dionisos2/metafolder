@@ -24,8 +24,9 @@
 # left to ask.
 #
 # THE QUERY IS THE SCOPE (spec-gui "A query is the scope"), as in the other
-# shipped scripts: given as the argument, else what the GUI shows
-# (`mf gui query`), else a folder chosen from the completion. `q` on any
+# shipped scripts: given as the argument, else ASKED — the checked selection,
+# or the query the list shows, like the GUI's bulk commands; when the list has
+# published nothing, a folder chosen from the completion. `q` on any
 # question stops the whole run, not just the record being classified.
 #
 # A bare UUID is a valid query (spec-query, the UUID-atom bullet), so the old
