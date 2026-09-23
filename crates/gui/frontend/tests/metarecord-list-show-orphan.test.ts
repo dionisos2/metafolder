@@ -144,7 +144,7 @@ async function mountPanel() {
     invoke: async (name: string, ...args: unknown[]) => {
       const h = handlers.get(name);
       if (!h) throw new Error(`command not registered: ${name}`);
-      await (h as (...a: unknown[]) => unknown)(...args);
+      await h(...args);
     },
   };
 }

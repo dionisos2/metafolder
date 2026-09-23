@@ -62,7 +62,7 @@ export async function loadUserCommands(): Promise<string[]> {
     { guiServer: base, sessionToken: store.sessionToken, focusedWs },
   );
   const names = await installUserCommands(module.default, api, (name, label, log) =>
-    invoke('register_user_command', { name, label, log }) as Promise<void>,
+    invoke('register_user_command', { name, label, log }),
   );
   await refreshCommands();
   return names;

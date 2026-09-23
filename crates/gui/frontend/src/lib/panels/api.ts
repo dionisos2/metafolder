@@ -127,24 +127,26 @@ export function createUserCommandApi(
     } as unknown as VisibilityGate,
   });
 
-  const {
-    panelType: _panelType,
-    pageSize: _pageSize,
-    defaults: _defaults,
-    visible: _visible,
-    onVisibility: _onVisibility,
-    whenVisible: _whenVisible,
-    ...rest
-  } = api as MetafolderApi & Record<string, unknown>;
+  // The panel-only members (`panelType`, `pageSize`, `defaults`, the visibility
+  // gate) are dropped rather than faked. Spread-and-delete rather than
+  // omit-destructuring: pulling a method out just to discard it is a detached
+  // method reference, which is exactly what `unbound-method` is about.
+  const rest = { ...(api as MetafolderApi & Record<string, unknown>) };
+  for (const key of ['panelType', 'pageSize', 'defaults', 'visible', 'onVisibility', 'whenVisible']) {
+    delete rest[key];
+  }
 
   return withTopLevelInvoke({
     ...rest,
-    commands: { invoke: api.commands.invoke, keybindings: api.commands.keybindings },
+    commands: {
+      invoke: (invocation: string) => api.commands.invoke(invocation),
+      keybindings: () => api.commands.keybindings(),
+    },
     addKeybinding: (invocation: string, combo: string, options: { when?: string } = {}) =>
       // Global unless the definition says otherwise: there is no panel whose
       // focus could scope it.
       api.addKeybinding(invocation, combo, { ...options, when: options.when ?? undefined }),
-  } as unknown as MetafolderApi & { commands: { invoke: (i: string) => unknown } }) as MetafolderApi;
+  } as unknown as MetafolderApi & { commands: { invoke: (i: string) => unknown } });
 }
 
 export function createPanelApi(deps: PanelApiDeps, ctx: PanelApiCtx): PanelApiInstance {
