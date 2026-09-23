@@ -9,7 +9,7 @@ import {
   installDefaultContextMenu,
 } from '../../../panel-shim/menu.js';
 import { resolveClickTopic } from '../../../panel-shim/help.js';
-import { deepActiveElement, dispatch, hasEditingTarget, setFullscreen } from './commands';
+import { deepActiveElement, dispatch, hasEditingTarget, setFullscreen, status } from './commands';
 import { setHelpCursor } from './cursor';
 import {
   activeQuestion,
@@ -19,6 +19,7 @@ import {
   slotPayload,
   store,
 } from './store.svelte';
+import { describeKeyStep } from './describeKey';
 import type { SlotId } from './types';
 
 // The shell owns the single default context menu now (panels no longer run in
@@ -71,6 +72,12 @@ export function focusScope(path: EventTarget[]): string | null {
   return null;
 }
 
+/** The registry description of a command name (empty for a shell invocation or
+ *  a name nothing registered), for the `help:key` report. */
+function commandLabel(name: string): string {
+  return store.commands.find((command) => command.name === name)?.label ?? '';
+}
+
 /** Ends the help-cursor mode and restores the normal pointer. */
 function deactivateHelpCursor() {
   store.ui.helpCursorActive = false;
@@ -96,6 +103,46 @@ export function installKeys() {
         event.preventDefault();
         event.stopPropagation();
         deactivateHelpCursor();
+        return;
+      }
+      // A `help:key` describe wait (spec-gui "Help"): the next key sequence is
+      // swallowed and reported on — what it runs, or that it runs nothing —
+      // instead of dispatched. The lookup sees the context the key arrived in,
+      // so the answer is what the key *would* have done. Escape cancels the
+      // wait here, ahead of the fullscreen escape below, for the reason the
+      // help cursor sits there too: the wait is the user's most recent
+      // instruction and the arm message promises escape cancels it.
+      if (store.ui.describeKeys !== null) {
+        const combo = comboFromEvent(event);
+        if (!combo) return; // a modifier alone is not a key yet
+        event.preventDefault();
+        event.stopPropagation();
+        const path = event.composedPath();
+        const target = (path[0] as Element | undefined) ?? document.activeElement;
+        const step = describeKeyStep(
+          store.ui.describeKeys,
+          combo,
+          store.keytable,
+          {
+            panelType: focusedPanelType(),
+            textInput: inTextInputContext(target),
+            focus: focusScope(path),
+          },
+          commandLabel,
+        );
+        if ('pending' in step) {
+          // A sequence in progress: show its continuations in the hint strip,
+          // exactly as a real pending combo does.
+          store.ui.describeKeys = step.keys;
+          store.ui.pendingKeys = { prefix: step.keys, candidates: step.candidates };
+          return;
+        }
+        store.ui.describeKeys = null;
+        store.ui.pendingKeys = null;
+        // The report is content worth keeping (status bar and message log);
+        // the cancellation is a notice.
+        if ('reported' in step) void status(step.message, 'info');
+        else flashStatus('describe key cancelled');
         return;
       }
       // Escape always leaves fullscreen first (even from inside a panel

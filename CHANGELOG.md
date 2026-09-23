@@ -14,6 +14,15 @@ than breaking them.
 ## [Unreleased]
 
 ### Added
+- **`help:key` describes a key — Emacs `C-h k`.** Press `h k` (or run
+  `help:key`), then the shortcut in question: the shell reports the command
+  that key runs *in the current context* — its invocation and its description —
+  or that it is not bound to any command, naming the contexts it does work in
+  when the exclusion is only contextual (a `file-manager` shortcut asked about
+  from another panel reads "not bound here (elsewhere: file-manager:find in
+  file-manager, …)" rather than simply unbound). Sequences are read whole
+  (`t l`, with the usual continuation hint), escape cancels, and the answer
+  lands in the status bar and the message log (spec-gui "Help").
 - **Watched-or-not is visible where files are.** "Is this file watched?" used
   to mean re-implementing the tracking algorithm in one's head and still
   missing the cases eligibility cannot see — a watch budget exclusion, an

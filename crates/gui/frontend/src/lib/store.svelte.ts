@@ -62,6 +62,11 @@ export const store = $state({
     /// Active while `help:cursor` waits for a click to resolve to a help
     /// topic; the next click (or escape) ends it. Drives the `?` cursor.
     helpCursorActive: false,
+    /// Non-null while `help:key` waits for the key to describe (spec-gui
+    /// "Help"): the combo sequence typed so far (a pending sequence
+    /// accumulates, its continuations in `pendingKeys`). The next key is
+    /// reported on instead of dispatched; escape cancels the wait.
+    describeKeys: null as string[] | null,
     configOpen: false,
     configInfo: null as ConfigInfo | null,
     /// Non-null while a prompt waits for the input — a script's

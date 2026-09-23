@@ -1299,6 +1299,7 @@ Behaviours:
 | =help=               | Open the =help= panel (alias of =help:open=)   |
 | =help:open [text]=   | Open the =help= panel for a topic (an exact name opens its page; else search) |
 | =help:cursor=   | Turn the pointer into =?=; the next click opens the matching help page (escape cancels) |
+| =help:key=   | Describe what a key runs: wait for the key combo and report its invocation and description — or that it is unbound (default =h k=) |
 | =config:open=        | Open settings (keybindings, style, daemon URL) |
 | =config:reload <what>= | Re-read user configuration without a restart — see [[*Reloading configuration]] |
 | =user:*=             | Whatever =~/.config/metafolder/gui/commands.js= defines — see [[*User commands]] |
@@ -1596,7 +1597,7 @@ query rather than a loaded list, so =f= there edits the *finder* (see [[*Finder
 
 ** Help
 
-In-app help is a dedicated =help= panel type plus three shell builtins. The
+In-app help is a dedicated =help= panel type plus four shell builtins. The
 builtins are *builtins* (not panel commands) so they work before the help panel
 has ever been mounted.
 
@@ -1616,6 +1617,20 @@ has ever been mounted.
   =data-slot-body= gives the clicked slot's panel type. Shell chrome and panels
   tag their zones with =data-help-topic= (e.g. the metarecord-list query box →
   =focus-query=); everything else falls back to its panel type's page.
+- =help:key= (default =h k=) is the Emacs =C-h k=: it waits for a key combo and
+  *describes it*. The combo — a multi-key sequence counts, its possible
+  continuations shown in the hint strip while one is pending, exactly like a
+  real binding — is swallowed and looked up in the live keybinding table, in
+  the context it arrived in (the focused panel type, the focus scope, whether a
+  text input is active), so the answer is what the key *would do now*. It is
+  posted to the status bar (and so lands in the [[*Message view][message log]]):
+  =<combo> runs <invocation>= followed by the command's description, or
+  =<combo> is not bound to any command= — followed, when the combo does bind
+  commands in *other* contexts, by those invocations and the scope that keeps
+  them out of this one (=elsewhere: file-manager:find in file-manager, …=), so
+  a panel-local shortcut does not read as unbound from another panel. Escape
+  cancels the wait. Arming =help:key= and =help:cursor= dismisses the other —
+  one help gesture at a time.
 
 The =help= panel renders a set of static HTML pages (=panel-types/help/pages/=,
 described by =pages/index.json= as ={id, title, file, aliases[]}=) with a grep

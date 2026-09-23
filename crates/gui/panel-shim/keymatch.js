@@ -89,6 +89,76 @@ export function comboFromEvent(event) {
  * @typedef {{panelType?: string|null, textInput?: boolean, focus?: string|null}} MatchContext
  */
 
+/** @param {unknown} value */
+const has = (value) => value !== null && value !== undefined;
+
+/** @param {Binding} binding @param {MatchContext} context */
+function eligible(binding, context) {
+  // A focus-scoped binding targets one named widget (e.g. the finder input):
+  // it fires only while that widget is focused, and does so regardless of the
+  // text-input gate (the widget is usually an input itself). It may still
+  // narrow to a panel type via `when`.
+  if (has(binding.focus)) {
+    if (binding.focus !== (context.focus ?? null)) return false;
+    return !has(binding.when) || binding.when === context.panelType;
+  }
+  if (context.textInput && !binding.text_input) return false;
+  if (has(binding.when)) return binding.when === context.panelType;
+  return true;
+}
+
+// Lower rank = higher precedence. Focus dominates panel-locality, which
+// dominates global; text-input=false beats text-input=true within a tier.
+/** @param {Binding} binding */
+function rank(binding) {
+  const focus = has(binding.focus) ? 0 : 4;
+  const local = has(binding.when) ? 0 : 2;
+  const strict = binding.text_input ? 1 : 0;
+  return focus + local + strict;
+}
+
+/** @param {string[]} a @param {string[]} b */
+function sameKeys(a, b) {
+  return a.length === b.length && a.every((key, index) => key === b[index]);
+}
+
+/** @param {string[]} keys @param {string[]} prefix */
+function startsWith(keys, prefix) {
+  return keys.length > prefix.length && prefix.every((key, index) => key === keys[index]);
+}
+
+/**
+ * Everything one combo sequence can mean in `context`, answered at once — the
+ * shared core of `createMatcher` (which projects it to its `MatchResult`) and
+ * of the `help:key` describe lookup (spec-gui "Help"):
+ *
+ *  - `fired`: the binding that would run now (best precedence first);
+ *  - `pending`: the bindings that would keep a longer sequence going;
+ *  - `elsewhere`: same-combo bindings excluded by their scope (`when`, `focus`
+ *    or the text-input gate) — bound, but not *here*.
+ *
+ * An exact match wins over a longer sequence, as everywhere else: a combo in
+ * progress never outbids a key that simply fires.
+ *
+ * @param {Binding[]} bindings
+ * @param {string[]} keys a whole combo sequence, in order
+ * @param {MatchContext} context
+ * @returns {{fired: Binding|null, pending: Binding[], elsewhere: Binding[]}}
+ */
+export function lookupKeys(bindings, keys, context) {
+  const eligibles = bindings.filter((binding) => eligible(binding, context));
+  const exact = eligibles
+    .filter((binding) => sameKeys(binding.keys, keys))
+    .sort((a, b) => rank(a) - rank(b));
+  return {
+    fired: exact[0] ?? null,
+    pending: eligibles.filter((binding) => startsWith(binding.keys, keys)),
+    elsewhere: bindings.filter(
+      (binding) => sameKeys(binding.keys, keys) && !eligible(binding, context),
+    ),
+  };
+}
+
 /** @param {Binding[]} [bindings] */
 export function createMatcher(bindings) {
   let table = bindings ?? [];
@@ -96,54 +166,11 @@ export function createMatcher(bindings) {
   /** @type {string[]} */
   let buffer = [];
 
-  /** @param {unknown} value */
-  const has = (value) => value !== null && value !== undefined;
-
-  /** @param {Binding} binding @param {MatchContext} context */
-  function eligible(binding, context) {
-    // A focus-scoped binding targets one named widget (e.g. the finder input):
-    // it fires only while that widget is focused, and does so regardless of the
-    // text-input gate (the widget is usually an input itself). It may still
-    // narrow to a panel type via `when`.
-    if (has(binding.focus)) {
-      if (binding.focus !== (context.focus ?? null)) return false;
-      return !has(binding.when) || binding.when === context.panelType;
-    }
-    if (context.textInput && !binding.text_input) return false;
-    if (has(binding.when)) return binding.when === context.panelType;
-    return true;
-  }
-
-  // Lower rank = higher precedence. Focus dominates panel-locality, which
-  // dominates global; text-input=false beats text-input=true within a tier.
-  /** @param {Binding} binding */
-  function rank(binding) {
-    const focus = has(binding.focus) ? 0 : 4;
-    const local = has(binding.when) ? 0 : 2;
-    const strict = binding.text_input ? 1 : 0;
-    return focus + local + strict;
-  }
-
-  /** @param {string[]} a @param {string[]} b */
-  function sameKeys(a, b) {
-    return a.length === b.length && a.every((key, index) => key === b[index]);
-  }
-
-  /** @param {string[]} keys @param {string[]} prefix */
-  function startsWith(keys, prefix) {
-    return keys.length > prefix.length && prefix.every((key, index) => key === keys[index]);
-  }
-
   /** @param {string[]} keys @param {MatchContext} context @returns {MatchResult|null} */
   function tryMatch(keys, context) {
-    const eligibles = table.filter((binding) => eligible(binding, context));
-    const exact = eligibles
-      .filter((binding) => sameKeys(binding.keys, keys))
-      .sort((a, b) => rank(a) - rank(b));
-    if (exact.length > 0) return { invocation: exact[0].invocation };
-    /** @type {Binding[]} */
-    const candidates = eligibles.filter((binding) => startsWith(binding.keys, keys));
-    if (candidates.length > 0) return { pending: true, prefix: keys, candidates };
+    const { fired, pending } = lookupKeys(table, keys, context);
+    if (fired) return { invocation: fired.invocation };
+    if (pending.length > 0) return { pending: true, prefix: keys, candidates: pending };
     return null;
   }
 

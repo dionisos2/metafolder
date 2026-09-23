@@ -102,6 +102,7 @@
 # Help (spec-gui "Help"). "h" then a letter; F1 also arms the help cursor.
 "h h" = { command = "help:open" }
 "h c" = { command = "help:cursor" }
+"h k" = { command = "help:key" }
 "f1" = { command = "help:cursor", text-input = true }
 
 # Go to a recently-viewed metarecord ("g" = go): opens the `recent` picker in

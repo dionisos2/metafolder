@@ -11,7 +11,7 @@ import { ignorePresetCandidates, ignoreTarget, resolvePresetName, targetDir } fr
 import { invoke } from './ipc';
 import { type ExpandDeps, expandShellPlaceholders } from './placeholders';
 import { recentLine } from './recent';
-import { focusedWs, store, workspaceById } from './store.svelte';
+import { focusedWs, flashStatus, store, workspaceById } from './store.svelte';
 import { daemonWork } from './working';
 import type { CommandDef, LayoutView } from './types';
 
@@ -1154,7 +1154,9 @@ registerArgs('script:stop', [
 
 // ── Dispatch ───────────────────────────────────────────────────────────
 
-async function status(text: string, kind = 'error') {
+/** Posts a status message on the focused workspace's status bar (and so to
+ *  its message log). `keys.ts` reports a `help:key` answer through it. */
+export async function status(text: string, kind = 'error') {
   const ws = focusedWs();
   if (ws) await invoke('post_status', { wsId: ws, text, kind, timeoutMs: 5000 });
 }
@@ -1654,8 +1656,23 @@ async function runCommand(name: string, args: string[], ws: string | null): Prom
     }
     case 'help:cursor':
       // Arm the `?` cursor: the next click (or escape) is intercepted in keys.ts.
+      // One help gesture at a time: arming it drops a pending describe-key wait.
+      store.ui.describeKeys = null;
+      store.ui.pendingKeys = null;
       store.ui.helpCursorActive = true;
       setHelpCursor(true);
+      return true;
+    case 'help:key':
+      // Arm the describe-key wait (spec-gui "Help"): the next key combo is
+      // swallowed and reported on instead of dispatched. Like the help cursor
+      // above, it takes over from the other help gesture.
+      if (store.ui.helpCursorActive) {
+        store.ui.helpCursorActive = false;
+        setHelpCursor(false);
+      }
+      store.ui.describeKeys = [];
+      store.ui.pendingKeys = null;
+      flashStatus('Describe which key? (escape cancels)');
       return true;
     case 'daemon:set': {
       // `setting` and `value` were collected by dispatch (inline or in the
