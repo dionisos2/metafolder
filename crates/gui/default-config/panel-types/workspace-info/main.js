@@ -4,7 +4,7 @@
 
 import { byId, el } from '/__ui.js';
 
-const STANDARD = ['active_repo', 'selected_paths', 'selected_metarecord', 'selected_entries'];
+const STANDARD = ['active_repo', 'selected_paths', 'selected_metarecord', 'selected_metarecords'];
 
 /** @param {ShadowRoot} root @param {MetafolderApi} metafolder */
 export async function mount(root, metafolder) {

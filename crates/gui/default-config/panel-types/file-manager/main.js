@@ -5,6 +5,7 @@
 import { byId, el, fileTypeGlyph } from '/__ui.js';
 import { copyText } from '/__menu.js';
 import { createPagedList } from '/__paged-list.js';
+import { createMultiSelect } from '/__multi-select.js';
 import { latestOnly } from '/__coalesce.js';
 import { registerFind } from '/__find-entry.js';
 import {
@@ -99,6 +100,11 @@ export async function mount(root, metafolder) {
   let revealNonce = null;
 
   const entriesList = byId(root, 'entries');
+  // The checked multi-selection (workspace `selected_metarecords`, spec-gui
+  // "The checked selection"): the same workspace-wide set the metarecord list
+  // gathers and the bulk operations act on — checked rows of the disk view
+  // join it by their metarecord uuid.
+  const selection = createMultiSelect({ workspace, daemon, render });
   const placeholderElement = byId(root, 'placeholder');
   const mountBanner = byId(root, 'mount-banner');
   /** @type {Array<import('/__mounts.js').Mount>} the repo's declared mount
@@ -228,6 +234,10 @@ export async function mount(root, metafolder) {
     await enrichChildren(dirUuid);
     await refreshEligibility();
     await refreshMounts();
+    // The checked selection outlives the listings it was gathered in (checking
+    // rows in several places is what it is for) — but a metarecord that no
+    // longer exists is dropped, since it could never be shown or unchecked.
+    await selection.pruneVanished();
     render();
   }
 
@@ -275,6 +285,7 @@ export async function mount(root, metafolder) {
     entriesList.replaceChildren(
       ...listing.slice(0, rendered).map((item, index) => {
         const internal = isWithin(item.path, internalDir);
+        const uuid = trackedPaths.get(item.path);
         const ignored = ignoredPaths.get(item.path);
         const unmounted = offlineFor(item.path);
         const title = unmounted
@@ -290,7 +301,8 @@ export async function mount(root, metafolder) {
           {
             class: [
               index === cursorIndex && 'cursor',
-              trackedPaths.has(item.path) && 'tracked',
+              uuid && 'tracked',
+              uuid && selection.has(uuid) && 'checked',
               internal && 'internal',
               ignored && 'ignored',
               unmounted && 'unmounted',
@@ -338,10 +350,13 @@ export async function mount(root, metafolder) {
     );
 
     // Footer count excludes the synthetic "." / ".." rows, so it reflects
-    // the directory's actual entries (mirrors metarecord-list).
+    // the directory's actual entries (mirrors metarecord-list) — and carries
+    // the selection count, which may name rows of other lists too.
     const total = Math.max(0, listing.length - syntheticCount);
     const shown = Math.max(0, Math.min(rendered, listing.length) - syntheticCount);
-    statusLine.textContent = entriesFooter(shown, total);
+    statusLine.textContent =
+      entriesFooter(shown, total) +
+      (selection.count() > 0 ? ` — ${selection.count()} selected` : '');
   }
 
   // Held-arrow navigation must stay cheaper than the key-repeat rate, or key
@@ -397,6 +412,45 @@ export async function mount(root, metafolder) {
     else await select(index);
   }
 
+  // ── The checked multi-selection (spec-gui "The checked selection") ─────────
+  // The same workspace-wide set the metarecord list gathers (and the bulk
+  // operations act on), checked here by metarecord uuid. Only a row that HAS a
+  // metarecord can join it: an untracked entry has none to check, and tracking
+  // it first is the way (its row then offers the Metarecord actions too).
+
+  async function toggleChecked() {
+    const item = listing[cursorIndex];
+    if (!item) return;
+    const uuid = trackedPaths.get(item.path);
+    if (!uuid) {
+      void statusBar.message('no metarecord for this entry — track it first', statusMessageMs);
+      return;
+    }
+    await selection.toggle(uuid);
+  }
+
+  /** Check every tracked entry of the directory — "all" is the directory's
+   *  entries, as the footer counts them (the synthetic "." / ".." rows are
+   *  navigation), on top of whatever is already checked: the selection is
+   *  gathered across lists and panels. */
+  async function checkAll() {
+    /** @type {string[]} */
+    const uuids = [];
+    for (const item of listing.slice(syntheticCount)) {
+      const uuid = trackedPaths.get(item.path);
+      if (uuid) uuids.push(uuid);
+    }
+    if (uuids.length === 0) {
+      void statusBar.message('no tracked entry here — nothing to check', statusMessageMs);
+      return;
+    }
+    await selection.add(uuids);
+  }
+
+  async function clearChecked() {
+    await selection.clear();
+  }
+
   // Confirm a folder-path pick with `path` (spec-gui "Value picker"): publish it
   // as the selection and run the global confirm command, which hands it back to
   // the caller (e.g. the repos panel) as `pick_result`.
@@ -434,7 +488,22 @@ export async function mount(root, metafolder) {
     // above published the row as `selected_metarecord`, which the reveal commands read.
     const uuid = trackedPaths.get(item.path);
     if (repo && uuid) {
-      items.push(...metarecordMenuItems({ metafolder, uuid, hasFile: true, revealFolder: false }));
+      items.push(
+        ...metarecordMenuItems({
+          metafolder,
+          uuid,
+          hasFile: true,
+          revealFolder: false,
+          // Checking from the menu, as Space does from the keyboard: the row
+          // joins (or leaves) the checked selection the bulk operations act on.
+          trailing: [
+            {
+              label: selection.has(uuid) ? 'Remove from the selection' : 'Add to the selection',
+              action: () => void selection.toggle(uuid),
+            },
+          ],
+        }),
+      );
     }
     // Tracking a row creates its metarecord, so it joins that category — the
     // repeated header is how an untracked row opens it (same-named categories
@@ -1022,9 +1091,36 @@ export async function mount(root, metafolder) {
     handler: deleteSelected,
   });
 
+  /** @type {Record<string, () => unknown>} */
+  const FM_SELECTIONS = {
+    toggle: () => toggleChecked(),
+    all: () => checkAll(),
+    none: () => clearChecked(),
+  };
+
+  void commands.register('file-manager:select', {
+    label: 'File manager: change the checked multi-selection (toggle / all / none)',
+    args: [
+      {
+        name: 'what',
+        prompt: () => `Select what? (${Object.keys(FM_SELECTIONS).join(' / ')})`,
+        complete: () => Object.keys(FM_SELECTIONS),
+      },
+    ],
+    handler: (what) => {
+      const run = FM_SELECTIONS[what];
+      if (!run) throw new Error(`unknown selection: "${what ?? ''}"`);
+      return run();
+    },
+  });
+
   listingElement.addEventListener('contextmenu', backgroundMenu);
 
   // Keybindings for this panel live in keybindings.toml (when = "file-manager").
+
+  // Adopt the checked selection (shared with the metarecord list) before the
+  // first listing can paint its rows.
+  await selection.load();
 
   async function start() {
     repo = /** @type {string|null} */ ((await workspace.get('active_repo')) ?? null);

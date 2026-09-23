@@ -82,6 +82,21 @@
   set through the daemon's set/append/remove operations. Pair this panel with the
   <a data-help-page="metarecord-detail">detail panel</a> to inspect one record.
 </p>
+<h3>The checked selection</h3>
+<p>
+  <span data-mf-key="metarecord-list:select toggle">Space</span> checks (or
+  unchecks) the row under the cursor into the multi-selection the bulk
+  operations can target &mdash; <span data-mf-key="metarecord-list:select none">Ctrl+Space</span>
+  empties it. The selection is the workspace&rsquo;s, and it <em>accumulates</em>:
+  checks survive changing the query or the finder, so you can gather rows from
+  several lists (and from the
+  <a data-help-page="file-manager">file manager</a>, which checks its own rows
+  into the same set) before acting on them. A row that merely no longer matches
+  the current list stays checked &mdash; the footer says how many checks this
+  list carries. Only a metarecord that no longer exists at all is dropped. The
+  same actions sit in a row&rsquo;s right-click menu, and
+  <code>mf gui selected</code> prints the selection for a script.
+</p>
 
 <h2>Watched or not</h2>
 <p>

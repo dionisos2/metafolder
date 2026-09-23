@@ -69,6 +69,21 @@
         background: var(--mf-cursor, #39408c);
         box-shadow: inset 3px 0 0 var(--mf-accent, #4c56c4);
       }
+      /* Rows checked into the multi-selection (spec-gui "The checked
+         selection") — the same set the metarecord list gathers: their own
+         fill, plus the ✓ marker. The cursor's fill wins when it sits on a
+         checked row (the bar and the ✓ still say the row is checked). */
+      li.checked {
+        background: var(--mf-checked, #24402a);
+      }
+      li.checked.cursor {
+        background: var(--mf-cursor, #39408c);
+      }
+      li.checked .name::before {
+        content: '✓ ';
+        font-weight: bold;
+        color: var(--mf-ok, #56c44c);
+      }
       .icon {
         width: 1.5em;
         flex: none;

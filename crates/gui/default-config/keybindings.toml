@@ -326,14 +326,22 @@
 # toggles, and the only one of the pair that had no key.
 "ctrl+r" = { command = "file-manager:toggle root", when = "file-manager" }
 
-# metarecord-list: selection, finder, query editing.
+# metarecord-list: selection, finder, query editing. Space checks the row under
+# the cursor into the multi-selection — the workspace-wide set the bulk
+# operations act on (spec-gui "The checked selection"), kept when the list
+# changes so a selection can be gathered in several lists. The file manager
+# checks its own rows into the same set, hence its entry on the same keys.
 "space" = [
   { command = "metarecord-list:select toggle", when = "metarecord-list" },
+  { command = "file-manager:select toggle", when = "file-manager" },
   # In the file panel, space is the media player's play/pause (see the
   # transport section below).
   { command = "file:play-pause", when = "file" },
 ]
-"ctrl+space" = { command = "metarecord-list:select none", when = "metarecord-list" }
+"ctrl+space" = [
+  { command = "metarecord-list:select none", when = "metarecord-list" },
+  { command = "file-manager:select none", when = "file-manager" },
+]
 "ctrl+/" = { command = "metarecord-list:focus simplified", when = "metarecord-list" }
 
 # Editing the three search fields by chord (in addition to `/` and `ctrl+/`).

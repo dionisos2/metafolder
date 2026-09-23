@@ -174,7 +174,7 @@ Standard variables:
 | =active_repo=      | =string \vert null=           | UUID of the active repository      |
 | =selected_paths=   | =string[]=                    | Absolute paths of the highlighted filesystem metarecord (usually one; multiple if the metarecord has several =mfr_path= values) |
 | =selected_metarecord=   | =\{uuid, repo\} \vert null=   | Metadata metarecord for the highlighted path (null if untracked) |
-| =selected_metarecords= | =string[]=                    | UUIDs of all selected metarecords      |
+| =selected_metarecords= | =string[]=                    | UUIDs of the /checked/ metarecords — the multi-selection, kept across list changes and shared by every panel of the workspace (see [[*The checked selection]]) |
 | =selected_treeref= | =\{repo, field, uuid, path\} \vert null= | TreeRef node selected in the =treeref= panel |
 | =pick_request=     | =\{caller_ws, token, picker_slot, restore\} \vert null= | Set on a *picker* workspace at creation; marks it as a value picker linked back to =caller_ws=, with the slot to restore on close (see [[*Value picker]]) |
 | =pick_result=      | =\{token, uuid\} \vert \{token, path\} \vert \{token, cancelled\} \vert null= | Delivered to the *calling* workspace when a picker confirms (=uuid= or =path=, per the request's =result= kind) or cancels; the requesting form matches =token= and consumes it |
@@ -202,6 +202,37 @@ otherwise runs a whole session one answer behind.
 A panel may move =selected_metarecord= *alone* — following a reference in
 =metarecord-detail= is exactly that — and the =file= panel deliberately ignores
 it, keeping the file it was showing (see [[*Video playback position]]).
+
+*** The checked selection
+
+Where =selected_metarecord= names the one highlighted thing,
+=selected_metarecords= is a *set*: the metarecords checked for a bulk operation
+(the =selection= target of =metarecord:bulk= and of the bulk form's /Checked
+selection/ choice), printed for a script by =mf gui selected=. It belongs to the
+workspace and it *accumulates*:
+
+- Rows are checked with =Space= (=metarecord-list:select toggle= /
+  =file-manager:select toggle=) or from a row's right-click menu, in the
+  =metarecord-list= and in the =file-manager= alike. A file-manager row joins by
+  its metarecord's uuid; an *untracked* entry has none to check and says so
+  (tracking it first is the way).
+- The selection *survives changing the list*: a checked metarecord stays
+  checked when the query or the finder moves to another result, so a selection
+  can be gathered in several lists — and in the file manager — before anything
+  acts on it. =select all= checks every loaded row *on top of* what is already
+  checked ("all of this list", never a replacement of the whole selection);
+  =select none= (=Ctrl+Space=) empties it.
+- The one thing dropped from the selection is a metarecord that no longer
+  *exists* (deleted or trashed — from anywhere, the CLI included, so each panel
+  prunes against the daemon when its listing reloads): it could never be shown
+  or unchecked again. Merely leaving the current query drops nothing.
+- It names metarecords of one repository: switching the workspace to another
+  repository starts a new selection.
+
+Every panel of the workspace shows the set as it stands, wherever the change
+came from — a row checked in one panel lights up in the other — and reports its
+count (the =metarecord-list= footer adds how many of the checks its own rows
+carry).
 
 ** Value picker
 
@@ -1403,7 +1434,9 @@ Within =metarecord-list=:
 - =Enter= or =Right= switches the other slot to =metarecord-detail= (or =file= if
   =selected_paths= is non-empty), opening the slot if hidden. See
   [[*Cross-panel selection]].
-- =Space= toggles selection for multi-select (updates =selected_metarecords=).
+- =Space= checks/unchecks the row for the multi-selection (updates
+  =selected_metarecords=; see [[*The checked selection]] — the checks are kept
+  when the list changes).
 - =Ctrl+Space= clears the multi-selection (=metarecord-list:select none=,
   resets =selected_metarecords= to =[]=).
 
@@ -2265,7 +2298,10 @@ in the =metarecord-list:columns= and =metarecord-list:column-widths= workspace
 variables, so they survive the panel and can be set by scripts.
 
 Supports sorting by column, multi-selection (=selected_metarecords=), and full
-keyboard navigation.
+keyboard navigation. The multi-selection is the workspace's checked selection
+([[*The checked selection]]): it survives changing the list — a checked row the
+new query no longer matches stays checked, so a selection can be gathered in
+several lists — and the =file-manager= checks its rows into the same set.
 
 When the user moves the selection, =metarecord-list= writes the highlighted metarecord
 to =workspace.selected_metarecord= and sets =workspace.selected_paths= to the list
@@ -2715,7 +2751,11 @@ and never an error.
 *Selection*: moving the cursor sets =workspace.selected_paths= to a
 single-element list containing the highlighted path. If the path has an
 existing metadata metarecord in the active repo, =workspace.selected_metarecord= is also
-updated; otherwise it is set to =null=.
+updated; otherwise it is set to =null=. A *tracked* row can also be checked
+into =workspace.selected_metarecords= ([[*The checked selection]] — the
+multi-selection the =metarecord-list= gathers and the bulk
+operations act on, kept across lists): an untracked entry has no metarecord to
+check and says so rather than silently doing nothing.
 
 *Reveal*: the panel also honours a =file-manager:reveal-path= workspace variable
 (={ path, nonce }=), set by =file-manager:reveal= from another panel — it
@@ -2726,6 +2766,8 @@ file), and drops the root constraint if the target lies outside the repo. See
 *Keyboard*: =Up= / =Down= navigate; =Enter= expands a directory or confirms
 selection for a file; =Backspace= goes up one level; =/= jumps to the root and
 =Ctrl+H= shows/hides the dot-entries; =r= refreshes;
+=Space= checks/unchecks the highlighted entry for the multi-selection and
+=Ctrl+Space= clears it ([[*The checked selection]]);
 =Delete= deletes the highlighted entry; =F2= renames; =Ctrl+C= / =Ctrl+X= /
 =Ctrl+V= copy / cut / paste; =Ctrl+D= duplicates; =Ctrl+Shift+N= creates a
 folder.
@@ -2761,9 +2803,12 @@ panel; browsing the raw disk with no active repo, it is a permanent removal.
 Both are confirmed.
 
 *Context menu*: right-clicking a row moves the cursor there and opens an
-HTML menu ([[*Context menus]]): =Open= (directories), =Track= (disabled when
-there is no active repo, the path is already tracked, or it is outside the
-repo root), then the clipboard actions (=Cut=, =Copy=, =Paste=), =Rename…=,
+HTML menu ([[*Context menus]]). A tracked row opens with the shared *Metarecord*
+category (open in detail/file, copy UUID) and its checked-selection toggle
+(=Add to the selection= / =Remove from the selection=, [[*The checked
+selection]]). Then come =Open= (directories), =Track=
+(disabled when there is no active repo, the path is already tracked, or it is
+outside the repo root), the clipboard actions (=Cut=, =Copy=, =Paste=), =Rename…=,
 =Duplicate=, =Copy full path=, the delete action (=Move to trash= with a repo,
 else =Delete…=),
 and the directory-level =New folder…= / =New file…=. Right-clicking empty
@@ -2785,6 +2830,7 @@ space in the listing offers just =New folder…= / =New file…= / =Paste=.
 | =file-manager:paste=      | Paste the clipboard into the current directory (=Ctrl+V=; copy or move) |
 | =file-manager:delete=     | Delete the selected entry (=Delete=): to the repo trash when a repo is active, else permanently; confirmed. A *tracked* entry has its metarecords captured and deleted like any other trashing (spec-trash "What trashing does, in order") — the GUI is the path most deletions take, and must not be the one that still leaves orphans |
 | =file-manager:find=       | Move the cursor onto an entry of the current directory (=f=), its name collected in the command input — the shared list-panel find, see [[*Find an entry]]. Only the displayed directory is searched (hidden entries only when they are shown), and a directory is selected, not entered. |
+| =file-manager:select=     | Change the checked multi-selection (=toggle= / =all= / =none=): check/uncheck the highlighted entry's metarecord (=toggle=; an untracked entry has none and says so), check every tracked entry of the directory on top of what is already checked (=all=), or empty the selection (=none=) — the workspace-wide set shared with =metarecord-list=, see [[*The checked selection]] |
 
 *** =treeref= panel type
 

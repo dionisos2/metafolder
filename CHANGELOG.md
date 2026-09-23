@@ -34,7 +34,28 @@ than breaking them.
     the record's raw `mf_watch` field — a record inheriting
     `mf_watch = true` no longer reads as unwatched.
 
+### Changed
+- **The checked selection is gathered wherever the user is, and kept.** The
+  multi-selection (`selected_metarecords` — the `selection` target of
+  `metarecord:bulk` and of the bulk form, what `mf gui selected` prints) used
+  to be pruned to whatever the current query matched, so checking rows in one
+  list threw away every check made in the previous one. It now survives
+  changing the query or the finder: a selection can be gathered across several
+  lists before anything acts on it. The **file manager** checks its rows into
+  the same workspace-wide set — `Space`, `file-manager:select
+  <toggle|all|none>`, and a row's right-click menu — only rows that have a
+  metarecord; an untracked entry says so instead of silently doing nothing.
+  `select all` checks a list's rows *on top of* what is already checked ("all
+  of this list", never a replacement); `select none` (Ctrl+Space) still empties
+  it. The one thing dropped from the selection is a metarecord that no longer
+  exists (deleted or trashed from anywhere, the CLI included) — it could never
+  be shown or unchecked again (spec-gui "The checked selection").
+
 ### Fixed
+- **`workspace-info` listed a `selected_entries` variable that never existed.**
+  The standard one is `selected_metarecords` — the checked multi-selection —
+  which the panel now shows in the standard group instead of among the custom
+  keys.
 - **A command that takes arguments waits for them in the minibuffer.**
   `panel:set` typed bare used to fail with `unknown setting: ""` instead of
   offering its choices; it now asks which setting, then which panel type —

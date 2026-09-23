@@ -5,6 +5,7 @@ import { byId, el, fields, qs, thumbnail } from '/__ui.js';
 import { orphanState, orphanLabel } from '/__orphan.js';
 import { fetchMounts, offlineMountFor, relativeTo, unavailableLabel } from '/__mounts.js';
 import { createPagedList } from '/__paged-list.js';
+import { createMultiSelect } from '/__multi-select.js';
 import { createTypePicker, widgetFor, bulkSetBody, MATCH_ALL, createPickRunner } from '/__value-widget.js';
 import { createSelect } from '/__select.js';
 import {
@@ -153,8 +154,11 @@ export async function mount(root, metafolder) {
   /** @type {SortKey[]} */
   let sort = [];
   let cursorIndex = -1;
-  /** @type {Set<string>} multi-selection (uuids) */
-  let checked = new Set();
+  // The checked multi-selection (workspace `selected_metarecords`, spec-gui
+  // "The checked selection"): workspace-wide and shared with the file manager,
+  // kept across list changes — checking rows in several lists is what it is
+  // for. The rows shown here are only where it is seen and edited.
+  const selection = createMultiSelect({ workspace, daemon, render });
   let mode = 'table';
   /** @type {Map<string, Promise<OrphanState>>} uuid -> orphan state */
   let orphanCache = new Map();
@@ -413,6 +417,13 @@ export async function mount(root, metafolder) {
       // A reset fetch is a deliberate freshness point (query, refresh, display):
       // poll the change feed so stale cached data is dropped before we read.
       if (reset) await cache.sync(r);
+      if (reset) {
+        // The checked selection outlives the list it was gathered in, so
+        // nothing is dropped here for merely not matching the query — but a
+        // metarecord that no longer exists is (it could never be shown or
+        // unchecked again).
+        await selection.pruneVanished();
+      }
       /** @type {string|null} */
       let keepUuid = null;
       if (reset) {
@@ -467,12 +478,6 @@ export async function mount(root, metafolder) {
       await prepare(fetched); // pre-resolve display data; rendering stays sync
       if (reset) total = result.total;
       if (reset) {
-        // Drop checked metarecords that no longer match.
-        const alive = new Set(metarecords.map((e) => e.uuid));
-        if ([...checked].some((uuid) => !alive.has(uuid))) {
-          checked = new Set([...checked].filter((uuid) => alive.has(uuid)));
-          await workspace.set('selected_metarecords', [...checked]);
-        }
         const keepIndex =
           keepUuid === null ? -1 : metarecords.findIndex((e) => e.uuid === keepUuid);
         if (keepIndex >= 0) {
@@ -650,7 +655,7 @@ export async function mount(root, metafolder) {
             class: [
               'row',
               index === cursorIndex && 'cursor',
-              checked.has(metarecord.uuid) && 'checked',
+              selection.has(metarecord.uuid) && 'checked',
             ],
             onclick: () => setCursor(index),
             ondblclick: () => openSelected(),
@@ -670,7 +675,7 @@ export async function mount(root, metafolder) {
             class: [
               'card',
               index === cursorIndex && 'cursor',
-              checked.has(metarecord.uuid) && 'checked',
+              selection.has(metarecord.uuid) && 'checked',
             ],
             onclick: () => setCursor(index),
             ondblclick: () => openSelected(),
@@ -700,6 +705,10 @@ export async function mount(root, metafolder) {
       errorEl.textContent = `⚠ Could not load metarecords\n${fetchError}`;
     }
     statusLine.classList.toggle('error', fetchError !== null);
+    // The selection count is the workspace-wide one (checks gathered in other
+    // lists included); the parenthetical says how many of them are on screen.
+    const selectedShown = metarecords.reduce((n, m) => n + (selection.has(m.uuid) ? 1 : 0), 0);
+    const selectedTotal = selection.count();
     statusLine.textContent = fetchError !== null
       ? `⚠ ${fetchError}`
       : !queryRan
@@ -708,7 +717,10 @@ export async function mount(root, metafolder) {
             (total ?? metarecords.length) === 1 ? '' : 's'
           }` +
           (nextCursor ? ' (more available — scroll down)' : '') +
-          (checked.size > 0 ? ` — ${checked.size} selected` : '');
+          (selectedTotal > 0
+            ? ` — ${selectedTotal} selected` +
+              (selectedShown < selectedTotal ? ` (${selectedShown} in this list)` : '')
+            : '');
   }
 
   // ── Selection (workspace variables) ─────────────────────────────────────
@@ -758,25 +770,20 @@ export async function mount(root, metafolder) {
   async function toggleChecked() {
     const metarecord = metarecords[cursorIndex];
     if (!metarecord) return;
-    if (checked.has(metarecord.uuid)) checked.delete(metarecord.uuid);
-    else checked.add(metarecord.uuid);
-    render();
-    await workspace.set('selected_metarecords', [...checked]);
+    await selection.toggle(metarecord.uuid);
   }
 
-  /** Check every loaded row. The bulk commands then act on an explicit set
-   *  rather than on the query, which is what makes the confirmation exact. */
+  /** Check every loaded row, on top of whatever is already checked: the
+   *  selection is gathered across lists, so "all" means "all of this list" and
+   *  never drops an earlier check. The bulk commands then act on an explicit
+   *  set rather than on the query, which is what makes the confirmation
+   *  exact. */
   async function checkAll() {
-    checked = new Set(metarecords.map((e) => e.uuid));
-    render();
-    await workspace.set('selected_metarecords', [...checked]);
+    await selection.add(metarecords.map((e) => e.uuid));
   }
 
   async function clearChecked() {
-    if (checked.size === 0) return;
-    checked = new Set();
-    render();
-    await workspace.set('selected_metarecords', []);
+    await selection.clear();
   }
 
   async function openSelected() {
@@ -1601,6 +1608,14 @@ export async function mount(root, metafolder) {
       leading: picking
         ? [{ label: 'Pick this metarecord', action: () => void commands.invoke('pick:confirm') }]
         : [],
+      // Checking from the menu, as Space does from the keyboard: the row joins
+      // (or leaves) the checked selection the bulk operations act on.
+      trailing: [
+        {
+          label: selection.has(target.uuid) ? 'Remove from the selection' : 'Add to the selection',
+          action: () => void selection.toggle(target.uuid),
+        },
+      ],
     });
     if (repo && paths.length > 0) {
       // The "File" category (cut / copy / paste / rename / duplicate / move to
@@ -1638,10 +1653,9 @@ export async function mount(root, metafolder) {
       watchByUuid = new Map();
       mounts = [];
       void refreshMounts();
-      if (checked.size > 0) {
-        checked = new Set();
-        await workspace.set('selected_metarecords', []);
-      }
+      // The checked selection is not cleared here: /__multi-select.js owns the
+      // policy (a genuine repository *switch* clears it, adopting one on a
+      // fresh panel does not — a remount keeps what is already checked).
     }
     byId(root, 'no-repo').hidden = repo !== null;
     if (!queryInitialized) {
@@ -1731,6 +1745,9 @@ export async function mount(root, metafolder) {
   });
 
   setColumns(await workspace.get('metarecord-list:columns'));
+  // Adopt the checked selection (shared with the file manager, kept across
+  // list changes) before the first fetch can repaint the rows.
+  await selection.load();
   widths = /** @type {Record<string, number>} */ (
     (await workspace.get('metarecord-list:column-widths')) ?? {}
   );
