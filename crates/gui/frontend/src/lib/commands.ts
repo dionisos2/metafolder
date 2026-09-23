@@ -298,16 +298,12 @@ export function argSpecFor(name: string): ArgSpec[] | undefined {
   return panelArgs?.resolve(name) ?? argSpecs.get(name);
 }
 
-// Builtins that reopen the command input to collect a value but do not declare
-// an ArgSpec (they prefill/await input inside their handler). Kept here so the
-// autocomplete's "…" marker matches what actually happens.
-const MINIBUFFER_PROMPT_BUILTINS = new Set(['workspace:rename']);
-
 /** Whether invoking `invocation` reopens the minibuffer to collect input,
  *  rather than acting immediately (spec-gui "Command"). Drives the trailing
  *  "…" the autocomplete shows — the menu-item ellipsis convention. The signal
  *  is the interactive-argument mechanism (a registered ArgSpec, the minibuffer
- *  completion path) plus the few builtins that reopen the input by hand.
+ *  completion path): every command that takes arguments declares them, builtins
+ *  included, so this reads the declaration and nothing else.
  *
  *  It takes a whole invocation, not just a name, because the listing carries
  *  pre-filled entries: `metarecord:bulk selection set` still has a field and a
@@ -316,7 +312,7 @@ const MINIBUFFER_PROMPT_BUILTINS = new Set(['workspace:rename']);
 export function promptsForInput(invocation: string): boolean {
   const [name, ...args] = invocation.split(/\s+/).filter(Boolean);
   const specs = argSpecFor(name);
-  if (specs === undefined) return args.length === 0 && MINIBUFFER_PROMPT_BUILTINS.has(name);
+  if (specs === undefined) return false;
   // Walk the specs the way collectArgs will: the first one that survives
   // `when` and has no inline token behind it is a prompt.
   let used = 0;
@@ -1045,6 +1041,117 @@ export function setPanelDispatch(fn: PanelDispatch | null) {
   panelDispatch = fn;
 }
 
+// ── Builtin argument declarations (spec-gui "Command") ─────────────────
+// Every argument a builtin takes is declared here, like a panel command's, so
+// a missing one is collected in the minibuffer — with its completions — instead
+// of reaching the handler and failing there. `panel:set` typed bare asks which
+// setting, then which panel type; `panel:set type` supplies the first and asks
+// only the second. A required argument is asked for whenever the invocation
+// does not supply it; an `optional` one is the trailing modifier whose absence
+// is itself the documented meaning (`workspace:next` moves both panels,
+// `workspace:next slot` the focused one only) and is never asked for.
+
+registerArgs('command-input:focus', [
+  { name: 'mode', prompt: () => 'Which mode? (command / bash)', complete: () => ['command', 'bash'] },
+]);
+
+registerArgs('editing:goto', [
+  {
+    name: 'target',
+    prompt: () => 'Move the cursor where? (line-start / line-end)',
+    complete: () => ['line-start', 'line-end'],
+  },
+]);
+
+registerArgs('workspace:new', [
+  { name: 'repo', optional: true, prompt: () => 'On which repository? (empty: none)' },
+]);
+
+registerArgs('workspace:rename', [
+  {
+    name: 'name',
+    prompt: () => 'Rename the workspace to:',
+    initial: () => workspaceById(focusedWs())?.name ?? '',
+  },
+]);
+
+registerArgs('workspace:goto', [
+  {
+    name: 'workspace',
+    prompt: () => 'Go to which workspace?',
+    complete: () => store.workspaces.map((_, index) => String(index + 1)),
+  },
+]);
+
+registerArgs('workspace:next', [
+  { name: 'slot', optional: true, prompt: () => 'Scope? (slot: the focused slot only)' },
+]);
+
+registerArgs('workspace:prev', [
+  { name: 'slot', optional: true, prompt: () => 'Scope? (slot: the focused slot only)' },
+]);
+
+registerArgs('panel:toggle', [
+  {
+    name: 'flag',
+    prompt: () => 'Which flag? (split / fullscreen)',
+    complete: () => ['split', 'fullscreen'],
+  },
+]);
+
+registerArgs('panel:focus', [
+  {
+    name: 'slot',
+    prompt: () => 'Focus which slot? (next / left / right)',
+    complete: () => ['next', 'left', 'right'],
+  },
+]);
+
+registerArgs('panel:set', [
+  { name: 'setting', prompt: () => 'Which setting? (type)', complete: () => ['type'] },
+  {
+    name: 'value',
+    when: (prior) => prior[0] === 'type',
+    prompt: () => 'Which panel type?',
+    complete: () => [...store.panelTypes],
+  },
+]);
+
+registerArgs('panel:reveal', [
+  { name: 'type', prompt: () => 'Show which panel type?', complete: () => [...store.panelTypes] },
+]);
+
+registerArgs('mf:duplicate', [
+  { name: 'operation', prompt: () => 'Which operation? (scan)', complete: () => ['scan'] },
+]);
+
+registerArgs('daemon:set', [
+  { name: 'setting', prompt: () => 'Which setting? (url)', complete: () => ['url'] },
+  {
+    name: 'value',
+    when: (prior) => prior[0] === 'url',
+    prompt: () => 'New daemon URL:',
+    initial: () => store.daemonUrl,
+  },
+]);
+
+registerArgs('answer:send', [
+  {
+    name: 'value',
+    prompt: () => 'Answer with:',
+    complete: () => [...(store.ui.inputWait?.keys ?? [])],
+  },
+]);
+
+registerArgs('help', [{ name: 'topic', optional: true, prompt: () => 'Help on what?' }]);
+registerArgs('help:open', [{ name: 'topic', optional: true, prompt: () => 'Help on what?' }]);
+
+registerArgs('find:open', [{ name: 'text', optional: true, prompt: () => 'Find what?' }]);
+
+registerArgs('script:stop', [
+  { name: 'task', optional: true, prompt: () => 'Stop which script? (empty: the one asking)' },
+]);
+
 // ── Dispatch ───────────────────────────────────────────────────────────
 
 async function status(text: string, kind = 'error') {
@@ -1302,21 +1409,21 @@ async function runCommand(name: string, args: string[], ws: string | null): Prom
     case 'workspace:close':
       await invoke('workspace_close');
       return true;
-    case 'workspace:rename':
-      if (args.length === 0) {
-        // No name given: prefill the command input instead.
-        if (ws) store.inputDrafts[ws] = 'workspace:rename ';
-        store.ui.commandInputFocusTick += 1;
-        return true;
-      }
-      if (ws) await invoke('workspace_rename', { wsId: ws, name: args.join(' ') });
+    case 'workspace:rename': {
+      // The name was collected by dispatch (inline or in the minibuffer); as
+      // the last argument it absorbs the remaining tokens, so a name may
+      // contain spaces without quoting.
+      const name = args.join(' ');
+      if (ws) await invoke('workspace_rename', { wsId: ws, name });
       return true;
+    }
 
     case 'workspace:goto': {
       // The 1-based workspace position is the parameter (no longer baked
       // into the command name). Moves BOTH panels.
       const n = Number(args[0]);
-      if (Number.isInteger(n)) await invoke('workspace_goto', { n });
+      if (Number.isInteger(n) && n > 0) await invoke('workspace_goto', { n });
+      else await status(`not a workspace number: "${args[0] ?? ''}"`);
       return true;
     }
     // Bare, both panels move together so the two slots never drift onto
@@ -1550,13 +1657,25 @@ async function runCommand(name: string, args: string[], ws: string | null): Prom
       store.ui.helpCursorActive = true;
       setHelpCursor(true);
       return true;
-    case 'daemon:set url':
-      if (args[0]) {
-        const connected = await invoke<boolean>('daemon_set_url', { url: args[0] });
-        store.daemonUrl = args[0];
-        await status(`daemon URL set; ${connected ? 'connected' : 'unreachable'}`, 'info');
+    case 'daemon:set': {
+      // `setting` and `value` were collected by dispatch (inline or in the
+      // minibuffer). `url` is the only setting there is, but `set <setting>
+      // <value>` is the naming convention (spec-gui "Naming convention"), so
+      // the shape matches `panel:set`.
+      if (args[0] !== 'url') {
+        await status(`unknown setting: "${args[0] ?? ''}" (expected url)`);
+        return true;
       }
+      const url = args[1] ?? '';
+      if (url === '') {
+        await status('no daemon URL given');
+        return true;
+      }
+      const connected = await invoke<boolean>('daemon_set_url', { url });
+      store.daemonUrl = url;
+      await status(`daemon URL set; ${connected ? 'connected' : 'unreachable'}`, 'info');
       return true;
+    }
     case 'answer:send':
       // Resolves a script's POST /gui/input wait.
       await invoke('answer_send', { value: args.join(' ') });

@@ -115,17 +115,6 @@
     });
   });
 
-  // Pick up drafts injected by commands (e.g. bare `workspace:rename`). Suspended
-  // while a prompt owns the input, so an interactive argument's pre-filled
-  // `initial` value is not clobbered by a stale workspace draft.
-  $effect(() => {
-    const ws = currentWs;
-    if (promptText !== null) return;
-    if (ws !== null && store.inputDrafts[ws] !== undefined && !focused && mode === 'command') {
-      draft = store.inputDrafts[ws];
-    }
-  });
-
   /** command-input:focus command / command-input:focus bash: focus the always-visible
    *  input in the given mode, swapping the per-mode drafts. */
   function activate(target: 'command' | 'bash') {

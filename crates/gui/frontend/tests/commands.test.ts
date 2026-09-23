@@ -640,8 +640,8 @@ describe('promptsForInput', () => {
   // The autocomplete marks a command with a trailing "…" when invoking it
   // reopens the minibuffer to collect input (spec-gui "Command"): the same
   // ellipsis convention as menu items that open a dialog. The signal is the
-  // interactive-argument mechanism (a registered ArgSpec) plus the handful of
-  // builtins that reopen the input without declaring one.
+  // interactive-argument mechanism — a registered ArgSpec, which every command
+  // that takes arguments declares, builtins included.
   afterEach(() => clearArgSpecs());
 
   test('a command with a registered arg spec prompts', () => {
@@ -654,8 +654,13 @@ describe('promptsForInput', () => {
     expect(promptsForInput('never:registered')).toBe(false);
   });
 
-  test('builtins that reopen the minibuffer prompt without an arg spec', () => {
+  test('a builtin prompts through its declared arguments, like any other command', () => {
+    // `workspace:rename` used to be the exception — a builtin that reopened
+    // the input by hand without declaring anything. It declares its name like
+    // every other command now, so one mechanism drives the marker.
+    registerArgs('workspace:rename', [{ name: 'name', prompt: () => 'Rename to:' }]);
     expect(promptsForInput('workspace:rename')).toBe(true);
+    expect(promptsForInput('workspace:rename new name')).toBe(false);
   });
 });
 

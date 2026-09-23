@@ -48,6 +48,13 @@
     parameter in double quotes to keep its spaces, e.g.
     <code>workspace:rename "My music"</code>.
   </li>
+  <li>
+    A command that takes parameters and is invoked without them <strong>asks
+    for them</strong> in this same input, one at a time, each with its own
+    completion list: <code>panel:set</code> typed bare asks which setting, then
+    which panel type. A parameter you already typed is not asked again, and
+    <code>Escape</code> abandons the whole invocation.
+  </li>
 </ul>
 
 <h2>Editing keys</h2>

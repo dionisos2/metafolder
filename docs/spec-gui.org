@@ -303,8 +303,12 @@ invocation is echoed to the workspace [[*Message view][message panel]] as
 (=editing:*=, =command-input:focus command=) register with =log: false= so
 keystroke-level actions do not flood the log.
 
-A command may *declare its arguments*. Each declared argument carries up to
-four functions, all evaluated *lazily* when the argument is asked for (never
+A command may *declare its arguments* — and every command that takes arguments
+does, the shell builtins included, so an invocation that merely *omits* one is
+collected rather than refused (a bare =panel:set= asks which setting, then
+which panel type; =panel:set type= supplies the first and asks only the
+second). Each declared argument carries up to four functions, all evaluated
+*lazily* when the argument is asked for (never
 at registration) and all receiving the arguments already collected so far: a
 =prompt= (the text shown in the command input), an optional =initial= (a
 pre-filled, editable value — e.g. the current value of the field being
@@ -315,7 +319,12 @@ declared arguments are the union of what any operation takes, and the ones an
 operation has no use for are dropped — =metarecord:bulk delete= names no
 field, =metarecord:bulk unset= no value. Because it only ever sees *prior*
 arguments, it is always decidable by the time the argument is reached, and a
-dropped argument consumes no inline token either. Because =initial= is a function and not a constant, it
+dropped argument consumes no inline token either. An argument may instead be
+marked =optional=: it is a trailing modifier whose absence is itself the
+documented meaning (=workspace:next= moves both panels, =workspace:next slot=
+the focused one only), and it is never asked for. Only a trailing run of
+arguments can be optional, since the arguments are filled positionally.
+Because =initial= is a function and not a constant, it
 can read live state at the moment of the prompt. When a command with declared
 arguments is invoked with fewer parameters than declared (from a keybinding,
 the command input, or =POST /gui/command=), the command input collects the
@@ -337,10 +346,11 @@ The command-input autocomplete distinguishes the two kinds of command by the
 menu-item *ellipsis convention*: a command that, invoked bare, reopens the
 minibuffer to collect input shows a trailing =…= after its name; a command
 that acts immediately (selecting or opening a DOM element, toggling a panel)
-shows none. A command prompts when it declares arguments (the interactive
-collection above) or is one of the few builtins that reopen the input by hand
-(e.g. =workspace:rename=). The marker is display-only — it is not part of the
-command name written into the input when a suggestion is accepted.
+shows none. A command prompts when it declares arguments and the invocation
+lacks a required one (the interactive collection above) — there is no second
+mechanism, so a builtin that collects a value (=workspace:rename=) is marked
+exactly like a panel command that does. The marker is display-only — it is not
+part of the command name written into the input when a suggestion is accepted.
 
 *Dead keys.* A keybinding whose command does not exist runs nothing and says
 nothing, so a typo — or a command renamed out from under a personal
@@ -586,6 +596,11 @@ missing arguments in order, reusing the same prompt/autocomplete machinery as
 a script's =POST /gui/prompt= — the prompt character shows the argument's
 =prompt= text, the field is pre-filled with its =initial= value, and the
 suggestion list offers =complete='s candidates filtered like command names.
+This is the uniform answer to an incomplete invocation — the shell builtins
+included: =panel:set= asks which setting, then which panel type (completing
+over the installed panel types), =panel:set type= asks only the second, and
+=daemon:set url= asks only the URL. A wrong *value* (typed free, past the
+completions) is a different matter and stays the handler's error to name.
 Unlike command mode (where =Enter= always runs the typed text), a prompt
 =Enter= accepts the *highlighted completion* and advances to the next
 argument — no =Tab= needed. To submit a *new value* that is not in the list
@@ -1188,7 +1203,7 @@ Behaviours:
 
 | Command              | Description                                    |
 |----------------------+------------------------------------------------|
-| =daemon:set url=     | Change daemon URL                              |
+| =daemon:set url <url>= | Change daemon URL — the setting and the URL are asked in the minibuffer when not named |
 | =repos:open=         | Switch focused panel slot to =repos= for repo selection |
 | =repos:open-init=         | Open init-repo form                            |
 | =repos:load=              | Pick a folder and load the repository in it     |

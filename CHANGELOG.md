@@ -34,6 +34,27 @@ than breaking them.
     the record's raw `mf_watch` field — a record inheriting
     `mf_watch = true` no longer reads as unwatched.
 
+### Fixed
+- **A command that takes arguments waits for them in the minibuffer.**
+  `panel:set` typed bare used to fail with `unknown setting: ""` instead of
+  offering its choices; it now asks which setting, then which panel type —
+  completing over the installed panel types — and `panel:set type` supplies
+  the first and asks only the second. The shell builtins declare their
+  arguments like panel commands already did, so an incomplete invocation is
+  collected one argument at a time (`panel:reveal`, `panel:toggle`,
+  `panel:focus`, `editing:goto`, `command-input:focus`, `workspace:goto`,
+  `workspace:rename`, `mf:duplicate`, `daemon:set`, `answer:send`) rather than
+  erroring or silently doing nothing (spec-gui "Command"). A trailing
+  argument marked optional (`workspace:next slot`) is never asked for — its
+  absence is the documented default — and an argument supplied inline is never
+  re-asked.
+- **`daemon:set url …` reached no handler at all**: the dispatcher read
+  `daemon:set` as the name and `url` as its first argument, while the handler
+  matched on the literal `"daemon:set url"`. The setting is an argument, like
+  `panel:set`'s, so `daemon:set url <url>` runs and a bare `daemon:set` asks
+  for both. `workspace:goto` now also says when its argument is not a
+  workspace number, instead of doing nothing.
+
 ### Performance
 - **Reading the log back is bounded again.** A listing of the most recent
   operations read every row of the `revision` table to build its timestamp map,
