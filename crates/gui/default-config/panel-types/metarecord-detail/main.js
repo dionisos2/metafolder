@@ -1440,7 +1440,8 @@ export async function mount(root, metafolder) {
     try {
       const repo = await repoForAdd();
       if (!repo) return 'Target? (selection / query)';
-      const checked = ((await workspace.get('selected_metarecords')) ?? []).length;
+      const selected = /** @type {string[]} */ ((await workspace.get('selected_metarecords')) ?? []);
+      const checked = selected.length;
       const { count, all } = await bulkQueryTarget(repo);
       const matches = all ? `ALL metarecords (${count})` : `${count} matching`;
       return `Target? (selection = ${checked} checked · query = ${matches})`;
