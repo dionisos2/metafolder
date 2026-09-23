@@ -134,9 +134,10 @@ pub fn query(ctx: &GuiCtx, workspace: Option<&str>) -> Result<i32, CliError> {
         Some(id) => id.to_string(),
         None => focused_workspace(&ctx.client.get("/gui/status", &[])?)?.to_string(),
     };
-    let resp = ctx.client.get(&format!(
-        "/gui/workspaces/{workspace}/vars/metarecord-list:effective-query-text"
-    ), &[])?;
+    let resp = ctx.client.get(
+        &format!("/gui/workspaces/{workspace}/vars/metarecord-list:effective-query-text"),
+        &[],
+    )?;
     match query_text(&resp["value"]) {
         Some(query) => {
             println!("{query}");
