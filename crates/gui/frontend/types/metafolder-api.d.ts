@@ -489,6 +489,12 @@ declare namespace Metafolder {
     readonly config: PanelConfig;
     readonly workspace: Workspace;
     readonly commands: Commands;
+    /** `commands.invoke` lifted to the top of the object
+     *  (`withTopLevelInvoke`, spec-gui "User commands"): composing existing
+     *  commands is what a command is *for*, so the call it makes most should
+     *  not need a path through the object. Panels get the alias too — one API
+     *  to learn, not two. */
+    invoke(invocation: string): unknown;
     /** Suggests a binding for one of this panel's commands. `when` defaults to
      *  this panel type; pass it explicitly to widen or narrow the scope. */
     addKeybinding(

@@ -501,6 +501,12 @@ export function createPanelApi(deps: PanelApiDeps, ctx: PanelApiCtx): PanelApiIn
       keybindings: () => invoke('get_compiled_keybindings') as Promise<Metafolder.Binding[]>,
     },
 
+    // `commands.invoke` lifted to the top of the object (spec-gui "User
+    // commands"): composing existing commands is what a command is *for*, so
+    // the call it makes most should not need a path through the object. The
+    // same alias the user-command API installs — one API to learn, not two.
+    invoke: (invocation: string) => deps.dispatch(invocation),
+
     addKeybinding(
       invocation: string,
       combo: string,

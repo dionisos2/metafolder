@@ -84,6 +84,13 @@ than breaking them.
   `panel:set`'s, so `daemon:set url <url>` runs and a bare `daemon:set` asks
   for both. `workspace:goto` now also says when its argument is not a
   workspace number, instead of doing nothing.
+- **Panels had no `metafolder.invoke`.** The top-level alias of
+  `commands.invoke` — "one alias, not two APIs", and what every documented
+  composition is written with — was installed on the user-command API only, so
+  a panel composing commands had to know the `commands.` path. `createPanelApi`
+  installs the alias too, and `Metafolder.Api` now declares it: that
+  declaration is also what lets the shipped `commands.js` join the typechecked
+  GUI JavaScript (`checkJs`, no exceptions) instead of floating above it.
 
 ### Performance
 - **Reading the log back is bounded again.** A listing of the most recent

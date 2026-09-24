@@ -2032,6 +2032,11 @@ metafolder.addKeybinding('editing:unfocus',    'escape', { textInput: true })
 const bindings = await metafolder.commands.keybindings()
 // [{ keys: ['ctrl+shift+z'], invocation: 'log:redo', when: null,
 //    text_input: false, focus: null }, …]
+
+// `commands.invoke` lifted to the top of the object — one alias, not two APIs.
+// Composing existing commands through it is what a command is *for*
+// (see *User commands*).
+await metafolder.invoke('panel:split')
 #+END_SRC
 
 Registered commands appear in the command input autocomplete alongside
