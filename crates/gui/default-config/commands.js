@@ -22,32 +22,49 @@
 // A syntax error in this file stops the GUI from starting, with the error on
 // screen. `config:reload commands` re-reads it without a restart.
 
-/** Every path of a TreeRef field in the active repository, sorted. */
+/**
+ * Every path of a TreeRef field in the active repository, sorted.
+ * @param {MetafolderApi} mf
+ * @param {string} field
+ */
 async function treePaths(mf, field) {
   const repo = await mf.workspace.get('active_repo');
   if (!repo) return [];
-  const body = await mf.daemon.call('POST', `/repos/${repo}/query/fields/resolve-tree`, {
-    query: { type: 'is_present', field },
-    field,
-  });
+  // `daemon.call` is untyped on purpose — the daemon's JSON is not a
+  // TypeScript type — so the shape is asserted at the one place it is read.
+  const body = /** @type {Record<string, string[]>} */ (
+    await mf.daemon.call('POST', `/repos/${repo}/query/fields/resolve-tree`, {
+      query: { type: 'is_present', field },
+      field,
+    })
+  );
   const paths = new Set();
   for (const list of Object.values(body ?? {})) for (const p of list) paths.add(p);
   return [...paths].sort();
 }
 
 export default {
-  // Insert a tag filter into the simplified query zone, completing over the
-  // tags that exist. `#=` is the simplified language's "this exact tag path".
+  // Insert a tag filter into the simplified query zone and run the search,
+  // completing over the tags that exist. `#=` is the simplified language's
+  // "this exact tag path".
   'user:tag-query': {
-    label: 'Insert a tag filter in the simplified query',
+    label: 'Insert a tag filter in the simplified query and search',
     args: [
       {
         name: 'tag',
         prompt: () => 'Tag?',
-        complete: (mf) => treePaths(mf, 'tag'),
+        complete: (/** @type {MetafolderApi} */ mf) => treePaths(mf, 'tag'),
       },
     ],
-    run: (mf, tag) => mf.invoke(`metarecord-list:insert simplified #=${tag}`),
+    // Two composed commands, and the pair is the point: `insert`'s `stay`
+    // keeps the focus where it is (the search is this command's job, not an
+    // edit session in the query zone), and `apply` is the Enter nobody
+    // presses — it runs the query and, holding no focus, drops none. The text
+    // is quoted so a tag whose path holds spaces still splices as one value.
+    run: async (/** @type {MetafolderApi} */ mf, /** @type {string} */ tag) => {
+      await mf.invoke(`metarecord-list:insert simplified "#=${tag}" stay`);
+      await mf.invoke('metarecord-list:apply simplified');
+    },
   },
 
   // Rate the selection without going through the bulk operation picker.
@@ -60,6 +77,7 @@ export default {
         complete: () => ['1', '2', '3', '4', '5'],
       },
     ],
-    run: (mf, rating) => mf.invoke(`metarecord:bulk selection set rating ${rating}`),
+    run: (/** @type {MetafolderApi} */ mf, /** @type {string} */ rating) =>
+      mf.invoke(`metarecord:bulk selection set rating ${rating}`),
   },
 };

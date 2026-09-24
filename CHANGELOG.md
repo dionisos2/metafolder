@@ -59,6 +59,17 @@ than breaking them.
   it. The one thing dropped from the selection is a metarecord that no longer
   exists (deleted or trashed from anywhere, the CLI included) — it could never
   be shown or unchecked again (spec-gui "The checked selection").
+- **`user:tag-query` runs the search instead of parking the caret in the query
+  zone.** The shipped example command spliced `#=<tag>` into the simplified
+  query and stopped there: the focus sat in the zone, and the search still took
+  an Enter. It now composes `metarecord-list:insert simplified "#=<tag>" stay`
+  and `metarecord-list:apply simplified` — the filter lands, the search runs,
+  and the focus is left wherever it was (the quoted text keeps a tag path that
+  holds spaces one argument). The `stay` modifier is new on `insert`: the one
+  `apply` already takes, with the same meaning — *the focus stays where it
+  is*. Since it trails the free text, a trailing token that is not exactly
+  `stay` is still text; a literal trailing "stay" takes double quotes (spec-gui
+  "Command names (non-exhaustive default set)", "User commands").
 
 ### Fixed
 - **`workspace-info` listed a `selected_entries` variable that never existed.**

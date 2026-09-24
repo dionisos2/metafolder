@@ -1454,8 +1454,21 @@ export async function mount(root, metafolder) {
     args: [
       zoneArg('insert into'),
       { name: 'text', prompt: (p) => `Text to insert into the ${p[0]} zone?` },
+      // `stay` is the modifier `apply` takes and means the same: the focus
+      // stays where it is. A plain insert lands in the zone, caret after the
+      // text, ready for the follow-up edit; a caller that writes and then runs
+      // the query (`user:tag-query`) must not yank the focus out of whatever
+      // the user is doing.
+      { name: 'stay', optional: true, prompt: () => 'Leave the focus where it is? (stay)' },
     ],
-    handler: async (name, text) => {
+    handler: async (name, text, modifier) => {
+      // `text` is free text and is declared before `stay`, so a trailing run
+      // of tokens lands in the modifier: `insert simplified #=jazz rock` must
+      // splice the whole "#=jazz rock". Re-join it back into the text, and
+      // read only the exact token `stay` as the modifier — quote the text to
+      // splice a literal trailing "stay".
+      const stay = modifier === 'stay';
+      const value = stay || modifier === undefined ? text : `${text} ${modifier}`;
       const z = zone(name);
       // Same unfreeze as `focus`: inserting into a zone the query ignores
       // would look like a no-op.

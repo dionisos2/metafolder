@@ -32,9 +32,8 @@ function shadowFor(): ShadowRoot {
 type Handler = (arg?: unknown) => unknown;
 
 /** A stub API that records registered command handlers and a workspace store. */
-function stubApi(handlers: Map<string, Handler>, initial: Record<string, unknown> = {}) {
+function stubApi(handlers: Map<string, Handler>, store: Map<string, unknown>) {
   const noop = () => {};
-  const store = new Map<string, unknown>(Object.entries(initial));
   return {
     ready: Promise.resolve(),
     workspaceId: 'ws-1',
@@ -102,13 +101,17 @@ function stubApi(handlers: Map<string, Handler>, initial: Record<string, unknown
 async function mountPanel(initial: Record<string, unknown> = {}) {
   const shadow = shadowFor();
   const handlers = new Map<string, Handler>();
+  // The workspace store the stub writes to: `vars` is how a test reads back
+  // what a command persisted (e.g. `metarecord-list:query`).
+  const vars = new Map<string, unknown>(Object.entries(initial));
   const mod = await import('../../default-config/panel-types/metarecord-list/main.js');
-  await mod.mount(shadow, stubApi(handlers, initial) as never);
+  await mod.mount(shadow, stubApi(handlers, vars) as never);
   const el = <T extends HTMLElement = HTMLInputElement>(id: string) =>
     shadow.getElementById(id) as unknown as T;
   return {
     shadow,
     handlers,
+    vars,
     finder: el('finder-input'),
     query: el('query-input'),
     normal: el('normal-input'),
@@ -343,5 +346,56 @@ describe('zone commands', () => {
     expect(p.query.value).toBe('rating>3');
     // Nothing was persisted: only `apply` commits.
     expect(p.shadow.activeElement).toBe(p.query);
+  });
+
+  test('insert `stay` leaves the focus where it is', async () => {
+    // A caller that writes and then runs the query must not yank the caret
+    // out of what the user is doing — `user:tag-query` composes this.
+    const p = await mountPanel();
+    p.finder.focus();
+
+    await p.invoke('metarecord-list:insert', 'simplified', '#=jazz', 'stay');
+
+    expect(p.query.value).toBe('#=jazz');
+    expect(p.query.selectionStart).toBe('#=jazz'.length);
+    expect(p.shadow.activeElement).toBe(p.finder);
+  });
+
+  test('insert `stay` still unfreezes zone B and refreshes the mirror', async () => {
+    // Focused or not, what was inserted must end up being what the query runs.
+    const p = await mountPanel();
+    await p.invoke('metarecord-list:focus', 'normal');
+    const seen: string[] = [];
+    p.query.addEventListener('input', () => seen.push(p.query.value));
+
+    await p.invoke('metarecord-list:insert', 'simplified', '#=jazz', 'stay');
+
+    expect(p.normalFreeze.checked).toBe(false);
+    expect(seen).toEqual(['#=jazz']);
+  });
+
+  test('a trailing run that is not `stay` is more text, not a modifier', async () => {
+    // The text is free text and holds spaces unquoted; `stay` is told apart
+    // by being spelled exactly that.
+    const p = await mountPanel();
+
+    await p.invoke('metarecord-list:insert', 'simplified', '#=jazz', 'rock');
+
+    expect(p.query.value).toBe('#=jazz rock');
+    expect(p.shadow.activeElement).toBe(p.query);
+  });
+
+  test('insert `stay` then apply runs the search without touching the focus', async () => {
+    // The pair `user:tag-query` is built from: the filter lands, the query
+    // runs (`apply` persists it), and the focus is never in the query zone
+    // along the way.
+    const p = await mountPanel();
+    p.finder.focus();
+
+    await p.invoke('metarecord-list:insert', 'simplified', '#=jazz', 'stay');
+    await p.invoke('metarecord-list:apply', 'simplified');
+
+    expect(p.vars.get('metarecord-list:query')).toBe('#=jazz');
+    expect(p.shadow.activeElement).toBe(p.finder);
   });
 });
