@@ -183,8 +183,7 @@ async fn test_panel_helper_modules_are_not_cached() {
         "/__value-widget.js",
         "/__columns.js",
         "/__completions.js",
-    ]
-    {
+    ] {
         let response = router
             .clone()
             .oneshot(Request::builder().uri(uri).body(Body::empty()).unwrap())
