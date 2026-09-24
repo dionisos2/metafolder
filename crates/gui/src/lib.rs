@@ -83,6 +83,7 @@ fn register_builtins(registry: &CommandRegistry) {
         ("editing:discard", "Clear and leave the focused text input", false),
         ("editing:confirm", "Confirm the focused text input", false),
         ("editing:goto", "Move the cursor to the line start / line end", false),
+        ("completion:cycle", "Cycle the prompt's completion views (forward / back)", false),
         ("workspace:new", "Create a workspace and show it in both slots", true),
         ("workspace:close", "Close the focused slot's workspace", true),
         ("workspace:rename", "Rename the focused slot's workspace", true),

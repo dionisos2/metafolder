@@ -14,6 +14,7 @@ import {
   deadInvocations,
   dispatch,
   filterCommands,
+  filterCompletionItems,
   installUserCommands,
   filterCompletions,
   listedCommands,
@@ -31,6 +32,7 @@ import {
   shortcutsFor,
   shouldLogCommand,
 } from '../src/lib/commands';
+import type { CompletionFn } from '../src/lib/completions';
 import type { LayoutView } from '../src/lib/types';
 
 // Runs before any clearArgSpecs() (called in the argSpecs-registry suite below):
@@ -40,7 +42,7 @@ describe('config:reload argument spec', () => {
   test('completes over the reloadable targets plus `all`', async () => {
     const spec = argSpecFor('config:reload');
     expect(spec).toHaveLength(1);
-    expect(await spec![0].complete!('', [])).toEqual([
+    expect(await (spec![0].complete as CompletionFn)('', [])).toEqual([
       'keybindings',
       'style',
       'grammar',
@@ -290,7 +292,7 @@ describe('installUserCommands', () => {
     const spec = argSpecFor('user:a')!;
     expect(await spec[0].prompt([])).toBe('prompt the api');
     expect(await spec[0].initial!([])).toBe('initial the api');
-    expect(await spec[0].complete!('', [])).toEqual(['complete the api']);
+    expect(await (spec[0].complete as CompletionFn)('', [])).toEqual(['complete the api']);
   });
 
   test('an entry without a callable `run` is rejected by name', async () => {
@@ -701,14 +703,10 @@ describe('collectArgs', () => {
     const { fn, requests } = scriptedPrompt(['musique/jazz']);
     const result = await collectArgs([field(), value()], ['tag'], fn);
     expect(result).toEqual(['tag', 'musique/jazz']);
-    expect(requests).toEqual([
-      {
-        argName: 'value',
-        prompt: 'New value for tag?',
-        initial: 'current-tag',
-        completions: ['tag/a', 'tag/b'],
-      },
+    expect(requests.map((r) => [r.argName, r.prompt, r.initial])).toEqual([
+      ['value', 'New value for tag?', 'current-tag'],
     ]);
+    expect(await requests[0].completions).toEqual(['tag/a', 'tag/b']);
   });
 
   test('all arguments missing are prompted in order, prior args accumulating', async () => {
@@ -717,12 +715,12 @@ describe('collectArgs', () => {
     expect(result).toEqual(['tag', 'musique/jazz']);
     // The second request's prompt/initial/completions saw the first answer.
     expect(requests[0].prompt).toBe('Which field?');
-    expect(requests[1]).toEqual({
-      argName: 'value',
-      prompt: 'New value for tag?',
-      initial: 'current-tag',
-      completions: ['tag/a', 'tag/b'],
-    });
+    expect([requests[1].argName, requests[1].prompt, requests[1].initial]).toEqual([
+      'value',
+      'New value for tag?',
+      'current-tag',
+    ]);
+    expect(await requests[1].completions).toEqual(['tag/a', 'tag/b']);
   });
 
   // A generic command carries one spec per argument any of its operations can
@@ -886,5 +884,110 @@ describe('resolvePromptValue', () => {
 
   test('an empty completion list submits the typed text', () => {
     expect(resolvePromptValue('newvalue', [], 0, false)).toBe('newvalue');
+  });
+
+  // The candidate is a couple (spec-gui "Completion views"): the label is what
+  // is shown and matched whole, the value is what the command receives.
+  const named = [
+    { name: 'musique (uuid-1)', value: 'uuid-1' },
+    { name: 'musique (uuid-2)', value: 'uuid-2' },
+  ];
+
+  test('the highlighted candidate submits its *value*', () => {
+    expect(resolvePromptValue('mus', named, 1, false)).toBe('uuid-2');
+  });
+
+  test('typed text that spells a label whole names its value', () => {
+    // What is seen is what is typed; the label is a name, not the answer.
+    expect(resolvePromptValue('musique (uuid-1)', named, -1, false, named)).toBe('uuid-1');
+  });
+
+  test('typed text nothing names stays itself (an uuid, a new value)', () => {
+    expect(resolvePromptValue('uuid-3', named, -1, true, named)).toBe('uuid-3');
+    expect(resolvePromptValue('musique (uuid-9)', named, -1, true, named)).toBe('musique (uuid-9)');
+  });
+
+  test('a typed label resolves even under Ctrl-Enter — what is typed is a name', () => {
+    expect(resolvePromptValue('musique (uuid-2)', named, 0, true, named)).toBe('uuid-2');
+  });
+});
+
+describe('completion views (spec-gui "Completion views")', () => {
+  function scriptedPrompt(answers: (string | null)[]) {
+    const requests: ArgPromptRequest[] = [];
+    let i = 0;
+    const fn = vi.fn(async (request: ArgPromptRequest) => {
+      requests.push(request);
+      return answers[i++] ?? null;
+    });
+    return { fn, requests };
+  }
+
+  test('one builder is one view; an array of them is what the cycle walks', async () => {
+    const views: ArgSpec = {
+      name: 'value',
+      prompt: () => 'Value?',
+      complete: [
+        { title: 'path · name', items: () => [{ label: 'musique', value: 'uuid-1' }] },
+        { title: 'name', items: (partial) => ({ items: [partial], more: true }) },
+      ],
+    };
+    const { fn, requests } = scriptedPrompt(['uuid-1']);
+    expect(await collectArgs([views], [], fn)).toEqual(['uuid-1']);
+    const source = await requests[0].source!;
+    expect(source.views.map((view) => view.title)).toEqual(['path · name', 'name']);
+    // The eager first page is the first view's own page.
+    expect(await requests[0].completions).toEqual([{ label: 'musique', value: 'uuid-1' }]);
+    // The other view narrows on the typed text and reports it is not the whole
+    // set (`more`) — so narrowing means asking again, not filtering.
+    expect(await source.views[1].items('mu')).toEqual({ items: ['mu'], more: true });
+  });
+
+  test('a bound view is called with the typed text and the arguments collected so far', async () => {
+    const seen: string[][] = [];
+    const spec: ArgSpec = {
+      name: 'value',
+      prompt: () => 'Value?',
+      complete: [
+        {
+          items: (partial, prior) => {
+            seen.push([partial, ...prior]);
+            return [];
+          },
+        },
+      ],
+    };
+    const { fn, requests } = scriptedPrompt(['x']);
+    await collectArgs([{ name: 'field', prompt: () => 'F?' }, spec], ['tag'], fn);
+    expect(await (await requests[0].source!).views[0].items('mu')).toEqual({ items: [] });
+    expect(seen).toEqual([
+      ['', 'tag'], // the eager first page
+      ['mu', 'tag'], // the narrowing query — same `prior`, bound at collection
+    ]);
+  });
+
+  test('the eager page and the driver’s first load are one call (memoized)', async () => {
+    let calls = 0;
+    const spec: ArgSpec = {
+      name: 'value',
+      prompt: () => 'Value?',
+      complete: [{ items: () => (calls += 1, [{ label: 'a', value: 'a' }]) }],
+    };
+    const { fn, requests } = scriptedPrompt(['a']);
+    await collectArgs([spec], [], fn);
+    expect(await requests[0].completions).toEqual([{ label: 'a', value: 'a' }]);
+    expect(await (await requests[0].source!).views[0].items('')).toEqual({
+      items: [{ label: 'a', value: 'a' }],
+    });
+    expect(calls).toBe(1);
+  });
+
+  test('filterCompletionItems ranks on the label and carries the value along', () => {
+    const items = [
+      { label: 'musique', value: 'uuid-1' },
+      { label: 'musique (jazz)', value: 'uuid-2' },
+    ];
+    expect(filterCompletionItems(items, 'mus')).toEqual(items);
+    expect(filterCompletionItems(items, 'jazz')).toEqual([items[1]]);
   });
 });

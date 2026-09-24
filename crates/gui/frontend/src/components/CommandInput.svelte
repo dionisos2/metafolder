@@ -5,7 +5,8 @@
   import {
     dispatch,
     filterCommands,
-    filterCompletions,
+    filterCompletionItems,
+    loadPromptCompletions,
     promptsForInput,
     resolvePromptValue,
     resolveSubmission,
@@ -160,8 +161,9 @@
     !focused
       ? []
       : promptText !== null
-        ? filterCompletions(store.ui.promptCompletions, draft).map((name) => ({
-            name,
+        ? filterCompletionItems(store.ui.promptItems, draft).map((item) => ({
+            name: item.label,
+            value: item.value,
             label: '',
             shortcuts: [],
           }))
@@ -169,6 +171,19 @@
           ? bashCandidates.map((name) => ({ name, label: '', shortcuts: [] }))
           : filterCommands(listedCommands(store.commands, store.keytable), draft),
   );
+  /** Every loaded prompt candidate as the resolution sees it (spec-gui
+   *  "Completion views"): the label matched whole, the value it names. */
+  const promptChoices = $derived(
+    store.ui.promptItems.map((item) => ({ name: item.label, value: item.value })),
+  );
+  /** The cycle hint for a multi-view completion: which view is on screen. */
+  const viewCount = $derived(store.ui.promptSource?.views.length ?? 0);
+  const viewHint = $derived.by(() => {
+    const views = store.ui.promptSource?.views ?? [];
+    if (views.length < 2) return '';
+    const title = views[store.ui.promptViewIndex]?.title ?? 'view';
+    return `${title} ${store.ui.promptViewIndex + 1}/${views.length}`;
+  });
   // The best-ranked matches are listed (filterCompletions caps prompt
   // candidates so a huge set stays cheap to render); the CSS max-height makes
   // the list scroll, and typing narrows it toward the wanted value.
@@ -183,6 +198,16 @@
   $effect(() => {
     void draft;
     selectedIndex = 0;
+  });
+
+  // A truncated candidate page is narrowed by asking its source again as the
+  // user types (debounced — a keystroke is not a request); a complete page is
+  // narrowed by the local filter alone (spec-gui "Completion views").
+  $effect(() => {
+    const typed = draft;
+    if (promptText === null || !store.ui.promptMore) return;
+    const timer = setTimeout(() => void loadPromptCompletions(typed), 150);
+    return () => clearTimeout(timer);
   });
 
   function scrollSelectionIntoView() {
@@ -282,6 +307,10 @@
     const resolver = store.ui.promptResolver;
     store.ui.promptText = null;
     store.ui.promptCompletions = [];
+    store.ui.promptItems = [];
+    store.ui.promptMore = false;
+    store.ui.promptSource = null;
+    store.ui.promptViewIndex = 0;
     store.ui.promptWorkspaces = [];
     store.ui.promptTask = null;
     store.ui.promptDraft = '';
@@ -319,7 +348,7 @@
     const input = draft;
     const picked =
       promptText === null ? resolveSubmission(input, suggestions, selectedIndex) : input;
-    const promptValue = resolvePromptValue(input, suggestions, selectedIndex, raw);
+    const promptValue = resolvePromptValue(input, suggestions, selectedIndex, raw, promptChoices);
     draft = '';
     bashCandidates = [];
     const ws = currentWs;
@@ -385,6 +414,17 @@
       discard,
       lineStart: () => element?.setSelectionRange(0, 0),
       lineEnd: () => element?.setSelectionRange(draft.length, draft.length),
+      // `completion:cycle`: the next (or previous) view of the prompt's
+      // candidates (spec-gui "Completion views"). The input owns the cycle
+      // because it owns the draft the candidates narrow on.
+      cycleCompletion: (delta: number) => {
+        const views = store.ui.promptSource?.views ?? [];
+        if (views.length < 2) return;
+        store.ui.promptViewIndex =
+          (store.ui.promptViewIndex + delta + views.length) % views.length;
+        selectedIndex = 0;
+        void loadPromptCompletions(draft);
+      },
     });
   }
 
@@ -446,7 +486,9 @@
       autocomplete="off"
     />
     {#if promptText !== null && suggestions.length > 0}
-      <span class="hint" title="Enter picks the highlighted value; Ctrl-Enter keeps what you typed">⏎ pick · ⌃⏎ new</span>
+      <span class="hint" title="Enter picks the highlighted value; Ctrl-Enter keeps what you typed"
+        >⏎ pick · ⌃⏎ new{#if viewCount > 1} · ⌃, {viewHint}{/if}</span
+      >
     {/if}
   </div>
 </div>

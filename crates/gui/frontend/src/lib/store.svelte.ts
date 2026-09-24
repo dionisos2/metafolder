@@ -3,6 +3,8 @@
 // visibility) also lives here.
 
 import { dispatch } from './commands';
+import { completionLabels } from './completions';
+import type { LoadedView } from './completions';
 import { invoke, listen } from './ipc';
 import { sharedCache, startCachePolling } from './panels/api';
 import type {
@@ -72,8 +74,22 @@ export const store = $state({
     /// Non-null while a prompt waits for the input — a script's
     /// POST /gui/prompt or an interactive command-argument collection.
     promptText: null as string | null,
-    /// Completions offered by the active prompt's autocomplete.
+    /// Completions offered by the active prompt's autocomplete (their labels).
     promptCompletions: [] as string[],
+    /// The same candidates as label/value couples (spec-gui "Completion
+    /// views"): the label is shown and matched whole, the value is what the
+    /// command receives. Identical labels arrive already suffixed with their
+    /// values, so every listed row names exactly one thing.
+    promptItems: [] as { label: string; value: string }[],
+    /// Whether the candidate source holds more than the loaded page: narrowing
+    /// on the typed text is then another request, not a local filter.
+    promptMore: false,
+    /// The live candidates behind the prompt (an interactive argument
+    /// collection): the views `completion:cycle` walks. Null for a script's
+    /// static list.
+    promptSource: null as { views: LoadedView[] } | null,
+    /// Which of `promptSource`'s views is shown.
+    promptViewIndex: 0,
     /// The workspaces the prompt belongs to: the ones the asking script owns
     /// (an argument collection owns the workspace it was invoked from). The
     /// command input shows the prompt only while one of them is on screen and
@@ -431,8 +447,15 @@ export async function initStore() {
     task?: string | null;
   }>('prompt-requested', (event) => {
     const prompt = promptRequestState(event.payload);
+    // A script's list is static and has one view: strings are their own
+    // labels and values (spec-gui "Completion views").
+    const items = completionLabels(prompt.completions);
     store.ui.promptText = prompt.text;
-    store.ui.promptCompletions = prompt.completions;
+    store.ui.promptItems = items;
+    store.ui.promptCompletions = items.map((item) => item.label);
+    store.ui.promptMore = false;
+    store.ui.promptSource = null;
+    store.ui.promptViewIndex = 0;
     store.ui.promptWorkspaces = prompt.workspaces;
     store.ui.promptTask = prompt.task;
     store.ui.promptDraft = '';

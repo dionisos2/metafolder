@@ -33,6 +33,13 @@
 "ctrl+a" = { command = "editing:goto line-start", text-input = true }
 "ctrl+e" = { command = "editing:goto line-end", text-input = true }
 
+# Completion views (spec-gui "Completion views"): walk the views of the prompt's
+# candidates, next/previous. A prompt with a single view (the common case)
+# ignores both — and a plain comma stays a comma, which is the whole reason
+# the cycle is on Ctrl+punctuation rather than on the key it used to suggest.
+"ctrl+," = { command = "completion:cycle forward", text-input = true }
+"ctrl+." = { command = "completion:cycle back", text-input = true }
+
 # Dismiss the transient status-bar message (works while typing too).
 "ctrl+l" = { command = "status:clear", text-input = true }
 

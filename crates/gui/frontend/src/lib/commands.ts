@@ -4,6 +4,14 @@
 
 import { osmMatch } from '../../../panel-shim/finder.js';
 import { bindingMatches } from '../../../panel-shim/keyhints.js';
+import { bindView, completionLabels } from './completions';
+import type {
+  CompletionFn,
+  CompletionItem,
+  CompletionResult,
+  CompletionView,
+  LoadedView,
+} from './completions';
 import { folderContentsQuery, selectionFolder } from './folder';
 import { setHelpCursor } from './cursor';
 import { closeFind, openFind, stepFind } from './find';
@@ -156,18 +164,27 @@ export function resolveSubmission(
 }
 
 /** What a prompt submits on Enter (interactive command arguments and script
- *  `POST /gui/prompt`, unlike the command path). Plain Enter accepts the
- *  highlighted completion; `raw` (Ctrl-Enter) — or a deselected list, or no
- *  completions at all — submits exactly what was typed, so a brand-new value
- *  that ordered-substring-matches an existing completion can still be entered. */
+ *  `POST /gui/prompt`, unlike the command path) — the *value* of what was
+ *  chosen. Plain Enter accepts the highlighted completion; `raw` (Ctrl-Enter)
+ *  — or a deselected list, or no completions at all — takes the typed text,
+ *  so a brand-new value that ordered-substring-matches an existing completion
+ *  can still be entered. Typed text still resolves like a pick when it spells
+ *  a candidate's label whole (spec-gui "Completion views"): the label is what
+ *  is seen, the value is what is named. `all` is every loaded candidate — the
+ *  filtered `suggestions` may have narrowed one away. */
 export function resolvePromptValue(
   draft: string,
-  suggestions: { name: string }[],
+  suggestions: { name: string; value?: string }[],
   selectedIndex: number,
   raw: boolean,
+  all: { name: string; value?: string }[] = suggestions,
 ): string {
-  if (raw || selectedIndex < 0 || suggestions.length === 0) return draft;
-  return suggestions[Math.min(selectedIndex, suggestions.length - 1)].name;
+  if (!raw && selectedIndex >= 0 && suggestions.length > 0) {
+    const picked = suggestions[Math.min(selectedIndex, suggestions.length - 1)];
+    return picked.value ?? picked.name;
+  }
+  const named = all.find((item) => item.name === draft);
+  return named ? (named.value ?? named.name) : draft;
 }
 
 /** How many completions the input renders at once. A prompt can be handed
@@ -194,6 +211,22 @@ export function filterCompletions(
     .map((c) => c.name);
 }
 
+/** `filterCompletions` over label/value candidates (spec-gui "Completion
+ *  views"): the ranking reads the label — what the user sees and types — and
+ *  the value rides along untouched. */
+export function filterCompletionItems<T extends { label: string }>(
+  items: T[],
+  draft: string,
+  limit: number = MAX_COMPLETIONS,
+): T[] {
+  return filterCommands(
+    items.map((item, index) => ({ name: item.label, index })),
+    draft,
+  )
+    .slice(0, limit)
+    .map((c) => items[c.index]);
+}
+
 // ── Interactive command arguments (spec-gui "Command") ─────────────────
 // A command may declare its arguments; each carries lazily-evaluated
 // functions (never read at registration) that receive the arguments already
@@ -209,10 +242,18 @@ export interface ArgSpec {
    *  edited). A function, not a constant, so it reads live state at prompt
    *  time. */
   initial?: (prior: string[]) => string | Promise<string>;
-  /** The candidate list offered by the input's autocomplete (filtered
-   *  client-side like command names). `partial` is the current draft, so a
-   *  future dynamic mode can narrow on it; the v1 completions ignore it. */
-  complete?: (partial: string, prior: string[]) => string[] | Promise<string[]>;
+  /** The candidates offered by the input's autocomplete. One builder is one
+   *  view of them — called with the typed text (so a source that talks to the
+   *  daemon can narrow as the user types) and the arguments collected so far;
+   *  a plain `string[]` result means its candidates are their own labels and
+   *  values. An *array* of views is several: one shown at a time, walked by
+   *  `completion:cycle` (spec-gui "Completion views"). */
+  complete?: CompletionFn | CompletionView[];
+  /** The cycled views of the candidates, for the case where *which* views
+   *  there are depends on the arguments collected so far — a `ref` value is
+   *  named by its field's `[ref-seeds]` rule, known only from `prior`. Wins
+   *  over `complete` unless it has no view to offer. */
+  views?: (prior: string[]) => CompletionView[] | Promise<CompletionView[]>;
   /** Whether the argument may simply be left out. An optional argument is
    *  used when the invocation supplies it and skipped — never prompted for —
    *  when it does not, so the command falls back to its default:
@@ -230,20 +271,26 @@ export interface ArgSpec {
 
 /** One argument's resolved prompt, handed to the prompt driver.
  *
- *  `completions` may still be *pending*: building a candidate list can cost a
- *  daemon round-trip and tens of thousands of strings (every path of a TreeRef
- *  forest), and waiting for it before opening the input froze the GUI for
- *  seconds on a large repository. The driver opens the prompt at once and
- *  fills the list in when it lands. */
+ *  `completions` is the first view's first page and may still be *pending*:
+ *  building a candidate list can cost a daemon round-trip and tens of
+ *  thousands of strings (every path of a TreeRef forest), and waiting for it
+ *  before opening the input froze the GUI for seconds on a large repository.
+ *  The driver opens the prompt at once and fills the list in when it lands.
+ *
+ *  `source` (absent for a static list) is what stands behind the list: the
+ *  views `completion:cycle` walks and the builders `loadPromptCompletions`
+ *  re-asks when the page it handed over was not the whole set. */
 export interface ArgPromptRequest {
   argName: string;
   prompt: string;
   initial: string;
-  completions: string[] | Promise<string[]>;
+  completions: CompletionItem[] | Promise<CompletionItem[]>;
+  source?: { views: LoadedView[] } | Promise<{ views: LoadedView[] }>;
 }
 
-/** Drives one interactive argument prompt; resolves to the entered string,
- *  or null when the user cancels (Escape). */
+/** Drives one interactive argument prompt; resolves to the *value* of the
+ *  chosen candidate (or, for text no candidate names, the text itself), or
+ *  null when the user cancels (Escape). */
 export type ArgPromptFn = (request: ArgPromptRequest) => Promise<string | null>;
 
 // Frontend-side registry of declared argument specs, keyed by command name.
@@ -340,10 +387,28 @@ export interface UserCommand {
     optional?: boolean;
     prompt?: (mf: unknown, prior: string[]) => string | Promise<string>;
     initial?: (mf: unknown, prior: string[]) => string | Promise<string>;
-    complete?: (mf: unknown, partial: string, prior: string[]) => string[] | Promise<string[]>;
+    complete?: UserCompletionFn | UserCompletionView[];
+    /** The cycled views, when which ones exist depends on the prior answers
+     *  (spec-gui "Completion views"). Wins over `complete` unless empty. */
+    views?: (mf: unknown, prior: string[]) => CompletionView[] | Promise<CompletionView[]>;
     when?: (mf: unknown, prior: string[]) => boolean;
   }[];
   run: (mf: unknown, ...args: string[]) => unknown;
+}
+
+/** A user command's completion builder: like `CompletionFn`, handed the API
+ *  first. */
+export type UserCompletionFn = (
+  mf: unknown,
+  partial: string,
+  prior: string[],
+) => CompletionResult | Promise<CompletionResult>;
+
+/** One cycled view of a user command's completion (spec-gui "Completion
+ *  views"). */
+export interface UserCompletionView {
+  title?: string;
+  items: UserCompletionFn;
 }
 
 const userHandlers = new Map<string, (...args: string[]) => unknown>();
@@ -395,8 +460,19 @@ export async function installUserCommands(
           prompt: (prior: string[]) => spec.prompt?.(mf, prior) ?? spec.name,
           ...(spec.initial ? { initial: (prior: string[]) => spec.initial!(mf, prior) } : {}),
           ...(spec.complete
-            ? { complete: (partial: string, prior: string[]) => spec.complete!(mf, partial, prior) }
+            ? Array.isArray(spec.complete)
+              ? {
+                  complete: spec.complete.map((view) => ({
+                    title: view.title,
+                    items: (partial: string, prior: string[]) => view.items(mf, partial, prior),
+                  })),
+                }
+              : {
+                  complete: (partial: string, prior: string[]) =>
+                    (spec.complete as UserCompletionFn)(mf, partial, prior),
+                }
             : {}),
+          ...(spec.views ? { views: (prior: string[]) => spec.views!(mf, prior) } : {}),
           ...(spec.when ? { when: (prior: string[]) => spec.when!(mf, prior) } : {}),
         })),
       );
@@ -869,6 +945,17 @@ registerArgs('script:run', [
   { name: 'script', prompt: () => 'Run script:', complete: () => scriptCandidates() },
 ]);
 
+registerArgs('completion:cycle', [
+  {
+    name: 'direction',
+    // Optional and never asked for: its absence *is* the forward cycle — the
+    // point of the default binding (spec-gui "Completion views").
+    optional: true,
+    prompt: () => 'Cycle which way? (forward / back)',
+    complete: () => ['forward', 'back'],
+  },
+]);
+
 /** Resolves a picked argument to an installed script's path. Accepts the full
  *  "<name> — <summary>" completion line, or a bare name (e.g. from a
  *  keybinding), with or without the `.sh` extension. Null when nothing matches. */
@@ -970,14 +1057,41 @@ export async function collectArgs(
     // Nothing left to fill it with: an optional argument is absent, not asked.
     if (spec.optional) continue;
     // `prompt` and `initial` are awaited — they are what the input shows and
-    // pre-fills. `complete` is NOT: it is handed over as it comes (an array, or
-    // a promise the driver resolves once the input is already open), so a slow
-    // candidate list never delays the prompt.
+    // pre-fills. The candidates are NOT: the first page is handed over as it
+    // comes (an array, or a promise the driver resolves once the input is
+    // already open), so a slow candidate list never delays the prompt. What
+    // stands behind that page goes with the request too: the views
+    // `completion:cycle` walks — `spec.views` when *which* views there are
+    // depends on the arguments collected so far, else the one builder (or the
+    // declared array) — each bound to `prior` and memoized, so the eager first
+    // page and the driver's own first load are one and the same call.
+    const prior = [...result];
+    const hasSource = spec.complete !== undefined || spec.views !== undefined;
+    const source = hasSource
+      ? Promise.resolve(spec.views ? spec.views(prior) : [])
+          // `views` wins over `complete` — unless it has none to offer, where
+          // `complete` is the (single-view) answer. A generic command's arg
+          // spec delegates to its operations and lets an operation that names
+          // no views fall back to its plain candidates.
+          .then((list) =>
+            list.length > 0
+              ? list
+              : Array.isArray(spec.complete)
+                ? spec.complete
+                : spec.complete
+                  ? [{ items: spec.complete }]
+                  : [],
+          )
+          .then((list) => ({ views: list.map((view) => bindView(view, prior)) }))
+      : null;
     const answer = await promptFn({
       argName: spec.name,
       prompt: await spec.prompt(result),
       initial: spec.initial ? await spec.initial(result) : '',
-      completions: spec.complete ? spec.complete('', result) : [],
+      completions: source
+        ? source.then(({ views }) => views[0]?.items('').then((page) => page.items) ?? [])
+        : [],
+      ...(source ? { source } : {}),
     });
     if (answer === null) return null;
     result.push(answer);
@@ -996,6 +1110,10 @@ export interface EditingTarget {
   discard(): void;
   lineStart(): void;
   lineEnd(): void;
+  /** Cycles the prompt's completion views (`completion:cycle`) by `delta`
+   *  (1 forward, -1 back). Absent on an input whose prompt offers a single
+   *  view — or none. */
+  cycleCompletion?: (delta: number) => void;
 }
 
 let editingTarget: EditingTarget | null = null;
@@ -1240,9 +1358,10 @@ function shellExpandDeps(ws: string | null): ExpandDeps {
 /**
  * Prompt driver for interactive argument collection: opens the command input
  * as a frontend-resolved prompt (spec-gui "Interactive command arguments")
- * and resolves to the entered text, or null on Escape. Refuses (null) when a
- * prompt already owns the input — an interactive collection and a script
- * prompt are mutually exclusive.
+ * and resolves to the chosen *value* (a candidate's, or the typed text when
+ * none names it), or null on Escape. Refuses (null) when a prompt already
+ * owns the input — an interactive collection and a script prompt are mutually
+ * exclusive.
  */
 async function promptForArg(request: ArgPromptRequest): Promise<string | null> {
   if (store.ui.promptText !== null || store.ui.promptResolver !== null) {
@@ -1254,6 +1373,10 @@ async function promptForArg(request: ArgPromptRequest): Promise<string | null> {
     store.ui.promptResolver = resolve;
     store.ui.promptText = request.prompt;
     store.ui.promptCompletions = [];
+    store.ui.promptItems = [];
+    store.ui.promptMore = false;
+    store.ui.promptViewIndex = 0;
+    store.ui.promptSource = null;
     // The collection belongs to the workspace the command was invoked from:
     // switching tab puts its question away with the rest of that workspace's
     // work (spec-gui "Ownership of a script's workspaces"). The command input
@@ -1261,14 +1384,28 @@ async function promptForArg(request: ArgPromptRequest): Promise<string | null> {
     store.ui.promptWorkspaces = ws === null ? [] : [ws];
     store.ui.promptTask = null;
     store.ui.promptDraft = request.initial;
-    // Pending candidates land later; ignore them if the user has meanwhile
-    // answered or cancelled and another prompt owns the input.
-    if (Array.isArray(request.completions)) {
-      store.ui.promptCompletions = request.completions;
+    if (request.source) {
+      // The live source owns the list; its first load is the eager page's own
+      // memoized call. A prompt that ended or changed while either is in
+      // flight is left alone.
+      void Promise.resolve(request.source).then(
+        (source) => {
+          if (store.ui.promptResolver !== resolve) return;
+          store.ui.promptSource = source;
+          void loadPromptCompletions('');
+        },
+        () => {
+          /* a source that fails to build just means no completions */
+        },
+      );
+    } else if (Array.isArray(request.completions)) {
+      setPromptItems(request.completions);
     } else {
+      // Pending candidates land later; ignore them if the user has meanwhile
+      // answered or cancelled and another prompt owns the input.
       void request.completions.then(
-        (list) => {
-          if (store.ui.promptResolver === resolve) store.ui.promptCompletions = list;
+        (items) => {
+          if (store.ui.promptResolver === resolve) setPromptItems(items);
         },
         () => {
           /* a failed candidate list just means no completions */
@@ -1276,6 +1413,32 @@ async function promptForArg(request: ArgPromptRequest): Promise<string | null> {
       );
     }
   });
+}
+
+/** Publishes a prompt's candidates: labels normalized, and identical labels
+ *  suffixed with their values so every listed row names exactly one thing
+ *  (spec-gui "Completion views"). */
+function setPromptItems(items: CompletionItem[]): void {
+  const pairs = completionLabels(items);
+  store.ui.promptItems = pairs;
+  store.ui.promptCompletions = pairs.map((item) => item.label);
+}
+
+/**
+ * Reloads the active prompt's candidates from its source — the view being
+ * shown, for the text typed so far — and publishes them. `more` comes with the
+ * page: a truncated one means narrowing is another request (the driver asks
+ * again as the user types), a complete one that narrowing is a local filter.
+ */
+export async function loadPromptCompletions(partial: string): Promise<void> {
+  const source = store.ui.promptSource;
+  const view = source?.views[store.ui.promptViewIndex];
+  if (!source || !view) return;
+  const page = await view.items(partial);
+  // The prompt has ended, or another one owns the input now.
+  if (store.ui.promptSource !== source) return;
+  setPromptItems(page.items);
+  store.ui.promptMore = page.more === true;
 }
 
 /** Outcome of a dispatch, reported back to `POST /gui/command` waiters. */
@@ -1384,6 +1547,18 @@ async function runCommand(name: string, args: string[], ws: string | null): Prom
     case 'editing:confirm':
       editingTarget?.confirm();
       return true;
+    case 'completion:cycle': {
+      // Walks the views of the prompt's completion (spec-gui "Completion
+      // views"): one builder is the common case and needs no cycling, so this
+      // is a no-op — a keystroke on a plain prompt must not shout. The input
+      // owns the cycle (it owns the draft the candidates narrow on).
+      if (args[0] !== undefined && args[0] !== 'forward' && args[0] !== 'back') {
+        await status(`unknown direction: "${args[0]}" (expected forward / back)`);
+        return true;
+      }
+      editingTarget?.cycleCompletion?.(args[0] === 'back' ? -1 : 1);
+      return true;
+    }
     case 'editing:goto': {
       if (args[0] !== 'line-start' && args[0] !== 'line-end') {
         await status(`unknown target: "${args[0] ?? ''}" (expected line-start / line-end)`);

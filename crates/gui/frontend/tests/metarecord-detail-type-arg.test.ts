@@ -102,7 +102,12 @@ async function mountPanel(fields: Field[], catalog: Record<string, string> = {},
     },
     query: { parse: async () => null, expand: async () => '', grammarSource: async () => '' },
     pick: { start: async () => '' },
-    config: { pickerSeed: async () => null, refCompletionSeed: async () => null },
+    config: {
+      pickerSeed: async () => null,
+      refCompletionSeed: async () => null,
+      refSeed: async () => null,
+      labelSeparator: async () => ' | ',
+    },
     recent: { touch: async () => {}, list: async () => [] },
     workspace: {
       get: async (key: string) => store.get(key) ?? null,
@@ -143,7 +148,13 @@ async function collect(spec: Spec, provided: string[], answers: string[]) {
   const queue = [...answers];
   const args = await collectArgs(spec.args ?? [], provided, async (request) => {
     prompts.push(request.prompt);
-    completions.push(request.completions);
+    // The recorded candidates are the labels the list shows (spec-gui
+    // "Completion views"); the values ride along in the live source.
+    completions.push(
+      Promise.resolve(request.completions).then((items) =>
+        items.map((item) => (typeof item === 'string' ? item : item.label)),
+      ),
+    );
     initials.push(request.initial);
     return queue.shift() ?? null;
   });
