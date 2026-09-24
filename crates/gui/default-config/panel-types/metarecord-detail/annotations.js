@@ -6,23 +6,22 @@
 // there is no client-side chain walk. `ctx` provides:
 //   resolvePaths(field, uuids) -> { uuid: [relPath] }
 //   getMetarecords(uuids)      -> { uuid: metarecord }
-//   refSeed(field)             -> the field's tree_ref completion seed, or null
+//   refLabel(field, uuid)      -> a ref target's name under its value, or null
 //
-// The ref case uses the configured completion seed (config.toml
-// `[ref-completion-seeds]`, e.g. `tag = 'path'`): the field that already says
-// "a value of this ref field is entered as a path in that forest" is exactly
-// the one that says how to read it back. It matters for tags, whose hierarchy
-// lives in a TreeRef `path` and whose `name`/`label` is optional — without it a
-// `tag` value shows nothing but its uuid.
+// The ref case reads the target back the way the field names its targets
+// (spec-gui "Ref value seeds"): the label of its `[ref-seeds]` rule is exactly
+// the form such a value is entered in. It matters for tags, whose hierarchy
+// lives in a TreeRef `path` and whose `name`/`label` is optional — without it
+// a `tag` value shows nothing but its uuid.
 
 /**
  * @param {{
  *   resolvePaths: (field: string, uuids: string[]) => Promise<Record<string, string[]>>,
  *   getMetarecords: (uuids: string[]) => Promise<Record<string, Metafolder.Metarecord>>,
- *   refSeed: (field: string) => Promise<string|null>,
+ *   refLabel: (field: string, uuid: string) => Promise<string|null>,
  * }} ctx
  */
-export function createAnnotator({ resolvePaths, getMetarecords, refSeed }) {
+export function createAnnotator({ resolvePaths, getMetarecords, refLabel }) {
   /** @param {string} field @param {Metafolder.TreeRef} treeRef */
   async function treeRefPath(field, { parent, name }) {
     if (!parent) return name; // a rootless node's path is its own name
@@ -46,16 +45,13 @@ export function createAnnotator({ resolvePaths, getMetarecords, refSeed }) {
     return null;
   }
 
-  /** The target's path in `fieldName`'s seed forest, or null when the field has
-   *  no seed or the target is not in that forest. Unlike the tree_ref case this
-   *  resolves the target itself (not its parent): the whole path is wanted.
+  /** The name a `ref` target answers to under its value — its label in the
+   *  field's naming (spec-gui "Ref value seeds"), or null when it has none.
+   *  Unlike the tree_ref case this names the target itself (not its parent).
    *  @param {string} fieldName @param {string} uuid
    *  @returns {Promise<string|null>} */
   async function refPath(fieldName, uuid) {
-    const seed = await refSeed(fieldName);
-    if (!seed) return null;
-    const byUuid = await resolvePaths(seed, [uuid]);
-    return (byUuid[uuid] ?? [])[0] ?? null;
+    return refLabel(fieldName, uuid);
   }
 
   /**

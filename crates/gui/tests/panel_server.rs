@@ -159,6 +159,8 @@ async fn test_panel_helper_modules_are_served() {
     assert_eq!(status, StatusCode::OK);
     let (status, _, _) = get(&router, "/__columns.js").await;
     assert_eq!(status, StatusCode::OK);
+    let (status, _, _) = get(&router, "/__completions.js").await;
+    assert_eq!(status, StatusCode::OK);
     let (status, _, _) = get(&router, "/__file-actions.js").await;
     assert_eq!(status, StatusCode::OK);
     // Removed with the iframe shim.
@@ -180,6 +182,7 @@ async fn test_panel_helper_modules_are_not_cached() {
         "/__paged-list.js",
         "/__value-widget.js",
         "/__columns.js",
+        "/__completions.js",
     ]
     {
         let response = router

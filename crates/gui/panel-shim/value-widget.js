@@ -163,7 +163,7 @@ export function parseRawValue(type, raw) {
  *
  * @param {{
  *   workspace: Pick<Metafolder.Workspace, 'get'|'onChange'>,
- *   config: Pick<Metafolder.PanelConfig, 'pickerSeed'>,
+ *   config: Pick<Metafolder.PanelConfig, 'pickerSeed' | 'refSeed'>,
  *   pick: Pick<Metafolder.Pick, 'start'>,
  * }} metafolder
  */
@@ -233,7 +233,11 @@ export function createPickRunner(metafolder) {
         if (field) vars = { 'treeref:field': field };
       } else {
         panel = 'metarecord-list';
-        const seed = (field && (await config.pickerSeed(field))) || '';
+        // The `[ref-seeds]` rule's selection is where its targets live (spec-gui
+        // "Ref value seeds"); the legacy picker seed is the fallback for a
+        // field no rule names.
+        const rule = field ? await config.refSeed(field) : null;
+        const seed = rule?.query ?? ((field && (await config.pickerSeed(field))) || '');
         vars = { 'metarecord-list:query': seed };
       }
       return request({

@@ -276,6 +276,10 @@ describe('panel api — misc surface', () => {
     expect(invoke).toHaveBeenCalledWith('picker_seed', { field: 'tag' });
     await api.config.refCompletionSeed('tag');
     expect(invoke).toHaveBeenCalledWith('ref_completion_seed', { field: 'tag' });
+    await api.config.refSeed('tag');
+    expect(invoke).toHaveBeenCalledWith('ref_seed', { field: 'tag' });
+    await api.config.labelSeparator();
+    expect(invoke).toHaveBeenCalledWith('label_separator');
   });
 
   test('fs and statusBar route to their commands', async () => {

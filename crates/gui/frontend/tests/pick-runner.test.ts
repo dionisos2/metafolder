@@ -22,7 +22,7 @@ function stubMetafolder({ seed = null }: { seed?: string | null } = {}) {
           if (key === 'pick_result') resultListener = listener;
         },
       },
-      config: { pickerSeed: async () => seed },
+      config: { pickerSeed: async () => seed, refSeed: async () => null },
       pick: { start: undefined as unknown as (spec: Record<string, any>) => Promise<string> },
     },
   };

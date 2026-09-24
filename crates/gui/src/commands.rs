@@ -42,8 +42,15 @@ pub struct App {
     pub picker_seeds: std::collections::HashMap<String, String>,
     /// Per-field `ref` value completion seeds (config.toml
     /// `[ref-completion-seeds]`): field name → the `tree_ref` field to seed the
-    /// value completion and resolve typed paths against.
+    /// value completion and resolve typed paths against. Legacy: `[ref-seeds]`
+    /// wins where both name a field.
     pub ref_completion_seeds: std::collections::HashMap<String, String>,
+    /// Per-field rules naming a `ref` field's targets (config.toml
+    /// `[ref-seeds]`): field name → `{query, columns}`, with `"*"` the default
+    /// rule (spec-gui "Ref value seeds").
+    pub ref_seeds: std::collections::HashMap<String, crate::config::RefSeed>,
+    /// Completion-wide knobs (config.toml `[completion]`).
+    pub completion: crate::config::CompletionSettings,
     /// External programs offered by `file:open-with` (config.toml `open-with`).
     pub open_with: Vec<String>,
     pub daemon: Arc<DaemonProxy>,
@@ -536,6 +543,21 @@ pub fn picker_seed(app: AppHandle, field: String) -> Option<String> {
 #[tauri::command]
 pub fn ref_completion_seed(app: AppHandle, field: String) -> Option<String> {
     app.ref_completion_seeds.get(&field).cloned()
+}
+
+/// The `[ref-seeds]` rule naming a `ref` field's targets (spec-gui "Ref value
+/// seeds"): `{query, columns}`, or null when neither the field nor the `"*"`
+/// default has a rule.
+#[tauri::command]
+pub fn ref_seed(app: AppHandle, field: String) -> Option<crate::config::RefSeed> {
+    app.ref_seeds.get(&field).or_else(|| app.ref_seeds.get("*")).cloned()
+}
+
+/// What joins the columns of a multi-column completion label (config.toml
+/// `[completion].label-separator`, spec-gui "Completion views").
+#[tauri::command]
+pub fn label_separator(app: AppHandle) -> String {
+    app.completion.label_separator.clone()
 }
 
 /// The external programs `file:open-with` offers as completions (config.toml

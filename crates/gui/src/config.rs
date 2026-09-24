@@ -160,12 +160,84 @@ pub struct GuiConfig {
     /// completion"), read from the `[ref-completion-seeds]` table: field name →
     /// the name of a `tree_ref` field whose paths seed the value completion and
     /// against which a typed path is resolved back to the target uuid.
+    /// Legacy: `[ref-seeds]` wins where both name a field.
     pub ref_completion_seeds: std::collections::HashMap<String, String>,
+    /// Per-field rules naming a `ref` field's targets (spec-gui "Ref value
+    /// seeds"), read from the `[ref-seeds]` table: field name →
+    /// `["query", "columns"]` (which metarecords may be named, and how each is
+    /// shown — the `metarecord-list` query and columns syntaxes). The `"*"`
+    /// entry is the default rule, read for every field that names none.
+    pub ref_seeds: std::collections::HashMap<String, RefSeed>,
+    /// Completion-wide knobs (`[completion]`, spec-gui "Completion views").
+    pub completion: CompletionSettings,
     /// External programs offered by `file:open-with` (spec-gui "Opening a file
     /// with another program"), read from the top-level `open-with` array. They
     /// are completion candidates, not a whitelist: any command line may be
     /// typed. Defaults to the desktop's own handler.
     pub open_with: Vec<String>,
+}
+
+/// Completion-wide knobs (config.toml `[completion]`, spec-gui "Completion
+/// views").
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "kebab-case")]
+pub struct CompletionSettings {
+    /// What joins the columns of a multi-column completion label — the label
+    /// is typed back whole, so the join must be deterministic and typeable.
+    #[serde(default = "default_label_separator")]
+    pub label_separator: String,
+}
+
+fn default_label_separator() -> String {
+    " | ".to_string()
+}
+
+impl Default for CompletionSettings {
+    fn default() -> Self {
+        CompletionSettings { label_separator: default_label_separator() }
+    }
+}
+
+/// One `[ref-seeds]` rule (spec-gui "Ref value seeds"): how a `ref` field's
+/// targets are *named* in every value slot — which metarecords may be named
+/// (`query`, in the `metarecord-list` query box's syntax; none = all of them)
+/// and how each is shown (`columns`, in the `metarecord-list` columns syntax).
+///
+/// Written as `"columns"` or `["query", "columns"]` (a one-element array is
+/// the first form). The rule reads "select by this, name by that", and the
+/// array puts the query first the way the rule reads.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(try_from = "RefSeedWire")]
+pub struct RefSeed {
+    pub query: Option<String>,
+    pub columns: String,
+}
+
+#[derive(Deserialize)]
+#[serde(untagged)]
+enum RefSeedWire {
+    Columns(String),
+    Parts(Vec<String>),
+}
+
+impl TryFrom<RefSeedWire> for RefSeed {
+    type Error = String;
+
+    fn try_from(wire: RefSeedWire) -> Result<Self, String> {
+        match wire {
+            RefSeedWire::Columns(columns) => Ok(RefSeed { query: None, columns }),
+            RefSeedWire::Parts(parts) => match parts.as_slice() {
+                [columns] => Ok(RefSeed { query: None, columns: columns.clone() }),
+                [query, columns] => {
+                    Ok(RefSeed { query: Some(query.clone()), columns: columns.clone() })
+                }
+                _ => Err(format!(
+                    "a [ref-seeds] rule is \"columns\" or [\"query\", \"columns\"] (got {} entries)",
+                    parts.len()
+                )),
+            },
+        }
+    }
 }
 
 impl GuiConfig {
@@ -204,6 +276,8 @@ impl Default for GuiConfig {
             panel_defaults: PanelDefaults::new(),
             picker_seeds: std::collections::HashMap::new(),
             ref_completion_seeds: std::collections::HashMap::new(),
+            ref_seeds: std::collections::HashMap::new(),
+            completion: CompletionSettings::default(),
             open_with: vec!["xdg-open".to_string()],
         }
     }
@@ -577,6 +651,47 @@ mod tests {
             Some("full_name")
         );
         assert_eq!(parsed.ref_completion_seeds.get("missing"), None);
+    }
+
+    #[test]
+    fn test_ref_seeds_rules_and_the_default_wildcard() {
+        let empty: GuiConfig = toml::from_str("").unwrap();
+        assert!(empty.ref_seeds.is_empty());
+        assert_eq!(empty.completion.label_separator, " | ");
+
+        let parsed: GuiConfig = toml::from_str(
+            "[ref-seeds]\n\
+             tag = ['mf_schema=tag', 'path:path']\n\
+             author = 'full_name:value'\n\
+             '*' = 'path:path mfr_path:path name label'\n\
+             [completion]\n\
+             label-separator = ' · '\n",
+        )
+        .unwrap();
+        assert_eq!(
+            parsed.ref_seeds.get("tag"),
+            Some(&RefSeed {
+                query: Some("mf_schema=tag".to_string()),
+                columns: "path:path".to_string()
+            })
+        );
+        assert_eq!(
+            parsed.ref_seeds.get("author"),
+            Some(&RefSeed { query: None, columns: "full_name:value".to_string() })
+        );
+        assert_eq!(
+            parsed.ref_seeds.get("*"),
+            Some(&RefSeed {
+                query: None,
+                columns: "path:path mfr_path:path name label".to_string()
+            })
+        );
+        assert_eq!(parsed.completion.label_separator, " · ");
+    }
+
+    #[test]
+    fn test_ref_seed_rejects_a_wrongly_shaped_rule() {
+        assert!(toml::from_str::<GuiConfig>("[ref-seeds]\ntag = ['a', 'b', 'c']\n").is_err());
     }
 
     #[test]

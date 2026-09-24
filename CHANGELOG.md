@@ -14,6 +14,37 @@ than breaking them.
 ## [Unreleased]
 
 ### Added
+- **`[ref-seeds]`: how a `ref` field's targets are *named* — everywhere at
+  once** (spec-gui "Ref value seeds"). One rule per field (and a `*` default
+  rule), written `["query", "columns"]`: which metarecords may be named (a
+  `metarecord-list` query) and how each is shown (its columns syntax — the
+  same vocabulary a list cell is built with). That one naming governs every
+  value slot of the field: the candidates a completion offers (the whole line,
+  then one column at a time — the views `completion:cycle` walks, a cycled
+  view offering only the records that have its column), what typed text must
+  spell to name a target (its label, whole, in some view; a uuid always wins;
+  an ambiguous or unknown name is a hard error), what a value reads back as
+  (its annotation line, the pre-fill of an `edit`), what `remove` and `edit`
+  name a row by, and where the value picker opens. Candidates come one
+  *counted page* at a time (≤ 100, sorted by the naming), narrowed on the
+  typed text — a `*` rule may name every metarecord of the repository and
+  still stays as cheap to offer as a closed list. The legacy
+  `[picker-seeds]` / `[ref-completion-seeds]` tables are still read where no
+  rule names a field; `[completion].label-separator` (default `" | "`) sets
+  the join of a multi-column label.
+- **Completion candidates are label/value couples, and a completion can have
+  several views** (spec-gui "Completion views"). What a prompt's list shows
+  and what the command receives are now distinct: a plain string candidate is
+  its own label and value (nothing changes for the many completions that are
+  plain lists), and where they differ the collected argument is the *value*
+  — typed text that spells a label whole names it like a pick does. Two
+  candidates that read the same are automatically suffixed with their values,
+  so no listed row is a coin flip between two things. An argument may offer
+  several *views* of its candidates (one builder per view, a title each),
+  walked — wrapping — by `completion:cycle forward|back`, bound by default to
+  `ctrl+,` / `ctrl+.`; a builder gets the typed text and answers one page at
+  a time (`more`), so narrowing a huge candidate set re-queries instead of
+  shipping every row.
 - **`help:key` describes a key — Emacs `C-h k`.** Press `h k` (or run
   `help:key`), then the shortcut in question: the shell reports the command
   that key runs *in the current context* — its invocation and its description —
@@ -44,6 +75,28 @@ than breaking them.
     `mf_watch = true` no longer reads as unwatched.
 
 ### Changed
+- **`metarecord:field remove` names a value, not a row — and a seeded ref by
+  its path.** `m d` used to ask "Which value to remove?" over row labels of the
+  form `tag = <uuid>`: deleting a tag meant knowing (or reading) its uuid — the
+  one thing the completion seed exists to spare — and the label could not even
+  be typed inline. It now asks the field, then the value, exactly like `add`
+  (and like `mf metarecord field remove`): the value is parsed as one being
+  added, so a `ref` with a completion seed is named by its path in the seed
+  forest (a 32-hex uuid still wins), and *every row equal to it* is deleted.
+  The candidates offered are the record's own values *read back* in the same
+  raw vocabulary — a seeded ref as its path, ∅ for an explicit `Nothing` — and
+  so is the pre-fill of an `edit`, which used to show the uuid too. A row's
+  delete button and `metarecord:row-delete` still delete one specific row
+  (spec-gui "Ref value completion").
+- **`metarecord:field edit` asks the field first, and names the row to change
+  readably.** `m v` picked its row over the same uuid labels; it now asks the
+  field, then — only when it holds several values — which one, named by its
+  readable raw form (∅ an explicit absence), then the new value, pre-filled
+  with the one being edited as it reads. The replacement is read as the row's
+  own type, so a seeded ref is edited by path on both sides; a `Nothing` row
+  takes its type from the type argument, as before. With a single value the
+  row is named by the field alone, so a whole edit is finally spellable inline
+  (spec-gui "Ref value completion").
 - **The checked selection is gathered wherever the user is, and kept.** The
   multi-selection (`selected_metarecords` — the `selection` target of
   `metarecord:bulk` and of the bulk form, what `mf gui selected` prints) used
@@ -72,6 +125,10 @@ than breaking them.
   "Command names (non-exhaustive default set)", "User commands").
 
 ### Fixed
+- **`metarecord:field add` prompted with the wrong name.** "Value to add to
+  …?" showed the field's *type* (or `undefined`, when no type argument was
+  asked) instead of the field name — an argument index copied from the bulk
+  form, whose arguments sit one slot further along.
 - **`workspace-info` listed a `selected_entries` variable that never existed.**
   The standard one is `selected_metarecords` — the checked multi-selection —
   which the panel now shows in the standard group instead of among the custom

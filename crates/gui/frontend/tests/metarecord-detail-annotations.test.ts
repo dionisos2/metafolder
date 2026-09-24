@@ -51,12 +51,21 @@ function annotatorFor(entries: Entry[], seeds: Record<string, string> = {}) {
     }
     return out;
   });
-  const refSeed = vi.fn(async (field: string) => seeds[field] ?? null);
+  // What a ref target answers to under its value: its naming (spec-gui
+  // "Ref value seeds"), read back here the way the panel reads a legacy seed
+  // back — the target's whole path in the seeded forest, resolved by the
+  // daemon in one call.
+  const refLabel = vi.fn(async (field: string, uuid: string) => {
+    const seed = seeds[field];
+    if (!seed) return null;
+    const byUuid = await resolvePaths(seed, [uuid]);
+    return (byUuid[uuid] ?? [])[0] ?? null;
+  });
   return {
-    annotator: createAnnotator({ resolvePaths, getMetarecords, refSeed }),
+    annotator: createAnnotator({ resolvePaths, getMetarecords, refLabel }),
     resolvePaths,
     getMetarecords,
-    refSeed,
+    refLabel,
   };
 }
 

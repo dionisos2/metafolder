@@ -211,6 +211,15 @@ declare namespace Metafolder {
     /** The configured `ref` value completion seed (a tree_ref field name) for a
      *  field, or null (config.toml `[ref-completion-seeds]`). */
     refCompletionSeed(field: string): Promise<string | null>;
+    /** The `[ref-seeds]` rule naming a `ref` field's targets —
+     *  `{query, columns}` (spec-gui "Ref value seeds"): which metarecords may
+     *  be named, and how each is shown (the `metarecord-list` query and columns
+     *  syntaxes). The named rule wins, `"*"` is the default; null when neither
+     *  exists. */
+    refSeed(field: string): Promise<{ query: string | null; columns: string } | null>;
+    /** What joins the columns of a multi-column completion label (config.toml
+     *  `[completion].label-separator`, spec-gui "Completion views"). */
+    labelSeparator(): Promise<string>;
   }
 
   interface Workspace {
@@ -220,6 +229,28 @@ declare namespace Metafolder {
     /** Subscribe to one variable, or to `'*'` for every change (the listener
      *  then also receives the key). */
     onChange(key: string, listener: (value: unknown, key?: string) => void): void;
+  }
+
+  /** One completion candidate (spec-gui "Completion views"): the label shown
+   *  (and matched whole) and the value the command receives. A plain string is
+   *  both. */
+  type CompletionItem = string | { label: string; value: string };
+
+  /** One page of candidates; `more` says the source holds more than it handed
+   *  over, so narrowing on the typed text means asking again. */
+  type CompletionPage = { items: CompletionItem[]; more?: boolean };
+
+  /** One cycled view of a completion: its title while on screen, and its
+   *  candidates for the typed text and the arguments collected so far. */
+  interface CompletionView {
+    title?: string;
+    items(
+      partial: string,
+      prior: string[],
+    ):
+      | CompletionItem[]
+      | CompletionPage
+      | Promise<CompletionItem[] | CompletionPage>;
   }
 
   /** One declared command argument (spec-gui "Command"). Its `prompt`,
@@ -235,8 +266,16 @@ declare namespace Metafolder {
     /** A pre-filled, editable value (empty if omitted). */
     initial?(prior: string[]): string | Promise<string>;
     /** Autocomplete candidates (filtered client-side like command names).
-     *  `partial` is the current draft; v1 completions ignore it. */
-    complete?(partial: string, prior: string[]): string[] | Promise<string[]>;
+     *  `partial` is the current draft, so a source that talks to the daemon
+     *  can narrow as the user types. */
+    complete?(partial: string, prior: string[]):
+      | CompletionItem[]
+      | CompletionPage
+      | Promise<CompletionItem[] | CompletionPage>;
+    /** The cycled views of the candidates (spec-gui "Completion views"), for
+     *  the case where *which* views there are depends on the arguments
+     *  collected so far. Wins over `complete`. */
+    views?(prior: string[]): CompletionView[] | Promise<CompletionView[]>;
     /** Whether the argument may be left out. Supplied inline it is used;
      *  omitted it is skipped rather than prompted, so the command falls back
      *  to its default (`log:revert` vs `log:revert with-dependents`). */

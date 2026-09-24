@@ -105,7 +105,12 @@ async function mountPanel(firstUuid: string) {
     },
     query: { parse: async () => null, expand: async () => '', grammarSource: async () => '' },
     pick: { start: async () => '' },
-    config: { pickerSeed: async () => null, refCompletionSeed: async () => null },
+    config: {
+      pickerSeed: async () => null,
+      refCompletionSeed: async () => null,
+      refSeed: async () => null,
+      labelSeparator: async () => ' | ',
+    },
     recent: { touch: async () => {}, list: async () => [] },
     workspace: {
       get: async (key: string) => store.get(key) ?? null,

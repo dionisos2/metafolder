@@ -451,6 +451,16 @@ export function createPanelApi(deps: PanelApiDeps, ctx: PanelApiCtx): PanelApiIn
       // field name, or null (config.toml `[ref-completion-seeds]`).
       refCompletionSeed: (field: string) =>
         invoke('ref_completion_seed', { field }) as Promise<string | null>,
+      // The `[ref-seeds]` rule naming a `ref` field's targets —
+      // `{query, columns}` (spec-gui "Ref value seeds"): which metarecords may
+      // be named, and how each is shown. The named rule wins, `"*"` is the
+      // default; null when neither exists.
+      refSeed: (field: string) =>
+        invoke('ref_seed', { field }) as Promise<{ query: string | null; columns: string } | null>,
+      // What joins the columns of a multi-column completion label
+      // (config.toml `[completion].label-separator`, spec-gui "Completion
+      // views").
+      labelSeparator: () => invoke('label_separator') as Promise<string>,
     },
 
     workspace: {

@@ -281,9 +281,10 @@ The =result= kind in the spec chooses what is returned:
   (e.g. the repos panel's *Browse…* button — the picker opens =file-manager=
   on the disk, the user highlights a folder, =.= being the current directory).
 
-Seeding is configurable per field name, see [[*Picker seeds]]. The calling
-panel reads the mapping through the API and folds it into =spec=, so the seed
-policy stays the caller's decision.
+Seeding comes from the field's rule — a rule's query is where its targets live
+— with a legacy per-field picker query as the fallback, see [[*Ref value
+seeds]]. The calling panel reads it through the API and folds it into =spec=,
+so the seed policy stays the caller's decision.
 
 ** Command
 
@@ -369,7 +370,7 @@ that declared them. The prompts come from the instance of the *focused*
 workspace — the same one the handler runs on — so a completion list can never
 be another workspace's. Parameters supplied inline skip their prompt, so a
 fully-specified invocation
-(=metarecord:field edit tag musique/jazz=) runs without prompting — the
+(=metarecord:field remove tag musique/jazz=) runs without prompting — the
 interactive collection is a fallback for the missing tail, not a separate
 mode.
 
@@ -455,7 +456,8 @@ deliberately:
 - =row-X= is the cursor family (=metarecord:row-next= / =row-edit= /
   =row-delete=). It is deliberately not =field-X=: that would put
   =metarecord:field-edit= one hyphen from =metarecord:field edit=, which asks
-  *which* value to edit instead of taking the one under the cursor.
+  what to edit — the field, then *which* of its values — instead of taking the
+  one under the cursor.
 
 =edit-= is not a verb. A command that merely focuses an input is =focus=, one
 that opens a form is =open=, and an edit through the minibuffer is =<noun>
@@ -633,15 +635,53 @@ over the installed panel types), =panel:set type= asks only the second, and
 =daemon:set url= asks only the URL. A wrong *value* (typed free, past the
 completions) is a different matter and stays the handler's error to name.
 Unlike command mode (where =Enter= always runs the typed text), a prompt
-=Enter= accepts the *highlighted completion* and advances to the next
+=Enter= accepts the *highlighted candidate* and advances to the next
 argument — no =Tab= needed. To submit a *new value* that is not in the list
 (even one that ordered-substring-matches an existing candidate), either
 =Ctrl-Enter=, or =Up= past the top of the list to deselect it (the minibuffer
 itself) and then =Enter=; with no candidates highlighted, or none offered,
-=Enter= submits exactly what was typed. =Escape= abandons the whole
-invocation. Only one prompt owns the input at a time: an
+=Enter= submits what was typed — or, when that spells a candidate's label
+whole, the value it names (see [[*Completion views]]). =Escape= abandons the
+whole invocation. Only one prompt owns the input at a time: an
 interactive argument collection and a script prompt are mutually exclusive
 (whichever holds the input makes the other refuse to start).
+
+**** Completion views
+
+A prompt's candidates are *couples*: the =label= the list shows (and the
+filter reads) and the =value= the command receives. A plain string candidate
+is its own label and value, so every completion that gains nothing from the
+split stays a plain list. Where the two differ, what is seen is a name and
+what runs is what it names — a =ref= candidate is labelled the way a human
+reads its target and valued with that metarecord's uuid, and the collected
+argument *is* the value. A typed answer that spells a label whole names its
+value exactly as a pick does; text no label names is taken as itself, which
+is how an uuid or a brand-new value is entered.
+
+Two candidates that read the same are both *suffixed with their values* (the
+duplicate-label rule) — for every completion, whatever it completes: no listed
+row is ever a coin flip between two different things, and each stays
+addressable by typing it whole. Exact duplicates (same label, same value)
+collapse first.
+
+A completion may offer several *views* of its candidates. Usually it offers
+one — which is why the mechanism is invisible until it is needed. A =ref=
+value names its target one way (=path=), then another (=name=), then a third
+(=label=), because which naming reaches the wanted metarecord fastest depends
+on the metarecord: the user picks the view that names theirs the quickest.
+An argument declares its views as an array of builders, each with a =title=
+the input shows in the hint while it is on screen;
+=completion:cycle forward= / =completion:cycle back= (default =ctrl+,= /
+=ctrl+.=, rebindable — deliberately a chord, so an ordinary =comma= stays
+typable) walk the array, wrapping; with a single view the command is a
+silent no-op.
+
+Each builder is called with the typed text (and the arguments collected so
+far) and returns one *page* of candidates plus whether the source holds more
+(=more=). A complete page is narrowed by the local filter alone; a truncated
+one is re-asked as the user types (debounced). A builder therefore fetches at
+most one bounded page — a daemon request with its =count= and the view's own
+sort — however large the selection behind it.
 
 *** Bash completion (bash mode)
 
@@ -934,54 +974,87 @@ hanging on "Loading…" when the daemon calls in its start-up path fail.
 
 No authentication: the daemon is local-only and requires none.
 
-** Picker seeds
-
-=ref= value pickers (see [[*Value picker]]) benefit from a sensible starting
-query, but the daemon does not record what a =ref= field points to, so the seed
-cannot be derived automatically. It is configured per field name in
-=~/.config/metafolder/gui/config.toml=, in a =[picker-seeds]= table mapping a
-field name to a query string — written in the same syntax as the
-=metarecord-list= query box (simplified query text), since that is where the
-seed is injected:
-
-#+BEGIN_SRC toml
-[picker-seeds]
-tag    = 'mf_schema = "tag"'
-author = 'mf_schema = "person"'
-#+END_SRC
-
-The map is exposed to panels through =metafolder.config.pickerSeed(field)= so a
-calling form can fold the seed into its =pick.start= spec. A field with no
-entry yields =null= (the picker opens unfiltered). =tree_ref= pickers do not
-need a seed: the natural starting point is the field's own forest.
-
-** Ref value completion
+** Ref value seeds
 
 A =ref= field points to a metarecord by uuid, which is unreadable to type by
-hand in the command input. When the field has a *completion seed* configured, its
-value can instead be entered as a *path* — the symmetric of a =tree_ref= value.
-The seed is configured per field name in
-=~/.config/metafolder/gui/config.toml=, in a =[ref-completion-seeds]= table
-mapping a =ref= field name to the name of a =tree_ref= field:
+hand and useless to look at. A *seed rule* says how its targets are *named*
+instead — which metarecords may be named, and how each is shown — and that one
+naming governs every value slot of the field: the candidates a value
+completion offers, what typed text must spell to name a target, what a value
+reads back as (its annotation line, an =edit= pre-fill), what =remove= and
+=edit= name a row by, and where its value picker opens (see [[*Value picker]]).
+
+The rule is configured per field name in =~/.config/metafolder/gui/config.toml=,
+in a =[ref-seeds]= table. Each entry is =["query", "columns"]= — a
+=metarecord-list= query (which metarecords may be named; omitted = all of
+them) and a columns spec (how each is shown — the very vocabulary a list cell
+is built with, its =:path= aspects and =field>sub= follows included, see
+[[*metarecord-list= panel type]]). The =*= entry is the default rule, read for
+every field that names none:
 
 #+BEGIN_SRC toml
-[ref-completion-seeds]
-tag    = 'path'
-author = 'full_name'
+[ref-seeds]
+tag    = ['mf_schema = "tag"', 'path:path']
+author = ['mf_schema = "person"', 'full_name:name']
+'*'    = 'path:path mfr_path:path name label'
 #+END_SRC
 
-For a =ref= field with a seed, the =metarecord:field set=/=add= value argument
-(=m s= / =m a=) completes against the *seed field's forest* and, on commit,
-resolves the typed path to the owning metarecord's uuid through
-=POST …/tree/resolve-path= on the seed field (the same call =tree_ref= values
-use). A value that is already a 32-char hex uuid is always taken as the uuid
-directly (an explicit uuid wins over the seed); a non-uuid path that resolves to
-nothing is a *hard error*, never a silently-wrong ref (a full tree path is
-unique within a forest, so resolution is unambiguous). A field with no entry
-falls back to the legacy behaviour: the raw value is taken as the uuid. The map
-is exposed to panels through =metafolder.config.refCompletionSeed(field)=. The
-tag model's three ref fields (=tag= / =negative_tag= / =mixed_tag=) are seeded by
-default against their =path= hierarchy.
+A value is then entered as the target's *label* — its columns joined by the
+completion separator (=label-separator=, see [[*Completion views]]) — and a
+32-char hex uuid is always accepted directly (an explicit uuid wins). The
+label is matched *whole*, and in *some* view (see below): text no candidate is
+named by is a *hard error*, as is a label several targets bear (the error
+names their duplicate-label forms) — never a silently-wrong ref.
+
+The candidates come one *page* at a time (a counted daemon query, ≤ 100 rows,
+sorted by the naming columns then the uuid), narrowed on the typed text: each
+term is OR-ed over every naming column, a superset of the label matches, so
+narrowing can never lose the wanted candidate. The naming is offered as the
+*views* of [[*Completion views]]: the whole line first, then one column at a
+time — a cycled view offering only the records that /have/ its column —
+because which naming reaches the wanted metarecord fastest depends on the
+metarecord. Interactively the view on screen /is/ the vocabulary (the same
+text names different metarecords in different views, by design); an inline
+value has no view to be read in and must be unambiguous across them.
+
+The rule is read through the API as =metafolder.config.refSeed(field)= (the
+named rule wins, =*= is the default), with
+=metafolder.config.labelSeparator()= for the join. The legacy tables are
+still read for a field no rule names: =[ref-completion-seeds]= (a =tree_ref=
+field whose paths name the targets, and resolve a typed path through
+=POST …/tree/resolve-path=) and =[picker-seeds]= (a picker start query). The
+tag model's three ref fields (=tag= / =negative_tag= / =mixed_tag=) are
+seeded by default against their =path= hierarchy.
+
+The vocabulary is shared *both ways*: what is entered as a label is read back
+as one. The rule is exactly what says how to render the value it names — under
+the value (its annotation line), as the pre-fill of an =edit=, and among the
+values =metarecord:field remove= and =edit= name — and a target the naming
+cannot name falls back to its uuid, the only name it has.
+
+=metarecord:field remove= (=m d=) is where this matters most: it names what it
+drops as a *value*, not as a row — the field first, then the value, the exact
+inverse of =add= and the mirror of =mf metarecord field remove=. The value is
+read as one being added (a label names the very uuid =add= would have
+written), and *every row equal to it* is deleted: a value is not a row, and
+equal rows are indistinguishable in a value's terms. Its candidates are the
+record's own values, read back in the same vocabulary (∅ offering the
+explicit =Nothing= rows, which have no raw form to parse) — not the rule's
+candidates: only what the record holds can be removed from it. The
+=metarecord:bulk remove= candidates are the rule's instead, because its value
+is not on any one record. A value the record does not hold is refused. To
+delete one *specific*
+row — the twin of a duplicate, one =Nothing= among several — there is the row's
+delete button and =metarecord:row-delete=, which take the row itself.
+
+=metarecord:field edit= (=m v=) names its row the same way =remove= names a
+value: the field first, then which of its values — asked only when there are
+several, since with one the field names the row already — then the replacement,
+pre-filled with the value being edited as it reads. The replacement is read as
+the row's own type (a Nothing row, which has none, takes the type argument and
+so establishes one). What both flows replace picked rows by display labels of
+the form =tag = <uuid>=: untypeable inline — the label contains spaces, and
+only the last argument absorbs several — and unreadable at that.
 
 ** Panel defaults
 
@@ -1260,7 +1333,7 @@ Behaviours:
 | =metarecord:row-edit=   | Edit the field row under the cursor                 |
 | =metarecord:row-delete= | Delete the field row under the cursor               |
 | =metarecord:cancel=  | Cancel the current field edit or add form           |
-| =metarecord:field <op> [target] [type] [value]= | Field operation on the *current* metarecord. =op= is =set= (overwrite every value), =add= (append one value — a value it already holds is a no-op, spec-data-model "No duplicate rows"), =edit= (change one value, selected by value), =remove= (drop one value, selected by value), =unset= (remove the field entirely → /unknown/), =rename= (all its values), =retype= (all its values). =target= names a field for =set=/=add=/=unset=/=rename=/=retype=, and one value for =edit=/=remove=. =type= is taken only when the operation writes a value and nothing settles its type (always for =retype=, which is the operation that names one) — see "The type is an argument" below |
+| =metarecord:field <op> [target] [which] [type] [value]= | Field operation on the *current* metarecord. =op= is =set= (overwrite every value), =add= (append one value — a value it already holds is a no-op, spec-data-model "No duplicate rows"), =edit= (change one value), =remove= (drop every row equal to the value it names — the inverse of =add=), =unset= (remove the field entirely → /unknown/), =rename= (all its values), =retype= (all its values). =target= always names a field. =which= names the row =edit= changes by its value's raw form (∅ an explicit absence), and is asked only when the field holds several values — with one, the field names the row already. =type= is taken only when the operation writes a value and nothing settles its type (always for =retype=, which is the operation that names one); =remove= takes none — every row it can name carries the type its value is read as — see "The type is an argument" below |
 | =metarecord:bulk <target> <op> [field] [type] [value]= | The same over the target the invocation names: =selection= (the checkbox selection, =selected_metarecords=) or =query= (the current query — the *effective* one, finder included; when the list has not run, its base query text, and the empty one reads as every metarecord). The target is asked first when not named — completed over =selection= / =query=, pre-filled with what a checked selection would mean, and naming what each choice would act on; there is no fall-through, so an empty selection is nothing to do rather than the query. An old positional invocation (=metarecord:bulk set …=) fails loudly with the new syntax in the error. =op= is =set= / =add= / =remove= / =unset= — the daemon's set-layer routes =POST /query/fields/{set,add,remove,unset}= — plus =delete=, which deletes the metarecords themselves (=POST /query/delete=; the files stay on disk) and so names no field |
 | =metarecord-list:open-bulk-edit= | Mouse flow: open the in-panel bulk edit / delete form, whose target drop-down names the same two choices (the checked selection, or the query shown — the default) |
 | =metarecord-list:set <setting> <value>= | Change a view setting: =mode= (=table= / =grid=) or =page-size= (results per fetch) |
@@ -1346,8 +1419,10 @@ Behaviours:
 
 A field whose only value is =Nothing= (an *explicit absence*, distinct from
 the field not existing) is still a first-class target of =metarecord:field=:
-its name is offered by the completion of =rename=, =retype= and =edit=.
-Renaming moves the Nothing row with the rest of the field. Because a =Nothing=
+its name is offered by the completion of =rename=, =retype=, =edit= and
+=remove=, and =remove= names such a row as ∅ — the glyph an absence displays
+as, which no raw form parses. Renaming moves the Nothing row with the rest of
+the field. Because a =Nothing=
 value carries no type, giving such a field a value first *establishes a type*:
 =edit= uses the field's single established type when one is known (from the
 schema or from other records) and otherwise asks which type to use; =retype= on
@@ -1461,8 +1536,8 @@ input collects the field name (or a value to edit, selected among the record's
 current values), then the type, then the new value through the minibuffer, with
 completion and the current value pre-filled. =TreeRef= values are edited as
 paths (completed against the field's forest, resolved through
-=POST …/tree/resolve-path= on commit); =ref= values with a completion seed are
-edited the same way (see [[*Ref value completion]]). A =bool= value completes
+=POST …/tree/resolve-path= on commit); =ref= values are named by their rule
+(see [[*Ref value seeds]]). A =bool= value completes
 over its closed set — =false= / =true= — with no repository lookup. This value
 completion and resolution is shared by the direct and the bulk value commands
 alike.
@@ -1471,7 +1546,9 @@ alike.
 type cannot be determined automatically (no row on the record, nothing in the
 schema-aware catalog), the type is *asked* through the command input rather
 than silently defaulting to =string= — for =metarecord:field set= / =add= /
-=edit= and for =metarecord:bulk set= / =add= / =remove= alike. It is one of the
+=edit= and for =metarecord:bulk set= / =add= / =remove= alike. The per-record
+=remove= asks none: every row it can name carries the type its value is read
+as. It is one of the
 command's declared arguments like any other, so it is completed over the
 concrete types (every type but =nothing=, which has no value to parse) and it
 is asked *before* the value: the value is parsed as that type, and a question
@@ -1991,14 +2068,17 @@ await metafolder.pick.start({
 
 **** =metafolder.config=
 
-Read-only access to GUI configuration the panel may need. =pickerSeed(field)=
-returns the configured seed query for a =ref= field name (=metarecord-list=
-query syntax), or =null= when none is set (see [[*Picker seeds]]). The caller
-folds it into the =pick.start= spec, keeping the seed policy on the calling
-side.
+Read-only access to GUI configuration the panel may need. =refSeed(field)=
+returns the rule naming a =ref= field's targets — ={query, columns}=, or =null=
+when neither the field nor the =*= default has one (see [[*Ref value seeds]]) —
+and =labelSeparator()= the join of a multi-column completion label (see
+[[*Completion views]]). =pickerSeed(field)= is the legacy per-field picker
+query, still read where no rule names the field. The caller folds the seed
+into the =pick.start= spec, keeping the seed policy on the calling side.
 
 #+BEGIN_SRC js
-const seed = (await metafolder.config.pickerSeed('tag')) ?? undefined
+const rule = await metafolder.config.refSeed('tag')
+const seed = rule?.query ?? ((await metafolder.config.pickerSeed('tag')) ?? undefined)
 #+END_SRC
 
 **** =metafolder.defaults=
@@ -2482,8 +2562,10 @@ terms, since a uuid does not:
 - otherwise (or when the target is not in the seed forest) the target's =name=
   field, a soft convention — a metarecord with none simply gets no annotation.
 
-Keyboard: =Tab= moves between rows, =Enter= edits, =d= deletes (with
-confirmation).
+Keyboard: =Tab= moves between rows, =Enter= edits, =d= deletes the row (with
+confirmation). That deletion is *per row*; =metarecord:field remove= (=m d=)
+removes by value instead, dropping every row equal to the value it names —
+see [[*Ref value seeds]].
 
 At the bottom of the panel:
 - /New metarecord/ button (or =metarecord:create= command) → creates a metarecord

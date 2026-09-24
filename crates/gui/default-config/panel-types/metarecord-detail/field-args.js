@@ -13,17 +13,16 @@
  * The type an operation will write without asking anyone, or null when nothing
  * settles it.
  *
- * In order: the row the user picked by value (an `edit` on a concrete row is
- * typed by that row, even when a sibling row of the same multi-map field has
- * another type), then any concrete row of the same name on the record, then
- * the repo's catalogue. A `nothing` never settles a type — it is an explicit
- * absence, and giving it a value is exactly the case that must ask.
+ * In order: any concrete row of the same name on the record, then the repo's
+ * catalogue. A `nothing` never settles a type — it is an explicit absence, and
+ * giving it a value is exactly the case that must ask. (A concrete row being
+ * *edited* types its own replacement, right where the edit runs; here the
+ * question is only what the name means.)
  *
- * @param {{rows?: Row[], name: string, catalog?: string|null, picked?: Row|null}} where
+ * @param {{rows?: Row[], name: string, catalog?: string|null}} where
  * @returns {string|null}
  */
-export function settledType({ rows = [], name, catalog = null, picked = null }) {
-  if (picked && picked.value.type !== 'nothing') return picked.value.type;
+export function settledType({ rows = [], name, catalog = null }) {
   const concrete = rows.find((f) => f.name === name && f.value.type !== 'nothing');
   if (concrete) return concrete.value.type;
   if (typeof catalog === 'string' && catalog !== 'nothing') return catalog;
