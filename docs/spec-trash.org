@@ -178,6 +178,12 @@ those references dangling. The endpoint therefore *refuses* — =409=, nothing
 written — when any metarecord in the set is referenced from *outside* the set,
 naming the referrers. =force= overrides it.
 
+The repository root metarecord is refused regardless of =force= (=400=, nothing
+written; [[file:spec-data-model.org][spec-data-model.org]] "Referential integrity
+of a forest"). Since the metarecords are deleted before the bytes move, this
+stops a trashing of the repository root *before* it touches anything —
+=trash -f= on the root directory errors out with the directory still in place.
+
 Only references from outside count. A subtree's own internal references travel
 with it and come back together on a restore, so refusing on those would make it
 impossible to trash a folder whose files reference each other — which would empty

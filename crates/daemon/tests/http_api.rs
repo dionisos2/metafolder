@@ -331,6 +331,66 @@ async fn test_create_get_delete_metarecord() {
     std::fs::remove_dir_all(root).unwrap();
 }
 
+// The filesystem root metarecord anchors every path in the repository: without
+// it no lookup resolves ("filesystem root entry missing"), and unlike any other
+// metarecord it cannot simply be re-created — a fresh one gets a fresh uuid,
+// and every child names the old one. So no deletion may take it, by any path
+// (spec-data-model "Referential integrity of a forest").
+#[tokio::test]
+async fn test_the_repository_root_metarecord_cannot_be_deleted() {
+    let (app, repo, root) = app_with_repo("root_kept").await;
+
+    // The root metarecord: the `mfr_path` forest root named "" (spec-file-tracking
+    // "The root directory metarecord").
+    let (status, roots) =
+        request(&app, "GET", &format!("/repos/{repo}/tree/roots?field=mfr_path"), None).await;
+    assert_eq!(status, StatusCode::OK, "tree roots failed: {roots}");
+    let root_uuid = roots
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|r| r["name"] == json!(""))
+        .and_then(|r| r["uuid"].as_str())
+        .expect("the filesystem forest has a root")
+        .to_string();
+
+    // An ordinary metarecord, named alongside the root in one query delete: a
+    // refused delete is atomic and leaves it alone too.
+    let other =
+        create_metarecord(&app, &repo, json!([])).await["uuid"].as_str().unwrap().to_string();
+
+    for (method, path, body) in [
+        ("DELETE", format!("/repos/{repo}/metarecords/{root_uuid}"), None),
+        (
+            "POST",
+            format!("/repos/{repo}/query/delete"),
+            Some(json!({"query": {"type": "uuid_in", "uuids": [root_uuid, other]}})),
+        ),
+        ("POST", format!("/repos/{repo}/metarecords/trash"), Some(json!({"uuids": [root_uuid]}))),
+    ] {
+        let (status, body) = request(&app, method, &path, body).await;
+        assert_eq!(
+            status,
+            StatusCode::BAD_REQUEST,
+            "{method} {path} must refuse to delete the root: {body}"
+        );
+        let (status, _) =
+            request(&app, "GET", &format!("/repos/{repo}/metarecords/{root_uuid}"), None).await;
+        assert_eq!(status, StatusCode::OK, "the root metarecord survived {method} {path}");
+    }
+
+    let (status, _) =
+        request(&app, "GET", &format!("/repos/{repo}/metarecords/{other}"), None).await;
+    assert_eq!(status, StatusCode::OK, "the refused query delete deleted nothing at all");
+
+    // Deleting an ordinary metarecord is unchanged.
+    let (status, _) =
+        request(&app, "DELETE", &format!("/repos/{repo}/metarecords/{other}"), None).await;
+    assert_eq!(status, StatusCode::NO_CONTENT);
+
+    std::fs::remove_dir_all(root).unwrap();
+}
+
 // The GUI re-warms the field catalog (GET /repos/:repo/fields) on every change
 // it sees through the log change feed — right after a write, when the in-memory
 // index is one op stale. Serving that from the O(rows) `SELECT DISTINCT

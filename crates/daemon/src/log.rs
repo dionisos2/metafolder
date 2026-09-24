@@ -1837,10 +1837,27 @@ impl<'c> Writer<'c> {
     }
 
     /// Deletes a metarecord and all its rows.
+    ///
+    /// One metarecord is never deleted: the repository root, the `mfr_path` root
+    /// position (spec-file-tracking "The root directory metarecord"). Every path
+    /// hangs from it, and re-creating it is not a repair — a fresh metarecord
+    /// gets a fresh uuid, while the whole forest keeps naming the deleted one.
+    /// Recovery for a root deleted before this check existed is a rollback or a
+    /// revert of the deletion, which restore it at its own uuid.
     pub fn delete_metarecord(&mut self, uuid: Uuid) -> Result<()> {
         let version = db::get_version(&self.tx, uuid)?
             .ok_or_else(|| DomainError::NotFound(format!("Metarecord not found: {uuid}")))?;
         let before = db::get_field_rows(&self.tx, uuid)?;
+        let is_repository_root = before.iter().any(|row| {
+            row.name == "mfr_path"
+                && matches!(&row.value, Value::TreeRef { parent: None, name } if name.as_bytes().is_empty())
+        });
+        if is_repository_root {
+            return Err(DomainError::BadRequest(
+                "cannot delete the repository root metarecord".to_string(),
+            )
+            .into());
+        }
         self.tx
             .execute("DELETE FROM metarecord WHERE uuid = ?1", params![db::uuid_to_bytes(uuid)])?;
         self.log_op(OpType::DeleteRecord, uuid, None, Some(version), before, vec![])?;

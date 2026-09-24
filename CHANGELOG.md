@@ -125,6 +125,18 @@ than breaking them.
   "Command names (non-exhaustive default set)", "User commands").
 
 ### Fixed
+- **The repository root metarecord could be deleted.** One deletion and nothing
+  in the repository resolved any more: every lookup through the `mfr_path`
+  forest failed with "filesystem root entry missing", `track` could not re-create
+  the root (it is not a creatable position), and re-creating it at a fresh uuid
+  would have orphaned the whole forest, which keeps naming the deleted one.
+  Every deletion path now refuses it with a `400` and nothing written —
+  `DELETE …/metarecords/:uuid`, `POST …/query/delete` (atomically, whatever else
+  the match set holds) and `POST …/metarecords/trash`, so `mf trash -f` on the
+  root directory errors out before the bytes move. A root deleted before this is
+  recovered by a rollback or a revert of the deletion, which put it back at its
+  own uuid (spec-data-model "Referential integrity of a forest"). API_VERSION
+  13 → 14.
 - **`metarecord:field add` prompted with the wrong name.** "Value to add to
   …?" showed the field's *type* (or `undefined`, when no type argument was
   asked) instead of the field name — an argument index copied from the bulk

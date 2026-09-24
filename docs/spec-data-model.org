@@ -183,6 +183,18 @@ reference on every manual write:
   to =Nothing= or to something else, a whole-record overwrite, and deleting the
   metarecord.
 
+One position cannot be removed at all: the *filesystem root* (=mfr_path= with
+=parent=NULL= and an empty name, the repository root metarecord of
+[[file:spec-file-tracking.org][spec-file-tracking.org]] "The root directory metarecord"). It anchors every
+path, so a deletion taking it leaves a repository nothing resolves in
+("filesystem root entry missing"), and re-creating it is not a repair: a fresh
+metarecord gets a fresh uuid while the whole forest keeps naming the deleted
+one. Deleting it — =DELETE /repos/:repo_uuid/metarecords/:uuid=,
+=POST /repos/:repo_uuid/query/delete=, or the trashing endpoint
+([[file:spec-trash.org][spec-trash.org]] "Deleting the metarecords") — is therefore rejected with =400=,
+children or not. Recovery for a root deleted before this check existed is a
+rollback or a revert of the deletion, which puts it back at its own uuid.
+
 The second check runs **once, against the state the revision is about to
 commit**, not per operation: deleting a whole subtree in one revision is
 legitimate even though the parent goes first, and only the committed state has
@@ -801,7 +813,9 @@ Body ={"fields": [...], "force"?}= → updated full object.
 
 *** =DELETE /repos/:repo_uuid/metarecords/:uuid=
 
-Deletes the metarecord and all its fields (one =DeleteRecord= op). =204=.
+Deletes the metarecord and all its fields (one =DeleteRecord= op). =204=. The
+repository root metarecord is refused with =400= (see
+[[*Referential integrity of a forest]]).
 
 *** =POST /repos/:repo_uuid/metarecords/:uuid/fields=
 
