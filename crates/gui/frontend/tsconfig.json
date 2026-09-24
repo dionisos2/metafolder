@@ -18,6 +18,7 @@
       "/__paged-list.js": ["../panel-shim/paged-list.js"],
       "/__value-widget.js": ["../panel-shim/value-widget.js"],
       "/__schema-template.js": ["../panel-shim/schema-template.js"],
+      "/__columns.js": ["../panel-shim/columns.js"],
       "/__finder.js": ["../panel-shim/finder.js"],
       "/__find-entry.js": ["../panel-shim/find-entry.js"],
       "/__keyhints.js": ["../panel-shim/keyhints.js"],

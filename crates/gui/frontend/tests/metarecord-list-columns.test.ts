@@ -18,7 +18,7 @@ import {
   treeRefFields,
   refTargetUuids,
   followedTreeFields,
-} from '../../default-config/panel-types/metarecord-list/columns.js';
+} from '../../panel-shim/columns.js';
 
 type Value = Metafolder.Value;
 type Entry = Metafolder.Metarecord & { version: number; fields: Metafolder.Field[] };

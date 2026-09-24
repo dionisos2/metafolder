@@ -29,7 +29,7 @@ import {
   treeRefFields,
   refTargetUuids,
   followedTreeFields,
-} from './columns.js';
+} from '/__columns.js';
 
 // Smallest page of the three list panels: each row needs several daemon
 // round-trips (TreeRef path resolution, ref-target metarecords) and parsing,
@@ -73,7 +73,7 @@ function parseColumnsOr(spec, fallback) {
 
 /**
  * A column spec, as ./columns.js parses it.
- * @typedef {import('./columns.js').Column} Column
+ * @typedef {import('/__columns.js').Column} Column
  *
  * A sort key, as the daemon's query body takes it.
  * @typedef {{field: string, order: 'asc'|'desc'}} SortKey
@@ -1476,10 +1476,10 @@ export async function mount(root, metafolder) {
       const input = z.input;
       const from = input.selectionStart ?? input.value.length;
       const to = input.selectionEnd ?? from;
-      input.value = input.value.slice(0, from) + text + input.value.slice(to);
-      const caret = from + text.length;
+      input.value = input.value.slice(0, from) + value + input.value.slice(to);
+      const caret = from + value.length;
       input.setSelectionRange(caret, caret);
-      input.focus();
+      if (!stay) input.focus();
       // Assigning `.value` fires nothing, so the debounced expand(A) → B
       // mirror would keep showing a stale expansion (panel-shim/history.js
       // dispatches this for the same reason).

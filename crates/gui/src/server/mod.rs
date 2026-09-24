@@ -34,6 +34,7 @@ const ORPHAN_JS: &str = include_str!("../../panel-shim/orphan.js");
 const PAGED_LIST_JS: &str = include_str!("../../panel-shim/paged-list.js");
 const VALUE_WIDGET_JS: &str = include_str!("../../panel-shim/value-widget.js");
 const SCHEMA_TEMPLATE_JS: &str = include_str!("../../panel-shim/schema-template.js");
+const COLUMNS_JS: &str = include_str!("../../panel-shim/columns.js");
 const FINDER_JS: &str = include_str!("../../panel-shim/finder.js");
 const HISTORY_JS: &str = include_str!("../../panel-shim/history.js");
 const HELP_JS: &str = include_str!("../../panel-shim/help.js");
@@ -71,6 +72,7 @@ pub fn build_router(state: ServerState) -> Router {
         .route("/__paged-list.js", get(|| async { javascript(PAGED_LIST_JS) }))
         .route("/__value-widget.js", get(|| async { javascript(VALUE_WIDGET_JS) }))
         .route("/__schema-template.js", get(|| async { javascript(SCHEMA_TEMPLATE_JS) }))
+        .route("/__columns.js", get(|| async { javascript(COLUMNS_JS) }))
         .route("/__finder.js", get(|| async { javascript(FINDER_JS) }))
         .route("/__find-entry.js", get(|| async { javascript(FIND_ENTRY_JS) }))
         .route("/__keyhints.js", get(|| async { javascript(KEYHINTS_JS) }))

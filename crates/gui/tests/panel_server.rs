@@ -157,6 +157,8 @@ async fn test_panel_helper_modules_are_served() {
     assert_eq!(status, StatusCode::OK);
     let (status, _, _) = get(&router, "/__value-widget.js").await;
     assert_eq!(status, StatusCode::OK);
+    let (status, _, _) = get(&router, "/__columns.js").await;
+    assert_eq!(status, StatusCode::OK);
     let (status, _, _) = get(&router, "/__file-actions.js").await;
     assert_eq!(status, StatusCode::OK);
     // Removed with the iframe shim.
@@ -171,7 +173,14 @@ async fn test_panel_helper_modules_are_not_cached() {
     // rebuilt helper (e.g. a panel importing a newly added export). The shim
     // routes must therefore forbid caching.
     let (_guard, _config, router) = setup();
-    for uri in ["/__ui.js", "/__menu.js", "/__orphan.js", "/__paged-list.js", "/__value-widget.js"]
+    for uri in [
+        "/__ui.js",
+        "/__menu.js",
+        "/__orphan.js",
+        "/__paged-list.js",
+        "/__value-widget.js",
+        "/__columns.js",
+    ]
     {
         let response = router
             .clone()
