@@ -275,22 +275,42 @@
   { command = "file:restart", when = "file" },
 ]
 
-# Delete: send the selected metarecord's file to the trash (spec-trash.org),
-# from any panel that carries a selection. In the trash panel itself, Delete
-# permanently removes the highlighted entry. All are confirmed.
+# Delete: remove the selection, confirmed (spec-trash.org "GUI"). On a
+# metarecord (`metarecord:remove`) the record always goes: without a file that
+# is the whole of it, and with one the question is about the file — trash it
+# (and the record with it) or keep it (the record alone). The two direct forms
+# skip that question: ctrl+delete / shift+delete below. In the trash panel
+# itself, Delete permanently removes the highlighted entry.
 "delete" = [
-  { command = "metarecord:trash", when = "metarecord-list" },
-  { command = "metarecord:trash", when = "metarecord-detail" },
+  { command = "metarecord:remove", when = "metarecord-list" },
+  { command = "metarecord:remove", when = "metarecord-detail" },
   # In the file-manager, Delete removes the highlighted file/folder itself
   # (to the repo trash when a repo is active, else permanently), so untracked
   # entries can be deleted too — not just tracked metarecords.
   { command = "file-manager:delete", when = "file-manager" },
-  { command = "metarecord:trash", when = "treeref" },
+  { command = "metarecord:remove", when = "treeref" },
   { command = "trash:delete", when = "trash" },
   # In the duplicates panel it is the copy under the cursor that goes, and the
   # panel re-counts the group it left (spec-duplicates "GUI") — which
   # `metarecord:trash` on the shared selection could not do.
   { command = "duplicates:trash", when = "duplicates" },
+]
+
+# The direct answers to the question `metarecord:remove` asks about a
+# metarecord's file (spec-trash.org "GUI"), in the panels that carry a
+# metarecord selection: ctrl+delete sends the file to the trash at once
+# (= metarecord:trash), shift+delete deletes the metarecord alone
+# (= metarecord:delete, the file kept). Both are confirmed, as the bare
+# Delete key's action is.
+"ctrl+delete" = [
+  { command = "metarecord:trash", when = "metarecord-list" },
+  { command = "metarecord:trash", when = "metarecord-detail" },
+  { command = "metarecord:trash", when = "treeref" },
+]
+"shift+delete" = [
+  { command = "metarecord:delete", when = "metarecord-list" },
+  { command = "metarecord:delete", when = "metarecord-detail" },
+  { command = "metarecord:delete", when = "treeref" },
 ]
 
 # duplicates: keep the copy under the cursor and trash the group's others. Plain

@@ -1741,6 +1741,59 @@ async function runCommand(name: string, args: string[], ws: string | null): Prom
       }
       return true;
     }
+    case 'metarecord:remove': {
+      // The Delete key on a metarecord (spec-trash.org "GUI"): the record goes
+      // either way, so what is asked about is its file. Without one this is a
+      // plain `metarecord:delete`; with one the question names the two
+      // canonical actions and runs the picked one — OK trashes the file (the
+      // question doubles as the confirmation `metarecord:trash` would ask),
+      // Cancel falls through to `metarecord:delete`, which keeps the file and
+      // confirms the record's deletion itself.
+      if (!ws) return true;
+      const selection = await invoke<{ uuid: string; repo: string } | null>('ws_get_var', {
+        wsId: ws,
+        key: 'selected_metarecord',
+      });
+      if (
+        !selection ||
+        typeof selection.uuid !== 'string' ||
+        typeof selection.repo !== 'string'
+      ) {
+        await status('no metarecord is selected');
+        return true;
+      }
+      const { uuid, repo } = selection;
+      // The file the metarecord carries (a present `mfr_path`), root-relative —
+      // no paths at all when the field is absent or Nothing, which is exactly
+      // the reading the trash takes of "the selected metarecord has no file".
+      const resolved = (await daemonJson(
+        'GET',
+        `/repos/${repo}/metarecords/${uuid}/fields/mfr_path/resolve-tree`,
+      )) as { paths?: string[] };
+      const rel = resolved.paths?.[0];
+      if (rel === undefined) {
+        await dispatch('metarecord:delete');
+        return true;
+      }
+      const name = rel === '' ? await repoRoot(repo) : (rel.split('/').pop() ?? rel);
+      const trashFile = window.confirm(
+        `Send "${name}" to the trash?\n\n` +
+          'OK = trash the file (its metarecord is deleted with it, restorable from the trash panel).\n' +
+          'Cancel = keep the file and delete the metarecord only.',
+      );
+      if (!trashFile) {
+        await dispatch('metarecord:delete');
+        return true;
+      }
+      // The Rust command posts its own success/error status; swallow the
+      // rejection so the error is not surfaced twice.
+      try {
+        await invoke('trash_selected_metarecord', { wsId: ws });
+      } catch {
+        /* already reported to the status bar */
+      }
+      return true;
+    }
     case 'log:undo':
       if (ws) await invoke('log_navigate', { wsId: ws, redo: false });
       return true;

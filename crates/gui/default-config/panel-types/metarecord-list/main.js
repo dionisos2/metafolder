@@ -1601,9 +1601,9 @@ export async function mount(root, metafolder) {
 
   // Right-click menu: acts on the row under the pointer. The clicked row
   // becomes the cursor first, so every action targets it rather than whatever
-  // the keyboard cursor last sat on — `metarecord:trash`/`pick:confirm` read
-  // `selected_metarecord`, which the cursor keeps in sync. All actions confirm
-  // where they mutate anything.
+  // the keyboard cursor last sat on — `metarecord:remove`/`metarecord:trash`/
+  // `pick:confirm` read `selected_metarecord`, which the cursor keeps in sync.
+  // All actions confirm where they mutate anything.
   metafolder.contextMenu.addDefaultItems((event) => {
     const index = rowIndexFromEvent(event);
     if (index >= 0 && index !== cursorIndex) void setCursor(index);

@@ -147,6 +147,11 @@ fn register_builtins(registry: &CommandRegistry) {
         ("ignore:remove", "Remove an ignore preset's patterns from the target directory", true),
         ("ignore:set", "Replace the target directory's ignore set with a preset", true),
         ("metarecord:trash", "Send the selected metarecord's file to the trash", true),
+        (
+            "metarecord:remove",
+            "Remove the selected metarecord (its file: trash it, or keep it)",
+            true,
+        ),
         ("log:undo", "Undo the last revision of the active repository", true),
         ("log:redo", "Re-apply the revision ahead of HEAD", true),
         ("answer:send", "Resolve the pending script input wait", true),

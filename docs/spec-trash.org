@@ -393,10 +393,22 @@ metadata half.
 - *Send to the trash* — the =metarecord:trash= command (a shell builtin) sends
   the workspace's =selected_metarecord='s file to the trash (=reason=manual=,
   capturing and deleting the metarecord, exactly like =mf trash -f=). It is
-  bound to =Delete= in the panels that carry a metarecord selection
+  bound to =ctrl+delete= in the panels that carry a metarecord selection
   (=metarecord-list=, =metarecord-detail=, =treeref=) and offered as a *Trash
-  file* context-menu item in the metarecord panels. Because =Delete= is a bare
-  key, the action is *confirmed* even though it is reversible.
+  file* context-menu item in the metarecord panels. The action is reversible
+  (restore from the trash panel), but *confirmed* anyway since it hangs off a
+  bare key.
+
+- *Remove the metarecord* — the =metarecord:remove= command (a shell builtin),
+  the =Delete= key in the same panels, removes the =selected_metarecord= and
+  settles its file on the way. A metarecord *without* a file has nothing to
+  settle, so it goes straight to =metarecord:delete= (the record alone, its own
+  confirmation). A metarecord *with* one is asked about it first: =OK= sends
+  the file to the trash — the trashing above, the question doubling as its
+  confirmation — and =Cancel= keeps the file and deletes the metarecord alone
+  (=metarecord:delete= confirms). =shift+delete= is that record deletion
+  without the question. Trashing keeps its order and its captures however it is
+  reached.
 
 - *file-manager delete* — the =file-manager= panel deletes the *highlighted
   filesystem entry* (=Delete=, or the context menu) through =trash_path=. When
