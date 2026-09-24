@@ -24,6 +24,18 @@
   minibuffer starts empty and completes over the repository's TreeRef fields.
 </p>
 
+<h2>Adding an element</h2>
+<p>
+  <span data-mf-key="treeref:add">Ctrl+N</span> (or the toolbar's <em>+
+  add</em>) grows the forest: a new element under the node the panel is open on
+  — at the forest roots it becomes a new root. It asks, in order, for the
+  <strong>schema type</strong> to create the metarecord with (completing over
+  the schema's declared types; a blank answer creates a record carrying only
+  its position), then for the new node's <strong>name</strong>. The record gets
+  the type's template fields plus one <code>tree_ref</code> row on the explored
+  field, positioned under the current node — and takes the cursor.
+</p>
+
 <h2>What points at this node?</h2>
 <p>
   The ref bar answers the companion question — which metarecords <em>reference</em>

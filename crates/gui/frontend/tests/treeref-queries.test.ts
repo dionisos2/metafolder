@@ -6,6 +6,7 @@
 import { describe, expect, test } from 'vitest';
 import {
   childrenQuery,
+  nodeFields,
   refQueryDsl,
   treeNameOf,
   treeRefPath,
@@ -96,5 +97,52 @@ describe('refQueryDsl', () => {
   test('with no node selected the shape alone is shown', () => {
     expect(refQueryDsl({ ...spec, path: null, scope: 'exact' })).toBe('tag -> (path = …)');
     expect(refQueryDsl({ ...spec, path: null, scope: 'subtree' })).toBe('tag -> (path =>* …)');
+  });
+});
+
+describe('nodeFields (treeref:add: a metarecord at a new node)', () => {
+  const position = { type: 'tree_ref', value: { parent: 'p1', name: 'jazz' } };
+
+  test('with no schema template the record carries only the tree position', () => {
+    expect(nodeFields([], { field: 'path', parent: 'p1', name: 'jazz' })).toEqual([
+      { name: 'path', value: position },
+    ]);
+  });
+
+  test('the schema template comes first, the position last', () => {
+    const fields = nodeFields(
+      [
+        { name: 'mf_schema', value: { type: 'string', value: 'tag' } },
+        { name: 'label', value: { type: 'nothing' } },
+      ],
+      { field: 'path', parent: 'p1', name: 'jazz' },
+    );
+    expect(fields).toEqual([
+      { name: 'mf_schema', value: { type: 'string', value: 'tag' } },
+      { name: 'label', value: { type: 'nothing' } },
+      { name: 'path', value: position },
+    ]);
+  });
+
+  test('a template row naming the tree field is overridden, never duplicated', () => {
+    // The schema constrains the position field itself (templated as Nothing
+    // when it carries no default): one row must hold the node, not two.
+    const fields = nodeFields(
+      [
+        { name: 'path', value: { type: 'nothing' } },
+        { name: 'label', value: { type: 'nothing' } },
+      ],
+      { field: 'path', parent: 'p1', name: 'jazz' },
+    );
+    expect(fields).toEqual([
+      { name: 'path', value: position },
+      { name: 'label', value: { type: 'nothing' } },
+    ]);
+  });
+
+  test('a null parent places the node at the forest roots', () => {
+    expect(nodeFields([], { field: 'path', parent: null, name: 'racine' })).toEqual([
+      { name: 'path', value: { type: 'tree_ref', value: { parent: null, name: 'racine' } } },
+    ]);
   });
 });

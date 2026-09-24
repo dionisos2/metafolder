@@ -2971,6 +2971,21 @@ Branch-vs-leaf is *not* predicted up front: descending into a leaf simply shows
 an empty list. Children are fetched page by page (=[page-size].treeref=,
 default 200) with more on scroll; the (few) roots are fetched in one call.
 
+*Adding an element*: =treeref:add= (the toolbar's =+ add= button, =ctrl+n=) grows
+the forest — a new node under the node the panel is *open on* (the parent of the
+displayed list, so the element joins it; at the forest roots it becomes a root).
+It creates a metarecord positioned there, and asks for its two inputs in the
+command input, in order (spec-gui "Interactive command arguments"): the *schema
+type* the record is created with (completing over the schema's declared
+metarecord types, [[file:spec-schema.org][spec-schema.org]]; its template fields seed the record — =mf_schema=,
+then the type's constrained fields; a blank answer creates a record carrying
+only its position, as =metarecord:create= does), then the *value*, the new
+node's single name component (=/= inside it is rejected, as in any =tree_ref=
+name). The record's position is one =tree_ref= row on the *explored field*,
+parent the current node and name the chosen value — a template row already
+naming that field is overridden by it. The new element joins the displayed list
+and takes the cursor (and the selection it publishes).
+
 *Selection*: highlighting a node sets =selected_metarecord= (=\{uuid, repo\}=,
 so =metarecord-detail= follows) and =selected_treeref=
 (=\{repo, field, uuid, path\}=).
@@ -2979,7 +2994,8 @@ so =metarecord-detail= follows) and =selected_treeref=
 =Backspace=/=Left= go up; =/= jumps back to the forest roots (as it jumps to the
 root in the file manager); =r= refreshes; =f= jumps to a child by name (see
 [[*Find an entry]]), =Shift+F= picks the explored field; =l= lists what points at
-the node, =s= toggles the scope, =e= picks the Ref field.
+the node, =s= toggles the scope, =e= picks the Ref field; =ctrl+n= adds an
+element under the current node (see above).
 
 *Ref bar — "what points at this node?"*. The companion question a tree
 inevitably raises ("what is tagged with this?") is answered by *building a
@@ -3011,6 +3027,7 @@ mode — which is the reason a dedicated panel type is not needed for it.
 | =treeref:parent=   | Go up one level                              |
 | =treeref:root=     | Jump to the forest roots                     |
 | =treeref:refresh=  | Reload the field lists and current children  |
+| =treeref:add=      | Add an element under the current node (args: schema type, then name) |
 | =treeref:set field= | Explore another TreeRef field (arg: field name, no pre-fill) |
 | =treeref:find=     | Jump to a loaded child by name (=f=; see [[*Find an entry]]) |
 | =treeref:list-refs= | List the metarecords whose Ref field points at the selected node |

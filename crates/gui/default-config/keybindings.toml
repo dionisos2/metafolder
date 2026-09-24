@@ -410,6 +410,9 @@
   # New *file*, on the same combo the folder uses without its shift — the
   # sibling had a key and it did not.
   { command = "file-manager:new file", when = "file-manager" },
+  # treeref: a new element of the explored forest, under the current node —
+  # the create family keeps its combo.
+  { command = "treeref:add", when = "treeref" },
 ]
 
 # Command-input-driven field editing ("m" = metarecord edit; the status bar

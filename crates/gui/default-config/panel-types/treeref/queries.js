@@ -74,3 +74,32 @@ export function refQueryDsl({ refField, treeField, path, scope }) {
   const operand = path === null ? '…' : dslString(path);
   return `${refField} -> (${treeField} ${arrow} ${operand})`;
 }
+
+// The fields of the metarecord `treeref:add` creates: the schema type's
+// template (from /__schema-template.js, empty when no type was chosen) plus the
+// tree position — one `tree_ref` row on the *explored* field, its name the
+// chosen value and its parent the node the panel is open on (null at the forest
+// roots, where the new node becomes a root).
+//
+// A template row already naming the field (the schema constrains the position
+// field itself — templated as Nothing when it carries no default) is
+// *overridden*, not followed by a second row: the node position is the whole
+// point of the record, and a `nothing` beside it would say "no position" about
+// a node that has one.
+/**
+ * @param {{name: string, value: Metafolder.Value}[]} template
+ * @param {{field: string, parent: string|null, name: string}} node
+ * @returns {{name: string, value: Metafolder.Value}[]}
+ */
+export function nodeFields(template, { field, parent, name }) {
+  /** @type {Metafolder.Value} */
+  const position = { type: 'tree_ref', value: { parent, name } };
+  let placed = false;
+  const fields = template.map((f) => {
+    if (f.name !== field) return f;
+    placed = true;
+    return { name: f.name, value: position };
+  });
+  if (!placed) fields.push({ name: field, value: position });
+  return fields;
+}

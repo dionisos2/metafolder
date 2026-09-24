@@ -8,14 +8,23 @@
 // metarecord-list, the ref bar showing which query the command will run. That
 // replaces the former `ref-list` panel: the answer is an ordinary list with a
 // visible, editable query rather than a second panel type with its own display.
-// Spec-gui "treeref panel type".
+//
+// And it grows the forest: `treeref:add` creates a metarecord positioned at a
+// new node under the current one (schema type first, then the name), the way
+// the file manager creates a folder. Spec-gui "treeref panel type".
 
 import { byId, el } from '/__ui.js';
 import { createPagedList } from '/__paged-list.js';
 import { createSelect } from '/__select.js';
 import { fileActionsProvider, metarecordMenuItems } from '/__file-actions.js';
 import { registerFind } from '/__find-entry.js';
-import { childrenQuery, refQueryDsl, treeNameOf, treeRefPath } from './queries.js';
+import { schemaTypes, templateFields } from '/__schema-template.js';
+import { childrenQuery, nodeFields, refQueryDsl, treeNameOf, treeRefPath } from './queries.js';
+
+/**
+ * The user schema, as the schema-template helpers read it.
+ * @typedef {import('/__schema-template.js').Schema} Schema
+ */
 
 const PAGE_DEFAULT = 200;
 // The tree_ref field the panel opens on. The effective value comes from the
@@ -54,6 +63,10 @@ export async function mount(root, metafolder) {
   let picking = false; // true while this panel is open as a tree_ref value picker
   /** @type {string} the Ref field `treeref:list-refs` follows */
   let refField = defaultRefField;
+  /** @type {{repo: string|null, schema: Schema}} memoized GET /schema */
+  let schemaCache = { repo: null, schema: null };
+  /** @type {string|null} a freshly created node to land the cursor on */
+  let pendingSelectUuid = null;
   /** @type {'exact'|'subtree'} how much of the selected node the query covers */
   let scope = 'exact';
   // The active repo's root path, cached for building absolute file paths for the
@@ -92,6 +105,7 @@ export async function mount(root, metafolder) {
   const breadcrumb = byId(root, 'breadcrumb');
   const statusLine = byId(root, 'status-line');
   const listingElement = byId(root, 'listing');
+  const addButton = byId(root, 'add');
 
   // Current node = the last breadcrumb entry; null UUID = the forest roots.
   const currentUuid = () => (stack.length > 0 ? stack[stack.length - 1].uuid : null);
@@ -203,6 +217,63 @@ export async function mount(root, metafolder) {
     await commands.invoke('panel:reveal metarecord-list');
   }
 
+  // ── Adding an element ─────────────────────────────────────────────────────
+
+  /** GET /schema for `repo`, memoized (null on error: treated as no schema).
+   *  @param {string} repo */
+  async function loadSchema(repo) {
+    if (schemaCache.repo === repo) return schemaCache.schema;
+    const schema = /** @type {Schema} */ (
+      await daemon.call('GET', `/repos/${repo}/schema`).catch(() => null)
+    );
+    schemaCache = { repo, schema };
+    return schema;
+  }
+
+  /** Creates a metarecord positioned at a new node of the explored forest
+   *  (spec-gui "treeref panel type"): the schema type's template fields, plus
+   *  one `tree_ref` row on the explored field whose parent is the node the
+   *  panel is open on and whose name is the chosen value. A blank schema type
+   *  creates a record carrying only its position. The new element joins the
+   *  *displayed* list — its parent is the current node, not the cursor row —
+   *  and the cursor lands on it.
+   *  @param {string} schemaType @param {string} name */
+  async function addNode(schemaType, name) {
+    const r = repo;
+    if (r === null) throw new Error('no active repository');
+    const leaf = (name ?? '').trim();
+    if (leaf === '') throw new Error('a node name is required');
+    // One path component, like every tree_ref name (spec-data-model): the
+    // forest structure is the parents, never a slash inside a name.
+    if (leaf.includes('/')) {
+      throw new Error(`invalid node name "${leaf}": must be a single path component`);
+    }
+    const schema = await loadSchema(r);
+    const wanted = (schemaType ?? '').trim();
+    let type = null;
+    if (wanted !== '') {
+      if (!schemaTypes(schema).includes(wanted)) {
+        throw new Error(`unknown schema type: "${wanted}"`);
+      }
+      type = wanted;
+    }
+    const fields = nodeFields(type ? templateFields(schema, type) : [], {
+      field,
+      parent: currentUuid(),
+      name: leaf,
+    });
+    // A position on an `mfr_*` field is a reserved write (spec-data-model
+    // "Reserved fields"), as in metarecord-detail's create.
+    const force = fields.some((f) => f.name.startsWith('mfr_')) ? { force: true } : {};
+    const created = /** @type {{uuid: string}} */ (
+      await daemon.call('POST', `/repos/${r}/metarecords`, { fields, ...force })
+    );
+    pendingSelectUuid = created.uuid;
+    void statusBar.message(`Element created: ${leaf}`);
+    // The `metarecords:dirty` subscribers (this panel included) reload.
+    await workspace.set('metarecords:dirty', Date.now());
+  }
+
   // ── Navigation ──────────────────────────────────────────────────────────
 
   // `children` holds normalized {uuid, name} nodes (from the roots endpoint at
@@ -261,6 +332,14 @@ export async function mount(root, metafolder) {
         return;
       }
       render();
+      // A freshly created element gets the cursor (and so the selection it
+      // publishes); when it is not in the loaded page, no jump happens.
+      if (pendingSelectUuid !== null) {
+        const wanted = pendingSelectUuid;
+        pendingSelectUuid = null;
+        const index = children.findIndex((c) => c.uuid === wanted);
+        if (index >= 0) await select(index);
+      }
     } finally {
       loading = false;
     }
@@ -384,6 +463,7 @@ export async function mount(root, metafolder) {
   byId(root, 'root').addEventListener('click', gotoRoot);
   byId(root, 'up').addEventListener('click', goUp);
   byId(root, 'refresh').addEventListener('click', () => void refresh());
+  addButton.addEventListener('click', () => void commands.invoke('treeref:add'));
 
   async function refresh() {
     await loadFields();
@@ -496,6 +576,35 @@ export async function mount(root, metafolder) {
     handler: listRefs,
   });
 
+  // Adding an element to the forest (spec-gui "treeref panel type"), on the
+  // toolbar's "add" button and ctrl+n. Two interactive arguments (spec-gui
+  // "Interactive command arguments"): the schema type seeds the new
+  // metarecord's template fields (a blank answer creates a record carrying
+  // only its position), then the value names the new node.
+  void commands.register('treeref:add', {
+    label: 'TreeRef explorer: add an element under the current node',
+    reveal: true,
+    args: [
+      {
+        name: 'schema',
+        prompt: () => 'Metarecord schema? (blank for an empty metarecord)',
+        complete: async () => (repo ? schemaTypes(await loadSchema(repo)) : []),
+      },
+      {
+        name: 'name',
+        // The prompt names where the element lands — the open node's path (the
+        // parent of the displayed list), or the forest roots.
+        prompt: () => {
+          const path = treeRefPath(stack.map((c) => c.name));
+          return path === ''
+            ? `Name for the new element at the roots of ${field}?`
+            : `Name for the new element in ${field}:${path}?`;
+        },
+      },
+    ],
+    handler: (schema, name) => addNode(schema, name),
+  });
+
   // Keybindings for this panel live in keybindings.toml (when = "treeref").
 
   /** The index in `entriesList` of the node `li` under a context-menu event, or
@@ -562,10 +671,12 @@ export async function mount(root, metafolder) {
       placeholderElement.hidden = false;
       placeholderElement.textContent = 'No active repository.';
       fieldSelect.element.toggleAttribute('disabled', true);
+      addButton.toggleAttribute('disabled', true);
       renderQueryPreview();
       return;
     }
     fieldSelect.element.toggleAttribute('disabled', false);
+    addButton.toggleAttribute('disabled', false);
     // A value picker (spec-gui "Value picker") can seed the field to explore and
     // arms the "Pick this folder/node" context-menu item.
     picking = !!(await workspace.get('pick_request'));
