@@ -314,6 +314,11 @@ present there still require a reconcile:
   updated by the watcher or reconcile, but their metadata (including
   =mfr_path=) remains unchanged until the user explicitly removes them.
 
+The re-placement is owed by every way the eligible set can change, not only by a
+direct write: a rollback or redo that restores or takes away =mf_watch=
+/=mf_ignore= rows re-places the watches the same way, once HEAD has landed
+([[file:spec-event-log.org][spec-event-log.org]] "Upkeep after a navigation").
+
 This is intentional: existing metadata is never silently discarded. To clean
 up after a watch scope change, the client should use targeted delete
 operations:
@@ -672,7 +677,9 @@ directories (so a watch can never escape the repository root — e.g. a Wine
 =dosdevices/z: -> /= symlink is not traversed), and skip a directory that cannot
 be read rather than aborting the whole watch. A repository with =mf_watch =
 false= everywhere (the opt-in default of a fresh repo) is therefore watched
-nowhere at all. The set is maintained incrementally as directories appear or
+nowhere at all. The root is only the walk's base, never a gate on it: a
+directory carrying =mf_watch = true= directly is watched even when the root is
+not, each entry being judged on its own exactly as reconcile's walk judges it. The set is maintained incrementally as directories appear or
 disappear, and recomputed after a manual write changes =mf_watch=/=mf_ignore=
 (see [[*Behaviour when =mf_watch= or =mf_ignore= changes]]). An *offline* mount
 point is pruned like an ineligible directory — no watch on it, none below it

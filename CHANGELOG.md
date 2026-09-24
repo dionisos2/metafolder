@@ -125,6 +125,19 @@ than breaking them.
   "Command names (non-exhaustive default set)", "User commands").
 
 ### Fixed
+- **A rollback left the watch set behind, and a nested tracking scope was never
+  watched at all.** Two halves of one symptom — `mf watch check` answering
+  `unwatched` for files that are tracked. History navigation restores
+  `mf_watch`/`mf_ignore` rows like any other write but never re-placed the
+  watches, so a rollback that brought the tracking back watched nothing until
+  some unrelated write touched those fields (and one that removed tracking kept
+  watching); the atomic navigation, the last step of a coordinated one and
+  `rollback/abort` now recompute the watch set against the state HEAD landed on
+  (spec-event-log "Upkeep after a navigation"). And the watch placement walked
+  away when the *root* metarecord was opt-out, so `mf_watch = true` on a
+  subdirectory — a tracking scope of its own — got no watch at all, while
+  reconcile happily tracked its contents; the walk now judges each entry on its
+  own, as spec-file-tracking "File Watcher" always said it did.
 - **The repository root metarecord could be deleted.** One deletion and nothing
   in the repository resolved any more: every lookup through the `mfr_path`
   forest failed with "filesystem root entry missing", `track` could not re-create

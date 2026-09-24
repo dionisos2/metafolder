@@ -621,6 +621,27 @@ pre-navigation state.
 If =target= is =NULL= (empty state), all =metadata= and =field= rows are
 deleted and =log_head.op_id= is set to =NULL=.
 
+*** Upkeep after a navigation
+
+A navigation restores =mf_watch= / =mf_ignore= rows like any other: rolling the
+deletion of a tracked directory back brings the tracking it carried, and rolling
+a tracking change back takes it away. The daemon therefore owes the same
+follow-up a write does (spec-file-tracking "Behaviour when =mf_watch= or
+=mf_ignore= changes"): once HEAD has landed, the watch set is recomputed against
+the state it landed on.
+
+*Once HEAD has landed* is the whole rule. The atomic navigation recomputes at
+the end; a coordinated one recomputes when its last step completes — and on
+=abort=, which keeps the state it stopped at — never in between, where each
+step is only a part of a revision and the states passed through need not be
+consistent even when the final one is. The watcher stays live throughout and its
+buffer is replayed on release, so what happened during the navigation is not
+lost.
+
+Without this the repository watches nothing after a rollback that restored its
+tracking, and watches what it no longer tracks after one that removed it — until
+some unrelated write happens to touch =mf_watch= or =mf_ignore= again.
+
 *** Inverse operations
 
 | =op_type=        | Inverse action                                                                                    |

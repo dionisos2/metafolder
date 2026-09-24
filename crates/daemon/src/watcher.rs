@@ -399,7 +399,14 @@ pub fn compute_watched_dirs_timed(
         Ok(true) => {
             out.insert(root.to_path_buf());
         }
-        Ok(false) => done!(),
+        // An ineligible root does not end the walk: a directory carrying
+        // `mf_watch = true` directly is tracked unconditionally
+        // (spec-file-tracking "Eligibility algorithm"), so the walk judges the
+        // root's entries one by one exactly as reconcile's does — only a
+        // repository with `mf_watch = false` *everywhere* is watched nowhere.
+        // The descent is still bounded: an ineligible entry is pruned, never
+        // entered in search of a scope below it.
+        Ok(false) => {}
         Err(err) => {
             crate::diagnostics::warn("watcher", format!("root eligibility check failed: {err:#}"));
             done!()

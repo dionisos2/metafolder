@@ -1251,6 +1251,11 @@ async fn rollback(
             // Navigation rewrites tree positions arbitrarily: rebuild the cache
             // from the new state (keeps it complete; `populate` clears first).
             repo_state.lock_cache().populate(&conn)?;
+            // And the watch set with it: navigation restores `mf_watch`/
+            // `mf_ignore` rows like any other, so the live watches must follow
+            // the state HEAD landed on (spec-event-log "Upkeep after a
+            // navigation").
+            repo_state.refresh_watches(&conn);
             Ok(Json(result))
         })
     })
@@ -2072,6 +2077,13 @@ async fn rollback_step(
             // HEAD reached the target: release the lock, replay the buffer.
             *repo_state.rollback_lock.lock_recover() = None;
             crate::executor::flush_pending(repo_state)?;
+            // The navigation restored (or took away) `mf_watch`/`mf_ignore`
+            // rows; the watch set follows the state it landed on, exactly as
+            // after a write that touched those fields (spec-event-log "Upkeep
+            // after a navigation"). Not per step: the states in between need
+            // not be consistent even when the final one is.
+            let conn = slowlog::timed("wait:conn", || repo_state.conn.lock_recover());
+            repo_state.refresh_watches(&conn);
         }
         Ok(Json(json!({"op": null, "remaining": 0})))
     })
@@ -2093,6 +2105,9 @@ async fn rollback_abort(
         }
         crate::executor::flush_pending(repo_state)?;
         let conn = slowlog::timed("wait:conn", || repo_state.conn.lock_recover());
+        // An abort keeps the state it stopped at, mid-navigation: the watch set
+        // follows that state too (spec-event-log "Upkeep after a navigation").
+        repo_state.refresh_watches(&conn);
         let head = crate::log::get_head(&conn)?;
         Ok(Json(json!({"head": head})))
     })

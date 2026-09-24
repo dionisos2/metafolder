@@ -124,6 +124,79 @@ async fn put_field(app: &Router, repo: &str, uuid: &str, name: &str, value: Valu
     assert_eq!(status, StatusCode::OK, "setting {name} failed: {body}");
 }
 
+// Navigation restores `mf_watch`/`mf_ignore` rows like any other: rolling a
+// deletion back brings the tracking it took with it. The live watch set has to
+// follow — a write refreshes it because it touched `mf_watch` (spec-file-
+// tracking "Upkeep after a write"), and navigation is a write through another
+// door. Without the refresh the repository that just came back watches
+// nothing until something else touches those fields.
+#[tokio::test]
+async fn a_rollback_that_restores_tracking_watches_again() {
+    let app = routes::build(std::sync::Arc::new(AppState::new()));
+    let root = TempDir::new("watch_rollback");
+    std::fs::create_dir_all(root.join("docs/notes")).unwrap();
+    std::fs::write(root.join("docs/notes/todo.txt"), b"todo").unwrap();
+    let repo = init_repo(&app, &root).await;
+    let root_uuid = root_metarecord(&app, &repo).await;
+
+    // A tracked directory: `mf_watch = true` on /docs, its whole subtree
+    // eligible. `mfr_path` is the daemon's own field, hence the force.
+    let (status, body) = request(
+        &app,
+        "POST",
+        &format!("/repos/{repo}/metarecords"),
+        Some(json!({
+            "force": true,
+            "fields": [
+                {"name": "mfr_path", "value": {"type": "tree_ref",
+                 "value": {"parent": root_uuid, "name": "docs"}}},
+                {"name": "mf_watch", "value": {"type": "bool", "value": true}}
+            ]
+        })),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "create failed: {body}");
+    let docs = body["uuid"].as_str().unwrap().to_string();
+
+    let paths = json!({"paths": ["/docs", "/docs/notes/todo.txt"]});
+    let (status, body) = check_paths(&app, &repo, paths.clone()).await;
+    assert_eq!(status, StatusCode::OK);
+    for path in ["/docs", "/docs/notes/todo.txt"] {
+        let r = result_for(&body, path);
+        assert_eq!(r["watched"], json!(true), "{path}: {r}");
+    }
+
+    // Deleting the record takes the tracking with it: nothing is watched.
+    let (status, _) =
+        request(&app, "DELETE", &format!("/repos/{repo}/metarecords/{docs}"), None).await;
+    assert_eq!(status, StatusCode::NO_CONTENT);
+    let (status, body) = check_paths(&app, &repo, paths.clone()).await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(result_for(&body, "/docs")["watched"], json!(false));
+
+    // Roll the deletion back: the record returns with its `mf_watch = true`.
+    let (status, body) = request(
+        &app,
+        "POST",
+        &format!("/repos/{repo}/rollback"),
+        Some(json!({"target": {"prev_revision": true}})),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "rollback failed: {body}");
+
+    // The watch set follows the state the navigation landed on.
+    let (status, body) = check_paths(&app, &repo, paths).await;
+    assert_eq!(status, StatusCode::OK);
+    for path in ["/docs", "/docs/notes/todo.txt"] {
+        let r = result_for(&body, path);
+        assert_eq!(
+            r["watched"],
+            json!(true),
+            "a rollback that restores tracking watches again ({path}): {r}"
+        );
+    }
+}
+
 #[tokio::test]
 async fn watch_check_on_a_fresh_repo_reports_nothing_watched() {
     // A fresh repository is opt-in: `mf_watch = false` on the root decides for
