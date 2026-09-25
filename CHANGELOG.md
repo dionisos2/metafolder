@@ -14,6 +14,15 @@ than breaking them.
 ## [Unreleased]
 
 ### Added
+- **Keyboard shortcuts for `repos:load` and `metarecord-list:folder`** — the
+  two shipped commands that had none, now in the global `g` ("go") family:
+  `g l` (go → load) picks a folder and loads the repository in it, the
+  form-less twin of *Load repo…* in the repos panel; `g f` (go → folder) lists
+  the selected metarecord's folder as metarecords — the keyboard form of the
+  "Open folder in metarecord-list" menu item. Both are global, beside `g o` /
+  `g r` / `g s` / `g w`, and read as a pair with `g o`: "point one out on disk"
+  / "open one the daemon already knows" (spec-gui "Repository management",
+  "Cross-panel selection").
 - **`[ref-seeds]`: how a `ref` field's targets are *named* — everywhere at
   once** (spec-gui "Ref value seeds"). One rule per field (and a `*` default
   rule), written `["query", "columns"]`: which metarecords may be named (a

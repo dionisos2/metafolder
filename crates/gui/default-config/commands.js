@@ -281,9 +281,9 @@ export default {
     },
   },
 
-  // The mirror image of `file-manager:reveal`: show the same folder's
-  // *metarecords* instead of its disk entries, replacing the focused panel
-  // (spec-gui "Cross-panel selection"). The folder becomes the DSL
+  // The mirror image of `file-manager:reveal` (keybindings.toml "g f"): show
+  // the same folder's *metarecords* instead of its disk entries, replacing the
+  // focused panel (spec-gui "Cross-panel selection"). The folder becomes the DSL
   // `mfr_path -> "<folder>"` (Follows: its files *and* its subdirectories, the
   // contents a file manager shows), landed in the DSL zone frozen so it stays
   // visible and editable. Repository-relative paths follow the `mfr_path`

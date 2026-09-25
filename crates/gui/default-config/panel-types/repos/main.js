@@ -123,7 +123,8 @@ export async function mount(root, metafolder) {
     }
   }
 
-  // The keyboard path to loading a repository (`repos:load`): no form to fill
+  // The keyboard path to loading a repository (`repos:load`, keybindings.toml
+  // "g l"): no form to fill
   // in — the folder picker opens straight away and the pick is loaded. A
   // failure has no form to land in, so it is said in the status bar.
   async function loadPicked() {

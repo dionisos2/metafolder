@@ -1310,7 +1310,7 @@ Behaviours:
 | =daemon:set url <url>= | Change daemon URL — the setting and the URL are asked in the minibuffer when not named |
 | =repos:open=         | Switch focused panel slot to =repos= for repo selection |
 | =repos:open-init=         | Open init-repo form                            |
-| =repos:load=              | Pick a folder and load the repository in it     |
+| =repos:load=              | Pick a folder and load the repository in it (default =g l=)     |
 | =repos:switch [repo]=    | Open a loaded repository: the =repo= pick completes over the daemon's loaded ones ("<name> — <root>"), and the pick opens exactly like a click in the =repos= panel — the focused workspace adopts it when it has no repository yet, otherwise a new workspace opens on it (default =g o=) |
 | =workspace:new=      | Create a new workspace, assign to both slots   |
 | =workspace:close=    | Close the focused slot's workspace (slot falls back to the previous workspace) |
@@ -1345,7 +1345,7 @@ Behaviours:
 | =metarecord-list:query <what>= | Run a canned query in the visible DSL zone, shown and frozen so it stays editable and composable: =duplicates= (the selection's byte-identical twins, =same(mfr_duplicate_group, <uuid>)=) or =orphans= (=orphan = true=, the metarecords the last =orphan:detect= marked — it detects nothing and reads no disk, it shows what detection wrote, see [[file:spec-file-tracking.org][spec-file-tracking.org]] "Marking orphans") |
 | =metarecord-list:toggle <flag>= | Flip a view flag (=normal=: show/hide the normal DSL editor) |
 | =file-manager:reveal= | Open the selected metarecord's folder in the file manager, replacing the focused panel (directory → itself, file → containing folder with the file highlighted) — see [[*Cross-panel selection]] |
-| =metarecord-list:folder= | List the selected metarecord's folder in =metarecord-list=, replacing the focused panel (directory → itself, file → its containing folder): the query =mfr_path -> "<folder>"= lands in the DSL zone, frozen, so it stays visible and editable — see [[*Cross-panel selection]] |
+| =metarecord-list:folder= | List the selected metarecord's folder in =metarecord-list=, replacing the focused panel (directory → itself, file → its containing folder; default =g f=): the query =mfr_path -> "<folder>"= lands in the DSL zone, frozen, so it stays visible and editable — see [[*Cross-panel selection]] |
 | =recent [metarecord]=   | Open a recently-viewed metarecord (completes over the list, newest first; default =g r=): the selection is published and the matching viewer revealed in the *other* slot — =file= when the metarecord has a file, =metarecord-detail= when not (the [[*Cross-panel selection]] open) |
 | =reconcile:run=      | Trigger reconcile on the active repo           |
 | =mf:duplicate scan=  | Scan the active repo for byte-identical files and record the groups — the GUI half of =mf duplicate scan=; progress in the [[*Task bar]], summary in the status bar (see [[*Duplicates]]) |
@@ -2328,15 +2328,18 @@ Submitting calls =POST /repos/load=. On success the loaded repo is adopted in
 place when the current workspace has no =active_repo= yet, otherwise it is only
 added to the list; like init, load never spawns a workspace.
 
-=repos:load= is the same load without the form: the command opens the folder
-picker straight away (a =file-manager= picker on the raw disk, started at the
-home directory) and loads the folder that is picked, adopting it under the same
-rule. Cancelling the picker loads nothing. Since there is no form to land in,
-a =POST /repos/load= failure — the folder is not a repository — is reported in
-the status bar. The form remains for typing or correcting a path by hand.
+=repos:load= (default =g l=) is the same load without the form: the command
+opens the folder picker straight away (a =file-manager= picker on the raw disk,
+started at the home directory) and loads the folder that is picked, adopting it
+under the same rule. Cancelling the picker loads nothing. Since there is no form
+to land in, a =POST /repos/load= failure — the folder is not a repository — is
+reported in the status bar. The form remains for typing or correcting a path by
+hand.
 
 The intended flow is: =repos:open= (global) → navigate to the =repos= panel
-→ select a loaded repo or trigger =repos:open-init= / =repos:load= from there.
+→ select a loaded repo or trigger =repos:open-init= / =repos:load= from there
+(=g l= runs the same command from anywhere, so the panel visit is only needed
+for the list itself).
 
 *** Tracking notices
 
@@ -3103,7 +3106,7 @@ path to tell a directory from a file and navigates there (honouring the request
 both when it mounts and while already mounted, the =nonce= guaranteeing an
 identical repeated request re-triggers while the same request acts only once).
 
-*List folder*: the =metarecord-list:folder= command (a shipped
+*List folder*: the =metarecord-list:folder= command (default =g f=; a shipped
 =gui/commands.js= entry; also the
 right-click menu item "Open folder in metarecord-list", offered by every panel
 showing metarecords — the file manager included, where "and now show me these as

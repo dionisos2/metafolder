@@ -134,6 +134,20 @@
 # it like a click in the repos panel (adopt in place, else a new workspace).
 "g o" = { command = "repos:switch" }
 
+# Load a repository from a folder ("g l" = go → load): `repos:load` without its
+# form — the folder picker opens straight away and the pick is loaded (a folder
+# that is not a repository is said in the status bar, since there is no form to
+# land the error in). Global, like `g o`: the two are the pair "open one the
+# daemon knows" / "point at one on disk".
+"g l" = { command = "repos:load" }
+
+# List the selection's folder as metarecords ("g f" = go → folder): the
+# keyboard form of the "Open folder in metarecord-list" menu item — the query
+# `mfr_path -> "<folder>"` lands in the DSL zone, frozen so it stays editable.
+# Global because it acts on the selection, whichever panel carries it (the file
+# manager included: "and now show me these as metarecords").
+"g f" = { command = "metarecord-list:folder" }
+
 # ── Panel navigation and actions ─────────────────────────────────────────────
 # The list panels share the same navigation combos, each dispatched to its own
 # panel type via `when`. Commands are routed to their owning panel type whether

@@ -246,3 +246,28 @@ fn test_file_panel_back_keybinding() {
     assert_eq!(in_file(&["backspace"]).as_deref(), Some("file:back"));
     assert_eq!(in_file(&["shift+backspace"]).as_deref(), Some("file:speed reset"));
 }
+
+// The two shipped commands that had no key, now in the global "go" family:
+// `g l` loads a repository from a picked folder (`repos:load`, the form-less
+// path), `g f` lists the selection's folder as metarecords
+// (`metarecord-list:folder`). Both are global — they act on the selection and
+// the daemon, whichever panel is focused — like the rest of the family.
+#[test]
+fn test_go_family_load_and_folder_keybindings() {
+    let (_guard, config) = temp_config();
+    common::install_defaults(&config);
+    let compiled = config.load_keybindings().unwrap().compiled();
+
+    let global = |keys: &[&str]| -> Option<String> {
+        compiled
+            .iter()
+            .find(|b| b.keys.iter().map(String::as_str).eq(keys.iter().copied()) && b.when.is_none())
+            .map(|b| b.invocation.clone())
+    };
+
+    assert_eq!(global(&["g", "l"]).as_deref(), Some("repos:load"));
+    assert_eq!(global(&["g", "f"]).as_deref(), Some("metarecord-list:folder"));
+    // The family's other members keep their picks.
+    assert_eq!(global(&["g", "o"]).as_deref(), Some("repos:switch"));
+    assert_eq!(global(&["g", "r"]).as_deref(), Some("recent"));
+}
