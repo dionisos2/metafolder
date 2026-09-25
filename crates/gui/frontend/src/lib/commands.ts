@@ -12,13 +12,11 @@ import type {
   CompletionView,
   LoadedView,
 } from './completions';
-import { folderContentsQuery, selectionFolder } from './folder';
 import { setHelpCursor } from './cursor';
 import { closeFind, openFind, stepFind } from './find';
 import { ignorePresetCandidates, ignoreTarget, resolvePresetName, targetDir } from './ignore';
 import { invoke } from './ipc';
 import { type ExpandDeps, expandShellPlaceholders } from './placeholders';
-import { recentLine } from './recent';
 import { focusedWs, flashStatus, store, workspaceById } from './store.svelte';
 import { daemonWork } from './working';
 import type { CommandDef, LayoutView } from './types';
@@ -521,17 +519,7 @@ export function clearArgSpecs(): void {
   panelArgs = null;
 }
 
-// ── Recently-viewed metarecords picker (the `recent` builtin) ───────────────
-// A shell builtin, so it works from any focused panel (a panel-registered
-// command only runs while its panel is focused). The metarecord argument
-// completes to the active repo's recently-viewed list (crate::recent), newest
-// first, one line "<mfr_path> — <label> — <name>"; the command input filters
-// the candidates by ordered substring — the same principle as the finder quick
-// filter — and picking one opens it in the other panel (file when the record
-// has paths, else metarecord-detail).
-
-/** Candidate display line → uuid, rebuilt on each completion pass. */
-const recentChoices = new Map<string, string>();
+// ── Installed helper scripts (the `script:run` builtin) ─────────────────────
 
 /** A daemon round-trip through the proxy, throwing the daemon's error on >=400. */
 async function daemonJson(method: string, path: string, body: unknown = null): Promise<unknown> {
@@ -551,115 +539,12 @@ function focusedRepo(): string | null {
   return workspaceById(focusedWs())?.active_repo ?? null;
 }
 
-/** Absolute filesystem path of a repo-relative `mfr_path` position. */
-function absPath(root: string, rel: string): string {
-  return rel === '' ? root : `${root}/${rel}`;
-}
-
 /** The repository's filesystem root (via GET /repos), or '' when not found. */
 async function repoRoot(repo: string): Promise<string> {
   const repos = (await daemonJson('GET', '/repos')) as { repo_uuid: string; root: string }[];
   const norm = repo.replace(/-/g, '');
   return repos.find((r) => r.repo_uuid.replace(/-/g, '') === norm)?.root ?? '';
 }
-
-/** Completion candidates for the `recent` argument: the recently-viewed list,
- *  newest first, one display line each. Also (re)builds `recentChoices`. */
-async function recentCandidates(): Promise<string[]> {
-  recentChoices.clear();
-  const repo = focusedRepo();
-  if (!repo) return [];
-  const entries = await invoke<{ uuid: string; viewed_at: string }[]>('recent_read', { repo, limit: null });
-  const uuids = entries.map((e) => e.uuid);
-  if (uuids.length === 0) return [];
-  const [records, paths] = (await Promise.all([
-    daemonJson('POST', `/repos/${repo}/metarecords/batch`, { uuids }),
-    daemonJson('POST', `/repos/${repo}/tree/resolve`, { field: 'mfr_path', uuids }),
-  ])) as [Record<string, Metafolder.Metarecord>, Record<string, string[]>];
-  const lines: string[] = [];
-  for (const { uuid } of entries) {
-    const line = recentLine(records[uuid], paths[uuid]?.[0] ?? '', uuid);
-    if (!recentChoices.has(line)) recentChoices.set(line, uuid); // newest wins on a collision
-    lines.push(line);
-  }
-  return lines;
-}
-
-/** Opens the picked line's metarecord: publishes the selection and reveals the
- *  matching viewer in the other slot, exactly like a metarecord-list open. */
-async function openRecent(choice: string, ws: string): Promise<void> {
-  const repo = focusedRepo();
-  const uuid = recentChoices.get(choice);
-  if (!repo || !uuid) throw new Error(`no recently-viewed metarecord matches "${choice}"`);
-  const resolved = (await daemonJson('POST', `/repos/${repo}/tree/resolve`, {
-    field: 'mfr_path',
-    uuids: [uuid],
-  })) as Record<string, string[]>;
-  const rel = resolved[uuid] ?? [];
-  const root = rel.length > 0 ? await repoRoot(repo) : '';
-  const paths = rel.map((p) => absPath(root, p));
-  await invoke('ws_set_var', { wsId: ws, key: 'selected_metarecord', value: { uuid, repo } });
-  await invoke('ws_set_var', { wsId: ws, key: 'selected_paths', value: paths });
-  const other = store.layout.focused === 'left' ? 'right' : 'left';
-  await invoke('tab_assign', { wsId: ws, slot: other });
-  await invoke('panel_set_type', { slot: other, panelType: paths.length > 0 ? 'file' : 'metarecord-detail' });
-}
-
-// The builtin's argument spec is always present (unlike panel specs, registered
-// at mount): register it once at module load.
-registerArgs('recent', [
-  { name: 'metarecord', prompt: () => 'Recently viewed:', complete: () => recentCandidates() },
-]);
-
-// ── Open a loaded repository (the `repos:switch` builtin) ───────────────────
-// A shell builtin (works from any focused panel) mirroring a click on a repo in
-// the repos panel: the `repo` argument completes over the daemon's loaded
-// repositories ("<name> — <root>"), and picking one opens it exactly like the
-// panel — adopting it in the focused workspace when that workspace has no repo
-// yet, otherwise opening it in a new workspace.
-
-/** Candidate display line → repo uuid, rebuilt on each completion pass. */
-const reposChoices = new Map<string, string>();
-
-/** Completion candidates for the `repo` argument: the daemon's loaded
- *  repositories, one display line each. Also (re)builds `reposChoices`. */
-async function reposCandidates(): Promise<string[]> {
-  reposChoices.clear();
-  const repos = (await daemonJson('GET', '/repos')) as { repo_uuid: string; name: string; root: string }[];
-  return repos.map((repo) => {
-    const line = `${repo.name} — ${repo.root}`;
-    if (!reposChoices.has(line)) reposChoices.set(line, repo.repo_uuid);
-    return line;
-  });
-}
-
-/** Opens the picked repository in the focused workspace, exactly like clicking
- *  it in the repos panel: adopt it in place when the workspace has no repo yet,
- *  otherwise open it in a new workspace. Accepts the full "<name> — <root>"
- *  completion line, a bare repo name, or a repo uuid. */
-async function openRepoInWorkspace(choice: string, ws: string): Promise<void> {
-  let uuid = reposChoices.get(choice);
-  if (!uuid) {
-    const want = choice.trim();
-    const norm = want.replace(/-/g, '');
-    const repos = (await daemonJson('GET', '/repos')) as { repo_uuid: string; name: string }[];
-    uuid = repos.find(
-      (r) => r.name === want || r.repo_uuid === want || r.repo_uuid.replace(/-/g, '') === norm,
-    )?.repo_uuid;
-  }
-  if (!uuid) throw new Error(`no loaded repository matches "${choice}"`);
-  const current = workspaceById(ws)?.active_repo ?? null;
-  if (current === null) {
-    await invoke('adopt_repo', { wsId: ws, repo: uuid });
-    await invoke('panel_set_type', { slot: store.layout.focused, panelType: 'metarecord-list' });
-  } else {
-    await invoke('workspace_new', { activeRepo: uuid });
-  }
-}
-
-registerArgs('repos:switch', [
-  { name: 'repo', prompt: () => 'Open repository:', complete: () => reposCandidates() },
-]);
 
 // ── Installed helper scripts (the `script:run` builtin) ─────────────────────
 // The shipped scripts live in ~/.config/metafolder/scripts/; a launchable one
@@ -745,49 +630,6 @@ async function defaultTargetDir(repo: string): Promise<string> {
     fmDir: typeof fmDir === 'string' ? fmDir : null,
     selected: selected?.uuid ? { uuid: selected.uuid } : null,
   });
-}
-
-// ── List a folder in the metarecord list (the `metarecord-list:folder`
-// builtin) ─────────────────────────────────────────────────────────────────
-// The mirror image of `file-manager:reveal`: instead of showing a
-// metarecord's folder on the disk, it shows the folder's *metarecords* — the
-// query `mfr_path -> "<folder>"`, written into the list's normal DSL zone so it
-// stays visible, editable and composable (spec-gui "Cross-panel selection").
-
-/** Lists the selected metarecord's folder in `metarecord-list`, replacing the
- *  focused panel. */
-async function listFolder(ws: string): Promise<void> {
-  const repo = focusedRepo();
-  if (!repo) {
-    await status('no active repository');
-    return;
-  }
-  const wsVar = <T>(key: string) => invoke<T | null>('ws_get_var', { wsId: ws, key });
-  const [selected, paths, fmDir] = await Promise.all([
-    wsVar<{ uuid: string }>('selected_metarecord'),
-    wsVar<unknown[]>('selected_paths'),
-    wsVar<string>('file-manager:dir'),
-  ]);
-  const folder = await selectionFolder({
-    call: daemonJson,
-    repo,
-    repoRoot: await repoRoot(repo),
-    selected: selected?.uuid ? { uuid: selected.uuid } : null,
-    selectedPath: Array.isArray(paths) ? (paths.find((p) => typeof p === 'string') as string) ?? null : null,
-    fmDir: typeof fmDir === 'string' ? fmDir : null,
-    isDir: async (path) => !!(await invoke<{ is_dir?: boolean }>('fs_stat', { path }))?.is_dir,
-  });
-  if (folder === null) {
-    await status('the selection lies outside the repository');
-    return;
-  }
-  await invoke('ws_set_var', {
-    wsId: ws,
-    key: 'metarecord-list:query-request',
-    value: { dsl: folderContentsQuery(folder), nonce: Date.now() },
-  });
-  await invoke('panel_set_type', { slot: store.layout.focused, panelType: 'metarecord-list' });
-  await status(`Listing ${folder || '/'}`);
 }
 
 /** Applies one preset to the context directory with the given mode, reporting
@@ -1699,28 +1541,6 @@ async function runCommand(name: string, args: string[], ws: string | null): Prom
       // is not surfaced twice.
       if (ws) await invoke('orphan_detect', { wsId: ws }).catch(() => 0);
       return true;
-    case 'orphan:delete':
-    case 'orphan:detect-delete': {
-      // Deleting is confirmed here rather than in Rust (as `metarecord:trash`
-      // is), which is why the count comes back from detection — or from a
-      // count query when the marked set is taken as it stands.
-      if (!ws) return true;
-      const marked = await (name === 'orphan:delete'
-        ? invoke<number>('orphan_count', { wsId: ws })
-        : invoke<number>('orphan_detect', { wsId: ws })
-      ).catch(() => null);
-      if (marked === null) return true; // already reported
-      if (marked === 0) {
-        await status('No metarecord is marked orphan = true.');
-        return true;
-      }
-      const question =
-        `Delete ${marked} metarecord${marked === 1 ? '' : 's'} marked orphan = true? ` +
-        'Their files are already gone; the metadata goes with them (undo takes it back).';
-      if (!window.confirm(question)) return true;
-      await invoke('orphan_delete', { wsId: ws }).catch(() => 0);
-      return true;
-    }
     case 'metarecord:trash': {
       // Send the selected metarecord's file to the trash (spec-trash.org).
       // Reversible (restore from the trash panel), but confirmed anyway since
@@ -1741,59 +1561,6 @@ async function runCommand(name: string, args: string[], ws: string | null): Prom
       }
       return true;
     }
-    case 'metarecord:remove': {
-      // The Delete key on a metarecord (spec-trash.org "GUI"): the record goes
-      // either way, so what is asked about is its file. Without one this is a
-      // plain `metarecord:delete`; with one the question names the two
-      // canonical actions and runs the picked one — OK trashes the file (the
-      // question doubles as the confirmation `metarecord:trash` would ask),
-      // Cancel falls through to `metarecord:delete`, which keeps the file and
-      // confirms the record's deletion itself.
-      if (!ws) return true;
-      const selection = await invoke<{ uuid: string; repo: string } | null>('ws_get_var', {
-        wsId: ws,
-        key: 'selected_metarecord',
-      });
-      if (
-        !selection ||
-        typeof selection.uuid !== 'string' ||
-        typeof selection.repo !== 'string'
-      ) {
-        await status('no metarecord is selected');
-        return true;
-      }
-      const { uuid, repo } = selection;
-      // The file the metarecord carries (a present `mfr_path`), root-relative —
-      // no paths at all when the field is absent or Nothing, which is exactly
-      // the reading the trash takes of "the selected metarecord has no file".
-      const resolved = (await daemonJson(
-        'GET',
-        `/repos/${repo}/metarecords/${uuid}/fields/mfr_path/resolve-tree`,
-      )) as { paths?: string[] };
-      const rel = resolved.paths?.[0];
-      if (rel === undefined) {
-        await dispatch('metarecord:delete');
-        return true;
-      }
-      const name = rel === '' ? await repoRoot(repo) : (rel.split('/').pop() ?? rel);
-      const trashFile = window.confirm(
-        `Send "${name}" to the trash?\n\n` +
-          'OK = trash the file (its metarecord is deleted with it, restorable from the trash panel).\n' +
-          'Cancel = keep the file and delete the metarecord only.',
-      );
-      if (!trashFile) {
-        await dispatch('metarecord:delete');
-        return true;
-      }
-      // The Rust command posts its own success/error status; swallow the
-      // rejection so the error is not surfaced twice.
-      try {
-        await invoke('trash_selected_metarecord', { wsId: ws });
-      } catch {
-        /* already reported to the status bar */
-      }
-      return true;
-    }
     case 'log:undo':
       if (ws) await invoke('log_navigate', { wsId: ws, redo: false });
       return true;
@@ -1802,42 +1569,6 @@ async function runCommand(name: string, args: string[], ws: string | null): Prom
       return true;
     case 'repos:open':
       await invoke('panel_set_type', { slot: store.layout.focused, panelType: 'repos' });
-      return true;
-    case 'repos:switch':
-      // The `repo` argument was collected by dispatch (with completion);
-      // args[0] is the picked "<name> — <root>" line (or a bare name/uuid).
-      if (ws && args[0]) await openRepoInWorkspace(args[0], ws);
-      return true;
-    case 'file-manager:reveal': {
-      // Open the folder of the current selection in the file manager, replacing
-      // the focused panel: the folder itself when a directory is selected, or
-      // the folder containing the selected file. The file manager (which reads
-      // the disk) stats the path to tell the two apart and highlights the file.
-      if (!ws) return true;
-      const paths = await invoke('ws_get_var', { wsId: ws, key: 'selected_paths' });
-      const path = Array.isArray(paths) ? paths.find((p) => typeof p === 'string') : undefined;
-      if (!path) {
-        await status('no file or folder is selected');
-        return true;
-      }
-      await invoke('ws_set_var', {
-        wsId: ws,
-        key: 'file-manager:reveal-path',
-        value: { path, nonce: Date.now() },
-      });
-      await invoke('panel_set_type', { slot: store.layout.focused, panelType: 'file-manager' });
-      return true;
-    }
-    case 'metarecord-list:folder': {
-      // The metarecord-list counterpart of `file-manager:reveal`: show
-      // the metarecords of the selection's folder, replacing the focused panel.
-      if (ws) await listFolder(ws);
-      return true;
-    }
-    case 'recent':
-      // The `metarecord` argument was collected by dispatch (with completion);
-      // args[0] is the picked display line.
-      if (ws && args[0]) await openRecent(args[0], ws);
       return true;
     case 'file:open-with':
       // The `program` argument was collected by dispatch (completing over the

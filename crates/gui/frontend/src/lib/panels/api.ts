@@ -555,6 +555,17 @@ export function createPanelApi(deps: PanelApiDeps, ctx: PanelApiCtx): PanelApiIn
         invoke('trash_path', { repo, path }) as Promise<string>,
     },
 
+    /** Orphaned metarecords (spec-gui "Orphans"): the shared layer behind
+     *  `mf orphan`, driven through the orphan Tauri commands. Each reports its
+     *  own outcome to the status bar (`delete` also to the message log) and
+     *  nudges the panels (`metarecords:dirty`), so a caller confirms in
+     *  between and says nothing after. */
+    orphans: {
+      detect: () => invoke('orphan_detect', { wsId: ctx.wsId }) as Promise<number>,
+      count: () => invoke('orphan_count', { wsId: ctx.wsId }) as Promise<number>,
+      delete: () => invoke('orphan_delete', { wsId: ctx.wsId }) as Promise<number>,
+    },
+
     /** Cross-repo synchronisation (spec-sync): the shared `core::sync`
      *  orchestration, driven through the sync Tauri commands. `plan`/`run` run
      *  non-interactively (conflicts are left for `plan_resolve` editing). */

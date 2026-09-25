@@ -405,8 +405,11 @@ metadata half.
   (restore from the trash panel), but *confirmed* anyway since it hangs off a
   bare key.
 
-- *Remove the metarecord* — the =metarecord:remove= command (a shell builtin),
-  the =Delete= key in the same panels, removes the =selected_metarecord= and
+- *Remove the metarecord* — the =metarecord:remove= command (a shipped
+  =gui/commands.js= entry rather than a compiled builtin, so its question and
+  its answers stay the user's to reshape — see [[file:spec-gui.org][spec-gui.org]]
+  "User commands"), the =Delete= key in the same panels, removes the
+  =selected_metarecord= and
   settles its file on the way. A metarecord *without* a file has nothing to
   settle, so it goes straight to =metarecord:delete= (the record alone, its own
   confirmation). A metarecord *with* one is asked about it first: =OK= sends

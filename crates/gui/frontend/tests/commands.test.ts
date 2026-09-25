@@ -59,9 +59,17 @@ describe('config:reload argument spec', () => {
   });
 });
 
-describe('recent builtin', () => {
-  test('registers its metarecord argument spec at module load', () => {
-    expect(argSpecFor('recent')?.map((s) => s.name)).toEqual(['metarecord']);
+// `recent` is a shipped `commands.js` entry since it left the shell builtins:
+// its `metarecord` argument collects the pick interactively (completing over
+// the recently-viewed list). The lines the pick offers and the way it opens
+// are recent.test.ts.
+describe('recent (shipped commands.js)', () => {
+  test('declares its metarecord argument', async () => {
+    const shipped = (await import('../../default-config/commands.js')).default;
+    const spec = shipped['recent'].args;
+
+    expect(spec.map((a: { name: string }) => a.name)).toEqual(['metarecord']);
+    expect(spec[0].prompt()).toBe('Recently viewed:');
   });
 });
 
@@ -86,12 +94,19 @@ describe('mf:order builtin', () => {
   });
 });
 
-// Like `recent`, `repos:switch` registers its argument spec at module load so
-// the command input collects the repository pick interactively (completing over
-// the daemon's loaded repositories).
-describe('repos:switch builtin', () => {
-  test('registers its repo argument spec at module load', () => {
-    expect(argSpecFor('repos:switch')?.map((s) => s.name)).toEqual(['repo']);
+// `repos:switch` is a shipped `commands.js` entry since it left the shell
+// builtins: its `repo` argument collects the repository pick interactively
+// (completing over the daemon's loaded repositories as "<name> — <root>"
+// lines), and picking one opens it exactly like a click in the repos panel —
+// adopted in the focused workspace when it has no repository yet, otherwise a
+// new workspace. The flow itself is repos-switch.test.ts.
+describe('repos:switch (shipped commands.js)', () => {
+  test('declares its repo argument, with completion', async () => {
+    const shipped = (await import('../../default-config/commands.js')).default;
+    const spec = shipped['repos:switch'].args;
+
+    expect(spec.map((a: { name: string }) => a.name)).toEqual(['repo']);
+    expect(spec[0].prompt()).toBe('Open repository:');
   });
 });
 

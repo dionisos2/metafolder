@@ -2,7 +2,8 @@
 // `data-mf-key` is filled in at display from the live keybinding table. A typo
 // in one of those names would silently render "unbound" — the page would claim
 // a shortcut does not exist. So pin them against the commands that actually
-// exist: the Rust builtins and the ones the panels register.
+// exist: the Rust builtins, the ones the panels register, and the ones the
+// shipped commands.js defines.
 
 import { readFileSync, readdirSync } from 'node:fs';
 import { join, resolve } from 'node:path';
@@ -14,11 +15,11 @@ const panelsDir = join(guiDir, 'default-config/panel-types');
 
 /** Builtins registered by the Rust shell: every command-shaped string literal
  *  of lib.rs (a superset — extra names only weaken this check, never break
- *  it), plus the few builtins whose name carries no colon. */
+ *  it), plus the two builtins whose name carries no colon. */
 function builtinCommands(): Set<string> {
   const text = readFileSync(join(guiDir, 'src/lib.rs'), 'utf8');
   const names = [...text.matchAll(/"([a-z][a-z0-9-]*:[a-z0-9-]+)"/g)].map((m) => m[1]);
-  return new Set([...names, 'help', 'recent', 'quit']);
+  return new Set([...names, 'help', 'quit']);
 }
 
 /** Commands the shipped panels register at mount, however they register them. */
@@ -32,6 +33,14 @@ function panelCommands(): Set<string> {
     }
   }
   return names;
+}
+
+/** Commands the shipped commands.js defines (spec-gui "User commands"): the
+ *  name is the entry's key in the default export (`'name': {`). The scan is a
+ *  superset at worst — extra names only weaken the check. */
+function userCommands(): Set<string> {
+  const text = readFileSync(join(guiDir, 'default-config/commands.js'), 'utf8');
+  return new Set([...text.matchAll(/'([^']*)':\s*\{/g)].map((m) => m[1]));
 }
 
 /** Every command named by a `data-mf-key`, with the page it appears on. */
@@ -94,7 +103,7 @@ describe('help page key hints', () => {
   });
 
   test('every command a page names exists', () => {
-    const known = new Set([...builtinCommands(), ...panelCommands()]);
+    const known = new Set([...builtinCommands(), ...panelCommands(), ...userCommands()]);
     const unknown = taggedCommands().filter((t) => !known.has(t.command));
     expect(unknown).toEqual([]);
   });

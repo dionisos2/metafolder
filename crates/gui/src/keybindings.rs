@@ -609,13 +609,15 @@ mod tests {
 
     /// Every command a shipped keybinding names must exist.
     ///
-    /// The registry is filled from two places that cannot see each other: the
-    /// builtins, listed in Rust, and the panel commands, registered by each
-    /// panel type's JavaScript at runtime. A keybinding naming neither is dead
-    /// — the key does nothing and says nothing — and nothing else in the build
-    /// catches it, because the two halves are only ever brought together in a
-    /// running GUI. So this test reads the panel sources the way the shell
-    /// would, and checks the shipped table against the union.
+    /// The registry is filled from three places that cannot see each other: the
+    /// builtins, listed in Rust; the panel commands, registered by each panel
+    /// type's JavaScript at runtime; and the user commands the shipped
+    /// `commands.js` defines (registered when the GUI boots). A keybinding
+    /// naming none of them is dead — the key does nothing and says nothing —
+    /// and nothing else in the build catches it, because the halves are only
+    /// ever brought together in a running GUI. So this test reads the config
+    /// sources the way the shell would, and checks the shipped table against
+    /// the union.
     ///
     /// It is the guard for a mass rename: an invocation left on an old name
     /// fails here instead of silently going dead in someone's GUI.
@@ -649,6 +651,24 @@ mod tests {
             }
         }
         assert!(sources >= 12, "expected the shipped panel types, found {sources}");
+
+        // User commands: `commands.js` maps each name to its definition, the
+        // name written as the entry's key (`'name': {` — a name holds a colon,
+        // so the key is always quoted). The shipped file carries real commands
+        // (`metarecord:remove`, the Delete key's), so it counts as a source
+        // like the panels'. The scan is a superset at worst: an extra name
+        // only weakens this check, a missing one fails it.
+        let commands_js = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("default-config")
+            .join("commands.js");
+        let source = std::fs::read_to_string(&commands_js).expect("commands.js is readable");
+        let mut rest = source.as_str();
+        while let Some(at) = rest.find("': {") {
+            if let Some(start) = rest[..at].rfind('\'') {
+                known.insert(rest[start + 1..at].to_string());
+            }
+            rest = &rest[at + 4..];
+        }
 
         let defaults = include_str!("../default-config/keybindings.toml");
         let table = KeybindingSet::from_sources(defaults, "").unwrap().compiled();

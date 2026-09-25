@@ -101,7 +101,10 @@ binary never holds its own defaults (see "No runtime fallback").
 *** User commands
 
 =gui/commands.js= is shipped like any other =gui/= default, with two worked
-examples in it. It is a JavaScript module the GUI imports at startup, so it is
+examples and the shipped utility commands (=metarecord:remove=,
+=file-manager:reveal=, =metarecord-list:folder=, =orphan:delete=,
+=orphan:detect-delete=, =repos:switch=, =recent=) in it. It is a JavaScript
+module the GUI imports at startup, so it is
 code in the configuration repository — which panel types and the shipped
 scripts already are. A missing file is a startup error, as everywhere else; see
 [[file:spec-gui.org][spec-gui]] "User commands".

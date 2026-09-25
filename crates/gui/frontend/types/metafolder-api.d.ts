@@ -377,9 +377,28 @@ declare namespace Metafolder {
     remove(repo: string, id: string): Promise<void>;
     /** Empties the whole trash; returns the number of entries removed. */
     empty(repo: string): Promise<number>;
-    /** Sends a raw filesystem path to the trash (no metarecord correlation);
-     *  returns the trashed basename. The file-manager panel's delete. */
+    /** Sends a raw filesystem path to the trash and returns the trashed
+     *  basename. A *tracked* path loses its metarecords on the way (captured
+     *  and deleted before the bytes move, spec-trash.org) — the file-manager
+     *  panel's delete, and `metarecord:remove`'s OK. */
     trashPath(repo: string, path: string): Promise<string>;
+  }
+
+  /** Orphaned metarecords (spec-gui "Orphans"): the shared `mf orphan` layer,
+   *  driven through the orphan Tauri commands. `detect` writes the
+   *  `orphan = true` marker and reports its counts itself; `count` reads the
+   *  marked set as it stands — detection is not re-run; `delete` removes the
+   *  marked metarecords (their files are already gone), reporting the summary
+   *  and refreshing the panels itself. */
+  interface Orphans {
+    /** Marks the orphaned metarecords and unmarks the rest; resolves to how
+     *  many carry the marker afterwards. */
+    detect(): Promise<number>;
+    /** How many metarecords carry the marker right now — what a deletion
+     *  prompt names. */
+    count(): Promise<number>;
+    /** Deletes every marked metarecord; resolves to the deleted count. */
+    delete(): Promise<number>;
   }
 
   /** Per-repo input history (spec-gui "Input history"): GUI-side files under
@@ -543,6 +562,7 @@ declare namespace Metafolder {
     ): Promise<unknown>;
     readonly fs: Fs;
     readonly trash: Trash;
+    readonly orphans: Orphans;
     readonly sync: Sync;
     readonly ignore: Ignore;
     readonly history: History;

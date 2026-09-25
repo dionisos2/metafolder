@@ -1,57 +1,176 @@
-// The recently-viewed picker's pure display helpers (lib/recent.ts): how one
-// recent metarecord becomes a single candidate line "<mfr_path> — <label> —
-// <name>" for the command input's ordered-substring filter.
+// The recently-viewed picker (`recent`, keybindings.toml "g r"), as the
+// shipped `commands.js` defines it since the command left the shell builtins:
+// the candidates are the active repo's recently-viewed metarecords, newest
+// first, one line "<mfr_path> — <label> — <name>" for the command input's
+// ordered-substring filter — and the pick publishes the selection and reveals
+// the matching viewer in the other slot, exactly like a metarecord-list open.
+//
+// The command is configuration now, so what is pinned is the line a candidate
+// shows and the way the pick opens: reshaping the wording is free; opening the
+// wrong metarecord — or a line the pick cannot resolve back — is not.
 
-import { describe, expect, test } from 'vitest';
-import { firstFieldText, recentLine } from '../src/lib/recent';
+import { beforeEach, describe, expect, test } from 'vitest';
+import shipped from '../../default-config/commands.js';
 
-/** @param entries name → Value */
-function rec(uuid: string, entries: [string, Metafolder.Value][]): Metafolder.Metarecord {
-  return { uuid, fields: entries.map(([name, value]) => ({ name, value })) };
+const state = {
+  repo: 'r' as string | null,
+  entries: [] as { uuid: string; viewed_at: string }[],
+  records: {} as Record<string, Metafolder.Metarecord>,
+  paths: {} as Record<string, string[]>,
+};
+
+const calls = {
+  invoked: [] as string[],
+  sets: [] as { key: string; value: unknown }[],
+};
+
+/** The `mf` a user command is handed (spec-gui "User commands"), faked. */
+function fakeMf() {
+  return {
+    workspace: {
+      get: async (key: string) => (key === 'active_repo' ? state.repo : null),
+      set: async (key: string, value: unknown) => {
+        calls.sets.push({ key, value });
+      },
+    },
+    recent: {
+      list: async () => state.entries,
+    },
+    daemon: {
+      call: async (_method: string, path: string) =>
+        path.endsWith('/metarecords/batch') ? state.records : state.paths,
+      metarecordPaths: async (_repo: string, metarecord: { uuid: string }) =>
+        (state.paths[metarecord.uuid] ?? []).map((rel) => (rel === '' ? '/srv' : `/srv/${rel}`)),
+    },
+    invoke: (invocation: string) => {
+      calls.invoked.push(invocation);
+      return Promise.resolve({ ok: true });
+    },
+  };
+}
+
+function complete() {
+  return shipped['recent'].args[0].complete(fakeMf() as never) as Promise<string[]>;
+}
+
+function run(choice: string) {
+  return shipped['recent'].run(fakeMf() as never, choice);
 }
 
 const str = (value: string): Metafolder.Value => ({ type: 'string', value });
 
-describe('firstFieldText', () => {
-  test('returns the first matching field rendered as text', () => {
-    const m = rec('u', [['label', str('Blue')]]);
-    expect(firstFieldText(m, 'label')).toBe('Blue');
+/** One row of the recently-viewed list, with the record and tree path the
+ *  daemon answers for it (`relPath` null = the record has no file). */
+function viewed(uuid: string, entries: [string, Metafolder.Value][], relPath: string | null = '') {
+  state.entries.push({ uuid, viewed_at: new Date().toISOString() });
+  state.records[uuid] = { uuid, fields: entries.map(([name, value]) => ({ name, value })) };
+  state.paths[uuid] = relPath === null ? [] : [relPath];
+}
+
+beforeEach(() => {
+  for (const list of Object.values(calls)) list.length = 0;
+  state.repo = 'r';
+  state.entries = [];
+  state.records = {};
+  state.paths = {};
+});
+
+describe('the candidate lines', () => {
+  test('path, label and name are joined with an em dash', async () => {
+    viewed('u1', [
+      ['label', str('Blue')],
+      ['name', str('jazz.mp3')],
+    ], 'music/jazz.mp3');
+
+    expect(await complete()).toEqual(['music/jazz.mp3 — Blue — jazz.mp3']);
   });
 
-  test('picks the first row of a multi-map field', () => {
-    const m = rec('u', [['tag', str('a')], ['tag', str('b')]]);
-    expect(firstFieldText(m, 'tag')).toBe('a');
+  test('the missing parts are dropped (no label)', async () => {
+    viewed('u1', [['name', str('jazz.mp3')]], 'music/jazz.mp3');
+
+    expect(await complete()).toEqual(['music/jazz.mp3 — jazz.mp3']);
   });
 
-  test('absent field is the empty string', () => {
-    expect(firstFieldText(rec('u', []), 'label')).toBe('');
+  test('the first row of a multi-map field wins', async () => {
+    viewed('u1', [
+      ['label', str('a')],
+      ['label', str('b')],
+      ['name', str('jazz.mp3')],
+    ], 'music/jazz.mp3');
+
+    expect(await complete()).toEqual(['music/jazz.mp3 — a — jazz.mp3']);
   });
 
-  test('a nothing value is the empty string (explicit absence)', () => {
-    expect(firstFieldText(rec('u', [['label', { type: 'nothing' }]]), 'label')).toBe('');
+  test('a nothing value counts as missing (explicit absence)', async () => {
+    viewed('u1', [
+      ['label', { type: 'nothing' }],
+      ['name', str('jazz.mp3')],
+    ], 'music/jazz.mp3');
+
+    expect(await complete()).toEqual(['music/jazz.mp3 — jazz.mp3']);
   });
 
-  test('non-string scalars stringify', () => {
-    expect(firstFieldText(rec('u', [['rating', { type: 'int', value: 5 }]]), 'rating')).toBe('5');
+  test('a non-string scalar is read as text', async () => {
+    viewed('u1', [['label', { type: 'int', value: 5 }]], 'music/jazz.mp3');
+
+    expect(await complete()).toEqual(['music/jazz.mp3 — 5']);
+  });
+
+  test('a record with no path, label or name falls back to its uuid', async () => {
+    viewed('deadbeef', [], null);
+
+    expect(await complete()).toEqual(['deadbeef']);
+  });
+
+  test('a record the daemon no longer knows shows its uuid', async () => {
+    // Deleted since it was viewed: no record, no path — the line must still
+    // name the pick, or the list loses its place.
+    state.entries.push({ uuid: 'gone-uuid', viewed_at: new Date().toISOString() });
+
+    expect(await complete()).toEqual(['gone-uuid']);
+  });
+
+  test('the list is offered newest first, and a colliding line goes to the newest', async () => {
+    // The daemon lists newest first; a line both records would answer with is
+    // kept for the first — the newest — to name.
+    viewed('newer', [['name', str('same.mp3')]], 'music/same.mp3');
+    viewed('older', [['name', str('same.mp3')]], 'music/same.mp3');
+    expect(await complete()).toEqual(['music/same.mp3 — same.mp3', 'music/same.mp3 — same.mp3']);
+
+    await run('music/same.mp3 — same.mp3');
+
+    expect(calls.sets[0].value).toEqual({ uuid: 'newer', repo: 'r' });
   });
 });
 
-describe('recentLine', () => {
-  test('joins path, label and name with an em dash', () => {
-    const m = rec('u', [['label', str('Blue')], ['name', str('jazz.mp3')]]);
-    expect(recentLine(m, 'music/jazz.mp3')).toBe('music/jazz.mp3 — Blue — jazz.mp3');
+describe('opening the pick', () => {
+  test('the selection is published and the file panel revealed in the other slot', async () => {
+    viewed('u1', [['name', str('jazz.mp3')]], 'music/jazz.mp3');
+    const [line] = await complete();
+
+    await run(line);
+
+    expect(calls.sets).toEqual([
+      { key: 'selected_metarecord', value: { uuid: 'u1', repo: 'r' } },
+      { key: 'selected_paths', value: ['/srv/music/jazz.mp3'] },
+    ]);
+    // `panel:reveal` switches the *other* slot — the focus stays where it is.
+    expect(calls.invoked).toEqual(['panel:reveal file']);
   });
 
-  test('drops the missing parts (no label)', () => {
-    const m = rec('u', [['name', str('jazz.mp3')]]);
-    expect(recentLine(m, 'music/jazz.mp3')).toBe('music/jazz.mp3 — jazz.mp3');
+  test('the detail panel is revealed when the metarecord has no file', async () => {
+    viewed('u1', [['name', str('jazz.mp3')]], null);
+    const [line] = await complete();
+
+    await run(line);
+
+    expect(calls.sets[1].value).toEqual([]);
+    expect(calls.invoked).toEqual(['panel:reveal metarecord-detail']);
   });
 
-  test('a record with no path/label/name falls back to the uuid', () => {
-    expect(recentLine(rec('deadbeef', []), '')).toBe('deadbeef');
-  });
-
-  test('tolerates a missing metarecord (uuid fallback)', () => {
-    expect(recentLine(undefined, '', 'the-uuid')).toBe('the-uuid');
+  test('no line matches: the failure is thrown, for the shell to report', async () => {
+    await expect(run('Nope')).rejects.toThrow('no recently-viewed metarecord matches "Nope"');
+    expect(calls.sets).toEqual([]);
+    expect(calls.invoked).toEqual([]);
   });
 });

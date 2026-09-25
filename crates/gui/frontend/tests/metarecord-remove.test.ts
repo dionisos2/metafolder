@@ -1,61 +1,96 @@
-// The Delete key on a metarecord (spec-trash.org "GUI"): `metarecord:remove`
-// deletes the metarecord either way and settles its file on the way. Without a
-// file it runs a plain `metarecord:delete`; with one, the question decides
-// between trashing the file (the metarecord going with it) and deleting the
-// metarecord alone, the file kept. `metarecord:trash` and `metarecord:delete`
-// keep their own behaviour — the command composes them rather than replacing
-// them, and the question doubles as the trash confirmation.
+// The Delete key on a metarecord (spec-trash.org "GUI"), as the shipped
+// `commands.js` defines it since the command left the shell builtins:
+// `metarecord:remove` deletes the metarecord either way and settles its file
+// on the way. Without a file it runs a plain `metarecord:delete`; with one,
+// the question decides between trashing the file (the metarecord going with
+// it) and deleting the metarecord alone, the file kept. `metarecord:trash` and
+// `metarecord:delete` keep their own behaviour — the command composes them
+// rather than replacing them, and the question doubles as the trash
+// confirmation.
+//
+// The command is configuration now, so what is pinned is the composition: the
+// primitives it calls, with what. Reshaping the wording is free; a metarecord
+// left behind, or a file trashed without the question, is not.
 
 import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest';
-import { dispatch, setPanelDispatch } from '../src/lib/commands';
-import { store } from '../src/lib/store.svelte';
-import type { CommandDef } from '../src/lib/types';
+import shipped from '../../default-config/commands.js';
 
-const { invoked, state } = vi.hoisted(() => ({
-  invoked: [] as { cmd: string; args: Record<string, unknown> }[],
-  state: {
-    selection: null as unknown,
-    paths: [] as string[],
-  },
-}));
+const calls = {
+  vars: [] as string[],
+  daemon: [] as { method: string; path: string }[],
+  trash: [] as { repo: string; path: string }[],
+  status: [] as { kind: string; text: string }[],
+  writes: [] as { key: string; value: unknown }[],
+  invoked: [] as string[],
+};
 
-vi.mock('../src/lib/ipc', () => ({
-  invoke: async (cmd: string, args: Record<string, unknown>) => {
-    invoked.push({ cmd, args });
-    if (cmd === 'ws_get_var' && args.key === 'selected_metarecord') return state.selection;
-    if (cmd === 'daemon_request') return { status: 200, body: { paths: state.paths } };
-    return null;
-  },
-  listen: async () => () => {},
-}));
+const state = {
+  selection: null as unknown,
+  paths: [] as string[],
+  root: '/srv',
+  trashed: 'song.mp3',
+  trashError: null as unknown,
+};
 
-/** Panel commands the delegation reaches, captured through the dispatch hook
- *  PanelHost installs in the real shell. */
-const reached: string[] = [];
+/** The `mf` a user command is handed (spec-gui "User commands"), faked: the
+ *  calls are recorded, the daemon's answers read from `state`. */
+function fakeMf() {
+  return {
+    workspace: {
+      get: async (key: string) => {
+        calls.vars.push(key);
+        return state.selection;
+      },
+      set: async (key: string, value: unknown) => {
+        calls.writes.push({ key, value });
+      },
+    },
+    daemon: {
+      call: async (method: string, path: string) => {
+        calls.daemon.push({ method, path });
+        return { paths: state.paths };
+      },
+      repoRoot: async () => state.root,
+    },
+    trash: {
+      trashPath: async (repo: string, path: string) => {
+        if (state.trashError) throw state.trashError;
+        calls.trash.push({ repo, path });
+        return state.trashed;
+      },
+    },
+    invoke: (invocation: string) => {
+      calls.invoked.push(invocation);
+      return Promise.resolve({ ok: true });
+    },
+    // The stringification `metafolder.statusBar.error` does: the message of an
+    // error, else the error read as text.
+    statusBar: {
+      message: async (text: string) => {
+        calls.status.push({ kind: 'info', text });
+      },
+      error: async (error: unknown) => {
+        const text = String((error as { message?: unknown } | null)?.message ?? error);
+        calls.status.push({ kind: 'error', text });
+      },
+    },
+  };
+}
 
-function command(name: string, owner: string | null): CommandDef {
-  return { name, label: name, owner, reveal: false, log: true };
+function run() {
+  return shipped['metarecord:remove'].run(fakeMf() as never);
 }
 
 beforeEach(() => {
-  invoked.length = 0;
-  reached.length = 0;
+  for (const list of Object.values(calls)) list.length = 0;
   state.selection = { uuid: 'u-1', repo: 'r-1' };
   state.paths = ['music/song.mp3'];
-  store.workspaces = [{ id: 'ws-1', name: 'music', active_repo: null }];
-  store.layout.left = { visible: true, workspace_id: 'ws-1', panel_type: 'metarecord-list' };
-  store.commands = [
-    command('metarecord:remove', null),
-    command('metarecord:trash', null),
-    command('metarecord:delete', 'metarecord-detail'),
-  ];
-  setPanelDispatch(async (target) => {
-    reached.push(target.name);
-  });
+  state.root = '/srv';
+  state.trashed = 'song.mp3';
+  state.trashError = null;
 });
 
 afterEach(() => {
-  setPanelDispatch(null);
   vi.restoreAllMocks();
 });
 
@@ -64,57 +99,64 @@ describe('metarecord:remove', () => {
     state.selection = null;
     const confirm = vi.spyOn(window, 'confirm').mockReturnValue(true);
 
-    expect(await dispatch('metarecord:remove')).toEqual({ ok: true });
+    await run();
 
+    expect(calls.vars).toEqual(['selected_metarecord']);
     expect(confirm).not.toHaveBeenCalled();
-    expect(reached).toEqual([]);
-    expect(invoked.some((c) => c.cmd === 'trash_selected_metarecord')).toBe(false);
-    expect(
-      invoked.some(
-        (c) =>
-          c.cmd === 'post_status' && String(c.args.text).includes('no metarecord is selected'),
-      ),
-    ).toBe(true);
+    expect(calls.invoked).toEqual([]);
+    expect(calls.trash).toEqual([]);
+    expect(calls.status).toEqual([{ kind: 'error', text: 'no metarecord is selected' }]);
   });
 
   test('a metarecord without a file is a plain metarecord:delete', async () => {
     state.paths = [];
     const confirm = vi.spyOn(window, 'confirm').mockReturnValue(true);
 
-    expect(await dispatch('metarecord:remove')).toEqual({ ok: true });
+    await run();
 
     // No file, no question: `metarecord:delete` confirms its own action.
     expect(confirm).not.toHaveBeenCalled();
-    expect(reached).toEqual(['metarecord:delete']);
-    expect(invoked.some((c) => c.cmd === 'trash_selected_metarecord')).toBe(false);
+    expect(calls.invoked).toEqual(['metarecord:delete']);
+    expect(calls.trash).toEqual([]);
   });
 
   test('with a file, OK trashes the file and its metarecord', async () => {
     const confirm = vi.spyOn(window, 'confirm').mockReturnValue(true);
 
-    expect(await dispatch('metarecord:remove')).toEqual({ ok: true });
+    await run();
 
     // The question doubles as the confirmation `metarecord:trash` would ask,
-    // so nothing re-confirms afterwards.
+    // so nothing re-confirms afterwards — and the metarecord goes with the
+    // file (a tracked path's records are captured and deleted before the bytes
+    // move), so `metarecord:delete` has nothing left to do.
     expect(confirm).toHaveBeenCalledTimes(1);
     expect(String(confirm.mock.calls[0][0])).toContain('song.mp3');
-    expect(invoked).toContainEqual({ cmd: 'trash_selected_metarecord', args: { wsId: 'ws-1' } });
-    expect(reached).toEqual([]);
+    expect(calls.trash).toEqual([{ repo: 'r-1', path: '/srv/music/song.mp3' }]);
+    expect(calls.invoked).toEqual([]);
+    // The trashing says nothing and refreshes nothing on its own: the status
+    // and the dirty nonce are the command's half of the exchange.
+    expect(calls.status).toEqual([
+      { kind: 'info', text: 'Trashed song.mp3 — restore it from the trash panel' },
+    ]);
+    expect(calls.writes).toHaveLength(1);
+    expect(calls.writes[0].key).toBe('metarecords:dirty');
+    expect(typeof calls.writes[0].value).toBe('number');
   });
 
   test('with a file, Cancel keeps the file and deletes the metarecord', async () => {
     vi.spyOn(window, 'confirm').mockReturnValue(false);
 
-    expect(await dispatch('metarecord:remove')).toEqual({ ok: true });
+    await run();
 
-    expect(reached).toEqual(['metarecord:delete']);
-    expect(invoked.some((c) => c.cmd === 'trash_selected_metarecord')).toBe(false);
+    expect(calls.trash).toEqual([]);
+    expect(calls.invoked).toEqual(['metarecord:delete']);
+    expect(calls.writes).toEqual([]);
   });
 
   test('the question names both outcomes and the file it is about', async () => {
     vi.spyOn(window, 'confirm').mockReturnValue(false);
 
-    await dispatch('metarecord:remove');
+    await run();
 
     const question = String(vi.mocked(window.confirm).mock.calls[0][0]);
     expect(question).toContain('Send "song.mp3" to the trash?');
@@ -125,15 +167,34 @@ describe('metarecord:remove', () => {
   test("the metarecord's file is read from the daemon's resolve-tree", async () => {
     vi.spyOn(window, 'confirm').mockReturnValue(false);
 
-    await dispatch('metarecord:remove');
+    await run();
 
-    expect(invoked).toContainEqual({
-      cmd: 'daemon_request',
-      args: {
-        method: 'GET',
-        path: '/repos/r-1/metarecords/u-1/fields/mfr_path/resolve-tree',
-        body: null,
-      },
+    expect(calls.daemon).toContainEqual({
+      method: 'GET',
+      path: '/repos/r-1/metarecords/u-1/fields/mfr_path/resolve-tree',
     });
+  });
+
+  test('the repository root itself is the file when the path resolves to it', async () => {
+    state.paths = [''];
+    vi.spyOn(window, 'confirm').mockReturnValue(true);
+
+    await run();
+
+    // `mfr_path` of '' is the repository root — named as itself in the
+    // question, trashed as itself.
+    expect(String(vi.mocked(window.confirm).mock.calls[0][0])).toContain('Send "/srv" to the trash?');
+    expect(calls.trash).toEqual([{ repo: 'r-1', path: '/srv' }]);
+  });
+
+  test('a refused trashing is reported, and refreshes nothing', async () => {
+    state.trashError = new Error('trashing refused');
+    vi.spyOn(window, 'confirm').mockReturnValue(true);
+
+    await run();
+
+    expect(calls.status).toEqual([{ kind: 'error', text: 'trashing refused' }]);
+    expect(calls.writes).toEqual([]);
+    expect(calls.invoked).toEqual([]);
   });
 });

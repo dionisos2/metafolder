@@ -7,6 +7,7 @@
 import { beforeEach, describe, expect, test, vi } from 'vitest';
 import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
+import shipped from '../../default-config/commands.js';
 
 const PANEL_DIR = resolve(process.cwd(), '../default-config/panel-types/file-manager');
 
@@ -175,5 +176,77 @@ describe('file-manager reveal-folder', () => {
     await mount(s);
     expect(s.fs.readDir).toHaveBeenCalledWith('/repo');
     expect(s.fs.readDir).not.toHaveBeenCalledWith('/repo/sub');
+  });
+});
+
+// ── The command side, as the shipped `commands.js` defines it ───────────────
+// `file-manager:reveal` publishes the selection's first path as the request
+// and switches the focused slot; everything above is what honours it. What is
+// pinned here is the request shape ({path, nonce}) and the switch.
+
+describe('the file-manager:reveal command (shipped commands.js)', () => {
+  const calls = {
+    sets: [] as { key: string; value: unknown }[],
+    invoked: [] as string[],
+    status: [] as string[],
+  };
+  const state = { paths: null as unknown };
+
+  function fakeMf() {
+    return {
+      workspace: {
+        get: async (key: string) => (key === 'selected_paths' ? state.paths : null),
+        set: async (key: string, value: unknown) => {
+          calls.sets.push({ key, value });
+        },
+      },
+      invoke: (invocation: string) => {
+        calls.invoked.push(invocation);
+        return Promise.resolve({ ok: true });
+      },
+      statusBar: {
+        message: async () => {},
+        error: async (error: unknown) => {
+          calls.status.push(String(error));
+        },
+      },
+    };
+  }
+
+  beforeEach(() => {
+    calls.sets.length = 0;
+    calls.invoked.length = 0;
+    calls.status.length = 0;
+    state.paths = ['/repo/sub/song.mp3'];
+  });
+
+  test('no selection: says so, and switches nothing', async () => {
+    state.paths = null;
+
+    await shipped['file-manager:reveal'].run(fakeMf() as never);
+
+    expect(calls.status).toEqual(['no file or folder is selected']);
+    expect(calls.sets).toEqual([]);
+    expect(calls.invoked).toEqual([]);
+  });
+
+  test('the selection is published as the request, then the panel switches', async () => {
+    await shipped['file-manager:reveal'].run(fakeMf() as never);
+
+    expect(calls.sets).toEqual([
+      {
+        key: 'file-manager:reveal-path',
+        value: { path: '/repo/sub/song.mp3', nonce: expect.any(Number) },
+      },
+    ]);
+    expect(calls.invoked).toEqual(['panel:set type file-manager']);
+  });
+
+  test('the first *string* entry is taken (the selection carries metadata too)', async () => {
+    state.paths = [42, '/repo/top.txt', '/repo/sub/song.mp3'];
+
+    await shipped['file-manager:reveal'].run(fakeMf() as never);
+
+    expect((calls.sets[0].value as { path: string }).path).toBe('/repo/top.txt');
   });
 });

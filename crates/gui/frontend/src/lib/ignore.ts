@@ -13,8 +13,8 @@ export {
   patternForPath,
 } from '../../../panel-shim/ignore.js';
 
-// The repo-root-relative path helpers live with the folder listing that also
-// needs them (see folder.ts) — one convention, one implementation.
+// The repo-root-relative path helper lives in folder.ts — one convention, one
+// implementation.
 import { relativeToRoot } from './folder';
 
 /** One installed preset, already expanded by the backend. */
