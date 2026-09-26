@@ -293,18 +293,23 @@ The tree cache is used to collect descendants efficiently.
 
 Both reconcile and the watcher evaluate eligibility before creating, updating,
 or clearing any metarecord. Ineligible paths are silently ignored. The watcher
-additionally uses eligibility to decide *where to place its inotify watches* —
-only eligible directories are watched (see [[*File Watcher]]).
+additionally uses eligibility to decide *where live coverage is needed* — in the
+budget regime only eligible directories are watched, and in both regimes only
+eligible paths are ever recorded (see [[*File Watcher]], [[*Watch sources and
+regimes]]).
 
 *** Behaviour when =mf_watch= or =mf_ignore= changes
 
 Changing =mf_watch= or =mf_ignore= on a metarecord does *not* automatically
 modify any existing database metarecords. The changes take effect only on the next
 event (watcher or reconcile) for each affected path. The watcher does, however,
-*immediately re-place its inotify watches* to match the new eligible-directory
-set (see [[*File Watcher]]), so filesystem events arriving in a newly-eligible
-subtree start being captured at once — but the metarecords for files *already*
-present there still require a reconcile:
+*immediately re-apply its watch set* to match the new eligible-directory set —
+a re-placement of the per-directory watches in the budget regime; in the
+coverage regime there is nothing to place, and the change is live as soon as the
+event filter sees it (see [[*File Watcher]], [[*Watch sources and regimes]]) —
+so filesystem events arriving in a newly-eligible subtree start being captured
+at once, but the metarecords for files *already* present there still require a
+reconcile:
 
 - *=mf_watch= set to =true=* on a previously-unwatched directory: existing
   files under that directory have no metarecords yet. A subsequent reconcile is
@@ -314,9 +319,9 @@ present there still require a reconcile:
   updated by the watcher or reconcile, but their metadata (including
   =mfr_path=) remains unchanged until the user explicitly removes them.
 
-The re-placement is owed by every way the eligible set can change, not only by a
+The re-application is owed by every way the eligible set can change, not only by a
 direct write: a rollback or redo that restores or takes away =mf_watch=
-/=mf_ignore= rows re-places the watches the same way, once HEAD has landed
+/=mf_ignore= rows re-applies the watch set the same way, once HEAD has landed
 ([[file:spec-event-log.org][spec-event-log.org]] "Upkeep after a navigation").
 
 This is intentional: existing metadata is never silently discarded. To clean
@@ -403,8 +408,9 @@ The freeze is decided by the *presence of a mount*, not by identity: if a
 normally (those files really are there); the identity mismatch is reported by
 [[*Mount status]] but changes no behaviour.
 
-Remounting resumes tracking — the watches are re-placed by the next watch-set
-refresh — but does *not* trigger a reconcile: its cost is unbounded on a large
+Remounting resumes tracking — the watch set is re-applied by the next refresh
+(a re-placement in the budget regime; under coverage there is nothing to place)
+— but does *not* trigger a reconcile: its cost is unbounded on a large
 disk, and the volume may have been mounted for hours elsewhere. Changes made
 while a volume was away are therefore picked up only by an explicit
 =mf reconcile --metarecord <mount>=, which the client is expected to offer
@@ -644,7 +650,9 @@ say why.
 
 The daemon watches each loaded repository root for filesystem events (inotify
 on Linux, FSEvents on macOS, ReadDirectoryChangesW on Windows, via the =notify=
-crate; per-backend differences are detailed in
+crate; on Linux, a fanotify source through a privileged broker is the
+alternative — [[file:docs/watcher-fanotify.md][docs/watcher-fanotify.md]];
+per-backend differences are detailed in
 [[file:spec-platform.org][spec-platform.org]]). *The watcher and manual writes
 with =force= are the only components that set =mfr_path= to =Nothing=*;
 reconcile leaves =mfr_path= stale rather than setting it to =Nothing=.
@@ -669,9 +677,10 @@ a =Rename(From)= / =Rename(To)= pair sharing the same non-null cookie back into
 a single =Rename(Both)=. Events without a cookie, and genuine one-sided renames
 (no matching cookie), are left as-is.
 
-The watcher places one *non-recursive* watch per *eligible directory* only
-(see [[*Watch and Ignore]]), rather than a single recursive watch on the whole
-root. The eligible set is computed by the same walk reconcile uses: descend only
+In the *budget* regime — one of the two watch regimes of [[*Watch sources and
+regimes]] — the watcher places one *non-recursive* watch per *eligible
+directory* only (see [[*Watch and Ignore]]), rather than a single recursive
+watch on the whole root. The eligible set is computed by the same walk reconcile uses: descend only
 through eligible directories, prune ineligible subtrees, never follow symlinked
 directories (so a watch can never escape the repository root — e.g. a Wine
 =dosdevices/z: -> /= symlink is not traversed), and skip a directory that cannot
@@ -684,7 +693,9 @@ disappear, and recomputed after a manual write changes =mf_watch=/=mf_ignore=
 (see [[*Behaviour when =mf_watch= or =mf_ignore= changes]]). An *offline* mount
 point is pruned like an ineligible directory — no watch on it, none below it
 (see [[*Offline subtrees]]); the watch set is recomputed on the next refresh, so a
-remounted volume starts being watched again without restarting the daemon.
+remounted volume starts being watched again without restarting the daemon. In
+the *coverage* regime none of this is placed at all — one kernel registration
+already covers the tree.
 
 Before processing any event, the daemon evaluates eligibility for the affected
 path (see [[*Watch and Ignore]]). Ineligible paths are silently ignored. Events
@@ -699,12 +710,62 @@ normal eligibility rules.
 
 The watch backend's event callback does *no* work of its own: it translates the
 event and hands it to the watcher's ingest thread, which writes the buffer and
-places any new directory's watch. The backend delivers events and serves watch
+maintains the watch set — its placement, in the budget regime ([[*Watch sources
+and regimes]]). The backend delivers events and serves watch
 placements from a single thread, so a callback that waited on the repository
 connection would freeze every watch placement — and deadlock outright against a
 write that recomputes the watch set while holding that connection (see
 [[*Behaviour when =mf_watch= or =mf_ignore= changes]]). Nothing that can block
 may run on the callback.
+
+*** Watch sources and regimes
+
+Two regimes, defined by how a watch *source* covers a tree — not by platform or
+backend name:
+
+- *Budget* (the =notify= source: inotify on Linux): coverage is one
+  registration per directory. A watch set is computed, placed and maintained;
+  the supply is finite ([[*The watch budget]]), what this daemon will not spend
+  is recorded (=mfr_watch_exceeded=, below), and what the kernel refuses leaves
+  paths momentarily uncovered ([[*Two different failures]]).
+- *Coverage* (fanotify on Linux; the tree-wide registration FSEvents and
+  ReadDirectoryChangesW provide natively): one kernel registration covers the
+  whole tree. There is nothing to place and nothing to run out of: no placement
+  walk, no watch budget, no frontier of subtrees the budget gave up on, no
+  starved state.
+
+The =notify= source runs the *budget* regime on *every* platform: it places one
+registration per directory even where the kernel could cover a tree with a
+single call, and where no watch limit is readable (=fsevents=,
+=readdirectorychangesw=) =watch_budget.limit= and its =cap= answer =null= — the
+budget is inert in effect there, as it has always been. What =GET /watch=
+reports as =backend= is the underlying notify backend name (=inotify=,
+=fsevents=, =readdirectorychangesw=); the regime is the source's.
+
+The broker behind the coverage source is a separate process and can go away.
+What happens then is what happens whenever events are missed (see [[*Event
+batching]] — a daemon that was down misses them too): the gap is *announced*
+(a diagnostic on every disconnect, every reconnect and every overflow, each
+naming =mf reconcile=) and closes with that reconcile. Nothing is ever
+inferred from a gap.
+
+What does *not* vary between regimes: the eligibility filter every event goes
+through (see [[*Watch and Ignore]]), the =.metafolder/internal/= hard skip,
+offline subtrees ([[*Offline subtrees]]), event batching and event semantics.
+
+Only one source is active for a repository at a time — fanotify when a broker is
+reachable and permitted, the =notify= backend otherwise, never both (every
+change would be recorded twice). The active source and its regime are reported
+by =GET /watch= ([[*Watch status, pause and resume]]).
+
+The user-visible vocabulary does not change between regimes:
+
+- =mf_watch= / =mf_ignore= say what *should* be covered, in both;
+- =mfr_watch_exceeded= says *leave this subtree uncovered*, in both — every
+  regime honours it (below, [[*The watch budget]]);
+- only the budget's own answers are budget-only: =watch_budget= and
+  =watched_dirs= in =GET /watch= (both =null= under coverage), and
+  =reason = "unwatched"= (the starved state) in [[*Watch check]].
 
 *** The watch budget
 
@@ -713,9 +774,10 @@ inotify holds *one watch per directory*. There is no recursive watch — the
 directory too — so a tree of N eligible directories costs N kernel watches. The
 supply is =fs.inotify.max_user_watches=, a **per-user** budget shared with every
 other program on the machine that watches files, and each watch costs on the
-order of a kilobyte of unswappable kernel memory. (FSEvents and
-ReadDirectoryChangesW watch a tree with a single registration; everything in
-this section is inert on those backends.)
+order of a kilobyte of unswappable kernel memory. (This section is the *budget*
+regime's own — see [[*Watch sources and regimes]]: the coverage sources watch a
+tree with a single registration and have no per-directory watch to budget. The
+one exception is =mfr_watch_exceeded=, which every regime honours — see below.)
 
 **** The share
 
@@ -750,29 +812,38 @@ do not get the same answer.
 A reserved field (=mfr_*=: written by the daemon, and by the user with
 =force=), *inherited* down the =mfr_path= tree exactly like =mf_watch= —
 nearest ancestor defining it wins, a value set directly on a directory
-overrides it. =true= means: *place no inotify watch here*.
+overrides it. =true= means: *leave this subtree uncovered by the watcher* —
+and every regime honours it ([[*Watch sources and regimes]]): the budget regime
+places no watch there, the coverage regime records no event under it.
 
 It means nothing else. The subtree stays fully tracked: reconcile walks it,
 queries return it, the orphan and duplicate scans consider it, =mf_watch=
-continues to say what the user *wants* watched. The field records only what the
-budget could not afford live, so changes there are noticed by the next
-=reconcile= instead of immediately.
+continues to say what the user *wants* watched. The field records only what is
+left to reconcile rather than to live tracking — what the budget could not
+afford, or what the user asked to leave alone — so changes there are noticed by
+the next =reconcile= instead of immediately.
 
 - The daemon writes it on the **frontier** of what the placement could not take
   — the subtree roots it did not enter — never on every directory beneath. That
   is what makes the mechanism affordable in the very case that triggers it: a
   repository too large to watch is also a repository too large to annotate one
-  metarecord at a time.
-- It is *sticky*. The daemon never clears it on its own, so the unwatched set is
+  metarecord at a time. This writer is the budget regime's alone: the coverage
+  regime has no budget to exhaust and never writes the field on its own, so
+  there the user's deliberate writes are the only ones.
+- It is *sticky*. The daemon never clears it on its own, so the uncovered set is
   the same from one session to the next and the user can reshape it deliberately.
   A budget that has since grown shows up as headroom in =watch_budget=; the user
   reclaims it explicitly.
-- Writing it re-triggers watch placement, like =mf_watch= and =mf_ignore=.
-- Clearing it when there is no headroom is refused with =409=, naming what to
-  free first. Setting it is always allowed: it only ever returns watches.
+- Writing it takes effect at once, like =mf_watch= and =mf_ignore=: a
+  re-placement of the watch set in the budget regime, a change of the event
+  filter in the coverage regime.
+- Setting it is always allowed: it only ever takes live coverage away (returning
+  its watches to the budget, in the budget regime). Clearing it is refused with
+  =409= in the budget regime when there is no headroom, naming what to free
+  first; under coverage, clearing is always allowed.
 - Like every =mfr_*= field except =mfr_path=, it does not travel through sync
-  (see [[file:spec-sync.org][spec-sync.org]]) — a watch budget is a fact about
-  one machine.
+  (see [[file:spec-sync.org][spec-sync.org]]) — what is left uncovered is a fact
+  about one machine.
 
 Exercised in tests by lowering =watch-budget-share= far enough that an ordinary
 fixture exceeds it.
@@ -1367,11 +1438,23 @@ Reads and sets whether the executor is ingesting filesystem events for this
 repository (see [[*Pausing ingestion]]). All three answer the same body:
 
 #+BEGIN_SRC json
-{"paused": true, "pending_events": 12043, "watched_dirs": 22838,
+{"paused": true, "pending_events": 12043, "backend": "inotify",
+ "watched_dirs": 22838,
  "watch_budget": {"limit": 524288, "share": 50, "cap": 262144,
                   "starved": false, "exceeded_dirs": 3}}
 #+END_SRC
 
+The same body under the coverage regime ([[*Watch sources and regimes]]) — no
+per-directory state, nothing to run out of:
+
+#+BEGIN_SRC json
+{"paused": false, "pending_events": 0, "backend": "fanotify",
+ "watched_dirs": null, "watch_budget": null}
+#+END_SRC
+
+- =backend= — the active watch source: =inotify=, =fanotify=, =fsevents= or
+  =readdirectorychangesw= ([[*Watch sources and regimes]]). Its regime is what
+  decides whether the two budget-only fields below carry anything.
 - =paused= — whether ingestion is paused. In memory: a reload or a daemon
   restart starts unpaused.
 - =pending_events= — how many filesystem events are waiting in the in-memory
@@ -1379,8 +1462,10 @@ repository (see [[*Pausing ingestion]]). All three answer the same body:
   the repository's connection, so it answers even while the flush the caller is
   trying to stop is holding it.
 - =watched_dirs= — how many directories the watcher holds a watch on: one
-  kernel watch each (see [[*The watch budget]]).
-- =watch_budget= — the supply and what became of it. =limit= is
+  kernel watch each (see [[*The watch budget]]). =null= in the coverage regime,
+  where one registration covers the tree and there is no per-directory state.
+- =watch_budget= — the supply and what became of it (budget regime; =null= in
+  the coverage regime, where there is nothing to run out of). =limit= is
   =fs.inotify.max_user_watches=, =share= the configured percentage, =cap= their
   product; =exceeded_dirs= counts the subtree roots carrying
   =mfr_watch_exceeded=; =starved= is true while the kernel refuses watches
@@ -1451,7 +1536,7 @@ POST /repos/:repo_uuid/watch/check
 
 The watcher's own answer for a list of paths: *would a change at each be
 recorded?* Where [[*Eligibility explain]] runs the tracking algorithm, this
-consults the *live watch set* ([[*File Watcher]]) — one step past eligibility,
+consults the *live coverage* ([[*File Watcher]]) — one step past eligibility,
 because the two can disagree, and the difference is exactly what a client
 showing "is this file watched?" must not flatten away:
 
@@ -1465,13 +1550,16 @@ showing "is this file watched?" must not flatten away:
 - everything under =.metafolder/internal/= is never watched, whatever the
   fields say — the walk's hard skip, not a decision;
 - and a tracked file whose directory *should* be watched may still hold no
-  watch: the kernel refused it (starved, [[*Two different failures]]).
+  watch: the kernel refused it (starved, [[*Two different failures]]) — the
+  budget regime's own failure; the coverage regime has nothing to refuse.
 
-"Watched" for a *directory* is its own watch (events inside it are reported);
-for anything else it is its containing directory's watch (the entry itself is).
-The answer is the live set's truth, not the placement's target — a starved
-directory is absent from both alike. Ingestion being *paused* does not change
-the answer: the watches stay placed, the events buffer.
+"Watched" for a *directory* is its own coverage (events inside it are
+reported); for anything else it is its containing directory's. The answer is
+the live coverage's truth, not what the fields ask for: =mfr_watch_exceeded= is
+honoured although =mf_watch= says tracked, and a starved directory is uncovered
+although nothing records it ([[*Watch sources and regimes]]). Ingestion being
+*paused* does not change the answer: the coverage stays as it is, the events
+buffer.
 
 Request body: repo-root-relative paths (leading slash, =""= is the root), at
 most 1000 per call, one request per directory listing. Response: one result
@@ -1499,12 +1587,15 @@ per path, in the order given.
 - =watched= — whether the watcher records a change at the path: eligible *and*
   covered by a watch.
 - =reason= — =watched=; =untracked= (the path itself or its covering directory
-  is not tracked); =excluded= (inside a subtree carrying =mfr_watch_exceeded=);
-  =offline= (its mount point is unplugged); =internal= (under the daemon's own
-  runtime directory); =unwatched= (tracked and uncovered for no recorded
-  reason: starved).
-- =watched_dir= — the directory whose watch covers the path (the path itself
-  for a directory, its containing directory otherwise; =""= is the root).
+  is not tracked); =excluded= (inside a subtree carrying =mfr_watch_exceeded=,
+  honoured in both regimes); =offline= (its mount point is unplugged);
+  =internal= (under the daemon's own runtime directory); =unwatched= (tracked
+  and uncovered for no recorded reason: starved — the budget regime's answer
+  alone, [[*Watch sources and regimes]]).
+- =watched_dir= — the directory the answer was computed against (the path
+  itself for a directory, its containing directory otherwise; =""= is the root):
+  the directory whose watch covers the path in the budget regime, the same
+  directory whose subtree coverage reaches the path in the coverage regime.
   Whether it *is* watched is the =watched= bit; the field is always present so
   a client can say what the answer was computed against.
 - =eligible= / =eligibility_reason= / =watch_scope= / =ignore_source= /
@@ -1521,8 +1612,8 @@ per path, in the order given.
   =reason = "offline"=.
 
 A path is *watched* when =watched= is true; every other reason is why it is
-not, ordered as the placement walk itself decides (eligibility, then the
-structural skips, then the unexplained remainder).
+not, ordered as the reason ladder decides (eligibility, then the structural
+skips, then the unexplained remainder — the last one budget-only).
 
 The GUI marks unwatched records in the
 [[file:spec-gui.org][spec-gui.org]] metarecord-list (amber, reason on hover)
@@ -1656,15 +1747,18 @@ Controls the ingestion of filesystem events for the repository (see
 watch state of individual paths (see [[*Watch check]]).
 
 =status= (the default) calls =GET /watch= and prints one line — =running= or
-=paused=, the number of buffered events and the number of watched directories:
+=paused=, the number of buffered events, and the coverage with the active source
+([[*Watch sources and regimes]]):
 
 #+BEGIN_SRC
-paused     12043 event(s) waiting	22838 directory(ies) watched
+paused     12043 event(s) waiting	22838 directory(ies) watched (inotify)
+running    0 event(s) waiting	tree covered (fanotify)
 #+END_SRC
 
-A budget in trouble adds a second line, so neither condition can pass unnoticed:
-the number of subtrees excluded for want of watches, and whether the kernel is
-refusing watches to a daemon that has not reached its own ceiling.
+A budget in trouble adds a second line (budget regime only), so neither
+condition can pass unnoticed: the number of subtrees excluded for want of
+watches, and whether the kernel is refusing watches to a daemon that has not
+reached its own ceiling.
 
 =pause= calls =POST /watch/pause=: it stops the flush in progress (its
 uncommitted group is abandoned, its events stay buffered) and keeps the executor
@@ -1687,17 +1781,19 @@ exit code is 1 ("found problems") when any path is not watched, so a script can
 assert on watchability the way =mf schema check= does on violations. =--json=
 prints the raw response body.
 
-=exceeded= manages =mfr_watch_exceeded=, the subtrees left unwatched for want of
-budget. It is named after the field rather than after an intention, because it
-is *not* how one says what to watch — that is =mf_watch=, and it is unaffected.
-This is the pathological case, and the command says so.
+=exceeded= manages =mfr_watch_exceeded=, the subtrees left *uncovered* — by
+want of budget, or deliberately. It is named after the field rather than after
+an intention, because it is *not* how one says what to watch — that is
+=mf_watch=, and it is unaffected. When it is the budget that put the field
+there, this is the pathological case, and the command says so.
 
 - =exceeded= / =exceeded list= — the directories carrying the field, with the
-  budget line from =status=.
-- =exceeded set <dir>= — stop watching that subtree, returning its watches to
-  the budget. Always allowed.
-- =exceeded clear <dir>= — watch it again. Refused with =409= when there is no
-  headroom, naming what to =set= first.
+  budget line from =status= (budget regime).
+- =exceeded set <dir>= — leave that subtree uncovered, returning its watches to
+  the budget where there is one. Always allowed.
+- =exceeded clear <dir>= — cover it again. Refused with =409= in the budget
+  regime when there is no headroom, naming what to =set= first; under coverage,
+  always allowed.
 
 The field is reserved, so the same thing can be done by writing it directly with
 =force=; the commands only spare the ceremony.

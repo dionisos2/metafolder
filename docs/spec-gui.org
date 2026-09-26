@@ -152,10 +152,11 @@ Not-watched metarecords are made visible the same way (spec-file-tracking
 (=--mf-warning=) with the reason on hover — a record *watched* through any of
 its paths stays unmarked, its reason still on hover — and =metarecord-detail=
 always states the verdict in a note under the head, dim when watched, amber
-with the reason when not. The verdict asks the daemon's live watch set
+with the reason when not. The verdict asks the daemon's live coverage
 (=POST /repos/:repo/watch/check=, one batch call per page in the list, one
-per load in the detail) and covers the states eligibility cannot: a watch
-budget exclusion, an unplugged volume, the daemon's own runtime directory. A
+per load in the detail) and covers the states eligibility cannot: a subtree
+left uncovered (=mfr_watch_exceeded=), an unplugged volume, the daemon's own
+runtime directory. A
 metarecord with no =mfr_path= at all, or one whose answer has not landed (the
 daemon down, or older than the endpoint), is left unmarked: "unknown" never
 reads as "unwatched". The amber yields to the stronger signals — the orphan

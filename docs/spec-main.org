@@ -155,7 +155,14 @@ metafolder = "/ssd/meta/music/.metafolder"
   =watch-quiet-period-ms= (default 500, the executor's flush quiet period),
   =watch-budget-share= (default 50, the percentage of
   =fs.inotify.max_user_watches= one daemon will spend — see
-  [[file:spec-file-tracking.org][spec-file-tracking.org]] "The watch budget")
+  [[file:spec-file-tracking.org][spec-file-tracking.org]] "The watch budget"),
+  =watchd-socket= (default =/run/metafolder/watchd.sock=: where the fanotify
+  broker is probed at load — reachable, and the daemon covers the tree through
+  it; absent, and the daemon watches with inotify and says so. There is no
+  option: the socket is the switch, and a path where nothing listens keeps one
+  on inotify — see
+  [[file:spec-file-tracking.org][spec-file-tracking.org]] "Watch sources and
+  regimes"),
   =orphan-cascade-limit= (default 10 000, =0= to disable: the largest cascade of
   =mfr_path = Nothing= a single watcher batch may apply — see
   [[file:spec-file-tracking.org][spec-file-tracking.org]] "Mass-orphan circuit
