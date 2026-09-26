@@ -302,6 +302,19 @@ fn dec_restoration(b: &[u8]) -> Result<Restoration> {
     })
 }
 
+/// The map a store opens on: an address-space reservation, not a size limit
+/// (it doubles as the store fills). Small, because a daemon holds one per
+/// loaded repository and a process has 128 TiB of address space in all — a
+/// fixed 1 TiB map ran out of it at ~120 repositories.
+const INITIAL_MAP: usize = 1 << 30;
+
+/// `n` rounded up to the system's page size, as LMDB requires of a map size.
+fn page_multiple(n: usize) -> usize {
+    // SAFETY: sysconf has no preconditions.
+    let page = unsafe { libc::sysconf(libc::_SC_PAGESIZE) }.max(4096) as usize;
+    n.div_ceil(page) * page
+}
+
 // ── Opening ─────────────────────────────────────────────────────────────────
 
 impl KvStore {
@@ -309,6 +322,14 @@ impl KvStore {
     /// repository's lock: a second daemon opening it fails, as a second
     /// daemon opening a SQLite repository does.
     pub fn open(dir: &Path) -> Result<KvStore> {
+        KvStore::open_with_map_size(dir, INITIAL_MAP)
+    }
+
+    /// [`KvStore::open`] on a map of at least `map_size` bytes (rounded up to
+    /// a page) — and at least twice what the store already holds. The map
+    /// only reserves address space; [`Begin::begin_write`] doubles it as the
+    /// store fills.
+    pub fn open_with_map_size(dir: &Path, map_size: usize) -> Result<KvStore> {
         std::fs::create_dir_all(dir).with_context(|| format!("create {}", dir.display()))?;
         let lock = File::create(dir.join("daemon.lock"))?;
         {
@@ -323,7 +344,9 @@ impl KvStore {
         // the map is read-only (no WRITEMAP), so a stray write in the process
         // cannot reach it (docs/spec-storage.org "Safety").
         let env = unsafe {
-            EnvOpenOptions::new().read_txn_without_tls().map_size(1 << 40).max_dbs(16).open(dir)
+            let held = std::fs::metadata(dir.join("data.mdb")).map_or(0, |m| m.len() as usize);
+            let map_size = page_multiple(map_size.max(held.saturating_mul(2)));
+            EnvOpenOptions::new().read_txn_without_tls().map_size(map_size).max_dbs(16).open(dir)
         }
         .with_context(|| format!("open the key-value store in {}", dir.display()))?;
         let mut w = env.write_txn()?;
@@ -885,7 +908,27 @@ kv_reads!(KvTxn<'_>, |me, read| |f: &mut dyn FnMut(&Read) -> Result<_>| {
 
 impl Begin for KvStore {
     fn begin_write(&mut self) -> Result<Box<dyn WriteTxn + '_>> {
+        self.grow_map()?;
         Ok(Box::new(KvTxn { t: self.t, txn: RefCell::new(self.env.write_txn()?) }))
+    }
+}
+
+impl KvStore {
+    /// Doubles the map once the store fills half of it, so a write
+    /// transaction always starts with at least as much room as the store
+    /// already holds. Done here because LMDB allows a resize only while the
+    /// process has no transaction open — which `&mut self` guarantees: every
+    /// transaction borrows the store.
+    fn grow_map(&mut self) -> Result<()> {
+        let info = self.env.info();
+        let used = (info.last_page_number + 1) * self.env.stat().page_size as usize;
+        if used.saturating_mul(2) > info.map_size {
+            let size = page_multiple(info.map_size.saturating_mul(2).max(used.saturating_mul(2)));
+            // SAFETY: no transaction is open in this process (see above), and
+            // the repository lock keeps every other process out of the file.
+            unsafe { self.env.resize(size) }.context("grow the key-value store's map")?;
+        }
+        Ok(())
     }
 }
 

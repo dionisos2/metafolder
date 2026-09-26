@@ -589,3 +589,45 @@ on_both!(
     targets_are_found_along_the_ancestry,
     pruning_removes_operations_and_their_empty_revisions
 );
+
+// ── The key-value store's map ───────────────────────────────────────────────
+//
+// LMDB maps its whole file into the address space, reserving `map_size` up
+// front. A daemon holds one map per loaded repository, so a fixed large map
+// runs a process out of virtual address space long before it runs out of
+// memory: 1 TiB each exhausted the 128 TiB of x86-64 at ~120 repositories.
+
+/// Enough stores at once that a map of 1 TiB each could not all be reserved.
+#[test]
+fn many_kv_stores_are_open_at_once() {
+    let dirs: Vec<TempDir> = (0..200).map(|_| TempDir::new("kv-many")).collect();
+    let stores: Vec<KvStore> = dirs.iter().map(|d| KvStore::open(d.path()).unwrap()).collect();
+    assert_eq!(stores.len(), 200);
+}
+
+/// A store starting on a map smaller than what it will hold grows it: the
+/// map is a reservation, not a quota on the repository's size.
+#[test]
+fn a_kv_store_grows_past_its_initial_map() {
+    let dir = TempDir::new("kv-grow");
+    let mut store: Handle = Box::new(KvStore::open_with_map_size(dir.path(), 1 << 20).unwrap());
+    let blob = "x".repeat(64 * 1024);
+    let mut written = Vec::new();
+    for _ in 0..64 {
+        let mut w = Writer::begin(&mut store, None).unwrap();
+        written.push(
+            w.create_metarecord(vec![Field::new("blob", Value::String(blob.clone()))])
+                .unwrap()
+                .uuid,
+        );
+        w.commit().unwrap();
+    }
+    assert_eq!(store.metarecord_count().unwrap(), 64);
+    drop(store);
+
+    let store = KvStore::open_with_map_size(dir.path(), 1 << 20).unwrap();
+    let last =
+        metafolder_daemon::store::Rows::string_field(&store, *written.last().unwrap(), "blob")
+            .unwrap();
+    assert_eq!(last.map(|s| s.len()), Some(blob.len()), "reopened below its size, it reads it all");
+}
