@@ -4174,7 +4174,14 @@ the workspace, the surface is:
 - *Listening*: the daemon (=127.0.0.1:7523=) and the GUI server
   (=127.0.0.1:7524=) bind loopback only, both behind the session token.
 - *Outgoing (Rust)*: =reqwest= (GUI → daemon) and =ureq= (CLI → daemon) build
-  loopback URLs only, redirects disabled. =git2= (=config_sync=) performs no
+  loopback URLs only, redirects disabled, and **no proxy**: =reqwest= follows
+  =HTTP_PROXY=/=ALL_PROXY= by default, loopback included, which would hand the
+  session token and repository data to whatever proxy the environment names —
+  so its client is built with =no_proxy()= (=tests/no_system_proxy.rs=);
+  =ureq= 2 reads no proxy variable unless its =proxy-from-env= feature is on,
+  and it is not. The WebView is likewise set to
+  =NetworkProxyMode::NoProxy= (=harden_webview=): its =/fsraw= and
+  =/thumbnail= URLs carry the token in the query string. =git2= (=config_sync=) performs no
   remote operation — no fetch, push or clone. The media helpers run with
   =--unshare-net= (see [[*Untrusted media]]): no network interface at all.
 - *Tauri*: =core:default= capability only — no =http= plugin, no =shell= plugin.

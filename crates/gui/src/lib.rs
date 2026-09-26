@@ -213,6 +213,15 @@ fn harden_webview(tauri_app: &tauri::App) {
                 false
             });
 
+            // Every URL the web realm loads is on loopback — `/fsraw` and
+            // `/thumbnail` carrying the session token in the query string
+            // among them. WebKit otherwise honours the system proxy settings,
+            // loopback included, and would send those URLs to the proxy.
+            if let Some(manager) = webview.inner().website_data_manager() {
+                use webkit2gtk::WebsiteDataManagerExt;
+                manager.set_network_proxy_settings(webkit2gtk::NetworkProxyMode::NoProxy, None);
+            }
+
             // The web process is confined by WEBKIT_FORCE_SANDBOX, set
             // in `sandbox::preflight`. Not by
             // `WebContext::set_sandbox_enabled`: by the time Tauri hands

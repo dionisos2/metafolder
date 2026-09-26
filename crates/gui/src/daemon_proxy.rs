@@ -73,6 +73,10 @@ impl DaemonProxy {
                 // crafted path/response steer the request to another host
                 // (SSRF). Refuse redirects outright.
                 .redirect(reqwest::redirect::Policy::none())
+                // The daemon is on loopback, always. reqwest otherwise follows
+                // `HTTP_PROXY`/`ALL_PROXY` — loopback included — and would hand
+                // the session token and repository data to that proxy.
+                .no_proxy()
                 .build()
                 .expect("reqwest client"),
             base_url: Mutex::new(base_url),
