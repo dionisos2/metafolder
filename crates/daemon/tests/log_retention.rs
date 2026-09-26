@@ -5,6 +5,7 @@
 use metafolder_core::metarecord::{Field, Value};
 use metafolder_daemon::db;
 use metafolder_daemon::log::{self, Retention, Writer};
+use metafolder_daemon::store::Begin as _;
 use rusqlite::Connection;
 
 fn test_conn() -> Connection {
@@ -220,6 +221,10 @@ fn test_a_repository_writes_with_its_configured_retention() {
         w.commit().unwrap();
     }
     let conn = state.conn.lock().unwrap();
-    let kept: i64 = conn.query_row("SELECT COUNT(*) FROM revision", [], |r| r.get(0)).unwrap();
+    let kept: i64 = conn
+        .as_sqlite()
+        .unwrap()
+        .query_row("SELECT COUNT(*) FROM revision", [], |r| r.get(0))
+        .unwrap();
     assert!(kept <= 4 + Retention::slack(4) as i64, "kept {kept} revisions");
 }

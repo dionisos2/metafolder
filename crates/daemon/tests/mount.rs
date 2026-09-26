@@ -21,7 +21,7 @@ use metafolder_daemon::executor::{self, FsEvent};
 use metafolder_daemon::log::Writer;
 use metafolder_daemon::mount::{self, MountState};
 use metafolder_daemon::state::{AppState, RepoState};
-use metafolder_daemon::{db, orphans, reconcile, repo, routes, watcher};
+use metafolder_daemon::{orphans, reconcile, repo, routes, watcher};
 use tower::util::ServiceExt;
 use uuid::Uuid;
 
@@ -36,7 +36,9 @@ fn setup(prefix: &str) -> (Arc<RepoState>, TempDir) {
     let repo_state = Arc::new(RepoState::from_opened(opened));
     let root_uuid = {
         let conn = repo_state.conn.lock().unwrap();
-        db::find_tree_child(&conn, "mfr_path", None, "").unwrap().unwrap()
+        metafolder_daemon::store::Rows::child_by_text(&conn, "mfr_path", None, "", false)
+            .unwrap()
+            .unwrap()
     };
     {
         let mut conn = repo_state.conn.lock().unwrap();
@@ -64,7 +66,7 @@ fn resolve(repo: &RepoState, path: &str) -> Option<Uuid> {
 
 fn field_value(repo: &RepoState, uuid: Uuid, name: &str) -> Option<Value> {
     let conn = repo.conn.lock().unwrap();
-    db::get_metarecord(&conn, uuid).unwrap().unwrap().get(name).cloned()
+    metafolder_daemon::store::Rows::metarecord(&conn, uuid).unwrap().unwrap().get(name).cloned()
 }
 
 /// Marks `dir_uuid` as the mount point of a volume that is not plugged in: the
@@ -246,7 +248,9 @@ fn setup_app(prefix: &str) -> (Router, Arc<AppState>, Arc<RepoState>, String, Te
     let repo = state.repo(uuid).unwrap();
     let root_uuid = {
         let conn = repo.conn.lock().unwrap();
-        db::find_tree_child(&conn, "mfr_path", None, "").unwrap().unwrap()
+        metafolder_daemon::store::Rows::child_by_text(&conn, "mfr_path", None, "", false)
+            .unwrap()
+            .unwrap()
     };
     {
         let mut conn = repo.conn.lock().unwrap();

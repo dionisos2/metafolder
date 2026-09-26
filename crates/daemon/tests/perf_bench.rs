@@ -35,6 +35,7 @@ use metafolder_core::query::{Aspect, FollowTarget, Query};
 use metafolder_daemon::index::{QueryRoots, RepoIndex};
 use metafolder_daemon::log::Writer;
 use metafolder_daemon::state::RepoState;
+use metafolder_daemon::store::Begin as _;
 use metafolder_daemon::{db, reconcile, repo};
 use metafolder_query_oracle as query_exec;
 use uuid::Uuid;
@@ -76,7 +77,7 @@ fn bench_index_build_and_folder_query() {
     // Opt into tracking on the root, then reconcile to populate the DB.
     let root_uuid = {
         let conn = repo.conn.lock().unwrap();
-        db::find_tree_child(&conn, "mfr_path", None, "").unwrap().unwrap()
+        db::find_tree_child(conn.as_sqlite().unwrap(), "mfr_path", None, "").unwrap().unwrap()
     };
     {
         let mut conn = repo.conn.lock().unwrap();
@@ -94,20 +95,20 @@ fn bench_index_build_and_folder_query() {
     }
 
     let conn = repo.conn.lock().unwrap();
-    let n = db::list_entries(&conn).unwrap().len();
+    let n = db::list_entries(conn.as_sqlite().unwrap()).unwrap().len();
     eprintln!("repository: {n} metarecords\n");
 
     // ── #1: index-build field-row access pattern ────────────────────────────
     let t = Instant::now();
     let mut rows_old = 0usize;
-    for uuid in db::list_entries(&conn).unwrap() {
-        rows_old += db::get_field_rows(&conn, uuid).unwrap().len();
+    for uuid in db::list_entries(conn.as_sqlite().unwrap()).unwrap() {
+        rows_old += db::get_field_rows(conn.as_sqlite().unwrap(), uuid).unwrap().len();
     }
     let old = t.elapsed();
 
     let t = Instant::now();
     let mut rows_new = 0usize;
-    db::for_each_field_row(&conn, |_uuid, _row| {
+    db::for_each_field_row(conn.as_sqlite().unwrap(), |_uuid, _row| {
         rows_new += 1;
         Ok(())
     })
@@ -139,6 +140,8 @@ fn bench_index_build_and_folder_query() {
     // histogram over the tree_ref rows.
     let (parent_uuid, child_count): (Uuid, i64) = {
         let mut stmt = conn
+            .as_sqlite()
+            .unwrap()
             .prepare(
                 "SELECT value_uuid, COUNT(*) c FROM field \
                  WHERE field_name = 'mfr_path' AND value_type = 'tree_ref' \
@@ -164,6 +167,8 @@ fn bench_index_build_and_folder_query() {
     // stuffed into the alternation).
     let names: Vec<String> = {
         let mut stmt = conn
+            .as_sqlite()
+            .unwrap()
             .prepare(
                 "SELECT value_name FROM field \
                  WHERE field_name = 'mfr_path' AND value_uuid = ?1 LIMIT 200",
@@ -198,8 +203,15 @@ fn bench_index_build_and_folder_query() {
     // reproducible here.
     let mut cache = repo.cache.lock().unwrap();
     let t = Instant::now();
-    let (old_hits, _) =
-        query_exec::execute(&conn, &mut cache, &old_query, &[], Some(names.len()), None).unwrap();
+    let (old_hits, _) = query_exec::execute(
+        conn.as_sqlite().unwrap(),
+        &mut cache,
+        &old_query,
+        &[],
+        Some(names.len()),
+        None,
+    )
+    .unwrap();
     let old_q = t.elapsed();
 
     // NEW: a plain Follows the bitmap index serves, path target resolved
@@ -262,12 +274,16 @@ fn bench_index_build_and_folder_query() {
     // ── #4: index refresh after a single write, on this repo's long log ─────
     // Every query following a write brings the index to HEAD first. The delta
     // is one operation; the question is what reading it costs.
-    let head = db::current_head(&conn).unwrap().unwrap();
-    let op_count: i64 = conn.query_row("SELECT COUNT(*) FROM operation", [], |r| r.get(0)).unwrap();
+    let head = db::current_head(conn.as_sqlite().unwrap()).unwrap().unwrap();
+    let op_count: i64 = conn
+        .as_sqlite()
+        .unwrap()
+        .query_row("SELECT COUNT(*) FROM operation", [], |r| r.get(0))
+        .unwrap();
     eprintln!("#4 index refresh after one write, log of {op_count} operations:");
 
     let t = Instant::now();
-    let chain = metafolder_daemon::log::ancestry_ops(&conn, head).unwrap();
+    let chain = metafolder_daemon::log::ancestry_ops(conn.as_sqlite().unwrap(), head).unwrap();
     let old_walk = t.elapsed();
 
     // The anchor a one-operation delta has: HEAD's parent. The budget is the
@@ -276,7 +292,9 @@ fn bench_index_build_and_folder_query() {
     let anchor = chain[1].id;
     let t = Instant::now();
     let bounded =
-        metafolder_daemon::log::ancestry_ops_until(&conn, head, anchor, 20_000).unwrap().unwrap();
+        metafolder_daemon::log::ancestry_ops_until(conn.as_sqlite().unwrap(), head, anchor, 20_000)
+            .unwrap()
+            .unwrap();
     let new_walk = t.elapsed();
 
     assert_eq!(bounded.len(), 1, "a one-operation delta");
@@ -293,6 +311,8 @@ fn bench_index_build_and_folder_query() {
     let mut cache = repo.cache.lock().unwrap();
     let file_path = {
         let mut stmt = conn
+            .as_sqlite()
+            .unwrap()
             .prepare(
                 "SELECT metarecord_uuid FROM field \
                  WHERE field_name = 'mfr_path' AND value_type = 'tree_ref' \
@@ -314,7 +334,8 @@ fn bench_index_build_and_folder_query() {
     // OLD: Unsupported by the index → the SQL engine scans every mfr_path row.
     let t = Instant::now();
     let (old_hits, _) =
-        query_exec::execute(&conn, &mut cache, &node_query, &[], None, None).unwrap();
+        query_exec::execute(conn.as_sqlite().unwrap(), &mut cache, &node_query, &[], None, None)
+            .unwrap();
     let old_q = t.elapsed();
 
     // NEW: the node is resolved through the tree cache and handed to the index.
@@ -343,6 +364,8 @@ fn bench_index_build_and_folder_query() {
 
     let t = Instant::now();
     let type_check: Option<String> = conn
+        .as_sqlite()
+        .unwrap()
         .query_row(
             "SELECT value_type FROM field \
              WHERE field_name = 'mfr_path' AND value_type NOT IN ('nothing', 'tree_ref') LIMIT 1",
@@ -367,7 +390,9 @@ fn bench_index_build_and_folder_query() {
     for list in [vec!["sample"], vec!["drafts", "sample"]] {
         let ts = terms(&list);
         let t = Instant::now();
-        let all = query_exec::osm_path_matches(&conn, &mut cache, "mfr_path", &ts).unwrap();
+        let all =
+            query_exec::osm_path_matches(conn.as_sqlite().unwrap(), &mut cache, "mfr_path", &ts)
+                .unwrap();
         eprintln!("   osm_path_matches {list:?} : {:?}  ({} hits)", t.elapsed(), all.len());
     }
     drop(cache);
@@ -401,7 +426,9 @@ fn bench_index_build_and_folder_query() {
         ),
     ] {
         let t = Instant::now();
-        let (hits, _) = query_exec::execute(&conn, &mut cache, &q, &[], None, None).unwrap();
+        let (hits, _) =
+            query_exec::execute(conn.as_sqlite().unwrap(), &mut cache, &q, &[], None, None)
+                .unwrap();
         eprintln!("#7 {label:<24} via the oracle's SQL : {:?}  ({} hits)", t.elapsed(), hits.len());
     }
     drop(cache);

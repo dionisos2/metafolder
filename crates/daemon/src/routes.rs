@@ -3187,8 +3187,9 @@ fn run_query_inner(
         // Register the SQLite interrupt handle so `POST …/tasks/:id/cancel` can
         // abort this query while it runs (spec-tasks "Cancellation"). The handle
         // is harmless once the query finishes (no running statement to stop).
-        let handle = conn.get_interrupt_handle();
-        repo_state.tasks.set_canceller(task, Box::new(move || handle.interrupt()));
+        if let Some(stop) = crate::store::Begin::interrupter(&conn) {
+            repo_state.tasks.set_canceller(task, stop);
+        }
         // Cooperative cancellation (spec-tasks): the SQLite interrupt only aborts
         // a running statement, so it cannot stop the index build/evaluation or the
         // result assembly (all Rust). Those phases poll this flag instead.

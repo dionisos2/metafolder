@@ -5,7 +5,6 @@ use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex, MutexGuard};
 
 use metafolder_core::sync::MutexExt;
-use rusqlite::Connection;
 use serde::Serialize;
 use uuid::Uuid;
 
@@ -26,7 +25,7 @@ const SLOW_EVENT: std::time::Duration = std::time::Duration::from_secs(1);
 /// One loaded repository. The SQLite connection and the tree cache each sit
 /// behind their own mutex; blocking work runs in `spawn_blocking`.
 pub struct RepoState {
-    pub conn: Mutex<Connection>,
+    pub conn: Mutex<crate::store::Handle>,
     pub cache: Mutex<TreeCache>,
     pub config: RepoConfig,
     /// The repository's display name. Starts at `config.name` but is mutable
@@ -155,7 +154,7 @@ impl RepoState {
             settings.slow_operation_threshold_ms,
         ));
         Self {
-            conn: Mutex::new(opened.conn),
+            conn: Mutex::new(Box::new(opened.conn)),
             cache: Mutex::new(TreeCache::new(opened.case_insensitive)),
             config: opened.config,
             name,

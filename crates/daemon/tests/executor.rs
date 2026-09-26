@@ -10,6 +10,7 @@ use metafolder_daemon::executor::{self, FsEvent};
 use metafolder_daemon::log::{self, Writer};
 use metafolder_daemon::repo;
 use metafolder_daemon::state::RepoState;
+use metafolder_daemon::store::Begin as _;
 use metafolder_daemon::tasks::{TaskKind, TaskStatus};
 use uuid::Uuid;
 
@@ -25,7 +26,7 @@ fn setup(prefix: &str) -> (Arc<RepoState>, TempDir, Uuid) {
 
     let root_uuid = {
         let conn = repo_state.conn.lock().unwrap();
-        db::find_tree_child(&conn, "mfr_path", None, "").unwrap().unwrap()
+        db::find_tree_child(conn.as_sqlite().unwrap(), "mfr_path", None, "").unwrap().unwrap()
     };
     {
         let mut conn = repo_state.conn.lock().unwrap();
@@ -64,12 +65,12 @@ fn resolve(repo: &RepoState, path: &str) -> Option<Uuid> {
 
 fn field_value(repo: &RepoState, uuid: Uuid, name: &str) -> Option<Value> {
     let conn = repo.conn.lock().unwrap();
-    db::get_metarecord(&conn, uuid).unwrap().unwrap().get(name).cloned()
+    db::get_metarecord(conn.as_sqlite().unwrap(), uuid).unwrap().unwrap().get(name).cloned()
 }
 
 fn count(repo: &RepoState, sql: &str) -> i64 {
     let conn = repo.conn.lock().unwrap();
-    conn.query_row(sql, [], |r| r.get(0)).unwrap()
+    conn.as_sqlite().unwrap().query_row(sql, [], |r| r.get(0)).unwrap()
 }
 
 // ── Create ────────────────────────────────────────────────────────────────────
@@ -705,7 +706,10 @@ fn test_removing_a_member_dissolves_a_pair_and_updates_a_bigger_group() {
 
     {
         let conn = repo.conn.lock().unwrap();
-        assert!(db::get_metarecord(&conn, group).unwrap().is_none(), "the group is deleted");
+        assert!(
+            db::get_metarecord(conn.as_sqlite().unwrap(), group).unwrap().is_none(),
+            "the group is deleted"
+        );
     }
     assert_eq!(field_value(&repo, members[0], "mfr_duplicate_group"), None);
 
@@ -853,8 +857,8 @@ fn test_groups_become_separate_revisions() {
 /// last operation.
 fn undo_last_target(repo: &RepoState) -> Option<i64> {
     let conn = repo.conn.lock().unwrap();
-    let head = log::get_head(&conn).unwrap().unwrap();
-    log::get_op(&conn, head).unwrap().unwrap().parent_id
+    let head = log::get_head(conn.as_sqlite().unwrap()).unwrap().unwrap();
+    log::get_op(conn.as_sqlite().unwrap(), head).unwrap().unwrap().parent_id
 }
 
 #[test]
@@ -938,7 +942,7 @@ fn test_modify_data_on_unchanged_file_is_idempotent() {
     let uuid = resolve(&repo, "/a.txt").expect("file tracked after create");
     let v0 = {
         let conn = repo.conn.lock().unwrap();
-        db::get_version(&conn, uuid).unwrap()
+        db::get_version(conn.as_sqlite().unwrap(), uuid).unwrap()
     };
 
     // The file is untouched on disk; its stored stat already matches.
@@ -947,7 +951,7 @@ fn test_modify_data_on_unchanged_file_is_idempotent() {
 
     let v1 = {
         let conn = repo.conn.lock().unwrap();
-        db::get_version(&conn, uuid).unwrap()
+        db::get_version(conn.as_sqlite().unwrap(), uuid).unwrap()
     };
     assert_eq!(v0, v1, "an unchanged file must not bump the version");
     assert_eq!(
@@ -1107,7 +1111,7 @@ fn test_a_cascade_larger_than_the_limit_is_refused() {
     let repo_state = Arc::new(RepoState::from_opened_with(opened, &settings));
     let root_uuid = {
         let conn = repo_state.conn.lock().unwrap();
-        db::find_tree_child(&conn, "mfr_path", None, "").unwrap().unwrap()
+        db::find_tree_child(conn.as_sqlite().unwrap(), "mfr_path", None, "").unwrap().unwrap()
     };
     {
         let mut conn = repo_state.conn.lock().unwrap();
@@ -1432,12 +1436,18 @@ fn test_a_watcher_revision_records_its_origin() {
     let conn = repo.conn.lock().unwrap();
     // The revision holding the arrival — the newest one.
     let (rev_id, origin): (i64, Option<String>) = conn
+        .as_sqlite()
+        .unwrap()
         .query_row("SELECT id, origin FROM revision ORDER BY id DESC LIMIT 1", [], |r| {
             Ok((r.get(0)?, r.get(1)?))
         })
         .unwrap();
     let types: Vec<String> = {
-        let mut stmt = conn.prepare("SELECT op_type FROM operation WHERE rev_id = ?1").unwrap();
+        let mut stmt = conn
+            .as_sqlite()
+            .unwrap()
+            .prepare("SELECT op_type FROM operation WHERE rev_id = ?1")
+            .unwrap();
         let rows = stmt.query_map([rev_id], |r| r.get(0)).unwrap();
         rows.collect::<rusqlite::Result<_>>().unwrap()
     };
@@ -1450,11 +1460,14 @@ fn test_a_watcher_revision_records_its_origin() {
     // A user's write leaves it unset.
     drop(conn);
     let mut conn = repo.conn.lock().unwrap();
-    let uuid = db::find_tree_child(&conn, "mfr_path", None, "").unwrap().unwrap();
+    let uuid =
+        db::find_tree_child(conn.as_sqlite().unwrap(), "mfr_path", None, "").unwrap().unwrap();
     let mut w = Writer::begin(&mut conn, None).unwrap();
     w.set_field(uuid, "rating", Value::Int(3)).unwrap();
     w.commit().unwrap();
     let origin: Option<String> = conn
+        .as_sqlite()
+        .unwrap()
         .query_row("SELECT origin FROM revision ORDER BY id DESC LIMIT 1", [], |r| r.get(0))
         .unwrap();
     assert_eq!(origin, None, "an ordinary write is nobody's but the writer's");
@@ -1476,7 +1489,7 @@ fn test_flush_leaves_the_query_index_at_head() {
 
     let head = {
         let conn = repo.conn.lock().unwrap();
-        db::current_head(&conn).unwrap()
+        db::current_head(conn.as_sqlite().unwrap()).unwrap()
     };
     let built = repo.index.lock().unwrap().as_ref().and_then(|i| i.built_at_head());
     assert_eq!(built, head, "the flush must leave the index at HEAD, not the next reader");

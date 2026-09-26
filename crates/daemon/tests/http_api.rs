@@ -7,6 +7,7 @@ use axum::Router;
 use http_body_util::BodyExt;
 use metafolder_daemon::routes;
 use metafolder_daemon::state::AppState;
+use metafolder_daemon::store::Begin as _;
 use serde_json::{json, Value};
 use tower::util::ServiceExt;
 use uuid::Uuid;
@@ -447,7 +448,7 @@ async fn list_fields_refreshes_warm_index_after_write() {
     let repo_state = state.repo(repo_uuid).unwrap();
     let head = {
         let conn = repo_state.conn.lock().unwrap();
-        db::current_head(&conn).unwrap()
+        db::current_head(conn.as_sqlite().unwrap()).unwrap()
     };
     let built = repo_state.index.lock().unwrap().as_ref().and_then(|i| i.built_at_head());
     assert_eq!(
@@ -1566,7 +1567,7 @@ async fn a_write_leaves_the_query_index_at_head() {
     let repo_state = state.repo(repo_uuid).unwrap();
     let head = {
         let conn = repo_state.conn.lock().unwrap();
-        db::current_head(&conn).unwrap()
+        db::current_head(conn.as_sqlite().unwrap()).unwrap()
     };
     let built = repo_state.index.lock().unwrap().as_ref().and_then(|i| i.built_at_head());
     assert_eq!(built, head, "the commit must leave the index at HEAD, not the next reader");

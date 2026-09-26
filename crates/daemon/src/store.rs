@@ -900,7 +900,20 @@ pub trait Begin {
     fn compact(&mut self) -> Result<()> {
         Ok(())
     }
+    /// The SQLite connection underneath, when there is one — transitional,
+    /// for the tests (and the few callers) still reading through SQL.
+    fn as_sqlite(&self) -> Option<&Connection> {
+        None
+    }
+    /// Something that aborts the statement this database is running, from
+    /// another thread (a task's Stop); `None` when there is nothing to abort.
+    fn interrupter(&self) -> Option<Box<dyn Fn() + Send + Sync>> {
+        None
+    }
 }
+
+/// What a loaded repository holds: its database, whatever the backend.
+pub type Handle = Box<dyn Database + Send>;
 
 /// An open repository database: it answers reads and opens writes.
 pub trait Database: Begin + Store {}
@@ -914,6 +927,13 @@ impl Begin for Connection {
     fn compact(&mut self) -> Result<()> {
         self.execute_batch("VACUUM; PRAGMA wal_checkpoint(TRUNCATE);")?;
         Ok(())
+    }
+    fn as_sqlite(&self) -> Option<&Connection> {
+        Some(self)
+    }
+    fn interrupter(&self) -> Option<Box<dyn Fn() + Send + Sync>> {
+        let handle = self.get_interrupt_handle();
+        Some(Box::new(move || handle.interrupt()))
     }
 }
 
@@ -948,6 +968,45 @@ impl Begin for std::sync::MutexGuard<'_, Connection> {
     }
     fn compact(&mut self) -> Result<()> {
         Begin::compact(&mut **self)
+    }
+    fn as_sqlite(&self) -> Option<&Connection> {
+        Some(self)
+    }
+    fn interrupter(&self) -> Option<Box<dyn Fn() + Send + Sync>> {
+        Begin::interrupter(&**self)
+    }
+}
+
+forward_to_connection!(Handle, |b| &**b);
+forward_to_connection!(std::sync::MutexGuard<'_, Handle>, |g| &***g);
+
+impl Begin for Handle {
+    fn begin_write(&mut self) -> Result<Box<dyn WriteTxn + '_>> {
+        (**self).begin_write()
+    }
+    fn compact(&mut self) -> Result<()> {
+        (**self).compact()
+    }
+    fn as_sqlite(&self) -> Option<&Connection> {
+        (**self).as_sqlite()
+    }
+    fn interrupter(&self) -> Option<Box<dyn Fn() + Send + Sync>> {
+        (**self).interrupter()
+    }
+}
+
+impl Begin for std::sync::MutexGuard<'_, Handle> {
+    fn begin_write(&mut self) -> Result<Box<dyn WriteTxn + '_>> {
+        (***self).begin_write()
+    }
+    fn compact(&mut self) -> Result<()> {
+        (***self).compact()
+    }
+    fn as_sqlite(&self) -> Option<&Connection> {
+        (***self).as_sqlite()
+    }
+    fn interrupter(&self) -> Option<Box<dyn Fn() + Send + Sync>> {
+        (***self).interrupter()
     }
 }
 

@@ -17,6 +17,7 @@ use metafolder_core::slowlog;
 use metafolder_daemon::daemon_config::DaemonSettings;
 use metafolder_daemon::routes;
 use metafolder_daemon::state::AppState;
+use metafolder_daemon::store::Begin as _;
 use serde_json::{json, Value};
 use tower::util::ServiceExt;
 
@@ -278,7 +279,8 @@ fn test_a_slow_watcher_flush_names_itself() {
     let repo_state = Arc::new(RepoState::from_opened_with(opened, &settings));
     {
         let mut conn = repo_state.conn.lock().unwrap();
-        let root_uuid = db::find_tree_child(&conn, "mfr_path", None, "").unwrap().unwrap();
+        let root_uuid =
+            db::find_tree_child(conn.as_sqlite().unwrap(), "mfr_path", None, "").unwrap().unwrap();
         let mut w = Writer::begin(&mut conn, None).unwrap();
         w.set_field(root_uuid, "mf_watch", Value::Bool(true)).unwrap();
         w.commit().unwrap();

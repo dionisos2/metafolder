@@ -21,6 +21,7 @@ use metafolder_daemon::executor;
 use metafolder_daemon::log::Writer;
 use metafolder_daemon::repo;
 use metafolder_daemon::state::RepoState;
+use metafolder_daemon::store::Begin as _;
 use metafolder_daemon::watcher;
 use metafolder_watchd::proto::{self, ClientMsg, Event, ServerMsg};
 use uuid::Uuid;
@@ -35,7 +36,8 @@ fn setup(name: &str, settings: DaemonSettings) -> (Arc<RepoState>, TempDir) {
     let repo_state = Arc::new(RepoState::from_opened_with(opened, &settings));
     {
         let mut conn = repo_state.conn.lock().unwrap();
-        let root_uuid = db::find_tree_child(&conn, "mfr_path", None, "").unwrap().unwrap();
+        let root_uuid =
+            db::find_tree_child(conn.as_sqlite().unwrap(), "mfr_path", None, "").unwrap().unwrap();
         let mut w = Writer::begin(&mut conn, None).unwrap();
         w.set_field(root_uuid, "mf_watch", Value::Bool(true)).unwrap();
         w.commit().unwrap();
