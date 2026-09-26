@@ -377,9 +377,9 @@ writes). Readers never block.
 - *Network filesystems* (NFS, SMB) are not supported by LMDB. A repository whose
   =.metafolder/internal/= lives on one keeps the SQLite backend; creating a
   KV repository there is refused.
-- *Map size.* The maximum file size is set at open. Reaching it fails the
-  transaction cleanly (no corruption); the daemon grows the map and retries on
-  reopen.
+- *Map size.* The map grows with the store ([[*Choosing the backend]]); a
+  single revision too large for the room left fails whole (=MDB_MAP_FULL=),
+  without corruption.
 - *Long read transactions* pin old pages and make the file grow. Read snapshots
   are held for one request at most — a code rule, enforced like the other
   invariants (=.semgrep/invariants.yml=).
@@ -595,8 +595,44 @@ and =MDB_NOMETASYNC= saved almost nothing — one =fsync= dominates either way.
    navigation.
 2. *(done)* *Extract the =Store= boundary* with SQLite as its only
    implementation, no behaviour change (see "Increment 2, concretely").
-3. *=KvStore=* for primary data and the log; every integration test on both
-   backends.
+3. *(done)* *=KvStore=* for primary data and the log; every integration test
+   on both backends; the KV store is the default for a new repository.
 4. *Derived key spaces* and the disk query source; the oracle comparison
-   through SQLite export; cost assertions.
+   through SQLite export; cost assertions. See "Increment 4, concretely".
 5. *=mf repo convert=*, =reindex=, =check=, backup; the backend choice at =init=.
+
+** Increment 4, concretely
+
+The resident index is not rewritten for the disk: its evaluator — the part
+that holds the query semantics (three-valued logic, aspects, =osm=, follows,
+the page strategies), validated against the oracle — is made generic over
+*where its bitmaps come from*, and the KV store becomes a second source. One
+evaluator, two sources, one oracle: a second evaluator would be a second copy
+of every subtle rule, and the place the two drift.
+
+a. *Dense ids and derived key spaces* in =KvStore=, written in the revision's
+   own transaction, maintained at the row level (every row insert and delete,
+   navigation included, goes through the same two primitives): =uuid→id=,
+   =id→uuid=, the universe, =presence= (present / absent per field), the
+   =ordered= index (=(field, sort key, id)=, which also answers equality and
+   the distinct-value scans), =referrers= for =ref= / =tree_ref= values, and
+   the forest's =children= (ids with at least one child). A =rebuild= derives
+   them all from the primary data; the tests hold the maintained spaces equal
+   to a rebuild after every write sequence, navigation included.
+b. *The evaluator's source trait*: the questions the evaluator asks of its
+   data (the universe, presence, a field's type, id ↔ uuid, a comparison on a
+   field, a text scan over its distinct values, referrers, forest roots and
+   parents, sort representatives) become a trait the resident index
+   implements. No behaviour change.
+c. *The KV source* implements it over the derived key spaces, inside one read
+   transaction per query; the oracle and page-strategy suites run it as a
+   third engine.
+d. *Serving from the disk*: a KV repository answers its queries through the KV
+   source and no longer builds the resident index at load.
+e. *The forest on disk*: =descendants= bitmaps, paths resolved from =forest=,
+   the path walk; the tree cache is no longer built for a KV repository.
+f. *Trigrams* and the lazy text checks; postings for frequent values; the
+   cost assertions (key reads counted, not timed).
+
+Each step leaves every suite green on both backends.
+
