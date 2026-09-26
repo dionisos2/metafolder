@@ -379,12 +379,14 @@ struct Residual {
     checks: Vec<TextCheck>,
 }
 
+type TextPred = Box<dyn Fn(&str) -> bool>;
+
 struct TextCheck {
     field: String,
     fid: u16,
     /// Whether the field holds strings (else its texts are tree names only).
     has_strings: bool,
-    pred: Box<dyn Fn(&str) -> bool>,
+    pred: TextPred,
 }
 
 // ── Reading ─────────────────────────────────────────────────────────────────
@@ -573,7 +575,7 @@ impl Reader<'_> {
     /// record holding the field, and the predicate left to verify on them.
     /// `None` for a field no record holds.
     fn text_leaf(&self, q: &Q) -> Result<Option<(RoaringBitmap, TextCheck)>> {
-        let (field, pred, text): (&str, Box<dyn Fn(&str) -> bool>, Option<&str>) = match q {
+        let (field, pred, text): (&str, TextPred, Option<&str>) = match q {
             Q::Contains { field, text } => {
                 let needle = text.to_lowercase();
                 (field, Box::new(move |s: &str| s.to_lowercase().contains(&needle)), Some(text))
