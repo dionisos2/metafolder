@@ -1,0 +1,28 @@
+# The metafolder fanotify broker (docs/watcher-fanotify.md "The broker").
+#
+# Install:
+#   make install PREFIX=/usr/local    # puts metafolder-watchd on the system path
+#   sudo cp scripts/metafolder-watchd.service /etc/systemd/system/
+#   sudo systemctl daemon-reload && sudo systemctl enable --now metafolder-watchd
+#
+# The two capabilities are the entire reason this service exists *beside* the
+# daemon: they are granted here and nowhere else, so the daemon — which talks
+# to this broker over /run/metafolder/watchd.sock — stays unprivileged.
+
+[Unit]
+Description=metafolder fanotify broker
+After=local-fs.target
+
+[Service]
+Type=simple
+ExecStart=/usr/local/bin/metafolder-watchd --socket /run/metafolder/watchd.sock
+RuntimeDirectory=metafolder
+AmbientCapabilities=CAP_SYS_ADMIN CAP_DAC_READ_SEARCH
+CapabilityBoundingSet=CAP_SYS_ADMIN CAP_DAC_READ_SEARCH
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=read-only
+PrivateTmp=true
+
+[Install]
+WantedBy=multi-user.target

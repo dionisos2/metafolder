@@ -6,6 +6,7 @@ members = [
     "crates/gui",
     "crates/bench",
     "crates/query-oracle",
+    "crates/watchd",
 ]
 resolver = "2"
 

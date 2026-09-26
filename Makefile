@@ -23,7 +23,10 @@ FRONTEND := crates/gui/frontend
 TARGET  := target/release
 
 # Binaries copied by `install` (name in target/release).
-BINS_HEADLESS := metafolder-daemon mf
+# metafolder-watchd is the privileged fanotify broker (docs/watcher-fanotify.md):
+# the binary installs like the others, but running it needs its systemd unit —
+# see scripts/metafolder-watchd.service for the two capabilities it takes.
+BINS_HEADLESS := metafolder-daemon mf metafolder-watchd
 BINS_GUI      := metafolder-gui
 
 .DEFAULT_GOAL := help
@@ -39,9 +42,12 @@ help:
 	@echo '  frontend           (re)build the GUI frontend bundle'
 	@echo ''
 	@echo '  install            build + install binaries into $(BINDIR) + user config'
-	@echo '  install-headless   daemon + cli only + user config'
+	@echo '  install-headless   daemon + cli + watchd + user config'
 	@echo '  install-config     install/update ~/.config/metafolder/ (sync-config)'
 	@echo '  uninstall          remove installed binaries from $(BINDIR)'
+	@echo ''
+	@echo '  metafolder-watchd (the fanotify broker) also wants its unit:'
+	@echo '    sudo cp scripts/metafolder-watchd.service /etc/systemd/system/'
 	@echo ''
 	@echo '  run-daemon         run the daemon from the build tree'
 	@echo '  run-gui            build frontend + run the GUI from the build tree'

@@ -10,6 +10,7 @@ name = "metafolder-daemon"
 [dependencies]
 anyhow = "1"
 metafolder-core = { path = "../core" }
+metafolder-watchd = { path = "../watchd" }
 tokio = { version = "1", features = ["full"] }
 axum = "0.7"
 rusqlite = { version = "0.31", features = ["bundled", "functions"] }

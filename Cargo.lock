@@ -2292,6 +2292,7 @@ dependencies = [
  "lofty",
  "metafolder-core",
  "metafolder-query-oracle",
+ "metafolder-watchd",
  "nom-exif",
  "notify",
  "regex",
@@ -2343,6 +2344,17 @@ dependencies = [
  "rusqlite",
  "serde_json",
  "uuid",
+]
+
+[[package]]
+name = "metafolder-watchd"
+version = "0.3.0"
+dependencies = [
+ "anyhow",
+ "clap",
+ "libc",
+ "serde",
+ "serde_json",
 ]
 
 [[package]]
