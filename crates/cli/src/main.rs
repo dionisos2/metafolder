@@ -319,6 +319,17 @@ enum RepoCommand {
     /// Rebuild what the selected repository derives from its data (its
     /// indexes)
     Reindex,
+    /// Take a backup of the selected repository and print where it went
+    ///
+    /// A consistent copy of its store (taken while the daemon runs) with its
+    /// config.json and schema.json, verified before it is kept. By default
+    /// under .metafolder/internal/backups/. To restore: stop the daemon, put
+    /// the backup's db.sqlite or kv/ back into .metafolder/internal/.
+    Backup {
+        /// A new directory to write the backup to (on another disk, say)
+        #[arg(long)]
+        to: Option<PathBuf>,
+    },
 }
 
 /// Shared arguments for the `add`/`remove`/`set` ignore verbs.
@@ -1164,6 +1175,7 @@ fn dispatch(ctx: &Ctx, command: Command) -> CmdResult {
             RepoCommand::Convert { to } => commands::convert(ctx, &to),
             RepoCommand::Check => commands::check_repo(ctx),
             RepoCommand::Reindex => commands::reindex_repo(ctx),
+            RepoCommand::Backup { to } => commands::backup_repo(ctx, to.as_deref()),
         },
         Command::Task { command } => {
             match command.unwrap_or(TaskCommand::List { all: false, json: false }) {

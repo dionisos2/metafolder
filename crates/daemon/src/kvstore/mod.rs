@@ -1114,6 +1114,15 @@ impl Begin for KvStore {
     fn reindex(&mut self) -> Result<()> {
         KvStore::reindex(self)
     }
+    fn backup_to(&self, dir: &Path) -> Result<()> {
+        // LMDB's own hot copy: a read snapshot written out, compacted.
+        let kv = dir.join(crate::repo::KV_DIR);
+        std::fs::create_dir_all(&kv).with_context(|| format!("create {}", kv.display()))?;
+        self.env
+            .copy_to_path(kv.join("data.mdb"), heed::CompactionOption::Enabled)
+            .context("copy the key-value store")?;
+        Ok(())
+    }
 }
 
 impl KvStore {

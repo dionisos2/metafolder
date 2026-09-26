@@ -626,8 +626,22 @@ and =MDB_NOMETASYNC= saved almost nothing — one =fsync= dominates either way.
    derives again: the KV store's derived key spaces (=KvStore::reindex=), or
    SQLite's =REINDEX= and then the resident index and forest, rebuilt as a
    load builds them. Both are methods of the store's =Begin= trait, required
-   of every backend, and hold the repository while they run. /Not built/:
-   backup.
+   of every backend, and hold the repository while they run.
+   *(backup done)* =mf repo backup [--to DIR]= (=POST /repos/:repo/backup=)
+   takes a consistent copy of the store while the daemon runs — LMDB's
+   compacting hot copy, SQLite's =VACUUM INTO=, both =Begin::backup_to= —
+   with the repository's =config.json= and =schema.json= and a =backup.json=
+   (time, backend, metarecords). It is written under a temporary name, then
+   opened and checked (=Begin::check=) before it takes its place: a store
+   damaged since the last backup fails its new one, which never replaces a
+   good one. By default it goes under =internal/backups/= (never tracked);
+   =--to= names a new directory. The daemon takes each loaded repository's
+   /automatic/ backup every =auto-backup-days= days (daemon settings, default
+   1, 0 turns it off) into the single slot =internal/backups/auto/=, looking
+   at startup and then every hour; a failure is a warning in the repository's
+   diagnostics. Restoring is manual: with the daemon stopped, the backup's
+   =db.sqlite= or =kv/= goes back into =.metafolder/internal/= (and its
+   =config.json= into =.metafolder/=, if the config itself was lost).
 
 ** Increment 4, concretely
 

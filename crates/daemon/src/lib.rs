@@ -1,3 +1,4 @@
+pub mod backup;
 pub mod config;
 pub mod convert;
 pub mod daemon_config;

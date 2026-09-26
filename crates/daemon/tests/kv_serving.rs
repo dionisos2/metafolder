@@ -254,3 +254,28 @@ async fn check_and_reindex_on_both_backends() {
         assert_eq!(body, json!([kept]), "answers after a reindex");
     }
 }
+
+/// `POST /repos/:repo/backup` takes a verified backup — by default under
+/// `internal/backups/`, or into a new directory — and the automatic backups
+/// of every loaded repository are taken when due.
+#[tokio::test]
+async fn backups_by_request_and_when_due() {
+    let (app, repo, root, state) = setup("backup").await;
+    let (status, body) = request(&app, "POST", &format!("/repos/{repo}/backup"), None).await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    let path = std::path::PathBuf::from(body["path"].as_str().unwrap());
+    assert!(path.starts_with(root.path().join(".metafolder/internal/backups")), "{body}");
+    assert!(path.join("backup.json").exists());
+
+    let elsewhere = root.path().join("elsewhere");
+    let to = json!({"to": elsewhere.to_str().unwrap()});
+    let (status, body) =
+        request(&app, "POST", &format!("/repos/{repo}/backup"), Some(to.clone())).await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    assert!(elsewhere.join("config.json").exists());
+    let (status, _) = request(&app, "POST", &format!("/repos/{repo}/backup"), Some(to)).await;
+    assert_eq!(status, StatusCode::BAD_REQUEST, "an existing directory is not overwritten");
+
+    state.run_auto_backups();
+    assert!(root.path().join(".metafolder/internal/backups/auto/backup.json").exists());
+}

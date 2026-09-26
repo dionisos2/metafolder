@@ -364,6 +364,16 @@ resident index and forest a SQLite repository keeps — and answers
 ={"storage"}=. Both hold the repository while they run (spec-storage
 increment 5).
 
+*** =POST /repos/:repo_uuid/backup=
+
+Takes a backup of the repository: a consistent copy of its store, taken while
+it stays loaded, with its =config.json= and =schema.json=, verified (opened and
+checked) before it is kept (spec-storage increment 5). Optional body
+={"to": "/a/new/dir"}=; by default a new =.metafolder/internal/backups/manual-<time>/=.
+=400= when =to= already exists. Response: ={"path", "created_at_ms",
+"storage", "metarecords"}=. The daemon also takes each repository's automatic
+backup every =auto-backup-days= days (daemon settings).
+
 *** =POST /repos/init=
 
 Initialises a new repository. Creates =config.json= and the store — the

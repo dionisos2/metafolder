@@ -46,6 +46,10 @@ pub const DEFAULT_SLOW_OPERATION_THRESHOLD_MS: u64 = metafolder_core::slowlog::D
 /// "Mass-orphan circuit breaker"). `0` disables the check.
 pub const DEFAULT_ORPHAN_CASCADE_LIMIT: usize = 10_000;
 
+/// Every how many days each repository's automatic backup is taken
+/// (spec-storage increment 5).
+pub const DEFAULT_AUTO_BACKUP_DAYS: u32 = 1;
+
 /// Tunable daemon settings (the `[settings]` table of `config.toml`). These are
 /// UX/performance knobs, all optional: a missing table or key keeps the default
 /// below, so an empty config behaves exactly as before.
@@ -84,6 +88,10 @@ pub struct DaemonSettings {
     /// How long an operation must take before it is written to the
     /// repository's slow-operation log (spec-slow-log). `0` turns the log off.
     pub slow_operation_threshold_ms: u64,
+    /// Every how many days each loaded repository's automatic backup is
+    /// taken, into `.metafolder/internal/backups/auto/` — one slot, replaced
+    /// only by a backup that checks clean. `0` turns it off.
+    pub auto_backup_days: u32,
 }
 
 impl Default for DaemonSettings {
@@ -96,6 +104,7 @@ impl Default for DaemonSettings {
             log_retention_revisions: DEFAULT_LOG_RETENTION_REVISIONS,
             log_retention_keep_labels: true,
             slow_operation_threshold_ms: DEFAULT_SLOW_OPERATION_THRESHOLD_MS,
+            auto_backup_days: DEFAULT_AUTO_BACKUP_DAYS,
         }
     }
 }

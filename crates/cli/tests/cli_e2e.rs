@@ -4563,3 +4563,19 @@ fn test_repo_check_and_reindex() {
     assert_ok(&out);
     assert_eq!(out.stdout.trim(), kept);
 }
+
+/// `mf repo backup` takes a verified backup and prints where it went;
+/// `--to` names a new directory.
+#[test]
+fn test_repo_backup() {
+    let (repo, root) = init_repo("backup");
+    create_metarecord(&repo, &["note:string=kept"]);
+    let out = mf(&["-u", &repo, "repo", "backup"]);
+    assert_ok(&out);
+    let path = std::path::PathBuf::from(out.stdout.trim());
+    assert!(path.join("backup.json").exists(), "{}", out.stdout);
+    let to = root.join("saved");
+    let out = mf(&["-u", &repo, "repo", "backup", "--to", to.to_str().unwrap()]);
+    assert_ok(&out);
+    assert!(to.join("config.json").exists());
+}

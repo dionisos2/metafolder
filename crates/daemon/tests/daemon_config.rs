@@ -142,3 +142,15 @@ fn test_apply_warns_on_failure_and_loads_the_rest() {
     drop(state);
     std::fs::remove_dir_all(root).unwrap();
 }
+
+/// `auto-backup-days` sets how often each repository's automatic backup is
+/// taken; one day by default, 0 turns it off.
+#[test]
+fn test_auto_backup_days_setting() {
+    let dir = temp_dir("autobackup");
+    let default = daemon_config::read_config(&write_config(&dir, "")).unwrap();
+    assert_eq!(default.settings.auto_backup_days, 1);
+    let every_two =
+        daemon_config::read_config(&write_config(&dir, "[settings]\nauto-backup-days = 2\n"));
+    assert_eq!(every_two.unwrap().settings.auto_backup_days, 2);
+}

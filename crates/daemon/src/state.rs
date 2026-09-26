@@ -584,6 +584,62 @@ impl RepoState {
     ///
     /// `progress` reports `(phase, done, total)` for the load progress bar; it
     /// is a no-op for the synchronous callers (startup auto-load, `init`).
+    /// Where this repository's backups go by default: `internal/backups/`,
+    /// which is never tracked.
+    fn backups_dir(&self) -> PathBuf {
+        self.internal_dir().join("backups")
+    }
+
+    /// Takes a verified backup (`mf repo backup`, spec-storage increment 5)
+    /// into `dest` — which must not exist — or, by default, into a new
+    /// `internal/backups/manual-<time>/`.
+    pub fn backup(&self, dest: Option<PathBuf>) -> Result<crate::backup::BackupInfo, ApiError> {
+        let dest = match dest {
+            Some(dest) => {
+                if dest.exists() {
+                    return Err(ApiError::bad_request(format!(
+                        "{} already exists; a backup goes to a new directory",
+                        dest.display()
+                    )));
+                }
+                dest
+            }
+            None => {
+                let stamp = metafolder_core::date::iso8601_from_ms(metafolder_core::date::now_ms())
+                    .replace(':', "-");
+                self.backups_dir().join(format!("manual-{stamp}"))
+            }
+        };
+        let conn = self.conn.lock_recover();
+        crate::backup::write_backup(&**conn, &self.metafolder_dir, &self.config, &dest)
+            .map_err(|e| ApiError::internal(format!("backup failed: {e:#}")))
+    }
+
+    /// Takes the automatic backup when it is due: when the one in
+    /// `internal/backups/auto/` is older than `every_days` days (or missing).
+    /// One slot, replaced — and only by a backup that checks clean, so a
+    /// damaged store keeps the last good one. `every_days = 0` turns it off.
+    pub fn auto_backup_if_due(
+        &self,
+        now_ms: i64,
+        every_days: u32,
+    ) -> Result<Option<crate::backup::BackupInfo>, ApiError> {
+        if every_days == 0 {
+            return Ok(None);
+        }
+        let dest = self.backups_dir().join("auto");
+        let interval = i64::from(every_days) * 24 * 3600 * 1000;
+        if let Some(last) = crate::backup::read_info(&dest) {
+            if now_ms - last.created_at_ms < interval {
+                return Ok(None);
+            }
+        }
+        let conn = self.conn.lock_recover();
+        crate::backup::write_backup(&**conn, &self.metafolder_dir, &self.config, &dest)
+            .map(Some)
+            .map_err(|e| ApiError::internal(format!("automatic backup failed: {e:#}")))
+    }
+
     /// What no longer holds together in the store (`mf repo check`,
     /// spec-storage increment 5); empty when healthy.
     pub fn check_store(&self) -> Result<Vec<String>, ApiError> {
@@ -965,6 +1021,44 @@ impl AppState {
             )));
         }
         Ok(())
+    }
+
+    /// Takes the automatic backup of every loaded repository that is due
+    /// (`auto-backup-days`); a failure is a warning in that repository's
+    /// diagnostics, its previous backup untouched.
+    pub fn run_auto_backups(&self) {
+        let days = self.settings.auto_backup_days;
+        if days == 0 {
+            return;
+        }
+        let repos: Vec<Arc<RepoState>> = self
+            .repos
+            .lock_recover()
+            .values()
+            .filter(|r| !r.config.system && r.is_ready())
+            .cloned()
+            .collect();
+        for repo in repos {
+            match repo.auto_backup_if_due(metafolder_core::date::now_ms(), days) {
+                Ok(Some(info)) => {
+                    eprintln!("[backup] {}: {}", repo.name(), info.path.display());
+                }
+                Ok(None) => {}
+                Err(e) => crate::diagnostics::warn_for("backup", e.message, repo.uuid()),
+            }
+        }
+    }
+
+    /// Runs [`Self::run_auto_backups`] now, then every hour, for as long as
+    /// the daemon lives.
+    pub fn start_auto_backups(self: &Arc<Self>) {
+        let state = Arc::downgrade(self);
+        std::thread::spawn(move || loop {
+            let Some(live) = state.upgrade() else { return };
+            live.run_auto_backups();
+            drop(live);
+            std::thread::sleep(std::time::Duration::from_secs(3600));
+        });
     }
 
     /// Converts a loaded repository to another storage backend

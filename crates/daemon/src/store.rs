@@ -985,6 +985,10 @@ pub trait Begin {
     /// Derives again whatever the store derives from its primary data
     /// (`mf repo reindex`).
     fn reindex(&mut self) -> Result<()>;
+    /// Writes a consistent copy of the store into the directory `dir`, as
+    /// the store's own file layout (`db.sqlite`, or `kv/`) — taken while the
+    /// store stays open (`mf repo backup`, spec-storage increment 5).
+    fn backup_to(&self, dir: &std::path::Path) -> Result<()>;
 }
 
 /// What a loaded repository holds: its database, whatever the backend.
@@ -1020,6 +1024,12 @@ impl Begin for Connection {
     }
     fn reindex(&mut self) -> Result<()> {
         self.execute_batch("REINDEX")?;
+        Ok(())
+    }
+    fn backup_to(&self, dir: &std::path::Path) -> Result<()> {
+        // A transactional copy into a fresh file, compacted on the way.
+        let path = dir.join(crate::repo::DB_FILE);
+        self.execute("VACUUM INTO ?1", params![path.to_string_lossy()])?;
         Ok(())
     }
 }
@@ -1068,6 +1078,9 @@ impl Begin for std::sync::MutexGuard<'_, Connection> {
     fn reindex(&mut self) -> Result<()> {
         Begin::reindex(&mut **self)
     }
+    fn backup_to(&self, dir: &std::path::Path) -> Result<()> {
+        Begin::backup_to(&**self, dir)
+    }
 }
 
 forward_to_connection!(Handle, |b| &**b);
@@ -1092,6 +1105,9 @@ impl Begin for Handle {
     fn reindex(&mut self) -> Result<()> {
         (**self).reindex()
     }
+    fn backup_to(&self, dir: &std::path::Path) -> Result<()> {
+        (**self).backup_to(dir)
+    }
 }
 
 impl Begin for std::sync::MutexGuard<'_, Handle> {
@@ -1112,6 +1128,9 @@ impl Begin for std::sync::MutexGuard<'_, Handle> {
     }
     fn reindex(&mut self) -> Result<()> {
         (***self).reindex()
+    }
+    fn backup_to(&self, dir: &std::path::Path) -> Result<()> {
+        (***self).backup_to(dir)
     }
 }
 

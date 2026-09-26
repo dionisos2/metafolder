@@ -83,3 +83,13 @@ log-retention-keep-labels = true
 # notice, and this is what is left behind to explain them. 0 turns the log off;
 # set it to 1 to record everything. Default: 2000.
 slow-operation-threshold-ms = 2000
+
+# Every how many days each loaded repository's automatic backup is taken: a
+# consistent copy of its store, with its config, in
+# .metafolder/internal/backups/auto/ (spec-storage). One slot, replaced by the
+# next backup — and only by one that checks clean, so a store damaged since
+# keeps the last good backup (a warning in the repository's diagnostics says
+# so). The daemon looks when it starts and then every hour; the copy holds the
+# repository for as long as it takes. Costs about the store's size once more on
+# disk. `mf repo backup` takes one by hand. 0 turns it off. Default: 1.
+auto-backup-days = 1

@@ -294,6 +294,18 @@ pub fn check_repo(ctx: &Ctx) -> Result<i32, CliError> {
     Ok(1)
 }
 
+/// `mf repo backup [--to DIR]`: prints the backup's directory.
+pub fn backup_repo(ctx: &Ctx, to: Option<&Path>) -> Result<i32, CliError> {
+    let base = ctx.repo_base()?;
+    let body = match to {
+        Some(dir) => json!({"to": absolutize(dir)?}),
+        None => json!({}),
+    };
+    let info = ctx.client.request("POST", &format!("{base}/backup"), &[], Some(&body))?;
+    println!("{}", info["path"].as_str().unwrap_or_default());
+    Ok(0)
+}
+
 /// `mf repo reindex`.
 pub fn reindex_repo(ctx: &Ctx) -> Result<i32, CliError> {
     let base = ctx.repo_base()?;

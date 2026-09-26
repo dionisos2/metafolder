@@ -41,6 +41,7 @@ pub fn build(state: Arc<AppState>) -> Router {
         .route("/repos/init", post(init_repo))
         .route("/repos/:repo/convert", post(convert_repo))
         .route("/repos/:repo/check", post(check_repo))
+        .route("/repos/:repo/backup", post(backup_repo))
         .route("/repos/:repo/reindex", post(reindex_repo))
         .route("/repos/load", post(load_repo))
         .route("/repos/:repo", get(get_repo).patch(rename_repo))
@@ -937,6 +938,40 @@ async fn check_repo(
     with_repo(&state, repo_uuid, move |repo_state| {
         let problems = repo_state.check_store()?;
         Ok(Json(json!({"storage": repo_state.config.storage, "problems": problems})))
+    })
+    .await
+}
+
+#[derive(Deserialize, Default)]
+struct BackupBody {
+    /// A new directory for the backup; by default one under
+    /// `internal/backups/`.
+    #[serde(default)]
+    to: Option<std::path::PathBuf>,
+}
+
+/// `POST /repos/:repo/backup` — a verified backup of the repository's store,
+/// with its config (spec-storage increment 5). The body is optional.
+async fn backup_repo(
+    State(state): State<Arc<AppState>>,
+    Path(repo): Path<String>,
+    body: axum::body::Bytes,
+) -> Result<Json<serde_json::Value>, ApiError> {
+    let repo_uuid = parse_uuid(&repo)?;
+    let body: BackupBody = if body.is_empty() {
+        BackupBody::default()
+    } else {
+        serde_json::from_slice(&body)
+            .map_err(|e| ApiError::bad_request(format!("invalid body: {e}")))?
+    };
+    with_repo(&state, repo_uuid, move |repo_state| {
+        let info = repo_state.backup(body.to)?;
+        Ok(Json(json!({
+            "path": info.path,
+            "created_at_ms": info.created_at_ms,
+            "storage": info.storage,
+            "metarecords": info.metarecords,
+        })))
     })
     .await
 }
