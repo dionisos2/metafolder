@@ -31,7 +31,7 @@ use super::derived::{
     VALUE,
 };
 use super::{dec_row, name_key, uuid_of, KvStore, Tables};
-use crate::index::field_index::{sort_rep, CmpOp, FieldIndex};
+use crate::index::field_index::{sort_rep, CmpOp, FieldIndex, SortRep};
 use crate::index::{unsupported, Follow, RepReader, Source, Unsupported};
 
 /// A read snapshot of a KV store, answering the evaluator's questions.
@@ -83,6 +83,101 @@ impl KvSource<'_> {
             Ok(out)
         };
         self.ok(read(), Vec::new())
+    }
+
+    /// A metarecord's representative on `field`, as a value: its smallest
+    /// value ascending, its largest descending (the sort's order, not the
+    /// keys').
+    fn representative(&self, id: u32, field: &str, want_max: bool) -> Option<(SortRep, Value)> {
+        let reps =
+            self.values(id, field).into_iter().filter_map(|v| sort_rep(&v).map(|rep| (rep, v)));
+        if want_max {
+            reps.max_by(|a, b| a.0.cmp(&b.0))
+        } else {
+            reps.min_by(|a, b| a.0.cmp(&b.0))
+        }
+    }
+
+    /// [`Source::walk_values`] over the value partition: each entry is an id
+    /// holding a value; it is visited there only if that value is its
+    /// representative. A run of long texts sharing their first bytes — whose
+    /// keys sort by hash — is read whole and put in order of the values.
+    fn walk(
+        &self,
+        field: &str,
+        want_max: bool,
+        start: Option<&SortRep>,
+        start_key: Option<&[u8]>,
+        visit: &mut dyn FnMut(&SortRep, u32) -> bool,
+    ) -> Result<()> {
+        let prefix = part_prefix(field, VALUE);
+        // A hashed start may sit anywhere in its run: start at the run.
+        let start_key: Option<Vec<u8>> = start_key.map(|k| match hashed_run(k) {
+            Some(run) => run.to_vec(),
+            None => k.to_vec(),
+        });
+        let lo: Vec<u8>;
+        let hi: Vec<u8>;
+        let entries: Entries<'_> = if want_max {
+            hi = match &start_key {
+                Some(k) => [&prefix[..], k, &[0xFF; 16][..]].concat(),
+                None => [&prefix[..], &[0xFF; 2][..]].concat(),
+            };
+            let range = (Bound::Included(prefix.as_slice()), Bound::Excluded(hi.as_slice()));
+            Box::new(self.t.parts.rev_range(&self.r, &range)?)
+        } else {
+            lo = match &start_key {
+                Some(k) => [&prefix[..], k].concat(),
+                None => prefix.clone(),
+            };
+            let range = (Bound::Included(lo.as_slice()), Bound::Unbounded);
+            Box::new(self.t.parts.range(&self.r, &range)?)
+        };
+        // Before the start in the walk's direction: already paged.
+        let before_start =
+            |rep: &SortRep| start.is_some_and(|s| if want_max { rep > s } else { rep < s });
+        let mut run: Vec<(SortRep, u32)> = Vec::new();
+        let mut run_key: Option<Vec<u8>> = None;
+        let emit_run = |run: &mut Vec<(SortRep, u32)>,
+                        visit: &mut dyn FnMut(&SortRep, u32) -> bool| {
+            run.sort_by(|a, b| if want_max { b.0.cmp(&a.0) } else { a.0.cmp(&b.0) });
+            run.drain(..).all(|(rep, id)| visit(&rep, id))
+        };
+        for entry in entries {
+            let (k, _) = entry?;
+            if !k.starts_with(&prefix) {
+                break;
+            }
+            let key = &k[prefix.len()..k.len() - 4];
+            let id = dense(&k[k.len() - 4..]);
+            // Is this entry the id's representative?
+            let Some((rep, value)) = self.representative(id, field, want_max) else { continue };
+            if value_key(&value).as_deref() != Some(key) || before_start(&rep) {
+                continue;
+            }
+            match hashed_run(key) {
+                Some(r) => {
+                    if run_key.as_deref() != Some(r) {
+                        if !emit_run(&mut run, visit) {
+                            return Ok(());
+                        }
+                        run_key = Some(r.to_vec());
+                    }
+                    run.push((rep, id));
+                }
+                None => {
+                    if !emit_run(&mut run, visit) {
+                        return Ok(());
+                    }
+                    run_key = None;
+                    if !visit(&rep, id) {
+                        return Ok(());
+                    }
+                }
+            }
+        }
+        emit_run(&mut run, visit);
+        Ok(())
     }
 
     /// The first read error met, if any (and forgets it).
@@ -333,6 +428,30 @@ fn is_hashed(key: &[u8]) -> bool {
         Some(7) => long_prefix(&key[17..]).is_some(),
         _ => false,
     }
+}
+
+/// A range of a table's entries, either way.
+type Entries<'t> = Box<dyn Iterator<Item = heed::Result<(&'t [u8], &'t [u8])>> + 't>;
+
+/// For a value key holding a text cut and hashed: the run of keys sharing
+/// its first bytes (tag, prefix and marker), which sort by hash, not value.
+fn hashed_run(key: &[u8]) -> Option<&[u8]> {
+    match key.first() {
+        Some(2) => long_prefix(&key[1..]).map(|p| &key[..1 + p.len()]),
+        _ => None,
+    }
+}
+
+/// The value a sort representative stands for, as far as its key goes: an
+/// int and a float of equal value share a key.
+fn rep_value(rep: &SortRep) -> Option<Value> {
+    Some(match rep {
+        SortRep::Bool(b) => Value::Bool(*b),
+        SortRep::Num(x) => Value::Float(*x),
+        SortRep::Str(s) => Value::String(s.to_string()),
+        SortRep::DateTime(ms) => Value::DateTime(*ms),
+        SortRep::Ref(_) | SortRep::Tree(_) => return None,
+    })
 }
 
 /// A `tree_ref` row's name, as the text partitions hold it.
@@ -600,6 +719,30 @@ impl Source for KvSource<'_> {
                 reps.min()
             }
         })
+    }
+
+    fn walk_values(
+        &self,
+        field: &str,
+        want_max: bool,
+        start: Option<&SortRep>,
+        visit: &mut dyn FnMut(&SortRep, u32) -> bool,
+    ) -> bool {
+        // The value partition sorts like the values (its keys are built for
+        // it) on a scalar field; a reference or a forest sorts otherwise.
+        if !matches!(self.kind(field), Some(Kind::Categorical | Kind::Numeric | Kind::Datetime)) {
+            return false;
+        }
+        let start_key = match start {
+            None => None,
+            Some(rep) => match rep_value(rep).as_ref().and_then(value_key) {
+                Some(k) => Some(k),
+                None => return false,
+            },
+        };
+        let r = self.walk(field, want_max, start, start_key.as_deref(), visit);
+        self.ok(r, ());
+        true
     }
 
     fn bsi(&self, _field: &str) -> Option<&FieldIndex> {

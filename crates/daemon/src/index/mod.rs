@@ -1215,6 +1215,14 @@ impl Eval<'_> {
                 }
                 return Ok(self.bsi_page(matched, fi, !key.ascending, limit, after));
             }
+            // A source with an ordered index of the values walks it.
+            if self.src.value_type(&key.field).is_some_and(|t| t != "tree_ref") {
+                let walked =
+                    self.value_page(matched, &accepts, &key.field, !key.ascending, limit, after);
+                if walked.is_some() {
+                    return Ok(walked);
+                }
+            }
             // A path sort walks the resident forest in key order.
             let tree = self.src.value_type(key.field.as_str()) == Some("tree_ref");
             let keys = roots.and_then(|r| r.keys).filter(|k| k.is_resident());
@@ -1227,6 +1235,84 @@ impl Eval<'_> {
             }
         }
         Ok(None)
+    }
+
+    /// Up to `limit + 1` ids of `matched` sorted on one key, after `after`,
+    /// read from the source's ordered values ([`Source::walk_values`]): each
+    /// run of equal representatives ordered by uuid, then the ids without a
+    /// value, by uuid. `None` to fetch instead: the walk is not expected to be
+    /// cheaper, ran over its budget, or the source cannot walk this field.
+    #[allow(clippy::too_many_arguments)]
+    fn value_page(
+        &self,
+        matched: &RoaringBitmap,
+        accepts: &dyn Fn(u32, Uuid) -> bool,
+        field: &str,
+        want_max: bool,
+        limit: usize,
+        after: Option<&SortEntry>,
+    ) -> Option<Vec<u32>> {
+        let valued = self.src.present(field);
+        let budget = self.walk_budget(matched.len(), valued.len(), limit)?;
+        let want = limit + 1;
+        // Where the walk starts, and where the valueless tail resumes.
+        let (walk, start, tail_after) = match after {
+            None => (true, None, None),
+            Some((reps, cursor)) => match reps.first() {
+                Some(Some(rep)) => (true, Some((rep.clone(), *cursor)), None),
+                Some(None) => (false, None, Some(*cursor)),
+                _ => return None,
+            },
+        };
+        let mut out: Vec<u32> = Vec::new();
+        if walk {
+            // One run of equal representatives at a time: sorted by uuid, and
+            // at the cursor's own value only what follows the cursor.
+            let flush = |run: &mut Vec<(Uuid, u32)>, rep: &SortRep, out: &mut Vec<u32>| {
+                run.sort_unstable();
+                let from = start.as_ref().filter(|(r, _)| r == rep).map(|(_, u)| *u);
+                out.extend(run.drain(..).filter(|(u, _)| from.is_none_or(|c| *u > c)).map(|x| x.1));
+            };
+            let mut run: Vec<(Uuid, u32)> = Vec::new();
+            let mut run_rep: Option<SortRep> = None;
+            let (mut steps, mut over) = (0usize, false);
+            let walked = self.src.walk_values(
+                field,
+                want_max,
+                start.as_ref().map(|(r, _)| r),
+                &mut |rep, id| {
+                    steps += 1;
+                    if steps > budget {
+                        over = true;
+                        return false;
+                    }
+                    if run_rep.as_ref() != Some(rep) {
+                        if let Some(done) = run_rep.take() {
+                            flush(&mut run, &done, &mut out);
+                            if out.len() >= want {
+                                return false;
+                            }
+                        }
+                        run_rep = Some(rep.clone());
+                    }
+                    if let Some(uuid) = self.src.uuid(id).filter(|&u| accepts(id, u)) {
+                        run.push((uuid, id));
+                    }
+                    true
+                },
+            );
+            if !walked || over {
+                return None;
+            }
+            if let Some(done) = run_rep {
+                flush(&mut run, &done, &mut out);
+            }
+        }
+        if out.len() < want {
+            let tail = matched - &*valued;
+            out.extend(self.by_uuid_after(&tail, tail_after, want - out.len(), accepts));
+        }
+        Some(out)
     }
 
     /// Up to `limit + 1` ids of `matched` in path order (either way) after

@@ -88,6 +88,21 @@ pub trait Source {
     /// A reader of `field`'s sort representatives (not for a `tree_ref`
     /// field, which sorts on whole paths the evaluator rebuilds).
     fn sort_reps(&self, field: &str, want_max: bool) -> RepReader<'_>;
+    /// Walks `field`'s values in sort order — ascending on each id's smallest
+    /// value, or descending on its largest (`want_max`) — from `start` on,
+    /// inclusive: `visit` receives each id once, with its representative, and
+    /// returns `false` to stop. Ties come in no particular order (the
+    /// evaluator orders them by uuid). `false` when the source has no ordered
+    /// structure to walk for this field, and the page is fetched instead.
+    fn walk_values(
+        &self,
+        _field: &str,
+        _want_max: bool,
+        _start: Option<&SortRep>,
+        _visit: &mut dyn FnMut(&SortRep, u32) -> bool,
+    ) -> bool {
+        false
+    }
     /// The resident bit-sliced index of a numeric or date field holding no
     /// value of another type, which serves a page without reading every
     /// match's key; `None` on a source without one.

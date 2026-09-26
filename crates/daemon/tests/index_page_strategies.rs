@@ -10,13 +10,18 @@
 use metafolder_core::metarecord::{Field, Value};
 use metafolder_core::query::{Aspect, FollowTarget, OsmMode, Query};
 use metafolder_daemon::db;
-use metafolder_daemon::index::{collect_path_targets, PageStrategy, QueryRoots, RepoIndex, SortBy};
+use metafolder_daemon::index::{
+    collect_path_targets, Eval, PageStrategy, QueryRoots, RepoIndex, SortBy,
+};
 use metafolder_daemon::log::Writer;
 use metafolder_daemon::query_result::{SortKey, SortOrder};
 use metafolder_daemon::tree_cache::{SortKeys, TreeCache};
 use metafolder_query_oracle as query_exec;
 use rusqlite::Connection;
 use uuid::Uuid;
+
+mod common;
+use common::kv::{kv_mirror, with_kv};
 
 struct Rng(u64);
 
@@ -98,6 +103,20 @@ fn fixture() -> Connection {
         if rng.below(3) == 0 {
             fields.push(Field::new("score", Value::Float(rng.below(100) as f64 / 7.0 - 3.0)));
         }
+        // Titles: ties, two values, and long texts sharing their first 300
+        // bytes (the key-value store keys those by a prefix and a hash).
+        let title = |rng: &mut Rng| match rng.below(4) {
+            0 => format!("{}{}", "t".repeat(300), rng.below(5)),
+            _ => format!("t{}", rng.below(25)),
+        };
+        match rng.below(5) {
+            0 => {}
+            1 => {
+                fields.push(Field::new("title", s(&title(&mut rng))));
+                fields.push(Field::new("title", s(&title(&mut rng))));
+            }
+            _ => fields.push(Field::new("title", s(&title(&mut rng)))),
+        }
         // Names are unique per parent in the forest; a clash is simply retried.
         let _ = w.create_metarecord(fields);
     }
@@ -167,6 +186,8 @@ fn sorts() -> Vec<Vec<(&'static str, bool)>> {
         vec![("mtime", false)],
         vec![("mtime", true)],
         vec![("score", true)],
+        vec![("title", true)],
+        vec![("title", false)],
         vec![(P, true)],
         vec![(P, false)],
         vec![("kind", true), ("size", false)],
@@ -230,11 +251,37 @@ fn index_pages(
     pages
 }
 
+/// The pages of an evaluator (the KV source's), cursor by cursor.
+fn eval_pages(
+    e: &Eval,
+    roots: &QueryRoots,
+    q: &Query,
+    by: &[(&str, bool)],
+    limit: usize,
+) -> Vec<Vec<Uuid>> {
+    let keys: Vec<SortBy> =
+        by.iter().map(|(f, asc)| SortBy { field: f.to_string(), ascending: *asc }).collect();
+    let mut pages = Vec::new();
+    let mut cursor: Option<String> = None;
+    loop {
+        let (page, next) =
+            e.evaluate_page_with_roots(q, &keys, Some(limit), cursor.as_deref(), roots).unwrap();
+        pages.push(page);
+        match next {
+            Some(c) => cursor = Some(c),
+            None => break,
+        }
+        assert!(pages.len() < 10_000, "runaway pagination");
+    }
+    pages
+}
+
 #[test]
 fn every_page_strategy_gives_the_oracles_pages() {
     let conn = fixture();
     let mut cache = TreeCache::new(false);
     let mut index = RepoIndex::build(&conn).unwrap();
+    let (kv, _dir) = kv_mirror(&conn);
     for q in queries(&conn, &mut cache) {
         for by in sorts() {
             for limit in [10, 50] {
@@ -254,6 +301,8 @@ fn every_page_strategy_gives_the_oracles_pages() {
                 for strategy in [PageStrategy::Fetch, PageStrategy::Walk, PageStrategy::Auto] {
                     let got = index_pages(&mut index, &roots, &q, &by, limit, strategy);
                     assert_eq!(got, want, "{strategy:?}: {q:?} by {by:?}, pages of {limit}");
+                    let got = with_kv(&kv, strategy, |e, _| eval_pages(e, &roots, &q, &by, limit));
+                    assert_eq!(got, want, "KV {strategy:?}: {q:?} by {by:?}, pages of {limit}");
                 }
             }
         }
