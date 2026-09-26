@@ -314,7 +314,18 @@ Done:
 To do:
 
 - A run against a real privileged broker (root, or the unit's two
-  capabilities): the only place handle resolution and marks meet.
+  capabilities): the only place handle resolution and marks meet. It cannot
+  happen in the development container (its bounding set holds neither
+  capability, and `open_by_handle_at` answers `EPERM` in a user namespace even
+  on a filesystem that namespace mounted — checked on 7.2), so it is a script
+  to run on a real machine: `scripts/watchd-live-test.sh` starts the broker as
+  the unit would (uid `nobody` + the two capabilities, via `setpriv`; `--root`
+  for plain root), a private daemon on a scratch repository, and checks
+  create/rename/move/modify/delete, a tree moved in, a move out, a filesystem
+  mounted under the root afterwards, another user's `0700` and `--x`
+  directories, and the broker's refusal of a root spelled through a private
+  directory. `--self-test-inotify` runs the same scenario without a broker
+  (the harness checking itself).
 - The conformance battery (create/remove/rename/modify semantics through the
   pipeline) run against both sources.
 - `tests/watch_leak.rs` as a backend test — under fanotify there is no
