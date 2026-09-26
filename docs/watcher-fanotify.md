@@ -1,15 +1,18 @@
 # A fanotify watch source behind a privileged broker
 
-**Status: design settled (September 2026), not implemented.** This note records
-why a second watch source is wanted, its exact shape, the permission model it
-must obey, and the spec points to settle before any code is written. It
-supersedes nothing: spec-file-tracking "File Watcher" and "The watch budget"
-remain the reference for the current (inotify) source.
+**Status: implemented (September 2026)** — the broker (`crates/watchd`) and the
+daemon's fanotify source (`daemon/src/watcher/fanotify.rs`) are in the tree.
+What is still missing is a run against a real privileged broker on a real
+machine: the tests cover the kernel side in a user namespace (marks, events,
+records) and the resolution side with a stand-in, but never both at once (see
+"Tests"). This note records why a second watch source is wanted, its exact
+shape, and the permission model it must obey. spec-file-tracking "File
+Watcher", "Watch sources and regimes" and "The watch budget" are the reference.
 
 ## What is wrong today
 
 The watcher places **one inotify watch per eligible directory**
-(`daemon/src/watcher.rs`), which costs in three places:
+(`daemon/src/watcher/inotify.rs`), which costs in three places:
 
 - *Placement.* Every load and every eligibility change re-walks the tree to
   compute the watch set (`compute_watched_dirs_timed`); the code itself logs any
@@ -36,8 +39,8 @@ shared and unchanged.
   `RecommendedWatcher`: inotify on Linux, native backends elsewhere). It remains
   the default and the fallback.
 - **A fanotify source** is added on Linux, fronted by a small **privileged
-  broker**. One mark covers a whole mount (or filesystem): no per-directory
-  watch, no budget, no placement walk.
+  broker**. One mark covers a whole filesystem: no per-directory watch, no
+  budget, no placement walk.
 
 Never both at once for a given repository: one source is chosen at load time —
 fanotify when the broker is reachable and permitted, inotify otherwise.
@@ -53,6 +56,16 @@ Verified against man-pages 6.19 and the kernel documentation:
   tree in a race-free manner" (fanotify(7)). `FAN_MARK_MOUNT` /
   `FAN_MARK_FILESYSTEM` need `CAP_SYS_ADMIN`. There is no useful half-privileged
   middle ground.
+- **It must be a filesystem mark, not a mount mark.** The kernel refuses every
+  entry event — `FAN_CREATE`, `FAN_DELETE`, `FAN_MOVE*`, `FAN_RENAME`,
+  `FAN_ATTRIB`, `FAN_DELETE_SELF` — on a `FAN_MARK_MOUNT` (EINVAL; only the
+  data events are allowed there), and accepts them on `FAN_MARK_FILESYSTEM`.
+  Verified on 7.2 (September 2026), in a user namespace marking a tmpfs it
+  mounted itself. The first broker used mount marks and could not have
+  started. A filesystem mark reaches every mount of that filesystem — bind
+  mounts, other mount namespaces (the systemd unit's own `ProtectHome=` one
+  included) — so events outside the subscribed roots arrive too, and the
+  per-subscriber filter drops them.
 - **Events carry file handles, not paths.** `FAN_REPORT_FID` events identify
   objects by handle; resolving a handle to a path is `open_by_handle_at`
   (`CAP_DAC_READ_SEARCH`) — or a maintained fid→path cache. The kernel also
@@ -66,8 +79,10 @@ Verified against man-pages 6.19 and the kernel documentation:
   `FAN_REPORT_TARGET_FID` (5.17, also 5.15.154 / 5.10.220). Feature-detect at
   startup; the full form is what makes renames complete.
 - **Limits on this side too.** `max_user_groups`, `max_user_marks`,
-  `max_queued_events`; an overflow is `FAN_Q_OVERFLOW` and must become a
-  reconcile trigger, not a silent gap.
+  `max_queued_events`; an overflow is `FAN_Q_OVERFLOW` and must be announced,
+  never a silent gap. *Announced*, not acted on: the daemon suggests
+  `mf reconcile`, it does not start one (decided September 2026 — an overflow
+  comes from load, and an automatic reconcile would add to it).
 - **Caveats to design for.** No events for `mmap`/`msync`/`munmap` writes
   (`FAN_CLOSE_WRITE` plus the fingerprint reconcile are the backstop — relevant
   to hash-based identity); no remote events on network filesystems; some FUSE
@@ -80,7 +95,9 @@ A small system service (e.g. `metafolder-watchd`), root or
 `AmbientCapabilities=CAP_SYS_ADMIN CAP_DAC_READ_SEARCH`, **one fanotify group for
 the machine**:
 
-- marks the mounts (or filesystems) holding subscribed repository roots;
+- marks the filesystems holding subscribed repository roots — the root's own,
+  and every one mounted beneath a root, following `/proc/self/mountinfo`
+  (`POLLPRI`) as mounts come and go;
 - resolves FID → path (it holds `CAP_DAC_READ_SEARCH`);
 - filters per subscriber (next section) and streams events over a Unix socket.
 
@@ -88,20 +105,44 @@ No business logic in it: no eligibility, no compaction — those stay in the
 daemon. The protocol is *subscribe to roots* + *a stream of (path, kind)*, with
 explicit backpressure rules: a slow consumer makes the broker drop and signal
 overflow, a disconnect or reconnect makes the daemon announce the gap — either
-way a reconcile closes it (the posture of a daemon that was down; see
-spec-file-tracking "Watch sources and regimes"). One group for all
+way a reconcile, suggested and run by the user, closes it (the posture of a
+daemon that was down; see spec-file-tracking "Watch sources and regimes"). One group for all
 repositories also removes the per-repository inotify instance limit.
 
 **Landed (September 2026)** as `crates/watchd` (`metafolder-watchd`, unit
 `scripts/metafolder-watchd.service`): `proto` (the NDJSON wire — `Subscribe`,
 `Subscribed`, `Event`, `Overflow`, `Error`), `filter` (the per-uid DAC filter
-over a `CredSource` seam), `fanotify` (the group, the mount marks, a *pure*
-record parser, and `preflight` which fails at startup naming the two
-capabilities), `server` (one bounded queue per subscriber, in-order `Overflow`
-markers, `RootSink` telling the marks what to cover). 34 tests, among them an
-unprivileged fanotify smoke test against the real kernel (group, inode mark,
-record layout) and an end-to-end over a real socket with `SO_PEERCRED`. Not yet
-wired to the daemon: that is `watcher/fanotify.rs` below.
+over a `CredSource` seam), `fanotify` (the group, the filesystem marks, the
+mount-table watch, a *pure* record parser, and `preflight` which fails at
+startup naming the two capabilities), `server` (one bounded queue per
+subscriber, in-order `Overflow` markers, `RootSink` telling the marks what to
+cover).
+
+Paths on the wire are byte strings (`proto::WirePath`): a plain JSON string
+when the path is text, otherwise `{"text", "bytes"}` — the object form of a
+tree name on the daemon's API (spec-data-model "Tree names"), `bytes` in
+lowercase hex and authoritative. A file with a Latin-1 name is watched like
+any other; the first version dropped its events.
+
+Three things the first version got wrong, fixed since (each with its test):
+
+- **Mount marks** — refused for every entry event (above). Now one filesystem
+  mark per filesystem, nested mounts included, the mount table followed.
+- **The reading thread held the group's lock while blocked in `read(2)`**, so
+  on a quiet machine the first subscription could never place its marks and
+  was never answered (its daemon fell back to inotify after the handshake
+  timeout). The group is read through a `Reader` sharing only the descriptor.
+- **One descriptor kept open per covered filesystem** (for
+  `open_by_handle_at`) — which makes `umount` fail with EBUSY, so a drive under
+  a repository could not be unplugged. Descriptors now live for one batch of
+  events.
+
+42 tests. The kernel-side ones run for real: an unprivileged smoke test (group,
+inode mark, record layout), and tests that re-run themselves under
+`unshare -rm` — a user namespace may mark a tmpfs it mounted itself (Linux
+6.8+) — covering a root with a filesystem mounted beneath it and one mounted
+after the subscription. Plus an end-to-end over a real socket with
+`SO_PEERCRED`.
 
 ## Permissions
 
@@ -165,7 +206,9 @@ fanotify):
 - `watcher/fanotify.rs` — the broker client behind the same `Source` trait
   (`name` / `regime` / `refresh` / `watched` / `watched_set` / `maintain`):
   a synchronous handshake (its answer *means* "you are covered"), then a
-  reconnecting reader thread — **landed**.
+  reconnecting reader thread that ends with the repository (dropping the source
+  shuts the stream down; the first version reconnected for ever after an
+  unload) — **landed**.
 
 Source choice: none to make. At load the daemon probes `[settings]
 watchd-socket` and takes the broker when one answers; when none does it says
@@ -202,19 +245,47 @@ tests run against both implementations.
   global option was decided *against* (September 2026): the socket is the
   switch — probe it and follow the answer. A per-repository override is the
   question that remains, and it has not been asked for.
-- Multi-mount repositories: one mark per mount, with mounts appearing and
-  disappearing (spec-file-tracking "Offline subtrees" already models this).
+- Multi-mount repositories: **settled and implemented** — one filesystem mark
+  per filesystem under the root, the mount table followed as drives come and
+  go (the daemon's side, "Offline subtrees", is unchanged). One limit: a mark
+  whose filesystem is still mounted elsewhere after it left the root cannot be
+  lifted by path, and stays until the broker restarts — its events are dropped
+  by the filter, so it costs work, not correctness.
 - Broker death mid-stream: **settled as the daemon-down posture** — the gap is
   announced (a diagnostic on disconnect, reconnect and overflow, each naming
   `mf reconcile`) and a reconcile closes it (spec-file-tracking "Watch sources
-  and regimes"). *Automatic* reconcile on reconnect is still open: it would
-  fire an unbounded reconcile every time a flaky socket blinks.
+  and regimes"). For an *overflow* the suggestion is the whole answer: no
+  automatic reconcile (decided September 2026). *Automatic* reconcile on
+  reconnect is still open: it would fire an unbounded reconcile every time a
+  flaky socket blinks.
+- The cost of filesystem marks: the broker receives every event of the
+  filesystems it covers, inside the roots or not, and resolves each one's
+  handle before the filter can drop it. On a busy `/home` that is work done
+  for nothing; filtering on the parent handle *before* resolving (a
+  directory-handle → "under a root?" cache) is the known remedy, not built.
 
 ## Tests
 
+Done:
+
+- The daemon's half through the real pipeline, against a stand-in broker
+  (`daemon/tests/watch_source.rs`): the source choice at load, wire events
+  becoming metarecords, `mfr_watch_exceeded` honoured under coverage, and the
+  client ending with its repository. Unit tests for the client's translation
+  (internal directory, non-UTF-8 names, overflow).
+- The broker's kernel side in a user namespace (see "The broker"), its
+  protocol, filter and server with synthetic events, and one end-to-end over a
+  socket.
+- The broker's filter for a directory the subscriber may not list (the `0700`
+  case, as a `CredSource` table).
+
+To do:
+
+- A run against a real privileged broker (root, or the unit's two
+  capabilities): the only place handle resolution and marks meet.
 - The conformance battery (create/remove/rename/modify semantics through the
-  pipeline) runs against both sources.
-- `tests/watch_leak.rs` becomes a backend test — under fanotify there is no
+  pipeline) run against both sources.
+- `tests/watch_leak.rs` as a backend test — under fanotify there is no
   per-directory state to leak at all.
-- The `0700` other-uid directory case, at both hops.
-- Overflow → reconcile.
+- The `0700` other-uid directory case on a real filesystem, at both hops.
+- Overflow → the announced suggestion, end to end.

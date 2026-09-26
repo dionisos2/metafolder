@@ -215,8 +215,8 @@ words. The =CLAUDE.md= sentences that repeated the tag went with them.
 
 ** TODO fanotify watch source
 From the watcher discussion (September 2026), not the review pass. Designed in
-[[file:docs/watcher-fanotify.md][docs/watcher-fanotify.md]], not started: a second watch *source* for Linux — a
-small privileged broker (fanotify marks on mounts, FID→path resolution, per-uid
+[[file:docs/watcher-fanotify.md][docs/watcher-fanotify.md]] and implemented: a second watch *source* for Linux — a
+small privileged broker (fanotify marks on filesystems, FID→path resolution, per-uid
 filtering) streaming events over a Unix socket — behind the existing pipeline,
 with the inotify source kept as the no-privilege default and fallback. One mark
 per mount removes the per-directory watches, the placement walk and the watch
@@ -230,21 +230,42 @@ and *coverage* regimes ([[file:docs/spec-file-tracking.org][spec-file-tracking]]
 check= keeps one answer ladder; only =unwatched= is budget-only), the active
 backend reported by =GET /watch=. The =watcher/= split, the =Source= seam, the
 broker and the daemon-side =fanotify= source are done (below); what remains is
-the conformance battery run against both sources *in a privileged environment*
-(mount marks and handle resolution cannot run in the unprivileged harness) and
-the note's open questions (auto-reconcile on reconnect, network filesystems).
+a run against a real privileged broker (handle resolution cannot run in the
+unprivileged harness; the marks now can, in a user namespace), the conformance
+battery against both sources, and the note's open questions (auto-reconcile on
+reconnect, network filesystems, filtering before resolving). An overflow is
+settled: announced with a suggestion, never an automatic reconcile.
 The permission model is decided (strictly single-user daemon; no hop reveals
 more than the next hop's own credentials could discover, see the note) and
 implemented in the broker.
 
+*** DONE the review pass over the fanotify source (September 2026)
+Five defects, each fixed with a test that failed first:
+- *Mount marks cannot report entry events* — the kernel answers EINVAL to
+  =FAN_CREATE=/=FAN_DELETE=/=FAN_RENAME=/=FAN_ATTRIB= on a =FAN_MARK_MOUNT=
+  (verified in a user namespace), so the broker could not have started. One
+  =FAN_MARK_FILESYSTEM= per filesystem the roots span, nested mounts included,
+  the mount table followed (=POLLPRI= on =/proc/self/mountinfo=).
+- *The reading thread held the group's lock while blocked in =read(2)=*: on a
+  quiet machine the first subscriber was never answered.
+- *One descriptor kept open per covered filesystem*: =umount= fails with EBUSY
+  — a drive under a repository could not be unplugged.
+- *The daemon's client thread never ended*: after an unload it kept the
+  subscription and reconnected for ever, one more thread per load cycle.
+- *Non-UTF-8 names were dropped* by the broker (JSON strings are text): paths
+  on the wire are now byte strings, the tree-name object form.
+The kernel-side tests re-run themselves under =unshare -rm=, where a user
+namespace may mark a tmpfs it mounted.
+
 *** DONE the broker: =crates/watchd= (September 2026)
 =metafolder-watchd= — one per machine, the two capabilities
 (=CAP_SYS_ADMIN=, =CAP_DAC_READ_SEARCH=) granted by its unit and nowhere else.
-One fanotify group, one mark per covered mount (=FAN_MARK_MOUNT=), file-handle
+One fanotify group, one mark per covered filesystem (=FAN_MARK_FILESYSTEM=; first
+shipped with mount marks, see the review pass above), file-handle
 events (=FAN_REPORT_DFID_NAME=, =FAN_RENAME=) resolved to paths, NDJSON over a
 Unix socket. Per-subscriber filtering by =SO_PEERCRED= uid + userspace DAC (the
 permission invariant of the note); per-subscriber bounded queues with in-order
-=Overflow= markers; =FAN_Q_OVERFLOW= broadcast to everyone. 34 tests, including
+=Overflow= markers; =FAN_Q_OVERFLOW= broadcast to everyone. 34 tests at landing (42 now), including
 an unprivileged fanotify smoke test against the real kernel (group, marks,
 record layout) and an end-to-end over a real socket.
 

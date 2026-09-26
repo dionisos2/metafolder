@@ -17,10 +17,12 @@ than breaking them.
 - **`metafolder-watchd`: the privileged fanotify broker** (`crates/watchd`,
   `scripts/metafolder-watchd.service`) — groundwork for the fanotify watch
   source (docs/watcher-fanotify.md "The broker"). One process per machine holds
-  the fanotify group covering the mounts of subscribed repository roots
-  (one mark per mount, no per-directory watches), resolves the kernel's file
+  the fanotify group covering the filesystems of subscribed repository roots
+  (one mark per filesystem, those mounted beneath a root included and followed
+  as drives come and go; no per-directory watches), resolves the kernel's file
   handles to paths, and streams events as NDJSON over a Unix socket — each
-  subscriber seeing only what its own uid could discover. A subscriber that
+  subscriber seeing only what its own uid could discover — names that are not
+  UTF-8 included, carried byte for byte. A subscriber that
   cannot keep up loses events and is told so (`Overflow`) rather than stalling
   the machine. **The daemon can now use it** — with no switch to set: at load
   it probes `[settings] watchd-socket` (default `/run/metafolder/watchd.sock`)

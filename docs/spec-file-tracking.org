@@ -732,7 +732,11 @@ backend name:
   ReadDirectoryChangesW provide natively): one kernel registration covers the
   whole tree. There is nothing to place and nothing to run out of: no placement
   walk, no watch budget, no frontier of subtrees the budget gave up on, no
-  starved state.
+  starved state. Under fanotify the registration is one *filesystem* mark per
+  filesystem the tree spans — the root's, and each one mounted beneath it,
+  followed as mounts come and go (a drive plugged in under the repository is
+  covered when it appears). A mount mark would not do: the kernel reports no
+  creation, deletion, move or attribute change through one.
 
 The =notify= source runs the *budget* regime on *every* platform: it places one
 registration per directory even where the kernel could cover a tree with a
@@ -746,8 +750,9 @@ The broker behind the coverage source is a separate process and can go away.
 What happens then is what happens whenever events are missed (see [[*Event
 batching]] — a daemon that was down misses them too): the gap is *announced*
 (a diagnostic on every disconnect, every reconnect and every overflow, each
-naming =mf reconcile=) and closes with that reconcile. Nothing is ever
-inferred from a gap.
+naming =mf reconcile=) and closes with that reconcile. The daemon suggests it
+and never starts one on its own — an overflow comes from load, and a reconcile
+it triggered would add to the load. Nothing is ever inferred from a gap.
 
 What does *not* vary between regimes: the eligibility filter every event goes
 through (see [[*Watch and Ignore]]), the =.metafolder/internal/= hard skip,
