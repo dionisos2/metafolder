@@ -18,6 +18,7 @@ use crate::config::ConfigDir;
 use crate::daemon_proxy::DaemonProxy;
 use crate::keybindings::KeybindingSet;
 use crate::state::GuiState;
+use axum::middleware::map_response;
 use axum::routing::{delete, get, post, put};
 use axum::Router;
 use bench::BenchBuffer;
@@ -114,9 +115,9 @@ pub fn build_router(state: ServerState) -> Router {
         )
         .route("/__media-probe", get(media_probe))
         .route("/panel/:name/*path", get(panel_assets::serve))
-        .route("/fsraw", get(fsraw::serve))
-        .route("/thumbnail", get(thumbnail::serve))
-        .route("/document", get(document::page))
+        .route("/fsraw", get(fsraw::serve).layer(map_response(fsraw::inert)))
+        .route("/thumbnail", get(thumbnail::serve).layer(map_response(fsraw::inert)))
+        .route("/document", get(document::page).layer(map_response(fsraw::inert)))
         .route("/document/info", get(document::info))
         .route("/gui/workspaces", get(gui_api::list_workspaces).post(gui_api::create_workspace))
         .route("/gui/workspaces/:id", delete(gui_api::delete_workspace))

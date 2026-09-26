@@ -4230,6 +4230,16 @@ No panel may load an =/fsraw= URL as a document. The shipped panels are checked
 by =crates/gui/tests/panel_invariants.rs=. A panel that genuinely needs a
 document view would first have to stop passing the token in the query string.
 
+The rule is also enforced where the browser can enforce it: every =/fsraw=,
+=/thumbnail= and =/document= response carries
+=Content-Security-Policy: sandbox; default-src 'none'; …= and
+=X-Content-Type-Options: nosniff= (=fsraw::inert=). As media they change
+nothing; rendered as a document, the file gets an opaque origin with scripts
+off and can load nothing — so breaking the rule (a user panel, a navigation
+the gate lets through, since loopback is navigable) is no longer a compromise.
+The two generated endpoints get it too: they serve what a decoder wrote, and
+the decoder is the party that may be compromised.
+
 * Open questions
 
 ** Custom panel type trust model (resolved: trusted)

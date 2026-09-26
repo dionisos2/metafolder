@@ -332,3 +332,49 @@ async fn test_fsraw_missing_file_and_missing_param() {
     let (status, _, _) = get(&router, "/fsraw").await;
     assert_eq!(status, StatusCode::BAD_REQUEST);
 }
+
+/// What a response serving untrusted bytes must carry, whatever loads it.
+///
+/// `/fsraw` is safe as media and fatal as a document (spec-gui "=/fsraw=:
+/// media, never a document"), and the shipped panels keep to media. These
+/// headers make the rule hold for any loader: rendered as a document, the
+/// response gets an opaque origin with scripts off (`sandbox`), loads nothing
+/// (`default-src 'none'`), and is never re-sniffed into HTML. `/thumbnail` and
+/// `/document` serve what a (sandboxed, but possibly compromised) decoder
+/// wrote: the same rule.
+fn assert_untrusted_headers(response: &axum::response::Response, what: &str) {
+    let header = |name: &str| {
+        response
+            .headers()
+            .get(name)
+            .map(|v| v.to_str().unwrap().to_string())
+            .unwrap_or_else(|| panic!("{what}: no {name} header"))
+    };
+    let csp = header("content-security-policy");
+    assert!(csp.split(';').any(|d| d.trim() == "sandbox"), "{what}: CSP without sandbox: {csp}");
+    assert!(csp.contains("default-src 'none'"), "{what}: CSP without default-src 'none': {csp}");
+    assert_eq!(header("x-content-type-options"), "nosniff", "{what}");
+}
+
+#[tokio::test]
+async fn test_untrusted_content_is_inert_even_as_a_document() {
+    let (_guard, _config, router) = setup();
+    let dir = tempfile::tempdir().unwrap();
+    let file = dir.path().join("page.html");
+    std::fs::write(&file, "<script>alert(location.search)</script>").unwrap();
+
+    let uris = [
+        format!("/fsraw?path={}", file.display()),
+        format!("/fsraw?path={}", dir.path().join("missing").display()),
+        format!("/thumbnail?path={}", file.display()),
+        format!("/document?path={}&page=1", file.display()),
+    ];
+    for uri in uris {
+        let response = router
+            .clone()
+            .oneshot(Request::builder().uri(&uri).body(Body::empty()).unwrap())
+            .await
+            .unwrap();
+        assert_untrusted_headers(&response, &uri);
+    }
+}

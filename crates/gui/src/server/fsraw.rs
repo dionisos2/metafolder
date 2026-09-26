@@ -52,6 +52,31 @@ pub async fn serve(request: Request<Body>) -> Response {
     }
 }
 
+/// Marks a response carrying untrusted bytes as inert, whatever loads it.
+///
+/// As media (`<img>`, `<video>`) these headers change nothing. As a document —
+/// the one position where a raw file becomes code in this origin (see the
+/// module doc) — `sandbox` gives it an opaque origin with scripts off,
+/// `default-src 'none'` lets it load nothing, and `nosniff` keeps the browser
+/// from promoting a mislabelled file to HTML. The rule that no panel loads
+/// `/fsraw` as a document stays; this makes breaking it harmless. Applied to
+/// `/thumbnail` and `/document` too: they serve what a decoder wrote, and a
+/// decoder may be the compromised party.
+pub async fn inert(mut response: Response) -> Response {
+    use axum::http::header::{HeaderValue, CONTENT_SECURITY_POLICY, X_CONTENT_TYPE_OPTIONS};
+    let headers = response.headers_mut();
+    // An SVG shown as an `<img>` still gets its inline styles and embedded
+    // `data:` images; nothing it can run or fetch.
+    headers.insert(
+        CONTENT_SECURITY_POLICY,
+        HeaderValue::from_static(
+            "sandbox; default-src 'none'; img-src data:; style-src 'unsafe-inline'; font-src data:",
+        ),
+    );
+    headers.insert(X_CONTENT_TYPE_OPTIONS, HeaderValue::from_static("nosniff"));
+    response
+}
+
 /// The `path` query parameter, percent-decoded.
 ///
 /// The query is split into pairs **before** decoding: a file name may itself
