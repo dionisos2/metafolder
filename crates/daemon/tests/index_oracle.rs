@@ -1837,6 +1837,8 @@ fn long_texts_answer_like_short_ones() {
         "a".into(),
         "b".into(),
         format!("{}b", "a".repeat(255)),
+        // Over the trigram index's limit: checked on every search.
+        format!("{}zzz", "b".repeat(600)),
     ];
     let root = o.create(vec![tref("loc", None, "")]);
     let mut ids = Vec::new();
@@ -1863,6 +1865,14 @@ fn long_texts_answer_like_short_ones() {
     };
     o.check(&matches("note", "1$"));
     o.check(&matches("note", "^a+$"));
+    o.check(&matches("note", "bzzz"));
+    o.check(&matches("note", "(?i)BZZ"));
+    o.check(&matches("note", "other[0-9]"));
+    o.check(&Query::Osm {
+        field: "note".into(),
+        terms: vec!["bbb".into(), "zz".into()],
+        mode: OsmMode::Direct,
+    });
     o.check(&Query::Matches { field: "loc".into(), pattern: "7$".into(), aspect: Aspect::Value });
     o.check(&Query::SameAs { field: "one".into(), target: Box::new(eq("note", s(&long))) });
     let name = format!("{}3", "n".repeat(400));

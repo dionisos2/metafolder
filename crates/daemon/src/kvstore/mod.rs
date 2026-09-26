@@ -78,6 +78,7 @@ struct Tables {
     sets: Db,
     parts: Db,
     kids: Db,
+    grams: Db,
 }
 
 /// A repository database on LMDB.
@@ -398,6 +399,7 @@ impl KvStore {
             sets: db("sets")?,
             parts: db("parts")?,
             kids: db("kids")?,
+            grams: db("grams")?,
         };
         let derived = t.meta.get(&w, b"derived")?.map(from_be);
         w.commit()?;

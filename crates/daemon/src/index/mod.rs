@@ -1707,7 +1707,8 @@ impl Eval<'_> {
         }
         let re = crate::regexp::compile(pattern)
             .map_err(|e| unsupported(format!("pattern the index cannot compile: {e}")))?;
-        Ok(self.src.scan_text(field, &|text| re.is_match(text), restrict))
+        let literals = crate::regexp::required_literals(pattern);
+        Ok(self.src.scan_text(field, &|text| re.is_match(text), &literals, restrict))
     }
 
     /// Direct `Follows`: referrers of every metarecord matching the sub-query.
@@ -1934,7 +1935,8 @@ impl Eval<'_> {
         // cliff.
         let re = crate::regexp::compile(&format!("(?i){}", regex::escape(term)))
             .map_err(|e| unsupported(format!("osm term is not a usable pattern: {e}")))?;
-        let seeds = self.src.scan_names(field, &|name| re.is_match(name), None);
+        let literals = [term.to_lowercase()];
+        let seeds = self.src.scan_names(field, &|name| re.is_match(name), &literals, None);
         Ok(self.expand_subtrees(field, seeds, true))
     }
 
@@ -2113,6 +2115,7 @@ impl Source for RepoIndex {
         &self,
         field: &str,
         keep: &dyn Fn(&str) -> bool,
+        _literals: &[String],
         restrict: Option<&RoaringBitmap>,
     ) -> RoaringBitmap {
         self.fields.get(field).map(|fi| fi.scan_text(keep, restrict)).unwrap_or_default()
@@ -2122,6 +2125,7 @@ impl Source for RepoIndex {
         &self,
         field: &str,
         keep: &dyn Fn(&str) -> bool,
+        _literals: &[String],
         restrict: Option<&RoaringBitmap>,
     ) -> RoaringBitmap {
         self.fields.get(field).map(|fi| fi.scan_names(keep, restrict)).unwrap_or_default()

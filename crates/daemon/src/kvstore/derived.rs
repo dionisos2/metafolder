@@ -9,6 +9,7 @@
 //! | sets  | kind · [field] · chunk               | a roaring bitmap         |
 //! | parts | field · partition · key · dense id   | rows (count)             |
 //! | kids  | parent uuid · field · dense id       | rows (count)             |
+//! | grams | field · trigram · chunk              | a roaring bitmap         |
 //!
 //! A *set* is a bitmap of dense ids cut in chunks of 65 536 ids (the high 16
 //! bits), so a write rewrites one chunk and a read unions a few: the universe,
@@ -40,7 +41,7 @@ use crate::store::Rows;
 
 /// The format of the derived key spaces. A store stamped with another (or
 /// none: a store from before they existed) is reindexed when it opens.
-pub(super) const DERIVED_VERSION: i64 = 1;
+pub(super) const DERIVED_VERSION: i64 = 2;
 
 /// Set kinds.
 pub(super) const UNIVERSE: u8 = 0;
@@ -48,12 +49,45 @@ pub(super) const PRESENT: u8 = 1;
 pub(super) const ABSENT: u8 = 2;
 pub(super) const PARENTS: u8 = 3;
 
+/// The texts too long to be split in trigrams (see [`TRIGRAM_MAX`]).
+pub(super) const LONG_TEXTS: u8 = 4;
+
+/// The two tables of chunked bitmaps, as the transaction's chunk cache
+/// tells them apart.
+const SETS: u8 = 0;
+const GRAMS: u8 = 1;
+
+/// The longest text (lower-cased, in bytes) split in trigrams. A longer one —
+/// a note, lyrics — would write a key per trigram on every edit; its id joins
+/// the field's long-text set instead, and every search checks it.
+pub(crate) const TRIGRAM_MAX: usize = 512;
+
 /// Partitions.
 pub(super) const VALUE: u8 = 0;
 pub(super) const NAME: u8 = 1;
 pub(super) const TARGET: u8 = 2;
 
 const ZERO: [u8; 16] = [0; 16];
+
+/// The distinct trigrams of a lower-cased text (3-byte windows of its UTF-8).
+pub(crate) fn trigrams(lower: &str) -> std::collections::BTreeSet<[u8; 3]> {
+    lower.as_bytes().windows(3).map(|w| [w[0], w[1], w[2]]).collect()
+}
+
+/// The text a value offers the text searches: a string, or a `tree_ref`'s
+/// name — lower-cased, as the trigram index holds it.
+pub(crate) fn search_text(value: &Value) -> Option<String> {
+    match value {
+        Value::String(s) => Some(s.to_lowercase()),
+        Value::TreeRef { name, .. } => Some(name.display().to_lowercase()),
+        _ => None,
+    }
+}
+
+/// The key of a trigram's bitmap, without its chunk.
+pub(super) fn gram_prefix(field: &str, gram: &[u8; 3]) -> Vec<u8> {
+    [&name_key(field)[..], gram].concat()
+}
 
 // ── Keys ────────────────────────────────────────────────────────────────────
 
@@ -258,10 +292,17 @@ impl KvTxn<'_> {
     /// cache: a bulk write touches each chunk many times and writes it once,
     /// at [`Self::flush_sets`].
     fn set_member(&self, kind: u8, field: Option<&str>, id: u32, member: bool) -> Result<()> {
-        let k = set_key(kind, field, (id >> 16) as u16);
+        self.chunk_member(SETS, &set_prefix(kind, field), id, member)
+    }
+
+    /// [`Self::set_member`] for a chunked bitmap of either table: `table`
+    /// ([`SETS`] or [`GRAMS`]), the key without its chunk.
+    fn chunk_member(&self, table: u8, prefix: &[u8], id: u32, member: bool) -> Result<()> {
+        let db = if table == SETS { self.t.sets } else { self.t.grams };
+        let k = [&[table][..], prefix, &((id >> 16) as u16).to_be_bytes()].concat();
         let mut cache = self.sets.borrow_mut();
         if !cache.contains_key(&k) {
-            let loaded = match self.t.sets.get(&self.txn.borrow(), &k)? {
+            let loaded = match db.get(&self.txn.borrow(), &k[1..])? {
                 Some(bytes) => decode_set(bytes)?,
                 None => RoaringBitmap::new(),
             };
@@ -280,12 +321,13 @@ impl KvTxn<'_> {
     pub(super) fn flush_sets(&self) -> Result<()> {
         let mut w = self.txn.borrow_mut();
         for (k, bm) in self.sets.borrow_mut().drain() {
+            let db = if k[0] == SETS { self.t.sets } else { self.t.grams };
             if bm.is_empty() {
-                self.t.sets.delete(&mut w, &k)?;
+                db.delete(&mut w, &k[1..])?;
             } else {
                 let mut bytes = Vec::with_capacity(bm.serialized_size());
                 bm.serialize_into(&mut bytes)?;
-                self.t.sets.put(&mut w, &k, &bytes)?;
+                db.put(&mut w, &k[1..], &bytes)?;
             }
         }
         Ok(())
@@ -384,6 +426,21 @@ impl KvTxn<'_> {
         let absent = rows.iter().any(|r| matches!(r.value, Value::Nothing));
         self.set_member(PRESENT, Some(field), id, present)?;
         self.set_member(ABSENT, Some(field), id, absent)?;
+        // Trigrams: the changed row's, held by the id while one of its
+        // remaining texts still has them.
+        if let Some(text) = search_text(value).filter(|t| t.len() <= TRIGRAM_MAX) {
+            let texts: Vec<String> = rows.iter().filter_map(|r| search_text(&r.value)).collect();
+            let held: std::collections::BTreeSet<[u8; 3]> =
+                texts.iter().filter(|t| t.len() <= TRIGRAM_MAX).flat_map(|t| trigrams(t)).collect();
+            for gram in trigrams(&text) {
+                self.chunk_member(GRAMS, &gram_prefix(field, &gram), id, held.contains(&gram))?;
+            }
+        }
+        if search_text(value).is_some() {
+            let long =
+                rows.iter().filter_map(|r| search_text(&r.value)).any(|t| t.len() > TRIGRAM_MAX);
+            self.set_member(LONG_TEXTS, Some(field), id, long)?;
+        }
         Ok(())
     }
 
@@ -393,7 +450,7 @@ impl KvTxn<'_> {
         self.sets.borrow_mut().clear();
         let mut w = self.txn.borrow_mut();
         let t = self.t;
-        for db in [t.ids, t.uuids, t.sets, t.parts, t.kids] {
+        for db in [t.ids, t.uuids, t.sets, t.parts, t.kids, t.grams] {
             db.clear(&mut w)?;
         }
         Ok(())
@@ -458,6 +515,7 @@ impl KvStore {
         let mut parts: BTreeMap<Part, i64> = BTreeMap::new();
         let mut kids: BTreeMap<([u8; 16], String, Uuid), i64> = BTreeMap::new();
         let mut sets: BTreeSet<(u8, String, Uuid)> = BTreeSet::new();
+        let mut grams: BTreeSet<(String, [u8; 3], Uuid)> = BTreeSet::new();
         for entry in t.cells.iter(&r)? {
             let (k, v) = entry?;
             let uuid = uuid_of(k);
@@ -480,6 +538,15 @@ impl KvStore {
                 *kids.entry((parent, f.clone(), uuid)).or_default() += 1;
                 if universe.contains(&Uuid::from_bytes(parent)) {
                     sets.insert((PARENTS, f.clone(), Uuid::from_bytes(parent)));
+                }
+            }
+            if let Some(text) = search_text(&row.value) {
+                if text.len() <= TRIGRAM_MAX {
+                    for gram in trigrams(&text) {
+                        grams.insert((f.clone(), gram, uuid));
+                    }
+                } else {
+                    sets.insert((LONG_TEXTS, f.clone(), uuid));
                 }
             }
             let kind = if matches!(row.value, Value::Nothing) { ABSENT } else { PRESENT };
@@ -566,6 +633,19 @@ impl KvStore {
             got_kids.insert((parent, field, u), from_be(v));
         }
         report(&mut diff, "kid", lines(&kids), lines(&got_kids));
+
+        let mut got_grams = BTreeSet::new();
+        for entry in t.grams.iter(&r)? {
+            let (k, v) = entry?;
+            let (field, rest) = unesc(k)?;
+            let field = String::from_utf8(field).context("a field name")?;
+            let gram: [u8; 3] = rest[..3].try_into().context("a trigram")?;
+            for id in decode_set(v)? {
+                let Some(u) = uuid(id, &mut diff) else { continue };
+                got_grams.insert((field.clone(), gram, u));
+            }
+        }
+        report(&mut diff, "gram", lines(&grams), lines(&got_grams));
 
         diff.truncate(100);
         Ok(diff)

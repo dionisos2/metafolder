@@ -58,11 +58,14 @@ pub trait Source {
     /// The ids sharing a value of `field` with one of `seed`'s.
     fn same_as(&self, field: &str, seed: &RoaringBitmap) -> RoaringBitmap;
     /// The ids whose text (a string value, a `tree_ref` name) satisfies
-    /// `keep`, within `restrict` when given.
+    /// `keep`, within `restrict` when given. `literals` are substrings every
+    /// text `keep` accepts contains, ignoring case — what a source with a text
+    /// index narrows the search with (it may ignore them).
     fn scan_text(
         &self,
         field: &str,
         keep: &dyn Fn(&str) -> bool,
+        literals: &[String],
         restrict: Option<&RoaringBitmap>,
     ) -> RoaringBitmap;
     /// The ids whose `tree_ref` name satisfies `keep`, within `restrict`.
@@ -70,6 +73,7 @@ pub trait Source {
         &self,
         field: &str,
         keep: &dyn Fn(&str) -> bool,
+        literals: &[String],
         restrict: Option<&RoaringBitmap>,
     ) -> RoaringBitmap;
 

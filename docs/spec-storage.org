@@ -651,7 +651,23 @@ e. *The forest on disk*: the tree cache is no longer built for a KV
    =descendants= bitmaps and the walk of the forest in key order from the
    store, which would bring both back down.
 f. *Trigrams* and the lazy text checks; postings for frequent values; the
-   cost assertions (key reads counted, not timed).
+   cost assertions (key reads counted, not timed). *(trigrams and cost
+   assertions done)* Each field's texts (strings, =tree_ref= names) are
+   indexed by the trigrams of their lower-cased form, one chunked bitmap per
+   trigram (so a frequent trigram costs a few reads, not one per row); a text
+   over 512 bytes is not split — its id joins the field's long-text set,
+   which every search checks. A search's required literals (the literal runs
+   every match contains, extracted from the pattern's syntax tree, a
+   case-insensitive letter counting as the letter; an =osm= term) give the
+   trigrams, their intersection the candidates, and each candidate is checked
+   on its values. A pattern with no literal of three characters scans as
+   before. =tests/kv_cost.rs= counts the keys a KV query reads on a
+   repository and on one eight times larger: a rare value, a page sorted on a
+   value and a literal search read the same number (a search read the whole
+   field before: 2 004 keys against 16 004). The lazy text checks already hold
+   on this backend (a deferred name check reads the record's positions);
+   postings for frequent values are not built — the value partition serves
+   equality with one key per holder.
 
 Each step leaves every suite green on both backends.
 

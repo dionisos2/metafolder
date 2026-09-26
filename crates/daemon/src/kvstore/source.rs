@@ -39,12 +39,20 @@ pub struct KvSource<'s> {
     t: Tables,
     r: RoTxn<'s, WithoutTls>,
     error: RefCell<Option<anyhow::Error>>,
+    /// Keys read so far — what the cost assertions count
+    /// (`tests/kv_cost.rs`): a bounded query must read a bounded number.
+    reads: Cell<u64>,
 }
 
 impl KvStore {
     /// A query source over the store as committed now.
     pub fn source(&self) -> Result<KvSource<'_>> {
-        Ok(KvSource { t: self.t, r: self.env.read_txn()?, error: RefCell::new(None) })
+        Ok(KvSource {
+            t: self.t,
+            r: self.env.read_txn()?,
+            error: RefCell::new(None),
+            reads: Cell::new(0),
+        })
     }
 }
 
@@ -145,6 +153,7 @@ impl KvSource<'_> {
         };
         for entry in entries {
             let (k, _) = entry?;
+            self.read_keys(1);
             if !k.starts_with(&prefix) {
                 break;
             }
@@ -178,6 +187,39 @@ impl KvSource<'_> {
         }
         emit_run(&mut run, visit);
         Ok(())
+    }
+
+    /// How many keys this snapshot has read (entries iterated, lookups made).
+    pub fn reads(&self) -> u64 {
+        self.reads.get()
+    }
+
+    /// The ids holding a trigram in `field`'s texts; a read per chunk.
+    fn gram_set(&self, field: &str, gram: &[u8; 3]) -> RoaringBitmap {
+        let read = || -> Result<RoaringBitmap> {
+            let prefix = derived::gram_prefix(field, gram);
+            let mut out = RoaringBitmap::new();
+            for entry in self.t.grams.prefix_iter(&self.r, &prefix)? {
+                let (k, v) = entry?;
+                self.read_keys(1);
+                if k.len() == prefix.len() + 2 {
+                    out |= derived::decode_set(v)?;
+                }
+            }
+            Ok(out)
+        };
+        self.ok(read(), RoaringBitmap::new())
+    }
+
+    /// A whole set; a read per chunk of 65 536 ids it spans.
+    fn set(&self, kind: u8, field: Option<&str>) -> RoaringBitmap {
+        let bm = self.ok(read_set(&self.t, &self.r, kind, field), RoaringBitmap::new());
+        self.read_keys(1 + bm.max().map_or(0, |m| u64::from(m >> 16)));
+        bm
+    }
+
+    fn read_keys(&self, n: u64) {
+        self.reads.set(self.reads.get() + n);
     }
 
     /// The first read error met, if any (and forgets it).
@@ -231,6 +273,7 @@ impl KvSource<'_> {
             let range = (lo.as_ref().map(|k| k.as_slice()), hi.as_ref().map(|k| k.as_slice()));
             for entry in self.t.parts.range(&self.r, &range)? {
                 let (k, _) = entry?;
+                self.read_keys(1);
                 if !k.starts_with(&prefix) {
                     break;
                 }
@@ -344,11 +387,13 @@ impl KvSource<'_> {
     /// A metarecord's rows of `field`.
     fn values(&self, id: u32, field: &str) -> Vec<Value> {
         let read = || -> Result<Vec<Value>> {
+            self.read_keys(1);
             let Some(uuid) = self.t.uuids.get(&self.r, &id.to_be_bytes())? else {
                 return Ok(Vec::new());
             };
             let mut out = Vec::new();
             for entry in self.t.cells.prefix_iter(&self.r, uuid)? {
+                self.read_keys(1);
                 let row = dec_row(entry?.1)?;
                 if row.name == field {
                     out.push(row.value);
@@ -368,8 +413,35 @@ impl KvSource<'_> {
         part: u8,
         text_of: &dyn Fn(&Value) -> Option<String>,
         keep: &dyn Fn(&str) -> bool,
+        literals: &[String],
         restrict: Option<&RoaringBitmap>,
     ) -> RoaringBitmap {
+        let text = |v: &Value| text_of(v).is_some_and(|t| keep(&t));
+        // The trigrams every accepted text holds: their bitmaps' intersection
+        // (plus the texts too long to be split) is a superset of the answer,
+        // each candidate then checked on its values.
+        let grams: std::collections::BTreeSet<[u8; 3]> =
+            literals.iter().flat_map(|l| derived::trigrams(l)).collect();
+        if !grams.is_empty() {
+            let mut candidates: Option<RoaringBitmap> = restrict.cloned();
+            for gram in &grams {
+                let ids = self.gram_set(field, gram);
+                candidates = Some(match candidates {
+                    None => ids,
+                    Some(c) => c & ids,
+                });
+                if candidates.as_ref().is_some_and(RoaringBitmap::is_empty) {
+                    break;
+                }
+            }
+            let mut candidates = candidates.unwrap_or_default();
+            let mut long = self.set(derived::LONG_TEXTS, Some(field));
+            if let Some(r) = restrict {
+                long &= r;
+            }
+            candidates |= long;
+            return self.having(candidates, field, &text);
+        }
         if let Some(r) = restrict {
             if r.len().saturating_mul(4) < self.present(field).len() {
                 return r
@@ -478,18 +550,15 @@ impl<I: Iterator<Item = u32>> Dedup for I {}
 
 impl Source for KvSource<'_> {
     fn universe(&self) -> Cow<'_, RoaringBitmap> {
-        let r = read_set(&self.t, &self.r, derived::UNIVERSE, None);
-        Cow::Owned(self.ok(r, RoaringBitmap::new()))
+        Cow::Owned(self.set(derived::UNIVERSE, None))
     }
 
     fn present(&self, field: &str) -> Cow<'_, RoaringBitmap> {
-        let r = read_set(&self.t, &self.r, derived::PRESENT, Some(field));
-        Cow::Owned(self.ok(r, RoaringBitmap::new()))
+        Cow::Owned(self.set(derived::PRESENT, Some(field)))
     }
 
     fn absent(&self, field: &str) -> Cow<'_, RoaringBitmap> {
-        let r = read_set(&self.t, &self.r, derived::ABSENT, Some(field));
-        Cow::Owned(self.ok(r, RoaringBitmap::new()))
+        Cow::Owned(self.set(derived::ABSENT, Some(field)))
     }
 
     fn value_type(&self, field: &str) -> Option<&str> {
@@ -508,6 +577,7 @@ impl Source for KvSource<'_> {
             let prefix = name_key(field);
             for entry in self.t.field_types.prefix_iter(&self.r, &prefix)? {
                 let (k, _) = entry?;
+                self.read_keys(1);
                 let ty = &k[prefix.len()..];
                 if let Some(t) = TYPES.iter().find(|t| t.as_bytes() == ty) {
                     return Ok(Some(t));
@@ -519,11 +589,13 @@ impl Source for KvSource<'_> {
     }
 
     fn id(&self, uuid: Uuid) -> Option<u32> {
+        self.read_keys(1);
         let r = id_of(&self.t, &self.r, uuid.as_bytes());
         self.ok(r, None)
     }
 
     fn uuid(&self, id: u32) -> Option<Uuid> {
+        self.read_keys(1);
         let r = self.t.uuids.get(&self.r, &id.to_be_bytes()).map(|u| u.map(uuid_of));
         self.ok(r.map_err(Into::into), None)
     }
@@ -542,7 +614,10 @@ impl Source for KvSource<'_> {
         let range = (lo, Bound::Unbounded);
         match self.t.ids.range(&self.r, &range) {
             Ok(iter) => Box::new(iter.map_while(move |entry| match entry {
-                Ok((k, v)) => Some((uuid_of(k), dense(v))),
+                Ok((k, v)) => {
+                    self.read_keys(1);
+                    Some((uuid_of(k), dense(v)))
+                }
                 Err(e) => {
                     self.error.borrow_mut().get_or_insert(e.into());
                     None
@@ -655,6 +730,7 @@ impl Source for KvSource<'_> {
         &self,
         field: &str,
         keep: &dyn Fn(&str) -> bool,
+        literals: &[String],
         restrict: Option<&RoaringBitmap>,
     ) -> RoaringBitmap {
         match self.kind(field) {
@@ -663,9 +739,11 @@ impl Source for KvSource<'_> {
                     Value::String(s) => Some(s.clone()),
                     _ => None,
                 };
-                self.scan(field, VALUE, &text, keep, restrict)
+                self.scan(field, VALUE, &text, keep, literals, restrict)
             }
-            Some(Kind::Reference { tree: true }) => self.scan_names(field, keep, restrict),
+            Some(Kind::Reference { tree: true }) => {
+                self.scan_names(field, keep, literals, restrict)
+            }
             _ => RoaringBitmap::new(),
         }
     }
@@ -674,12 +752,13 @@ impl Source for KvSource<'_> {
         &self,
         field: &str,
         keep: &dyn Fn(&str) -> bool,
+        literals: &[String],
         restrict: Option<&RoaringBitmap>,
     ) -> RoaringBitmap {
         if self.kind(field) != Some(Kind::Reference { tree: true }) {
             return RoaringBitmap::new();
         }
-        self.scan(field, NAME, &name_of, keep, restrict)
+        self.scan(field, NAME, &name_of, keep, literals, restrict)
     }
 
     fn follow(&self, field: &str) -> Option<Follow> {
@@ -705,8 +784,7 @@ impl Source for KvSource<'_> {
     }
 
     fn parents(&self, field: &str) -> Cow<'_, RoaringBitmap> {
-        let r = read_set(&self.t, &self.r, derived::PARENTS, Some(field));
-        Cow::Owned(self.ok(r, RoaringBitmap::new()))
+        Cow::Owned(self.set(derived::PARENTS, Some(field)))
     }
 
     fn sort_reps(&self, field: &str, want_max: bool) -> RepReader<'_> {
