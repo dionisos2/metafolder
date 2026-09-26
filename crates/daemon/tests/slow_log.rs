@@ -17,7 +17,6 @@ use metafolder_core::slowlog;
 use metafolder_daemon::daemon_config::DaemonSettings;
 use metafolder_daemon::routes;
 use metafolder_daemon::state::AppState;
-use metafolder_daemon::store::Begin as _;
 use serde_json::{json, Value};
 use tower::util::ServiceExt;
 
@@ -270,8 +269,8 @@ fn test_a_slow_watcher_flush_names_itself() {
     use metafolder_core::metarecord::Value;
     use metafolder_daemon::executor::{self, FsEvent};
     use metafolder_daemon::log::Writer;
+    use metafolder_daemon::repo;
     use metafolder_daemon::state::RepoState;
-    use metafolder_daemon::{db, repo};
 
     let root = TempDir::new("slowlog_flush");
     let opened = repo::init_repository(&root, None, None, false).unwrap();
@@ -280,7 +279,9 @@ fn test_a_slow_watcher_flush_names_itself() {
     {
         let mut conn = repo_state.conn.lock().unwrap();
         let root_uuid =
-            db::find_tree_child(conn.as_sqlite().unwrap(), "mfr_path", None, "").unwrap().unwrap();
+            metafolder_daemon::store::Rows::child_by_bytes(&*conn, "mfr_path", None, b"")
+                .unwrap()
+                .unwrap();
         let mut w = Writer::begin(&mut conn, None).unwrap();
         w.set_field(root_uuid, "mf_watch", Value::Bool(true)).unwrap();
         w.commit().unwrap();

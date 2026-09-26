@@ -7,11 +7,9 @@
 use std::sync::Arc;
 
 use metafolder_core::metarecord::{Field, Value};
-use metafolder_daemon::db;
 use metafolder_daemon::log::{self, OpType, Writer};
 use metafolder_daemon::repo;
 use metafolder_daemon::state::RepoState;
-use metafolder_daemon::store::Begin as _;
 
 mod common;
 use common::TempDir;
@@ -25,7 +23,9 @@ fn setup_move(prefix: &str) -> (Arc<RepoState>, i64, i64) {
 
     let root_uuid = {
         let conn = repo.conn.lock().unwrap();
-        db::find_tree_child(conn.as_sqlite().unwrap(), "mfr_path", None, "").unwrap().unwrap()
+        metafolder_daemon::store::Rows::child_by_bytes(&*conn, "mfr_path", None, b"")
+            .unwrap()
+            .unwrap()
     };
 
     // create the record at /a.txt
@@ -42,7 +42,7 @@ fn setup_move(prefix: &str) -> (Arc<RepoState>, i64, i64) {
         m.uuid
     };
     let create_op = repo.conn.lock().unwrap();
-    let create_op_id = log::get_head(create_op.as_sqlite().unwrap()).unwrap().unwrap();
+    let create_op_id = metafolder_daemon::store::Log::head(&*create_op).unwrap().unwrap();
     drop(create_op);
 
     // move it to /b.txt (a file_moved op: before=/a.txt is_new=0, after=/b.txt is_new=1)
@@ -59,7 +59,7 @@ fn setup_move(prefix: &str) -> (Arc<RepoState>, i64, i64) {
         w.commit().unwrap();
     }
     let move_op_id =
-        log::get_head(repo.conn.lock().unwrap().as_sqlite().unwrap()).unwrap().unwrap();
+        metafolder_daemon::store::Log::head(&*repo.conn.lock().unwrap()).unwrap().unwrap();
 
     (repo, create_op_id, move_op_id)
 }
@@ -67,14 +67,16 @@ fn setup_move(prefix: &str) -> (Arc<RepoState>, i64, i64) {
 /// The single enqueued `restore_set_path` name component (the rewind target).
 fn restoration_name(repo: &RepoState) -> String {
     let conn = repo.conn.lock().unwrap();
-    conn.as_sqlite()
+    let names: Vec<String> = metafolder_daemon::store::Log::restorations(&*conn)
         .unwrap()
-        .query_row(
-            "SELECT to_path FROM pending_operation WHERE op_type = 'restore_set_path'",
-            [],
-            |r| r.get::<_, String>(0),
-        )
-        .unwrap()
+        .into_iter()
+        .filter_map(|(_, r)| match r {
+            metafolder_daemon::store::Restoration::SetPath { name, .. } => Some(name.to_string()),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(names.len(), 1, "one enqueued path restoration: {names:?}");
+    names.into_iter().next().unwrap()
 }
 
 #[test]

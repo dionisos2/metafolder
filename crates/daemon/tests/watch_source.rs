@@ -16,12 +16,10 @@ use std::time::{Duration, Instant};
 
 use metafolder_core::metarecord::{Field, Value};
 use metafolder_daemon::daemon_config::DaemonSettings;
-use metafolder_daemon::db;
 use metafolder_daemon::executor;
 use metafolder_daemon::log::Writer;
 use metafolder_daemon::repo;
 use metafolder_daemon::state::RepoState;
-use metafolder_daemon::store::Begin as _;
 use metafolder_daemon::watcher;
 use metafolder_watchd::proto::{self, ClientMsg, Event, ServerMsg};
 use uuid::Uuid;
@@ -37,7 +35,9 @@ fn setup(name: &str, settings: DaemonSettings) -> (Arc<RepoState>, TempDir) {
     {
         let mut conn = repo_state.conn.lock().unwrap();
         let root_uuid =
-            db::find_tree_child(conn.as_sqlite().unwrap(), "mfr_path", None, "").unwrap().unwrap();
+            metafolder_daemon::store::Rows::child_by_bytes(&*conn, "mfr_path", None, b"")
+                .unwrap()
+                .unwrap();
         let mut w = Writer::begin(&mut conn, None).unwrap();
         w.set_field(root_uuid, "mf_watch", Value::Bool(true)).unwrap();
         w.commit().unwrap();

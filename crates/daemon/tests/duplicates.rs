@@ -9,9 +9,8 @@ use metafolder_core::metarecord::Value;
 use metafolder_daemon::duplicates::{self, ScanOptions, ScanResult, GROUP_SCHEMA};
 use metafolder_daemon::log::Writer;
 use metafolder_daemon::state::RepoState;
-use metafolder_daemon::store::Begin as _;
 use metafolder_daemon::tasks::Reporter;
-use metafolder_daemon::{db, orphans, reconcile, repo};
+use metafolder_daemon::{orphans, reconcile, repo};
 use uuid::Uuid;
 
 mod common;
@@ -25,7 +24,9 @@ fn setup(prefix: &str) -> (Arc<RepoState>, TempDir) {
     let repo_state = Arc::new(RepoState::from_opened(opened));
     let root_uuid = {
         let conn = repo_state.conn.lock().unwrap();
-        db::find_tree_child(conn.as_sqlite().unwrap(), "mfr_path", None, "").unwrap().unwrap()
+        metafolder_daemon::store::Rows::child_by_bytes(&*conn, "mfr_path", None, b"")
+            .unwrap()
+            .unwrap()
     };
     {
         let mut conn = repo_state.conn.lock().unwrap();
@@ -53,7 +54,7 @@ fn resolve(repo: &RepoState, path: &str) -> Uuid {
 
 fn field_value(repo: &RepoState, uuid: Uuid, name: &str) -> Option<Value> {
     let conn = repo.conn.lock().unwrap();
-    db::get_metarecord(conn.as_sqlite().unwrap(), uuid).unwrap().unwrap().get(name).cloned()
+    metafolder_daemon::store::Rows::metarecord(&*conn, uuid).unwrap().unwrap().get(name).cloned()
 }
 
 fn group_of(repo: &RepoState, uuid: Uuid) -> Option<Uuid> {
@@ -65,7 +66,7 @@ fn group_of(repo: &RepoState, uuid: Uuid) -> Option<Uuid> {
 
 fn revisions(repo: &RepoState) -> i64 {
     let conn = repo.conn.lock().unwrap();
-    conn.as_sqlite().unwrap().query_row("SELECT COUNT(*) FROM revision", [], |r| r.get(0)).unwrap()
+    metafolder_daemon::store::Log::counts(&*conn).unwrap().1
 }
 
 /// Reconciles so every file has a metarecord, then scans with the defaults.
@@ -312,7 +313,7 @@ fn a_group_that_lost_its_twin_is_removed() {
     assert_eq!(group_of(&repo, a), None, "the survivor's link is cleared");
     let conn = repo.conn.lock().unwrap();
     assert!(
-        db::get_metarecord(conn.as_sqlite().unwrap(), group).unwrap().is_none(),
+        metafolder_daemon::store::Rows::metarecord(&*conn, group).unwrap().is_none(),
         "the group is deleted"
     );
 }
@@ -453,7 +454,7 @@ fn a_group_left_with_one_member_is_dissolved_at_once() {
     assert_eq!(group_of(&repo, b), None);
     let conn = repo.conn.lock().unwrap();
     assert!(
-        db::get_metarecord(conn.as_sqlite().unwrap(), group).unwrap().is_none(),
+        metafolder_daemon::store::Rows::metarecord(&*conn, group).unwrap().is_none(),
         "the group is deleted"
     );
 }

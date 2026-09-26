@@ -10,7 +10,6 @@ use axum::Router;
 use http_body_util::BodyExt;
 use metafolder_daemon::routes;
 use metafolder_daemon::state::AppState;
-use metafolder_daemon::store::Begin as _;
 use serde_json::{json, Value};
 use tower::util::ServiceExt;
 use uuid::Uuid;
@@ -319,7 +318,7 @@ async fn test_inverse_step_exposes_the_pre_revision_version() {
     // Tracking is opt-in: watch the root so the events are eligible.
     let root_uuid = {
         let conn = repo_state.conn.lock().unwrap();
-        metafolder_daemon::db::find_tree_child(conn.as_sqlite().unwrap(), "mfr_path", None, "")
+        metafolder_daemon::store::Rows::child_by_bytes(&*conn, "mfr_path", None, b"")
             .unwrap()
             .unwrap()
     };
@@ -343,9 +342,7 @@ async fn test_inverse_step_exposes_the_pre_revision_version() {
     let uuid = file_uuid.as_simple().to_string();
     let before = {
         let conn = repo_state.conn.lock().unwrap();
-        metafolder_daemon::db::get_version(conn.as_sqlite().unwrap(), file_uuid)
-            .unwrap()
-            .expect("version")
+        metafolder_daemon::store::Rows::version(&*conn, file_uuid).unwrap().expect("version")
     };
 
     std::fs::remove_file(root.join("doc.txt")).unwrap();

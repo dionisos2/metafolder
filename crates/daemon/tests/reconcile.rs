@@ -5,13 +5,11 @@ use std::path::Path;
 use std::sync::Arc;
 
 use metafolder_core::metarecord::Value;
-use metafolder_daemon::db;
 use metafolder_daemon::fingerprint;
 use metafolder_daemon::log::Writer;
 use metafolder_daemon::reconcile::{self, ReconcileResult};
 use metafolder_daemon::repo;
 use metafolder_daemon::state::RepoState;
-use metafolder_daemon::store::Begin as _;
 use uuid::Uuid;
 
 mod common;
@@ -27,7 +25,9 @@ fn setup(prefix: &str) -> (Arc<RepoState>, TempDir) {
     let repo_state = Arc::new(RepoState::from_opened(opened));
     let root_uuid = {
         let conn = repo_state.conn.lock().unwrap();
-        db::find_tree_child(conn.as_sqlite().unwrap(), "mfr_path", None, "").unwrap().unwrap()
+        metafolder_daemon::store::Rows::child_by_bytes(&*conn, "mfr_path", None, b"")
+            .unwrap()
+            .unwrap()
     };
     {
         let mut conn = repo_state.conn.lock().unwrap();
@@ -70,7 +70,7 @@ fn resolve(repo: &RepoState, path: &str) -> Option<Uuid> {
 
 fn field_value(repo: &RepoState, uuid: Uuid, name: &str) -> Option<Value> {
     let conn = repo.conn.lock().unwrap();
-    db::get_metarecord(conn.as_sqlite().unwrap(), uuid).unwrap().unwrap().get(name).cloned()
+    metafolder_daemon::store::Rows::metarecord(&*conn, uuid).unwrap().unwrap().get(name).cloned()
 }
 
 fn set_field(repo: &RepoState, uuid: Uuid, name: &str, value: Value) {
@@ -287,7 +287,9 @@ fn test_reconcile_skips_internal_even_when_metafolder_is_tracked() {
     // again, isolating the internal/ (absolute-path) exclusion under test.
     let root_uuid = {
         let conn = repo.conn.lock().unwrap();
-        db::find_tree_child(conn.as_sqlite().unwrap(), "mfr_path", None, "").unwrap().unwrap()
+        metafolder_daemon::store::Rows::child_by_bytes(&*conn, "mfr_path", None, b"")
+            .unwrap()
+            .unwrap()
     };
     set_field(&repo, root_uuid, "mf_ignore", Value::String("^$".into()));
 
@@ -436,7 +438,7 @@ const PNG_MAGIC: &[u8] = &[0x89, b'P', b'N', b'G', 0x0d, 0x0a, 0x1a, 0x0a, 0, 0,
 
 fn op_count(repo: &RepoState) -> i64 {
     let conn = repo.conn.lock().unwrap();
-    conn.as_sqlite().unwrap().query_row("SELECT COUNT(*) FROM operation", [], |r| r.get(0)).unwrap()
+    metafolder_daemon::store::Log::counts(&*conn).unwrap().0
 }
 
 #[test]
@@ -494,13 +496,11 @@ fn test_reconcile_folds_mime_into_creation() {
     // operation, its own creation.
     let ops: Vec<String> = {
         let conn = repo.conn.lock().unwrap();
-        let mut stmt = conn
-            .as_sqlite()
+        metafolder_daemon::store::Log::entity_ops_after(&*conn, pic, 0)
             .unwrap()
-            .prepare("SELECT op_type FROM operation WHERE entity_uuid = ?1 ORDER BY id")
-            .unwrap();
-        let rows = stmt.query_map([db::uuid_to_bytes(pic)], |r| r.get::<_, String>(0)).unwrap();
-        rows.map(|r| r.unwrap()).collect()
+            .into_iter()
+            .map(|op| op.op_type)
+            .collect()
     };
     assert_eq!(
         ops,
@@ -664,7 +664,7 @@ fn metadata_extraction_is_idempotent() {
     let uuid = resolve(&repo, "/song.flac").unwrap();
     let version_after_first = {
         let conn = repo.conn.lock().unwrap();
-        db::get_version(conn.as_sqlite().unwrap(), uuid).unwrap()
+        metafolder_daemon::store::Rows::version(&*conn, uuid).unwrap()
     };
 
     // A second metadata reconcile must not re-parse (marker present) — the
@@ -672,7 +672,7 @@ fn metadata_extraction_is_idempotent() {
     reconcile::reconcile_full(&repo, None, false, true, false).unwrap();
     let version_after_second = {
         let conn = repo.conn.lock().unwrap();
-        db::get_version(conn.as_sqlite().unwrap(), uuid).unwrap()
+        metafolder_daemon::store::Rows::version(&*conn, uuid).unwrap()
     };
     assert_eq!(version_after_first, version_after_second);
 

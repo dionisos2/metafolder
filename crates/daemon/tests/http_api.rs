@@ -7,7 +7,6 @@ use axum::Router;
 use http_body_util::BodyExt;
 use metafolder_daemon::routes;
 use metafolder_daemon::state::AppState;
-use metafolder_daemon::store::Begin as _;
 use serde_json::{json, Value};
 use tower::util::ServiceExt;
 use uuid::Uuid;
@@ -400,8 +399,6 @@ async fn test_the_repository_root_metarecord_cannot_be_deleted() {
 // the catalog served from memory, leaving the index at the current HEAD.
 #[tokio::test]
 async fn list_fields_refreshes_warm_index_after_write() {
-    use metafolder_daemon::db;
-
     let state = std::sync::Arc::new(AppState::new());
     let app = routes::build(state.clone());
     let root = temp_dir("fields_refresh");
@@ -448,7 +445,7 @@ async fn list_fields_refreshes_warm_index_after_write() {
     let repo_state = state.repo(repo_uuid).unwrap();
     let head = {
         let conn = repo_state.conn.lock().unwrap();
-        db::current_head(conn.as_sqlite().unwrap()).unwrap()
+        metafolder_daemon::store::Log::head(&*conn).unwrap()
     };
     let built = repo_state.index.lock().unwrap().as_ref().and_then(|i| i.built_at_head());
     assert_eq!(
@@ -1536,8 +1533,6 @@ async fn list_fields_answers_while_a_writer_holds_the_connection() {
 // never gets the chance to accumulate.
 #[tokio::test]
 async fn a_write_leaves_the_query_index_at_head() {
-    use metafolder_daemon::db;
-
     let state = std::sync::Arc::new(AppState::new());
     let app = routes::build(state.clone());
     let root = temp_dir("index_settles_on_write");
@@ -1567,7 +1562,7 @@ async fn a_write_leaves_the_query_index_at_head() {
     let repo_state = state.repo(repo_uuid).unwrap();
     let head = {
         let conn = repo_state.conn.lock().unwrap();
-        db::current_head(conn.as_sqlite().unwrap()).unwrap()
+        metafolder_daemon::store::Log::head(&*conn).unwrap()
     };
     let built = repo_state.index.lock().unwrap().as_ref().and_then(|i| i.built_at_head());
     assert_eq!(built, head, "the commit must leave the index at HEAD, not the next reader");

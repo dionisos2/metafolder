@@ -10,8 +10,7 @@ use metafolder_core::metarecord::Value;
 use metafolder_daemon::log::Writer;
 use metafolder_daemon::orphans::{self, OrphanEntry};
 use metafolder_daemon::state::RepoState;
-use metafolder_daemon::store::Begin as _;
-use metafolder_daemon::{db, reconcile, repo};
+use metafolder_daemon::{reconcile, repo};
 use uuid::Uuid;
 
 mod common;
@@ -29,7 +28,9 @@ fn setup(prefix: &str) -> (Arc<RepoState>, TempDir) {
     let repo_state = Arc::new(RepoState::from_opened(opened));
     let root_uuid = {
         let conn = repo_state.conn.lock().unwrap();
-        db::find_tree_child(conn.as_sqlite().unwrap(), "mfr_path", None, "").unwrap().unwrap()
+        metafolder_daemon::store::Rows::child_by_bytes(&*conn, "mfr_path", None, b"")
+            .unwrap()
+            .unwrap()
     };
     {
         let mut conn = repo_state.conn.lock().unwrap();
@@ -57,7 +58,7 @@ fn resolve(repo: &RepoState, path: &str) -> Option<Uuid> {
 
 fn field_value(repo: &RepoState, uuid: Uuid, name: &str) -> Option<Value> {
     let conn = repo.conn.lock().unwrap();
-    db::get_metarecord(conn.as_sqlite().unwrap(), uuid).unwrap().unwrap().get(name).cloned()
+    metafolder_daemon::store::Rows::metarecord(&*conn, uuid).unwrap().unwrap().get(name).cloned()
 }
 
 fn scan_uuids(repo: &RepoState) -> Vec<Uuid> {
@@ -298,12 +299,15 @@ fn test_relink_re_homes_an_orphan_onto_its_reappeared_file() {
     );
     let conn = repo.conn.lock().unwrap();
     assert_eq!(
-        db::get_metarecord(conn.as_sqlite().unwrap(), original).unwrap().unwrap().get("rating"),
+        metafolder_daemon::store::Rows::metarecord(&*conn, original)
+            .unwrap()
+            .unwrap()
+            .get("rating"),
         Some(&Value::Int(5)),
         "the metadata came back with it"
     );
     assert!(
-        db::get_metarecord(conn.as_sqlite().unwrap(), fresh).unwrap().is_none(),
+        metafolder_daemon::store::Rows::metarecord(&*conn, fresh).unwrap().is_none(),
         "the freshly tracked duplicate is gone"
     );
 }
@@ -336,7 +340,7 @@ fn test_relink_refuses_to_absorb_an_annotated_metarecord() {
     assert_eq!(path_of(&repo, "/renamed.mp3"), Some(fresh), "it kept its position");
     let conn = repo.conn.lock().unwrap();
     assert!(
-        db::get_metarecord(conn.as_sqlite().unwrap(), fresh).unwrap().is_some(),
+        metafolder_daemon::store::Rows::metarecord(&*conn, fresh).unwrap().is_some(),
         "and it still exists"
     );
 }
@@ -347,8 +351,12 @@ fn test_relink_refuses_to_absorb_an_annotated_metarecord() {
 /// marker would return.
 fn marked(repo: &RepoState) -> Vec<Uuid> {
     let conn = repo.conn.lock().unwrap();
-    let mut uuids =
-        db::metarecords_with_true_flag(conn.as_sqlite().unwrap(), orphans::ORPHAN_FIELD).unwrap();
+    let mut uuids = metafolder_daemon::store::Questions::holding(
+        &*conn,
+        orphans::ORPHAN_FIELD,
+        &Value::Bool(true),
+    )
+    .unwrap();
     uuids.sort();
     uuids
 }
@@ -419,5 +427,5 @@ fn test_mark_is_idempotent_and_takes_the_marker_back() {
 
 fn record_version(repo: &RepoState, uuid: Uuid) -> u64 {
     let conn = repo.conn.lock().unwrap();
-    db::get_metarecord(conn.as_sqlite().unwrap(), uuid).unwrap().unwrap().version
+    metafolder_daemon::store::Rows::metarecord(&*conn, uuid).unwrap().unwrap().version
 }

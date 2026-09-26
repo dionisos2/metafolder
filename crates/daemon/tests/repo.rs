@@ -1,7 +1,7 @@
 //! Integration tests for repository initialisation and loading.
 
 use metafolder_core::metarecord::Value;
-use metafolder_daemon::config::RepoConfig;
+use metafolder_daemon::config::{RepoConfig, Storage};
 use metafolder_daemon::db;
 use metafolder_daemon::repo::{self, RepoLocator};
 use metafolder_daemon::state::AppState;
@@ -13,6 +13,17 @@ use common::TempDir;
 
 fn temp_dir(prefix: &str) -> TempDir {
     TempDir::new(&format!("metafolder_{prefix}"))
+}
+
+/// A repository on SQLite whatever `METAFOLDER_DEFAULT_STORAGE` says: for the
+/// tests about SQLite's own layout (its file, its tables, its migrations).
+fn init_sqlite(
+    root: &std::path::Path,
+    metafolder: Option<&std::path::Path>,
+    name: Option<&str>,
+    system: bool,
+) -> anyhow::Result<repo::OpenedRepo> {
+    repo::init_repository_with(root, metafolder, name, system, Storage::Sqlite)
 }
 
 #[test]
@@ -49,7 +60,7 @@ fn test_init_without_seed_has_no_schema() {
 #[test]
 fn test_init_creates_structure_and_root_metarecord() {
     let root = temp_dir("init");
-    let opened = repo::init_repository(&root, None, None, false).unwrap();
+    let opened = init_sqlite(&root, None, None, false).unwrap();
 
     assert!(root.join(".metafolder/config.json").exists());
     assert!(root.join(".metafolder/internal/db.sqlite").exists());
@@ -117,7 +128,11 @@ fn test_init_with_external_metafolder() {
 
     let opened = repo::init_repository(&root, Some(&meta), None, false).unwrap();
     assert!(meta.join("config.json").exists());
-    assert!(meta.join("internal/db.sqlite").exists());
+    let store = match opened.config.storage {
+        Storage::Sqlite => "internal/db.sqlite",
+        Storage::Kv => "internal/kv",
+    };
+    assert!(meta.join(store).exists(), "{store}");
     assert!(!root.join(".metafolder").exists());
     assert_eq!(opened.config.root, root.canonicalize().unwrap());
     drop(opened);
@@ -146,7 +161,7 @@ fn test_load_standard_form_restores_uuid() {
 #[test]
 fn test_load_migrates_legacy_db_layout() {
     let root = temp_dir("migrate");
-    let created = repo::init_repository(&root, None, None, false).unwrap();
+    let created = init_sqlite(&root, None, None, false).unwrap();
     let uuid = created.config.repo_uuid;
     drop(created);
 
@@ -177,7 +192,7 @@ fn test_load_migrates_legacy_db_layout() {
 #[test]
 fn test_load_migrates_legacy_table_names() {
     let root = temp_dir("sql_migrate");
-    let created = repo::init_repository(&root, None, None, false).unwrap();
+    let created = init_sqlite(&root, None, None, false).unwrap();
     let uuid = created.config.repo_uuid;
     drop(created);
 
@@ -230,7 +245,7 @@ fn test_load_migrates_legacy_table_names() {
 #[test]
 fn test_load_migrates_record_era_table_names() {
     let root = temp_dir("sql_migrate_rec");
-    let created = repo::init_repository(&root, None, None, false).unwrap();
+    let created = init_sqlite(&root, None, None, false).unwrap();
     let uuid = created.config.repo_uuid;
     drop(created);
 
@@ -278,7 +293,7 @@ fn test_load_fails_when_no_repository() {
 #[test]
 fn test_exclusive_lock_blocks_second_connection() {
     let root = temp_dir("lock");
-    let opened = repo::init_repository(&root, None, None, false).unwrap();
+    let opened = init_sqlite(&root, None, None, false).unwrap();
 
     // The first connection holds an EXCLUSIVE lock (it has already written);
     // a second connection must not be able to read or write.
@@ -380,7 +395,6 @@ fn test_unload_refused_during_rollback_navigation() {
 /// after a reload — the root metarecord and a write included.
 #[test]
 fn a_repository_on_the_kv_backend_reloads_its_data() {
-    use metafolder_daemon::config::Storage;
     use metafolder_daemon::log::Writer;
     use metafolder_daemon::store::Rows;
 
@@ -413,7 +427,6 @@ fn a_repository_on_the_kv_backend_reloads_its_data() {
 /// A config written before the field existed is a SQLite repository.
 #[test]
 fn a_config_without_a_storage_field_is_sqlite() {
-    use metafolder_daemon::config::Storage;
     let root = temp_dir("storage_default");
     let opened =
         repo::init_repository_with(root.path(), None, None, false, Storage::Sqlite).unwrap();
@@ -422,4 +435,16 @@ fn a_config_without_a_storage_field_is_sqlite() {
     let raw = std::fs::read_to_string(meta.join("config.json")).unwrap();
     assert!(!raw.contains("\"storage\":"), "the default is not written: {raw}");
     assert_eq!(RepoConfig::read(&meta).unwrap().storage, Storage::Sqlite);
+}
+
+/// The KV store's "one daemon per repository": a second load of a repository
+/// that is open fails instead of sharing it.
+#[test]
+fn a_kv_repository_cannot_be_opened_twice() {
+    let root = temp_dir("kv_lock");
+    let opened = repo::init_repository_with(root.path(), None, None, false, Storage::Kv).unwrap();
+    let second = repo::load_repository(RepoLocator::Root(root.path().to_path_buf()));
+    assert!(second.is_err(), "a second opening must be refused");
+    drop(opened);
+    assert!(repo::load_repository(RepoLocator::Root(root.path().to_path_buf())).is_ok());
 }

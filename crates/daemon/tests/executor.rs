@@ -5,12 +5,10 @@ use std::path::Path;
 use std::sync::Arc;
 
 use metafolder_core::metarecord::{Field, Value};
-use metafolder_daemon::db;
 use metafolder_daemon::executor::{self, FsEvent};
 use metafolder_daemon::log::{self, Writer};
 use metafolder_daemon::repo;
 use metafolder_daemon::state::RepoState;
-use metafolder_daemon::store::Begin as _;
 use metafolder_daemon::tasks::{TaskKind, TaskStatus};
 use uuid::Uuid;
 
@@ -26,7 +24,9 @@ fn setup(prefix: &str) -> (Arc<RepoState>, TempDir, Uuid) {
 
     let root_uuid = {
         let conn = repo_state.conn.lock().unwrap();
-        db::find_tree_child(conn.as_sqlite().unwrap(), "mfr_path", None, "").unwrap().unwrap()
+        metafolder_daemon::store::Rows::child_by_bytes(&*conn, "mfr_path", None, b"")
+            .unwrap()
+            .unwrap()
     };
     {
         let mut conn = repo_state.conn.lock().unwrap();
@@ -65,12 +65,33 @@ fn resolve(repo: &RepoState, path: &str) -> Option<Uuid> {
 
 fn field_value(repo: &RepoState, uuid: Uuid, name: &str) -> Option<Value> {
     let conn = repo.conn.lock().unwrap();
-    db::get_metarecord(conn.as_sqlite().unwrap(), uuid).unwrap().unwrap().get(name).cloned()
+    metafolder_daemon::store::Rows::metarecord(&*conn, uuid).unwrap().unwrap().get(name).cloned()
 }
 
-fn count(repo: &RepoState, sql: &str) -> i64 {
+/// How many operations the log holds, of `op_type` when given.
+fn op_count(repo: &RepoState, op_type: Option<&str>) -> i64 {
     let conn = repo.conn.lock().unwrap();
-    conn.as_sqlite().unwrap().query_row(sql, [], |r| r.get(0)).unwrap()
+    match op_type {
+        None => metafolder_daemon::store::Log::counts(&*conn).unwrap().0,
+        Some(t) => metafolder_daemon::store::Log::all_ops(&*conn)
+            .unwrap()
+            .iter()
+            .filter(|op| op.op_type == t)
+            .count() as i64,
+    }
+}
+
+/// How many revisions the log holds.
+fn revision_count(repo: &RepoState) -> i64 {
+    metafolder_daemon::store::Log::counts(&*repo.conn.lock().unwrap()).unwrap().1
+}
+
+/// The newest revision (the one HEAD's operation belongs to) and its origin.
+fn newest_revision(store: &dyn metafolder_daemon::store::Store) -> (i64, Option<String>) {
+    let head = store.head().unwrap().unwrap();
+    let rev_id = store.op(head).unwrap().unwrap().rev_id;
+    let origin = store.revisions(&[rev_id]).unwrap().remove(&rev_id).unwrap().origin;
+    (rev_id, origin)
 }
 
 // ── Create ────────────────────────────────────────────────────────────────────
@@ -359,7 +380,7 @@ fn test_rename_updates_tree_ref_and_children_follow() {
         Some(Value::TreeRef { parent: Some(root_uuid), name: "new".into() })
     );
     // One file_moved operation was logged.
-    assert_eq!(count(&repo, "SELECT COUNT(*) FROM operation WHERE op_type = 'file_moved'"), 1);
+    assert_eq!(op_count(&repo, Some("file_moved")), 1);
     // A plain move must NOT touch mfr_path_old: it is captured only on the
     // transition to Nothing (orphaning), not on every rename.
     assert_eq!(field_value(&repo, dir, "mfr_path_old"), None);
@@ -399,8 +420,8 @@ fn test_split_rename_with_cookie_is_one_move_not_delete_plus_arrival() {
         Some(Value::TreeRef { parent: Some(root_uuid), name: "new".into() })
     );
     // One file_moved op, and crucially no delete (no Nothing was written).
-    assert_eq!(count(&repo, "SELECT COUNT(*) FROM operation WHERE op_type = 'file_moved'"), 1);
-    assert_eq!(count(&repo, "SELECT COUNT(*) FROM operation WHERE op_type = 'file_deleted'"), 0);
+    assert_eq!(op_count(&repo, Some("file_moved")), 1);
+    assert_eq!(op_count(&repo, Some("file_deleted")), 0);
 
     std::fs::remove_dir_all(root).unwrap();
 }
@@ -592,7 +613,7 @@ fn test_an_echo_on_an_unchanged_file_keeps_the_hash_cache_and_the_group() {
         w.commit().unwrap();
         group
     };
-    let revisions_before = count(&repo, "SELECT COUNT(*) FROM revision");
+    let revisions_before = revision_count(&repo);
 
     // The file is untouched: same bytes, same mtime.
     enqueue(
@@ -611,11 +632,7 @@ fn test_an_echo_on_an_unchanged_file_keeps_the_hash_cache_and_the_group() {
         Some(Value::Ref(group)),
         "nor the duplicate group it justified"
     );
-    assert_eq!(
-        count(&repo, "SELECT COUNT(*) FROM revision"),
-        revisions_before,
-        "and must write no revision at all"
-    );
+    assert_eq!(revision_count(&repo), revisions_before, "and must write no revision at all");
 
     std::fs::remove_dir_all(root).unwrap();
 }
@@ -707,7 +724,7 @@ fn test_removing_a_member_dissolves_a_pair_and_updates_a_bigger_group() {
     {
         let conn = repo.conn.lock().unwrap();
         assert!(
-            db::get_metarecord(conn.as_sqlite().unwrap(), group).unwrap().is_none(),
+            metafolder_daemon::store::Rows::metarecord(&*conn, group).unwrap().is_none(),
             "the group is deleted"
         );
     }
@@ -722,15 +739,11 @@ fn test_removing_a_member_dissolves_a_pair_and_updates_a_bigger_group() {
 fn test_compaction_create_then_remove_writes_nothing() {
     let (repo, root, _) = setup("compact1");
     enqueue(&repo, &[FsEvent::Create("/ghost.txt".into()), FsEvent::Remove("/ghost.txt".into())]);
-    let revisions_before = count(&repo, "SELECT COUNT(*) FROM revision");
+    let revisions_before = revision_count(&repo);
     executor::flush_pending(&repo).unwrap();
 
     assert!(resolve(&repo, "/ghost.txt").is_none());
-    assert_eq!(
-        count(&repo, "SELECT COUNT(*) FROM revision"),
-        revisions_before,
-        "no revision for a fully-compacted buffer"
-    );
+    assert_eq!(revision_count(&repo), revisions_before, "no revision for a fully-compacted buffer");
     std::fs::remove_dir_all(root).unwrap();
 }
 
@@ -749,7 +762,7 @@ fn test_compaction_create_then_rename_creates_at_destination() {
 
     assert!(resolve(&repo, "/final.txt").is_some());
     assert!(resolve(&repo, "/initial.txt").is_none());
-    assert_eq!(count(&repo, "SELECT COUNT(*) FROM operation WHERE op_type = 'file_moved'"), 0);
+    assert_eq!(op_count(&repo, Some("file_moved")), 0);
     std::fs::remove_dir_all(root).unwrap();
 }
 
@@ -768,9 +781,9 @@ fn test_compaction_collapses_repeated_modify() {
             FsEvent::ModifyData("/m.txt".into()),
         ],
     );
-    let ops_before = count(&repo, "SELECT COUNT(*) FROM operation");
+    let ops_before = op_count(&repo, None);
     executor::flush_pending(&repo).unwrap();
-    let ops_after = count(&repo, "SELECT COUNT(*) FROM operation");
+    let ops_after = op_count(&repo, None);
 
     // One compacted modify: refresh ops for size/mtime only (the entry has
     // no hash rows to clear), far fewer than three full refreshes.
@@ -833,19 +846,19 @@ fn test_groups_become_separate_revisions() {
             FsEvent::Create("/n2.txt".into()),
         ],
     );
-    let revisions_before = count(&repo, "SELECT COUNT(*) FROM revision");
+    let revisions_before = revision_count(&repo);
     executor::flush_pending(&repo).unwrap();
-    assert_eq!(
-        count(&repo, "SELECT COUNT(*) FROM revision") - revisions_before,
-        2,
-        "one revision per op_type group"
-    );
+    assert_eq!(revision_count(&repo) - revisions_before, 2, "one revision per op_type group");
     // Both creates share one revision.
-    let create_revs: i64 = count(
-        &repo,
-        "SELECT COUNT(DISTINCT rev_id) FROM operation
-         WHERE op_type = 'create_metarecord' AND field_name IS NULL",
-    );
+    let create_revs = {
+        let conn = repo.conn.lock().unwrap();
+        let ops = metafolder_daemon::store::Log::all_ops(&*conn).unwrap();
+        ops.iter()
+            .filter(|op| op.op_type == "create_metarecord" && op.field_name.is_none())
+            .map(|op| op.rev_id)
+            .collect::<std::collections::HashSet<_>>()
+            .len()
+    };
     assert!(create_revs >= 1);
 
     std::fs::remove_dir_all(root).unwrap();
@@ -857,8 +870,8 @@ fn test_groups_become_separate_revisions() {
 /// last operation.
 fn undo_last_target(repo: &RepoState) -> Option<i64> {
     let conn = repo.conn.lock().unwrap();
-    let head = log::get_head(conn.as_sqlite().unwrap()).unwrap().unwrap();
-    log::get_op(conn.as_sqlite().unwrap(), head).unwrap().unwrap().parent_id
+    let head = metafolder_daemon::store::Log::head(&*conn).unwrap().unwrap();
+    metafolder_daemon::store::Log::op(&*conn, head).unwrap().unwrap().parent_id
 }
 
 #[test]
@@ -942,7 +955,7 @@ fn test_modify_data_on_unchanged_file_is_idempotent() {
     let uuid = resolve(&repo, "/a.txt").expect("file tracked after create");
     let v0 = {
         let conn = repo.conn.lock().unwrap();
-        db::get_version(conn.as_sqlite().unwrap(), uuid).unwrap()
+        metafolder_daemon::store::Rows::version(&*conn, uuid).unwrap()
     };
 
     // The file is untouched on disk; its stored stat already matches.
@@ -951,11 +964,11 @@ fn test_modify_data_on_unchanged_file_is_idempotent() {
 
     let v1 = {
         let conn = repo.conn.lock().unwrap();
-        db::get_version(conn.as_sqlite().unwrap(), uuid).unwrap()
+        metafolder_daemon::store::Rows::version(&*conn, uuid).unwrap()
     };
     assert_eq!(v0, v1, "an unchanged file must not bump the version");
     assert_eq!(
-        count(&repo, "SELECT COUNT(*) FROM operation WHERE op_type = 'file_modified'"),
+        op_count(&repo, Some("file_modified")),
         0,
         "no file_modified operation for an unchanged file"
     );
@@ -1111,7 +1124,9 @@ fn test_a_cascade_larger_than_the_limit_is_refused() {
     let repo_state = Arc::new(RepoState::from_opened_with(opened, &settings));
     let root_uuid = {
         let conn = repo_state.conn.lock().unwrap();
-        db::find_tree_child(conn.as_sqlite().unwrap(), "mfr_path", None, "").unwrap().unwrap()
+        metafolder_daemon::store::Rows::child_by_bytes(&*conn, "mfr_path", None, b"")
+            .unwrap()
+            .unwrap()
     };
     {
         let mut conn = repo_state.conn.lock().unwrap();
@@ -1435,22 +1450,12 @@ fn test_a_watcher_revision_records_its_origin() {
 
     let conn = repo.conn.lock().unwrap();
     // The revision holding the arrival — the newest one.
-    let (rev_id, origin): (i64, Option<String>) = conn
-        .as_sqlite()
+    let (rev_id, origin) = newest_revision(&*conn);
+    let types: Vec<String> = metafolder_daemon::store::Log::revision_ops(&*conn, rev_id)
         .unwrap()
-        .query_row("SELECT id, origin FROM revision ORDER BY id DESC LIMIT 1", [], |r| {
-            Ok((r.get(0)?, r.get(1)?))
-        })
-        .unwrap();
-    let types: Vec<String> = {
-        let mut stmt = conn
-            .as_sqlite()
-            .unwrap()
-            .prepare("SELECT op_type FROM operation WHERE rev_id = ?1")
-            .unwrap();
-        let rows = stmt.query_map([rev_id], |r| r.get(0)).unwrap();
-        rows.collect::<rusqlite::Result<_>>().unwrap()
-    };
+        .into_iter()
+        .map(|op| op.op_type)
+        .collect();
     assert!(
         types.iter().any(|t| t == "create_metarecord"),
         "an arrival is recorded as a creation: {types:?}"
@@ -1460,16 +1465,13 @@ fn test_a_watcher_revision_records_its_origin() {
     // A user's write leaves it unset.
     drop(conn);
     let mut conn = repo.conn.lock().unwrap();
-    let uuid =
-        db::find_tree_child(conn.as_sqlite().unwrap(), "mfr_path", None, "").unwrap().unwrap();
+    let uuid = metafolder_daemon::store::Rows::child_by_bytes(&*conn, "mfr_path", None, b"")
+        .unwrap()
+        .unwrap();
     let mut w = Writer::begin(&mut conn, None).unwrap();
     w.set_field(uuid, "rating", Value::Int(3)).unwrap();
     w.commit().unwrap();
-    let origin: Option<String> = conn
-        .as_sqlite()
-        .unwrap()
-        .query_row("SELECT origin FROM revision ORDER BY id DESC LIMIT 1", [], |r| r.get(0))
-        .unwrap();
+    let (_, origin) = newest_revision(&*conn);
     assert_eq!(origin, None, "an ordinary write is nobody's but the writer's");
 }
 
@@ -1489,7 +1491,7 @@ fn test_flush_leaves_the_query_index_at_head() {
 
     let head = {
         let conn = repo.conn.lock().unwrap();
-        db::current_head(conn.as_sqlite().unwrap()).unwrap()
+        metafolder_daemon::store::Log::head(&*conn).unwrap()
     };
     let built = repo.index.lock().unwrap().as_ref().and_then(|i| i.built_at_head());
     assert_eq!(built, head, "the flush must leave the index at HEAD, not the next reader");
