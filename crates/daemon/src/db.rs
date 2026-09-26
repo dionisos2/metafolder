@@ -312,23 +312,6 @@ pub fn dedup_field_rows(conn: &Connection) -> Result<()> {
     mark_migration_done(conn, DEDUP_MIGRATION)
 }
 
-/// The id of the row of `(metarecord, name)` that already holds `value`, if any
-/// — the probe behind spec-data-model "No duplicate rows". Reads the name's
-/// rows (an index seek on `idx_field_metarecord`) and compares in Rust, so
-/// "same value" is exactly `Value`'s own equality rather than a per-column
-/// SQL transcription of it.
-pub(crate) fn duplicate_row_id(
-    conn: &Connection,
-    uuid: Uuid,
-    name: &str,
-    value: &Value,
-) -> Result<Option<i64>> {
-    Ok(get_field_rows_named(conn, uuid, name)?
-        .into_iter()
-        .find(|r| &r.value == value)
-        .map(|r| r.id))
-}
-
 /// Renames the two `mf order` position fields to their current names —
 /// `order_position_file`/`order_position_dir` became `order_file`/`order_dir`
 /// (spec-file-tracking "mf order"), keeping the `order_` prefix that groups them

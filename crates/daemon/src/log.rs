@@ -15,6 +15,7 @@ use metafolder_core::metarecord::{Field, FieldType, MetaRecord, Value};
 
 use crate::db::{self, FieldRow};
 use crate::error::DomainError;
+use crate::store::{Begin, NewOp, Store, WriteTxn};
 use crate::version;
 
 /// The `revision.origin` of a revision the daemon writes on the filesystem's
@@ -1163,39 +1164,6 @@ fn compact_best_effort(conn: &rusqlite::Connection) -> bool {
 
 /// Multi-row INSERT in chunks. `insert_sql` is the statement up to (and
 /// excluding) the VALUES clause; every row must have `row_width` parameters.
-fn bulk_insert(
-    tx: &Transaction<'_>,
-    insert_sql: &str,
-    row_width: usize,
-    rows: &[Vec<rusqlite::types::Value>],
-) -> Result<()> {
-    // Stay well under SQLITE_MAX_VARIABLE_NUMBER (32766 for bundled SQLite).
-    const MAX_PARAMS: usize = 16_000;
-    let rows_per_chunk = (MAX_PARAMS / row_width).max(1);
-    let row_placeholder = format!("({})", vec!["?"; row_width].join(", "));
-    for chunk in rows.chunks(rows_per_chunk) {
-        let placeholders = vec![row_placeholder.as_str(); chunk.len()].join(", ");
-        let sql = format!("{insert_sql} VALUES {placeholders}");
-        tx.execute(&sql, rusqlite::params_from_iter(chunk.iter().flatten()))?;
-    }
-    Ok(())
-}
-
-/// One buffered operation, written to `operation`/`op_snapshot` in bulk
-/// (spec-event-log "Normal write flow": for batch operations all operation
-/// rows are inserted together after computing the parent chain).
-struct PendingOp {
-    op_type: OpType,
-    entity: Uuid,
-    field_name: Option<String>,
-    version_before: Option<u64>,
-    version_after: Option<u64>,
-    before: Vec<FieldRow>,
-    after: Vec<FieldRow>,
-    /// The operation this one undoes, when the writer is reverting.
-    reverts_op_id: Option<i64>,
-}
-
 /// Buffered operations are flushed to the database once this many accumulate,
 /// keeping the Writer's memory bounded on huge revisions (e.g. reconcile).
 pub const FLUSH_THRESHOLD: usize = 4096;
@@ -1431,7 +1399,7 @@ impl Retention {
 /// the operations older than the cutoff *plus their descendants*, and the
 /// cutoff is severed from its parent first so that the surviving history is not
 /// itself reachable from the set.
-fn trim(tx: &Transaction<'_>, retention: Retention, head: i64) -> Result<usize> {
+pub(crate) fn trim(tx: &Transaction<'_>, retention: Retention, head: i64) -> Result<usize> {
     if !retention.enabled() {
         return Ok(0);
     }
@@ -1545,14 +1513,14 @@ fn trim_at(tx: &Transaction<'_>, cutoff: i64, head: i64) -> Result<Option<usize>
 /// the same revision observe them); the log rows are buffered and inserted
 /// in bulk, in batches of [`FLUSH_THRESHOLD`] operations.
 pub struct Writer<'c> {
-    tx: Transaction<'c>,
+    tx: Box<dyn WriteTxn + 'c>,
     rev_id: i64,
     /// Parent of the next operation to flush: HEAD as of `begin`, then the
     /// last flushed operation.
     chain_head: Option<i64>,
     /// Number of operations already flushed to the database.
     flushed: i64,
-    pending: Vec<PendingOp>,
+    pending: Vec<NewOp>,
     /// Per-revision cache of each field name's established (non-`Nothing`) value
     /// type, populated lazily on the first checked write of a name. Collapses the
     /// per-write type probe to one DB seek per field name (a bulk reconcile/watcher
@@ -1597,14 +1565,9 @@ impl<'c> Writer<'c> {
         label: Option<String>,
         retention: Retention,
     ) -> Result<Self> {
-        let tx = conn.transaction()?;
-        let head: Option<i64> =
-            tx.query_row("SELECT op_id FROM log_head WHERE singleton = 1", [], |r| r.get(0))?;
-        tx.execute(
-            "INSERT INTO revision (timestamp, label) VALUES (?1, ?2)",
-            params![now_ms(), label],
-        )?;
-        let rev_id = tx.last_insert_rowid();
+        let tx = conn.begin_write()?;
+        let head = tx.head()?;
+        let rev_id = tx.begin_revision(label.as_deref(), now_ms())?;
         Ok(Self {
             tx,
             rev_id,
@@ -1634,17 +1597,19 @@ impl<'c> Writer<'c> {
     /// arriving is recorded as a `create_metarecord`, indistinguishable by type
     /// from a metarecord the user created.
     pub fn set_origin(&mut self, origin: &str) -> Result<()> {
-        self.tx.execute(
-            "UPDATE revision SET origin = ?1 WHERE id = ?2",
-            params![origin, self.rev_id],
-        )?;
-        Ok(())
+        self.tx.set_revision_origin(self.rev_id, origin)
     }
 
-    /// Read access to the underlying transaction, for lookups (tree cache,
-    /// eligibility) that must observe the writes already applied.
+    /// Read access to the transaction, for lookups that must observe the
+    /// writes already applied.
+    pub fn store(&self) -> &dyn Store {
+        &*self.tx
+    }
+
+    /// The SQLite connection underneath — transitional, for the lookups that
+    /// have not moved onto [`Self::store`] yet (tree cache, eligibility).
     pub fn connection(&self) -> &rusqlite::Connection {
-        &self.tx
+        self.tx.as_sqlite().expect("a SQLite write transaction")
     }
 
     /// Number of operations recorded so far in this revision.
@@ -1737,7 +1702,7 @@ impl<'c> Writer<'c> {
     fn check_deferred_types(&self) -> Result<()> {
         let Some(names) = &self.deferred_types else { return Ok(()) };
         for name in names {
-            let types = db::distinct_value_types(&self.tx, name)?;
+            let types = self.tx.value_types(name)?;
             if types.len() > 1 {
                 return Err(DomainError::BadRequest(format!(
                     "field '{name}' would be left with more than one value type ({}); \
@@ -1754,11 +1719,12 @@ impl<'c> Writer<'c> {
         for (field_name, uuid) in &self.tree_lost {
             // Cheapest question first, and the one that is almost always "none":
             // a cell nobody is placed under has nothing to keep.
-            let children = db::tree_children(&self.tx, field_name, *uuid)?;
+            let children = self.tx.children(field_name, *uuid)?;
             if children.is_empty() {
                 continue;
             }
-            if db::tree_position(&self.tx, field_name, *uuid)?.is_some() {
+            let placed = self.tx.rows_named(*uuid, field_name)?;
+            if placed.iter().any(|r| matches!(r.value, Value::TreeRef { .. })) {
                 continue;
             }
             let mut named: Vec<String> =
@@ -1781,14 +1747,12 @@ impl<'c> Writer<'c> {
     /// Set-field shaped (before = all rows, after = none) so the standard
     /// `set_field` inverse applies. Used to invalidate `mfr_*` hashes.
     pub fn clear_field_as(&mut self, op_type: OpType, uuid: Uuid, name: &str) -> Result<()> {
-        let before = db::get_field_rows_named(&self.tx, uuid, name)?;
+        let before = self.tx.rows_named(uuid, name)?;
         if before.is_empty() {
             return Ok(());
         }
         let version_before = self.current_version(uuid)?;
-        self.tx
-            .prepare_cached("DELETE FROM field WHERE metarecord_uuid = ?1 AND field_name = ?2")?
-            .execute(params![db::uuid_to_bytes(uuid), name])?;
+        self.tx.delete_rows(uuid, Some(name))?;
         self.log_op(op_type, uuid, Some(name), Some(version_before), before, vec![])?;
         self.field_types.remove(name); // rows removed: the type may have unlocked
         Ok(())
@@ -1816,9 +1780,7 @@ impl<'c> Writer<'c> {
         // Seeded with the metarecord's own term; `log_op` then adds the terms
         // of the rows created below, so a fresh record's version describes its
         // initial fields like any other (spec-data-model "Version").
-        self.tx
-            .prepare_cached("INSERT INTO metarecord (uuid, version) VALUES (?1, ?2)")?
-            .execute(params![db::uuid_to_bytes(uuid), version::base(uuid) as i64])?;
+        self.tx.create_metarecord(uuid, version::base(uuid))?;
 
         let mut after = Vec::with_capacity(fields.len());
         let mut out_fields = Vec::with_capacity(fields.len());
@@ -1826,7 +1788,7 @@ impl<'c> Writer<'c> {
             // Checked inside the loop so two rows of the same name with different
             // types within one create are rejected (the second sees the first).
             self.validate_value_type(&f.name, &f.value)?;
-            let id = db::insert_field_row(&self.tx, uuid, &f.name, &f.value, None)?;
+            let id = self.tx.insert_row(uuid, &f.name, &f.value, None)?;
             after.push(FieldRow { id, name: f.name.clone(), value: f.value.clone() });
             out_fields.push(Field { id: Some(id), ..f });
         }
@@ -1845,9 +1807,11 @@ impl<'c> Writer<'c> {
     /// Recovery for a root deleted before this check existed is a rollback or a
     /// revert of the deletion, which restore it at its own uuid.
     pub fn delete_metarecord(&mut self, uuid: Uuid) -> Result<()> {
-        let version = db::get_version(&self.tx, uuid)?
+        let version = self
+            .tx
+            .version(uuid)?
             .ok_or_else(|| DomainError::NotFound(format!("Metarecord not found: {uuid}")))?;
-        let before = db::get_field_rows(&self.tx, uuid)?;
+        let before = self.tx.rows(uuid)?;
         let is_repository_root = before.iter().any(|row| {
             row.name == "mfr_path"
                 && matches!(&row.value, Value::TreeRef { parent: None, name } if name.as_bytes().is_empty())
@@ -1858,8 +1822,7 @@ impl<'c> Writer<'c> {
             )
             .into());
         }
-        self.tx
-            .execute("DELETE FROM metarecord WHERE uuid = ?1", params![db::uuid_to_bytes(uuid)])?;
+        self.tx.remove_metarecord(uuid)?;
         self.log_op(OpType::DeleteRecord, uuid, None, Some(version), before, vec![])?;
         Ok(())
     }
@@ -1871,10 +1834,8 @@ impl<'c> Writer<'c> {
     pub fn set_record(&mut self, uuid: Uuid, fields: Vec<Field>) -> Result<MetaRecord> {
         let fields = collapse_duplicate_fields(fields); // spec-data-model "No duplicate rows"
         let version_before = self.current_version(uuid)?; // errors NotFound if absent
-        let before = db::get_field_rows(&self.tx, uuid)?;
-        self.tx
-            .prepare_cached("DELETE FROM field WHERE metarecord_uuid = ?1")?
-            .execute(params![db::uuid_to_bytes(uuid)])?;
+        let before = self.tx.rows(uuid)?;
+        self.tx.delete_rows(uuid, None)?;
         // The whole record's types are reset; drop cached locks so the new set
         // re-probes from a clean slate (validated against the post-delete state).
         for row in &before {
@@ -1885,7 +1846,7 @@ impl<'c> Writer<'c> {
         for f in fields {
             self.validate_tree_ref(uuid, &f.name, &f.value)?;
             self.validate_value_type(&f.name, &f.value)?;
-            let id = db::insert_field_row(&self.tx, uuid, &f.name, &f.value, None)?;
+            let id = self.tx.insert_row(uuid, &f.name, &f.value, None)?;
             after.push(FieldRow { id, name: f.name.clone(), value: f.value.clone() });
             out_fields.push(Field { id: Some(id), ..f });
         }
@@ -1910,12 +1871,10 @@ impl<'c> Writer<'c> {
         self.validate_tree_ref(uuid, name, &value)?;
         self.validate_value_type(name, &value)?;
         let version_before = self.current_version(uuid)?;
-        let before = db::get_field_rows_named(&self.tx, uuid, name)?;
-        self.tx
-            .prepare_cached("DELETE FROM field WHERE metarecord_uuid = ?1 AND field_name = ?2")?
-            .execute(params![db::uuid_to_bytes(uuid), name])?;
+        let before = self.tx.rows_named(uuid, name)?;
+        self.tx.delete_rows(uuid, Some(name))?;
         let cleared_to_nothing = matches!(value, Value::Nothing);
-        let id = db::insert_field_row(&self.tx, uuid, name, &value, None)?;
+        let id = self.tx.insert_row(uuid, name, &value, None)?;
         let after = vec![FieldRow { id, name: name.to_string(), value }];
         self.log_op(op_type, uuid, Some(name), Some(version_before), before, after)?;
         if cleared_to_nothing {
@@ -1955,14 +1914,12 @@ impl<'c> Writer<'c> {
         // occurrence so the returned ids still pair with `values`.
         let (kept, slot) = collapse_duplicates(&values);
         let version_before = self.current_version(uuid)?;
-        let before = db::get_field_rows_named(&self.tx, uuid, name)?;
-        self.tx
-            .prepare_cached("DELETE FROM field WHERE metarecord_uuid = ?1 AND field_name = ?2")?
-            .execute(params![db::uuid_to_bytes(uuid), name])?;
+        let before = self.tx.rows_named(uuid, name)?;
+        self.tx.delete_rows(uuid, Some(name))?;
         let cleared_to_nothing = values.iter().all(|v| matches!(v, Value::Nothing));
         let mut after = Vec::with_capacity(kept.len());
         for value in kept {
-            let id = db::insert_field_row(&self.tx, uuid, name, &value, None)?;
+            let id = self.tx.insert_row(uuid, name, &value, None)?;
             after.push(FieldRow { id, name: name.to_string(), value });
         }
         let ids = slot.iter().map(|&i| after[i].id).collect();
@@ -1982,11 +1939,12 @@ impl<'c> Writer<'c> {
     pub fn append_field(&mut self, uuid: Uuid, name: &str, value: Value) -> Result<Appended> {
         self.validate_tree_ref(uuid, name, &value)?;
         self.validate_value_type(name, &value)?;
-        if let Some(existing) = db::duplicate_row_id(&self.tx, uuid, name, &value)? {
+        let twin = self.tx.rows_named(uuid, name)?.into_iter().find(|r| r.value == value);
+        if let Some(existing) = twin.map(|r| r.id) {
             return Ok(Appended::AlreadyPresent(existing));
         }
         let version_before = self.current_version(uuid)?;
-        let id = db::insert_field_row(&self.tx, uuid, name, &value, None)?;
+        let id = self.tx.insert_row(uuid, name, &value, None)?;
         let after = vec![FieldRow { id, name: name.to_string(), value }];
         self.log_op(OpType::AppendField, uuid, Some(name), Some(version_before), vec![], after)?;
         Ok(Appended::Created(id))
@@ -2028,7 +1986,9 @@ impl<'c> Writer<'c> {
         name: &str,
         value: &Value,
     ) -> Result<Option<i64>> {
-        Ok(db::get_field_rows_named(&self.tx, uuid, name)?
+        Ok(self
+            .tx
+            .rows_named(uuid, name)?
             .into_iter()
             .find(|r| r.id != field_id && &r.value == value)
             .map(|r| r.id))
@@ -2065,7 +2025,7 @@ impl<'c> Writer<'c> {
     ) -> Result<()> {
         let field_id = old.id;
         let v1 = self.current_version(uuid)?;
-        self.tx.execute("DELETE FROM field WHERE id = ?1", params![field_id])?;
+        self.tx.delete_row(field_id)?;
         self.log_op(
             OpType::DeleteField,
             uuid,
@@ -2076,7 +2036,7 @@ impl<'c> Writer<'c> {
         )?;
 
         let v2 = self.current_version(uuid)?;
-        db::insert_field_row(&self.tx, uuid, new_name, &value, Some(field_id))?;
+        self.tx.insert_row(uuid, new_name, &value, Some(field_id))?;
         let after = vec![FieldRow { id: field_id, name: new_name.to_string(), value }];
         self.log_op(OpType::AppendField, uuid, Some(new_name), Some(v2), vec![], after)?;
         if new_name != old.name {
@@ -2103,8 +2063,8 @@ impl<'c> Writer<'c> {
         self.field_types.remove(name);
         let mut converted = 0usize;
         let mut fallback: std::collections::BTreeSet<Uuid> = Default::default();
-        for uuid in db::metarecords_with_field(&self.tx, name)? {
-            for row in db::get_field_rows_named(&self.tx, uuid, name)? {
+        for uuid in self.tx.holders(name)? {
+            for row in self.tx.rows_named(uuid, name)? {
                 if matches!(row.value, Value::Nothing) {
                     continue;
                 }
@@ -2148,7 +2108,7 @@ impl<'c> Writer<'c> {
     pub fn delete_field(&mut self, uuid: Uuid, field_id: i64) -> Result<()> {
         let old = self.get_owned_row(uuid, field_id)?;
         let version_before = self.current_version(uuid)?;
-        self.tx.execute("DELETE FROM field WHERE id = ?1", params![field_id])?;
+        self.tx.delete_row(field_id)?;
         self.log_op(
             OpType::DeleteField,
             uuid,
@@ -2171,7 +2131,7 @@ impl<'c> Writer<'c> {
         }
         let version_before = self.current_version(uuid)?;
         for row in &rows {
-            self.tx.execute("DELETE FROM field WHERE id = ?1", params![row.id])?;
+            self.tx.delete_row(row.id)?;
         }
         let removed = rows.len();
         self.log_op(OpType::DeleteField, uuid, Some(name), Some(version_before), rows, vec![])?;
@@ -2182,17 +2142,15 @@ impl<'c> Writer<'c> {
     /// Removes every row of `(uuid, name)` whose value equals `value` — the
     /// inverse of [`Self::append_field`] — in one operation. Returns the count.
     pub fn delete_fields_valued(&mut self, uuid: Uuid, name: &str, value: &Value) -> Result<usize> {
-        let rows: Vec<FieldRow> = db::get_field_rows_named(&self.tx, uuid, name)?
-            .into_iter()
-            .filter(|r| &r.value == value)
-            .collect();
+        let rows: Vec<FieldRow> =
+            self.tx.rows_named(uuid, name)?.into_iter().filter(|r| &r.value == value).collect();
         self.delete_field_rows(uuid, name, rows)
     }
 
     /// Removes the field *entirely* — every row of `(uuid, name)`, whatever its
     /// value — in one operation, leaving the field unknown (absent).
     pub fn delete_fields_named(&mut self, uuid: Uuid, name: &str) -> Result<usize> {
-        let rows = db::get_field_rows_named(&self.tx, uuid, name)?;
+        let rows = self.tx.rows_named(uuid, name)?;
         self.delete_field_rows(uuid, name, rows)
     }
 
@@ -2203,20 +2161,17 @@ impl<'c> Writer<'c> {
         self.check_deferred_types()?;
         if self.flushed == 0 && self.pending.is_empty() {
             // Nothing was written: drop the empty revision, leave HEAD alone.
-            self.tx.execute("DELETE FROM revision WHERE id = ?1", params![self.rev_id])?;
+            self.tx.drop_revision(self.rev_id)?;
         } else {
             self.flush_pending()?;
-            self.tx.execute(
-                "UPDATE log_head SET op_id = ?1 WHERE singleton = 1",
-                params![self.chain_head],
-            )?;
+            self.tx.set_head(self.chain_head)?;
             if let Some(head) = self.chain_head {
                 // In this transaction, deliberately: the trim then rides the
                 // commit the write was going to pay for anyway.
-                trim(&self.tx, self.retention, head)?;
+                self.tx.trim(self.retention, head)?;
             }
         }
-        self.tx.commit().context("Failed to commit write transaction")
+        self.tx.commit()
     }
 
     // ── Internals ────────────────────────────────────────────────────────────
@@ -2226,18 +2181,16 @@ impl<'c> Writer<'c> {
     /// from the rows the write moves, in `log_op`, which is the single place a
     /// version is assigned.
     fn current_version(&self, uuid: Uuid) -> Result<u64> {
-        db::get_version(&self.tx, uuid)?
+        self.tx
+            .version(uuid)?
             .ok_or_else(|| DomainError::NotFound(format!("Metarecord not found: {uuid}")).into())
     }
 
     /// Fetches a field row, checking it belongs to the given metarecord.
     fn get_owned_row(&self, uuid: Uuid, field_id: i64) -> Result<FieldRow> {
-        db::get_field_rows(&self.tx, uuid)?.into_iter().find(|r| r.id == field_id).ok_or_else(
-            || {
-                DomainError::NotFound(format!("Field {field_id} not found on metarecord {uuid}"))
-                    .into()
-            },
-        )
+        self.tx.rows(uuid)?.into_iter().find(|r| r.id == field_id).ok_or_else(|| {
+            DomainError::NotFound(format!("Field {field_id} not found on metarecord {uuid}")).into()
+        })
     }
 
     /// Buffers one operation; the log rows are inserted in bulk, in batches
@@ -2256,17 +2209,17 @@ impl<'c> Writer<'c> {
         // "Version"). This is the single place a version is assigned. `None`
         // when the op removed the metarecord itself — there is no row left to
         // carry a version, and nothing for a redo to restore.
-        let version_after = match db::get_version(&self.tx, entity)? {
+        let version_after = match self.tx.version(entity)? {
             Some(current) => {
                 let (add, sub) = version::delta(&before, &after);
                 let assigned = version::apply(current, add, sub);
-                set_version(&self.tx, entity, assigned)?;
+                self.tx.set_version(entity, assigned)?;
                 Some(assigned)
             }
             None => None,
         };
         self.observe_effects(op_type, &before, &after, entity);
-        self.pending.push(PendingOp {
+        self.pending.push(NewOp {
             op_type,
             entity,
             field_name: field_name.map(str::to_string),
@@ -2290,78 +2243,28 @@ impl<'c> Writer<'c> {
     /// into an AUTOINCREMENT table keep the sequence in step, preserving the
     /// never-reused-id guarantee.
     fn flush_pending(&mut self) -> Result<()> {
-        use rusqlite::types::Value as Sql;
-        use rusqlite::OptionalExtension as _;
-
         if self.pending.is_empty() {
             return Ok(());
         }
-        let last_id: Option<i64> = self
-            .tx
-            .query_row("SELECT seq FROM sqlite_sequence WHERE name = 'operation'", [], |r| r.get(0))
-            .optional()?;
-        let base = last_id.unwrap_or(0) + 1;
-
         let pending = std::mem::take(&mut self.pending);
-        let mut op_rows: Vec<Vec<Sql>> = Vec::with_capacity(pending.len());
-        let mut snapshot_rows: Vec<Vec<Sql>> = Vec::new();
-        for (i, op) in pending.iter().enumerate() {
-            let op_id = base + i as i64;
-            let parent = if i == 0 { self.chain_head } else { Some(op_id - 1) };
-            op_rows.push(vec![
-                Sql::Integer(op_id),
-                parent.map_or(Sql::Null, Sql::Integer),
-                Sql::Integer(self.rev_id),
-                Sql::Integer(self.flushed + i as i64 + 1), // seq
-                Sql::Text(op.op_type.as_str().to_string()),
-                Sql::Blob(db::uuid_to_bytes(op.entity)),
-                op.version_before.map_or(Sql::Null, |v| Sql::Integer(v as i64)),
-                op.version_after.map_or(Sql::Null, |v| Sql::Integer(v as i64)),
-                op.field_name.clone().map_or(Sql::Null, Sql::Text),
-                op.reverts_op_id.map_or(Sql::Null, Sql::Integer),
-            ]);
-            for (is_new, rows) in [(0, &op.before), (1, &op.after)] {
-                for row in rows {
-                    let e = db::encode_value(&row.value);
-                    snapshot_rows.push(vec![
-                        Sql::Integer(op_id),
-                        Sql::Integer(is_new),
-                        Sql::Integer(row.id),
-                        Sql::Text(row.name.clone()),
-                        Sql::Text(e.value_type.to_string()),
-                        e.text.map_or(Sql::Null, Sql::Text),
-                        e.int.map_or(Sql::Null, Sql::Integer),
-                        e.real.map_or(Sql::Null, Sql::Real),
-                        e.uuid.map_or(Sql::Null, Sql::Blob),
-                        e.ref_repo.map_or(Sql::Null, Sql::Blob),
-                        e.name.map_or(Sql::Null, Sql::Text),
-                        e.name_bytes.map_or(Sql::Null, Sql::Blob),
-                    ]);
-                }
-            }
-        }
-
-        bulk_insert(
-            &self.tx,
-            "INSERT INTO operation
-                 (id, parent_id, rev_id, seq, op_type, entity_uuid,
-                  entity_version_before, entity_version_after, field_name,
-                  reverts_op_id)",
-            10,
-            &op_rows,
-        )?;
-        bulk_insert(
-            &self.tx,
-            "INSERT INTO op_snapshot
-                 (op_id, is_new, field_id, field_name, value_type, value_text,
-                  value_int, value_real, value_uuid, value_ref_repo, value_name,
-                  value_name_bytes)",
-            12,
-            &snapshot_rows,
-        )?;
+        let last = self.tx.append_ops(self.rev_id, self.chain_head, self.flushed + 1, &pending)?;
         self.flushed += pending.len() as i64;
-        self.chain_head = Some(base + pending.len() as i64 - 1);
+        self.chain_head = Some(last);
         Ok(())
+    }
+
+    /// The parents of `uuid`'s positions in `field`'s forest (`None` for a
+    /// root), from its rows as this transaction sees them.
+    fn tree_parents(&self, field: &str, uuid: Uuid) -> Result<Vec<Option<Uuid>>> {
+        Ok(self
+            .tx
+            .rows_named(uuid, field)?
+            .into_iter()
+            .filter_map(|r| match r.value {
+                Value::TreeRef { parent, .. } => Some(parent),
+                _ => None,
+            })
+            .collect())
     }
 
     /// Enforces the "one value type per field name" invariant (spec-data-model):
@@ -2394,7 +2297,7 @@ impl<'c> Writer<'c> {
 
         // Not cached yet: probe the DB once. An established differing type is a
         // conflict; otherwise this write fixes the type — cache it either way.
-        if let Some(established) = db::established_value_type(&self.tx, field_name)? {
+        if let Some(established) = self.tx.value_types(field_name)?.into_iter().next() {
             if established != new_type {
                 return Err(Self::type_conflict(field_name, &established, new_type));
             }
@@ -2427,7 +2330,7 @@ impl<'c> Writer<'c> {
             ))
             .into());
         }
-        let parent_positions = db::get_tree_parents(&self.tx, field_name, *parent)?;
+        let parent_positions = self.tree_parents(field_name, *parent)?;
         if parent_positions.is_empty() {
             return Err(DomainError::BadRequest(format!(
                 "invalid TreeRef parent {parent}: no such metarecord carrying a \
@@ -2453,7 +2356,7 @@ impl<'c> Writer<'c> {
                 if !visited.insert(node) {
                     continue;
                 }
-                for gp in db::get_tree_parents(&self.tx, field_name, node)?.into_iter().flatten() {
+                for gp in self.tree_parents(field_name, node)?.into_iter().flatten() {
                     next.push(gp);
                 }
             }
