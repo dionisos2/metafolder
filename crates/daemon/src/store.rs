@@ -174,6 +174,26 @@ macro_rules! forward_to_connection {
                 let $me = self;
                 Log::version_before_revision($conn, rev, entity)
             }
+            fn ops_after(&self, op: i64) -> Result<Vec<OpRow>> {
+                let $me = self;
+                Log::ops_after($conn, op)
+            }
+            fn ops_after_count(&self, op: i64) -> Result<i64> {
+                let $me = self;
+                Log::ops_after_count($conn, op)
+            }
+            fn ancestor_at_or_before(&self, head: i64, timestamp_ms: i64) -> Result<Option<i64>> {
+                let $me = self;
+                Log::ancestor_at_or_before($conn, head, timestamp_ms)
+            }
+            fn ancestor_labelled(&self, head: i64, label: &str) -> Result<Option<i64>> {
+                let $me = self;
+                Log::ancestor_labelled($conn, head, label)
+            }
+            fn before_revision_of(&self, op: i64) -> Result<Option<i64>> {
+                let $me = self;
+                Log::before_revision_of($conn, op)
+            }
         }
     };
     (@questions $ty:ty, |$me:ident| $conn:expr) => {
@@ -403,6 +423,19 @@ pub trait Log {
     /// operation there's `entity_version_before` (a trash entry records the
     /// version from outside the revision, so a rollback matches on this one).
     fn version_before_revision(&self, rev: i64, entity: Uuid) -> Result<Option<u64>>;
+    /// The operations newer than `op`, oldest first (the change feed).
+    fn ops_after(&self, op: i64) -> Result<Vec<OpRow>>;
+    /// How many operations are newer than `op`.
+    fn ops_after_count(&self, op: i64) -> Result<i64>;
+    /// Walking back from `head`, the first operation whose revision is at or
+    /// before `timestamp_ms`.
+    fn ancestor_at_or_before(&self, head: i64, timestamp_ms: i64) -> Result<Option<i64>>;
+    /// Walking back from `head`, the first operation of a revision labelled
+    /// `label` (the last operation of the most recent such revision).
+    fn ancestor_labelled(&self, head: i64, label: &str) -> Result<Option<i64>>;
+    /// The parent of the first operation of `op`'s revision: the state just
+    /// before that whole revision (`None` = the empty state).
+    fn before_revision_of(&self, op: i64) -> Result<Option<i64>>;
 }
 
 /// A revision's metadata.
@@ -840,6 +873,12 @@ pub trait WriteTxn: Store {
     fn trim(&self, retention: Retention, head: i64) -> Result<usize>;
     /// Removes every metarecord (a navigation to the empty state).
     fn clear_metarecords(&self) -> Result<()>;
+    /// Makes `op` a root of the history (its parent is pruned away).
+    fn detach_op(&self, op: i64) -> Result<()>;
+    /// Deletes operations and their snapshots, children before parents.
+    fn delete_ops(&self, ids: &[i64]) -> Result<()>;
+    /// Deletes the revisions no operation belongs to any more.
+    fn drop_empty_revisions(&self) -> Result<()>;
     fn queue_restoration(&self, restoration: &Restoration) -> Result<()>;
     /// Drops the queued restorations up to position `up_to`, included.
     fn drop_restorations(&self, up_to: i64) -> Result<()>;
@@ -856,6 +895,11 @@ pub trait WriteTxn: Store {
 /// Opens write transactions.
 pub trait Begin {
     fn begin_write(&mut self) -> Result<Box<dyn WriteTxn + '_>>;
+    /// Returns the space deleted data held to the filesystem, when the
+    /// backend keeps it (SQLite's `VACUUM`); nothing to do by default.
+    fn compact(&mut self) -> Result<()> {
+        Ok(())
+    }
 }
 
 /// An open repository database: it answers reads and opens writes.
@@ -866,6 +910,10 @@ impl<T: Begin + Store + ?Sized> Database for T {}
 impl Begin for Connection {
     fn begin_write(&mut self) -> Result<Box<dyn WriteTxn + '_>> {
         Ok(Box::new(SqliteTxn(self.transaction()?)))
+    }
+    fn compact(&mut self) -> Result<()> {
+        self.execute_batch("VACUUM; PRAGMA wal_checkpoint(TRUNCATE);")?;
+        Ok(())
     }
 }
 
@@ -897,6 +945,9 @@ forward_to_connection!(std::sync::MutexGuard<'_, Connection>, |g| &**g);
 impl Begin for std::sync::MutexGuard<'_, Connection> {
     fn begin_write(&mut self) -> Result<Box<dyn WriteTxn + '_>> {
         Begin::begin_write(&mut **self)
+    }
+    fn compact(&mut self) -> Result<()> {
+        Begin::compact(&mut **self)
     }
 }
 
@@ -1045,6 +1096,24 @@ impl WriteTxn for SqliteTxn<'_> {
     }
     fn clear_metarecords(&self) -> Result<()> {
         self.0.execute("DELETE FROM metarecord", [])?;
+        Ok(())
+    }
+    fn detach_op(&self, op: i64) -> Result<()> {
+        self.0.execute("UPDATE operation SET parent_id = NULL WHERE id = ?1", params![op])?;
+        Ok(())
+    }
+    fn delete_ops(&self, ids: &[i64]) -> Result<()> {
+        let mut stmt = self.0.prepare_cached("DELETE FROM operation WHERE id = ?1")?;
+        for id in ids {
+            stmt.execute(params![id])?;
+        }
+        Ok(())
+    }
+    fn drop_empty_revisions(&self) -> Result<()> {
+        self.0.execute(
+            "DELETE FROM revision WHERE id NOT IN (SELECT DISTINCT rev_id FROM operation)",
+            [],
+        )?;
         Ok(())
     }
     fn queue_restoration(&self, restoration: &Restoration) -> Result<()> {
@@ -1223,6 +1292,27 @@ impl Log for Connection {
     }
     fn version_before_revision(&self, rev: i64, entity: Uuid) -> Result<Option<u64>> {
         log::entity_version_before_revision(self, rev, entity)
+    }
+    fn ops_after(&self, op: i64) -> Result<Vec<OpRow>> {
+        log::ops_since(self, op)
+    }
+    fn ops_after_count(&self, op: i64) -> Result<i64> {
+        log::ops_since_count(self, op)
+    }
+    fn ancestor_at_or_before(&self, head: i64, timestamp_ms: i64) -> Result<Option<i64>> {
+        log::ancestor_where(self, head, "r.timestamp <= ?3", &timestamp_ms)
+    }
+    fn ancestor_labelled(&self, head: i64, label: &str) -> Result<Option<i64>> {
+        log::ancestor_where(self, head, "r.label = ?3", &label)
+    }
+    fn before_revision_of(&self, op: i64) -> Result<Option<i64>> {
+        Ok(self.query_row(
+            "SELECT parent_id FROM operation
+             WHERE rev_id = (SELECT rev_id FROM operation WHERE id = ?1)
+             ORDER BY seq LIMIT 1",
+            params![op],
+            |r| r.get(0),
+        )?)
     }
     /// Served by `idx_operation_entity (entity_uuid, id)`.
     fn entity_ops_after(&self, entity: Uuid, after: i64) -> Result<Vec<OpRow>> {

@@ -15,7 +15,7 @@ use metafolder_core::metarecord::{Field, FieldType, MetaRecord, Value};
 
 use crate::db::{self, FieldRow};
 use crate::error::DomainError;
-use crate::store::{Begin, Log, NewOp, Restoration, Store, WriteTxn};
+use crate::store::{Begin, Database, Log, NewOp, Restoration, Store, WriteTxn};
 use crate::version;
 
 /// The `revision.origin` of a revision the daemon writes on the filesystem's
@@ -527,58 +527,30 @@ pub enum Target {
 }
 
 /// Resolves a target to an operation id; `Ok(None)` is the empty state.
-pub fn resolve_target(conn: &rusqlite::Connection, target: &Target) -> Result<Option<i64>> {
-    let head = get_head(conn)?;
+pub fn resolve_target(log: &dyn Log, target: &Target) -> Result<Option<i64>> {
+    let head = log.head()?;
     match target {
         Target::Id(id) => {
-            get_op(conn, *id)?
+            log.op(*id)?
                 .ok_or_else(|| DomainError::NotFound(format!("operation {id} not found")))?;
             Ok(Some(*id))
         }
         Target::Timestamp(t) => {
-            use rusqlite::OptionalExtension as _;
             let Some(head) = head else {
                 anyhow::bail!("no operation found at or before timestamp {t} (empty history)");
             };
-            // Walking from HEAD down, the first operation whose revision is
-            // at or before the timestamp.
-            let found: Option<i64> = conn
-                .prepare_cached(&format!(
-                    "{ANCESTRY_CTE}
-                     SELECT c.id FROM chain c
-                     JOIN operation o ON o.id = c.id
-                     JOIN revision r ON r.id = o.rev_id
-                     WHERE r.timestamp <= ?3
-                     ORDER BY c.depth LIMIT 1"
-                ))?
-                .query_row(params![head, cycle_cap(conn)?, t], |r| r.get(0))
-                .optional()?;
-            found
+            log.ancestor_at_or_before(head, *t)?
                 .map(Some)
                 .with_context(|| format!("no operation found at or before timestamp {t}"))
         }
         Target::Label(label) => {
-            use rusqlite::OptionalExtension as _;
             let Some(head) = head else {
                 return Err(DomainError::NotFound(format!(
                     "label '{label}' not found (empty history)"
                 ))
                 .into());
             };
-            // Walking from HEAD down, the first op of a matching revision is
-            // the last operation of the most recent matching revision.
-            let found: Option<i64> = conn
-                .prepare_cached(&format!(
-                    "{ANCESTRY_CTE}
-                     SELECT c.id FROM chain c
-                     JOIN operation o ON o.id = c.id
-                     JOIN revision r ON r.id = o.rev_id
-                     WHERE r.label = ?3
-                     ORDER BY c.depth LIMIT 1"
-                ))?
-                .query_row(params![head, cycle_cap(conn)?, label], |r| r.get(0))
-                .optional()?;
-            found.map(Some).ok_or_else(|| {
+            log.ancestor_labelled(head, label)?.map(Some).ok_or_else(|| {
                 DomainError::NotFound(format!(
                     "label '{label}' not found on the HEAD ancestry path"
                 ))
@@ -589,19 +561,31 @@ pub fn resolve_target(conn: &rusqlite::Connection, target: &Target) -> Result<Op
             let Some(head) = head else {
                 anyhow::bail!("nothing to undo: the history is empty");
             };
-            // The first operation of HEAD's revision (operations of one
-            // revision form a chain); its parent is the state before the
-            // whole revision (None = empty state).
-            let parent: Option<i64> = conn.query_row(
-                "SELECT parent_id FROM operation
-                 WHERE rev_id = (SELECT rev_id FROM operation WHERE id = ?1)
-                 ORDER BY seq LIMIT 1",
-                params![head],
-                |r| r.get(0),
-            )?;
-            Ok(parent)
+            log.before_revision_of(head)
         }
     }
+}
+
+/// Walking back from `head` along the ancestry, the first operation whose
+/// revision satisfies `condition` (on `r`, the revision; `?3` is `value`).
+pub(crate) fn ancestor_where(
+    conn: &rusqlite::Connection,
+    head: i64,
+    condition: &str,
+    value: &dyn rusqlite::ToSql,
+) -> Result<Option<i64>> {
+    use rusqlite::OptionalExtension as _;
+    Ok(conn
+        .prepare_cached(&format!(
+            "{ANCESTRY_CTE}
+             SELECT c.id FROM chain c
+             JOIN operation o ON o.id = c.id
+             JOIN revision r ON r.id = o.rev_id
+             WHERE {condition}
+             ORDER BY c.depth LIMIT 1"
+        ))?
+        .query_row(params![head, cycle_cap(conn)?, value], |r| r.get(0))
+        .optional()?)
 }
 
 #[derive(Debug, serde::Serialize)]
@@ -1008,18 +992,14 @@ pub enum PruneMode {
 
 /// Permanently removes operations. The target must be an ancestor of HEAD
 /// (or HEAD itself). Returns (pruned operations, pruned revisions).
-pub fn prune(
-    conn: &mut rusqlite::Connection,
-    mode: PruneMode,
-    target: i64,
-) -> Result<(usize, usize)> {
-    let head = get_head(conn)?.context("cannot prune an empty history")?;
-    let head_path = ancestry(conn, head)?;
+pub fn prune(conn: &mut dyn Database, mode: PruneMode, target: i64) -> Result<(usize, usize)> {
+    let head = conn.head()?.context("cannot prune an empty history")?;
+    let head_path = conn.ancestry(head)?;
     if !head_path.contains(&target) {
         anyhow::bail!("prune target {target} must be an ancestor of HEAD (or HEAD itself)");
     }
 
-    let ops = all_ops(conn)?;
+    let ops = conn.all_ops()?;
     let mut children: HashMap<Option<i64>, Vec<i64>> = HashMap::new();
     for op in &ops {
         children.entry(op.parent_id).or_default().push(op.id);
@@ -1060,25 +1040,19 @@ pub fn prune(
         }
     };
 
-    let revisions_before: i64 =
-        conn.query_row("SELECT COUNT(*) FROM revision", [], |r| r.get(0))?;
-    let tx = conn.transaction()?;
+    let (_, revisions_before) = conn.counts()?;
+    let tx = conn.begin_write()?;
     if matches!(mode, PruneMode::Before) {
-        tx.execute("UPDATE operation SET parent_id = NULL WHERE id = ?1", params![target])?;
+        tx.detach_op(target)?;
     }
     // Children reference their parent (FK): delete newest-first, which is
     // child-before-parent since ids are monotonically increasing.
     let mut ordered: Vec<i64> = to_delete.iter().copied().collect();
     ordered.sort_unstable_by(|a, b| b.cmp(a));
-    {
-        let mut stmt = tx.prepare_cached("DELETE FROM operation WHERE id = ?1")?;
-        for id in ordered {
-            stmt.execute(params![id])?;
-        }
-    }
-    tx.execute("DELETE FROM revision WHERE id NOT IN (SELECT DISTINCT rev_id FROM operation)", [])?;
+    tx.delete_ops(&ordered)?;
+    tx.drop_empty_revisions()?;
     tx.commit()?;
-    let revisions_after: i64 = conn.query_row("SELECT COUNT(*) FROM revision", [], |r| r.get(0))?;
+    let (_, revisions_after) = conn.counts()?;
 
     // Return the freed pages to the filesystem (best-effort): the deleted
     // snapshots would otherwise keep the file at its high-water size
@@ -1094,8 +1068,8 @@ pub fn prune(
 /// Compacts the database to release freed pages, best-effort. Returns whether
 /// it succeeded; a failure is logged, not propagated, because the caller's
 /// write is already committed (see [`prune`]).
-fn compact_best_effort(conn: &rusqlite::Connection) -> bool {
-    match conn.execute_batch("VACUUM; PRAGMA wal_checkpoint(TRUNCATE);") {
+fn compact_best_effort(conn: &mut dyn Begin) -> bool {
+    match conn.compact() {
         Ok(()) => true,
         Err(e) => {
             crate::diagnostics::warn(
@@ -2395,15 +2369,15 @@ mod tests {
 
     #[test]
     fn compact_best_effort_swallows_a_vacuum_failure() {
-        let conn = rusqlite::Connection::open_in_memory().unwrap();
+        let mut conn = rusqlite::Connection::open_in_memory().unwrap();
         // Idle connection: VACUUM runs.
-        assert!(compact_best_effort(&conn), "VACUUM should succeed on an idle connection");
+        assert!(compact_best_effort(&mut conn), "VACUUM should succeed on an idle connection");
 
         // VACUUM cannot run inside an open transaction; the failure must be
         // swallowed (returned as false), not propagated — a committed prune is
         // never failed by its best-effort compaction.
         conn.execute_batch("BEGIN").unwrap();
-        assert!(!compact_best_effort(&conn), "a VACUUM failure must be reported, not raised");
+        assert!(!compact_best_effort(&mut conn), "a VACUUM failure must be reported, not raised");
         conn.execute_batch("ROLLBACK").unwrap();
     }
 }

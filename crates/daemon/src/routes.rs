@@ -1090,19 +1090,19 @@ async fn get_log_since(
     let repo_uuid = parse_uuid(&repo)?;
     with_repo(&state, repo_uuid, move |repo_state| {
         let conn = slowlog::timed("wait:conn", || repo_state.conn.lock_recover());
-        let head = crate::log::get_head(&conn)?;
+        let head = crate::store::Log::head(&*conn)?;
         let limit = params.limit.unwrap_or(SINCE_DEFAULT_LIMIT).max(0);
         let mut truncated = false;
         let operations = match params.op {
             Some(since) => {
-                if crate::log::ops_since_count(&conn, since)? > limit {
+                if crate::store::Log::ops_after_count(&*conn, since)? > limit {
                     // Oversized delta: signal a coarse refresh instead of
                     // streaming every operation (a large reconcile would flood
                     // the client).
                     truncated = true;
                     Vec::new()
                 } else {
-                    let ops = crate::log::ops_since(&conn, since)?;
+                    let ops = crate::store::Log::ops_after(&*conn, since)?;
                     let mut out = Vec::with_capacity(ops.len());
                     for op in &ops {
                         out.push(op_json(&conn, op, false)?);
@@ -1124,11 +1124,11 @@ async fn get_revision(
     let repo_uuid = parse_uuid(&repo)?;
     with_repo(&state, repo_uuid, move |repo_state| {
         let conn = slowlog::timed("wait:conn", || repo_state.conn.lock_recover());
-        let head = crate::log::get_head(&conn)?;
+        let head = crate::store::Log::head(&*conn)?;
         let rev_id: i64 = if rev_id == "head" {
             let head =
                 head.ok_or_else(|| ApiError::not_found("the history is empty (no HEAD revision)"))?;
-            crate::log::get_op(&conn, head)?
+            crate::store::Log::op(&*conn, head)?
                 .ok_or_else(|| ApiError::internal("HEAD operation vanished"))?
                 .rev_id
         } else {
@@ -1223,7 +1223,7 @@ async fn rollback(
         observed(repo_state, TaskKind::Rollback, "rolling back", |repo_state| {
             repo_state.ensure_writable()?;
             let mut conn = slowlog::timed("wait:conn", || repo_state.conn.lock_recover());
-            let resolved = crate::log::resolve_target(&conn, &target)?;
+            let resolved = crate::log::resolve_target(&*conn, &target)?;
             let result = crate::log::navigate(&mut *conn, resolved)?;
             // Navigation rewrites tree positions arbitrarily: rebuild the cache
             // from the new state (keeps it complete; `populate` clears first).
@@ -1293,9 +1293,9 @@ async fn prune_log(
         observed(repo_state, TaskKind::Prune, "pruning", |repo_state| {
             repo_state.ensure_writable()?;
             let mut conn = slowlog::timed("wait:conn", || repo_state.conn.lock_recover());
-            let resolved = crate::log::resolve_target(&conn, &target)?
+            let resolved = crate::log::resolve_target(&*conn, &target)?
                 .ok_or_else(|| ApiError::bad_request("cannot prune to the empty state"))?;
-            let (ops, revisions) = crate::log::prune(&mut conn, mode, resolved)
+            let (ops, revisions) = crate::log::prune(&mut *conn, mode, resolved)
                 .map_err(|e| ApiError::bad_request(format!("{e:#}")))?;
             Ok(Json(json!({"pruned_operations": ops, "pruned_revisions": revisions})))
         })
@@ -1427,8 +1427,8 @@ async fn rollback_plan(
     let target = params.into_target()?;
     with_repo(&state, repo_uuid, move |repo_state| {
         let conn = slowlog::timed("wait:conn", || repo_state.conn.lock_recover());
-        let head = crate::log::get_head(&conn)?;
-        let resolved = crate::log::resolve_target(&conn, &target)?;
+        let head = crate::store::Log::head(&*conn)?;
+        let resolved = crate::log::resolve_target(&*conn, &target)?;
         let path = crate::log::nav_path(&*conn, head, resolved)?;
         let mut cache = slowlog::timed("wait:cache", || repo_state.lock_cache());
         let mut ops = Vec::with_capacity(path.len());
@@ -1450,8 +1450,8 @@ async fn rollback_plan_summary(
     let target = params.into_target()?;
     with_repo(&state, repo_uuid, move |repo_state| {
         let conn = slowlog::timed("wait:conn", || repo_state.conn.lock_recover());
-        let head = crate::log::get_head(&conn)?;
-        let resolved = crate::log::resolve_target(&conn, &target)?;
+        let head = crate::store::Log::head(&*conn)?;
+        let resolved = crate::log::resolve_target(&*conn, &target)?;
         let path = crate::log::nav_path(&*conn, head, resolved)?;
         let mut by_type: std::collections::BTreeMap<String, usize> =
             std::collections::BTreeMap::new();
@@ -1482,8 +1482,8 @@ async fn rollback_start(
             return Err(ApiError::conflict("a rollback navigation is already in progress"));
         }
         let conn = slowlog::timed("wait:conn", || repo_state.conn.lock_recover());
-        let head = crate::log::get_head(&conn)?;
-        let resolved = crate::log::resolve_target(&conn, &target)?;
+        let head = crate::store::Log::head(&*conn)?;
+        let resolved = crate::log::resolve_target(&*conn, &target)?;
         if resolved == head {
             // Nothing to do: the lock is not entered.
             return Ok(Json(json!({"op": null, "remaining": 0})));
@@ -1717,7 +1717,7 @@ async fn revert_plan(
     let with_dependents = params.with_dependents;
     with_repo(&state, repo_uuid, move |repo_state| {
         let conn = slowlog::timed("wait:conn", || repo_state.conn.lock_recover());
-        let head = crate::log::get_head(&conn)?;
+        let head = crate::store::Log::head(&*conn)?;
         let ops = resolve_revert_target(&conn, head, &target)?;
         let analysis = crate::revert::analyse(&*conn, head, ops)?;
         Ok(Json(revert_plan_json(&conn, &analysis, with_dependents, None)?))
@@ -1735,7 +1735,7 @@ async fn revert(
     with_repo(&state, repo_uuid, move |repo_state| {
         repo_state.ensure_writable()?;
         let mut conn = slowlog::timed("wait:conn", || repo_state.conn.lock_recover());
-        let head = crate::log::get_head(&conn)?;
+        let head = crate::store::Log::head(&*conn)?;
         let ops = resolve_revert_target(&conn, head, &body.target)?;
         // The check runs here, inside the transaction that writes the revert,
         // so what is written was checked against the state it is written into.
@@ -1787,7 +1787,7 @@ async fn revert(
         let effects = writer.effects();
         slowlog::timed("commit", || writer.commit())?;
         repo_state.settle(&conn, &effects)?;
-        let new_head = crate::log::get_head(&conn)?;
+        let new_head = crate::store::Log::head(&*conn)?;
         Ok(Json(json!({
             "revision": rev_id,
             "head": new_head,
@@ -1847,7 +1847,7 @@ async fn revert_start(
             return Err(ApiError::conflict("a coordinated operation is already in progress"));
         }
         let conn = slowlog::timed("wait:conn", || repo_state.conn.lock_recover());
-        let head = crate::log::get_head(&conn)?;
+        let head = crate::store::Log::head(&*conn)?;
         let ops = resolve_revert_target(&conn, head, &body.target)?;
         let analysis = crate::revert::analyse(&*conn, head, ops)?;
         if !body.with_dependents && !analysis.revertable() {
@@ -1909,10 +1909,10 @@ async fn revert_commit(
 
         let result = (|| -> Result<serde_json::Value, ApiError> {
             let mut conn = slowlog::timed("wait:conn", || repo_state.conn.lock_recover());
-            let head = crate::log::get_head(&conn)?;
+            let head = crate::store::Log::head(&*conn)?;
             let mut effective = Vec::with_capacity(locked.len());
             for id in &locked {
-                effective.push(crate::log::get_op(&conn, *id)?.ok_or_else(|| {
+                effective.push(crate::store::Log::op(&*conn, *id)?.ok_or_else(|| {
                     ApiError::not_found(format!("operation {id} vanished during the revert"))
                 })?);
             }
@@ -1941,7 +1941,7 @@ async fn revert_commit(
             let effects = writer.effects();
             slowlog::timed("commit", || writer.commit())?;
             repo_state.settle(&conn, &effects)?;
-            let new_head = crate::log::get_head(&conn)?;
+            let new_head = crate::store::Log::head(&*conn)?;
             Ok(json!({
                 "revision": rev_id,
                 "head": new_head,
@@ -1985,7 +1985,7 @@ async fn revert_abort(
         }
         crate::executor::flush_pending(repo_state)?;
         let conn = slowlog::timed("wait:conn", || repo_state.conn.lock_recover());
-        let head = crate::log::get_head(&conn)?;
+        let head = crate::store::Log::head(&*conn)?;
         Ok(Json(json!({"head": head})))
     })
     .await
@@ -2084,7 +2084,7 @@ async fn rollback_abort(
         // An abort keeps the state it stopped at, mid-navigation: the watch set
         // follows that state too (spec-event-log "Upkeep after a navigation").
         repo_state.refresh_watches(&conn);
-        let head = crate::log::get_head(&conn)?;
+        let head = crate::store::Log::head(&*conn)?;
         Ok(Json(json!({"head": head})))
     })
     .await

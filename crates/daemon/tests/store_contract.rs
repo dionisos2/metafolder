@@ -505,3 +505,45 @@ fn every_sqlite_answer_is_its_derived_default() {
     assert_eq!(sql.missing("title", 2).unwrap().len(), 2, "the limit holds");
     assert_eq!(derived.missing("title", 2).unwrap().len(), 2);
 }
+
+#[test]
+fn targets_are_found_along_the_ancestry() {
+    let (mut conn, _, _) = fixture();
+    let store: &dyn Store = &conn;
+    let all = store.all_ops().unwrap();
+    let head = store.head().unwrap().unwrap();
+    assert_eq!(store.ops_after(all[0].id).unwrap().len(), 2);
+    assert_eq!(store.ops_after_count(all[0].id).unwrap(), 2);
+    assert_eq!(store.ops_after_count(head).unwrap(), 0);
+    // Before the second revision: the last operation of the first.
+    assert_eq!(store.before_revision_of(head).unwrap(), Some(all[1].id));
+    assert_eq!(store.before_revision_of(all[1].id).unwrap(), None, "before the first: empty");
+    let meta = store.revisions(&[all[0].rev_id, all[2].rev_id]).unwrap();
+    let first_ts = meta[&all[0].rev_id].timestamp;
+    assert_eq!(store.ancestor_at_or_before(head, i64::MAX).unwrap(), Some(head));
+    assert_eq!(store.ancestor_at_or_before(head, first_ts - 1).unwrap(), None);
+    assert!(store.ancestor_at_or_before(head, first_ts).unwrap().is_some());
+
+    let tx = conn.begin_write().unwrap();
+    tx.set_revision_label(all[0].rev_id, Some("start")).unwrap();
+    tx.commit().unwrap();
+    let store: &dyn Store = &conn;
+    assert_eq!(store.ancestor_labelled(head, "start").unwrap(), Some(all[1].id), "its last op");
+    assert_eq!(store.ancestor_labelled(head, "none").unwrap(), None);
+}
+
+#[test]
+fn pruning_removes_operations_and_their_empty_revisions() {
+    let (mut conn, _, _) = fixture();
+    let all = (&conn as &dyn Store).all_ops().unwrap();
+    let tx = conn.begin_write().unwrap();
+    tx.detach_op(all[2].id).unwrap();
+    tx.delete_ops(&[all[1].id, all[0].id]).unwrap();
+    tx.drop_empty_revisions().unwrap();
+    tx.commit().unwrap();
+    let store: &dyn Store = &conn;
+    assert_eq!(store.counts().unwrap(), (1, 1));
+    assert_eq!(store.op(all[2].id).unwrap().unwrap().parent_id, None);
+    assert!(store.snapshots(all[0].id, true).unwrap().is_empty(), "snapshots go too");
+    conn.compact().unwrap();
+}
