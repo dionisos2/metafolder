@@ -123,6 +123,44 @@ implementation: =log.rs= and =db.rs= currently mix the logic (what to undo, in
 what order, what a revert writes) with the SQL (how rows are read and written).
 Separating them is worth doing even if the second backend never ships.
 
+*** Increment 2, concretely (proposal, September 2026)
+
+Measured on the code: the SQL is concentrated — =db.rs= (55 public functions,
+≈ 96 statements) and =log.rs= (≈ 82 statements: the =Writer=, snapshots, the
+ancestry walks, navigation, pruning and retention) — and about fifteen other
+modules only *carry* a =&Connection= to call them. =sync.rs= holds the per-pair
+sync database, which stays SQLite and is out of scope.
+
+Two traits, both behind one transaction type (=Store::read()= /
+=Store::write()=; one write transaction is still one =Writer= revision):
+
+- =Rows= — the data model's primary state: a metarecord's existence and
+  version; its field rows (all, or by name); a row by id; insert a row (the
+  store allocates the id) or re-insert one *with* its id (navigation restores
+  rows exactly); delete a row; create and delete a metarecord; and the three
+  scans a load needs (every row in id order, every metarecord, the forest).
+- =Log= — revisions, operations and their snapshots; one operation by id; the
+  bounded ancestry walks (=ancestry_ops_until=, =ancestry_ops_limited=); HEAD;
+  labels; the range deletions pruning and retention perform.
+
+Everything else in =db.rs= is a *question* — "the metarecords missing a field",
+"tracked files by size", "string fields", "children of a node" — asked by the
+schema validation, the duplicates and orphan scans, the reconcile. Those are
+answered by the query index (or the forest), not by the store: one engine per
+question, and no per-backend SQL to keep in step. Where the index cannot answer
+one yet, it gets the operand rather than the store getting the method.
+
+*Row ids are part of the data model.* =Field.id= is in every API response and
+=…/fields/:id= addresses a row by it; navigation restores the original ids. So
+every backend allocates monotonic row ids and can re-insert a row under its old
+one — the KV layout gains a =row id → (metarecord, position)= key space.
+
+Order of work, each step behaviour-preserving with the whole test suite as its
+oracle: the traits and a =SqliteStore= wrapping today's statements; the
+=Writer= and the navigation on them; the load scans and the readers; the
+questions moved onto the index; finally no module but =SqliteStore= names
+=rusqlite=.
+
 The query side has the same boundary one level up: the evaluator of
 =crates/daemon/src/index/= reads bitmaps, BSI slices and value dictionaries
 through a source trait, implemented by the resident index (today's structures)
