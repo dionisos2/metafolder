@@ -1088,22 +1088,23 @@ impl RepoIndex {
                 }
                 return Ok(self.bsi_page(matched, fi, !key.ascending, limit, after));
             }
-            // An ascending path sort walks the resident forest in key order.
+            // A path sort walks the resident forest in key order.
             let tree = self.types.get(key.field.as_str()) == Some(&"tree_ref");
             let keys = roots.and_then(|r| r.keys).filter(|k| k.is_resident());
-            if let (true, true, Some(keys)) = (tree, key.ascending, keys) {
+            if let (true, Some(keys)) = (tree, keys) {
                 let within = roots.and_then(|r| walk_bound(q, &key.field, r));
-                return Ok(
-                    self.tree_page(matched, &accepts, &key.field, keys, within, limit, after)
-                );
+                let descending = !key.ascending;
+                return Ok(self.tree_page(
+                    matched, &accepts, &key.field, descending, keys, within, limit, after,
+                ));
             }
         }
         Ok(None)
     }
 
-    /// Up to `limit + 1` ids of `matched` in ascending path order after
+    /// Up to `limit + 1` ids of `matched` in path order (either way) after
     /// `after`: the forest walked in key order from the cursor's node
-    /// ([`crate::tree_cache::SortKeys::walk_ascending`]), then the ids in no
+    /// ([`crate::tree_cache::SortKeys::walk_sorted`]), then the ids in no
     /// forest position, by uuid. `None` to fetch instead: the walk is not
     /// expected to be cheaper, ran over its budget, or refused.
     #[allow(clippy::too_many_arguments)]
@@ -1112,6 +1113,7 @@ impl RepoIndex {
         matched: &RoaringBitmap,
         accepts: &dyn Fn(u32, Uuid) -> bool,
         field: &str,
+        descending: bool,
         keys: &crate::tree_cache::SortKeys<'_>,
         within: Option<Uuid>,
         limit: usize,
@@ -1133,7 +1135,7 @@ impl RepoIndex {
         if walk {
             let mut steps = 0usize;
             let mut over = false;
-            let end = keys.walk_ascending(field, within, resume, &mut |uuid| {
+            let end = keys.walk_sorted(field, descending, within, resume, &mut |uuid| {
                 steps += 1;
                 if steps > budget {
                     over = true;
