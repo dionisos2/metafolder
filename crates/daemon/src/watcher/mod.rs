@@ -22,12 +22,10 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 use anyhow::Result;
-use rusqlite::Connection;
 
 use metafolder_core::metarecord::TreeName;
 use metafolder_core::sync::MutexExt;
 
-use crate::db;
 use crate::eligibility::{self, EligibilityCache};
 use crate::executor::{self, ExecutorPinger, FsEvent};
 use crate::relpath::RelPath;
@@ -79,7 +77,7 @@ pub(crate) trait Source: Send + Sync {
     /// achieved ([`Placement`]).
     fn refresh(
         &self,
-        conn: &Connection,
+        conn: &dyn crate::store::Store,
         cache: &mut TreeCache,
         root: &Path,
         internal_dir: &Path,
@@ -156,7 +154,7 @@ impl WatcherHandle {
     /// tree cache to avoid re-locking them.
     pub fn refresh(
         &self,
-        conn: &Connection,
+        conn: &dyn crate::store::Store,
         cache: &mut TreeCache,
         root: &Path,
         internal_dir: &Path,
@@ -315,7 +313,7 @@ pub struct WatchedStatus {
 /// reason says which. Read-only; one shared [`EligibilityCache`] and one
 /// offline-mounts snapshot serve the whole batch.
 pub fn explain_watched(
-    conn: &Connection,
+    conn: &dyn crate::store::Store,
     cache: &mut TreeCache,
     root: &Path,
     internal_dir: &Path,
@@ -348,7 +346,7 @@ pub fn explain_watched(
 /// explains the absence of a watch.
 #[allow(clippy::too_many_arguments)]
 fn explain_watched_one(
-    conn: &Connection,
+    conn: &dyn crate::store::Store,
     cache: &mut TreeCache,
     root: &Path,
     internal_dir: &Path,
@@ -407,7 +405,12 @@ fn explain_watched_one(
 /// `file_type().is_dir()`), the metarecord's `mfr_type` when the path is gone
 /// (an orphan's stale path still says what it was), else a file — a
 /// not-yet-existing path is treated as the file that would appear there.
-fn dir_like(conn: &Connection, cache: &mut TreeCache, root: &Path, rel: &str) -> Result<bool> {
+fn dir_like(
+    conn: &dyn crate::store::Store,
+    cache: &mut TreeCache,
+    root: &Path,
+    rel: &str,
+) -> Result<bool> {
     if std::fs::symlink_metadata(abs_of(root, rel))
         .map(|md| md.file_type().is_dir())
         .unwrap_or(false)
@@ -415,10 +418,9 @@ fn dir_like(conn: &Connection, cache: &mut TreeCache, root: &Path, rel: &str) ->
         return Ok(true);
     }
     match cache.resolve_path(conn, "mfr_path", rel)? {
-        Some(uuid) => Ok(db::string_fields(conn, uuid, "mfr_type")?
-            .first()
-            .map(|t| t == "dir")
-            .unwrap_or(false)),
+        Some(uuid) => {
+            Ok(conn.string_fields(uuid, "mfr_type")?.first().map(|t| t == "dir").unwrap_or(false))
+        }
         None => Ok(false),
     }
 }
@@ -452,7 +454,7 @@ fn covers(m: &str, rel: &str) -> bool {
 /// when nothing excludes the path: the nearest definition decides, and an
 /// unmetarecorded prefix carries none of its own.
 fn excluded_by(
-    conn: &Connection,
+    conn: &dyn crate::store::Store,
     cache: &mut TreeCache,
     ec: &mut EligibilityCache,
     rel: &str,
@@ -475,7 +477,7 @@ fn excluded_by(
 /// daemon's own internals, an unplugged volume, a recorded exclusion
 /// (spec-file-tracking "Watch sources and regimes").
 fn covered_by_tree(
-    conn: &Connection,
+    conn: &dyn crate::store::Store,
     cache: &mut TreeCache,
     root: &Path,
     internal_dir: &Path,
@@ -627,12 +629,12 @@ fn ingest(
 /// visible side. Memoised per directory path — a batch usually hammers a
 /// handful of directories, and the check is an ancestor walk each.
 fn drop_excluded(
-    conn: &Connection,
+    conn: &dyn crate::store::Store,
     cache: &mut TreeCache,
     events: &[(FsEvent, Option<i64>)],
 ) -> Vec<(FsEvent, Option<i64>)> {
     fn is_excluded(
-        conn: &Connection,
+        conn: &dyn crate::store::Store,
         cache: &mut TreeCache,
         ec: &mut EligibilityCache,
         memo: &mut HashMap<String, bool>,

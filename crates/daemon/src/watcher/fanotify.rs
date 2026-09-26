@@ -31,7 +31,6 @@ use crate::executor::FsEvent;
 use crate::state::RepoState;
 use crate::tree_cache::TreeCache;
 use crate::watcher::{relative, Placement, Regime};
-use rusqlite::Connection;
 
 /// How long the first connection waits for the broker's handshake before the
 /// load decides the broker is not there. Generous for a local socket, short
@@ -319,7 +318,7 @@ impl crate::watcher::Source for Source {
 
     fn refresh(
         &self,
-        _conn: &Connection,
+        _conn: &dyn crate::store::Store,
         _cache: &mut TreeCache,
         _root: &Path,
         _internal_dir: &Path,

@@ -191,7 +191,7 @@ impl RepoState {
     /// the whole history whatever the configuration says.
     pub fn writer<'c>(
         &self,
-        conn: &'c mut Connection,
+        conn: &'c mut dyn crate::store::Database,
         label: Option<String>,
     ) -> anyhow::Result<crate::log::Writer<'c>> {
         crate::log::Writer::begin_with_retention(conn, label, self.log_retention)
@@ -333,7 +333,7 @@ impl RepoState {
     /// what made going back over a large write cost minutes.
     pub fn settle(
         &self,
-        conn: &Connection,
+        conn: &dyn crate::store::Store,
         effects: &crate::log::WriteEffects,
     ) -> anyhow::Result<()> {
         // Unconditional: every revision moves HEAD, whatever it touched, and the
@@ -374,7 +374,7 @@ impl RepoState {
     ///
     /// A failure is logged, never propagated: the revision is already committed,
     /// and an index left stale is slow, not wrong.
-    pub fn settle_index(&self, conn: &Connection) {
+    pub fn settle_index(&self, conn: &dyn crate::store::Store) {
         let _phase = metafolder_core::slowlog::phase("settle.index");
         let mut guard = self.index.lock_recover();
         let Some(index) = guard.as_mut() else { return };
@@ -393,7 +393,7 @@ impl RepoState {
     /// just excluded stops). No-op when the watcher is not running (unit tests,
     /// or a repository being torn down). `conn` is the already-locked
     /// connection; the tree cache is locked here.
-    pub fn refresh_watches(&self, conn: &Connection) -> usize {
+    pub fn refresh_watches(&self, conn: &dyn crate::store::Store) -> usize {
         let cap = crate::watcher::budget_cap_for(self.watch_budget_share);
         let placement = {
             let handles = self.handles.lock_recover();
@@ -743,7 +743,7 @@ impl RepoState {
 /// creating the directory's metarecord when it has none yet.
 fn write_watch_frontier(
     repo: &RepoState,
-    conn: &mut Connection,
+    conn: &mut dyn crate::store::Database,
     cache: &mut TreeCache,
     root: &Path,
     frontier: &[String],

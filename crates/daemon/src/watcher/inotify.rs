@@ -31,7 +31,6 @@ use std::sync::{Arc, Mutex};
 
 use anyhow::{Context, Result};
 use notify::Watcher as _;
-use rusqlite::Connection;
 
 use metafolder_core::metarecord::TreeName;
 use metafolder_core::sync::MutexExt;
@@ -243,7 +242,7 @@ pub struct WatchPlan {
 }
 
 pub fn compute_watched_dirs_timed(
-    conn: &Connection,
+    conn: &dyn crate::store::Store,
     cache: &mut TreeCache,
     root: &Path,
     internal_dir: &Path,
@@ -305,7 +304,10 @@ pub fn compute_watched_dirs_timed(
 
 /// The paths carrying `mfr_watch_exceeded = false` — the deliberate overrides
 /// inside an excluded subtree.
-fn watch_exceeded_overrides(conn: &Connection, cache: &mut TreeCache) -> HashSet<String> {
+fn watch_exceeded_overrides(
+    conn: &dyn crate::store::Store,
+    cache: &mut TreeCache,
+) -> HashSet<String> {
     let mut out = HashSet::new();
     let uuids = match crate::store::Questions::holding(
         conn,
@@ -356,7 +358,7 @@ impl Walk<'_> {
 /// directory into `out`.
 #[allow(clippy::too_many_arguments)]
 fn collect_eligible_dirs(
-    conn: &Connection,
+    conn: &dyn crate::store::Store,
     cache: &mut TreeCache,
     root: &Path,
     base: &RelPath,
@@ -425,7 +427,7 @@ fn collect_eligible_dirs(
 /// The effective `mfr_watch_exceeded` of `display`: its own value when it has
 /// one, else the value inherited from its ancestors.
 fn exclusion_of(
-    conn: &Connection,
+    conn: &dyn crate::store::Store,
     cache: &mut TreeCache,
     ec: &mut EligibilityCache,
     display: &str,
@@ -582,7 +584,7 @@ impl crate::watcher::Source for Source {
 
     fn refresh(
         &self,
-        conn: &Connection,
+        conn: &dyn crate::store::Store,
         cache: &mut TreeCache,
         root: &Path,
         internal_dir: &Path,
