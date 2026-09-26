@@ -20,7 +20,6 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use anyhow::{Context as _, Result};
-use rusqlite::Connection;
 use uuid::Uuid;
 
 use metafolder_core::metarecord::{Field, TreeName, Value};
@@ -31,7 +30,7 @@ use crate::fs_meta;
 use crate::log::{self, OpType, Writer};
 use crate::relpath::RelPath;
 use crate::state::RepoState;
-use crate::store::{Restoration, Rows};
+use crate::store::{Database, Restoration, Rows};
 use crate::tree_cache::TreeCache;
 
 /// A raw filesystem event, as enqueued by the watcher. Paths are
@@ -622,7 +621,7 @@ fn flush_pending_once(repo: &RepoState, report: FlushReport) -> Result<FlushStat
 /// metarecord holds, and every later resolution of them answers a uuid that is
 /// not there. Rebuilding costs one scan of the forest and only happens on a
 /// path that has already given up.
-fn resync_cache(conn: &Connection, cache: &mut TreeCache) {
+fn resync_cache(conn: &dyn Rows, cache: &mut TreeCache) {
     if let Err(err) = cache.populate(conn) {
         crate::diagnostics::error(
             "executor",
@@ -635,11 +634,11 @@ fn resync_cache(conn: &Connection, cache: &mut TreeCache) {
 /// single revision (spec-event-log "skip"), then deletes them. The tree cache
 /// is cleared afterwards because `mfr_path` restorations move tree positions.
 fn flush_restorations(
-    conn: &mut Connection,
+    conn: &mut dyn Database,
     cache: &mut TreeCache,
     retention: crate::log::Retention,
 ) -> Result<usize> {
-    let rows = crate::store::Log::restorations(&*conn)?;
+    let rows = conn.restorations()?;
     if rows.is_empty() {
         return Ok(0);
     }

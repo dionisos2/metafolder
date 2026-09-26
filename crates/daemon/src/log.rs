@@ -144,14 +144,15 @@ pub struct OpRow {
 /// (spec-trash "rollback auto-restore").
 pub fn entity_version_before_revision(
     conn: &rusqlite::Connection,
-    op: &OpRow,
+    rev: i64,
+    entity: Uuid,
 ) -> Result<Option<u64>> {
     use rusqlite::OptionalExtension as _;
     let first: Option<Option<i64>> = conn
         .query_row(
             "SELECT entity_version_before FROM operation \
              WHERE rev_id = ?1 AND entity_uuid = ?2 ORDER BY seq LIMIT 1",
-            params![op.rev_id, db::uuid_to_bytes(op.entity_uuid)],
+            params![rev, db::uuid_to_bytes(entity)],
             |r| r.get(0),
         )
         .optional()?;
@@ -1498,14 +1499,14 @@ impl<'c> Writer<'c> {
     /// history. Every write of a *loaded* repository goes through
     /// [`crate::state::RepoState::writer`] instead, which applies the
     /// repository's configured retention.
-    pub fn begin(conn: &'c mut rusqlite::Connection, label: Option<String>) -> Result<Self> {
+    pub fn begin(conn: &'c mut dyn Begin, label: Option<String>) -> Result<Self> {
         Self::begin_with_retention(conn, label, Retention::UNLIMITED)
     }
 
     /// Opens a transaction and creates the revision row, dropping the history
     /// that falls outside `retention` when the revision is committed.
     pub fn begin_with_retention(
-        conn: &'c mut rusqlite::Connection,
+        conn: &'c mut dyn Begin,
         label: Option<String>,
         retention: Retention,
     ) -> Result<Self> {

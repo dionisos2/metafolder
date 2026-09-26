@@ -6,10 +6,9 @@ use std::collections::HashMap;
 
 use anyhow::{Context, Result};
 use regex::Regex;
-use rusqlite::Connection;
 use uuid::Uuid;
 
-use crate::store::Rows;
+use crate::store::{Rows, Store};
 use crate::tree_cache::TreeCache;
 
 /// The field recording a directory the watch budget could not afford
@@ -81,14 +80,14 @@ pub struct Explanation {
 /// leading slash; `""` is the root itself). Single-shot: compiles regexes and
 /// reads ancestor fields fresh. Hot loops (the reconcile walk) should use
 /// [`is_eligible_cached`] with a shared [`EligibilityCache`].
-pub fn is_eligible(conn: &Connection, cache: &mut TreeCache, rel_path: &str) -> Result<bool> {
+pub fn is_eligible(conn: &dyn Store, cache: &mut TreeCache, rel_path: &str) -> Result<bool> {
     is_eligible_cached(conn, cache, rel_path, &mut EligibilityCache::default())
 }
 
 /// Like [`is_eligible`] but memoising ancestor field reads and compiled regexes
 /// in `ec` across calls (spec-tasks "walk perf").
 pub fn is_eligible_cached(
-    conn: &Connection,
+    conn: &dyn Store,
     cache: &mut TreeCache,
     rel_path: &str,
     ec: &mut EligibilityCache,
@@ -97,7 +96,7 @@ pub fn is_eligible_cached(
 }
 
 /// [`explain_cached`] with a throwaway cache.
-pub fn explain(conn: &Connection, cache: &mut TreeCache, rel_path: &str) -> Result<Explanation> {
+pub fn explain(conn: &dyn Store, cache: &mut TreeCache, rel_path: &str) -> Result<Explanation> {
     explain_cached(conn, cache, rel_path, &mut EligibilityCache::default())
 }
 
@@ -105,7 +104,7 @@ pub fn explain(conn: &Connection, cache: &mut TreeCache, rel_path: &str) -> Resu
 /// eligibility decision in the daemon goes through this function — the verdict
 /// and its explanation can therefore never disagree.
 pub fn explain_cached(
-    conn: &Connection,
+    conn: &dyn Store,
     cache: &mut TreeCache,
     rel_path: &str,
     ec: &mut EligibilityCache,
@@ -224,7 +223,7 @@ pub struct EffectiveIgnore {
 /// here", not "which set filtered this entry" (the algorithm's step 4 excludes
 /// the entry, which only matters for a file being tested).
 pub fn effective_ignore(
-    conn: &Connection,
+    conn: &dyn Store,
     cache: &mut TreeCache,
     rel_path: &str,
 ) -> Result<EffectiveIgnore> {
@@ -256,7 +255,7 @@ fn prefix_path(rel_path: &str, idx: usize) -> String {
 /// stops at the first unresolved prefix. `rel_path` is repo-root-relative,
 /// `/`-separated, leading slash; `""` is the root.
 fn ancestor_chain(
-    conn: &Connection,
+    conn: &dyn Store,
     cache: &mut TreeCache,
     rel_path: &str,
 ) -> Result<Vec<(usize, Uuid)>> {
@@ -277,7 +276,7 @@ fn ancestor_chain(
 /// value of the nearest ancestor (including the record itself) that defines
 /// `mf_sync`, defaulting to `internal` when none does. `external` means an
 /// external tool owns the content; anything else (incl. absent) is `internal`.
-pub fn resolve_mf_sync(conn: &Connection, cache: &mut TreeCache, rel_path: &str) -> Result<String> {
+pub fn resolve_mf_sync(conn: &dyn Store, cache: &mut TreeCache, rel_path: &str) -> Result<String> {
     let chain = ancestor_chain(conn, cache, rel_path)?;
     for (_, uuid) in chain.iter().rev() {
         if let Some(v) = Rows::string_fields(conn, *uuid, "mf_sync")?.into_iter().next() {
@@ -288,7 +287,7 @@ pub fn resolve_mf_sync(conn: &Connection, cache: &mut TreeCache, rel_path: &str)
 }
 
 /// Cached `mf_watch` of a metarecord.
-fn cached_watch(conn: &Connection, ec: &mut EligibilityCache, uuid: Uuid) -> Result<Option<bool>> {
+fn cached_watch(conn: &dyn Store, ec: &mut EligibilityCache, uuid: Uuid) -> Result<Option<bool>> {
     if let Some(v) = ec.watch.get(&uuid) {
         return Ok(*v);
     }
@@ -304,7 +303,7 @@ fn cached_watch(conn: &Connection, ec: &mut EligibilityCache, uuid: Uuid) -> Res
 /// itself overrides — so the descent carries the inherited answer and consults
 /// this only for an override (spec-file-tracking "The watch budget").
 pub fn cached_watch_exceeded(
-    conn: &Connection,
+    conn: &dyn Store,
     ec: &mut EligibilityCache,
     uuid: Uuid,
 ) -> Result<Option<bool>> {
@@ -317,7 +316,7 @@ pub fn cached_watch_exceeded(
 }
 
 /// Cached `mf_ignore` patterns of a metarecord.
-fn cached_ignore(conn: &Connection, ec: &mut EligibilityCache, uuid: Uuid) -> Result<Vec<String>> {
+fn cached_ignore(conn: &dyn Store, ec: &mut EligibilityCache, uuid: Uuid) -> Result<Vec<String>> {
     if let Some(v) = ec.ignore.get(&uuid) {
         return Ok(v.clone());
     }

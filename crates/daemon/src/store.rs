@@ -162,6 +162,10 @@ macro_rules! forward_to_connection {
                 let $me = self;
                 Log::entity_ops_after($conn, entity, after)
             }
+            fn version_before_revision(&self, rev: i64, entity: Uuid) -> Result<Option<u64>> {
+                let $me = self;
+                Log::version_before_revision($conn, rev, entity)
+            }
         }
     };
 }
@@ -244,6 +248,16 @@ pub trait Rows {
             })
             .collect())
     }
+    /// The metarecords holding a position in `field`'s forest (each once).
+    fn placed(&self, field: &str) -> Result<Vec<Uuid>> {
+        let mut seen = std::collections::HashSet::new();
+        Ok(self
+            .forest()?
+            .into_iter()
+            .filter(|t| t.field_name == field && seen.insert(t.uuid))
+            .map(|t| t.uuid)
+            .collect())
+    }
     /// The first string value of a field, if any.
     fn string_field(&self, uuid: Uuid, name: &str) -> Result<Option<String>> {
         Ok(self.rows_named(uuid, name)?.into_iter().find_map(|r| match r.value {
@@ -314,6 +328,10 @@ pub trait Log {
     /// An entity's operations newer than `after`, whatever branch they are on,
     /// oldest first.
     fn entity_ops_after(&self, entity: Uuid, after: i64) -> Result<Vec<OpRow>>;
+    /// The version `entity` had when revision `rev` began — its first
+    /// operation there's `entity_version_before` (a trash entry records the
+    /// version from outside the revision, so a rollback matches on this one).
+    fn version_before_revision(&self, rev: i64, entity: Uuid) -> Result<Option<u64>>;
 }
 
 /// A revision's metadata.
@@ -411,6 +429,11 @@ pub trait WriteTxn: Store {
 pub trait Begin {
     fn begin_write(&mut self) -> Result<Box<dyn WriteTxn + '_>>;
 }
+
+/// An open repository database: it answers reads and opens writes.
+pub trait Database: Begin + Store {}
+
+impl<T: Begin + Store + ?Sized> Database for T {}
 
 impl Begin for Connection {
     fn begin_write(&mut self) -> Result<Box<dyn WriteTxn + '_>> {
@@ -766,6 +789,9 @@ impl Log for Connection {
                     .ok_or_else(|| anyhow::anyhow!("operation {id} vanished from revision {rev}"))
             })
             .collect()
+    }
+    fn version_before_revision(&self, rev: i64, entity: Uuid) -> Result<Option<u64>> {
+        log::entity_version_before_revision(self, rev, entity)
     }
     /// Served by `idx_operation_entity (entity_uuid, id)`.
     fn entity_ops_after(&self, entity: Uuid, after: i64) -> Result<Vec<OpRow>> {

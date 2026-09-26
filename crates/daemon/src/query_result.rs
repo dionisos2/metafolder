@@ -5,14 +5,13 @@
 //! of uuids* — which is all the SQL layer does on the serving path now
 //! (spec-indexing "No operand runs in SQL").
 
-use rusqlite::Connection;
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
 use metafolder_core::metarecord::{Field, MetaRecord};
 
 use crate::error::ApiError;
-use crate::store::Rows;
+use crate::store::{Rows, Store};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
@@ -38,7 +37,7 @@ fn default_order() -> SortOrder {
 /// "Cancellation"). `fields_filter = None` keeps every field; `Some(list)` keeps
 /// only the named ones. Pass `&|| false` for uncancellable callers.
 pub fn assemble_selected(
-    conn: &Connection,
+    conn: &dyn Store,
     uuids: &[Uuid],
     fields_filter: Option<&[String]>,
     cancel: &dyn Fn() -> bool,

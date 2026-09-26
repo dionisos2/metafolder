@@ -14,7 +14,6 @@ use uuid::Uuid;
 use metafolder_core::metarecord::{Field, TreeName, Value};
 use metafolder_core::sync::MutexExt;
 
-use crate::db;
 use crate::eligibility;
 use crate::error::ApiError;
 use crate::executor::ensure_parent_metarecords;
@@ -179,7 +178,7 @@ pub fn reconcile_full_reported(
     // Step 1 — orphaned metarecords: tree position no longer present on disk.
     // (Checked against the disk directly, so that files that merely became
     // ineligible are not mistaken for orphans.) Determinate "scan" phase.
-    let tracked = db::all_tracked_metarecords(writer.connection())?;
+    let tracked = writer.store().placed("mfr_path")?;
     let scan_total = tracked.len() as u64;
     reporter.progress("scan", Some(0), Some(scan_total));
     let mut orphans: Vec<(Uuid, String)> = Vec::new();
@@ -798,11 +797,11 @@ fn refresh_stat_fields(writer: &mut Writer, root: &Path, uuid: Uuid, rel: &RelPa
 }
 
 fn string_field(writer: &Writer, uuid: Uuid, name: &str) -> Result<Option<String>> {
-    db::string_field(writer.connection(), uuid, name)
+    writer.store().string_field(uuid, name)
 }
 
 fn int_field(writer: &Writer, uuid: Uuid, name: &str) -> Result<Option<i64>> {
-    db::int_field(writer.connection(), uuid, name)
+    writer.store().int_field(uuid, name)
 }
 
 // ── MIME detection (spec-platform "MIME detection") ─────────────────────────────

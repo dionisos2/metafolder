@@ -523,7 +523,7 @@ async fn tree_children(
 }
 
 /// Fetches the full metadata object of a metarecord, or 404.
-fn metarecord_response(conn: &rusqlite::Connection, uuid: Uuid) -> Result<MetaRecord, ApiError> {
+fn metarecord_response(conn: &dyn crate::store::Store, uuid: Uuid) -> Result<MetaRecord, ApiError> {
     Rows::metarecord(conn, uuid)?
         .ok_or_else(|| ApiError::not_found(format!("Metarecord not found: {uuid}")))
 }
@@ -658,7 +658,7 @@ struct ExpectedVersion {
 /// current version differs — the optimistic-concurrency precondition used by
 /// cross-repo sync propagation (spec-data-model "Conditional writes").
 fn ensure_version(
-    conn: &rusqlite::Connection,
+    conn: &dyn crate::store::Store,
     uuid: Uuid,
     expected: Option<u64>,
 ) -> Result<(), ApiError> {
@@ -676,7 +676,7 @@ fn ensure_version(
 
 /// 404 unless the metarecord exists. Shared by the write handlers that target
 /// a metarecord by uuid rather than by an existing field row.
-fn ensure_exists(conn: &rusqlite::Connection, uuid: Uuid) -> Result<(), ApiError> {
+fn ensure_exists(conn: &dyn crate::store::Store, uuid: Uuid) -> Result<(), ApiError> {
     if Rows::version(conn, uuid)?.is_none() {
         return Err(ApiError::not_found(format!("Metarecord not found: {uuid}")));
     }
@@ -992,7 +992,7 @@ async fn unload_repo(
 
 /// Serializes one operation row, optionally with its snapshots.
 fn op_json(
-    conn: &rusqlite::Connection,
+    conn: &dyn crate::store::Store,
     op: &crate::log::OpRow,
     include_snapshots: bool,
 ) -> Result<serde_json::Value, ApiError> {
@@ -1000,7 +1000,7 @@ fn op_json(
 }
 
 fn snapshots_json(
-    conn: &rusqlite::Connection,
+    conn: &dyn crate::store::Store,
     op_id: i64,
     is_new: i64,
 ) -> Result<serde_json::Value, ApiError> {
@@ -1336,13 +1336,13 @@ impl PlanParams {
 /// Resolves the `mfr_path` of one operation snapshot to an OS-native absolute
 /// path, for the `from`/`to` of a `move_file` action.
 fn snapshot_abs_path(
-    conn: &rusqlite::Connection,
+    conn: &dyn crate::store::Store,
     cache: &mut crate::tree_cache::TreeCache,
     root: &std::path::Path,
     op_id: i64,
     is_new: i64,
 ) -> Result<Option<String>, ApiError> {
-    for row in crate::log::snapshots(conn, op_id, is_new)? {
+    for row in conn.snapshots(op_id, is_new != 0)? {
         if row.name == "mfr_path" {
             if let Value::TreeRef { parent, name } = row.value {
                 let parent_rel = match parent {
@@ -1362,7 +1362,7 @@ fn snapshot_abs_path(
 /// response `op_type` reflects the *action to execute* — a stored `file_moved`
 /// becomes `move_file` with `from`/`to`; everything else is unchanged).
 fn action_op_json(
-    conn: &rusqlite::Connection,
+    conn: &dyn crate::store::Store,
     cache: &mut crate::tree_cache::TreeCache,
     root: &std::path::Path,
     op: &crate::log::OpRow,
@@ -1398,7 +1398,7 @@ fn action_op_json(
         // version the record held before the whole revision. Expose that one
         // too: it is what the CLI correlates the entry against, identically on
         // every op of the revision.
-        if let Some(v) = crate::log::entity_version_before_revision(conn, op)? {
+        if let Some(v) = conn.version_before_revision(op.rev_id, op.entity_uuid)? {
             value["entity_version_before_revision"] = json!(v);
         }
     }
@@ -1538,7 +1538,7 @@ struct RevertPlanParams {
 /// lie on HEAD's ancestry: an operation on a branch a past rollback abandoned
 /// is not part of the current history, so there is nothing there to undo.
 fn resolve_revert_target(
-    conn: &rusqlite::Connection,
+    conn: &dyn crate::store::Store,
     head: Option<i64>,
     target: &RevertTarget,
 ) -> Result<Vec<crate::log::OpRow>, ApiError> {
@@ -1547,7 +1547,7 @@ fn resolve_revert_target(
             let rev_id = match rev {
                 serde_json::Value::String(s) if s == "head" => {
                     let head = head.ok_or_else(|| ApiError::not_found("the log is empty"))?;
-                    crate::log::get_op(conn, head)?
+                    conn.op(head)?
                         .ok_or_else(|| ApiError::not_found("HEAD names no operation"))?
                         .rev_id
                 }
@@ -1570,7 +1570,7 @@ fn resolve_revert_target(
             }
             let mut ops = Vec::with_capacity(ids.len());
             for id in ids {
-                ops.push(crate::log::get_op(conn, *id)?.ok_or_else(|| {
+                ops.push(conn.op(*id)?.ok_or_else(|| {
                     ApiError::not_found(format!(
                         "operation {id} does not exist, or was pruned or trimmed away"
                     ))
@@ -1582,8 +1582,7 @@ fn resolve_revert_target(
         _ => return Err(ApiError::bad_request("the target needs exactly one of rev_id or op_ids")),
     };
     if let Some(head) = head {
-        let ancestry: std::collections::HashSet<i64> =
-            crate::log::ancestry(conn, head)?.into_iter().collect();
+        let ancestry: std::collections::HashSet<i64> = conn.ancestry(head)?.into_iter().collect();
         if let Some(off) = ops.iter().find(|o| !ancestry.contains(&o.id)) {
             return Err(ApiError::bad_request(format!(
                 "operation {} is not on HEAD's ancestry: it sits on a branch a past rollback \
@@ -1609,7 +1608,7 @@ fn op_brief(op: &crate::log::OpRow) -> serde_json::Value {
 /// resolves the paths a `move` action needs, which costs a tree-cache walk per
 /// operation and is useless to a caller that will not touch the filesystem.
 fn revert_plan_json(
-    conn: &rusqlite::Connection,
+    conn: &dyn crate::store::Store,
     analysis: &crate::revert::Analysis,
     with_dependents: bool,
     mut fs: Option<(&mut crate::tree_cache::TreeCache, &std::path::Path)>,
@@ -1669,7 +1668,7 @@ fn revert_plan_json(
             if let Some(v) = op.entity_version_before {
                 entry["entity_version_before"] = json!(v);
             }
-            if let Some(v) = crate::log::entity_version_before_revision(conn, op)? {
+            if let Some(v) = conn.version_before_revision(op.rev_id, op.entity_uuid)? {
                 entry["entity_version_before_revision"] = json!(v);
             }
         }
@@ -2994,7 +2993,7 @@ type QueryPage = (Vec<Uuid>, Option<String>, Option<usize>);
 /// shared reference to it. The single acquisition point for the two live-query
 /// call sites (`field_catalog` and `run_query_filter`) so they cannot drift.
 fn ensure_index<'g>(
-    conn: &rusqlite::Connection,
+    conn: &dyn crate::store::Store,
     guard: &'g mut Option<crate::index::RepoIndex>,
     cancel: &dyn Fn() -> bool,
 ) -> Result<&'g crate::index::RepoIndex, ApiError> {
@@ -3019,7 +3018,7 @@ fn ensure_index<'g>(
 /// same forest and rewritten to `UuidIn` sets (spec-indexing "No operand runs in
 /// SQL").
 fn prepare_indexed_query<'a>(
-    conn: &rusqlite::Connection,
+    conn: &dyn crate::store::Store,
     cache: &mut crate::tree_cache::TreeCache,
     query: &MetaQuery,
 ) -> Result<(crate::index::QueryRoots<'a>, MetaQuery), ApiError> {
@@ -3057,7 +3056,7 @@ fn prepare_indexed_query<'a>(
 /// there being nothing else to ask.
 fn resolve_query_uuids(
     repo_state: &RepoState,
-    conn: &rusqlite::Connection,
+    conn: &dyn crate::store::Store,
     cache: &mut crate::tree_cache::TreeCache,
     query: &MetaQuery,
     cancel: &dyn Fn() -> bool,
@@ -3097,7 +3096,7 @@ fn index_gap(gap: crate::index::Unsupported) -> ApiError {
 /// bug (see [`index_gap`]).
 fn run_query_filter(
     repo_state: &RepoState,
-    conn: &rusqlite::Connection,
+    conn: &dyn crate::store::Store,
     cache: &mut crate::tree_cache::TreeCache,
     body: &QueryBody,
     cancel: &dyn Fn() -> bool,
@@ -3468,7 +3467,7 @@ struct TrashDeleteBody {
 /// "Refusing to break a reference" rather than left to be discovered.
 fn inbound_referrers(
     repo_state: &RepoState,
-    conn: &rusqlite::Connection,
+    conn: &dyn crate::store::Store,
     cache: &mut crate::tree_cache::TreeCache,
     targets: &[Uuid],
 ) -> Result<Vec<Uuid>, ApiError> {
@@ -3898,7 +3897,7 @@ struct ForceBody {
 // ── By-id field access (repo-level: the row id is unique per repo) ────────────
 
 /// 404 unless field row `id` exists in this repo; returns its owning metarecord.
-fn field_owner(conn: &rusqlite::Connection, id: i64) -> Result<Uuid, ApiError> {
+fn field_owner(conn: &dyn crate::store::Store, id: i64) -> Result<Uuid, ApiError> {
     Rows::owner_of_row(conn, id)?
         .ok_or_else(|| ApiError::not_found(format!("Field {id} not found")))
 }
