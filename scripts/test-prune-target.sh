@@ -271,4 +271,34 @@ touch -d "2020-01-03" "target/debug/incremental/bitflags-3ccccccccccccc"
     || fail "serde keeps its single generation, its incremental dir must stay"
 ok "first-run cap"
 
+echo "== scenario 11: superseded sessions inside a live incremental dir are pruned"
+# rustc writes each compilation of a crate as a new session dir inside its
+# cache dir (s-<timestamp>-<random>-<svh>, locked by s-<timestamp>-<random>.lock)
+# and deletes the previous one only on the NEXT successful compilation of that
+# crate — so a crate not rebuilt since, or a build killed mid-way, leaves a
+# full second copy behind. A session older than the newest finalized one is
+# dead; one newer (a build in progress, still named -working) is not.
+make_target
+inc=target/debug/incremental/serde-4ddddddddddddd
+mkdir -p "$inc/s-hmaaaaaaaa-0000001-oldsvh" \
+         "$inc/s-hmbbbbbbbb-0000002-newsvh" \
+         "$inc/s-hmcccccccc-0000003-working"
+touch "$inc/s-hmaaaaaaaa-0000001.lock" "$inc/s-hmbbbbbbbb-0000002.lock" \
+      "$inc/s-hmcccccccc-0000003.lock"
+"$prune" >/dev/null
+[ ! -e "$inc/s-hmaaaaaaaa-0000001-oldsvh" ] || fail "a superseded session should be pruned"
+[ ! -e "$inc/s-hmaaaaaaaa-0000001.lock" ] || fail "its lock file goes with it"
+[ -e "$inc/s-hmbbbbbbbb-0000002-newsvh" ] || fail "the newest finalized session must stay"
+[ -e "$inc/s-hmbbbbbbbb-0000002.lock" ] || fail "the newest session keeps its lock file"
+[ -e "$inc/s-hmcccccccc-0000003-working" ] || fail "a session in progress must stay"
+[ -e "$inc/s-hmcccccccc-0000003.lock" ] || fail "a session in progress keeps its lock file"
+ok "superseded sessions"
+
+echo "== scenario 12: --dry-run deletes no session"
+make_target
+mkdir -p "$inc/s-hmaaaaaaaa-0000001-oldsvh" "$inc/s-hmbbbbbbbb-0000002-newsvh"
+"$prune" --dry-run >/dev/null
+[ -e "$inc/s-hmaaaaaaaa-0000001-oldsvh" ] || fail "--dry-run must not delete a session"
+ok "dry run leaves sessions alone"
+
 echo "all prune-target tests passed"

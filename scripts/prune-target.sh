@@ -26,6 +26,14 @@
 #      gain since the previous run, or a first run with no recorded state)
 #      keeps one dir per surviving generation (the most recently used) and
 #      loses the older ones. A deleted cache dir costs a recompile.
+#   4. Session pass — inside a cache dir that stays, rustc writes each
+#      compilation as a new session dir (s-<time>-<random>-<svh>, locked by
+#      s-<time>-<random>.lock) and deletes the previous one only on the NEXT
+#      successful compilation of that crate: a crate not rebuilt since, or a
+#      build killed mid-way, keeps a full second copy (a third of incremental/
+#      on a real target/). Every session older than the newest finalized one
+#      is deleted with its lock; a newer one — a build in progress, still
+#      named -working — is left alone.
 #
 # Usage: scripts/prune-target.sh [--dry-run] [TARGET_DIR]
 #   TARGET_DIR defaults to ./target; Cargo.lock is expected next to it.
@@ -46,7 +54,7 @@ target_dir=target
 for arg in "$@"; do
     case "$arg" in
         --dry-run) dry_run=1 ;;
-        -h|--help) sed -n '2,39p' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
+        -h|--help) sed -n '2,48p' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
         *) target_dir=$arg ;;
     esac
 done
@@ -127,8 +135,9 @@ mark() {
 }
 
 # Same, for a path that needs no stem/hash bridging (incremental cache dirs).
+declare -A doomed_path=()
 mark_path() {
-    [ -e "$1" ] && doomed+=("$1")
+    [ -e "$1" ] && doomed+=("$1") && doomed_path["$1"]=1
     return 0
 }
 
@@ -244,6 +253,28 @@ if [ ${#inc_dirs[@]} -gt 0 ]; then
         done < <(printf '%s' "${inc_dirs[$name_key]}" | sort -rn)
     done
 fi
+
+# ---- pass 4: superseded sessions inside the cache dirs that stay -------------
+# Session names sort by their time field (fixed-width base 36), so the newest
+# finalized session is the last non-working one in name order; everything
+# before it is dead. Its lock is named by the session's first two fields.
+for p in "$target_dir"/*/; do
+    [ -d "${p}incremental" ] || continue
+    for cache in "${p}"incremental/*/; do
+        cache=${cache%/}
+        [ -z "${doomed_path[$cache]+x}" ] || continue
+        newest=$(find "$cache" -mindepth 1 -maxdepth 1 -type d -name 's-*' \
+                     ! -name '*-working' -printf '%f\n' | sort | tail -1)
+        [ -n "$newest" ] || continue
+        newest_key=$(cut -d- -f1-3 <<<"$newest")
+        while IFS= read -r session; do
+            key=$(cut -d- -f1-3 <<<"$session")
+            [[ $key < $newest_key ]] || continue
+            mark_path "$cache/$session"
+            mark_path "$cache/$key.lock"
+        done < <(find "$cache" -mindepth 1 -maxdepth 1 -type d -name 's-*' -printf '%f\n')
+    done
+done
 
 # ---- execute and report ------------------------------------------------------
 # The doomed list routinely runs to tens of thousands of paths, well past
