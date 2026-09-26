@@ -453,12 +453,19 @@ pub fn has_children(conn: &rusqlite::Connection, op_id: i64) -> Result<bool> {
 /// stays visible (for redo) while operations on divergent branches are hidden.
 /// Returned root→leaf (oldest first), like the `linear` mode.
 pub fn active_line_ops(conn: &rusqlite::Connection, head: i64) -> Result<Vec<OpRow>> {
+    Ok(active_line_of(ancestry_ops(conn, head)?, all_ops(conn)?, head))
+}
+
+/// The active line through `head` from its ancestry (HEAD-first) and every
+/// operation: the ancestors root-first, then the branch below `head` that
+/// leads to the newest operation (spec-event-log "Active line"). Pure, so
+/// every storage backend walks it the same way.
+pub(crate) fn active_line_of(ancestry: Vec<OpRow>, all: Vec<OpRow>, head: i64) -> Vec<OpRow> {
     // Ancestry is HEAD→root; reverse to root→HEAD.
-    let mut line = ancestry_ops(conn, head)?;
+    let mut line = ancestry;
     line.reverse();
 
     // Build the child map from every operation to walk forward from HEAD.
-    let all = all_ops(conn)?;
     let mut children: HashMap<i64, Vec<i64>> = HashMap::new();
     for op in &all {
         if let Some(parent) = op.parent_id {
@@ -492,7 +499,7 @@ pub fn active_line_ops(conn: &rusqlite::Connection, head: i64) -> Result<Vec<OpR
         line.push((*by_id.get(&next).expect("child op present")).clone());
         cur = next;
     }
-    Ok(line)
+    line
 }
 
 /// Snapshot rows of one operation (`is_new` 0 = before, 1 = after).
@@ -1305,7 +1312,7 @@ impl Retention {
         (revisions / 10).max(1)
     }
 
-    fn enabled(&self) -> bool {
+    pub(crate) fn enabled(&self) -> bool {
         self.revisions > 0
     }
 }

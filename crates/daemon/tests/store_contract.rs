@@ -5,11 +5,38 @@
 
 use metafolder_core::metarecord::{Field, Value};
 use metafolder_daemon::db;
+use metafolder_daemon::kvstore::KvStore;
 use metafolder_daemon::log::Delta;
 use metafolder_daemon::log::Writer;
+use metafolder_daemon::store::Handle;
 use metafolder_daemon::store::Store;
-use rusqlite::Connection;
 use uuid::Uuid;
+
+mod common;
+use common::TempDir;
+
+/// The two backends every test here runs on.
+#[derive(Clone, Copy, Debug)]
+enum Backend {
+    Sqlite,
+    Kv,
+}
+
+/// An empty database of the given backend (and the directory a KV store
+/// lives in, removed when dropped).
+fn open(backend: Backend) -> (Handle, Option<TempDir>) {
+    match backend {
+        Backend::Sqlite => {
+            let conn = db::open_in_memory().unwrap();
+            db::init_schema(&conn).unwrap();
+            (Box::new(conn), None)
+        }
+        Backend::Kv => {
+            let dir = TempDir::new("store-contract-kv");
+            (Box::new(KvStore::open(dir.path()).unwrap()), Some(dir))
+        }
+    }
+}
 
 fn tref(parent: Option<Uuid>, name: &str) -> Field {
     Field::new("loc", Value::TreeRef { parent, name: name.into() })
@@ -17,9 +44,8 @@ fn tref(parent: Option<Uuid>, name: &str) -> Field {
 
 /// A root, a child with two string rows, and a later revision rewriting one
 /// field: three operations over two revisions.
-fn fixture() -> (Connection, Uuid, Uuid) {
-    let mut conn = db::open_in_memory().unwrap();
-    db::init_schema(&conn).unwrap();
+fn fixture(backend: Backend) -> (Handle, Option<TempDir>, Uuid, Uuid) {
+    let (mut conn, dir) = open(backend);
     let mut w = Writer::begin(&mut conn, None).unwrap();
     let root = w.create_metarecord(vec![tref(None, "root")]).unwrap().uuid;
     let child = w
@@ -34,12 +60,11 @@ fn fixture() -> (Connection, Uuid, Uuid) {
     let mut w = Writer::begin(&mut conn, None).unwrap();
     w.set_field(child, "rating", Value::Int(3)).unwrap();
     w.commit().unwrap();
-    (conn, root, child)
+    (conn, dir, root, child)
 }
 
-#[test]
-fn rows_answer_what_was_written() {
-    let (conn, root, child) = fixture();
+fn rows_answer_what_was_written(backend: Backend) {
+    let (conn, _dir, root, child) = fixture(backend);
     let store: &dyn Store = &conn;
 
     let rows = store.rows(child).unwrap();
@@ -51,6 +76,9 @@ fn rows_answer_what_was_written() {
         [Value::String("a".into()), Value::String("b".into())]
     );
     assert!(store.rows_named(child, "none").unwrap().is_empty());
+    let field: Vec<(Uuid, Value)> =
+        store.field_rows("tag").unwrap().into_iter().map(|(u, r)| (u, r.value)).collect();
+    assert_eq!(field, [(child, Value::String("a".into())), (child, Value::String("b".into()))]);
     assert!(store.rows(Uuid::new_v4()).unwrap().is_empty());
 
     // A row by its id, and whose it is.
@@ -69,9 +97,8 @@ fn rows_answer_what_was_written() {
     assert_eq!(all, want);
 }
 
-#[test]
-fn scans_cover_every_row_in_id_order() {
-    let (conn, root, child) = fixture();
+fn scans_cover_every_row_in_id_order(backend: Backend) {
+    let (conn, _dir, root, child) = fixture(backend);
     let store: &dyn Store = &conn;
     let mut seen = Vec::new();
     store
@@ -92,9 +119,8 @@ fn scans_cover_every_row_in_id_order() {
     assert_eq!(placed, want);
 }
 
-#[test]
-fn the_log_walks_back_from_head() {
-    let (conn, _, child) = fixture();
+fn the_log_walks_back_from_head(backend: Backend) {
+    let (conn, _dir, _, child) = fixture(backend);
     let store: &dyn Store = &conn;
     let head = store.head().unwrap().expect("a head after three writes");
     let last = store.op(head).unwrap().expect("the head operation");
@@ -121,19 +147,16 @@ fn the_log_walks_back_from_head() {
 use metafolder_daemon::log::{OpType, Retention};
 use metafolder_daemon::store::{Begin, NewOp, Restoration};
 
-fn empty() -> Connection {
-    let conn = db::open_in_memory().unwrap();
-    db::init_schema(&conn).unwrap();
-    conn
+fn empty(backend: Backend) -> (Handle, Option<TempDir>) {
+    open(backend)
 }
 
 fn s(v: &str) -> Value {
     Value::String(v.into())
 }
 
-#[test]
-fn row_ids_are_never_reused_and_can_be_restored() {
-    let mut conn = empty();
+fn row_ids_are_never_reused_and_can_be_restored(backend: Backend) {
+    let (mut conn, _dir) = empty(backend);
     let m = Uuid::new_v4();
     let (a, b) = {
         let tx = conn.begin_write().unwrap();
@@ -157,9 +180,8 @@ fn row_ids_are_never_reused_and_can_be_restored() {
     tx.commit().unwrap();
 }
 
-#[test]
-fn a_forest_position_and_a_path_are_taken_once() {
-    let mut conn = empty();
+fn a_forest_position_and_a_path_are_taken_once(backend: Backend) {
+    let (mut conn, _dir) = empty(backend);
     let (root, x, y) = (Uuid::new_v4(), Uuid::new_v4(), Uuid::new_v4());
     let tx = conn.begin_write().unwrap();
     for u in [root, x, y] {
@@ -180,9 +202,8 @@ fn a_forest_position_and_a_path_are_taken_once() {
     assert_eq!(kids, want);
 }
 
-#[test]
-fn removing_a_metarecord_takes_its_rows() {
-    let mut conn = empty();
+fn removing_a_metarecord_takes_its_rows(backend: Backend) {
+    let (mut conn, _dir) = empty(backend);
     let m = Uuid::new_v4();
     let tx = conn.begin_write().unwrap();
     tx.create_metarecord(m, 7).unwrap();
@@ -201,9 +222,8 @@ fn removing_a_metarecord_takes_its_rows() {
     assert!(tx.holders("k").unwrap().is_empty());
 }
 
-#[test]
-fn appended_operations_chain_from_head() {
-    let mut conn = empty();
+fn appended_operations_chain_from_head(backend: Backend) {
+    let (mut conn, _dir) = empty(backend);
     let m = Uuid::new_v4();
     let op = |field: &str| NewOp {
         op_type: OpType::SetField,
@@ -238,9 +258,8 @@ fn appended_operations_chain_from_head() {
     tx.commit().unwrap();
 }
 
-#[test]
-fn an_uncommitted_transaction_leaves_nothing() {
-    let mut conn = empty();
+fn an_uncommitted_transaction_leaves_nothing(backend: Backend) {
+    let (mut conn, _dir) = empty(backend);
     let m = Uuid::new_v4();
     {
         let tx = conn.begin_write().unwrap();
@@ -252,9 +271,8 @@ fn an_uncommitted_transaction_leaves_nothing() {
     assert!(store.metarecords().unwrap().is_empty());
 }
 
-#[test]
-fn restorations_queue_in_order_and_leave_when_dropped() {
-    let mut conn = empty();
+fn restorations_queue_in_order_and_leave_when_dropped(backend: Backend) {
+    let (mut conn, _dir) = empty(backend);
     let (a, b, p) = (Uuid::new_v4(), Uuid::new_v4(), Uuid::new_v4());
     let queued = [
         Restoration::SetPath { entity: a, parent: Some(p), name: "n".into() },
@@ -275,18 +293,16 @@ fn restorations_queue_in_order_and_leave_when_dropped() {
     tx.commit().unwrap();
 }
 
-#[test]
-fn clearing_takes_every_metarecord() {
-    let (mut conn, _, _) = fixture();
+fn clearing_takes_every_metarecord(backend: Backend) {
+    let (mut conn, _dir, _, _) = fixture(backend);
     let tx = conn.begin_write().unwrap();
     tx.clear_metarecords().unwrap();
     assert!(tx.metarecords().unwrap().is_empty());
     assert_eq!(tx.max_row_id().unwrap(), 0);
 }
 
-#[test]
-fn the_log_lists_its_lines_and_revisions() {
-    let (conn, _, _) = fixture();
+fn the_log_lists_its_lines_and_revisions(backend: Backend) {
+    let (conn, _dir, _, _) = fixture(backend);
     let store: &dyn Store = &conn;
     let head = store.head().unwrap().unwrap();
     let chain = store.ancestry_ops(head, None).unwrap();
@@ -312,9 +328,8 @@ fn the_log_lists_its_lines_and_revisions() {
     assert_eq!(store.counts().unwrap(), (3, 2));
 }
 
-#[test]
-fn a_revision_names_its_operations_and_takes_a_label() {
-    let (mut conn, _, child) = fixture();
+fn a_revision_names_its_operations_and_takes_a_label(backend: Backend) {
+    let (mut conn, _dir, _, child) = fixture(backend);
     let store: &dyn Store = &conn;
     let all = store.all_ops().unwrap();
     let (first_rev, second_rev) = (all[0].rev_id, all[2].rev_id);
@@ -334,9 +349,8 @@ fn a_revision_names_its_operations_and_takes_a_label() {
     assert_eq!(store.revisions(&[first_rev]).unwrap()[&first_rev].label.as_deref(), Some("before"));
 }
 
-#[test]
-fn a_child_is_found_by_its_bytes_or_its_text() {
-    let mut conn = empty();
+fn a_child_is_found_by_its_bytes_or_its_text(backend: Backend) {
+    let (mut conn, _dir) = empty(backend);
     let (root, a, e) = (Uuid::new_v4(), Uuid::new_v4(), Uuid::new_v4());
     let tx = conn.begin_write().unwrap();
     for u in [root, a, e] {
@@ -367,8 +381,8 @@ fn a_child_is_found_by_its_bytes_or_its_text() {
 use metafolder_daemon::store::{Derived, Questions};
 
 /// A repository touching every question.
-fn questions_fixture() -> (Connection, Uuid) {
-    let mut conn = empty();
+fn questions_fixture(backend: Backend) -> (Handle, Option<TempDir>, Uuid) {
+    let (mut conn, dir) = empty(backend);
     let mut w = Writer::begin(&mut conn, None).unwrap();
     let root = w
         .create_metarecord(vec![Field::new(
@@ -424,7 +438,7 @@ fn questions_fixture() -> (Connection, Uuid) {
     w.create_metarecord(vec![st("mf_schema", "song")]).unwrap();
     w.create_metarecord(vec![st("mf_schema", "film"), st("title", "v")]).unwrap();
     w.commit().unwrap();
-    (conn, group)
+    (conn, dir, group)
 }
 
 fn sorted<T: Ord>(mut v: Vec<T>) -> Vec<T> {
@@ -434,9 +448,9 @@ fn sorted<T: Ord>(mut v: Vec<T>) -> Vec<T> {
 
 #[test]
 fn every_sqlite_answer_is_its_derived_default() {
-    let (conn, group) = questions_fixture();
+    let (conn, _dir, group) = questions_fixture(Backend::Sqlite);
     let sql: &dyn Store = &conn;
-    let derived = Derived(&conn);
+    let derived = Derived(conn.as_sqlite().unwrap());
     for (name, value) in [
         ("mf_watch_exceeded", Value::Bool(true)),
         ("mf_watch_exceeded", Value::Bool(false)),
@@ -506,9 +520,8 @@ fn every_sqlite_answer_is_its_derived_default() {
     assert_eq!(derived.missing("title", 2).unwrap().len(), 2);
 }
 
-#[test]
-fn targets_are_found_along_the_ancestry() {
-    let (mut conn, _, _) = fixture();
+fn targets_are_found_along_the_ancestry(backend: Backend) {
+    let (mut conn, _dir, _, _) = fixture(backend);
     let store: &dyn Store = &conn;
     let all = store.all_ops().unwrap();
     let head = store.head().unwrap().unwrap();
@@ -532,9 +545,8 @@ fn targets_are_found_along_the_ancestry() {
     assert_eq!(store.ancestor_labelled(head, "none").unwrap(), None);
 }
 
-#[test]
-fn pruning_removes_operations_and_their_empty_revisions() {
-    let (mut conn, _, _) = fixture();
+fn pruning_removes_operations_and_their_empty_revisions(backend: Backend) {
+    let (mut conn, _dir, _, _) = fixture(backend);
     let all = (&conn as &dyn Store).all_ops().unwrap();
     let tx = conn.begin_write().unwrap();
     tx.detach_op(all[2].id).unwrap();
@@ -547,3 +559,33 @@ fn pruning_removes_operations_and_their_empty_revisions() {
     assert!(store.snapshots(all[0].id, true).unwrap().is_empty(), "snapshots go too");
     conn.compact().unwrap();
 }
+
+/// Every test above, on each backend.
+macro_rules! on_both {
+    ($($name:ident),* $(,)?) => {
+        mod sqlite {
+            $(#[test] fn $name() { super::$name(super::Backend::Sqlite) })*
+        }
+        mod kv {
+            $(#[test] fn $name() { super::$name(super::Backend::Kv) })*
+        }
+    };
+}
+
+on_both!(
+    rows_answer_what_was_written,
+    scans_cover_every_row_in_id_order,
+    the_log_walks_back_from_head,
+    row_ids_are_never_reused_and_can_be_restored,
+    a_forest_position_and_a_path_are_taken_once,
+    removing_a_metarecord_takes_its_rows,
+    appended_operations_chain_from_head,
+    an_uncommitted_transaction_leaves_nothing,
+    restorations_queue_in_order_and_leave_when_dropped,
+    clearing_takes_every_metarecord,
+    the_log_lists_its_lines_and_revisions,
+    a_revision_names_its_operations_and_takes_a_label,
+    a_child_is_found_by_its_bytes_or_its_text,
+    targets_are_found_along_the_ancestry,
+    pruning_removes_operations_and_their_empty_revisions
+);
