@@ -14,6 +14,7 @@ use anyhow::{bail, Context, Result};
 use metafolder_kv_proto::model::{Record, Value, ROOT};
 use metafolder_kv_proto::query::{Sort, Q};
 use metafolder_kv_proto::store::Store;
+use metafolder_kv_proto::synth::{synthetic, WORDS};
 use uuid::Uuid;
 
 const P: &str = "mfr_path";
@@ -180,49 +181,9 @@ fn hex(b: &[u8]) -> String {
 
 // ── gen ─────────────────────────────────────────────────────────────────────
 
-struct Rng(u64);
-impl Rng {
-    fn next(&mut self) -> u64 {
-        self.0 ^= self.0 << 13;
-        self.0 ^= self.0 >> 7;
-        self.0 ^= self.0 << 17;
-        self.0
-    }
-    fn below(&mut self, n: u64) -> u64 {
-        self.next() % n
-    }
-    fn uuid(&mut self) -> Uuid {
-        Uuid::from_u128(((self.next() as u128) << 64) | self.next() as u128)
-    }
-}
-
-const WORDS: &[&str] = &[
-    "holiday", "report", "invoice", "sample", "draft", "photo", "concert", "summer", "family",
-    "project", "budget", "notes", "scan", "letter", "music", "album", "track", "video", "backup",
-    "archive", "meeting", "trip", "garden", "recipe", "birthday", "wedding", "paper", "thesis",
-];
-const EXTS: &[&str] = &["jpg", "png", "mp3", "flac", "pdf", "txt", "mkv", "mp4", "odt", "zip"];
-
-/// A synthetic repository of `files` files under `files / 20` directories
-/// (an 8-way tree under a root named `""`), written in depth-first order as a
-/// reconcile would discover it. Fields modelled on a real one: the stat
-/// fields, a low-cardinality type, a unique hash, optional tags and rating.
+/// Writes the synthetic repository of `synth::synthetic` (see there).
 fn generate(dir: &Path, files: usize) -> Result<()> {
     let store = fresh(dir)?;
-    let dirs = (files / 20).max(1);
-    let mut rng = Rng(0x2545_F491_4F6C_DD1D);
-    let uuids: Vec<Uuid> = (0..=dirs).map(|_| rng.uuid()).collect();
-    // Directory k (1-based) hangs under (k - 1) / 8, the root being 0.
-    let mut kids: Vec<Vec<usize>> = vec![Vec::new(); dirs + 1];
-    for k in 1..=dirs {
-        kids[(k - 1) / 8].push(k);
-    }
-    // Every directory, the root included, gets the same share; the root takes
-    // the remainder.
-    let per_dir = files / (dirs + 1);
-    let extra = files - per_dir * (dirs + 1);
-    let mut stack = vec![0usize];
-    let mut next_file = 0usize;
     let mut out: Vec<Record> = Vec::new();
     let mut written = 0usize;
     let t0 = Instant::now();
@@ -233,57 +194,15 @@ fn generate(dir: &Path, files: usize) -> Result<()> {
         }
         w.commit()
     };
-    while let Some(k) = stack.pop() {
-        let (parent, name) = if k == 0 {
-            (ROOT, String::new())
-        } else {
-            let p = (k - 1) / 8;
-            (uuids[p], format!("{}-{k}", WORDS[k % WORDS.len()]))
-        };
-        out.push(Record {
-            uuid: uuids[k],
-            fields: vec![
-                (P.into(), Value::Tree { parent, name }),
-                ("mfr_type".into(), Value::Str("directory".into())),
-            ],
-        });
-        let n = if k == 0 { per_dir + extra } else { per_dir };
-        for _ in 0..n {
-            let i = next_file;
-            next_file += 1;
-            let r = rng.next();
-            let ext = EXTS[(r % EXTS.len() as u64) as usize];
-            let name = format!(
-                "{}_{}_{i}.{ext}",
-                WORDS[rng.below(WORDS.len() as u64) as usize],
-                WORDS[rng.below(WORDS.len() as u64) as usize]
-            );
-            let mut fields = vec![
-                (P.to_string(), Value::Tree { parent: uuids[k], name }),
-                ("mfr_type".into(), Value::Str("file".into())),
-                ("mfr_ext".into(), Value::Str(ext.into())),
-                ("mfr_size".into(), Value::Int(rng.below(50_000_000) as i64)),
-                (
-                    "mfr_mtime".into(),
-                    Value::Time(1_500_000_000_000 + rng.below(300_000_000_000) as i64),
-                ),
-                ("mfr_hash".into(), Value::Str(format!("{:016x}", rng.next()))),
-            ];
-            for _ in 0..rng.below(3) {
-                fields.push(("tag".into(), Value::Str(WORDS[rng.below(8) as usize].into())));
-            }
-            if rng.below(3) == 0 {
-                fields.push(("rating".into(), Value::Int(rng.below(10) as i64)));
-            }
-            out.push(Record { uuid: rng.uuid(), fields });
-        }
+    synthetic(files, |r| {
+        out.push(r);
         if out.len() >= BATCH {
             written += out.len();
             flush(&mut out, &store)?;
             eprint!("\r{written} records, {:.0}/s", written as f64 / t0.elapsed().as_secs_f64());
         }
-        stack.extend(kids[k].iter().rev());
-    }
+        Ok(())
+    })?;
     written += out.len();
     flush(&mut out, &store)?;
     let s = t0.elapsed().as_secs_f64();

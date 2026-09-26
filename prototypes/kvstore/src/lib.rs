@@ -6,3 +6,4 @@ pub mod model;
 pub mod query;
 pub mod reference;
 pub mod store;
+pub mod synth;
