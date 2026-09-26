@@ -487,8 +487,14 @@ and =MDB_NOMETASYNC= saved almost nothing — one =fsync= dominates either way.
 - Cold-cache latency: whether to warm the hot key spaces (=forest=, =kids=,
   =presence=, postings) at load with =madvise(WILLNEED)=, and how much that costs
   on a store larger than memory.
-- Whether the resident engine should adopt the page-bounded sort (walk/fetch)
-  and the lazy text checks now — they explain most of the gap measured above.
+- *(done, September 2026)* The resident engine adopted the page-bounded sort
+  and the lazy text checks (spec-indexing "A page costs the page"). On the same
+  210 000 records, in-process: first page 5.7 → 0.08 ms, by size 50 → 0.3 ms,
+  all files by path 152 → 1.5 ms, a tag by date 7.9 → 0.2 ms, name searches
+  without a count 66–118 → 1–11 ms. What remains is the filter itself: a
+  11 699-file subtree still costs ≈ 5 ms to evaluate (iterative expansion,
+  where the disk backend reads one descendant bitmap), and a counted text
+  search still scans every distinct name (≈ 70 ms).
 
 * Increments
 
