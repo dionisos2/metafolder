@@ -7,8 +7,8 @@ use std::path::PathBuf;
 
 /// `key → values` of the `[Service]` section (a key may repeat).
 fn service() -> HashMap<String, Vec<String>> {
-    let path = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-        .join("../../scripts/metafolder-watchd.service");
+    let path =
+        PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../scripts/metafolder-watchd.service");
     let text = std::fs::read_to_string(path).expect("the unit file");
     let mut section = String::new();
     let mut out: HashMap<String, Vec<String>> = HashMap::new();
@@ -85,5 +85,5 @@ fn test_the_broker_is_confined_and_bounded() {
 fn test_the_broker_sees_the_hosts_tmp() {
     let unit = service();
     assert_ne!(unit.get("PrivateTmp").and_then(|v| v.last()).map(String::as_str), Some("true"));
-    assert!(unit.get("DynamicUser").is_none(), "DynamicUser implies PrivateTmp");
+    assert!(!unit.contains_key("DynamicUser"), "DynamicUser implies PrivateTmp");
 }
