@@ -750,9 +750,11 @@ The broker behind the coverage source is a separate process and can go away.
 What happens then is what happens whenever events are missed (see [[*Event
 batching]] — a daemon that was down misses them too): the gap is *announced*
 (a diagnostic on every disconnect, every reconnect and every overflow, each
-naming =mf reconcile=) and closes with that reconcile. The daemon suggests it
-and never starts one on its own — an overflow comes from load, and a reconcile
-it triggered would add to the load. Nothing is ever inferred from a gap.
+naming =mf reconcile=) and closes with that reconcile. Reconciling is purely
+manual: the daemon suggests it and never starts one on its own — not after an
+overflow (which comes from load, and a reconcile would add to it), not after a
+reconnection (a flaky socket would fire one per blink). Nothing is ever
+inferred from a gap.
 
 What does *not* vary between regimes: the eligibility filter every event goes
 through (see [[*Watch and Ignore]]), the =.metafolder/internal/= hard skip,
