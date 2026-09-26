@@ -361,3 +361,147 @@ fn a_child_is_found_by_its_bytes_or_its_text() {
     assert_eq!(tx.positions("loc", root).unwrap(), [(None, String::new())]);
     assert!(tx.positions("other", a).unwrap().is_empty());
 }
+
+// ── Questions: every SQLite answer is its derived default ─────────────────────
+
+use metafolder_daemon::store::{Derived, Questions};
+
+/// A repository touching every question.
+fn questions_fixture() -> (Connection, Uuid) {
+    let mut conn = empty();
+    let mut w = Writer::begin(&mut conn, None).unwrap();
+    let root = w
+        .create_metarecord(vec![Field::new(
+            "mfr_path",
+            Value::TreeRef { parent: None, name: "".into() },
+        )])
+        .unwrap()
+        .uuid;
+    let path = |name: &str| {
+        Field::new("mfr_path", Value::TreeRef { parent: Some(root), name: name.into() })
+    };
+    let int = |n: &str, v: i64| Field::new(n, Value::Int(v));
+    let st = |n: &str, v: &str| Field::new(n, s(v));
+    let group = w
+        .create_metarecord(vec![
+            st("mfr_content_hash", "h1"),
+            int("mfr_content_size", 10),
+            int("mfr_duplicate_count", 2),
+        ])
+        .unwrap()
+        .uuid;
+    w.create_metarecord(vec![st("mfr_content_hash", "h2"), int("mfr_content_size", 20)]).unwrap();
+    for (i, name) in ["a", "b", "c"].iter().enumerate() {
+        let mut fields = vec![
+            path(name),
+            st("mfr_type", "file"),
+            int("mfr_size", 10 * (i as i64 + 1)),
+            st("mfr_partial_hash", &format!("p{i}")),
+            int("mfr_hash_mtime", 100 + i as i64),
+            Field::new("mf_watch_exceeded", Value::Bool(i % 2 == 0)),
+            st("tag", "x"),
+            st("tag", &format!("y{i}")),
+        ];
+        if i < 2 {
+            fields.push(int("mfr_hash_size", 10));
+            fields.push(st("mfr_full_hash", &format!("f{i}")));
+            fields.push(Field::new("mfr_duplicate_group", Value::Ref(group)));
+        }
+        w.create_metarecord(fields).unwrap();
+    }
+    // Orphans: one hashed, one not; a directory.
+    w.create_metarecord(vec![
+        Field::new("mfr_path", Value::Nothing),
+        int("mfr_size", 7),
+        st("mfr_partial_hash", "op"),
+        st("mfr_full_hash", "of"),
+    ])
+    .unwrap();
+    w.create_metarecord(vec![Field::new("mfr_path", Value::Nothing), int("mfr_size", 8)]).unwrap();
+    w.create_metarecord(vec![path("dir"), st("mfr_type", "directory")]).unwrap();
+    // Schema material: declared types, a wrongly typed row, counts.
+    w.create_metarecord(vec![st("mf_schema", "song"), st("title", "t"), st("title", "u")]).unwrap();
+    w.create_metarecord(vec![st("mf_schema", "song")]).unwrap();
+    w.create_metarecord(vec![st("mf_schema", "film"), st("title", "v")]).unwrap();
+    w.commit().unwrap();
+    (conn, group)
+}
+
+fn sorted<T: Ord>(mut v: Vec<T>) -> Vec<T> {
+    v.sort();
+    v
+}
+
+#[test]
+fn every_sqlite_answer_is_its_derived_default() {
+    let (conn, group) = questions_fixture();
+    let sql: &dyn Store = &conn;
+    let derived = Derived(&conn);
+    for (name, value) in [
+        ("mf_watch_exceeded", Value::Bool(true)),
+        ("mf_watch_exceeded", Value::Bool(false)),
+        ("mfr_path", Value::Nothing),
+        ("tag", s("x")),
+    ] {
+        assert_eq!(
+            sorted(sql.holding(name, &value).unwrap()),
+            sorted(derived.holding(name, &value).unwrap()),
+            "holding {name} = {value:?}"
+        );
+    }
+    assert!(!sql.holding("mf_watch_exceeded", &Value::Bool(true)).unwrap().is_empty());
+    assert_eq!(sql.string_owners("tag").unwrap(), derived.string_owners("tag").unwrap());
+    assert_eq!(
+        sql.ref_map("mfr_duplicate_group").unwrap(),
+        derived.ref_map("mfr_duplicate_group").unwrap()
+    );
+    assert_eq!(sql.hash_cache().unwrap(), derived.hash_cache().unwrap());
+    assert_eq!(
+        sorted(sql.tracked_files_with_size().unwrap()),
+        sorted(derived.tracked_files_with_size().unwrap())
+    );
+    assert_eq!(sql.tracked_files_with_size().unwrap().len(), 3);
+    assert_eq!(sql.duplicate_groups().unwrap(), derived.duplicate_groups().unwrap());
+    assert_eq!(
+        sorted(sql.duplicate_group_members(group).unwrap()),
+        sorted(derived.duplicate_group_members(group).unwrap())
+    );
+    let key = |o: &metafolder_daemon::db::OrphanCandidate| (o.uuid, o.size);
+    let mut a = sql.hashed_orphans().unwrap();
+    let mut b = derived.hashed_orphans().unwrap();
+    a.sort_by_key(key);
+    b.sort_by_key(key);
+    assert_eq!(a, b);
+    assert_eq!(a.len(), 1);
+    for (field, allowed) in [("title", "string"), ("title", "int"), ("tag", "string")] {
+        assert_eq!(
+            sorted(sql.wrong_type(field, allowed, 100).unwrap()),
+            sorted(derived.wrong_type(field, allowed, 100).unwrap()),
+            "wrong_type {field} {allowed}"
+        );
+    }
+    for n in [0, 1, 2, 3] {
+        assert_eq!(
+            sorted(sql.count_over("title", n, 100).unwrap()),
+            sorted(derived.count_over("title", n, 100).unwrap()),
+            "count_over {n}"
+        );
+        assert_eq!(
+            sorted(sql.count_under("title", n, 100).unwrap()),
+            sorted(derived.count_under("title", n, 100).unwrap()),
+            "count_under {n}"
+        );
+    }
+    assert_eq!(
+        sorted(sql.missing("title", 100).unwrap()),
+        sorted(derived.missing("title", 100).unwrap())
+    );
+    let types = vec!["song".to_string()];
+    assert_eq!(
+        sorted(sql.typed_missing(&types, "title", 100).unwrap()),
+        sorted(derived.typed_missing(&types, "title", 100).unwrap())
+    );
+    assert_eq!(sql.typed_missing(&types, "title", 100).unwrap().len(), 1);
+    assert_eq!(sql.missing("title", 2).unwrap().len(), 2, "the limit holds");
+    assert_eq!(derived.missing("title", 2).unwrap().len(), 2);
+}

@@ -1339,7 +1339,7 @@ pub fn tracked_files_with_size(conn: &Connection) -> Result<Vec<(Uuid, i64)>> {
 
 /// The stored content hashes of one metarecord, with the `stat` stamp they were
 /// computed under (spec-duplicates "The hash cache and its validity stamp").
-#[derive(Debug, Default, Clone)]
+#[derive(Debug, Default, Clone, PartialEq, Eq)]
 pub struct StoredHashes {
     pub partial: Option<String>,
     pub full: Option<String>,
@@ -1464,7 +1464,7 @@ pub fn duplicate_group_members(conn: &Connection, group: Uuid) -> Result<Vec<Uui
 /// A `duplicate_group` metarecord as stored: its uuid and the counters the last
 /// scan wrote, so a re-scan can tell an unchanged counter from a changed one
 /// without asking the database again.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct DuplicateGroup {
     pub uuid: Uuid,
     pub count: Option<i64>,
@@ -1495,7 +1495,7 @@ pub fn ref_field_map(conn: &Connection, field_name: &str) -> Result<HashMap<Uuid
 
 /// An orphaned metarecord a re-appearing file can be matched against: its
 /// size and the two stored hashes the fingerprint cascade compares.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct OrphanCandidate {
     pub uuid: Uuid,
     pub size: i64,
@@ -1626,6 +1626,22 @@ pub fn find_tree_child_opts(
         )
         .optional()?;
     uuid.map(bytes_to_uuid).transpose()
+}
+
+/// Every row of one field name, with its metarecord, in row-id order
+/// (`idx_field_name`).
+pub fn rows_of_field(conn: &Connection, name: &str) -> Result<Vec<(Uuid, FieldRow)>> {
+    let mut stmt = conn.prepare_cached(&format!(
+        "SELECT {FIELD_COLUMNS}, metarecord_uuid FROM field WHERE field_name = ?1 ORDER BY id"
+    ))?;
+    let mut rows = stmt.query(params![name])?;
+    let mut out = Vec::new();
+    while let Some(row) = rows.next()? {
+        let (id, name, value) = row_to_field_row(row)?;
+        let uuid = bytes_to_uuid(row.get::<_, Vec<u8>>("metarecord_uuid")?)?;
+        out.push((uuid, FieldRow { id, name, value: value? }));
+    }
+    Ok(out)
 }
 
 /// All direct children of `parent` in the tree of `field_name`, with the

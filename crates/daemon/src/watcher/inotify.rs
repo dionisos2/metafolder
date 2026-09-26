@@ -37,7 +37,6 @@ use metafolder_core::metarecord::TreeName;
 use metafolder_core::sync::MutexExt;
 use uuid::Uuid;
 
-use crate::db;
 use crate::eligibility::{self, EligibilityCache};
 use crate::executor::FsEvent;
 use crate::relpath::RelPath;
@@ -308,7 +307,11 @@ pub fn compute_watched_dirs_timed(
 /// inside an excluded subtree.
 fn watch_exceeded_overrides(conn: &Connection, cache: &mut TreeCache) -> HashSet<String> {
     let mut out = HashSet::new();
-    let uuids = match db::metarecords_with_bool(conn, eligibility::WATCH_EXCEEDED, false) {
+    let uuids = match crate::store::Questions::holding(
+        conn,
+        eligibility::WATCH_EXCEEDED,
+        &metafolder_core::metarecord::Value::Bool(false),
+    ) {
         Ok(uuids) => uuids,
         Err(err) => {
             crate::diagnostics::warn("watcher", format!("reading watch overrides failed: {err:#}"));

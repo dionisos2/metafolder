@@ -6,14 +6,12 @@ use std::collections::HashMap;
 use std::path::Path;
 
 use anyhow::Result;
-use rusqlite::Connection;
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
 use metafolder_core::metarecord::Value;
 
 use crate::config::RepoConfig;
-use crate::db;
 use crate::error::ApiError;
 
 const VALUE_TYPES: &[&str] = &[
@@ -282,12 +280,12 @@ fn value_type_name(v: &Value) -> &'static str {
 /// field names after applying the write).
 pub fn validate_entry_fields(
     schema: &CompiledSchema,
-    conn: &Connection,
+    conn: &dyn crate::store::Store,
     uuid: Uuid,
     touched: &[String],
 ) -> Result<Vec<Violation>> {
     // The metarecord's declared types (its mf_schema values).
-    let types: Vec<String> = db::get_field_rows_named(conn, uuid, "mf_schema")?
+    let types: Vec<String> = crate::store::Rows::rows_named(conn, uuid, "mf_schema")?
         .into_iter()
         .filter_map(|r| match r.value {
             Value::String(s) => Some(s),
@@ -304,7 +302,7 @@ pub fn validate_entry_fields(
         let Some(constraints) = schema.by_field.get(field) else {
             continue;
         };
-        let rows = db::get_field_rows_named(conn, uuid, field)?;
+        let rows = crate::store::Rows::rows_named(conn, uuid, field)?;
         for constraint in constraints {
             let origin = match &constraint.targets {
                 None => None,
@@ -371,7 +369,7 @@ pub fn validate_entry_fields(
 /// that is not actually of a targeted type simply yields no violation.
 pub fn violation_candidates(
     schema: &CompiledSchema,
-    conn: &Connection,
+    conn: &dyn crate::store::Store,
     cap: Option<usize>,
 ) -> Result<Vec<Uuid>> {
     let limit = cap.map(|c| c as i64).unwrap_or(i64::MAX);
@@ -388,21 +386,23 @@ pub fn violation_candidates(
         for c in constraints {
             // A row of the wrong type trips the `type` constraint.
             if let Some(expected) = &c.value_type {
-                add(db::uuids_field_wrong_type(conn, field, expected, limit)?);
+                add(crate::store::Questions::wrong_type(conn, field, expected, limit)?);
             }
             // Too many rows trips `max`.
             if let Some(max) = c.max {
-                add(db::uuids_field_count_over(conn, field, max as i64, limit)?);
+                add(crate::store::Questions::count_over(conn, field, max as i64, limit)?);
             }
             // Too few rows trips `min`: present-but-under, plus records that lack
             // the field entirely (restricted to the target population when the
             // constraint is targeted, so unrelated records never become
             // candidates; unrestricted for a global constraint).
             if c.min > 0 {
-                add(db::uuids_field_count_under(conn, field, c.min as i64, limit)?);
+                add(crate::store::Questions::count_under(conn, field, c.min as i64, limit)?);
                 match &c.targets {
-                    Some(types) => add(db::uuids_typed_missing_field(conn, types, field, limit)?),
-                    None => add(db::uuids_missing_field(conn, field, limit)?),
+                    Some(types) => {
+                        add(crate::store::Questions::typed_missing(conn, types, field, limit)?)
+                    }
+                    None => add(crate::store::Questions::missing(conn, field, limit)?),
                 }
             }
         }

@@ -537,7 +537,7 @@ fn check_writable(name: &str, force: bool) -> Result<(), ApiError> {
 /// violation the caller drops the Writer, rolling the whole write back.
 fn validate_schema(
     repo_state: &RepoState,
-    conn: &rusqlite::Connection,
+    conn: &dyn crate::store::Store,
     uuid: Uuid,
     touched: &[String],
 ) -> Result<(), ApiError> {
@@ -2657,8 +2657,11 @@ async fn watch_exceeded_list(
     with_repo(&state, repo_uuid, move |repo_state| {
         let conn = slowlog::timed("wait:conn", || repo_state.conn.lock_recover());
         let mut cache = slowlog::timed("wait:cache", || repo_state.lock_cache());
-        let uuids =
-            crate::db::metarecords_with_bool(&conn, crate::eligibility::WATCH_EXCEEDED, true)?;
+        let uuids = crate::store::Questions::holding(
+            &conn,
+            crate::eligibility::WATCH_EXCEEDED,
+            &metafolder_core::metarecord::Value::Bool(true),
+        )?;
         let mut paths: Vec<String> = uuids
             .into_iter()
             .filter_map(|uuid| cache.path_of(&conn, "mfr_path", uuid).ok().flatten())

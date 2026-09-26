@@ -29,7 +29,6 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 use anyhow::Result;
-use rusqlite::Connection;
 use uuid::Uuid;
 
 use crate::tree_cache::TreeCache;
@@ -139,9 +138,12 @@ pub struct DeclaredMount {
 
 /// The repository's declared mount points, read from the database: every
 /// metarecord carrying [`FIELD`], with the path it sits at.
-pub fn declared_set(conn: &Connection, cache: &mut TreeCache) -> Result<Vec<DeclaredMount>> {
+pub fn declared_set(
+    conn: &dyn crate::store::Store,
+    cache: &mut TreeCache,
+) -> Result<Vec<DeclaredMount>> {
     let mut out = Vec::new();
-    for (uuid, expected) in crate::db::string_field_owners(conn, FIELD)? {
+    for (uuid, expected) in crate::store::Questions::string_owners(conn, FIELD)? {
         let path = cache.path_of(conn, "mfr_path", uuid)?;
         out.push(DeclaredMount { uuid, path, expected });
     }
@@ -175,7 +177,11 @@ pub fn states(declared: &[DeclaredMount], root: &Path) -> Vec<MountPoint> {
 
 /// Every declared mount point of the repository, with its current state — the
 /// two halves in one step, for a caller that already holds the repository.
-pub fn declared(conn: &Connection, cache: &mut TreeCache, root: &Path) -> Result<Vec<MountPoint>> {
+pub fn declared(
+    conn: &dyn crate::store::Store,
+    cache: &mut TreeCache,
+    root: &Path,
+) -> Result<Vec<MountPoint>> {
     Ok(states(&declared_set(conn, cache)?, root))
 }
 
@@ -213,9 +219,13 @@ impl OfflineMounts {
 
 /// Computes the offline mount points of the repository (one `lstat` pair per
 /// declared mount point, no walk).
-pub fn offline(conn: &Connection, cache: &mut TreeCache, root: &Path) -> Result<OfflineMounts> {
+pub fn offline(
+    conn: &dyn crate::store::Store,
+    cache: &mut TreeCache,
+    root: &Path,
+) -> Result<OfflineMounts> {
     let mut paths = Vec::new();
-    for (uuid, _) in crate::db::string_field_owners(conn, FIELD)? {
+    for (uuid, _) in crate::store::Questions::string_owners(conn, FIELD)? {
         // A mount point whose own `mfr_path` is gone freezes nothing: there is
         // no subtree left to protect, and its records are ordinary orphans.
         let Some(rel) = cache.path_of(conn, "mfr_path", uuid)? else {

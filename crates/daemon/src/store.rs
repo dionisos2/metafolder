@@ -16,13 +16,17 @@ use metafolder_core::metarecord::{Field, MetaRecord, TreeName, Value};
 use rusqlite::{params, Connection, Transaction};
 use uuid::Uuid;
 
-use crate::db::{self, FieldRow, TreeRow};
+use crate::db::{self, DuplicateGroup, FieldRow, OrphanCandidate, StoredHashes, TreeRow};
 use crate::log::{self, Delta, OpRow, OpType, Retention};
 
 /// Implements `Rows` and `Log` for a type holding a SQLite connection, by
 /// handing every call to the `Connection` implementation.
 macro_rules! forward_to_connection {
     ($ty:ty, |$me:ident| $conn:expr) => {
+        forward_to_connection!(@rows_log $ty, |$me| $conn);
+        forward_to_connection!(@questions $ty, |$me| $conn);
+    };
+    (@rows_log $ty:ty, |$me:ident| $conn:expr) => {
         impl Rows for $ty {
             fn version(&self, uuid: Uuid) -> Result<Option<u64>> {
                 let $me = self;
@@ -59,6 +63,10 @@ macro_rules! forward_to_connection {
             fn metarecords(&self) -> Result<Vec<Uuid>> {
                 let $me = self;
                 Rows::metarecords($conn)
+            }
+            fn field_rows(&self, name: &str) -> Result<Vec<(Uuid, FieldRow)>> {
+                let $me = self;
+                Rows::field_rows($conn, name)
             }
             fn for_each_row(&self, f: &mut dyn FnMut(Uuid, FieldRow) -> Result<()>) -> Result<()> {
                 let $me = self;
@@ -168,6 +176,67 @@ macro_rules! forward_to_connection {
             }
         }
     };
+    (@questions $ty:ty, |$me:ident| $conn:expr) => {
+        impl Questions for $ty {
+            fn holding(&self, name: &str, value: &Value) -> Result<Vec<Uuid>> {
+                let $me = self;
+                Questions::holding($conn, name, value)
+            }
+            fn string_owners(&self, name: &str) -> Result<Vec<(Uuid, String)>> {
+                let $me = self;
+                Questions::string_owners($conn, name)
+            }
+            fn ref_map(&self, name: &str) -> Result<HashMap<Uuid, Uuid>> {
+                let $me = self;
+                Questions::ref_map($conn, name)
+            }
+            fn hash_cache(&self) -> Result<HashMap<Uuid, StoredHashes>> {
+                let $me = self;
+                Questions::hash_cache($conn)
+            }
+            fn tracked_files_with_size(&self) -> Result<Vec<(Uuid, i64)>> {
+                let $me = self;
+                Questions::tracked_files_with_size($conn)
+            }
+            fn duplicate_groups(&self) -> Result<HashMap<(i64, String), DuplicateGroup>> {
+                let $me = self;
+                Questions::duplicate_groups($conn)
+            }
+            fn duplicate_group_members(&self, group: Uuid) -> Result<Vec<Uuid>> {
+                let $me = self;
+                Questions::duplicate_group_members($conn, group)
+            }
+            fn hashed_orphans(&self) -> Result<Vec<OrphanCandidate>> {
+                let $me = self;
+                Questions::hashed_orphans($conn)
+            }
+            fn wrong_type(&self, field: &str, allowed: &str, limit: i64) -> Result<Vec<Uuid>> {
+                let $me = self;
+                Questions::wrong_type($conn, field, allowed, limit)
+            }
+            fn count_over(&self, field: &str, max: i64, limit: i64) -> Result<Vec<Uuid>> {
+                let $me = self;
+                Questions::count_over($conn, field, max, limit)
+            }
+            fn count_under(&self, field: &str, min: i64, limit: i64) -> Result<Vec<Uuid>> {
+                let $me = self;
+                Questions::count_under($conn, field, min, limit)
+            }
+            fn missing(&self, field: &str, limit: i64) -> Result<Vec<Uuid>> {
+                let $me = self;
+                Questions::missing($conn, field, limit)
+            }
+            fn typed_missing(
+                &self,
+                types: &[String],
+                field: &str,
+                limit: i64,
+            ) -> Result<Vec<Uuid>> {
+                let $me = self;
+                Questions::typed_missing($conn, types, field, limit)
+            }
+        }
+    };
 }
 
 /// Metarecords and their field rows.
@@ -190,6 +259,8 @@ pub trait Rows {
     fn owner_of_row(&self, id: i64) -> Result<Option<Uuid>>;
     /// Every metarecord.
     fn metarecords(&self) -> Result<Vec<Uuid>>;
+    /// Every row of one field name, with its metarecord, in row-id order.
+    fn field_rows(&self, name: &str) -> Result<Vec<(Uuid, FieldRow)>>;
     /// Every row with its metarecord, in row-id order — the load's one pass.
     fn for_each_row(&self, f: &mut dyn FnMut(Uuid, FieldRow) -> Result<()>) -> Result<()>;
     /// The largest row id (`0` when there is none): a scan's progress bound.
@@ -356,10 +427,367 @@ pub enum Restoration {
     ClearHashes { entity: Uuid },
 }
 
-/// A repository's database: both halves.
-pub trait Store: Rows + Log {}
+/// A repository's database: its rows, its log, and the questions asked of
+/// them.
+pub trait Store: Rows + Log + Questions {}
 
-impl<T: Rows + Log + ?Sized> Store for T {}
+impl<T: Rows + Log + Questions + ?Sized> Store for T {}
+
+/// Whole-repository questions (the schema check, the duplicate and orphan
+/// scans, the watch flags). Each has a default derived from `Rows` alone —
+/// correct on any backend — which a backend may override with a faster
+/// native answer, as SQLite does with its indexed queries.
+/// `tests/store_contract.rs` holds every override to its default.
+pub trait Questions: Rows {
+    /// The metarecords holding a row of `name` equal to `value` (`Nothing`
+    /// included), each once.
+    fn holding(&self, name: &str, value: &Value) -> Result<Vec<Uuid>> {
+        derive::holding(self, name, value)
+    }
+    /// Each metarecord's first string value of `name`, in row order.
+    fn string_owners(&self, name: &str) -> Result<Vec<(Uuid, String)>> {
+        derive::string_owners(self, name)
+    }
+    /// Every `Ref` row of `name`, as owner → target.
+    fn ref_map(&self, name: &str) -> Result<HashMap<Uuid, Uuid>> {
+        derive::ref_map(self, name)
+    }
+    /// The stored content hashes and their stamps, per metarecord.
+    fn hash_cache(&self) -> Result<HashMap<Uuid, StoredHashes>> {
+        derive::hash_cache(self)
+    }
+    /// Every tracked file (`mfr_type = "file"`, placed) with its `mfr_size`.
+    fn tracked_files_with_size(&self) -> Result<Vec<(Uuid, i64)>> {
+        derive::tracked_files_with_size(self)
+    }
+    /// The `duplicate_group` metarecords, by `(content size, content hash)`.
+    fn duplicate_groups(&self) -> Result<HashMap<(i64, String), DuplicateGroup>> {
+        derive::duplicate_groups(self)
+    }
+    /// The metarecords whose `mfr_duplicate_group` refers to `group`.
+    fn duplicate_group_members(&self, group: Uuid) -> Result<Vec<Uuid>> {
+        derive::duplicate_group_members(self, group)
+    }
+    /// The orphans (`mfr_path` = `Nothing`) that carry a size and both hashes.
+    fn hashed_orphans(&self) -> Result<Vec<OrphanCandidate>> {
+        derive::hashed_orphans(self)
+    }
+    /// Up to `limit` metarecords holding a non-`Nothing` `field` row of
+    /// another type than `allowed`.
+    fn wrong_type(&self, field: &str, allowed: &str, limit: i64) -> Result<Vec<Uuid>> {
+        derive::wrong_type(self, field, allowed, limit)
+    }
+    /// Up to `limit` metarecords with more than `max` rows of `field`.
+    fn count_over(&self, field: &str, max: i64, limit: i64) -> Result<Vec<Uuid>> {
+        derive::count_over(self, field, max, limit)
+    }
+    /// Up to `limit` metarecords holding `field`, with fewer than `min` rows.
+    fn count_under(&self, field: &str, min: i64, limit: i64) -> Result<Vec<Uuid>> {
+        derive::count_under(self, field, min, limit)
+    }
+    /// Up to `limit` metarecords with no `field` row at all.
+    fn missing(&self, field: &str, limit: i64) -> Result<Vec<Uuid>> {
+        derive::missing(self, field, limit)
+    }
+    /// Up to `limit` metarecords declared one of `types` (`mf_schema`) with no
+    /// `field` row.
+    fn typed_missing(&self, types: &[String], field: &str, limit: i64) -> Result<Vec<Uuid>> {
+        derive::typed_missing(self, types, field, limit)
+    }
+}
+
+/// The derived answers of [`Questions`], from `Rows` alone.
+pub mod derive {
+    use std::collections::{HashMap, HashSet};
+
+    use anyhow::Result;
+    use metafolder_core::metarecord::Value;
+    use uuid::Uuid;
+
+    use super::Rows;
+    use crate::db::{self, DuplicateGroup, FieldRow, OrphanCandidate, StoredHashes};
+
+    fn type_of(v: &Value) -> &'static str {
+        db::encode_value(v).value_type
+    }
+    fn int_of(v: &Value) -> Option<i64> {
+        db::encode_value(v).int
+    }
+    fn text_of(v: &Value) -> Option<String> {
+        match v {
+            Value::String(s) => Some(s.clone()),
+            _ => None,
+        }
+    }
+    /// A field's rows grouped by metarecord (first-seen order kept apart).
+    fn by_owner(rows: Vec<(Uuid, FieldRow)>) -> HashMap<Uuid, Vec<Value>> {
+        let mut out: HashMap<Uuid, Vec<Value>> = HashMap::new();
+        for (u, r) in rows {
+            out.entry(u).or_default().push(r.value);
+        }
+        out
+    }
+    fn ints(rows: &HashMap<Uuid, Vec<Value>>, u: Uuid, ty: &str) -> Vec<i64> {
+        rows.get(&u)
+            .map(|vs| vs.iter().filter(|v| type_of(v) == ty).filter_map(int_of).collect())
+            .unwrap_or_default()
+    }
+    fn strings(rows: &HashMap<Uuid, Vec<Value>>, u: Uuid) -> Vec<String> {
+        rows.get(&u).map(|vs| vs.iter().filter_map(text_of).collect()).unwrap_or_default()
+    }
+    fn take(uuids: impl Iterator<Item = Uuid>, limit: i64) -> Vec<Uuid> {
+        let mut seen = HashSet::new();
+        uuids.filter(|u| seen.insert(*u)).take(limit.max(0) as usize).collect()
+    }
+
+    pub fn holding<S: Rows + ?Sized>(s: &S, name: &str, value: &Value) -> Result<Vec<Uuid>> {
+        let rows = s.field_rows(name)?;
+        Ok(take(rows.into_iter().filter(|(_, r)| &r.value == value).map(|(u, _)| u), i64::MAX))
+    }
+    pub fn string_owners<S: Rows + ?Sized>(s: &S, name: &str) -> Result<Vec<(Uuid, String)>> {
+        let mut seen = HashSet::new();
+        Ok(s.field_rows(name)?
+            .into_iter()
+            .filter_map(|(u, r)| text_of(&r.value).map(|t| (u, t)))
+            .filter(|(u, _)| seen.insert(*u))
+            .collect())
+    }
+    pub fn ref_map<S: Rows + ?Sized>(s: &S, name: &str) -> Result<HashMap<Uuid, Uuid>> {
+        Ok(s.field_rows(name)?
+            .into_iter()
+            .filter_map(|(u, r)| match r.value {
+                Value::Ref(t) => Some((u, t)),
+                _ => None,
+            })
+            .collect())
+    }
+    pub fn hash_cache<S: Rows + ?Sized>(s: &S) -> Result<HashMap<Uuid, StoredHashes>> {
+        let mut out: HashMap<Uuid, StoredHashes> = HashMap::new();
+        let mut mtimes: HashMap<Uuid, i64> = HashMap::new();
+        let mut sizes: HashMap<Uuid, i64> = HashMap::new();
+        for name in ["mfr_partial_hash", "mfr_full_hash", "mfr_hash_mtime", "mfr_hash_size"] {
+            for (u, r) in s.field_rows(name)? {
+                let entry = out.entry(u).or_default();
+                match (name, text_of(&r.value), int_of(&r.value)) {
+                    ("mfr_partial_hash", Some(t), _) => entry.partial = Some(t),
+                    ("mfr_full_hash", Some(t), _) => entry.full = Some(t),
+                    ("mfr_hash_mtime", _, Some(n)) => {
+                        mtimes.insert(u, n);
+                    }
+                    ("mfr_hash_size", _, Some(n)) => {
+                        sizes.insert(u, n);
+                    }
+                    _ => {}
+                }
+            }
+        }
+        for (u, entry) in out.iter_mut() {
+            if let (Some(m), Some(z)) = (mtimes.get(u), sizes.get(u)) {
+                entry.stamp = Some((*m, *z));
+            }
+        }
+        Ok(out)
+    }
+    pub fn tracked_files_with_size<S: Rows + ?Sized>(s: &S) -> Result<Vec<(Uuid, i64)>> {
+        let sizes = by_owner(s.field_rows("mfr_size")?);
+        let paths = by_owner(s.field_rows("mfr_path")?);
+        let mut out = Vec::new();
+        for (u, r) in s.field_rows("mfr_type")? {
+            if r.value != Value::String("file".into()) {
+                continue;
+            }
+            let placed = paths
+                .get(&u)
+                .map_or(0, |vs| vs.iter().filter(|v| matches!(v, Value::TreeRef { .. })).count());
+            for size in ints(&sizes, u, "int") {
+                for _ in 0..placed {
+                    out.push((u, size));
+                }
+            }
+        }
+        Ok(out)
+    }
+    pub fn duplicate_groups<S: Rows + ?Sized>(
+        s: &S,
+    ) -> Result<HashMap<(i64, String), DuplicateGroup>> {
+        let sizes = by_owner(s.field_rows("mfr_content_size")?);
+        let counts = by_owner(s.field_rows("mfr_duplicate_count")?);
+        let reclaim = by_owner(s.field_rows("mfr_duplicate_reclaimable")?);
+        let mut out = HashMap::new();
+        for (u, r) in s.field_rows("mfr_content_hash")? {
+            let Some(hash) = text_of(&r.value) else { continue };
+            let or_none = |v: Vec<i64>| -> Vec<Option<i64>> {
+                if v.is_empty() {
+                    vec![None]
+                } else {
+                    v.into_iter().map(Some).collect()
+                }
+            };
+            for size in ints(&sizes, u, "int") {
+                for count in or_none(ints(&counts, u, "int")) {
+                    for reclaimable in or_none(ints(&reclaim, u, "int")) {
+                        out.insert(
+                            (size, hash.clone()),
+                            DuplicateGroup { uuid: u, count, reclaimable },
+                        );
+                    }
+                }
+            }
+        }
+        Ok(out)
+    }
+    pub fn duplicate_group_members<S: Rows + ?Sized>(s: &S, group: Uuid) -> Result<Vec<Uuid>> {
+        Ok(s.field_rows("mfr_duplicate_group")?
+            .into_iter()
+            .filter(|(_, r)| r.value == Value::Ref(group))
+            .map(|(u, _)| u)
+            .collect())
+    }
+    pub fn hashed_orphans<S: Rows + ?Sized>(s: &S) -> Result<Vec<OrphanCandidate>> {
+        let sizes = by_owner(s.field_rows("mfr_size")?);
+        let partial = by_owner(s.field_rows("mfr_partial_hash")?);
+        let full = by_owner(s.field_rows("mfr_full_hash")?);
+        let mut out = Vec::new();
+        for (u, r) in s.field_rows("mfr_path")? {
+            if r.value != Value::Nothing {
+                continue;
+            }
+            for size in ints(&sizes, u, "int") {
+                for p in strings(&partial, u) {
+                    for f in strings(&full, u) {
+                        out.push(OrphanCandidate {
+                            uuid: u,
+                            size,
+                            partial_hash: p.clone(),
+                            full_hash: f,
+                        });
+                    }
+                }
+            }
+        }
+        Ok(out)
+    }
+    pub fn wrong_type<S: Rows + ?Sized>(
+        s: &S,
+        field: &str,
+        allowed: &str,
+        limit: i64,
+    ) -> Result<Vec<Uuid>> {
+        let rows = s.field_rows(field)?;
+        Ok(take(
+            rows.into_iter()
+                .filter(|(_, r)| {
+                    let t = type_of(&r.value);
+                    t != "nothing" && t != allowed
+                })
+                .map(|(u, _)| u),
+            limit,
+        ))
+    }
+    fn counts<S: Rows + ?Sized>(s: &S, field: &str) -> Result<Vec<(Uuid, i64)>> {
+        let mut order = Vec::new();
+        let mut n: HashMap<Uuid, i64> = HashMap::new();
+        for (u, _) in s.field_rows(field)? {
+            let c = n.entry(u).or_insert(0);
+            if *c == 0 {
+                order.push(u);
+            }
+            *c += 1;
+        }
+        Ok(order.into_iter().map(|u| (u, n[&u])).collect())
+    }
+    pub fn count_over<S: Rows + ?Sized>(
+        s: &S,
+        field: &str,
+        max: i64,
+        limit: i64,
+    ) -> Result<Vec<Uuid>> {
+        Ok(take(counts(s, field)?.into_iter().filter(|(_, c)| *c > max).map(|(u, _)| u), limit))
+    }
+    pub fn count_under<S: Rows + ?Sized>(
+        s: &S,
+        field: &str,
+        min: i64,
+        limit: i64,
+    ) -> Result<Vec<Uuid>> {
+        Ok(take(counts(s, field)?.into_iter().filter(|(_, c)| *c < min).map(|(u, _)| u), limit))
+    }
+    pub fn missing<S: Rows + ?Sized>(s: &S, field: &str, limit: i64) -> Result<Vec<Uuid>> {
+        let holders: HashSet<Uuid> = s.field_rows(field)?.into_iter().map(|(u, _)| u).collect();
+        Ok(take(s.metarecords()?.into_iter().filter(|u| !holders.contains(u)), limit))
+    }
+    pub fn typed_missing<S: Rows + ?Sized>(
+        s: &S,
+        types: &[String],
+        field: &str,
+        limit: i64,
+    ) -> Result<Vec<Uuid>> {
+        if types.is_empty() {
+            return Ok(Vec::new());
+        }
+        let holders: HashSet<Uuid> = s.field_rows(field)?.into_iter().map(|(u, _)| u).collect();
+        let declared = s
+            .field_rows("mf_schema")?
+            .into_iter()
+            .filter(|(_, r)| matches!(&r.value, Value::String(t) if types.contains(t)));
+        Ok(take(declared.map(|(u, _)| u).filter(|u| !holders.contains(u)), limit))
+    }
+}
+
+/// The SQLite answers: the indexed queries of `db.rs` where there is one.
+impl Questions for Connection {
+    fn holding(&self, name: &str, value: &Value) -> Result<Vec<Uuid>> {
+        match value {
+            Value::Bool(b) => db::metarecords_with_bool(self, name, *b),
+            Value::Nothing => db::metarecords_with_absent_field(self, name),
+            other => derive::holding(self, name, other),
+        }
+    }
+    fn string_owners(&self, name: &str) -> Result<Vec<(Uuid, String)>> {
+        db::string_field_owners(self, name)
+    }
+    fn ref_map(&self, name: &str) -> Result<HashMap<Uuid, Uuid>> {
+        db::ref_field_map(self, name)
+    }
+    fn hash_cache(&self) -> Result<HashMap<Uuid, StoredHashes>> {
+        db::hash_cache(self)
+    }
+    fn tracked_files_with_size(&self) -> Result<Vec<(Uuid, i64)>> {
+        db::tracked_files_with_size(self)
+    }
+    fn duplicate_groups(&self) -> Result<HashMap<(i64, String), DuplicateGroup>> {
+        db::duplicate_groups(self)
+    }
+    fn duplicate_group_members(&self, group: Uuid) -> Result<Vec<Uuid>> {
+        db::duplicate_group_members(self, group)
+    }
+    fn hashed_orphans(&self) -> Result<Vec<OrphanCandidate>> {
+        db::hashed_orphans(self)
+    }
+    fn wrong_type(&self, field: &str, allowed: &str, limit: i64) -> Result<Vec<Uuid>> {
+        db::uuids_field_wrong_type(self, field, allowed, limit)
+    }
+    fn count_over(&self, field: &str, max: i64, limit: i64) -> Result<Vec<Uuid>> {
+        db::uuids_field_count_over(self, field, max, limit)
+    }
+    fn count_under(&self, field: &str, min: i64, limit: i64) -> Result<Vec<Uuid>> {
+        db::uuids_field_count_under(self, field, min, limit)
+    }
+    fn missing(&self, field: &str, limit: i64) -> Result<Vec<Uuid>> {
+        db::uuids_missing_field(self, field, limit)
+    }
+    fn typed_missing(&self, types: &[String], field: &str, limit: i64) -> Result<Vec<Uuid>> {
+        db::uuids_typed_missing_field(self, types, field, limit)
+    }
+}
+
+/// A SQLite store answering every [`Questions`] with its derived default —
+/// what the contract test holds the SQLite overrides to.
+pub struct Derived<'a>(pub &'a Connection);
+
+forward_to_connection!(@rows_log Derived<'_>, |d| d.0);
+
+impl Questions for Derived<'_> {}
 
 /// One operation a write transaction appends to the log.
 pub struct NewOp {
@@ -684,6 +1112,9 @@ impl Rows for Connection {
     }
     fn metarecords(&self) -> Result<Vec<Uuid>> {
         db::list_entries(self)
+    }
+    fn field_rows(&self, name: &str) -> Result<Vec<(Uuid, FieldRow)>> {
+        db::rows_of_field(self, name)
     }
     fn for_each_row(&self, f: &mut dyn FnMut(Uuid, FieldRow) -> Result<()>) -> Result<()> {
         db::for_each_field_row(self, f)

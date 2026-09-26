@@ -407,9 +407,12 @@ impl RepoState {
             self.record_watch_frontier(&placement.frontier);
         }
         self.starved_watches.store(placement.starved > 0, std::sync::atomic::Ordering::Relaxed);
-        let excluded =
-            crate::db::metarecords_with_bool(conn, crate::eligibility::WATCH_EXCEEDED, true)
-                .map_or(0, |v| v.len());
+        let excluded = crate::store::Questions::holding(
+            conn,
+            crate::eligibility::WATCH_EXCEEDED,
+            &metafolder_core::metarecord::Value::Bool(true),
+        )
+        .map_or(0, |v| v.len());
         self.exceeded_dirs.store(excluded, std::sync::atomic::Ordering::Relaxed);
         placement.watched
     }

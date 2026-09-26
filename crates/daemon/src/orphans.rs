@@ -44,7 +44,7 @@ pub fn scan_orphans(repo: &RepoState) -> Result<Vec<OrphanEntry>, ApiError> {
     let mut dirs: HashMap<PathBuf, DirState> = HashMap::new();
     let offline = crate::mount::offline(&conn, &mut cache, root)?;
     let mut orphans = Vec::new();
-    for uuid in db::all_tracked_metarecords(&conn)? {
+    for uuid in crate::store::Rows::placed(&conn, "mfr_path")? {
         let Some(path) = cache.path_of(&conn, "mfr_path", uuid)? else {
             continue; // No resolvable path (e.g. already Nothing): not this scan.
         };
@@ -198,9 +198,18 @@ pub fn mark_orphans(repo: &RepoState) -> Result<MarkResult, ApiError> {
 
     let mut conn = repo.conn.lock_recover();
     let mut orphans: std::collections::BTreeSet<Uuid> = stale.into_iter().collect();
-    orphans.extend(db::metarecords_with_absent_field(&conn, "mfr_path")?);
-    let marked: std::collections::BTreeSet<Uuid> =
-        db::metarecords_with_true_flag(&conn, ORPHAN_FIELD)?.into_iter().collect();
+    orphans.extend(crate::store::Questions::holding(
+        &conn,
+        "mfr_path",
+        &metafolder_core::metarecord::Value::Nothing,
+    )?);
+    let marked: std::collections::BTreeSet<Uuid> = crate::store::Questions::holding(
+        &conn,
+        ORPHAN_FIELD,
+        &metafolder_core::metarecord::Value::Bool(true),
+    )?
+    .into_iter()
+    .collect();
 
     let mut result = MarkResult { orphans: orphans.len(), ..Default::default() };
     let mut writer = repo.writer(&mut conn, None)?;
@@ -266,7 +275,7 @@ pub fn relink_reported(
     // hashing down to the candidates that could possibly match.
     reporter.progress("orphans", None, None);
     let mut by_size: HashMap<i64, Vec<db::OrphanCandidate>> = HashMap::new();
-    for candidate in db::hashed_orphans(&conn)? {
+    for candidate in crate::store::Questions::hashed_orphans(&conn)? {
         by_size.entry(candidate.size).or_default().push(candidate);
     }
     if by_size.is_empty() {
@@ -274,7 +283,7 @@ pub fn relink_reported(
     }
 
     // Tracked files whose size matches one of them.
-    let tracked: Vec<(Uuid, i64)> = db::tracked_files_with_size(&conn)?
+    let tracked: Vec<(Uuid, i64)> = crate::store::Questions::tracked_files_with_size(&conn)?
         .into_iter()
         .filter(|(_, size)| by_size.contains_key(size))
         .collect();
@@ -334,14 +343,14 @@ fn confirm(abs: &Path, candidates: &[db::OrphanCandidate]) -> Option<Uuid> {
 /// Whether the metarecord carries anything the daemon did not put there. The
 /// `mfr_*` namespace is the daemon's (spec-data-model "Reserved fields"), so
 /// anything outside it is the user's and must not be deleted.
-fn annotated(conn: &rusqlite::Connection, uuid: Uuid) -> Result<bool, ApiError> {
-    let record = db::get_metarecord(conn, uuid)?;
+fn annotated(conn: &dyn crate::store::Store, uuid: Uuid) -> Result<bool, ApiError> {
+    let record = crate::store::Rows::metarecord(conn, uuid)?;
     Ok(record.is_some_and(|r| r.fields.iter().any(|f| !f.name.starts_with("mfr_"))))
 }
 
 /// Moves `orphan` onto the position `holder` occupies, then deletes `holder`.
 fn adopt(
-    conn: &mut rusqlite::Connection,
+    conn: &mut dyn crate::store::Database,
     cache: &mut crate::tree_cache::TreeCache,
     root: &Path,
     orphan: Uuid,

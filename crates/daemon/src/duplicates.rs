@@ -122,13 +122,13 @@ pub fn scan_reported(
         }
     };
     let inodes: HashMap<Uuid, String> =
-        db::string_field_owners(&conn, "mfr_inode")?.into_iter().collect();
+        crate::store::Questions::string_owners(&conn, "mfr_inode")?.into_iter().collect();
     // The group links as they stand, loaded once. The write path then answers
     // "does this record already point there?" in memory instead of spending a
     // round trip per member, and the prune computes its work from the same map
     // rather than re-asking per group.
-    let mut links = db::ref_field_map(&conn, "mfr_duplicate_group")?;
-    let files = db::tracked_files_with_size(&conn)?;
+    let mut links = crate::store::Questions::ref_map(&conn, "mfr_duplicate_group")?;
+    let files = crate::store::Questions::tracked_files_with_size(&conn)?;
 
     // Partition on `(uuid, size)` alone first. A size class of one cannot hold
     // a duplicate, and that is by far the biggest cut of the scan — so nothing
@@ -193,7 +193,7 @@ pub fn scan_reported(
     classes.sort_by_key(|(size, _)| std::cmp::Reverse(*size));
 
     // ── Phase 2: partial hashes ─────────────────────────────────────────────
-    let stored = db::hash_cache(&conn)?;
+    let stored = crate::store::Questions::hash_cache(&conn)?;
     let total = classes.iter().map(|(_, m)| m.len()).sum::<usize>() as u64;
     reporter.progress("partial", Some(0), Some(total));
     let mut pending: Vec<(Uuid, Field)> = Vec::new();
@@ -234,7 +234,7 @@ pub fn scan_reported(
     let total_bytes: i64 = classes.iter().map(|(size, m)| size * m.len() as i64).sum();
     reporter.progress("full", Some(0), Some(total_bytes.max(0) as u64));
     let mut hashed_bytes = 0i64;
-    let mut existing = db::duplicate_groups(&conn)?;
+    let mut existing = crate::store::Questions::duplicate_groups(&conn)?;
     let mut grouped: HashSet<Uuid> = HashSet::new();
     let mut touched: HashSet<Uuid> = HashSet::new();
 
@@ -368,7 +368,7 @@ fn push_hash(
 /// Commits one batch of field writes as a single revision.
 fn flush(
     retention: crate::log::Retention,
-    conn: &mut rusqlite::Connection,
+    conn: &mut dyn crate::store::Database,
     pending: &mut Vec<(Uuid, Field)>,
 ) -> Result<(), ApiError> {
     if pending.is_empty() {
@@ -431,7 +431,7 @@ fn reclaimable_from_inodes<'a>(size: i64, inodes: impl Iterator<Item = Option<&'
 /// interfaces display is not an internal detail, and "stale but harmless" is
 /// false the moment it is shown to someone deciding what to delete.
 pub fn leave_group(writer: &mut Writer, op: OpType, uuid: Uuid) -> anyhow::Result<()> {
-    let group = db::get_field_rows_named(writer.connection(), uuid, GROUP_FIELD)?
+    let group = crate::store::Rows::rows_named(writer.connection(), uuid, GROUP_FIELD)?
         .into_iter()
         .find_map(|row| match row.value {
             Value::Ref(group) => Some(group),
@@ -449,14 +449,14 @@ pub fn leave_group(writer: &mut Writer, op: OpType, uuid: Uuid) -> anyhow::Resul
 /// duplicate, so the survivor's own link goes with the group metarecord
 /// (spec-duplicates "Invariant").
 pub fn refresh_group(writer: &mut Writer, op: OpType, group: Uuid) -> anyhow::Result<()> {
-    let members = db::duplicate_group_members(writer.connection(), group)?;
+    let members = crate::store::Questions::duplicate_group_members(writer.connection(), group)?;
     if members.len() < 2 {
         for member in members {
             writer.clear_field_as(op, member, GROUP_FIELD)?;
         }
         // The group may already be gone (two members of one group departing in
         // the same flush); deleting it twice is an error, not a no-op.
-        if db::get_version(writer.connection(), group)?.is_some() {
+        if crate::store::Rows::version(writer.connection(), group)?.is_some() {
             writer.delete_metarecord(group)?;
         }
         return Ok(());
@@ -465,7 +465,7 @@ pub fn refresh_group(writer: &mut Writer, op: OpType, group: Uuid) -> anyhow::Re
     let mut inodes = Vec::with_capacity(members.len());
     for &member in &members {
         inodes.push(
-            db::get_field_rows_named(writer.connection(), member, "mfr_inode")?
+            crate::store::Rows::rows_named(writer.connection(), member, "mfr_inode")?
                 .into_iter()
                 .find_map(|row| match row.value {
                     Value::String(inode) => Some(inode),
@@ -490,10 +490,16 @@ pub fn refresh_group(writer: &mut Writer, op: OpType, group: Uuid) -> anyhow::Re
 }
 
 /// The first `Int` value of `name` on `uuid`, if it has one.
-fn int_field(conn: &rusqlite::Connection, uuid: Uuid, name: &str) -> anyhow::Result<Option<i64>> {
-    Ok(db::get_field_rows_named(conn, uuid, name)?.into_iter().find_map(|row| match row.value {
-        Value::Int(v) => Some(v),
-        _ => None,
+fn int_field(
+    conn: &dyn crate::store::Store,
+    uuid: Uuid,
+    name: &str,
+) -> anyhow::Result<Option<i64>> {
+    Ok(crate::store::Rows::rows_named(conn, uuid, name)?.into_iter().find_map(|row| {
+        match row.value {
+            Value::Int(v) => Some(v),
+            _ => None,
+        }
     }))
 }
 
@@ -503,7 +509,7 @@ fn int_field(conn: &rusqlite::Connection, uuid: Uuid, name: &str) -> anyhow::Res
 #[allow(clippy::too_many_arguments)]
 fn write_class_groups(
     retention: crate::log::Retention,
-    conn: &mut rusqlite::Connection,
+    conn: &mut dyn crate::store::Database,
     size: i64,
     members: &[Candidate],
     existing: &mut HashMap<(i64, String), db::DuplicateGroup>,
@@ -608,7 +614,7 @@ fn write_class_groups(
 #[allow(clippy::too_many_arguments)]
 fn prune(
     retention: crate::log::Retention,
-    conn: &mut rusqlite::Connection,
+    conn: &mut dyn crate::store::Database,
     existing: &HashMap<(i64, String), db::DuplicateGroup>,
     links: &mut HashMap<Uuid, Uuid>,
     grouped: &HashSet<Uuid>,
