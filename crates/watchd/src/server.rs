@@ -81,7 +81,11 @@ impl<C: 'static + CredSource> Broker<C> {
 
     /// The same broker with a smaller per-subscriber queue — what the tests
     /// use to provoke an overflow without writing megabytes.
-    pub fn with_queue_cap(filter: AccessFilter<C>, sink: Arc<dyn RootSink>, queue_cap: usize) -> Self {
+    pub fn with_queue_cap(
+        filter: AccessFilter<C>,
+        sink: Arc<dyn RootSink>,
+        queue_cap: usize,
+    ) -> Self {
         Self {
             inner: Arc::new(Inner {
                 filter: Mutex::new(filter),
@@ -279,10 +283,9 @@ fn apply_subscription<C: CredSource>(
                 .filter(|p| filter.may_watch(&client.peer, p));
             match canonical {
                 Some(path) => allowed.push(path),
-                None => denied.push(Denied {
-                    root: root.clone(),
-                    reason: "not accessible".to_string(),
-                }),
+                None => {
+                    denied.push(Denied { root: root.clone(), reason: "not accessible".to_string() })
+                }
             }
         }
     }
@@ -420,7 +423,8 @@ mod tests {
     #[test]
     fn test_a_second_subscribe_replaces_the_roots() {
         let sink = Arc::new(RecordingSink { seen: std::sync::Mutex::new(Vec::new()) });
-        let broker = Broker::new(AccessFilter::new(AllowAll), Arc::clone(&sink) as Arc<dyn RootSink>);
+        let broker =
+            Broker::new(AccessFilter::new(AllowAll), Arc::clone(&sink) as Arc<dyn RootSink>);
         let (client, _writer) = attach_pair(&broker);
         let mut r = reader(&client);
 

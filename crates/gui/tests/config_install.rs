@@ -261,7 +261,9 @@ fn test_go_family_load_and_folder_keybindings() {
     let global = |keys: &[&str]| -> Option<String> {
         compiled
             .iter()
-            .find(|b| b.keys.iter().map(String::as_str).eq(keys.iter().copied()) && b.when.is_none())
+            .find(|b| {
+                b.keys.iter().map(String::as_str).eq(keys.iter().copied()) && b.when.is_none()
+            })
             .map(|b| b.invocation.clone())
     };
 

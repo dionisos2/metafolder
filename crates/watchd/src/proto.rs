@@ -64,24 +64,18 @@ impl Event {
     /// path itself. A two-sided rename degrades to its one-sided form when the
     /// other side is out of scope — the same distinction the daemon draws for
     /// a move that leaves the watched tree (spec-file-tracking "File Watcher").
-    pub fn adapt(
-        &self,
-        roots: &[PathBuf],
-        visible: &mut dyn FnMut(&str) -> bool,
-    ) -> Option<Event> {
+    pub fn adapt(&self, roots: &[PathBuf], visible: &mut dyn FnMut(&str) -> bool) -> Option<Event> {
         let in_scope = |p: &str, visible: &mut dyn FnMut(&str) -> bool| {
             let path = Path::new(p);
             visible(p) && roots.iter().any(|r| path.starts_with(r))
         };
         match self {
-            Event::Rename { from, to } => {
-                match (in_scope(from, visible), in_scope(to, visible)) {
-                    (true, true) => Some(Event::Rename { from: from.clone(), to: to.clone() }),
-                    (true, false) => Some(Event::RenameFrom { path: from.clone() }),
-                    (false, true) => Some(Event::RenameTo { path: to.clone() }),
-                    (false, false) => None,
-                }
-            }
+            Event::Rename { from, to } => match (in_scope(from, visible), in_scope(to, visible)) {
+                (true, true) => Some(Event::Rename { from: from.clone(), to: to.clone() }),
+                (true, false) => Some(Event::RenameFrom { path: from.clone() }),
+                (false, true) => Some(Event::RenameTo { path: to.clone() }),
+                (false, false) => None,
+            },
             _ => {
                 let path = self.paths()[0];
                 in_scope(path, visible).then(|| self.clone())
@@ -190,10 +184,16 @@ mod tests {
         let roots = vec![PathBuf::from("/repo")];
         let ev = Event::Rename { from: "/repo/a".into(), to: "/elsewhere/b".into() };
         let mut see_all = |_: &str| true;
-        assert_eq!(ev.adapt(&roots, &mut see_all), Some(Event::RenameFrom { path: "/repo/a".into() }));
+        assert_eq!(
+            ev.adapt(&roots, &mut see_all),
+            Some(Event::RenameFrom { path: "/repo/a".into() })
+        );
 
         let ev = Event::Rename { from: "/elsewhere/a".into(), to: "/repo/b".into() };
-        assert_eq!(ev.adapt(&roots, &mut see_all), Some(Event::RenameTo { path: "/repo/b".into() }));
+        assert_eq!(
+            ev.adapt(&roots, &mut see_all),
+            Some(Event::RenameTo { path: "/repo/b".into() })
+        );
 
         let ev = Event::Rename { from: "/elsewhere/a".into(), to: "/other/b".into() };
         assert_eq!(ev.adapt(&roots, &mut see_all), None);

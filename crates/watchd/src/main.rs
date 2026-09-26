@@ -26,7 +26,9 @@ use metafolder_watchd::proto::Event;
 use metafolder_watchd::server::{Broker, RootSink};
 
 #[derive(Parser)]
-#[command(about = "The metafolder fanotify broker: fanotify events to subscribers over a Unix socket")]
+#[command(
+    about = "The metafolder fanotify broker: fanotify events to subscribers over a Unix socket"
+)]
 struct Args {
     /// Where to listen for subscribers.
     #[arg(long, default_value = "/run/metafolder/watchd.sock")]
@@ -55,7 +57,8 @@ fn main() -> Result<()> {
 
     // Fail closed, with the remedy in hand: a broker that cannot mark a mount
     // or resolve a handle is a broker that would silently stream nothing.
-    let probe = args.socket.parent().filter(|p| !p.as_os_str().is_empty()).unwrap_or(Path::new("/"));
+    let probe =
+        args.socket.parent().filter(|p| !p.as_os_str().is_empty()).unwrap_or(Path::new("/"));
     fanotify::preflight(probe).context("refusing to start")?;
 
     let fanotify = Arc::new(Mutex::new(Fanotify::open()?));
@@ -111,11 +114,9 @@ fn bind(socket: &Path) -> Result<UnixListener> {
             .with_context(|| format!("cannot remove the stale socket at {socket:?}"))?;
     }
     if let Some(dir) = socket.parent() {
-        std::fs::create_dir_all(dir)
-            .with_context(|| format!("cannot create {dir:?}"))?;
+        std::fs::create_dir_all(dir).with_context(|| format!("cannot create {dir:?}"))?;
     }
-    let listener = UnixListener::bind(socket)
-        .with_context(|| format!("cannot bind {socket:?}"))?;
+    let listener = UnixListener::bind(socket).with_context(|| format!("cannot bind {socket:?}"))?;
     std::fs::set_permissions(socket, std::fs::Permissions::from_mode(0o666))
         .with_context(|| format!("cannot open up {socket:?}"))?;
     Ok(listener)

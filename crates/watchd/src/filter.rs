@@ -192,11 +192,7 @@ mod tests {
         fn new() -> Self {
             let mut dirs = HashMap::new();
             dirs.insert(PathBuf::from("/"), (0, 0, 0o755));
-            Self {
-                dirs,
-                groups: HashMap::new(),
-                stats: std::sync::atomic::AtomicUsize::new(0),
-            }
+            Self { dirs, groups: HashMap::new(), stats: std::sync::atomic::AtomicUsize::new(0) }
         }
 
         fn dir(mut self, path: &str, uid: u32, gid: u32, mode: u32) -> Self {
@@ -263,9 +259,12 @@ mod tests {
 
     #[test]
     fn test_a_locked_ancestor_shuts_out_everything_below() {
-        let mut f = AccessFilter::new(
-            FakeCreds::new().dir("/locked", 1000, 100, 0o700).dir("/locked/sub", 1000, 100, 0o777),
-        );
+        let mut f = AccessFilter::new(FakeCreds::new().dir("/locked", 1000, 100, 0o700).dir(
+            "/locked/sub",
+            1000,
+            100,
+            0o777,
+        ));
         assert!(!f.may_see(&user(1001), Path::new("/locked/sub/x")));
     }
 

@@ -272,9 +272,13 @@ pub fn parse(buf: &[u8]) -> (Vec<RawEvent>, bool) {
                 break;
             }
             match info_type {
-                INFO_TYPE_FID | INFO_TYPE_DFID | INFO_TYPE_DFID_NAME | INFO_TYPE_OLD_DFID_NAME
+                INFO_TYPE_FID
+                | INFO_TYPE_DFID
+                | INFO_TYPE_DFID_NAME
+                | INFO_TYPE_OLD_DFID_NAME
                 | INFO_TYPE_NEW_DFID_NAME => {
-                    if let Some((handle, name)) = parse_fid_record(&buf[pos..pos + len], info_type) {
+                    if let Some((handle, name)) = parse_fid_record(&buf[pos..pos + len], info_type)
+                    {
                         match info_type {
                             INFO_TYPE_FID | INFO_TYPE_DFID => raw.fid = Some(handle),
                             INFO_TYPE_DFID_NAME => raw.parent = Some((handle, name)),
@@ -481,13 +485,8 @@ impl Fanotify {
     pub fn read_events(&mut self) -> Result<ReadOutcome> {
         let mut buf = [0u8; 64 * 1024];
         let n = loop {
-            let n = unsafe {
-                libc::read(
-                    self.fd,
-                    buf.as_mut_ptr() as *mut libc::c_void,
-                    buf.len(),
-                )
-            };
+            let n =
+                unsafe { libc::read(self.fd, buf.as_mut_ptr() as *mut libc::c_void, buf.len()) };
             if n >= 0 {
                 break n as usize;
             }
@@ -552,19 +551,13 @@ fn name_to_handle(path: &Path) -> Result<Handle> {
     buf[0..4].copy_from_slice(&(libc::MAX_HANDLE_SZ as u32).to_ne_bytes());
     let fh = buf.as_mut_ptr() as *mut libc::file_handle;
     let mut mount_id: libc::c_int = 0;
-    let rc = unsafe {
-        libc::name_to_handle_at(libc::AT_FDCWD, c.as_ptr(), fh, &mut mount_id, 0)
-    };
+    let rc = unsafe { libc::name_to_handle_at(libc::AT_FDCWD, c.as_ptr(), fh, &mut mount_id, 0) };
     if rc != 0 {
         return Err(io::Error::last_os_error()).context("name_to_handle_at failed");
     }
     let handle_bytes = u32::from_ne_bytes(buf[0..4].try_into().unwrap()) as usize;
     let handle_type = i32::from_ne_bytes(buf[4..8].try_into().unwrap());
-    Ok(Handle {
-        fsid: statfs_fsid(path)?,
-        handle_type,
-        bytes: buf[8..8 + handle_bytes].to_vec(),
-    })
+    Ok(Handle { fsid: statfs_fsid(path)?, handle_type, bytes: buf[8..8 + handle_bytes].to_vec() })
 }
 
 #[cfg(test)]
@@ -626,12 +619,7 @@ mod tests {
     }
 
     fn table(pairs: &[(&Handle, &str)]) -> Table {
-        Table(
-            pairs
-                .iter()
-                .map(|(h, p)| (h.bytes.clone(), PathBuf::from(*p)))
-                .collect(),
-        )
+        Table(pairs.iter().map(|(h, p)| (h.bytes.clone(), PathBuf::from(*p))).collect())
     }
 
     // ── Parsing ──────────────────────────────────────────────────────────────
@@ -787,8 +775,7 @@ mod tests {
         rec[12..16].copy_from_slice(&(h.bytes.len() as u32).to_ne_bytes());
         rec[16..20].copy_from_slice(&h.handle_type.to_ne_bytes());
         rec[20..20 + h.bytes.len()].copy_from_slice(&h.bytes);
-        rec[20 + h.bytes.len()..20 + h.bytes.len() + 5]
-            .copy_from_slice(b"caf\xE9\0");
+        rec[20 + h.bytes.len()..20 + h.bytes.len() + 5].copy_from_slice(b"caf\xE9\0");
         b.0.extend_from_slice(&rec);
         let (events, _) = parse(&b.finish());
         let mut r = table(&[(&handle(1), "/repo")]);
@@ -843,9 +830,7 @@ mod tests {
         let mut buf = [0u8; 8192];
         let mut seen = false;
         for _ in 0..50 {
-            let n = unsafe {
-                libc::read(group, buf.as_mut_ptr() as *mut libc::c_void, buf.len())
-            };
+            let n = unsafe { libc::read(group, buf.as_mut_ptr() as *mut libc::c_void, buf.len()) };
             if n > 0 {
                 let (events, _) = parse(&buf[..n as usize]);
                 seen = events.iter().any(|e| {

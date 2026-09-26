@@ -71,9 +71,7 @@ fn test_the_accept_path_identifies_the_peer_and_serves_the_filtered_stream() {
     // A real connection: the broker identifies us through the kernel.
     let mut stream = UnixStream::connect(&socket).unwrap();
     let mut r = BufReader::new(stream.try_clone().unwrap());
-    let sub = ClientMsg::Subscribe {
-        roots: vec!["/repo".to_string(), "/locked/nope".to_string()],
-    };
+    let sub = ClientMsg::Subscribe { roots: vec!["/repo".to_string(), "/locked/nope".to_string()] };
     stream.write_all(proto::encode(&sub).as_bytes()).unwrap();
 
     // Root bypasses DAC (in the filter as in the kernel), so the refusal half
