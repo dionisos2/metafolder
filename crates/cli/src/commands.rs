@@ -273,6 +273,35 @@ pub fn convert(ctx: &Ctx, to: &str) -> Result<i32, CliError> {
     Ok(0)
 }
 
+/// `mf repo check`: "ok" on a healthy store, else one problem per line and
+/// exit 1.
+pub fn check_repo(ctx: &Ctx) -> Result<i32, CliError> {
+    let base = ctx.repo_base()?;
+    let report = ctx.client.request("POST", &format!("{base}/check"), &[], None)?;
+    let storage = report["storage"].as_str().unwrap_or("?");
+    let problems = report["problems"].as_array().cloned().unwrap_or_default();
+    if problems.is_empty() {
+        println!("ok ({storage})");
+        return Ok(0);
+    }
+    for p in &problems {
+        println!("{}", p.as_str().unwrap_or_default());
+    }
+    eprintln!(
+        "{} problem(s) in the {storage} store; `mf repo reindex` repairs derived data",
+        problems.len()
+    );
+    Ok(1)
+}
+
+/// `mf repo reindex`.
+pub fn reindex_repo(ctx: &Ctx) -> Result<i32, CliError> {
+    let base = ctx.repo_base()?;
+    let report = ctx.client.request("POST", &format!("{base}/reindex"), &[], None)?;
+    println!("reindexed ({})", report["storage"].as_str().unwrap_or("?"));
+    Ok(0)
+}
+
 pub fn unload(ctx: &Ctx) -> Result<i32, CliError> {
     let base = ctx.repo_base()?;
     let resp = ctx.client.request("POST", &format!("{base}/unload"), &[], None)?;

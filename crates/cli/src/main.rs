@@ -310,6 +310,15 @@ enum RepoCommand {
         #[arg(long, value_parser = ["kv", "sqlite"])]
         to: String,
     },
+    /// Check that the selected repository's store holds together
+    ///
+    /// On the key-value store: its indexes against a rebuild from its data;
+    /// on SQLite: its integrity check. Exits 1 when a problem is found —
+    /// `mf repo reindex` repairs what is derived.
+    Check,
+    /// Rebuild what the selected repository derives from its data (its
+    /// indexes)
+    Reindex,
 }
 
 /// Shared arguments for the `add`/`remove`/`set` ignore verbs.
@@ -1153,6 +1162,8 @@ fn dispatch(ctx: &Ctx, command: Command) -> CmdResult {
             }
             RepoCommand::Unload => commands::unload(ctx),
             RepoCommand::Convert { to } => commands::convert(ctx, &to),
+            RepoCommand::Check => commands::check_repo(ctx),
+            RepoCommand::Reindex => commands::reindex_repo(ctx),
         },
         Command::Task { command } => {
             match command.unwrap_or(TaskCommand::List { all: false, json: false }) {

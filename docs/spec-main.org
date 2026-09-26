@@ -354,6 +354,16 @@ is loaded back on its old backend. =400= when it is already on that backend.
 Response: ={"metarecords", "rows", "operations", "revisions", "old_store"}=,
 the last naming where the former store was set aside.
 
+*** =POST /repos/:repo_uuid/check= and =…/reindex=
+
+=check= answers ={"storage", "problems": [...]}=: what no longer holds
+together in the repository's store, one line each, empty when healthy (on
+the key-value store its derived data against a rebuild, on SQLite its
+integrity check). =reindex= derives again what the store derives — and the
+resident index and forest a SQLite repository keeps — and answers
+={"storage"}=. Both hold the repository while they run (spec-storage
+increment 5).
+
 *** =POST /repos/init=
 
 Initialises a new repository. Creates =config.json= and the store — the

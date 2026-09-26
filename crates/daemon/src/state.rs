@@ -584,6 +584,30 @@ impl RepoState {
     ///
     /// `progress` reports `(phase, done, total)` for the load progress bar; it
     /// is a no-op for the synchronous callers (startup auto-load, `init`).
+    /// What no longer holds together in the store (`mf repo check`,
+    /// spec-storage increment 5); empty when healthy.
+    pub fn check_store(&self) -> Result<Vec<String>, ApiError> {
+        let conn = self.conn.lock_recover();
+        crate::store::Begin::check(&conn)
+            .map_err(|e| ApiError::internal(format!("the check could not run: {e:#}")))
+    }
+
+    /// Derives again what the store derives (`mf repo reindex`) — and, on a
+    /// repository that keeps them, the resident index and forest, rebuilt
+    /// from the store as a load builds them.
+    pub fn reindex_store(&self) -> Result<(), ApiError> {
+        let resident = {
+            let mut conn = self.conn.lock_recover();
+            crate::store::Begin::reindex(&mut conn)
+                .map_err(|e| ApiError::internal(format!("reindex failed: {e:#}")))?;
+            crate::store::Rows::as_kv(&*conn).is_none()
+        };
+        if resident {
+            self.warmup(&|_, _, _| {})?;
+        }
+        Ok(())
+    }
+
     pub fn warm(self: &Arc<Self>, progress: ProgressFn) -> Result<(), ApiError> {
         self.warmup(progress)?;
         self.activate()?;

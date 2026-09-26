@@ -945,6 +945,13 @@ pub trait Begin {
     fn interrupter(&self) -> Option<Box<dyn Fn() + Send + Sync>> {
         None
     }
+    /// What in the store no longer holds together, one line each — derived
+    /// data differing from what its primary data derives, a damaged page;
+    /// empty when healthy (`mf repo check`, spec-storage increment 5).
+    fn check(&self) -> Result<Vec<String>>;
+    /// Derives again whatever the store derives from its primary data
+    /// (`mf repo reindex`).
+    fn reindex(&mut self) -> Result<()>;
 }
 
 /// What a loaded repository holds: its database, whatever the backend.
@@ -969,6 +976,18 @@ impl Begin for Connection {
     fn interrupter(&self) -> Option<Box<dyn Fn() + Send + Sync>> {
         let handle = self.get_interrupt_handle();
         Some(Box::new(move || handle.interrupt()))
+    }
+    fn check(&self) -> Result<Vec<String>> {
+        // SQLite's own consistency check: pages, and every index against
+        // its table. One row, "ok", when healthy.
+        let mut stmt = self.prepare("PRAGMA integrity_check")?;
+        let rows: Vec<String> =
+            stmt.query_map([], |r| r.get(0))?.collect::<rusqlite::Result<_>>()?;
+        Ok(rows.into_iter().filter(|r| r != "ok").collect())
+    }
+    fn reindex(&mut self) -> Result<()> {
+        self.execute_batch("REINDEX")?;
+        Ok(())
     }
 }
 
@@ -1010,6 +1029,12 @@ impl Begin for std::sync::MutexGuard<'_, Connection> {
     fn interrupter(&self) -> Option<Box<dyn Fn() + Send + Sync>> {
         Begin::interrupter(&**self)
     }
+    fn check(&self) -> Result<Vec<String>> {
+        Begin::check(&**self)
+    }
+    fn reindex(&mut self) -> Result<()> {
+        Begin::reindex(&mut **self)
+    }
 }
 
 forward_to_connection!(Handle, |b| &**b);
@@ -1028,6 +1053,12 @@ impl Begin for Handle {
     fn interrupter(&self) -> Option<Box<dyn Fn() + Send + Sync>> {
         (**self).interrupter()
     }
+    fn check(&self) -> Result<Vec<String>> {
+        (**self).check()
+    }
+    fn reindex(&mut self) -> Result<()> {
+        (**self).reindex()
+    }
 }
 
 impl Begin for std::sync::MutexGuard<'_, Handle> {
@@ -1042,6 +1073,12 @@ impl Begin for std::sync::MutexGuard<'_, Handle> {
     }
     fn interrupter(&self) -> Option<Box<dyn Fn() + Send + Sync>> {
         (***self).interrupter()
+    }
+    fn check(&self) -> Result<Vec<String>> {
+        (***self).check()
+    }
+    fn reindex(&mut self) -> Result<()> {
+        (***self).reindex()
     }
 }
 

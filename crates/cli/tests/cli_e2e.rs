@@ -4547,3 +4547,19 @@ fn test_repo_convert_both_ways() {
     let out = mf(&["-u", &repo, "repo", "convert", "--to", "sqlite"]);
     assert_ne!(out.code, 0, "already on sqlite");
 }
+
+/// `mf repo check` reports a healthy repository (exit 0) and `mf repo
+/// reindex` derives again, after which it still answers.
+#[test]
+fn test_repo_check_and_reindex() {
+    let (repo, _root) = init_repo("check");
+    let kept = create_metarecord(&repo, &["note:string=kept"]);
+    let out = mf(&["-u", &repo, "repo", "check"]);
+    assert_ok(&out);
+    assert!(out.stdout.contains("ok"), "{}", out.stdout);
+    let out = mf(&["-u", &repo, "repo", "reindex"]);
+    assert_ok(&out);
+    let out = mf(&["-u", &repo, "metarecord", "-q", "note = \"kept\"", "get"]);
+    assert_ok(&out);
+    assert_eq!(out.stdout.trim(), kept);
+}

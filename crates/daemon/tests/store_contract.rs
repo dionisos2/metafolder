@@ -682,3 +682,22 @@ fn a_kv_store_waits_out_a_transient_lock_holder() {
     let _open = KvStore::open(dir.path()).unwrap();
     assert!(KvStore::open(dir.path()).is_err(), "a lasting holder is refused");
 }
+
+/// A healthy store checks clean, and stays so once reindexed.
+fn a_healthy_store_checks_clean(backend: Backend) {
+    let (mut conn, _dir, _, _) = fixture(backend);
+    assert!(conn.check().unwrap().is_empty());
+    conn.reindex().unwrap();
+    assert!(conn.check().unwrap().is_empty());
+}
+
+mod checks {
+    #[test]
+    fn sqlite() {
+        super::a_healthy_store_checks_clean(super::Backend::Sqlite)
+    }
+    #[test]
+    fn kv() {
+        super::a_healthy_store_checks_clean(super::Backend::Kv)
+    }
+}

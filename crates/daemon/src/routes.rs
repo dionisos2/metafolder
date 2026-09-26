@@ -40,6 +40,8 @@ pub fn build(state: Arc<AppState>) -> Router {
         .route("/repos", get(list_repos))
         .route("/repos/init", post(init_repo))
         .route("/repos/:repo/convert", post(convert_repo))
+        .route("/repos/:repo/check", post(check_repo))
+        .route("/repos/:repo/reindex", post(reindex_repo))
         .route("/repos/load", post(load_repo))
         .route("/repos/:repo", get(get_repo).patch(rename_repo))
         .route("/repos/:repo/unload", post(unload_repo))
@@ -923,6 +925,34 @@ async fn init_repo(
     .await
     .map_err(|e| ApiError::internal(format!("blocking task failed: {e}")))??;
     Ok(Json(json!({"repo_uuid": hex(uuid)})))
+}
+
+/// `POST /repos/:repo/check` — what no longer holds together in the store
+/// (spec-storage increment 5): `{"storage", "problems": [...]}`.
+async fn check_repo(
+    State(state): State<Arc<AppState>>,
+    Path(repo): Path<String>,
+) -> Result<Json<serde_json::Value>, ApiError> {
+    let repo_uuid = parse_uuid(&repo)?;
+    with_repo(&state, repo_uuid, move |repo_state| {
+        let problems = repo_state.check_store()?;
+        Ok(Json(json!({"storage": repo_state.config.storage, "problems": problems})))
+    })
+    .await
+}
+
+/// `POST /repos/:repo/reindex` — derives again what the store derives, and
+/// rebuilds what the repository keeps resident.
+async fn reindex_repo(
+    State(state): State<Arc<AppState>>,
+    Path(repo): Path<String>,
+) -> Result<Json<serde_json::Value>, ApiError> {
+    let repo_uuid = parse_uuid(&repo)?;
+    with_repo(&state, repo_uuid, move |repo_state| {
+        repo_state.reindex_store()?;
+        Ok(Json(json!({"storage": repo_state.config.storage})))
+    })
+    .await
 }
 
 #[derive(Deserialize)]

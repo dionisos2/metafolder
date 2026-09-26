@@ -618,8 +618,16 @@ and =MDB_NOMETASYNC= saved almost nothing — one =fsync= dominates either way.
    is left to set aside. The repository is loaded back either way.
    Measured: 50 000 files (200 000 rows) in 9 s to KV, 13 s back.
    =mf repo init --storage= chooses the backend; =GET /repos= reports it.
-   /Not built/: =reindex= and =check= as commands (=KvStore::reindex= and
-   =check_derived= exist), backup.
+   *(check and reindex done)* =mf repo check= (=POST /repos/:repo/check=)
+   lists what no longer holds together — on the KV store, the derived key
+   spaces against a rebuild from the primary data (=check_derived=: ids,
+   sets, partitions, forest, trigrams); on SQLite, =PRAGMA integrity_check= —
+   and exits 1 on a problem. =mf repo reindex= (=POST /repos/:repo/reindex=)
+   derives again: the KV store's derived key spaces (=KvStore::reindex=), or
+   SQLite's =REINDEX= and then the resident index and forest, rebuilt as a
+   load builds them. Both are methods of the store's =Begin= trait, required
+   of every backend, and hold the repository while they run. /Not built/:
+   backup.
 
 ** Increment 4, concretely
 

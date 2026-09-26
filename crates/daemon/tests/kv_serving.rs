@@ -220,3 +220,37 @@ async fn a_loaded_repository_converts_and_answers() {
             .await;
     assert_eq!(status, StatusCode::BAD_REQUEST, "already on sqlite");
 }
+
+/// `POST /repos/:repo/check` reports what no longer holds together (nothing,
+/// here) and `POST /repos/:repo/reindex` derives again; on either backend.
+#[tokio::test]
+async fn check_and_reindex_on_both_backends() {
+    let state = std::sync::Arc::new(AppState::new());
+    let app = routes::build(state.clone());
+    for storage in ["kv", "sqlite"] {
+        let root = temp_dir(&format!("check_{storage}"));
+        let (status, body) = request(
+            &app,
+            "POST",
+            "/repos/init",
+            Some(json!({"root": root.to_str().unwrap(), "storage": storage})),
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK, "{body}");
+        let repo = body["repo_uuid"].as_str().unwrap().to_string();
+        let tag = json!([{"name": "tag", "value": {"type": "string", "value": "kept"}}]);
+        let kept = create(&app, &repo, tag).await;
+
+        let (status, body) = request(&app, "POST", &format!("/repos/{repo}/check"), None).await;
+        assert_eq!(status, StatusCode::OK, "{body}");
+        assert_eq!(body, json!({"storage": storage, "problems": []}));
+        let (status, body) = request(&app, "POST", &format!("/repos/{repo}/reindex"), None).await;
+        assert_eq!(status, StatusCode::OK, "{body}");
+        let query = json!({"query": {"type": "eq", "field": "tag",
+                                     "value": {"type": "string", "value": "kept"}}});
+        let (status, body) =
+            request(&app, "POST", &format!("/repos/{repo}/query"), Some(query)).await;
+        assert_eq!(status, StatusCode::OK, "{body}");
+        assert_eq!(body, json!([kept]), "answers after a reindex");
+    }
+}

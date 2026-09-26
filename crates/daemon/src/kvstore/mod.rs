@@ -1027,6 +1027,12 @@ impl Begin for KvStore {
     fn begin_write(&mut self) -> Result<Box<dyn WriteTxn + '_>> {
         Ok(Box::new(KvTxn::new(self)?))
     }
+    fn check(&self) -> Result<Vec<String>> {
+        self.check_derived()
+    }
+    fn reindex(&mut self) -> Result<()> {
+        KvStore::reindex(self)
+    }
 }
 
 impl KvStore {

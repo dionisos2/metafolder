@@ -157,3 +157,31 @@ fn long_texts_are_derived_too() {
     w.commit().unwrap();
     check(&store);
 }
+
+/// `check` finds derived data that no longer matches the primary data — here
+/// a set chunk deleted behind the store's back — and `reindex` repairs it
+/// (spec-storage increment 5).
+#[test]
+fn check_finds_damaged_derived_data_and_reindex_repairs_it() {
+    use metafolder_daemon::store::Begin;
+    let (mut store, dir) = open();
+    populate(&mut store);
+    assert!(Begin::check(&store).unwrap().is_empty(), "a healthy store");
+    drop(store);
+    {
+        // Damage: drop every set chunk (the universe, presence, parents).
+        let env =
+            unsafe { heed::EnvOpenOptions::new().max_dbs(32).map_size(1 << 30).open(dir.path()) }
+                .unwrap();
+        let mut w = env.write_txn().unwrap();
+        let sets: heed::Database<heed::types::Bytes, heed::types::Bytes> =
+            env.open_database(&w, Some("sets")).unwrap().unwrap();
+        sets.clear(&mut w).unwrap();
+        w.commit().unwrap();
+    }
+    let mut store = KvStore::open(dir.path()).unwrap();
+    let problems = Begin::check(&store).unwrap();
+    assert!(!problems.is_empty(), "the damage is reported");
+    Begin::reindex(&mut store).unwrap();
+    assert!(Begin::check(&store).unwrap().is_empty(), "reindex repairs it");
+}
