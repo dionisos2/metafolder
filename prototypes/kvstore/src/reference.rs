@@ -218,6 +218,13 @@ impl Reference {
         Ok(Page { uuids, count })
     }
 
+    /// The record's path in the field's forest, components joined by `/`
+    /// (the daemon's convention: a root named `""` gives `/a/b`).
+    pub fn path_string(&self, field: &str, uuid: Uuid) -> Option<String> {
+        let parts = self.path(field, uuid)?;
+        Some(parts.into_iter().map(|p| String::from_utf8(p).unwrap()).collect::<Vec<_>>().join("/"))
+    }
+
     /// Every record strictly below `node` in the field's forest.
     pub fn descendants(&self, field: &str, node: Uuid) -> Vec<Uuid> {
         self.live().filter(|r| self.is_under(field, r.uuid, node)).map(|r| r.uuid).collect()

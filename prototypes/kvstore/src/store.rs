@@ -27,7 +27,7 @@ use std::sync::RwLock;
 
 use anyhow::{bail, Context, Result};
 use heed::types::Bytes;
-use heed::{Database, Env, EnvOpenOptions, RoTxn, RwTxn};
+use heed::{Database, Env, EnvFlags, EnvOpenOptions, RoTxn, RwTxn};
 use regex::Regex;
 use roaring::RoaringBitmap;
 use uuid::Uuid;
@@ -170,9 +170,20 @@ fn string_of_key(k: &[u8]) -> (String, usize) {
 impl Store {
     pub fn open(path: &Path) -> Result<Store> {
         std::fs::create_dir_all(path)?;
-        // SAFETY: the file is opened once per process, and nothing else maps it.
-        let env = unsafe { EnvOpenOptions::new().map_size(1 << 40).max_dbs(16).open(path) }
-            .with_context(|| format!("open {}", path.display()))?;
+        // KVPROTO_SYNC picks the commit durability, to measure its cost:
+        // `full` (default: data then header synced — two fsyncs), `meta` (the
+        // header is not synced: the last commit may be lost on power loss,
+        // never corrupted — SQLite's WAL `NORMAL`), `none` (no fsync).
+        let flags = match std::env::var("KVPROTO_SYNC").as_deref() {
+            Ok("meta") => EnvFlags::NO_META_SYNC,
+            Ok("none") => EnvFlags::NO_SYNC,
+            _ => EnvFlags::empty(),
+        };
+        // SAFETY: the file is opened once per process, and nothing else maps it;
+        // the flags only weaken durability, never consistency.
+        let env =
+            unsafe { EnvOpenOptions::new().map_size(1 << 40).max_dbs(16).flags(flags).open(path) }
+                .with_context(|| format!("open {}", path.display()))?;
         let mut w = env.write_txn()?;
         let mut db = |name| env.create_database::<Bytes, Bytes>(&mut w, Some(name));
         let t = Tables {
@@ -218,6 +229,30 @@ impl Store {
         self.reads.0.swap(0, std::sync::atomic::Ordering::Relaxed)
     }
 
+    /// Per table: (name, entries, pages including overflow).
+    pub fn table_stats(&self) -> Result<Vec<(&'static str, u64, u64)>> {
+        let r = self.env.read_txn()?;
+        let t = self.t;
+        let mut out = Vec::new();
+        for (name, db) in [
+            ("records", t.records),
+            ("uuids", t.uuids),
+            ("presence", t.presence),
+            ("postings", t.postings),
+            ("ordered", t.ordered),
+            ("forest", t.forest),
+            ("position", t.position),
+            ("desc", t.desc),
+            ("trigrams", t.trigrams),
+            ("log", t.log),
+        ] {
+            let s = db.stat(&r)?;
+            let pages = s.branch_pages + s.leaf_pages + s.overflow_pages;
+            out.push((name, s.entries as u64, pages as u64 * s.page_size as u64));
+        }
+        Ok(out)
+    }
+
     /// Size of the store file, in bytes.
     pub fn file_size(&self) -> Result<u64> {
         Ok(std::fs::metadata(self.path.join("data.mdb"))?.len())
@@ -254,6 +289,22 @@ impl Store {
         let Some(id) = self.t.uuids.get(&r, uuid.as_bytes())? else { return Ok(None) };
         let bytes = self.t.records.get(&r, id)?.context("record of a known uuid")?;
         Ok(Some(decode_record(bytes)?))
+    }
+
+    /// The record at a path of the field's forest (components joined by `/`).
+    pub fn resolve(&self, field: &str, path: &str) -> Result<Option<Uuid>> {
+        let r = self.env.read_txn()?;
+        let q = Reader { s: self, r: &r };
+        let Some(fid) = self.fid(field) else { return Ok(None) };
+        let mut at = ROOT_ID;
+        for part in path.split('/') {
+            let k = key(&[&fid.to_be_bytes(), &at.to_be_bytes(), part.as_bytes()]);
+            match q.get(self.t.forest, &k)? {
+                Some(v) => at = id_of(v),
+                None => return Ok(None),
+            }
+        }
+        Ok(Some(q.uuid(at)?))
     }
 
     pub fn descendants(&self, field: &str, node: Uuid) -> Result<Vec<Uuid>> {

@@ -118,7 +118,11 @@ impl Both {
         }
         for u in self.reference.uuids() {
             assert_eq!(self.store.get(u).unwrap().as_ref(), self.reference.get(u));
+            if let Some(path) = self.reference.path_string(P, u) {
+                assert_eq!(self.store.resolve(P, &path).unwrap(), Some(u), "resolve {path}");
+            }
         }
+        assert_eq!(self.store.resolve(P, "/no/such/path").unwrap(), None);
     }
 
     fn check_queries(&self, queries: &[Q], sorts: &[Sort], t: Thresholds) {
