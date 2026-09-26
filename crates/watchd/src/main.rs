@@ -74,23 +74,31 @@ fn main() -> Result<()> {
     {
         let fanotify = Arc::clone(&fanotify);
         let broker = Arc::clone(&broker);
-        std::thread::spawn(move || loop {
-            match lock(&fanotify).read_events() {
-                Ok(out) => {
-                    for event in out.events {
-                        if tx.send(event).is_err() {
-                            return; // The broker is shutting down.
-                        }
+        // The read happens *outside* the lock: it blocks until something
+        // happens, and a subscription must be able to place its marks
+        // meanwhile.
+        let reader = lock(&fanotify).reader();
+        std::thread::spawn(move || {
+            let mut buf = vec![0u8; 64 * 1024];
+            loop {
+                let n = match reader.read(&mut buf) {
+                    Ok(n) => n,
+                    Err(err) => {
+                        eprintln!("[watchd] {err:#}");
+                        std::thread::sleep(std::time::Duration::from_millis(100));
+                        continue;
                     }
-                    if out.kernel_overflow {
-                        // The kernel dropped events: every subscriber must
-                        // reconcile, so everyone is told.
-                        broker.broadcast_overflow();
+                };
+                let out = lock(&fanotify).translate(&buf[..n]);
+                for event in out.events {
+                    if tx.send(event).is_err() {
+                        return; // The broker is shutting down.
                     }
                 }
-                Err(err) => {
-                    eprintln!("[watchd] fanotify read failed: {err:#}");
-                    std::thread::sleep(std::time::Duration::from_millis(100));
+                if out.kernel_overflow {
+                    // The kernel dropped events: every subscriber must
+                    // reconcile, so everyone is told.
+                    broker.broadcast_overflow();
                 }
             }
         });

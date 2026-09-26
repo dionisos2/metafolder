@@ -24,8 +24,9 @@ use std::collections::HashMap;
 use std::ffi::{CString, OsStr, OsString};
 use std::io;
 use std::os::unix::ffi::OsStrExt;
-use std::os::unix::io::RawFd;
+use std::os::unix::io::{AsRawFd, FromRawFd, OwnedFd, RawFd};
 use std::path::{Path, PathBuf};
+use std::sync::Arc;
 use std::time::Instant;
 
 use anyhow::{bail, Context, Result};
@@ -409,7 +410,9 @@ pub struct ReadOutcome {
 }
 
 pub struct Fanotify {
-    fd: RawFd,
+    /// The group. Shared with every [`Reader`]: reading needs none of the
+    /// state below, and must not hold it (see [`Fanotify::reader`]).
+    fd: Arc<OwnedFd>,
     /// mount id → mark.
     marks: HashMap<u64, Mark>,
     /// subscribed root → mount id.
@@ -432,6 +435,8 @@ impl Fanotify {
         if fd < 0 {
             return Err(io::Error::last_os_error()).context("fanotify_init failed");
         }
+        // SAFETY: a fresh descriptor, owned by nothing else.
+        let fd = Arc::new(unsafe { OwnedFd::from_raw_fd(fd) });
         Ok(Self {
             fd,
             marks: HashMap::new(),
@@ -475,32 +480,34 @@ impl Fanotify {
         Ok(())
     }
 
-    /// One `read(2)` of the group, translated. Blocks until something happens.
-    pub fn read_events(&mut self) -> Result<ReadOutcome> {
-        let mut buf = [0u8; 64 * 1024];
-        let n = loop {
-            let n =
-                unsafe { libc::read(self.fd, buf.as_mut_ptr() as *mut libc::c_void, buf.len()) };
-            if n >= 0 {
-                break n as usize;
-            }
-            let err = io::Error::last_os_error();
-            if err.kind() != io::ErrorKind::Interrupted {
-                return Err(err).context("fanotify read failed");
-            }
-        };
-        let (raws, kernel_overflow) = parse(&buf[..n]);
+    /// A handle that reads the group without holding it. The read blocks
+    /// until something happens — on a quiet machine, indefinitely — so it must
+    /// not stand between a subscription and its marks: read with this, then
+    /// lock the group only to [`translate`](Self::translate) what was read.
+    pub fn reader(&self) -> Reader {
+        Reader { fd: Arc::clone(&self.fd) }
+    }
+
+    /// Turns one read's bytes into wire events.
+    pub fn translate(&mut self, buf: &[u8]) -> ReadOutcome {
+        let (raws, kernel_overflow) = parse(buf);
         let mut events = Vec::new();
         for raw in &raws {
             events.extend(translate(raw, &mut self.resolver));
         }
-        Ok(ReadOutcome { events, kernel_overflow })
+        ReadOutcome { events, kernel_overflow }
     }
 
     fn mark_mount(&self, at: &Path, op: u32) -> Result<()> {
         let c = CString::new(at.as_os_str().as_bytes()).context("path contains a NUL byte")?;
         let rc = unsafe {
-            libc::fanotify_mark(self.fd, op | FAN_MARK_MOUNT, mask(), libc::AT_FDCWD, c.as_ptr())
+            libc::fanotify_mark(
+                self.fd.as_raw_fd(),
+                op | FAN_MARK_MOUNT,
+                mask(),
+                libc::AT_FDCWD,
+                c.as_ptr(),
+            )
         };
         if rc != 0 {
             return Err(io::Error::last_os_error())
@@ -531,9 +538,26 @@ fn mask() -> u64 {
         | FAN_ONDIR
 }
 
-impl Drop for Fanotify {
-    fn drop(&mut self) {
-        unsafe { libc::close(self.fd) };
+/// The reading end of the group ([`Fanotify::reader`]).
+pub struct Reader {
+    fd: Arc<OwnedFd>,
+}
+
+impl Reader {
+    /// One `read(2)` of the group into `buf`. Blocks until something happens.
+    pub fn read(&self, buf: &mut [u8]) -> Result<usize> {
+        loop {
+            let n = unsafe {
+                libc::read(self.fd.as_raw_fd(), buf.as_mut_ptr() as *mut libc::c_void, buf.len())
+            };
+            if n >= 0 {
+                return Ok(n as usize);
+            }
+            let err = io::Error::last_os_error();
+            if err.kind() != io::ErrorKind::Interrupted {
+                return Err(err).context("fanotify read failed");
+            }
+        }
     }
 }
 
@@ -770,6 +794,36 @@ mod tests {
     }
 
     // ── The real group (needs fanotify; skips where it is not permitted) ─────
+
+    #[test]
+    fn test_a_blocked_read_does_not_hold_the_marks() {
+        // The reading thread spends its life blocked in `read(2)`. If it held
+        // the group's state meanwhile, a subscription could not place its
+        // marks until some event happened to arrive — and on a quiet machine
+        // none does, so the first subscriber would never be answered.
+        let fa = match Fanotify::open() {
+            Ok(fa) => fa,
+            Err(_) => {
+                eprintln!("skipped: fanotify_init is not permitted here");
+                return;
+            }
+        };
+        let fa = std::sync::Arc::new(std::sync::Mutex::new(fa));
+        let reader = fa.lock().unwrap().reader();
+        std::thread::spawn(move || {
+            let mut buf = [0u8; 4096];
+            let _ = reader.read(&mut buf); // Blocks: nothing is marked.
+        });
+        std::thread::sleep(std::time::Duration::from_millis(50));
+        let (tx, rx) = std::sync::mpsc::channel();
+        let fa2 = fa.clone();
+        std::thread::spawn(move || {
+            fa2.lock().unwrap().sync_roots(&[]).unwrap();
+            tx.send(()).unwrap();
+        });
+        rx.recv_timeout(std::time::Duration::from_secs(2))
+            .expect("the marks can be changed while a read is blocked");
+    }
 
     #[test]
     fn test_the_group_reports_a_creation_on_a_marked_directory() {
