@@ -154,7 +154,7 @@ impl RepoState {
             settings.slow_operation_threshold_ms,
         ));
         Self {
-            conn: Mutex::new(Box::new(opened.conn)),
+            conn: Mutex::new(opened.conn),
             cache: Mutex::new(TreeCache::new(opened.case_insensitive)),
             config: opened.config,
             name,

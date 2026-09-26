@@ -5,17 +5,18 @@
 use std::path::{Path, PathBuf};
 
 use anyhow::{bail, Context, Result};
-use rusqlite::Connection;
-
 use metafolder_core::metarecord::{Field, TreeName, Value};
 
-use crate::config::RepoConfig;
+use crate::config::{RepoConfig, Storage};
 use crate::db;
 use crate::error::DomainError;
 use crate::log::Writer;
 use crate::phase::Phase;
 
 pub const DB_FILE: &str = "db.sqlite";
+
+/// The key-value store's directory inside `internal/` (spec-storage).
+pub const KV_DIR: &str = "kv";
 
 /// Subdirectory of `.metafolder/` holding the live database (and its WAL /
 /// journal sidecars) plus other daemon-managed volatile files. It is the
@@ -25,15 +26,23 @@ pub const DB_FILE: &str = "db.sqlite";
 pub const INTERNAL_DIR: &str = "internal";
 
 /// An initialised or loaded repository: its config, its open (exclusive)
-/// database connection, and the location of its `.metafolder/` directory.
-#[derive(Debug)]
+/// database, whatever the backend, and the location of its `.metafolder/`.
 pub struct OpenedRepo {
     pub config: RepoConfig,
-    pub conn: Connection,
+    pub conn: crate::store::Handle,
     pub metafolder_dir: PathBuf,
     /// Whether the repository's filesystem matches names case-insensitively
     /// (probed at init/load time; spec-platform "Case sensitivity").
     pub case_insensitive: bool,
+}
+
+impl std::fmt::Debug for OpenedRepo {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("OpenedRepo")
+            .field("config", &self.config)
+            .field("metafolder_dir", &self.metafolder_dir)
+            .finish_non_exhaustive()
+    }
 }
 
 /// Probes the filesystem's case sensitivity by creating a lowercase file in
@@ -70,6 +79,17 @@ pub fn init_repository(
     name: Option<&str>,
     system: bool,
 ) -> Result<OpenedRepo> {
+    init_repository_with(root, metafolder, name, system, Storage::default_for_init())
+}
+
+/// [`init_repository`] on an explicit storage backend.
+pub fn init_repository_with(
+    root: &Path,
+    metafolder: Option<&Path>,
+    name: Option<&str>,
+    system: bool,
+    storage: Storage,
+) -> Result<OpenedRepo> {
     let root = root.canonicalize().map_err(|e| {
         DomainError::BadRequest(format!(
             "Cannot resolve path {root:?}: the root directory must exist ({e})"
@@ -105,10 +125,17 @@ pub fn init_repository(
     };
     let mut config = RepoConfig::new(root, name);
     config.system = system;
+    config.storage = storage;
     config.write(&metafolder_dir)?;
 
-    let mut conn = db::open_database(&internal_dir.join(DB_FILE), &config.name)?;
-    db::init_schema(&conn)?;
+    let mut conn: crate::store::Handle = match storage {
+        Storage::Sqlite => {
+            let conn = db::open_database(&internal_dir.join(DB_FILE), &config.name)?;
+            db::init_schema(&conn)?;
+            Box::new(conn)
+        }
+        Storage::Kv => Box::new(crate::kvstore::KvStore::open(&internal_dir.join(KV_DIR))?),
+    };
     create_root_entry(&mut conn)?;
 
     let case_insensitive = probe_case_insensitive(&internal_dir);
@@ -137,7 +164,7 @@ pub fn seed_schema_file(metafolder_dir: &Path, source: &Path) {
 /// carries no built-in ignore policy (spec-config "No runtime fallback"); the
 /// default patterns are applied client-side as the `default` ignore preset by
 /// `mf repo init` / the GUI (spec-file-tracking "Ignore presets").
-fn create_root_entry(conn: &mut Connection) -> Result<()> {
+fn create_root_entry(conn: &mut crate::store::Handle) -> Result<()> {
     let fields = vec![
         Field::new("mfr_path", Value::TreeRef { parent: None, name: TreeName::default() }),
         Field::new("mfr_type", Value::String("dir".to_string())),
@@ -172,11 +199,19 @@ pub fn load_repository(locator: RepoLocator) -> Result<OpenedRepo> {
     let internal_dir = metafolder_dir.join(INTERNAL_DIR);
     std::fs::create_dir_all(&internal_dir)
         .with_context(|| format!("Failed to create {internal_dir:?}"))?;
-    {
-        let _p = Phase::begin(&who, "migrate the on-disk layout");
-        migrate_legacy_db_layout(&metafolder_dir, &internal_dir)?;
-    }
-    let conn = db::open_database(&internal_dir.join(DB_FILE), &who)?;
+    let conn: crate::store::Handle = match config.storage {
+        Storage::Sqlite => {
+            {
+                let _p = Phase::begin(&who, "migrate the on-disk layout");
+                migrate_legacy_db_layout(&metafolder_dir, &internal_dir)?;
+            }
+            Box::new(db::open_database(&internal_dir.join(DB_FILE), &who)?)
+        }
+        Storage::Kv => {
+            let _p = Phase::begin(&who, "open the key-value store");
+            Box::new(crate::kvstore::KvStore::open(&internal_dir.join(KV_DIR))?)
+        }
+    };
     let case_insensitive = {
         let _p = Phase::begin(&who, "probe case sensitivity");
         probe_case_insensitive(&internal_dir)

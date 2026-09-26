@@ -396,6 +396,19 @@ an observable task that writes the new store beside the old one and switches on
 success). Per the migration policy, the conversion *is* the migration script
 for this format.
 
+On disk, a SQLite repository keeps =internal/db.sqlite=; a KV one keeps
+=internal/kv/= (the LMDB environment, plus =daemon.lock=: LMDB has no
+exclusive mode, so the "one daemon per repository" lock SQLite gets from
+=locking_mode = EXCLUSIVE= is an =flock= held for the store's lifetime). The
+legacy-layout migration at load is SQLite's alone — no KV repository predates
+=internal/=.
+
+Until =init= takes a flag (increment 5), the daemon creates repositories on
+SQLite unless =METAFOLDER_DEFAULT_STORAGE=kv= is set. That variable is how the
+whole integration suite is run on the KV backend; tests about SQLite's own
+layout (the file, its tables, its legacy migrations) pin SQLite with
+=init_repository_with=.
+
 The resident query index remains available on top of either store: on a
 repository that fits in memory it may still be the faster engine. Whether it is
 still worth keeping on the KV store, where a small repository is fully in the

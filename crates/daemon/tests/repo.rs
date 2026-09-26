@@ -5,6 +5,7 @@ use metafolder_daemon::config::RepoConfig;
 use metafolder_daemon::db;
 use metafolder_daemon::repo::{self, RepoLocator};
 use metafolder_daemon::state::AppState;
+use metafolder_daemon::store::Begin as _;
 use uuid::Uuid;
 
 mod common;
@@ -57,10 +58,10 @@ fn test_init_creates_structure_and_root_metarecord() {
     assert_eq!(opened.config.name, root.file_name().unwrap().to_string_lossy().to_string());
 
     // The filesystem root entry exists with the spec'd defaults.
-    let root_uuid = db::find_tree_child(&opened.conn, "mfr_path", None, "")
+    let root_uuid = db::find_tree_child(opened.conn.as_sqlite().unwrap(), "mfr_path", None, "")
         .unwrap()
         .expect("filesystem root entry must exist");
-    let entry = db::get_metarecord(&opened.conn, root_uuid).unwrap().unwrap();
+    let entry = db::get_metarecord(opened.conn.as_sqlite().unwrap(), root_uuid).unwrap().unwrap();
     assert_eq!(entry.get("mfr_type"), Some(&Value::String("dir".into())));
     assert_eq!(entry.get("mf_watch"), Some(&Value::Bool(false)));
     // The daemon writes no mf_ignore at init: it carries no built-in ignore
@@ -72,6 +73,8 @@ fn test_init_creates_structure_and_root_metarecord() {
     // The root entry creation went through the event log.
     let n_ops: i64 = opened
         .conn
+        .as_sqlite()
+        .unwrap()
         .query_row("SELECT COUNT(*) FROM operation WHERE op_type = 'create_metarecord'", [], |r| {
             r.get(0)
         })
@@ -164,7 +167,9 @@ fn test_load_migrates_legacy_db_layout() {
     assert!(!metafolder.join("db.sqlite").exists());
     assert!(!metafolder.join("db.sqlite-wal").exists());
     // The loaded repository is functional: the root entry is readable.
-    assert!(db::find_tree_child(&loaded.conn, "mfr_path", None, "").unwrap().is_some());
+    assert!(db::find_tree_child(loaded.conn.as_sqlite().unwrap(), "mfr_path", None, "")
+        .unwrap()
+        .is_some());
     drop(loaded);
     std::fs::remove_dir_all(root).unwrap();
 }
@@ -194,10 +199,14 @@ fn test_load_migrates_legacy_table_names() {
     assert_eq!(loaded.config.repo_uuid, uuid);
     // The schema is migrated and functional: the root metarecord is readable
     // and its creation op uses the new op type.
-    let root_uuid = db::find_tree_child(&loaded.conn, "mfr_path", None, "").unwrap().unwrap();
-    assert!(db::get_metarecord(&loaded.conn, root_uuid).unwrap().is_some());
+    let root_uuid = db::find_tree_child(loaded.conn.as_sqlite().unwrap(), "mfr_path", None, "")
+        .unwrap()
+        .unwrap();
+    assert!(db::get_metarecord(loaded.conn.as_sqlite().unwrap(), root_uuid).unwrap().is_some());
     let n: i64 = loaded
         .conn
+        .as_sqlite()
+        .unwrap()
         .query_row("SELECT COUNT(*) FROM operation WHERE op_type = 'create_metarecord'", [], |r| {
             r.get(0)
         })
@@ -205,6 +214,8 @@ fn test_load_migrates_legacy_table_names() {
     assert_eq!(n, 1);
     let legacy: i64 = loaded
         .conn
+        .as_sqlite()
+        .unwrap()
         .query_row(
             "SELECT COUNT(*) FROM sqlite_master WHERE type = 'table' AND name = 'metadata'",
             [],
@@ -239,10 +250,14 @@ fn test_load_migrates_record_era_table_names() {
 
     let loaded = repo::load_repository(RepoLocator::Root(root.to_path_buf())).unwrap();
     assert_eq!(loaded.config.repo_uuid, uuid);
-    let root_uuid = db::find_tree_child(&loaded.conn, "mfr_path", None, "").unwrap().unwrap();
-    assert!(db::get_metarecord(&loaded.conn, root_uuid).unwrap().is_some());
+    let root_uuid = db::find_tree_child(loaded.conn.as_sqlite().unwrap(), "mfr_path", None, "")
+        .unwrap()
+        .unwrap();
+    assert!(db::get_metarecord(loaded.conn.as_sqlite().unwrap(), root_uuid).unwrap().is_some());
     let n: i64 = loaded
         .conn
+        .as_sqlite()
+        .unwrap()
         .query_row("SELECT COUNT(*) FROM operation WHERE op_type = 'create_metarecord'", [], |r| {
             r.get(0)
         })
@@ -356,4 +371,55 @@ fn test_unload_refused_during_rollback_navigation() {
     assert!(state.repo(uuid).is_err());
 
     std::fs::remove_dir_all(root).unwrap();
+}
+
+// ── Storage backend (docs/spec-storage.org "Choosing the backend") ─────────────
+
+/// A repository initialised on the key-value backend says so in its config,
+/// keeps its data under `internal/kv/` (no SQLite file), and reads it back
+/// after a reload — the root metarecord and a write included.
+#[test]
+fn a_repository_on_the_kv_backend_reloads_its_data() {
+    use metafolder_daemon::config::Storage;
+    use metafolder_daemon::log::Writer;
+    use metafolder_daemon::store::Rows;
+
+    let root = temp_dir("kv_backend");
+    let written = {
+        let mut opened =
+            repo::init_repository_with(root.path(), None, None, false, Storage::Kv).unwrap();
+        assert_eq!(opened.config.storage, Storage::Kv);
+        let mut w = Writer::begin(&mut opened.conn, None).unwrap();
+        let made = w
+            .create_metarecord(vec![metafolder_core::metarecord::Field::new(
+                "note",
+                Value::String("kept".into()),
+            )])
+            .unwrap();
+        w.commit().unwrap();
+        made.uuid
+    };
+    let meta = root.path().join(".metafolder");
+    assert!(meta.join("internal/kv").is_dir());
+    assert!(!meta.join("internal/db.sqlite").exists());
+
+    let opened = repo::load_repository(RepoLocator::Root(root.path().to_path_buf())).unwrap();
+    assert_eq!(opened.config.storage, Storage::Kv);
+    let note = Rows::string_field(&opened.conn, written, "note").unwrap();
+    assert_eq!(note.as_deref(), Some("kept"));
+    assert_eq!(Rows::metarecord_count(&opened.conn).unwrap(), 2, "the root and the note");
+}
+
+/// A config written before the field existed is a SQLite repository.
+#[test]
+fn a_config_without_a_storage_field_is_sqlite() {
+    use metafolder_daemon::config::Storage;
+    let root = temp_dir("storage_default");
+    let opened =
+        repo::init_repository_with(root.path(), None, None, false, Storage::Sqlite).unwrap();
+    let meta = opened.metafolder_dir.clone();
+    drop(opened);
+    let raw = std::fs::read_to_string(meta.join("config.json")).unwrap();
+    assert!(!raw.contains("\"storage\":"), "the default is not written: {raw}");
+    assert_eq!(RepoConfig::read(&meta).unwrap().storage, Storage::Sqlite);
 }

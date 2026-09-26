@@ -5,6 +5,34 @@ use anyhow::Context;
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
+/// A repository's storage backend (docs/spec-storage.org).
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum Storage {
+    /// SQLite (`internal/db.sqlite`).
+    #[default]
+    Sqlite,
+    /// The key-value store (`internal/kv/`, LMDB).
+    Kv,
+}
+
+impl Storage {
+    fn is_sqlite(&self) -> bool {
+        *self == Storage::Sqlite
+    }
+
+    /// The backend a repository is created on when the caller does not say:
+    /// SQLite, unless `METAFOLDER_DEFAULT_STORAGE=kv` — how the test suite is
+    /// run on the key-value backend, and how to try it before `mf repo
+    /// convert` exists.
+    pub fn default_for_init() -> Storage {
+        match std::env::var("METAFOLDER_DEFAULT_STORAGE").as_deref() {
+            Ok("kv") => Storage::Kv,
+            _ => Storage::Sqlite,
+        }
+    }
+}
+
 const CONFIG_FILE: &str = "config.json";
 pub const CURRENT_VERSION: u32 = 1;
 
@@ -43,6 +71,11 @@ pub struct RepoConfig {
     /// `GET /repos` unless `?all=true`.
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub system: bool,
+    /// The storage backend holding this repository's data (spec-storage
+    /// "Choosing the backend"), chosen at init. Absent — every repository
+    /// written before the choice existed — is SQLite.
+    #[serde(default, skip_serializing_if = "Storage::is_sqlite")]
+    pub storage: Storage,
 }
 
 impl RepoConfig {
@@ -58,6 +91,7 @@ impl RepoConfig {
             log_retention_revisions: None,
             log_retention_keep_labels: None,
             system: false,
+            storage: Storage::Sqlite,
         }
     }
 

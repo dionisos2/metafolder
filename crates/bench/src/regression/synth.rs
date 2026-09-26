@@ -15,6 +15,7 @@ use anyhow::{Context, Result};
 use metafolder_core::metarecord::{Field, Value};
 use metafolder_daemon::log::Writer;
 use metafolder_daemon::repo;
+use metafolder_daemon::store::{Begin as _, Rows as _};
 use uuid::Uuid;
 
 /// A repository size. The identifier is part of every measurement's key, so
@@ -63,19 +64,15 @@ pub fn build(dir: &Path, shape: &Shape) -> Result<Uuid> {
 
     // Generation only: a fsync per revision would make building the log longer
     // than the whole measurement (and the generated repository is disposable).
-    conn.pragma_update(None, "synchronous", "OFF")?;
+    if let Some(sqlite) = conn.as_sqlite() {
+        sqlite.pragma_update(None, "synchronous", "OFF")?;
+    }
 
     // The forest root the repository's own init created — the generated tree
     // hangs under it, so `mfr_path` stays one forest.
-    let root: Uuid = {
-        let blob: Vec<u8> = conn.query_row(
-            "SELECT metarecord_uuid FROM field
-             WHERE field_name = 'mfr_path' AND value_name = '' LIMIT 1",
-            [],
-            |r| r.get(0),
-        )?;
-        Uuid::from_slice(&blob)?
-    };
+    let root: Uuid = conn
+        .child_by_bytes("mfr_path", None, b"")?
+        .context("the repository has no filesystem root")?;
 
     // One revision for the tree, as a reconcile would write it.
     let mut dirs = Vec::with_capacity(shape.dirs);
@@ -126,7 +123,9 @@ pub fn build(dir: &Path, shape: &Shape) -> Result<Uuid> {
     // every page is still in a multi-megabyte WAL, and reads it three times
     // slower than every run after it — a difference of the harness, not of the
     // code under test.
-    conn.pragma_update(None, "wal_checkpoint", "TRUNCATE")?;
+    if let Some(sqlite) = conn.as_sqlite() {
+        sqlite.pragma_update(None, "wal_checkpoint", "TRUNCATE")?;
+    }
 
     drop(conn);
     Ok(repo_uuid)
