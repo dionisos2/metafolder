@@ -327,22 +327,25 @@ pub fn preflight(allow_unsandboxed_webview: bool) -> Result<(), String> {
 /// `about:blank` and the Tauri/asset custom protocols are the app's own; a
 /// URI we cannot make sense of is refused (fail closed).
 pub fn is_local_navigation(uri: &str) -> bool {
-    let uri = uri.trim();
-    if uri.is_empty() {
+    // Parsed, never prefix-matched: `http://127.0.0.1:x@evil.example/` starts
+    // like a loopback URL, but what precedes the `@` is a user name and a
+    // password — its host is `evil.example`.
+    let Ok(url) = url::Url::parse(uri.trim()) else {
         return false;
+    };
+    match url.scheme() {
+        "about" => url.path() == "blank",
+        // Tauri's own custom protocols: served by the app, whatever the host.
+        "tauri" | "asset" | "ipc" => true,
+        "http" => {
+            const LOCAL_HOSTS: &[&str] =
+                &["tauri.localhost", "ipc.localhost", "asset.localhost", "127.0.0.1", "localhost"];
+            url.username().is_empty()
+                && url.password().is_none()
+                && url.host_str().is_some_and(|host| LOCAL_HOSTS.contains(&host))
+        }
+        _ => false,
     }
-    const LOCAL_PREFIXES: &[&str] = &[
-        "about:blank",
-        "tauri://",
-        "asset://",
-        "ipc://",
-        "http://tauri.localhost",
-        "http://ipc.localhost",
-        "http://asset.localhost",
-        "http://127.0.0.1:",
-        "http://localhost:",
-    ];
-    LOCAL_PREFIXES.iter().any(|prefix| uri.starts_with(prefix))
 }
 
 /// Whether WebKit's web process — the one that decodes the images and video a
@@ -559,6 +562,13 @@ mod tests {
             "javascript:fetch('https://evil.example')",
             "file:///etc/passwd",
             "",
+            // A loopback-looking prefix whose real host is elsewhere: what
+            // precedes `@` is a user name and a password, not a host.
+            "http://127.0.0.1:x@evil.example/?token=abcdef",
+            "http://localhost:x@evil.example/",
+            "http://tauri.localhost@evil.example/",
+            "http://tauri.localhost.evil.example/",
+            "about:blankx",
         ] {
             assert!(!is_local_navigation(uri), "must be refused: {uri:?}");
         }

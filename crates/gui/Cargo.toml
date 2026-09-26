@@ -35,6 +35,8 @@ toml = "1.0"
 notify = "6"
 uuid = { version = "1", features = ["v4", "serde"] }
 clap = { version = "4", features = ["derive"] }
+# The navigation gate parses URLs rather than prefix-matching them (sandbox.rs).
+url = "2"
 
 # Already in the dependency tree via wry; used directly to react to
 # WebKit web-process crashes (reload instead of a frozen window).
