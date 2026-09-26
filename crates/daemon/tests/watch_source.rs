@@ -235,3 +235,83 @@ fn test_an_excluded_subtree_is_not_recorded_under_the_coverage_source() {
     assert!(resolve(&repo, "/dir/x").is_none(), "nothing under the excluded subtree is recorded");
     std::fs::remove_dir_all(root).ok();
 }
+
+/// A stand-in broker that accepts any number of connections, answers each
+/// handshake, and reports what happened to them: `accepted` counts the
+/// connections, `closed` the ones the client ended.
+struct CountingBroker {
+    socket: PathBuf,
+    accepted: Arc<std::sync::atomic::AtomicUsize>,
+    closed: Arc<std::sync::atomic::AtomicUsize>,
+}
+
+impl CountingBroker {
+    fn start(socket: PathBuf) -> Self {
+        use std::sync::atomic::{AtomicUsize, Ordering};
+        std::fs::create_dir_all(socket.parent().unwrap()).unwrap();
+        let _ = std::fs::remove_file(&socket);
+        let listener = UnixListener::bind(&socket).unwrap();
+        let accepted = Arc::new(AtomicUsize::new(0));
+        let closed = Arc::new(AtomicUsize::new(0));
+        let (acc, clo) = (accepted.clone(), closed.clone());
+        std::thread::spawn(move || {
+            for stream in listener.incoming() {
+                let Ok(mut stream) = stream else { return };
+                acc.fetch_add(1, Ordering::SeqCst);
+                let clo = clo.clone();
+                std::thread::spawn(move || {
+                    let mut reader = BufReader::new(stream.try_clone().unwrap());
+                    let mut line = String::new();
+                    reader.read_line(&mut line).unwrap();
+                    let roots = match proto::decode::<ClientMsg>(&line).unwrap() {
+                        ClientMsg::Subscribe { roots } => roots,
+                    };
+                    stream
+                        .write_all(
+                            proto::encode(&ServerMsg::Subscribed { roots, denied: Vec::new() })
+                                .as_bytes(),
+                        )
+                        .unwrap();
+                    // The client never writes again: EOF is the client leaving.
+                    line.clear();
+                    while matches!(reader.read_line(&mut line), Ok(n) if n > 0) {
+                        line.clear();
+                    }
+                    clo.fetch_add(1, Ordering::SeqCst);
+                });
+            }
+        });
+        Self { socket, accepted, closed }
+    }
+}
+
+impl Drop for CountingBroker {
+    fn drop(&mut self) {
+        let _ = std::fs::remove_file(&self.socket);
+    }
+}
+
+#[test]
+fn test_unloading_ends_the_broker_connection_for_good() {
+    // The client thread holds no `Arc<RepoState>`, but it must not outlive the
+    // repository either: an unload closes the subscription, and nothing
+    // reconnects on behalf of a repository that is gone.
+    use std::sync::atomic::Ordering;
+    let socket = dead_socket();
+    let (repo, root) = setup("unload", fanotify_settings(&socket));
+    let broker = CountingBroker::start(socket);
+
+    let executor = executor::spawn(&repo, Duration::from_millis(25));
+    let handle = watcher::start(&repo, executor.pinger()).unwrap();
+    assert_eq!(handle.backend(), "fanotify");
+    assert_eq!(broker.accepted.load(Ordering::SeqCst), 1);
+
+    drop(handle);
+    wait_for("the subscription to be closed", || broker.closed.load(Ordering::SeqCst) == 1);
+    // Longer than the client's reconnection delay: a leaked thread would have
+    // subscribed again by now.
+    std::thread::sleep(Duration::from_millis(2500));
+    assert_eq!(broker.accepted.load(Ordering::SeqCst), 1, "no reconnection after the unload");
+    drop(repo);
+    drop(root);
+}

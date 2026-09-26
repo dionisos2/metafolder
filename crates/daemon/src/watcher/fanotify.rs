@@ -22,6 +22,7 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use anyhow::{bail, Context, Result};
+use metafolder_core::sync::MutexExt;
 use uuid::Uuid;
 
 use metafolder_watchd::proto::{self, ClientMsg, Event, ServerMsg};
@@ -41,10 +42,68 @@ const HANDSHAKE_TIMEOUT: Duration = Duration::from_secs(5);
 const RECONNECT_DELAY: Duration = Duration::from_secs(2);
 
 pub(crate) struct Source {
-    // No state: the connection lives on the client thread, which carries the
+    // The connection lives on the client thread, which carries the
     // repository's `Uuid` for diagnostics and *no* `Arc<RepoState>` — an Arc
     // would keep the repository (and its exclusive lock) alive for ever
-    // (.semgrep/invariants.yml `mf-repostate-arc-in-background-task`).
+    // (.semgrep/invariants.yml `mf-repostate-arc-in-background-task`). What the
+    // source keeps is the way to end that thread when it is dropped.
+    stop: Arc<Stop>,
+}
+
+/// How a dropped [`Source`] ends its client thread: the flag says "do not
+/// (re)connect", and the live stream is shut down so a read blocked on it
+/// returns at once. Both under one lock, so a connection made concurrently
+/// with the drop is either seen by it or refused by [`Stop::attach`].
+#[derive(Default)]
+struct Stop {
+    state: std::sync::Mutex<StopState>,
+}
+
+#[derive(Default)]
+struct StopState {
+    stopped: bool,
+    stream: Option<UnixStream>,
+}
+
+impl Stop {
+    /// Records `reader`'s stream as the live one; `false` once stopped (the
+    /// caller then drops the connection and leaves).
+    fn attach(&self, reader: &BufReader<UnixStream>) -> bool {
+        let mut state = self.state.lock_recover();
+        if state.stopped {
+            return false;
+        }
+        state.stream = reader.get_ref().try_clone().ok();
+        true
+    }
+
+    fn is_stopped(&self) -> bool {
+        self.state.lock_recover().stopped
+    }
+
+    fn stop(&self) {
+        let mut state = self.state.lock_recover();
+        state.stopped = true;
+        if let Some(stream) = state.stream.take() {
+            // The broker sees the subscription end; the reader sees EOF.
+            let _ = stream.shutdown(std::net::Shutdown::Both);
+        }
+    }
+}
+
+impl Drop for Source {
+    fn drop(&mut self) {
+        self.stop.stop();
+    }
+}
+
+/// Why [`pump`] returned.
+enum Ended {
+    /// The stream ended: the broker went away (or the source was dropped,
+    /// which [`Stop`] tells apart).
+    Stream,
+    /// The ingest thread is gone: the repository was unloaded.
+    Unloaded,
 }
 
 impl Source {
@@ -72,13 +131,19 @@ impl Source {
         // (re)connection; the handshake one is handed over as-is.
         let repo_uuid = repo.uuid();
         let socket = socket.to_path_buf();
+        let stop = Arc::new(Stop::default());
+        let thread_stop = stop.clone();
         std::thread::spawn(move || {
+            let stop = thread_stop;
             let mut reader = Some(reader);
             loop {
                 let current = match reader.take() {
                     Some(current) => current,
                     None => match subscribe(&socket, &root) {
                         Ok(current) => {
+                            if stop.is_stopped() {
+                                return;
+                            }
                             // Events while the connection was down are gone,
                             // like those of a daemon that was down: the gap
                             // closes with a reconcile (spec-file-tracking
@@ -96,11 +161,22 @@ impl Source {
                         }
                         Err(_) => {
                             std::thread::sleep(RECONNECT_DELAY);
+                            if stop.is_stopped() {
+                                return;
+                            }
                             continue;
                         }
                     },
                 };
-                pump(current, &root, &internal_dir, &repo_uuid, &tx);
+                if !stop.attach(&current) {
+                    return; // Dropped while connecting: the repository is gone.
+                }
+                if let Ended::Unloaded = pump(current, &root, &internal_dir, &repo_uuid, &tx) {
+                    return;
+                }
+                if stop.is_stopped() {
+                    return; // The stream ended because the source was dropped.
+                }
                 crate::diagnostics::error_for(
                     "watcher",
                     format!(
@@ -111,10 +187,13 @@ impl Source {
                     repo_uuid,
                 );
                 std::thread::sleep(RECONNECT_DELAY);
+                if stop.is_stopped() {
+                    return;
+                }
             }
         });
 
-        Ok(Arc::new(Source {}))
+        Ok(Arc::new(Source { stop }))
     }
 }
 
@@ -151,21 +230,21 @@ fn subscribe(socket: &Path, root: &Path) -> Result<BufReader<UnixStream>> {
 }
 
 /// Reads one stream to its end, handing every event to the ingest thread as a
-/// batch. Returns when the broker goes away.
+/// batch. Returns when the stream ends or the repository is unloaded.
 fn pump(
     reader: BufReader<UnixStream>,
     root: &Path,
     internal_dir: &Path,
     repo: &Uuid,
     tx: &Sender<Vec<(FsEvent, Option<i64>)>>,
-) {
+) -> Ended {
     let mut lines = reader.lines();
     while let Ok(Some(line)) = lines.next().transpose() {
         match proto::decode::<ServerMsg>(&line) {
             Ok(ServerMsg::Event { event }) => {
                 let events = translate(root, internal_dir, &event);
                 if !events.is_empty() && tx.send(events).is_err() {
-                    return; // The repository is being unloaded.
+                    return Ended::Unloaded;
                 }
             }
             Ok(ServerMsg::Overflow {}) => {
@@ -192,6 +271,7 @@ fn pump(
             }
         }
     }
+    Ended::Stream
 }
 
 /// One wire event into the internal forms. The broker has already narrowed the
@@ -346,7 +426,9 @@ mod tests {
         {
             let root = root.clone();
             let internal = internal.clone();
-            std::thread::spawn(move || pump(reader, &root, &internal, &Uuid::nil(), &tx));
+            std::thread::spawn(move || {
+                pump(reader, &root, &internal, &Uuid::nil(), &tx);
+            });
         }
         let mut out = Vec::new();
         while let Ok(batch) = rx.recv_timeout(Duration::from_secs(2)) {
