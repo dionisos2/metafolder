@@ -132,6 +132,8 @@ impl Both {
                     let want = self.reference.query(q, s, limit).unwrap();
                     let got = self.store.query(q, s, limit).unwrap();
                     assert_eq!(got, want, "query {q:?} sort {s:?} limit {limit} {t:?}");
+                    let page = self.store.page(q, s, limit).unwrap();
+                    assert_eq!(page, want.uuids, "page {q:?} sort {s:?} limit {limit} {t:?}");
                 }
             }
         }

@@ -429,14 +429,35 @@ fn gestures(store: &Store) -> Result<Vec<Gesture>> {
 }
 
 /// One run: the query, then the page's records (what a client displays).
-fn run(store: &Store, g: &Gesture) -> Result<(f64, u64, u64)> {
+/// One run: the query, then the page's records (what a client displays).
+/// `counted` asks for the total as well, which needs the whole match set;
+/// without it, a text predicate is checked only on what the sort visits.
+fn run(store: &Store, g: &Gesture, counted: bool) -> Result<(f64, u64, u64)> {
     store.take_reads();
     let t = Instant::now();
-    let page = store.query(&g.q, &g.sort, g.limit)?;
-    for u in &page.uuids {
+    let (uuids, count) = if counted {
+        let p = store.query(&g.q, &g.sort, g.limit)?;
+        (p.uuids, p.count)
+    } else {
+        (store.page(&g.q, &g.sort, g.limit)?, 0)
+    };
+    for u in &uuids {
         store.get(*u)?;
     }
-    Ok((t.elapsed().as_secs_f64() * 1e3, store.take_reads(), page.count))
+    Ok((t.elapsed().as_secs_f64() * 1e3, store.take_reads(), count))
+}
+
+/// Median time, reads and count over seven warm runs (after one to warm up).
+fn warm(store: &Store, g: &Gesture, counted: bool) -> Result<(f64, u64, u64)> {
+    run(store, g, counted)?;
+    let mut times = Vec::new();
+    let (mut reads, mut count) = (0, 0);
+    for _ in 0..7 {
+        let (ms, r, c) = run(store, g, counted)?;
+        times.push(ms);
+        (reads, count) = (r, c);
+    }
+    Ok((median(times), reads, count))
 }
 
 fn median(mut v: Vec<f64>) -> f64 {
@@ -463,31 +484,26 @@ fn bench(dir: &Path, cold: bool) -> Result<()> {
     println!("{} records, store {} MB", n, store.file_size()? / 1_000_000);
     let gs = gestures(&store)?;
     println!(
-        "{:<20} {:>10} {:>9} {:>9}{}",
+        "{:<20} {:>9} {:>9} {:>10} {:>9}{}",
         "gesture",
-        "warm ms",
+        "page ms",
         "reads",
+        "+count ms",
         "matches",
         if cold { "   cold ms" } else { "" }
     );
     let mut store = Some(store);
     for g in &gs {
         let s = store.as_ref().unwrap();
-        run(s, g)?;
-        let mut times = Vec::new();
-        let mut reads = 0;
-        let mut count = 0;
-        for _ in 0..7 {
-            let (ms, r, c) = run(s, g)?;
-            times.push(ms);
-            (reads, count) = (r, c);
-        }
-        let mut line = format!("{:<20} {:>10.3} {:>9} {:>9}", g.name, median(times), reads, count);
+        let (page_ms, reads, _) = warm(s, g, false)?;
+        let (count_ms, _, count) = warm(s, g, true)?;
+        let mut line =
+            format!("{:<20} {page_ms:>9.3} {reads:>9} {count_ms:>10.3} {count:>9}", g.name);
         if cold {
             drop(store.take());
             evict(dir)?;
             let s = Store::open(dir)?;
-            let (ms, _, _) = run(&s, g)?;
+            let (ms, _, _) = run(&s, g, false)?;
             line += &format!(" {ms:>9.1}");
             store = Some(s);
         }

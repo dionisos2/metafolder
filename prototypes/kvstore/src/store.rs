@@ -351,15 +351,40 @@ impl Store {
         bm.iter().map(|id| q.uuid(id)).collect()
     }
 
+    /// A page with no count: text predicates are then checked only on the
+    /// candidates the sort visits, and the work stops at the page's end.
+    pub fn page(&self, query: &Q, sort: &Sort, limit: usize) -> Result<Vec<Uuid>> {
+        let r = self.env.read_txn()?;
+        let q = Reader { s: self, r: &r };
+        let (candidates, residual) = q.split(query)?;
+        let ids = q.sorted_page(&candidates, sort, limit, &residual)?;
+        ids.into_iter().map(|id| q.uuid(id)).collect()
+    }
+
     pub fn query(&self, query: &Q, sort: &Sort, limit: usize) -> Result<Page> {
         let r = self.env.read_txn()?;
         let q = Reader { s: self, r: &r };
         let matched = q.eval(query, None)?;
         let count = matched.len();
-        let ids = q.sorted_page(&matched, sort, limit)?;
+        let ids = q.sorted_page(&matched, sort, limit, &Residual::default())?;
         let uuids = ids.into_iter().map(|id| q.uuid(id)).collect::<Result<_>>()?;
         Ok(Page { uuids, count })
     }
+}
+
+/// Text predicates left to check per candidate (docs/spec-storage.org "Text:
+/// trigrams"): a page with no count verifies only what its sort visits.
+#[derive(Default)]
+struct Residual {
+    checks: Vec<TextCheck>,
+}
+
+struct TextCheck {
+    field: String,
+    fid: u16,
+    /// Whether the field holds strings (else its texts are tree names only).
+    has_strings: bool,
+    pred: Box<dyn Fn(&str) -> bool>,
 }
 
 // ── Reading ─────────────────────────────────────────────────────────────────
@@ -482,19 +507,15 @@ impl Reader<'_> {
                 let Some(fid) = fid(field) else { return Ok(RoaringBitmap::new()) };
                 let needle = text.to_lowercase();
                 let pred = |s: &str| s.to_lowercase().contains(&needle);
-                let grams: Vec<[u8; 3]> = trigrams(text).collect();
-                if grams.is_empty() {
-                    self.text_scan(field, fid, cand, &pred)?
-                } else {
-                    let mut hits: Option<RoaringBitmap> = cand.cloned();
-                    for g in grams {
-                        let bm = self.bitmap(t.trigrams, &key(&[&fid.to_be_bytes(), &g]))?;
-                        hits = Some(match hits {
-                            None => bm,
-                            Some(h) => h & bm,
-                        });
+                match self.trigram_candidates(fid, text)? {
+                    None => self.text_scan(field, fid, cand, &pred)?,
+                    Some(hits) => {
+                        let hits = match cand {
+                            Some(c) => hits & c,
+                            None => hits,
+                        };
+                        self.verify(field, fid, &hits, &pred)?
                     }
-                    self.verify(field, fid, &hits.unwrap(), &pred)?
                 }
             }
             Q::Regex { field, pattern } => {
@@ -529,6 +550,115 @@ impl Reader<'_> {
         })
     }
 
+    /// The ids whose texts hold every trigram of `text` — `None` when it has
+    /// none (shorter than three bytes).
+    fn trigram_candidates(&self, fid: u16, text: &str) -> Result<Option<RoaringBitmap>> {
+        let mut hits: Option<RoaringBitmap> = None;
+        for g in trigrams(text) {
+            let bm = self.bitmap(self.s.t.trigrams, &key(&[&fid.to_be_bytes(), &g]))?;
+            hits = Some(match hits {
+                None => bm,
+                Some(h) => h & bm,
+            });
+        }
+        Ok(hits)
+    }
+
+    fn has_strings(&self, fid: u16) -> Result<bool> {
+        let prefix = key(&[&fid.to_be_bytes(), &[1]]);
+        Ok(self.s.t.ordered.prefix_iter(self.r, &prefix)?.next().is_some())
+    }
+
+    /// A text leaf as (candidates, check): its trigram candidates, or every
+    /// record holding the field, and the predicate left to verify on them.
+    /// `None` for a field no record holds.
+    fn text_leaf(&self, q: &Q) -> Result<Option<(RoaringBitmap, TextCheck)>> {
+        let (field, pred, text): (&str, Box<dyn Fn(&str) -> bool>, Option<&str>) = match q {
+            Q::Contains { field, text } => {
+                let needle = text.to_lowercase();
+                (field, Box::new(move |s: &str| s.to_lowercase().contains(&needle)), Some(text))
+            }
+            Q::Regex { field, pattern } => {
+                let re = Regex::new(pattern)?;
+                (field, Box::new(move |s: &str| re.is_match(s)), None)
+            }
+            _ => unreachable!("not a text leaf"),
+        };
+        let Some(fid) = self.s.fid(field) else { return Ok(None) };
+        let cand = match text.map(|t| self.trigram_candidates(fid, t)).transpose()?.flatten() {
+            Some(c) => c,
+            None => self.bitmap(self.s.t.presence, &key(&[&fid.to_be_bytes(), &[PRESENT]]))?,
+        };
+        let check =
+            TextCheck { field: field.to_string(), fid, has_strings: self.has_strings(fid)?, pred };
+        Ok(Some((cand, check)))
+    }
+
+    /// Splits a filter into a candidate bitmap and the text checks left over:
+    /// a text leaf, or the text conjuncts of an `And`, are deferred; anything
+    /// else is evaluated whole.
+    fn split(&self, q: &Q) -> Result<(RoaringBitmap, Residual)> {
+        let text = |q: &Q| matches!(q, Q::Contains { .. } | Q::Regex { .. });
+        let leaves: Vec<&Q> = match q {
+            Q::Contains { .. } | Q::Regex { .. } => vec![q],
+            Q::And(qs) => qs.iter().filter(|q| text(q)).collect(),
+            _ => Vec::new(),
+        };
+        if leaves.is_empty() {
+            return Ok((self.eval(q, None)?, Residual::default()));
+        }
+        let mut acc: Option<RoaringBitmap> = None;
+        if let Q::And(qs) = q {
+            for q in qs.iter().filter(|q| !text(q)) {
+                let bm = self.eval(q, acc.as_ref())?;
+                acc = Some(match acc {
+                    None => bm,
+                    Some(a) => a & bm,
+                });
+            }
+        }
+        let mut residual = Residual::default();
+        for leaf in leaves {
+            let Some((cand, check)) = self.text_leaf(leaf)? else {
+                return Ok((RoaringBitmap::new(), Residual::default()));
+            };
+            acc = Some(match acc {
+                None => cand,
+                Some(a) => a & cand,
+            });
+            residual.checks.push(check);
+        }
+        Ok((acc.unwrap(), residual))
+    }
+
+    /// Whether `id` passes every deferred text check.
+    fn accepts(&self, residual: &Residual, id: u32) -> Result<bool> {
+        for c in &residual.checks {
+            if !self.text_hit(&c.field, c.fid, c.has_strings, id, &*c.pred)? {
+                return Ok(false);
+            }
+        }
+        Ok(true)
+    }
+
+    fn text_hit(
+        &self,
+        field: &str,
+        fid: u16,
+        has_strings: bool,
+        id: u32,
+        pred: &dyn Fn(&str) -> bool,
+    ) -> Result<bool> {
+        if has_strings {
+            return Ok(self.texts(field, id)?.iter().any(|s| pred(s)));
+        }
+        let pos = self.get(self.s.t.position, &key(&[&fid.to_be_bytes(), &id.to_be_bytes()]))?;
+        Ok(match pos {
+            Some(v) => pred(std::str::from_utf8(&v[4..])?),
+            None => false,
+        })
+    }
+
     /// The texts (strings and tree names) a record holds in a field.
     fn texts(&self, field: &str, id: u32) -> Result<Vec<String>> {
         let r = self.record(id)?;
@@ -545,19 +675,10 @@ impl Reader<'_> {
         ids: &RoaringBitmap,
         pred: &dyn Fn(&str) -> bool,
     ) -> Result<RoaringBitmap> {
-        let f = fid.to_be_bytes();
-        let has_strings = self.s.t.ordered.prefix_iter(self.r, &key(&[&f, &[1]]))?.next().is_some();
+        let has_strings = self.has_strings(fid)?;
         let mut out = RoaringBitmap::new();
         for id in ids {
-            let hit = if has_strings {
-                self.texts(field, id)?.iter().any(|s| pred(s))
-            } else {
-                match self.get(self.s.t.position, &key(&[&f, &id.to_be_bytes()]))? {
-                    Some(v) => pred(std::str::from_utf8(&v[4..])?),
-                    None => false,
-                }
-            };
-            if hit {
+            if self.text_hit(field, fid, has_strings, id, pred)? {
                 out.insert(id);
             }
         }
@@ -603,12 +724,37 @@ impl Reader<'_> {
         Ok(out)
     }
 
-    fn sorted_page(&self, matched: &RoaringBitmap, sort: &Sort, limit: usize) -> Result<Vec<u32>> {
+    /// The first `limit` of `matched` (those `res` accepts) in sort order.
+    fn sorted_page(
+        &self,
+        matched: &RoaringBitmap,
+        sort: &Sort,
+        limit: usize,
+        res: &Residual,
+    ) -> Result<Vec<u32>> {
         match sort {
-            Sort::None => Ok(matched.iter().take(limit).collect()),
-            Sort::Field { field, desc } => self.sort_field(matched, field, *desc, limit),
-            Sort::Path { field } => self.sort_path(matched, field, limit),
+            Sort::None => self.take_accepted(matched.iter(), limit, res),
+            Sort::Field { field, desc } => self.sort_field(matched, field, *desc, limit, res),
+            Sort::Path { field } => self.sort_path(matched, field, limit, res),
         }
+    }
+
+    fn take_accepted(
+        &self,
+        ids: impl Iterator<Item = u32>,
+        limit: usize,
+        res: &Residual,
+    ) -> Result<Vec<u32>> {
+        let mut out = Vec::new();
+        for id in ids {
+            if out.len() >= limit {
+                break;
+            }
+            if self.accepts(res, id)? {
+                out.push(id);
+            }
+        }
+        Ok(out)
     }
 
     fn sort_field(
@@ -617,8 +763,9 @@ impl Reader<'_> {
         field: &str,
         desc: bool,
         limit: usize,
+        res: &Residual,
     ) -> Result<Vec<u32>> {
-        let Some(fid) = self.s.fid(field) else { return Ok(m.iter().take(limit).collect()) };
+        let Some(fid) = self.s.fid(field) else { return self.take_accepted(m.iter(), limit, res) };
         let fetch = match self.s.thresholds().sort {
             SortChoice::Fetch => true,
             SortChoice::Walk => false,
@@ -633,6 +780,9 @@ impl Reader<'_> {
             let mut keyed = Vec::new();
             let mut rest = Vec::new();
             for id in m {
+                if !self.accepts(res, id)? {
+                    continue;
+                }
                 let r = self.record(id)?;
                 let keys =
                     r.values(field).filter(|v| **v != Value::Nothing).filter_map(ordered_key);
@@ -652,39 +802,48 @@ impl Reader<'_> {
         let prefix = fid.to_be_bytes();
         let mut out = Vec::new();
         let mut seen = RoaringBitmap::new();
-        let mut step = |k: &[u8]| {
+        // A record is judged at its first appearance (its sort key), accepted
+        // or not; later appearances are other values of the same record.
+        let mut step = |k: &[u8]| -> Result<bool> {
             self.s.reads.add(1);
             let id = id_of(&k[k.len() - 4..]);
-            if m.contains(id) && seen.insert(id) {
+            if m.contains(id) && seen.insert(id) && self.accepts(res, id)? {
                 out.push(id);
             }
-            out.len() >= limit
+            Ok(out.len() >= limit)
         };
         let t = self.s.t;
         let mut full = true;
         if desc {
             for e in t.ordered.rev_prefix_iter(self.r, &prefix)? {
-                if step(e?.0) {
+                if step(e?.0)? {
                     full = false;
                     break;
                 }
             }
         } else {
             for e in t.ordered.prefix_iter(self.r, &prefix)? {
-                if step(e?.0) {
+                if step(e?.0)? {
                     full = false;
                     break;
                 }
             }
         }
-        if full {
-            out.extend((m - &seen).iter().take(limit - out.len()));
+        if full && out.len() < limit {
+            let rest = self.take_accepted((m - &seen).iter(), limit - out.len(), res)?;
+            out.extend(rest);
         }
         Ok(out)
     }
 
-    fn sort_path(&self, m: &RoaringBitmap, field: &str, limit: usize) -> Result<Vec<u32>> {
-        let Some(fid) = self.s.fid(field) else { return Ok(m.iter().take(limit).collect()) };
+    fn sort_path(
+        &self,
+        m: &RoaringBitmap,
+        field: &str,
+        limit: usize,
+        res: &Residual,
+    ) -> Result<Vec<u32>> {
+        let Some(fid) = self.s.fid(field) else { return self.take_accepted(m.iter(), limit, res) };
         let f = fid.to_be_bytes();
         let placed = self.bitmap(self.s.t.desc, &key(&[&f, &ROOT_ID.to_be_bytes()]))?;
         let placed_m = m & &placed;
@@ -703,15 +862,17 @@ impl Reader<'_> {
             let mut memo: HashMap<u32, Vec<Vec<u8>>> = HashMap::new();
             let mut keyed = Vec::new();
             for id in placed_m {
-                keyed.push((self.path_of(fid, id, &mut memo)?, id));
+                if self.accepts(res, id)? {
+                    keyed.push((self.path_of(fid, id, &mut memo)?, id));
+                }
             }
             keyed.sort();
             out.extend(keyed.into_iter().map(|(_, id)| id));
         } else {
-            self.walk(&f, start, m, limit, &mut out)?;
+            self.walk(&f, start, m, limit, res, &mut out)?;
         }
         if out.len() < limit {
-            out.extend((m - &placed).iter().take(limit - out.len()));
+            out.extend(self.take_accepted((m - &placed).iter(), limit - out.len(), res)?);
         }
         out.truncate(limit);
         Ok(out)
@@ -764,6 +925,7 @@ impl Reader<'_> {
         node: u32,
         m: &RoaringBitmap,
         limit: usize,
+        res: &Residual,
         out: &mut Vec<u32>,
     ) -> Result<bool> {
         let t = self.s.t;
@@ -773,14 +935,14 @@ impl Reader<'_> {
             let (_, v) = e?;
             self.s.reads.add(1);
             let c = id_of(v);
-            if m.contains(c) {
+            if m.contains(c) && self.accepts(res, c)? {
                 out.push(c);
                 if out.len() >= limit {
                     return Ok(true);
                 }
             }
             if self.meets(t.desc, &key(&[f, &c.to_be_bytes()]), m)?
-                && self.walk(f, c, m, limit, out)?
+                && self.walk(f, c, m, limit, res, out)?
             {
                 return Ok(true);
             }

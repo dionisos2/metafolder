@@ -155,3 +155,20 @@ fn a_giant_folder_opens_at_the_cost_of_its_first_page() {
     let (rs, rb) = (reads(&small, &q(&small), &sort, 100), reads(&big, &q(&big), &sort, 100));
     assert!(rb <= rs + 10, "{rs} keys for 500 files, {rb} for 8 000");
 }
+
+/// A name search that does not ask for a count verifies only the names its
+/// sort visits: its first page costs the same among 500 or 8 000 matches.
+#[test]
+fn a_name_search_page_costs_the_page() {
+    let (_a, small) = flat(500);
+    let (_b, big) = flat(8_000);
+    let q = Q::Contains { field: P.into(), text: "file".into() };
+    let sort = Sort::Path { field: P.into() };
+    let page_reads = |s: &Store| {
+        s.take_reads();
+        s.page(&q, &sort, 100).unwrap();
+        s.take_reads()
+    };
+    let (rs, rb) = (page_reads(&small), page_reads(&big));
+    assert!(rb <= rs + 10, "{rs} keys among 500 matches, {rb} among 8 000");
+}
