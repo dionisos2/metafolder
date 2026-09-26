@@ -54,9 +54,10 @@ const ABSENT: u8 = 1;
 /// (docs/spec-storage.org "Sort", "Text: trigrams").
 #[derive(Clone, Copy, Debug)]
 pub struct Thresholds {
-    /// Up to this many matches a sort reads each match's key and sorts; above
-    /// it walks the ordered index (or the forest) and stops at the page's end.
-    pub small_match: u64,
+    /// How a sort is answered: reading each match's key and sorting, or
+    /// walking the ordered index (or the forest) until the page is full.
+    /// `Auto` compares the two estimated costs ([`fetch_is_cheaper`]).
+    pub sort: SortChoice,
     /// Below this many candidates a text predicate with no trigram verifies
     /// the candidates instead of scanning the field's values.
     pub small_candidates: u64,
@@ -64,9 +65,20 @@ pub struct Thresholds {
 
 impl Default for Thresholds {
     fn default() -> Self {
-        Thresholds { small_match: 2_000, small_candidates: 10_000 }
+        Thresholds { sort: SortChoice::Auto, small_candidates: 10_000 }
     }
 }
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum SortChoice {
+    Auto,
+    Fetch,
+    Walk,
+}
+
+/// Relative cost of reading one match's sort key (a random record read and
+/// its decoding) against one step of an in-order index walk.
+const FETCH_COST: u64 = 8;
 
 #[derive(Clone, Copy)]
 struct Tables {
@@ -167,6 +179,20 @@ fn string_of_key(k: &[u8]) -> (String, usize) {
             i += 1;
         }
     }
+}
+
+/// Whether sorting `matches` ids by reading each one's key costs less than
+/// walking an index of `rows` entries in order until `limit` of them turn up
+/// (docs/spec-storage.org "Sort"). The walk is expected to find the matches
+/// evenly spread along the index, so it reads `limit / matches` of it.
+pub fn fetch_is_cheaper(matches: u64, rows: u64, limit: usize) -> bool {
+    let fetch = matches.saturating_mul(FETCH_COST);
+    let walk = if limit as u64 >= matches {
+        rows
+    } else {
+        (limit as u128 * rows as u128 / matches.max(1) as u128) as u64
+    };
+    fetch <= walk
 }
 
 // ── Store ───────────────────────────────────────────────────────────────────
@@ -595,7 +621,16 @@ impl Reader<'_> {
         limit: usize,
     ) -> Result<Vec<u32>> {
         let Some(fid) = self.s.fid(field) else { return Ok(m.iter().take(limit).collect()) };
-        if m.len() <= self.s.thresholds().small_match {
+        let fetch = match self.s.thresholds().sort {
+            SortChoice::Fetch => true,
+            SortChoice::Walk => false,
+            SortChoice::Auto => {
+                let present = key(&[&fid.to_be_bytes(), &[PRESENT]]);
+                let rows = self.bitmap(self.s.t.presence, &present)?.len();
+                fetch_is_cheaper(m.len(), rows, limit)
+            }
+        };
+        if fetch {
             // Read each match's key.
             let mut keyed = Vec::new();
             let mut rest = Vec::new();
@@ -654,18 +689,27 @@ impl Reader<'_> {
         let Some(fid) = self.s.fid(field) else { return Ok(m.iter().take(limit).collect()) };
         let f = fid.to_be_bytes();
         let placed = self.bitmap(self.s.t.desc, &key(&[&f, &ROOT_ID.to_be_bytes()]))?;
+        let placed_m = m & &placed;
+        let start = self.walk_root(fid, &placed_m)?;
+        let fetch = match self.s.thresholds().sort {
+            SortChoice::Fetch => true,
+            SortChoice::Walk => false,
+            SortChoice::Auto => {
+                let below = self.bitmap(self.s.t.desc, &key(&[&f, &start.to_be_bytes()]))?;
+                fetch_is_cheaper(placed_m.len(), below.len(), limit)
+            }
+        };
         let mut out = Vec::new();
-        if m.len() <= self.s.thresholds().small_match {
+        if fetch {
             // Each match's path, memoising the shared ancestors.
             let mut memo: HashMap<u32, Vec<Vec<u8>>> = HashMap::new();
             let mut keyed = Vec::new();
-            for id in m & &placed {
+            for id in placed_m {
                 keyed.push((self.path_of(fid, id, &mut memo)?, id));
             }
             keyed.sort();
             out.extend(keyed.into_iter().map(|(_, id)| id));
         } else {
-            let start = self.walk_root(fid, &(m & &placed))?;
             self.walk(&f, start, m, limit, &mut out)?;
         }
         if out.len() < limit {
@@ -1180,5 +1224,35 @@ impl Writer<'_> {
         txn.commit()?;
         self.store.fids.write().unwrap().extend(self.new_fids);
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a_big_folder_in_a_huge_repository_is_fetched_and_sorted() {
+        // Walking the repository-wide date index to find 100 of 2 500 files
+        // among 5 M reads ≈ 200 000 keys; reading the 2 500 keys is cheaper.
+        assert!(fetch_is_cheaper(2_500, 5_000_000, 100));
+    }
+
+    #[test]
+    fn a_large_match_is_walked() {
+        assert!(!fetch_is_cheaper(1_000_000, 5_000_000, 100));
+        assert!(!fetch_is_cheaper(20_000, 26_000, 100));
+    }
+
+    #[test]
+    fn a_small_match_is_fetched() {
+        assert!(fetch_is_cheaper(50, 26_000, 100));
+        assert!(fetch_is_cheaper(50, 5_000_000, 100));
+    }
+
+    #[test]
+    fn a_whole_listing_walks_only_when_the_match_is_most_of_the_index() {
+        assert!(fetch_is_cheaper(10_000, 5_000_000, usize::MAX));
+        assert!(!fetch_is_cheaper(4_900_000, 5_000_000, usize::MAX));
     }
 }

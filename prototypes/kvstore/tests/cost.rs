@@ -113,7 +113,7 @@ fn a_path_walk_starts_at_the_matches_common_ancestor() {
     let (_b, big) = build(640);
     for s in [&small, &big] {
         s.set_thresholds(metafolder_kv_proto::store::Thresholds {
-            small_match: 0,
+            sort: metafolder_kv_proto::store::SortChoice::Walk,
             ..Default::default()
         });
     }

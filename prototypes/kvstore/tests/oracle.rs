@@ -5,7 +5,7 @@
 use metafolder_kv_proto::model::{Record, Value, ROOT};
 use metafolder_kv_proto::query::{Sort, Q};
 use metafolder_kv_proto::reference::Reference;
-use metafolder_kv_proto::store::{Store, Thresholds};
+use metafolder_kv_proto::store::{SortChoice, Store, Thresholds};
 use uuid::Uuid;
 
 mod common;
@@ -103,8 +103,8 @@ impl Both {
         ];
         // Both ways of answering: always the small-set strategy, never it.
         for t in [
-            Thresholds { small_match: u64::MAX, small_candidates: u64::MAX },
-            Thresholds { small_match: 0, small_candidates: 0 },
+            Thresholds { sort: SortChoice::Fetch, small_candidates: u64::MAX },
+            Thresholds { sort: SortChoice::Walk, small_candidates: 0 },
         ] {
             self.store.set_thresholds(t);
             self.check_queries(&queries, &sorts, t);
