@@ -1632,6 +1632,32 @@ pub enum WalkEnd {
     Refused,
 }
 
+/// A level of a walk of the stored forest: `parent`'s children, read a page
+/// at a time in name order from the store (spec-storage increment 4 e).
+struct StoredFrame {
+    parent: Uuid,
+    /// The last name handed out: the next page starts after it.
+    after: Option<Vec<u8>>,
+    ready: std::collections::VecDeque<(Uuid, Vec<u8>)>,
+    chunk: usize,
+    exhausted: bool,
+    /// Descending walks only: the node visited once its children are done.
+    then: Option<Uuid>,
+}
+
+impl StoredFrame {
+    fn new(parent: Uuid, after: Option<Vec<u8>>, then: Option<Uuid>) -> StoredFrame {
+        StoredFrame {
+            parent,
+            after,
+            ready: std::collections::VecDeque::new(),
+            chunk: 16,
+            exhausted: false,
+            then,
+        }
+    }
+}
+
 /// Siblings in key order, sorted a chunk at a time — a chunk twice the size of
 /// the last each time, so a page of a folder of 250 000 entries sorts the first
 /// few hundred of them, and a walk through all of it stays O(n log n).
@@ -1683,10 +1709,16 @@ impl<'a> SortKeys<'a> {
         visit: &mut dyn FnMut(Uuid) -> bool,
     ) -> WalkEnd {
         use std::cmp::Ordering;
-        // Without the resident forest there is nothing to walk in key order
-        // here: the caller fetches the keys instead.
-        if self.stored().is_some() {
-            return WalkEnd::Refused;
+        // Without the resident forest the store is walked, below a bound
+        // only: a whole-forest walk would have to find the detached nodes,
+        // which only a scan does — the caller fetches the keys instead.
+        if let Some(store) = self.stored() {
+            return match within {
+                Some(within) => {
+                    self.walk_stored_sorted(store, field, descending, within, resume, visit)
+                }
+                None => WalkEnd::Refused,
+            };
         }
         let Some(tree) = self.cache.fields.get(field) else { return WalkEnd::Completed };
         // The top of the walk: the forest's roots (detached nodes among them),
@@ -1805,6 +1837,106 @@ impl<'a> SortKeys<'a> {
         }
         let idxs = self.cache.fields.get(field).and_then(|ft| ft.by_uuid.get(&uuid));
         idxs.is_some_and(|idxs| idxs.iter().any(|&i| keep(&self.cache.node(i).name.display())))
+    }
+
+    /// [`Self::walk_sorted`] over the store, below `within`: each folder's
+    /// children read a page at a time in the store's name order, which is the
+    /// key order as long as every name is plain UTF-8 above the separator and
+    /// short enough to be keyed whole — and as long as every node met holds
+    /// one position (a node at two could sort on the other, outside the
+    /// bound). Anything else refuses, and the caller fetches the keys.
+    fn walk_stored_sorted(
+        &self,
+        store: &dyn Rows,
+        field: &str,
+        descending: bool,
+        within: Uuid,
+        resume: Option<(Uuid, &str)>,
+        visit: &mut dyn FnMut(Uuid) -> bool,
+    ) -> WalkEnd {
+        let mut stack: Vec<StoredFrame> = Vec::new();
+        match resume {
+            None => stack.push(StoredFrame::new(within, None, None)),
+            Some((uuid, key)) => {
+                // Down the resume key's components from the bound, one frame
+                // per level: its siblings still to come.
+                let Some(base) = self.first_key(store, field, within) else {
+                    return WalkEnd::Refused;
+                };
+                let Some(rest) =
+                    key.strip_prefix(base.as_ref()).and_then(|r| r.strip_prefix(PATH_KEY_SEP))
+                else {
+                    return WalkEnd::Refused;
+                };
+                let mut parent = within;
+                let mut above: Option<Uuid> = None;
+                for name in rest.split(PATH_KEY_SEP) {
+                    let Some(child) =
+                        self.read(store.child_by_bytes(field, Some(parent), name.as_bytes()))
+                    else {
+                        return WalkEnd::Refused;
+                    };
+                    let Some(child) = child else { return WalkEnd::Refused };
+                    let then = above.filter(|_| descending);
+                    stack.push(StoredFrame::new(parent, Some(name.as_bytes().to_vec()), then));
+                    above = Some(child);
+                    parent = child;
+                }
+                if parent != uuid {
+                    return WalkEnd::Refused;
+                }
+                if !descending {
+                    stack.push(StoredFrame::new(uuid, None, None));
+                }
+            }
+        }
+        while let Some(frame) = stack.last_mut() {
+            if frame.ready.is_empty() && !frame.exhausted {
+                let Some(page) = self.read(store.children_page(
+                    field,
+                    frame.parent,
+                    frame.after.as_deref(),
+                    descending,
+                    frame.chunk,
+                )) else {
+                    return WalkEnd::Refused;
+                };
+                frame.exhausted = page.len() < frame.chunk;
+                frame.chunk = (frame.chunk * 2).min(4096);
+                frame.ready.extend(page);
+            }
+            let Some((uuid, name)) = frame.ready.pop_front() else {
+                let done = stack.pop().expect("the frame just read");
+                if let Some(node) = done.then {
+                    if !visit(node) {
+                        return WalkEnd::Stopped;
+                    }
+                }
+                continue;
+            };
+            frame.after = Some(name.clone());
+            // The store's order is the key order only for such names.
+            let plain = std::str::from_utf8(&name).is_ok_and(|n| {
+                n.chars().all(|c| c > PATH_KEY_SEP) && n.len() <= 300 && !n.is_empty()
+            });
+            if !plain {
+                return WalkEnd::Refused;
+            }
+            match self.read(store.positions(field, uuid)) {
+                Some(positions) if positions.len() == 1 => {}
+                _ => return WalkEnd::Refused,
+            }
+            if descending {
+                // Its descendants first; itself when they are done.
+                stack.push(StoredFrame::new(uuid, None, Some(uuid)));
+            } else {
+                if !visit(uuid) {
+                    return WalkEnd::Stopped;
+                }
+                stack.push(StoredFrame::new(uuid, None, None));
+            }
+        }
+        WalkEnd::Completed
     }
 
     /// The next sibling of a frame in name order (descending when asked);

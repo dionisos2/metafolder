@@ -5,18 +5,20 @@
 //! and needs no large data set.
 
 use metafolder_core::metarecord::{Field, Value};
+use metafolder_core::query::FollowTarget;
 use metafolder_core::query::{Aspect, OsmMode, Query};
-use metafolder_daemon::index::{Eval, PageStrategy, QueryRoots, SortBy};
+use metafolder_daemon::index::{collect_path_targets, Eval, PageStrategy, QueryRoots, SortBy};
 use metafolder_daemon::kvstore::KvStore;
 use metafolder_daemon::log::Writer;
+use metafolder_daemon::tree_cache::{SortKeys, TreeCache};
 use uuid::Uuid;
 
 mod common;
 use common::TempDir;
 
-/// `n` files named `file000000.txt`…, a hundred per directory; a `kind` of
-/// three common values, and ten files of a rare one.
-fn repository(n: usize) -> (KvStore, TempDir) {
+/// `n` files named `file000000.txt`…, `per_folder` per directory (`d0`, …);
+/// a `kind` of three common values, and ten files of a rare one.
+fn repository_in(n: usize, per_folder: usize) -> (KvStore, TempDir) {
     let dir = TempDir::new("kv-cost");
     let mut kv = KvStore::open(dir.path()).unwrap();
     let mut w = Writer::begin(&mut kv, None).unwrap();
@@ -26,7 +28,7 @@ fn repository(n: usize) -> (KvStore, TempDir) {
     let root = w.create_metarecord(vec![tree(None, "")]).unwrap().uuid;
     let mut folder = root;
     for i in 0..n {
-        if i % 100 == 0 {
+        if i % per_folder == 0 {
             folder = w.create_metarecord(vec![tree(Some(root), &format!("d{i}"))]).unwrap().uuid;
         }
         let kind = if i % (n / 10) == 7 { "rare" } else { ["note", "photo", "song"][i % 3] };
@@ -41,27 +43,46 @@ fn repository(n: usize) -> (KvStore, TempDir) {
     (kv, dir)
 }
 
-/// The keys one page of `q` reads (sorted on `sort`, counted when `count`).
+/// The keys one page of `q` reads (sorted on `sort`, counted when `count`):
+/// the query source's and the store's own (the forest, read by the path
+/// resolution and the path sort keys), prepared as the route prepares it.
 fn reads(kv: &KvStore, q: &Query, sort: &[(&str, bool)], count: bool) -> (usize, u64) {
+    let before = kv.reads();
+    let mut cache = TreeCache::new(false).without_forest();
+    let mut roots = QueryRoots::new();
+    let mut targets = Vec::new();
+    collect_path_targets(q, &mut targets);
+    for (field, path) in targets {
+        if let Some(uuid) = cache.resolve_path(kv, &field, &path).unwrap() {
+            roots.path.insert((field, path), uuid);
+        }
+    }
+    let keys = SortKeys::with_store(&cache, kv);
+    roots.keys = Some(&keys);
     let src = kv.source().unwrap();
     let e = Eval { src: &src, strategy: PageStrategy::Auto };
     let sort: Vec<SortBy> =
         sort.iter().map(|(f, asc)| SortBy { field: f.to_string(), ascending: *asc }).collect();
-    let roots = QueryRoots::new();
     let found = if count {
         e.page_and_count(q, &sort, Some(50), None, &roots).unwrap().2 as usize
     } else {
         e.evaluate_page_with_roots(q, &sort, Some(50), None, &roots).unwrap().0.len()
     };
     assert!(src.take_error().is_none());
-    (found, src.reads())
+    assert!(keys.take_error().is_none());
+    (found, kv.reads() - before)
 }
 
 /// Runs `q` on both sizes and asserts the larger reads no more than a
 /// little over what the smaller reads.
 fn bounded(what: &str, q: &Query, sort: &[(&str, bool)], count: bool) {
-    let (small, _s) = repository(2_000);
-    let (large, _l) = repository(16_000);
+    bounded_on(what, q, sort, count, 100);
+}
+
+/// [`bounded`] on repositories of `per_folder` files per directory.
+fn bounded_on(what: &str, q: &Query, sort: &[(&str, bool)], count: bool, per_folder: usize) {
+    let (small, _s) = repository_in(2_000, per_folder.min(2_000));
+    let (large, _l) = repository_in(16_000, per_folder);
     let (found_small, cost_small) = reads(&small, q, sort, count);
     let (found_large, cost_large) = reads(&large, q, sort, count);
     assert_eq!(found_small, found_large, "{what}: the answer should not grow");
@@ -106,4 +127,58 @@ fn a_text_search_reads_its_candidates_not_the_field() {
         mode: OsmMode::Direct,
     };
     bounded("osm search, counted", &osm, &[], true);
+}
+
+#[test]
+fn a_folder_page_sorted_by_path_reads_the_page() {
+    // One folder holding every file: 2 000, then 16 000 entries.
+    let folder = Query::Follows { field: "loc".into(), target: FollowTarget::Path("/d0".into()) };
+    bounded_on("a folder by path", &folder, &[("loc", true)], false, 16_000);
+    bounded_on("a folder by path, descending", &folder, &[("loc", false)], false, 16_000);
+    let below = Query::FollowsTransitive {
+        field: "loc".into(),
+        target: FollowTarget::Path("/d0".into()),
+        inclusive: false,
+    };
+    bounded_on("a subtree by path", &below, &[("loc", true)], false, 16_000);
+}
+
+/// `n` files under `/top`, ten per folder: a subtree whose folders grow with
+/// the repository.
+fn nested(n: usize) -> (KvStore, TempDir) {
+    let dir = TempDir::new("kv-cost-nested");
+    let mut kv = KvStore::open(dir.path()).unwrap();
+    let mut w = Writer::begin(&mut kv, None).unwrap();
+    let tree = |parent: Option<Uuid>, name: &str| {
+        Field::new("mfr_path", Value::TreeRef { parent, name: name.into() })
+    };
+    let root = w.create_metarecord(vec![tree(None, "")]).unwrap().uuid;
+    let top = w.create_metarecord(vec![tree(Some(root), "top")]).unwrap().uuid;
+    let mut folder = top;
+    for i in 0..n {
+        if i % 10 == 0 {
+            folder = w.create_metarecord(vec![tree(Some(top), &format!("f{i}"))]).unwrap().uuid;
+        }
+        w.create_metarecord(vec![tree(Some(folder), &format!("file{i}"))]).unwrap();
+    }
+    w.commit().unwrap();
+    (kv, dir)
+}
+
+#[test]
+fn a_subtree_count_reads_no_more_for_more_folders() {
+    let below = Query::FollowsTransitive {
+        field: "mfr_path".into(),
+        target: FollowTarget::Path("/top".into()),
+        inclusive: false,
+    };
+    let (small, _s) = nested(1_000);
+    let (large, _l) = nested(8_000);
+    let (found_small, cost_small) = reads(&small, &below, &[], true);
+    let (found_large, cost_large) = reads(&large, &below, &[], true);
+    assert_eq!((found_small, found_large), (1_100, 8_800), "files and folders below /top");
+    assert!(
+        cost_large <= cost_small + cost_small / 2 + 20,
+        "subtree count: {cost_small} keys for 100 folders, {cost_large} for 800"
+    );
 }

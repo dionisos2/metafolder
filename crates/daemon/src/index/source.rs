@@ -88,6 +88,12 @@ pub trait Source {
     fn tree_parents_except(&self, field: &str, except: Option<Uuid>) -> RoaringBitmap;
     /// The ids with at least one child in `field`'s forest.
     fn parents(&self, field: &str) -> Cow<'_, RoaringBitmap>;
+    /// Every id below the nodes of `of` in `field`'s forest, when the source
+    /// keeps them at hand (descendant bitmaps); `None` to expand the subtrees
+    /// level by level instead.
+    fn descendants(&self, _field: &str, _of: &RoaringBitmap) -> Option<RoaringBitmap> {
+        None
+    }
 
     /// A reader of `field`'s sort representatives (not for a `tree_ref`
     /// field, which sorts on whole paths the evaluator rebuilds).

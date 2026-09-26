@@ -42,6 +42,8 @@ pub struct KvSource<'s> {
     /// Keys read so far — what the cost assertions count
     /// (`tests/kv_cost.rs`): a bounded query must read a bounded number.
     reads: Cell<u64>,
+    /// The store's own counter, which the snapshot's reads add to.
+    store_reads: &'s std::sync::atomic::AtomicU64,
 }
 
 impl KvStore {
@@ -52,6 +54,7 @@ impl KvStore {
             r: self.env.read_txn()?,
             error: RefCell::new(None),
             reads: Cell::new(0),
+            store_reads: &self.reads,
         })
     }
 }
@@ -211,6 +214,24 @@ impl KvSource<'_> {
         self.ok(read(), RoaringBitmap::new())
     }
 
+    /// The ids pointing at `target` in `field` (a folder's children): one
+    /// bitmap, a read per chunk.
+    fn referrers_of(&self, field: &str, target: &[u8; 16]) -> RoaringBitmap {
+        let read = || -> Result<RoaringBitmap> {
+            let prefix = derived::referrers_prefix(field, target);
+            let mut out = RoaringBitmap::new();
+            for entry in self.t.sets.prefix_iter(&self.r, &prefix)? {
+                let (k, v) = entry?;
+                self.read_keys(1);
+                if k.len() == prefix.len() + 2 {
+                    out |= derived::decode_set(v)?;
+                }
+            }
+            Ok(out)
+        };
+        self.ok(read(), RoaringBitmap::new())
+    }
+
     /// A whole set; a read per chunk of 65 536 ids it spans.
     fn set(&self, kind: u8, field: Option<&str>) -> RoaringBitmap {
         let bm = self.ok(read_set(&self.t, &self.r, kind, field), RoaringBitmap::new());
@@ -220,6 +241,7 @@ impl KvSource<'_> {
 
     fn read_keys(&self, n: u64) {
         self.reads.set(self.reads.get() + n);
+        self.store_reads.fetch_add(n, std::sync::atomic::Ordering::Relaxed);
     }
 
     /// The first read error met, if any (and forgets it).
@@ -770,17 +792,40 @@ impl Source for KvSource<'_> {
     }
 
     fn referrers(&self, field: &str, target: Uuid) -> Option<Cow<'_, RoaringBitmap>> {
-        let ids = self.bucket(field, TARGET, target.as_bytes());
+        let ids = self.referrers_of(field, target.as_bytes());
         (!ids.is_empty()).then_some(Cow::Owned(ids))
     }
 
     fn tree_roots(&self, field: &str) -> RoaringBitmap {
-        self.bucket(field, TARGET, &[0; 16])
+        self.referrers_of(field, &[0; 16])
     }
 
     fn tree_parents_except(&self, field: &str, except: Option<Uuid>) -> RoaringBitmap {
         let except = except.map(|u| *u.as_bytes());
         self.all_but(field, TARGET, except.as_ref().map(|u| &u[..]))
+    }
+
+    fn descendants(&self, field: &str, of: &RoaringBitmap) -> Option<RoaringBitmap> {
+        if !derived::DESCENDANT_FIELDS.contains(&field) {
+            return None;
+        }
+        let read = || -> Result<RoaringBitmap> {
+            let mut out = RoaringBitmap::new();
+            for id in of {
+                self.read_keys(1);
+                let Some(node) = self.t.uuids.get(&self.r, &id.to_be_bytes())? else { continue };
+                let prefix = derived::descendants_prefix(field, &uuid_of(node).into_bytes());
+                for entry in self.t.sets.prefix_iter(&self.r, &prefix)? {
+                    let (k, v) = entry?;
+                    self.read_keys(1);
+                    if k.len() == prefix.len() + 2 {
+                        out |= derived::decode_set(v)?;
+                    }
+                }
+            }
+            Ok(out)
+        };
+        Some(self.ok(read(), RoaringBitmap::new()))
     }
 
     fn parents(&self, field: &str) -> Cow<'_, RoaringBitmap> {

@@ -1879,9 +1879,14 @@ impl Eval<'_> {
         mut frontier: RoaringBitmap,
         inclusive: bool,
     ) -> RoaringBitmap {
-        let parents = self.src.parents(field);
         let mut result =
             if inclusive { &frontier & &*self.src.universe() } else { RoaringBitmap::new() };
+        // A source keeping descendant bitmaps answers in one read per node.
+        if let Some(below) = self.src.descendants(field, &frontier) {
+            result |= below;
+            return result;
+        }
+        let parents = self.src.parents(field);
         while !frontier.is_empty() {
             // Only the frontier's directories have children to ask for, and
             // one union takes them all: `|=` per directory copied the growing

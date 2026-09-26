@@ -185,3 +185,41 @@ fn check_finds_damaged_derived_data_and_reindex_repairs_it() {
     Begin::reindex(&mut store).unwrap();
     assert!(Begin::check(&store).unwrap().is_empty(), "reindex repairs it");
 }
+
+/// The file tree's descendant bitmaps follow every change: a subtree moved
+/// under another folder, a node deleted, the log navigated back and forth.
+#[test]
+fn descendants_follow_moves_deletions_and_navigation() {
+    let (mut store, _dir) = open();
+    let path = |parent: Option<Uuid>, name: &str| {
+        Field::new("mfr_path", Value::TreeRef { parent, name: TreeName::from(name) })
+    };
+    let mut w = Writer::begin(&mut store, None).unwrap();
+    let root = w.create_metarecord(vec![path(None, "")]).unwrap().uuid;
+    let a = w.create_metarecord(vec![path(Some(root), "a")]).unwrap().uuid;
+    let b = w.create_metarecord(vec![path(Some(root), "b")]).unwrap().uuid;
+    let sub = w.create_metarecord(vec![path(Some(a), "sub")]).unwrap().uuid;
+    let file = w.create_metarecord(vec![path(Some(sub), "f.txt")]).unwrap().uuid;
+    w.create_metarecord(vec![path(Some(sub), "g.txt")]).unwrap();
+    w.commit().unwrap();
+    check(&store);
+    let before_move = store.head().unwrap();
+
+    // Move `sub` (and its files) from `a` to `b`.
+    let mut w = Writer::begin(&mut store, None).unwrap();
+    w.set_field(sub, "mfr_path", Value::TreeRef { parent: Some(b), name: "sub".into() }).unwrap();
+    w.commit().unwrap();
+    check(&store);
+
+    let mut w = Writer::begin(&mut store, None).unwrap();
+    w.delete_metarecord(file).unwrap();
+    w.commit().unwrap();
+    check(&store);
+
+    log::navigate(&mut store, before_move).unwrap();
+    check(&store);
+    log::navigate(&mut store, None).unwrap();
+    check(&store);
+    store.reindex().unwrap();
+    check(&store);
+}

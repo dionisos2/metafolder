@@ -663,7 +663,8 @@ d. *(done)* *Serving from the disk*: a KV repository answers its queries through
    writer from its stale-but-committed index. Letting reads open their
    snapshot without that lock ("Readers never block", [[*Writes and
    atomicity]]) needs the map's growth to exclude open readers, since LMDB
-   resizes only with no transaction open in the process; it is its own step.
+   resizes only with no transaction open in the process. /Deferred by
+   decision (September 2026)/: operations stay sequential for now.
 e. *The forest on disk*: the tree cache is no longer built for a KV
    repository. *(done)* It is created /without a forest/: a load leaves it
    empty, the upkeep after a write has nothing to do, and a lookup starts from
@@ -675,9 +676,28 @@ e. *The forest on disk*: the tree cache is no longer built for a KV
    whose parent holds no position is in no path), and the key-order walk of a
    path sort declines, so a path-sorted page is fetched. Measured (quick bench,
    size S): opening a folder 0.53 → 1.44 ms, resolving a page of paths 0.41 →
-   1.21 ms — costs of the result, not of the repository. *Not built yet*: the
-   =descendants= bitmaps and the walk of the forest in key order from the
-   store, which would bring both back down.
+   1.21 ms — costs of the result, not of the repository. Then *(done)*:
+   - /The folder walk/: a page sorted by path below a bound (a folder, a
+     subtree) walks the store's forest in key order — each folder's children
+     read a page at a time from the forest table (=Rows::children_page=),
+     which orders them by name bytes — and stops at the page's end, resuming
+     a cursor by descending its key's components. It declines, and the page
+     is fetched, on a name that is not plain UTF-8 above the separator or is
+     keyed by hash (over 300 bytes), on a node at several positions, and
+     without a bound (a whole-forest walk would have to find the detached
+     nodes).
+   - /Children bitmaps/: the ids pointing at a uuid in a field (a folder's
+     children, a =ref='s referrers) are one chunked bitmap per (field,
+     target), so a folder filter reads a key per 65 536 children.
+   - /Descendant bitmaps/, for =mfr_path= only: there a node holds one
+     position, so a move is set arithmetic — the moved node's descendants
+     plus itself leave each old ancestor's bitmap and join each new one's,
+     ≈ depth chunk writes, independent of the subtree's size. A forest whose
+     nodes may hang at several places keeps the level-by-level expansion
+     (maintaining the closure there would need its paths counted).
+   =tests/kv_cost.rs= pins all three: a page of a 16 000-entry folder by path
+   (either way), a subtree by path, and a count over a subtree of 800
+   folders read what they read on the eighth of it.
 f. *Trigrams* and the lazy text checks; postings for frequent values; the
    cost assertions (key reads counted, not timed). *(trigrams and cost
    assertions done)* Each field's texts (strings, =tree_ref= names) are

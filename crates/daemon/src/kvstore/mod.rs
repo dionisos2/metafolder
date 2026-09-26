@@ -89,6 +89,9 @@ pub struct KvStore {
     t: Tables,
     /// Held for the store's lifetime: one daemon per repository.
     _lock: File,
+    /// Keys read so far by the store's reads and its query sources — what
+    /// the cost assertions count (`tests/kv_cost.rs`).
+    reads: std::sync::atomic::AtomicU64,
 }
 
 // ── Encoding ────────────────────────────────────────────────────────────────
@@ -136,6 +139,9 @@ fn node_key(name: &[u8]) -> Cow<'_, [u8]> {
         Cow::Owned([&name[..NODE_MAX], &hash[..]].concat())
     }
 }
+
+/// A range of a table's entries, either way.
+type Entries<'t> = Box<dyn Iterator<Item = heed::Result<(&'t [u8], &'t [u8])>> + 't>;
 
 /// A growable byte buffer with length-prefixed fields.
 #[derive(Default)]
@@ -433,7 +439,7 @@ impl KvStore {
         };
         let derived = t.meta.get(&w, b"derived")?.map(from_be);
         w.commit()?;
-        let mut store = KvStore { env, t, _lock: lock };
+        let mut store = KvStore { env, t, _lock: lock, reads: Default::default() };
         // A store from before the derived key spaces (or of another format of
         // them) gets them derived now: their migration.
         if derived != Some(derived::DERIVED_VERSION) {
@@ -448,6 +454,8 @@ impl KvStore {
 struct Read<'a> {
     t: &'a Tables,
     r: &'a RoTxn<'a>,
+    /// The store's read counter; `None` inside a write transaction.
+    reads: Option<&'a std::sync::atomic::AtomicU64>,
 }
 
 impl Read<'_> {
@@ -465,7 +473,14 @@ impl Read<'_> {
             let (_, v) = e?;
             out.push(dec_row(v)?);
         }
+        self.count(out.len() as u64 + 1);
         Ok(out)
+    }
+
+    fn count(&self, n: u64) {
+        if let Some(reads) = self.reads {
+            reads.fetch_add(n, std::sync::atomic::Ordering::Relaxed);
+        }
     }
 
     fn row(&self, id: i64) -> Result<Option<(Uuid, FieldRow)>> {
@@ -497,6 +512,50 @@ impl Read<'_> {
             let (k, v) = e?;
             out.push((uuid_of(v), self.node_name(&k[prefix.len()..], v)?, from_be(&v[16..])));
         }
+        self.count(out.len() as u64 + 1);
+        Ok(out)
+    }
+
+    /// [`Rows::children_page`] over the forest table, which orders a
+    /// parent's children by their name bytes: the page, and nothing else.
+    fn children_page(
+        &self,
+        field: &str,
+        parent: &[u8; 16],
+        after: Option<&[u8]>,
+        descending: bool,
+        limit: usize,
+    ) -> Result<Vec<(Uuid, Vec<u8>)>> {
+        let prefix = key(&[&name_key(field), parent]);
+        let bound = after.map(|a| key(&[&prefix, &node_key(a)]));
+        let top = key(&[&prefix, &[0xFF; 400]]);
+        let entries: Entries<'_> = if descending {
+            let hi = match &bound {
+                Some(b) => std::ops::Bound::Excluded(b.as_slice()),
+                None => std::ops::Bound::Excluded(top.as_slice()),
+            };
+            let range = (std::ops::Bound::Included(prefix.as_slice()), hi);
+            Box::new(self.t.forest.rev_range(self.r, &range)?)
+        } else {
+            let lo = match &bound {
+                Some(b) => std::ops::Bound::Excluded(b.as_slice()),
+                None => std::ops::Bound::Included(prefix.as_slice()),
+            };
+            let range = (lo, std::ops::Bound::Excluded(top.as_slice()));
+            Box::new(self.t.forest.range(self.r, &range)?)
+        };
+        let mut out = Vec::new();
+        for entry in entries {
+            let (k, v) = entry?;
+            if !k.starts_with(&prefix) {
+                break;
+            }
+            out.push((uuid_of(v), self.node_name(&k[prefix.len()..], v)?));
+            if out.len() >= limit {
+                break;
+            }
+        }
+        self.count(out.len() as u64 + 1);
         Ok(out)
     }
 
@@ -726,6 +785,19 @@ macro_rules! kv_reads {
                     Ok(out)
                 })
             }
+            fn children_page(
+                &self,
+                field: &str,
+                parent: Uuid,
+                after: Option<&[u8]>,
+                descending: bool,
+                limit: usize,
+            ) -> Result<Vec<(Uuid, Vec<u8>)>> {
+                let $me = self;
+                $with(&mut |$read: &Read| {
+                    $read.children_page(field, parent.as_bytes(), after, descending, limit)
+                })
+            }
             fn children(&self, field: &str, parent: Uuid) -> Result<Vec<(Uuid, String)>> {
                 let $me = self;
                 $with(&mut |$read: &Read| {
@@ -746,6 +818,7 @@ macro_rules! kv_reads {
                 $with(&mut |$read: &Read| {
                     let p = parent.map_or(ROOT, |p| *p.as_bytes());
                     let k = key(&[&name_key(field), &p, &node_key(name)]);
+                    $read.count(1);
                     let Some(v) = $read.t.forest.get($read.r, &k)? else { return Ok(None) };
                     // A hashed key names the right position only if the name
                     // read back is the one asked for.
@@ -992,10 +1065,15 @@ macro_rules! kv_reads {
 
 kv_reads!(KvStore, |me, read| |f: &mut dyn FnMut(&Read) -> Result<_>| {
     let r = me.env.read_txn()?;
-    f(&Read { t: &me.t, r: &r })
+    f(&Read { t: &me.t, r: &r, reads: Some(&me.reads) })
 });
 
 impl KvStore {
+    /// How many keys the store's reads and query sources have read.
+    pub fn reads(&self) -> u64 {
+        self.reads.load(std::sync::atomic::Ordering::Relaxed)
+    }
+
     fn kv_store(&self) -> Option<&KvStore> {
         Some(self)
     }
@@ -1016,11 +1094,14 @@ pub struct KvTxn<'e> {
     txn: RefCell<RwTxn<'e>>,
     /// The derived set chunks this transaction changed, written at commit.
     sets: RefCell<HashMap<Vec<u8>, roaring::RoaringBitmap>>,
+    /// Which chunks of each bitmap (table tag · key without chunk) the cache
+    /// holds: a bitmap is read back whole without scanning the cache.
+    cached_chunks: RefCell<HashMap<Vec<u8>, std::collections::BTreeSet<u16>>>,
 }
 
 kv_reads!(KvTxn<'_>, |me, read| |f: &mut dyn FnMut(&Read) -> Result<_>| {
     let txn = me.txn.borrow();
-    f(&Read { t: &me.t, r: &txn })
+    f(&Read { t: &me.t, r: &txn, reads: None })
 });
 
 impl Begin for KvStore {
@@ -1061,6 +1142,7 @@ impl<'e> KvTxn<'e> {
             t: store.t,
             txn: RefCell::new(store.env.write_txn()?),
             sets: RefCell::new(HashMap::new()),
+            cached_chunks: RefCell::new(HashMap::new()),
         })
     }
 
@@ -1211,7 +1293,7 @@ impl WriteTxn for KvTxn<'_> {
     fn delete_row(&self, id: i64) -> Result<()> {
         let Some((owner, row)) = ({
             let txn = self.txn.borrow();
-            Read { t: &self.t, r: &txn }.row(id)?
+            Read { t: &self.t, r: &txn, reads: None }.row(id)?
         }) else {
             return Ok(());
         };
@@ -1267,7 +1349,7 @@ impl WriteTxn for KvTxn<'_> {
     fn drop_revision(&self, rev: i64) -> Result<()> {
         for id in {
             let txn = self.txn.borrow();
-            Read { t: &self.t, r: &txn }.revision_op_ids(rev)?
+            Read { t: &self.t, r: &txn, reads: None }.revision_op_ids(rev)?
         } {
             self.remove_op(id)?;
         }
@@ -1350,12 +1432,12 @@ impl WriteTxn for KvTxn<'_> {
         }
         let first = {
             let txn = self.txn.borrow();
-            Read { t: &self.t, r: &txn }.revision_op_ids(keep_from)?
+            Read { t: &self.t, r: &txn, reads: None }.revision_op_ids(keep_from)?
         };
         let Some(cutoff) = first.into_iter().min() else { return Ok(0) };
         let all = {
             let txn = self.txn.borrow();
-            Read { t: &self.t, r: &txn }.all_op_ids()?
+            Read { t: &self.t, r: &txn, reads: None }.all_op_ids()?
         };
         if all.first() == Some(&cutoff) {
             return Ok(0);
@@ -1386,7 +1468,7 @@ impl WriteTxn for KvTxn<'_> {
         for rev in revs_hit {
             let empty = {
                 let txn = self.txn.borrow();
-                Read { t: &self.t, r: &txn }.revision_op_ids(rev)?.is_empty()
+                Read { t: &self.t, r: &txn, reads: None }.revision_op_ids(rev)?.is_empty()
             };
             if empty {
                 self.t.revisions.delete(&mut self.txn.borrow_mut(), &be(rev))?;
@@ -1438,7 +1520,7 @@ impl WriteTxn for KvTxn<'_> {
         for rev in revs {
             let empty = {
                 let txn = self.txn.borrow();
-                Read { t: &self.t, r: &txn }.revision_op_ids(rev)?.is_empty()
+                Read { t: &self.t, r: &txn, reads: None }.revision_op_ids(rev)?.is_empty()
             };
             if empty {
                 self.t.revisions.delete(&mut self.txn.borrow_mut(), &be(rev))?;

@@ -92,6 +92,17 @@ macro_rules! forward_to_connection {
                 let $me = self;
                 Rows::children($conn, field, parent)
             }
+            fn children_page(
+                &self,
+                field: &str,
+                parent: Uuid,
+                after: Option<&[u8]>,
+                descending: bool,
+                limit: usize,
+            ) -> Result<Vec<(Uuid, Vec<u8>)>> {
+                let $me = self;
+                Rows::children_page($conn, field, parent, after, descending, limit)
+            }
             fn child_by_bytes(
                 &self,
                 field: &str,
@@ -306,6 +317,28 @@ pub trait Rows {
     fn holders(&self, name: &str) -> Result<Vec<Uuid>>;
     /// The direct children of `parent` in `field`'s forest, `(uuid, name)`.
     fn children(&self, field: &str, parent: Uuid) -> Result<Vec<(Uuid, String)>>;
+    /// A page of `parent`'s children in `field`'s forest in the byte order of
+    /// their names — reversed when `descending` — strictly after `after` in
+    /// that order: `(uuid, name bytes)`. The default reads every child; a
+    /// store keeping its forest ordered reads the page alone (a sorted walk
+    /// of a folder then costs its page, spec-storage increment 4 e).
+    fn children_page(
+        &self,
+        field: &str,
+        parent: Uuid,
+        after: Option<&[u8]>,
+        descending: bool,
+        limit: usize,
+    ) -> Result<Vec<(Uuid, Vec<u8>)>> {
+        let mut all: Vec<(Uuid, Vec<u8>)> =
+            self.children(field, parent)?.into_iter().map(|(u, n)| (u, n.into_bytes())).collect();
+        all.sort_by(|a, b| a.1.cmp(&b.1));
+        if descending {
+            all.reverse();
+        }
+        let later = |n: &[u8]| after.is_none_or(|a| if descending { n < a } else { n > a });
+        Ok(all.into_iter().filter(|(_, n)| later(n)).take(limit).collect())
+    }
     /// The child of `parent` (`None`: a root) whose name is exactly these
     /// bytes.
     fn child_by_bytes(

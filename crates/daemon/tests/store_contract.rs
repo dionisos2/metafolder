@@ -587,6 +587,41 @@ fn a_long_name_is_a_position_like_any(backend: Backend) {
     assert_eq!(store.children("loc", root).unwrap().len(), 2);
 }
 
+/// A folder's children come a page at a time, in name order either way.
+fn children_come_a_page_at_a_time(backend: Backend) {
+    let (mut conn, _dir) = open(backend);
+    let mut w = Writer::begin(&mut conn, None).unwrap();
+    let root = w.create_metarecord(vec![tref(None, "root")]).unwrap().uuid;
+    let mut by_name = std::collections::BTreeMap::new();
+    for name in ["delta", "alpha", "echo", "charlie", "bravo"] {
+        by_name.insert(name, w.create_metarecord(vec![tref(Some(root), name)]).unwrap().uuid);
+    }
+    w.commit().unwrap();
+    let store: &dyn Store = &conn;
+    let names = |page: Vec<(Uuid, Vec<u8>)>| -> Vec<String> {
+        page.into_iter()
+            .map(|(u, n)| {
+                let n = String::from_utf8(n).unwrap();
+                assert_eq!(by_name[n.as_str()], u);
+                n
+            })
+            .collect()
+    };
+    assert_eq!(
+        names(store.children_page("loc", root, None, false, 2).unwrap()),
+        ["alpha", "bravo"]
+    );
+    assert_eq!(
+        names(store.children_page("loc", root, Some(b"bravo"), false, 10).unwrap()),
+        ["charlie", "delta", "echo"]
+    );
+    assert_eq!(names(store.children_page("loc", root, None, true, 2).unwrap()), ["echo", "delta"]);
+    assert_eq!(
+        names(store.children_page("loc", root, Some(b"charlie"), true, 10).unwrap()),
+        ["bravo", "alpha"]
+    );
+}
+
 /// Every test above, on each backend.
 macro_rules! on_both {
     ($($name:ident),* $(,)?) => {
@@ -615,7 +650,8 @@ on_both!(
     a_child_is_found_by_its_bytes_or_its_text,
     targets_are_found_along_the_ancestry,
     pruning_removes_operations_and_their_empty_revisions,
-    a_long_name_is_a_position_like_any
+    a_long_name_is_a_position_like_any,
+    children_come_a_page_at_a_time
 );
 
 // ── The key-value store's map ───────────────────────────────────────────────

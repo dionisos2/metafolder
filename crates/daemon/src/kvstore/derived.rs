@@ -41,7 +41,7 @@ use crate::store::Rows;
 
 /// The format of the derived key spaces. A store stamped with another (or
 /// none: a store from before they existed) is reindexed when it opens.
-pub(super) const DERIVED_VERSION: i64 = 2;
+pub(super) const DERIVED_VERSION: i64 = 3;
 
 /// Set kinds.
 pub(super) const UNIVERSE: u8 = 0;
@@ -51,6 +51,31 @@ pub(super) const PARENTS: u8 = 3;
 
 /// The texts too long to be split in trigrams (see [`TRIGRAM_MAX`]).
 pub(super) const LONG_TEXTS: u8 = 4;
+/// The ids pointing at a uuid in a field — a `ref`'s referrers, a folder's
+/// children — keyed by field *and* target: a folder filter is one bitmap,
+/// a read per 65 536 children (spec-storage "Key layout", `children`).
+pub(super) const REFERRERS: u8 = 5;
+
+/// Every id below a node of a file tree, keyed by field and node — what
+/// makes a subtree one bitmap read (spec-storage "The forest: descendant
+/// bitmaps"). Kept for the fields in [`DESCENDANT_FIELDS`] only: a node there
+/// holds one position, so the tree is a tree and a move is set arithmetic;
+/// where a node may hang at several places the closure would need its paths
+/// counted, and a subtree is expanded level by level instead.
+pub(super) const DESCENDANTS: u8 = 6;
+
+/// The forests whose descendant bitmaps are kept: one position per node.
+pub(crate) const DESCENDANT_FIELDS: [&str; 1] = ["mfr_path"];
+
+/// The key of the descendants of `node` in `field`, without its chunk.
+pub(super) fn descendants_prefix(field: &str, node: &[u8; 16]) -> Vec<u8> {
+    [&[DESCENDANTS][..], &name_key(field), node].concat()
+}
+
+/// The key of the referrers of `target` in `field`, without its chunk.
+pub(super) fn referrers_prefix(field: &str, target: &[u8; 16]) -> Vec<u8> {
+    [&[REFERRERS][..], &name_key(field), target].concat()
+}
 
 /// The two tables of chunked bitmaps, as the transaction's chunk cache
 /// tells them apart.
@@ -298,8 +323,25 @@ impl KvTxn<'_> {
     /// [`Self::set_member`] for a chunked bitmap of either table: `table`
     /// ([`SETS`] or [`GRAMS`]), the key without its chunk.
     fn chunk_member(&self, table: u8, prefix: &[u8], id: u32, member: bool) -> Result<()> {
+        self.with_chunk(table, prefix, (id >> 16) as u16, &mut |bm| {
+            if member {
+                bm.insert(id);
+            } else {
+                bm.remove(id);
+            }
+        })
+    }
+
+    /// Changes one chunk of a bitmap, in the transaction's cache.
+    fn with_chunk(
+        &self,
+        table: u8,
+        prefix: &[u8],
+        chunk: u16,
+        change: &mut dyn FnMut(&mut RoaringBitmap),
+    ) -> Result<()> {
         let db = if table == SETS { self.t.sets } else { self.t.grams };
-        let k = [&[table][..], prefix, &((id >> 16) as u16).to_be_bytes()].concat();
+        let k = [&[table][..], prefix, &chunk.to_be_bytes()].concat();
         let mut cache = self.sets.borrow_mut();
         if !cache.contains_key(&k) {
             let loaded = match db.get(&self.txn.borrow(), &k[1..])? {
@@ -307,12 +349,56 @@ impl KvTxn<'_> {
                 None => RoaringBitmap::new(),
             };
             cache.insert(k.clone(), loaded);
+            let whole = [&[table][..], prefix].concat();
+            self.cached_chunks.borrow_mut().entry(whole).or_default().insert(chunk);
         }
-        let bm = cache.get_mut(&k).expect("just loaded");
-        if member {
-            bm.insert(id);
-        } else {
-            bm.remove(id);
+        change(cache.get_mut(&k).expect("just loaded"));
+        Ok(())
+    }
+
+    /// A whole bitmap as the transaction sees it: its stored chunks, the
+    /// cached ones in their stead.
+    fn read_chunked(&self, table: u8, prefix: &[u8]) -> Result<RoaringBitmap> {
+        let db = if table == SETS { self.t.sets } else { self.t.grams };
+        let whole = [&[table][..], prefix].concat();
+        let cached = self.cached_chunks.borrow().get(&whole).cloned().unwrap_or_default();
+        let cache = self.sets.borrow();
+        let mut out = RoaringBitmap::new();
+        for entry in db.prefix_iter(&self.txn.borrow(), prefix)? {
+            let (k, v) = entry?;
+            if k.len() == prefix.len() + 2 {
+                let chunk = u16::from_be_bytes([k[k.len() - 2], k[k.len() - 1]]);
+                if !cached.contains(&chunk) {
+                    out |= decode_set(v)?;
+                }
+            }
+        }
+        for chunk in cached {
+            let k = [&whole[..], &chunk.to_be_bytes()].concat();
+            if let Some(bm) = cache.get(&k) {
+                out |= bm;
+            }
+        }
+        Ok(out)
+    }
+
+    /// Adds `ids` to a bitmap, or removes them — a chunk at a time.
+    fn chunk_apply(&self, table: u8, prefix: &[u8], ids: &RoaringBitmap, add: bool) -> Result<()> {
+        let (Some(lo), Some(hi)) = (ids.min(), ids.max()) else { return Ok(()) };
+        for chunk in (lo >> 16)..=(hi >> 16) {
+            let mut part = RoaringBitmap::new();
+            part.insert_range((chunk << 16)..=((chunk << 16) | 0xFFFF));
+            part &= ids;
+            if part.is_empty() {
+                continue;
+            }
+            self.with_chunk(table, prefix, chunk as u16, &mut |bm| {
+                if add {
+                    *bm |= &part;
+                } else {
+                    *bm -= &part;
+                }
+            })?;
         }
         Ok(())
     }
@@ -441,13 +527,49 @@ impl KvTxn<'_> {
                 rows.iter().filter_map(|r| search_text(&r.value)).any(|t| t.len() > TRIGRAM_MAX);
             self.set_member(LONG_TEXTS, Some(field), id, long)?;
         }
+        if let Some(target) = target_of(value) {
+            let held = rows.iter().any(|r| target_of(&r.value) == Some(target));
+            self.chunk_member(SETS, &referrers_prefix(field, &target), id, held)?;
+        }
+        if let Value::TreeRef { parent: Some(parent), .. } = value {
+            if DESCENDANT_FIELDS.contains(&field) {
+                self.derive_descendants(uuid, id, field, *parent, delta > 0)?;
+            }
+        }
         Ok(())
+    }
+
+    /// A position of `uuid` under `parent` in a file tree came (`add`) or
+    /// went: the node and everything below it join, or leave, the descendants
+    /// of `parent` and of each of its ancestors — a node there holds one
+    /// position, so the chain up is its one path.
+    fn derive_descendants(
+        &self,
+        uuid: Uuid,
+        id: u32,
+        field: &str,
+        parent: Uuid,
+        add: bool,
+    ) -> Result<()> {
+        let mut moving = self.read_chunked(SETS, &descendants_prefix(field, uuid.as_bytes()))?;
+        moving.insert(id);
+        let mut up = Some(parent);
+        for _ in 0..crate::log::MAX_TREE_DEPTH {
+            let Some(ancestor) = up else { return Ok(()) };
+            self.chunk_apply(SETS, &descendants_prefix(field, ancestor.as_bytes()), &moving, add)?;
+            up = Rows::rows_named(self, ancestor, field)?.into_iter().find_map(|r| match r.value {
+                Value::TreeRef { parent, .. } => parent,
+                _ => None,
+            });
+        }
+        anyhow::bail!("a tree deeper than {} in '{field}'", crate::log::MAX_TREE_DEPTH)
     }
 
     /// Empties every derived table (the primary data was cleared, or is about
     /// to be derived again).
     pub(super) fn clear_derived(&self) -> Result<()> {
         self.sets.borrow_mut().clear();
+        self.cached_chunks.borrow_mut().clear();
         let mut w = self.txn.borrow_mut();
         let t = self.t;
         for db in [t.ids, t.uuids, t.sets, t.parts, t.kids, t.grams] {
@@ -516,6 +638,9 @@ impl KvStore {
         let mut kids: BTreeMap<([u8; 16], String, Uuid), i64> = BTreeMap::new();
         let mut sets: BTreeSet<(u8, String, Uuid)> = BTreeSet::new();
         let mut grams: BTreeSet<(String, [u8; 3], Uuid)> = BTreeSet::new();
+        let mut referrers: BTreeSet<(String, [u8; 16], Uuid)> = BTreeSet::new();
+        // Per descendant field: each node's parent, for the closure below.
+        let mut parent_of: BTreeMap<(String, Uuid), Uuid> = BTreeMap::new();
         for entry in t.cells.iter(&r)? {
             let (k, v) = entry?;
             let uuid = uuid_of(k);
@@ -547,6 +672,14 @@ impl KvStore {
                     }
                 } else {
                     sets.insert((LONG_TEXTS, f.clone(), uuid));
+                }
+            }
+            if let Some(target) = target_of(&row.value) {
+                referrers.insert((f.clone(), target, uuid));
+            }
+            if let Value::TreeRef { parent: Some(p), .. } = &row.value {
+                if DESCENDANT_FIELDS.contains(&f.as_str()) {
+                    parent_of.insert((f.clone(), uuid), *p);
                 }
             }
             let kind = if matches!(row.value, Value::Nothing) { ABSENT } else { PRESENT };
@@ -585,23 +718,43 @@ impl KvStore {
 
         let mut got_universe = BTreeSet::new();
         let mut got_sets = BTreeSet::new();
+        let mut got_referrers = BTreeSet::new();
+        let mut got_descendants = BTreeSet::new();
         for entry in t.sets.iter(&r)? {
             let (k, v) = entry?;
             let kind = k[0];
-            let field = if kind == UNIVERSE {
-                String::new()
+            let (field, rest) = if kind == UNIVERSE {
+                (String::new(), &k[1..])
             } else {
-                String::from_utf8(unesc(&k[1..])?.0).context("a field name")?
+                let (f, rest) = unesc(&k[1..])?;
+                (String::from_utf8(f).context("a field name")?, rest)
             };
             for id in decode_set(v)? {
                 let Some(u) = uuid(id, &mut diff) else { continue };
                 if kind == UNIVERSE {
                     got_universe.insert(u);
+                } else if kind == REFERRERS {
+                    let target: [u8; 16] = rest[..16].try_into().context("a target uuid")?;
+                    got_referrers.insert((field.clone(), target, u));
+                } else if kind == DESCENDANTS {
+                    let node: [u8; 16] = rest[..16].try_into().context("a node uuid")?;
+                    got_descendants.insert((field.clone(), node, u));
                 } else {
                     got_sets.insert((kind, field.clone(), u));
                 }
             }
         }
+        report(&mut diff, "referrer", lines(&referrers), lines(&got_referrers));
+        let mut descendants: BTreeSet<(String, [u8; 16], Uuid)> = BTreeSet::new();
+        for ((field, node), first) in &parent_of {
+            let mut up = Some(*first);
+            for _ in 0..crate::log::MAX_TREE_DEPTH {
+                let Some(ancestor) = up else { break };
+                descendants.insert((field.clone(), *ancestor.as_bytes(), *node));
+                up = parent_of.get(&(field.clone(), ancestor)).copied();
+            }
+        }
+        report(&mut diff, "descendant", lines(&descendants), lines(&got_descendants));
         if got_universe != universe {
             diff.push(format!(
                 "universe: {} ids, the store holds {} metarecords",
