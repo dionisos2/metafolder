@@ -103,3 +103,23 @@ fn everyday_gestures_do_not_grow_with_the_repository() {
         );
     }
 }
+
+/// The walk strategy of a path sort starts below the lowest ancestor the
+/// matches share, not at the forest root: browsing a folder must not pay for
+/// the siblings of its ancestors.
+#[test]
+fn a_path_walk_starts_at_the_matches_common_ancestor() {
+    let (_a, small) = build(40);
+    let (_b, big) = build(640);
+    for s in [&small, &big] {
+        s.set_thresholds(metafolder_kv_proto::store::Thresholds {
+            small_match: 0,
+            ..Default::default()
+        });
+    }
+    let path = Sort::Path { field: P.into() };
+    for (label, q) in [("folder", child as fn(&Store) -> Q), ("subtree", under)] {
+        let (rs, rb) = (reads(&small, &q(&small), &path, 100), reads(&big, &q(&big), &path, 100));
+        assert_eq!(rs, rb, "{label}: {rs} keys on the small repository, {rb} on the big one");
+    }
+}

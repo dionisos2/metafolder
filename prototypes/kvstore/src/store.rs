@@ -665,7 +665,8 @@ impl Reader<'_> {
             keyed.sort();
             out.extend(keyed.into_iter().map(|(_, id)| id));
         } else {
-            self.walk(&f, ROOT_ID, m, limit, &mut out)?;
+            let start = self.walk_root(fid, &(m & &placed))?;
+            self.walk(&f, start, m, limit, &mut out)?;
         }
         if out.len() < limit {
             out.extend((m - &placed).iter().take(limit - out.len()));
@@ -691,6 +692,26 @@ impl Reader<'_> {
         path.push(pos[4..].to_vec());
         memo.insert(id, path.clone());
         Ok(path)
+    }
+
+    /// The lowest node whose descendants hold every placed match — where a
+    /// path walk starts, so browsing a folder does not pay for the siblings
+    /// of its ancestors. Found from the first match upwards: ≈ depth reads.
+    fn walk_root(&self, fid: u16, placed: &RoaringBitmap) -> Result<u32> {
+        let Some(first) = placed.min() else { return Ok(ROOT_ID) };
+        let f = fid.to_be_bytes();
+        let parent = |id: u32| -> Result<u32> {
+            let pos = self.get(self.s.t.position, &key(&[&f, &id.to_be_bytes()]))?;
+            Ok(id_of(pos.context("position of a placed id")?))
+        };
+        let mut at = parent(first)?;
+        while at != ROOT_ID {
+            if placed.is_subset(&self.bitmap(self.s.t.desc, &key(&[&f, &at.to_be_bytes()]))?) {
+                return Ok(at);
+            }
+            at = parent(at)?;
+        }
+        Ok(ROOT_ID)
     }
 
     /// Depth-first walk in name order below `node`, emitting the matches and
