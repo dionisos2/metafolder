@@ -15,7 +15,7 @@ use metafolder_core::metarecord::{Field, FieldType, MetaRecord, Value};
 
 use crate::db::{self, FieldRow};
 use crate::error::DomainError;
-use crate::store::{Begin, NewOp, Store, WriteTxn};
+use crate::store::{Begin, Log, NewOp, Restoration, Store, WriteTxn};
 use crate::version;
 
 /// The `revision.origin` of a revision the daemon writes on the filesystem's
@@ -340,7 +340,8 @@ pub fn ancestry_ops_until(
 /// its budget ([`linear_path`]), which has to tell "not far enough yet" from
 /// "not on this chain at all" — the first is a reason to look again, the second
 /// is the answer.
-enum Delta {
+#[derive(Debug)]
+pub enum Delta {
     /// The chain from `from` (inclusive) down to — but excluding — the anchor.
     Found(Vec<OpRow>),
     /// The budget ran out before the anchor was met; it may still be further
@@ -351,7 +352,12 @@ enum Delta {
     Unrelated,
 }
 
-fn delta_until(conn: &rusqlite::Connection, from: i64, until: i64, max: usize) -> Result<Delta> {
+pub(crate) fn delta_until(
+    conn: &rusqlite::Connection,
+    from: i64,
+    until: i64,
+    max: usize,
+) -> Result<Delta> {
     if from == until {
         return Ok(Delta::Found(Vec::new()));
     }
@@ -615,8 +621,9 @@ pub struct RetypeSummary {
 
 /// Moves HEAD to `target` in one atomic transaction: inverse operations on
 /// the path up to the LCA, forward operations down to the target.
-pub fn navigate(conn: &mut rusqlite::Connection, target: Option<i64>) -> Result<NavResult> {
-    let previous_head = get_head(conn)?;
+pub fn navigate(store: &mut dyn Begin, target: Option<i64>) -> Result<NavResult> {
+    let tx = store.begin_write()?;
+    let previous_head = tx.head()?;
     if previous_head == target {
         return Ok(NavResult {
             previous_head,
@@ -625,17 +632,15 @@ pub fn navigate(conn: &mut rusqlite::Connection, target: Option<i64>) -> Result<
             operations_applied: 0,
         });
     }
-    let tx = conn.transaction()?;
 
     let (unapply, apply): (Vec<i64>, Vec<i64>) = match (previous_head, target) {
         (None, None) => (vec![], vec![]),
         (Some(head), None) => {
             // Empty state: every data row of this repository is removed (one repo
-            // per database file, so the whole `metarecord` table goes).
-            let unapplied = ancestry(&tx, head)?.len();
-            tx.execute("DELETE FROM metarecord", [])?;
-            // One repo per database file, so emptying it clears the whole FTS index.
-            tx.execute("UPDATE log_head SET op_id = NULL WHERE singleton = 1", [])?;
+            // per database file, so every metarecord goes).
+            let unapplied = tx.ancestry(head)?.len();
+            tx.clear_metarecords()?;
+            tx.set_head(None)?;
             tx.commit()?;
             return Ok(NavResult {
                 previous_head,
@@ -645,14 +650,14 @@ pub fn navigate(conn: &mut rusqlite::Connection, target: Option<i64>) -> Result<
             });
         }
         (None, Some(t)) => {
-            let mut chain = ancestry(&tx, t)?;
+            let mut chain = tx.ancestry(t)?;
             chain.reverse(); // root → target
             (vec![], chain)
         }
         (Some(h), Some(t)) => {
-            let h_anc = ancestry(&tx, h)?;
+            let h_anc = tx.ancestry(h)?;
             let h_set: HashSet<i64> = h_anc.iter().copied().collect();
-            let t_anc = ancestry(&tx, t)?;
+            let t_anc = tx.ancestry(t)?;
             let lca = t_anc.iter().find(|id| h_set.contains(id)).copied();
             let unapply: Vec<i64> = h_anc.into_iter().take_while(|id| Some(*id) != lca).collect();
             let mut apply: Vec<i64> = t_anc.into_iter().take_while(|id| Some(*id) != lca).collect();
@@ -662,14 +667,14 @@ pub fn navigate(conn: &mut rusqlite::Connection, target: Option<i64>) -> Result<
     };
 
     for op_id in &unapply {
-        let op = get_op(&tx, *op_id)?.context("operation vanished during navigation")?;
-        apply_inverse(&tx, &op)?;
+        let op = tx.op(*op_id)?.context("operation vanished during navigation")?;
+        apply_inverse(&*tx, &op)?;
     }
     for op_id in &apply {
-        let op = get_op(&tx, *op_id)?.context("operation vanished during navigation")?;
-        apply_forward(&tx, &op)?;
+        let op = tx.op(*op_id)?.context("operation vanished during navigation")?;
+        apply_forward(&*tx, &op)?;
     }
-    tx.execute("UPDATE log_head SET op_id = ?1 WHERE singleton = 1", params![target])?;
+    tx.set_head(target)?;
     tx.commit()?;
 
     Ok(NavResult {
@@ -692,22 +697,22 @@ pub enum NavDir {
 /// The unapply and apply id lists from `head` toward `target`, one operation
 /// at a time (unlike [`navigate`], the empty-state case is not bulk-deleted).
 fn step_paths(
-    conn: &rusqlite::Connection,
+    log: &dyn Log,
     head: Option<i64>,
     target: Option<i64>,
 ) -> Result<(Vec<i64>, Vec<i64>)> {
     Ok(match (head, target) {
         (None, None) => (vec![], vec![]),
-        (Some(h), None) => (ancestry(conn, h)?, vec![]),
+        (Some(h), None) => (log.ancestry(h)?, vec![]),
         (None, Some(t)) => {
-            let mut chain = ancestry(conn, t)?;
+            let mut chain = log.ancestry(t)?;
             chain.reverse();
             (vec![], chain)
         }
         (Some(h), Some(t)) => {
-            let h_anc = ancestry(conn, h)?;
+            let h_anc = log.ancestry(h)?;
             let h_set: HashSet<i64> = h_anc.iter().copied().collect();
-            let t_anc = ancestry(conn, t)?;
+            let t_anc = log.ancestry(t)?;
             let lca = t_anc.iter().find(|id| h_set.contains(id)).copied();
             let unapply: Vec<i64> = h_anc.into_iter().take_while(|id| Some(*id) != lca).collect();
             let mut apply: Vec<i64> = t_anc.into_iter().take_while(|id| Some(*id) != lca).collect();
@@ -738,16 +743,12 @@ const LINEAR_WIDEN: usize = 8;
 /// The budget widens instead of being guessed: [`Delta::Budget`] means "look
 /// further", [`Delta::Unrelated`] means "not this way", and only two
 /// `Unrelated`s — the genuinely divergent case — fall back to the LCA.
-fn linear_path(
-    conn: &rusqlite::Connection,
-    head: i64,
-    target: i64,
-) -> Result<Option<Vec<(OpRow, NavDir)>>> {
+fn linear_path(log: &dyn Log, head: i64, target: i64) -> Result<Option<Vec<(OpRow, NavDir)>>> {
     let (mut backward, mut forward) = (true, true);
     let mut budget = LINEAR_BUDGET;
     while backward || forward {
         if backward {
-            match delta_until(conn, head, target, budget)? {
+            match log.ops_until(head, target, budget)? {
                 // The target is an ancestor: unapply everything above it,
                 // newest first.
                 Delta::Found(ops) => {
@@ -758,7 +759,7 @@ fn linear_path(
             }
         }
         if forward {
-            match delta_until(conn, target, head, budget)? {
+            match log.ops_until(target, head, budget)? {
                 // The target is a descendant: re-apply the chain down to it,
                 // oldest first.
                 Delta::Found(mut ops) => {
@@ -779,7 +780,7 @@ fn linear_path(
 /// each apply op (oldest first) as [`NavDir::Forward`]. Empty when already at
 /// the target (spec-event-log "Coordinated navigation").
 pub fn nav_path(
-    conn: &rusqlite::Connection,
+    log: &dyn Log,
     head: Option<i64>,
     target: Option<i64>,
 ) -> Result<Vec<(OpRow, NavDir)>> {
@@ -790,23 +791,17 @@ pub fn nav_path(
     // HEAD, a redo to a descendant of it — and that path can be read without
     // ever walking to the root of the log.
     if let (Some(h), Some(t)) = (head, target) {
-        if let Some(path) = linear_path(conn, h, t)? {
+        if let Some(path) = linear_path(log, h, t)? {
             return Ok(path);
         }
     }
-    let (unapply, apply) = step_paths(conn, head, target)?;
+    let (unapply, apply) = step_paths(log, head, target)?;
     let mut out = Vec::with_capacity(unapply.len() + apply.len());
     for id in unapply {
-        out.push((
-            get_op(conn, id)?.context("operation vanished during navigation")?,
-            NavDir::Inverse,
-        ));
+        out.push((log.op(id)?.context("operation vanished during navigation")?, NavDir::Inverse));
     }
     for id in apply {
-        out.push((
-            get_op(conn, id)?.context("operation vanished during navigation")?,
-            NavDir::Forward,
-        ));
+        out.push((log.op(id)?.context("operation vanished during navigation")?, NavDir::Forward));
     }
     Ok(out)
 }
@@ -819,31 +814,31 @@ pub fn nav_path(
 /// `pending_operation` (replayed as a new branch once the lock is released —
 /// spec-event-log "skip").
 pub fn coordinated_step(
-    conn: &mut rusqlite::Connection,
+    store: &mut dyn Begin,
     target: Option<i64>,
     skip: bool,
 ) -> Result<(Option<i64>, Vec<TreeOp>)> {
-    let head = get_head(conn)?;
-    let path = nav_path(conn, head, target)?;
+    let tx = store.begin_write()?;
+    let head = tx.head()?;
+    let path = nav_path(&*tx, head, target)?;
     let Some((op, dir)) = path.into_iter().next() else {
         return Ok((head, vec![])); // Already at the target.
     };
-    let tx = conn.transaction()?;
-    let tree = nav_tree_ops(&tx, &op, dir)?;
+    let tree = nav_tree_ops(&*tx, &op, dir)?;
     if skip {
-        enqueue_restoration(&tx, &op, dir)?;
+        enqueue_restoration(&*tx, &op, dir)?;
     }
     let new_head = match dir {
         NavDir::Inverse => {
-            apply_inverse(&tx, &op)?;
+            apply_inverse(&*tx, &op)?;
             op.parent_id
         }
         NavDir::Forward => {
-            apply_forward(&tx, &op)?;
+            apply_forward(&*tx, &op)?;
             Some(op.id)
         }
     };
-    tx.execute("UPDATE log_head SET op_id = ?1 WHERE singleton = 1", params![new_head])?;
+    tx.set_head(new_head)?;
     tx.commit()?;
     Ok((new_head, tree))
 }
@@ -852,12 +847,12 @@ pub fn coordinated_step(
 /// [`Writer`] records for its own writes ([`tree_ops_of`]), derived from the
 /// operation's snapshots instead — which carry both the rows it put in place
 /// and the rows it replaced, so nothing has to be read back afterwards.
-fn nav_tree_ops(conn: &rusqlite::Connection, op: &OpRow, dir: NavDir) -> Result<Vec<TreeOp>> {
+fn nav_tree_ops(log: &dyn Log, op: &OpRow, dir: NavDir) -> Result<Vec<TreeOp>> {
     let Some(op_type) = OpType::parse(&op.op_type) else {
         return Ok(Vec::new());
     };
-    let before = snapshots(conn, op.id, 0)?;
-    let after = snapshots(conn, op.id, 1)?;
+    let before = log.snapshots(op.id, false)?;
+    let after = log.snapshots(op.id, true)?;
     Ok(match dir {
         NavDir::Forward => tree_ops_of(op_type, &before, &after, op.entity_uuid),
         NavDir::Inverse => inverse_tree_ops(op_type, &before, &after, op.entity_uuid),
@@ -876,115 +871,74 @@ fn nav_tree_ops(conn: &rusqlite::Connection, op: &OpRow, dir: NavDir) -> Result<
 /// `is_new=0`. Taking the wrong side leaves the metadata where the (skipped,
 /// hence not performed) move would have put it. See `docs/review-followups.md`
 /// (#6).
-fn enqueue_restoration(tx: &Transaction<'_>, op: &OpRow, dir: NavDir) -> Result<()> {
-    let entity = op.entity_uuid.as_simple().to_string();
-    match op.op_type.as_str() {
+fn enqueue_restoration(tx: &dyn WriteTxn, op: &OpRow, dir: NavDir) -> Result<()> {
+    let entity = op.entity_uuid;
+    let restoration = match op.op_type.as_str() {
         // Rewind to the file's recorded location before this step (the side the
-        // step did *not* apply): is_new=1 for an inverse, is_new=0 for a redo.
+        // step did *not* apply): after it for an inverse, before it for a redo.
         "file_moved" => {
-            let recorded_is_new = match dir {
-                NavDir::Inverse => 1,
-                NavDir::Forward => 0,
-            };
-            let rows = snapshots(tx, op.id, recorded_is_new)?;
+            let rows = tx.snapshots(op.id, dir == NavDir::Inverse)?;
             let Some(row) = rows.iter().find(|r| r.name == "mfr_path") else {
                 return Ok(());
             };
-            if let Value::TreeRef { parent, name } = &row.value {
-                let parent_hex = parent.map(|p| p.as_simple().to_string()).unwrap_or_default();
-                tx.execute(
-                    "INSERT INTO pending_operation (op_type, path, from_path, to_path)
-                     VALUES ('restore_set_path', ?1, ?2, ?3)",
-                    params![entity, parent_hex, name.display().as_ref()],
-                )?;
-            }
+            let Value::TreeRef { parent, name } = &row.value else { return Ok(()) };
+            Restoration::SetPath { entity, parent: *parent, name: name.clone() }
         }
         // The file is gone: re-record the deletion.
-        "file_deleted" => {
-            tx.execute(
-                "INSERT INTO pending_operation (op_type, path) VALUES ('restore_clear_path', ?1)",
-                params![entity],
-            )?;
-        }
+        "file_deleted" => Restoration::ClearPath { entity },
         // The content changed: invalidate the hashes (size/mtime left stale).
-        "file_modified" => {
-            tx.execute(
-                "INSERT INTO pending_operation (op_type, path) VALUES ('restore_clear_hashes', ?1)",
-                params![entity],
-            )?;
-        }
-        _ => {}
-    }
-    Ok(())
-}
-
-/// Writes a metarecord's version. The value is always derived from the
-/// metarecord's own rows — by [`version::apply`] on a write, by
-/// [`version::of_rows`] once navigation has restored them — never invented and
-/// never read back from the log (spec-event-log "Field ID and version
-/// stability").
-fn set_version(tx: &Transaction<'_>, uuid: Uuid, version: u64) -> Result<()> {
-    tx.prepare_cached("UPDATE metarecord SET version = ?1 WHERE uuid = ?2")?
-        .execute(params![version as i64, db::uuid_to_bytes(uuid)])?;
-    Ok(())
+        "file_modified" => Restoration::ClearHashes { entity },
+        _ => return Ok(()),
+    };
+    tx.queue_restoration(&restoration)
 }
 
 /// Recomputes a metarecord's version from the rows it currently holds. This is
 /// what navigation uses: restoring the rows restores the version with them, so
 /// there is no second source of truth that could disagree with the content.
-fn resync_version(tx: &Transaction<'_>, uuid: Uuid) -> Result<()> {
-    let rows = db::get_field_rows(tx, uuid)?;
-    // A no-op when the step removed the metarecord: the UPDATE matches no row.
-    set_version(tx, uuid, version::of_rows(uuid, &rows))
+fn resync_version(tx: &dyn WriteTxn, uuid: Uuid) -> Result<()> {
+    let rows = tx.rows(uuid)?;
+    // A no-op when the step removed the metarecord: there is none to update.
+    tx.set_version(uuid, version::of_rows(uuid, &rows))
 }
 
 /// Undoes one operation (spec-event-log "Inverse operations"). Field rows
 /// are restored with their original primary keys.
-fn apply_inverse(tx: &Transaction<'_>, op: &OpRow) -> Result<()> {
+fn apply_inverse(tx: &dyn WriteTxn, op: &OpRow) -> Result<()> {
     let entity = op.entity_uuid;
     match op.op_type.as_str() {
         "create_metarecord" => {
-            tx.execute(
-                "DELETE FROM metarecord WHERE uuid = ?1",
-                params![db::uuid_to_bytes(entity)],
-            )?;
+            tx.remove_metarecord(entity)?;
         }
         "delete_metarecord" => {
-            tx.execute(
-                "INSERT INTO metarecord (uuid, version) VALUES (?1, 0)",
-                params![db::uuid_to_bytes(entity)],
-            )?;
-            for row in snapshots(tx, op.id, 0)? {
-                db::insert_field_row(tx, entity, &row.name, &row.value, Some(row.id))?;
+            tx.create_metarecord(entity, 0)?;
+            for row in tx.snapshots(op.id, false)? {
+                tx.insert_row(entity, &row.name, &row.value, Some(row.id))?;
             }
         }
         // Whole-record set: replace the entire field set (all names).
         "set_metarecord" => {
-            tx.execute(
-                "DELETE FROM field WHERE metarecord_uuid = ?1",
-                params![db::uuid_to_bytes(entity)],
-            )?;
-            for row in snapshots(tx, op.id, 0)? {
-                db::insert_field_row(tx, entity, &row.name, &row.value, Some(row.id))?;
+            tx.delete_rows(entity, None)?;
+            for row in tx.snapshots(op.id, false)? {
+                tx.insert_row(entity, &row.name, &row.value, Some(row.id))?;
             }
         }
         // All set-field-shaped operations (one field name, full replacement).
         "set_field" | "file_deleted" | "file_moved" | "file_modified" => {
             let field = op.field_name.as_deref().context("set-shaped op without field_name")?;
-            tx.prepare_cached("DELETE FROM field WHERE metarecord_uuid = ?1 AND field_name = ?2")?
-                .execute(params![db::uuid_to_bytes(entity), field])?;
-            for row in snapshots(tx, op.id, 0)? {
-                db::insert_field_row(tx, entity, &row.name, &row.value, Some(row.id))?;
+            tx.delete_rows(entity, Some(field))?;
+            for row in tx.snapshots(op.id, false)? {
+                tx.insert_row(entity, &row.name, &row.value, Some(row.id))?;
             }
         }
         "append_field" => {
-            for row in snapshots(tx, op.id, 1)? {
-                tx.execute("DELETE FROM field WHERE id = ?1", params![row.id])?;
+            for row in tx.snapshots(op.id, true)? {
+                tx.delete_row(row.id)?;
             }
         }
         "delete_field" => {
-            for row in snapshots(tx, op.id, 0)? {
-                db::insert_field_row(tx, entity, &row.name, &row.value, Some(row.id))?;
+            for row in tx.snapshots(op.id, false)? {
+                tx.insert_row(entity, &row.name, &row.value, Some(row.id))?;
             }
         }
         "unknown" => anyhow::bail!("cannot navigate across an 'unknown' operation (op {})", op.id),
@@ -998,49 +952,39 @@ fn apply_inverse(tx: &Transaction<'_>, op: &OpRow) -> Result<()> {
 }
 
 /// Replays one operation forward (redo).
-fn apply_forward(tx: &Transaction<'_>, op: &OpRow) -> Result<()> {
+fn apply_forward(tx: &dyn WriteTxn, op: &OpRow) -> Result<()> {
     let entity = op.entity_uuid;
     match op.op_type.as_str() {
         "create_metarecord" => {
-            tx.execute(
-                "INSERT INTO metarecord (uuid, version) VALUES (?1, 0)",
-                params![db::uuid_to_bytes(entity)],
-            )?;
-            for row in snapshots(tx, op.id, 1)? {
-                db::insert_field_row(tx, entity, &row.name, &row.value, Some(row.id))?;
+            tx.create_metarecord(entity, 0)?;
+            for row in tx.snapshots(op.id, true)? {
+                tx.insert_row(entity, &row.name, &row.value, Some(row.id))?;
             }
         }
         "delete_metarecord" => {
-            tx.execute(
-                "DELETE FROM metarecord WHERE uuid = ?1",
-                params![db::uuid_to_bytes(entity)],
-            )?;
+            tx.remove_metarecord(entity)?;
         }
         "set_metarecord" => {
-            tx.execute(
-                "DELETE FROM field WHERE metarecord_uuid = ?1",
-                params![db::uuid_to_bytes(entity)],
-            )?;
-            for row in snapshots(tx, op.id, 1)? {
-                db::insert_field_row(tx, entity, &row.name, &row.value, Some(row.id))?;
+            tx.delete_rows(entity, None)?;
+            for row in tx.snapshots(op.id, true)? {
+                tx.insert_row(entity, &row.name, &row.value, Some(row.id))?;
             }
         }
         "set_field" | "file_deleted" | "file_moved" | "file_modified" => {
             let field = op.field_name.as_deref().context("set-shaped op without field_name")?;
-            tx.prepare_cached("DELETE FROM field WHERE metarecord_uuid = ?1 AND field_name = ?2")?
-                .execute(params![db::uuid_to_bytes(entity), field])?;
-            for row in snapshots(tx, op.id, 1)? {
-                db::insert_field_row(tx, entity, &row.name, &row.value, Some(row.id))?;
+            tx.delete_rows(entity, Some(field))?;
+            for row in tx.snapshots(op.id, true)? {
+                tx.insert_row(entity, &row.name, &row.value, Some(row.id))?;
             }
         }
         "append_field" => {
-            for row in snapshots(tx, op.id, 1)? {
-                db::insert_field_row(tx, entity, &row.name, &row.value, Some(row.id))?;
+            for row in tx.snapshots(op.id, true)? {
+                tx.insert_row(entity, &row.name, &row.value, Some(row.id))?;
             }
         }
         "delete_field" => {
-            for row in snapshots(tx, op.id, 0)? {
-                tx.execute("DELETE FROM field WHERE id = ?1", params![row.id])?;
+            for row in tx.snapshots(op.id, false)? {
+                tx.delete_row(row.id)?;
             }
         }
         "unknown" => anyhow::bail!("cannot navigate across an 'unknown' operation (op {})", op.id),
@@ -1610,6 +1554,13 @@ impl<'c> Writer<'c> {
     /// have not moved onto [`Self::store`] yet (tree cache, eligibility).
     pub fn connection(&self) -> &rusqlite::Connection {
         self.tx.as_sqlite().expect("a SQLite write transaction")
+    }
+
+    /// Drops the queued restorations up to `up_to` in this revision's
+    /// transaction — the one that re-records them, so a crash cannot replay
+    /// them twice.
+    pub fn drop_restorations(&self, up_to: i64) -> Result<()> {
+        self.tx.drop_restorations(up_to)
     }
 
     /// Number of operations recorded so far in this revision.

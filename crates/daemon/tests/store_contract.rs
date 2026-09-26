@@ -5,6 +5,7 @@
 
 use metafolder_core::metarecord::{Field, Value};
 use metafolder_daemon::db;
+use metafolder_daemon::log::Delta;
 use metafolder_daemon::log::Writer;
 use metafolder_daemon::store::Store;
 use rusqlite::Connection;
@@ -105,16 +106,20 @@ fn the_log_walks_back_from_head() {
 
     // The walk back from HEAD to the first operation: the two between.
     let first = store.op(last.parent_id.unwrap()).unwrap().unwrap().parent_id.unwrap();
-    let delta = store.ops_until(head, first, 10).unwrap().expect("first is an ancestor");
+    let Delta::Found(delta) = store.ops_until(head, first, 10).unwrap() else {
+        panic!("first is an ancestor of head");
+    };
     assert_eq!(delta.len(), 2);
     assert_eq!(delta[0].id, head, "newest first");
-    assert_eq!(store.ops_until(head, first, 1).unwrap().map(|d| d.len()), None, "over budget");
+    assert!(matches!(store.ops_until(head, first, 1).unwrap(), Delta::Budget));
+    assert!(matches!(store.ops_until(first, head, 10).unwrap(), Delta::Unrelated));
+    assert_eq!(store.ancestry(head).unwrap(), [head, delta[1].id, first]);
 }
 
 // ── Writing ───────────────────────────────────────────────────────────────────
 
 use metafolder_daemon::log::{OpType, Retention};
-use metafolder_daemon::store::{Begin, NewOp};
+use metafolder_daemon::store::{Begin, NewOp, Restoration};
 
 fn empty() -> Connection {
     let conn = db::open_in_memory().unwrap();
@@ -245,4 +250,36 @@ fn an_uncommitted_transaction_leaves_nothing() {
     let store: &dyn Store = &conn;
     assert_eq!(store.version(m).unwrap(), None);
     assert!(store.metarecords().unwrap().is_empty());
+}
+
+#[test]
+fn restorations_queue_in_order_and_leave_when_dropped() {
+    let mut conn = empty();
+    let (a, b, p) = (Uuid::new_v4(), Uuid::new_v4(), Uuid::new_v4());
+    let queued = [
+        Restoration::SetPath { entity: a, parent: Some(p), name: "n".into() },
+        Restoration::SetPath { entity: b, parent: None, name: "".into() },
+        Restoration::ClearPath { entity: a },
+        Restoration::ClearHashes { entity: b },
+    ];
+    let tx = conn.begin_write().unwrap();
+    for r in &queued {
+        tx.queue_restoration(r).unwrap();
+    }
+    let got = tx.restorations().unwrap();
+    assert_eq!(got.iter().map(|(_, r)| r.clone()).collect::<Vec<_>>(), queued);
+    assert!(got.windows(2).all(|w| w[0].0 < w[1].0), "queue order");
+    tx.drop_restorations(got[1].0).unwrap();
+    let left: Vec<Restoration> = tx.restorations().unwrap().into_iter().map(|(_, r)| r).collect();
+    assert_eq!(left, &queued[2..]);
+    tx.commit().unwrap();
+}
+
+#[test]
+fn clearing_takes_every_metarecord() {
+    let (mut conn, _, _) = fixture();
+    let tx = conn.begin_write().unwrap();
+    tx.clear_metarecords().unwrap();
+    assert!(tx.metarecords().unwrap().is_empty());
+    assert_eq!(tx.max_row_id().unwrap(), 0);
 }

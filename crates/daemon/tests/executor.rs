@@ -875,7 +875,7 @@ fn test_skip_move_restores_actual_location_on_replay() {
     let target = undo_last_target(&repo);
     {
         let mut conn = repo.conn.lock().unwrap();
-        log::coordinated_step(&mut conn, target, true).unwrap();
+        log::coordinated_step(&mut *conn, target, true).unwrap();
     }
     repo.cache.lock().unwrap().clear();
     assert_eq!(resolve(&repo, "/a.txt"), Some(uuid), "metadata reverted to old location");
@@ -907,7 +907,7 @@ fn test_skip_delete_rerecords_deletion_on_replay() {
     let target = undo_last_target(&repo);
     {
         let mut conn = repo.conn.lock().unwrap();
-        log::coordinated_step(&mut conn, target, true).unwrap();
+        log::coordinated_step(&mut *conn, target, true).unwrap();
     }
     repo.cache.lock().unwrap().clear();
     assert_eq!(resolve(&repo, "/a.txt"), Some(uuid), "metadata restored");

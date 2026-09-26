@@ -605,9 +605,9 @@ impl RepoIndex {
         };
 
         let mut delta = match store.ops_until(current_head, built_at_head, REBUILD_OVER)? {
-            Some(ops) => ops,
+            crate::log::Delta::Found(ops) => ops,
             // Not on the chain (history was rewritten) or beyond the budget.
-            None => return Ok(None),
+            crate::log::Delta::Budget | crate::log::Delta::Unrelated => return Ok(None),
         };
         if delta.iter().any(|op| !KNOWN.contains(&op.op_type.as_str())) {
             return Ok(None);

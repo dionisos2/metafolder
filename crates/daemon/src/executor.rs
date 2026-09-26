@@ -20,7 +20,7 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use anyhow::{Context as _, Result};
-use rusqlite::{params, Connection};
+use rusqlite::Connection;
 use uuid::Uuid;
 
 use metafolder_core::metarecord::{Field, TreeName, Value};
@@ -32,6 +32,7 @@ use crate::fs_meta;
 use crate::log::{self, OpType, Writer};
 use crate::relpath::RelPath;
 use crate::state::RepoState;
+use crate::store::Restoration;
 use crate::tree_cache::TreeCache;
 
 /// A raw filesystem event, as enqueued by the watcher. Paths are
@@ -639,70 +640,49 @@ fn flush_restorations(
     cache: &mut TreeCache,
     retention: crate::log::Retention,
 ) -> Result<usize> {
-    let mut stmt = conn.prepare(
-        "SELECT id, op_type, path, from_path, to_path FROM pending_operation
-         WHERE op_type LIKE 'restore_%' ORDER BY id",
-    )?;
-    // (id, op_type, path, from_path, to_path)
-    type RestoreRow = (i64, String, Option<String>, Option<String>, Option<String>);
-    let rows: Vec<RestoreRow> = stmt
-        .query_map([], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?, r.get(4)?)))?
-        .collect::<rusqlite::Result<_>>()?;
-    drop(stmt);
+    let rows = crate::store::Log::restorations(&*conn)?;
     if rows.is_empty() {
         return Ok(0);
     }
     let max_id = rows.iter().map(|r| r.0).max().unwrap_or(0);
 
-    let parse_uuid = |s: &str| -> Result<Uuid> {
-        Uuid::parse_str(s).with_context(|| format!("invalid uuid in restoration op: {s}"))
-    };
-
     let mut writer = Writer::begin_with_retention(conn, None, retention)?;
     // Re-recording the filesystem truth a skipped navigation step left behind:
     // the daemon's doing, like the watcher's own flush.
     writer.set_origin(log::ORIGIN_WATCHER)?;
-    for (_, op_type, path, from_path, to_path) in &rows {
-        let entity = parse_uuid(path.as_deref().context("restoration op missing entity")?)?;
-        match op_type.as_str() {
-            "restore_set_path" => {
-                let parent = match from_path.as_deref() {
-                    Some(p) if !p.is_empty() => Some(parse_uuid(p)?),
-                    _ => None,
-                };
-                let name = to_path.clone().unwrap_or_default();
+    for (_, restoration) in &rows {
+        match restoration {
+            Restoration::SetPath { entity, parent, name } => {
                 writer.set_field_as(
                     OpType::FileMoved,
-                    entity,
+                    *entity,
                     "mfr_path",
-                    Value::TreeRef { parent, name: name.into() },
+                    Value::TreeRef { parent: *parent, name: name.clone() },
                 )?;
             }
-            "restore_clear_path" => {
-                writer.set_field_as(OpType::FileDeleted, entity, "mfr_path", Value::Nothing)?;
-                crate::duplicates::leave_group(&mut writer, OpType::FileDeleted, entity)?;
+            Restoration::ClearPath { entity } => {
+                writer.set_field_as(OpType::FileDeleted, *entity, "mfr_path", Value::Nothing)?;
+                crate::duplicates::leave_group(&mut writer, OpType::FileDeleted, *entity)?;
             }
-            "restore_clear_hashes" => {
+            Restoration::ClearHashes { entity } => {
                 for name in crate::fingerprint::CONTENT_DERIVED_FIELDS {
                     if *name == crate::duplicates::GROUP_FIELD {
                         continue;
                     }
-                    writer.clear_field_as(OpType::FileModified, entity, name)?;
+                    writer.clear_field_as(OpType::FileModified, *entity, name)?;
                 }
-                crate::duplicates::leave_group(&mut writer, OpType::FileModified, entity)?;
+                crate::duplicates::leave_group(&mut writer, OpType::FileModified, *entity)?;
             }
-            other => anyhow::bail!("unknown restoration op_type '{other}'"),
         }
     }
+    // Dequeued in the revision that re-records them: a crash leaves both or
+    // neither, never a replay of what was already written.
+    writer.drop_restorations(max_id)?;
     let wrote = writer.op_count() > 0;
     writer.commit()?;
     // The restore rewrote tree positions arbitrarily: rebuild the cache from
     // the new state (keeps it complete; `populate` clears first).
     cache.populate(conn)?;
-    conn.execute(
-        "DELETE FROM pending_operation WHERE id <= ?1 AND op_type LIKE 'restore_%'",
-        params![max_id],
-    )?;
     Ok(if wrote { 1 } else { 0 })
 }
 

@@ -12,12 +12,12 @@
 use std::collections::HashMap;
 
 use anyhow::{Context, Result};
-use metafolder_core::metarecord::Value;
+use metafolder_core::metarecord::{TreeName, Value};
 use rusqlite::{params, Connection, Transaction};
 use uuid::Uuid;
 
 use crate::db::{self, FieldRow, TreeRow};
-use crate::log::{self, OpRow, OpType, Retention};
+use crate::log::{self, Delta, OpRow, OpType, Retention};
 
 /// Metarecords and their field rows.
 pub trait Rows {
@@ -61,8 +61,26 @@ pub trait Log {
     /// An operation's snapshot rows: the state after it (`after`) or before.
     fn snapshots(&self, op_id: i64, after: bool) -> Result<Vec<FieldRow>>;
     /// The operations from `from` back to — not including — `until`, newest
-    /// first; `None` when `until` is not an ancestor within `max` steps.
-    fn ops_until(&self, from: i64, until: i64, max: usize) -> Result<Option<Vec<OpRow>>>;
+    /// first: [`Delta::Found`]; or `until` not met within `max` steps
+    /// ([`Delta::Budget`]), or not an ancestor at all ([`Delta::Unrelated`]).
+    fn ops_until(&self, from: i64, until: i64, max: usize) -> Result<Delta>;
+    /// The whole ancestor chain from `from` (inclusive) to the root.
+    fn ancestry(&self, from: i64) -> Result<Vec<i64>>;
+    /// The restorations skipped navigation steps queued, oldest first, with
+    /// the position each holds in the queue.
+    fn restorations(&self) -> Result<Vec<(i64, Restoration)>>;
+}
+
+/// A filesystem fact a skipped step of a coordinated navigation leaves to be
+/// re-recorded once the navigation lock is released (spec-event-log "skip").
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Restoration {
+    /// The file is where this position says.
+    SetPath { entity: Uuid, parent: Option<Uuid>, name: TreeName },
+    /// The file is gone.
+    ClearPath { entity: Uuid },
+    /// The file's content changed: its hashes no longer hold.
+    ClearHashes { entity: Uuid },
 }
 
 /// A repository's database: both halves.
@@ -116,6 +134,11 @@ pub trait WriteTxn: Store {
     fn set_head(&self, op: Option<i64>) -> Result<()>;
     /// Drops the history `retention` no longer keeps behind `head`.
     fn trim(&self, retention: Retention, head: i64) -> Result<usize>;
+    /// Removes every metarecord (a navigation to the empty state).
+    fn clear_metarecords(&self) -> Result<()>;
+    fn queue_restoration(&self, restoration: &Restoration) -> Result<()>;
+    /// Drops the queued restorations up to position `up_to`, included.
+    fn drop_restorations(&self, up_to: i64) -> Result<()>;
 
     fn commit(self: Box<Self>) -> Result<()>;
 
@@ -211,8 +234,14 @@ impl Log for SqliteTxn<'_> {
     fn snapshots(&self, op_id: i64, after: bool) -> Result<Vec<FieldRow>> {
         Log::snapshots(&*self.0, op_id, after)
     }
-    fn ops_until(&self, from: i64, until: i64, max: usize) -> Result<Option<Vec<OpRow>>> {
+    fn ops_until(&self, from: i64, until: i64, max: usize) -> Result<Delta> {
         Log::ops_until(&*self.0, from, until, max)
+    }
+    fn ancestry(&self, from: i64) -> Result<Vec<i64>> {
+        Log::ancestry(&*self.0, from)
+    }
+    fn restorations(&self) -> Result<Vec<(i64, Restoration)>> {
+        Log::restorations(&*self.0)
     }
 }
 
@@ -354,6 +383,40 @@ impl WriteTxn for SqliteTxn<'_> {
     fn trim(&self, retention: Retention, head: i64) -> Result<usize> {
         log::trim(&self.0, retention, head)
     }
+    fn clear_metarecords(&self) -> Result<()> {
+        self.0.execute("DELETE FROM metarecord", [])?;
+        Ok(())
+    }
+    fn queue_restoration(&self, restoration: &Restoration) -> Result<()> {
+        let hex = |u: &Uuid| u.as_simple().to_string();
+        match restoration {
+            Restoration::SetPath { entity, parent, name } => self.0.execute(
+                "INSERT INTO pending_operation (op_type, path, from_path, to_path)
+                 VALUES ('restore_set_path', ?1, ?2, ?3)",
+                params![
+                    hex(entity),
+                    parent.as_ref().map(hex).unwrap_or_default(),
+                    name.display().as_ref()
+                ],
+            )?,
+            Restoration::ClearPath { entity } => self.0.execute(
+                "INSERT INTO pending_operation (op_type, path) VALUES ('restore_clear_path', ?1)",
+                params![hex(entity)],
+            )?,
+            Restoration::ClearHashes { entity } => self.0.execute(
+                "INSERT INTO pending_operation (op_type, path) VALUES ('restore_clear_hashes', ?1)",
+                params![hex(entity)],
+            )?,
+        };
+        Ok(())
+    }
+    fn drop_restorations(&self, up_to: i64) -> Result<()> {
+        self.0.execute(
+            "DELETE FROM pending_operation WHERE id <= ?1 AND op_type LIKE 'restore_%'",
+            params![up_to],
+        )?;
+        Ok(())
+    }
     fn commit(self: Box<Self>) -> Result<()> {
         self.0.commit().context("Failed to commit write transaction")
     }
@@ -414,7 +477,42 @@ impl Log for Connection {
     fn snapshots(&self, op_id: i64, after: bool) -> Result<Vec<FieldRow>> {
         log::snapshots(self, op_id, after as i64)
     }
-    fn ops_until(&self, from: i64, until: i64, max: usize) -> Result<Option<Vec<OpRow>>> {
-        log::ancestry_ops_until(self, from, until, max)
+    fn ops_until(&self, from: i64, until: i64, max: usize) -> Result<Delta> {
+        log::delta_until(self, from, until, max)
+    }
+    fn ancestry(&self, from: i64) -> Result<Vec<i64>> {
+        log::ancestry(self, from)
+    }
+    fn restorations(&self) -> Result<Vec<(i64, Restoration)>> {
+        let mut stmt = self.prepare(
+            "SELECT id, op_type, path, from_path, to_path FROM pending_operation
+             WHERE op_type LIKE 'restore_%' ORDER BY id",
+        )?;
+        type Raw = (i64, String, Option<String>, Option<String>, Option<String>);
+        let raw: Vec<Raw> = stmt
+            .query_map([], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?, r.get(4)?)))?
+            .collect::<rusqlite::Result<_>>()?;
+        let parse = |s: &str| -> Result<Uuid> {
+            Uuid::parse_str(s).with_context(|| format!("invalid uuid in restoration op: {s}"))
+        };
+        raw.into_iter()
+            .map(|(id, op_type, path, from_path, to_path)| {
+                let entity = parse(path.as_deref().context("restoration op missing entity")?)?;
+                let r = match op_type.as_str() {
+                    "restore_set_path" => Restoration::SetPath {
+                        entity,
+                        parent: match from_path.as_deref() {
+                            Some(p) if !p.is_empty() => Some(parse(p)?),
+                            _ => None,
+                        },
+                        name: to_path.unwrap_or_default().into(),
+                    },
+                    "restore_clear_path" => Restoration::ClearPath { entity },
+                    "restore_clear_hashes" => Restoration::ClearHashes { entity },
+                    other => anyhow::bail!("unknown restoration op_type '{other}'"),
+                };
+                Ok((id, r))
+            })
+            .collect()
     }
 }

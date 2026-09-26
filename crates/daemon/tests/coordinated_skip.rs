@@ -80,8 +80,8 @@ fn forward_skip_rewinds_to_the_pre_move_location() {
     // Roll back the move, then redo it forward with skip.
     {
         let mut conn = repo.conn.lock().unwrap();
-        log::navigate(&mut conn, Some(create_op)).unwrap();
-        log::coordinated_step(&mut conn, Some(move_op), true).unwrap();
+        log::navigate(&mut *conn, Some(create_op)).unwrap();
+        log::coordinated_step(&mut *conn, Some(move_op), true).unwrap();
     }
 
     // The forward step applied the post-move location (/b.txt); the rewind must
@@ -98,7 +98,7 @@ fn inverse_skip_rewinds_to_the_current_location() {
     // HEAD is at the move; roll it back one step with skip.
     {
         let mut conn = repo.conn.lock().unwrap();
-        log::coordinated_step(&mut conn, Some(create_op), true).unwrap();
+        log::coordinated_step(&mut *conn, Some(create_op), true).unwrap();
     }
     let _ = move_op;
 

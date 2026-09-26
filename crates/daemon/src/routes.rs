@@ -1247,7 +1247,7 @@ async fn rollback(
             repo_state.ensure_writable()?;
             let mut conn = slowlog::timed("wait:conn", || repo_state.conn.lock_recover());
             let resolved = crate::log::resolve_target(&conn, &target)?;
-            let result = crate::log::navigate(&mut conn, resolved)?;
+            let result = crate::log::navigate(&mut *conn, resolved)?;
             // Navigation rewrites tree positions arbitrarily: rebuild the cache
             // from the new state (keeps it complete; `populate` clears first).
             repo_state.lock_cache().populate(&conn)?;
@@ -1452,7 +1452,7 @@ async fn rollback_plan(
         let conn = slowlog::timed("wait:conn", || repo_state.conn.lock_recover());
         let head = crate::log::get_head(&conn)?;
         let resolved = crate::log::resolve_target(&conn, &target)?;
-        let path = crate::log::nav_path(&conn, head, resolved)?;
+        let path = crate::log::nav_path(&*conn, head, resolved)?;
         let mut cache = slowlog::timed("wait:cache", || repo_state.lock_cache());
         let mut ops = Vec::with_capacity(path.len());
         for (op, dir) in &path {
@@ -1475,7 +1475,7 @@ async fn rollback_plan_summary(
         let conn = slowlog::timed("wait:conn", || repo_state.conn.lock_recover());
         let head = crate::log::get_head(&conn)?;
         let resolved = crate::log::resolve_target(&conn, &target)?;
-        let path = crate::log::nav_path(&conn, head, resolved)?;
+        let path = crate::log::nav_path(&*conn, head, resolved)?;
         let mut by_type: std::collections::BTreeMap<String, usize> =
             std::collections::BTreeMap::new();
         let mut revs = std::collections::HashSet::new();
@@ -1511,7 +1511,7 @@ async fn rollback_start(
             // Nothing to do: the lock is not entered.
             return Ok(Json(json!({"op": null, "remaining": 0})));
         }
-        let path = crate::log::nav_path(&conn, head, resolved)?;
+        let path = crate::log::nav_path(&*conn, head, resolved)?;
         let (op, dir) = path.first().expect("non-empty path when head != target");
         let mut cache = slowlog::timed("wait:cache", || repo_state.lock_cache());
         let first = action_op_json(&conn, &mut cache, &repo_state.config.root, op, *dir)?;
@@ -2050,7 +2050,7 @@ async fn rollback_step(
 
         let done = {
             let mut conn = slowlog::timed("wait:conn", || repo_state.conn.lock_recover());
-            let (new_head, tree) = crate::log::coordinated_step(&mut conn, target, skip)?;
+            let (new_head, tree) = crate::log::coordinated_step(&mut *conn, target, skip)?;
             // The step says which TreeRef cells it rewrote, and the cache
             // settles exactly those (spec-file-tracking "Upkeep after a
             // write"). Rebuilding here instead is one scan of the `field`
@@ -2063,7 +2063,7 @@ async fn rollback_step(
             // it waits for arrives, so the order the operations come in is not
             // this caller's problem.
             repo_state.lock_cache().apply_ops(&tree);
-            let next = crate::log::nav_path(&conn, new_head, target)?;
+            let next = crate::log::nav_path(&*conn, new_head, target)?;
             if let Some((op, dir)) = next.first() {
                 let mut cache = slowlog::timed("wait:cache", || repo_state.lock_cache());
                 let op_json = action_op_json(&conn, &mut cache, &repo_state.config.root, op, *dir)?;
