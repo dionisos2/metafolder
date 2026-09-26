@@ -801,7 +801,7 @@ impl Apply<'_, '_> {
     fn eligible(&mut self, rel: &RelPath) -> Result<bool> {
         self.step("eligibility walk");
         let eligible = eligibility::is_eligible_cached(
-            self.writer.connection(),
+            self.writer.store(),
             self.cache,
             &rel.display(),
             self.elig,
@@ -814,7 +814,7 @@ impl Apply<'_, '_> {
 
     fn resolve(&mut self, rel: &RelPath) -> Result<Option<Uuid>> {
         self.step("resolve path");
-        self.cache.resolve_rel(self.writer.connection(), "mfr_path", rel)
+        self.cache.resolve_rel(self.writer.store(), "mfr_path", rel)
     }
 
     /// Resolves the parent directory entry of `rel`, creating any missing
@@ -973,7 +973,7 @@ impl Apply<'_, '_> {
     /// else being moved on top of it.
     fn orphan_subtree(&mut self, uuid: Uuid) -> Result<()> {
         self.step("orphan cascade over the subtree");
-        let descendants = self.cache.descendants(self.writer.connection(), "mfr_path", uuid)?;
+        let descendants = self.cache.descendants(self.writer.store(), "mfr_path", uuid)?;
         // Mass-orphan circuit breaker (spec-file-tracking): a single event that
         // would null thousands of paths is a filesystem going away, not a
         // deletion. Skipping is recoverable — the paths stay stale and
@@ -999,7 +999,7 @@ impl Apply<'_, '_> {
         // where the orphan last lived (spec-file-tracking "Orphan origin").
         let mut olds = Vec::with_capacity(descendants.len() + 1);
         for &u in std::iter::once(&uuid).chain(descendants.iter()) {
-            olds.push((u, self.cache.path_of(self.writer.connection(), "mfr_path", u)?));
+            olds.push((u, self.cache.path_of(self.writer.store(), "mfr_path", u)?));
         }
         for (u, old) in olds {
             // A cascade over a whole subtree is as long as the subtree.
@@ -1180,7 +1180,7 @@ impl Apply<'_, '_> {
         // relies on, and it fails the same safe way: a same-second, same-size
         // rewrite is missed, and reconcile is what catches it.
         let unchanged = {
-            let conn = self.writer.connection();
+            let conn = self.writer.store();
             let stored = |name: &str| -> Option<Value> {
                 Rows::rows_named(conn, uuid, name).ok().and_then(|rows| {
                     rows.into_iter().map(|r| r.value).find(|v| !matches!(v, Value::Nothing))
@@ -1281,7 +1281,7 @@ pub(crate) fn ensure_parent_metarecords(
     extra_fields: &[Field],
 ) -> Result<Uuid> {
     let mut parent = cache
-        .resolve_path(writer.connection(), "mfr_path", "")?
+        .resolve_path(writer.store(), "mfr_path", "")?
         .context("filesystem root entry missing — was the repository initialised?")?;
     // Walk down the ancestors, creating what is missing. The prefix carries the
     // exact bytes, so a directory whose own name does not decode is created
@@ -1289,7 +1289,7 @@ pub(crate) fn ensure_parent_metarecords(
     let mut prefix = RelPath::root();
     for comp in rel.parent().components() {
         prefix = prefix.child(comp.clone());
-        if let Some(existing) = cache.resolve_rel(writer.connection(), "mfr_path", &prefix)? {
+        if let Some(existing) = cache.resolve_rel(writer.store(), "mfr_path", &prefix)? {
             parent = existing;
             continue;
         }

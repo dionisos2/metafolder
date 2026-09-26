@@ -750,7 +750,7 @@ fn write_watch_frontier(
     let mut writer = repo.writer(conn, None)?;
     for rel in frontier {
         let path = crate::relpath::RelPath::from_display(rel);
-        let uuid = match cache.resolve_path(writer.connection(), "mfr_path", rel)? {
+        let uuid = match cache.resolve_path(writer.store(), "mfr_path", rel)? {
             Some(uuid) => uuid,
             None => {
                 // Not tracked yet — a directory the placement met before

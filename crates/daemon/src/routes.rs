@@ -579,10 +579,10 @@ where
         repo_state.ensure_writable()?;
         let mut conn = slowlog::timed("wait:conn", || repo_state.conn.lock_recover());
         let mut writer = repo_state.writer(&mut conn, None)?;
-        ensure_version(writer.connection(), uuid, expected_version)?;
+        ensure_version(writer.store(), uuid, expected_version)?;
         let touched = slowlog::timed("write.fields", || write(&mut writer))?;
         slowlog::timed("validate.schema", || {
-            validate_schema(repo_state, writer.connection(), uuid, &touched)
+            validate_schema(repo_state, writer.store(), uuid, &touched)
         })?;
         let effects = writer.effects();
         slowlog::timed("commit", || writer.commit())?;
@@ -634,7 +634,7 @@ where
             }
             updated += 1;
             slowlog::timed("validate.schema", || {
-                validate_schema(repo_state, writer.connection(), *uuid, std::slice::from_ref(&name))
+                validate_schema(repo_state, writer.store(), *uuid, std::slice::from_ref(&name))
             })?;
         }
         drop(writing);
@@ -3672,7 +3672,7 @@ async fn bulk_create_endpoint(
                 None => writer.create_metarecord(record.fields)?,
             };
             slowlog::timed("validate.schema", || {
-                validate_schema(repo_state, writer.connection(), made.uuid, &touched)
+                validate_schema(repo_state, writer.store(), made.uuid, &touched)
             })?;
             created += 1;
             uuids.push(made.uuid.as_simple().to_string());
@@ -3712,7 +3712,7 @@ async fn create_record_endpoint(
             }
             None => writer.create_metarecord(body.fields)?,
         };
-        validate_schema(repo_state, writer.connection(), created.uuid, &touched)?;
+        validate_schema(repo_state, writer.store(), created.uuid, &touched)?;
         let effects = writer.effects();
         slowlog::timed("commit", || writer.commit())?;
         repo_state.settle(&conn, &effects)?;
@@ -3748,7 +3748,7 @@ async fn delete_record_endpoint(
             return Err(ApiError::not_found(format!("Metarecord not found: {uuid}")));
         }
         let mut writer = repo_state.writer(&mut conn, None)?;
-        ensure_version(writer.connection(), uuid, ev.expected_version)?;
+        ensure_version(writer.store(), uuid, ev.expected_version)?;
         writer.delete_metarecord(uuid)?;
         let effects = writer.effects();
         slowlog::timed("commit", || writer.commit())?;
@@ -3810,7 +3810,7 @@ async fn set_record_field(
     let rows = resolved_values(body.value, body.values)?;
     write_record_checked(&state, repo_uuid, uuid, ev.expected_version, move |writer| {
         check_writable(&name, body.force)?;
-        ensure_exists(writer.connection(), uuid)?;
+        ensure_exists(writer.store(), uuid)?;
         writer.set_field_multi(uuid, &name, rows)?;
         Ok(vec![name])
     })
@@ -3831,7 +3831,7 @@ async fn unset_record_field(
     let uuid = parse_uuid(&uuid)?;
     write_record_checked(&state, repo_uuid, uuid, ev.expected_version, move |writer| {
         check_writable(&name, force)?;
-        ensure_exists(writer.connection(), uuid)?;
+        ensure_exists(writer.store(), uuid)?;
         writer.delete_fields_named(uuid, &name)?;
         Ok(vec![name])
     })
@@ -3862,7 +3862,7 @@ async fn put_metarecord(
         for field in &body.fields {
             check_writable(&field.name, body.force)?;
         }
-        ensure_exists(writer.connection(), uuid)?;
+        ensure_exists(writer.store(), uuid)?;
         let touched: Vec<String> = body.fields.iter().map(|f| f.name.clone()).collect();
         writer.set_record(uuid, body.fields)?;
         Ok(touched)
@@ -3884,7 +3884,7 @@ async fn append_field(
     write_record_checked(&state, repo_uuid, uuid, ev.expected_version, move |writer| {
         check_writable(&body.name, body.force)?;
         slowlog::note("field", body.name.as_str());
-        ensure_exists(writer.connection(), uuid)?;
+        ensure_exists(writer.store(), uuid)?;
         writer.append_field(uuid, &body.name, value)?;
         Ok(vec![body.name])
     })
@@ -3954,12 +3954,7 @@ async fn patch_field_by_id(
 
         let mut writer = repo_state.writer(&mut conn, None)?;
         writer.rename_field(uuid, id, &new_name, new_value)?;
-        validate_schema(
-            repo_state,
-            writer.connection(),
-            uuid,
-            &[old.name.clone(), new_name.clone()],
-        )?;
+        validate_schema(repo_state, writer.store(), uuid, &[old.name.clone(), new_name.clone()])?;
         let effects = writer.effects();
         slowlog::timed("commit", || writer.commit())?;
         repo_state.settle(&conn, &effects)?;
@@ -3985,7 +3980,7 @@ async fn delete_field_by_id(
         check_writable(&row.name, force)?;
         let mut writer = repo_state.writer(&mut conn, None)?;
         writer.delete_field(uuid, id)?;
-        validate_schema(repo_state, writer.connection(), uuid, std::slice::from_ref(&row.name))?;
+        validate_schema(repo_state, writer.store(), uuid, std::slice::from_ref(&row.name))?;
         let effects = writer.effects();
         slowlog::timed("commit", || writer.commit())?;
         repo_state.settle(&conn, &effects)?;

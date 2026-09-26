@@ -133,7 +133,7 @@ pub fn reconcile_full_reported(
     // Declared mount points with nothing mounted on them: their subtrees are
     // frozen — not walked, not orphaned, not offered as candidates
     // (spec-file-tracking "Offline subtrees").
-    let offline = crate::mount::offline(writer.connection(), &mut cache, &root)?;
+    let offline = crate::mount::offline(writer.store(), &mut cache, &root)?;
     let paths = walk(
         &mut writer,
         &mut cache,
@@ -170,7 +170,7 @@ pub fn reconcile_full_reported(
         if meta.is_file() {
             disk_files.push(rel.clone());
         }
-        if cache.resolve_rel(writer.connection(), "mfr_path", rel)?.is_none() {
+        if cache.resolve_rel(writer.store(), "mfr_path", rel)?.is_none() {
             new_files.push((rel.clone(), meta.clone()));
         }
     }
@@ -189,7 +189,7 @@ pub fn reconcile_full_reported(
                 return Err(cancelled());
             }
         }
-        let Some(path) = cache.path_of(writer.connection(), "mfr_path", uuid)? else {
+        let Some(path) = cache.path_of(writer.store(), "mfr_path", uuid)? else {
             continue;
         };
         if path.is_empty() {
@@ -373,7 +373,7 @@ pub fn reconcile_full_reported(
         if claimed.contains(rel) {
             continue;
         }
-        if cache.resolve_rel(writer.connection(), "mfr_path", rel)?.is_some() {
+        if cache.resolve_rel(writer.store(), "mfr_path", rel)?.is_some() {
             continue; // Already created as a parent of an earlier path.
         }
         create_record_for(&mut writer, &mut cache, &root, rel, &[], compute_mime)?;
@@ -396,7 +396,7 @@ pub fn reconcile_full_reported(
                     return Err(cancelled());
                 }
             }
-            if let Some(uuid) = cache.resolve_rel(writer.connection(), "mfr_path", rel)? {
+            if let Some(uuid) = cache.resolve_rel(writer.store(), "mfr_path", rel)? {
                 refresh_stat_fields(&mut writer, &root, uuid, rel)?;
             }
         }
@@ -414,7 +414,7 @@ pub fn reconcile_full_reported(
                     return Err(cancelled());
                 }
             }
-            if let Some(uuid) = cache.resolve_rel(writer.connection(), "mfr_path", rel)? {
+            if let Some(uuid) = cache.resolve_rel(writer.store(), "mfr_path", rel)? {
                 maybe_compute_mime(&mut writer, &root, uuid, rel)?;
             }
         }
@@ -433,7 +433,7 @@ pub fn reconcile_full_reported(
                     return Err(cancelled());
                 }
             }
-            if let Some(uuid) = cache.resolve_rel(writer.connection(), "mfr_path", rel)? {
+            if let Some(uuid) = cache.resolve_rel(writer.store(), "mfr_path", rel)? {
                 maybe_extract_metadata(&mut writer, &root, uuid, rel, &map)?;
             }
         }
@@ -545,7 +545,7 @@ pub fn reconcile_metarecord_reported(
         }
         // The subtree root itself was made eligible by the caller setting
         // mf_watch directly; descendants were eligibility-checked by walk().
-        match cache.resolve_rel(writer.connection(), "mfr_path", rel)? {
+        match cache.resolve_rel(writer.store(), "mfr_path", rel)? {
             Some(existing) => {
                 if refresh {
                     refresh_stat_fields(&mut writer, &root, existing, rel)?;
@@ -571,7 +571,7 @@ pub fn reconcile_metarecord_reported(
             if !meta.is_file() {
                 continue;
             }
-            if let Some(uuid) = cache.resolve_rel(writer.connection(), "mfr_path", rel)? {
+            if let Some(uuid) = cache.resolve_rel(writer.store(), "mfr_path", rel)? {
                 maybe_compute_mime(&mut writer, &root, uuid, rel)?;
             }
         }
@@ -591,7 +591,7 @@ pub fn reconcile_metarecord_reported(
             if !meta.is_file() {
                 continue;
             }
-            if let Some(uuid) = cache.resolve_rel(writer.connection(), "mfr_path", rel)? {
+            if let Some(uuid) = cache.resolve_rel(writer.store(), "mfr_path", rel)? {
                 maybe_extract_metadata(&mut writer, &root, uuid, rel, &map)?;
             }
         }
@@ -669,7 +669,7 @@ fn walk(
                 // Ignore patterns are regexes over text, so they see the
                 // displayed path — the same one the user wrote them against.
                 let display = rel.display();
-                if !eligibility::is_eligible_cached(writer.connection(), cache, &display, elig)? {
+                if !eligibility::is_eligible_cached(writer.store(), cache, &display, elig)? {
                     continue;
                 }
                 // `file_type` is free here (from the dir entry, no stat).

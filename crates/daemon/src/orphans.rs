@@ -74,7 +74,7 @@ pub fn clear_orphans(repo: &RepoState, uuids: &[Uuid]) -> Result<usize, ApiError
     let mut cleared = 0;
 
     for &uuid in uuids {
-        let Some(path) = cache.path_of(writer.connection(), "mfr_path", uuid)? else {
+        let Some(path) = cache.path_of(writer.store(), "mfr_path", uuid)? else {
             continue; // Already Nothing (e.g. cascaded by an earlier iteration).
         };
         if path.is_empty() {
@@ -89,10 +89,10 @@ pub fn clear_orphans(repo: &RepoState, uuids: &[Uuid]) -> Result<usize, ApiError
         // Snapshot every path *before* any write: clearing a parent's `mfr_path`
         // would break its descendants' `path_of` walk (mirrors the watcher's
         // `apply_remove`; spec-file-tracking "Orphan origin").
-        let descendants = cache.descendants(writer.connection(), "mfr_path", uuid)?;
+        let descendants = cache.descendants(writer.store(), "mfr_path", uuid)?;
         let mut olds = Vec::with_capacity(descendants.len() + 1);
         for &u in std::iter::once(&uuid).chain(descendants.iter()) {
-            olds.push((u, cache.path_of(writer.connection(), "mfr_path", u)?));
+            olds.push((u, cache.path_of(writer.store(), "mfr_path", u)?));
         }
         for (u, old) in olds {
             if let Some(old) = old {

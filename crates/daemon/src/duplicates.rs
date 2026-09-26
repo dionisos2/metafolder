@@ -431,7 +431,7 @@ fn reclaimable_from_inodes<'a>(size: i64, inodes: impl Iterator<Item = Option<&'
 /// interfaces display is not an internal detail, and "stale but harmless" is
 /// false the moment it is shown to someone deciding what to delete.
 pub fn leave_group(writer: &mut Writer, op: OpType, uuid: Uuid) -> anyhow::Result<()> {
-    let group = crate::store::Rows::rows_named(writer.connection(), uuid, GROUP_FIELD)?
+    let group = crate::store::Rows::rows_named(writer.store(), uuid, GROUP_FIELD)?
         .into_iter()
         .find_map(|row| match row.value {
             Value::Ref(group) => Some(group),
@@ -449,23 +449,23 @@ pub fn leave_group(writer: &mut Writer, op: OpType, uuid: Uuid) -> anyhow::Resul
 /// duplicate, so the survivor's own link goes with the group metarecord
 /// (spec-duplicates "Invariant").
 pub fn refresh_group(writer: &mut Writer, op: OpType, group: Uuid) -> anyhow::Result<()> {
-    let members = crate::store::Questions::duplicate_group_members(writer.connection(), group)?;
+    let members = crate::store::Questions::duplicate_group_members(writer.store(), group)?;
     if members.len() < 2 {
         for member in members {
             writer.clear_field_as(op, member, GROUP_FIELD)?;
         }
         // The group may already be gone (two members of one group departing in
         // the same flush); deleting it twice is an error, not a no-op.
-        if crate::store::Rows::version(writer.connection(), group)?.is_some() {
+        if crate::store::Rows::version(writer.store(), group)?.is_some() {
             writer.delete_metarecord(group)?;
         }
         return Ok(());
     }
-    let size = int_field(writer.connection(), group, "mfr_content_size")?.unwrap_or(0);
+    let size = int_field(writer.store(), group, "mfr_content_size")?.unwrap_or(0);
     let mut inodes = Vec::with_capacity(members.len());
     for &member in &members {
         inodes.push(
-            crate::store::Rows::rows_named(writer.connection(), member, "mfr_inode")?
+            crate::store::Rows::rows_named(writer.store(), member, "mfr_inode")?
                 .into_iter()
                 .find_map(|row| match row.value {
                     Value::String(inode) => Some(inode),
@@ -478,8 +478,8 @@ pub fn refresh_group(writer: &mut Writer, op: OpType, group: Uuid) -> anyhow::Re
     // Only what changed: removing one of two hard-linked names drops the count
     // without freeing a byte, and a redundant write would be a redundant
     // operation in the log.
-    let stored_count = int_field(writer.connection(), group, "mfr_duplicate_count")?;
-    let stored_reclaimable = int_field(writer.connection(), group, "mfr_duplicate_reclaimable")?;
+    let stored_count = int_field(writer.store(), group, "mfr_duplicate_count")?;
+    let stored_reclaimable = int_field(writer.store(), group, "mfr_duplicate_reclaimable")?;
     if stored_count != Some(count) {
         writer.set_field_as(op, group, "mfr_duplicate_count", Value::Int(count))?;
     }

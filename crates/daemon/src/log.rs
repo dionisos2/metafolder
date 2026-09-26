@@ -1525,12 +1525,6 @@ impl<'c> Writer<'c> {
         &*self.tx
     }
 
-    /// The SQLite connection underneath — transitional, for the lookups that
-    /// have not moved onto [`Self::store`] yet (tree cache, eligibility).
-    pub fn connection(&self) -> &rusqlite::Connection {
-        self.tx.as_sqlite().expect("a SQLite write transaction")
-    }
-
     /// Drops the queued restorations up to `up_to` in this revision's
     /// transaction — the one that re-records them, so a crash cannot replay
     /// them twice.
