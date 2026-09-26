@@ -245,7 +245,8 @@ fn targets(store: &Store) -> Result<(Uuid, Uuid)> {
         usize::MAX,
     )?;
     let mut best = (0u64, root);
-    for d in &dirs.uuids {
+    // The forest roots too: an imported repository's root carries no type.
+    for d in dirs.uuids.iter().chain([&root]) {
         let n = store.query(&Q::Child { field: P.into(), node: *d }, &Sort::None, 0)?.count;
         if n > best.0 {
             best = (n, *d);
@@ -379,6 +380,20 @@ fn warm(store: &Store, g: &Gesture, counted: bool) -> Result<(f64, u64, u64)> {
     Ok((median(times), reads, count))
 }
 
+/// The process's anonymous memory (heap: what a repository costs in RAM) and
+/// its file-backed resident pages (the mapped store: page cache, reclaimable).
+fn memory() -> String {
+    let status = std::fs::read_to_string("/proc/self/status").unwrap_or_default();
+    let field = |name: &str| {
+        status.lines().find(|l| l.starts_with(name)).map_or("?".to_string(), |l| {
+            l.split_whitespace()
+                .nth(1)
+                .map_or("?".into(), |kb| format!("{} MB", kb.parse::<u64>().unwrap_or(0) / 1024))
+        })
+    };
+    format!("heap (RssAnon) {}, mapped (RssFile) {}", field("RssAnon:"), field("RssFile:"))
+}
+
 fn median(mut v: Vec<f64>) -> f64 {
     v.sort_by(|a, b| a.partial_cmp(b).unwrap());
     v[v.len() / 2]
@@ -428,6 +443,7 @@ fn bench(dir: &Path, cold: bool) -> Result<()> {
         }
         println!("{line}");
     }
+    println!("{}", memory());
     let s = store.unwrap();
     write_gestures(&s)?;
     Ok(())
