@@ -1559,6 +1559,14 @@ impl<'a> SortKeys<'a> {
         WalkEnd::Completed
     }
 
+    /// Whether one of `uuid`'s positions in `field` has a name `keep` accepts
+    /// — the per-record form of the index's name scan (the same display form
+    /// of the same names), for the text checks a walked page defers.
+    pub fn any_name(&self, field: &str, uuid: Uuid, keep: &dyn Fn(&str) -> bool) -> bool {
+        let idxs = self.cache.fields.get(field).and_then(|ft| ft.by_uuid.get(&uuid));
+        idxs.is_some_and(|idxs| idxs.iter().any(|&i| keep(&self.cache.node(i).name.display())))
+    }
+
     /// The next sibling of a frame in name order; `Err` when the order cannot
     /// be the key order (equal names, or a character below the separator).
     fn next_sibling(&self, frame: &mut Frame) -> Result<Option<usize>, ()> {

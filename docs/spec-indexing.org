@@ -358,7 +358,21 @@ carries. When the query bounds its matches to a subtree — a path-target
 =and= — the walk starts below that node instead of at the roots; only while no
 metarecord of the forest holds several positions (=TreeCache::multi_positioned=,
 always the case for =mfr_path=), since one could match inside and sort on a
-smaller position outside, which a bounded walk would not meet in time. The walk refuses — and the fetch answers — when it cannot vouch for the
+smaller position outside, which a bounded walk would not meet in time.
+
+*A page without a count checks text where the walk looks.* A =Matches= on the
+=value= aspect or an =osm direct= on a =tree_ref= field — alone, or among the
+operands of an =and= — is not evaluated up front when the request does not ask
+for a count: the other operands give the candidates (within the holders of the
+leaf's field), and the regex is run on the names of the ids a walk visits,
+which the resident forest holds per metarecord (=SortKeys::any_name=, the same
+display form the name partition is keyed by). A search as you type then costs
+its page instead of a scan of every distinct name. When the page is not walked
+— the fetch is cheaper, the walk runs over its budget, or the sort is a top-k,
+which takes no per-id check — the leaves are evaluated over the candidates
+after all, and the now exact set may still walk. A request that asks for the
+count pays for the whole set, as before; so does a text leaf on a =string=
+field, whose values the index holds only by value. The walk refuses — and the fetch answers — when it cannot vouch for the
 key order: the cursor's node is gone, two siblings display the same name, or a
 name holds a character at or below the key separator. A descending path sort is
 left to the fetch (its walk would be a reversed post-order; not built).

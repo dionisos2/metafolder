@@ -204,6 +204,21 @@ fn walk_bound(q: &Query, field: &str, roots: &QueryRoots<'_>) -> Option<Uuid> {
     }
 }
 
+/// Text leaves a page without a count defers to the ids a walk visits
+/// (spec-indexing "A page costs the page"): each is a regex over the names of
+/// a `tree_ref` field, which the resident forest holds per metarecord.
+struct Residual<'q, 'k> {
+    leaves: Vec<&'q Query>,
+    checks: Vec<(&'q str, regex::Regex)>,
+    keys: &'k crate::tree_cache::SortKeys<'k>,
+}
+
+impl Residual<'_, '_> {
+    fn accepts(&self, uuid: Uuid) -> bool {
+        self.checks.iter().all(|(field, re)| self.keys.any_name(field, uuid, &|n| re.is_match(n)))
+    }
+}
+
 /// What reading one match's sort key costs in a fetch, in walk steps.
 const FETCH_COST: u64 = 4;
 
@@ -782,14 +797,104 @@ impl RepoIndex {
         cursor: Option<&str>,
         roots: Option<&QueryRoots>,
     ) -> Result<(Vec<Uuid>, Option<String>), Unsupported> {
+        // A page without a count need not know every match: a text leaf on a
+        // forest's names is checked on the ids a walk visits.
+        let keys = roots.and_then(|r| r.keys).filter(|k| k.is_resident());
+        if let (Some(_), Some(keys)) = (limit.filter(|&l| l > 0), keys) {
+            if let Some((rest, leaves)) = self.deferrable_text(q) {
+                let (candidates, residual) = self.defer_text(&rest, leaves, roots, keys)?;
+                return self.page_of_with(
+                    candidates,
+                    Some(&residual),
+                    q,
+                    sort,
+                    limit,
+                    cursor,
+                    roots,
+                );
+            }
+        }
         let matched = self.eval(q, roots)?;
         self.page_of(matched, q, sort, limit, cursor, roots)
+    }
+
+    /// Splits `q` into the operands evaluated as bitmaps and the text leaves
+    /// that can wait: a `Matches` on the `value` aspect or an `osm direct` on a
+    /// `tree_ref` field (their text is the names the resident forest holds),
+    /// alone or among the operands of an `and`. `None` when there is none.
+    fn deferrable_text<'q>(&self, q: &'q Query) -> Option<(Vec<&'q Query>, Vec<&'q Query>)> {
+        let deferrable = |q: &Query| match q {
+            Query::Matches { field, aspect: Aspect::Value, .. }
+            | Query::Osm { field, mode: metafolder_core::query::OsmMode::Direct, .. } => {
+                self.types.get(field.as_str()) == Some(&"tree_ref")
+            }
+            _ => false,
+        };
+        let (rest, leaves): (Vec<&Query>, Vec<&Query>) = match q {
+            Query::And { operands } => operands.iter().partition(|o| !deferrable(o)),
+            q if deferrable(q) => (Vec::new(), vec![q]),
+            _ => return None,
+        };
+        (!leaves.is_empty()).then_some((rest, leaves))
+    }
+
+    /// The candidates of a query whose text leaves wait — its other operands
+    /// (text last, as [`Self::intersect`] does), within the holders of each
+    /// leaf's field — and the checks the leaves leave to the page.
+    fn defer_text<'q, 'k>(
+        &self,
+        rest: &[&Query],
+        leaves: Vec<&'q Query>,
+        roots: Option<&QueryRoots>,
+        keys: &'k crate::tree_cache::SortKeys<'k>,
+    ) -> Result<(RoaringBitmap, Residual<'q, 'k>), Unsupported> {
+        let (text, plain): (Vec<&Query>, Vec<&Query>) =
+            rest.iter().copied().partition(|o| is_text_predicate(o));
+        let mut acc: Option<RoaringBitmap> = None;
+        for operand in plain.into_iter().chain(text) {
+            let bm = self.eval_within(operand, roots, acc.as_ref())?;
+            acc = Some(match acc {
+                None => bm,
+                Some(prev) => prev & bm,
+            });
+        }
+        let mut candidates = acc.unwrap_or_else(|| self.universe.clone());
+        let mut checks = Vec::new();
+        for leaf in &leaves {
+            let (field, pattern) = match leaf {
+                Query::Matches { field, pattern, .. } => (field, pattern.clone()),
+                Query::Osm { field, terms, .. } => (field, crate::query_result::osm_regex(terms)),
+                _ => unreachable!("a deferrable leaf"),
+            };
+            candidates &= self.present.get(field.as_str()).cloned().unwrap_or_default();
+            let re = crate::regexp::compile(&pattern)
+                .map_err(|e| unsupported(format!("pattern the index cannot compile: {e}")))?;
+            checks.push((field.as_str(), re));
+        }
+        Ok((candidates, Residual { leaves, checks, keys }))
     }
 
     /// Sorts, cuts and paginates an already-evaluated match set.
     fn page_of(
         &self,
         matched: RoaringBitmap,
+        q: &Query,
+        sort: &[SortBy],
+        limit: Option<usize>,
+        cursor: Option<&str>,
+        roots: Option<&QueryRoots<'_>>,
+    ) -> Result<(Vec<Uuid>, Option<String>), Unsupported> {
+        self.page_of_with(matched, None, q, sort, limit, cursor, roots)
+    }
+
+    /// [`Self::page_of`] over a candidate set, of which `residual`'s checks
+    /// keep only some: a walk applies them to what it visits; otherwise they
+    /// are evaluated over every candidate first.
+    #[allow(clippy::too_many_arguments)]
+    fn page_of_with(
+        &self,
+        matched: RoaringBitmap,
+        residual: Option<&Residual<'_, '_>>,
         q: &Query,
         sort: &[SortBy],
         limit: Option<usize>,
@@ -815,9 +920,28 @@ impl RepoIndex {
         // A page read from an ordered structure until it is full, when that is
         // cheaper than sorting the whole match set (spec-indexing "A page costs
         // the page"). `None` means the fetch below does it.
+        let mut matched = matched;
         if let Some(limit) = limit.filter(|&l| l > 0) {
-            if let Some(ids) = self.walk_page(&matched, q, sort, limit, after.as_ref(), roots)? {
+            let walked =
+                self.walk_page(&matched, q, sort, limit, after.as_ref(), roots, residual)?;
+            if let Some(ids) = walked {
                 return self.walked_page(ids, limit, guard, sort, roots);
+            }
+        }
+        if let Some(residual) = residual {
+            // Not walked: the deferred leaves are evaluated after all, over the
+            // candidates — and the exact set may walk where the candidates
+            // could not (a top-k over the bit-slices takes no per-id check).
+            for leaf in &residual.leaves {
+                let bm = self.eval_within(leaf, roots, Some(&matched))?;
+                matched &= bm;
+            }
+            if let Some(limit) = limit.filter(|&l| l > 0) {
+                let walked =
+                    self.walk_page(&matched, q, sort, limit, after.as_ref(), roots, None)?;
+                if let Some(ids) = walked {
+                    return self.walked_page(ids, limit, guard, sort, roots);
+                }
             }
         }
 
@@ -887,7 +1011,10 @@ impl RepoIndex {
         limit: usize,
         after: Option<&SortEntry>,
         roots: Option<&QueryRoots<'_>>,
+        residual: Option<&Residual<'_, '_>>,
     ) -> Result<Option<Vec<u32>>, Unsupported> {
+        let accepts =
+            |id: u32, uuid: Uuid| matched.contains(id) && residual.is_none_or(|r| r.accepts(uuid));
         if sort.is_empty() {
             // The default order is the uuid order, which the registry keeps.
             let span = self.registry.len() as u64;
@@ -895,11 +1022,11 @@ impl RepoIndex {
                 return Ok(None);
             };
             let mut out = Vec::new();
-            for (steps, (_, id)) in self.registry.in_uuid_order(after.map(|a| a.1)).enumerate() {
+            for (steps, (uuid, id)) in self.registry.in_uuid_order(after.map(|a| a.1)).enumerate() {
                 if steps >= budget {
                     return Ok(None);
                 }
-                if matched.contains(id) {
+                if accepts(id, uuid) {
                     out.push(id);
                     if out.len() > limit {
                         break;
@@ -915,7 +1042,9 @@ impl RepoIndex {
             let bsi = self.fields.get(&key.field).filter(|fi| fi.bsi_valued().is_some());
             let mixed = self.sort.get(&key.field).is_some_and(|s| !s.is_empty());
             if let (Some(fi), false) = (bsi, mixed) {
-                if self.strategy == PageStrategy::Fetch {
+                // The top-k takes no per-id check: with text still to check,
+                // the leaves are evaluated first (see `page_of_with`).
+                if self.strategy == PageStrategy::Fetch || residual.is_some() {
                     return Ok(None);
                 }
                 return Ok(self.bsi_page(matched, fi, !key.ascending, limit, after));
@@ -925,7 +1054,9 @@ impl RepoIndex {
             let keys = roots.and_then(|r| r.keys).filter(|k| k.is_resident());
             if let (true, true, Some(keys)) = (tree, key.ascending, keys) {
                 let within = roots.and_then(|r| walk_bound(q, &key.field, r));
-                return Ok(self.tree_page(matched, &key.field, keys, within, limit, after));
+                return Ok(
+                    self.tree_page(matched, &accepts, &key.field, keys, within, limit, after)
+                );
             }
         }
         Ok(None)
@@ -936,9 +1067,11 @@ impl RepoIndex {
     /// ([`crate::tree_cache::SortKeys::walk_ascending`]), then the ids in no
     /// forest position, by uuid. `None` to fetch instead: the walk is not
     /// expected to be cheaper, ran over its budget, or refused.
+    #[allow(clippy::too_many_arguments)]
     fn tree_page(
         &self,
         matched: &RoaringBitmap,
+        accepts: &dyn Fn(u32, Uuid) -> bool,
         field: &str,
         keys: &crate::tree_cache::SortKeys<'_>,
         within: Option<Uuid>,
@@ -967,7 +1100,7 @@ impl RepoIndex {
                     over = true;
                     return false;
                 }
-                if let Some(id) = self.registry.id(uuid).filter(|&id| matched.contains(id)) {
+                if let Some(id) = self.registry.id(uuid).filter(|&id| accepts(id, uuid)) {
                     out.push(id);
                 }
                 out.len() < want
@@ -977,18 +1110,26 @@ impl RepoIndex {
             }
         }
         if out.len() < want {
-            out.extend(self.by_uuid_after(&(matched - placed), tail_after, want - out.len()));
+            let tail = matched - placed;
+            out.extend(self.by_uuid_after(&tail, tail_after, want - out.len(), accepts));
         }
         Some(out)
     }
 
     /// The `n` smallest-uuid ids of `set` after `after`, in uuid order — the
     /// tail of a sort (the ids lacking its key).
-    fn by_uuid_after(&self, set: &RoaringBitmap, after: Option<Uuid>, n: usize) -> Vec<u32> {
+    fn by_uuid_after(
+        &self,
+        set: &RoaringBitmap,
+        after: Option<Uuid>,
+        n: usize,
+        accepts: &dyn Fn(u32, Uuid) -> bool,
+    ) -> Vec<u32> {
         let mut rest: Vec<(Uuid, u32)> = set
             .iter()
             .map(|id| (self.registry.uuid(id).expect("interned id"), id))
             .filter(|(u, _)| after.is_none_or(|a| *u > a))
+            .filter(|&(u, id)| accepts(id, u))
             .collect();
         if n == 0 {
             return Vec::new();
@@ -1051,7 +1192,7 @@ impl RepoIndex {
         if out.len() < want {
             // Lacking the field (or holding only `Nothing`): last, by uuid.
             let tail = matched - fi.bsi_valued().expect("a BSI field");
-            out.extend(self.by_uuid_after(&tail, tail_after, want - out.len()));
+            out.extend(self.by_uuid_after(&tail, tail_after, want - out.len(), &|_, _| true));
         }
         Some(out)
     }

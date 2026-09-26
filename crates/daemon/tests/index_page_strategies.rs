@@ -8,7 +8,7 @@
 //! ties.
 
 use metafolder_core::metarecord::{Field, Value};
-use metafolder_core::query::{FollowTarget, Query};
+use metafolder_core::query::{Aspect, FollowTarget, OsmMode, Query};
 use metafolder_daemon::db;
 use metafolder_daemon::index::{collect_path_targets, PageStrategy, QueryRoots, RepoIndex, SortBy};
 use metafolder_daemon::log::Writer;
@@ -122,6 +122,11 @@ fn queries(conn: &Connection, cache: &mut TreeCache) -> Vec<Query> {
     let present = |f: &str| Query::IsPresent { field: f.into(), aspect: Default::default() };
     let eq =
         |f: &str, v: Value| Query::Eq { field: f.into(), value: v, aspect: Default::default() };
+    let matches = |f: &str, p: &str| Query::Matches {
+        field: f.into(),
+        pattern: p.into(),
+        aspect: if f == P { Aspect::Value } else { Aspect::Raw },
+    };
     let _ = (conn, cache);
     vec![
         present("kind"),
@@ -135,6 +140,21 @@ fn queries(conn: &Connection, cache: &mut TreeCache) -> Vec<Query> {
         },
         Query::And {
             operands: vec![present("size"), Query::Not { operand: Box::new(eq("kind", s("dir"))) }],
+        },
+        // Text on the forest's names: checked where a walk looks, when the page
+        // comes without a count.
+        matches(P, "^f[0-4]"),
+        Query::Osm { field: P.into(), terms: vec!["f1".into()], mode: OsmMode::Direct },
+        Query::And {
+            operands: vec![
+                Query::FollowsTransitive {
+                    field: P.into(),
+                    target: FollowTarget::Path("/d00".into()),
+                    inclusive: false,
+                },
+                matches(P, "7"),
+                matches("kind", "^(photo|song)$"),
+            ],
         },
     ]
 }
