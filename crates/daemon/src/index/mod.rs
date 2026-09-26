@@ -799,7 +799,7 @@ impl RepoIndex {
         // cheaper than sorting the whole match set (spec-indexing "A page costs
         // the page"). `None` means the fetch below does it.
         if let Some(limit) = limit.filter(|&l| l > 0) {
-            if let Some(ids) = self.walk_page(&matched, sort, limit, after.as_ref())? {
+            if let Some(ids) = self.walk_page(&matched, sort, limit, after.as_ref(), roots)? {
                 return self.walked_page(ids, limit, guard, sort, roots);
             }
         }
@@ -868,6 +868,7 @@ impl RepoIndex {
         sort: &[SortBy],
         limit: usize,
         after: Option<&SortEntry>,
+        roots: Option<&QueryRoots<'_>>,
     ) -> Result<Option<Vec<u32>>, Unsupported> {
         if sort.is_empty() {
             // The default order is the uuid order, which the registry keeps.
@@ -901,8 +902,83 @@ impl RepoIndex {
                 }
                 return Ok(self.bsi_page(matched, fi, !key.ascending, limit, after));
             }
+            // An ascending path sort walks the resident forest in key order.
+            let tree = self.types.get(key.field.as_str()) == Some(&"tree_ref");
+            let keys = roots.and_then(|r| r.keys).filter(|k| k.is_resident());
+            if let (true, true, Some(keys)) = (tree, key.ascending, keys) {
+                return Ok(self.tree_page(matched, &key.field, keys, limit, after));
+            }
         }
         Ok(None)
+    }
+
+    /// Up to `limit + 1` ids of `matched` in ascending path order after
+    /// `after`: the forest walked in key order from the cursor's node
+    /// ([`crate::tree_cache::SortKeys::walk_ascending`]), then the ids in no
+    /// forest position, by uuid. `None` to fetch instead: the walk is not
+    /// expected to be cheaper, ran over its budget, or refused.
+    fn tree_page(
+        &self,
+        matched: &RoaringBitmap,
+        field: &str,
+        keys: &crate::tree_cache::SortKeys<'_>,
+        limit: usize,
+        after: Option<&SortEntry>,
+    ) -> Option<Vec<u32>> {
+        let empty = RoaringBitmap::new();
+        let placed = self.present.get(field).unwrap_or(&empty);
+        let budget = self.walk_budget(matched.len(), placed.len(), limit)?;
+        let want = limit + 1;
+        let mut out: Vec<u32> = Vec::new();
+        let (walk, resume, tail_after) = match after {
+            None => (true, None, None),
+            Some((reps, cursor)) => match reps.first() {
+                Some(Some(SortRep::Tree(k))) => (true, Some((*cursor, k.as_ref())), None),
+                Some(None) => (false, None, Some(*cursor)),
+                _ => return None,
+            },
+        };
+        if walk {
+            let mut steps = 0usize;
+            let mut over = false;
+            let end = keys.walk_ascending(field, resume, &mut |uuid| {
+                steps += 1;
+                if steps > budget {
+                    over = true;
+                    return false;
+                }
+                if let Some(id) = self.registry.id(uuid).filter(|&id| matched.contains(id)) {
+                    out.push(id);
+                }
+                out.len() < want
+            });
+            if over || end == crate::tree_cache::WalkEnd::Refused {
+                return None;
+            }
+        }
+        if out.len() < want {
+            out.extend(self.by_uuid_after(&(matched - placed), tail_after, want - out.len()));
+        }
+        Some(out)
+    }
+
+    /// The `n` smallest-uuid ids of `set` after `after`, in uuid order — the
+    /// tail of a sort (the ids lacking its key).
+    fn by_uuid_after(&self, set: &RoaringBitmap, after: Option<Uuid>, n: usize) -> Vec<u32> {
+        let mut rest: Vec<(Uuid, u32)> = set
+            .iter()
+            .map(|id| (self.registry.uuid(id).expect("interned id"), id))
+            .filter(|(u, _)| after.is_none_or(|a| *u > a))
+            .collect();
+        if n == 0 {
+            return Vec::new();
+        }
+        if rest.len() > n {
+            rest.select_nth_unstable(n - 1);
+            rest.truncate(n);
+        }
+        rest.sort_unstable();
+        rest.into_iter().map(|(_, id)| id).collect()
     }
 
     /// Up to `limit + 1` ids of `matched` sorted on one BSI key, after `after`:
@@ -955,18 +1031,7 @@ impl RepoIndex {
         if out.len() < want {
             // Lacking the field (or holding only `Nothing`): last, by uuid.
             let tail = matched - fi.bsi_valued().expect("a BSI field");
-            let mut rest: Vec<(Uuid, u32)> = tail
-                .iter()
-                .map(|id| (uuid(id), id))
-                .filter(|(u, _)| tail_after.is_none_or(|a| *u > a))
-                .collect();
-            let need = want - out.len();
-            if rest.len() > need {
-                rest.select_nth_unstable(need - 1);
-                rest.truncate(need);
-            }
-            rest.sort_unstable();
-            out.extend(rest.into_iter().map(|(_, id)| id));
+            out.extend(self.by_uuid_after(&tail, tail_after, want - out.len()));
         }
         Some(out)
     }

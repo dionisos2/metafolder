@@ -101,7 +101,20 @@ fn fixture() -> Connection {
         // Names are unique per parent in the forest; a clash is simply retried.
         let _ = w.create_metarecord(fields);
     }
+    // A directory that will lose its own position, leaving its children
+    // detached: the cache keeps them apart as roots of their own, and the
+    // oracle sorts them by their bare names (see index_oracle's
+    // `tree_ref_sort_with_a_detached_node`). Made with a name sorting mid-way.
+    let gone = w.create_metarecord(vec![tref(Some(dirs[3]), "gone")]).unwrap().uuid;
+    for name in ["kept", "d05x", "zzz"] {
+        w.create_metarecord(vec![tref(Some(gone), name), Field::new("kind", s("photo"))]).unwrap();
+    }
     w.commit().unwrap();
+    conn.execute(
+        "DELETE FROM field WHERE metarecord_uuid = ?1 AND field_name = ?2",
+        rusqlite::params![gone.as_bytes().to_vec(), P],
+    )
+    .unwrap();
     conn
 }
 

@@ -1387,6 +1387,160 @@ impl<'a> SortKeys<'a> {
     }
 }
 
+/// How a sorted walk of a forest ended ([`SortKeys::walk_ascending`]).
+#[derive(Debug, PartialEq, Eq)]
+pub enum WalkEnd {
+    /// Every node was visited.
+    Completed,
+    /// The visitor asked to stop.
+    Stopped,
+    /// The walk cannot reproduce the key order here — the caller sorts
+    /// instead: the resume position is gone, two siblings display the same
+    /// name, or a name holds a character that sorts below [`PATH_KEY_SEP`].
+    Refused,
+}
+
+/// Siblings in key order, sorted a chunk at a time: a page of a folder of
+/// 250 000 entries sorts the first few hundred of them, not all.
+struct Frame {
+    rest: Vec<usize>,
+    /// The next sorted chunk, reversed (popped from the end).
+    ready: Vec<usize>,
+}
+
+/// How many siblings a frame sorts at once.
+const WALK_CHUNK: usize = 128;
+
+impl<'a> SortKeys<'a> {
+    /// Visits `field`'s forest in ascending sort-key order — pre-order, each
+    /// node's children by name — calling `visit` with each metarecord at its
+    /// *smallest* position only (the representative an ascending sort uses),
+    /// until it returns `false`. With `resume = (uuid, key)`, the walk starts
+    /// strictly after the node of `uuid` whose key is `key` (a keyset
+    /// cursor). Detached nodes are roots by their bare names, as in
+    /// [`Self::pick`]. The page strategies of the query index use this to stop
+    /// at the page's end (spec-indexing "A page costs the page").
+    pub fn walk_ascending(
+        &self,
+        field: &str,
+        resume: Option<(Uuid, &str)>,
+        visit: &mut dyn FnMut(Uuid) -> bool,
+    ) -> WalkEnd {
+        let Some(tree) = self.cache.fields.get(field) else { return WalkEnd::Completed };
+        let top: Vec<usize> =
+            tree.roots.values().chain(tree.waiting.values().flatten()).copied().collect();
+        let mut stack: Vec<Frame> = Vec::new();
+        match resume {
+            None => stack.push(Frame { rest: top, ready: Vec::new() }),
+            Some((uuid, key)) => {
+                let at = tree.by_uuid.get(&uuid).and_then(|idxs| {
+                    idxs.iter().copied().find(|&i| self.key_at(i).as_ref() == key)
+                });
+                let Some(at) = at else { return WalkEnd::Refused };
+                // The ancestors' later siblings, outermost first, then the
+                // resume node's own children.
+                let mut chain = vec![at];
+                while let Placement::Under(p) = self.cache.node(*chain.last().unwrap()).place {
+                    chain.push(p);
+                }
+                chain.reverse();
+                let mut level = top;
+                for &on_path in &chain {
+                    let name = self.cache.node(on_path).name.display();
+                    let mut later = Vec::new();
+                    for i in level {
+                        if i == on_path {
+                            continue;
+                        }
+                        match self.cache.node(i).name.display().as_ref().cmp(name.as_ref()) {
+                            std::cmp::Ordering::Greater => later.push(i),
+                            std::cmp::Ordering::Equal => return WalkEnd::Refused,
+                            std::cmp::Ordering::Less => {}
+                        }
+                    }
+                    stack.push(Frame { rest: later, ready: Vec::new() });
+                    level = self.cache.node(on_path).children.values().copied().collect();
+                }
+                stack.push(Frame { rest: level, ready: Vec::new() });
+            }
+        }
+        while let Some(frame) = stack.last_mut() {
+            let next = match self.next_sibling(frame) {
+                Ok(n) => n,
+                Err(()) => return WalkEnd::Refused,
+            };
+            let Some(idx) = next else {
+                stack.pop();
+                continue;
+            };
+            let node = self.cache.node(idx);
+            if self.is_smallest_position(tree, idx) && !visit(node.uuid) {
+                return WalkEnd::Stopped;
+            }
+            if !node.children.is_empty() {
+                stack.push(Frame {
+                    rest: node.children.values().copied().collect(),
+                    ready: Vec::new(),
+                });
+            }
+        }
+        WalkEnd::Completed
+    }
+
+    /// The next sibling of a frame in name order; `Err` when the order cannot
+    /// be the key order (equal names, or a character below the separator).
+    fn next_sibling(&self, frame: &mut Frame) -> Result<Option<usize>, ()> {
+        if let Some(i) = frame.ready.pop() {
+            return Ok(Some(i));
+        }
+        if frame.rest.is_empty() {
+            return Ok(None);
+        }
+        let name = |i: &usize| self.cache.node(*i).name.display();
+        let cmp = |a: &usize, b: &usize| name(a).as_ref().cmp(name(b).as_ref());
+        let n = frame.rest.len().min(WALK_CHUNK);
+        if n < frame.rest.len() {
+            frame.rest.select_nth_unstable_by(n - 1, cmp);
+        }
+        let mut chunk: Vec<usize> = frame.rest.drain(..n).collect();
+        chunk.sort_unstable_by(cmp);
+        for w in chunk.windows(2) {
+            if cmp(&w[0], &w[1]) == std::cmp::Ordering::Equal {
+                return Err(());
+            }
+        }
+        let last = name(chunk.last().unwrap());
+        if frame.rest.iter().any(|i| name(i) == last) {
+            return Err(());
+        }
+        if chunk.iter().any(|i| name(i).chars().any(|c| c <= PATH_KEY_SEP)) {
+            return Err(());
+        }
+        chunk.reverse();
+        frame.ready = chunk;
+        Ok(frame.ready.pop())
+    }
+
+    /// Whether `idx` is its metarecord's smallest position — trivially, for
+    /// the common single-position metarecord.
+    fn is_smallest_position(&self, tree: &FieldTree, idx: usize) -> bool {
+        let uuid = self.cache.node(idx).uuid;
+        match tree.by_uuid.get(&uuid) {
+            Some(idxs) if idxs.len() > 1 => {
+                let own = self.key_at(idx);
+                // Equal keys (two roots of one name): the first position wins.
+                idxs.iter().all(|&o| {
+                    o == idx || {
+                        let other = self.key_at(o);
+                        other > own || (other == own && o > idx)
+                    }
+                })
+            }
+            _ => true,
+        }
+    }
+}
+
 fn join_key(parent_key: &str, name: &str) -> Arc<str> {
     let mut key = String::with_capacity(parent_key.len() + name.len() + 1);
     key.push_str(parent_key);
