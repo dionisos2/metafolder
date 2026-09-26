@@ -66,6 +66,25 @@ enum Kind {
 const ID_MAX: [u8; 5] = [0xFF; 5];
 
 impl KvSource<'_> {
+    /// The distinct `(field, value type)` pairs holding a value, by name,
+    /// optionally of one type — `GET /repos/:repo/fields`.
+    pub fn field_catalog(&self, type_filter: Option<&str>) -> Vec<(String, String)> {
+        let read = || -> Result<Vec<(String, String)>> {
+            let mut out = Vec::new();
+            for entry in self.t.field_types.iter(&self.r)? {
+                let (k, _) = entry?;
+                let (name, ty) = derived::unesc(k)?;
+                let ty = String::from_utf8(ty.to_vec())?;
+                if type_filter.is_none_or(|want| want == ty) {
+                    out.push((String::from_utf8(name)?, ty));
+                }
+            }
+            out.sort();
+            Ok(out)
+        };
+        self.ok(read(), Vec::new())
+    }
+
     /// The first read error met, if any (and forgets it).
     pub fn take_error(&self) -> Option<anyhow::Error> {
         self.error.borrow_mut().take()

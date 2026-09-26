@@ -585,6 +585,9 @@ impl Read<'_> {
 macro_rules! kv_reads {
     ($ty:ty, |$me:ident, $read:ident| $with:expr) => {
         impl Rows for $ty {
+            fn as_kv(&self) -> Option<&KvStore> {
+                self.kv_store()
+            }
             fn version(&self, uuid: Uuid) -> Result<Option<u64>> {
                 let $me = self;
                 $with(&mut |$read: &Read| $read.version(uuid))
@@ -949,6 +952,19 @@ kv_reads!(KvStore, |me, read| |f: &mut dyn FnMut(&Read) -> Result<_>| {
     let r = me.env.read_txn()?;
     f(&Read { t: &me.t, r: &r })
 });
+
+impl KvStore {
+    fn kv_store(&self) -> Option<&KvStore> {
+        Some(self)
+    }
+}
+
+impl KvTxn<'_> {
+    /// A write transaction is not a store a query can read a snapshot of.
+    fn kv_store(&self) -> Option<&KvStore> {
+        None
+    }
+}
 
 // ── Writing ─────────────────────────────────────────────────────────────────
 

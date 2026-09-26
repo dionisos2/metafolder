@@ -505,7 +505,14 @@ impl RepoState {
         // cannot build them is one that cannot serve, and the load says so
         // rather than degrading quietly.
         let mut forest = Vec::new();
-        {
+        if crate::store::Rows::as_kv(&*conn).is_some() {
+            // A key-value repository is queried from the store itself
+            // (spec-storage increment 4 d): no resident index, and the forest
+            // is read straight from the store.
+            let _p = Phase::begin(&who, "read the forest");
+            forest = crate::store::Rows::forest(&*conn)
+                .map_err(|e| ApiError::internal(format!("failed to read the forest: {e:#}")))?;
+        } else {
             let _p = Phase::begin(&who, "build the query index");
             let index = crate::index::RepoIndex::build_reported_collecting(
                 &*conn,
@@ -851,7 +858,21 @@ impl AppState {
         name: Option<&str>,
         system: bool,
     ) -> Result<Uuid, ApiError> {
-        let opened = repo::init_repository(root, metafolder, name, system)?;
+        self.init_repo_with(root, metafolder, name, system, None)
+    }
+
+    /// [`Self::init_repo`] on a chosen storage backend (`None`: the default,
+    /// [`crate::config::Storage::default_for_init`]).
+    pub fn init_repo_with(
+        &self,
+        root: &Path,
+        metafolder: Option<&Path>,
+        name: Option<&str>,
+        system: bool,
+        storage: Option<crate::config::Storage>,
+    ) -> Result<Uuid, ApiError> {
+        let storage = storage.unwrap_or_else(crate::config::Storage::default_for_init);
+        let opened = repo::init_repository_with(root, metafolder, name, system, storage)?;
         let uuid = opened.config.repo_uuid;
         self.ensure_name_available(&opened.config.name)?;
         // Seed the per-repo schema from the shipped default (best-effort),

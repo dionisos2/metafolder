@@ -627,8 +627,15 @@ b. *(done)* *The evaluator's source trait*: the questions the evaluator asks of 
 c. *(done)* *The KV source* implements it over the derived key spaces, inside one read
    transaction per query; the oracle and page-strategy suites run it as a
    third engine.
-d. *Serving from the disk*: a KV repository answers its queries through the KV
-   source and no longer builds the resident index at load.
+d. *(done)* *Serving from the disk*: a KV repository answers its queries through the KV
+   source and no longer builds the resident index at load. A query still
+   takes the repository's connection lock, as every read did before: the read
+   snapshot borrows the store behind it. So a read waits for a long write —
+   the field catalogue included, which the resident engine served past a
+   writer from its stale-but-committed index. Letting reads open their
+   snapshot without that lock ("Readers never block", [[*Writes and
+   atomicity]]) needs the map's growth to exclude open readers, since LMDB
+   resizes only with no transaction open in the process; it is its own step.
 e. *The forest on disk*: =descendants= bitmaps, paths resolved from =forest=,
    the path walk; the tree cache is no longer built for a KV repository.
 f. *Trigrams* and the lazy text checks; postings for frequent values; the

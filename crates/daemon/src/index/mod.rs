@@ -750,7 +750,7 @@ impl RepoIndex {
     }
 
     /// The evaluator over this index, with its page strategy.
-    fn evaluator(&self) -> Eval<'_> {
+    pub fn evaluator(&self) -> Eval<'_> {
         Eval { src: self, strategy: self.strategy }
     }
 

@@ -5,6 +5,7 @@ use std::path::Path;
 use std::sync::Arc;
 
 use metafolder_core::metarecord::{Field, Value};
+use metafolder_daemon::config::Storage;
 use metafolder_daemon::executor::{self, FsEvent};
 use metafolder_daemon::log::{self, Writer};
 use metafolder_daemon::repo;
@@ -18,8 +19,13 @@ use common::TempDir;
 /// Initialises a repository with tracking enabled on the root. The returned
 /// directory removes itself when it goes out of scope, panic included.
 fn setup(prefix: &str) -> (Arc<RepoState>, TempDir, Uuid) {
+    setup_on(prefix, Storage::default_for_init())
+}
+
+/// [`setup`] on a chosen storage backend.
+fn setup_on(prefix: &str, storage: Storage) -> (Arc<RepoState>, TempDir, Uuid) {
     let root = TempDir::new(&format!("exec_{prefix}"));
-    let opened = repo::init_repository(&root, None, None, false).unwrap();
+    let opened = repo::init_repository_with(&root, None, None, false, storage).unwrap();
     let repo_state = Arc::new(RepoState::from_opened(opened));
 
     let root_uuid = {
@@ -1482,7 +1488,8 @@ fn test_a_watcher_revision_records_its_origin() {
 // it, like the tree cache it already keeps in step.
 #[test]
 fn test_flush_leaves_the_query_index_at_head() {
-    let (repo, root, _) = setup("index_settle");
+    // The resident index is what this pins: a SQLite repository.
+    let (repo, root, _) = setup_on("index_settle", Storage::Sqlite);
     repo.warmup(&|_, _, _| {}).unwrap();
     write_file(&root, "a.txt", b"hello");
     enqueue(&repo, &[FsEvent::Create("/a.txt".into())]);

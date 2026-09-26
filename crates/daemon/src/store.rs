@@ -28,6 +28,10 @@ macro_rules! forward_to_connection {
     };
     (@rows_log $ty:ty, |$me:ident| $conn:expr) => {
         impl Rows for $ty {
+            fn as_kv(&self) -> Option<&crate::kvstore::KvStore> {
+                let $me = self;
+                Rows::as_kv($conn)
+            }
             fn version(&self, uuid: Uuid) -> Result<Option<u64>> {
                 let $me = self;
                 Rows::version($conn, uuid)
@@ -261,6 +265,12 @@ macro_rules! forward_to_connection {
 
 /// Metarecords and their field rows.
 pub trait Rows {
+    /// The key-value store behind this one, when it is one: a KV repository
+    /// is queried from the store itself (spec-storage increment 4 d), not
+    /// through the resident index.
+    fn as_kv(&self) -> Option<&crate::kvstore::KvStore> {
+        None
+    }
     /// A metarecord's version, `None` when it does not exist.
     fn version(&self, uuid: Uuid) -> Result<Option<u64>>;
     /// A metarecord's field rows, in row-id order.

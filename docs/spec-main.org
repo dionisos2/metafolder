@@ -345,9 +345,13 @@ info object.
 
 *** =POST /repos/init=
 
-Initialises a new repository. Creates =config.json= and =internal/db.sqlite=
+Initialises a new repository. Creates =config.json= and the store — the
+key-value store =internal/kv/= by default, =internal/db.sqlite= on SQLite —
 inside the =.metafolder/= directory. Fails if a repository already exists
 there.
+
+Optional: =storage= (="kv"= or ="sqlite"=) chooses the backend
+(spec-storage "Choosing the backend"); absent, the daemon's default.
 
 Request body:
 #+BEGIN_SRC json

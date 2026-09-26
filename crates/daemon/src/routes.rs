@@ -430,12 +430,22 @@ async fn list_fields(
         // therefore buys no freshness at all and costs the whole write — a 1 ms
         // read measured at 255 s behind a reconcile, which is the stall seen on
         // opening a repository in the GUI.
-        let conn = slowlog::timed("wait:conn", || repo_state.conn.try_lock_recover());
+        //
+        // A key-value repository has no resident catalog to read past a
+        // writer: it waits for the store (until reads stop taking the
+        // connection, spec-storage increment 4).
+        let conn = slowlog::timed("wait:conn", || {
+            if repo_state.config.storage == crate::config::Storage::Kv {
+                Some(repo_state.conn.lock_recover())
+            } else {
+                repo_state.conn.try_lock_recover()
+            }
+        });
         let mut index_guard = slowlog::timed("wait:index", || repo_state.index.lock_recover());
         let data = match conn.as_deref() {
             // `ensure_index` rather than a refresh of our own: the acquisition
             // the live-query paths share, so the two cannot drift.
-            Some(conn) => ensure_index(conn, &mut index_guard, &|| false)?.field_catalog(None),
+            Some(conn) => engine(conn, &mut index_guard, &|| false)?.field_catalog(None),
             None => index_guard
                 .as_ref()
                 .ok_or_else(|| {
@@ -887,6 +897,10 @@ struct InitBody {
     /// hidden from `GET /repos` unless `?all=true`.
     #[serde(default)]
     system: bool,
+    /// The storage backend (`"kv"` / `"sqlite"`, spec-storage "Choosing the
+    /// backend"); the daemon's default when absent.
+    #[serde(default)]
+    storage: Option<crate::config::Storage>,
 }
 
 async fn init_repo(
@@ -897,7 +911,13 @@ async fn init_repo(
     // An empty/whitespace name falls back to the directory-derived default.
     let name = body.name.filter(|n| !n.trim().is_empty());
     let uuid = tokio::task::spawn_blocking(move || {
-        state.init_repo(&body.root, body.metafolder.as_deref(), name.as_deref(), body.system)
+        state.init_repo_with(
+            &body.root,
+            body.metafolder.as_deref(),
+            name.as_deref(),
+            body.system,
+            body.storage,
+        )
     })
     .await
     .map_err(|e| ApiError::internal(format!("blocking task failed: {e}")))??;
@@ -3012,6 +3032,67 @@ fn ensure_index<'g>(
     Ok(index)
 }
 
+/// What a repository's queries are evaluated against: its resident index, or
+/// — on the key-value store — the store's own derived key spaces, read in one
+/// snapshot (spec-storage increment 4 d). One evaluator either way.
+enum Engine<'a> {
+    Resident(&'a crate::index::RepoIndex),
+    Disk(Box<crate::kvstore::KvSource<'a>>),
+}
+
+impl Engine<'_> {
+    fn eval(&self) -> crate::index::Eval<'_> {
+        match self {
+            Engine::Resident(index) => index.evaluator(),
+            Engine::Disk(src) => {
+                crate::index::Eval { src: &**src, strategy: crate::index::PageStrategy::Auto }
+            }
+        }
+    }
+
+    fn value_type(&self, field: &str) -> Option<String> {
+        match self {
+            Engine::Resident(index) => index.value_type(field),
+            Engine::Disk(src) => {
+                crate::index::Source::value_type(&**src, field).map(str::to_string)
+            }
+        }
+    }
+
+    fn field_catalog(&self, type_filter: Option<&str>) -> Vec<(String, String)> {
+        match self {
+            Engine::Resident(index) => index.field_catalog(type_filter),
+            Engine::Disk(src) => src.field_catalog(type_filter),
+        }
+    }
+
+    /// Fails with the read error the disk source met, if it met one: its
+    /// answers went empty from there, so they must not be served.
+    fn check(&self) -> Result<(), ApiError> {
+        match self {
+            Engine::Disk(src) => match src.take_error() {
+                Some(e) => Err(ApiError::internal(format!("reading the store failed: {e:#}"))),
+                None => Ok(()),
+            },
+            Engine::Resident(_) => Ok(()),
+        }
+    }
+}
+
+/// The repository's [`Engine`]: the store itself on the key-value backend,
+/// else the resident index brought up to HEAD ([`ensure_index`]).
+fn engine<'a>(
+    conn: &'a dyn crate::store::Store,
+    guard: &'a mut Option<crate::index::RepoIndex>,
+    cancel: &dyn Fn() -> bool,
+) -> Result<Engine<'a>, ApiError> {
+    if let Some(kv) = conn.as_kv() {
+        let src = kv.source().map_err(|e| ApiError::internal(format!("{e:#}")))?;
+        return Ok(Engine::Disk(Box::new(src)));
+    }
+    Ok(Engine::Resident(ensure_index(conn, guard, cancel)?))
+}
+
 /// Resolves a query's index seeds and rewrites its index-unsupported text leaves
 /// — the shared preparation feeding the bitmap index, used by both the paginated
 /// query path ([`run_query_filter`]) and the whole-set resolution
@@ -3068,12 +3149,14 @@ fn resolve_query_uuids(
     crate::query_validate::validate_query(query)?;
     crate::query_validate::check_query_size(query)?;
     let mut index_guard = slowlog::timed("wait:index", || repo_state.index.lock_recover());
-    let index = ensure_index(conn, &mut index_guard, cancel)?;
-    crate::query_validate::validate_query_types(query, &|f| index.value_type(f))?;
+    let engine = engine(conn, &mut index_guard, cancel)?;
+    crate::query_validate::validate_query_types(query, &|f| engine.value_type(f))?;
     let (roots, indexed) = prepare_indexed_query(conn, cache, query)?;
-    match slowlog::timed("index.evaluate", || {
-        index.evaluate_page_with_roots(&indexed, &[], None, None, &roots)
-    }) {
+    let evaluated = slowlog::timed("index.evaluate", || {
+        engine.eval().evaluate_page_with_roots(&indexed, &[], None, None, &roots)
+    });
+    engine.check()?;
+    match evaluated {
         Ok((uuids, _)) => Ok(uuids),
         Err(gap) => Err(index_gap(gap)),
     }
@@ -3131,8 +3214,9 @@ fn run_query_filter(
     // different queries and would reject each other's cursor (which is bound to
     // a hash of the rewritten query).
     let mut index_guard = slowlog::timed("wait:index", || repo_state.index.lock_recover());
-    let index = ensure_index(conn, &mut index_guard, cancel)?;
-    crate::query_validate::validate_query_types(&body.query, &|f| index.value_type(f))?;
+    let engine = engine(conn, &mut index_guard, cancel)?;
+    crate::query_validate::validate_query_types(&body.query, &|f| engine.value_type(f))?;
+    let index = engine.eval();
 
     let (mut roots, indexed_query) = prepare_indexed_query(conn, cache, &body.query)?;
     // Full-path sort keys for a `tree_ref` sort key, rebuilt from the resident
@@ -3170,6 +3254,7 @@ fn run_query_filter(
                 .map(|(uuids, next)| (uuids, next, None))
         }
     });
+    engine.check()?;
     paged.map_err(index_gap)
 }
 
@@ -3478,10 +3563,10 @@ fn inbound_referrers(
     // Scoped: `resolve_query_uuids` takes the index lock itself.
     let fields: Vec<String> = {
         let mut guard = slowlog::timed("wait:index", || repo_state.index.lock_recover());
-        let index = ensure_index(conn, &mut guard, &|| false)?;
+        let engine = engine(conn, &mut guard, &|| false)?;
         ["ref", "tree_ref"]
             .iter()
-            .flat_map(|ty| index.field_catalog(Some(ty)))
+            .flat_map(|ty| engine.field_catalog(Some(ty)))
             .map(|(name, _)| name)
             .collect()
     };

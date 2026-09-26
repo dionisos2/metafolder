@@ -403,7 +403,15 @@ async fn list_fields_refreshes_warm_index_after_write() {
     let app = routes::build(state.clone());
     let root = temp_dir("fields_refresh");
     let (status, body) =
-        request(&app, "POST", "/repos/init", Some(json!({"root": root.to_str().unwrap()}))).await;
+        // The resident index is what this pins: a SQLite repository (a KV
+        // one is queried from its store, spec-storage increment 4 d).
+        request(
+            &app,
+            "POST",
+            "/repos/init",
+            Some(json!({"root": root.to_str().unwrap(), "storage": "sqlite"})),
+        )
+        .await;
     assert_eq!(status, StatusCode::OK, "init failed: {body}");
     let repo = body["repo_uuid"].as_str().unwrap().to_string();
     let repo_uuid = Uuid::parse_str(&repo).unwrap();
@@ -1475,7 +1483,15 @@ async fn list_fields_answers_while_a_writer_holds_the_connection() {
     let app = routes::build(state.clone());
     let root = temp_dir("fields_busy_conn");
     let (status, body) =
-        request(&app, "POST", "/repos/init", Some(json!({"root": root.to_str().unwrap()}))).await;
+        // The resident index is what this pins: a SQLite repository (a KV
+        // one is queried from its store, spec-storage increment 4 d).
+        request(
+            &app,
+            "POST",
+            "/repos/init",
+            Some(json!({"root": root.to_str().unwrap(), "storage": "sqlite"})),
+        )
+        .await;
     assert_eq!(status, StatusCode::OK, "init failed: {body}");
     let repo = body["repo_uuid"].as_str().unwrap().to_string();
     let repo_uuid = Uuid::parse_str(&repo).unwrap();
@@ -1537,7 +1553,15 @@ async fn a_write_leaves_the_query_index_at_head() {
     let app = routes::build(state.clone());
     let root = temp_dir("index_settles_on_write");
     let (status, body) =
-        request(&app, "POST", "/repos/init", Some(json!({"root": root.to_str().unwrap()}))).await;
+        // The resident index is what this pins: a SQLite repository (a KV
+        // one is queried from its store, spec-storage increment 4 d).
+        request(
+            &app,
+            "POST",
+            "/repos/init",
+            Some(json!({"root": root.to_str().unwrap(), "storage": "sqlite"})),
+        )
+        .await;
     assert_eq!(status, StatusCode::OK, "init failed: {body}");
     let repo = body["repo_uuid"].as_str().unwrap().to_string();
     let repo_uuid = Uuid::parse_str(&repo).unwrap();
