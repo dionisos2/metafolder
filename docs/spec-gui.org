@@ -4135,6 +4135,20 @@ moment its tile or its preview is shown. Every decoder is confined:
   sandbox has no registry and rebuilds one per probe (~1 s against ~80 ms).
   These helpers **fail closed** — no sandbox, no helper, and the panel falls
   back to a glyph.
+- A **syscall filter** (seccomp, =crates/gui/src/seccomp.rs=, handed to
+  =bwrap --add-seccomp-fd=): =bwrap= bounds what a decoder reaches on disk, not
+  what it asks the kernel. A deny-list in the spirit of flatpak's refuses
+  (=EPERM=) namespace creation — =unshare=, =setns=, =clone= with a =CLONE_NEW*=
+  flag, the mount calls — since a user namespace hands a process every
+  capability inside it, the opening move of most kernel escalations; and the
+  large, bug-prone interfaces no decoder needs (=io_uring=, =bpf=, =keyctl=,
+  =userfaultfd=, =perf_event_open=, =ptrace=, module loading…). =clone3=
+  answers =ENOSYS= (its flags sit behind a pointer a filter cannot read), so the
+  C library falls back to =clone=, whose flags it can. A foreign syscall ABI
+  (i386, x32) kills the process. =bwrap --disable-userns= is deliberately not
+  used: it writes =/proc/sys/user/max_user_namespaces=, read-only in some
+  containers. The filter exists for x86-64 and aarch64; elsewhere the rest of
+  the sandbox stands alone. The startup probe runs through it.
 - The same helpers carry **rlimits** (=setrlimit= between fork and exec, so
   =bwrap= and everything it spawns inherit them): 2 GiB of address space, 30 s
   of CPU, 64 MiB per file written, no core dump. =bwrap= bounds what a decoder

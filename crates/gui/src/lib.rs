@@ -28,6 +28,7 @@ pub mod recent;
 pub mod reconcile;
 pub mod repo_init;
 pub mod sandbox;
+pub mod seccomp;
 pub mod server;
 pub mod shell_exec;
 pub mod slow;

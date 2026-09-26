@@ -9,7 +9,8 @@
 //! browsing a directory. Unsandboxed, that is code execution with the user's
 //! full privileges.
 //!
-//! Each helper therefore runs with: no network, no IPC/PID/user namespace
+//! Each helper therefore runs with: a syscall filter (`crate::seccomp`: no new
+//! namespace, no io_uring/bpf/keyctl…), no network, no IPC/PID/user namespace
 //! sharing, an empty environment, a read-only view of the system directories,
 //! and **only the file being examined** bound in (read-only) — plus, for
 //! `ffmpeg`, the thumbnail cache directory bound read-write, the single place
@@ -106,7 +107,7 @@ impl Spec {
 /// Order matters: the system binds and the `/tmp` tmpfs come first, so a
 /// `read_only`/`read_write` path that happens to live under one of them (a
 /// file in `/tmp`) is bound *over* it and stays visible.
-fn bwrap_args(spec: &Spec) -> Vec<OsString> {
+fn bwrap_args(spec: &Spec, seccomp_fd: Option<i32>) -> Vec<OsString> {
     let mut args: Vec<OsString> = Vec::new();
     let mut push = |arg: &str| args.push(OsString::from(arg));
 
@@ -164,6 +165,13 @@ fn bwrap_args(spec: &Spec) -> Vec<OsString> {
         args.push(path.into());
     }
 
+    // The syscall filter (`crate::seccomp`), read by bwrap from this fd and
+    // installed just before it runs the helper.
+    if let Some(fd) = seccomp_fd {
+        args.push(OsString::from("--add-seccomp-fd"));
+        args.push(OsString::from(fd.to_string()));
+    }
+
     args.push(OsString::from("--chdir"));
     args.push(OsString::from("/"));
     args.push(OsString::from("--"));
@@ -207,11 +215,83 @@ pub fn command(spec: &Spec) -> Option<Command> {
     if !available() {
         return None;
     }
-    let mut cmd = Command::new(BWRAP);
-    cmd.args(bwrap_args(spec));
-    apply_limits(&mut cmd, spec.limits);
-    Some(cmd)
+    sandboxed(spec).ok()
 }
+
+/// The sandboxed command for `spec`: `bwrap`, its rlimits and its syscall
+/// filter. `Err` names why it cannot be built — a filter that cannot be handed
+/// to `bwrap` is a sandbox that cannot be built (fail closed).
+fn sandboxed(spec: &Spec) -> Result<Command, String> {
+    let seccomp = seccomp_fd()?;
+    let mut cmd = Command::new(BWRAP);
+    cmd.args(bwrap_args(spec, seccomp));
+    apply_limits(&mut cmd, spec.limits);
+    if let Some(fd) = seccomp {
+        pass_seccomp_fd(&mut cmd, fd);
+    }
+    Ok(cmd)
+}
+
+/// The filter program, written once into a memfd kept open for the life of
+/// the GUI; `None` where `crate::seccomp` has no table for the architecture.
+#[cfg(target_os = "linux")]
+fn seccomp_fd() -> Result<Option<i32>, String> {
+    use std::os::fd::{AsRawFd, FromRawFd, OwnedFd};
+    static FD: std::sync::OnceLock<Result<Option<OwnedFd>, String>> = std::sync::OnceLock::new();
+    let fd = FD.get_or_init(|| {
+        let Some(program) = crate::seccomp::program() else {
+            return Ok(None);
+        };
+        // SAFETY: a fresh descriptor, owned by nothing else.
+        let fd = unsafe { libc::memfd_create(c"metafolder-seccomp".as_ptr(), libc::MFD_CLOEXEC) };
+        if fd < 0 {
+            return Err(format!("memfd_create: {}", std::io::Error::last_os_error()));
+        }
+        let fd = unsafe { OwnedFd::from_raw_fd(fd) };
+        let mut file = std::fs::File::from(fd);
+        std::io::Write::write_all(&mut file, &program)
+            .map_err(|e| format!("writing the syscall filter: {e}"))?;
+        Ok(Some(OwnedFd::from(file)))
+    });
+    match fd {
+        Ok(fd) => Ok(fd.as_ref().map(|fd| fd.as_raw_fd())),
+        Err(e) => Err(e.clone()),
+    }
+}
+
+#[cfg(not(target_os = "linux"))]
+fn seccomp_fd() -> Result<Option<i32>, String> {
+    Ok(None)
+}
+
+/// Hands the filter to the child at the fd number its arguments name. The
+/// shared memfd's offset is at its end (and shared by every helper spawned
+/// concurrently), so the child reopens it — `/proc/self/fd/N` opens a *new*
+/// description at offset 0 — and puts that copy at `N`, without close-on-exec.
+#[cfg(target_os = "linux")]
+fn pass_seccomp_fd(cmd: &mut Command, fd: i32) {
+    use std::os::unix::process::CommandExt;
+    // Built before the fork: nothing may allocate in the child.
+    let path = std::ffi::CString::new(format!("/proc/self/fd/{fd}")).expect("no NUL");
+    // SAFETY: runs in the forked child before exec, and only makes
+    // async-signal-safe system calls on a path prepared beforehand.
+    unsafe {
+        cmd.pre_exec(move || {
+            let fresh = libc::open(path.as_ptr(), libc::O_RDONLY);
+            if fresh < 0 {
+                return Err(std::io::Error::last_os_error());
+            }
+            if libc::dup2(fresh, fd) < 0 {
+                return Err(std::io::Error::last_os_error());
+            }
+            libc::close(fresh);
+            Ok(())
+        });
+    }
+}
+
+#[cfg(not(target_os = "linux"))]
+fn pass_seccomp_fd(_cmd: &mut Command, _fd: i32) {}
 
 /// Sets the rlimits on the child. They are applied to `bwrap` itself, between
 /// `fork` and `exec`, and every process it goes on to spawn inherits them —
@@ -257,8 +337,7 @@ pub fn available() -> bool {
 /// reason, for the startup error message.
 fn smoke_test() -> Result<(), String> {
     let spec = Spec::new("sh").arg("-c").arg(":");
-    let mut cmd = Command::new(BWRAP);
-    cmd.args(bwrap_args(&spec));
+    let mut cmd = sandboxed(&spec)?;
     // The limits too, so the probe exercises exactly what a helper will run
     // under: a ceiling low enough to break bwrap itself must fail here, at
     // startup, not silently disable thumbnails later.
@@ -449,7 +528,7 @@ mod tests {
     use super::*;
 
     fn strings(spec: &Spec) -> Vec<String> {
-        bwrap_args(spec).iter().map(|arg| arg.to_string_lossy().into_owned()).collect()
+        bwrap_args(spec, None).iter().map(|arg| arg.to_string_lossy().into_owned()).collect()
     }
 
     /// The arg list must window into `[flag, source, dest]` triplets; this
@@ -469,6 +548,20 @@ mod tests {
         // The whole of /etc is never exposed, only the loader/font bits.
         assert!(!has_bind(&args, "--ro-bind", "/etc"));
         assert!(has_bind(&args, "--ro-bind-try", "/etc/ld.so.cache"));
+    }
+
+    #[test]
+    fn test_the_syscall_filter_is_handed_to_bwrap_before_the_program() {
+        let args: Vec<String> = bwrap_args(&Spec::new("ffmpeg"), Some(7))
+            .iter()
+            .map(|arg| arg.to_string_lossy().into_owned())
+            .collect();
+        let filter = args
+            .windows(2)
+            .position(|w| w[0] == "--add-seccomp-fd" && w[1] == "7")
+            .expect("--add-seccomp-fd 7");
+        let dashes = args.iter().position(|arg| arg == "--").expect("--");
+        assert!(filter < dashes);
     }
 
     #[test]
@@ -512,6 +605,70 @@ mod tests {
         assert!(args
             .windows(3)
             .any(|w| w[0] == "--setenv" && w[1] == "GST_REGISTRY" && w[2] == "/tmp/registry.bin"));
+    }
+
+    // --- The syscall filter: what a compromised decoder may ask the kernel.
+
+    /// Runs `python3 -c <script>` in the real sandbox; its exit code. `None`
+    /// when the sandbox or python3 is unavailable (nothing to assert then).
+    fn sandboxed_python(script: &str) -> Option<i32> {
+        if !available() || !Path::new("/usr/bin/python3").exists() {
+            return None;
+        }
+        let cmd = command(&Spec::new("python3").arg("-c").arg(script))?;
+        let out = crate::proc::run_with_timeout(cmd, std::time::Duration::from_secs(20))?;
+        out.status.code()
+    }
+
+    /// `syscall(nr, args…)` from inside the sandbox: 0 when it succeeded,
+    /// else its errno.
+    fn errno_of(call: &str) -> Option<i32> {
+        sandboxed_python(&format!(
+            "import ctypes, sys\n\
+             libc = ctypes.CDLL(None, use_errno=True)\n\
+             r = libc.syscall({call})\n\
+             sys.exit(0 if r >= 0 else ctypes.get_errno())"
+        ))
+    }
+
+    #[test]
+    fn test_a_sandboxed_helper_cannot_create_a_namespace() {
+        // A user namespace hands a process every capability *inside* it —
+        // the first step of most kernel privilege escalations.
+        for flags in [libc::CLONE_NEWUSER, libc::CLONE_NEWNS, libc::CLONE_NEWNET] {
+            if let Some(errno) = errno_of(&format!("{}, {flags}", libc::SYS_unshare)) {
+                assert_eq!(errno, libc::EPERM, "unshare({flags:#x}) was allowed");
+            }
+        }
+    }
+
+    #[test]
+    fn test_a_sandboxed_helper_cannot_reach_the_riskiest_kernel_interfaces() {
+        // keyctl(KEYCTL_GET_KEYRING_ID, KEY_SPEC_SESSION_KEYRING, 0) succeeds
+        // for anyone unfiltered; io_uring_setup and bpf are the classic
+        // kernel attack surface a media decoder never needs.
+        for call in [
+            format!("{}, 0, -3, 0", libc::SYS_keyctl),
+            format!("{}, 1, None", libc::SYS_io_uring_setup),
+            format!("{}, 0, None, 0", libc::SYS_bpf),
+        ] {
+            if let Some(errno) = errno_of(&call) {
+                assert_eq!(errno, libc::EPERM, "syscall({call}) was allowed");
+            }
+        }
+    }
+
+    #[test]
+    fn test_a_sandboxed_helper_still_runs_threads() {
+        // clone3 is refused with ENOSYS (its flags sit behind a pointer the
+        // filter cannot read): the C library must fall back to clone, whose
+        // flags the filter can check. ffmpeg decodes on threads.
+        let script = "import threading\n\
+                      t = threading.Thread(target=lambda: None)\n\
+                      t.start(); t.join()";
+        if let Some(code) = sandboxed_python(script) {
+            assert_eq!(code, 0, "a thread could not be started in the sandbox");
+        }
     }
 
     #[test]
