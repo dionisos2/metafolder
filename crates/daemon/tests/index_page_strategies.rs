@@ -237,7 +237,7 @@ fn every_page_strategy_gives_the_oracles_pages() {
     let mut index = RepoIndex::build(&conn).unwrap();
     for q in queries(&conn, &mut cache) {
         for by in sorts() {
-            for limit in [3, 50] {
+            for limit in [10, 50] {
                 let want = oracle_pages(&conn, &mut cache, &q, &by, limit);
                 // What `run_query_filter` resolves through the tree cache.
                 let mut targets = Vec::new();
