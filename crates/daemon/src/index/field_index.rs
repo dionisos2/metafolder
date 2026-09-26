@@ -17,7 +17,7 @@ use std::collections::HashMap;
 use std::sync::Arc;
 
 use metafolder_core::metarecord::{TreeName, Value, ZERO_UUID};
-use roaring::RoaringBitmap;
+use roaring::{MultiOps, RoaringBitmap};
 use uuid::Uuid;
 
 use super::Unsupported;
@@ -253,6 +253,17 @@ impl FieldIndex {
 
     /// The dense ids whose `value_uuid` is `target` (direct referrers / direct
     /// children). `None` outside a follow-capable field.
+    /// The targets something refers to, for a `tree_ref` field: its forest's
+    /// parents (a key whose referrers all left is not one).
+    pub fn referenced_targets(&self) -> Vec<Uuid> {
+        match self {
+            FieldIndex::Reverse(r) if r.supports_follows() => {
+                r.by_value_uuid.iter().filter(|(_, b)| !b.is_empty()).map(|(u, _)| *u).collect()
+            }
+            _ => Vec::new(),
+        }
+    }
+
     pub fn referrers_of(&self, target: Uuid) -> Option<&RoaringBitmap> {
         match self {
             FieldIndex::Reverse(r) if r.supports_follows() => r.by_value_uuid.get(&target),
@@ -496,13 +507,7 @@ impl CategoricalIndex {
     /// mirroring the SQL `NOT (value_type=… AND …)`.
     fn neq(&self, value: &Value) -> RoaringBitmap {
         let target = cat_key(value);
-        let mut out = RoaringBitmap::new();
-        for (k, bm) in &self.by_value {
-            if Some(k) != target.as_ref() {
-                out |= bm;
-            }
-        }
-        out
+        self.by_value.iter().filter(|(k, _)| Some(*k) != target.as_ref()).map(|(_, bm)| bm).union()
     }
 
     /// Ordered comparison. Only a string operand is meaningful (it compares
@@ -513,17 +518,14 @@ impl CategoricalIndex {
     /// field, hence empty.
     fn ordered(&self, value: &Value, op: CmpOp) -> Result<RoaringBitmap, Unsupported> {
         match value {
-            Value::String(s) => {
-                let mut out = RoaringBitmap::new();
-                for (k, bm) in &self.by_value {
-                    if let CatKey::Str(ks) = k {
-                        if op.matches_ordering(ks.as_str().cmp(s.as_str())) {
-                            out |= bm;
-                        }
-                    }
-                }
-                Ok(out)
-            }
+            Value::String(s) => Ok(self
+                .by_value
+                .iter()
+                .filter(|(k, _)| {
+                    matches!(k, CatKey::Str(ks) if op.matches_ordering(ks.as_str().cmp(s.as_str())))
+                })
+                .map(|(_, bm)| bm)
+                .union()),
             Value::Bool(_) => Err(super::unsupported("ordered comparison on bool")),
             _ => Ok(RoaringBitmap::new()),
         }
@@ -753,13 +755,7 @@ impl BsiIndex {
     /// the union is the whole present set (`has_value`), mirroring SQL.
     fn neq(&self, value: &Value) -> RoaringBitmap {
         let target = self.key_of(value);
-        let mut out = RoaringBitmap::new();
-        for (&k, bm) in &self.exact {
-            if Some(k) != target {
-                out |= bm;
-            }
-        }
-        out
+        self.exact.iter().filter(|(k, _)| Some(**k) != target).map(|(_, bm)| bm).union()
     }
 
     fn range(&self, op: CmpOp, value: &Value) -> RoaringBitmap {
@@ -869,13 +865,7 @@ fn union_intersecting<K>(
     partition: &HashMap<K, RoaringBitmap>,
     target: &RoaringBitmap,
 ) -> RoaringBitmap {
-    let mut out = RoaringBitmap::new();
-    for ids in partition.values() {
-        if intersects(target, ids) {
-            out |= ids;
-        }
-    }
-    out
+    partition.values().filter(|ids| intersects(target, ids)).union()
 }
 
 fn scan_partition<K>(
@@ -884,18 +874,16 @@ fn scan_partition<K>(
     keep: &dyn Fn(&str) -> bool,
     restrict: Option<&RoaringBitmap>,
 ) -> RoaringBitmap {
-    let mut out = RoaringBitmap::new();
-    for (key, ids) in partition {
-        if restrict.is_some_and(|r| !intersects(r, ids)) {
-            continue;
-        }
+    // One union of every kept bitmap: `|=` in the loop copied the growing
+    // result's containers once per kept value — quadratic in the matches.
+    let mut out = partition
+        .iter()
+        .filter(|(_, ids)| restrict.is_none_or(|r| intersects(r, ids)))
         // A key with no textual form (a bool) is what SQL's `value_type` guard
         // excludes: it is never a `value_text` or a `value_name`.
-        let Some(text) = text_of(key) else { continue };
-        if keep(text) {
-            out |= ids;
-        }
-    }
+        .filter(|(key, _)| text_of(key).is_some_and(keep))
+        .map(|(_, ids)| ids)
+        .union();
     if let Some(restrict) = restrict {
         out &= restrict;
     }
@@ -1031,13 +1019,7 @@ impl ReverseIndex {
     /// buckets is O(rows), which its answer is anyway — it is "every node but
     /// those".
     fn parents_except(&self, except: Option<Uuid>) -> RoaringBitmap {
-        let mut out = RoaringBitmap::new();
-        for (parent, bm) in &self.by_value_uuid {
-            if Some(*parent) != except {
-                out |= bm;
-            }
-        }
-        out
+        self.by_value_uuid.iter().filter(|(p, _)| Some(**p) != except).map(|(_, bm)| bm).union()
     }
 
     fn eq(&self, value: &Value) -> RoaringBitmap {
@@ -1060,12 +1042,12 @@ impl ReverseIndex {
             // operand keys to nothing, so every row differs → has_value.
             _ => {
                 let target = target_key(value);
-                let mut out = RoaringBitmap::new();
-                for (k, bm) in &self.exact {
-                    if Some(k) != target.as_ref() {
-                        out |= bm;
-                    }
-                }
+                let mut out = self
+                    .exact
+                    .iter()
+                    .filter(|(k, _)| Some(*k) != target.as_ref())
+                    .map(|(_, bm)| bm)
+                    .union();
                 if target.is_none() {
                     // mismatched (incl. non-tree string): all present rows differ.
                     out |= &self.has_value;
@@ -1077,15 +1059,12 @@ impl ReverseIndex {
 
     fn ordered(&self, value: &Value, op: CmpOp) -> Result<RoaringBitmap, Unsupported> {
         match value {
-            Value::String(s) if self.kind == RefKind::TreeRef => {
-                let mut out = RoaringBitmap::new();
-                for (n, bm) in &self.by_name {
-                    if op.matches_ordering(n.as_str().cmp(s.as_str())) {
-                        out |= bm;
-                    }
-                }
-                Ok(out)
-            }
+            Value::String(s) if self.kind == RefKind::TreeRef => Ok(self
+                .by_name
+                .iter()
+                .filter(|(n, _)| op.matches_ordering(n.as_str().cmp(s.as_str())))
+                .map(|(_, bm)| bm)
+                .union()),
             // Ordered comparison on a reference value is rejected upfront by
             // `query_validate`; this is the backstop.
             Value::Ref(_)
@@ -1103,13 +1082,7 @@ impl ReverseIndex {
 /// Union of every bitmap whose key differs from `target` (multi-map `Neq` /
 /// ordered helper).
 fn union_except(map: &HashMap<String, RoaringBitmap>, target: Option<&String>) -> RoaringBitmap {
-    let mut out = RoaringBitmap::new();
-    for (k, bm) in map {
-        if Some(k) != target {
-            out |= bm;
-        }
-    }
-    out
+    map.iter().filter(|(k, _)| Some(*k) != target).map(|(_, bm)| bm).union()
 }
 
 #[cfg(test)]

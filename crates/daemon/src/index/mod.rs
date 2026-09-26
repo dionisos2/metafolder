@@ -29,7 +29,7 @@ use std::collections::HashMap;
 use base64::Engine;
 use metafolder_core::metarecord::{Value, ZERO_UUID};
 use metafolder_core::query::{Aspect, FollowTarget, Query};
-use roaring::RoaringBitmap;
+use roaring::{MultiOps, RoaringBitmap};
 use rusqlite::Connection;
 use uuid::Uuid;
 
@@ -358,6 +358,10 @@ pub struct RepoIndex {
     types: HashMap<String, &'static str>,
     /// Per field name: min/max sort representatives, for `ORDER BY`.
     sort: HashMap<String, SortReps>,
+    /// Per `tree_ref` field name: the ids with at least one child in its
+    /// forest. A subtree expansion asks only these for their children — the
+    /// directories, not every file below them ([`Self::expand_subtrees`]).
+    parents: HashMap<String, RoaringBitmap>,
     /// The log HEAD (`log_head.op_id`) this index reflects. The caller only
     /// uses the index while this matches the current HEAD, then rebuilds.
     built_at_head: Option<i64>,
@@ -469,6 +473,14 @@ impl RepoIndex {
         for fi in fields.values_mut() {
             fi.finalize();
         }
+        let parents = fields
+            .iter()
+            .filter(|(_, fi)| fi.supports_transitive())
+            .map(|(name, fi)| {
+                let ids = fi.referenced_targets().into_iter().filter_map(|u| registry.id(u));
+                (name.clone(), ids.collect())
+            })
+            .collect();
         progress(total, total);
 
         Ok(RepoIndex {
@@ -479,17 +491,18 @@ impl RepoIndex {
             absent,
             fields,
             sort,
+            parents,
             types,
             built_at_head,
         })
     }
 
-    /// The log HEAD this index reflects (see [`Self::build`]).
     /// Forces a page strategy (tests only: the daemon keeps `Auto`).
     pub fn set_page_strategy(&mut self, strategy: PageStrategy) {
         self.strategy = strategy;
     }
 
+    /// The log HEAD this index reflects (see [`Self::build`]).
     pub fn built_at_head(&self) -> Option<i64> {
         self.built_at_head
     }
@@ -716,6 +729,31 @@ impl RepoIndex {
                     }
                 }
             }
+        }
+        // The parents this cell left or joined: whether each still has a child.
+        if self.fields.get(field).is_some_and(|fi| fi.supports_transitive()) {
+            for v in old.iter().chain(new) {
+                if let Value::TreeRef { parent: Some(p), .. } = v {
+                    self.note_parent(field, *p);
+                }
+            }
+        }
+    }
+
+    /// Brings `field`'s parents bitmap in line with whether `parent` has any
+    /// child now.
+    fn note_parent(&mut self, field: &str, parent: Uuid) {
+        let Some(pid) = self.registry.id(parent) else { return };
+        let has = self
+            .fields
+            .get(field)
+            .and_then(|fi| fi.referrers_of(parent))
+            .is_some_and(|b| !b.is_empty());
+        let parents = self.parents.entry(field.to_string()).or_default();
+        if has {
+            parents.insert(pid);
+        } else {
+            parents.remove(pid);
         }
     }
 
@@ -1573,13 +1611,7 @@ impl RepoIndex {
         if !fi.supports_follows() {
             return Ok(RoaringBitmap::new());
         }
-        let mut out = RoaringBitmap::new();
-        for uuid in target_uuids {
-            if let Some(referrers) = fi.referrers_of(uuid) {
-                out |= referrers;
-            }
-        }
-        Ok(out)
+        Ok(target_uuids.into_iter().filter_map(|uuid| fi.referrers_of(uuid)).union())
     }
 
     /// Transitive `Follows`: all descendants of the sub-query's matches, by
@@ -1613,7 +1645,7 @@ impl RepoIndex {
         }
         // The inclusive form (`=>*`) keeps the root(s) in the result (whole
         // subtree); the strict form (`->*`) grows only downward from them.
-        Ok(self.expand_subtrees(fi, frontier, inclusive))
+        Ok(self.expand_subtrees(fi, self.parents.get(field), frontier, inclusive))
     }
 
     /// Grows `frontier` downward over the reverse (direct-children) index of
@@ -1623,19 +1655,23 @@ impl RepoIndex {
     fn expand_subtrees(
         &self,
         fi: &FieldIndex,
+        parents: Option<&RoaringBitmap>,
         mut frontier: RoaringBitmap,
         inclusive: bool,
     ) -> RoaringBitmap {
+        let empty = RoaringBitmap::new();
+        let parents = parents.unwrap_or(&empty);
         let mut result = if inclusive { &frontier & &self.universe } else { RoaringBitmap::new() };
         while !frontier.is_empty() {
-            let mut next = RoaringBitmap::new();
-            for nid in &frontier {
-                if let Some(uuid) = self.registry.uuid(nid) {
-                    if let Some(children) = fi.referrers_of(uuid) {
-                        next |= children;
-                    }
-                }
-            }
+            // Only the frontier's directories have children to ask for, and
+            // one union takes them all: `|=` per directory copied the growing
+            // level once per directory.
+            let asked = &frontier & parents;
+            let mut next: RoaringBitmap = asked
+                .iter()
+                .filter_map(|nid| self.registry.uuid(nid))
+                .filter_map(|uuid| fi.referrers_of(uuid))
+                .union();
             next -= &result; // only newly discovered nodes; also breaks cycles
             result |= &next;
             frontier = next;
@@ -1680,7 +1716,7 @@ impl RepoIndex {
         let re = crate::regexp::compile(&format!("(?i){}", regex::escape(term)))
             .map_err(|e| unsupported(format!("osm term is not a usable pattern: {e}")))?;
         let seeds = fi.scan_names(&|name| re.is_match(name), None);
-        Ok(self.expand_subtrees(fi, seeds, true))
+        Ok(self.expand_subtrees(fi, self.parents.get(field), seeds, true))
     }
 
     /// `And`, evaluated cheapest-first: the operands that are pure bitmap work

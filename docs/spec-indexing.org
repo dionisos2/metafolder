@@ -236,6 +236,19 @@ SQL — and it reuses the =TreeRef= reverse index (the tree cache is then only
 needed to resolve ="/A" → id(A)=). This is fine for the common case (browsing a normal
 folder of thousands of files is sub-millisecond).
 
+*Implementation notes (September 2026).* Two things the sketch leaves implicit
+decided the cost. The union must be *one* k-way union (roaring's =MultiOps=):
+unioning each child bitmap into the growing level with =|== recopied the
+level's containers once per directory, which made a 11 699-file subtree cost
+5 ms where the union itself costs a tenth of that — and the same loop shape in
+every "union of many value bitmaps" (the text scans, =Neq=, ordered string
+comparisons, =same=) had the same quadratic tail, the whole count of a name
+search among them. And only the frontier's *directories* are asked for their
+children: each =tree_ref= field keeps the bitmap of its ids that have a child
+(=RepoIndex::parents=, built at load, and kept by =recompute_field= for every
+parent a written cell leaves or joins), so a level's files — nearly all of it —
+cost no lookup. Together: 5 ms → 0.6 ms for that subtree on 200 000 files.
+
 ** The tree as a range dimension                                  :future:
 
 An optimisation over iterative expansion for *one* case: a *large* sub-tree

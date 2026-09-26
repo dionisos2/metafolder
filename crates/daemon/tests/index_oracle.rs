@@ -401,6 +401,73 @@ fn refresh_over_set_record_stays_incremental() {
     assert_eq!(index.field_catalog(None), db::distinct_field_names(&o.conn, None).unwrap());
 }
 
+/// Subtrees stay right through incremental refreshes: moves, a leaf becoming a
+/// directory, a directory emptied, deletes, creations under a moved branch.
+/// The expansion only asks the nodes the index knows to have children, so that
+/// knowledge must follow every write (spec-indexing "FollowsTransitive by
+/// iterative bitmap expansion").
+#[test]
+fn subtrees_stay_right_through_incremental_refreshes() {
+    let mut o = Oracle::new();
+    let root = o.create(vec![tref("loc", None, "root")]);
+    let a = o.create(vec![tref("loc", Some(root), "a")]);
+    let b = o.create(vec![tref("loc", Some(root), "b")]);
+    let c = o.create(vec![tref("loc", Some(a), "c")]);
+    let mut files = Vec::new();
+    for (i, parent) in [a, a, b, c, c, c].into_iter().enumerate() {
+        files.push(o.create(vec![tref("loc", Some(parent), &format!("f{i}"))]));
+    }
+    let mut index = RepoIndex::build(&o.conn).unwrap();
+    let under = |u: Uuid| follows_t("loc", Query::UuidIn { uuids: vec![u] });
+
+    let check = |o: &mut Oracle, index: &mut RepoIndex, nodes: &[Uuid]| {
+        index.refresh(&o.conn, &|| false).unwrap();
+        for &n in nodes {
+            let q = under(n);
+            let (mut sql, _) =
+                query_exec::execute(&o.conn, &mut o.cache, &q, &[], None, None).unwrap();
+            let mut got = index.to_uuids(&index.evaluate(&q).unwrap());
+            sql.sort();
+            got.sort();
+            assert_eq!(got, sql, "below {n}");
+        }
+    };
+    let mut all = vec![root, a, b, c];
+    all.extend(&files);
+    check(&mut o, &mut index, &all);
+
+    // c (with its files) moves under b.
+    let mut w = Writer::begin(&mut o.conn, None).unwrap();
+    w.set_field(c, "loc", Value::TreeRef { parent: Some(b), name: "c".into() }).unwrap();
+    w.commit().unwrap();
+    check(&mut o, &mut index, &all);
+
+    // A leaf becomes a directory; b's only direct file leaves the forest.
+    let leaf = files[0];
+    let child = o.create(vec![tref("loc", Some(leaf), "inside")]);
+    all.push(child);
+    let mut w = Writer::begin(&mut o.conn, None).unwrap();
+    w.set_field(files[2], "loc", Value::Nothing).unwrap();
+    w.commit().unwrap();
+    check(&mut o, &mut index, &all);
+
+    // The new directory is emptied again, then deleted along with a file.
+    let mut w = Writer::begin(&mut o.conn, None).unwrap();
+    w.delete_metarecord(child).unwrap();
+    w.delete_metarecord(files[5]).unwrap();
+    w.commit().unwrap();
+    all.retain(|u| *u != child && *u != files[5]);
+    check(&mut o, &mut index, &all);
+
+    // A new branch under the moved directory, created parent first.
+    let d = o.create(vec![tref("loc", Some(c), "d")]);
+    let e = o.create(vec![tref("loc", Some(d), "e")]);
+    all.extend([d, e]);
+    check(&mut o, &mut index, &all);
+    // Incremental all along: a rebuild would have reclaimed the deleted ids.
+    assert!(index.dense_id_count() > index.universe_len(), "a refresh rebuilt the index");
+}
+
 // ── Categorical: string ─────────────────────────────────────────────────────
 
 #[test]
