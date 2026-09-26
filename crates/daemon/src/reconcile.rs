@@ -24,6 +24,7 @@ use crate::log::{OpType, Writer};
 use crate::relpath::{file_name_bytes, RelPath};
 use crate::similarity::{similarity_score, FileSig};
 use crate::state::RepoState;
+use crate::store::Rows;
 use crate::tree_cache::TreeCache;
 
 #[derive(Debug, Serialize)]
@@ -484,7 +485,7 @@ pub fn reconcile_metarecord_reported(
     let mut cache = repo.lock_cache();
     let root = repo.config.root.clone();
 
-    if db::get_version(&conn, uuid)?.is_none() {
+    if Rows::version(&*conn, uuid)?.is_none() {
         return Err(ApiError::not_found(format!("Metarecord not found: {uuid}")));
     }
     let Some(base) = cache.path_of(&conn, "mfr_path", uuid)? else {
@@ -786,7 +787,7 @@ fn refresh_stat_fields(writer: &mut Writer, root: &Path, uuid: Uuid, rel: &RelPa
         return Ok(());
     };
     for field in &stat {
-        let current = db::get_field_rows_named(writer.connection(), uuid, &field.name)?;
+        let current = Rows::rows_named(writer.store(), uuid, &field.name)?;
         if current.len() == 1 && current[0].value == field.value {
             continue;
         }
@@ -817,7 +818,7 @@ fn detect_mime(abs: &Path) -> Option<String> {
 /// existing `mfr_mime` is never recomputed (so re-running reconcile does not
 /// grow the log; content changes are out of scope, like the hashes).
 fn maybe_compute_mime(writer: &mut Writer, root: &Path, uuid: Uuid, rel: &RelPath) -> Result<()> {
-    if !db::get_field_rows_named(writer.connection(), uuid, "mfr_mime")?.is_empty() {
+    if !Rows::rows_named(writer.store(), uuid, "mfr_mime")?.is_empty() {
         return Ok(());
     }
     let abs = rel.to_abs(root);
@@ -843,7 +844,7 @@ fn maybe_extract_metadata(
     rel: &RelPath,
     map: &crate::metadata_map::MetadataMap,
 ) -> Result<()> {
-    if !db::get_field_rows_named(writer.connection(), uuid, "mfr_meta_extracted")?.is_empty() {
+    if !Rows::rows_named(writer.store(), uuid, "mfr_meta_extracted")?.is_empty() {
         return Ok(());
     }
     let abs = rel.to_abs(root);

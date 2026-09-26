@@ -21,7 +21,6 @@ use metafolder_core::sync::MutexExt;
 use metafolder_core::query::{FollowTarget, Query as MetaQuery};
 use metafolder_core::slowlog;
 
-use crate::db;
 use crate::error::ApiError;
 use crate::log::Writer;
 use crate::orphans;
@@ -30,6 +29,7 @@ use crate::query_result::SortKey;
 use crate::repo::RepoLocator;
 use crate::reserved;
 use crate::state::{AppState, RepoState, RollbackLock};
+use crate::store::Rows;
 use crate::tasks::TaskKind;
 
 pub fn build(state: Arc<AppState>) -> Router {
@@ -484,7 +484,7 @@ async fn tree_roots(
     with_repo(&state, repo_uuid, move |repo_state| {
         let conn = slowlog::timed("wait:conn", || repo_state.conn.lock_recover());
         // Roots are stored with `value_uuid = ZERO_UUID` (the sentinel).
-        let mut roots = db::tree_children(&conn, &params.field, ZERO_UUID)?;
+        let mut roots = Rows::children(&*conn, &params.field, ZERO_UUID)?;
         roots.sort_by(|a, b| a.1.cmp(&b.1));
         let out: Vec<serde_json::Value> = roots
             .into_iter()
@@ -524,7 +524,7 @@ async fn tree_children(
 
 /// Fetches the full metadata object of a metarecord, or 404.
 fn metarecord_response(conn: &rusqlite::Connection, uuid: Uuid) -> Result<MetaRecord, ApiError> {
-    db::get_metarecord(conn, uuid)?
+    Rows::metarecord(conn, uuid)?
         .ok_or_else(|| ApiError::not_found(format!("Metarecord not found: {uuid}")))
 }
 
@@ -663,7 +663,7 @@ fn ensure_version(
     expected: Option<u64>,
 ) -> Result<(), ApiError> {
     if let Some(expected) = expected {
-        let current = db::get_version(conn, uuid)?;
+        let current = Rows::version(conn, uuid)?;
         if current != Some(expected) {
             return Err(ApiError::conflict(format!(
                 "expected_version {expected} but current is {}",
@@ -677,7 +677,7 @@ fn ensure_version(
 /// 404 unless the metarecord exists. Shared by the write handlers that target
 /// a metarecord by uuid rather than by an existing field row.
 fn ensure_exists(conn: &rusqlite::Connection, uuid: Uuid) -> Result<(), ApiError> {
-    if db::get_version(conn, uuid)?.is_none() {
+    if Rows::version(conn, uuid)?.is_none() {
         return Err(ApiError::not_found(format!("Metarecord not found: {uuid}")));
     }
     Ok(())
@@ -2190,7 +2190,7 @@ async fn check_schema(
             // examined (the non-candidates are provably clean).
             let truncated = body.limit.is_some_and(|l| violations.len() > l);
             if body.query.is_none() && !truncated {
-                checked = db::count_metarecords(&conn)?;
+                checked = Rows::metarecord_count(&*conn)?;
             }
         }
         let truncated = body.limit.is_some_and(|l| violations.len() > l);
@@ -3654,7 +3654,7 @@ async fn bulk_create_endpoint(
             let touched: Vec<String> = record.fields.iter().map(|f| f.name.clone()).collect();
             let made = match supplied {
                 Some(uuid) => {
-                    if db::get_version(writer.connection(), uuid)?.is_some() {
+                    if Rows::version(writer.store(), uuid)?.is_some() {
                         if body.skip_existing {
                             skipped += 1;
                             uuids.push(uuid.as_simple().to_string());
@@ -3702,7 +3702,7 @@ async fn create_record_endpoint(
         let mut writer = repo_state.writer(&mut conn, None)?;
         let created = match supplied {
             Some(uuid) => {
-                if db::get_version(writer.connection(), uuid)?.is_some() {
+                if Rows::version(writer.store(), uuid)?.is_some() {
                     return Err(ApiError::conflict(format!("metarecord already exists: {uuid}")));
                 }
                 writer.create_metarecord_with_uuid(uuid, body.fields)?
@@ -3741,7 +3741,7 @@ async fn delete_record_endpoint(
     with_repo(&state, repo_uuid, move |repo_state| {
         repo_state.ensure_writable()?;
         let mut conn = slowlog::timed("wait:conn", || repo_state.conn.lock_recover());
-        if db::get_version(&conn, uuid)?.is_none() {
+        if Rows::version(&*conn, uuid)?.is_none() {
             return Err(ApiError::not_found(format!("Metarecord not found: {uuid}")));
         }
         let mut writer = repo_state.writer(&mut conn, None)?;
@@ -3786,7 +3786,7 @@ async fn get_record_field(
     with_repo(&state, repo_uuid, move |repo_state| {
         let conn = slowlog::timed("wait:conn", || repo_state.conn.lock_recover());
         ensure_exists(&conn, uuid)?;
-        let rows = db::get_field_rows_named(&conn, uuid, &name)?;
+        let rows = Rows::rows_named(&*conn, uuid, &name)?;
         let values: Vec<&Value> = rows.iter().map(|r| &r.value).collect();
         Ok(Json(json!({ "name": name, "values": values })))
     })
@@ -3899,7 +3899,7 @@ struct ForceBody {
 
 /// 404 unless field row `id` exists in this repo; returns its owning metarecord.
 fn field_owner(conn: &rusqlite::Connection, id: i64) -> Result<Uuid, ApiError> {
-    db::metarecord_of_field(conn, id)?
+    Rows::owner_of_row(conn, id)?
         .ok_or_else(|| ApiError::not_found(format!("Field {id} not found")))
 }
 
@@ -3911,7 +3911,7 @@ async fn get_field_by_id(
     let repo_uuid = parse_uuid(&repo)?;
     with_repo(&state, repo_uuid, move |repo_state| {
         let conn = slowlog::timed("wait:conn", || repo_state.conn.lock_recover());
-        let row = db::get_field_row_by_id(&conn, id)?
+        let row = Rows::row(&*conn, id)?
             .ok_or_else(|| ApiError::not_found(format!("Field {id} not found")))?;
         Ok(Json(json!({"id": row.id, "name": row.name, "value": row.value})))
     })
@@ -3942,7 +3942,7 @@ async fn patch_field_by_id(
         repo_state.ensure_writable()?;
         let mut conn = slowlog::timed("wait:conn", || repo_state.conn.lock_recover());
         let uuid = field_owner(&conn, id)?;
-        let old = db::get_field_row_by_id(&conn, id)?
+        let old = Rows::row(&*conn, id)?
             .ok_or_else(|| ApiError::not_found(format!("Field {id} not found")))?;
         let new_name = body.name.clone().unwrap_or_else(|| old.name.clone());
         let new_value = body.value.clone().unwrap_or_else(|| old.value.clone());
@@ -3977,7 +3977,7 @@ async fn delete_field_by_id(
         repo_state.ensure_writable()?;
         let mut conn = slowlog::timed("wait:conn", || repo_state.conn.lock_recover());
         let uuid = field_owner(&conn, id)?;
-        let row = db::get_field_row_by_id(&conn, id)?
+        let row = Rows::row(&*conn, id)?
             .ok_or_else(|| ApiError::not_found(format!("Field {id} not found")))?;
         check_writable(&row.name, force)?;
         let mut writer = repo_state.writer(&mut conn, None)?;
@@ -4120,10 +4120,10 @@ async fn sync_create_link(
         let record_a = parse_uuid(&body.record_a)?;
         let record_b = parse_uuid(&body.record_b)?;
         // Both endpoint metarecords must exist.
-        if db::get_version(&repo_a.conn.lock_recover(), record_a)?.is_none() {
+        if Rows::version(&*repo_a.conn.lock_recover(), record_a)?.is_none() {
             return Err(ApiError::not_found(format!("metarecord not found in repo_a: {record_a}")));
         }
-        if db::get_version(&repo_b.conn.lock_recover(), record_b)?.is_none() {
+        if Rows::version(&*repo_b.conn.lock_recover(), record_b)?.is_none() {
             return Err(ApiError::not_found(format!("metarecord not found in repo_b: {record_b}")));
         }
         let host = match &body.host {
@@ -4213,7 +4213,7 @@ async fn sync_delete_link(
             };
             repo.ensure_writable()?;
             let mut conn = repo.conn.lock_recover();
-            if db::get_version(&conn, record)?.is_some() {
+            if Rows::version(&*conn, record)?.is_some() {
                 let mut writer = repo.writer(&mut conn, None)?;
                 writer.delete_metarecord(record)?;
                 let effects = writer.effects();
@@ -4243,8 +4243,8 @@ async fn sync_status(
         let conn_b = repo_b.conn.lock_recover();
         let mut out = Vec::with_capacity(links.len());
         for l in &links {
-            let ea = db::get_version(&conn_a, l.record_a)?;
-            let eb = db::get_version(&conn_b, l.record_b)?;
+            let ea = Rows::version(&*conn_a, l.record_a)?;
+            let eb = Rows::version(&*conn_b, l.record_b)?;
             let state = link_state(ea, eb, l.version_a, l.version_b);
             out.push(json!({
                 "uuid": hex(l.uuid),

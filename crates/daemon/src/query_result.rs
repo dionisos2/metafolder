@@ -11,8 +11,8 @@ use uuid::Uuid;
 
 use metafolder_core::metarecord::{Field, MetaRecord};
 
-use crate::db;
 use crate::error::ApiError;
+use crate::store::Rows;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
@@ -45,8 +45,8 @@ pub fn assemble_selected(
 ) -> Result<Vec<serde_json::Value>, ApiError> {
     // Batched reads: the whole page's versions and field rows in a couple of
     // `IN (…)` scans, not a query per metarecord.
-    let versions = db::versions_for(conn, uuids)?;
-    let mut rows = db::field_rows_for(conn, uuids)?;
+    let versions = Rows::versions_for(conn, uuids)?;
+    let mut rows = Rows::rows_for(conn, uuids)?;
     let mut objects = Vec::with_capacity(uuids.len());
     for (i, &uuid) in uuids.iter().enumerate() {
         if i % 256 == 0 && cancel() {

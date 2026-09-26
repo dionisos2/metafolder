@@ -9,7 +9,7 @@ use regex::Regex;
 use rusqlite::Connection;
 use uuid::Uuid;
 
-use crate::db;
+use crate::store::Rows;
 use crate::tree_cache::TreeCache;
 
 /// The field recording a directory the watch budget could not afford
@@ -231,7 +231,7 @@ pub fn effective_ignore(
     let full_idx = rel_path.split('/').count() - 1;
     let chain = ancestor_chain(conn, cache, rel_path)?;
     for (i, uuid) in chain.iter().rev() {
-        let patterns = db::string_fields(conn, *uuid, "mf_ignore")?;
+        let patterns = Rows::string_fields(conn, *uuid, "mf_ignore")?;
         if patterns.is_empty() {
             continue;
         }
@@ -280,7 +280,7 @@ fn ancestor_chain(
 pub fn resolve_mf_sync(conn: &Connection, cache: &mut TreeCache, rel_path: &str) -> Result<String> {
     let chain = ancestor_chain(conn, cache, rel_path)?;
     for (_, uuid) in chain.iter().rev() {
-        if let Some(v) = db::string_fields(conn, *uuid, "mf_sync")?.into_iter().next() {
+        if let Some(v) = Rows::string_fields(conn, *uuid, "mf_sync")?.into_iter().next() {
             return Ok(if v == "external" { v } else { "internal".to_string() });
         }
     }
@@ -292,7 +292,7 @@ fn cached_watch(conn: &Connection, ec: &mut EligibilityCache, uuid: Uuid) -> Res
     if let Some(v) = ec.watch.get(&uuid) {
         return Ok(*v);
     }
-    let v = db::bool_field(conn, uuid, "mf_watch")?;
+    let v = Rows::bool_field(conn, uuid, "mf_watch")?;
     ec.watch.insert(uuid, v);
     Ok(v)
 }
@@ -311,7 +311,7 @@ pub fn cached_watch_exceeded(
     if let Some(v) = ec.exceeded.get(&uuid) {
         return Ok(*v);
     }
-    let v = db::bool_field(conn, uuid, WATCH_EXCEEDED)?;
+    let v = Rows::bool_field(conn, uuid, WATCH_EXCEEDED)?;
     ec.exceeded.insert(uuid, v);
     Ok(v)
 }
@@ -321,7 +321,7 @@ fn cached_ignore(conn: &Connection, ec: &mut EligibilityCache, uuid: Uuid) -> Re
     if let Some(v) = ec.ignore.get(&uuid) {
         return Ok(v.clone());
     }
-    let v = db::string_fields(conn, uuid, "mf_ignore")?;
+    let v = Rows::string_fields(conn, uuid, "mf_ignore")?;
     ec.ignore.insert(uuid, v.clone());
     Ok(v)
 }

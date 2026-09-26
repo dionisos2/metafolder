@@ -26,13 +26,12 @@ use uuid::Uuid;
 use metafolder_core::metarecord::{Field, TreeName, Value};
 use metafolder_core::sync::MutexExt;
 
-use crate::db;
 use crate::eligibility;
 use crate::fs_meta;
 use crate::log::{self, OpType, Writer};
 use crate::relpath::RelPath;
 use crate::state::RepoState;
-use crate::store::Restoration;
+use crate::store::{Restoration, Rows};
 use crate::tree_cache::TreeCache;
 
 /// A raw filesystem event, as enqueued by the watcher. Paths are
@@ -1135,7 +1134,7 @@ impl Apply<'_, '_> {
             let Some(uuid) = self.resolve(from)? else {
                 continue; // Untracked, or already re-homed.
             };
-            let Some(record) = db::get_metarecord(self.writer.connection(), uuid)? else {
+            let Some(record) = Rows::metarecord(self.writer.store(), uuid)? else {
                 continue;
             };
             let key =
@@ -1184,7 +1183,7 @@ impl Apply<'_, '_> {
         let unchanged = {
             let conn = self.writer.connection();
             let stored = |name: &str| -> Option<Value> {
-                db::get_field_rows_named(conn, uuid, name).ok().and_then(|rows| {
+                Rows::rows_named(conn, uuid, name).ok().and_then(|rows| {
                     rows.into_iter().map(|r| r.value).find(|v| !matches!(v, Value::Nothing))
                 })
             };

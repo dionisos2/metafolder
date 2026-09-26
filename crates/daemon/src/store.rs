@@ -12,7 +12,7 @@
 use std::collections::HashMap;
 
 use anyhow::{Context, Result};
-use metafolder_core::metarecord::{TreeName, Value};
+use metafolder_core::metarecord::{Field, MetaRecord, TreeName, Value};
 use rusqlite::{params, Connection, Transaction};
 use uuid::Uuid;
 
@@ -39,6 +39,14 @@ macro_rules! forward_to_connection {
             fn rows_for(&self, uuids: &[Uuid]) -> Result<HashMap<Uuid, Vec<FieldRow>>> {
                 let $me = self;
                 Rows::rows_for($conn, uuids)
+            }
+            fn versions_for(&self, uuids: &[Uuid]) -> Result<HashMap<Uuid, u64>> {
+                let $me = self;
+                Rows::versions_for($conn, uuids)
+            }
+            fn metarecord_count(&self) -> Result<usize> {
+                let $me = self;
+                Rows::metarecord_count($conn)
             }
             fn row(&self, id: i64) -> Result<Option<FieldRow>> {
                 let $me = self;
@@ -149,6 +157,10 @@ pub trait Rows {
     fn rows_named(&self, uuid: Uuid, name: &str) -> Result<Vec<FieldRow>>;
     /// Several metarecords' rows at once.
     fn rows_for(&self, uuids: &[Uuid]) -> Result<HashMap<Uuid, Vec<FieldRow>>>;
+    /// Several metarecords' versions at once (the missing ones left out).
+    fn versions_for(&self, uuids: &[Uuid]) -> Result<HashMap<Uuid, u64>>;
+    /// How many metarecords there are.
+    fn metarecord_count(&self) -> Result<usize>;
     /// A row by its id.
     fn row(&self, id: i64) -> Result<Option<FieldRow>>;
     /// The metarecord a row belongs to.
@@ -170,6 +182,51 @@ pub trait Rows {
     /// metarecord's positions in row-id order (the order a load places them
     /// in; the groups themselves come in no promised order).
     fn forest(&self) -> Result<Vec<TreeRow>>;
+
+    // ── Derived: every backend has these from the above ──────────────────
+
+    /// A whole metarecord, `None` when it does not exist.
+    fn metarecord(&self, uuid: Uuid) -> Result<Option<MetaRecord>> {
+        let Some(version) = self.version(uuid)? else { return Ok(None) };
+        let fields = self
+            .rows(uuid)?
+            .into_iter()
+            .map(|r| Field { id: Some(r.id), name: r.name, value: r.value })
+            .collect();
+        Ok(Some(MetaRecord { uuid, version, fields }))
+    }
+    /// The first `String` value of a field, if any.
+    fn string_field(&self, uuid: Uuid, name: &str) -> Result<Option<String>> {
+        Ok(self.rows_named(uuid, name)?.into_iter().find_map(|r| match r.value {
+            Value::String(s) => Some(s),
+            _ => None,
+        }))
+    }
+    /// Every `String` value of a multi-map field, in row order.
+    fn string_fields(&self, uuid: Uuid, name: &str) -> Result<Vec<String>> {
+        Ok(self
+            .rows_named(uuid, name)?
+            .into_iter()
+            .filter_map(|r| match r.value {
+                Value::String(s) => Some(s),
+                _ => None,
+            })
+            .collect())
+    }
+    /// The first `Int` value of a field, if any.
+    fn int_field(&self, uuid: Uuid, name: &str) -> Result<Option<i64>> {
+        Ok(self.rows_named(uuid, name)?.into_iter().find_map(|r| match r.value {
+            Value::Int(n) => Some(n),
+            _ => None,
+        }))
+    }
+    /// The first `Bool` value of a field, if any (`Nothing` does not count).
+    fn bool_field(&self, uuid: Uuid, name: &str) -> Result<Option<bool>> {
+        Ok(self.rows_named(uuid, name)?.into_iter().find_map(|r| match r.value {
+            Value::Bool(b) => Some(b),
+            _ => None,
+        }))
+    }
 }
 
 /// The event log.
@@ -540,6 +597,12 @@ impl Rows for Connection {
     }
     fn rows_for(&self, uuids: &[Uuid]) -> Result<HashMap<Uuid, Vec<FieldRow>>> {
         db::field_rows_for(self, uuids)
+    }
+    fn versions_for(&self, uuids: &[Uuid]) -> Result<HashMap<Uuid, u64>> {
+        db::versions_for(self, uuids)
+    }
+    fn metarecord_count(&self) -> Result<usize> {
+        db::count_metarecords(self)
     }
     fn row(&self, id: i64) -> Result<Option<FieldRow>> {
         db::get_field_row_by_id(self, id)
