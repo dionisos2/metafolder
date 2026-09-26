@@ -156,6 +156,7 @@ lexicographically, integers big-endian so that byte order is numeric order.
 | bsi         | =(field, min/max, slice, chunk)= | roaring container          | numeric ranges, numeric top-k                   |
 | forest      | =(field, parent, name)=      | =id=                           | path resolution, children *already sorted*      |
 | descendants | =(field, node, chunk)=       | roaring container              | subtree membership ([[*The forest: descendant bitmaps]]) |
+| children    | =(field, node, chunk)=       | roaring container              | a folder's direct entries as one bitmap         |
 | trigrams    | =(field, trigram, chunk)=    | roaring container              | =Matches= / =Osm= on text and names             |
 | log         | =op_id=                      | operation + snapshots          | history, undo/redo, navigation, incremental reads |
 | meta        | name                         | HEAD, format version, …        |                                                 |

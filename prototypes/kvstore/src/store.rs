@@ -13,6 +13,7 @@
 //! | forest    | fid · parent · name          | id                     |
 //! | position  | fid · id                     | parent · name          |
 //! | desc      | fid · node · chunk           | bitmap                 |
+//! | kids      | fid · node · chunk           | bitmap                 |
 //! | trigrams  | fid · trigram · chunk        | bitmap                 |
 //! | log       | seq                          | uuid · before · after  |
 //! | meta      | name                         | counter                |
@@ -91,6 +92,7 @@ struct Tables {
     forest: Db,
     position: Db,
     desc: Db,
+    kids: Db,
     trigrams: Db,
     log: Db,
     meta: Db,
@@ -102,6 +104,7 @@ enum Bm {
     Presence,
     Postings,
     Desc,
+    Kids,
     Trigrams,
 }
 
@@ -226,6 +229,7 @@ impl Store {
             forest: db("forest")?,
             position: db("position")?,
             desc: db("desc")?,
+            kids: db("kids")?,
             trigrams: db("trigrams")?,
             log: db("log")?,
             meta: db("meta")?,
@@ -273,6 +277,7 @@ impl Store {
             ("forest", t.forest),
             ("position", t.position),
             ("desc", t.desc),
+            ("kids", t.kids),
             ("trigrams", t.trigrams),
             ("log", t.log),
         ] {
@@ -465,14 +470,7 @@ impl Reader<'_> {
                 let (Some(fid), Some(node)) = (fid(field), self.node_id(*node)?) else {
                     return Ok(RoaringBitmap::new());
                 };
-                let mut out = RoaringBitmap::new();
-                let prefix = key(&[&fid.to_be_bytes(), &node.to_be_bytes()]);
-                for e in t.forest.prefix_iter(self.r, &prefix)? {
-                    let (_, v) = e?;
-                    self.s.reads.add(1);
-                    out.insert(id_of(v));
-                }
-                out
+                self.bitmap(t.kids, &key(&[&fid.to_be_bytes(), &node.to_be_bytes()]))?
             }
             Q::Under { field, node } => {
                 let (Some(fid), Some(node)) = (fid(field), self.node_id(*node)?) else {
@@ -769,13 +767,12 @@ impl Reader<'_> {
         out: &mut Vec<u32>,
     ) -> Result<bool> {
         let t = self.s.t;
-        let mut children = Vec::new();
+        // Streamed: a folder of 250 000 entries stops being read at the page's
+        // end (LMDB cursors nest freely inside one read transaction).
         for e in t.forest.prefix_iter(self.r, &key(&[f, &node.to_be_bytes()]))? {
             let (_, v) = e?;
             self.s.reads.add(1);
-            children.push(id_of(v));
-        }
-        for c in children {
+            let c = id_of(v);
             if m.contains(c) {
                 out.push(c);
                 if out.len() >= limit {
@@ -825,6 +822,7 @@ impl Writer<'_> {
             Bm::Presence => self.t.presence,
             Bm::Postings => self.t.postings,
             Bm::Desc => self.t.desc,
+            Bm::Kids => self.t.kids,
             Bm::Trigrams => self.t.trigrams,
         }
     }
@@ -1189,6 +1187,8 @@ impl Writer<'_> {
         if let (Some(op), Some((_, name))) = (old_parent, &old) {
             self.t.forest.delete(&mut self.txn, &key(&[&f, &op.to_be_bytes(), name.as_bytes()]))?;
             self.t.position.delete(&mut self.txn, &key(&[&f, &id.to_be_bytes()]))?;
+            let one = RoaringBitmap::from_iter([id]);
+            self.bm_remove(Bm::Kids, &key(&[&f, &op.to_be_bytes()]), &one)?;
             if new_parent != Some(op) {
                 for a in self.chain(fid, op)? {
                     self.bm_remove(Bm::Desc, &key(&[&f, &a.to_be_bytes()]), &subtree)?;
@@ -1200,6 +1200,8 @@ impl Writer<'_> {
             self.t.forest.put(&mut self.txn, &fk, &id.to_be_bytes())?;
             let pv = key(&[&np.to_be_bytes(), name.as_bytes()]);
             self.t.position.put(&mut self.txn, &key(&[&f, &id.to_be_bytes()]), &pv)?;
+            let one = RoaringBitmap::from_iter([id]);
+            self.bm_add(Bm::Kids, &key(&[&f, &np.to_be_bytes()]), &one)?;
             if old_parent != Some(np) {
                 for a in self.chain(fid, np)? {
                     self.bm_add(Bm::Desc, &key(&[&f, &a.to_be_bytes()]), &subtree)?;

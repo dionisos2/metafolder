@@ -123,3 +123,35 @@ fn a_path_walk_starts_at_the_matches_common_ancestor() {
         assert_eq!(rs, rb, "{label}: {rs} keys on the small repository, {rb} on the big one");
     }
 }
+
+/// One folder of `n` files under the root.
+fn flat(n: usize) -> (TempDir, Store) {
+    let dir = TempDir::new("flat");
+    let store = Store::open(dir.path()).unwrap();
+    let mut w = store.write().unwrap();
+    let (root, folder) = (Uuid::from_u128(1), Uuid::from_u128(2));
+    w.create(Record { uuid: root, fields: vec![(P.into(), tree(ROOT, ""))] }).unwrap();
+    w.create(Record { uuid: folder, fields: vec![(P.into(), tree(root, "big"))] }).unwrap();
+    for i in 0..n {
+        let fields = vec![
+            (P.to_string(), tree(folder, &format!("file{i:06}.txt"))),
+            ("mfr_mtime".into(), Value::Time((i * 7919 % 100_003) as i64)),
+        ];
+        w.create(Record { uuid: Uuid::from_u128(10 + i as u128), fields }).unwrap();
+    }
+    w.commit().unwrap();
+    (dir, store)
+}
+
+/// The first page of a folder costs the page, not the folder: a folder of
+/// 8 000 files opens with as few reads as one of 500 (give or take a key per
+/// bitmap chunk).
+#[test]
+fn a_giant_folder_opens_at_the_cost_of_its_first_page() {
+    let (_a, small) = flat(500);
+    let (_b, big) = flat(8_000);
+    let q = |s: &Store| Q::Child { field: P.into(), node: s.resolve(P, "/big").unwrap().unwrap() };
+    let sort = Sort::Path { field: P.into() };
+    let (rs, rb) = (reads(&small, &q(&small), &sort, 100), reads(&big, &q(&big), &sort, 100));
+    assert!(rb <= rs + 10, "{rs} keys for 500 files, {rb} for 8 000");
+}
