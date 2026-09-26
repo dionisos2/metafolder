@@ -2030,12 +2030,12 @@ fn print_watch(resp: &serde_json::Value, raw_json: bool) -> Result<i32, CliError
     }
     let state = if resp["paused"].as_bool().unwrap_or(false) { "paused" } else { "running" };
     // The buffer is in memory, so the count is always there — no "unavailable"
-    // case to render any more. The watch count is worth showing next to it: one
-    // inotify watch per directory, on a budget shared with every other program
-    // on the machine (spec-file-tracking "File Watcher").
+    // case to render any more. The coverage is worth showing next to it: one
+    // watch per directory in the budget regime, the whole tree under a single
+    // registration in the coverage regime (spec-file-tracking "Watch sources
+    // and regimes").
     let waiting = resp["pending_events"].as_i64().unwrap_or(0);
-    let watched = resp["watched_dirs"].as_i64().unwrap_or(0);
-    println!("{state:<10}\t{waiting} event(s) waiting\t{watched} directory(ies) watched");
+    println!("{state:<10}\t{waiting} event(s) waiting\t{}", coverage(resp));
     // A budget in trouble adds its own lines, so neither condition passes
     // unnoticed (spec-file-tracking "The watch budget").
     let budget = &resp["watch_budget"];
@@ -2045,6 +2045,18 @@ fn print_watch(resp: &serde_json::Value, raw_json: bool) -> Result<i32, CliError
         print_watch_budget(resp);
     }
     Ok(0)
+}
+
+/// The coverage column of `watch status` and `watch exceeded`: per-directory
+/// watches in the budget regime, the whole tree under one registration in the
+/// coverage regime — the active source named either way (spec-file-tracking
+/// "Watch sources and regimes").
+fn coverage(resp: &serde_json::Value) -> String {
+    let backend = resp["backend"].as_str().unwrap_or("?");
+    match resp["watched_dirs"].as_i64() {
+        Some(watched) => format!("{watched} directory(ies) watched ({backend})"),
+        None => format!("tree covered ({backend})"),
+    }
 }
 
 /// `mf watch exceeded` / `... list`: the subtrees the watch budget could not
@@ -2084,16 +2096,20 @@ pub fn watch_exceeded_set(
     if raw_json {
         print_pretty(&resp);
     } else {
-        let watched = resp["watched_dirs"].as_i64().unwrap_or(0);
         let verb = if exceeded { "no longer watched" } else { "watched again" };
-        println!("{path}: {verb}\t{watched} directory(ies) watched");
+        println!("{path}: {verb}\t{}", coverage(&resp));
     }
     Ok(0)
 }
 
-/// The budget line shared by `watch status` and `watch exceeded`.
+/// The budget line shared by `watch status` and `watch exceeded`. The coverage
+/// regime has no budget to report (spec-file-tracking "Watch sources and
+/// regimes") — nothing is printed.
 fn print_watch_budget(resp: &serde_json::Value) {
     let budget = &resp["watch_budget"];
+    if budget.is_null() {
+        return;
+    }
     let n = |key: &str| budget[key].as_i64();
     match (n("cap"), n("limit")) {
         (Some(cap), Some(limit)) => println!(

@@ -68,6 +68,8 @@ pub struct RepoState {
     /// Percentage of the kernel's watch limit this repository may spend
     /// (`[settings] watch-budget-share`).
     watch_budget_share: u8,
+    /// Where the fanotify broker is probed at load (`[settings] watchd-socket`).
+    watchd_socket: PathBuf,
     /// The kernel refused watches while this daemon was still under its own
     /// ceiling: another program holds the budget. A *state*, not a message —
     /// it lasts as long as the condition, so a client can keep it on screen
@@ -171,6 +173,7 @@ impl RepoState {
             declared_mounts: Mutex::new(Arc::new(Vec::new())),
             ready: std::sync::atomic::AtomicBool::new(false),
             watch_budget_share: settings.watch_budget_share,
+            watchd_socket: settings.watchd_socket.clone(),
             starved_watches: std::sync::atomic::AtomicBool::new(false),
             exceeded_dirs: std::sync::atomic::AtomicUsize::new(0),
             watch_quiet_period: settings.watch_quiet_period(),
@@ -436,6 +439,28 @@ impl RepoState {
         self.handles.lock_recover().as_ref().map_or(0, |h| h.watcher.watched())
     }
 
+    /// The active watch source's wire name — `GET /watch`'s `backend`
+    /// (spec-file-tracking "Watch sources and regimes"). While the watcher is
+    /// not running (unit tests, a repository being torn down) the platform's
+    /// notify backend is named, so the view still answers.
+    pub fn watch_backend(&self) -> &'static str {
+        self.handles
+            .lock_recover()
+            .as_ref()
+            .map_or_else(crate::watcher::inotify::platform_backend_name, |h| h.watcher.backend())
+    }
+
+    /// Whether the watch-budget vocabulary applies to this repository's source
+    /// (spec-file-tracking "Watch sources and regimes"): `watch_budget` and
+    /// `watched_dirs` carry nothing under the coverage regime, where one
+    /// registration covers the tree and there is no per-directory state.
+    pub fn watch_budget_regime(&self) -> bool {
+        self.handles
+            .lock_recover()
+            .as_ref()
+            .is_none_or(|h| h.watcher.regime() == crate::watcher::Regime::Budget)
+    }
+
     /// The absolute paths of the directories currently watched, as a snapshot
     /// (what `POST /watch/check` answers against). Empty while the repository's
     /// watcher is not running.
@@ -652,9 +677,15 @@ impl RepoState {
             let mut p = Phase::begin(&who, "place the filesystem watches");
             let conn = self.conn.lock_recover();
             let watched = self.refresh_watches(&conn);
-            // One inotify watch per directory: worth stating, because the
-            // budget is per user and shared (spec-file-tracking "File Watcher").
-            p.detail(format!("{watched} directories"));
+            // What coverage looks like is regime-specific (spec-file-tracking
+            // "Watch sources and regimes"): one inotify watch per directory —
+            // worth stating, the budget is per user and shared — or the whole
+            // tree under one registration.
+            p.detail(if self.watch_budget_regime() {
+                format!("{watched} directories")
+            } else {
+                format!("tree covered ({})", self.watch_backend())
+            });
         }
         Ok(())
     }
@@ -662,6 +693,11 @@ impl RepoState {
     /// The share of the kernel's watch limit this repository may spend.
     pub fn watch_budget_share(&self) -> u8 {
         self.watch_budget_share
+    }
+
+    /// Where the fanotify broker is probed at load (`[settings] watchd-socket`).
+    pub fn watchd_socket(&self) -> &Path {
+        &self.watchd_socket
     }
 
     /// How many subtree roots carry `mfr_watch_exceeded = true` — what the

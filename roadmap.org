@@ -213,6 +213,65 @@ concerns"; =spec-indexing= (on-disk persistence), =spec-config= (binary-only
 install) and =spec-trash= (sync as a future caller) say what is missing in
 words. The =CLAUDE.md= sentences that repeated the tag went with them.
 
+** TODO fanotify watch source
+From the watcher discussion (September 2026), not the review pass. Designed in
+[[file:docs/watcher-fanotify.md][docs/watcher-fanotify.md]], not started: a second watch *source* for Linux — a
+small privileged broker (fanotify marks on mounts, FID→path resolution, per-uid
+filtering) streaming events over a Unix socket — behind the existing pipeline,
+with the inotify source kept as the no-privilege default and fallback. One mark
+per mount removes the per-directory watches, the placement walk and the watch
+budget (=mfr_watch_exceeded= and friends). The motivating case: a personal
+repository sitting close to =fs.inotify.max_user_watches=, with a placement walk
+that is felt.
+
+Settled in spec-file-tracking (September 2026) before any code: the *budget*
+and *coverage* regimes ([[file:docs/spec-file-tracking.org][spec-file-tracking]]
+"Watch sources and regimes"), =mfr_watch_exceeded= honoured in both (=watch
+check= keeps one answer ladder; only =unwatched= is budget-only), the active
+backend reported by =GET /watch=. The =watcher/= split, the =Source= seam, the
+broker and the daemon-side =fanotify= source are done (below); what remains is
+the conformance battery run against both sources *in a privileged environment*
+(mount marks and handle resolution cannot run in the unprivileged harness) and
+the note's open questions (auto-reconcile on reconnect, network filesystems).
+The permission model is decided (strictly single-user daemon; no hop reveals
+more than the next hop's own credentials could discover, see the note) and
+implemented in the broker.
+
+*** DONE the broker: =crates/watchd= (September 2026)
+=metafolder-watchd= — one per machine, the two capabilities
+(=CAP_SYS_ADMIN=, =CAP_DAC_READ_SEARCH=) granted by its unit and nowhere else.
+One fanotify group, one mark per covered mount (=FAN_MARK_MOUNT=), file-handle
+events (=FAN_REPORT_DFID_NAME=, =FAN_RENAME=) resolved to paths, NDJSON over a
+Unix socket. Per-subscriber filtering by =SO_PEERCRED= uid + userspace DAC (the
+permission invariant of the note); per-subscriber bounded queues with in-order
+=Overflow= markers; =FAN_Q_OVERFLOW= broadcast to everyone. 34 tests, including
+an unprivileged fanotify smoke test against the real kernel (group, marks,
+record layout) and an end-to-end over a real socket.
+
+*** DONE the =fanotify= source behind the trait (September 2026)
+=watcher/fanotify.rs= — the daemon-side client: a synchronous handshake whose
+answer *means* "you are covered" (a refused root falls back, announced), then a
+reconnecting reader thread
+holding no =Arc<RepoState>=. Wire events become =FsEvent=s through the shared
+pipeline; the coverage regime drops what happens under =mfr_watch_exceeded= at
+ingestion (=drop_excluded=, a move out of it reads as an arrival), and
+=watch check= answers from =Coverage::Tree= (exclusion / offline / internal —
+the structural skips the ladder already names). =[settings] watchd-socket= is
+the whole switch: probed at load, fanotify when it answers, inotify (announced)
+when it does not. 3 integration tests through the real pipeline
+(stand-in broker → metarecords) plus unit tests for the client and the filter.
+
+*** DONE the =watcher/= split and the =Source= seam (September 2026)
+=watcher.rs= is now =watcher/mod.rs= (the pipeline: pure =translate=, the
+ingest thread, =WatcherHandle=, the watch-check ladder) and
+=watcher/inotify.rs= (the notify source — placement walk, watch budget,
+maintenance), behind the =Source= trait (=name= / =regime= / =refresh= /
+=watched= / =watched_set= / =maintain=). Behaviour unchanged: the daemon suite
+passes. =GET /watch= reports =backend= and answers =null= for
+=watched_dirs= / =watch_budget= under the coverage regime, =mf watch status=
+prints the coverage line (=22838 directory(ies) watched (inotify)= /
+=tree covered (fanotify)=).
+
 ** TODO structure
 *** TODO =routes.rs= is 4105 lines and 85 handlers
 Splitting it into =routes/= submodules is filing, not simplification — a large

@@ -238,7 +238,7 @@ fn bench_index_build_and_folder_query() {
     let internal = repo.internal_dir();
 
     let mut empty = TreeCache::new(false);
-    let cold = metafolder_daemon::watcher::compute_watched_dirs_timed(
+    let cold = metafolder_daemon::watcher::inotify::compute_watched_dirs_timed(
         &conn, &mut empty, &root_dir, &internal, None,
     );
     let (total_cold, elig_cold) = (cold.total, cold.eligibility);
@@ -250,7 +250,7 @@ fn bench_index_build_and_folder_query() {
 
     let mut warm = TreeCache::new(false);
     warm.populate(&conn).unwrap();
-    let warm_plan = metafolder_daemon::watcher::compute_watched_dirs_timed(
+    let warm_plan = metafolder_daemon::watcher::inotify::compute_watched_dirs_timed(
         &conn, &mut warm, &root_dir, &internal, None,
     );
     let (total_warm, elig_warm) = (warm_plan.total, warm_plan.eligibility);

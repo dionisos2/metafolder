@@ -1,17 +1,20 @@
-//! Filesystem watcher (spec-file-tracking "File Watcher"): translates notify
-//! events into [`crate::executor::FsEvent`]s, enqueues them in the persistent
-//! buffer and pings the executor. Events under `.metafolder/internal/` (the
-//! daemon's own database writes) and non-UTF-8 names are skipped.
+//! The inotify watch source — the *budget* regime of spec-file-tracking "Watch
+//! sources and regimes": one *non-recursive* watch per eligible directory,
+//! placed and maintained by hand, out of a per-user kernel budget shared with
+//! every other program on the machine that watches files. The `notify` crate's
+//! recursive mode does exactly this internally (a walk plus one watch per
+//! directory), so the placement is done here explicitly, where its cost, its
+//! budget and its failures are visible (spec-file-tracking "The watch budget").
 //!
 //! Watches are placed **only on eligible directories** (the opt-in
-//! `mf_watch`/`mf_ignore` scope, spec-file-tracking "Watch and Ignore"), one
-//! non-recursive inotify watch per directory. This matches the semantics of the
-//! reconcile walk ([`crate::reconcile`]): symlinked directories are never
-//! followed (so the watch cannot escape the repository root) and an unreadable
-//! directory is skipped rather than aborting the whole watch. A fresh repository
-//! (`mf_watch = false`) is therefore watched nowhere at all. The set is
-//! recomputed by [`WatcherHandle::refresh`] whenever a manual write changes
-//! eligibility, and maintained incrementally as directories appear/disappear.
+//! `mf_watch`/`mf_ignore` scope, spec-file-tracking "Watch and Ignore"). This
+//! matches the semantics of the reconcile walk ([`crate::reconcile`]):
+//! symlinked directories are never followed (so the watch cannot escape the
+//! repository root) and an unreadable directory is skipped rather than aborting
+//! the whole watch. A fresh repository (`mf_watch = false`) is therefore watched
+//! nowhere at all. The set is recomputed by the [`crate::watcher::WatcherHandle`]
+//! refresh whenever a manual write changes eligibility, and maintained
+//! incrementally as directories appear/disappear.
 //!
 //! **The notify event callback must never block.** notify's inotify backend
 //! serves `watch()`/`unwatch()` requests from the same thread that delivers
@@ -19,7 +22,8 @@
 //! and any thread that asks for one while holding that lock deadlocks with it
 //! (the repository connection is held across `refresh` at every route commit
 //! site). The callback therefore only translates the event and hands it to the
-//! ingest thread ([`start`]), which does the database and watch work.
+//! ingest thread ([`crate::watcher::start`]), which does the database and watch
+//! work.
 
 use std::collections::HashSet;
 use std::path::{Path, PathBuf};
@@ -31,20 +35,36 @@ use rusqlite::Connection;
 
 use metafolder_core::metarecord::TreeName;
 use metafolder_core::sync::MutexExt;
+use uuid::Uuid;
 
 use crate::db;
 use crate::eligibility::{self, EligibilityCache};
-use crate::executor::{self, ExecutorPinger, FsEvent};
+use crate::executor::FsEvent;
 use crate::relpath::RelPath;
 use crate::state::RepoState;
 use crate::tree_cache::TreeCache;
-use uuid::Uuid;
+use crate::watcher::{Placement, Regime};
 
-/// Shared watcher state. Behind mutexes so both the refresh path (manual writes
-/// changing eligibility) and the event callback (directories created/removed at
-/// runtime) can adjust the live watch set. `watcher` is `Option` only during
-/// construction: it is set once, right after the notify watcher is created.
-struct WatcherInner {
+/// The name of the notify backend this source runs on — what `GET /watch`
+/// reports as `backend` (spec-file-tracking "Watch sources and regimes").
+pub const fn platform_backend_name() -> &'static str {
+    if cfg!(target_os = "linux") {
+        "inotify"
+    } else if cfg!(target_os = "macos") {
+        "fsevents"
+    } else if cfg!(target_os = "windows") {
+        "readdirectorychangesw"
+    } else {
+        "notify"
+    }
+}
+
+/// The inotify source's shared state. Behind mutexes so both the refresh path
+/// (manual writes changing eligibility) and the event callback (directories
+/// created/removed at runtime) can adjust the live watch set. `watcher` is
+/// `Option` only during construction: it is set once, right after the notify
+/// watcher is created.
+pub(crate) struct Source {
     watcher: Mutex<Option<notify::RecommendedWatcher>>,
     /// Absolute paths of the directories currently watched.
     watched: Mutex<HashSet<PathBuf>>,
@@ -53,7 +73,7 @@ struct WatcherInner {
     repo: Uuid,
 }
 
-impl WatcherInner {
+impl Source {
     /// Adds a non-recursive watch on `dir` (idempotent). Returns whether the
     /// directory is now watched. Failures are swallowed: one unreadable/racing
     /// directory must never abort watching the rest (spec-file-tracking "File
@@ -197,151 +217,6 @@ fn budget_report(unwatched: usize, watched: usize) -> Option<String> {
              every other program watching files)"
         )
     })
-}
-
-/// The most events the ingest thread folds into a single hand-over. Large
-/// enough that a mass arrival costs a handful of locks rather than one per
-/// event, small enough that the executor still sees the first events of a long
-/// stream without waiting for it to end.
-const MAX_INGEST_BATCH: usize = 4096;
-
-/// What one placement achieved (spec-file-tracking "The watch budget").
-pub struct Placement {
-    /// Directories now watched.
-    pub watched: usize,
-    /// Directories the *kernel* refused although the daemon was under its own
-    /// ceiling — someone else holds the budget. Nothing is recorded for these.
-    pub starved: usize,
-    /// Subtree roots the daemon's own ceiling could not afford, to record as
-    /// `mfr_watch_exceeded`.
-    pub frontier: Vec<String>,
-}
-
-pub struct WatcherHandle {
-    // Dropping the last strong `Arc` drops the notify watcher (stopping event
-    // delivery). The event callback holds only a `Weak`, so it is not a cycle.
-    inner: Arc<WatcherInner>,
-}
-
-impl WatcherHandle {
-    /// Recomputes the eligible-directory set and reconciles the live watches to
-    /// it. Called after a manual write changes `mf_watch`/`mf_ignore`. Takes the
-    /// already-locked connection and tree cache to avoid re-locking them.
-    /// How many directories are currently watched — one inotify watch each
-    /// (see [`is_watch_budget_exhausted`]).
-    pub fn watched(&self) -> usize {
-        self.inner.watched_count()
-    }
-
-    /// A snapshot of the absolute paths currently watched — what
-    /// `POST /repos/:repo/watch/check` answers against (the live set, not the
-    /// placement's target: a starved directory is absent).
-    pub fn watched_set(&self) -> HashSet<PathBuf> {
-        self.inner.watched.lock_recover().clone()
-    }
-
-    /// Brings the watch set in line with the repository's eligibility, within
-    /// the budget `cap` (`None` = uncapped).
-    pub fn refresh(
-        &self,
-        conn: &Connection,
-        cache: &mut TreeCache,
-        root: &Path,
-        internal_dir: &Path,
-        cap: Option<usize>,
-    ) -> Placement {
-        let plan = compute_watched_dirs_timed(conn, cache, root, internal_dir, cap);
-        // A persistent diagnostic for the initial (load-time) walk and any large
-        // watch reconfiguration: the filesystem read_dir cost vs the per-directory
-        // eligibility cost (served from the tree cache once warm).
-        if plan.total.as_millis() >= 100 {
-            eprintln!(
-                "[watcher] walk: {} dirs in {:?} (fs {:?} + eligibility {:?})",
-                plan.dirs.len(),
-                plan.total,
-                plan.total.saturating_sub(plan.eligibility),
-                plan.eligibility,
-            );
-        }
-        let starved = self.inner.apply(&plan.dirs);
-        let watched = self.inner.watched_count();
-        // Refused by the kernel while under our own ceiling: another program is
-        // holding the budget. Transient and external — reported, never recorded
-        // (spec-file-tracking "Two different failures").
-        if let Some(report) = budget_report(starved, watched) {
-            crate::diagnostics::error_for("watcher", report, self.inner.repo);
-        }
-        Placement { watched, starved, frontier: plan.frontier }
-    }
-}
-
-pub fn start(repo: &Arc<RepoState>, pinger: ExecutorPinger) -> Result<WatcherHandle> {
-    let root = repo.config.root.clone();
-    let internal_dir = repo.internal_dir();
-
-    let inner = Arc::new(WatcherInner {
-        watcher: Mutex::new(None),
-        watched: Mutex::new(HashSet::new()),
-        repo: repo.uuid(),
-    });
-
-    // Weaks: neither the ingest thread nor the callback may keep the repository
-    // (and its exclusive lock) or the watcher alive.
-    let repo_weak = Arc::downgrade(repo);
-    let inner_weak = Arc::downgrade(&inner);
-
-    // The ingest thread does everything that can block — the database enqueue
-    // and the watch maintenance for new directories. It ends when the sender
-    // dies with the notify watcher (repository unloaded).
-    let (tx, rx) = std::sync::mpsc::channel::<Vec<(FsEvent, Option<i64>)>>();
-    let ingest_root = root.clone();
-    let ingest_internal = internal_dir.clone();
-    std::thread::spawn(move || {
-        while let Ok(events) = rx.recv() {
-            // Take everything already queued behind this delivery: notify hands
-            // events over a few at a time, and each delivery costs a lock and a
-            // ping. Coalescing them turns a mass arrival into one of each per
-            // batch. Capped so a continuous stream still reaches the executor
-            // promptly instead of growing one unbounded batch.
-            let mut events = events;
-            while events.len() < MAX_INGEST_BATCH {
-                match rx.try_recv() {
-                    Ok(more) => events.extend(more),
-                    Err(_) => break,
-                }
-            }
-            let Some(repo) = repo_weak.upgrade() else {
-                return; // Repository unloaded.
-            };
-            let inner = inner_weak.upgrade();
-            ingest(&repo, &ingest_root, &ingest_internal, &pinger, inner.as_deref(), events);
-        }
-    });
-
-    let cb_root = root.clone();
-    let cb_internal = internal_dir.clone();
-    let watcher = notify::recommended_watcher(move |res: notify::Result<notify::Event>| {
-        // Runs on notify's event-loop thread: translate and hand off, never
-        // block (see the module documentation).
-        match res {
-            Ok(event) => {
-                let events = translate(&cb_root, &cb_internal, event);
-                if !events.is_empty() {
-                    let _ = tx.send(events); // The ingest thread is gone: unloaded.
-                }
-            }
-            Err(err) => crate::diagnostics::error("watcher", format!("backend error: {err}")),
-        }
-    })
-    .context("Failed to create the filesystem watcher")?;
-    *inner.watcher.lock_recover() = Some(watcher);
-
-    // No initial placement here: the eligible-directory walk needs the tree
-    // cache, so it is deferred to the end of the load warmup (which populates the
-    // cache) via `RepoState::refresh_watches` — there each directory's
-    // eligibility is served from memory instead of a per-directory DB walk. Until
-    // then the watcher holds no watches (a fresh repo watches nothing anyway).
-    Ok(WatcherHandle { inner })
 }
 
 /// The set of directories that should be watched: every eligible directory,
@@ -569,346 +444,6 @@ fn exclusion_of(
     }
 }
 
-// ── Watch check (spec-file-tracking "Watch check") ───────────────────────────
-
-/// Why [`explain_watched`] decided the way it did — what stands between the
-/// path and the watcher recording a change at it.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum WatchedReason {
-    /// The path is tracked and the watch on its covering directory reports it.
-    Watched,
-    /// Not tracked at all: the eligibility algorithm said no (the path itself,
-    /// or — for an entry — its containing directory).
-    Untracked,
-    /// Tracked, but inside a subtree carrying `mfr_watch_exceeded = true`: the
-    /// budget's frontier, or a deliberate `mf watch exceeded set`.
-    Excluded,
-    /// Under a declared mount point with nothing mounted: frozen until the
-    /// volume returns (spec-file-tracking "Offline subtrees").
-    Offline,
-    /// Inside the daemon's own runtime directory: never watched, whatever the
-    /// eligibility says.
-    Internal,
-    /// Tracked, eligible, not excluded, not offline — yet the covering
-    /// directory holds no watch right now: the kernel refused (starved).
-    Unwatched,
-}
-
-impl WatchedReason {
-    /// The wire form used by `POST /repos/:repo/watch/check`.
-    pub fn as_str(self) -> &'static str {
-        match self {
-            WatchedReason::Watched => "watched",
-            WatchedReason::Untracked => "untracked",
-            WatchedReason::Excluded => "excluded",
-            WatchedReason::Offline => "offline",
-            WatchedReason::Internal => "internal",
-            WatchedReason::Unwatched => "unwatched",
-        }
-    }
-}
-
-/// The watched state of one path, as `POST /repos/:repo/watch/check` reports
-/// it. The eligibility explanations are carried along so a client can show
-/// *why* without a second call.
-#[derive(Debug, Clone)]
-pub struct WatchedStatus {
-    pub watched: bool,
-    pub reason: WatchedReason,
-    /// The directory whose watch covers the path (`""` is the repository
-    /// root): itself for a directory, its containing directory for anything
-    /// else. The watch set's truth is about directories — this is what the
-    /// answer was computed against.
-    pub watched_dir: String,
-    /// The path's own eligibility dry run (what `POST /eligibility` answers).
-    pub eligibility: eligibility::Explanation,
-    /// The covering directory's own eligibility dry run — `eligibility` for a
-    /// directory path, its containing directory's otherwise. A file whose name
-    /// no pattern matches can still be unwatchable because its directory is
-    /// pruned (cascading skip), and only this tells the two apart.
-    pub dir_eligibility: eligibility::Explanation,
-    /// The path of the metarecord carrying the `mfr_watch_exceeded = true`
-    /// that excludes it ([`WatchedReason::Excluded`] only).
-    pub excluded_by: Option<String>,
-    /// The offline mount point the path sits under
-    /// ([`WatchedReason::Offline`] only).
-    pub offline_mount: Option<String>,
-}
-
-/// The watched state of a batch of repo-root-relative paths, answering
-/// `POST /repos/:repo/watch/check`. `watched` is the *live watch set's* truth —
-/// one step past eligibility: a change at a path is recorded when the path is
-/// eligible AND the covering directory holds a watch, so a tracked file inside
-/// an excluded subtree or on an unplugged volume is still not watched, and the
-/// reason says which. Read-only; one shared [`EligibilityCache`] and one
-/// offline-mounts snapshot serve the whole batch.
-pub fn explain_watched(
-    conn: &Connection,
-    cache: &mut TreeCache,
-    root: &Path,
-    internal_dir: &Path,
-    watched: &HashSet<PathBuf>,
-    rel_paths: &[String],
-) -> Result<Vec<WatchedStatus>> {
-    let mut ec = EligibilityCache::default();
-    let mut offline = None;
-    rel_paths
-        .iter()
-        .map(|rel| {
-            explain_watched_one(
-                conn,
-                cache,
-                root,
-                internal_dir,
-                watched,
-                rel,
-                &mut ec,
-                &mut offline,
-            )
-        })
-        .collect()
-}
-
-/// [`explain_watched`] for one path. The reason ladder follows the placement
-/// walk's own order — eligibility first (the path, then its covering
-/// directory), then the structural skips (the daemon's internals, an unplugged
-/// volume, a recorded exclusion), and "starved" only when nothing else
-/// explains the absence of a watch.
-#[allow(clippy::too_many_arguments)]
-fn explain_watched_one(
-    conn: &Connection,
-    cache: &mut TreeCache,
-    root: &Path,
-    internal_dir: &Path,
-    watched: &HashSet<PathBuf>,
-    rel_path: &str,
-    ec: &mut EligibilityCache,
-    offline: &mut Option<crate::mount::OfflineMounts>,
-) -> Result<WatchedStatus> {
-    let is_dir = dir_like(conn, cache, root, rel_path)?;
-    let cover = if is_dir { rel_path.to_string() } else { parent_of(rel_path) };
-    let watched_dir = watched.contains(&abs_of(root, &cover));
-    let eligibility = eligibility::explain_cached(conn, cache, rel_path, ec)?;
-    let dir_eligibility = if is_dir {
-        eligibility.clone()
-    } else {
-        eligibility::explain_cached(conn, cache, &cover, ec)?
-    };
-    let watched = watched_dir && eligibility.eligible;
-    let (reason, excluded_by, offline_mount) = if watched {
-        (WatchedReason::Watched, None, None)
-    } else if !eligibility.eligible || !dir_eligibility.eligible {
-        // Two cases, one verdict: the path itself is untracked (the common
-        // one — mf_watch or a pattern decided), or only its covering
-        // directory is (a pattern matched the directory alone, so the walk
-        // pruned it and the file beneath can never be reached).
-        (WatchedReason::Untracked, None, None)
-    } else if abs_of(root, &cover).starts_with(internal_dir) {
-        (WatchedReason::Internal, None, None)
-    } else {
-        let mounts = offline
-            .get_or_insert_with(|| crate::mount::offline(conn, cache, root).unwrap_or_default());
-        if let Some(mount) = mounts.paths().iter().find(|m| covers(m, &cover)) {
-            (WatchedReason::Offline, None, Some((*mount).clone()))
-        } else if let Some(by) = excluded_by(conn, cache, ec, &cover)? {
-            (WatchedReason::Excluded, Some(by), None)
-        } else {
-            (WatchedReason::Unwatched, None, None)
-        }
-    };
-    Ok(WatchedStatus {
-        watched,
-        reason,
-        watched_dir: cover,
-        eligibility,
-        dir_eligibility,
-        excluded_by,
-        offline_mount,
-    })
-}
-
-/// Whether the path denotes a directory: the disk first (symlink metadata —
-/// a symlinked directory is never watched, matching the walk's
-/// `file_type().is_dir()`), the metarecord's `mfr_type` when the path is gone
-/// (an orphan's stale path still says what it was), else a file — a
-/// not-yet-existing path is treated as the file that would appear there.
-fn dir_like(conn: &Connection, cache: &mut TreeCache, root: &Path, rel: &str) -> Result<bool> {
-    if std::fs::symlink_metadata(abs_of(root, rel))
-        .map(|md| md.file_type().is_dir())
-        .unwrap_or(false)
-    {
-        return Ok(true);
-    }
-    match cache.resolve_path(conn, "mfr_path", rel)? {
-        Some(uuid) => Ok(db::string_fields(conn, uuid, "mfr_type")?
-            .first()
-            .map(|t| t == "dir")
-            .unwrap_or(false)),
-        None => Ok(false),
-    }
-}
-
-/// The parent directory of a repo-root-relative path (`""` for the root and
-/// for a top-level entry — the root's own parent).
-fn parent_of(rel: &str) -> String {
-    match rel.rfind('/') {
-        Some(0) | None => String::new(),
-        Some(i) => rel[..i].to_string(),
-    }
-}
-
-/// The absolute path of a repo-root-relative `rel` (`""` is the root itself).
-fn abs_of(root: &Path, rel: &str) -> PathBuf {
-    if rel.is_empty() {
-        root.to_path_buf()
-    } else {
-        root.join(rel.trim_start_matches('/'))
-    }
-}
-
-/// Whether the offline mount point `m` is `rel` or an ancestor of it.
-fn covers(m: &str, rel: &str) -> bool {
-    rel == m || (rel.len() > m.len() && rel.starts_with(m) && rel.as_bytes()[m.len()] == b'/')
-}
-
-/// The nearest metarecord on the ancestor chain of `rel` (itself included)
-/// defining `mfr_watch_exceeded = true` — the subtree root the placement walk
-/// left unwatched, whether the budget recorded it or the user set it. `None`
-/// when nothing excludes the path: the nearest definition decides, and an
-/// unmetarecorded prefix carries none of its own.
-fn excluded_by(
-    conn: &Connection,
-    cache: &mut TreeCache,
-    ec: &mut EligibilityCache,
-    rel: &str,
-) -> Result<Option<String>> {
-    let comps: Vec<&str> = rel.split('/').collect();
-    for i in (0..comps.len()).rev() {
-        let prefix = comps[..=i].join("/");
-        if let Some(uuid) = cache.resolve_path(conn, "mfr_path", &prefix)? {
-            if let Some(exceeded) = eligibility::cached_watch_exceeded(conn, ec, uuid)? {
-                return Ok(if exceeded { Some(prefix) } else { None });
-            }
-        }
-    }
-    Ok(None)
-}
-
-/// Converts an absolute path to the internal repo-root-relative form, keeping
-/// each component's exact bytes — a POSIX name need not be UTF-8, and such a
-/// file is watched like any other (spec-data-model "Tree names"). None for
-/// paths outside the root, under `.metafolder/internal/`, or for the root.
-fn relative(root: &Path, internal_dir: &Path, abs: &Path) -> Option<RelPath> {
-    if abs.starts_with(internal_dir) {
-        return None;
-    }
-    let rel = abs.strip_prefix(root).ok()?;
-    let mut out = RelPath::root();
-    for comp in rel.components() {
-        let std::path::Component::Normal(name) = comp else {
-            return None;
-        };
-        out = out.child(TreeName::from_bytes(crate::relpath::file_name_bytes(name)));
-    }
-    if out.is_root() {
-        None // The root itself.
-    } else {
-        Some(out)
-    }
-}
-
-/// Translates one notify event into the internal [`FsEvent`] forms. Pure: no
-/// locks, no database, no watch calls — it runs on notify's event-loop thread.
-fn translate(
-    root: &Path,
-    internal_dir: &Path,
-    event: notify::Event,
-) -> Vec<(FsEvent, Option<i64>)> {
-    use notify::event::{ModifyKind, RenameMode};
-
-    let rel = |p: &Path| relative(root, internal_dir, p);
-    // The inotify rename cookie correlates a split From/To pair; carried so the
-    // executor can fuse them back into one rename (see `correlate_renames`).
-    let cookie = event.attrs.tracker().map(|c| c as i64);
-    let mut events: Vec<(FsEvent, Option<i64>)> = Vec::new();
-    match event.kind {
-        notify::EventKind::Create(_) => {
-            events.extend(
-                event.paths.iter().filter_map(|p| rel(p)).map(|p| (FsEvent::Create(p), None)),
-            );
-        }
-        notify::EventKind::Remove(_) => {
-            events.extend(
-                event.paths.iter().filter_map(|p| rel(p)).map(|p| (FsEvent::Remove(p), None)),
-            );
-        }
-        notify::EventKind::Modify(ModifyKind::Name(RenameMode::Both)) => {
-            if let [from, to] = event.paths.as_slice() {
-                match (rel(from), rel(to)) {
-                    (Some(a), Some(b)) => events.push((FsEvent::Rename(a, b), None)),
-                    // One side is outside the watched scope (e.g. into
-                    // .metafolder/internal/): degrade to the one-sided forms.
-                    (Some(a), None) => events.push((FsEvent::RenameFrom(a), cookie)),
-                    (None, Some(b)) => events.push((FsEvent::RenameTo(b), cookie)),
-                    (None, None) => {}
-                }
-            }
-        }
-        notify::EventKind::Modify(ModifyKind::Name(RenameMode::From)) => {
-            events.extend(
-                event.paths.iter().filter_map(|p| rel(p)).map(|p| (FsEvent::RenameFrom(p), cookie)),
-            );
-        }
-        notify::EventKind::Modify(ModifyKind::Name(RenameMode::To)) => {
-            events.extend(
-                event.paths.iter().filter_map(|p| rel(p)).map(|p| (FsEvent::RenameTo(p), cookie)),
-            );
-        }
-        notify::EventKind::Modify(ModifyKind::Metadata(_)) => {
-            events.extend(
-                event.paths.iter().filter_map(|p| rel(p)).map(|p| (FsEvent::ModifyMeta(p), None)),
-            );
-        }
-        // Data modifications; unknown Modify kinds fall back to Data
-        // semantics (full refresh + hash invalidation, spec-platform).
-        notify::EventKind::Modify(ModifyKind::Data(_))
-        | notify::EventKind::Modify(ModifyKind::Any) => {
-            events.extend(
-                event.paths.iter().filter_map(|p| rel(p)).map(|p| (FsEvent::ModifyData(p), None)),
-            );
-        }
-        _ => {}
-    }
-
-    events
-}
-
-/// Buffers a batch of translated events and keeps the live watch set in step.
-/// Runs on the ingest thread — never on notify's event-loop thread.
-fn ingest(
-    repo: &RepoState,
-    root: &Path,
-    internal_dir: &Path,
-    pinger: &ExecutorPinger,
-    inner: Option<&WatcherInner>,
-    events: Vec<(FsEvent, Option<i64>)>,
-) {
-    // Buffering is a push onto an in-memory vector: it cannot fail, and it does
-    // not touch the repository's connection — so a mass arrival no longer
-    // queues behind whatever holds it.
-    executor::enqueue_all(repo, events.clone());
-    pinger.ping();
-
-    // Keep the live watch set in step with directories that appeared or vanished
-    // (recursive watching is re-implemented here per-directory, so unlike
-    // notify's own recursive mode this must be done by hand). The executor's
-    // `scan_dir` ingests any content already inside a new directory; here we only
-    // register the inotify watches for its *future* events.
-    if let Some(inner) = inner {
-        maintain_watches(repo, root, internal_dir, inner, &events);
-    }
-}
-
 /// Adds/removes watches for directory arrivals/departures in `events`. An
 /// arrival that is an eligible directory gets a watch on its whole (eligible)
 /// subtree; a departure has its subtree forgotten (the kernel already dropped
@@ -917,7 +452,7 @@ fn maintain_watches(
     repo: &RepoState,
     root: &Path,
     internal_dir: &Path,
-    inner: &WatcherInner,
+    source: &Source,
     events: &[(FsEvent, Option<i64>)],
 ) {
     let mut arrivals: Vec<&RelPath> = Vec::new();
@@ -937,7 +472,7 @@ fn maintain_watches(
         return;
     }
     for rel in departures {
-        inner.forget_subtree(&rel.to_abs(root));
+        source.forget_subtree(&rel.to_abs(root));
     }
     if arrivals.is_empty() {
         return;
@@ -975,7 +510,7 @@ fn maintain_watches(
                 overrides: &overrides,
                 // The ceiling counts the *whole* repository, not this subtree,
                 // so what is already watched is charged against it.
-                cap: cap.map(|cap| cap.saturating_sub(inner.watched_count())),
+                cap: cap.map(|cap| cap.saturating_sub(source.watched_count())),
                 out: &mut subtree,
                 frontier: &mut frontier,
                 elig: &mut elig,
@@ -984,7 +519,7 @@ fn maintain_watches(
         }
     }
     for dir in &subtree {
-        inner.watch_dir(dir);
+        source.watch_dir(dir);
     }
     // A directory that arrived into a full budget is recorded like any other
     // frontier, so the choice survives the session (spec-file-tracking "The
@@ -994,10 +529,110 @@ fn maintain_watches(
     }
 }
 
+
+impl Source {
+    /// Creates the notify watcher and hands its translated events to `tx` —
+    /// the shared ingest thread ([`crate::watcher::start`]). The initial
+    /// placement is *not* done here: it needs the tree cache, so it is deferred
+    /// to `RepoState::refresh_watches` at the end of the load warmup.
+    pub(crate) fn start(
+        repo: &Arc<RepoState>,
+        tx: std::sync::mpsc::Sender<Vec<(FsEvent, Option<i64>)>>,
+    ) -> Result<Arc<Self>> {
+        let root = repo.config.root.clone();
+        let internal_dir = repo.internal_dir();
+
+        let inner = Arc::new(Source {
+            watcher: Mutex::new(None),
+            watched: Mutex::new(HashSet::new()),
+            repo: repo.uuid(),
+        });
+
+        let cb_root = root.clone();
+        let cb_internal = internal_dir.clone();
+        let watcher = notify::recommended_watcher(move |res: notify::Result<notify::Event>| {
+            // Runs on notify's event-loop thread: translate and hand off, never
+            // block (see the module documentation).
+            match res {
+                Ok(event) => {
+                    let events = crate::watcher::translate(&cb_root, &cb_internal, event);
+                    if !events.is_empty() {
+                        let _ = tx.send(events); // The ingest thread is gone: unloaded.
+                    }
+                }
+                Err(err) => crate::diagnostics::error("watcher", format!("backend error: {err}")),
+            }
+        })
+        .context("Failed to create the filesystem watcher")?;
+        *inner.watcher.lock_recover() = Some(watcher);
+        Ok(inner)
+    }
+}
+
+impl crate::watcher::Source for Source {
+    fn name(&self) -> &'static str {
+        platform_backend_name()
+    }
+
+    fn regime(&self) -> Regime {
+        Regime::Budget
+    }
+
+    fn refresh(
+        &self,
+        conn: &Connection,
+        cache: &mut TreeCache,
+        root: &Path,
+        internal_dir: &Path,
+        cap: Option<usize>,
+    ) -> Placement {
+        let plan = compute_watched_dirs_timed(conn, cache, root, internal_dir, cap);
+        // A persistent diagnostic for the initial (load-time) walk and any large
+        // watch reconfiguration: the filesystem read_dir cost vs the per-directory
+        // eligibility cost (served from the tree cache once warm).
+        if plan.total.as_millis() >= 100 {
+            eprintln!(
+                "[watcher] walk: {} dirs in {:?} (fs {:?} + eligibility {:?})",
+                plan.dirs.len(),
+                plan.total,
+                plan.total.saturating_sub(plan.eligibility),
+                plan.eligibility,
+            );
+        }
+        let starved = self.apply(&plan.dirs);
+        let watched = self.watched_count();
+        // Refused by the kernel while under our own ceiling: another program is
+        // holding the budget. Transient and external — reported, never recorded
+        // (spec-file-tracking "Two different failures").
+        if let Some(report) = budget_report(starved, watched) {
+            crate::diagnostics::error_for("watcher", report, self.repo);
+        }
+        Placement { watched, starved, frontier: plan.frontier }
+    }
+
+    fn watched(&self) -> usize {
+        self.watched_count()
+    }
+
+    fn watched_set(&self) -> HashSet<PathBuf> {
+        self.watched.lock_recover().clone()
+    }
+
+    fn maintain(
+        &self,
+        repo: &RepoState,
+        root: &Path,
+        internal_dir: &Path,
+        events: &[(FsEvent, Option<i64>)],
+    ) {
+        maintain_watches(repo, root, internal_dir, self, events);
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::{
-        budget_cap, budget_report, compute_watched_dirs_timed, is_watch_budget_exhausted, relative,
+        budget_cap, budget_report, compute_watched_dirs_timed, is_watch_budget_exhausted,
     };
     use crate::db;
     use crate::log::Writer;
@@ -1183,39 +818,6 @@ mod tests {
             !watched.contains(&fx.internal_dir()),
             ".metafolder/internal/ is always excluded from watching"
         );
-    }
-
-    #[test]
-    fn test_relative_skips_internal_dir_only() {
-        let root = Path::new("/repo");
-        let internal = Path::new("/repo/.metafolder/internal");
-        let rel = |p: &str| relative(root, internal, Path::new(p)).map(|r| r.display());
-
-        assert_eq!(rel("/repo/a.txt").as_deref(), Some("/a.txt"));
-        assert_eq!(
-            rel("/repo/.metafolder/config.json").as_deref(),
-            Some("/.metafolder/config.json")
-        );
-        assert_eq!(rel("/repo/.metafolder/internal/db.sqlite"), None);
-        assert_eq!(rel("/repo/.metafolder/internal/db.sqlite-wal"), None);
-        assert_eq!(rel("/elsewhere/x"), None);
-        assert_eq!(rel("/repo"), None);
-    }
-
-    #[test]
-    fn test_relative_handles_external_metafolder_inside_root() {
-        // root = "/" with the metafolder elsewhere inside it: only the
-        // internal/ directory is excluded, by absolute path.
-        let root = Path::new("/");
-        let internal = Path::new("/home/.metafolder/internal");
-        let rel = |p: &str| relative(root, internal, Path::new(p)).map(|r| r.display());
-
-        assert_eq!(rel("/etc/hosts").as_deref(), Some("/etc/hosts"));
-        assert_eq!(
-            rel("/home/.metafolder/config.json").as_deref(),
-            Some("/home/.metafolder/config.json")
-        );
-        assert_eq!(rel("/home/.metafolder/internal/db.sqlite"), None);
     }
 
     // ── The kernel's watch budget ─────────────────────────────────────────────

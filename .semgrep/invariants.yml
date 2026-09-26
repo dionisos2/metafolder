@@ -84,12 +84,12 @@ rules:
       `upgrade()` at each tick.
     paths:
       include:
-        - crates/daemon/src/watcher.rs
+        - crates/daemon/src/watcher/**
         - crates/daemon/src/executor.rs
     # Only `Arc::clone`: a background task can only get a second owning handle on
     # an *existing* `Arc<RepoState>` by cloning it. `Arc::new` was matched here
     # too, but it constructs a fresh value — it flagged the watcher's own
-    # `Arc::new(WatcherInner { .. })`, which owns no repository.
+    # `Arc::new(inotify::Source { .. })`, which owns no repository.
     pattern: Arc::clone($REPO)
 
   - id: mf-unsandboxed-decoder
@@ -181,11 +181,12 @@ rules:
       include:
         - crates/daemon/src/reconcile.rs
         - crates/daemon/src/orphans.rs
-        - crates/daemon/src/watcher.rs
+        - crates/daemon/src/watcher/**
         - crates/daemon/src/executor.rs
         - crates/core/src/trash.rs
         - crates/core/src/sync/run.rs
         - crates/cli/src/log.rs
+        - crates/watchd/**
       exclude:
         - "**/tests/**"
     # Only `.exists()`: it is unambiguous (a `Metadata` has no such method), so

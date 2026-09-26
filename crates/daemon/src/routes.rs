@@ -2310,25 +2310,37 @@ async fn mounts(
 }
 
 /// The body all three `watch` routes answer with (spec-file-tracking "Watch
-/// status, pause and resume"): whether ingestion is paused, and how many
-/// filesystem events are waiting to be applied.
+/// status, pause and resume"): whether ingestion is paused, how many
+/// filesystem events are waiting to be applied, which watch source is active
+/// (`backend`, [[spec-file-tracking "Watch sources and regimes"]]), and —
+/// budget regime only — the two budget fields, which answer `null` under
+/// coverage: no per-directory state, nothing to run out of.
 ///
 /// The count is exact and always available: the buffer is in memory, so reading
 /// it never queues behind the flush the caller may be trying to stop.
 fn watch_view(repo_state: &RepoState) -> serde_json::Value {
     let share = repo_state.watch_budget_share();
     let limit = crate::watcher::kernel_watch_limit();
+    let (watched_dirs, watch_budget) = if repo_state.watch_budget_regime() {
+        (
+            json!(repo_state.watched_dirs()),
+            json!({
+                "limit": limit,
+                "share": share,
+                "cap": crate::watcher::budget_cap_for(share),
+                "starved": repo_state.starved_watches(),
+                "exceeded_dirs": repo_state.exceeded_dirs(),
+            }),
+        )
+    } else {
+        (json!(null), json!(null))
+    };
     json!({
         "paused": repo_state.is_ingestion_paused(),
         "pending_events": crate::executor::pending_count(repo_state),
-        "watched_dirs": repo_state.watched_dirs(),
-        "watch_budget": {
-            "limit": limit,
-            "share": share,
-            "cap": crate::watcher::budget_cap_for(share),
-            "starved": repo_state.starved_watches(),
-            "exceeded_dirs": repo_state.exceeded_dirs(),
-        },
+        "backend": repo_state.watch_backend(),
+        "watched_dirs": watched_dirs,
+        "watch_budget": watch_budget,
     })
 }
 
@@ -2404,7 +2416,15 @@ async fn watch_check(
         }
     }
     with_repo(&state, repo_uuid, move |repo_state| {
+        // What the answer is computed against is regime-specific: the live
+        // watch set in the budget regime, the tree itself under coverage
+        // (spec-file-tracking "Watch check").
         let watched = repo_state.watched_dir_set();
+        let coverage = if repo_state.watch_budget_regime() {
+            crate::watcher::Coverage::Watches(&watched)
+        } else {
+            crate::watcher::Coverage::Tree
+        };
         let conn = slowlog::timed("wait:conn", || repo_state.conn.lock_recover());
         let mut cache = slowlog::timed("wait:cache", || repo_state.lock_cache());
         let statuses = crate::watcher::explain_watched(
@@ -2412,7 +2432,7 @@ async fn watch_check(
             &mut cache,
             &repo_state.config.root,
             repo_state.internal_dir().as_path(),
-            &watched,
+            coverage,
             &body.paths,
         )?;
         let mut results = Vec::with_capacity(statuses.len());
@@ -2679,7 +2699,9 @@ async fn watch_exceeded_list(
 /// Setting it always succeeds — it only ever returns watches to the budget.
 /// Clearing it is refused with `409` when the budget has no headroom, naming
 /// what to give up first: watching that subtree would need watches that are not
-/// there, and silently doing nothing would be worse than saying so.
+/// there, and silently doing nothing would be worse than saying so. The
+/// coverage regime has no headroom to run out of and always allows the clear
+/// (spec-file-tracking "Watch sources and regimes").
 async fn watch_exceeded_set(
     State(state): State<Arc<AppState>>,
     Path(repo): Path<String>,
@@ -2689,7 +2711,7 @@ async fn watch_exceeded_set(
     let body = payload?.0;
     with_repo(&state, repo_uuid, move |repo_state| {
         repo_state.ensure_writable()?;
-        if !body.exceeded {
+        if !body.exceeded && repo_state.watch_budget_regime() {
             let cap = crate::watcher::budget_cap_for(repo_state.watch_budget_share());
             let watched = repo_state.watched_dirs();
             if cap.is_some_and(|cap| watched >= cap) {

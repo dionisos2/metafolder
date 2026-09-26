@@ -14,6 +14,32 @@ than breaking them.
 ## [Unreleased]
 
 ### Added
+- **`metafolder-watchd`: the privileged fanotify broker** (`crates/watchd`,
+  `scripts/metafolder-watchd.service`) — groundwork for the fanotify watch
+  source (docs/watcher-fanotify.md "The broker"). One process per machine holds
+  the fanotify group covering the mounts of subscribed repository roots
+  (one mark per mount, no per-directory watches), resolves the kernel's file
+  handles to paths, and streams events as NDJSON over a Unix socket — each
+  subscriber seeing only what its own uid could discover. A subscriber that
+  cannot keep up loses events and is told so (`Overflow`) rather than stalling
+  the machine. **The daemon can now use it** — with no switch to set: at load
+  it probes `[settings] watchd-socket` (default `/run/metafolder/watchd.sock`)
+  and takes the broker when one answers, falling back to the inotify source
+  with a message naming the socket when none does. Under the fanotify source one
+  kernel registration covers the whole tree: no per-directory watches, no watch
+  budget, and `mf watch check` answers from the coverage regime (spec-file-
+  tracking "Watch sources and regimes"). `mfr_watch_exceeded` is honoured in
+  both regimes — under coverage, what happens in such a subtree is dropped at
+  ingestion, and a move out of it reads as an arrival.
+- **`GET /watch` names the active watch source** — `backend` (`inotify`,
+  `fanotify`, …) — and its two budget-only fields (`watched_dirs`,
+  `watch_budget`) now answer `null` under the coverage regime, where one kernel
+  registration covers the tree and there is no per-directory state to budget
+  (spec-file-tracking "Watch sources and regimes"). `mf watch status` shows the
+  coverage accordingly — `22838 directory(ies) watched (inotify)` or `tree
+  covered (fanotify)` — and the budget line is budget-regime only. Groundwork
+  for the fanotify watch source (`docs/watcher-fanotify.md`); the inotify
+  source itself is unchanged.
 - **Keyboard shortcuts for `repos:load` and `metarecord-list:folder`** — the
   two shipped commands that had none, now in the global `g` ("go") family:
   `g l` (go → load) picks a folder and loads the repository in it, the

@@ -21,6 +21,11 @@ pub const DEFAULT_WATCH_QUIET_PERIOD_MS: u64 = 500;
 /// files still have somewhere to go.
 pub const DEFAULT_WATCH_BUDGET_SHARE: u8 = 50;
 
+/// Default socket of the fanotify broker (docs/watcher-fanotify.md "The
+/// broker"): probed at load — reachable, and the source becomes fanotify;
+/// absent, and the daemon says so and watches with inotify.
+pub const DEFAULT_WATCHD_SOCKET: &str = "/run/metafolder/watchd.sock";
+
 /// Default log retention: 200 revisions. A revision is an *event* — a batch of
 /// filesystem changes, a command — not an operation, so 200 of them is already
 /// more history than anyone walks back through, and it keeps the database of a
@@ -57,6 +62,12 @@ pub struct DaemonSettings {
     /// so other programs keep some, not a reservation — nothing can be
     /// reserved, and the kernel never says what is still free.
     pub watch_budget_share: u8,
+    /// Where the fanotify broker is probed at load ([settings] watchd-socket,
+    /// spec-file-tracking "Watch sources and regimes"): reachable, and the
+    /// daemon covers the tree through it; absent, and the daemon watches with
+    /// inotify and says so. Pointing it at a path where nothing listens is how
+    /// one stays on inotify.
+    pub watchd_socket: PathBuf,
     /// Revisions of history the event log keeps behind HEAD; the oldest fall
     /// off as new ones arrive. `0` keeps everything. A repository may override
     /// it in its own `config.json`.
@@ -80,6 +91,7 @@ impl Default for DaemonSettings {
         DaemonSettings {
             watch_quiet_period_ms: DEFAULT_WATCH_QUIET_PERIOD_MS,
             watch_budget_share: DEFAULT_WATCH_BUDGET_SHARE,
+            watchd_socket: PathBuf::from(DEFAULT_WATCHD_SOCKET),
             orphan_cascade_limit: DEFAULT_ORPHAN_CASCADE_LIMIT,
             log_retention_revisions: DEFAULT_LOG_RETENTION_REVISIONS,
             log_retention_keep_labels: true,
@@ -251,6 +263,7 @@ mod tests {
         assert_eq!(empty.watch_quiet_period_ms, DEFAULT_WATCH_QUIET_PERIOD_MS);
         assert_eq!(empty.watch_quiet_period(), Duration::from_millis(500));
         assert_eq!(empty.orphan_cascade_limit, DEFAULT_ORPHAN_CASCADE_LIMIT);
+        assert_eq!(empty.watchd_socket, PathBuf::from(DEFAULT_WATCHD_SOCKET));
         assert_eq!(
             empty.log_retention(),
             crate::log::Retention { revisions: DEFAULT_LOG_RETENTION_REVISIONS, keep_labels: true },
@@ -258,6 +271,15 @@ mod tests {
         );
         assert_eq!(DEFAULT_LOG_RETENTION_REVISIONS, 200);
         assert_eq!(DaemonConfig::default().settings, DaemonSettings::default());
+    }
+
+    #[test]
+    fn test_the_broker_socket_is_configurable() {
+        // No watch-backend knob: the socket is probed and the source follows
+        // (spec-file-tracking "Watch sources and regimes"). A path where
+        // nothing listens is how one stays on inotify.
+        let s: DaemonSettings = toml::from_str("watchd-socket = \"/tmp/w.sock\"").unwrap();
+        assert_eq!(s.watchd_socket, PathBuf::from("/tmp/w.sock"));
     }
 
     #[test]

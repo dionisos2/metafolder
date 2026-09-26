@@ -295,8 +295,8 @@ export async function mount(root, metafolder) {
   /**
    * @typedef {{limit: number|null, share: number, cap: number|null,
    *            starved: boolean, exceeded_dirs: number}} WatchBudget
-   * @typedef {{paused?: boolean, pending_events?: number|null,
-   *            watched_dirs?: number, watch_budget?: WatchBudget}} WatchStatus
+   * @typedef {{paused?: boolean, pending_events?: number|null, backend?: string,
+   *            watched_dirs?: number|null, watch_budget?: WatchBudget|null}} WatchStatus
    */
 
   async function pollWatch() {
