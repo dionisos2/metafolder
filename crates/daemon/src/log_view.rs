@@ -14,7 +14,8 @@ use serde_json::json;
 use uuid::Uuid;
 
 use crate::db;
-use crate::log::{self, OpRow};
+use crate::log::OpRow;
+use crate::store::{Log, RevisionMeta};
 
 /// Which line through the log to read.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -69,24 +70,24 @@ impl Default for LogQuery {
 }
 
 /// The body of `GET /repos/:repo/log`.
-pub fn listing(conn: &rusqlite::Connection, q: &LogQuery) -> Result<serde_json::Value> {
-    let head = log::get_head(conn)?;
-    let ops = select_ops(conn, q, head)?;
+pub fn listing(log: &dyn Log, q: &LogQuery) -> Result<serde_json::Value> {
+    let head = log.head()?;
+    let ops = select_ops(log, q, head)?;
 
     // The revisions of the operations in hand — never the whole table. A
     // window of fifty operations must not pay for the log behind it
     // (spec-perf "Cost assertions").
-    let rev_meta = revision_meta(conn, ops.iter().map(|op| op.rev_id))?;
+    let rev_meta = revision_meta(log, ops.iter().map(|op| op.rev_id))?;
 
     let mut op_values = Vec::with_capacity(ops.len());
     let mut seen_revs = HashSet::new();
     let mut revisions = Vec::new();
     for op in &ops {
-        op_values.push(op_json(conn, op, q.include_snapshots)?);
+        op_values.push(op_json(log, op, q.include_snapshots)?);
         if seen_revs.insert(op.rev_id) {
-            if let Some((ts, label, origin)) = rev_meta.get(&op.rev_id) {
+            if let Some(m) = rev_meta.get(&op.rev_id) {
                 revisions.push(json!({
-                    "id": op.rev_id, "timestamp": ts, "label": label, "origin": origin,
+                    "id": op.rev_id, "timestamp": m.timestamp, "label": m.label, "origin": m.origin,
                 }));
             }
         }
@@ -96,9 +97,7 @@ pub fn listing(conn: &rusqlite::Connection, q: &LogQuery) -> Result<serde_json::
     // panel fetches only the most recent `limit` operations) can still report
     // how much log there is. Two counts off the primary keys — not the size of
     // the returned window, and unaffected by `limit`/`mode`.
-    let total_operations: i64 =
-        conn.query_row("SELECT COUNT(*) FROM operation", [], |r| r.get(0))?;
-    let total_revisions: i64 = conn.query_row("SELECT COUNT(*) FROM revision", [], |r| r.get(0))?;
+    let (total_operations, total_revisions) = log.counts()?;
 
     Ok(json!({
         "head": head,
@@ -118,15 +117,15 @@ pub fn listing(conn: &rusqlite::Connection, q: &LogQuery) -> Result<serde_json::
 /// nothing costs one full walk and finding it quickly costs almost nothing —
 /// the common case, a window of the most recent operations, is one bounded
 /// walk (spec-event-log "limit").
-fn select_ops(conn: &rusqlite::Connection, q: &LogQuery, head: Option<i64>) -> Result<Vec<OpRow>> {
+fn select_ops(log: &dyn Log, q: &LogQuery, head: Option<i64>) -> Result<Vec<OpRow>> {
     let Some(head) = head else {
         return Ok(match q.mode {
             // An empty log has no HEAD; `tree` still answers from the table,
             // which is how a pruned-to-nothing log reads back as empty rather
             // than as an error.
             Mode::Tree => {
-                let mut ops = log::all_ops(conn)?;
-                filter_ops(conn, q, &mut ops)?;
+                let mut ops = log.all_ops()?;
+                filter_ops(log, q, &mut ops)?;
                 bound_ops(q, &mut ops);
                 ops
             }
@@ -136,8 +135,8 @@ fn select_ops(conn: &rusqlite::Connection, q: &LogQuery, head: Option<i64>) -> R
 
     let Some(initial) = walk_budget(q) else {
         // Unbounded: read the whole line, filter it, and answer.
-        let mut ops = whole_line(conn, q.mode, head)?;
-        filter_ops(conn, q, &mut ops)?;
+        let mut ops = whole_line(log, q.mode, head)?;
+        filter_ops(log, q, &mut ops)?;
         return Ok(ops);
     };
 
@@ -146,16 +145,16 @@ fn select_ops(conn: &rusqlite::Connection, q: &LogQuery, head: Option<i64>) -> R
         // `active` with a forward continuation below HEAD has no bounded form:
         // rebuilding the branch reads every operation either way.
         let bounded_walk =
-            q.mode != Mode::Tree && !(q.mode == Mode::Active && log::has_children(conn, head)?);
+            q.mode != Mode::Tree && !(q.mode == Mode::Active && log.has_children(head)?);
         let (mut ops, exhausted) = if bounded_walk {
-            let mut chain = log::ancestry_ops_limited(conn, head, budget)?;
+            let mut chain = log.ancestry_ops(head, Some(budget))?;
             let exhausted = chain.len() < budget;
             chain.reverse(); // root → HEAD, oldest first
             (chain, exhausted)
         } else {
-            (whole_line(conn, q.mode, head)?, true)
+            (whole_line(log, q.mode, head)?, true)
         };
-        filter_ops(conn, q, &mut ops)?;
+        filter_ops(log, q, &mut ops)?;
         if exhausted || satisfied(q, &ops) {
             bound_ops(q, &mut ops);
             return Ok(ops);
@@ -165,28 +164,28 @@ fn select_ops(conn: &rusqlite::Connection, q: &LogQuery, head: Option<i64>) -> R
 }
 
 /// The mode's whole line through the log, oldest first.
-fn whole_line(conn: &rusqlite::Connection, mode: Mode, head: i64) -> Result<Vec<OpRow>> {
+fn whole_line(log: &dyn Log, mode: Mode, head: i64) -> Result<Vec<OpRow>> {
     Ok(match mode {
-        Mode::Tree => log::all_ops(conn)?,
+        Mode::Tree => log.all_ops()?,
         Mode::Linear => {
-            let mut chain = log::ancestry_ops(conn, head)?;
+            let mut chain = log.ancestry_ops(head, None)?;
             chain.reverse();
             chain
         }
-        Mode::Active => log::active_line_ops(conn, head)?,
+        Mode::Active => log.active_line(head)?,
     })
 }
 
 /// Drops the operations the request does not select: another metarecord's, or
 /// one whose revision falls outside the time window.
-fn filter_ops(conn: &rusqlite::Connection, q: &LogQuery, ops: &mut Vec<OpRow>) -> Result<()> {
+fn filter_ops(log: &dyn Log, q: &LogQuery, ops: &mut Vec<OpRow>) -> Result<()> {
     if let Some(filter) = q.entity {
         ops.retain(|op| op.entity_uuid == filter);
     }
     if q.since.is_some() || q.until.is_some() {
-        let meta = revision_meta(conn, ops.iter().map(|op| op.rev_id))?;
+        let meta = revision_meta(log, ops.iter().map(|op| op.rev_id))?;
         ops.retain(|op| {
-            let ts = meta.get(&op.rev_id).map(|(ts, _, _)| *ts).unwrap_or(0);
+            let ts = meta.get(&op.rev_id).map(|m| m.timestamp).unwrap_or(0);
             q.since.is_none_or(|s| ts >= s) && q.until.is_none_or(|u| ts <= u)
         });
     }
@@ -261,45 +260,20 @@ const GROWTH: usize = 8;
 
 /// What a listing needs of a revision: when it was written, its label, and who
 /// wrote it (`origin`).
-type RevisionMeta = (i64, Option<String>, Option<String>);
-
-/// `(timestamp, label, origin)` for the given revision ids — one query over a
-/// bounded id set, never a scan of the table.
+/// The metadata of the revisions `ids` name (each once).
 fn revision_meta(
-    conn: &rusqlite::Connection,
+    log: &dyn Log,
     ids: impl Iterator<Item = i64>,
 ) -> Result<HashMap<i64, RevisionMeta>> {
-    /// Ids per `IN (…)` query. SQLite allows 32 766 parameters; a few hundred
-    /// keeps the prepared-statement cache useful on a large window.
-    const CHUNK: usize = 256;
-
     let unique: Vec<i64> = {
         let mut seen = HashSet::new();
         ids.filter(|id| seen.insert(*id)).collect()
     };
-    let mut out = HashMap::with_capacity(unique.len());
-    for chunk in unique.chunks(CHUNK) {
-        let placeholders = std::iter::repeat_n("?", chunk.len()).collect::<Vec<_>>().join(",");
-        let mut stmt = conn.prepare_cached(&format!(
-            "SELECT id, timestamp, label, origin FROM revision WHERE id IN ({placeholders})"
-        ))?;
-        let rows = stmt.query_map(rusqlite::params_from_iter(chunk.iter()), |r| {
-            Ok((r.get::<_, i64>(0)?, r.get(1)?, r.get(2)?, r.get(3)?))
-        })?;
-        for row in rows {
-            let (id, ts, label, origin) = row?;
-            out.insert(id, (ts, label, origin));
-        }
-    }
-    Ok(out)
+    log.revisions(&unique)
 }
 
 /// One operation, in the shape every `/log` response uses (spec-event-log).
-pub fn op_json(
-    conn: &rusqlite::Connection,
-    op: &OpRow,
-    include_snapshots: bool,
-) -> Result<serde_json::Value> {
+pub fn op_json(log: &dyn Log, op: &OpRow, include_snapshots: bool) -> Result<serde_json::Value> {
     let mut value = json!({
         "id": op.id,
         "parent_id": op.parent_id,
@@ -311,21 +285,17 @@ pub fn op_json(
         "reverts_op_id": op.reverts_op_id,
     });
     if include_snapshots {
-        value["snapshots_before"] = snapshots_json(conn, op.id, 0)?;
-        value["snapshots_after"] = snapshots_json(conn, op.id, 1)?;
+        value["snapshots_before"] = snapshots_json(log, op.id, false)?;
+        value["snapshots_after"] = snapshots_json(log, op.id, true)?;
     }
     Ok(value)
 }
 
 /// Snapshot rows in their raw column form (spec-event-log examples).
-pub fn snapshots_json(
-    conn: &rusqlite::Connection,
-    op_id: i64,
-    is_new: i64,
-) -> Result<serde_json::Value> {
+pub fn snapshots_json(log: &dyn Log, op_id: i64, after: bool) -> Result<serde_json::Value> {
     let blob_hex = |b: Vec<u8>| b.iter().map(|x| format!("{x:02x}")).collect::<String>();
     let mut out = Vec::new();
-    for row in log::snapshots(conn, op_id, is_new)? {
+    for row in log.snapshots(op_id, after)? {
         // Raw column form (spec-event-log examples), null columns omitted.
         let encoded = db::encode_value(&row.value);
         let mut snapshot = json!({

@@ -69,6 +69,30 @@ pub trait Log {
     /// The restorations skipped navigation steps queued, oldest first, with
     /// the position each holds in the queue.
     fn restorations(&self) -> Result<Vec<(i64, Restoration)>>;
+    /// The ancestor chain from `from` (inclusive), newest first — whole, or
+    /// its first `max` operations.
+    fn ancestry_ops(&self, from: i64, max: Option<usize>) -> Result<Vec<OpRow>>;
+    /// Every operation, whatever branch it is on, oldest first.
+    fn all_ops(&self) -> Result<Vec<OpRow>>;
+    /// The active line through `head`: its ancestors, then the branch that
+    /// continues below it (spec-event-log "Active line"), oldest first.
+    fn active_line(&self, head: i64) -> Result<Vec<OpRow>>;
+    /// Whether an operation has a child (a continuation below it).
+    fn has_children(&self, op: i64) -> Result<bool>;
+    /// The given revisions' metadata; ids that name none are left out.
+    fn revisions(&self, ids: &[i64]) -> Result<HashMap<i64, RevisionMeta>>;
+    /// How many operations and revisions the log holds.
+    fn counts(&self) -> Result<(i64, i64)>;
+}
+
+/// A revision's metadata.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct RevisionMeta {
+    /// Unix milliseconds.
+    pub timestamp: i64,
+    pub label: Option<String>,
+    /// Who wrote it: `watcher` for the daemon's own, `None` for a client's.
+    pub origin: Option<String>,
 }
 
 /// A filesystem fact a skipped step of a coordinated navigation leaves to be
@@ -242,6 +266,24 @@ impl Log for SqliteTxn<'_> {
     }
     fn restorations(&self) -> Result<Vec<(i64, Restoration)>> {
         Log::restorations(&*self.0)
+    }
+    fn ancestry_ops(&self, from: i64, max: Option<usize>) -> Result<Vec<OpRow>> {
+        Log::ancestry_ops(&*self.0, from, max)
+    }
+    fn all_ops(&self) -> Result<Vec<OpRow>> {
+        Log::all_ops(&*self.0)
+    }
+    fn active_line(&self, head: i64) -> Result<Vec<OpRow>> {
+        Log::active_line(&*self.0, head)
+    }
+    fn has_children(&self, op: i64) -> Result<bool> {
+        Log::has_children(&*self.0, op)
+    }
+    fn revisions(&self, ids: &[i64]) -> Result<HashMap<i64, RevisionMeta>> {
+        Log::revisions(&*self.0, ids)
+    }
+    fn counts(&self) -> Result<(i64, i64)> {
+        Log::counts(&*self.0)
     }
 }
 
@@ -482,6 +524,46 @@ impl Log for Connection {
     }
     fn ancestry(&self, from: i64) -> Result<Vec<i64>> {
         log::ancestry(self, from)
+    }
+    fn ancestry_ops(&self, from: i64, max: Option<usize>) -> Result<Vec<OpRow>> {
+        match max {
+            Some(max) => log::ancestry_ops_limited(self, from, max),
+            None => log::ancestry_ops(self, from),
+        }
+    }
+    fn all_ops(&self) -> Result<Vec<OpRow>> {
+        log::all_ops(self)
+    }
+    fn active_line(&self, head: i64) -> Result<Vec<OpRow>> {
+        log::active_line_ops(self, head)
+    }
+    fn has_children(&self, op: i64) -> Result<bool> {
+        log::has_children(self, op)
+    }
+    /// A few hundred ids per `IN (…)` (SQLite allows 32 766 parameters),
+    /// which keeps the prepared-statement cache useful on a large window.
+    fn revisions(&self, ids: &[i64]) -> Result<HashMap<i64, RevisionMeta>> {
+        const CHUNK: usize = 256;
+        let mut out = HashMap::with_capacity(ids.len());
+        for chunk in ids.chunks(CHUNK) {
+            let placeholders = std::iter::repeat_n("?", chunk.len()).collect::<Vec<_>>().join(",");
+            let mut stmt = self.prepare_cached(&format!(
+                "SELECT id, timestamp, label, origin FROM revision WHERE id IN ({placeholders})"
+            ))?;
+            let rows = stmt.query_map(rusqlite::params_from_iter(chunk.iter()), |r| {
+                Ok((r.get::<_, i64>(0)?, r.get(1)?, r.get(2)?, r.get(3)?))
+            })?;
+            for row in rows {
+                let (id, timestamp, label, origin) = row?;
+                out.insert(id, RevisionMeta { timestamp, label, origin });
+            }
+        }
+        Ok(out)
+    }
+    fn counts(&self) -> Result<(i64, i64)> {
+        let ops = self.query_row("SELECT COUNT(*) FROM operation", [], |r| r.get(0))?;
+        let revs = self.query_row("SELECT COUNT(*) FROM revision", [], |r| r.get(0))?;
+        Ok((ops, revs))
     }
     fn restorations(&self) -> Result<Vec<(i64, Restoration)>> {
         let mut stmt = self.prepare(

@@ -283,3 +283,31 @@ fn clearing_takes_every_metarecord() {
     assert!(tx.metarecords().unwrap().is_empty());
     assert_eq!(tx.max_row_id().unwrap(), 0);
 }
+
+#[test]
+fn the_log_lists_its_lines_and_revisions() {
+    let (conn, _, _) = fixture();
+    let store: &dyn Store = &conn;
+    let head = store.head().unwrap().unwrap();
+    let chain = store.ancestry_ops(head, None).unwrap();
+    assert_eq!(chain.iter().map(|o| o.id).collect::<Vec<_>>(), store.ancestry(head).unwrap());
+    assert_eq!(chain.len(), 3);
+    assert_eq!(store.ancestry_ops(head, Some(2)).unwrap().len(), 2, "bounded walk");
+    let all = store.all_ops().unwrap();
+    assert_eq!(all.iter().map(|o| o.id).rev().collect::<Vec<_>>(), store.ancestry(head).unwrap());
+    assert_eq!(store.active_line(head).unwrap().len(), 3);
+    assert!(!store.has_children(head).unwrap());
+    assert!(store.has_children(chain[1].id).unwrap());
+
+    let revs: Vec<i64> = {
+        let mut r: Vec<i64> = all.iter().map(|o| o.rev_id).collect();
+        r.dedup();
+        r
+    };
+    assert_eq!(revs.len(), 2);
+    let meta = store.revisions(&[revs[0], revs[1], 999_999]).unwrap();
+    assert_eq!(meta.len(), 2, "an id naming no revision is left out");
+    assert!(meta[&revs[0]].timestamp <= meta[&revs[1]].timestamp);
+    assert_eq!(meta[&revs[0]].origin, None, "a client's write");
+    assert_eq!(store.counts().unwrap(), (3, 2));
+}

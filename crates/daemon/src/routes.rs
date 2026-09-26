@@ -1004,7 +1004,7 @@ fn snapshots_json(
     op_id: i64,
     is_new: i64,
 ) -> Result<serde_json::Value, ApiError> {
-    Ok(crate::log_view::snapshots_json(conn, op_id, is_new)?)
+    Ok(crate::log_view::snapshots_json(conn, op_id, is_new != 0)?)
 }
 
 fn revision_json(conn: &rusqlite::Connection, rev_id: i64) -> Result<serde_json::Value, ApiError> {
@@ -1065,7 +1065,7 @@ async fn get_log(
     };
     with_repo(&state, repo_uuid, move |repo_state| {
         let conn = slowlog::timed("wait:conn", || repo_state.conn.lock_recover());
-        Ok(Json(crate::log_view::listing(&conn, &query)?))
+        Ok(Json(crate::log_view::listing(&*conn, &query)?))
     })
     .await
 }
