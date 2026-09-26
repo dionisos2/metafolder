@@ -1,12 +1,12 @@
 //! `metafolder-watchd` — the privileged fanotify broker
 //! (docs/watcher-fanotify.md "The broker"; spec-file-tracking "Watch sources
 //! and regimes"). One per machine: it holds the fanotify group covering the
-//! mounts of every subscribed repository root, and streams the events to the
+//! filesystems of every subscribed repository root, and streams the events to the
 //! subscribers' daemons over a Unix socket — each seeing only what its own
 //! credentials could discover.
 //!
 //! It is meant to run as a system service with exactly two capabilities —
-//! `CAP_SYS_ADMIN` (to mark a mount) and `CAP_DAC_READ_SEARCH` (to resolve a
+//! `CAP_SYS_ADMIN` (to mark a filesystem) and `CAP_DAC_READ_SEARCH` (to resolve a
 //! file handle to a path) — and nothing else in the process is privileged by
 //! construction: the daemon stays unprivileged, which is the whole point of
 //! the split. [`fanotify::preflight`] fails at startup with the remedy named
@@ -35,7 +35,7 @@ struct Args {
     socket: PathBuf,
 }
 
-/// The bridge from subscriptions to mount marks: whatever the subscribers
+/// The bridge from subscriptions to filesystem marks: whatever the subscribers
 /// watch is what the kernel is asked to report on.
 struct MarkSink {
     fanotify: Arc<Mutex<Fanotify>>,
@@ -55,7 +55,7 @@ fn lock<T>(m: &Mutex<T>) -> MutexGuard<'_, T> {
 fn main() -> Result<()> {
     let args = Args::parse();
 
-    // Fail closed, with the remedy in hand: a broker that cannot mark a mount
+    // Fail closed, with the remedy in hand: a broker that cannot mark a filesystem
     // or resolve a handle is a broker that would silently stream nothing.
     let probe =
         args.socket.parent().filter(|p| !p.as_os_str().is_empty()).unwrap_or(Path::new("/"));
@@ -102,6 +102,25 @@ fn main() -> Result<()> {
                 }
             }
         });
+    }
+
+    // The mount table: a filesystem mounted under a subscribed root (a drive
+    // plugged in) is one more filesystem to mark, one unmounted is a mark to
+    // lift. Without the watch, coverage follows only the subscriptions.
+    match fanotify::MountWatch::open() {
+        Ok(mut watch) => {
+            let fanotify = Arc::clone(&fanotify);
+            std::thread::spawn(move || loop {
+                if let Err(err) = watch.wait() {
+                    eprintln!("[watchd] the mount table can no longer be watched: {err:#}");
+                    return;
+                }
+                if let Err(err) = lock(&fanotify).resync() {
+                    eprintln!("[watchd] {err:#}");
+                }
+            });
+        }
+        Err(err) => eprintln!("[watchd] mounts appearing later will not be covered: {err:#}"),
     }
 
     eprintln!("[watchd] listening on {}", args.socket.display());

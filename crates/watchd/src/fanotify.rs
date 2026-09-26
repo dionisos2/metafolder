@@ -1,6 +1,7 @@
 //! The kernel-facing half of the broker (docs/watcher-fanotify.md "The
-//! broker"): one fanotify group for the machine, one mark per *mount* holding
-//! a subscribed root, and file-handle events resolved into paths.
+//! broker"): one fanotify group for the machine, one mark per *filesystem* a
+//! subscribed root is on or has mounted beneath it, and file-handle events
+//! resolved into paths.
 //!
 //! Why fanotify and not inotify is a spec question (spec-file-tracking "Watch
 //! sources and regimes"); why these flags and not others is here:
@@ -9,12 +10,18 @@
 //!   handle plus the entry name — the only form that reports creations,
 //!   deletions and moves at all (those require a handle-identified group), and
 //!   the one whose name records make a path reconstructible.
-//! - `FAN_RENAME` (5.1+): both sides of a move in one event, with both
+//! - `FAN_RENAME` (5.17+): both sides of a move in one event, with both
 //!   parents and both names — no cookie correlation, and a move is a move even
 //!   when one side leaves the covered roots.
-//! - One `FAN_MARK_MOUNT` per mount instead of one watch per directory: the
-//!   whole point. It needs `CAP_SYS_ADMIN`; resolving a handle needs
-//!   `CAP_DAC_READ_SEARCH` ([`preflight`] checks both and says so).
+//! - One `FAN_MARK_FILESYSTEM` per filesystem instead of one watch per
+//!   directory: the whole point. A filesystem mark, not a mount mark: the
+//!   kernel refuses every entry event (create, delete, move, attributes) on a
+//!   mount mark (EINVAL). It covers every mount of the filesystem, so events
+//!   outside the roots arrive too, and the server's filter drops them. It needs
+//!   `CAP_SYS_ADMIN`; resolving a handle needs `CAP_DAC_READ_SEARCH`
+//!   ([`preflight`] checks both and says so).
+//! - The mount table is followed ([`MountWatch`]): a filesystem mounted under a
+//!   root is marked when it appears, the mark lifted when it goes.
 //!
 //! Parsing is pure ([`parse`]) and separate from the syscalls, so the record
 //! layout — the part that silently breaks — is tested against synthetic
@@ -57,7 +64,7 @@ const FAN_REPORT_DFID_NAME: u32 = FAN_REPORT_DIR_FID | FAN_REPORT_NAME;
 
 const FAN_MARK_ADD: u32 = 0x0000_0001;
 const FAN_MARK_REMOVE: u32 = 0x0000_0002;
-const FAN_MARK_MOUNT: u32 = 0x0000_0010;
+const FAN_MARK_FILESYSTEM: u32 = 0x0000_0100;
 
 const INFO_TYPE_FID: u8 = 1;
 const INFO_TYPE_DFID_NAME: u8 = 2;
@@ -73,20 +80,19 @@ const METADATA_LEN: usize = 24;
 /// mis-deployed broker fails at start with the remedy in hand rather than at
 /// the first event (docs/watcher-fanotify.md "The broker").
 pub fn preflight(probe: &Path) -> Result<()> {
-    let fa = Fanotify::open().context("fanotify is not available (CONFIG_FANOTIFY?)")?;
-    if let Err(err) = fa.mark_mount(probe, FAN_MARK_ADD) {
+    let mut fa = Fanotify::open().context("fanotify is not available (CONFIG_FANOTIFY?)")?;
+    if let Err(err) = fa.mark_fs(probe, FAN_MARK_ADD) {
         bail!(
-            "cannot mark a mount ({err}): the broker needs CAP_SYS_ADMIN (root, or the \
+            "cannot mark a filesystem ({err:#}): the broker needs CAP_SYS_ADMIN (root, or the \
              systemd unit with AmbientCapabilities=CAP_SYS_ADMIN CAP_DAC_READ_SEARCH). \
              Without it the kernel will not report events for a whole tree"
         );
     }
-    let _ = fa.mark_mount(probe, FAN_MARK_REMOVE);
+    let _ = fa.mark_fs(probe, FAN_MARK_REMOVE);
 
-    let h = name_to_handle(probe).context("cannot identify a file by handle")?;
+    let h = name_to_handle(probe).context("cannot name a file handle")?;
     let mut resolver = PathResolver::default();
-    let fsid = statfs_fsid(probe)?;
-    resolver.insert_fs(fsid, open_fs_fd(probe)?);
+    resolver.add_fs(statfs_fsid(probe)?, probe.to_path_buf());
     if resolver.resolve(&h).is_none() {
         bail!(
             "cannot resolve a file handle to a path: the broker needs CAP_DAC_READ_SEARCH \
@@ -117,11 +123,20 @@ pub trait Resolve {
 /// The real resolver: `open_by_handle_at` plus `/proc/self/fd`, memoised.
 /// A handle is stable for the life of the object, but the *path* is not (the
 /// object can be renamed under us), so entries are forgotten after a moment.
+///
+/// `open_by_handle_at` needs a descriptor on the handle's filesystem. Those are
+/// opened for one batch of events and closed after it ([`end_batch`]), never
+/// kept: an open descriptor makes `umount` fail with EBUSY, and a broker must
+/// not be why a drive under a repository cannot be unplugged.
+///
+/// [`end_batch`]: PathResolver::end_batch
 #[derive(Default)]
 pub struct PathResolver {
-    /// One descriptor per covered filesystem — `open_by_handle_at` accepts any
-    /// fd on the same filesystem as the handle.
-    fs_fds: HashMap<[i32; 2], RawFd>,
+    /// Where each covered filesystem was marked: a path to open a descriptor
+    /// on when one of its handles needs resolving.
+    fs_paths: HashMap<[i32; 2], PathBuf>,
+    /// The descriptors of the current batch.
+    open: HashMap<[i32; 2], OwnedFd>,
     cache: HashMap<([i32; 2], Vec<u8>), (PathBuf, Instant)>,
 }
 
@@ -129,16 +144,38 @@ const RESOLVE_CACHE_TTL: std::time::Duration = std::time::Duration::from_secs(2)
 const RESOLVE_CACHE_MAX: usize = 16384;
 
 impl PathResolver {
-    pub fn insert_fs(&mut self, fsid: [i32; 2], fd: RawFd) {
-        if let Some(old) = self.fs_fds.insert(fsid, fd) {
-            unsafe { libc::close(old) };
-        }
+    pub fn add_fs(&mut self, fsid: [i32; 2], at: PathBuf) {
+        self.fs_paths.insert(fsid, at);
     }
 
     pub fn remove_fs(&mut self, fsid: [i32; 2]) {
-        if let Some(fd) = self.fs_fds.remove(&fsid) {
-            unsafe { libc::close(fd) };
+        self.fs_paths.remove(&fsid);
+        self.open.remove(&fsid);
+    }
+
+    /// Closes the descriptors the batch opened.
+    pub fn end_batch(&mut self) {
+        self.open.clear();
+    }
+
+    /// How many descriptors are open right now (tests).
+    pub fn open_descriptors(&self) -> usize {
+        self.open.len()
+    }
+
+    /// A descriptor on the filesystem `fsid`, opened for this batch. `None`
+    /// when what is at the recorded path is no longer that filesystem (it was
+    /// unmounted: the path now names the directory underneath).
+    fn fs_fd(&mut self, fsid: [i32; 2]) -> Option<RawFd> {
+        if !self.open.contains_key(&fsid) {
+            let at = self.fs_paths.get(&fsid)?;
+            let fd = open_fs_fd(at).ok()?;
+            if fsid_of_fd(fd.as_raw_fd()).ok()? != fsid {
+                return None;
+            }
+            self.open.insert(fsid, fd);
         }
+        self.open.get(&fsid).map(AsRawFd::as_raw_fd)
     }
 }
 
@@ -149,21 +186,13 @@ impl Resolve for PathResolver {
                 return Some(path.clone());
             }
         }
-        let fs_fd = *self.fs_fds.get(&handle.fsid)?;
+        let fs_fd = self.fs_fd(handle.fsid)?;
         let path = resolve_handle(fs_fd, handle)?;
         if self.cache.len() >= RESOLVE_CACHE_MAX {
             self.cache.clear();
         }
         self.cache.insert((handle.fsid, handle.bytes.clone()), (path.clone(), Instant::now()));
         Some(path)
-    }
-}
-
-impl Drop for PathResolver {
-    fn drop(&mut self) {
-        for fd in self.fs_fds.values() {
-            unsafe { libc::close(*fd) };
-        }
     }
 }
 
@@ -195,32 +224,128 @@ fn statfs_fsid(path: &Path) -> Result<[i32; 2]> {
     if unsafe { libc::statfs(c.as_ptr(), &mut st) } != 0 {
         return Err(io::Error::last_os_error()).context("statfs failed");
     }
-    // `fsid_t` hides its two ints; the events carry them plainly.
-    assert_eq!(std::mem::size_of::<libc::fsid_t>(), std::mem::size_of::<[i32; 2]>());
-    Ok(unsafe { std::mem::transmute::<libc::fsid_t, [i32; 2]>(st.f_fsid) })
+    Ok(fsid_of(&st))
 }
 
-/// Any open fd on the filesystem of `path` — the reference
-/// `open_by_handle_at` needs.
-fn open_fs_fd(path: &Path) -> Result<RawFd> {
+/// [`statfs_fsid`] of an open descriptor.
+fn fsid_of_fd(fd: RawFd) -> Result<[i32; 2]> {
+    let mut st: libc::statfs = unsafe { std::mem::zeroed() };
+    if unsafe { libc::fstatfs(fd, &mut st) } != 0 {
+        return Err(io::Error::last_os_error()).context("fstatfs failed");
+    }
+    Ok(fsid_of(&st))
+}
+
+fn fsid_of(st: &libc::statfs) -> [i32; 2] {
+    // `fsid_t` hides its two ints; the events carry them plainly.
+    assert_eq!(std::mem::size_of::<libc::fsid_t>(), std::mem::size_of::<[i32; 2]>());
+    unsafe { std::mem::transmute::<libc::fsid_t, [i32; 2]>(st.f_fsid) }
+}
+
+/// The fsid of the filesystem at `path`, refusing the zero fsid some FUSE
+/// filesystems report: fanotify cannot mark those, and two of them would be
+/// indistinguishable.
+fn coverable_fsid(path: &Path) -> Result<[i32; 2]> {
+    let fsid = statfs_fsid(path)?;
+    if fsid == [0, 0] {
+        bail!("the filesystem has no fsid (fanotify cannot cover it)");
+    }
+    Ok(fsid)
+}
+
+fn open_fs_fd(path: &Path) -> Result<OwnedFd> {
     let c = CString::new(path.as_os_str().as_bytes()).context("path contains a NUL byte")?;
     let fd = unsafe { libc::open(c.as_ptr(), libc::O_PATH | libc::O_DIRECTORY | libc::O_CLOEXEC) };
     if fd < 0 {
         return Err(io::Error::last_os_error()).context("cannot open the filesystem reference");
     }
-    Ok(fd)
+    // SAFETY: a fresh descriptor, owned by nothing else.
+    Ok(unsafe { OwnedFd::from_raw_fd(fd) })
 }
 
-/// The mount id of an open file (`/proc/self/fdinfo/<fd>`), the key one
-/// `FAN_MARK_MOUNT` mark is placed per. `st_dev` would do almost: it cannot
-/// tell two bind mounts of one filesystem apart, and they are two marks.
-fn mount_id_of_fd(fd: RawFd) -> Result<u64> {
-    let fdinfo = std::fs::read_to_string(format!("/proc/self/fdinfo/{fd}"))?;
-    fdinfo
-        .lines()
-        .find_map(|l| l.strip_prefix("mnt_id:"))
-        .and_then(|v| v.trim().parse().ok())
-        .context("no mount id in fdinfo")
+// ── Mounts ───────────────────────────────────────────────────────────────────
+
+/// The mount points of a `/proc/self/mountinfo` table, in order. The fifth
+/// field, with the kernel's octal escapes (`\040` for a space, …) undone —
+/// the bytes behind them are the real path. Malformed lines are skipped.
+pub fn mount_points(table: &[u8]) -> Vec<PathBuf> {
+    table
+        .split(|&b| b == b'\n')
+        .filter_map(|line| line.split(|&b| b == b' ').nth(4))
+        .filter(|field| field.first() == Some(&b'/'))
+        .map(|field| PathBuf::from(OsStr::from_bytes(&unescape_octal(field))))
+        .collect()
+}
+
+fn unescape_octal(field: &[u8]) -> Vec<u8> {
+    let mut out = Vec::with_capacity(field.len());
+    let mut i = 0;
+    while i < field.len() {
+        let octal = field.get(i + 1..i + 4).filter(|d| d.iter().all(|b| (b'0'..=b'7').contains(b)));
+        match (field[i], octal) {
+            (b'\\', Some(d)) => {
+                out.push((d[0] - b'0') << 6 | (d[1] - b'0') << 3 | (d[2] - b'0'));
+                i += 4;
+            }
+            (b, _) => {
+                out.push(b);
+                i += 1;
+            }
+        }
+    }
+    out
+}
+
+/// The mount points strictly under `root` — by component, so `/repo-other` is
+/// not under `/repo`. Each may hold another filesystem, which a filesystem
+/// mark on the root's does not reach.
+pub fn covered_mounts(root: &Path, points: &[PathBuf]) -> Vec<PathBuf> {
+    let mut out: Vec<PathBuf> =
+        points.iter().filter(|p| p.starts_with(root) && p.as_path() != root).cloned().collect();
+    out.dedup();
+    out
+}
+
+/// Wakes when the mount table changes — a drive plugged in under a repository
+/// is a filesystem to mark ([`Fanotify::resync`]). The kernel signals a change
+/// of `/proc/self/mountinfo` as `POLLPRI`, re-armed by reading the file again.
+pub struct MountWatch {
+    file: std::fs::File,
+}
+
+impl MountWatch {
+    pub fn open() -> Result<Self> {
+        let mut file = std::fs::File::open("/proc/self/mountinfo")
+            .context("cannot open /proc/self/mountinfo")?;
+        drain(&mut file)?;
+        Ok(Self { file })
+    }
+
+    /// Blocks until the mount table has changed.
+    pub fn wait(&mut self) -> Result<()> {
+        loop {
+            let mut pfd =
+                libc::pollfd { fd: self.file.as_raw_fd(), events: libc::POLLPRI, revents: 0 };
+            let rc = unsafe { libc::poll(&mut pfd, 1, -1) };
+            if rc < 0 {
+                let err = io::Error::last_os_error();
+                if err.kind() == io::ErrorKind::Interrupted {
+                    continue;
+                }
+                return Err(err).context("poll on the mount table failed");
+            }
+            if pfd.revents & (libc::POLLPRI | libc::POLLERR) != 0 {
+                return drain(&mut self.file);
+            }
+        }
+    }
+}
+
+fn drain(file: &mut std::fs::File) -> Result<()> {
+    use std::io::{Read, Seek};
+    file.seek(io::SeekFrom::Start(0))?;
+    file.read_to_end(&mut Vec::new())?;
+    Ok(())
 }
 
 // ── Parsing (pure) ───────────────────────────────────────────────────────────
@@ -393,12 +518,11 @@ pub fn translate(raw: &RawEvent, resolver: &mut dyn Resolve) -> Vec<Event> {
 
 // ── The group, the marks, the reader ─────────────────────────────────────────
 
-/// One covered mount: one mark, placed as long as a subscribed root stands on
-/// it.
+/// One covered filesystem: one mark, placed as long as a subscribed root is on
+/// it or has it mounted beneath.
 struct Mark {
-    /// A path on the mount — what `fanotify_mark` was given.
+    /// A path on the filesystem — what `fanotify_mark` was given.
     at: PathBuf,
-    fsid: [i32; 2],
 }
 
 /// What one `read(2)` produced.
@@ -413,10 +537,13 @@ pub struct Fanotify {
     /// The group. Shared with every [`Reader`]: reading needs none of the
     /// state below, and must not hold it (see [`Fanotify::reader`]).
     fd: Arc<OwnedFd>,
-    /// mount id → mark.
-    marks: HashMap<u64, Mark>,
-    /// subscribed root → mount id.
-    roots: HashMap<PathBuf, u64>,
+    /// fsid → mark.
+    marks: HashMap<[i32; 2], Mark>,
+    /// The union of the subscribed roots.
+    roots: Vec<PathBuf>,
+    /// What is asked of the kernel: [`mask`], less `FAN_RENAME` on a kernel
+    /// that refuses it.
+    mask: u64,
     resolver: PathResolver,
 }
 
@@ -440,44 +567,85 @@ impl Fanotify {
         Ok(Self {
             fd,
             marks: HashMap::new(),
-            roots: HashMap::new(),
+            roots: Vec::new(),
+            mask: mask(),
             resolver: PathResolver::default(),
         })
     }
 
-    /// Brings the mount marks in line with `roots` (the union of everything
-    /// every subscriber watches).
+    /// Brings the marks in line with `roots` (the union of everything every
+    /// subscriber watches).
     pub fn sync_roots(&mut self, roots: &[PathBuf]) -> Result<()> {
-        // What is wanted: one mark per distinct mount of the given roots.
-        let mut wanted: HashMap<u64, PathBuf> = HashMap::new();
-        self.roots.clear();
-        for root in roots {
-            let fd = open_fs_fd(root)?;
-            let mnt = mount_id_of_fd(fd)?;
-            unsafe { libc::close(fd) };
-            self.roots.insert(root.clone(), mnt);
-            wanted.entry(mnt).or_insert_with(|| root.clone());
-        }
-        // Marks nothing stands on any more are lifted.
-        let stale: Vec<u64> =
-            self.marks.keys().copied().filter(|m| !wanted.contains_key(m)).collect();
-        for mnt in stale {
-            if let Some(mark) = self.marks.remove(&mnt) {
-                self.mark_mount(&mark.at, FAN_MARK_REMOVE)?;
-                self.resolver.remove_fs(mark.fsid);
+        self.roots = roots.to_vec();
+        self.resync()
+    }
+
+    /// Brings the marks in line with the roots and the mount table as it is
+    /// now: one filesystem mark for each distinct filesystem a root is on or
+    /// has mounted beneath it. A *filesystem* mark, because the kernel reports
+    /// no entry events (create, delete, rename, attributes) on a mount mark —
+    /// and it covers every mount of that filesystem, bind mounts and other
+    /// mount namespaces included. Events outside the roots are dropped by the
+    /// server's per-subscriber filter.
+    ///
+    /// A root that cannot be covered is an error (its subscriber must not
+    /// believe it is covered); a filesystem mounted beneath one is reported
+    /// and skipped — the rest of the tree is still covered.
+    pub fn resync(&mut self) -> Result<()> {
+        let points = std::fs::read("/proc/self/mountinfo")
+            .map(|table| mount_points(&table))
+            .unwrap_or_default();
+        let mut wanted: HashMap<[i32; 2], (PathBuf, bool)> = HashMap::new();
+        let mut failed: Vec<String> = Vec::new();
+        for root in &self.roots {
+            match coverable_fsid(root) {
+                Ok(fsid) => {
+                    wanted.entry(fsid).or_insert((root.clone(), true));
+                }
+                Err(err) => failed.push(format!("{}: {err:#}", root.display())),
             }
+            for at in covered_mounts(root, &points) {
+                match coverable_fsid(&at) {
+                    Ok(fsid) => {
+                        wanted.entry(fsid).or_insert((at, false));
+                    }
+                    Err(err) => {
+                        eprintln!("[watchd] cannot cover the mount {}: {err:#}", at.display())
+                    }
+                }
+            }
+        }
+        // Marks nothing needs any more are lifted. One whose filesystem was
+        // unmounted is already gone with it, so a failure here says nothing.
+        let stale: Vec<[i32; 2]> =
+            self.marks.keys().copied().filter(|f| !wanted.contains_key(f)).collect();
+        for fsid in stale {
+            if let Some(mark) = self.marks.remove(&fsid) {
+                let _ = self.mark_fs(&mark.at, FAN_MARK_REMOVE);
+            }
+            self.resolver.remove_fs(fsid);
         }
         // The rest are placed.
-        for (mnt, at) in wanted {
-            if self.marks.contains_key(&mnt) {
+        for (fsid, (at, is_root)) in wanted {
+            if self.marks.contains_key(&fsid) {
                 continue;
             }
-            let fsid = statfs_fsid(&at)?;
-            self.resolver.insert_fs(fsid, open_fs_fd(&at)?);
-            self.mark_mount(&at, FAN_MARK_ADD)?;
-            self.marks.insert(mnt, Mark { at, fsid });
+            match self.mark_fs(&at, FAN_MARK_ADD) {
+                Ok(()) => {
+                    self.resolver.add_fs(fsid, at.clone());
+                    self.marks.insert(fsid, Mark { at });
+                }
+                Err(err) if is_root => failed.push(format!("{}: {err:#}", at.display())),
+                Err(err) => {
+                    eprintln!("[watchd] cannot cover the mount {}: {err:#}", at.display())
+                }
+            }
         }
-        Ok(())
+        if failed.is_empty() {
+            Ok(())
+        } else {
+            bail!("cannot cover {}", failed.join("; "))
+        }
     }
 
     /// A handle that reads the group without holding it. The read blocks
@@ -495,32 +663,51 @@ impl Fanotify {
         for raw in &raws {
             events.extend(translate(raw, &mut self.resolver));
         }
+        self.resolver.end_batch();
         ReadOutcome { events, kernel_overflow }
     }
 
-    fn mark_mount(&self, at: &Path, op: u32) -> Result<()> {
+    fn mark_fs(&mut self, at: &Path, op: u32) -> Result<()> {
         let c = CString::new(at.as_os_str().as_bytes()).context("path contains a NUL byte")?;
-        let rc = unsafe {
-            libc::fanotify_mark(
-                self.fd.as_raw_fd(),
-                op | FAN_MARK_MOUNT,
-                mask(),
-                libc::AT_FDCWD,
-                c.as_ptr(),
-            )
+        let mark = |mask: u64| {
+            let rc = unsafe {
+                libc::fanotify_mark(
+                    self.fd.as_raw_fd(),
+                    op | FAN_MARK_FILESYSTEM,
+                    mask,
+                    libc::AT_FDCWD,
+                    c.as_ptr(),
+                )
+            };
+            if rc == 0 {
+                Ok(())
+            } else {
+                Err(io::Error::last_os_error())
+            }
         };
-        if rc != 0 {
-            return Err(io::Error::last_os_error())
-                .with_context(|| format!("fanotify_mark({at:?}) failed"));
+        match mark(self.mask) {
+            Ok(()) => Ok(()),
+            // A kernel before 5.17 does not know `FAN_RENAME`: moves then
+            // arrive as `FAN_MOVED_FROM`/`FAN_MOVED_TO` pairs (see [`mask`]).
+            // Dropped only once the retry proves that was the refusal.
+            Err(err)
+                if op == FAN_MARK_ADD
+                    && self.mask & FAN_RENAME != 0
+                    && err.raw_os_error() == Some(libc::EINVAL)
+                    && mark(self.mask & !FAN_RENAME).is_ok() =>
+            {
+                self.mask &= !FAN_RENAME;
+                Ok(())
+            }
+            Err(err) => Err(err).with_context(|| format!("fanotify_mark({at:?}) failed")),
         }
-        Ok(())
     }
 }
 
 /// The events the daemon's vocabulary needs, plus `FAN_ONDIR` — without it in
 /// the *mark mask* the kernel reports nothing about directory objects.
 ///
-/// `FAN_RENAME` is retried away on kernels that refuse it (pre-5.1): moves
+/// `FAN_RENAME` is retried away on kernels that refuse it (pre-5.17): moves
 /// then arrive as `FAN_MOVED_FROM`/`FAN_MOVED_TO` pairs with nothing to
 /// correlate them by, and read as delete + create — the same degradation the
 /// notify sources have on backends without rename correlation (spec-file-
@@ -791,6 +978,197 @@ mod tests {
         let mut r = table(&[(&handle(1), "/repo")]);
         let expected = PathBuf::from(std::ffi::OsStr::from_bytes(b"/repo/caf\xE9"));
         assert_eq!(translate(&events[0], &mut r), vec![Event::Create { path: expected.into() }]);
+    }
+
+    // ── Mounts ───────────────────────────────────────────────────────────────
+
+    #[test]
+    fn test_mount_points_are_read_with_their_escapes() {
+        // `/proc/self/mountinfo` escapes a space, a tab, a newline and a
+        // backslash as octal; the bytes behind them are the real path.
+        let table = b"22 1 0:21 / / rw - ext4 /dev/sda1 rw\n\
+            30 22 0:30 / /mnt/my\\040disk rw,nosuid - vfat /dev/sdb1 rw\n\
+            31 22 0:31 / /mnt/caf\xE9 rw - tmpfs t rw\n\
+            garbage\n";
+        use std::os::unix::ffi::OsStrExt;
+        assert_eq!(
+            mount_points(table),
+            vec![
+                PathBuf::from("/"),
+                PathBuf::from("/mnt/my disk"),
+                PathBuf::from(OsStr::from_bytes(b"/mnt/caf\xE9")),
+            ]
+        );
+    }
+
+    #[test]
+    fn test_the_mounts_under_a_root_are_covered_with_it() {
+        let points: Vec<PathBuf> =
+            ["/", "/home", "/home/me/repo/usb", "/home/me/repo-other", "/proc"]
+                .iter()
+                .map(PathBuf::from)
+                .collect();
+        assert_eq!(
+            covered_mounts(Path::new("/home/me/repo"), &points),
+            vec![PathBuf::from("/home/me/repo/usb")],
+            "strictly under the root, by component — not by string prefix"
+        );
+        assert!(covered_mounts(Path::new("/home/me/repo/usb"), &points).is_empty());
+    }
+
+    #[test]
+    fn test_the_resolver_keeps_no_descriptor_between_batches() {
+        // A descriptor on a filesystem makes `umount` fail with EBUSY: a
+        // broker holding one would stop a USB drive under a repository from
+        // being unplugged. Descriptors are opened for a batch, then closed.
+        let dir = std::env::temp_dir();
+        let mut r = PathResolver::default();
+        let fsid = statfs_fsid(&dir).unwrap();
+        r.add_fs(fsid, dir.clone());
+        let h = name_to_handle(&dir).unwrap();
+        let _ = r.resolve(&h); // May be refused unprivileged; it opens all the same.
+        assert_eq!(r.open_descriptors(), 1, "the batch has its descriptor");
+        r.end_batch();
+        assert_eq!(r.open_descriptors(), 0, "and nothing survives the batch");
+    }
+
+    // ── Filesystem marks against the real kernel ─────────────────────────────
+    //
+    // Marking a filesystem needs CAP_SYS_ADMIN over it. A user namespace grants
+    // exactly that over a tmpfs it mounts itself (Linux 6.8+), so these tests
+    // re-run themselves under `unshare -rm` and skip where that is refused.
+    // Handle *resolution* stays out of reach there (`open_by_handle_at` wants
+    // CAP_DAC_READ_SEARCH in the initial namespace): they assert on the parsed
+    // records — names under the marked filesystems.
+
+    const USERNS_ENV: &str = "METAFOLDER_WATCHD_IN_USERNS";
+
+    /// `true` inside the namespace (run the body); outside, re-runs `test` in
+    /// one and returns `false`. The outer run owns the scratch directory (the
+    /// value of [`USERNS_ENV`]) and removes it, mounts and all having died
+    /// with the namespace.
+    fn in_userns(test: &str) -> bool {
+        if std::env::var_os(USERNS_ENV).is_some() {
+            return true;
+        }
+        let usable = std::process::Command::new("unshare")
+            .args(["-rm", "true"])
+            .status()
+            .is_ok_and(|s| s.success());
+        if !usable {
+            eprintln!("skipped: user namespaces are not available here");
+            return false;
+        }
+        let scratch = std::env::temp_dir()
+            .join("metafolder-tests")
+            .join(format!("watchd-{test}-{}", std::process::id()));
+        std::fs::create_dir_all(&scratch).unwrap();
+        let name = format!("fanotify::tests::{test}");
+        let out = std::process::Command::new("unshare")
+            .args(["-rm", "--"])
+            .arg(std::env::current_exe().unwrap())
+            .args([name.as_str(), "--exact", "--nocapture", "--test-threads=1"])
+            .env(USERNS_ENV, &scratch)
+            .output()
+            .unwrap();
+        std::fs::remove_dir_all(&scratch).ok();
+        let text = String::from_utf8_lossy(&out.stdout).into_owned()
+            + &String::from_utf8_lossy(&out.stderr);
+        assert!(out.status.success() && text.contains("1 passed"), "{text}");
+        false
+    }
+
+    /// A directory of the scratch area with a tmpfs mounted on it (inside the
+    /// namespace).
+    fn tmpfs(name: &str) -> PathBuf {
+        let dir = PathBuf::from(std::env::var_os(USERNS_ENV).unwrap()).join(name);
+        mount_tmpfs(&dir);
+        dir
+    }
+
+    fn mount_tmpfs(at: &Path) {
+        std::fs::create_dir_all(at).unwrap();
+        let ok = std::process::Command::new("mount")
+            .args(["-t", "tmpfs", "t"])
+            .arg(at)
+            .status()
+            .is_ok_and(|s| s.success());
+        assert!(ok, "mount tmpfs on {at:?}");
+    }
+
+    /// Reads the group on a thread, forwarding every entry name it reports.
+    fn names(fa: &Fanotify) -> std::sync::mpsc::Receiver<String> {
+        let reader = fa.reader();
+        let (tx, rx) = std::sync::mpsc::channel();
+        std::thread::spawn(move || {
+            let mut buf = vec![0u8; 64 * 1024];
+            while let Ok(n) = reader.read(&mut buf) {
+                for raw in parse(&buf[..n]).0 {
+                    for (_, name) in [&raw.parent, &raw.old, &raw.new].into_iter().flatten() {
+                        if tx.send(name.to_string_lossy().into_owned()).is_err() {
+                            return;
+                        }
+                    }
+                }
+            }
+        });
+        rx
+    }
+
+    fn expect_names(rx: &std::sync::mpsc::Receiver<String>, wanted: &[&str]) {
+        let mut missing: std::collections::HashSet<&str> = wanted.iter().copied().collect();
+        let deadline = Instant::now() + std::time::Duration::from_secs(5);
+        while !missing.is_empty() {
+            let left = deadline.saturating_duration_since(Instant::now());
+            match rx.recv_timeout(left) {
+                Ok(name) => {
+                    missing.remove(name.as_str());
+                }
+                Err(_) => panic!("never reported: {missing:?}"),
+            }
+        }
+    }
+
+    #[test]
+    fn test_a_root_and_the_filesystems_mounted_under_it_are_covered() {
+        if !in_userns("test_a_root_and_the_filesystems_mounted_under_it_are_covered") {
+            return;
+        }
+        let root = tmpfs("nested");
+        mount_tmpfs(&root.join("usb"));
+        let mut fa = Fanotify::open().unwrap();
+        fa.sync_roots(std::slice::from_ref(&root)).unwrap();
+        let rx = names(&fa);
+        std::fs::write(root.join("top.txt"), b"x").unwrap();
+        std::fs::rename(root.join("top.txt"), root.join("moved.txt")).unwrap();
+        std::fs::write(root.join("usb").join("deep.txt"), b"y").unwrap();
+        expect_names(&rx, &["top.txt", "moved.txt", "deep.txt"]);
+    }
+
+    #[test]
+    fn test_a_filesystem_mounted_later_is_covered_after_a_resync() {
+        if !in_userns("test_a_filesystem_mounted_later_is_covered_after_a_resync") {
+            return;
+        }
+        let root = tmpfs("late");
+        let mut fa = Fanotify::open().unwrap();
+        fa.sync_roots(std::slice::from_ref(&root)).unwrap();
+        let rx = names(&fa);
+
+        let mut watch = MountWatch::open().unwrap();
+        let (tx, woke) = std::sync::mpsc::channel();
+        std::thread::spawn(move || {
+            let _ = tx.send(watch.wait().is_ok());
+        });
+        mount_tmpfs(&root.join("later"));
+        assert_eq!(
+            woke.recv_timeout(std::time::Duration::from_secs(5)),
+            Ok(true),
+            "the mount table change is noticed"
+        );
+        fa.resync().unwrap();
+        std::fs::write(root.join("later").join("new.txt"), b"z").unwrap();
+        expect_names(&rx, &["new.txt"]);
     }
 
     // ── The real group (needs fanotify; skips where it is not permitted) ─────

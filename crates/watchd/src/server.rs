@@ -29,7 +29,7 @@ const CLIENT_QUEUE: usize = 4096;
 
 /// What the server tells the event source about the *union* of the roots all
 /// subscribers watch, after every subscription change. The fanotify side uses
-/// it to place and lift its mount marks.
+/// it to place and lift its filesystem marks.
 pub trait RootSink: Send + Sync {
     fn set_roots(&self, roots: Vec<PathBuf>) -> Result<()>;
 }
