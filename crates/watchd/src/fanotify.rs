@@ -91,13 +91,14 @@ pub fn preflight(probe: &Path) -> Result<()> {
     let _ = fa.mark_fs(probe, FAN_MARK_REMOVE);
 
     let h = name_to_handle(probe).context("cannot name a file handle")?;
-    let mut resolver = PathResolver::default();
-    resolver.add_fs(statfs_fsid(probe)?, probe.to_path_buf());
-    if resolver.resolve(&h).is_none() {
+    let fs = open_fs_fd(probe)?;
+    if let Err(err) = resolve_handle_verbose(fs.as_raw_fd(), &h) {
         bail!(
-            "cannot resolve a file handle to a path: the broker needs CAP_DAC_READ_SEARCH \
-             (root, or the systemd unit with AmbientCapabilities=CAP_SYS_ADMIN \
-             CAP_DAC_READ_SEARCH)"
+            "cannot resolve a file handle to a path ({err:#}; probed on {}, handle type \
+             {}): the broker needs CAP_DAC_READ_SEARCH (root, or the systemd unit with \
+             AmbientCapabilities=CAP_SYS_ADMIN CAP_DAC_READ_SEARCH)",
+            probe.display(),
+            h.handle_type
         );
     }
     Ok(())
@@ -197,6 +198,14 @@ impl Resolve for PathResolver {
 }
 
 fn resolve_handle(fs_fd: RawFd, handle: &Handle) -> Option<PathBuf> {
+    // ESTALE is routine — gone by now, the man page warns about it — and is
+    // what most failures here are: not worth a word per event.
+    resolve_handle_verbose(fs_fd, handle).ok()
+}
+
+/// [`resolve_handle`], saying which step failed and why — what [`preflight`]
+/// reports when the machine will not let the broker resolve anything.
+fn resolve_handle_verbose(fs_fd: RawFd, handle: &Handle) -> Result<PathBuf> {
     // `struct file_handle` is a header (u32 + i32) followed by the opaque
     // bytes — laid out by hand because the uapi struct ends in a flexible
     // array.
@@ -209,11 +218,11 @@ fn resolve_handle(fs_fd: RawFd, handle: &Handle) -> Option<PathBuf> {
         libc::open_by_handle_at(fs_fd, fh, libc::O_PATH | libc::O_CLOEXEC | libc::O_NOFOLLOW)
     };
     if fd < 0 {
-        return None; // ESTALE: gone by now — the man page warns about this.
+        return Err(io::Error::last_os_error()).context("open_by_handle_at failed");
     }
     let link = std::fs::read_link(format!("/proc/self/fd/{fd}"));
     unsafe { libc::close(fd) };
-    link.ok()
+    link.context("reading /proc/self/fd (the path of the opened handle) failed")
 }
 
 /// The `fsid` of the filesystem holding `path` (`statfs` reports the same
@@ -1197,6 +1206,25 @@ mod tests {
             "strictly under the root, by component — not by string prefix"
         );
         assert!(covered_mounts(Path::new("/home/me/repo/usb"), &points).is_empty());
+    }
+
+    /// A broker that cannot resolve a handle must say *which* call failed and
+    /// with what errno: "cannot resolve" alone left a failure on a real
+    /// machine undiagnosable.
+    #[test]
+    fn test_a_failed_resolution_names_the_call_and_the_error() {
+        let dir = std::env::temp_dir()
+            .join("metafolder-tests")
+            .join(format!("watchd-resolve-err-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let fd = open_fs_fd(&dir).unwrap();
+        // A handle no filesystem ever issued.
+        let bogus = Handle { fsid: [0, 0], handle_type: 1, bytes: vec![0xff; 8] };
+        let err = resolve_handle_verbose(fd.as_raw_fd(), &bogus).unwrap_err();
+        let _ = std::fs::remove_dir_all(&dir);
+        let text = format!("{err:#}");
+        assert!(text.contains("open_by_handle_at"), "{text}");
+        assert!(text.contains("os error"), "the errno must be kept: {text}");
     }
 
     #[test]

@@ -146,6 +146,10 @@ if [[ $mode != none ]]; then
     # `$broker_pid` is sudo's: it relays the cleanup's SIGTERM to the broker.
     if ! wait_for test -S "$sock"; then
         show_logs
+        echo "── context ──"
+        echo "kernel: $(uname -r)"
+        echo "socket directory on: $(findmnt -n -o FSTYPE,OPTIONS -T "$run" 2>/dev/null)"
+        [[ $mode == caps ]] && echo "(try --root too: it tells whether the capabilities are the issue)"
         die "the broker did not start (log above)"
     fi
     pass "the broker starts ($mode) and passes its preflight"
