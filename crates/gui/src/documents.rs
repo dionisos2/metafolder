@@ -14,7 +14,6 @@
 
 use std::ffi::OsString;
 use std::path::{Path, PathBuf};
-use std::sync::atomic::{AtomicU64, Ordering};
 
 /// Bump when the rendering parameters change, so cached PNGs keyed by the
 /// source's identity (not its rendering) are no longer reused.
@@ -98,16 +97,17 @@ pub fn render_page(
     if output.is_file() {
         return Ok(output);
     }
-    std::fs::create_dir_all(cache_dir).map_err(|_| DocError::Failed)?;
 
-    // Render to a per-call temp file, then atomically rename in, so a
-    // concurrent request never observes (or serves) a half-written PNG.
-    let temp = cache_dir.join(temp_name());
-    if !run_poppler(&pdftoppm_spec(path, &temp, page, dpi), &temp) {
-        let _ = std::fs::remove_file(&temp);
+    // Rendered into a scratch directory of its own — never the cache itself,
+    // which holds every other page — then moved in (atomically: a concurrent
+    // request never serves half a file).
+    let scratch = crate::sandbox::Scratch::new(cache_dir).map_err(|_| DocError::Failed)?;
+    let temp = scratch.file("out.png");
+    if !run_poppler(&pdftoppm_spec(path, &temp, page, dpi), &temp)
+        || !scratch.take("out.png", &output)
+    {
         return Err(DocError::Failed);
     }
-    std::fs::rename(&temp, &output).map_err(|_| DocError::Failed)?;
     Ok(output)
 }
 
@@ -165,15 +165,6 @@ fn cache_filename(path: &Path, mtime_ms: i128, size: u64, page: u32, dpi: u32) -
     dpi.hash(&mut hasher);
     DOCUMENT_VERSION.hash(&mut hasher);
     format!("{:016x}.png", hasher.finish())
-}
-
-/// A unique temp file name within this process (pid + monotonic counter), so
-/// two simultaneous renders never collide. It ends in `.png` because that is
-/// what `pdftoppm -png -singlefile` appends to the prefix it is given.
-fn temp_name() -> String {
-    static COUNTER: AtomicU64 = AtomicU64::new(0);
-    let n = COUNTER.fetch_add(1, Ordering::Relaxed);
-    format!(".tmp-{}-{}.png", std::process::id(), n)
 }
 
 /// `pdftoppm` writes `<prefix>.png` under `-singlefile`, so the prefix is the

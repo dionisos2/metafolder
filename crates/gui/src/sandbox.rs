@@ -180,6 +180,60 @@ fn bwrap_args(spec: &Spec, seccomp_fd: Option<i32>) -> Vec<OsString> {
     args
 }
 
+/// A private, empty directory for one helper run to write into — the only
+/// thing bound read-write in its sandbox.
+///
+/// Binding the whole cache directory instead would let a compromised decoder
+/// rewrite *every* cached image — the posters and pages of other files, which
+/// the WebView then decodes — or fill the cache without bound. Here it reaches
+/// one empty directory, the caller takes the one file it expects out of it
+/// ([`take`](Self::take)), and the directory goes with whatever else was
+/// left in it.
+pub struct Scratch {
+    dir: PathBuf,
+}
+
+impl Scratch {
+    /// A new directory under `parent` (the cache it will feed), unique to this
+    /// process and call.
+    pub fn new(parent: &Path) -> std::io::Result<Scratch> {
+        use std::sync::atomic::{AtomicU64, Ordering};
+        static COUNTER: AtomicU64 = AtomicU64::new(0);
+        std::fs::create_dir_all(parent)?;
+        let n = COUNTER.fetch_add(1, Ordering::Relaxed);
+        let dir = parent.join(format!(".tmp-{}-{}", std::process::id(), n));
+        // `create_dir`, not `_all`: an existing entry at this name is not ours.
+        std::fs::create_dir(&dir)?;
+        Ok(Scratch { dir })
+    }
+
+    pub fn dir(&self) -> &Path {
+        &self.dir
+    }
+
+    /// Where the helper should write its output `name`.
+    pub fn file(&self, name: &str) -> PathBuf {
+        self.dir.join(name)
+    }
+
+    /// Moves the output `name` to `dest` (atomically: a concurrent reader
+    /// never sees half a file) if it is what a helper should have left: a
+    /// non-empty *regular* file. A symbolic link is refused — moved into the
+    /// cache, it would be served in place of an image.
+    pub fn take(&self, name: &str, dest: &Path) -> bool {
+        let file = self.file(name);
+        let ok =
+            std::fs::symlink_metadata(&file).is_ok_and(|m| m.file_type().is_file() && m.len() > 0);
+        ok && std::fs::rename(&file, dest).is_ok()
+    }
+}
+
+impl Drop for Scratch {
+    fn drop(&mut self) {
+        let _ = std::fs::remove_dir_all(&self.dir);
+    }
+}
+
 /// Resource ceilings for a helper. `bwrap` bounds what a decoder can *reach*;
 /// these bound what it can *consume* — a crafted file whose decode balloons to
 /// gigabytes, spins forever, or writes without end must die on its own rather
@@ -945,5 +999,63 @@ mod tests {
         let output = run(&Spec::new("sh").arg("-c").arg("ip -o link 2>/dev/null | wc -l"));
         let count: i32 = String::from_utf8_lossy(&output.stdout).trim().parse().unwrap_or(i32::MAX);
         assert!(count <= 1, "the sandbox must have no network interface but loopback");
+    }
+}
+
+#[cfg(test)]
+mod scratch_tests {
+    use super::Scratch;
+
+    fn parent(name: &str) -> std::path::PathBuf {
+        let dir = std::env::temp_dir()
+            .join("metafolder-tests")
+            .join(format!("scratch-{name}-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        dir
+    }
+
+    #[test]
+    fn test_a_scratch_is_a_fresh_directory_of_its_own() {
+        let cache = parent("fresh");
+        std::fs::write(cache.join("other.png"), b"cached").unwrap();
+        let a = Scratch::new(&cache).unwrap();
+        let b = Scratch::new(&cache).unwrap();
+        assert_ne!(a.dir(), b.dir());
+        assert!(a.dir().starts_with(&cache));
+        assert_eq!(std::fs::read_dir(a.dir()).unwrap().count(), 0);
+        drop((a, b));
+        let _ = std::fs::remove_dir_all(&cache);
+    }
+
+    #[test]
+    fn test_taking_the_output_moves_it_and_the_rest_disappears() {
+        let cache = parent("take");
+        let scratch = Scratch::new(&cache).unwrap();
+        std::fs::write(scratch.file("out.png"), b"png").unwrap();
+        std::fs::write(scratch.file("junk"), b"left behind by the helper").unwrap();
+        let dest = cache.join("final.png");
+        assert!(scratch.take("out.png", &dest));
+        let dir = scratch.dir().to_path_buf();
+        drop(scratch);
+        assert_eq!(std::fs::read(&dest).unwrap(), b"png");
+        assert!(!dir.exists(), "the scratch directory must go, with whatever it held");
+        let _ = std::fs::remove_dir_all(&cache);
+    }
+
+    #[test]
+    fn test_an_empty_or_linked_output_is_refused() {
+        let cache = parent("refuse");
+        let scratch = Scratch::new(&cache).unwrap();
+        std::fs::write(scratch.file("empty.png"), b"").unwrap();
+        assert!(!scratch.take("empty.png", &cache.join("a.png")));
+        // A compromised helper pointing its "output" at a file of the user's:
+        // moved into the cache, it would be served in its place.
+        std::os::unix::fs::symlink("/etc/hostname", scratch.file("out.png")).unwrap();
+        assert!(!scratch.take("out.png", &cache.join("b.png")));
+        assert!(!cache.join("b.png").exists());
+        assert!(!scratch.take("missing.png", &cache.join("c.png")));
+        drop(scratch);
+        let _ = std::fs::remove_dir_all(&cache);
     }
 }

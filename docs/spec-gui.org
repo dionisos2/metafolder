@@ -4129,8 +4129,13 @@ moment its tile or its preview is shown. Every decoder is confined:
   =gst-discoverer-1.0= (=GET /__media-probe=)
   run under =bwrap= (=crates/gui/src/sandbox.rs=): no network, no IPC/PID/user
   namespace sharing, an empty environment, a read-only system, and *only the
-  examined file* bound read-only — plus, for the two renderers, the cache
-  directory they write the image into, the single thing they may write. The GStreamer
+  examined file* bound read-only — plus, for the two renderers, a *scratch
+  directory* of their own (=sandbox::Scratch=, a fresh empty directory inside
+  the cache), the single thing they may write. Not the cache itself: that
+  would let a compromised decoder rewrite every other file's poster — which
+  the WebView then decodes — or fill it without bound. The caller moves the one
+  PNG it expects out of the scratch directory (a non-empty regular file; a
+  symbolic link is refused) and deletes the rest. The GStreamer
   plugin registry is bound read-only (=GST_REGISTRY_UPDATE=no=): without it the
   sandbox has no registry and rebuilds one per probe (~1 s against ~80 ms).
   These helpers **fail closed** — no sandbox, no helper, and the panel falls

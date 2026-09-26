@@ -15,7 +15,6 @@
 
 use std::ffi::OsString;
 use std::path::{Path, PathBuf};
-use std::sync::atomic::{AtomicU64, Ordering};
 
 /// Bump when the extraction parameters change so stale cached PNGs (keyed by
 /// the source file's identity, not its rendering) are no longer reused.
@@ -129,11 +128,13 @@ pub fn generate(path: &Path, cache_dir: &Path) -> Result<PathBuf, ThumbError> {
     if output.is_file() {
         return Ok(output);
     }
-    std::fs::create_dir_all(cache_dir).map_err(|_| ThumbError::Failed)?;
 
-    // Render to a per-call temp file, then atomically rename in, so a
-    // concurrent request never observes (or serves) a half-written PNG.
-    let temp = cache_dir.join(temp_name());
+    // The helper writes into a scratch directory of its own — never the cache
+    // itself, which holds every other file's poster — and the one PNG is moved
+    // in from there (atomically: a concurrent request never serves half a
+    // file).
+    let scratch = crate::sandbox::Scratch::new(cache_dir).map_err(|_| ThumbError::Failed)?;
+    let temp = scratch.file("out.png");
     // A document's first page, or a video frame — the retry at seek 0 covers a
     // clip shorter than the first offset.
     let produced = if crate::documents::is_document(path) {
@@ -141,20 +142,10 @@ pub fn generate(path: &Path, cache_dir: &Path) -> Result<PathBuf, ThumbError> {
     } else {
         run_ffmpeg(path, &temp, "1") || run_ffmpeg(path, &temp, "0")
     };
-    if !produced {
-        let _ = std::fs::remove_file(&temp);
+    if !produced || !scratch.take("out.png", &output) {
         return Err(ThumbError::Failed);
     }
-    std::fs::rename(&temp, &output).map_err(|_| ThumbError::Failed)?;
     Ok(output)
-}
-
-/// A unique temp file name within this process (pid + monotonic counter), so
-/// two simultaneous generations of different files never collide.
-fn temp_name() -> String {
-    static COUNTER: AtomicU64 = AtomicU64::new(0);
-    let n = COUNTER.fetch_add(1, Ordering::Relaxed);
-    format!(".tmp-{}-{}.png", std::process::id(), n)
 }
 
 /// Hard timeout for one `ffmpeg` frame extraction. Extracting a single frame
@@ -405,6 +396,16 @@ trailer\n<</Size 6/Root 1 0 R>>\nstartxref\n364\n%%EOF\n";
         let gif_png = generate(&gif, &cache_dir).expect("gif poster generated");
         let bytes = std::fs::read(&gif_png).unwrap();
         assert_eq!(&bytes[..8], b"\x89PNG\r\n\x1a\n", "gif poster is a PNG");
+
+        // The helpers wrote into scratch directories that are gone: the cache
+        // holds the two posters and nothing else.
+        let mut entries: Vec<_> = std::fs::read_dir(&cache_dir)
+            .unwrap()
+            .map(|e| e.unwrap().file_name().to_string_lossy().into_owned())
+            .collect();
+        entries.sort();
+        assert_eq!(entries.len(), 2, "{entries:?}");
+        assert!(entries.iter().all(|name| name.ends_with(".png") && !name.starts_with('.')));
 
         std::fs::remove_file(&png).ok();
         std::fs::remove_dir_all(&dir).ok();
