@@ -262,9 +262,15 @@ fn coverable_fsid(path: &Path) -> Result<[i32; 2]> {
     Ok(fsid)
 }
 
+/// A descriptor on the filesystem at the directory `path`, for
+/// `open_by_handle_at`'s `mount_fd`. A real open, never `O_PATH`: the kernel
+/// takes `mount_fd` through `fdget`, which refuses an `O_PATH` file — every
+/// resolution then fails with EBADF (seen on 7.2). Opening a directory for
+/// reading takes the right to read it, which `CAP_DAC_READ_SEARCH` grants.
 fn open_fs_fd(path: &Path) -> Result<OwnedFd> {
     let c = CString::new(path.as_os_str().as_bytes()).context("path contains a NUL byte")?;
-    let fd = unsafe { libc::open(c.as_ptr(), libc::O_PATH | libc::O_DIRECTORY | libc::O_CLOEXEC) };
+    let fd =
+        unsafe { libc::open(c.as_ptr(), libc::O_RDONLY | libc::O_DIRECTORY | libc::O_CLOEXEC) };
     if fd < 0 {
         return Err(io::Error::last_os_error()).context("cannot open the filesystem reference");
     }
@@ -1225,6 +1231,22 @@ mod tests {
         let text = format!("{err:#}");
         assert!(text.contains("open_by_handle_at"), "{text}");
         assert!(text.contains("os error"), "the errno must be kept: {text}");
+    }
+
+    /// `open_by_handle_at` takes its `mount_fd` through `fdget`, which does not
+    /// accept an `O_PATH` descriptor: on a real machine (7.2) every
+    /// resolution failed with EBADF. The reference must be a real open.
+    #[test]
+    fn test_the_filesystem_reference_is_not_an_o_path_descriptor() {
+        let dir = std::env::temp_dir()
+            .join("metafolder-tests")
+            .join(format!("watchd-fsref-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let fd = open_fs_fd(&dir).unwrap();
+        let flags = unsafe { libc::fcntl(fd.as_raw_fd(), libc::F_GETFL) };
+        let _ = std::fs::remove_dir_all(&dir);
+        assert!(flags >= 0);
+        assert_eq!(flags & libc::O_PATH, 0, "O_PATH: open_by_handle_at would answer EBADF");
     }
 
     #[test]
