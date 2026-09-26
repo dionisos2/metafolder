@@ -121,7 +121,8 @@ fn mark_exceeded(repo: &RepoState, rel: &str) {
     let mut conn = repo.conn.lock().unwrap();
     let mut cache = repo.cache.lock().unwrap();
     let parent_rel = rel.rsplit_once('/').map(|(p, _)| p).unwrap_or("");
-    let parent = cache.resolve_path(&conn, "mfr_path", parent_rel).unwrap().expect("parent tracked");
+    let parent =
+        cache.resolve_path(&conn, "mfr_path", parent_rel).unwrap().expect("parent tracked");
     let name = rel.rsplit('/').next().unwrap().to_string();
     let mut w = Writer::begin(&mut conn, None).unwrap();
     let created = w
@@ -195,9 +196,7 @@ fn test_events_from_the_broker_become_metarecords() {
     let executor = executor::spawn(&repo, Duration::from_millis(25));
     let handle = watcher::start(&repo, executor.pinger()).unwrap();
     assert_eq!(handle.backend(), "fanotify");
-    wait_for("the broker's event to become a metarecord", || {
-        resolve(&repo, "/dir/x").is_some()
-    });
+    wait_for("the broker's event to become a metarecord", || resolve(&repo, "/dir/x").is_some());
     std::fs::remove_dir_all(root).ok();
 }
 
@@ -222,10 +221,7 @@ fn test_an_excluded_subtree_is_not_recorded_under_the_coverage_source() {
             // never the departure (the same shape as a move out of the watched
             // tree — a `RenameTo`).
             ServerMsg::Event {
-                event: Event::Rename {
-                    from: wire(&root, "dir/x"),
-                    to: wire(&root, "other/moved"),
-                },
+                event: Event::Rename { from: wire(&root, "dir/x"), to: wire(&root, "other/moved") },
             },
         ],
     );
@@ -236,9 +232,6 @@ fn test_an_excluded_subtree_is_not_recorded_under_the_coverage_source() {
         resolve(&repo, "/other/y").is_some() && resolve(&repo, "/other/moved").is_some()
     });
     settle();
-    assert!(
-        resolve(&repo, "/dir/x").is_none(),
-        "nothing under the excluded subtree is recorded"
-    );
+    assert!(resolve(&repo, "/dir/x").is_none(), "nothing under the excluded subtree is recorded");
     std::fs::remove_dir_all(root).ok();
 }

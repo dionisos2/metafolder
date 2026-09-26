@@ -302,6 +302,34 @@ invariant violation, reported as such — a =State= gap — and not a reason to 
 back. It costs nothing in
 steady-state memory and is paid only by the queries that sort on a tree field.
 
+** A page costs the page
+
+A sorted page can be produced two ways. *Fetch*: read every match's sort key,
+partition out the page (=select_nth=), sort it — O(m) whatever the page size,
+which is what made the first page of a 200 000-file repository cost 6 ms
+unsorted, 50 ms by size and 150 ms by path. *Walk*: read an ordered structure
+from the cursor's position and keep the matches until the page is full — its
+cost is the page, divided by the matches' density along that structure. The
+design came out of the disk-backend prototype
+([[file:spec-storage.org][spec-storage.org]] "Prototype results"), where it
+explained most of the measured gap; it does not depend on where the data lives.
+
+=RepoIndex::page_of= walks when a sort has a walk and =walk_budget= says so:
+the walk is expected to find =limit + 1= matches after ≈ =(limit + 1) × span /
+m= steps (the matches spread evenly along the span), the fetch costs
+=FETCH_COST= steps per match. When the walk is cheaper it gets a budget of
+twice the fetch; running over it (unevenly spread matches) falls back to the
+fetch, so a wrong guess costs at most three fetches. The extra id tells whether
+another page follows; the cursor is the fetch's cursor, built from the last id's
+representatives, so the two strategies interleave freely across pages.
+=PageStrategy= forces one or the other; =tests/index_page_strategies.rs= holds
+both to the SQL oracle, page after page, on a repository built for their edge
+cases.
+
+| Sort                    | Walks                                       |
+|-------------------------+---------------------------------------------|
+| none (uuid order)       | the registry's uuid → id map, which is ordered |
+
 ** Three kinds of gap (implemented)
 
 The bitmap engine declines a query for one of three reasons, and they are not

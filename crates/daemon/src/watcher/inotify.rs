@@ -529,7 +529,6 @@ fn maintain_watches(
     }
 }
 
-
 impl Source {
     /// Creates the notify watcher and hands its translated events to `tx` —
     /// the shared ingest thread ([`crate::watcher::start`]). The initial
@@ -631,9 +630,7 @@ impl crate::watcher::Source for Source {
 
 #[cfg(test)]
 mod tests {
-    use super::{
-        budget_cap, budget_report, compute_watched_dirs_timed, is_watch_budget_exhausted,
-    };
+    use super::{budget_cap, budget_report, compute_watched_dirs_timed, is_watch_budget_exhausted};
     use crate::db;
     use crate::log::Writer;
     use crate::tree_cache::TreeCache;

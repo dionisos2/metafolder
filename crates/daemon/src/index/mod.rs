@@ -187,6 +187,9 @@ impl KeyLookup<'_> {
     }
 }
 
+/// What reading one match's sort key costs in a fetch, in walk steps.
+const FETCH_COST: u64 = 4;
+
 /// Whether a node is a text predicate — one answered by scanning the field's
 /// distinct values. These are the only operands a candidate restriction makes
 /// cheaper, so [`RepoIndex::intersect`] evaluates them last.
@@ -284,8 +287,22 @@ fn stores_sort_rep(value: &Value) -> bool {
     !is_bsi_value(value) && !matches!(value, Value::TreeRef { .. })
 }
 
+/// How a sorted page is produced (spec-indexing "A page costs the page").
+/// `Fetch` reads every match's sort key and partially sorts them; `Walk` reads
+/// an ordered structure until the page is full; `Auto` — what the daemon uses —
+/// picks by estimated cost. Forcing one is for the tests that hold both to the
+/// oracle.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum PageStrategy {
+    #[default]
+    Auto,
+    Fetch,
+    Walk,
+}
+
 pub struct RepoIndex {
     registry: IdRegistry,
+    strategy: PageStrategy,
     /// All interned ids: every metarecord of this repository's database
     /// (`db::list_entries`). Complement base for `Not` / `IsUnknown`.
     ///
@@ -422,10 +439,25 @@ impl RepoIndex {
         }
         progress(total, total);
 
-        Ok(RepoIndex { registry, universe, present, absent, fields, sort, types, built_at_head })
+        Ok(RepoIndex {
+            registry,
+            strategy: PageStrategy::Auto,
+            universe,
+            present,
+            absent,
+            fields,
+            sort,
+            types,
+            built_at_head,
+        })
     }
 
     /// The log HEAD this index reflects (see [`Self::build`]).
+    /// Forces a page strategy (tests only: the daemon keeps `Auto`).
+    pub fn set_page_strategy(&mut self, strategy: PageStrategy) {
+        self.strategy = strategy;
+    }
+
     pub fn built_at_head(&self) -> Option<i64> {
         self.built_at_head
     }
@@ -763,6 +795,15 @@ impl RepoIndex {
             }
         };
 
+        // A page read from an ordered structure until it is full, when that is
+        // cheaper than sorting the whole match set (spec-indexing "A page costs
+        // the page"). `None` means the fetch below does it.
+        if let Some(limit) = limit.filter(|&l| l > 0) {
+            if let Some(ids) = self.walk_page(&matched, sort, limit, after.as_ref())? {
+                return self.walked_page(ids, limit, guard, sort, roots);
+            }
+        }
+
         // Column-major: one flat run of representatives (`keys.len()` per
         // metarecord) and one of uuids, ordered by a permutation of indices.
         // A `Vec` per metarecord — the obvious shape — meant one heap allocation
@@ -815,6 +856,85 @@ impl RepoIndex {
             _ => None,
         };
         Ok((page, next))
+    }
+
+    /// Up to `limit + 1` ids of `matched` in sort order after `after`, read
+    /// from an ordered structure — or `None` when the fetch is cheaper, or the
+    /// walk ran over its budget, or the sort has no walk. The extra id says
+    /// whether another page follows.
+    fn walk_page(
+        &self,
+        matched: &RoaringBitmap,
+        sort: &[SortBy],
+        limit: usize,
+        after: Option<&SortEntry>,
+    ) -> Result<Option<Vec<u32>>, Unsupported> {
+        if sort.is_empty() {
+            // The default order is the uuid order, which the registry keeps.
+            let span = self.registry.len() as u64;
+            let Some(budget) = self.walk_budget(matched.len(), span, limit) else {
+                return Ok(None);
+            };
+            let mut out = Vec::new();
+            for (steps, (_, id)) in self.registry.in_uuid_order(after.map(|a| a.1)).enumerate() {
+                if steps >= budget {
+                    return Ok(None);
+                }
+                if matched.contains(id) {
+                    out.push(id);
+                    if out.len() > limit {
+                        break;
+                    }
+                }
+            }
+            return Ok(Some(out));
+        }
+        Ok(None)
+    }
+
+    /// The steps a walk may take before giving up on it, or `None` to fetch.
+    /// A walk over `span` ordered entries finds `limit + 1` of `matches` ids
+    /// after ≈ `(limit + 1) × span / matches` steps if they are spread evenly;
+    /// the fetch touches every match, at [`FETCH_COST`] steps each. The budget
+    /// is twice the fetch, so a walk that meets unevenly spread matches costs
+    /// at most three times what the fetch would have.
+    fn walk_budget(&self, matches: u64, span: u64, limit: usize) -> Option<usize> {
+        let fetch = matches.saturating_mul(FETCH_COST);
+        match self.strategy {
+            PageStrategy::Fetch => None,
+            PageStrategy::Walk => Some(usize::MAX),
+            PageStrategy::Auto => {
+                let wanted = limit as u64 + 1;
+                let walk = if wanted >= matches { span } else { wanted * span / matches.max(1) };
+                (walk < fetch).then(|| (fetch.saturating_mul(2)).min(usize::MAX as u64) as usize)
+            }
+        }
+    }
+
+    /// A walked page, finished as the fetch finishes one: the uuids, and the
+    /// cursor from the last one when another page follows.
+    fn walked_page(
+        &self,
+        mut ids: Vec<u32>,
+        limit: usize,
+        guard: u64,
+        sort: &[SortBy],
+        roots: Option<&QueryRoots<'_>>,
+    ) -> Result<(Vec<Uuid>, Option<String>), Unsupported> {
+        let more = ids.len() > limit;
+        ids.truncate(limit);
+        let uuids: Vec<Uuid> =
+            ids.iter().map(|&id| self.registry.uuid(id).expect("interned id")).collect();
+        let next = match (more, ids.last()) {
+            (true, Some(&last)) => {
+                let uuid = self.registry.uuid(last).expect("interned id");
+                let keys = self.key_lookups(sort, roots)?;
+                let reps = keys.iter().map(|k| k.rep(last, uuid)).collect();
+                Some(encode_cursor(guard, &(reps, uuid)))
+            }
+            _ => None,
+        };
+        Ok((uuids, next))
     }
 
     /// A sort key with its two lookups already resolved. Resolving them per

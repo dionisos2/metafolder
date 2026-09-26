@@ -678,7 +678,6 @@ fn drop_excluded(
     out
 }
 
-
 #[cfg(test)]
 mod tests {
     use super::{
@@ -750,12 +749,8 @@ mod tests {
                     Field::new("mfr_type", Value::String("dir".into())),
                 ])
                 .unwrap();
-            w.set_field(
-                created.uuid,
-                crate::eligibility::WATCH_EXCEEDED,
-                Value::Bool(value),
-            )
-            .unwrap();
+            w.set_field(created.uuid, crate::eligibility::WATCH_EXCEEDED, Value::Bool(value))
+                .unwrap();
             w.commit().unwrap();
             self.cache.clear();
         }

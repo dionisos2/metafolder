@@ -59,8 +59,9 @@ impl Source {
         // The broker resolves and matches paths itself (its events carry
         // kernel-resolved names), so the root is subscribed under the same
         // name it will come back with.
-        let root = std::fs::canonicalize(&repo.config.root)
-            .with_context(|| format!("cannot resolve the repository root {:?}", repo.config.root))?;
+        let root = std::fs::canonicalize(&repo.config.root).with_context(|| {
+            format!("cannot resolve the repository root {:?}", repo.config.root)
+        })?;
         let internal_dir = repo.internal_dir();
 
         // The handshake is synchronous: a load that wanted fanotify either
@@ -130,10 +131,7 @@ fn subscribe(socket: &Path, root: &Path) -> Result<BufReader<UnixStream>> {
     let mut writer = stream.try_clone()?;
     let mut reader = BufReader::new(stream);
     writer.write_all(
-        proto::encode(&ClientMsg::Subscribe {
-            roots: vec![root.display().to_string()],
-        })
-        .as_bytes(),
+        proto::encode(&ClientMsg::Subscribe { roots: vec![root.display().to_string()] }).as_bytes(),
     )?;
     let mut line = String::new();
     reader.read_line(&mut line).context("the broker did not answer the subscription")?;
@@ -204,8 +202,12 @@ fn pump(
 fn translate(root: &Path, internal_dir: &Path, event: &Event) -> Vec<(FsEvent, Option<i64>)> {
     let rel = |p: &str| relative(root, internal_dir, Path::new(p));
     match event {
-        Event::Create { path } => rel(path).map(|p| vec![(FsEvent::Create(p), None)]).unwrap_or_default(),
-        Event::Remove { path } => rel(path).map(|p| vec![(FsEvent::Remove(p), None)]).unwrap_or_default(),
+        Event::Create { path } => {
+            rel(path).map(|p| vec![(FsEvent::Create(p), None)]).unwrap_or_default()
+        }
+        Event::Remove { path } => {
+            rel(path).map(|p| vec![(FsEvent::Remove(p), None)]).unwrap_or_default()
+        }
         Event::ModifyData { path } => {
             rel(path).map(|p| vec![(FsEvent::ModifyData(p), None)]).unwrap_or_default()
         }
@@ -305,11 +307,8 @@ mod tests {
                     };
                     stream
                         .write_all(
-                            proto::encode(&ServerMsg::Subscribed {
-                                roots,
-                                denied: Vec::new(),
-                            })
-                            .as_bytes(),
+                            proto::encode(&ServerMsg::Subscribed { roots, denied: Vec::new() })
+                                .as_bytes(),
                         )
                         .unwrap();
                     for msg in &script {

@@ -6,13 +6,18 @@
 //! exclusively-owned set) are ever interned — reference *targets* (referents,
 //! `ZERO_UUID` tree roots, out-of-universe metarecords) are never interned and
 //! only appear as reverse-map keys.
+//!
+//! The uuid → id direction is ordered: the default sort order *is* the uuid
+//! order, so a page of it is read from here until it is full instead of
+//! sorting the whole match set (spec-indexing "A page costs the page").
 
-use std::collections::HashMap;
+use std::collections::BTreeMap;
+use std::ops::Bound;
 use uuid::Uuid;
 
 #[derive(Default)]
 pub struct IdRegistry {
-    to_id: HashMap<Uuid, u32>,
+    to_id: BTreeMap<Uuid, u32>,
     to_uuid: Vec<Uuid>,
 }
 
@@ -36,6 +41,17 @@ impl IdRegistry {
     /// The dense id of an already-interned uuid, or `None`.
     pub fn id(&self, uuid: Uuid) -> Option<u32> {
         self.to_id.get(&uuid).copied()
+    }
+
+    /// Every interned `(uuid, id)` in uuid order, strictly after `after` when
+    /// given (which need not be interned). Tombstones included: the caller
+    /// tests membership in its match set anyway.
+    pub fn in_uuid_order(&self, after: Option<Uuid>) -> impl Iterator<Item = (Uuid, u32)> + '_ {
+        let start = match after {
+            Some(u) => Bound::Excluded(u),
+            None => Bound::Unbounded,
+        };
+        self.to_id.range((start, Bound::Unbounded)).map(|(u, id)| (*u, *id))
     }
 
     /// The uuid for a dense id, or `None` if out of range.
@@ -77,6 +93,22 @@ mod tests {
         assert_eq!(r.intern(b), 1);
         assert_eq!(r.intern(a), 0); // unchanged
         assert_eq!(r.len(), 2);
+    }
+
+    #[test]
+    fn ids_come_back_in_uuid_order_after_a_position() {
+        let mut r = IdRegistry::new();
+        let (a, b, c) = (Uuid::from_u128(30), Uuid::from_u128(10), Uuid::from_u128(20));
+        for u in [a, b, c] {
+            r.intern(u);
+        }
+        let all: Vec<(Uuid, u32)> = r.in_uuid_order(None).collect();
+        assert_eq!(all, vec![(b, 1), (c, 2), (a, 0)]);
+        let after: Vec<(Uuid, u32)> = r.in_uuid_order(Some(b)).collect();
+        assert_eq!(after, vec![(c, 2), (a, 0)]);
+        // A position that is no interned uuid still resumes after it.
+        let after: Vec<(Uuid, u32)> = r.in_uuid_order(Some(Uuid::from_u128(25))).collect();
+        assert_eq!(after, vec![(a, 0)]);
     }
 
     #[test]
