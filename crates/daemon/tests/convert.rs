@@ -152,6 +152,33 @@ fn copies_faithfully(from: Backend, to: Backend) {
     }
 }
 
+/// The copy is one write transaction, and a KV map can grow only between
+/// transactions: a repository larger than the map the new store opens on
+/// failed with MDB_MAP_FULL (a real one did, past 1 GiB). The copy must grow
+/// the map and start again, however small it began.
+#[test]
+fn a_copy_larger_than_the_new_stores_map_still_completes() {
+    let (mut source, _a) = open(Backend::Sqlite);
+    let mut w = Writer::begin(&mut source, None).unwrap();
+    for i in 0..3000 {
+        w.create_metarecord(vec![
+            Field::new("title", s(&format!("{i:05} {}", "a long enough payload ".repeat(8)))),
+            Field::new("n", Value::Int(i)),
+        ])
+        .unwrap();
+    }
+    w.commit().unwrap();
+
+    let dir = TempDir::new("convert_small_map");
+    let kv = dir.path().join("kv");
+    // 256 KiB: a fraction of what the copy writes.
+    convert::copy_into_kv(&*source, &kv, 256 * 1024).unwrap();
+
+    let target: Handle = Box::new(KvStore::open(&kv).unwrap());
+    convert::verify(&*source, &*target).unwrap();
+    assert_eq!(snapshot(&*source), snapshot(&*target));
+}
+
 #[test]
 fn sqlite_to_kv_copies_faithfully() {
     copies_faithfully(Backend::Sqlite, Backend::Kv);

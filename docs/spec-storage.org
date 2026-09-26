@@ -608,8 +608,12 @@ and =MDB_NOMETASYNC= saved almost nothing — one =fsync= dominates either way.
    (operations and snapshots, revisions, HEAD, queued restorations), and the
    id counters, so no id is ever handed out twice — through three import
    primitives both backends implement (=import_revision=, =import_op=,
-   =raise_counters=); a KV target is reindexed for the locality of its dense
-   ids; both stores are then read and compared (a digest of all of it); the
+   =raise_counters=); the copy is one write transaction, and LMDB grows a map
+   only between transactions, so a KV target opens on a map sized from the
+   source (twice its bytes, at least the usual initial map) and, should that
+   still end in =MDB_MAP_FULL=, is thrown away and copied again on a map twice
+   as large (=convert::copy_into_kv=; a repository past 1 GiB failed before);
+   a KV target is reindexed for the locality of its dense ids; both stores are then read and compared (a digest of all of it); the
    new store takes its name; =config.json= — now always written atomically,
    a new file renamed over the old — switches; the old store is set aside as
    =internal/pre-convert-<time>-<name>=, for the user to delete. An

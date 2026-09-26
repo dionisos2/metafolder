@@ -357,7 +357,7 @@ fn dec_restoration(b: &[u8]) -> Result<Restoration> {
 /// (it doubles as the store fills). Small, because a daemon holds one per
 /// loaded repository and a process has 128 TiB of address space in all — a
 /// fixed 1 TiB map ran out of it at ~120 repositories.
-const INITIAL_MAP: usize = 1 << 30;
+pub(crate) const INITIAL_MAP: usize = 1 << 30;
 
 /// `n` rounded up to the system's page size, as LMDB requires of a map size.
 fn page_multiple(n: usize) -> usize {

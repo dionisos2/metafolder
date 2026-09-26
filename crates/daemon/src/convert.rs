@@ -67,6 +67,42 @@ pub fn copy(from: &dyn Store, to: &mut dyn Begin) -> Result<()> {
     tx.commit()
 }
 
+/// [`copy`] into a new KV store at `dir`, starting on a map of `map_size`.
+///
+/// The copy is one write transaction, and LMDB grows a map only between
+/// transactions ([`KvStore`](crate::kvstore::KvStore) doubles it at each
+/// one's start, to what the store already holds — nothing, here). So a
+/// repository larger than the map would end in `MDB_MAP_FULL`: the store is
+/// then thrown away and the copy starts again on a map twice as large. The
+/// map reserves address space, not disk, so overshooting costs nothing.
+pub fn copy_into_kv(from: &dyn Store, dir: &Path, map_size: usize) -> Result<()> {
+    /// Past this, a full map is not the store being too small.
+    const MAX_MAP: usize = 1 << 40;
+    let mut map_size = map_size;
+    loop {
+        let result = {
+            let mut target = crate::kvstore::KvStore::open_with_map_size(dir, map_size)?;
+            copy(from, &mut target)
+        };
+        match result {
+            Err(err) if map_full(&err) && map_size < MAX_MAP => {
+                remove(dir)?;
+                map_size = map_size.saturating_mul(2);
+            }
+            other => return other,
+        }
+    }
+}
+
+fn map_full(err: &anyhow::Error) -> bool {
+    err.chain().any(|cause| {
+        matches!(
+            cause.downcast_ref::<heed::Error>(),
+            Some(heed::Error::Mdb(heed::MdbError::MapFull))
+        )
+    })
+}
+
 /// A digest of everything [`copy`] carries, with the counts of the report.
 struct Digest {
     hash: u64,
@@ -182,7 +218,13 @@ pub fn convert_repository(locator: RepoLocator, to: Storage) -> Result<Report> {
 
     let report = {
         let source = crate::repo::open_store(&old_path, from, &config.name)?;
-        {
+        if to == Storage::Kv {
+            // Sized from the source to begin with (its bytes on disk, twice
+            // over), and grown further if that was not enough.
+            let held = std::fs::metadata(&old_path).map_or(0, |m| m.len() as usize);
+            let start = held.saturating_mul(2).max(crate::kvstore::INITIAL_MAP);
+            copy_into_kv(&*source, &temp, start).context("copy the repository")?;
+        } else {
             let mut target = crate::repo::create_store(&temp, to, &config.name)?;
             copy(&*source, &mut *target).context("copy the repository")?;
         }
