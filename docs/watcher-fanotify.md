@@ -112,7 +112,12 @@ daemon that was down; see spec-file-tracking "Watch sources and regimes"). One g
 repositories also removes the per-repository inotify instance limit.
 
 **Landed (September 2026)** as `crates/watchd` (`metafolder-watchd`, unit
-`scripts/metafolder-watchd.service`): `proto` (the NDJSON wire — `Subscribe`,
+`scripts/metafolder-watchd.service`, run as its own `metafolder-watchd` user
+— `scripts/metafolder-watchd.sysusers` — holding the two capabilities and
+nothing else: no network, a read-only filesystem, kernel interfaces fenced off,
+a syscall filter, and memory/task/descriptor ceilings; no `PrivateTmp`, since
+the broker must name paths as the host does; `tests/service_unit.rs` holds the
+file to all of it): `proto` (the NDJSON wire — `Subscribe`,
 `Subscribed`, `Event`, `Overflow`, `Error`), `filter` (the per-uid DAC filter
 over a `CredSource` seam), `fanotify` (the group, the filesystem marks, the
 mount-table watch, a *pure* record parser, and `preflight` which fails at

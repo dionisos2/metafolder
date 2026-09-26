@@ -2,12 +2,17 @@
 #
 # Install:
 #   make install PREFIX=/usr/local    # puts metafolder-watchd on the system path
+#   sudo cp scripts/metafolder-watchd.sysusers /etc/sysusers.d/metafolder-watchd.conf
+#   sudo systemd-sysusers             # creates the metafolder-watchd system user
 #   sudo cp scripts/metafolder-watchd.service /etc/systemd/system/
 #   sudo systemctl daemon-reload && sudo systemctl enable --now metafolder-watchd
 #
 # The two capabilities are the entire reason this service exists *beside* the
 # daemon: they are granted here and nowhere else, so the daemon — which talks
-# to this broker over /run/metafolder/watchd.sock — stays unprivileged.
+# to this broker over /run/metafolder/watchd.sock — stays unprivileged. The
+# rest of this file takes away everything the broker does not need, and bounds
+# what any local user (the socket is world-connectable) can make it hold.
+# crates/watchd/tests/service_unit.rs holds the file to that.
 
 [Unit]
 Description=metafolder fanotify broker
@@ -16,13 +21,50 @@ After=local-fs.target
 [Service]
 Type=simple
 ExecStart=/usr/local/bin/metafolder-watchd --socket /run/metafolder/watchd.sock
+Restart=on-failure
 RuntimeDirectory=metafolder
+
+# Its own user, holding exactly the two capabilities — not root, which would
+# own every root-owned file besides.
+User=metafolder-watchd
+Group=metafolder-watchd
 AmbientCapabilities=CAP_SYS_ADMIN CAP_DAC_READ_SEARCH
 CapabilityBoundingSet=CAP_SYS_ADMIN CAP_DAC_READ_SEARCH
 NoNewPrivileges=true
+
+# The filesystem, read-only. No PrivateTmp (nor DynamicUser, which implies
+# it): the broker names paths as the host does, and a repository under /tmp
+# must resolve to the real /tmp.
 ProtectSystem=strict
 ProtectHome=read-only
-PrivateTmp=true
+PrivateDevices=true
+
+# No network: the only socket is the Unix one it listens on.
+RestrictAddressFamilies=AF_UNIX
+PrivateNetwork=true
+IPAddressDeny=any
+
+# The kernel, as far as it can be kept away.
+ProtectKernelModules=true
+ProtectKernelTunables=true
+ProtectKernelLogs=true
+ProtectControlGroups=true
+ProtectClock=true
+ProtectHostname=true
+RestrictNamespaces=true
+RestrictRealtime=true
+RestrictSUIDSGID=true
+LockPersonality=true
+MemoryDenyWriteExecute=true
+SystemCallArchitectures=native
+SystemCallFilter=@system-service fanotify_init fanotify_mark name_to_handle_at open_by_handle_at
+SystemCallErrorNumber=EPERM
+
+# Ceilings: the broker bounds each connection itself (1024 at most, two
+# threads and three descriptors each); these bound the whole.
+MemoryMax=1G
+TasksMax=2200
+LimitNOFILE=4096
 
 [Install]
 WantedBy=multi-user.target
