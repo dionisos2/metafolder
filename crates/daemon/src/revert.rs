@@ -14,11 +14,11 @@ use std::collections::{BTreeSet, HashMap, HashSet};
 
 use anyhow::Result;
 use metafolder_core::metarecord::Field;
-use rusqlite::params;
 use uuid::Uuid;
 
-use crate::db::{self, FieldRow};
-use crate::log::{self, OpRow, OpType, Writer};
+use crate::db::FieldRow;
+use crate::log::{OpRow, OpType, Writer};
+use crate::store::Log;
 
 /// The cell an operation writes: one field of an entity, or the whole entity
 /// when the operation carries no field name (spec-event-log "Operation
@@ -81,38 +81,8 @@ impl Analysis {
 }
 
 /// Resolves the operations of a revision, oldest first.
-pub fn revision_ops(conn: &rusqlite::Connection, rev_id: i64) -> Result<Vec<OpRow>> {
-    let ids: Vec<i64> = conn
-        .prepare_cached("SELECT id FROM operation WHERE rev_id = ?1 ORDER BY seq, id")?
-        .query_map(params![rev_id], |r| r.get(0))?
-        .collect::<rusqlite::Result<_>>()?;
-    ids.into_iter()
-        .map(|id| {
-            log::get_op(conn, id)?
-                .ok_or_else(|| anyhow::anyhow!("operation {id} vanished from revision {rev_id}"))
-        })
-        .collect()
-}
-
-fn revision_timestamp(conn: &rusqlite::Connection, rev_id: i64) -> Result<i64> {
-    Ok(conn
-        .query_row("SELECT timestamp FROM revision WHERE id = ?1", params![rev_id], |r| r.get(0))?)
-}
-
-/// Operations of `entity` newer than `after_id`, whatever branch they sit on.
-/// Served by `idx_operation_entity (entity_uuid, id)`.
-fn entity_ops_after(
-    conn: &rusqlite::Connection,
-    entity: Uuid,
-    after_id: i64,
-) -> Result<Vec<OpRow>> {
-    let ids: Vec<i64> = conn
-        .prepare_cached("SELECT id FROM operation WHERE entity_uuid = ?1 AND id > ?2 ORDER BY id")?
-        .query_map(params![db::uuid_to_bytes(entity), after_id], |r| r.get(0))?
-        .collect::<rusqlite::Result<_>>()?;
-    ids.into_iter()
-        .map(|id| log::get_op(conn, id)?.ok_or_else(|| anyhow::anyhow!("operation {id} vanished")))
-        .collect()
+pub fn revision_ops(log: &dyn Log, rev_id: i64) -> Result<Vec<OpRow>> {
+    log.revision_ops(rev_id)
 }
 
 /// Analyses a revert of `requested`: its blockers, and the closure that taking
@@ -123,15 +93,11 @@ fn entity_ops_after(
 /// become blockers in turn. It terminates because a blocker is always younger
 /// than the set's oldest member, so the iteration never leaves the window
 /// between that operation and HEAD.
-pub fn analyse(
-    conn: &rusqlite::Connection,
-    head: Option<i64>,
-    requested: Vec<OpRow>,
-) -> Result<Analysis> {
+pub fn analyse(log: &dyn Log, head: Option<i64>, requested: Vec<OpRow>) -> Result<Analysis> {
     let Some(head) = head else {
         return Ok(Analysis { requested, dependents: vec![], blocked: vec![] });
     };
-    let ancestry: HashSet<i64> = log::ancestry(conn, head)?.into_iter().collect();
+    let ancestry: HashSet<i64> = log.ancestry(head)?.into_iter().collect();
     let oldest = requested.iter().map(|o| o.id).min().unwrap_or(head);
 
     let mut set: BTreeSet<i64> = requested.iter().map(|o| o.id).collect();
@@ -143,7 +109,7 @@ pub fn analyse(
         let entities: BTreeSet<Uuid> = cells.iter().map(|c| c.entity).collect();
         let mut found: Vec<OpRow> = vec![];
         for entity in entities {
-            for op in entity_ops_after(conn, entity, oldest)? {
+            for op in log.entity_ops_after(entity, oldest)? {
                 if set.contains(&op.id) || !ancestry.contains(&op.id) {
                     continue;
                 }
@@ -160,7 +126,11 @@ pub fn analyse(
             // The first round is what blocks the operations actually asked for.
             for op in &found {
                 blocked.push(Blocker {
-                    timestamp: revision_timestamp(conn, op.rev_id)?,
+                    timestamp: log
+                        .revisions(&[op.rev_id])?
+                        .get(&op.rev_id)
+                        .map(|m| m.timestamp)
+                        .ok_or_else(|| anyhow::anyhow!("revision {} not found", op.rev_id))?,
                     op: op.clone(),
                 });
             }
@@ -233,8 +203,8 @@ pub fn apply(writer: &mut Writer, ops: &[OpRow]) -> Result<usize> {
         writer.reverting(Some(op.id));
         // Read through the writer's own transaction, so the state the revert
         // is computed from is the state it is written into.
-        let before = log::snapshots(writer.connection(), op.id, 0)?;
-        let after = log::snapshots(writer.connection(), op.id, 1)?;
+        let before = writer.store().snapshots(op.id, false)?;
+        let after = writer.store().snapshots(op.id, true)?;
         match op.op_type.as_str() {
             "create_metarecord" => writer.delete_metarecord(op.entity_uuid)?,
             "delete_metarecord" => {

@@ -311,3 +311,25 @@ fn the_log_lists_its_lines_and_revisions() {
     assert_eq!(meta[&revs[0]].origin, None, "a client's write");
     assert_eq!(store.counts().unwrap(), (3, 2));
 }
+
+#[test]
+fn a_revision_names_its_operations_and_takes_a_label() {
+    let (mut conn, _, child) = fixture();
+    let store: &dyn Store = &conn;
+    let all = store.all_ops().unwrap();
+    let (first_rev, second_rev) = (all[0].rev_id, all[2].rev_id);
+    let ids =
+        |ops: Vec<metafolder_daemon::log::OpRow>| ops.iter().map(|o| o.id).collect::<Vec<_>>();
+    assert_eq!(ids(store.revision_ops(first_rev).unwrap()), [all[0].id, all[1].id]);
+    assert_eq!(ids(store.revision_ops(second_rev).unwrap()), [all[2].id]);
+    assert!(store.revision_ops(999_999).unwrap().is_empty());
+    assert_eq!(ids(store.entity_ops_after(child, 0).unwrap()), [all[1].id, all[2].id]);
+    assert_eq!(ids(store.entity_ops_after(child, all[1].id).unwrap()), [all[2].id]);
+
+    let tx = conn.begin_write().unwrap();
+    assert!(tx.set_revision_label(first_rev, Some("before")).unwrap());
+    assert!(!tx.set_revision_label(999_999, Some("x")).unwrap(), "no such revision");
+    tx.commit().unwrap();
+    let store: &dyn Store = &conn;
+    assert_eq!(store.revisions(&[first_rev]).unwrap()[&first_rev].label.as_deref(), Some("before"));
+}

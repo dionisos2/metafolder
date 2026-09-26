@@ -19,6 +19,126 @@ use uuid::Uuid;
 use crate::db::{self, FieldRow, TreeRow};
 use crate::log::{self, Delta, OpRow, OpType, Retention};
 
+/// Implements `Rows` and `Log` for a type holding a SQLite connection, by
+/// handing every call to the `Connection` implementation.
+macro_rules! forward_to_connection {
+    ($ty:ty, |$me:ident| $conn:expr) => {
+        impl Rows for $ty {
+            fn version(&self, uuid: Uuid) -> Result<Option<u64>> {
+                let $me = self;
+                Rows::version($conn, uuid)
+            }
+            fn rows(&self, uuid: Uuid) -> Result<Vec<FieldRow>> {
+                let $me = self;
+                Rows::rows($conn, uuid)
+            }
+            fn rows_named(&self, uuid: Uuid, name: &str) -> Result<Vec<FieldRow>> {
+                let $me = self;
+                Rows::rows_named($conn, uuid, name)
+            }
+            fn rows_for(&self, uuids: &[Uuid]) -> Result<HashMap<Uuid, Vec<FieldRow>>> {
+                let $me = self;
+                Rows::rows_for($conn, uuids)
+            }
+            fn row(&self, id: i64) -> Result<Option<FieldRow>> {
+                let $me = self;
+                Rows::row($conn, id)
+            }
+            fn owner_of_row(&self, id: i64) -> Result<Option<Uuid>> {
+                let $me = self;
+                Rows::owner_of_row($conn, id)
+            }
+            fn metarecords(&self) -> Result<Vec<Uuid>> {
+                let $me = self;
+                Rows::metarecords($conn)
+            }
+            fn for_each_row(&self, f: &mut dyn FnMut(Uuid, FieldRow) -> Result<()>) -> Result<()> {
+                let $me = self;
+                Rows::for_each_row($conn, f)
+            }
+            fn max_row_id(&self) -> Result<i64> {
+                let $me = self;
+                Rows::max_row_id($conn)
+            }
+            fn value_types(&self, name: &str) -> Result<Vec<String>> {
+                let $me = self;
+                Rows::value_types($conn, name)
+            }
+            fn holders(&self, name: &str) -> Result<Vec<Uuid>> {
+                let $me = self;
+                Rows::holders($conn, name)
+            }
+            fn children(&self, field: &str, parent: Uuid) -> Result<Vec<(Uuid, String)>> {
+                let $me = self;
+                Rows::children($conn, field, parent)
+            }
+            fn forest(&self) -> Result<Vec<TreeRow>> {
+                let $me = self;
+                Rows::forest($conn)
+            }
+        }
+
+        impl Log for $ty {
+            fn head(&self) -> Result<Option<i64>> {
+                let $me = self;
+                Log::head($conn)
+            }
+            fn op(&self, id: i64) -> Result<Option<OpRow>> {
+                let $me = self;
+                Log::op($conn, id)
+            }
+            fn snapshots(&self, op_id: i64, after: bool) -> Result<Vec<FieldRow>> {
+                let $me = self;
+                Log::snapshots($conn, op_id, after)
+            }
+            fn ops_until(&self, from: i64, until: i64, max: usize) -> Result<Delta> {
+                let $me = self;
+                Log::ops_until($conn, from, until, max)
+            }
+            fn ancestry(&self, from: i64) -> Result<Vec<i64>> {
+                let $me = self;
+                Log::ancestry($conn, from)
+            }
+            fn restorations(&self) -> Result<Vec<(i64, Restoration)>> {
+                let $me = self;
+                Log::restorations($conn)
+            }
+            fn ancestry_ops(&self, from: i64, max: Option<usize>) -> Result<Vec<OpRow>> {
+                let $me = self;
+                Log::ancestry_ops($conn, from, max)
+            }
+            fn all_ops(&self) -> Result<Vec<OpRow>> {
+                let $me = self;
+                Log::all_ops($conn)
+            }
+            fn active_line(&self, head: i64) -> Result<Vec<OpRow>> {
+                let $me = self;
+                Log::active_line($conn, head)
+            }
+            fn has_children(&self, op: i64) -> Result<bool> {
+                let $me = self;
+                Log::has_children($conn, op)
+            }
+            fn revisions(&self, ids: &[i64]) -> Result<HashMap<i64, RevisionMeta>> {
+                let $me = self;
+                Log::revisions($conn, ids)
+            }
+            fn counts(&self) -> Result<(i64, i64)> {
+                let $me = self;
+                Log::counts($conn)
+            }
+            fn revision_ops(&self, rev: i64) -> Result<Vec<OpRow>> {
+                let $me = self;
+                Log::revision_ops($conn, rev)
+            }
+            fn entity_ops_after(&self, entity: Uuid, after: i64) -> Result<Vec<OpRow>> {
+                let $me = self;
+                Log::entity_ops_after($conn, entity, after)
+            }
+        }
+    };
+}
+
 /// Metarecords and their field rows.
 pub trait Rows {
     /// A metarecord's version, `None` when it does not exist.
@@ -83,6 +203,11 @@ pub trait Log {
     fn revisions(&self, ids: &[i64]) -> Result<HashMap<i64, RevisionMeta>>;
     /// How many operations and revisions the log holds.
     fn counts(&self) -> Result<(i64, i64)>;
+    /// A revision's operations, oldest first.
+    fn revision_ops(&self, rev: i64) -> Result<Vec<OpRow>>;
+    /// An entity's operations newer than `after`, whatever branch they are on,
+    /// oldest first.
+    fn entity_ops_after(&self, entity: Uuid, after: i64) -> Result<Vec<OpRow>>;
 }
 
 /// A revision's metadata.
@@ -144,6 +269,9 @@ pub trait WriteTxn: Store {
     /// A new revision; its id.
     fn begin_revision(&self, label: Option<&str>, timestamp_ms: i64) -> Result<i64>;
     fn set_revision_origin(&self, rev: i64, origin: &str) -> Result<()>;
+    /// Sets or clears a revision's label; `false` when there is no such
+    /// revision.
+    fn set_revision_label(&self, rev: i64, label: Option<&str>) -> Result<bool>;
     /// Drops a revision no operation was recorded in.
     fn drop_revision(&self, rev: i64) -> Result<()>;
     /// Appends `ops` to revision `rev`, chained from `parent`, numbered from
@@ -206,84 +334,12 @@ fn bulk_insert(
     Ok(())
 }
 
-impl Rows for SqliteTxn<'_> {
-    fn version(&self, uuid: Uuid) -> Result<Option<u64>> {
-        Rows::version(&*self.0, uuid)
-    }
-    fn rows(&self, uuid: Uuid) -> Result<Vec<FieldRow>> {
-        Rows::rows(&*self.0, uuid)
-    }
-    fn rows_named(&self, uuid: Uuid, name: &str) -> Result<Vec<FieldRow>> {
-        Rows::rows_named(&*self.0, uuid, name)
-    }
-    fn rows_for(&self, uuids: &[Uuid]) -> Result<HashMap<Uuid, Vec<FieldRow>>> {
-        Rows::rows_for(&*self.0, uuids)
-    }
-    fn row(&self, id: i64) -> Result<Option<FieldRow>> {
-        Rows::row(&*self.0, id)
-    }
-    fn owner_of_row(&self, id: i64) -> Result<Option<Uuid>> {
-        Rows::owner_of_row(&*self.0, id)
-    }
-    fn metarecords(&self) -> Result<Vec<Uuid>> {
-        Rows::metarecords(&*self.0)
-    }
-    fn for_each_row(&self, f: &mut dyn FnMut(Uuid, FieldRow) -> Result<()>) -> Result<()> {
-        Rows::for_each_row(&*self.0, f)
-    }
-    fn max_row_id(&self) -> Result<i64> {
-        Rows::max_row_id(&*self.0)
-    }
-    fn value_types(&self, name: &str) -> Result<Vec<String>> {
-        Rows::value_types(&*self.0, name)
-    }
-    fn holders(&self, name: &str) -> Result<Vec<Uuid>> {
-        Rows::holders(&*self.0, name)
-    }
-    fn children(&self, field: &str, parent: Uuid) -> Result<Vec<(Uuid, String)>> {
-        Rows::children(&*self.0, field, parent)
-    }
-    fn forest(&self) -> Result<Vec<TreeRow>> {
-        Rows::forest(&*self.0)
-    }
-}
+forward_to_connection!(SqliteTxn<'_>, |t| &*t.0);
+forward_to_connection!(std::sync::MutexGuard<'_, Connection>, |g| &**g);
 
-impl Log for SqliteTxn<'_> {
-    fn head(&self) -> Result<Option<i64>> {
-        Log::head(&*self.0)
-    }
-    fn op(&self, id: i64) -> Result<Option<OpRow>> {
-        Log::op(&*self.0, id)
-    }
-    fn snapshots(&self, op_id: i64, after: bool) -> Result<Vec<FieldRow>> {
-        Log::snapshots(&*self.0, op_id, after)
-    }
-    fn ops_until(&self, from: i64, until: i64, max: usize) -> Result<Delta> {
-        Log::ops_until(&*self.0, from, until, max)
-    }
-    fn ancestry(&self, from: i64) -> Result<Vec<i64>> {
-        Log::ancestry(&*self.0, from)
-    }
-    fn restorations(&self) -> Result<Vec<(i64, Restoration)>> {
-        Log::restorations(&*self.0)
-    }
-    fn ancestry_ops(&self, from: i64, max: Option<usize>) -> Result<Vec<OpRow>> {
-        Log::ancestry_ops(&*self.0, from, max)
-    }
-    fn all_ops(&self) -> Result<Vec<OpRow>> {
-        Log::all_ops(&*self.0)
-    }
-    fn active_line(&self, head: i64) -> Result<Vec<OpRow>> {
-        Log::active_line(&*self.0, head)
-    }
-    fn has_children(&self, op: i64) -> Result<bool> {
-        Log::has_children(&*self.0, op)
-    }
-    fn revisions(&self, ids: &[i64]) -> Result<HashMap<i64, RevisionMeta>> {
-        Log::revisions(&*self.0, ids)
-    }
-    fn counts(&self) -> Result<(i64, i64)> {
-        Log::counts(&*self.0)
+impl Begin for std::sync::MutexGuard<'_, Connection> {
+    fn begin_write(&mut self) -> Result<Box<dyn WriteTxn + '_>> {
+        Begin::begin_write(&mut **self)
     }
 }
 
@@ -340,6 +396,11 @@ impl WriteTxn for SqliteTxn<'_> {
     fn drop_revision(&self, rev: i64) -> Result<()> {
         self.0.execute("DELETE FROM revision WHERE id = ?1", params![rev])?;
         Ok(())
+    }
+    fn set_revision_label(&self, rev: i64, label: Option<&str>) -> Result<bool> {
+        let changed =
+            self.0.execute("UPDATE revision SET label = ?1 WHERE id = ?2", params![label, rev])?;
+        Ok(changed > 0)
     }
     /// Operation ids are assigned up front from `sqlite_sequence` so the parent
     /// chain is known before inserting; explicit-id inserts into an
@@ -564,6 +625,32 @@ impl Log for Connection {
         let ops = self.query_row("SELECT COUNT(*) FROM operation", [], |r| r.get(0))?;
         let revs = self.query_row("SELECT COUNT(*) FROM revision", [], |r| r.get(0))?;
         Ok((ops, revs))
+    }
+    fn revision_ops(&self, rev: i64) -> Result<Vec<OpRow>> {
+        let ids: Vec<i64> = self
+            .prepare_cached("SELECT id FROM operation WHERE rev_id = ?1 ORDER BY seq, id")?
+            .query_map(params![rev], |r| r.get(0))?
+            .collect::<rusqlite::Result<_>>()?;
+        ids.into_iter()
+            .map(|id| {
+                log::get_op(self, id)?
+                    .ok_or_else(|| anyhow::anyhow!("operation {id} vanished from revision {rev}"))
+            })
+            .collect()
+    }
+    /// Served by `idx_operation_entity (entity_uuid, id)`.
+    fn entity_ops_after(&self, entity: Uuid, after: i64) -> Result<Vec<OpRow>> {
+        let ids: Vec<i64> = self
+            .prepare_cached(
+                "SELECT id FROM operation WHERE entity_uuid = ?1 AND id > ?2 ORDER BY id",
+            )?
+            .query_map(params![db::uuid_to_bytes(entity), after], |r| r.get(0))?
+            .collect::<rusqlite::Result<_>>()?;
+        ids.into_iter()
+            .map(|id| {
+                log::get_op(self, id)?.ok_or_else(|| anyhow::anyhow!("operation {id} vanished"))
+            })
+            .collect()
     }
     fn restorations(&self) -> Result<Vec<(i64, Restoration)>> {
         let mut stmt = self.prepare(

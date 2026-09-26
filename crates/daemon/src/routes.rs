@@ -1007,19 +1007,12 @@ fn snapshots_json(
     Ok(crate::log_view::snapshots_json(conn, op_id, is_new != 0)?)
 }
 
-fn revision_json(conn: &rusqlite::Connection, rev_id: i64) -> Result<serde_json::Value, ApiError> {
-    use rusqlite::OptionalExtension as _;
-    let row: Option<(i64, Option<String>, Option<String>)> = conn
-        .query_row(
-            "SELECT timestamp, label, origin FROM revision WHERE id = ?1",
-            rusqlite::params![rev_id],
-            |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)),
-        )
-        .optional()
-        .map_err(anyhow::Error::from)?;
-    let (timestamp, label, origin) =
-        row.ok_or_else(|| ApiError::not_found(format!("revision {rev_id} not found")))?;
-    Ok(json!({"id": rev_id, "timestamp": timestamp, "label": label, "origin": origin}))
+fn revision_json(log: &dyn crate::store::Log, rev_id: i64) -> Result<serde_json::Value, ApiError> {
+    let meta = log.revisions(&[rev_id])?;
+    let m = meta
+        .get(&rev_id)
+        .ok_or_else(|| ApiError::not_found(format!("revision {rev_id} not found")))?;
+    Ok(json!({"id": rev_id, "timestamp": m.timestamp, "label": m.label, "origin": m.origin}))
 }
 
 #[derive(Deserialize)]
@@ -1144,26 +1137,14 @@ async fn get_revision(
                 .map_err(|_| ApiError::bad_request(format!("invalid revision id '{rev_id}'")))?
         };
 
-        let mut revision = revision_json(&conn, rev_id)?;
+        let mut revision = revision_json(&*conn, rev_id)?;
         let mut ops = Vec::new();
         let mut is_head = false;
-        {
-            let mut stmt = conn
-                .prepare("SELECT id FROM operation WHERE rev_id = ?1 ORDER BY seq")
-                .map_err(anyhow::Error::from)?;
-            let ids = stmt
-                .query_map(rusqlite::params![rev_id], |r| r.get::<_, i64>(0))
-                .map_err(anyhow::Error::from)?
-                .collect::<Result<Vec<i64>, _>>()
-                .map_err(anyhow::Error::from)?;
-            for id in ids {
-                let op = crate::log::get_op(&conn, id)?
-                    .ok_or_else(|| ApiError::internal("operation vanished"))?;
-                if Some(op.id) == head {
-                    is_head = true;
-                }
-                ops.push(op_json(&conn, &op, true)?);
+        for op in crate::store::Log::revision_ops(&*conn, rev_id)? {
+            if Some(op.id) == head {
+                is_head = true;
             }
+            ops.push(op_json(&conn, &op, true)?);
         }
         revision["is_head"] = json!(is_head);
         Ok(Json(json!({"revision": revision, "operations": ops})))
@@ -1184,17 +1165,13 @@ async fn patch_revision(
     let Json(body) = payload?;
     let repo_uuid = parse_uuid(&repo)?;
     with_repo(&state, repo_uuid, move |repo_state| {
-        let conn = slowlog::timed("wait:conn", || repo_state.conn.lock_recover());
-        let changed = conn
-            .execute(
-                "UPDATE revision SET label = ?1 WHERE id = ?2",
-                rusqlite::params![body.label, rev_id],
-            )
-            .map_err(anyhow::Error::from)?;
-        if changed == 0 {
+        let mut conn = slowlog::timed("wait:conn", || repo_state.conn.lock_recover());
+        let tx = crate::store::Begin::begin_write(&mut *conn)?;
+        if !tx.set_revision_label(rev_id, body.label.as_deref())? {
             return Err(ApiError::not_found(format!("revision {rev_id} not found")));
         }
-        Ok(Json(revision_json(&conn, rev_id)?))
+        tx.commit()?;
+        Ok(Json(revision_json(&*conn, rev_id)?))
     })
     .await
 }
@@ -1743,7 +1720,7 @@ async fn revert_plan(
         let conn = slowlog::timed("wait:conn", || repo_state.conn.lock_recover());
         let head = crate::log::get_head(&conn)?;
         let ops = resolve_revert_target(&conn, head, &target)?;
-        let analysis = crate::revert::analyse(&conn, head, ops)?;
+        let analysis = crate::revert::analyse(&*conn, head, ops)?;
         Ok(Json(revert_plan_json(&conn, &analysis, with_dependents, None)?))
     })
     .await
@@ -1763,7 +1740,7 @@ async fn revert(
         let ops = resolve_revert_target(&conn, head, &body.target)?;
         // The check runs here, inside the transaction that writes the revert,
         // so what is written was checked against the state it is written into.
-        let analysis = crate::revert::analyse(&conn, head, ops)?;
+        let analysis = crate::revert::analyse(&*conn, head, ops)?;
         if !body.with_dependents && !analysis.revertable() {
             let plan = revert_plan_json(&conn, &analysis, false, None)?;
             return Err(ApiError::conflict(format!(
@@ -1873,7 +1850,7 @@ async fn revert_start(
         let conn = slowlog::timed("wait:conn", || repo_state.conn.lock_recover());
         let head = crate::log::get_head(&conn)?;
         let ops = resolve_revert_target(&conn, head, &body.target)?;
-        let analysis = crate::revert::analyse(&conn, head, ops)?;
+        let analysis = crate::revert::analyse(&*conn, head, ops)?;
         if !body.with_dependents && !analysis.revertable() {
             let plan = revert_plan_json(&conn, &analysis, false, None)?;
             return Err(ApiError::conflict(format!(
