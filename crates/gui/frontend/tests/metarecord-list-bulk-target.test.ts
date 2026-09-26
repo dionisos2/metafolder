@@ -174,6 +174,7 @@ describe('the bulk form target', () => {
 
   test('an empty checked selection is nothing to do, never the query', async () => {
     const { shadow, calls, store, statusBar } = await mountList({});
+    calls.length = 0; // the list's own footer count, asked at mount
     store.set('selected_metarecords', []);
     (shadow.getElementById('bulk-form') as HTMLElement).classList.add('open');
     await choose(shadow, 'bulk-target', 'Checked selection');

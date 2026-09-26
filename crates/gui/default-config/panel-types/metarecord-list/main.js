@@ -120,6 +120,29 @@ export async function mount(root, metafolder) {
   let nextCursor = null;
   /** @type {number|null} full result count (daemon-side COUNT, first page only) */
   let total = null;
+  /** Bumped per count asked for: a count answers only if it is still the last. */
+  let countSeq = 0;
+
+  /**
+   * The number of metarecords `query` matches, into the footer's "/total" —
+   * asked after the first page (spec-indexing "A page costs the page").
+   * Unknown until it arrives, and left unknown if it fails: the rows are
+   * what the list is for.
+   * @param {string} r @param {unknown} query
+   */
+  async function fetchCount(r, query) {
+    const seq = ++countSeq;
+    try {
+      const result = /** @type {{total?: number|null}} */ (
+        await daemon.call('POST', `/repos/${r}/query`, { query, select: '*', limit: 1, count: true })
+      );
+      if (seq !== countSeq) return;
+      total = result.total ?? null;
+      render();
+    } catch {
+      // Stays unknown.
+    }
+  }
   let pageSize = defaultPageSize; // persisted per workspace
   let loading = false;
   /** @type {Record<string, unknown>|null} null = match all (the structural base query) */
@@ -435,6 +458,8 @@ export async function mount(root, metafolder) {
         keepUuid = metarecords[cursorIndex]?.uuid ?? previous?.uuid ?? null;
         metarecords = [];
         nextCursor = null;
+        total = null;
+        countSeq += 1; // a count still on its way belongs to the old query
         orphanCache = new Map();
         watchByUuid = new Map();
         void refreshMounts(); // a volume may have been plugged in or pulled out
@@ -456,7 +481,6 @@ export async function mount(root, metafolder) {
           query: effQuery,
           select: '*',
           limit: pageSize,
-          ...(reset && { count: true }), // daemon-side COUNT, no extra pages
           ...(sort.length > 0 && { sort }),
           ...(nextCursor && { cursor: nextCursor }),
         });
@@ -476,7 +500,11 @@ export async function mount(root, metafolder) {
       metarecords = metarecords.concat(fetched);
       nextCursor = result.nextCursor;
       await prepare(fetched); // pre-resolve display data; rendering stays sync
-      if (reset) total = result.total;
+      // The total is asked for apart, once the page is in and prepared: a page
+      // the daemon stops at its end would otherwise wait for every match to be
+      // found — and a render landing mid-preparation would judge rows whose
+      // display data is not there yet.
+      if (reset) void fetchCount(r, effQuery);
       if (reset) {
         const keepIndex =
           keepUuid === null ? -1 : metarecords.findIndex((e) => e.uuid === keepUuid);
@@ -1661,6 +1689,7 @@ export async function mount(root, metafolder) {
       metarecords = [];
       nextCursor = null;
       total = null;
+      countSeq += 1;
       cursorIndex = -1;
       orphanCache = new Map();
       watchByUuid = new Map();

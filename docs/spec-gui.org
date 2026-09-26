@@ -127,7 +127,9 @@ For large result sets, =metarecord-list= uses the daemon's cursor pagination
 (=limit= / =cursor= / =sort= on =POST /query=, see the Pagination section of
 [[file:spec-data-model.org][spec-data-model.org]]), fetching further pages as
 the user scrolls; a footer shows =loaded/total= rows (the total from the
-daemon's =count=). Scrolling is not the only way down: moving the selection
+daemon's =count=, asked *apart*, once the first page is shown: a page the
+daemon stops at its end would otherwise wait for every match to be found —
+spec-indexing "A page costs the page"). Scrolling is not the only way down: moving the selection
 past the last loaded row (=metarecord-list:next=) fetches the next page too,
 so keyboard and script navigation reach the whole result set even when the
 panel is not the displayed one (no scroll event ever fires there). The default page size comes from the GUI config
