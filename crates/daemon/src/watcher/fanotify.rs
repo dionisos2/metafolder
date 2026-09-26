@@ -209,9 +209,8 @@ fn subscribe(socket: &Path, root: &Path) -> Result<BufReader<UnixStream>> {
     stream.set_read_timeout(Some(HANDSHAKE_TIMEOUT))?;
     let mut writer = stream.try_clone()?;
     let mut reader = BufReader::new(stream);
-    writer.write_all(
-        proto::encode(&ClientMsg::Subscribe { roots: vec![root.display().to_string()] }).as_bytes(),
-    )?;
+    writer
+        .write_all(proto::encode(&ClientMsg::Subscribe { roots: vec![root.into()] }).as_bytes())?;
     let mut line = String::new();
     reader.read_line(&mut line).context("the broker did not answer the subscription")?;
     match proto::decode::<ServerMsg>(&line).context("the broker sent an unparsable answer")? {
@@ -280,7 +279,7 @@ fn pump(
 /// [`relative`]) — a rename that lands outside it degrades to its one-sided
 /// form, exactly as a move out of the watched tree does.
 fn translate(root: &Path, internal_dir: &Path, event: &Event) -> Vec<(FsEvent, Option<i64>)> {
-    let rel = |p: &str| relative(root, internal_dir, Path::new(p));
+    let rel = |p: &proto::WirePath| relative(root, internal_dir, p.as_path());
     match event {
         Event::Create { path } => {
             rel(path).map(|p| vec![(FsEvent::Create(p), None)]).unwrap_or_default()
@@ -439,8 +438,8 @@ mod tests {
     }
 
     /// A path under the fake root, spelled the way the broker sends them.
-    fn at(root: &Path, rest: &str) -> String {
-        root.join(rest).display().to_string()
+    fn at(root: &Path, rest: &str) -> proto::WirePath {
+        root.join(rest).into()
     }
 
     #[test]
@@ -488,6 +487,18 @@ mod tests {
         // source side is the daemon's own write, never named).
         assert_eq!(got.len(), 1);
         assert!(matches!(got[0].0, FsEvent::RenameTo(_)), "{:?}", got[0].0);
+    }
+
+    #[test]
+    fn test_a_non_utf8_name_arrives_with_its_exact_bytes() {
+        use std::os::unix::ffi::OsStrExt;
+        let got = events_from(|root| {
+            let path = root.join("dir").join(std::ffi::OsStr::from_bytes(b"caf\xE9"));
+            vec![ServerMsg::Event { event: Event::Create { path: path.into() } }]
+        });
+        assert_eq!(got.len(), 1, "{got:?}");
+        let FsEvent::Create(p) = &got[0].0 else { panic!("{:?}", got[0].0) };
+        assert_eq!(p.name().unwrap().as_bytes(), b"caf\xE9");
     }
 
     #[test]

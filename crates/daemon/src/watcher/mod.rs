@@ -1,16 +1,17 @@
 //! The filesystem watcher (spec-file-tracking "File Watcher"): translates the
 //! source's events into [`crate::executor::FsEvent`]s, enqueues them in the
 //! persistent buffer and pings the executor. Events under
-//! `.metafolder/internal/` (the daemon's own database writes) and non-UTF-8
-//! names are skipped.
+//! `.metafolder/internal/` (the daemon's own database writes) are skipped;
+//! names travel as their exact bytes (spec-data-model "Tree names").
 //!
 //! One pipeline, two *sources* behind it ([`Source`]; spec-file-tracking "Watch
 //! sources and regimes"): [`inotify`] — the notify backend, one non-recursive
-//! watch per eligible directory, the *budget* regime — and, to come, a fanotify
-//! broker client covering the tree with a single kernel registration, the
-//! *coverage* regime (docs/watcher-fanotify.md). Exactly one source is active
-//! per repository at a time; translation, buffering, compaction and the executor
-//! are shared and do not care which source produced an event.
+//! watch per eligible directory, the *budget* regime — and [`fanotify`], the
+//! client of the fanotify broker covering the tree with one kernel
+//! registration per mount, the *coverage* regime (docs/watcher-fanotify.md).
+//! Exactly one source is active per repository at a time; translation,
+//! buffering, compaction and the executor are shared and do not care which
+//! source produced an event.
 //!
 //! **The event callback must never block.** A source only hands events to the
 //! ingest thread ([`start`]); everything that can touch the database or the

@@ -19,7 +19,7 @@ use std::sync::{Arc, Mutex, MutexGuard};
 use anyhow::Result;
 
 use crate::filter::{AccessFilter, CredSource, Subscriber};
-use crate::proto::{self, ClientMsg, Denied, Event, ServerMsg};
+use crate::proto::{self, ClientMsg, Denied, Event, ServerMsg, WirePath};
 
 /// How many messages may sit in one subscriber's queue before the broker drops
 /// (announced by `Overflow`). A few hundred kilobytes at worst — the cost of
@@ -190,7 +190,7 @@ impl<C: 'static + CredSource> Broker<C> {
             // and no longer.
             let adapted = {
                 let mut filter = lock(&self.inner.filter);
-                let mut visible = |p: &str| filter.may_see(&client.peer, std::path::Path::new(p));
+                let mut visible = |p: &std::path::Path| filter.may_see(&client.peer, p);
                 event.adapt(&roots, &mut visible)
             };
             let Some(adapted) = adapted else { continue };
@@ -265,7 +265,7 @@ fn drop_client<C: CredSource>(inner: &Arc<Inner<C>>, id: u64) {
 fn apply_subscription<C: CredSource>(
     inner: &Arc<Inner<C>>,
     client: &Arc<Client>,
-    roots: Vec<String>,
+    roots: Vec<WirePath>,
 ) {
     let mut allowed: Vec<PathBuf> = Vec::new();
     let mut denied: Vec<Denied> = Vec::new();
@@ -278,9 +278,8 @@ fn apply_subscription<C: CredSource>(
             // cannot be resolved is denied like one that cannot be listed —
             // one uniform reason, which leaks neither existence nor
             // permissions.
-            let canonical = filter
-                .real_path(std::path::Path::new(root))
-                .filter(|p| filter.may_watch(&client.peer, p));
+            let canonical =
+                filter.real_path(root.as_path()).filter(|p| filter.may_watch(&client.peer, p));
             match canonical {
                 Some(path) => allowed.push(path),
                 None => {
@@ -295,7 +294,7 @@ fn apply_subscription<C: CredSource>(
         let _ = client.tx.try_send(ServerMsg::Error { message: format!("{err:#}") });
     }
     let _ = client.tx.try_send(ServerMsg::Subscribed {
-        roots: allowed.iter().map(|p| p.display().to_string()).collect(),
+        roots: allowed.iter().map(|p| WirePath::from(p.as_path())).collect(),
         denied,
     });
 }
@@ -376,7 +375,7 @@ mod tests {
     }
 
     fn subscribe(mut stream: &UnixStream, roots: &[&str]) {
-        let msg = ClientMsg::Subscribe { roots: roots.iter().map(|r| r.to_string()).collect() };
+        let msg = ClientMsg::Subscribe { roots: roots.iter().map(|&r| r.into()).collect() };
         stream.write_all(proto::encode(&msg).as_bytes()).unwrap();
     }
 
@@ -468,7 +467,7 @@ mod tests {
 
         match next_msg(&mut r) {
             ServerMsg::Subscribed { roots, denied } => {
-                assert_eq!(roots, vec!["/mine".to_string()]);
+                assert_eq!(roots, vec!["/mine".into()]);
                 // The reason is identical whether the root exists or not.
                 assert_eq!(denied.len(), 2);
                 assert!(denied.iter().all(|d| d.reason == "not accessible"));
@@ -489,7 +488,7 @@ mod tests {
         let _ = next_msg(&mut r);
 
         for i in 0..100_000 {
-            broker.broadcast(&Event::ModifyData { path: format!("/repo/{i}") });
+            broker.broadcast(&Event::ModifyData { path: format!("/repo/{i}").into() });
         }
 
         // Drain: the marker must appear, and events must follow it.

@@ -21,7 +21,7 @@
 //! buffers wherever the crate is built.
 
 use std::collections::HashMap;
-use std::ffi::CString;
+use std::ffi::{CString, OsStr, OsString};
 use std::io;
 use std::os::unix::ffi::OsStrExt;
 use std::os::unix::io::RawFd;
@@ -30,7 +30,7 @@ use std::time::Instant;
 
 use anyhow::{bail, Context, Result};
 
-use crate::proto::Event;
+use crate::proto::{Event, WirePath};
 
 // ── linux/fanotify.h ─────────────────────────────────────────────────────────
 // Copied, not guessed: these values are the uapi ABI.
@@ -235,11 +235,11 @@ pub struct RawEvent {
     pub fid: Option<Handle>,
     /// `FAN_EVENT_INFO_TYPE_DFID_NAME`: the parent directory + entry name
     /// (`"."` names the directory itself).
-    pub parent: Option<(Handle, String)>,
+    pub parent: Option<(Handle, OsString)>,
     /// `FAN_EVENT_INFO_TYPE_OLD_DFID_NAME` / `NEW_DFID_NAME`: both sides of a
     /// `FAN_RENAME`.
-    pub old: Option<(Handle, String)>,
-    pub new: Option<(Handle, String)>,
+    pub old: Option<(Handle, OsString)>,
+    pub new: Option<(Handle, OsString)>,
 }
 
 /// Splits a `read(2)` buffer into events. Records are walked by their `len`
@@ -303,7 +303,7 @@ fn align8(n: usize) -> usize {
 
 /// One info record: header (4) + `__kernel_fsid_t` (8) + `struct file_handle`
 /// (8 + bytes) +, for the name-bearing kinds, a NUL-terminated name.
-fn parse_fid_record(rec: &[u8], info_type: u8) -> Option<(Handle, String)> {
+fn parse_fid_record(rec: &[u8], info_type: u8) -> Option<(Handle, OsString)> {
     if rec.len() < 20 {
         return None;
     }
@@ -321,24 +321,19 @@ fn parse_fid_record(rec: &[u8], info_type: u8) -> Option<(Handle, String)> {
         INFO_TYPE_DFID_NAME | INFO_TYPE_OLD_DFID_NAME | INFO_TYPE_NEW_DFID_NAME => {
             let tail = &rec[20 + handle_bytes..];
             let nul = tail.iter().position(|&b| b == 0).unwrap_or(tail.len());
-            // A name that is not UTF-8 cannot be carried as JSON — and a lossy
-            // name would name a file that does not exist. The record is given
-            // up on, and the event with it (spec-file-tracking skips non-UTF-8
-            // names too).
-            let name = std::str::from_utf8(&tail[..nul]).ok()?;
-            Some(name.to_string())
+            // The exact bytes: a POSIX name need not be UTF-8, and the wire
+            // carries it as it is (`proto::WirePath`).
+            Some(OsStr::from_bytes(&tail[..nul]).to_os_string())
         }
         _ => None,
     };
     Some((Handle { fsid, handle_type, bytes }, name.unwrap_or_default()))
 }
 
-/// Turns parsed events into wire events. Names are carried as `String`, so an
-/// event on a non-UTF-8 name is *dropped* — the daemon skips those too
-/// (spec-file-tracking "File Watcher"), and a lossy name would name a file
-/// that does not exist.
+/// Turns parsed events into wire events. Names travel as their exact bytes —
+/// a non-UTF-8 name is an event like any other (spec-data-model "Tree names").
 pub fn translate(raw: &RawEvent, resolver: &mut dyn Resolve) -> Vec<Event> {
-    fn path_of(resolver: &mut dyn Resolve, h: &Handle, name: &str) -> Option<PathBuf> {
+    fn path_of(resolver: &mut dyn Resolve, h: &Handle, name: &OsStr) -> Option<PathBuf> {
         let base = resolver.resolve(h)?;
         if name.is_empty() || name == "." {
             Some(base)
@@ -347,14 +342,14 @@ pub fn translate(raw: &RawEvent, resolver: &mut dyn Resolve) -> Vec<Event> {
         }
     }
 
-    fn path_string(p: Option<PathBuf>) -> Option<String> {
-        p?.to_str().map(str::to_string)
+    fn path_string(p: Option<PathBuf>) -> Option<WirePath> {
+        p.map(WirePath::from)
     }
 
     let mut out = Vec::new();
 
     // The entry events: the parent record + name is all there is to them.
-    let mut push_parent = |mask: u64, make: &dyn Fn(String) -> Event| {
+    let mut push_parent = |mask: u64, make: &dyn Fn(WirePath) -> Event| {
         if raw.mask & mask != 0 {
             if let Some((h, name)) = &raw.parent {
                 if let Some(path) = path_string(path_of(resolver, h, name)) {
@@ -387,7 +382,7 @@ pub fn translate(raw: &RawEvent, resolver: &mut dyn Resolve) -> Vec<Event> {
     // a subscribed root, which has no parent inside the tree.
     if raw.mask & FAN_DELETE_SELF != 0 {
         if let Some(h) = raw.fid.as_ref().or(raw.parent.as_ref().map(|(h, _)| h)) {
-            if let Some(path) = path_string(path_of(resolver, h, "")) {
+            if let Some(path) = path_string(path_of(resolver, h, OsStr::new(""))) {
                 out.push(Event::Remove { path });
             }
         }
@@ -578,7 +573,11 @@ mod tests {
         }
 
         fn fid_record(&mut self, info_type: u8, handle: &Handle, name: Option<&str>) {
-            let name_bytes = name.map(|n| n.as_bytes()).unwrap_or_default();
+            self.fid_record_bytes(info_type, handle, name.map(str::as_bytes));
+        }
+
+        fn fid_record_bytes(&mut self, info_type: u8, handle: &Handle, name: Option<&[u8]>) {
+            let name_bytes = name.unwrap_or_default();
             let raw_len = 20 + handle.bytes.len() + name_bytes.len() + usize::from(name.is_some());
             let len = align8(raw_len);
             let mut rec = vec![0u8; len];
@@ -590,8 +589,7 @@ mod tests {
             rec[16..20].copy_from_slice(&handle.handle_type.to_ne_bytes());
             rec[20..20 + handle.bytes.len()].copy_from_slice(&handle.bytes);
             if let Some(n) = name {
-                rec[20 + handle.bytes.len()..20 + handle.bytes.len() + n.len()]
-                    .copy_from_slice(n.as_bytes());
+                rec[20 + handle.bytes.len()..20 + handle.bytes.len() + n.len()].copy_from_slice(n);
             }
             self.0.extend_from_slice(&rec);
         }
@@ -691,7 +689,7 @@ mod tests {
         let mut r = table(&[(&handle(1), "/repo/dir")]);
         assert_eq!(
             translate(&events[0], &mut r),
-            vec![Event::Create { path: "/repo/dir/x".to_string() }]
+            vec![Event::Create { path: "/repo/dir/x".into() }]
         );
     }
 
@@ -703,7 +701,7 @@ mod tests {
         let mut r = table(&[(&handle(1), "/repo/dir")]);
         assert_eq!(
             translate(&events[0], &mut r),
-            vec![Event::ModifyData { path: "/repo/dir".to_string() }]
+            vec![Event::ModifyData { path: "/repo/dir".into() }]
         );
     }
 
@@ -716,7 +714,7 @@ mod tests {
         let mut r = table(&[(&handle(1), "/repo"), (&handle(2), "/repo/sub")]);
         assert_eq!(
             translate(&events[0], &mut r),
-            vec![Event::Rename { from: "/repo/a".to_string(), to: "/repo/sub/b".to_string() }]
+            vec![Event::Rename { from: "/repo/a".into(), to: "/repo/sub/b".into() }]
         );
     }
 
@@ -731,7 +729,7 @@ mod tests {
         let mut r = table(&[(&handle(1), "/repo")]);
         assert_eq!(
             translate(&events[0], &mut r),
-            vec![Event::RenameFrom { path: "/repo/a".to_string() }]
+            vec![Event::RenameFrom { path: "/repo/a".into() }]
         );
     }
 
@@ -743,7 +741,7 @@ mod tests {
         let mut r = table(&[(&handle(1), "/repo")]);
         assert_eq!(
             translate(&events[0], &mut r),
-            vec![Event::ModifyData { path: "/repo/x".to_string() }]
+            vec![Event::ModifyData { path: "/repo/x".into() }]
         );
     }
 
@@ -755,30 +753,20 @@ mod tests {
         let mut r = table(&[(&handle(3), "/repo/gone")]);
         assert_eq!(
             translate(&events[0], &mut r),
-            vec![Event::Remove { path: "/repo/gone".to_string() }]
+            vec![Event::Remove { path: "/repo/gone".into() }]
         );
     }
 
     #[test]
-    fn test_a_non_utf8_name_is_dropped_not_mangled() {
+    fn test_a_non_utf8_name_is_carried_byte_for_byte() {
+        use std::os::unix::ffi::OsStrExt;
         let mut b = Buf::new(FAN_CREATE, 1);
         // "caf\xE9" — a Latin-1 name, invalid UTF-8.
-        let h = handle(1);
-        let raw_len = 20 + h.bytes.len() + 5;
-        let len = align8(raw_len);
-        let mut rec = vec![0u8; len];
-        rec[0] = INFO_TYPE_DFID_NAME;
-        rec[2..4].copy_from_slice(&(len as u16).to_ne_bytes());
-        rec[4..8].copy_from_slice(&h.fsid[0].to_ne_bytes());
-        rec[8..12].copy_from_slice(&h.fsid[1].to_ne_bytes());
-        rec[12..16].copy_from_slice(&(h.bytes.len() as u32).to_ne_bytes());
-        rec[16..20].copy_from_slice(&h.handle_type.to_ne_bytes());
-        rec[20..20 + h.bytes.len()].copy_from_slice(&h.bytes);
-        rec[20 + h.bytes.len()..20 + h.bytes.len() + 5].copy_from_slice(b"caf\xE9\0");
-        b.0.extend_from_slice(&rec);
+        b.fid_record_bytes(INFO_TYPE_DFID_NAME, &handle(1), Some(b"caf\xE9"));
         let (events, _) = parse(&b.finish());
         let mut r = table(&[(&handle(1), "/repo")]);
-        assert_eq!(translate(&events[0], &mut r), Vec::new());
+        let expected = PathBuf::from(std::ffi::OsStr::from_bytes(b"/repo/caf\xE9"));
+        assert_eq!(translate(&events[0], &mut r), vec![Event::Create { path: expected.into() }]);
     }
 
     // ── The real group (needs fanotify; skips where it is not permitted) ─────

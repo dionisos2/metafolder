@@ -140,8 +140,8 @@ fn mark_exceeded(repo: &RepoState, rel: &str) {
 }
 
 /// A wire path under the repository root, as the broker would send it.
-fn wire(root: &Path, rest: &str) -> String {
-    std::fs::canonicalize(root).unwrap().join(rest).display().to_string()
+fn wire(root: &Path, rest: &str) -> proto::WirePath {
+    std::fs::canonicalize(root).unwrap().join(rest).into()
 }
 
 fn fanotify_settings(socket: &Path) -> DaemonSettings {
