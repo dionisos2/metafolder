@@ -33,7 +33,7 @@ pub enum CmpOp {
 }
 
 impl CmpOp {
-    fn matches_ordering(self, ord: std::cmp::Ordering) -> bool {
+    pub(crate) fn matches_ordering(self, ord: std::cmp::Ordering) -> bool {
         use std::cmp::Ordering::*;
         match self {
             CmpOp::Lt => ord == Less,
@@ -350,7 +350,7 @@ impl PartialOrd for SortRep {
     }
 }
 
-fn sort_rep(value: &Value) -> Option<SortRep> {
+pub(crate) fn sort_rep(value: &Value) -> Option<SortRep> {
     let norm = |f: f64| if f == 0.0 { 0.0 } else { f }; // merge -0.0 / 0.0 like SQL
     match value {
         Value::Bool(b) => Some(SortRep::Bool(*b)),

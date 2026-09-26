@@ -47,6 +47,9 @@ use crate::log::{self, Delta, OpRow, Retention};
 use crate::store::{Begin, Log, NewOp, Questions, Restoration, RevisionMeta, Rows, WriteTxn};
 
 mod derived;
+mod source;
+
+pub use source::KvSource;
 
 type Db = Database<Bytes, Bytes>;
 

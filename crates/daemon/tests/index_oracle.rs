@@ -18,7 +18,7 @@ use metafolder_core::query::{Aspect, FollowTarget, OsmMode, Query};
 use metafolder_daemon::db;
 use metafolder_daemon::forest_query;
 use metafolder_daemon::index::{
-    collect_node_paths, collect_path_targets, QueryRoots, RepoIndex, SortBy,
+    collect_node_paths, collect_path_targets, PageStrategy, QueryRoots, RepoIndex, SortBy,
 };
 use metafolder_daemon::log::Writer;
 use metafolder_daemon::query_result::{SortKey, SortOrder};
@@ -27,6 +27,9 @@ use metafolder_daemon::tree_cache::{SortKeys, TreeCache};
 use metafolder_query_oracle as query_exec;
 use rusqlite::Connection;
 use uuid::Uuid;
+
+mod common;
+use common::kv::{kv_mirror, uuids, with_kv};
 
 struct Oracle {
     conn: Connection,
@@ -56,6 +59,11 @@ impl Oracle {
         sql.sort();
         got.sort();
         assert_eq!(got, sql, "divergence on {q:?}");
+        let (kv, _dir) = kv_mirror(&self.conn);
+        let mut got =
+            with_kv(&kv, PageStrategy::Auto, |e, src| uuids(src, &e.evaluate(q).unwrap()));
+        got.sort();
+        assert_eq!(got, sql, "KV divergence on {q:?}");
     }
 
     /// Asserts the bitmap index agrees with the SQL engine on the *ordered*,
@@ -75,6 +83,9 @@ impl Oracle {
             by.iter().map(|(f, asc)| SortBy { field: f.to_string(), ascending: *asc }).collect();
         let got = index.evaluate_sorted(q, &idx_keys, limit).unwrap();
         assert_eq!(got, sql, "sort divergence on {q:?} by {by:?} limit {limit:?}");
+        let (kv, _dir) = kv_mirror(&self.conn);
+        let got = with_kv(&kv, PageStrategy::Auto, |e, _| e.evaluate_sorted(q, &idx_keys, limit));
+        assert_eq!(got.unwrap(), sql, "KV sort divergence on {q:?} by {by:?} limit {limit:?}");
     }
 
     /// Asserts the index `count` matches the SQL `COUNT`.
@@ -82,6 +93,9 @@ impl Oracle {
         let index = RepoIndex::build(&self.conn).unwrap();
         let sql = query_exec::count(&self.conn, &mut self.cache, q).unwrap();
         assert_eq!(index.count(q).unwrap() as usize, sql, "count divergence on {q:?}");
+        let (kv, _dir) = kv_mirror(&self.conn);
+        let got = with_kv(&kv, PageStrategy::Auto, |e, _| e.count(q).unwrap());
+        assert_eq!(got as usize, sql, "KV count divergence on {q:?}");
     }
 
     /// Asserts the in-memory field catalog agrees with the SQL
@@ -145,6 +159,11 @@ impl Oracle {
         }
 
         assert_eq!(ipages, spages, "pagination divergence on {q:?} by {by:?} limit {limit}");
+        let (kv, _dir) = kv_mirror(&self.conn);
+        let kpages = with_kv(&kv, PageStrategy::Auto, |e, _| {
+            pages(|cursor| e.evaluate_page(q, &idx_keys, Some(limit), cursor).unwrap())
+        });
+        assert_eq!(kpages, spages, "KV pagination divergence on {q:?} by {by:?} limit {limit}");
     }
 
     /// Like [`Self::check_paginated`] but supplying the index every seed
@@ -215,6 +234,28 @@ impl Oracle {
         }
 
         assert_eq!(ipages, spages, "pagination divergence on {q:?} by {by:?} limit {limit}");
+        let (kv, _dir) = kv_mirror(&self.conn);
+        let kpages = with_kv(&kv, PageStrategy::Auto, |e, _| {
+            pages(|cursor| {
+                e.evaluate_page_with_roots(q, &idx_keys, Some(limit), cursor, &roots).unwrap()
+            })
+        });
+        assert_eq!(kpages, spages, "KV pagination divergence on {q:?} by {by:?} limit {limit}");
+    }
+}
+
+/// Every page of a paginated evaluation, following the cursors.
+fn pages(mut page: impl FnMut(Option<&str>) -> (Vec<Uuid>, Option<String>)) -> Vec<Vec<Uuid>> {
+    let mut out = Vec::new();
+    let mut cursor: Option<String> = None;
+    loop {
+        let (uuids, next) = page(cursor.as_deref());
+        out.push(uuids);
+        match next {
+            Some(c) => cursor = Some(c),
+            None => return out,
+        }
+        assert!(out.len() < 10_000, "runaway pagination");
     }
 }
 
@@ -1764,4 +1805,66 @@ fn a_path_leaf_on_a_non_tree_field_is_refused_before_any_engine() {
     assert!(index.evaluate(&rewritten).unwrap().is_empty());
     let (sql, _) = query_exec::execute(&o.conn, &mut o.cache, &q, &[], None, None).unwrap();
     assert!(sql.is_empty());
+}
+
+/// Texts too long to be keyed whole on the key-value store (keyed by their
+/// first 256 bytes and a hash; spec-storage "Keys have a size limit"): texts
+/// sharing that prefix, one equal to it, shorter ones around it — every
+/// comparison, the text scans, `same_as` and the sorts must still agree.
+#[test]
+fn long_texts_answer_like_short_ones() {
+    let mut o = Oracle::new();
+    let p = "a".repeat(300);
+    let texts = [
+        p.clone(),
+        format!("{p}1"),
+        format!("{p}2"),
+        format!("{p}10"),
+        format!("{p}\0z"),
+        "a".into(),
+        "b".into(),
+        format!("{}b", "a".repeat(255)),
+    ];
+    let root = o.create(vec![tref("loc", None, "")]);
+    let mut ids = Vec::new();
+    for (i, t) in texts.iter().enumerate() {
+        let name = format!("{}{i}", "n".repeat(400));
+        ids.push(o.create(vec![
+            Field::new("note", s(t)),
+            Field::new("note", s(&format!("other{i}"))),
+            tref("loc", Some(root), &name),
+            Field::new("one", s(t)),
+        ]));
+    }
+    let long = format!("{p}1");
+    for op in [eq, neq, lt, lte, gt, gte] {
+        for operand in [&p, &long, &format!("{p}15"), &format!("{p}\0"), &"a".to_string()] {
+            o.check(&op("note", s(operand)));
+            o.check(&op("one", s(operand)));
+        }
+    }
+    let matches = |field: &str, pattern: &str| Query::Matches {
+        field: field.into(),
+        pattern: pattern.into(),
+        aspect: Aspect::Raw,
+    };
+    o.check(&matches("note", "1$"));
+    o.check(&matches("note", "^a+$"));
+    o.check(&Query::Matches { field: "loc".into(), pattern: "7$".into(), aspect: Aspect::Value });
+    o.check(&Query::SameAs { field: "one".into(), target: Box::new(eq("note", s(&long))) });
+    let name = format!("{}3", "n".repeat(400));
+    let on_name = |op: fn(&str, Value) -> Query| match op("loc", s(&name)) {
+        Query::Eq { field, value, .. } => Query::Eq { field, value, aspect: Aspect::Value },
+        Query::Neq { field, value, .. } => Query::Neq { field, value, aspect: Aspect::Value },
+        Query::Lt { field, value, .. } => Query::Lt { field, value, aspect: Aspect::Value },
+        q => q,
+    };
+    for op in [eq, neq, lt] {
+        o.check(&on_name(op));
+    }
+    for asc in [true, false] {
+        o.check_sorted(&present("one"), &[("one", asc)], None);
+        o.check_paginated(&present("note"), &[("note", asc)], 3);
+    }
+    let _ = ids;
 }

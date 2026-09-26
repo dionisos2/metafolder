@@ -624,7 +624,7 @@ b. *(done)* *The evaluator's source trait*: the questions the evaluator asks of 
    field, a text scan over its distinct values, referrers, forest roots and
    parents, sort representatives) become a trait the resident index
    implements. No behaviour change.
-c. *The KV source* implements it over the derived key spaces, inside one read
+c. *(done)* *The KV source* implements it over the derived key spaces, inside one read
    transaction per query; the oracle and page-strategy suites run it as a
    third engine.
 d. *Serving from the disk*: a KV repository answers its queries through the KV

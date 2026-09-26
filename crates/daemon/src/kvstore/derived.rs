@@ -78,7 +78,7 @@ pub(super) fn esc(bytes: &[u8]) -> Vec<u8> {
 /// sorts after the `00 00` ending the one text equal to that prefix and
 /// before any other — and a hash of the whole. Order is kept except among
 /// the long texts sharing a prefix, which a reader resolves from the values
-/// themselves.
+/// themselves ([`long_prefix`]).
 pub(crate) const TEXT_MAX: usize = 256;
 
 /// A text's partition key: [`esc`]aped whole, or cut and hashed.
@@ -101,6 +101,22 @@ pub(crate) fn text_key(bytes: &[u8]) -> Vec<u8> {
     out.extend_from_slice(&[0, 1]);
     out.extend_from_slice(&xxhash_rust::xxh3::xxh3_64(bytes).to_be_bytes());
     out
+}
+
+/// For a [`text_key`] cut and hashed: its prefix up to and with the marker —
+/// what every long text sharing its first bytes starts with. `None` for a
+/// text keyed whole.
+pub(crate) fn long_prefix(key: &[u8]) -> Option<&[u8]> {
+    let mut i = 0;
+    while i + 1 < key.len() {
+        match (key[i], key[i + 1]) {
+            (0, 0) => return None,
+            (0, 1) => return Some(&key[..i + 2]),
+            (0, _) => i += 2,
+            _ => i += 1,
+        }
+    }
+    None
 }
 
 /// Reads an [`esc`]aped string at the front of `bytes`: the string and the
@@ -176,6 +192,13 @@ pub(super) fn set_key(kind: u8, field: Option<&str>, chunk: u16) -> Vec<u8> {
     k
 }
 
+/// The prefix of every chunk of a set.
+pub(super) fn set_prefix(kind: u8, field: Option<&str>) -> Vec<u8> {
+    let mut k = set_key(kind, field, 0);
+    k.truncate(k.len() - 2);
+    k
+}
+
 pub(super) fn part_prefix(field: &str, part: u8) -> Vec<u8> {
     let mut k = name_key(field);
     k.push(part);
@@ -199,6 +222,26 @@ pub(super) fn decode_set(bytes: &[u8]) -> Result<RoaringBitmap> {
 }
 
 // ── Reading ─────────────────────────────────────────────────────────────────
+
+/// A whole set: the union of its chunks.
+pub(super) fn read_set(
+    t: &Tables,
+    r: &RoTxn<'_>,
+    kind: u8,
+    field: Option<&str>,
+) -> Result<RoaringBitmap> {
+    let prefix = set_prefix(kind, field);
+    let mut out = RoaringBitmap::new();
+    for entry in t.sets.prefix_iter(r, &prefix)? {
+        let (k, v) = entry?;
+        // The field name's terminator keeps a longer name out of the prefix;
+        // only the 2-byte chunk follows it.
+        if k.len() == prefix.len() + 2 {
+            out |= decode_set(v)?;
+        }
+    }
+    Ok(out)
+}
 
 pub(super) fn id_of(t: &Tables, r: &RoTxn<'_>, uuid: &[u8]) -> Result<Option<u32>> {
     Ok(t.ids.get(r, uuid)?.map(dense))

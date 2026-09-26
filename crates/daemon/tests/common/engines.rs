@@ -9,7 +9,7 @@
 use metafolder_core::query::Query;
 use metafolder_daemon::error::ApiError;
 use metafolder_daemon::index::{
-    collect_node_paths, collect_path_targets, QueryRoots, RepoIndex, SortBy,
+    collect_node_paths, collect_path_targets, PageStrategy, QueryRoots, RepoIndex, SortBy,
 };
 use metafolder_daemon::query_result::{SortKey, SortOrder};
 use metafolder_daemon::tree_cache::{SortKeys, TreeCache};
@@ -101,8 +101,18 @@ pub fn indexed(
         .map(|k| SortBy { field: k.field.clone(), ascending: k.order == SortOrder::Asc })
         .collect();
     let index = RepoIndex::build(conn).unwrap();
-    match index.evaluate_page_with_roots(&indexed, &sort_by, None, None, &roots) {
+    let got = match index.evaluate_page_with_roots(&indexed, &sort_by, None, None, &roots) {
         Ok((uuids, _)) => uuids,
         Err(gap) => panic!("the serving path declined {query:?}: {gap}"),
+    };
+    // The same evaluator over the key-value store's derived key spaces.
+    let (kv, _dir) = super::kv::kv_mirror(conn);
+    let on_kv = super::kv::with_kv(&kv, PageStrategy::Auto, |e, _| {
+        e.evaluate_page_with_roots(&indexed, &sort_by, None, None, &roots)
+    });
+    match on_kv {
+        Ok((uuids, _)) => assert_eq!(uuids, got, "KV/resident divergence on {query:?}"),
+        Err(gap) => panic!("the KV source declined {query:?}: {gap}"),
     }
+    got
 }
