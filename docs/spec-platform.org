@@ -119,7 +119,12 @@ subprocess and no system dependency, mirroring the =infer= choice for MIME:
 
 Memory-safety is the reason a subprocess sandbox is *not* required for this in
 the daemon: a crafted file can at worst make a parser panic or return wrong
-values (which the extraction pass catches and treats as "no metadata"), never
+values (which the extraction pass catches and treats as "no metadata": each
+backend runs under =catch_unwind=, a warning names the file, and its half-
+collected output is dropped — without that, one file whose EXIF makes
+=nom-exif= =assert!= would fail every reconcile of the repository; its
+allocations are bounded by lofty's allocation limit and, for nom-exif, by the
+file's real length), never
 the passive code-execution vector that the C media decoders behind =ffmpeg= /
 the WebView are (those stay confined by the GUI's =bwrap= sandbox — see
 spec-gui "Untrusted media"). A richer =exiftool=/=ffprobe= backend is a

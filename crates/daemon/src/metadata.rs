@@ -9,6 +9,14 @@
 //! wrong values (which we treat as "no metadata"), never the passive
 //! code-execution vector that the C media decoders behind `ffmpeg` / the WebView
 //! are. That is precisely why this needs no subprocess sandbox in the daemon.
+//!
+//! Memory-safe is not the same as well-behaved, though, and the two remaining
+//! ways a crafted file bites are bounded here: a *panic* (`nom-exif` asserts on
+//! sizes the file controls) is caught per backend ([`guarded`]), and an
+//! *allocation* sized by the file is capped by lofty's global allocation
+//! limit (16 MiB by default) and, for nom-exif, by what the file really holds
+//! (it reads incrementally: a box *claiming* 2 GiB in a small file ends at the
+//! end of the file, not in a 2 GiB buffer).
 
 use std::collections::HashMap;
 use std::path::Path;
@@ -89,9 +97,30 @@ fn parse_leading_int(s: &str) -> Option<i64> {
 /// Collects `(source key → value)` for a file from every backend. A backend
 /// that cannot parse the file contributes nothing (treated as "no metadata").
 fn collect_sources(abs: &Path) -> HashMap<String, SourceValue> {
+    let mut out = guarded(abs, "audio", |out| collect_audio(abs, out));
+    out.extend(guarded(abs, "exif", |out| collect_exif(abs, out)));
+    out
+}
+
+/// Runs one backend, turning a panic into "no metadata". Memory-safe is not
+/// panic-free: `nom-exif` `assert!`s on box sizes a crafted file controls, and
+/// a panic here would fail the whole reconcile — on every run, since the file
+/// stays in the tree. What a panicked backend had collected is dropped (it
+/// stopped half-way); the file's path is reported.
+fn guarded(
+    abs: &Path,
+    backend: &str,
+    collect: impl FnOnce(&mut HashMap<String, SourceValue>),
+) -> HashMap<String, SourceValue> {
     let mut out = HashMap::new();
-    collect_audio(abs, &mut out);
-    collect_exif(abs, &mut out);
+    let ran = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| collect(&mut out)));
+    if ran.is_err() {
+        crate::diagnostics::warn(
+            "metadata",
+            format!("the {backend} metadata parser failed on {}: skipped", abs.display()),
+        );
+        return HashMap::new();
+    }
     out
 }
 
@@ -186,6 +215,22 @@ mod tests {
 
     fn map(toml: &str) -> MetadataMap {
         MetadataMap::parse(toml).unwrap()
+    }
+
+    /// A parser that panics on a crafted file (nom-exif `assert!`s on box
+    /// sizes) must cost that file its metadata, not the whole reconcile — else
+    /// one file in the tree makes every reconcile of the repository fail.
+    #[test]
+    fn test_a_panicking_backend_contributes_nothing_and_the_others_still_run() {
+        let got = guarded(Path::new("/r/evil.heic"), "exif", |out| {
+            out.insert("Make".to_string(), SourceValue::Text("half".into()));
+            panic!("crafted box size");
+        });
+        assert!(got.is_empty(), "a panicked backend's partial output must be dropped");
+        let got = guarded(Path::new("/r/fine.mp3"), "audio", |out| {
+            out.insert("Artist".to_string(), SourceValue::Text("x".into()));
+        });
+        assert_eq!(got.len(), 1);
     }
 
     fn find<'a>(fields: &'a [Field], name: &str) -> Option<&'a Value> {
