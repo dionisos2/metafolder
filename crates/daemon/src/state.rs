@@ -506,7 +506,7 @@ impl RepoState {
         {
             let _p = Phase::begin(&who, "build the query index");
             let index = crate::index::RepoIndex::build_reported_collecting(
-                &conn,
+                &*conn,
                 &mut forest,
                 &|done, total| progress("index", Some(done), Some(total)),
                 &|| false, // the load warmup is not cancellable (spec-tasks)

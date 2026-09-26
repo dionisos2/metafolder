@@ -123,7 +123,7 @@ fn bench_index_build_and_folder_query() {
     let t = Instant::now();
     let mut forest = Vec::new();
     let index =
-        RepoIndex::build_reported_collecting(&conn, &mut forest, &|_, _| {}, &|| false).unwrap();
+        RepoIndex::build_reported_collecting(&*conn, &mut forest, &|_, _| {}, &|| false).unwrap();
     eprintln!("   NEW  build + collect forest    : {:?}", t.elapsed());
     // Piggyback: the tree cache built from the forest the build just collected,
     // vs the standalone DB scan (`populate`) it replaces at load.

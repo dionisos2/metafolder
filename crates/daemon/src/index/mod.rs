@@ -30,7 +30,8 @@ use base64::Engine;
 use metafolder_core::metarecord::{Value, ZERO_UUID};
 use metafolder_core::query::{Aspect, FollowTarget, Query};
 use roaring::{MultiOps, RoaringBitmap};
-use rusqlite::Connection;
+
+use crate::store::Store;
 use uuid::Uuid;
 
 use crate::db;
@@ -370,8 +371,8 @@ pub struct RepoIndex {
 impl RepoIndex {
     /// Builds the index from a single pass over the repository's field rows
     /// (every metarecord — one repository per database file).
-    pub fn build(conn: &Connection) -> anyhow::Result<RepoIndex> {
-        Self::build_reported(conn, &|_, _| {}, &|| false)
+    pub fn build(store: &dyn Store) -> anyhow::Result<RepoIndex> {
+        Self::build_reported(store, &|_, _| {}, &|| false)
     }
 
     /// [`Self::build`] reporting progress as `(done, total)` metarecords scanned,
@@ -381,11 +382,11 @@ impl RepoIndex {
     /// triggered a rebuild can be stopped. Pass `&|| false` for uncancellable
     /// callers (the load warmup).
     pub fn build_reported(
-        conn: &Connection,
+        store: &dyn Store,
         progress: &dyn Fn(u64, u64),
         cancel: &dyn Fn() -> bool,
     ) -> anyhow::Result<RepoIndex> {
-        Self::build_inner(conn, None, progress, cancel)
+        Self::build_inner(store, None, progress, cancel)
     }
 
     /// [`Self::build_reported`] that also collects every TreeRef position it
@@ -393,24 +394,24 @@ impl RepoIndex {
     /// tree cache from the *same* single pass over the `field` table instead of a
     /// second full scan (`db::load_tree_forest`). See `RepoState::warmup`.
     pub fn build_reported_collecting(
-        conn: &Connection,
+        store: &dyn Store,
         forest: &mut Vec<db::TreeRow>,
         progress: &dyn Fn(u64, u64),
         cancel: &dyn Fn() -> bool,
     ) -> anyhow::Result<RepoIndex> {
-        Self::build_inner(conn, Some(forest), progress, cancel)
+        Self::build_inner(store, Some(forest), progress, cancel)
     }
 
     fn build_inner(
-        conn: &Connection,
+        store: &dyn Store,
         mut forest: Option<&mut Vec<db::TreeRow>>,
         progress: &dyn Fn(u64, u64),
         cancel: &dyn Fn() -> bool,
     ) -> anyhow::Result<RepoIndex> {
-        let built_at_head = db::current_head(conn)?;
+        let built_at_head = store.head()?;
         let mut registry = IdRegistry::new();
         let mut universe = RoaringBitmap::new();
-        for uuid in db::list_entries(conn)? {
+        for uuid in store.metarecords()? {
             universe.insert(registry.intern(uuid));
         }
 
@@ -424,12 +425,12 @@ impl RepoIndex {
         // in rowid (`id`) order, so progress against `MAX(id)` is a near-linear
         // bar (`MAX(id)` is an O(1) read, unlike counting the rows); cancellation
         // is polled at the same cadence.
-        let total = db::max_field_id(conn)?.max(0) as u64;
+        let total = store.max_row_id()?.max(0) as u64;
         if cancel() {
             anyhow::bail!("index build cancelled");
         }
         let mut scanned_rows: u64 = 0;
-        db::for_each_field_row(conn, |uuid, row| {
+        store.for_each_row(&mut |uuid, row| {
             scanned_rows += 1;
             if scanned_rows.is_multiple_of(4096) {
                 progress((row.id.max(0) as u64).min(total), total);
@@ -528,9 +529,9 @@ impl RepoIndex {
     /// `cancel` is polled during a full rebuild (the heavy case), so a query
     /// that triggered one can be stopped (spec-tasks "Cancellation"). The
     /// incremental path is bounded (`REBUILD_OVER` ops) and runs to completion.
-    pub fn refresh(&mut self, conn: &Connection, cancel: &dyn Fn() -> bool) -> anyhow::Result<()> {
-        if !self.refresh_incremental(conn)? {
-            *self = Self::build_reported(conn, &|_, _| {}, cancel)?;
+    pub fn refresh(&mut self, store: &dyn Store, cancel: &dyn Fn() -> bool) -> anyhow::Result<()> {
+        if !self.refresh_incremental(store)? {
+            *self = Self::build_reported(store, &|_, _| {}, cancel)?;
         }
         Ok(())
     }
@@ -546,20 +547,20 @@ impl RepoIndex {
     /// path. Declining leaves the rebuild to the next reader — and since every
     /// commit catches up, the delta is one revision and that case stops
     /// arising.
-    pub fn refresh_incremental(&mut self, conn: &Connection) -> anyhow::Result<bool> {
-        let head = db::current_head(conn)?;
+    pub fn refresh_incremental(&mut self, store: &dyn Store) -> anyhow::Result<bool> {
+        let head = store.head()?;
         if head == self.built_at_head {
             return Ok(true);
         }
         // HEAD reset to empty: not a forward extension.
         let Some(current) = head else { return Ok(false) };
-        let Some(delta) = self.forward_delta(conn, current)? else { return Ok(false) };
+        let Some(delta) = self.forward_delta(store, current)? else { return Ok(false) };
         // Dead dense ids (deleted metarecords, never reused) have piled up; only
         // a rebuild re-interns the live set and reclaims them.
         if self.tombstones_heavy() {
             return Ok(false);
         }
-        self.apply_ops(conn, &delta)?;
+        self.apply_ops(store, &delta)?;
         self.built_at_head = head;
         Ok(true)
     }
@@ -569,7 +570,7 @@ impl RepoIndex {
     /// an ancestor of `current_head` (history was rewritten), an op type is not
     /// one we replay, or the delta is large enough that a rebuild is cheaper.
     ///
-    /// The walk *stops at* `built_at_head` ([`crate::log::ancestry_ops_until`])
+    /// The walk *stops at* `built_at_head` ([`Log::ops_until`])
     /// rather than materialising the whole ancestor chain, so it costs the delta
     /// — normally one or two operations — and not the length of the log. This
     /// runs on the read path before every query that follows a write, so walking
@@ -580,7 +581,7 @@ impl RepoIndex {
     /// rebuild, always correct.
     fn forward_delta(
         &self,
-        conn: &Connection,
+        store: &dyn Store,
         current_head: i64,
     ) -> anyhow::Result<Option<Vec<crate::log::OpRow>>> {
         const KNOWN: &[&str] = &[
@@ -603,12 +604,7 @@ impl RepoIndex {
             None => return Ok(None),
         };
 
-        let mut delta = match crate::log::ancestry_ops_until(
-            conn,
-            current_head,
-            built_at_head,
-            REBUILD_OVER,
-        )? {
+        let mut delta = match store.ops_until(current_head, built_at_head, REBUILD_OVER)? {
             Some(ops) => ops,
             // Not on the chain (history was rewritten) or beyond the budget.
             None => return Ok(None),
@@ -624,7 +620,7 @@ impl RepoIndex {
     /// metarecords, then recomputes every touched `(metarecord, field)` cell
     /// from its current DB rows (the before-snapshots supply the old values to
     /// clear, so buckets a value left are emptied).
-    fn apply_ops(&mut self, conn: &Connection, delta: &[crate::log::OpRow]) -> anyhow::Result<()> {
+    fn apply_ops(&mut self, store: &dyn Store, delta: &[crate::log::OpRow]) -> anyhow::Result<()> {
         use std::collections::{HashMap, HashSet};
 
         let mut created: Vec<Uuid> = Vec::new();
@@ -632,11 +628,11 @@ impl RepoIndex {
         let mut touched: HashMap<(Uuid, String), Vec<Value>> = HashMap::new();
 
         for op in delta {
-            let before = crate::log::snapshots(conn, op.id, 0)?;
+            let before = store.snapshots(op.id, false)?;
             match op.op_type.as_str() {
                 "create_metarecord" => {
                     created.push(op.entity_uuid);
-                    for row in crate::log::snapshots(conn, op.id, 1)? {
+                    for row in store.snapshots(op.id, true)? {
                         touched.entry((op.entity_uuid, row.name)).or_default();
                     }
                 }
@@ -652,7 +648,7 @@ impl RepoIndex {
                     for row in before {
                         touched.entry((op.entity_uuid, row.name)).or_default().push(row.value);
                     }
-                    for row in crate::log::snapshots(conn, op.id, 1)? {
+                    for row in store.snapshots(op.id, true)? {
                         touched.entry((op.entity_uuid, row.name)).or_default();
                     }
                 }
@@ -679,10 +675,8 @@ impl RepoIndex {
         }
         for ((uuid, field), old_values) in touched {
             let Some(id) = self.registry.id(uuid) else { continue };
-            let new_values: Vec<Value> = db::get_field_rows_named(conn, uuid, &field)?
-                .into_iter()
-                .map(|row| row.value)
-                .collect();
+            let new_values: Vec<Value> =
+                store.rows_named(uuid, &field)?.into_iter().map(|row| row.value).collect();
             self.recompute_field(id, &field, &old_values, &new_values);
         }
         Ok(())

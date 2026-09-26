@@ -30,6 +30,7 @@ pub mod routes;
 pub mod schema;
 pub mod similarity;
 pub mod state;
+pub mod store;
 pub mod sync;
 pub mod tasks;
 pub mod tree_cache;
