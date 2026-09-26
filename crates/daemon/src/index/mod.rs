@@ -23,7 +23,9 @@
 
 pub mod field_index;
 pub mod id_registry;
+pub mod source;
 
+use std::borrow::Cow;
 use std::collections::HashMap;
 
 use base64::Engine;
@@ -37,6 +39,7 @@ use uuid::Uuid;
 use crate::db;
 use field_index::{CmpOp, FieldIndex, SortRep, SortReps};
 use id_registry::IdRegistry;
+pub use source::{Follow, RepReader, Source};
 
 /// One sort key: a field name and its direction.
 #[derive(Debug)]
@@ -161,12 +164,10 @@ pub fn osm_path_indexable(terms: &[String]) -> Option<&str> {
     }
 }
 
-/// One sort key's resolved lookups: the field's encoding (for a BSI
-/// representative) and its small sort store (for every other encoding) — or,
+/// One sort key's resolved lookups: the source's representative reader — or,
 /// on a `tree_ref` field, the tree-cache resolver that rebuilds full-path keys.
 struct KeyLookup<'a> {
-    field: Option<&'a FieldIndex>,
-    store: Option<&'a SortReps>,
+    reps: Option<RepReader<'a>>,
     /// Set on a `tree_ref` field: `(field name, resolver)`. A tree value sorts
     /// on its whole path, which is not stored anywhere (a directory rename
     /// would stale it), so it is rebuilt per query from the tree cache.
@@ -175,16 +176,13 @@ struct KeyLookup<'a> {
 }
 
 impl KeyLookup<'_> {
-    /// A metarecord's representative for this key. A BSI field reads it from the
-    /// bit-slices, a tree field from the path resolver, every other encoding
-    /// from the sort store.
+    /// A metarecord's representative for this key: a tree field's from the
+    /// path resolver, any other from the source.
     fn rep(&self, id: u32, uuid: Uuid) -> Option<SortRep> {
         if let Some((field, keys)) = self.tree {
             return keys.pick(field, uuid, self.want_max).map(SortRep::Tree);
         }
-        self.field
-            .and_then(|fi| fi.bsi_sort_rep(id, self.want_max))
-            .or_else(|| self.store.and_then(|s| s.rep(id, self.want_max)).cloned())
+        self.reps.as_ref().and_then(|reps| reps(id))
     }
 }
 
@@ -751,6 +749,143 @@ impl RepoIndex {
         }
     }
 
+    /// The evaluator over this index, with its page strategy.
+    fn evaluator(&self) -> Eval<'_> {
+        Eval { src: self, strategy: self.strategy }
+    }
+
+    pub fn count(&self, q: &Query) -> Result<u64, Unsupported> {
+        self.evaluator().count(q)
+    }
+
+    /// [`Eval::count_with_roots`].
+    pub fn count_with_roots(&self, q: &Query, roots: &QueryRoots) -> Result<u64, Unsupported> {
+        self.evaluator().count_with_roots(q, roots)
+    }
+
+    /// [`Eval::evaluate_sorted`].
+    pub fn evaluate_sorted(
+        &self,
+        q: &Query,
+        sort: &[SortBy],
+        limit: Option<usize>,
+    ) -> Result<Vec<Uuid>, Unsupported> {
+        self.evaluator().evaluate_sorted(q, sort, limit)
+    }
+
+    /// [`Eval::evaluate_page`].
+    pub fn evaluate_page(
+        &self,
+        q: &Query,
+        sort: &[SortBy],
+        limit: Option<usize>,
+        cursor: Option<&str>,
+    ) -> Result<(Vec<Uuid>, Option<String>), Unsupported> {
+        self.evaluator().evaluate_page(q, sort, limit, cursor)
+    }
+
+    /// [`Eval::evaluate_page_with_roots`].
+    pub fn evaluate_page_with_roots(
+        &self,
+        q: &Query,
+        sort: &[SortBy],
+        limit: Option<usize>,
+        cursor: Option<&str>,
+        roots: &QueryRoots,
+    ) -> Result<(Vec<Uuid>, Option<String>), Unsupported> {
+        self.evaluator().evaluate_page_with_roots(q, sort, limit, cursor, roots)
+    }
+
+    /// [`Eval::page_and_count`].
+    pub fn page_and_count(
+        &self,
+        q: &Query,
+        sort: &[SortBy],
+        limit: Option<usize>,
+        cursor: Option<&str>,
+        roots: &QueryRoots,
+    ) -> Result<(Vec<Uuid>, Option<String>, u64), Unsupported> {
+        self.evaluator().page_and_count(q, sort, limit, cursor, roots)
+    }
+
+    /// [`Eval::evaluate`].
+    pub fn evaluate(&self, q: &Query) -> Result<RoaringBitmap, Unsupported> {
+        self.evaluator().evaluate(q)
+    }
+
+    /// The `value_type` this field holds, `None` for a field with no
+    /// non-`Nothing` row. The type source of
+    /// [`crate::query_validate::validate_query_types`] on the serving path —
+    /// where the SQL oracle asks the database for the same answer.
+    pub fn value_type(&self, field: &str) -> Option<String> {
+        self.types.get(field).map(|t| (*t).to_string())
+    }
+
+    pub fn to_uuids(&self, bm: &RoaringBitmap) -> Vec<Uuid> {
+        bm.iter().filter_map(|id| self.registry.uuid(id)).collect()
+    }
+
+    pub fn universe_len(&self) -> usize {
+        self.universe.len() as usize
+    }
+
+    /// Number of distinct field names indexed.
+    pub fn field_count(&self) -> usize {
+        self.fields.len()
+    }
+
+    /// The distinct `(field_name, value_type)` pairs of the exclusively-owned
+    /// universe, optionally restricted to a single value type — the in-memory
+    /// equivalent of `db::distinct_field_names` (backs `GET /repos/:repo/fields`).
+    /// A name is reported iff it has ≥1 non-`Nothing` row (`present` non-empty),
+    /// so emptied names drop out; ordered by name (each name has one type, so the
+    /// secondary key is moot). Served from memory, no DB scan.
+    pub fn field_catalog(&self, type_filter: Option<&str>) -> Vec<(String, String)> {
+        let mut out: Vec<(String, String)> = self
+            .present
+            .iter()
+            .filter(|(_, ids)| !ids.is_empty())
+            .filter_map(|(name, _)| {
+                let ty = *self.types.get(name)?;
+                match type_filter {
+                    Some(want) if want != ty => None,
+                    _ => Some((name.clone(), ty.to_string())),
+                }
+            })
+            .collect();
+        out.sort();
+        out
+    }
+
+    /// Total number of sort representatives held (min + max per metarecord per
+    /// field) — the extra resident cost of `ORDER BY` support.
+    pub fn sort_rep_count(&self) -> usize {
+        self.sort.values().map(|s| s.len()).sum()
+    }
+
+    /// Number of interned dense ids (live + not-yet-reclaimed tombstones).
+    pub fn dense_id_count(&self) -> usize {
+        self.registry.len()
+    }
+
+    /// Approximate resident size of all bitmaps (serialized size), the figure
+    /// the memory-budget gate measures (spec-indexing "What to measure").
+    pub fn approx_serialized_bytes(&self) -> usize {
+        self.universe.serialized_size()
+            + field_index::sum_bytes(self.present.values())
+            + field_index::sum_bytes(self.absent.values())
+            + self.fields.values().map(|f| f.approx_serialized_bytes()).sum::<usize>()
+    }
+}
+
+/// The query evaluator: the semantics of every query shape, over any
+/// [`Source`] of bitmaps.
+pub struct Eval<'s> {
+    pub src: &'s dyn Source,
+    pub strategy: PageStrategy,
+}
+
+impl Eval<'_> {
     /// Number of metarecords matching `q` — `O(1)` from the result bitmap,
     /// where a SQL `COUNT` is `O(n)` (the irreducible count wall).
     pub fn count(&self, q: &Query) -> Result<u64, Unsupported> {
@@ -858,7 +993,7 @@ impl RepoIndex {
         let deferrable = |q: &Query| match q {
             Query::Matches { field, aspect: Aspect::Value, .. }
             | Query::Osm { field, mode: metafolder_core::query::OsmMode::Direct, .. } => {
-                self.types.get(field.as_str()) == Some(&"tree_ref")
+                self.src.value_type(field.as_str()) == Some("tree_ref")
             }
             _ => false,
         };
@@ -890,7 +1025,7 @@ impl RepoIndex {
                 Some(prev) => prev & bm,
             });
         }
-        let mut candidates = acc.unwrap_or_else(|| self.universe.clone());
+        let mut candidates = acc.unwrap_or_else(|| self.src.universe().into_owned());
         let mut checks = Vec::new();
         for leaf in &leaves {
             let (field, pattern) = match leaf {
@@ -898,7 +1033,7 @@ impl RepoIndex {
                 Query::Osm { field, terms, .. } => (field, crate::query_result::osm_regex(terms)),
                 _ => unreachable!("a deferrable leaf"),
             };
-            candidates &= self.present.get(field.as_str()).cloned().unwrap_or_default();
+            candidates &= &*self.src.present(field.as_str());
             let re = crate::regexp::compile(&pattern)
                 .map_err(|e| unsupported(format!("pattern the index cannot compile: {e}")))?;
             checks.push((field.as_str(), re));
@@ -986,7 +1121,7 @@ impl RepoIndex {
         let mut reps: Vec<Option<SortRep>> = Vec::with_capacity(matched.len() as usize * width);
         let mut uuids: Vec<Uuid> = Vec::with_capacity(matched.len() as usize);
         for id in &matched {
-            let uuid = self.registry.uuid(id).expect("interned id");
+            let uuid = self.src.uuid(id).expect("interned id");
             reps.extend(keys.iter().map(|k| k.rep(id, uuid)));
             uuids.push(uuid);
         }
@@ -1050,12 +1185,12 @@ impl RepoIndex {
             |id: u32, uuid: Uuid| matched.contains(id) && residual.is_none_or(|r| r.accepts(uuid));
         if sort.is_empty() {
             // The default order is the uuid order, which the registry keeps.
-            let span = self.registry.len() as u64;
+            let span = self.src.id_count();
             let Some(budget) = self.walk_budget(matched.len(), span, limit) else {
                 return Ok(None);
             };
             let mut out = Vec::new();
-            for (steps, (uuid, id)) in self.registry.in_uuid_order(after.map(|a| a.1)).enumerate() {
+            for (steps, (uuid, id)) in self.src.in_uuid_order(after.map(|a| a.1)).enumerate() {
                 if steps >= budget {
                     return Ok(None);
                 }
@@ -1072,9 +1207,7 @@ impl RepoIndex {
             // A numeric or date key is answered from the bit-slices — unless the
             // field also holds values the slices do not (mixed historical data,
             // which the sort store keeps).
-            let bsi = self.fields.get(&key.field).filter(|fi| fi.bsi_valued().is_some());
-            let mixed = self.sort.get(&key.field).is_some_and(|s| !s.is_empty());
-            if let (Some(fi), false) = (bsi, mixed) {
+            if let Some(fi) = self.src.bsi(&key.field) {
                 // The top-k takes no per-id check: with text still to check,
                 // the leaves are evaluated first (see `page_of_with`).
                 if self.strategy == PageStrategy::Fetch || residual.is_some() {
@@ -1083,7 +1216,7 @@ impl RepoIndex {
                 return Ok(self.bsi_page(matched, fi, !key.ascending, limit, after));
             }
             // A path sort walks the resident forest in key order.
-            let tree = self.types.get(key.field.as_str()) == Some(&"tree_ref");
+            let tree = self.src.value_type(key.field.as_str()) == Some("tree_ref");
             let keys = roots.and_then(|r| r.keys).filter(|k| k.is_resident());
             if let (true, Some(keys)) = (tree, keys) {
                 let within = roots.and_then(|r| walk_bound(q, &key.field, r));
@@ -1113,8 +1246,7 @@ impl RepoIndex {
         limit: usize,
         after: Option<&SortEntry>,
     ) -> Option<Vec<u32>> {
-        let empty = RoaringBitmap::new();
-        let placed = self.present.get(field).unwrap_or(&empty);
+        let placed = self.src.present(field);
         let budget = self.walk_budget(matched.len(), placed.len(), limit)?;
         let want = limit + 1;
         let mut out: Vec<u32> = Vec::new();
@@ -1135,7 +1267,7 @@ impl RepoIndex {
                     over = true;
                     return false;
                 }
-                if let Some(id) = self.registry.id(uuid).filter(|&id| accepts(id, uuid)) {
+                if let Some(id) = self.src.id(uuid).filter(|&id| accepts(id, uuid)) {
                     out.push(id);
                 }
                 out.len() < want
@@ -1145,7 +1277,7 @@ impl RepoIndex {
             }
         }
         if out.len() < want {
-            let tail = matched - placed;
+            let tail = matched - &*placed;
             out.extend(self.by_uuid_after(&tail, tail_after, want - out.len(), accepts));
         }
         Some(out)
@@ -1162,7 +1294,7 @@ impl RepoIndex {
     ) -> Vec<u32> {
         let mut rest: Vec<(Uuid, u32)> = set
             .iter()
-            .map(|id| (self.registry.uuid(id).expect("interned id"), id))
+            .map(|id| (self.src.uuid(id).expect("interned id"), id))
             .filter(|(u, _)| after.is_none_or(|a| *u > a))
             .filter(|&(u, id)| accepts(id, u))
             .collect();
@@ -1191,7 +1323,7 @@ impl RepoIndex {
         after: Option<&SortEntry>,
     ) -> Option<Vec<u32>> {
         let want = limit + 1;
-        let uuid = |id: u32| self.registry.uuid(id).expect("interned id");
+        let uuid = |id: u32| self.src.uuid(id).expect("interned id");
         let mut out: Vec<u32> = Vec::new();
         // The valued ids still to place, and where the valueless tail resumes.
         let (rest, tail_after) = match after {
@@ -1264,10 +1396,10 @@ impl RepoIndex {
         let more = ids.len() > limit;
         ids.truncate(limit);
         let uuids: Vec<Uuid> =
-            ids.iter().map(|&id| self.registry.uuid(id).expect("interned id")).collect();
+            ids.iter().map(|&id| self.src.uuid(id).expect("interned id")).collect();
         let next = match (more, ids.last()) {
             (true, Some(&last)) => {
-                let uuid = self.registry.uuid(last).expect("interned id");
+                let uuid = self.src.uuid(last).expect("interned id");
                 let keys = self.key_lookups(sort, roots)?;
                 let reps = keys.iter().map(|k| k.rep(last, uuid)).collect();
                 Some(encode_cursor(guard, &(reps, uuid)))
@@ -1287,7 +1419,7 @@ impl RepoIndex {
     ) -> Result<Vec<KeyLookup<'a>>, Unsupported> {
         sort.iter()
             .map(|k| {
-                let tree = if self.types.get(k.field.as_str()) == Some(&"tree_ref") {
+                let tree = if self.src.value_type(k.field.as_str()) == Some("tree_ref") {
                     // A tree sort rebuilds the paths from the resident forest.
                     // The forest is always resident on a repository that
                     // serves at all, so this is an invariant, not a fallback.
@@ -1299,12 +1431,8 @@ impl RepoIndex {
                 } else {
                     None
                 };
-                Ok(KeyLookup {
-                    field: self.fields.get(&k.field),
-                    store: self.sort.get(&k.field),
-                    tree,
-                    want_max: !k.ascending,
-                })
+                let reps = tree.is_none().then(|| self.src.sort_reps(&k.field, !k.ascending));
+                Ok(KeyLookup { reps, tree, want_max: !k.ascending })
             })
             .collect()
     }
@@ -1369,7 +1497,7 @@ impl RepoIndex {
             Query::IsUnknown { field } => {
                 // universe − {records with any row of `field`} (present ∪ absent),
                 // matching the oracle's `_repo WHERE uuid NOT IN (any field row)`.
-                let mut r = self.universe.clone();
+                let mut r = self.src.universe().into_owned();
                 r -= &self.present_of(field);
                 r -= &self.absent_of(field);
                 Ok(r)
@@ -1406,7 +1534,7 @@ impl RepoIndex {
                 Ok(acc)
             }
             Query::Not { operand } => {
-                let mut r = self.universe.clone();
+                let mut r = self.src.universe().into_owned();
                 r -= &self.eval(operand, roots)?;
                 if let Some(restrict) = restrict {
                     r &= restrict;
@@ -1420,10 +1548,10 @@ impl RepoIndex {
             // answer. The answer itself is then intersected by the shared tail.
             Query::SameAs { field, target } => {
                 let seed = self.eval(target, roots)?;
-                Ok(match self.fields.get(field) {
-                    _ if seed.is_empty() => RoaringBitmap::new(),
-                    Some(fi) => fi.same_as(&seed),
-                    None => RoaringBitmap::new(),
+                Ok(if seed.is_empty() {
+                    RoaringBitmap::new()
+                } else {
+                    self.src.same_as(field, &seed)
                 })
             }
             Query::FollowsTransitive { field, target, inclusive } => {
@@ -1439,11 +1567,11 @@ impl RepoIndex {
                 // (unknown / non-owned uuids drop out).
                 let mut r = RoaringBitmap::new();
                 for u in uuids {
-                    if let Some(id) = self.registry.id(*u) {
+                    if let Some(id) = self.src.id(*u) {
                         r.insert(id);
                     }
                 }
-                r &= &self.universe;
+                r &= &*self.src.universe();
                 Ok(r)
             }
 
@@ -1453,7 +1581,7 @@ impl RepoIndex {
                 // upstream by `query_validate` (spec-query "Field aspects"), so
                 // this is a backstop. Under `value` the scan is the ordinary
                 // name scan.
-                if *aspect == Aspect::Raw && self.types.get(field) == Some(&"tree_ref") {
+                if *aspect == Aspect::Raw && self.src.value_type(field) == Some("tree_ref") {
                     return Err(unsupported("MATCHES on a tree_ref field needs an aspect"));
                 }
                 self.text_scan(field, pattern, restrict)
@@ -1488,10 +1616,12 @@ impl RepoIndex {
         pattern: &str,
         restrict: Option<&RoaringBitmap>,
     ) -> Result<RoaringBitmap, Unsupported> {
-        let Some(fi) = self.fields.get(field) else { return Ok(RoaringBitmap::new()) };
+        if self.src.follow(field).is_none() {
+            return Ok(RoaringBitmap::new());
+        }
         let re = crate::regexp::compile(pattern)
             .map_err(|e| unsupported(format!("pattern the index cannot compile: {e}")))?;
-        Ok(fi.scan_text(&|text| re.is_match(text), restrict))
+        Ok(self.src.scan_text(field, &|text| re.is_match(text), restrict))
     }
 
     /// Direct `Follows`: referrers of every metarecord matching the sub-query.
@@ -1525,9 +1655,14 @@ impl RepoIndex {
     /// forest reaching here is a backstop; a field with no indexed value at all
     /// is vacuously empty in both engines.
     fn parent_presence(&self, field: &str, present: bool) -> Result<RoaringBitmap, Unsupported> {
-        let Some(fi) = self.fields.get(field) else { return Ok(RoaringBitmap::new()) };
-        let bm = if present { fi.tree_parents_except(Some(ZERO_UUID)) } else { fi.tree_roots() };
-        bm.ok_or_else(|| unsupported("the ':parent' aspect"))
+        match self.src.follow(field) {
+            None => Ok(RoaringBitmap::new()),
+            Some(Follow::Tree) if present => {
+                Ok(self.src.tree_parents_except(field, Some(ZERO_UUID)))
+            }
+            Some(Follow::Tree) => Ok(self.src.tree_roots(field)),
+            Some(_) => Err(unsupported("the ':parent' aspect")),
+        }
     }
 
     /// `field:path IS PRESENT` / `IS ABSENT`: a node has an assembled path
@@ -1536,7 +1671,7 @@ impl RepoIndex {
     /// On anything else `:path` is a `400`, raised upstream by
     /// `query_validate`.
     fn path_presence(&self, field: &str, present: bool) -> Result<RoaringBitmap, Unsupported> {
-        if self.types.get(field).is_some_and(|t| *t != "tree_ref") {
+        if self.src.value_type(field).is_some_and(|t| t != "tree_ref") {
             return Err(unsupported("the ':path' aspect"));
         }
         Ok(if present { self.present_of(field) } else { self.absent_of(field) })
@@ -1565,9 +1700,10 @@ impl RepoIndex {
         let Value::String(path) = value else {
             return Err(unsupported("the ':parent' aspect"));
         };
-        let Some(fi) = self.fields.get(field) else { return Ok(RoaringBitmap::new()) };
-        if !fi.supports_transitive() {
-            return Err(unsupported("the ':parent' aspect"));
+        match self.src.follow(field) {
+            None => return Ok(RoaringBitmap::new()),
+            Some(Follow::Tree) => {}
+            Some(_) => return Err(unsupported("the ':parent' aspect")),
         }
         // A missing entry means nobody resolved this path: `Unsupported`,
         // exactly as the exact-node equality is. An entry mapping to `None`
@@ -1579,12 +1715,14 @@ impl RepoIndex {
         Ok(match op {
             CmpOp::Eq => match resolved {
                 None => RoaringBitmap::new(),
-                Some(node) => fi.referrers_of(*node).cloned().unwrap_or_default(),
+                Some(node) => {
+                    self.src.referrers(field, *node).map(Cow::into_owned).unwrap_or_default()
+                }
             },
             // `*resolved` is `None` for a path that is no node: the predicate
             // is then `NOT (0)`, every row of the field — which is exactly what
             // excluding no bucket gives.
-            _ => fi.tree_parents_except(*resolved).unwrap_or_default(),
+            _ => self.src.tree_parents_except(field, *resolved),
         })
     }
 
@@ -1600,14 +1738,15 @@ impl RepoIndex {
                 None => return Ok(RoaringBitmap::new()), // path resolved to nothing
             },
             FollowTarget::Condition(cond) => {
-                self.eval(cond, roots)?.iter().filter_map(|tid| self.registry.uuid(tid)).collect()
+                self.eval(cond, roots)?.iter().filter_map(|tid| self.src.uuid(tid)).collect()
             }
         };
-        let Some(fi) = self.fields.get(field) else { return Ok(RoaringBitmap::new()) };
-        if !fi.supports_follows() {
+        if !matches!(self.src.follow(field), Some(Follow::Direct | Follow::Tree)) {
             return Ok(RoaringBitmap::new());
         }
-        Ok(target_uuids.into_iter().filter_map(|uuid| fi.referrers_of(uuid)).union())
+        let referrers: Vec<Cow<'_, RoaringBitmap>> =
+            target_uuids.into_iter().filter_map(|uuid| self.src.referrers(field, uuid)).collect();
+        Ok(referrers.iter().map(|b| &**b).union())
     }
 
     /// Transitive `Follows`: all descendants of the sub-query's matches, by
@@ -1627,7 +1766,7 @@ impl RepoIndex {
         // surfaces rather than being masked by an empty answer.)
         let frontier = match target {
             FollowTarget::Path(p) => match self.resolved_root(field, p, roots)? {
-                Some(root) => match self.registry.id(root) {
+                Some(root) => match self.src.id(root) {
                     Some(id) => RoaringBitmap::from_iter([id]),
                     None => return Ok(RoaringBitmap::new()), // root not in the index
                 },
@@ -1635,13 +1774,12 @@ impl RepoIndex {
             },
             FollowTarget::Condition(cond) => self.eval(cond, roots)?,
         };
-        let Some(fi) = self.fields.get(field) else { return Ok(RoaringBitmap::new()) };
-        if !fi.supports_transitive() {
+        if self.src.follow(field) != Some(Follow::Tree) {
             return Ok(RoaringBitmap::new());
         }
         // The inclusive form (`=>*`) keeps the root(s) in the result (whole
         // subtree); the strict form (`->*`) grows only downward from them.
-        Ok(self.expand_subtrees(fi, self.parents.get(field), frontier, inclusive))
+        Ok(self.expand_subtrees(field, frontier, inclusive))
     }
 
     /// Grows `frontier` downward over the reverse (direct-children) index of
@@ -1650,24 +1788,24 @@ impl RepoIndex {
     /// The shared core of `FollowsTransitive` and single-term `Osm` `Path`.
     fn expand_subtrees(
         &self,
-        fi: &FieldIndex,
-        parents: Option<&RoaringBitmap>,
+        field: &str,
         mut frontier: RoaringBitmap,
         inclusive: bool,
     ) -> RoaringBitmap {
-        let empty = RoaringBitmap::new();
-        let parents = parents.unwrap_or(&empty);
-        let mut result = if inclusive { &frontier & &self.universe } else { RoaringBitmap::new() };
+        let parents = self.src.parents(field);
+        let mut result =
+            if inclusive { &frontier & &*self.src.universe() } else { RoaringBitmap::new() };
         while !frontier.is_empty() {
             // Only the frontier's directories have children to ask for, and
             // one union takes them all: `|=` per directory copied the growing
             // level once per directory.
-            let asked = &frontier & parents;
-            let mut next: RoaringBitmap = asked
+            let asked = &frontier & &*parents;
+            let children: Vec<Cow<'_, RoaringBitmap>> = asked
                 .iter()
-                .filter_map(|nid| self.registry.uuid(nid))
-                .filter_map(|uuid| fi.referrers_of(uuid))
-                .union();
+                .filter_map(|nid| self.src.uuid(nid))
+                .filter_map(|uuid| self.src.referrers(field, uuid))
+                .collect();
+            let mut next: RoaringBitmap = children.iter().map(|b| &**b).union();
             next -= &result; // only newly discovered nodes; also breaks cycles
             result |= &next;
             frontier = next;
@@ -1686,7 +1824,7 @@ impl RepoIndex {
         // (spec-query), before this runs. Decline rather than answer with an
         // empty bitmap, which would turn that mistake into a silent "no rows".
         // A field with no values at all is vacuously empty in both engines.
-        if self.types.get(field).is_some_and(|t| *t != "tree_ref") {
+        if self.src.value_type(field).is_some_and(|t| t != "tree_ref") {
             return Err(unsupported("osm path on a non-tree_ref field"));
         }
         // A blank query (the search box emptied) matches every metarecord with a
@@ -1698,8 +1836,7 @@ impl RepoIndex {
         let Some(term) = osm_path_indexable(terms) else {
             return Err(unsupported("multi-term osm path"));
         };
-        let Some(fi) = self.fields.get(field) else { return Ok(RoaringBitmap::new()) };
-        if !fi.supports_transitive() {
+        if self.src.follow(field) != Some(Follow::Tree) {
             return Ok(RoaringBitmap::new());
         }
         // The "term nodes" — those whose *name* contains the term — resolved
@@ -1711,8 +1848,8 @@ impl RepoIndex {
         // cliff.
         let re = crate::regexp::compile(&format!("(?i){}", regex::escape(term)))
             .map_err(|e| unsupported(format!("osm term is not a usable pattern: {e}")))?;
-        let seeds = fi.scan_names(&|name| re.is_match(name), None);
-        Ok(self.expand_subtrees(fi, self.parents.get(field), seeds, true))
+        let seeds = self.src.scan_names(field, &|name| re.is_match(name), None);
+        Ok(self.expand_subtrees(field, seeds, true))
     }
 
     /// `And`, evaluated cheapest-first: the operands that are pure bitmap work
@@ -1785,7 +1922,7 @@ impl RepoIndex {
         // is a backstop.
         if aspect == Aspect::Raw
             && !matches!(op, CmpOp::Eq | CmpOp::Neq)
-            && self.types.get(field) == Some(&"tree_ref")
+            && self.src.value_type(field) == Some("tree_ref")
         {
             return Err(unsupported("ordered comparison on a tree_ref field needs an aspect"));
         }
@@ -1798,7 +1935,7 @@ impl RepoIndex {
         // bitmap. A string field keeps literal equality (the index handles it).
         if matches!(op, CmpOp::Eq | CmpOp::Neq) && aspect == Aspect::Raw {
             if let Value::String(s) = value {
-                if self.types.get(field) == Some(&"tree_ref") {
+                if self.src.value_type(field) == Some("tree_ref") {
                     // A missing entry means nobody resolved this path: decline.
                     let resolved = roots.and_then(|r| r.node.get(&(field.to_string(), s.clone())));
                     let Some(node) = resolved else {
@@ -1810,7 +1947,7 @@ impl RepoIndex {
                     // are all `Nothing` matches nothing either. An entry
                     // mapping to `None` resolved to no node: no match at all.
                     let eq = match node {
-                        Some(node) => match self.registry.id(*node) {
+                        Some(node) => match self.src.id(*node) {
                             Some(id) => RoaringBitmap::from_iter([id]) & self.present_of(field),
                             None => RoaringBitmap::new(),
                         },
@@ -1829,82 +1966,124 @@ impl RepoIndex {
                 }
             }
         }
+        self.src.compare(field, op, value)
+    }
+
+    fn present_of(&self, field: &str) -> RoaringBitmap {
+        self.src.present(field).into_owned()
+    }
+
+    fn absent_of(&self, field: &str) -> RoaringBitmap {
+        self.src.absent(field).into_owned()
+    }
+}
+
+/// The resident index as a [`Source`]: every answer from memory.
+impl Source for RepoIndex {
+    fn universe(&self) -> Cow<'_, RoaringBitmap> {
+        Cow::Borrowed(&self.universe)
+    }
+
+    fn present(&self, field: &str) -> Cow<'_, RoaringBitmap> {
+        self.present.get(field).map_or_else(|| Cow::Owned(RoaringBitmap::new()), Cow::Borrowed)
+    }
+
+    fn absent(&self, field: &str) -> Cow<'_, RoaringBitmap> {
+        self.absent.get(field).map_or_else(|| Cow::Owned(RoaringBitmap::new()), Cow::Borrowed)
+    }
+
+    fn value_type(&self, field: &str) -> Option<&str> {
+        self.types.get(field).copied()
+    }
+
+    fn id(&self, uuid: Uuid) -> Option<u32> {
+        self.registry.id(uuid)
+    }
+
+    fn uuid(&self, id: u32) -> Option<Uuid> {
+        self.registry.uuid(id)
+    }
+
+    fn id_count(&self) -> u64 {
+        self.registry.len() as u64
+    }
+
+    fn in_uuid_order(&self, after: Option<Uuid>) -> Box<dyn Iterator<Item = (Uuid, u32)> + '_> {
+        Box::new(self.registry.in_uuid_order(after))
+    }
+
+    fn compare(&self, field: &str, op: CmpOp, value: &Value) -> Result<RoaringBitmap, Unsupported> {
         match self.fields.get(field) {
             Some(fi) => fi.compare(op, value),
             None => Ok(RoaringBitmap::new()),
         }
     }
 
-    /// The `value_type` this field holds, `None` for a field with no
-    /// non-`Nothing` row. The type source of
-    /// [`crate::query_validate::validate_query_types`] on the serving path —
-    /// where the SQL oracle asks the database for the same answer.
-    pub fn value_type(&self, field: &str) -> Option<String> {
-        self.types.get(field).map(|t| (*t).to_string())
+    fn same_as(&self, field: &str, seed: &RoaringBitmap) -> RoaringBitmap {
+        self.fields.get(field).map(|fi| fi.same_as(seed)).unwrap_or_default()
     }
 
-    pub fn to_uuids(&self, bm: &RoaringBitmap) -> Vec<Uuid> {
-        bm.iter().filter_map(|id| self.registry.uuid(id)).collect()
+    fn scan_text(
+        &self,
+        field: &str,
+        keep: &dyn Fn(&str) -> bool,
+        restrict: Option<&RoaringBitmap>,
+    ) -> RoaringBitmap {
+        self.fields.get(field).map(|fi| fi.scan_text(keep, restrict)).unwrap_or_default()
     }
 
-    pub fn universe_len(&self) -> usize {
-        self.universe.len() as usize
+    fn scan_names(
+        &self,
+        field: &str,
+        keep: &dyn Fn(&str) -> bool,
+        restrict: Option<&RoaringBitmap>,
+    ) -> RoaringBitmap {
+        self.fields.get(field).map(|fi| fi.scan_names(keep, restrict)).unwrap_or_default()
     }
 
-    /// Number of distinct field names indexed.
-    pub fn field_count(&self) -> usize {
-        self.fields.len()
+    fn follow(&self, field: &str) -> Option<Follow> {
+        let fi = self.fields.get(field)?;
+        Some(if fi.supports_transitive() {
+            Follow::Tree
+        } else if fi.supports_follows() {
+            Follow::Direct
+        } else {
+            Follow::None
+        })
     }
 
-    /// The distinct `(field_name, value_type)` pairs of the exclusively-owned
-    /// universe, optionally restricted to a single value type — the in-memory
-    /// equivalent of `db::distinct_field_names` (backs `GET /repos/:repo/fields`).
-    /// A name is reported iff it has ≥1 non-`Nothing` row (`present` non-empty),
-    /// so emptied names drop out; ordered by name (each name has one type, so the
-    /// secondary key is moot). Served from memory, no DB scan.
-    pub fn field_catalog(&self, type_filter: Option<&str>) -> Vec<(String, String)> {
-        let mut out: Vec<(String, String)> = self
-            .present
-            .iter()
-            .filter(|(_, ids)| !ids.is_empty())
-            .filter_map(|(name, _)| {
-                let ty = *self.types.get(name)?;
-                match type_filter {
-                    Some(want) if want != ty => None,
-                    _ => Some((name.clone(), ty.to_string())),
-                }
-            })
-            .collect();
-        out.sort();
-        out
+    fn referrers(&self, field: &str, target: Uuid) -> Option<Cow<'_, RoaringBitmap>> {
+        self.fields.get(field)?.referrers_of(target).map(Cow::Borrowed)
     }
 
-    /// Total number of sort representatives held (min + max per metarecord per
-    /// field) — the extra resident cost of `ORDER BY` support.
-    pub fn sort_rep_count(&self) -> usize {
-        self.sort.values().map(|s| s.len()).sum()
+    fn tree_roots(&self, field: &str) -> RoaringBitmap {
+        self.fields.get(field).and_then(|fi| fi.tree_roots()).unwrap_or_default()
     }
 
-    /// Number of interned dense ids (live + not-yet-reclaimed tombstones).
-    pub fn dense_id_count(&self) -> usize {
-        self.registry.len()
+    fn tree_parents_except(&self, field: &str, except: Option<Uuid>) -> RoaringBitmap {
+        self.fields.get(field).and_then(|fi| fi.tree_parents_except(except)).unwrap_or_default()
     }
 
-    /// Approximate resident size of all bitmaps (serialized size), the figure
-    /// the memory-budget gate measures (spec-indexing "What to measure").
-    pub fn approx_serialized_bytes(&self) -> usize {
-        self.universe.serialized_size()
-            + field_index::sum_bytes(self.present.values())
-            + field_index::sum_bytes(self.absent.values())
-            + self.fields.values().map(|f| f.approx_serialized_bytes()).sum::<usize>()
+    fn parents(&self, field: &str) -> Cow<'_, RoaringBitmap> {
+        self.parents.get(field).map_or_else(|| Cow::Owned(RoaringBitmap::new()), Cow::Borrowed)
     }
 
-    fn present_of(&self, field: &str) -> RoaringBitmap {
-        self.present.get(field).cloned().unwrap_or_default()
+    fn sort_reps(&self, field: &str, want_max: bool) -> RepReader<'_> {
+        // A numeric or date value's representative is read from the
+        // bit-slices, any other from the sort store (see `stores_sort_rep`).
+        let fi = self.fields.get(field);
+        let store = self.sort.get(field);
+        Box::new(move |id| {
+            fi.and_then(|fi| fi.bsi_sort_rep(id, want_max))
+                .or_else(|| store.and_then(|s| s.rep(id, want_max)).cloned())
+        })
     }
 
-    fn absent_of(&self, field: &str) -> RoaringBitmap {
-        self.absent.get(field).cloned().unwrap_or_default()
+    fn bsi(&self, field: &str) -> Option<&FieldIndex> {
+        // Only when the field holds no value the slices do not (mixed
+        // historical data, which the sort store keeps).
+        let mixed = self.sort.get(field).is_some_and(|s| !s.is_empty());
+        self.fields.get(field).filter(|fi| fi.bsi_valued().is_some() && !mixed)
     }
 }
 
