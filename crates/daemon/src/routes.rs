@@ -3128,7 +3128,7 @@ fn prepare_indexed_query<'a>(
     }
     // The forest's own leaves. A `Matches` or an `osm direct` needs no rewrite:
     // the index runs the regex over the field's distinct values in memory.
-    let indexed = crate::forest_query::resolve_path_leaves(cache, query)?;
+    let indexed = crate::forest_query::resolve_path_leaves(cache, conn, query)?;
     Ok((roots, indexed))
 }
 
@@ -3220,8 +3220,9 @@ fn run_query_filter(
 
     let (mut roots, indexed_query) = prepare_indexed_query(conn, cache, &body.query)?;
     // Full-path sort keys for a `tree_ref` sort key, rebuilt from the resident
-    // forest (spec-data-model "Sort specification").
-    let sort_keys = crate::tree_cache::SortKeys::new(cache);
+    // forest — or from the store, where none is resident (spec-data-model
+    // "Sort specification", spec-storage increment 4 e).
+    let sort_keys = crate::tree_cache::SortKeys::with_store(cache, conn);
     roots.keys = Some(&sort_keys);
     // The index build/refresh above is the heavy phase on a large repo; if a
     // Stop landed during it, don't start the (also non-trivial) evaluation.
@@ -3255,6 +3256,9 @@ fn run_query_filter(
         }
     });
     engine.check()?;
+    if let Some(e) = sort_keys.take_error() {
+        return Err(ApiError::internal(format!("reading the forest failed: {e:#}")));
+    }
     paged.map_err(index_gap)
 }
 

@@ -155,7 +155,14 @@ impl RepoState {
         ));
         Self {
             conn: Mutex::new(opened.conn),
-            cache: Mutex::new(TreeCache::new(opened.case_insensitive)),
+            // A key-value repository keeps no forest in memory: its store
+            // answers (spec-storage increment 4 e).
+            cache: Mutex::new(match opened.config.storage {
+                crate::config::Storage::Kv => {
+                    TreeCache::new(opened.case_insensitive).without_forest()
+                }
+                crate::config::Storage::Sqlite => TreeCache::new(opened.case_insensitive),
+            }),
             config: opened.config,
             name,
             metafolder_dir: opened.metafolder_dir,
@@ -506,12 +513,9 @@ impl RepoState {
         // rather than degrading quietly.
         let mut forest = Vec::new();
         if crate::store::Rows::as_kv(&*conn).is_some() {
-            // A key-value repository is queried from the store itself
-            // (spec-storage increment 4 d): no resident index, and the forest
-            // is read straight from the store.
-            let _p = Phase::begin(&who, "read the forest");
-            forest = crate::store::Rows::forest(&*conn)
-                .map_err(|e| ApiError::internal(format!("failed to read the forest: {e:#}")))?;
+            // A key-value repository is queried from the store itself:
+            // no resident index (spec-storage increment 4 d), and no resident
+            // forest either (4 e) — nothing to build.
         } else {
             let _p = Phase::begin(&who, "build the query index");
             let index = crate::index::RepoIndex::build_reported_collecting(

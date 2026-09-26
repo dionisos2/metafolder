@@ -636,8 +636,20 @@ d. *(done)* *Serving from the disk*: a KV repository answers its queries through
    snapshot without that lock ("Readers never block", [[*Writes and
    atomicity]]) needs the map's growth to exclude open readers, since LMDB
    resizes only with no transaction open in the process; it is its own step.
-e. *The forest on disk*: =descendants= bitmaps, paths resolved from =forest=,
-   the path walk; the tree cache is no longer built for a KV repository.
+e. *The forest on disk*: the tree cache is no longer built for a KV
+   repository. *(done)* It is created /without a forest/: a load leaves it
+   empty, the upkeep after a write has nothing to do, and a lookup starts from
+   scratch (the nodes one lookup brings in are dropped by the next, so nothing
+   grows and nothing goes stale). Every forest question goes to the store:
+   paths resolve component by component, the full-path sort keys and the
+   =:path= / =osm= path leaves are computed from the store's positions by the
+   resident rules (a child hangs under its parent's first position; a node
+   whose parent holds no position is in no path), and the key-order walk of a
+   path sort declines, so a path-sorted page is fetched. Measured (quick bench,
+   size S): opening a folder 0.53 → 1.44 ms, resolving a page of paths 0.41 →
+   1.21 ms — costs of the result, not of the repository. *Not built yet*: the
+   =descendants= bitmaps and the walk of the forest in key order from the
+   store, which would bring both back down.
 f. *Trigrams* and the lazy text checks; postings for frequent values; the
    cost assertions (key reads counted, not timed).
 

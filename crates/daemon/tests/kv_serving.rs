@@ -128,3 +128,56 @@ async fn init_takes_the_storage_backend() {
         assert_eq!(repo.config.storage, want);
     }
 }
+
+/// A KV repository keeps no forest in memory (spec-storage increment 4 e):
+/// paths resolve, sort and filter from the store, and the tree cache holds
+/// at most the nodes of the last path looked up — a rename included.
+#[tokio::test]
+async fn a_kv_repository_keeps_no_forest_in_memory() {
+    let (app, repo, _root, state) = setup("forest").await;
+    let repo_state = state.repo(repo.parse().unwrap()).unwrap();
+    if repo_state.config.storage != Storage::Kv {
+        return; // the resident forest is what a SQLite repository keeps
+    }
+    let tref = |parent: Option<&str>, name: &str| {
+        json!([{"name": "loc", "value": {"type": "tree_ref",
+                 "value": {"parent": parent, "name": name}}}])
+    };
+    let top = create(&app, &repo, tref(None, "top")).await;
+    let b = create(&app, &repo, tref(Some(&top), "b")).await;
+    let a = create(&app, &repo, tref(Some(&top), "a")).await;
+
+    let query = |q: Value| {
+        let app = app.clone();
+        let repo = repo.clone();
+        async move {
+            let (status, body) =
+                request(&app, "POST", &format!("/repos/{repo}/query"), Some(q)).await;
+            assert_eq!(status, StatusCode::OK, "{body}");
+            body
+        }
+    };
+    let under_top = json!({"type": "follows", "field": "loc", "target": "top"});
+    let by_path = json!([{"field": "loc", "order": "asc"}]);
+    assert_eq!(query(json!({"query": under_top, "sort": by_path})).await, json!([a, b]));
+    let on_path = json!({"type": "eq", "field": "loc", "aspect": "path",
+                         "value": {"type": "string", "value": "top/b"}});
+    assert_eq!(query(json!({"query": on_path})).await, json!([b]));
+    assert!(repo_state.lock_cache().len() <= 2, "at most the last lookup's path is held");
+
+    // Rename `b` to `c`: served at once, from the store.
+    let (status, body) = request(
+        &app,
+        "PUT",
+        &format!("/repos/{repo}/metarecords/{b}/fields/loc"),
+        Some(json!({"value": {"type": "tree_ref", "value": {"parent": top, "name": "c"}}})),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    let desc = json!([{"field": "loc", "order": "desc"}]);
+    assert_eq!(query(json!({"query": under_top, "sort": desc})).await, json!([b, a]));
+    let on_c = json!({"type": "eq", "field": "loc", "aspect": "path",
+                      "value": {"type": "string", "value": "top/c"}});
+    assert_eq!(query(json!({"query": on_c})).await, json!([b]));
+    assert!(repo_state.lock_cache().len() <= 2, "at most the last lookup's path is held");
+}

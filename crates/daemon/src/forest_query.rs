@@ -16,6 +16,7 @@ use metafolder_core::query::{Aspect, FollowTarget, OsmMode, Query};
 use uuid::Uuid;
 
 use crate::error::ApiError;
+use crate::store::Rows;
 use crate::tree_cache::TreeCache;
 
 /// Rewrites every forest-served leaf of `q` into the `uuid_in` set it matches.
@@ -28,40 +29,52 @@ use crate::tree_cache::TreeCache;
 /// declining the untouched leaf then reports the daemon bug it is. A field
 /// with no forest at all is the one benign case: the leaf matches nothing and
 /// the walk says so.
-pub fn resolve_path_leaves(cache: &TreeCache, q: &Query) -> Result<Query, ApiError> {
-    if let Some(matched) = path_leaf_matches(cache, q)? {
+pub fn resolve_path_leaves(
+    cache: &TreeCache,
+    store: &dyn Rows,
+    q: &Query,
+) -> Result<Query, ApiError> {
+    if let Some(matched) = path_leaf_matches(cache, store, q)? {
         return Ok(Query::UuidIn { uuids: matched });
     }
     Ok(match q {
-        Query::And { operands } => Query::And { operands: rewrite_all(cache, operands)? },
-        Query::Or { operands } => Query::Or { operands: rewrite_all(cache, operands)? },
+        Query::And { operands } => Query::And { operands: rewrite_all(cache, store, operands)? },
+        Query::Or { operands } => Query::Or { operands: rewrite_all(cache, store, operands)? },
         Query::Not { operand } => {
-            Query::Not { operand: Box::new(resolve_path_leaves(cache, operand)?) }
+            Query::Not { operand: Box::new(resolve_path_leaves(cache, store, operand)?) }
         }
         Query::SameAs { field, target } => Query::SameAs {
             field: field.clone(),
-            target: Box::new(resolve_path_leaves(cache, target)?),
+            target: Box::new(resolve_path_leaves(cache, store, target)?),
         },
         Query::Follows { field, target } => {
-            Query::Follows { field: field.clone(), target: rewrite_target(cache, target)? }
+            Query::Follows { field: field.clone(), target: rewrite_target(cache, store, target)? }
         }
         Query::FollowsTransitive { field, target, inclusive } => Query::FollowsTransitive {
             field: field.clone(),
-            target: rewrite_target(cache, target)?,
+            target: rewrite_target(cache, store, target)?,
             inclusive: *inclusive,
         },
         other => other.clone(),
     })
 }
 
-fn rewrite_all(cache: &TreeCache, operands: &[Query]) -> Result<Vec<Query>, ApiError> {
-    operands.iter().map(|o| resolve_path_leaves(cache, o)).collect()
+fn rewrite_all(
+    cache: &TreeCache,
+    store: &dyn Rows,
+    operands: &[Query],
+) -> Result<Vec<Query>, ApiError> {
+    operands.iter().map(|o| resolve_path_leaves(cache, store, o)).collect()
 }
 
-fn rewrite_target(cache: &TreeCache, target: &FollowTarget) -> Result<FollowTarget, ApiError> {
+fn rewrite_target(
+    cache: &TreeCache,
+    store: &dyn Rows,
+    target: &FollowTarget,
+) -> Result<FollowTarget, ApiError> {
     Ok(match target {
         FollowTarget::Condition(c) => {
-            FollowTarget::Condition(Box::new(resolve_path_leaves(cache, c)?))
+            FollowTarget::Condition(Box::new(resolve_path_leaves(cache, store, c)?))
         }
         FollowTarget::Path(p) => FollowTarget::Path(p.clone()),
     })
@@ -69,25 +82,28 @@ fn rewrite_target(cache: &TreeCache, target: &FollowTarget) -> Result<FollowTarg
 
 /// The uuids a single forest leaf matches, or `None` when `q` is not one or the
 /// forest cannot answer it.
-fn path_leaf_matches(cache: &TreeCache, q: &Query) -> Result<Option<Vec<Uuid>>, ApiError> {
+fn path_leaf_matches(
+    cache: &TreeCache,
+    store: &dyn Rows,
+    q: &Query,
+) -> Result<Option<Vec<Uuid>>, ApiError> {
     // An `osm` path the index cannot serve natively — several terms, or one
     // containing the separator, both order-sensitive. The forest walk carries
     // the match position down each branch and takes a whole subtree at once
     // when a branch has consumed every term.
     if let Query::Osm { field, terms, mode: OsmMode::Path } = q {
         if !terms.is_empty() && crate::index::osm_path_indexable(terms).is_none() {
-            let mut matched = cache.osm_path_matches(field, terms).map_err(ApiError::from)?;
+            let mut matched =
+                cache.osm_path_matches_with(store, field, terms).map_err(ApiError::from)?;
             // Sorted for the same reason the `:path` walk sorts: the cursor is
             // bound to a hash of the rewritten query.
-            if let Some(matched) = matched.as_mut() {
-                matched.sort_unstable();
-            }
-            return Ok(matched);
+            matched.sort_unstable();
+            return Ok(Some(matched));
         }
         return Ok(None);
     }
     let Some((field, pred)) = path_predicate(q) else { return Ok(None) };
-    cache.path_matches(field, pred.as_ref()).map_err(ApiError::from)
+    cache.path_matches_with(store, field, pred.as_ref()).map(Some).map_err(ApiError::from)
 }
 
 /// A `:path` leaf's field and the test its assembled path must pass.

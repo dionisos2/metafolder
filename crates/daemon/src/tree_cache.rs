@@ -166,6 +166,12 @@ pub struct TreeCache {
     /// as unit tests do, where the DB fallbacks below still apply. Nothing
     /// clears it any more: there is no eviction to lose a node to.
     complete: bool,
+    /// Whether the forest is ever kept here. A key-value repository keeps
+    /// none (spec-storage increment 4 e): its store answers every forest
+    /// question, a load leaves this empty, and a lookup starts from scratch —
+    /// what one lookup brings in is dropped by the next, so nothing grows and
+    /// nothing goes stale, there being no upkeep.
+    resident: bool,
 }
 
 impl TreeCache {
@@ -178,6 +184,26 @@ impl TreeCache {
             case_insensitive,
             misses: 0,
             complete: false,
+            resident: true,
+        }
+    }
+
+    /// A cache that keeps no forest: see [`Self::keeps_forest`].
+    pub fn without_forest(mut self) -> Self {
+        self.resident = false;
+        self
+    }
+
+    /// Whether the forest is kept here at all (false on a key-value
+    /// repository, whose store is asked instead).
+    pub fn keeps_forest(&self) -> bool {
+        self.resident
+    }
+
+    /// Without a resident forest, forgets what the last lookup brought in.
+    fn scratch(&mut self) {
+        if !self.resident && self.live > 0 {
+            self.clear();
         }
     }
 
@@ -195,6 +221,10 @@ impl TreeCache {
     /// a single DB scan, so that subsequent read-side navigation is served
     /// without per-node queries. Replaces any current contents.
     pub fn populate(&mut self, store: &dyn Rows) -> Result<()> {
+        if !self.resident {
+            self.clear();
+            return Ok(());
+        }
         // Timed in two parts (logged when non-trivial): the `load_tree_forest`
         // SQL scan+sort, and the in-memory node linking — a persistent load
         // report, so it is clear which dominates on a large forest.
@@ -217,6 +247,10 @@ impl TreeCache {
     /// collects them (see `RepoIndex::build_reported_collecting`). Replaces any
     /// current contents.
     pub fn populate_from_forest(&mut self, rows: Vec<db::TreeRow>) {
+        if !self.resident {
+            self.clear();
+            return;
+        }
         self.clear();
         // The same two steps every other producer uses — create the node, link
         // it where its position says — in two passes, so a child's parent is in
@@ -277,6 +311,7 @@ impl TreeCache {
         path: &str,
         form: PathForm,
     ) -> Result<Option<Uuid>> {
+        self.scratch();
         // A node's name is never empty — only the filesystem forest's root has
         // one, and it is always the first component. So an empty component
         // *after* the first can only come from a redundant slash, and dropping
@@ -544,6 +579,63 @@ impl TreeCache {
         Ok(Some(out))
     }
 
+    /// [`Self::path_matches`], from the store when the forest is not resident
+    /// (a key-value repository keeps no tree cache, spec-storage increment 4
+    /// e): the same walk, over the store's positions.
+    pub fn path_matches_with(
+        &self,
+        store: &dyn Rows,
+        field: &str,
+        pred: &dyn Fn(&str) -> bool,
+    ) -> Result<Vec<Uuid>> {
+        if let Some(out) = self.path_matches(field, pred)? {
+            return Ok(out);
+        }
+        let mut matched = HashSet::new();
+        walk_stored(store, field, (), &mut |(), uuid, path| {
+            if pred(path) {
+                matched.insert(uuid);
+            }
+            Some(())
+        })?;
+        let mut out: Vec<Uuid> = matched.into_iter().collect();
+        out.sort_unstable();
+        Ok(out)
+    }
+
+    /// [`Self::osm_path_matches`], from the store when the forest is not
+    /// resident. A branch that has consumed every term matches whole, as in
+    /// the resident walk.
+    pub fn osm_path_matches_with(
+        &self,
+        store: &dyn Rows,
+        field: &str,
+        terms: &[String],
+    ) -> Result<Vec<Uuid>> {
+        if let Some(out) = self.osm_path_matches(field, terms)? {
+            return Ok(out);
+        }
+        let terms_lower: Vec<String> = terms.iter().map(|t| t.to_lowercase()).collect();
+        let mut matched = HashSet::new();
+        // `None` below a branch that matched whole: everything there matches.
+        let start = Some(metafolder_core::query::OsmProgress::default());
+        walk_stored(store, field, start, &mut |at, uuid, path| {
+            let at = match at {
+                None => None,
+                Some(at) => {
+                    let lower = path.to_lowercase();
+                    let at = metafolder_core::query::osm_advance(&lower, &terms_lower, at);
+                    (at.matched < terms_lower.len()).then_some(at)
+                }
+            };
+            if at.is_none() {
+                matched.insert(uuid);
+            }
+            Some(at)
+        })?;
+        Ok(matched.into_iter().collect())
+    }
+
     /// Adds every metarecord below `node` (excluding it) to `out`.
     fn collect_subtree(&self, node: &Node, out: &mut HashSet<Uuid>) {
         let mut frontier: Vec<usize> = node.children.values().copied().collect();
@@ -619,6 +711,9 @@ impl TreeCache {
     /// uncached parent does not lose the position: it waits for it
     /// ([`Self::link`]).
     pub fn apply_insert(&mut self, field: &str, parent: Option<Uuid>, name: &TreeName, uuid: Uuid) {
+        if !self.resident {
+            return;
+        }
         let norm = self.normalize(name);
         let taken = match parent.and_then(|p| self.first_node_of(field, p)) {
             Some(parent_idx) => self.node(parent_idx).children.contains_key(&norm),
@@ -641,6 +736,9 @@ impl TreeCache {
         new_parent: Option<Uuid>,
         new_name: &TreeName,
     ) {
+        if !self.resident {
+            return;
+        }
         let nodes = self.fields.get(field).and_then(|ft| ft.by_uuid.get(&uuid)).cloned();
         let Some(nodes) = nodes else {
             return;
@@ -665,6 +763,9 @@ impl TreeCache {
 
     /// Notifies the cache that a metarecord left the tree; drops its subtree.
     pub fn apply_remove(&mut self, field: &str, uuid: Uuid) {
+        if !self.resident {
+            return;
+        }
         let nodes = self.fields.get(field).and_then(|ft| ft.by_uuid.get(&uuid)).cloned();
         for idx in nodes.unwrap_or_default() {
             self.remove_subtree(field, idx);
@@ -692,6 +793,9 @@ impl TreeCache {
     /// ones), and which of the two survives then depends on the order they are
     /// placed in. A load has the same collision, and resolves it by row id.
     pub fn apply_ops(&mut self, ops: &[TreeOp]) -> bool {
+        if !self.resident {
+            return true; // nothing kept, nothing to keep up
+        }
         if !self.complete {
             return false;
         }
@@ -900,6 +1004,7 @@ impl TreeCache {
         field: &str,
         rel: &crate::relpath::RelPath,
     ) -> Result<Option<Uuid>> {
+        self.scratch();
         let mut cur = match self.root_node(store, field)? {
             Some(idx) => idx,
             None => return Ok(None),
@@ -1309,21 +1414,118 @@ impl TreeCache {
 /// refresh. Rebuilding is cheap because ancestors are memoised — a directory's
 /// key is assembled once and then shared by every file in it — while leaves,
 /// which are the bulk of a match set and are each needed once, are not kept.
+///
+/// Without a resident forest (a key-value repository keeps none, spec-storage
+/// increment 4 e) the keys are read from a store instead, by the same rule:
+/// a position's key is its parent's key — at the parent's first position —
+/// then its name; a root's, or a detached node's, is its bare name.
 pub struct SortKeys<'a> {
     cache: &'a TreeCache,
+    store: Option<&'a dyn Rows>,
     dirs: RefCell<HashMap<usize, Arc<str>>>,
+    /// Store mode: a metarecord's key at its first position, memoised.
+    firsts: RefCell<HashMap<Uuid, Option<Arc<str>>>>,
+    /// Store mode: the first read error, which leaves keys missing.
+    error: RefCell<Option<anyhow::Error>>,
 }
 
 impl<'a> SortKeys<'a> {
     pub fn new(cache: &'a TreeCache) -> Self {
-        Self { cache, dirs: RefCell::new(HashMap::new()) }
+        Self {
+            cache,
+            store: None,
+            dirs: RefCell::new(HashMap::new()),
+            firsts: RefCell::new(HashMap::new()),
+            error: RefCell::new(None),
+        }
     }
 
-    /// Whether the keys can be served at all — the forest is fully resident
-    /// ([`TreeCache::is_complete`]). Checked once per sort key rather than per
-    /// metarecord.
+    /// Keys from `cache` while it holds the whole forest, else from `store`.
+    pub fn with_store(cache: &'a TreeCache, store: &'a dyn Rows) -> Self {
+        Self { store: Some(store), ..Self::new(cache) }
+    }
+
+    /// Whether the keys can be served at all: the forest is fully resident
+    /// ([`TreeCache::is_complete`]), or a store stands in for it. Checked once
+    /// per sort key rather than per metarecord.
     pub fn is_resident(&self) -> bool {
-        self.cache.complete
+        self.cache.complete || self.store.is_some()
+    }
+
+    /// The first read error of the store mode, if any (and forgets it): the
+    /// keys it left missing must not be served.
+    pub fn take_error(&self) -> Option<anyhow::Error> {
+        self.error.borrow_mut().take()
+    }
+
+    /// The store behind the keys, when the forest is not resident.
+    fn stored(&self) -> Option<&'a dyn Rows> {
+        self.store.filter(|_| !self.cache.complete)
+    }
+
+    /// A read of the store mode, its error kept.
+    fn read<T>(&self, r: Result<T>) -> Option<T> {
+        match r {
+            Ok(v) => Some(v),
+            Err(e) => {
+                self.error.borrow_mut().get_or_insert(e);
+                None
+            }
+        }
+    }
+
+    /// Store mode: the key of `uuid` at its first position (memoised).
+    fn first_key(&self, store: &dyn Rows, field: &str, uuid: Uuid) -> Option<Arc<str>> {
+        if let Some(k) = self.firsts.borrow().get(&uuid) {
+            return k.clone();
+        }
+        // Up the chain of first positions to a known key or a root, then
+        // down again, memoising each.
+        let mut chain: Vec<(Uuid, String)> = Vec::new();
+        let mut base: Option<Arc<str>> = None;
+        let mut cur = uuid;
+        let mut ended = false;
+        for _ in 0..MAX_TREE_DEPTH {
+            let Some(first) = self.read(store.positions(field, cur))?.into_iter().next() else {
+                // No position: `cur` is in no path.
+                if chain.is_empty() {
+                    self.firsts.borrow_mut().insert(uuid, None);
+                    return None;
+                }
+                ended = true;
+                break;
+            };
+            chain.push((cur, first.1));
+            match first.0 {
+                None => {
+                    ended = true;
+                    break;
+                }
+                Some(p) => {
+                    if let Some(k) = self.firsts.borrow().get(&p) {
+                        base = k.clone();
+                        ended = true;
+                        break;
+                    }
+                    cur = p;
+                }
+            }
+        }
+        if !ended {
+            let e = anyhow::anyhow!("TreeRef chain deeper than {MAX_TREE_DEPTH} for {uuid}");
+            self.error.borrow_mut().get_or_insert(e);
+            return None;
+        }
+        let mut key = base;
+        for (node, name) in chain.iter().rev() {
+            let k = match &key {
+                None => Arc::from(name.as_str()),
+                Some(parent) => join_key(parent, name),
+            };
+            self.firsts.borrow_mut().insert(*node, Some(k.clone()));
+            key = Some(k);
+        }
+        key
     }
 
     /// The sort key `uuid` takes in `field`'s forest for the requested
@@ -1335,6 +1537,16 @@ impl<'a> SortKeys<'a> {
     /// rather than the list so the common single-position row costs no
     /// allocation beyond its own key.
     pub fn pick(&self, field: &str, uuid: Uuid, want_max: bool) -> Option<Arc<str>> {
+        if let Some(store) = self.stored() {
+            let positions = self.read(store.positions(field, uuid))?;
+            let keys = positions.into_iter().map(|(parent, name)| {
+                match parent.and_then(|p| self.first_key(store, field, p)) {
+                    Some(pk) => join_key(&pk, &name),
+                    None => Arc::from(name.as_str()),
+                }
+            });
+            return if want_max { keys.max() } else { keys.min() };
+        }
         let idxs = self.cache.fields.get(field)?.by_uuid.get(&uuid)?;
         let mut best: Option<Arc<str>> = None;
         for &idx in idxs {
@@ -1471,6 +1683,11 @@ impl<'a> SortKeys<'a> {
         visit: &mut dyn FnMut(Uuid) -> bool,
     ) -> WalkEnd {
         use std::cmp::Ordering;
+        // Without the resident forest there is nothing to walk in key order
+        // here: the caller fetches the keys instead.
+        if self.stored().is_some() {
+            return WalkEnd::Refused;
+        }
         let Some(tree) = self.cache.fields.get(field) else { return WalkEnd::Completed };
         // The top of the walk: the forest's roots (detached nodes among them),
         // or the children of the bounding metarecord's positions.
@@ -1582,6 +1799,10 @@ impl<'a> SortKeys<'a> {
     /// — the per-record form of the index's name scan (the same display form
     /// of the same names), for the text checks a walked page defers.
     pub fn any_name(&self, field: &str, uuid: Uuid, keep: &dyn Fn(&str) -> bool) -> bool {
+        if let Some(store) = self.stored() {
+            let positions = self.read(store.positions(field, uuid)).unwrap_or_default();
+            return positions.iter().any(|(_, name)| keep(name));
+        }
         let idxs = self.cache.fields.get(field).and_then(|ft| ft.by_uuid.get(&uuid));
         idxs.is_some_and(|idxs| idxs.iter().any(|&i| keep(&self.cache.node(i).name.display())))
     }
@@ -1657,6 +1878,39 @@ impl<'a> SortKeys<'a> {
         }
         best.is_some_and(|(_, o)| o == idx)
     }
+}
+
+/// Walks `field`'s forest in the store from its roots, depth first, as the
+/// resident walks do: a node is visited once per position, with the path of
+/// that position (a root's is its bare name, every other joins its parent's
+/// with `/`), and its children are reached under its *first* position only —
+/// where a load hangs them. A node whose parent holds no position is in no
+/// path, so it is never reached. `visit` gets the state its parent passed
+/// down and returns the state for the node's children, or `None` to skip them.
+fn walk_stored<S: Copy>(
+    store: &dyn Rows,
+    field: &str,
+    start: S,
+    visit: &mut dyn FnMut(S, Uuid, &str) -> Option<S>,
+) -> Result<()> {
+    // (parent, the parent's path, the state it passes down, depth)
+    let mut stack: Vec<(Uuid, String, S, usize)> = vec![(Uuid::nil(), String::new(), start, 0)];
+    while let Some((parent, parent_path, state, depth)) = stack.pop() {
+        if depth >= MAX_TREE_DEPTH {
+            anyhow::bail!("TreeRef chain deeper than {MAX_TREE_DEPTH} in field '{field}'");
+        }
+        for (child, name) in store.children(field, parent)? {
+            let path = if depth == 0 { name.clone() } else { format!("{parent_path}/{name}") };
+            let Some(next) = visit(state, child, &path) else { continue };
+            // Descend only from the child's first position.
+            let here = if depth == 0 { None } else { Some(parent) };
+            let first = store.positions(field, child)?.into_iter().next();
+            if first.is_some_and(|(p, n)| p == here && n == name) {
+                stack.push((child, path, next, depth + 1));
+            }
+        }
+    }
+    Ok(())
 }
 
 fn join_key(parent_key: &str, name: &str) -> Arc<str> {

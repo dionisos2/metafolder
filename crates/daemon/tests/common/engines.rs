@@ -12,6 +12,7 @@ use metafolder_daemon::index::{
     collect_node_paths, collect_path_targets, PageStrategy, QueryRoots, RepoIndex, SortBy,
 };
 use metafolder_daemon::query_result::{SortKey, SortOrder};
+use metafolder_daemon::store::Store;
 use metafolder_daemon::tree_cache::{SortKeys, TreeCache};
 use metafolder_daemon::{forest_query, query_validate};
 use metafolder_query_oracle as query_exec;
@@ -74,45 +75,58 @@ pub fn indexed(
     validate(conn, query).expect("validation");
     cache.populate(conn).unwrap();
 
-    let mut path_targets = Vec::new();
-    collect_path_targets(query, &mut path_targets);
-    let mut resolved_paths = Vec::new();
-    for (field, path) in path_targets {
-        if let Some(uuid) = cache.resolve_path(conn, &field, &path).unwrap() {
-            resolved_paths.push(((field, path), uuid));
-        }
-    }
-    let mut node_paths = Vec::new();
-    collect_node_paths(query, &mut node_paths);
-    let mut resolved_nodes = Vec::new();
-    for (field, path) in node_paths {
-        let node = cache.resolve_path(conn, &field, &path).unwrap();
-        resolved_nodes.push(((field, path), node));
-    }
-    let indexed = forest_query::resolve_path_leaves(cache, query).unwrap();
-
-    let keys = SortKeys::new(cache);
-    let mut roots = QueryRoots::new();
-    roots.path.extend(resolved_paths);
-    roots.node.extend(resolved_nodes);
-    roots.keys = Some(&keys);
     let sort_by: Vec<SortBy> = sort
         .iter()
         .map(|k| SortBy { field: k.field.clone(), ascending: k.order == SortOrder::Asc })
         .collect();
+    let (roots, indexed) = prepare(cache, conn, query);
+    let keys = SortKeys::new(cache);
+    let roots = QueryRoots { keys: Some(&keys), ..roots };
     let index = RepoIndex::build(conn).unwrap();
     let got = match index.evaluate_page_with_roots(&indexed, &sort_by, None, None, &roots) {
         Ok((uuids, _)) => uuids,
         Err(gap) => panic!("the serving path declined {query:?}: {gap}"),
     };
-    // The same evaluator over the key-value store's derived key spaces.
+    // The same evaluator over the key-value store's derived key spaces, and
+    // the forest read from that store: a KV repository keeps none resident.
     let (kv, _dir) = super::kv::kv_mirror(conn);
+    let mut no_forest = TreeCache::new(false).without_forest();
+    let (roots, indexed) = prepare(&mut no_forest, &kv, query);
+    let keys = SortKeys::with_store(&no_forest, &kv);
+    let roots = QueryRoots { keys: Some(&keys), ..roots };
     let on_kv = super::kv::with_kv(&kv, PageStrategy::Auto, |e, _| {
         e.evaluate_page_with_roots(&indexed, &sort_by, None, None, &roots)
     });
+    assert!(keys.take_error().is_none(), "reading the forest failed");
     match on_kv {
         Ok((uuids, _)) => assert_eq!(uuids, got, "KV/resident divergence on {query:?}"),
         Err(gap) => panic!("the KV source declined {query:?}: {gap}"),
     }
     got
+}
+
+/// The route's preparation of a query: its path seeds and exact nodes
+/// resolved, its forest leaves rewritten — through `cache`, or `store` where
+/// the cache holds no forest.
+pub fn prepare(
+    cache: &mut TreeCache,
+    store: &dyn Store,
+    query: &Query,
+) -> (QueryRoots<'static>, Query) {
+    let mut roots = QueryRoots::new();
+    let mut path_targets = Vec::new();
+    collect_path_targets(query, &mut path_targets);
+    for (field, path) in path_targets {
+        if let Some(uuid) = cache.resolve_path(store, &field, &path).unwrap() {
+            roots.path.insert((field, path), uuid);
+        }
+    }
+    let mut node_paths = Vec::new();
+    collect_node_paths(query, &mut node_paths);
+    for (field, path) in node_paths {
+        let node = cache.resolve_path(store, &field, &path).unwrap();
+        roots.node.insert((field, path), node);
+    }
+    let indexed = forest_query::resolve_path_leaves(cache, store, query).unwrap();
+    (roots, indexed)
 }
