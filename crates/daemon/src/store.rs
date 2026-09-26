@@ -80,6 +80,25 @@ macro_rules! forward_to_connection {
                 let $me = self;
                 Rows::children($conn, field, parent)
             }
+            fn child_by_bytes(
+                &self,
+                field: &str,
+                parent: Option<Uuid>,
+                name: &[u8],
+            ) -> Result<Option<Uuid>> {
+                let $me = self;
+                Rows::child_by_bytes($conn, field, parent, name)
+            }
+            fn child_by_text(
+                &self,
+                field: &str,
+                parent: Option<Uuid>,
+                name: &str,
+                nocase: bool,
+            ) -> Result<Option<Uuid>> {
+                let $me = self;
+                Rows::child_by_text($conn, field, parent, name, nocase)
+            }
             fn forest(&self) -> Result<Vec<TreeRow>> {
                 let $me = self;
                 Rows::forest($conn)
@@ -178,6 +197,24 @@ pub trait Rows {
     fn holders(&self, name: &str) -> Result<Vec<Uuid>>;
     /// The direct children of `parent` in `field`'s forest, `(uuid, name)`.
     fn children(&self, field: &str, parent: Uuid) -> Result<Vec<(Uuid, String)>>;
+    /// The child of `parent` (`None`: a root) whose name is exactly these
+    /// bytes.
+    fn child_by_bytes(
+        &self,
+        field: &str,
+        parent: Option<Uuid>,
+        name: &[u8],
+    ) -> Result<Option<Uuid>>;
+    /// The child of `parent` whose name, as text, is `name` — ignoring ASCII
+    /// case when `nocase` (SQLite's `NOCASE`, which another backend must
+    /// reproduce exactly: ASCII letters only).
+    fn child_by_text(
+        &self,
+        field: &str,
+        parent: Option<Uuid>,
+        name: &str,
+        nocase: bool,
+    ) -> Result<Option<Uuid>>;
     /// Every `tree_ref` position, grouped by field name and metarecord, a
     /// metarecord's positions in row-id order (the order a load places them
     /// in; the groups themselves come in no promised order).
@@ -195,7 +232,19 @@ pub trait Rows {
             .collect();
         Ok(Some(MetaRecord { uuid, version, fields }))
     }
-    /// The first `String` value of a field, if any.
+    /// A metarecord's positions in `field`'s forest, `(parent, name)` (`None`
+    /// for a root), in row-id order.
+    fn positions(&self, field: &str, uuid: Uuid) -> Result<Vec<(Option<Uuid>, String)>> {
+        Ok(self
+            .rows_named(uuid, field)?
+            .into_iter()
+            .filter_map(|r| match r.value {
+                Value::TreeRef { parent, name } => Some((parent, name.display().into_owned())),
+                _ => None,
+            })
+            .collect())
+    }
+    /// The first string value of a field, if any.
     fn string_field(&self, uuid: Uuid, name: &str) -> Result<Option<String>> {
         Ok(self.rows_named(uuid, name)?.into_iter().find_map(|r| match r.value {
             Value::String(s) => Some(s),
@@ -627,6 +676,23 @@ impl Rows for Connection {
     }
     fn children(&self, field: &str, parent: Uuid) -> Result<Vec<(Uuid, String)>> {
         db::tree_children(self, field, parent)
+    }
+    fn child_by_bytes(
+        &self,
+        field: &str,
+        parent: Option<Uuid>,
+        name: &[u8],
+    ) -> Result<Option<Uuid>> {
+        db::find_tree_child_by_bytes(self, field, parent, name)
+    }
+    fn child_by_text(
+        &self,
+        field: &str,
+        parent: Option<Uuid>,
+        name: &str,
+        nocase: bool,
+    ) -> Result<Option<Uuid>> {
+        db::find_tree_child_opts(self, field, parent, name, nocase)
     }
     fn forest(&self) -> Result<Vec<TreeRow>> {
         db::load_tree_forest(self)

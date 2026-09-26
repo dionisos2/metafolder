@@ -333,3 +333,31 @@ fn a_revision_names_its_operations_and_takes_a_label() {
     let store: &dyn Store = &conn;
     assert_eq!(store.revisions(&[first_rev]).unwrap()[&first_rev].label.as_deref(), Some("before"));
 }
+
+#[test]
+fn a_child_is_found_by_its_bytes_or_its_text() {
+    let mut conn = empty();
+    let (root, a, e) = (Uuid::new_v4(), Uuid::new_v4(), Uuid::new_v4());
+    let tx = conn.begin_write().unwrap();
+    for u in [root, a, e] {
+        tx.create_metarecord(u, 1).unwrap();
+    }
+    tx.insert_row(root, "loc", &Value::TreeRef { parent: None, name: "".into() }, None).unwrap();
+    let under = |name: &str| Value::TreeRef { parent: Some(root), name: name.into() };
+    tx.insert_row(a, "loc", &under("Photos"), None).unwrap();
+    tx.insert_row(e, "loc", &under("Été"), None).unwrap();
+
+    assert_eq!(tx.child_by_bytes("loc", None, b"").unwrap(), Some(root));
+    assert_eq!(tx.child_by_bytes("loc", Some(root), b"Photos").unwrap(), Some(a));
+    assert_eq!(tx.child_by_bytes("loc", Some(root), b"photos").unwrap(), None);
+    assert_eq!(tx.child_by_text("loc", Some(root), "Photos", false).unwrap(), Some(a));
+    assert_eq!(tx.child_by_text("loc", Some(root), "photos", false).unwrap(), None);
+    assert_eq!(tx.child_by_text("loc", Some(root), "PHOTOS", true).unwrap(), Some(a));
+    // NOCASE folds ASCII letters only.
+    assert_eq!(tx.child_by_text("loc", Some(root), "ÉTÉ", true).unwrap(), None);
+    assert_eq!(tx.child_by_text("loc", Some(root), "Été", true).unwrap(), Some(e));
+
+    assert_eq!(tx.positions("loc", a).unwrap(), [(Some(root), "Photos".to_string())]);
+    assert_eq!(tx.positions("loc", root).unwrap(), [(None, String::new())]);
+    assert!(tx.positions("other", a).unwrap().is_empty());
+}

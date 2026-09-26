@@ -10,7 +10,6 @@ use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 
 use anyhow::Result;
-use rusqlite::Connection;
 use uuid::Uuid;
 
 use metafolder_core::metarecord::TreeName;
@@ -18,6 +17,7 @@ use metafolder_core::query::OsmProgress;
 
 use crate::db;
 use crate::log::{TreeOp, TreePos, MAX_TREE_DEPTH, UNKNOWN_ROW};
+use crate::store::Rows;
 
 /// Separator joining the components of a *sort key* — the form a `tree_ref`
 /// value takes when a query sorts on it (spec-data-model "Sort specification").
@@ -194,12 +194,12 @@ impl TreeCache {
     /// Eagerly loads the entire TreeRef forest (all field names) into memory in
     /// a single DB scan, so that subsequent read-side navigation is served
     /// without per-node queries. Replaces any current contents.
-    pub fn populate(&mut self, conn: &Connection) -> Result<()> {
+    pub fn populate(&mut self, store: &dyn Rows) -> Result<()> {
         // Timed in two parts (logged when non-trivial): the `load_tree_forest`
         // SQL scan+sort, and the in-memory node linking — a persistent load
         // report, so it is clear which dominates on a large forest.
         let t_scan = std::time::Instant::now();
-        let rows = db::load_tree_forest(conn)?;
+        let rows = store.forest()?;
         let scan = t_scan.elapsed();
         let n = rows.len();
         let t_link = std::time::Instant::now();
@@ -260,11 +260,11 @@ impl TreeCache {
     /// filesystem paths start with `/` because the root is named `""`).
     pub fn resolve_path(
         &mut self,
-        conn: &Connection,
+        store: &dyn Rows,
         field: &str,
         path: &str,
     ) -> Result<Option<Uuid>> {
-        self.resolve_path_as(conn, field, path, PathForm::Any)
+        self.resolve_path_as(store, field, path, PathForm::Any)
     }
 
     /// [`Self::resolve_path`] restricted to one reading of the typed text
@@ -272,7 +272,7 @@ impl TreeCache {
     /// lookup unambiguous when a path could designate two different files.
     pub fn resolve_path_as(
         &mut self,
-        conn: &Connection,
+        store: &dyn Rows,
         field: &str,
         path: &str,
         form: PathForm,
@@ -304,7 +304,7 @@ impl TreeCache {
                     return Ok(None); // Full forest resident: a cache miss is absence.
                 }
                 self.misses += 1;
-                let Some((uuid, name)) = self.db_child(conn, field, None, comps[0], form)? else {
+                let Some((uuid, name)) = self.db_child(store, field, None, comps[0], form)? else {
                     return Ok(None);
                 };
                 self.insert_node(field, None, &name, uuid)
@@ -322,7 +322,7 @@ impl TreeCache {
                     self.misses += 1;
                     let parent_uuid = self.node(cur).uuid;
                     let Some((uuid, name)) =
-                        self.db_child(conn, field, Some(parent_uuid), comp, form)?
+                        self.db_child(store, field, Some(parent_uuid), comp, form)?
                     else {
                         return Ok(None);
                     };
@@ -337,12 +337,7 @@ impl TreeCache {
 
     /// Reconstructs the path string of a metarecord by walking up its parents
     /// in the database (first position for multi-map fields).
-    pub fn path_of(
-        &mut self,
-        conn: &Connection,
-        field: &str,
-        uuid: Uuid,
-    ) -> Result<Option<String>> {
+    pub fn path_of(&mut self, store: &dyn Rows, field: &str, uuid: Uuid) -> Result<Option<String>> {
         if self.complete {
             return Ok(self.path_of_in_cache(field, uuid));
         }
@@ -350,7 +345,7 @@ impl TreeCache {
         let mut components = Vec::new();
         let mut cur = uuid;
         for _ in 0..MAX_TREE_DEPTH {
-            let Some((parent, name)) = db::tree_position(conn, field, cur)? else {
+            let Some((parent, name)) = store.positions(field, cur)?.into_iter().next() else {
                 return Ok(None);
             };
             components.push(name);
@@ -369,17 +364,17 @@ impl TreeCache {
     /// position (fields are a multi-map: e.g. hardlinks give several
     /// `mfr_path`). Positions whose parent is not in the forest (stale) are
     /// skipped. The reverse of [`Self::resolve_path`].
-    pub fn paths_of(&mut self, conn: &Connection, field: &str, uuid: Uuid) -> Result<Vec<String>> {
+    pub fn paths_of(&mut self, store: &dyn Rows, field: &str, uuid: Uuid) -> Result<Vec<String>> {
         if self.complete {
             return Ok(self.paths_of_in_cache(field, uuid));
         }
         self.misses += 1;
         let mut paths = Vec::new();
-        for (parent, name) in db::tree_positions(conn, field, uuid)? {
+        for (parent, name) in store.positions(field, uuid)? {
             match parent {
                 None => paths.push(name),
                 Some(parent) => {
-                    if let Some(parent_path) = self.path_of(conn, field, parent)? {
+                    if let Some(parent_path) = self.path_of(store, field, parent)? {
                         // Mirror `path_of` exactly: the empty repo-root gives
                         // `parent_path == ""`, so a top-level filesystem node
                         // joins to a leading-"/" path (`/file.txt`) — the same
@@ -561,7 +556,7 @@ impl TreeCache {
 
     /// Collects all descendants of a metarecord (excluding itself), walking the
     /// tree breadth-first from the database.
-    pub fn descendants(&mut self, conn: &Connection, field: &str, uuid: Uuid) -> Result<Vec<Uuid>> {
+    pub fn descendants(&mut self, store: &dyn Rows, field: &str, uuid: Uuid) -> Result<Vec<Uuid>> {
         if self.complete {
             return Ok(self.descendants_in_cache(field, uuid));
         }
@@ -571,7 +566,7 @@ impl TreeCache {
         let mut frontier = vec![uuid];
         visited.insert(uuid);
         while let Some(node) = frontier.pop() {
-            for (child, _name) in db::tree_children(conn, field, node)? {
+            for (child, _name) in store.children(field, node)? {
                 if visited.insert(child) {
                     result.push(child);
                     frontier.push(child);
@@ -588,7 +583,7 @@ impl TreeCache {
     /// per-record fetch of each child.
     pub fn children_of(
         &mut self,
-        conn: &Connection,
+        store: &dyn Rows,
         field: &str,
         uuid: Uuid,
     ) -> Result<Vec<(String, Uuid)>> {
@@ -597,7 +592,7 @@ impl TreeCache {
         }
         self.misses += 1;
         // `tree_children` yields `(child_uuid, name)`; expose `(name, child_uuid)`.
-        Ok(db::tree_children(conn, field, uuid)?.into_iter().map(|(u, n)| (n, u)).collect())
+        Ok(store.children(field, uuid)?.into_iter().map(|(u, n)| (n, u)).collect())
     }
 
     fn children_of_in_cache(&self, field: &str, uuid: Uuid) -> Vec<(String, Uuid)> {
@@ -824,7 +819,7 @@ impl TreeCache {
     /// typed.
     fn db_child(
         &self,
-        conn: &Connection,
+        store: &dyn Rows,
         field: &str,
         parent: Option<Uuid>,
         comp: &str,
@@ -836,18 +831,13 @@ impl TreeCache {
             // so `caf%E9.mp4` is what a file really named that AND one named
             // with the byte 0xE9 both store — comparing it would confuse the two
             // readings the caller just asked to tell apart.
-            let mut found = db::find_tree_child_by_bytes(conn, field, parent, name.as_bytes())?;
+            let mut found = store.child_by_bytes(field, parent, name.as_bytes())?;
             if found.is_none() && self.case_insensitive {
                 // Only a case-insensitive filesystem needs the text compare, for
                 // its COLLATE NOCASE; it cannot distinguish the two readings,
                 // which is why it is the fallback rather than the rule.
-                found = db::find_tree_child_opts(
-                    conn,
-                    field,
-                    parent,
-                    &name.display(),
-                    self.case_insensitive,
-                )?;
+                found =
+                    store.child_by_text(field, parent, &name.display(), self.case_insensitive)?;
             }
             if let Some(uuid) = found {
                 hits.push((uuid, name));
@@ -906,11 +896,11 @@ impl TreeCache {
     /// `0xE9`, and reconcile would then reuse the wrong metarecord.
     pub fn resolve_rel(
         &mut self,
-        conn: &Connection,
+        store: &dyn Rows,
         field: &str,
         rel: &crate::relpath::RelPath,
     ) -> Result<Option<Uuid>> {
-        let mut cur = match self.root_node(conn, field)? {
+        let mut cur = match self.root_node(store, field)? {
             Some(idx) => idx,
             None => return Ok(None),
         };
@@ -925,20 +915,14 @@ impl TreeCache {
                     self.misses += 1;
                     let parent_uuid = self.node(cur).uuid;
                     let found = if name.is_exact() {
-                        db::find_tree_child_opts(
-                            conn,
+                        store.child_by_text(
                             field,
                             Some(parent_uuid),
                             &name.display(),
                             self.case_insensitive,
                         )?
                     } else {
-                        db::find_tree_child_by_bytes(
-                            conn,
-                            field,
-                            Some(parent_uuid),
-                            name.as_bytes(),
-                        )?
+                        store.child_by_bytes(field, Some(parent_uuid), name.as_bytes())?
                     };
                     let Some(uuid) = found else {
                         return Ok(None);
@@ -952,7 +936,7 @@ impl TreeCache {
     }
 
     /// The forest root of `field` (the empty-named node), cached or fetched.
-    fn root_node(&mut self, conn: &Connection, field: &str) -> Result<Option<usize>> {
+    fn root_node(&mut self, store: &dyn Rows, field: &str) -> Result<Option<usize>> {
         let empty = TreeName::default();
         let norm = self.normalize(&empty);
         if let Some(idx) = self.fields.get(field).and_then(|ft| ft.roots.get(&norm)).copied() {
@@ -962,7 +946,7 @@ impl TreeCache {
             return Ok(None);
         }
         self.misses += 1;
-        let Some(uuid) = db::find_tree_child_by_bytes(conn, field, None, empty.as_bytes())? else {
+        let Some(uuid) = store.child_by_bytes(field, None, empty.as_bytes())? else {
             return Ok(None);
         };
         let idx = self.insert_node(field, None, &empty, uuid);
