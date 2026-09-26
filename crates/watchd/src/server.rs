@@ -346,8 +346,9 @@ fn apply_subscription<C: CredSource>(
             // cannot be resolved is denied like one that cannot be listed —
             // one uniform reason, which leaks neither existence nor
             // permissions.
-            let canonical =
-                filter.real_path(root.as_path()).filter(|p| filter.may_watch(&client.peer, p));
+            let canonical = filter
+                .resolve(&client.peer, root.as_path())
+                .filter(|p| filter.may_watch(&client.peer, p));
             match canonical {
                 Some(path) => allowed.push(path),
                 None => {

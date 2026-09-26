@@ -24,15 +24,31 @@ pub trait CredSource: Send + Sync {
     /// The groups of the process `pid` — what `SO_PEERCRED` cannot carry (it
     /// has only the primary gid).
     fn groups_of(&self, pid: i32) -> Vec<u32>;
-    /// What the kernel would call `path` (symlinks resolved), if it exists.
-    /// A subscribed root must be stored under this name: event paths come from
-    /// the kernel resolved, so a symlinked root stored as spelled would never
-    /// prefix-match anything. Defaults to the path unchanged (what a fake
-    /// filesystem wants).
-    fn real_path(&self, path: &Path) -> Option<PathBuf> {
-        Some(path.to_path_buf())
+    /// What is at `path` itself, a symbolic link not followed (`lstat`,
+    /// `readlink`). Defaults to what [`dir_meta`](Self::dir_meta) says — a
+    /// fake filesystem without links.
+    fn entry(&self, path: &Path) -> Option<Entry> {
+        self.dir_meta(path).map(|(uid, gid, mode)| Entry::Dir { uid, gid, mode })
     }
 }
+
+/// One directory entry, as `lstat` sees it.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Entry {
+    Dir {
+        uid: u32,
+        gid: u32,
+        mode: u32,
+    },
+    /// A symbolic link, and where it points.
+    Link(PathBuf),
+    /// Anything else: a file, a socket… never a root.
+    Other,
+}
+
+/// Symbolic links followed in one resolution before giving up (the kernel's
+/// own limit, `MAXSYMLINKS`).
+const MAX_LINKS: usize = 40;
 
 /// The real thing: `stat`, and `/proc/<pid>/status` for the group list.
 pub struct SystemCreds;
@@ -59,8 +75,17 @@ impl CredSource for SystemCreds {
             .unwrap_or_default()
     }
 
-    fn real_path(&self, path: &Path) -> Option<PathBuf> {
-        std::fs::canonicalize(path).ok()
+    fn entry(&self, path: &Path) -> Option<Entry> {
+        use std::os::unix::fs::MetadataExt;
+        let md = std::fs::symlink_metadata(path).ok()?;
+        let kind = md.file_type();
+        Some(if kind.is_dir() {
+            Entry::Dir { uid: md.uid(), gid: md.gid(), mode: md.mode() & 0o7777 }
+        } else if kind.is_symlink() {
+            Entry::Link(std::fs::read_link(path).ok()?)
+        } else {
+            Entry::Other
+        })
     }
 }
 
@@ -101,9 +126,67 @@ impl<C: CredSource> AccessFilter<C> {
         Subscriber { uid, gid, pid, groups }
     }
 
-    /// What the kernel would call `path` (symlinks resolved), if it exists.
-    pub fn real_path(&self, path: &Path) -> Option<PathBuf> {
-        self.creds.real_path(path)
+    /// What the kernel would call the directory `path` (symlinks and `..`
+    /// resolved) — found **with the subscriber's rights**, or `None`.
+    ///
+    /// A subscribed root must be stored resolved: event paths come from the
+    /// kernel that way, and a root spelled through a link would never
+    /// prefix-match one. But resolving it is a walk, and the broker walks with
+    /// `CAP_DAC_READ_SEARCH`: `canonicalize` would enter directories the
+    /// subscriber cannot, making `/secret/x/../../tmp` an oracle for "does
+    /// `/secret/x` exist?", and read links the subscriber could not read. So
+    /// the walk is done here, one component at a time, looking an entry up
+    /// only in a directory the subscriber may traverse — exactly what the
+    /// subscriber's own `realpath` could find, and no more.
+    pub fn resolve(&mut self, sub: &Subscriber, path: &Path) -> Option<PathBuf> {
+        use std::path::Component;
+        if !path.is_absolute() {
+            return None;
+        }
+        let mut resolved = PathBuf::from("/");
+        // What is left to walk, in reverse (the next component last), so a
+        // link's target can be spliced in front of the rest.
+        let mut pending: Vec<std::ffi::OsString> = Vec::new();
+        let push_all = |pending: &mut Vec<std::ffi::OsString>, p: &Path| {
+            let parts: Vec<_> = p
+                .components()
+                .filter_map(|c| match c {
+                    Component::Normal(n) => Some(n.to_os_string()),
+                    Component::ParentDir => Some("..".into()),
+                    _ => None, // `/` and `.`
+                })
+                .collect();
+            pending.extend(parts.into_iter().rev());
+        };
+        push_all(&mut pending, path);
+        let mut links = 0;
+        while let Some(name) = pending.pop() {
+            // Looking anything up in `resolved` — `..` included — takes the
+            // right to traverse it.
+            if !self.usable(sub, &resolved).0 {
+                return None;
+            }
+            if name == ".." {
+                resolved.pop();
+                continue;
+            }
+            let next = resolved.join(&name);
+            match self.creds.entry(&next)? {
+                Entry::Dir { .. } => resolved = next,
+                Entry::Link(target) => {
+                    links += 1;
+                    if links > MAX_LINKS {
+                        return None;
+                    }
+                    if target.is_absolute() {
+                        resolved = PathBuf::from("/");
+                    }
+                    push_all(&mut pending, &target);
+                }
+                Entry::Other => return None,
+            }
+        }
+        Some(resolved)
     }
 
     /// May `sub` subscribe to `root` — reach it and list what is inside?
@@ -184,6 +267,7 @@ mod tests {
     /// prove the cache is doing its job.
     struct FakeCreds {
         dirs: HashMap<PathBuf, (u32, u32, u32)>,
+        links: HashMap<PathBuf, PathBuf>,
         groups: HashMap<i32, Vec<u32>>,
         stats: std::sync::atomic::AtomicUsize,
     }
@@ -192,11 +276,21 @@ mod tests {
         fn new() -> Self {
             let mut dirs = HashMap::new();
             dirs.insert(PathBuf::from("/"), (0, 0, 0o755));
-            Self { dirs, groups: HashMap::new(), stats: std::sync::atomic::AtomicUsize::new(0) }
+            Self {
+                dirs,
+                links: HashMap::new(),
+                groups: HashMap::new(),
+                stats: std::sync::atomic::AtomicUsize::new(0),
+            }
         }
 
         fn dir(mut self, path: &str, uid: u32, gid: u32, mode: u32) -> Self {
             self.dirs.insert(path.into(), (uid, gid, mode));
+            self
+        }
+
+        fn link(mut self, path: &str, target: &str) -> Self {
+            self.links.insert(path.into(), target.into());
             self
         }
 
@@ -214,6 +308,99 @@ mod tests {
         fn groups_of(&self, pid: i32) -> Vec<u32> {
             self.groups.get(&pid).cloned().unwrap_or_default()
         }
+
+        fn entry(&self, path: &Path) -> Option<Entry> {
+            if let Some(target) = self.links.get(path) {
+                return Some(Entry::Link(target.clone()));
+            }
+            self.dir_meta(path).map(|(uid, gid, mode)| Entry::Dir { uid, gid, mode })
+        }
+    }
+
+    // --- Resolving a subscribed root *as the subscriber*.
+
+    /// The broker resolves with privileges no subscriber has: `..` after a
+    /// directory the subscriber cannot enter must not work — else "does
+    /// `/secret/x` exist?" is answered by whether `/secret/x/../../tmp` is
+    /// accepted.
+    #[test]
+    fn test_a_root_through_a_private_directory_reveals_nothing() {
+        let creds = FakeCreds::new()
+            .dir("/secret", 0, 0, 0o700)
+            .dir("/secret/x", 0, 0, 0o755)
+            .dir("/tmp", 0, 0, 0o777);
+        let mut f = AccessFilter::new(creds);
+        assert_eq!(f.resolve(&user(1000), Path::new("/secret/x/../../tmp")), None);
+        assert_eq!(f.resolve(&user(1000), Path::new("/secret/nope/../../tmp")), None);
+        // Root may, as it may walk anything.
+        assert_eq!(f.resolve(&user(0), Path::new("/secret/x/../../tmp")), Some("/tmp".into()));
+    }
+
+    #[test]
+    fn test_a_link_inside_a_private_directory_is_not_followed() {
+        // Its target would say where it points — which the subscriber could
+        // not read itself.
+        let creds = FakeCreds::new()
+            .dir("/secret", 0, 0, 0o700)
+            .link("/secret/l", "/tmp")
+            .dir("/tmp", 0, 0, 0o777);
+        let mut f = AccessFilter::new(creds);
+        assert_eq!(f.resolve(&user(1000), Path::new("/secret/l")), None);
+    }
+
+    #[test]
+    fn test_a_root_is_resolved_to_the_kernels_name_for_it() {
+        // Event paths come resolved; a root must be stored the same way.
+        let creds = FakeCreds::new()
+            .dir("/home", 0, 0, 0o755)
+            .dir("/home/u", 1000, 100, 0o700)
+            .dir("/data", 0, 0, 0o755)
+            .dir("/data/music", 1000, 100, 0o755)
+            .link("/home/u/music", "../../data/./music")
+            .link("/home/u/abs", "/data/music");
+        let mut f = AccessFilter::new(creds);
+        let u = user(1000);
+        assert_eq!(f.resolve(&u, Path::new("/home/u/music")), Some("/data/music".into()));
+        assert_eq!(f.resolve(&u, Path::new("/home/u/abs/")), Some("/data/music".into()));
+        assert_eq!(f.resolve(&u, Path::new("/home/./u/../u")), Some("/home/u".into()));
+        // Not a directory, or nothing at all: no root.
+        assert_eq!(f.resolve(&u, Path::new("/home/u/missing")), None);
+        assert_eq!(f.resolve(&u, Path::new("relative")), None);
+    }
+
+    #[test]
+    fn test_a_link_loop_ends() {
+        let creds =
+            FakeCreds::new().dir("/d", 1000, 100, 0o755).link("/d/a", "b").link("/d/b", "a");
+        let mut f = AccessFilter::new(creds);
+        assert_eq!(f.resolve(&user(1000), Path::new("/d/a")), None);
+    }
+
+    #[test]
+    fn test_the_real_filesystem_resolves_like_canonicalize() {
+        let base = std::env::temp_dir()
+            .join("metafolder-tests")
+            .join(format!("watchd-resolve-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&base);
+        std::fs::create_dir_all(base.join("real/inner")).unwrap();
+        std::os::unix::fs::symlink("real/inner", base.join("link")).unwrap();
+        let me = Subscriber {
+            uid: unsafe { libc::geteuid() },
+            gid: unsafe { libc::getegid() },
+            pid: std::process::id() as i32,
+            groups: vec![unsafe { libc::getegid() }],
+        };
+        let mut f = AccessFilter::new(SystemCreds);
+        let got = f.resolve(&me, &base.join("link"));
+        let _ = std::fs::remove_dir_all(&base);
+        assert_eq!(
+            got,
+            std::fs::canonicalize(std::env::temp_dir()).ok().map(|t| {
+                t.join("metafolder-tests")
+                    .join(format!("watchd-resolve-{}", std::process::id()))
+                    .join("real/inner")
+            })
+        );
     }
 
     fn user(uid: u32) -> Subscriber {

@@ -172,7 +172,12 @@ rule, at every hop:
   if that uid could itself `stat` the path (search the ancestors) and see the
   entry in its parent (read the parent). Evaluated *as the subscriber's
   identity*, cached per (uid, directory inode). Subscribing to a root passes the
-  same check.
+  same check — and so does *resolving* it (symlinks, `..`) to the name the
+  kernel reports events under: `filter::AccessFilter::resolve` walks it one
+  component at a time, looking an entry up only in a directory the subscriber
+  may traverse. The first version called `canonicalize` with the broker's
+  `CAP_DAC_READ_SEARCH`, which made `/secret/x/../../tmp` an oracle for the
+  existence of `/secret/x` and read links inside private directories.
 - **daemon → client**: under the single-user model the caller's rights are the
   daemon's own rights, so the invariant is simply "never report a path this
   daemon could not stat/read itself". A shared or root daemon would need real
