@@ -4516,3 +4516,34 @@ fn test_log_redo_with_nothing_to_redo() {
     assert_ok(&out);
     assert!(out.stdout.to_lowercase().contains("nothing to redo"), "stdout: {}", out.stdout);
 }
+
+/// `mf repo convert --to <backend>` converts the selected repository in
+/// place, both ways; `mf repo init --storage` chooses the backend, and
+/// `mf repo list` shows it.
+#[test]
+fn test_repo_convert_both_ways() {
+    let root = temp_dir("convert");
+    let out = mf_cfg(&["repo", "init", root.to_str().unwrap(), "--storage", "sqlite"]);
+    assert_ok(&out);
+    let repo = out.stdout.trim().to_string();
+    let kept = create_metarecord(&repo, &["note:string=kept"]);
+    let storage = || {
+        let out = mf(&["repo", "list", "--all"]);
+        assert_ok(&out);
+        let repos: serde_json::Value = serde_json::from_str(&out.stdout).unwrap();
+        let this = repos.as_array().unwrap().iter().find(|r| r["repo_uuid"] == repo).cloned();
+        this.unwrap()["storage"].as_str().unwrap().to_string()
+    };
+    assert_eq!(storage(), "sqlite");
+    for to in ["kv", "sqlite"] {
+        let out = mf(&["-u", &repo, "repo", "convert", "--to", to]);
+        assert_ok(&out);
+        assert!(out.stdout.contains("metarecords"), "a report: {}", out.stdout);
+        assert_eq!(storage(), to);
+        let out = mf(&["-u", &repo, "metarecord", "-q", "note = \"kept\"", "get"]);
+        assert_ok(&out);
+        assert_eq!(out.stdout.trim(), kept);
+    }
+    let out = mf(&["-u", &repo, "repo", "convert", "--to", "sqlite"]);
+    assert_ne!(out.code, 0, "already on sqlite");
+}

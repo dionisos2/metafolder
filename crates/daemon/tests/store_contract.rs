@@ -659,3 +659,26 @@ fn a_kv_store_grows_past_its_initial_map() {
             .unwrap();
     assert_eq!(last.map(|s| s.len()), Some(blob.len()), "reopened below its size, it reads it all");
 }
+
+/// The store's lock is an `flock`, which a `fork` shares with the child
+/// until its `exec` closes it: a process that spawns anything holds its own
+/// lock, briefly, from another descriptor. Opening waits such a transient
+/// holder out — and still refuses a lasting one (a second daemon).
+#[test]
+fn a_kv_store_waits_out_a_transient_lock_holder() {
+    use std::os::fd::AsRawFd;
+    let dir = TempDir::new("kv-lock");
+    drop(KvStore::open(dir.path()).unwrap());
+    let holder = std::fs::File::open(dir.path().join("daemon.lock")).unwrap();
+    // SAFETY: flock on a descriptor this test owns.
+    assert_eq!(unsafe { libc::flock(holder.as_raw_fd(), libc::LOCK_EX | libc::LOCK_NB) }, 0);
+    let release = std::thread::spawn(move || {
+        std::thread::sleep(std::time::Duration::from_millis(200));
+        drop(holder);
+    });
+    KvStore::open(dir.path()).expect("the transient holder is waited out");
+    release.join().unwrap();
+
+    let _open = KvStore::open(dir.path()).unwrap();
+    assert!(KvStore::open(dir.path()).is_err(), "a lasting holder is refused");
+}

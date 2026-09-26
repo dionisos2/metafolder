@@ -166,6 +166,10 @@ macro_rules! forward_to_connection {
                 let $me = self;
                 Log::counts($conn)
             }
+            fn counters(&self) -> Result<Counters> {
+                let $me = self;
+                Log::counters($conn)
+            }
             fn revision_ops(&self, rev: i64) -> Result<Vec<OpRow>> {
                 let $me = self;
                 Log::revision_ops($conn, rev)
@@ -424,6 +428,8 @@ pub trait Log {
     fn revisions(&self, ids: &[i64]) -> Result<HashMap<i64, RevisionMeta>>;
     /// How many operations and revisions the log holds.
     fn counts(&self) -> Result<(i64, i64)>;
+    /// The next id each counter hands out.
+    fn counters(&self) -> Result<Counters>;
     /// A revision's operations, oldest first.
     fn revision_ops(&self, rev: i64) -> Result<Vec<OpRow>>;
     /// An entity's operations newer than `after`, whatever branch they are on,
@@ -893,6 +899,16 @@ pub trait WriteTxn: Store {
     /// Drops the queued restorations up to position `up_to`, included.
     fn drop_restorations(&self, up_to: i64) -> Result<()>;
 
+    /// Puts a revision under its own id — a conversion copying a history
+    /// (spec-storage increment 5).
+    fn import_revision(&self, id: i64, meta: &RevisionMeta) -> Result<()>;
+    /// Puts an operation and its snapshots under their own ids (a
+    /// conversion); its parent and its revision are already there.
+    fn import_op(&self, op: &OpRow, before: &[FieldRow], after: &[FieldRow]) -> Result<()>;
+    /// Moves the counters to at least `counters`, so no id below them is
+    /// handed out again.
+    fn raise_counters(&self, counters: Counters) -> Result<()>;
+
     fn commit(self: Box<Self>) -> Result<()>;
 
     /// The SQLite connection underneath, for the callers that still read
@@ -900,6 +916,15 @@ pub trait WriteTxn: Store {
     fn as_sqlite(&self) -> Option<&Connection> {
         None
     }
+}
+
+/// The next id each of a store's counters hands out: rows, operations,
+/// revisions. Ids are never reused, so a copy carries these along.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Counters {
+    pub next_row: i64,
+    pub next_op: i64,
+    pub next_rev: i64,
 }
 
 /// Opens write transactions.
@@ -1215,6 +1240,81 @@ impl WriteTxn for SqliteTxn<'_> {
         )?;
         Ok(())
     }
+    fn import_revision(&self, id: i64, meta: &RevisionMeta) -> Result<()> {
+        self.0.execute(
+            "INSERT INTO revision (id, timestamp, label, origin) VALUES (?1, ?2, ?3, ?4)",
+            params![id, meta.timestamp, meta.label, meta.origin],
+        )?;
+        Ok(())
+    }
+    fn import_op(&self, op: &OpRow, before: &[FieldRow], after: &[FieldRow]) -> Result<()> {
+        self.0
+            .prepare_cached(
+                "INSERT INTO operation
+                     (id, parent_id, rev_id, seq, op_type, entity_uuid,
+                      entity_version_before, entity_version_after, field_name,
+                      reverts_op_id)
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)",
+            )?
+            .execute(params![
+                op.id,
+                op.parent_id,
+                op.rev_id,
+                op.seq,
+                op.op_type,
+                db::uuid_to_bytes(op.entity_uuid),
+                op.entity_version_before.map(|v| v as i64),
+                op.entity_version_after.map(|v| v as i64),
+                op.field_name,
+                op.reverts_op_id,
+            ])?;
+        let mut stmt = self.0.prepare_cached(
+            "INSERT INTO op_snapshot
+                 (op_id, is_new, field_id, field_name, value_type, value_text,
+                  value_int, value_real, value_uuid, value_ref_repo, value_name,
+                  value_name_bytes)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12)",
+        )?;
+        for (is_new, rows) in [(0, before), (1, after)] {
+            for row in rows {
+                let e = db::encode_value(&row.value);
+                stmt.execute(params![
+                    op.id,
+                    is_new,
+                    row.id,
+                    row.name,
+                    e.value_type,
+                    e.text,
+                    e.int,
+                    e.real,
+                    e.uuid,
+                    e.ref_repo,
+                    e.name,
+                    e.name_bytes,
+                ])?;
+            }
+        }
+        Ok(())
+    }
+    fn raise_counters(&self, counters: Counters) -> Result<()> {
+        for (table, next) in [
+            ("field", counters.next_row),
+            ("operation", counters.next_op),
+            ("revision", counters.next_rev),
+        ] {
+            let changed = self.0.execute(
+                "UPDATE sqlite_sequence SET seq = MAX(seq, ?2) WHERE name = ?1",
+                params![table, next - 1],
+            )?;
+            if changed == 0 && next > 1 {
+                self.0.execute(
+                    "INSERT INTO sqlite_sequence (name, seq) VALUES (?1, ?2)",
+                    params![table, next - 1],
+                )?;
+            }
+        }
+        Ok(())
+    }
     fn commit(self: Box<Self>) -> Result<()> {
         self.0.commit().context("Failed to commit write transaction")
     }
@@ -1346,6 +1446,23 @@ impl Log for Connection {
         let ops = self.query_row("SELECT COUNT(*) FROM operation", [], |r| r.get(0))?;
         let revs = self.query_row("SELECT COUNT(*) FROM revision", [], |r| r.get(0))?;
         Ok((ops, revs))
+    }
+    fn counters(&self) -> Result<Counters> {
+        use rusqlite::OptionalExtension as _;
+        // AUTOINCREMENT keeps the largest id ever handed out per table.
+        let next = |table: &str| -> Result<i64> {
+            let seq: Option<i64> = self
+                .query_row("SELECT seq FROM sqlite_sequence WHERE name = ?1", params![table], |r| {
+                    r.get(0)
+                })
+                .optional()?;
+            Ok(seq.unwrap_or(0) + 1)
+        };
+        Ok(Counters {
+            next_row: next("field")?,
+            next_op: next("operation")?,
+            next_rev: next("revision")?,
+        })
     }
     fn revision_ops(&self, rev: i64) -> Result<Vec<OpRow>> {
         let ids: Vec<i64> = self

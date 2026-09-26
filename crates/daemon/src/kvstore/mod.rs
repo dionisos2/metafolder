@@ -44,7 +44,9 @@ use uuid::Uuid;
 use crate::db::{self, FieldRow, RawValue, TreeRow};
 use crate::error::DomainError;
 use crate::log::{self, Delta, OpRow, Retention};
-use crate::store::{Begin, Log, NewOp, Questions, Restoration, RevisionMeta, Rows, WriteTxn};
+use crate::store::{
+    Begin, Counters, Log, NewOp, Questions, Restoration, RevisionMeta, Rows, WriteTxn,
+};
 
 mod derived;
 mod source;
@@ -263,6 +265,21 @@ fn enc_op(op: &NewOp, parent: Option<i64>, rev: i64, seq: i64) -> Vec<u8> {
     out.0
 }
 
+/// [`enc_op`] for an operation read back whole — the same bytes.
+fn enc_op_row(op: &OpRow) -> Vec<u8> {
+    let mut out = Out::default();
+    out.opt_int(op.parent_id)
+        .int(op.rev_id)
+        .int(op.seq)
+        .bytes(op.op_type.as_bytes())
+        .bytes(op.entity_uuid.as_bytes())
+        .opt_int(op.entity_version_before.map(|v| v as i64))
+        .opt_int(op.entity_version_after.map(|v| v as i64))
+        .opt_bytes(op.field_name.as_deref().map(str::as_bytes))
+        .opt_int(op.reverts_op_id);
+    out.0
+}
+
 /// An operation, without its revision's origin (the caller adds it).
 fn dec_op(id: i64, b: &[u8]) -> Result<OpRow> {
     let mut r = In(b);
@@ -362,10 +379,23 @@ impl KvStore {
         let lock = File::create(dir.join("daemon.lock"))?;
         {
             use std::os::fd::AsRawFd;
-            // SAFETY: flock on a descriptor this function owns.
-            let rc = unsafe { libc::flock(lock.as_raw_fd(), libc::LOCK_EX | libc::LOCK_NB) };
-            if rc != 0 {
-                bail!("the repository is already open in another daemon ({})", dir.display());
+            // An `flock` belongs to the open file description, which a `fork`
+            // shares with the child until its `exec` closes it: a process
+            // that spawns anything holds its own lock from another
+            // descriptor for that instant, and a store closed then reopened
+            // can find it taken. Such a holder lets go within milliseconds;
+            // a second daemon does not, and is refused after the wait.
+            let deadline = std::time::Instant::now() + std::time::Duration::from_secs(1);
+            loop {
+                // SAFETY: flock on a descriptor this function owns.
+                let rc = unsafe { libc::flock(lock.as_raw_fd(), libc::LOCK_EX | libc::LOCK_NB) };
+                if rc == 0 {
+                    break;
+                }
+                if std::time::Instant::now() > deadline {
+                    bail!("the repository is already open in another daemon ({})", dir.display());
+                }
+                std::thread::sleep(std::time::Duration::from_millis(10));
             }
         }
         // SAFETY: the lock above makes this process the file's only opener;
@@ -877,6 +907,16 @@ macro_rules! kv_reads {
                 let $me = self;
                 $with(&mut |$read: &Read| {
                     Ok(($read.t.ops.len($read.r)? as i64, $read.t.revisions.len($read.r)? as i64))
+                })
+            }
+            fn counters(&self) -> Result<Counters> {
+                let $me = self;
+                $with(&mut |$read: &Read| {
+                    Ok(Counters {
+                        next_row: $read.meta("next_row")?.unwrap_or(1),
+                        next_op: $read.meta("next_op")?.unwrap_or(1),
+                        next_rev: $read.meta("next_rev")?.unwrap_or(1),
+                    })
                 })
             }
             fn revision_ops(&self, rev: i64) -> Result<Vec<OpRow>> {
@@ -1417,6 +1457,45 @@ impl WriteTxn for KvTxn<'_> {
         let mut w = self.txn.borrow_mut();
         for k in keys {
             self.t.restorations.delete(&mut w, &be(k))?;
+        }
+        Ok(())
+    }
+
+    fn import_revision(&self, id: i64, meta: &RevisionMeta) -> Result<()> {
+        self.t.revisions.put(&mut self.txn.borrow_mut(), &be(id), &enc_revision(meta))?;
+        self.bump_past("next_rev", id)
+    }
+
+    fn import_op(&self, op: &OpRow, before: &[FieldRow], after: &[FieldRow]) -> Result<()> {
+        {
+            let mut w = self.txn.borrow_mut();
+            let t = self.t;
+            let id = op.id;
+            t.ops.put(&mut w, &be(id), &enc_op_row(op))?;
+            for (flag, rows) in [(0u8, before), (1u8, after)] {
+                for (n, row) in rows.iter().enumerate() {
+                    let k = key(&[&be(id), &[flag], &(n as u32).to_be_bytes()]);
+                    t.snaps.put(&mut w, &k, &enc_row(row))?;
+                }
+            }
+            if let Some(p) = op.parent_id {
+                t.op_children.put(&mut w, &key(&[&be(p), &be(id)]), &[])?;
+            }
+            t.ops_by_rev.put(&mut w, &key(&[&be(op.rev_id), &be(op.seq), &be(id)]), &[])?;
+            t.ops_by_entity.put(&mut w, &key(&[op.entity_uuid.as_bytes(), &be(id)]), &[])?;
+        }
+        self.bump_past("next_op", op.id)
+    }
+
+    fn raise_counters(&self, counters: Counters) -> Result<()> {
+        for (name, next) in [
+            ("next_row", counters.next_row),
+            ("next_op", counters.next_op),
+            ("next_rev", counters.next_rev),
+        ] {
+            if next > 1 {
+                self.bump_past(name, next - 1)?;
+            }
         }
         Ok(())
     }

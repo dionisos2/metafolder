@@ -39,6 +39,7 @@ pub fn build(state: Arc<AppState>) -> Router {
         .route("/tasks", get(list_all_tasks))
         .route("/repos", get(list_repos))
         .route("/repos/init", post(init_repo))
+        .route("/repos/:repo/convert", post(convert_repo))
         .route("/repos/load", post(load_repo))
         .route("/repos/:repo", get(get_repo).patch(rename_repo))
         .route("/repos/:repo/unload", post(unload_repo))
@@ -922,6 +923,34 @@ async fn init_repo(
     .await
     .map_err(|e| ApiError::internal(format!("blocking task failed: {e}")))??;
     Ok(Json(json!({"repo_uuid": hex(uuid)})))
+}
+
+#[derive(Deserialize)]
+struct ConvertBody {
+    /// The backend to convert to: `"kv"` or `"sqlite"`.
+    to: crate::config::Storage,
+}
+
+/// `POST /repos/:repo/convert` — converts a loaded repository to another
+/// storage backend and loads it back (spec-storage increment 5). Answers what
+/// was copied and where the old store was set aside.
+async fn convert_repo(
+    State(state): State<Arc<AppState>>,
+    Path(repo): Path<String>,
+    payload: Result<Json<ConvertBody>, JsonRejection>,
+) -> Result<Json<serde_json::Value>, ApiError> {
+    let Json(body) = payload?;
+    let repo_uuid = parse_uuid(&repo)?;
+    let report = tokio::task::spawn_blocking(move || state.convert_repo(repo_uuid, body.to))
+        .await
+        .map_err(|e| ApiError::internal(format!("blocking task failed: {e}")))??;
+    Ok(Json(json!({
+        "metarecords": report.metarecords,
+        "rows": report.rows,
+        "operations": report.operations,
+        "revisions": report.revisions,
+        "old_store": report.old_store,
+    })))
 }
 
 #[derive(Deserialize)]

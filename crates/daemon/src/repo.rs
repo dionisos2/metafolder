@@ -176,24 +176,57 @@ fn create_root_entry(conn: &mut crate::store::Handle) -> Result<()> {
 }
 
 /// Opens an existing repository.
-pub fn load_repository(locator: RepoLocator) -> Result<OpenedRepo> {
-    let metafolder_dir = match &locator {
-        RepoLocator::Root(root) => {
-            let root = root.canonicalize().map_err(|e| {
-                DomainError::BadRequest(format!(
-                    "Cannot resolve path {root:?}: the root directory must exist ({e})"
-                ))
-            })?;
-            root.join(".metafolder")
+impl RepoLocator {
+    /// The repository's `.metafolder/` directory, resolved; an error when no
+    /// repository is there.
+    pub fn metafolder_dir(&self) -> Result<PathBuf> {
+        let metafolder_dir = match self {
+            RepoLocator::Root(root) => {
+                let root = root.canonicalize().map_err(|e| {
+                    DomainError::BadRequest(format!(
+                        "Cannot resolve path {root:?}: the root directory must exist ({e})"
+                    ))
+                })?;
+                root.join(".metafolder")
+            }
+            RepoLocator::Metafolder(dir) => dir.clone(),
+        };
+        if !RepoConfig::exists(&metafolder_dir) {
+            bail!("No repository found at {metafolder_dir:?} (missing config.json)");
         }
-        RepoLocator::Metafolder(dir) => dir.clone(),
-    };
-    if !RepoConfig::exists(&metafolder_dir) {
-        bail!("No repository found at {metafolder_dir:?} (missing config.json)");
+        Ok(metafolder_dir.canonicalize().map_err(|e| {
+            DomainError::BadRequest(format!("Cannot resolve path {metafolder_dir:?}: {e}"))
+        })?)
     }
-    let metafolder_dir = metafolder_dir.canonicalize().map_err(|e| {
-        DomainError::BadRequest(format!("Cannot resolve path {metafolder_dir:?}: {e}"))
-    })?;
+}
+
+/// Opens the store of a backend at `path` (`who` names the repository in
+/// the slow-operation log).
+pub(crate) fn open_store(path: &Path, storage: Storage, who: &str) -> Result<crate::store::Handle> {
+    Ok(match storage {
+        Storage::Sqlite => Box::new(db::open_database(path, who)?),
+        Storage::Kv => Box::new(crate::kvstore::KvStore::open(path)?),
+    })
+}
+
+/// Creates an empty store of a backend at `path`.
+pub(crate) fn create_store(
+    path: &Path,
+    storage: Storage,
+    who: &str,
+) -> Result<crate::store::Handle> {
+    Ok(match storage {
+        Storage::Sqlite => {
+            let conn = db::open_database(path, who)?;
+            db::init_schema(&conn)?;
+            Box::new(conn)
+        }
+        Storage::Kv => Box::new(crate::kvstore::KvStore::open(path)?),
+    })
+}
+
+pub fn load_repository(locator: RepoLocator) -> Result<OpenedRepo> {
+    let metafolder_dir = locator.metafolder_dir()?;
     let config = RepoConfig::read(&metafolder_dir)?;
     let who = config.name.clone();
     let internal_dir = metafolder_dir.join(INTERNAL_DIR);

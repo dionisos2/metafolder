@@ -228,6 +228,7 @@ impl RepoState {
             internal_dir: self.internal_dir(),
             created_at: self.config.created_at,
             system: self.config.system,
+            storage: self.config.storage,
         }
     }
 
@@ -833,6 +834,8 @@ pub struct RepoInfo {
     /// A daemon-internal repository (spec-sync plan repo), hidden from the
     /// default `GET /repos` listing.
     pub system: bool,
+    /// The storage backend (`"kv"` / `"sqlite"`, spec-storage).
+    pub storage: crate::config::Storage,
 }
 
 impl AppState {
@@ -938,6 +941,48 @@ impl AppState {
             )));
         }
         Ok(())
+    }
+
+    /// Converts a loaded repository to another storage backend
+    /// (spec-storage increment 5): unloads it, waits until its store is
+    /// released, converts it on disk ([`crate::convert::convert_repository`])
+    /// and loads it back — on its old backend when the conversion failed,
+    /// which then changed nothing.
+    pub fn convert_repo(
+        &self,
+        repo_uuid: Uuid,
+        to: crate::config::Storage,
+    ) -> Result<crate::convert::Report, ApiError> {
+        let repo_state = self.repo(repo_uuid)?;
+        if repo_state.config.storage == to {
+            return Err(ApiError::bad_request(format!(
+                "the repository is already on {}",
+                storage_name(to)
+            )));
+        }
+        let locator = RepoLocator::Metafolder(repo_state.metafolder_dir.clone());
+        let released = Arc::downgrade(&repo_state);
+        drop(repo_state);
+        self.unload_repo(repo_uuid)?;
+        // A request still running holds the repository a moment longer; its
+        // store (and its lock) goes with the last reference.
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(60);
+        while released.strong_count() > 0 {
+            if std::time::Instant::now() > deadline {
+                let _ = self.reload(locator.clone());
+                return Err(ApiError::conflict("the repository is still in use; try again"));
+            }
+            std::thread::sleep(std::time::Duration::from_millis(20));
+        }
+        let converted = crate::convert::convert_repository(locator.clone(), to);
+        self.reload(locator)?;
+        converted.map_err(|e| ApiError::internal(format!("conversion failed: {e:#}")))
+    }
+
+    /// Loads a repository back and warms it before it answers.
+    fn reload(&self, locator: RepoLocator) -> Result<(), ApiError> {
+        let uuid = self.load_repo(locator)?;
+        self.repo(uuid)?.warm(&|_, _, _| {})
     }
 
     /// Unloads a repository: removes it from the loaded set, stops its watcher
@@ -1058,5 +1103,13 @@ impl AppState {
             repos.values().flat_map(|r| r.tasks.list()).collect();
         tasks.sort_by(|a, b| a.started_at.cmp(&b.started_at).then(a.id.cmp(&b.id)));
         tasks
+    }
+}
+
+/// A backend's name, as `config.json` spells it.
+fn storage_name(storage: crate::config::Storage) -> &'static str {
+    match storage {
+        crate::config::Storage::Sqlite => "sqlite",
+        crate::config::Storage::Kv => "kv",
     }
 }

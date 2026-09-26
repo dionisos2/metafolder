@@ -1,4 +1,5 @@
 pub mod config;
+pub mod convert;
 pub mod daemon_config;
 pub mod db;
 pub mod diagnostics;

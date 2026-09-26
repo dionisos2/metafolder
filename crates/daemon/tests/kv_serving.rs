@@ -181,3 +181,42 @@ async fn a_kv_repository_keeps_no_forest_in_memory() {
     assert_eq!(query(json!({"query": on_c})).await, json!([b]));
     assert!(repo_state.lock_cache().len() <= 2, "at most the last lookup's path is held");
 }
+
+/// `POST /repos/:repo/convert` converts a loaded repository in place — it
+/// is unloaded, converted, loaded back — and it keeps answering.
+#[tokio::test]
+async fn a_loaded_repository_converts_and_answers() {
+    let state = std::sync::Arc::new(AppState::new());
+    let app = routes::build(state.clone());
+    let root = temp_dir("convert");
+    let (status, body) = request(
+        &app,
+        "POST",
+        "/repos/init",
+        Some(json!({"root": root.to_str().unwrap(), "storage": "sqlite"})),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    let repo = body["repo_uuid"].as_str().unwrap().to_string();
+    let tag = json!([{"name": "tag", "value": {"type": "string", "value": "kept"}}]);
+    let kept = create(&app, &repo, tag).await;
+    let query = json!({"query": {"type": "eq", "field": "tag",
+                                 "value": {"type": "string", "value": "kept"}}});
+
+    for (to, storage) in [("kv", Storage::Kv), ("sqlite", Storage::Sqlite)] {
+        let (status, body) =
+            request(&app, "POST", &format!("/repos/{repo}/convert"), Some(json!({"to": to}))).await;
+        assert_eq!(status, StatusCode::OK, "{body}");
+        assert_eq!(body["metarecords"], json!(2), "{body}");
+        let repo_state = state.repo(repo.parse().unwrap()).unwrap();
+        assert_eq!(repo_state.config.storage, storage);
+        let (status, body) =
+            request(&app, "POST", &format!("/repos/{repo}/query"), Some(query.clone())).await;
+        assert_eq!(status, StatusCode::OK, "{body}");
+        assert_eq!(body, json!([kept]));
+    }
+    let (status, _) =
+        request(&app, "POST", &format!("/repos/{repo}/convert"), Some(json!({"to": "sqlite"})))
+            .await;
+    assert_eq!(status, StatusCode::BAD_REQUEST, "already on sqlite");
+}

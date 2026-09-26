@@ -600,6 +600,26 @@ and =MDB_NOMETASYNC= saved almost nothing — one =fsync= dominates either way.
 4. *Derived key spaces* and the disk query source; the oracle comparison
    through SQLite export; cost assertions. See "Increment 4, concretely".
 5. *=mf repo convert=*, =reindex=, =check=, backup; the backend choice at =init=.
+   *(convert and the choice at init done)* =mf repo convert --to kv|sqlite=
+   (=POST /repos/:repo/convert=) unloads the repository, waits for its store
+   to be released, and converts it on disk: the new store is written beside
+   the old one (=internal/converting-…=) by a faithful copy — metarecords and
+   versions, every row under its own id, the history under its own ids
+   (operations and snapshots, revisions, HEAD, queued restorations), and the
+   id counters, so no id is ever handed out twice — through three import
+   primitives both backends implement (=import_revision=, =import_op=,
+   =raise_counters=); a KV target is reindexed for the locality of its dense
+   ids; both stores are then read and compared (a digest of all of it); the
+   new store takes its name; =config.json= — now always written atomically,
+   a new file renamed over the old — switches; the old store is set aside as
+   =internal/pre-convert-<time>-<name>=, for the user to delete. An
+   interruption before the config write leaves the repository as it was (the
+   leftovers are removed by the next attempt); after it, only the old store
+   is left to set aside. The repository is loaded back either way.
+   Measured: 50 000 files (200 000 rows) in 9 s to KV, 13 s back.
+   =mf repo init --storage= chooses the backend; =GET /repos= reports it.
+   /Not built/: =reindex= and =check= as commands (=KvStore::reindex= and
+   =check_derived= exist), backup.
 
 ** Increment 4, concretely
 

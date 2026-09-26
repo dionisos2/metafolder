@@ -343,6 +343,17 @@ unique among loaded repos (=409= on collision), since =-n <name>= resolves it to
 a UUID. The new name is persisted to =config.json=. Response: the updated repo
 info object.
 
+*** =POST /repos/:repo_uuid/convert=
+
+Converts a loaded repository to another storage backend (spec-storage
+"Choosing the backend", increment 5). Body ={"to": "kv"}= or ={"to":
+"sqlite"}=. The daemon unloads the repository (=409= while a task runs or a
+navigation holds it), converts it on disk — a verified, faithful copy of its
+data and history — and loads it back; on failure nothing is switched and it
+is loaded back on its old backend. =400= when it is already on that backend.
+Response: ={"metarecords", "rows", "operations", "revisions", "old_store"}=,
+the last naming where the former store was set aside.
+
 *** =POST /repos/init=
 
 Initialises a new repository. Creates =config.json= and the store — the

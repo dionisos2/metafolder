@@ -106,10 +106,30 @@ impl RepoConfig {
         serde_json::from_str(&content).context("Failed to parse config.json")
     }
 
+    /// Writes `config.json` atomically — a complete new file renamed over
+    /// the old one — so a crash leaves the old config or the new, never half
+    /// of one: a backend conversion switches stores by this very write
+    /// (spec-storage increment 5). The new file is written in `internal/`,
+    /// which the watcher never records.
     pub fn write(&self, metafolder_dir: &Path) -> anyhow::Result<()> {
+        use std::io::Write as _;
         let path = metafolder_dir.join(CONFIG_FILE);
         let content = serde_json::to_string_pretty(self).context("Failed to serialize config")?;
-        std::fs::write(&path, content).with_context(|| format!("Failed to write {path:?}"))
+        let internal = metafolder_dir.join(crate::repo::INTERNAL_DIR);
+        std::fs::create_dir_all(&internal)
+            .with_context(|| format!("Failed to create {internal:?}"))?;
+        let temp = internal.join(format!("{CONFIG_FILE}.new"));
+        {
+            let mut file = std::fs::File::create(&temp)
+                .with_context(|| format!("Failed to create {temp:?}"))?;
+            file.write_all(content.as_bytes())?;
+            file.sync_all().with_context(|| format!("Failed to sync {temp:?}"))?;
+        }
+        std::fs::rename(&temp, &path).with_context(|| format!("Failed to write {path:?}"))?;
+        if let Ok(dir) = std::fs::File::open(metafolder_dir) {
+            let _ = dir.sync_all();
+        }
+        Ok(())
     }
 
     /// This repository's effective retention: its own overrides where set,

@@ -188,12 +188,16 @@ pub fn init(
     metafolder: Option<&Path>,
     ignore: Vec<String>,
     no_ignore: bool,
+    storage: Option<String>,
 ) -> Result<i32, CliError> {
     use metafolder_core::repo_init::{init_repo, InitIgnore};
 
     let mut body = json!({"root": absolutize(root)?});
     if let Some(dir) = metafolder {
         body["metafolder"] = json!(absolutize(dir)?);
+    }
+    if let Some(storage) = storage {
+        body["storage"] = json!(storage);
     }
     let client = TrashDaemon(&ctx.client);
 
@@ -259,6 +263,16 @@ pub fn repos(ctx: &Ctx, all: bool) -> Result<i32, CliError> {
 /// `mf unload`: unloads the repository from the daemon (`POST …/unload`),
 /// printing its UUID. A repository not loaded (404) or in a rollback navigation
 /// (409) is reported as an error.
+/// `mf repo convert --to <backend>` (spec-storage increment 5): prints what
+/// was copied and where the old store was set aside.
+pub fn convert(ctx: &Ctx, to: &str) -> Result<i32, CliError> {
+    let base = ctx.repo_base()?;
+    let report =
+        ctx.client.request("POST", &format!("{base}/convert"), &[], Some(&json!({"to": to})))?;
+    println!("{}", serde_json::to_string_pretty(&report).unwrap_or_default());
+    Ok(0)
+}
+
 pub fn unload(ctx: &Ctx) -> Result<i32, CliError> {
     let base = ctx.repo_base()?;
     let resp = ctx.client.request("POST", &format!("{base}/unload"), &[], None)?;
