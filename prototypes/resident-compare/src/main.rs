@@ -34,6 +34,7 @@ async fn main() -> Result<()> {
     match args.iter().map(String::as_str).collect::<Vec<_>>().as_slice() {
         ["gen", dir, files] => generate(Path::new(dir), files.parse()?),
         ["bench", dir] => bench(Path::new(dir)).await,
+        ["profile", dir] => profile(Path::new(dir)).await,
         _ => bail!("usage: resident-compare gen <dir> <files> | bench <dir>"),
     }
 }
@@ -192,6 +193,40 @@ fn memory() -> String {
         })
     };
     format!("heap (RssAnon) {}, mapped (RssFile) {}", field("RssAnon:"), field("RssFile:"))
+}
+
+/// Each gesture once more with the slow-operation threshold at 1 ms, then the
+/// phases the daemon recorded for it (its own instrumentation, ms precision).
+async fn profile(dir: &Path) -> Result<()> {
+    let settings = metafolder_daemon::daemon_config::DaemonSettings {
+        slow_operation_threshold_ms: 1,
+        ..Default::default()
+    };
+    let state = Arc::new(AppState::new().with_settings(settings));
+    let api = |e: metafolder_daemon::error::ApiError| anyhow::anyhow!("{e:?}");
+    let uuid = state.load_repo(repo::RepoLocator::Root(dir.to_path_buf())).map_err(api)?;
+    let repo_state = state.repo(uuid).map_err(api)?;
+    repo_state.warm(&|_, _, _| {}).map_err(api)?;
+    let slow = metafolder_core::slowlog::slow_dir(&repo_state.internal_dir());
+    let app = routes::build(state.clone());
+    let uri = format!("/repos/{}/query", routes::hex(uuid));
+    for g in gestures() {
+        let body = json!({"query": g.query, "sort": g.sort, "limit": 100, "count": false});
+        post(&app, &uri, &body).await?;
+        metafolder_core::slowlog::clear(&slow);
+        post(&app, &uri, &body).await?;
+        let (entries, _) = metafolder_core::slowlog::read(&slow, 10, None);
+        for e in entries.iter().filter(|e| e.op.contains("query")) {
+            let phases: Vec<String> = e
+                .phases
+                .iter()
+                .filter(|p| p.ms > 0)
+                .map(|p| format!("{}{}={}", "  ".repeat(p.depth as usize), p.name, p.ms))
+                .collect();
+            println!("{:<18} {:>4} ms  {}", g.name, e.ms, phases.join(" "));
+        }
+    }
+    Ok(())
 }
 
 fn median(mut v: Vec<f64>) -> f64 {
