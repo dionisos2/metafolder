@@ -232,9 +232,12 @@ backend reported by =GET /watch=. The =watcher/= split, the =Source= seam, the
 broker and the daemon-side =fanotify= source are done (below); what remains is
 a run against a real privileged broker (handle resolution cannot run in the
 unprivileged harness; the marks now can, in a user namespace), the conformance
-battery against both sources, and the note's open questions (auto-reconcile on
-reconnect, network filesystems, filtering before resolving). An overflow is
-settled: announced with a suggestion, never an automatic reconcile.
+battery against both sources, and the note's open questions (network
+filesystems, kernel-side ignore marks for busy directories outside the roots).
+Settled: reconciling is purely manual — an overflow or a reconnection is
+announced with a suggestion, never an automatic reconcile. Done since: events
+outside the roots are filtered by parent directory before any path is
+resolved (=fanotify::Scope=).
 The permission model is decided (strictly single-user daemon; no hop reveals
 more than the next hop's own credentials could discover, see the note) and
 implemented in the broker.

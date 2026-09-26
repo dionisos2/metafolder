@@ -65,7 +65,8 @@ Verified against man-pages 6.19 and the kernel documentation:
   started. A filesystem mark reaches every mount of that filesystem — bind
   mounts, other mount namespaces (the systemd unit's own `ProtectHome=` one
   included) — so events outside the subscribed roots arrive too, and the
-  per-subscriber filter drops them.
+  per-subscriber filter drops them — after the broker's own parent-directory
+  filter has dropped most of them unresolved (see "The broker").
 - **Events carry file handles, not paths.** `FAN_REPORT_FID` events identify
   objects by handle; resolving a handle to a path is `open_by_handle_at`
   (`CAP_DAC_READ_SEARCH`) — or a maintained fid→path cache. The kernel also
@@ -81,8 +82,9 @@ Verified against man-pages 6.19 and the kernel documentation:
 - **Limits on this side too.** `max_user_groups`, `max_user_marks`,
   `max_queued_events`; an overflow is `FAN_Q_OVERFLOW` and must be announced,
   never a silent gap. *Announced*, not acted on: the daemon suggests
-  `mf reconcile`, it does not start one (decided September 2026 — an overflow
-  comes from load, and an automatic reconcile would add to it).
+  `mf reconcile`, it does not start one (decided September 2026: reconciling
+  is purely manual — an overflow comes from load, and an automatic reconcile
+  would add to it).
 - **Caveats to design for.** No events for `mmap`/`msync`/`munmap` writes
   (`FAN_CLOSE_WRITE` plus the fingerprint reconcile are the backstop — relevant
   to hash-based identity); no remote events on network filesystems; some FUSE
@@ -137,7 +139,12 @@ Three things the first version got wrong, fixed since (each with its test):
   a repository could not be unplugged. Descriptors now live for one batch of
   events.
 
-42 tests. The kernel-side ones run for real: an unprivileged smoke test (group,
+Events outside the roots are dropped before their paths are resolved: a
+directory's "under a root?" verdict is resolved once per directory handle and
+remembered (`Scope`, see "Open questions"), and the server tests the roots
+before the permission filter stats anything.
+
+48 tests. The kernel-side ones run for real: an unprivileged smoke test (group,
 inode mark, record layout), and tests that re-run themselves under
 `unshare -rm` — a user namespace may mark a tmpfs it mounted itself (Linux
 6.8+) — covering a root with a filesystem mounted beneath it and one mounted
@@ -254,15 +261,20 @@ tests run against both implementations.
 - Broker death mid-stream: **settled as the daemon-down posture** — the gap is
   announced (a diagnostic on disconnect, reconnect and overflow, each naming
   `mf reconcile`) and a reconcile closes it (spec-file-tracking "Watch sources
-  and regimes"). For an *overflow* the suggestion is the whole answer: no
-  automatic reconcile (decided September 2026). *Automatic* reconcile on
-  reconnect is still open: it would fire an unbounded reconcile every time a
-  flaky socket blinks.
+  and regimes"). **Reconciling is purely manual** (decided September 2026):
+  the suggestion is the whole answer, after an overflow as after a
+  reconnection — an automatic one would add to the load that caused an
+  overflow, and fire every time a flaky socket blinks.
 - The cost of filesystem marks: the broker receives every event of the
-  filesystems it covers, inside the roots or not, and resolves each one's
-  handle before the filter can drop it. On a busy `/home` that is work done
-  for nothing; filtering on the parent handle *before* resolving (a
-  directory-handle → "under a root?" cache) is the known remedy, not built.
+  filesystems it covers, inside the roots or not. **Filtered by parent
+  directory (September 2026)**: `fanotify::Scope` answers "under a root?"
+  from the event's directory handles, resolving each directory once and
+  remembering the verdict — which only a directory move or a change of roots
+  can invalidate, and either forgets them all. A busy `~/.cache` then costs one
+  resolution, not one per event. What remains is the kernel side: those events
+  are still queued and read, and a flood of them can still overflow the
+  group's queue for everyone. Ignore marks (`FAN_MARK_IGNORE`, 6.0+) on the
+  busiest outside directories would stop them in the kernel — not built.
 
 ## Tests
 

@@ -177,7 +177,8 @@ impl Event {
     ) -> Option<Event> {
         let in_scope = |p: &WirePath, visible: &mut dyn FnMut(&Path) -> bool| {
             let path = p.as_path();
-            visible(path) && roots.iter().any(|r| path.starts_with(r))
+            // The cheap test first: `visible` stats the path's ancestors.
+            roots.iter().any(|r| path.starts_with(r)) && visible(path)
         };
         match self {
             Event::Rename { from, to } => match (in_scope(from, visible), in_scope(to, visible)) {

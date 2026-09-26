@@ -516,6 +516,77 @@ pub fn translate(raw: &RawEvent, resolver: &mut dyn Resolve) -> Vec<Event> {
     out
 }
 
+// ── Scope: the parent-directory filter ───────────────────────────────────────
+
+/// Past this many remembered directories the verdicts start over — a bound on
+/// memory, not a correctness limit (a forgotten verdict is recomputed).
+const SCOPE_MAX: usize = 65536;
+
+/// Whether an event concerns a subscribed root, answered from its *directory*
+/// handles before anything is resolved to a path. A filesystem mark reports the
+/// whole filesystem — a busy `~/.cache` beside a repository included — and
+/// resolving each of those events only to drop it is the broker's main cost.
+/// A directory's verdict (under a root or not) is resolved once and
+/// remembered; it can only change when a directory moves (its subtree goes
+/// with it) or the roots change, and either forgets everything.
+#[derive(Default)]
+pub struct Scope {
+    roots: Vec<PathBuf>,
+    /// Directory handle → under a root.
+    verdicts: HashMap<([i32; 2], Vec<u8>), bool>,
+}
+
+impl Scope {
+    pub fn set_roots(&mut self, roots: Vec<PathBuf>) {
+        self.roots = roots;
+        self.verdicts.clear();
+    }
+
+    /// Whether `raw` can concern a root: some directory it names is under one
+    /// (the root itself included). A directory move is seen here first, and
+    /// forgets every verdict before any is read.
+    pub fn relevant(&mut self, raw: &RawEvent, resolver: &mut dyn Resolve) -> bool {
+        let moves = FAN_RENAME | FAN_MOVED_FROM | FAN_MOVED_TO;
+        if raw.mask & FAN_ONDIR != 0 && raw.mask & moves != 0 {
+            self.verdicts.clear();
+        }
+        let dirs = [&raw.parent, &raw.old, &raw.new].into_iter().flatten().map(|(h, _)| h);
+        let mut any_dir = false;
+        for dir in dirs {
+            any_dir = true;
+            if self.dir_under_root(dir, resolver) {
+                return true;
+            }
+        }
+        // An event about the object alone (`FAN_DELETE_SELF`, the only word on
+        // a deleted root): rare, resolved directly, never remembered — the
+        // handle need not be a directory, and a file moving forgets nothing.
+        match (&raw.fid, any_dir) {
+            (Some(h), false) => resolver.resolve(h).is_some_and(|p| self.under_root(&p)),
+            _ => false,
+        }
+    }
+
+    fn dir_under_root(&mut self, h: &Handle, resolver: &mut dyn Resolve) -> bool {
+        let key = (h.fsid, h.bytes.clone());
+        if let Some(&verdict) = self.verdicts.get(&key) {
+            return verdict;
+        }
+        // Unresolvable says nothing about the directory: not remembered.
+        let Some(path) = resolver.resolve(h) else { return false };
+        let verdict = self.under_root(&path);
+        if self.verdicts.len() >= SCOPE_MAX {
+            self.verdicts.clear();
+        }
+        self.verdicts.insert(key, verdict);
+        verdict
+    }
+
+    fn under_root(&self, path: &Path) -> bool {
+        self.roots.iter().any(|r| path.starts_with(r))
+    }
+}
+
 // ── The group, the marks, the reader ─────────────────────────────────────────
 
 /// One covered filesystem: one mark, placed as long as a subscribed root is on
@@ -544,6 +615,8 @@ pub struct Fanotify {
     /// What is asked of the kernel: [`mask`], less `FAN_RENAME` on a kernel
     /// that refuses it.
     mask: u64,
+    /// What is under a root, by directory handle ([`Scope`]).
+    scope: Scope,
     resolver: PathResolver,
 }
 
@@ -569,6 +642,7 @@ impl Fanotify {
             marks: HashMap::new(),
             roots: Vec::new(),
             mask: mask(),
+            scope: Scope::default(),
             resolver: PathResolver::default(),
         })
     }
@@ -577,6 +651,7 @@ impl Fanotify {
     /// subscriber watches).
     pub fn sync_roots(&mut self, roots: &[PathBuf]) -> Result<()> {
         self.roots = roots.to_vec();
+        self.scope.set_roots(roots.to_vec());
         self.resync()
     }
 
@@ -656,12 +731,16 @@ impl Fanotify {
         Reader { fd: Arc::clone(&self.fd) }
     }
 
-    /// Turns one read's bytes into wire events.
+    /// Turns one read's bytes into wire events — those under a subscribed
+    /// root: the rest is dropped by directory handle ([`Scope`]) before
+    /// anything is resolved for it.
     pub fn translate(&mut self, buf: &[u8]) -> ReadOutcome {
         let (raws, kernel_overflow) = parse(buf);
         let mut events = Vec::new();
         for raw in &raws {
-            events.extend(translate(raw, &mut self.resolver));
+            if self.scope.relevant(raw, &mut self.resolver) {
+                events.extend(translate(raw, &mut self.resolver));
+            }
         }
         self.resolver.end_batch();
         ReadOutcome { events, kernel_overflow }
@@ -978,6 +1057,110 @@ mod tests {
         let mut r = table(&[(&handle(1), "/repo")]);
         let expected = PathBuf::from(std::ffi::OsStr::from_bytes(b"/repo/caf\xE9"));
         assert_eq!(translate(&events[0], &mut r), vec![Event::Create { path: expected.into() }]);
+    }
+
+    // ── Scope (the parent-directory filter) ──────────────────────────────────
+
+    /// A [`Table`] that counts its resolutions — the cost being filtered.
+    struct Counting {
+        table: Table,
+        calls: usize,
+    }
+
+    impl Resolve for Counting {
+        fn resolve(&mut self, h: &Handle) -> Option<PathBuf> {
+            self.calls += 1;
+            self.table.resolve(h)
+        }
+    }
+
+    fn creation(parent: &Handle, name: &str) -> RawEvent {
+        let mut b = Buf::new(FAN_CREATE, 1);
+        b.fid_record(INFO_TYPE_DFID_NAME, parent, Some(name));
+        parse(&b.finish()).0.remove(0)
+    }
+
+    fn scope_over(roots: &[&str]) -> Scope {
+        let mut scope = Scope::default();
+        scope.set_roots(roots.iter().map(PathBuf::from).collect());
+        scope
+    }
+
+    #[test]
+    fn test_a_busy_directory_outside_the_roots_is_resolved_once() {
+        // A filesystem mark reports the whole filesystem. What happens in a
+        // directory outside every root is dropped on the strength of its
+        // handle, remembered — not by resolving the handle again per event.
+        let mut r = Counting { table: table(&[(&handle(1), "/home/me/.cache")]), calls: 0 };
+        let mut scope = scope_over(&["/home/me/repo"]);
+        for i in 0..100 {
+            assert!(!scope.relevant(&creation(&handle(1), &format!("f{i}")), &mut r));
+        }
+        assert_eq!(r.calls, 1, "one resolution for the directory, none per event");
+    }
+
+    #[test]
+    fn test_an_event_under_a_root_goes_through() {
+        let mut r = Counting {
+            table: table(&[(&handle(1), "/home/me/repo/sub"), (&handle(2), "/home/me/repo")]),
+            calls: 0,
+        };
+        let mut scope = scope_over(&["/home/me/repo"]);
+        assert!(scope.relevant(&creation(&handle(1), "x"), &mut r));
+        assert!(scope.relevant(&creation(&handle(2), "x"), &mut r), "the root itself");
+        // `/home/me/repo-other` is not under `/home/me/repo`.
+        let mut r = Counting { table: table(&[(&handle(3), "/home/me/repo-other")]), calls: 0 };
+        assert!(!scope.relevant(&creation(&handle(3), "x"), &mut r));
+    }
+
+    #[test]
+    fn test_a_move_with_one_side_under_a_root_goes_through() {
+        let mut r = Counting {
+            table: table(&[(&handle(1), "/home/me/Downloads"), (&handle(2), "/home/me/repo")]),
+            calls: 0,
+        };
+        let mut scope = scope_over(&["/home/me/repo"]);
+        let mut b = Buf::new(FAN_RENAME, 1);
+        b.fid_record(INFO_TYPE_OLD_DFID_NAME, &handle(1), Some("a"));
+        b.fid_record(INFO_TYPE_NEW_DFID_NAME, &handle(2), Some("a"));
+        assert!(scope.relevant(&parse(&b.finish()).0[0], &mut r));
+    }
+
+    #[test]
+    fn test_a_directory_moving_forgets_what_was_known() {
+        // A directory moved into a root takes its subtree with it: what was
+        // known to be outside may now be inside. Any directory move forgets.
+        let mut r = Counting { table: table(&[(&handle(1), "/home/me/Downloads/d")]), calls: 0 };
+        let mut scope = scope_over(&["/home/me/repo"]);
+        assert!(!scope.relevant(&creation(&handle(1), "x"), &mut r));
+
+        r.table.0.insert(handle(1).bytes, PathBuf::from("/home/me/repo/d"));
+        let mut b = Buf::new(FAN_RENAME | FAN_ONDIR, 1);
+        b.fid_record(INFO_TYPE_OLD_DFID_NAME, &handle(2), Some("d"));
+        b.fid_record(INFO_TYPE_NEW_DFID_NAME, &handle(3), Some("d"));
+        scope.relevant(&parse(&b.finish()).0[0], &mut r);
+
+        assert!(scope.relevant(&creation(&handle(1), "x"), &mut r), "recomputed after the move");
+    }
+
+    #[test]
+    fn test_new_roots_forget_what_was_known() {
+        let mut r = Counting { table: table(&[(&handle(1), "/home/me/other")]), calls: 0 };
+        let mut scope = scope_over(&["/home/me/repo"]);
+        assert!(!scope.relevant(&creation(&handle(1), "x"), &mut r));
+        scope.set_roots(vec![PathBuf::from("/home/me/other")]);
+        assert!(scope.relevant(&creation(&handle(1), "x"), &mut r));
+    }
+
+    #[test]
+    fn test_a_handle_that_cannot_be_resolved_is_not_remembered() {
+        // An unresolvable handle (ESTALE, a filesystem gone) says nothing about
+        // the directory: dropped now, asked again next time.
+        let mut r = Counting { table: table(&[]), calls: 0 };
+        let mut scope = scope_over(&["/home/me/repo"]);
+        assert!(!scope.relevant(&creation(&handle(1), "x"), &mut r));
+        assert!(!scope.relevant(&creation(&handle(1), "y"), &mut r));
+        assert_eq!(r.calls, 2);
     }
 
     // ── Mounts ───────────────────────────────────────────────────────────────
