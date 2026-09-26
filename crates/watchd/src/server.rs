@@ -262,7 +262,15 @@ impl<C: 'static + CredSource> Broker<C> {
             // and no longer.
             let adapted = {
                 let mut filter = lock(&self.inner.filter);
-                let mut visible = |p: &std::path::Path| filter.may_see(&client.peer, p);
+                let mut visible = |p: &std::path::Path| {
+                    // The subscriber's innermost root holding `p`: listing
+                    // is required from there down.
+                    let root = roots
+                        .iter()
+                        .filter(|r| p.starts_with(r))
+                        .max_by_key(|r| r.components().count());
+                    root.is_some_and(|root| filter.may_see(&client.peer, root, p))
+                };
                 event.adapt(&roots, &mut visible)
             };
             let Some(adapted) = adapted else { continue };

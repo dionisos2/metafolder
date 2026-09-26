@@ -117,7 +117,7 @@ fn test_the_accept_path_identifies_the_peer_and_serves_the_filtered_stream() {
     let mut filter = AccessFilter::new(FakeCreds);
     let peer = Subscriber { uid: peer_uid, gid: 0, pid: 0, groups: vec![0] };
     if !is_root {
-        assert!(!filter.may_see(&peer, Path::new("/locked/c")));
+        assert!(!filter.may_see(&peer, Path::new("/locked"), Path::new("/locked/c")));
     }
 
     drop(stream);

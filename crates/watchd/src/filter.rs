@@ -4,8 +4,9 @@
 //! runs privileged and sees the whole mount; a subscriber learns of an entry
 //! only if its own uid could reach the entry's parent directory and list it.
 //!
-//! The check is userspace DAC (owner/group/other mode bits), memoised per
-//! (uid, directory). Two things it deliberately does not do, by design: POSIX
+//! The check is userspace DAC (owner/group/other mode bits) over each
+//! directory's owner and mode, memoised per directory (the verdict itself is
+//! recomputed per subscriber: it depends on its groups). Two things it deliberately does not do, by design: POSIX
 //! ACLs are *not* consulted (the mode bits are — a stricter answer than the
 //! filesystem would give, never a looser one), and the cache is allowed to be
 //! up to [`AccessFilter::ttl`] old. Root (uid 0) is answered yes outright: it
@@ -98,11 +99,14 @@ pub struct Subscriber {
     pub groups: Vec<u32>,
 }
 
-/// The filter: userspace DAC, memoised per (uid, directory) for `ttl`.
+/// A directory's `(uid, gid, mode)`.
+type DirMeta = (u32, u32, u32);
+
+/// The filter: userspace DAC over directory modes memoised for `ttl`.
 pub struct AccessFilter<C: CredSource> {
     creds: C,
-    /// (uid, directory) → (may traverse, may list, when asked).
-    cache: HashMap<(u32, PathBuf), (bool, bool, Instant)>,
+    /// directory → (its `(uid, gid, mode)`, or absent; when asked).
+    cache: HashMap<PathBuf, (Option<DirMeta>, Instant)>,
     ttl: Duration,
 }
 
@@ -194,12 +198,31 @@ impl<C: CredSource> AccessFilter<C> {
         self.walk(sub, root)
     }
 
-    /// May `sub` see the entry `path` — reach its parent and list the entry?
-    pub fn may_see(&mut self, sub: &Subscriber, path: &Path) -> bool {
+    /// May `sub`, watching `root`, see the entry `path` — reach its parent and
+    /// list the entry?
+    ///
+    /// Walking the tree from `root`, a name is learnt only by listing the
+    /// directory that holds it, so *every* directory from `root` down to the
+    /// parent must be listable — not only the parent: under a `--x` directory
+    /// the names of its subdirectories stay unknown however open they are.
+    /// Above `root`, traversal is enough (the subscriber named the root).
+    pub fn may_see(&mut self, sub: &Subscriber, root: &Path, path: &Path) -> bool {
         let Some(parent) = path.parent() else {
             return false;
         };
-        self.walk(sub, parent)
+        if !parent.starts_with(root) || !self.walk(sub, parent) {
+            return false;
+        }
+        if sub.uid == 0 {
+            return true;
+        }
+        // `walk` checked `x` everywhere and `r` on the parent; `r` on the
+        // directories between the root and it remains.
+        parent
+            .ancestors()
+            .skip(1)
+            .take_while(|d| d.starts_with(root))
+            .all(|d| self.usable(sub, d).1)
     }
 
     /// The whole rule in one shape: *traverse every directory from the
@@ -229,15 +252,22 @@ impl<C: CredSource> AccessFilter<C> {
         true
     }
 
-    /// The (traverse, list) rights of `sub` on `dir`, memoised.
+    /// The (traverse, list) rights of `sub` on `dir`. What is memoised is the
+    /// directory's owner and mode, not the verdict: the verdict depends on the
+    /// subscriber's groups, which two processes of one uid need not share.
     fn usable(&mut self, sub: &Subscriber, dir: &Path) -> (bool, bool) {
-        let key = (sub.uid, dir.to_path_buf());
-        if let Some((x, r, at)) = self.cache.get(&key) {
-            if at.elapsed() < self.ttl {
-                return (*x, *r);
+        let meta = match self.cache.get(dir) {
+            Some((meta, at)) if at.elapsed() < self.ttl => *meta,
+            _ => {
+                let meta = self.creds.dir_meta(dir);
+                if self.cache.len() >= CACHE_MAX {
+                    self.cache.clear();
+                }
+                self.cache.insert(dir.to_path_buf(), (meta, Instant::now()));
+                meta
             }
-        }
-        let rights = match self.creds.dir_meta(dir) {
+        };
+        match meta {
             Some((fuid, fgid, mode)) => {
                 let shift = if sub.uid == fuid {
                     6 // owner
@@ -250,12 +280,7 @@ impl<C: CredSource> AccessFilter<C> {
                 ((bits & 0o1) != 0, (bits & 0o4) != 0)
             }
             None => (false, false), // Absent: nothing to reach, nothing to list.
-        };
-        if self.cache.len() >= CACHE_MAX {
-            self.cache.clear();
         }
-        self.cache.insert(key, (rights.0, rights.1, Instant::now()));
-        rights
     }
 }
 
@@ -411,14 +436,14 @@ mod tests {
     fn test_an_owner_reaches_and_lists_their_own_directory() {
         let mut f = AccessFilter::new(FakeCreds::new().dir("/repo", 1000, 100, 0o700));
         assert!(f.may_watch(&user(1000), Path::new("/repo")));
-        assert!(f.may_see(&user(1000), Path::new("/repo/x")));
+        assert!(f.may_see(&user(1000), Path::new("/repo"), Path::new("/repo/x")));
     }
 
     #[test]
     fn test_another_user_is_shut_out_by_700() {
         let mut f = AccessFilter::new(FakeCreds::new().dir("/repo", 1000, 100, 0o700));
         assert!(!f.may_watch(&user(1001), Path::new("/repo")));
-        assert!(!f.may_see(&user(1001), Path::new("/repo/x")));
+        assert!(!f.may_see(&user(1001), Path::new("/repo"), Path::new("/repo/x")));
     }
 
     #[test]
@@ -438,10 +463,10 @@ mod tests {
         // --x on the parent: a known file can be reached, but its name cannot
         // be *seen* — and events are names.
         let mut f = AccessFilter::new(FakeCreds::new().dir("/repo", 1000, 100, 0o711));
-        assert!(!f.may_see(&user(1001), Path::new("/repo/x")));
+        assert!(!f.may_see(&user(1001), Path::new("/repo"), Path::new("/repo/x")));
         // r-x on the parent is the pair the rule asks for.
         let mut f = AccessFilter::new(FakeCreds::new().dir("/repo", 1000, 100, 0o755));
-        assert!(f.may_see(&user(1001), Path::new("/repo/x")));
+        assert!(f.may_see(&user(1001), Path::new("/repo"), Path::new("/repo/x")));
     }
 
     #[test]
@@ -452,13 +477,46 @@ mod tests {
             100,
             0o777,
         ));
-        assert!(!f.may_see(&user(1001), Path::new("/locked/sub/x")));
+        assert!(!f.may_see(&user(1001), Path::new("/locked/sub"), Path::new("/locked/sub/x")));
+    }
+
+    /// Walking from the root down, a name is learnt only by listing the
+    /// directory holding it: under a `--x` directory, the names of its
+    /// subdirectories stay unknown — even when those are wide open.
+    #[test]
+    fn test_names_under_an_unlistable_directory_stay_hidden() {
+        let creds = FakeCreds::new()
+            .dir("/repo", 1000, 100, 0o755)
+            .dir("/repo/secret", 1000, 100, 0o711)
+            .dir("/repo/secret/known", 1000, 100, 0o755);
+        let mut f = AccessFilter::new(creds);
+        let stranger = Subscriber { uid: 2000, gid: 200, pid: 2, groups: vec![200] };
+        let root = Path::new("/repo");
+        assert!(!f.may_see(&stranger, root, Path::new("/repo/secret/known/file")));
+        // `secret` itself is listed in /repo: that entry may be seen.
+        assert!(f.may_see(&stranger, root, Path::new("/repo/secret")));
+        // Above the root only traversal counts: the subscriber named it.
+        let mut f = AccessFilter::new(
+            FakeCreds::new().dir("/home", 0, 0, 0o711).dir("/home/u", 2000, 200, 0o755),
+        );
+        assert!(f.may_see(&stranger, Path::new("/home/u"), Path::new("/home/u/x")));
+    }
+
+    /// The same uid in two processes need not hold the same groups: what one
+    /// may see through a group must not be lent to the other by the cache.
+    #[test]
+    fn test_the_cache_lends_no_group_to_another_process() {
+        let mut f = AccessFilter::new(FakeCreds::new().dir("/g", 1000, 77, 0o750));
+        let with = Subscriber { uid: 1001, gid: 100, pid: 1, groups: vec![77, 100] };
+        let without = Subscriber { uid: 1001, gid: 100, pid: 2, groups: vec![100] };
+        assert!(f.may_see(&with, Path::new("/g"), Path::new("/g/x")));
+        assert!(!f.may_see(&without, Path::new("/g"), Path::new("/g/x")));
     }
 
     #[test]
     fn test_an_absent_directory_is_denied() {
         let mut f = AccessFilter::new(FakeCreds::new());
-        assert!(!f.may_see(&user(1000), Path::new("/gone/x")));
+        assert!(!f.may_see(&user(1000), Path::new("/gone"), Path::new("/gone/x")));
     }
 
     #[test]
@@ -484,7 +542,7 @@ mod tests {
         let creds = FakeCreds::new().dir("/repo", 1000, 100, 0o755);
         let mut f = AccessFilter::new(creds);
         for _ in 0..10 {
-            assert!(f.may_see(&user(1000), Path::new("/repo/x")));
+            assert!(f.may_see(&user(1000), Path::new("/repo"), Path::new("/repo/x")));
         }
         // `/` and `/repo`, once each — not once per event.
         assert_eq!(f.creds.stats(), 2);

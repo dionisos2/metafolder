@@ -169,9 +169,12 @@ rule, at every hop:
 
 - **broker → daemon** (the critical hop — the broker sees the whole mount): each
   subscriber is identified by `SO_PEERCRED` (its uid), and an event is sent only
-  if that uid could itself `stat` the path (search the ancestors) and see the
-  entry in its parent (read the parent). Evaluated *as the subscriber's
-  identity*, cached per (uid, directory inode). Subscribing to a root passes the
+  if that uid could itself discover it by walking down from its root: search
+  every ancestor, and *list* every directory from the root down to the entry's
+  parent (the first version asked it of the parent only, so the names of the
+  subdirectories of a `--x` directory leaked). Evaluated *as the subscriber's
+  identity* — its uid and its groups; the directories' modes are cached, the
+  verdict is not (two processes of one uid need not hold the same groups). Subscribing to a root passes the
   same check — and so does *resolving* it (symlinks, `..`) to the name the
   kernel reports events under: `filter::AccessFilter::resolve` walks it one
   component at a time, looking an entry up only in a directory the subscriber
