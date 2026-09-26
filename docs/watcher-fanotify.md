@@ -139,6 +139,13 @@ Three things the first version got wrong, fixed since (each with its test):
   a repository could not be unplugged. Descriptors now live for one batch of
   events.
 
+The socket is world-connectable, so what a peer can make the broker hold is
+bounded (`server::Limits`): a message is at most 256 KiB (a line is buffered
+whole before it is parsed — `lines()` would have buffered one without end), a
+uid holds at most 256 connections and the machine 1024 (two threads each),
+and a peer that hangs up is let go entirely — the first version left the
+writer thread of every closed connection waiting for ever on its queue.
+
 Events outside the roots are dropped before their paths are resolved: a
 directory's "under a root?" verdict is resolved once per directory handle and
 remembered (`Scope`, see "Open questions"), and the server tests the roots

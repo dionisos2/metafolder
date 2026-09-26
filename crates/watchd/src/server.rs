@@ -27,6 +27,32 @@ use crate::proto::{self, ClientMsg, Denied, Event, ServerMsg, WirePath};
 /// into unbounded memory, taking every other subscriber with it.
 const CLIENT_QUEUE: usize = 4096;
 
+/// How much of the broker one connection, and one user, may occupy. The
+/// socket is world-connectable (the gate is the per-uid filter), so every
+/// resource a peer can make the broker hold is bounded here.
+#[derive(Debug, Clone, Copy)]
+pub struct Limits {
+    /// Messages queued per subscriber before it is dropped from (`Overflow`).
+    pub queue_cap: usize,
+    /// Connections one uid may hold: another user's daemon can never be
+    /// starved out by a flood of connections.
+    pub per_uid: usize,
+    /// Connections in all: two threads each, on a privileged process.
+    pub total: usize,
+}
+
+impl Default for Limits {
+    fn default() -> Self {
+        // A daemon holds one connection per loaded repository.
+        Limits { queue_cap: CLIENT_QUEUE, per_uid: 256, total: 1024 }
+    }
+}
+
+/// The longest message a subscriber may send: a `Subscribe` naming its roots.
+/// Past it the connection is dropped — a line is buffered whole before it is
+/// parsed, and nobody may make a privileged process buffer without end.
+const MAX_LINE: usize = 256 * 1024;
+
 /// What the server tells the event source about the *union* of the roots all
 /// subscribers watch, after every subscription change. The fanotify side uses
 /// it to place and lift its filesystem marks.
@@ -49,10 +75,20 @@ struct Client {
     /// The roots this subscriber may see (absolute, canonical). Read by the
     /// broadcast, written by the subscriber's own reader thread.
     roots: Mutex<Vec<PathBuf>>,
-    tx: SyncSender<ServerMsg>,
+    tx: SyncSender<Out>,
+    /// The connection itself, to hang up on the peer when the queue cannot
+    /// carry the order to (it is full).
+    conn: UnixStream,
     /// Set when a message was dropped for this subscriber; the writer thread
     /// turns it into an in-order `Overflow` marker before the next message.
     overflow: AtomicBool,
+}
+
+/// What a subscriber's writer thread is handed: a message to write, or the
+/// order to hang up once everything queued before it is written.
+enum Out {
+    Msg(ServerMsg),
+    Close,
 }
 
 struct Inner<C: CredSource> {
@@ -60,7 +96,7 @@ struct Inner<C: CredSource> {
     sink: Arc<dyn RootSink>,
     clients: Mutex<Vec<Arc<Client>>>,
     next_id: AtomicU64,
-    queue_cap: usize,
+    limits: Limits,
 }
 
 /// The broker: a client registry and the two loops that serve it.
@@ -76,7 +112,7 @@ fn lock<T>(m: &Mutex<T>) -> MutexGuard<'_, T> {
 
 impl<C: 'static + CredSource> Broker<C> {
     pub fn new(filter: AccessFilter<C>, sink: Arc<dyn RootSink>) -> Self {
-        Self::with_queue_cap(filter, sink, CLIENT_QUEUE)
+        Self::with_limits(filter, sink, Limits::default())
     }
 
     /// The same broker with a smaller per-subscriber queue — what the tests
@@ -86,13 +122,17 @@ impl<C: 'static + CredSource> Broker<C> {
         sink: Arc<dyn RootSink>,
         queue_cap: usize,
     ) -> Self {
+        Self::with_limits(filter, sink, Limits { queue_cap, ..Limits::default() })
+    }
+
+    pub fn with_limits(filter: AccessFilter<C>, sink: Arc<dyn RootSink>, limits: Limits) -> Self {
         Self {
             inner: Arc::new(Inner {
                 filter: Mutex::new(filter),
                 sink,
                 clients: Mutex::new(Vec::new()),
                 next_id: AtomicU64::new(1),
-                queue_cap,
+                limits,
             }),
         }
     }
@@ -111,25 +151,37 @@ impl<C: 'static + CredSource> Broker<C> {
 
     /// Attaches an already-identified peer (what tests do; `attach_stream` is
     /// the thin `SO_PEERCRED` wrapper above).
-    pub fn attach(&self, stream: UnixStream, peer: Subscriber) {
-        let (tx, rx) = std::sync::mpsc::sync_channel(self.inner.queue_cap);
+    pub fn attach(&self, mut stream: UnixStream, peer: Subscriber) {
+        {
+            let clients = lock(&self.inner.clients);
+            let mine = clients.iter().filter(|c| c.peer.uid == peer.uid).count();
+            if mine >= self.inner.limits.per_uid || clients.len() >= self.inner.limits.total {
+                drop(clients);
+                let _ = write_msg(
+                    &mut stream,
+                    &ServerMsg::Error { message: "too many connections".to_string() },
+                );
+                return; // Dropping the stream hangs up.
+            }
+        }
+        let (write_half, conn) = match (stream.try_clone(), stream.try_clone()) {
+            (Ok(w), Ok(c)) => (w, c),
+            (Err(err), _) | (_, Err(err)) => {
+                eprintln!("[watchd] could not split a connection: {err}");
+                return;
+            }
+        };
+        let read_half = stream;
+        let (tx, rx) = std::sync::mpsc::sync_channel(self.inner.limits.queue_cap);
         let client = Arc::new(Client {
             id: self.inner.next_id.fetch_add(1, Ordering::Relaxed),
             peer,
             roots: Mutex::new(Vec::new()),
             tx,
+            conn,
             overflow: AtomicBool::new(false),
         });
         lock(&self.inner.clients).push(Arc::clone(&client));
-
-        let (read_half, write_half) = match stream.try_clone() {
-            Ok(w) => (stream, w),
-            Err(err) => {
-                eprintln!("[watchd] could not split a connection: {err}");
-                self.drop_client(client.id);
-                return;
-            }
-        };
 
         // Writer: the overflow marker is emitted *in order*, before the first
         // message that follows the gap, so the subscriber never has to guess
@@ -139,7 +191,8 @@ impl<C: 'static + CredSource> Broker<C> {
             let client = Arc::clone(&client);
             std::thread::spawn(move || {
                 let mut out = write_half;
-                for msg in rx {
+                for item in rx {
+                    let Out::Msg(msg) = item else { break };
                     if client.overflow.swap(false, Ordering::Relaxed)
                         && write_msg(&mut out, &ServerMsg::Overflow {}).is_err()
                     {
@@ -149,7 +202,9 @@ impl<C: 'static + CredSource> Broker<C> {
                         break;
                     }
                 }
-                // Either side going away ends this subscriber.
+                // Either side going away ends this subscriber — and the
+                // connection, so the reading thread's `read` returns too.
+                let _ = client.conn.shutdown(std::net::Shutdown::Both);
                 drop_client(&inner, client.id);
             });
         }
@@ -160,18 +215,35 @@ impl<C: 'static + CredSource> Broker<C> {
             let inner = Arc::clone(&self.inner);
             let client = Arc::clone(&client);
             std::thread::spawn(move || {
-                let mut lines = BufReader::new(read_half).lines();
-                while let Ok(Some(line)) = lines.next().transpose() {
+                let mut input = BufReader::new(read_half);
+                loop {
+                    let line = match read_bounded_line(&mut input) {
+                        Line::Complete(line) => line,
+                        Line::End => break,
+                        Line::TooLong => {
+                            // Through the queue, so it is written before the
+                            // hang-up below.
+                            let _ = client.tx.try_send(Out::Msg(ServerMsg::Error {
+                                message: format!("message too long (over {MAX_LINE} bytes)"),
+                            }));
+                            break;
+                        }
+                    };
                     match proto::decode::<ClientMsg>(&line) {
                         Ok(ClientMsg::Subscribe { roots }) => {
                             apply_subscription(&inner, &client, roots);
                         }
                         Err(err) => {
-                            let _ = client.tx.try_send(ServerMsg::Error {
+                            let _ = client.tx.try_send(Out::Msg(ServerMsg::Error {
                                 message: format!("unparsable message: {err}"),
-                            });
+                            }));
                         }
                     }
+                }
+                // The writer hangs up once what is queued is written; with the
+                // queue full, it cannot be told, and the connection is cut.
+                if client.tx.try_send(Out::Close).is_err() {
+                    let _ = client.conn.shutdown(std::net::Shutdown::Both);
                 }
                 drop_client(&inner, client.id);
             });
@@ -195,7 +267,7 @@ impl<C: 'static + CredSource> Broker<C> {
             };
             let Some(adapted) = adapted else { continue };
             if let Err(TrySendError::Full(_)) =
-                client.tx.try_send(ServerMsg::Event { event: adapted })
+                client.tx.try_send(Out::Msg(ServerMsg::Event { event: adapted }))
             {
                 client.overflow.store(true, Ordering::Relaxed);
             }
@@ -236,10 +308,6 @@ impl<C: 'static + CredSource> Broker<C> {
     /// How many subscribers are connected (diagnostics, tests).
     pub fn client_count(&self) -> usize {
         lock(&self.inner.clients).len()
-    }
-
-    fn drop_client(&self, id: u64) {
-        drop_client(&self.inner, id);
     }
 }
 
@@ -291,12 +359,12 @@ fn apply_subscription<C: CredSource>(
     *lock(&client.roots) = allowed.clone();
     let union = union_roots(&lock(&inner.clients));
     if let Err(err) = inner.sink.set_roots(union) {
-        let _ = client.tx.try_send(ServerMsg::Error { message: format!("{err:#}") });
+        let _ = client.tx.try_send(Out::Msg(ServerMsg::Error { message: format!("{err:#}") }));
     }
-    let _ = client.tx.try_send(ServerMsg::Subscribed {
+    let _ = client.tx.try_send(Out::Msg(ServerMsg::Subscribed {
         roots: allowed.iter().map(|p| WirePath::from(p.as_path())).collect(),
         denied,
-    });
+    }));
 }
 
 fn union_roots(clients: &[Arc<Client>]) -> Vec<PathBuf> {
@@ -309,6 +377,28 @@ fn union_roots(clients: &[Arc<Client>]) -> Vec<PathBuf> {
         }
     }
     union
+}
+
+enum Line {
+    Complete(String),
+    End,
+    TooLong,
+}
+
+/// One newline-terminated line of at most [`MAX_LINE`] bytes. `lines()` would
+/// buffer a line without end for as long as the peer keeps sending.
+fn read_bounded_line(input: &mut BufReader<UnixStream>) -> Line {
+    use std::io::Read;
+    let mut buf = Vec::new();
+    match input.by_ref().take(MAX_LINE as u64 + 1).read_until(b'\n', &mut buf) {
+        Ok(0) | Err(_) => Line::End,
+        Ok(_) if buf.last() == Some(&b'\n') => {
+            buf.pop();
+            Line::Complete(String::from_utf8_lossy(&buf).into_owned())
+        }
+        Ok(_) if buf.len() > MAX_LINE => Line::TooLong,
+        Ok(_) => Line::End, // The peer hung up mid-line.
+    }
 }
 
 fn write_msg(out: &mut UnixStream, msg: &ServerMsg) -> std::io::Result<()> {
@@ -513,6 +603,77 @@ mod tests {
             }
         }
         panic!("no overflow marker in the stream");
+    }
+
+    /// The socket is world-connectable: whatever any local user sends, the
+    /// privileged broker's memory must not follow it.
+    #[test]
+    fn test_a_line_without_end_is_cut_off_not_buffered() {
+        let broker = Broker::new(AccessFilter::new(AllowAll), Arc::new(NoRoots));
+        let (client, mut writer) = attach_pair(&broker);
+        client.set_read_timeout(Some(std::time::Duration::from_secs(5))).unwrap();
+        let chunk = vec![b'x'; 64 * 1024];
+        // Far past any sane message; the broker may hang up half-way (EPIPE).
+        for _ in 0..64 {
+            if writer.write_all(&chunk).is_err() {
+                break;
+            }
+        }
+        // Told why, then hung up on.
+        let mut r = reader(&client);
+        let mut rest = String::new();
+        let n = r.read_line(&mut rest).expect("the broker answers instead of waiting for more");
+        assert!(n > 0 && rest.contains("too long"), "{rest:?}");
+        rest.clear();
+        assert_eq!(r.read_line(&mut rest).unwrap_or(0), 0, "the connection must be closed");
+    }
+
+    /// A peer that stops talking is let go *entirely*: both of its threads
+    /// end and the connection is closed, instead of a writer waiting for ever
+    /// on a queue nothing feeds any more — one leaked thread per connection,
+    /// which any local user could repeat until the broker runs out.
+    #[test]
+    fn test_a_peer_that_hangs_up_is_let_go() {
+        let broker = Broker::new(AccessFilter::new(AllowAll), Arc::new(NoRoots));
+        let (client, _writer) = attach_pair(&broker);
+        client.set_read_timeout(Some(std::time::Duration::from_secs(5))).unwrap();
+        client.shutdown(std::net::Shutdown::Write).unwrap();
+        let mut rest = String::new();
+        let n = reader(&client).read_line(&mut rest).expect("closed, not left hanging");
+        assert_eq!(n, 0, "{rest:?}");
+        // Unregistered by its threads, which may finish just after the close.
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
+        while broker.client_count() != 0 && std::time::Instant::now() < deadline {
+            std::thread::sleep(std::time::Duration::from_millis(10));
+        }
+        assert_eq!(broker.client_count(), 0);
+    }
+
+    #[test]
+    fn test_one_user_cannot_take_every_connection() {
+        let broker = Broker::with_limits(
+            AccessFilter::new(AllowAll),
+            Arc::new(NoRoots),
+            Limits { queue_cap: 64, per_uid: 2, total: 3 },
+        );
+        let connect = |uid: u32| {
+            let (client, server) = UnixStream::pair().unwrap();
+            broker.attach(server, Subscriber { uid, gid: uid, pid: 1, groups: vec![uid] });
+            client
+        };
+        let _a = connect(1000);
+        let _b = connect(1000);
+        let refused = connect(1000);
+        refused.set_read_timeout(Some(std::time::Duration::from_secs(5))).unwrap();
+        let mut r = reader(&refused);
+        let mut line = String::new();
+        r.read_line(&mut line).unwrap();
+        assert!(line.contains("too many connections"), "{line:?}");
+        // Another user still gets in — up to the machine-wide ceiling.
+        let _c = connect(1001);
+        assert_eq!(broker.client_count(), 3);
+        let _d = connect(1002);
+        assert_eq!(broker.client_count(), 3);
     }
 
     #[test]
