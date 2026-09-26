@@ -140,6 +140,43 @@ impl FieldIndex {
         }
     }
 
+    /// The `k` best representatives of `cand` (spec-indexing "A page costs the
+    /// page"): see [`BsiIndex::top_k`]. `None` for any other encoding.
+    pub fn bsi_top_k(
+        &self,
+        cand: &RoaringBitmap,
+        k: u64,
+        want_max: bool,
+    ) -> Option<(RoaringBitmap, RoaringBitmap)> {
+        match self {
+            FieldIndex::Bsi(b) => Some(b.top_k(cand, k, want_max)),
+            _ => None,
+        }
+    }
+
+    /// The ids holding a value, for a BSI field (`None` for any other encoding).
+    pub fn bsi_valued(&self) -> Option<&RoaringBitmap> {
+        match self {
+            FieldIndex::Bsi(b) => Some(&b.has_value),
+            _ => None,
+        }
+    }
+
+    /// `cand`'s ids whose representative sorts strictly after `rep`, and those
+    /// equal to it. `None` for any other encoding, or a representative of
+    /// another type.
+    pub fn bsi_split_after(
+        &self,
+        cand: &RoaringBitmap,
+        rep: &SortRep,
+        want_max: bool,
+    ) -> Option<(RoaringBitmap, RoaringBitmap)> {
+        match self {
+            FieldIndex::Bsi(b) => b.split_after(cand, rep, want_max),
+            _ => None,
+        }
+    }
+
     /// The ids whose `value_name` satisfies `keep`, for a `tree_ref` field — the
     /// in-memory `value_name REGEXP` scan (see [`ReverseIndex::scan_names`]).
     /// Empty for any other encoding, which has no name partition.
@@ -613,6 +650,63 @@ impl BsiIndex {
         })
     }
 
+    /// The ids of `cand` with the `k` best representatives — the largest
+    /// maxima (`want_max`, a descending sort) or the smallest minima — without
+    /// reading any id's key: one pass over the slices, most significant first,
+    /// keeping the ids that are certainly in (`sure`) and narrowing the ones
+    /// still undecided. Returns `(sure, ties)`: every id of `sure` sorts
+    /// strictly before every id of `ties`, which all share one key — the
+    /// boundary, from which the caller takes `k − |sure|` by uuid. When `cand`
+    /// holds at most `k` valued ids they are all `sure`.
+    fn top_k(
+        &self,
+        cand: &RoaringBitmap,
+        k: u64,
+        want_max: bool,
+    ) -> (RoaringBitmap, RoaringBitmap) {
+        let slices = if want_max { &self.max_slices } else { &self.min_slices };
+        let mut undecided = cand & &self.has_value;
+        if undecided.len() <= k {
+            return (undecided, RoaringBitmap::new());
+        }
+        let mut sure = RoaringBitmap::new();
+        for b in (0..KEY_BITS).rev() {
+            // The undecided ids whose bit b puts them first.
+            let first = if want_max { &undecided & &slices[b] } else { &undecided - &slices[b] };
+            if sure.len() + first.len() > k {
+                undecided = first;
+            } else {
+                sure |= &first;
+                undecided -= &first;
+                if sure.len() == k {
+                    return (sure, RoaringBitmap::new());
+                }
+            }
+        }
+        (sure, undecided)
+    }
+
+    /// `cand`'s ids whose representative sorts strictly after `rep` (a keyset
+    /// cursor's position) and those equal to it. `None` when `rep` is not of
+    /// this index's kind.
+    fn split_after(
+        &self,
+        cand: &RoaringBitmap,
+        rep: &SortRep,
+        want_max: bool,
+    ) -> Option<(RoaringBitmap, RoaringBitmap)> {
+        let c = match (self.kind, rep) {
+            (NumKind::Numeric, SortRep::Num(x)) => num_key(*x),
+            (NumKind::Datetime, SortRep::DateTime(ms)) => dt_key(*ms),
+            _ => return None,
+        };
+        let slices = if want_max { &self.max_slices } else { &self.min_slices };
+        let valued = cand & &self.has_value;
+        let (gt, eq) = bsi_cmp(slices, &valued, c);
+        let after = if want_max { valued - &gt - &eq } else { gt };
+        Some((after, eq))
+    }
+
     fn clear_member(&mut self, id: u32, values: &[&Value]) {
         for slice in self.min_slices.iter_mut().chain(self.max_slices.iter_mut()) {
             slice.remove(id);
@@ -1016,4 +1110,114 @@ fn union_except(map: &HashMap<String, RoaringBitmap>, target: Option<&String>) -
         }
     }
     out
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Ids 0..40 with multi-valued ints (ties included) and some without any.
+    fn bsi() -> (FieldIndex, HashMap<u32, Vec<i64>>) {
+        let mut fi = FieldIndex::for_value(&Value::Int(0));
+        let mut vals: HashMap<u32, Vec<i64>> = HashMap::new();
+        for id in 0..40u32 {
+            if id % 7 == 3 {
+                continue;
+            }
+            let mut vs = vec![(id as i64 * 37 % 11) - 4];
+            if id % 5 == 0 {
+                vs.push(id as i64 % 9);
+            }
+            for v in &vs {
+                fi.insert(&Value::Int(*v), id);
+            }
+            vals.insert(id, vs);
+        }
+        fi.finalize();
+        (fi, vals)
+    }
+
+    fn rep_of(vals: &HashMap<u32, Vec<i64>>, id: u32, want_max: bool) -> Option<i64> {
+        let vs = vals.get(&id)?;
+        if want_max {
+            vs.iter().max().copied()
+        } else {
+            vs.iter().min().copied()
+        }
+    }
+
+    /// `a` comes before `b` in the sort (representative only, no tiebreak).
+    fn before(a: i64, b: i64, want_max: bool) -> bool {
+        if want_max {
+            a > b
+        } else {
+            a < b
+        }
+    }
+
+    #[test]
+    fn top_k_keeps_the_k_best_representatives() {
+        let (fi, vals) = bsi();
+        let cand: RoaringBitmap = (0..40).filter(|i| i % 3 != 1).collect();
+        for want_max in [false, true] {
+            for k in [0u64, 1, 3, 5, 10, 100] {
+                let (sure, ties) = fi.bsi_top_k(&cand, k, want_max).unwrap();
+                let valued: Vec<u32> = cand.iter().filter(|i| vals.contains_key(i)).collect();
+                assert!(sure.len() <= k, "k={k}");
+                assert!(sure.is_subset(&cand) && ties.is_subset(&cand));
+                if (valued.len() as u64) <= k {
+                    assert_eq!(sure.len() as usize, valued.len());
+                    continue;
+                }
+                assert!(sure.len() + ties.len() >= k, "k={k}: too few");
+                if k == 0 {
+                    assert!(sure.is_empty());
+                    continue;
+                }
+                let tie = ties.iter().next().map(|i| rep_of(&vals, i, want_max).unwrap());
+                for t in &ties {
+                    assert_eq!(Some(rep_of(&vals, t, want_max).unwrap()), tie, "ties share a key");
+                }
+                for s in &sure {
+                    let r = rep_of(&vals, s, want_max).unwrap();
+                    assert!(tie.is_none_or(|t| before(r, t, want_max)), "sure beats ties");
+                }
+                if tie.is_none() {
+                    assert_eq!(sure.len(), k, "k={k}: no ties means the page is full");
+                }
+                // The boundary: the ties' key, or the worst of the sure ones.
+                let worst = sure
+                    .iter()
+                    .map(|i| rep_of(&vals, i, want_max).unwrap())
+                    .reduce(|a, b| if before(a, b, want_max) { b } else { a });
+                let Some(boundary) = tie.or(worst) else { continue };
+                // Everything left out sorts strictly after it.
+                for o in valued.iter().filter(|i| !sure.contains(**i) && !ties.contains(**i)) {
+                    let r = rep_of(&vals, *o, want_max).unwrap();
+                    assert!(before(boundary, r, want_max), "k={k}: {o} left out");
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn split_after_separates_later_and_equal_representatives() {
+        let (fi, vals) = bsi();
+        let cand: RoaringBitmap = (0..40).collect();
+        for want_max in [false, true] {
+            for c in -5..8i64 {
+                let (after, equal) =
+                    fi.bsi_split_after(&cand, &SortRep::Num(c as f64), want_max).unwrap();
+                for id in 0..40u32 {
+                    let r = rep_of(&vals, id, want_max);
+                    assert_eq!(equal.contains(id), r == Some(c), "id {id} c {c}");
+                    assert_eq!(
+                        after.contains(id),
+                        r.is_some_and(|r| before(c, r, want_max)),
+                        "id {id} c {c} max {want_max}"
+                    );
+                }
+            }
+        }
+    }
 }

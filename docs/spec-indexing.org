@@ -329,6 +329,19 @@ cases.
 | Sort                    | Walks                                       |
 |-------------------------+---------------------------------------------|
 | none (uuid order)       | the registry's uuid → id map, which is ordered |
+| one numeric / date key  | the bit-slices: a top-k (below)             |
+
+A single numeric or date key needs no walk at all: the bit-slices answer "the
+k best representatives of this set" directly (=BsiIndex::top_k=). One pass over
+the 64 slices, most significant first, moves the ids whose bit puts them first
+into a =sure= set while that stays within k, and otherwise narrows the
+undecided set to them; what remains undecided shares one key, the boundary, and
+supplies the page's last ids by uuid. Only the page's ids ever have their key
+read. The cursor splits the match set with the same comparison a range filter
+uses (=bsi_cmp=): the ids equal to its key that follow it by uuid come first,
+then the top-k of those strictly after it, then the ids without a value. A
+field that also holds values outside the slices (mixed historical types, kept
+by the sort store) is left to the fetch.
 
 ** Three kinds of gap (implemented)
 

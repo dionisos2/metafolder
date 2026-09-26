@@ -889,7 +889,86 @@ impl RepoIndex {
             }
             return Ok(Some(out));
         }
+        if let [key] = sort {
+            // A numeric or date key is answered from the bit-slices — unless the
+            // field also holds values the slices do not (mixed historical data,
+            // which the sort store keeps).
+            let bsi = self.fields.get(&key.field).filter(|fi| fi.bsi_valued().is_some());
+            let mixed = self.sort.get(&key.field).is_some_and(|s| !s.is_empty());
+            if let (Some(fi), false) = (bsi, mixed) {
+                if self.strategy == PageStrategy::Fetch {
+                    return Ok(None);
+                }
+                return Ok(self.bsi_page(matched, fi, !key.ascending, limit, after));
+            }
+        }
         Ok(None)
+    }
+
+    /// Up to `limit + 1` ids of `matched` sorted on one BSI key, after `after`:
+    /// the ids equal to the cursor's key that follow it by uuid, then the best
+    /// of those after it ([`FieldIndex::bsi_top_k`] — only the page's ids ever
+    /// have their key read), then the ids without a value, by uuid. `None` for
+    /// a cursor whose key is of another type (the fetch rejects or serves it).
+    fn bsi_page(
+        &self,
+        matched: &RoaringBitmap,
+        fi: &FieldIndex,
+        want_max: bool,
+        limit: usize,
+        after: Option<&SortEntry>,
+    ) -> Option<Vec<u32>> {
+        let want = limit + 1;
+        let uuid = |id: u32| self.registry.uuid(id).expect("interned id");
+        let mut out: Vec<u32> = Vec::new();
+        // The valued ids still to place, and where the valueless tail resumes.
+        let (rest, tail_after) = match after {
+            None => (Some(matched.clone()), None),
+            Some((reps, cursor)) => match reps.first() {
+                Some(Some(rep)) => {
+                    let (later, equal) = fi.bsi_split_after(matched, rep, want_max)?;
+                    let mut ties: Vec<(Uuid, u32)> =
+                        equal.iter().map(|id| (uuid(id), id)).filter(|(u, _)| u > cursor).collect();
+                    ties.sort_unstable();
+                    out.extend(ties.into_iter().map(|(_, id)| id).take(want));
+                    (Some(later), None)
+                }
+                _ => (None, Some(*cursor)),
+            },
+        };
+        if let Some(rest) = rest.filter(|_| out.len() < want) {
+            let need = want - out.len();
+            let (sure, ties) = fi.bsi_top_k(&rest, need as u64, want_max)?;
+            let mut ranked: Vec<(SortRep, Uuid, u32)> = sure
+                .iter()
+                .map(|id| (fi.bsi_sort_rep(id, want_max).expect("valued id"), uuid(id), id))
+                .collect();
+            ranked.sort_unstable_by(|a, b| {
+                let by_rep = if want_max { b.0.cmp(&a.0) } else { a.0.cmp(&b.0) };
+                by_rep.then(a.1.cmp(&b.1))
+            });
+            out.extend(ranked.into_iter().map(|(_, _, id)| id));
+            let mut ties: Vec<(Uuid, u32)> = ties.iter().map(|id| (uuid(id), id)).collect();
+            ties.sort_unstable();
+            out.extend(ties.into_iter().map(|(_, id)| id).take(want - out.len().min(want)));
+        }
+        if out.len() < want {
+            // Lacking the field (or holding only `Nothing`): last, by uuid.
+            let tail = matched - fi.bsi_valued().expect("a BSI field");
+            let mut rest: Vec<(Uuid, u32)> = tail
+                .iter()
+                .map(|id| (uuid(id), id))
+                .filter(|(u, _)| tail_after.is_none_or(|a| *u > a))
+                .collect();
+            let need = want - out.len();
+            if rest.len() > need {
+                rest.select_nth_unstable(need - 1);
+                rest.truncate(need);
+            }
+            rest.sort_unstable();
+            out.extend(rest.into_iter().map(|(_, id)| id));
+        }
+        Some(out)
     }
 
     /// The steps a walk may take before giving up on it, or `None` to fetch.
