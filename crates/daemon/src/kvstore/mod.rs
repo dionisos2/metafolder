@@ -1,7 +1,7 @@
-//! The key-value storage backend (docs/spec-storage.org, increment 3): the
-//! `store` traits over LMDB (through `heed`). Primary data and the event log
-//! only — the query index stays the resident one, built from `Rows` like on
-//! SQLite; the derived key spaces of the spec are increment 4.
+//! The key-value storage backend (docs/spec-storage.org): the `store` traits
+//! over LMDB (through `heed`). The tables below hold the primary data and the
+//! event log; the derived key spaces the query source reads are in
+//! [`derived`].
 //!
 //! Every table is an ordered map of byte strings. Integers are big-endian (so
 //! byte order is numeric order), uuids their 16 bytes, and a name inside a
@@ -29,6 +29,7 @@
 //! `meta` and never reused, as SQLite's AUTOINCREMENT guarantees; a row put
 //! back under its own id moves the counter past it.
 
+use std::borrow::Cow;
 use std::cell::RefCell;
 use std::collections::{HashMap, HashSet};
 use std::fs::File;
@@ -44,6 +45,8 @@ use crate::db::{self, FieldRow, RawValue, TreeRow};
 use crate::error::DomainError;
 use crate::log::{self, Delta, OpRow, Retention};
 use crate::store::{Begin, Log, NewOp, Questions, Restoration, RevisionMeta, Rows, WriteTxn};
+
+mod derived;
 
 type Db = Database<Bytes, Bytes>;
 
@@ -66,6 +69,12 @@ struct Tables {
     ops_by_entity: Db,
     revisions: Db,
     restorations: Db,
+    // Derived (see `derived`).
+    ids: Db,
+    uuids: Db,
+    sets: Db,
+    parts: Db,
+    kids: Db,
 }
 
 /// A repository database on LMDB.
@@ -105,6 +114,21 @@ fn name_key(name: &str) -> Vec<u8> {
     }
     out.extend_from_slice(&[0, 0]);
     out
+}
+
+/// The longest node name a forest key holds whole. LMDB refuses a key over
+/// 511 bytes; a longer name is keyed by its first `NODE_MAX` bytes and a hash
+/// of the whole — a key `NODE_MAX + 8` bytes long, which no whole name is —
+/// and read back from its row.
+const NODE_MAX: usize = 300;
+
+fn node_key(name: &[u8]) -> Cow<'_, [u8]> {
+    if name.len() <= NODE_MAX {
+        Cow::Borrowed(name)
+    } else {
+        let hash = xxhash_rust::xxh3::xxh3_64(name).to_be_bytes();
+        Cow::Owned([&name[..NODE_MAX], &hash[..]].concat())
+    }
 }
 
 /// A growable byte buffer with length-prefixed fields.
@@ -346,7 +370,7 @@ impl KvStore {
         let env = unsafe {
             let held = std::fs::metadata(dir.join("data.mdb")).map_or(0, |m| m.len() as usize);
             let map_size = page_multiple(map_size.max(held.saturating_mul(2)));
-            EnvOpenOptions::new().read_txn_without_tls().map_size(map_size).max_dbs(16).open(dir)
+            EnvOpenOptions::new().read_txn_without_tls().map_size(map_size).max_dbs(32).open(dir)
         }
         .with_context(|| format!("open the key-value store in {}", dir.display()))?;
         let mut w = env.write_txn()?;
@@ -366,9 +390,21 @@ impl KvStore {
             ops_by_entity: db("ops_by_entity")?,
             revisions: db("revisions")?,
             restorations: db("restorations")?,
+            ids: db("ids")?,
+            uuids: db("uuids")?,
+            sets: db("sets")?,
+            parts: db("parts")?,
+            kids: db("kids")?,
         };
+        let derived = t.meta.get(&w, b"derived")?.map(from_be);
         w.commit()?;
-        Ok(KvStore { env, t, _lock: lock })
+        let mut store = KvStore { env, t, _lock: lock };
+        // A store from before the derived key spaces (or of another format of
+        // them) gets them derived now: their migration.
+        if derived != Some(derived::DERIVED_VERSION) {
+            store.reindex().context("derive the key-value store's indexes")?;
+        }
+        Ok(store)
     }
 }
 
@@ -424,9 +460,22 @@ impl Read<'_> {
         let mut out = Vec::new();
         for e in self.t.forest.prefix_iter(self.r, &prefix)? {
             let (k, v) = e?;
-            out.push((uuid_of(v), k[prefix.len()..].to_vec(), from_be(&v[16..])));
+            out.push((uuid_of(v), self.node_name(&k[prefix.len()..], v)?, from_be(&v[16..])));
         }
         Ok(out)
+    }
+
+    /// A position's name, from the end of its forest key — or, for a name
+    /// too long to be keyed whole, from its row (`v` is uuid · row id).
+    fn node_name(&self, key_end: &[u8], v: &[u8]) -> Result<Vec<u8>> {
+        if key_end.len() <= NODE_MAX {
+            return Ok(key_end.to_vec());
+        }
+        let row = self.t.cells.get(self.r, v)?.context("a forest position without its row")?;
+        match dec_row(row)?.value {
+            Value::TreeRef { name, .. } => Ok(name.as_bytes().to_vec()),
+            _ => bail!("a forest position whose row is no tree_ref"),
+        }
     }
 
     fn origin(&self, rev: i64, cache: &mut HashMap<i64, Option<String>>) -> Result<Option<String>> {
@@ -658,8 +707,12 @@ macro_rules! kv_reads {
                 let $me = self;
                 $with(&mut |$read: &Read| {
                     let p = parent.map_or(ROOT, |p| *p.as_bytes());
-                    let k = key(&[&name_key(field), &p, name]);
-                    Ok($read.t.forest.get($read.r, &k)?.map(uuid_of))
+                    let k = key(&[&name_key(field), &p, &node_key(name)]);
+                    let Some(v) = $read.t.forest.get($read.r, &k)? else { return Ok(None) };
+                    // A hashed key names the right position only if the name
+                    // read back is the one asked for.
+                    let found = $read.node_name(&k[k.len() - node_key(name).len()..], v)?;
+                    Ok((found == name).then(|| uuid_of(v)))
                 })
             }
             fn child_by_text(
@@ -698,12 +751,13 @@ macro_rules! kv_reads {
                             i += if k[i] == 0 { 2 } else { 1 };
                         }
                         let parent = uuid_of(&k[end + 2..end + 18]);
+                        let name = $read.node_name(&k[end + 18..], v)?;
                         out.push(TreeRow {
                             id: from_be(&v[16..]),
                             field_name: String::from_utf8(field)?,
                             uuid: uuid_of(v),
                             parent: (!parent.is_nil()).then_some(parent),
-                            name: TreeName::from_bytes(k[end + 18..].to_vec()),
+                            name: TreeName::from_bytes(name),
                         });
                     }
                     out.sort_by(|a, b| {
@@ -899,6 +953,8 @@ kv_reads!(KvStore, |me, read| |f: &mut dyn FnMut(&Read) -> Result<_>| {
 pub struct KvTxn<'e> {
     t: Tables,
     txn: RefCell<RwTxn<'e>>,
+    /// The derived set chunks this transaction changed, written at commit.
+    sets: RefCell<HashMap<Vec<u8>, roaring::RoaringBitmap>>,
 }
 
 kv_reads!(KvTxn<'_>, |me, read| |f: &mut dyn FnMut(&Read) -> Result<_>| {
@@ -908,8 +964,7 @@ kv_reads!(KvTxn<'_>, |me, read| |f: &mut dyn FnMut(&Read) -> Result<_>| {
 
 impl Begin for KvStore {
     fn begin_write(&mut self) -> Result<Box<dyn WriteTxn + '_>> {
-        self.grow_map()?;
-        Ok(Box::new(KvTxn { t: self.t, txn: RefCell::new(self.env.write_txn()?) }))
+        Ok(Box::new(KvTxn::new(self)?))
     }
 }
 
@@ -929,6 +984,28 @@ impl KvStore {
             unsafe { self.env.resize(size) }.context("grow the key-value store's map")?;
         }
         Ok(())
+    }
+}
+
+impl<'e> KvTxn<'e> {
+    fn new(store: &'e mut KvStore) -> Result<KvTxn<'e>> {
+        store.grow_map()?;
+        Ok(KvTxn {
+            t: store.t,
+            txn: RefCell::new(store.env.write_txn()?),
+            sets: RefCell::new(HashMap::new()),
+        })
+    }
+
+    fn meta_put(&self, name: &str, n: i64) -> Result<()> {
+        self.t.meta.put(&mut self.txn.borrow_mut(), name.as_bytes(), &be(n))?;
+        Ok(())
+    }
+
+    /// Writes what the transaction still holds in memory, and commits.
+    fn finish(self) -> Result<()> {
+        self.flush_sets()?;
+        self.txn.into_inner().commit().context("Failed to commit write transaction")
     }
 }
 
@@ -967,7 +1044,7 @@ impl KvTxn<'_> {
     fn forest_key(name: &str, value: &Value) -> Option<Vec<u8>> {
         let Value::TreeRef { parent, name: node } = value else { return None };
         let p = parent.map_or(ROOT, |p| *p.as_bytes());
-        Some(key(&[&name_key(name), &p, node.as_bytes()]))
+        Some(key(&[&name_key(name), &p, &node_key(node.as_bytes())]))
     }
 
     fn remove_op(&self, id: i64) -> Result<()> {
@@ -1000,13 +1077,14 @@ impl WriteTxn for KvTxn<'_> {
             bail!("metarecord {uuid} already exists");
         }
         self.t.metarecords.put(&mut w, uuid.as_bytes(), &be(version as i64))?;
-        Ok(())
+        drop(w);
+        self.derive_created(uuid)
     }
 
     fn remove_metarecord(&self, uuid: Uuid) -> Result<()> {
         self.delete_rows(uuid, None)?;
         self.t.metarecords.delete(&mut self.txn.borrow_mut(), uuid.as_bytes())?;
-        Ok(())
+        self.derive_removed(uuid)
     }
 
     fn set_version(&self, uuid: Uuid, version: u64) -> Result<()> {
@@ -1059,6 +1137,7 @@ impl WriteTxn for KvTxn<'_> {
             }
         }
         self.count_type(name, value, 1)?;
+        self.derive_row(uuid, name, value, 1)?;
         Ok(id)
     }
 
@@ -1079,7 +1158,8 @@ impl WriteTxn for KvTxn<'_> {
                 t.forest.delete(&mut w, &k)?;
             }
         }
-        self.count_type(&row.name, &row.value, -1)
+        self.count_type(&row.name, &row.value, -1)?;
+        self.derive_row(owner, &row.name, &row.value, -1)
     }
 
     fn delete_rows(&self, uuid: Uuid, name: Option<&str>) -> Result<()> {
@@ -1254,7 +1334,8 @@ impl WriteTxn for KvTxn<'_> {
         for db in [t.metarecords, t.cells, t.row_owner, t.by_field, t.field_types, t.forest] {
             db.clear(&mut w)?;
         }
-        Ok(())
+        drop(w);
+        self.clear_derived()
     }
 
     fn detach_op(&self, op: i64) -> Result<()> {
@@ -1320,6 +1401,6 @@ impl WriteTxn for KvTxn<'_> {
     }
 
     fn commit(self: Box<Self>) -> Result<()> {
-        self.txn.into_inner().commit().context("Failed to commit write transaction")
+        (*self).finish()
     }
 }

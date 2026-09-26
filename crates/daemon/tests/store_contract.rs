@@ -560,6 +560,33 @@ fn pruning_removes_operations_and_their_empty_revisions(backend: Backend) {
     conn.compact().unwrap();
 }
 
+/// A name too long to key whole (LMDB caps a key at 511 bytes) is still one
+/// position: found by its bytes, listed and read back whole — and a name
+/// sharing its first bytes is another position.
+fn a_long_name_is_a_position_like_any(backend: Backend) {
+    let (mut conn, _dir) = open(backend);
+    let long = "x".repeat(1_000);
+    let (twin, sibling) = (format!("{long}-twin"), format!("{long}-sibling"));
+    let mut w = Writer::begin(&mut conn, None).unwrap();
+    let root = w.create_metarecord(vec![tref(None, "root")]).unwrap().uuid;
+    let node = w.create_metarecord(vec![tref(Some(root), &twin)]).unwrap().uuid;
+    w.commit().unwrap();
+    let store: &dyn Store = &conn;
+    assert_eq!(store.child_by_bytes("loc", Some(root), twin.as_bytes()).unwrap(), Some(node));
+    assert_eq!(store.child_by_bytes("loc", Some(root), sibling.as_bytes()).unwrap(), None);
+    assert_eq!(store.children("loc", root).unwrap(), vec![(node, twin.clone())]);
+    let names: Vec<String> =
+        store.forest().unwrap().iter().map(|r| r.name.display().into_owned()).collect();
+    assert!(names.contains(&twin), "the forest reads the whole name back");
+
+    let mut w = Writer::begin(&mut conn, None).unwrap();
+    let other = w.create_metarecord(vec![tref(Some(root), &sibling)]).unwrap().uuid;
+    w.commit().unwrap();
+    let store: &dyn Store = &conn;
+    assert_eq!(store.child_by_bytes("loc", Some(root), sibling.as_bytes()).unwrap(), Some(other));
+    assert_eq!(store.children("loc", root).unwrap().len(), 2);
+}
+
 /// Every test above, on each backend.
 macro_rules! on_both {
     ($($name:ident),* $(,)?) => {
@@ -587,7 +614,8 @@ on_both!(
     a_revision_names_its_operations_and_takes_a_label,
     a_child_is_found_by_its_bytes_or_its_text,
     targets_are_found_along_the_ancestry,
-    pruning_removes_operations_and_their_empty_revisions
+    pruning_removes_operations_and_their_empty_revisions,
+    a_long_name_is_a_position_like_any
 );
 
 // ── The key-value store's map ───────────────────────────────────────────────

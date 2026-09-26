@@ -610,7 +610,7 @@ the page strategies), validated against the oracle — is made generic over
 evaluator, two sources, one oracle: a second evaluator would be a second copy
 of every subtle rule, and the place the two drift.
 
-a. *Dense ids and derived key spaces* in =KvStore=, written in the revision's
+a. *(done)* *Dense ids and derived key spaces* in =KvStore=, written in the revision's
    own transaction, maintained at the row level (every row insert and delete,
    navigation included, goes through the same two primitives): =uuid→id=,
    =id→uuid=, the universe, =presence= (present / absent per field), the
@@ -619,7 +619,7 @@ a. *Dense ids and derived key spaces* in =KvStore=, written in the revision's
    the forest's =children= (ids with at least one child). A =rebuild= derives
    them all from the primary data; the tests hold the maintained spaces equal
    to a rebuild after every write sequence, navigation included.
-b. *The evaluator's source trait*: the questions the evaluator asks of its
+b. *(done)* *The evaluator's source trait*: the questions the evaluator asks of its
    data (the universe, presence, a field's type, id ↔ uuid, a comparison on a
    field, a text scan over its distinct values, referrers, forest roots and
    parents, sort representatives) become a trait the resident index
@@ -635,4 +635,18 @@ f. *Trigrams* and the lazy text checks; postings for frequent values; the
    cost assertions (key reads counted, not timed).
 
 Each step leaves every suite green on both backends.
+
+*Keys have a size limit* (found building step a). LMDB refuses a key over
+511 bytes, and both a partition key (which holds the value) and a forest key
+(which holds the node's name) can hold arbitrary text. So:
+- a text over 256 escaped bytes is keyed by that prefix, the marker =00 01=
+  (which sorts after the =00 00= ending the text equal to the prefix, and
+  before anything longer) and a 64-bit hash of the whole. Order is kept
+  except among the long texts sharing the prefix; a reader resolves that
+  case, and a hashed equality, from the values themselves — rare, local, and
+  exact;
+- a node name over 300 bytes is keyed by its first 300 bytes and a hash (a
+  key no whole name has the length of), and read back from its row.
+A field name is still part of every key: one over ≈ 200 bytes cannot be
+written on this backend.
 

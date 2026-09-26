@@ -548,7 +548,7 @@ pub enum NumKind {
 
 /// Maps an f64 to an order-preserving u64 (negatives included). `-0.0` is
 /// normalised to `0.0` so it keys identically (SQL treats them equal).
-fn num_key(x: f64) -> u64 {
+pub(crate) fn num_key(x: f64) -> u64 {
     let x = if x == 0.0 { 0.0 } else { x };
     let bits = x.to_bits();
     if bits & SIGN == 0 {
@@ -559,7 +559,7 @@ fn num_key(x: f64) -> u64 {
 }
 
 /// Maps an i64 (Unix-ms) to an order-preserving u64.
-fn dt_key(ms: i64) -> u64 {
+pub(crate) fn dt_key(ms: i64) -> u64 {
     (ms as u64) ^ SIGN
 }
 
