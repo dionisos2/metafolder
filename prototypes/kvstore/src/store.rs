@@ -44,6 +44,10 @@ const ROOT_ID: u32 = u32::MAX;
 /// The pseudo-field holding the universe (every live id) in `presence`.
 const UNIVERSE: u16 = u16::MAX;
 const PRESENT: u8 = 0;
+/// A value gets a posting bitmap once this many records hold it; below, its
+/// ids are read from the ordered index. Unique values (hashes, sizes, dates)
+/// then cost one ordered entry instead of an ordered entry and a bitmap.
+const PROMOTE: u64 = 64;
 const ABSENT: u8 = 1;
 
 /// The switches between two ways of answering the same question
@@ -392,8 +396,21 @@ impl Reader<'_> {
                 (Some(_), Value::Nothing) => self.eval(&Q::Absent(f.clone()), cand)?,
                 (Some(_), Value::Tree { .. }) => bail!("Eq on a tree value"),
                 (Some(fid), v) => {
-                    let ok = ordered_key(v).unwrap();
-                    self.bitmap(t.postings, &key(&[&fid.to_be_bytes(), &ok]))?
+                    // A frequent value has a posting; a rare one is read from
+                    // the ordered index, where its ids are adjacent.
+                    let prefix = key(&[&fid.to_be_bytes(), &ordered_key(v).unwrap()]);
+                    let posting = self.bitmap(t.postings, &prefix)?;
+                    if !posting.is_empty() {
+                        posting
+                    } else {
+                        let mut out = RoaringBitmap::new();
+                        for e in t.ordered.prefix_iter(self.r, &prefix)? {
+                            let (k, _) = e?;
+                            self.s.reads.add(1);
+                            out.insert(id_of(&k[k.len() - 4..]));
+                        }
+                        out
+                    }
                 }
             },
             Q::Range { field, lo, hi } => {
@@ -494,16 +511,29 @@ impl Reader<'_> {
         Ok(r.values(field).filter_map(text_of).map(str::to_string).collect())
     }
 
+    /// The candidates whose texts satisfy `pred`. A field holding no string
+    /// (a pure forest, like `mfr_path`) is verified from its position table —
+    /// a small entry per record — instead of decoding whole records.
     fn verify(
         &self,
         field: &str,
-        _fid: u16,
+        fid: u16,
         ids: &RoaringBitmap,
         pred: &dyn Fn(&str) -> bool,
     ) -> Result<RoaringBitmap> {
+        let f = fid.to_be_bytes();
+        let has_strings = self.s.t.ordered.prefix_iter(self.r, &key(&[&f, &[1]]))?.next().is_some();
         let mut out = RoaringBitmap::new();
         for id in ids {
-            if self.texts(field, id)?.iter().any(|s| pred(s)) {
+            let hit = if has_strings {
+                self.texts(field, id)?.iter().any(|s| pred(s))
+            } else {
+                match self.get(self.s.t.position, &key(&[&f, &id.to_be_bytes()]))? {
+                    Some(v) => pred(std::str::from_utf8(&v[4..])?),
+                    None => false,
+                }
+            };
+            if hit {
                 out.insert(id);
             }
         }
@@ -755,6 +785,15 @@ impl Writer<'_> {
     /// it spans, whatever its size (a moved subtree).
     fn bm_apply(&mut self, bm: Bm, prefix: &[u8], ids: &RoaringBitmap, add: bool) -> Result<()> {
         let (Some(lo), Some(hi)) = (ids.min(), ids.max()) else { return Ok(()) };
+        if lo == hi {
+            let c = self.chunk_mut(bm, prefix, lo)?;
+            if add {
+                c.insert(lo);
+            } else {
+                c.remove(lo);
+            }
+            return Ok(());
+        }
         for h in (lo >> 16)..=(hi >> 16) {
             let start = h << 16;
             let mut mask = RoaringBitmap::new();
@@ -771,6 +810,43 @@ impl Writer<'_> {
             }
         }
         Ok(())
+    }
+
+    /// Whether any non-empty chunk exists under `prefix` — usually decided by
+    /// the first key, without reading the bitmap.
+    fn bm_exists(&self, bm: Bm, prefix: &[u8]) -> Result<bool> {
+        let start = (bm, prefix.to_vec());
+        for ((b, k), d) in self.dirty.range(start..) {
+            if *b != bm || !k.starts_with(prefix) {
+                break;
+            }
+            if !d.is_empty() {
+                return Ok(true);
+            }
+        }
+        for e in self.db(bm).prefix_iter(&self.txn, prefix)? {
+            let (k, _) = e?;
+            if !self.dirty.contains_key(&(bm, k.to_vec())) {
+                return Ok(true);
+            }
+        }
+        Ok(false)
+    }
+
+    /// Gives a value its posting once `PROMOTE` records hold it. Invariant: a
+    /// value that has a posting has all its ids in it (a posting is never
+    /// demoted; it disappears only when it empties).
+    fn promote(&mut self, prefix: &[u8]) -> Result<()> {
+        let held = self.t.ordered.prefix_iter(&self.txn, prefix)?.take(PROMOTE as usize).count();
+        if (held as u64) < PROMOTE {
+            return Ok(());
+        }
+        let mut ids = RoaringBitmap::new();
+        for e in self.t.ordered.prefix_iter(&self.txn, prefix)? {
+            let (k, _) = e?;
+            ids.insert(id_of(&k[k.len() - 4..]));
+        }
+        self.bm_add(Bm::Postings, prefix, &ids)
     }
 
     /// Every chunk under `prefix`, as this transaction sees it.
@@ -977,12 +1053,20 @@ impl Writer<'_> {
         };
         let (ko, kn) = (okeys(old), okeys(new));
         for k in ko.difference(&kn) {
-            self.bm_remove(Bm::Postings, &key(&[&f, k]), &one)?;
+            let prefix = key(&[&f, k]);
+            if self.bm_exists(Bm::Postings, &prefix)? {
+                self.bm_remove(Bm::Postings, &prefix, &one)?;
+            }
             self.t.ordered.delete(&mut self.txn, &key(&[&f, k, &id.to_be_bytes()]))?;
         }
         for k in kn.difference(&ko) {
-            self.bm_add(Bm::Postings, &key(&[&f, k]), &one)?;
+            let prefix = key(&[&f, k]);
             self.t.ordered.put(&mut self.txn, &key(&[&f, k, &id.to_be_bytes()]), &[])?;
+            if self.bm_exists(Bm::Postings, &prefix)? {
+                self.bm_add(Bm::Postings, &prefix, &one)?;
+            } else {
+                self.promote(&prefix)?;
+            }
         }
 
         let grams = |vs: &[Value]| -> BTreeSet<[u8; 3]> {
