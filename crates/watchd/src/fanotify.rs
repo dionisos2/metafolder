@@ -196,7 +196,7 @@ fn statfs_fsid(path: &Path) -> Result<[i32; 2]> {
     }
     // `fsid_t` hides its two ints; the events carry them plainly.
     assert_eq!(std::mem::size_of::<libc::fsid_t>(), std::mem::size_of::<[i32; 2]>());
-    Ok(unsafe { std::mem::transmute(st.f_fsid) })
+    Ok(unsafe { std::mem::transmute::<libc::fsid_t, [i32; 2]>(st.f_fsid) })
 }
 
 /// Any open fd on the filesystem of `path` — the reference
@@ -371,7 +371,6 @@ pub fn translate(raw: &RawEvent, resolver: &mut dyn Resolve) -> Vec<Event> {
     // data (the second is what catches an mmap write at close): one event.
     push_parent(FAN_MODIFY | FAN_CLOSE_WRITE, &|path| Event::ModifyData { path });
     push_parent(FAN_ATTRIB, &|path| Event::ModifyMeta { path });
-    drop(push_parent);
 
     if raw.mask & FAN_RENAME != 0 {
         let from = path_string(raw.old.as_ref().and_then(|(h, n)| path_of(resolver, h, n)));

@@ -140,10 +140,10 @@ impl<C: 'static + CredSource> Broker<C> {
             std::thread::spawn(move || {
                 let mut out = write_half;
                 for msg in rx {
-                    if client.overflow.swap(false, Ordering::Relaxed) {
-                        if write_msg(&mut out, &ServerMsg::Overflow {}).is_err() {
-                            break;
-                        }
+                    if client.overflow.swap(false, Ordering::Relaxed)
+                        && write_msg(&mut out, &ServerMsg::Overflow {}).is_err()
+                    {
+                        break;
                     }
                     if write_msg(&mut out, &msg).is_err() {
                         break;
