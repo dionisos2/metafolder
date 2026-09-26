@@ -1,0 +1,391 @@
+#+TITLE: Metafolder — Disk-Resident Storage & Query Backend
+#+OPTIONS: toc:2 num:t
+
+* Status
+
+*Design document, nothing implemented* (September 2026). Like
+[[file:spec-indexing.org][spec-indexing.org]], this describes a direction, not
+the code. It is the answer to the limit that document leaves open: the query
+engine is fast because *everything* it needs is resident — the bitmap/BSI index,
+the id registry, the whole TreeRef forest — so a repository only works while its
+index fits in RAM.
+
+The goal is a *second* storage-and-query backend that keeps the full generality
+of the query language without loading the repository in memory, *next to* the
+current one, which stays as it is. Nothing here is decided until the prototype
+([[*Increments]]) has measured it; the numbers quoted below are estimates.
+
+* Requirements
+
+- *Arbitrary repository size* on an ordinary PC (8–16 GB of RAM). Nothing whose
+  size is proportional to the repository may be resident, except the transient
+  result bitmap of a query (≤ n/8 bytes: 12 MB at 100 M metarecords).
+- *Everyday use must stay close to the resident backend*: opening a folder
+  (sorted, paginated), filtering by tag or any categorical field, searching a
+  name, sorting by date. Target: at most ×2 on a warm cache (see
+  [[*Acceptance criteria]]). A ×10 regression on those gestures would make the
+  backend unusable, whatever it buys at scale.
+- Queries that are intrinsically global (a regex with no literal over every
+  file, a negation on a rare field sorted by another) may be slower — they are
+  already O(n) today; only their constant changes.
+- *Both backends remain possible*, chosen per repository. Everything above the
+  storage layer — the event log, undo/redo and navigation, the watcher, the
+  reconcile, sync, trash — must work unchanged on either.
+- *Safety is not traded*: atomic writes, no corruption on crash or power loss,
+  and a bug in derived data must never lose user data ([[*Safety]]).
+
+* Why not SQL
+
+The resident backend already removed SQL from query evaluation
+([[file:spec-indexing.org::*No operand runs in SQL][spec-indexing "No operand runs
+in SQL"]]); what SQLite does today is store rows and the log. A disk-resident
+engine performs many small reads — a bitmap container, a dictionary key, the
+children of a directory — and for that access pattern SQL is the wrong layer:
+
+- *Per-access cost.* A SQLite statement step (bind, execute, decode) is in the
+  microsecond range. A lookup in a memory-mapped B+tree on a warm cache is a
+  few hundred nanoseconds with no copy. Over the hundreds of thousands of
+  accesses of a heavy query, that difference alone is a large part of the ×10
+  the requirements forbid.
+- *Locking.* The repository connection runs =locking_mode = EXCLUSIVE=, and a
+  long write holds the connection readers queue on (the "read blocked by the
+  write lock" class of slow reads). An MVCC store with a single writer and
+  non-blocking readers removes that class structurally.
+- *Memory management.* A memory-mapped store needs no cache of its own and no
+  memory budget: the operating system's page cache holds the pages in use and
+  evicts the others ([[*The page cache is the cache]]).
+
+SQLite stays for what it is good at: the SQLite backend itself, the per-pair
+sync database (spec-sync, out of scope here), and the test oracle
+([[*Testing]]).
+
+** Candidate stores
+
+Transactional, ordered key-value stores (to be confirmed by the prototype —
+maturity and current state of each crate must be checked):
+
+| Store   | Kind                             | Notes                                                      |
+|---------+----------------------------------+------------------------------------------------------------|
+| LMDB (=heed=) | mmap'd copy-on-write B+tree | fastest reads, MVCC, one writer; C library, very mature   |
+| =redb=  | same model, pure Rust            | somewhat slower reads; page checksums (to verify)          |
+| =fjall= | LSM tree, pure Rust              | better write throughput, worse point reads, compaction     |
+
+The workload is read-dominated, with writes arriving in bursts (watcher
+flushes, reconcile) that batch well: *LMDB is the default choice*, =redb= the
+fallback if a pure-Rust dependency or page checksums turn out to matter more.
+The rest of this document assumes an mmap'd copy-on-write B+tree.
+
+** The page cache is the cache
+
+The store file is mapped into the daemon's address space (=mmap=): to the
+program it is one large byte array, but nothing is read at open. The first
+access to a page faults, the kernel reads that page from disk and resumes the
+program; later accesses are plain memory reads. When memory runs short the
+kernel drops the least recently used pages — they are clean copies of the file,
+so dropping costs nothing but a later re-read.
+
+Consequences:
+
+- no memory budget to configure: a small repository ends up fully cached on its
+  own, a large one keeps its working set;
+- the database can never exhaust memory — the worst case is being slower;
+- the design effort moves to *layout*: data used together must be stored
+  together. Ten neighbouring pages are fast, ten thousand scattered ones are
+  not. Every key layout below is chosen for that.
+
+* Architecture
+
+** The storage boundary
+
+A =Store= trait sits under everything that today speaks =rusqlite= (22 source
+files at the time of writing). Two implementations:
+
+- =SqliteStore= — the current schema and code paths, behaviour unchanged;
+- =KvStore= — the layout below.
+
+The trait is kept *narrow*, because every method is a place where two backends
+can diverge:
+
+- read the field rows of a set of metarecords; write/replace/delete field rows;
+  create/delete a metarecord;
+- append an operation (with its before/after snapshots) to the log; read a
+  range of the log; read and move HEAD;
+- resolve a path / list the children of a node / walk ancestors (the forest);
+- open a read snapshot and a write transaction (one write transaction = one
+  =log::Writer= revision).
+
+The first increment is to *extract* this boundary with SQLite as its only
+implementation: =log.rs= and =db.rs= currently mix the logic (what to undo, in
+what order, what a revert writes) with the SQL (how rows are read and written).
+Separating them is worth doing even if the second backend never ships.
+
+The query side has the same boundary one level up: the evaluator of
+=crates/daemon/src/index/= reads bitmaps, BSI slices and value dictionaries
+through a source trait, implemented by the resident index (today's structures)
+and by the store (the key spaces below). The algebra — =And=/=Or=/=Not=,
+three-valued predicates, =Follows=, keyset pagination, exact counts — is shared.
+
+** Primary and derived data
+
+The store holds two kinds of data, in separate key spaces:
+
+- *Primary* — metarecords, their fields, the event log, HEAD. The source of
+  truth; the only thing a backup must carry.
+- *Derived* — postings, BSI slices, ordered indexes, descendant bitmaps,
+  trigrams. Everything here is a function of the primary data and can be
+  rebuilt from it by a =reindex= (an observable task).
+
+A bug in derived data yields wrong query results, never lost data, and a
+consistency check (the same comparison the oracle performs) detects it. This
+split is the main safety property of the design.
+
+** Key layout
+
+Every key space is an ordered table; keys are byte strings compared
+lexicographically, integers big-endian so that byte order is numeric order.
+
+| Key space   | Key                          | Value                          | Serves                                          |
+|-------------+------------------------------+--------------------------------+-------------------------------------------------|
+| records     | =id=                         | the metarecord's field rows    | reading a result page (k lookups)               |
+| uuid→id     | =uuid=                       | =id=                           | replaces the resident =IdRegistry=              |
+| id→uuid     | =id=                         | =uuid=                         | turning a result bitmap into uuids (k lookups)  |
+| postings    | =(field, value, chunk)=      | roaring container              | =Eq=, categorical fields, presence              |
+| unique      | =(field, value)=             | =id=                           | singleton values (hashes, fingerprints)         |
+| presence    | =(field, present/absent, chunk)= | roaring container          | =IS PRESENT= / =IS ABSENT= / =IS UNKNOWN=       |
+| ordered     | =(field, sort key, id)=      | —                              | sort and range on any type                      |
+| bsi         | =(field, min/max, slice, chunk)= | roaring container          | numeric ranges, numeric top-k                   |
+| forest      | =(field, parent, name)=      | =id=                           | path resolution, children *already sorted*      |
+| descendants | =(field, node, chunk)=       | roaring container              | subtree membership ([[*The forest: descendant bitmaps]]) |
+| trigrams    | =(field, trigram, chunk)=    | roaring container              | =Matches= / =Osm= on text and names             |
+| log         | =op_id=                      | operation + snapshots          | history, undo/redo, navigation, incremental reads |
+| meta        | name                         | HEAD, format version, …        |                                                 |
+
+=chunk= is the high 16 bits of an id: one roaring container covers 65 536 ids,
+so a bitmap is read container by container and a write rewrites at most a few
+KB. A value held by a single metarecord goes to =unique= instead of =postings=
+— a bitmap per unique value is exactly what makes the resident index expensive
+on =mfr_mtime=, =mfr_size= and the hashes.
+
+Containers are read *in place* from the mapped page, without deserialising. If
+the roaring crate in use cannot expose a zero-copy view of its serialised form,
+a small read-only view over that format is written for it — a small piece, but
+on the critical path of every query.
+
+** Ids and locality
+
+A metarecord's =id= is a dense =u64= (=u32= per chunked bitmap) allocated
+*in discovery order* and never renumbered. The reconcile walks the filesystem
+directory by directory and the watcher reports a new directory's content
+together, so the files of one subtree mostly receive *consecutive* ids. That
+locality is what keeps descendant bitmaps small (they compress to roaring runs)
+and makes a folder's records neighbours in the =records= table.
+
+Deleted ids are not reused (a tombstone costs one absent key). A full
+=reindex --compact= may renumber; it is an explicit maintenance operation, never
+an effect of a write.
+
+** The forest: descendant bitmaps
+
+This answers the question spec-indexing leaves open ("tree as a range": stable
+tree-order ids vs nested intervals), without renumbering anything.
+
+Each node with children keeps the bitmap of *all* its descendants, per
+=tree_ref= field.
+
+Maintenance:
+- *a node is created* under a parent: its id is added to the bitmap of each
+  ancestor — ≈ depth container writes;
+- *a subtree moves*: its descendant bitmap (plus the node itself) is removed
+  from each old ancestor and added to each new one — ≈ depth OR/ANDNOT
+  operations on a compact bitmap, *independent of the subtree's size*;
+- *a rename* changes nothing here (the =forest= key of the node moves, one
+  delete and one insert).
+
+What it buys:
+- =field ->* "/dir"= (=FollowsTransitive= on a path) is one bitmap read — no
+  level-by-level expansion;
+- *sort by path*, including a global one: a depth-first walk of =forest= in
+  name order, pruning every subtree whose =descendants ∩ match= is empty,
+  stopping at the k-th result — ≈ k × depth reads whatever the repository size;
+- =:path= and order-sensitive =Osm= path matching: the same walk, pruned by the
+  descendant bitmaps and by the term candidates the trigrams give;
+- the forest invariants (no cycle, depth ≤ 1000) only need the ancestor chain:
+  ≈ depth reads per checked write.
+
+Write amplification: about depth times more containers per tree write. Opening
+a folder — the central gesture of the GUI — costs a handful of reads in return.
+
+** Text: trigrams
+
+A =Matches= or =Osm= leaf on a high-cardinality field (file names) cannot scan
+the distinct values on disk at every keystroke. Each string and =tree_ref=
+name is indexed by its trigrams: the literal parts of the pattern (or the
+terms) give trigram postings, their intersection gives the candidates, and only
+the candidates' values are read and matched against the real predicate. A
+pattern with no usable literal (or a term shorter than three characters) falls
+back to scanning the value dictionary, restricted as today to the candidate
+set of the enclosing =And=.
+
+This reintroduces what spec-indexing removed (the FTS5 trigram pre-filter):
+that removal was justified by the dictionary being resident, which is exactly
+what no longer holds here. The resident backend keeps its scan.
+
+** Sort
+
+The filter produces a bitmap first, so |match| is known *exactly and for free*
+before sorting. The sort chooses among:
+
+- *|match| small*: read the sort key of each matched id (=records=), sort;
+- *|match| large*: walk the =ordered= index (or take the BSI top-k for numeric
+  fields) and test membership in the match bitmap until k are found;
+- *sort by path*: the pruned forest walk above.
+
+The switch is one deterministic comparison of |match| against the field's
+cardinality — no statistics, no estimation. Keyset pagination is unchanged: the
+cursor carries the last sort key and uuid, and each strategy resumes strictly
+after it.
+
+** Evaluation cost, per gesture
+
+Estimates, warm cache, to be confirmed ([[*Acceptance criteria]]):
+
+| Gesture                                  | Resident today           | Disk backend                              |
+|------------------------------------------+--------------------------+-------------------------------------------|
+| open a folder, sort by name, page of 100 | forest in RAM            | ≈ 100 forest + record reads — comparable  |
+| a folder sorted by date                  | sort of the whole match  | small match: read and sort — comparable   |
+| filter by tag / categorical field        | resident bitmaps         | a few mapped containers — ×1 to ×2        |
+| name substring search                    | scan of distinct values  | trigrams + verification — faster at scale |
+| regex with no literal over everything    | resident dictionary scan | dictionary scan from disk — ×10, cold     |
+| count                                    | O(1) on the result       | O(1) on the result                        |
+
+* Writes and atomicity
+
+One =log::Writer= revision is one write transaction of the store: the field
+rows, the log operations and their snapshots, HEAD, *and* every derived key
+space. It commits entirely or not at all; readers keep seeing the previous
+snapshot until it does. There is no snapshot-plus-replay scheme and no
+"refresh to HEAD" step on the read path: the derived data is consistent with
+HEAD by construction.
+
+Bulk writers (reconcile, a large watcher flush) accumulate the derived updates
+of their transaction in memory per container and write each container once.
+
+One writer at a time, as today (the executor and the API already serialise
+writes). Readers never block.
+
+* Safety
+
+- *Crash and power loss.* A copy-on-write B+tree never modifies a live page: a
+  commit writes the new pages elsewhere, syncs them, then flips a small header
+  pointing to the new root (two alternating headers). A crash before the flip
+  leaves the previous header intact: the store opens at the last committed
+  transaction, with no recovery log to replay.
+- *Our own memory bugs.* The map is opened *read-only* (=MDB_WRITEMAP= stays
+  off): writes go through the library's system calls, so a stray write in the
+  process cannot reach the file.
+- *Storage lying about =fsync=, bad sectors.* As with SQLite, a damaged page
+  can make part — or, for a page near the root, all — of the store unreadable.
+  LMDB has no page checksums (SQLite has none by default either; =redb= may —
+  to verify). The defence is backups: the store supports a consistent hot copy
+  (=mdb_copy=), which a =mf repo backup= would expose.
+- *Network filesystems* (NFS, SMB) are not supported by LMDB. A repository whose
+  =.metafolder/internal/= lives on one keeps the SQLite backend; creating a
+  KV repository there is refused.
+- *Map size.* The maximum file size is set at open. Reaching it fails the
+  transaction cleanly (no corruption); the daemon grows the map and retries on
+  reopen.
+- *Long read transactions* pin old pages and make the file grow. Read snapshots
+  are held for one request at most — a code rule, enforced like the other
+  invariants (=.semgrep/invariants.yml=).
+- *Derived data* can always be rebuilt ([[*Primary and derived data]]);
+  =reindex= and a =check= comparing a sample of queries against a rebuild are
+  part of the backend, not an afterthought.
+
+* Choosing the backend
+
+The backend is a property of the repository, recorded in
+=.metafolder/config.json= (=storage: "sqlite" | "kv"=, absent = =sqlite=), chosen
+at =init= and changed only by a conversion (=mf repo convert=, both directions,
+an observable task that writes the new store beside the old one and switches on
+success). Per the migration policy, the conversion *is* the migration script
+for this format.
+
+The resident query index remains available on top of either store: on a
+repository that fits in memory it may still be the faster engine. Whether it is
+still worth keeping on the KV store, where a small repository is fully in the
+page cache anyway, is decided by measurement, not in advance.
+
+* Testing
+
+- *Every integration test runs on both backends*, the way
+  =tests/common/engines.rs= already runs both query engines. A behaviour tested
+  on one backend only is where the two drift.
+- *The oracle stays SQL.* =crates/query-oracle= compiles to the SQLite schema;
+  on the KV backend the tests export the repository into a throwaway SQLite
+  database and compare. Three engines, one answer.
+- *Scale is tested by counting, not timing* — the =perf_cost.rs= idea applied
+  to page and key reads: opening a folder reads the same number of keys on a
+  5 k and an 80 k repository; a tag filter reads a number of containers
+  proportional to the ids it spans; no bounded query reads a whole key space.
+  This needs no large data set and cannot flake under load.
+- *Synthetic scale.* Millions of metarecords are generated directly into a
+  store (no files on disk: a metarecord needs rows, not a file), from the
+  =regression/synth.rs= generator. At that size only the KV backend is
+  measured — the resident one would need the memory the machine does not have.
+- *Cold cache.* The page cache is dropped between runs
+  (=sync; echo 3 > /proc/sys/vm/drop_caches=, root) to measure first access
+  separately from everyday use.
+
+** Acceptance criteria
+
+Measured on =benchmarks/bench_data= and =bench_data_big= against the resident
+backend, warm cache, with the scenario list of =scripts/bench.sh=:
+
+- the everyday gestures of [[*Evaluation cost, per gesture]] at most ×2;
+- writes (single-field, watcher flush, reconcile) at most ×2 end to end;
+- on the synthetic multi-million store: the everyday gestures independent of
+  the repository size (cost assertions), and usable on 8 GB of RAM.
+
+If a gesture misses its target, the prototype says which one and why; the
+decision to migrate waits for that answer.
+
+* Conflicts with existing decisions
+
+- *Adaptive planner* — off the roadmap because each operand had one way to be
+  answered (spec-indexing "Status"). The sort choice and the trigram/scan choice
+  bring alternatives back. They are fixed, statistics-free rules driven by exact
+  counts, not a planner — but the premise that there is "no plan to pick" stops
+  holding on this backend.
+- *The trigram pre-filter* removed by spec-indexing returns on this backend
+  (see [[*Text: trigrams]]).
+- *The oracle depends on =tree_cache=* for path shapes. On the KV backend it is
+  fed the exported SQLite database, where the full forest is available.
+- *Network filesystems*: the SQLite backend falls back to =journal_mode =
+  DELETE= there; the KV backend refuses them. A user moving a repository onto a
+  network share must convert it first.
+- *One persisted format more* to migrate for the lifetime of the project.
+
+* Open questions
+
+- LMDB vs =redb= — read speed on the prototype, and whether page checksums are
+  worth the difference.
+- Whether =id= allocation in discovery order gives enough locality after years
+  of moves and renames, or whether =reindex --compact= must be scheduled.
+- The exact shape of the =Store= trait around the log's navigation (LCA,
+  inverse/forward application restoring =field.id=s): today it relies on SQL
+  row ids, which the KV backend must reproduce or replace.
+- Whether the resident index is kept on top of the KV store at all.
+
+* Increments
+
+1. *Prototype*, in a separate throwaway crate that touches no daemon code: the
+   key layout above, a synthetic generator, and only the gestures of
+   [[*Evaluation cost, per gesture]], measured warm and cold, on bench_data-sized
+   and multi-million stores. Decide on its numbers.
+2. *Extract the =Store= boundary* with SQLite as its only implementation, no
+   behaviour change (useful on its own: it separates log logic from SQL).
+3. *=KvStore=* for primary data and the log; every integration test on both
+   backends.
+4. *Derived key spaces* and the disk query source; the oracle comparison
+   through SQLite export; cost assertions.
+5. *=mf repo convert=*, =reindex=, =check=, backup; the backend choice at =init=.
