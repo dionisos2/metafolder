@@ -399,15 +399,24 @@ for this format.
 On disk, a SQLite repository keeps =internal/db.sqlite=; a KV one keeps
 =internal/kv/= (the LMDB environment, plus =daemon.lock=: LMDB has no
 exclusive mode, so the "one daemon per repository" lock SQLite gets from
-=locking_mode = EXCLUSIVE= is an =flock= held for the store's lifetime). The
+=locking_mode = EXCLUSIVE= is an =flock= held for the store's lifetime).
+LMDB reserves its whole map in the address space up front, and a daemon holds
+one map per loaded repository: a fixed 1 TiB map ran the 128 TiB of x86-64
+out at about 120 repositories. So the map starts at 1 GiB (or twice what the
+store holds) and doubles, at the start of a write transaction, once the store
+fills half of it — the one moment LMDB allows a resize, no transaction being
+open. A single revision larger than the room left then fails whole, like any
+other failed write (=MDB_MAP_FULL=); it cannot corrupt the store. The
 legacy-layout migration at load is SQLite's alone — no KV repository predates
 =internal/=.
 
-Until =init= takes a flag (increment 5), the daemon creates repositories on
-SQLite unless =METAFOLDER_DEFAULT_STORAGE=kv= is set. That variable is how the
-whole integration suite is run on the KV backend; tests about SQLite's own
-layout (the file, its tables, its legacy migrations) pin SQLite with
-=init_repository_with=.
+A new repository is created on the KV store; until =init= takes a flag
+(increment 5), =METAFOLDER_DEFAULT_STORAGE=sqlite= creates it on SQLite
+instead. That variable is also how the integration suite is run on each
+backend; tests about SQLite's own layout (the file, its tables, its legacy
+migrations) pin SQLite with =init_repository_with=. An existing repository
+keeps its backend: a =config.json= without =storage= is SQLite, since every
+repository written before the choice existed is one.
 
 The resident query index remains available on top of either store: on a
 repository that fits in memory it may still be the faster engine. Whether it is

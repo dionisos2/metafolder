@@ -22,13 +22,16 @@ impl Storage {
     }
 
     /// The backend a repository is created on when the caller does not say:
-    /// SQLite, unless `METAFOLDER_DEFAULT_STORAGE=kv` — how the test suite is
-    /// run on the key-value backend, and how to try it before `mf repo
-    /// convert` exists.
+    /// the key-value store, unless `METAFOLDER_DEFAULT_STORAGE=sqlite`.
     pub fn default_for_init() -> Storage {
-        match std::env::var("METAFOLDER_DEFAULT_STORAGE").as_deref() {
-            Ok("kv") => Storage::Kv,
-            _ => Storage::Sqlite,
+        Storage::for_init(std::env::var("METAFOLDER_DEFAULT_STORAGE").ok().as_deref())
+    }
+
+    /// [`Storage::default_for_init`] given the variable's value.
+    fn for_init(var: Option<&str>) -> Storage {
+        match var {
+            Some("sqlite") => Storage::Sqlite,
+            _ => Storage::Kv,
         }
     }
 }
@@ -72,8 +75,9 @@ pub struct RepoConfig {
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub system: bool,
     /// The storage backend holding this repository's data (spec-storage
-    /// "Choosing the backend"), chosen at init. Absent — every repository
-    /// written before the choice existed — is SQLite.
+    /// "Choosing the backend"), chosen at init (the key-value store by
+    /// default). Absent — every repository written before the choice
+    /// existed — is SQLite.
     #[serde(default, skip_serializing_if = "Storage::is_sqlite")]
     pub storage: Storage,
 }
@@ -126,6 +130,13 @@ impl RepoConfig {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_new_repository_is_kv_unless_sqlite_is_asked_for() {
+        assert_eq!(Storage::for_init(None), Storage::Kv);
+        assert_eq!(Storage::for_init(Some("kv")), Storage::Kv);
+        assert_eq!(Storage::for_init(Some("sqlite")), Storage::Sqlite);
+    }
 
     fn temp_dir() -> PathBuf {
         let path = std::env::temp_dir()
