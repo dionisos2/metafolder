@@ -123,7 +123,36 @@ implementation: =log.rs= and =db.rs= currently mix the logic (what to undo, in
 what order, what a revert writes) with the SQL (how rows are read and written).
 Separating them is worth doing even if the second backend never ships.
 
-*** Increment 2, concretely (proposal, September 2026)
+*** Increment 2, concretely (done, September 2026)
+
+*State.* Built as described below, with two amendments the code forced.
+=crates/daemon/src/store.rs= holds the traits — =Rows=, =Log=, =Questions=
+(=Store= is the three), =WriteTxn=, =Begin=, =Database= — and SQLite's
+implementation of them; a loaded repository holds a =store::Handle=
+(=Box<dyn Database + Send>=). Outside the SQLite layer itself (=db.rs=, the
+statements still defined in =log.rs=, =repo.rs= as the opener) and the per-pair
+sync database, no daemon module names =rusqlite=: the query index, the tree
+cache, the writer, navigation, pruning, the log listing, reverts, the watchers,
+the reconcile, the schema, duplicates, orphans and mounts all take the traits.
+=tests/store_contract.rs= asks every method through the traits only, and is
+the file a second backend runs.
+
+- *Questions stayed with the store, not the index.* The schema check's
+  candidates count a field's rows *per metarecord*, which the index does not
+  keep; serving them from it meant either growing the index or validating every
+  holder of a field (minutes on millions of files). Instead each question has a
+  default derived from =Rows= alone — correct on any backend, so a new one
+  writes nothing — which SQLite overrides with its indexed query; the contract
+  test holds every override to its default.
+- *Interruption is a capability.* A task's Stop used SQLite's interrupt handle;
+  it is now =Begin::interrupter()=, none by default. =as_sqlite()= remains, for
+  the tests that run raw SQL against a loaded repository.
+
+Found on the way: the executor used to dequeue the restorations a skipped
+navigation step leaves *after* committing the revision that re-records them —
+a crash between the two replayed them. They are now dequeued in that revision.
+
+The proposal as written:
 
 Measured on the code: the SQL is concentrated — =db.rs= (55 public functions,
 ≈ 96 statements) and =log.rs= (≈ 82 statements: the =Writer=, snapshots, the
@@ -542,8 +571,8 @@ and =MDB_NOMETASYNC= saved almost nothing — one =fsync= dominates either way.
    store ([[*Prototype results]]). Not built: BSI (ranges and sorts go through
    =ordered=), cursors beyond the first page, zero-copy containers, the log's
    navigation.
-2. *Extract the =Store= boundary* with SQLite as its only implementation, no
-   behaviour change (useful on its own: it separates log logic from SQL).
+2. *(done)* *Extract the =Store= boundary* with SQLite as its only
+   implementation, no behaviour change (see "Increment 2, concretely").
 3. *=KvStore=* for primary data and the log; every integration test on both
    backends.
 4. *Derived key spaces* and the disk query source; the oracle comparison
