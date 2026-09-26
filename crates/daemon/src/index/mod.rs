@@ -1003,6 +1003,7 @@ impl RepoIndex {
     /// from an ordered structure — or `None` when the fetch is cheaper, or the
     /// walk ran over its budget, or the sort has no walk. The extra id says
     /// whether another page follows.
+    #[allow(clippy::too_many_arguments)]
     fn walk_page(
         &self,
         matched: &RoaringBitmap,
