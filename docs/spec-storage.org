@@ -3,7 +3,12 @@
 
 * Status
 
-*Design document, nothing implemented* (September 2026). Like
+*Design document; the prototype of increment 1 is built and measured*
+(September 2026): =prototypes/kvstore= (the store, an oracle, cost tests, the
+=kvproto= measuring tool) and =prototypes/resident-compare= (the resident engine
+timed on the same records). Nothing in the daemon changes yet. The measured
+numbers are in [[*Prototype results]]; they replace the estimates this document
+started from. Like
 [[file:spec-indexing.org][spec-indexing.org]], this describes a direction, not
 the code. It is the answer to the limit that document leaves open: the query
 engine is fast because *everything* it needs is resident — the bitmap/BSI index,
@@ -12,8 +17,7 @@ index fits in RAM.
 
 The goal is a *second* storage-and-query backend that keeps the full generality
 of the query language without loading the repository in memory, *next to* the
-current one, which stays as it is. Nothing here is decided until the prototype
-([[*Increments]]) has measured it; the numbers quoted below are estimates.
+current one, which stays as it is.
 
 * Requirements
 
@@ -149,8 +153,7 @@ lexicographically, integers big-endian so that byte order is numeric order.
 | records     | =id=                         | the metarecord's field rows    | reading a result page (k lookups)               |
 | uuid→id     | =uuid=                       | =id=                           | replaces the resident =IdRegistry=              |
 | id→uuid     | =id=                         | =uuid=                         | turning a result bitmap into uuids (k lookups)  |
-| postings    | =(field, value, chunk)=      | roaring container              | =Eq=, categorical fields, presence              |
-| unique      | =(field, value)=             | =id=                           | singleton values (hashes, fingerprints)         |
+| postings    | =(field, value, chunk)=      | roaring container              | =Eq= on a value held by ≥ 64 records            |
 | presence    | =(field, present/absent, chunk)= | roaring container          | =IS PRESENT= / =IS ABSENT= / =IS UNKNOWN=       |
 | ordered     | =(field, sort key, id)=      | —                              | sort and range on any type                      |
 | bsi         | =(field, min/max, slice, chunk)= | roaring container          | numeric ranges, numeric top-k                   |
@@ -163,9 +166,12 @@ lexicographically, integers big-endian so that byte order is numeric order.
 
 =chunk= is the high 16 bits of an id: one roaring container covers 65 536 ids,
 so a bitmap is read container by container and a write rewrites at most a few
-KB. A value held by a single metarecord goes to =unique= instead of =postings=
-— a bitmap per unique value is exactly what makes the resident index expensive
-on =mfr_mtime=, =mfr_size= and the hashes.
+KB. A value gets a posting only once 64 records hold it; a rarer one is
+answered from =ordered=, where its ids are adjacent under one prefix. A bitmap
+per unique value is exactly what makes the resident index expensive on
+=mfr_mtime=, =mfr_size= and the hashes: in the prototype, postings for every
+value weighed 200 bytes per record, promoted ones 5. A posting is never
+demoted, so "a value has a posting" always means "all its ids are in it".
 
 Containers are read *in place* from the mapped page, without deserialising. If
 the roaring crate in use cannot expose a zero-copy view of its serialised form,
@@ -227,6 +233,14 @@ pattern with no usable literal (or a term shorter than three characters) falls
 back to scanning the value dictionary, restricted as today to the candidate
 set of the enclosing =And=.
 
+*A page without a count checks text lazily.* A text leaf, or the text
+conjuncts of an =And=, are split off the filter: what is evaluated is the
+candidate bitmap (the trigram intersection, or every holder of the field when
+there is no trigram), and the predicate itself is checked only on the ids the
+sort visits, stopping at the page's end. A search as you type then costs its
+page (0.5–3 ms on 5 M files) instead of its whole match set (170–530 ms); only
+a request that asks for the total pays for the whole set.
+
 This reintroduces what spec-indexing removed (the FTS5 trigram pre-filter):
 that removal was justified by the dictionary being resident, which is exactly
 what no longer holds here. The resident backend keeps its scan.
@@ -236,28 +250,32 @@ what no longer holds here. The resident backend keeps its scan.
 The filter produces a bitmap first, so |match| is known *exactly and for free*
 before sorting. The sort chooses among:
 
-- *|match| small*: read the sort key of each matched id (=records=), sort;
-- *|match| large*: walk the =ordered= index (or take the BSI top-k for numeric
-  fields) and test membership in the match bitmap until k are found;
-- *sort by path*: the pruned forest walk above.
+- *fetch*: read the sort key of each matched id (=records=, or the path from
+  =position=), sort;
+- *walk*: walk the =ordered= index — or the forest, for a path sort — and test
+  membership in the match bitmap until k are found.
 
-The switch is one deterministic comparison of |match| against the field's
-cardinality — no statistics, no estimation. Keyset pagination is unchanged: the
-cursor carries the last sort key and uuid, and each strategy resumes strictly
-after it.
+The choice compares the two estimated costs: fetching costs |match| random
+reads (weighted ×8 against an index step), walking costs k × rows / |match|
+steps if the matches are spread evenly along the index (the whole index when k
+covers the match). No statistics: |match| is exact, and rows is the field's
+presence count (or the size of the walk's subtree). A count of matches alone
+is not enough: a 2 500-file folder is "large", yet walking the date index of a
+5 M-file repository for 100 of its files reads ≈ 200 000 keys.
+
+A path walk starts at the lowest node whose descendants hold every match
+(found from the first match upwards), not at the forest root — otherwise
+browsing a folder pays for the siblings of its ancestors. It streams each
+folder's children from =forest= and stops at the page's end, and a folder
+filter is the =children= bitmap: a folder of 250 000 entries opens in 0.4 ms.
+
+Keyset pagination is unchanged: the cursor carries the last sort key and uuid,
+and each strategy resumes strictly after it. (The prototype serves first pages
+only; the cursor is not built.)
 
 ** Evaluation cost, per gesture
 
-Estimates, warm cache, to be confirmed ([[*Acceptance criteria]]):
-
-| Gesture                                  | Resident today           | Disk backend                              |
-|------------------------------------------+--------------------------+-------------------------------------------|
-| open a folder, sort by name, page of 100 | forest in RAM            | ≈ 100 forest + record reads — comparable  |
-| a folder sorted by date                  | sort of the whole match  | small match: read and sort — comparable   |
-| filter by tag / categorical field        | resident bitmaps         | a few mapped containers — ×1 to ×2        |
-| name substring search                    | scan of distinct values  | trigrams + verification — faster at scale |
-| regex with no literal over everything    | resident dictionary scan | dictionary scan from disk — ×10, cold     |
-| count                                    | O(1) on the result       | O(1) on the result                        |
+Measured — see [[*Prototype results]].
 
 * Writes and atomicity
 
@@ -350,6 +368,94 @@ backend, warm cache, with the scenario list of =scripts/bench.sh=:
 If a gesture misses its target, the prototype says which one and why; the
 decision to migrate waits for that answer.
 
+* Prototype results
+
+Machine: i7-7500U, 4 cores, 7.6 GB of RAM (swapping during the runs), SSD.
+Synthetic repository of =metafolder_kv_proto::synth=: an 8-way directory tree,
+20 files per directory, the root holding the remainder (its largest folder);
+each file carries =mfr_path=, =mfr_type=, =mfr_ext=, =mfr_size=, =mfr_mtime=, a
+unique =mfr_hash=, 0–2 tags and a rating one time in three. Times are medians
+of seven warm runs; a page is 100 results *and their records read*. "Cold" is
+the first run after the store's pages were evicted from the page cache.
+
+** Against the resident engine (210 000 records, same records)
+
+The resident engine is timed in-process through the daemon's router (no TCP,
+but the JSON of the page's fields is included: ≈ 0.4–0.9 ms for a page of
+100, the floor of the right-hand column). The match counts agree on every
+gesture.
+
+| Gesture                               | Disk backend, page | + count | Resident, page |
+|---------------------------------------+--------------------+---------+----------------|
+| first page of everything              |               0.15 |    0.15 |            5.7 |
+| sorted by size                        |               0.20 |    0.19 |             50 |
+| subtree (11 699), no sort             |               0.14 |    0.15 |            5.2 |
+| folder of 10 008 files, by name       |               0.20 |    0.20 |            7.0 |
+| same folder, by date                  |               0.29 |    0.29 |            4.0 |
+| subtree, by path / by date            |        0.18 / 0.22 |       — |      12 / 9.0 |
+| tag (23 914), no sort / by date       |        0.16 / 0.22 |       — |     0.88 / 7.9 |
+| all files by path (200 000)           |               0.19 |    0.19 |            152 |
+| size range (432)                      |               0.20 |    0.20 |           0.37 |
+| name contains "concert"               |               0.70 |     6.4 |             72 |
+| name contains "t_" (no trigram)       |               0.40 |    18.5 |            118 |
+| regex with no literal                 |               0.50 |    21.1 |             66 |
+| subtree and name contains             |               0.51 |    0.75 |             57 |
+| resident memory (anonymous)           |               2 MB |         |         476 MB |
+| load before the first query           |                  — |         |          4.7 s |
+
+The disk backend is ahead everywhere, and by one to three orders of
+magnitude on sorts and text. This is *not* the storage: it is that a sort
+stops at the page (walk / fetch by cost) and that text is checked where the
+sort looks, while the resident engine sorts or scans the whole match set per
+page. Both techniques transfer to the resident engine as they are — which is
+worth doing whatever becomes of this backend. The comparison says what it had
+to say: the disk backend meets the ×2 criterion with room to spare.
+
+** At scale (5 250 000 records, 6.4 GB store on a 7.6 GB machine)
+
+| Gesture                                | Page, warm | + count | Cold, page |
+|----------------------------------------+------------+---------+------------|
+| count of everything                    |       0.04 |       — |         72 |
+| first page of everything               |       0.97 |    0.96 |        147 |
+| sorted by size                         |        1.5 |     1.2 |        171 |
+| subtree of 748 979, no sort            |       0.64 |    0.62 |        124 |
+| folder of 250 008 files, by name       |       0.42 |    0.42 |        201 |
+| same folder, by date                   |        1.4 |     0.8 |        179 |
+| subtree, by path / by date             | 1.4 / 0.50 |       — |  145 / 152 |
+| tag (598 626), no sort / by date       | 0.23 / 0.63 |      — |  156 / 210 |
+| all files by path (5 000 000)          |        2.1 |     1.5 |        240 |
+| size range (9 821)                     |        2.5 |     1.4 |        159 |
+| name contains "concert" (359 150)      |        2.8 |     167 |       2440 |
+| name contains "t_" (1 626 474)         |        2.0 |     458 |        356 |
+| regex with no literal                  |       0.66 |     535 |        156 |
+| subtree and name contains              |        3.0 |      24 |        325 |
+| write one field (synced)               |        5.2 |         |            |
+| move a subtree of 748 979              |        6.1 |         |            |
+
+Twenty-five times the data leaves every page under 3 ms warm; the heap stays
+at a few MB (at 476 MB per 210 000 records, the resident engine would need ≈ 12 GB here). Writes stay under
+10 ms whatever the subtree moved: a move costs the depth, not the size.
+
+Where it is not yet good enough:
+- *Cold cache*: 70–240 ms for an everyday gesture, seconds for a text search
+  over a large candidate set. The first gesture after a start or after memory
+  pressure pays for scattered page reads.
+- *Counts of text searches*: the total needs the whole match set (0.2–0.5 s on
+  5 M). The GUI's list asks for a count with its first page; it would have to
+  ask for it separately, after the page.
+- *Size*: ≈ 1.2 KB per record, of which the log, the ordered index and the
+  records are ≈ 270 bytes each (the SQLite database of the same 210 000
+  records is 410 MB against 324 MB; on the M regression repository, 31 MB
+  against 22 MB). A bulk load leaves freed pages in the file (438 → 274 MB
+  used on one run): a compacting copy after an import would reclaim them.
+- *Bulk load*: 16 000 records/s at 200 k, 6 300/s at 5 M (a reconcile of a
+  large tree would be minutes).
+
+Two measurements about the environment rather than the design: a synced
+commit costs ≈ 2 ms on the home filesystem but ≈ 20 ms on the container's
+=fuse-overlayfs= root, so writes must be measured where repositories live;
+and =MDB_NOMETASYNC= saved almost nothing — one =fsync= dominates either way.
+
 * Conflicts with existing decisions
 
 - *Adaptive planner* — off the roadmap because each operand had one way to be
@@ -375,14 +481,23 @@ decision to migrate waits for that answer.
 - The exact shape of the =Store= trait around the log's navigation (LCA,
   inverse/forward application restoring =field.id=s): today it relies on SQL
   row ids, which the KV backend must reproduce or replace.
-- Whether the resident index is kept on top of the KV store at all.
+- Whether the resident index is kept on top of the KV store at all. On the
+  measurements, no: the disk backend's page costs are below the resident
+  engine's at 210 000 records, the page cache holding the store.
+- Cold-cache latency: whether to warm the hot key spaces (=forest=, =kids=,
+  =presence=, postings) at load with =madvise(WILLNEED)=, and how much that costs
+  on a store larger than memory.
+- Whether the resident engine should adopt the page-bounded sort (walk/fetch)
+  and the lazy text checks now — they explain most of the gap measured above.
 
 * Increments
 
-1. *Prototype*, in a separate throwaway crate that touches no daemon code: the
-   key layout above, a synthetic generator, and only the gestures of
-   [[*Evaluation cost, per gesture]], measured warm and cold, on bench_data-sized
-   and multi-million stores. Decide on its numbers.
+1. *(done)* *Prototype*, in separate crates that touch no daemon code: the
+   key layout above, a synthetic generator, and the everyday gestures,
+   measured warm and cold, against the resident engine and on a multi-million
+   store ([[*Prototype results]]). Not built: BSI (ranges and sorts go through
+   =ordered=), cursors beyond the first page, zero-copy containers, the log's
+   navigation.
 2. *Extract the =Store= boundary* with SQLite as its only implementation, no
    behaviour change (useful on its own: it separates log logic from SQL).
 3. *=KvStore=* for primary data and the log; every integration test on both
