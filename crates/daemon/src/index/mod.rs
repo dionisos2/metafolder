@@ -187,6 +187,23 @@ impl KeyLookup<'_> {
     }
 }
 
+/// The metarecord whose descendants hold every match of `q` in `field`'s
+/// forest, when the query says so: a path-target follow (direct, or strict
+/// transitive) on that field, alone or as an operand of an `and`. A walk of
+/// the forest can then start there instead of at the roots.
+fn walk_bound(q: &Query, field: &str, roots: &QueryRoots<'_>) -> Option<Uuid> {
+    let resolved = |f: &str, target: &FollowTarget| match target {
+        FollowTarget::Path(p) if f == field => roots.path.get(&(f.to_string(), p.clone())).copied(),
+        _ => None,
+    };
+    match q {
+        Query::Follows { field: f, target } => resolved(f, target),
+        Query::FollowsTransitive { field: f, target, inclusive: false } => resolved(f, target),
+        Query::And { operands } => operands.iter().find_map(|o| walk_bound(o, field, roots)),
+        _ => None,
+    }
+}
+
 /// What reading one match's sort key costs in a fetch, in walk steps.
 const FETCH_COST: u64 = 4;
 
@@ -799,7 +816,7 @@ impl RepoIndex {
         // cheaper than sorting the whole match set (spec-indexing "A page costs
         // the page"). `None` means the fetch below does it.
         if let Some(limit) = limit.filter(|&l| l > 0) {
-            if let Some(ids) = self.walk_page(&matched, sort, limit, after.as_ref(), roots)? {
+            if let Some(ids) = self.walk_page(&matched, q, sort, limit, after.as_ref(), roots)? {
                 return self.walked_page(ids, limit, guard, sort, roots);
             }
         }
@@ -865,6 +882,7 @@ impl RepoIndex {
     fn walk_page(
         &self,
         matched: &RoaringBitmap,
+        q: &Query,
         sort: &[SortBy],
         limit: usize,
         after: Option<&SortEntry>,
@@ -906,7 +924,8 @@ impl RepoIndex {
             let tree = self.types.get(key.field.as_str()) == Some(&"tree_ref");
             let keys = roots.and_then(|r| r.keys).filter(|k| k.is_resident());
             if let (true, true, Some(keys)) = (tree, key.ascending, keys) {
-                return Ok(self.tree_page(matched, &key.field, keys, limit, after));
+                let within = roots.and_then(|r| walk_bound(q, &key.field, r));
+                return Ok(self.tree_page(matched, &key.field, keys, within, limit, after));
             }
         }
         Ok(None)
@@ -922,6 +941,7 @@ impl RepoIndex {
         matched: &RoaringBitmap,
         field: &str,
         keys: &crate::tree_cache::SortKeys<'_>,
+        within: Option<Uuid>,
         limit: usize,
         after: Option<&SortEntry>,
     ) -> Option<Vec<u32>> {
@@ -941,7 +961,7 @@ impl RepoIndex {
         if walk {
             let mut steps = 0usize;
             let mut over = false;
-            let end = keys.walk_ascending(field, resume, &mut |uuid| {
+            let end = keys.walk_ascending(field, within, resume, &mut |uuid| {
                 steps += 1;
                 if steps > budget {
                     over = true;

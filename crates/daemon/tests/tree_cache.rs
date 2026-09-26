@@ -1105,3 +1105,52 @@ fn test_a_cell_settled_before_its_parents_still_lands() {
     assert!(commit_and_settle(w, &mut cache));
     assert_matches_fresh(&conn, &mut cache);
 }
+
+// ── Multi-position count ──────────────────────────────────────────────────────
+
+/// How many metarecords hold several positions in a forest — what tells a
+/// sorted walk whether it may start below a node (spec-indexing "A page costs
+/// the page") — follows every kind of upkeep, and agrees with a fresh load.
+#[test]
+fn the_multi_position_count_follows_the_upkeep() {
+    use metafolder_daemon::log::{TreeOp, TreePos, UNKNOWN_ROW};
+    let mut conn = test_conn();
+    let root = tree_entry(&mut conn, "loc", None, "");
+    let a = tree_entry(&mut conn, "loc", Some(root), "a");
+    let b = tree_entry(&mut conn, "loc", Some(root), "b");
+    let x = Uuid::new_v4();
+    let mut cache = TreeCache::new(false);
+    cache.populate(&conn).unwrap();
+    assert_eq!(cache.multi_positioned("loc"), 0);
+
+    let pos = |parent: Uuid, name: &str| TreePos {
+        row: UNKNOWN_ROW,
+        parent: Some(parent),
+        name: TreeName::from(name.to_string()),
+    };
+    let set = |positions: Vec<TreePos>| TreeOp::Set { field: "loc".into(), uuid: x, positions };
+    assert!(cache.apply_ops(&[set(vec![pos(a, "x"), pos(b, "x")])]));
+    assert_eq!(cache.multi_positioned("loc"), 1);
+    assert!(cache.apply_ops(&[set(vec![pos(a, "x")])]));
+    assert_eq!(cache.multi_positioned("loc"), 0);
+    assert!(cache.apply_ops(&[TreeOp::Add {
+        field: "loc".into(),
+        uuid: x,
+        positions: vec![pos(b, "x")]
+    }]));
+    assert_eq!(cache.multi_positioned("loc"), 1);
+    cache.apply_remove("loc", x);
+    assert_eq!(cache.multi_positioned("loc"), 0);
+
+    // A load counts what the database holds.
+    let mut w = Writer::begin(&mut conn, None).unwrap();
+    w.create_metarecord(vec![
+        Field::new("loc", Value::TreeRef { parent: Some(a), name: "y".into() }),
+        Field::new("loc", Value::TreeRef { parent: Some(b), name: "y".into() }),
+    ])
+    .unwrap();
+    w.commit().unwrap();
+    cache.populate(&conn).unwrap();
+    assert_eq!(cache.multi_positioned("loc"), 1);
+    assert_eq!(cache.multi_positioned("mfr_path"), 0);
+}

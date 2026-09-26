@@ -350,9 +350,15 @@ full-path keys, the separator sorting below every character a name can hold —
 emitting each metarecord at its smallest position only (the representative an
 ascending sort uses), detached nodes as roots by their bare names like
 =SortKeys::pick= does, then the matches in no position by uuid. Siblings are
-sorted a chunk of 128 at a time, so a page of a folder of 250 000 entries does
-not sort the folder. The cursor resumes at the node of its uuid whose key it
-carries. The walk refuses — and the fetch answers — when it cannot vouch for the
+sorted a chunk at a time — 128, then twice the last chunk — so a page of a
+folder of 250 000 entries does not sort the folder, and a walk through all of
+it stays O(n log n). The cursor resumes at the node of its uuid whose key it
+carries. When the query bounds its matches to a subtree — a path-target
+=follows= or strict =follows_transitive= on the sorted field, alone or under an
+=and= — the walk starts below that node instead of at the roots; only while no
+metarecord of the forest holds several positions (=TreeCache::multi_positioned=,
+always the case for =mfr_path=), since one could match inside and sort on a
+smaller position outside, which a bounded walk would not meet in time. The walk refuses — and the fetch answers — when it cannot vouch for the
 key order: the cursor's node is gone, two siblings display the same name, or a
 name holds a character at or below the key separator. A descending path sort is
 left to the fetch (its walk would be a reversed post-order; not built).

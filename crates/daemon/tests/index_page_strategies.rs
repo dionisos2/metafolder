@@ -239,3 +239,43 @@ fn every_page_strategy_gives_the_oracles_pages() {
         }
     }
 }
+
+/// A metarecord at `/a/x` and `/b/x` matches "below `/b`", and sorts on its
+/// smallest path, `/a/x` — before everything else below `/b`. A walk bounded
+/// to `/b` meets it only at `/b/x`: it must refuse rather than drop it.
+#[test]
+fn a_smallest_position_outside_the_walked_subtree_is_not_dropped() {
+    let mut conn = db::open_in_memory().unwrap();
+    db::init_schema(&conn).unwrap();
+    let mut w = Writer::begin(&mut conn, None).unwrap();
+    let root = w.create_metarecord(vec![tref(None, "")]).unwrap().uuid;
+    let a = w.create_metarecord(vec![tref(Some(root), "a")]).unwrap().uuid;
+    let b = w.create_metarecord(vec![tref(Some(root), "b")]).unwrap().uuid;
+    w.create_metarecord(vec![tref(Some(a), "x"), tref(Some(b), "x")]).unwrap();
+    for name in ["m", "n", "o"] {
+        w.create_metarecord(vec![tref(Some(b), name)]).unwrap();
+    }
+    w.commit().unwrap();
+
+    let mut cache = TreeCache::new(false);
+    let mut index = RepoIndex::build(&conn).unwrap();
+    let q = Query::FollowsTransitive {
+        field: P.into(),
+        target: FollowTarget::Path("/b".into()),
+        inclusive: false,
+    };
+    let by = [(P, true)];
+    for limit in [1, 2, 10] {
+        let want = oracle_pages(&conn, &mut cache, &q, &by, limit);
+        let mut roots = QueryRoots::new();
+        let node = cache.resolve_path(&conn, P, "/b").unwrap().unwrap();
+        roots.path.insert((P.to_string(), "/b".to_string()), node);
+        cache.populate(&conn).unwrap();
+        let keys = SortKeys::new(&cache);
+        roots.keys = Some(&keys);
+        for strategy in [PageStrategy::Walk, PageStrategy::Auto] {
+            let got = index_pages(&mut index, &roots, &q, &by, limit, strategy);
+            assert_eq!(got, want, "{strategy:?}, pages of {limit}");
+        }
+    }
+}

@@ -81,6 +81,48 @@ struct FieldTree {
     /// producer has to sort its work — and none of them can
     /// (see [`TreeCache::adopt`]).
     waiting: HashMap<Uuid, Vec<usize>>,
+    /// How many `by_uuid` entries hold more than one node — kept by the three
+    /// methods below, the only writers of `by_uuid`.
+    multi: usize,
+}
+
+impl FieldTree {
+    fn count(&mut self, before: usize, after: usize) {
+        match (before > 1, after > 1) {
+            (false, true) => self.multi += 1,
+            (true, false) => self.multi -= 1,
+            _ => {}
+        }
+    }
+
+    fn push_node(&mut self, uuid: Uuid, idx: usize) {
+        let list = self.by_uuid.entry(uuid).or_default();
+        list.push(idx);
+        let after = list.len();
+        self.count(after - 1, after);
+    }
+
+    fn set_nodes(&mut self, uuid: Uuid, nodes: Vec<usize>) {
+        let before = self.by_uuid.get(&uuid).map_or(0, Vec::len);
+        let after = nodes.len();
+        if nodes.is_empty() {
+            self.by_uuid.remove(&uuid);
+        } else {
+            self.by_uuid.insert(uuid, nodes);
+        }
+        self.count(before, after);
+    }
+
+    fn drop_node(&mut self, uuid: Uuid, idx: usize) {
+        let Some(list) = self.by_uuid.get_mut(&uuid) else { return };
+        let before = list.len();
+        list.retain(|&n| n != idx);
+        let after = list.len();
+        if after == 0 {
+            self.by_uuid.remove(&uuid);
+        }
+        self.count(before, after);
+    }
 }
 
 /// What resolving one path component yielded.
@@ -137,6 +179,11 @@ impl TreeCache {
             misses: 0,
             complete: false,
         }
+    }
+
+    /// How many metarecords hold several positions in `field`'s forest.
+    pub fn multi_positioned(&self, field: &str) -> usize {
+        self.fields.get(field).map_or(0, |ft| ft.multi)
     }
 
     /// True while the whole forest is resident in memory (see [`Self::populate`]).
@@ -751,12 +798,11 @@ impl TreeCache {
             self.remove_subtree_detached(field, idx);
         }
         let entry = self.fields.entry(field.to_string()).or_default();
-        if kept.is_empty() {
-            entry.by_uuid.remove(&uuid);
-        } else {
-            // Before adopting: whoever waits for this metarecord hangs from its
-            // *first* position, and that list is what names it.
-            entry.by_uuid.insert(uuid, kept);
+        let adopt = !kept.is_empty();
+        // Before adopting: whoever waits for this metarecord hangs from its
+        // *first* position, and that list is what names it.
+        entry.set_nodes(uuid, kept);
+        if adopt {
             self.adopt(field, uuid);
         }
     }
@@ -1096,13 +1142,7 @@ impl TreeCache {
             }
         };
         self.live += 1;
-        self.fields
-            .entry(field.to_string())
-            .or_default()
-            .by_uuid
-            .entry(uuid)
-            .or_default()
-            .push(idx);
+        self.fields.entry(field.to_string()).or_default().push_node(uuid, idx);
         idx
     }
 
@@ -1268,12 +1308,7 @@ impl TreeCache {
             };
             stack.extend(node.children.values().copied());
             if let Some(ft) = self.fields.get_mut(field) {
-                if let Some(list) = ft.by_uuid.get_mut(&node.uuid) {
-                    list.retain(|&n| n != i);
-                    if list.is_empty() {
-                        ft.by_uuid.remove(&node.uuid);
-                    }
-                }
+                ft.drop_node(node.uuid, i);
             }
             self.free.push(i);
             self.live -= 1;
@@ -1395,43 +1430,71 @@ pub enum WalkEnd {
     /// The visitor asked to stop.
     Stopped,
     /// The walk cannot reproduce the key order here — the caller sorts
-    /// instead: the resume position is gone, two siblings display the same
-    /// name, or a name holds a character that sorts below [`PATH_KEY_SEP`].
+    /// instead: the resume position is gone (or outside the bound), two
+    /// siblings display the same name, or a name holds a character that sorts
+    /// at or below [`PATH_KEY_SEP`].
     Refused,
 }
 
-/// Siblings in key order, sorted a chunk at a time: a page of a folder of
-/// 250 000 entries sorts the first few hundred of them, not all.
+/// Siblings in key order, sorted a chunk at a time — a chunk twice the size of
+/// the last each time, so a page of a folder of 250 000 entries sorts the first
+/// few hundred of them, and a walk through all of it stays O(n log n).
 struct Frame {
     rest: Vec<usize>,
     /// The next sorted chunk, reversed (popped from the end).
     ready: Vec<usize>,
+    chunk: usize,
+    /// The last sibling handed out, which the next chunk's first must follow
+    /// strictly (equal names straddle a chunk boundary only there).
+    last: Option<usize>,
 }
 
-/// How many siblings a frame sorts at once.
-const WALK_CHUNK: usize = 128;
+impl Frame {
+    fn new(rest: Vec<usize>) -> Frame {
+        Frame { rest, ready: Vec::new(), chunk: 128, last: None }
+    }
+}
 
 impl<'a> SortKeys<'a> {
     /// Visits `field`'s forest in ascending sort-key order — pre-order, each
     /// node's children by name — calling `visit` with each metarecord at its
     /// *smallest* position only (the representative an ascending sort uses),
-    /// until it returns `false`. With `resume = (uuid, key)`, the walk starts
-    /// strictly after the node of `uuid` whose key is `key` (a keyset
-    /// cursor). Detached nodes are roots by their bare names, as in
-    /// [`Self::pick`]. The page strategies of the query index use this to stop
-    /// at the page's end (spec-indexing "A page costs the page").
+    /// until it returns `false`. Detached nodes are roots by their bare names,
+    /// as in [`Self::pick`].
+    ///
+    /// `within` restricts the walk to the descendants of that metarecord (the
+    /// caller knows every match is one of them: a path-target follow). Only
+    /// while no metarecord of the forest holds several positions: one could
+    /// match below `within` and sort on a smaller position elsewhere, which a
+    /// bounded walk would never meet before its page is full — the walk then
+    /// starts at the roots, as without a bound.
+    /// `resume = (uuid, key)` starts strictly after the node of `uuid` whose
+    /// key is `key` (a keyset cursor). The page strategies of the query index
+    /// use this to stop at the page's end (spec-indexing "A page costs the
+    /// page").
     pub fn walk_ascending(
         &self,
         field: &str,
+        within: Option<Uuid>,
         resume: Option<(Uuid, &str)>,
         visit: &mut dyn FnMut(Uuid) -> bool,
     ) -> WalkEnd {
         let Some(tree) = self.cache.fields.get(field) else { return WalkEnd::Completed };
-        let top: Vec<usize> =
-            tree.roots.values().chain(tree.waiting.values().flatten()).copied().collect();
+        // The top of the walk: the forest's roots (detached nodes among them),
+        // or the children of the bounding metarecord's positions.
+        let (top, bound): (Vec<usize>, Option<usize>) = match within.filter(|_| tree.multi == 0) {
+            None => (
+                tree.roots.values().chain(tree.waiting.values().flatten()).copied().collect(),
+                None,
+            ),
+            Some(node) => {
+                let Some(idxs) = tree.by_uuid.get(&node) else { return WalkEnd::Completed };
+                (self.cache.node(idxs[0]).children.values().copied().collect(), Some(idxs[0]))
+            }
+        };
         let mut stack: Vec<Frame> = Vec::new();
         match resume {
-            None => stack.push(Frame { rest: top, ready: Vec::new() }),
+            None => stack.push(Frame::new(top)),
             Some((uuid, key)) => {
                 let at = tree.by_uuid.get(&uuid).and_then(|idxs| {
                     idxs.iter().copied().find(|&i| self.key_at(i).as_ref() == key)
@@ -1441,7 +1504,17 @@ impl<'a> SortKeys<'a> {
                 // resume node's own children.
                 let mut chain = vec![at];
                 while let Placement::Under(p) = self.cache.node(*chain.last().unwrap()).place {
+                    if Some(p) == bound {
+                        break;
+                    }
                     chain.push(p);
+                }
+                if let Some(b) = bound {
+                    // The resume node must lie below the bound.
+                    let top_of_chain = self.cache.node(*chain.last().unwrap()).place;
+                    if top_of_chain != Placement::Under(b) {
+                        return WalkEnd::Refused;
+                    }
                 }
                 chain.reverse();
                 let mut level = top;
@@ -1458,10 +1531,12 @@ impl<'a> SortKeys<'a> {
                             std::cmp::Ordering::Less => {}
                         }
                     }
-                    stack.push(Frame { rest: later, ready: Vec::new() });
+                    let mut frame = Frame::new(later);
+                    frame.last = Some(on_path);
+                    stack.push(frame);
                     level = self.cache.node(on_path).children.values().copied().collect();
                 }
-                stack.push(Frame { rest: level, ready: Vec::new() });
+                stack.push(Frame::new(level));
             }
         }
         while let Some(frame) = stack.last_mut() {
@@ -1478,10 +1553,7 @@ impl<'a> SortKeys<'a> {
                 return WalkEnd::Stopped;
             }
             if !node.children.is_empty() {
-                stack.push(Frame {
-                    rest: node.children.values().copied().collect(),
-                    ready: Vec::new(),
-                });
+                stack.push(Frame::new(node.children.values().copied().collect()));
             }
         }
         WalkEnd::Completed
@@ -1491,6 +1563,7 @@ impl<'a> SortKeys<'a> {
     /// be the key order (equal names, or a character below the separator).
     fn next_sibling(&self, frame: &mut Frame) -> Result<Option<usize>, ()> {
         if let Some(i) = frame.ready.pop() {
+            frame.last = Some(i);
             return Ok(Some(i));
         }
         if frame.rest.is_empty() {
@@ -1498,46 +1571,44 @@ impl<'a> SortKeys<'a> {
         }
         let name = |i: &usize| self.cache.node(*i).name.display();
         let cmp = |a: &usize, b: &usize| name(a).as_ref().cmp(name(b).as_ref());
-        let n = frame.rest.len().min(WALK_CHUNK);
+        let n = frame.rest.len().min(frame.chunk);
+        frame.chunk = frame.chunk.saturating_mul(2);
         if n < frame.rest.len() {
             frame.rest.select_nth_unstable_by(n - 1, cmp);
         }
         let mut chunk: Vec<usize> = frame.rest.drain(..n).collect();
         chunk.sort_unstable_by(cmp);
-        for w in chunk.windows(2) {
-            if cmp(&w[0], &w[1]) == std::cmp::Ordering::Equal {
+        let adjacent = frame.last.iter().chain(chunk.first()).copied().collect::<Vec<_>>();
+        for w in adjacent.windows(2).chain(chunk.windows(2)) {
+            if cmp(&w[0], &w[1]) != std::cmp::Ordering::Less {
                 return Err(());
             }
-        }
-        let last = name(chunk.last().unwrap());
-        if frame.rest.iter().any(|i| name(i) == last) {
-            return Err(());
         }
         if chunk.iter().any(|i| name(i).chars().any(|c| c <= PATH_KEY_SEP)) {
             return Err(());
         }
         chunk.reverse();
         frame.ready = chunk;
-        Ok(frame.ready.pop())
+        let first = frame.ready.pop();
+        frame.last = first;
+        Ok(first)
     }
 
     /// Whether `idx` is its metarecord's smallest position — trivially, for
     /// the common single-position metarecord.
     fn is_smallest_position(&self, tree: &FieldTree, idx: usize) -> bool {
         let uuid = self.cache.node(idx).uuid;
-        match tree.by_uuid.get(&uuid) {
-            Some(idxs) if idxs.len() > 1 => {
-                let own = self.key_at(idx);
-                // Equal keys (two roots of one name): the first position wins.
-                idxs.iter().all(|&o| {
-                    o == idx || {
-                        let other = self.key_at(o);
-                        other > own || (other == own && o > idx)
-                    }
-                })
+        let Some(idxs) = tree.by_uuid.get(&uuid).filter(|idxs| idxs.len() > 1) else {
+            return true;
+        };
+        let own = self.key_at(idx);
+        // Equal keys (two roots of one name): the first position wins.
+        idxs.iter().all(|&o| {
+            o == idx || {
+                let other = self.key_at(o);
+                other > own || (other == own && o > idx)
             }
-            _ => true,
-        }
+        })
     }
 }
 
