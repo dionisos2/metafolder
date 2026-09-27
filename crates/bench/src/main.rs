@@ -185,28 +185,21 @@ pub(crate) async fn api_init_repo(url: &str, root: &Path) -> Result<Uuid> {
     Ok(v["repo_uuid"].as_str().context("missing repo_uuid field")?.parse()?)
 }
 
-/// Runs a query and returns the matching metarecord UUIDs (hex strings) — the
-/// first page only (`{"results": [...], "next_cursor": ...}`), which is what
-/// every caller here needs.
+/// Runs a query and returns the matching metarecord UUIDs (hex strings). A
+/// query without `limit` answers a bare array (with one, `{results, …}`).
 pub(crate) async fn api_query(
     url: &str,
     repo: Uuid,
     query: serde_json::Value,
 ) -> Result<Vec<String>> {
-    let body: serde_json::Value = daemon_client()
+    Ok(daemon_client()
         .post(format!("{url}/repos/{repo}/query"))
         .json(&json!({ "query": query }))
         .send()
         .await?
         .error_for_status()?
         .json()
-        .await?;
-    Ok(body["results"]
-        .as_array()
-        .context("a query answer without results")?
-        .iter()
-        .filter_map(|v| v.as_str().map(str::to_string))
-        .collect())
+        .await?)
 }
 
 /// The root metarecord's UUID. At init it is the only metarecord carrying an
