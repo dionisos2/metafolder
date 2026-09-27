@@ -17,6 +17,20 @@ pub mod engines;
 pub mod kv;
 pub mod sqlcost;
 
+/// A daemon state for the tests that drive the live watcher: its quiet period
+/// is the 500 ms these suites were written and timed against, not the shipped
+/// default (2 s, `DEFAULT_WATCH_QUIET_PERIOD_MS`). What they check is what the
+/// watcher records, not how long it waits first — and their settle budgets
+/// (a few seconds per step) leave the 2 s default no margin on a loaded
+/// machine: `early_journey` failed that way in a full run.
+pub fn watching_state() -> metafolder_daemon::state::AppState {
+    let settings = metafolder_daemon::daemon_config::DaemonSettings {
+        watch_quiet_period_ms: 500,
+        ..Default::default()
+    };
+    metafolder_daemon::state::AppState::new().with_settings(settings)
+}
+
 use std::path::{Path, PathBuf};
 
 use uuid::Uuid;

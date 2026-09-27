@@ -13,7 +13,6 @@ use axum::http::{Request, StatusCode};
 use axum::Router;
 use http_body_util::BodyExt;
 use metafolder_daemon::routes;
-use metafolder_daemon::state::AppState;
 use serde_json::{json, Value};
 use tower::util::ServiceExt;
 
@@ -86,7 +85,7 @@ async fn wait_for_paths(app: &Router, repo: &str, expected: &[&str]) {
 }
 
 async fn watched_repo(prefix: &str) -> (Router, String, TempDir) {
-    let app = routes::build(std::sync::Arc::new(AppState::new()));
+    let app = routes::build(std::sync::Arc::new(common::watching_state()));
     let root = TempDir::new(prefix);
     let (status, body) =
         request(&app, "POST", "/repos/init", Some(json!({"root": root.to_str().unwrap()}))).await;

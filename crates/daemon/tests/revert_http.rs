@@ -8,7 +8,6 @@ use axum::http::{Request, StatusCode};
 use axum::Router;
 use http_body_util::BodyExt;
 use metafolder_daemon::routes;
-use metafolder_daemon::state::AppState;
 use serde_json::{json, Value};
 use tower::util::ServiceExt;
 
@@ -41,7 +40,7 @@ async fn request(
 }
 
 async fn setup(prefix: &str) -> (Router, String, TempDir) {
-    let app = routes::build(Arc::new(AppState::new()));
+    let app = routes::build(Arc::new(common::watching_state()));
     let root = TempDir::new(&format!("revert_{prefix}"));
     let (status, body) =
         request(&app, "POST", "/repos/init", Some(json!({"root": root.to_str().unwrap()}))).await;

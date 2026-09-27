@@ -9,7 +9,6 @@ use axum::http::{Request, StatusCode};
 use axum::Router;
 use http_body_util::BodyExt;
 use metafolder_daemon::routes;
-use metafolder_daemon::state::AppState;
 use serde_json::{json, Value};
 use tower::util::ServiceExt;
 
@@ -124,7 +123,7 @@ async fn wait_for_paths(app: &Router, repo: &str, expected: &[&str]) {
 /// A repository initialised through the HTTP API with tracking enabled on its
 /// root — the state a user reaches right after creating their first repository.
 async fn watched_repo(prefix: &str) -> (Router, String, TempDir) {
-    let app = routes::build(std::sync::Arc::new(AppState::new()));
+    let app = routes::build(std::sync::Arc::new(common::watching_state()));
     let root = TempDir::new(prefix);
     let (status, body) =
         request(&app, "POST", "/repos/init", Some(json!({"root": root.to_str().unwrap()}))).await;
@@ -152,7 +151,7 @@ async fn watched_repo(prefix: &str) -> (Router, String, TempDir) {
 
 #[tokio::test(flavor = "multi_thread")]
 async fn test_watcher_tracks_create_rename_delete() {
-    let app = routes::build(std::sync::Arc::new(AppState::new()));
+    let app = routes::build(std::sync::Arc::new(common::watching_state()));
     let root = TempDir::new("e2e");
 
     let (status, body) =
@@ -207,7 +206,7 @@ async fn test_watcher_tracks_create_rename_delete() {
 async fn test_load_succeeds_with_symlink_to_unreadable_dir() {
     use std::os::unix::fs::PermissionsExt;
 
-    let app = routes::build(std::sync::Arc::new(AppState::new()));
+    let app = routes::build(std::sync::Arc::new(common::watching_state()));
     let root = TempDir::new("symlink");
 
     // A readable directory outside the repo that itself contains an *unreadable*
@@ -270,7 +269,7 @@ async fn test_load_succeeds_with_symlink_to_unreadable_dir() {
 /// holds the repository connection, and every request then hangs behind it.
 #[tokio::test(flavor = "multi_thread")]
 async fn test_new_directory_does_not_wedge_the_daemon() {
-    let app = routes::build(std::sync::Arc::new(AppState::new()));
+    let app = routes::build(std::sync::Arc::new(common::watching_state()));
     let root = TempDir::new("newdir");
 
     let (status, body) =

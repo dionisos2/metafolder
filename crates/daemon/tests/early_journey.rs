@@ -22,7 +22,6 @@ use axum::http::{Request, StatusCode};
 use axum::Router;
 use http_body_util::BodyExt;
 use metafolder_daemon::routes;
-use metafolder_daemon::state::AppState;
 use serde_json::{json, Value};
 use tower::util::ServiceExt;
 
@@ -69,7 +68,7 @@ fn default_ignore_patterns() -> Vec<String> {
 /// A repository as a user gets one: created on an existing folder, with the
 /// default ignore set applied client-side, and tracking turned on.
 async fn journey_repo(prefix: &str) -> (Router, String, TempDir) {
-    let app = routes::build(std::sync::Arc::new(AppState::new()));
+    let app = routes::build(std::sync::Arc::new(common::watching_state()));
     let root = TempDir::new(&format!("journey_{prefix}"));
 
     let (status, body) =
@@ -140,7 +139,8 @@ async fn tracked_paths(app: &Router, repo: &str) -> Vec<String> {
     out
 }
 
-/// Waits for the watcher to settle on `expected` (its 500 ms quiet period plus
+/// Waits for the watcher to settle on `expected` (its quiet period — 500 ms here,
+/// see `common::watching_state` — plus
 /// the flush), then reports what it settled on.
 async fn settle_on(app: &Router, repo: &str, expected: &[&str]) -> Vec<String> {
     let mut want: Vec<String> = expected.iter().map(|s| s.to_string()).collect();
