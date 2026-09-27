@@ -1,0 +1,12 @@
+# Pins the compiler for every environment that builds this checkout.
+#
+# The container and the host share one target/. Two rustc versions writing
+# into it keep two complete artifact sets side by side (the compiler version
+# is part of every artifact hash) and keep overwriting each other's uplifted
+# binaries, so each build recompiles what the other just built: target/ reached
+# 21 GB two hours after a clean. One pinned version keeps one set.
+# Bump it deliberately, on both sides at once (rustup does it on first use).
+[toolchain]
+channel = "1.96.0"
+components = ["clippy", "rustfmt", "llvm-tools"]
+profile = "minimal"
