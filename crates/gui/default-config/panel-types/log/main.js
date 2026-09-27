@@ -349,7 +349,25 @@ export async function mount(root, metafolder) {
     });
   }
 
+  /** What was last published as `selected_log_entry`, to publish changes only. */
+  let publishedKey = 'null';
+
+  /** Publishes the selection for the log-detail panel (spec-gui "Log detail
+   *  view"): the revision, and the operation when the cursor is on one. Called
+   *  from render, so every path that moves or drops the selection publishes. */
+  function publishSelection() {
+    const entry =
+      selection && repo
+        ? { repo, rev_id: selection.revId, op_id: selection.kind === 'op' ? selection.id : null }
+        : null;
+    const key = JSON.stringify(entry);
+    if (key === publishedKey) return;
+    publishedKey = key;
+    void workspace.set('selected_log_entry', entry);
+  }
+
   function render() {
+    publishSelection();
     placeholderElement.hidden = revisions.length > 0;
     if (revisions.length === 0) placeholderElement.textContent = 'Empty log.';
     table.hidden = revisions.length === 0;
@@ -774,6 +792,10 @@ export async function mount(root, metafolder) {
   workspace.onChange('metarecords:dirty', () => metafolder.whenVisible(deferredRefresh));
   workspace.onChange('active_repo', (value) => {
     repo = /** @type {string|null} */ (value ?? null);
+    // A selection is a revision of the previous repository.
+    selection = null;
+    expandedRev = null;
+    publishSelection();
     limit = LOG_PAGE; // reset the window for the new repository
     metafolder.whenVisible(deferredRefresh);
   });

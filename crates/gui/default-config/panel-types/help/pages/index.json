@@ -146,6 +146,15 @@
     "aliases": ["event-log", "revision", "undo", "redo", "rollback", "prune"]
   },
   {
+    "id": "log-detail",
+    "title": "Log detail panel",
+    "file": "log-detail.html",
+    "aliases": [
+      "log-detail", "operation", "snapshot", "before", "after", "diff",
+      "log-detail:toggle", "log-detail:refresh", "selected_log_entry"
+    ]
+  },
+  {
     "id": "recent",
     "title": "Recent panel",
     "file": "recent.html",

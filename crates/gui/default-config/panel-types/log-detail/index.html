@@ -1,0 +1,176 @@
+<!doctype html>
+<!-- Built-in panel type: what one revision (or one operation) of the event log
+     changed, field by field (spec-gui "Log detail view"). -->
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <title>log-detail</title>
+    <style>
+      [hidden] {
+        display: none !important;
+      }
+      .mf-panel-body {
+        margin: 0;
+        display: flex;
+        flex-direction: column;
+        height: 100%;
+        font-size: 13px;
+      }
+      #toolbar {
+        display: flex;
+        gap: 6px;
+        padding: 4px 8px;
+        background: var(--mf-bg-raised, #26262e);
+        align-items: center;
+      }
+      button {
+        font: inherit;
+        background: var(--mf-bg, #1e1e24);
+        color: var(--mf-fg, #d8d8e0);
+        border: 1px solid var(--mf-fg-dim, #8a8a96);
+        border-radius: 3px;
+        padding: 1px 8px;
+        cursor: pointer;
+      }
+      .toggle {
+        display: flex;
+        align-items: center;
+        gap: 4px;
+        cursor: pointer;
+      }
+      #unchanged-toggle {
+        margin-left: auto;
+      }
+      #content {
+        flex: 1;
+        overflow-y: auto;
+        padding: 8px;
+      }
+      .placeholder {
+        padding: 20px;
+        text-align: center;
+        color: var(--mf-fg-dim, #8a8a96);
+      }
+      .revision-head {
+        margin-bottom: 8px;
+      }
+      .revision-head .title {
+        font-weight: bold;
+      }
+      .meta {
+        color: var(--mf-fg-dim, #8a8a96);
+      }
+      .badge {
+        font-size: 0.85em;
+        border: 1px solid currentColor;
+        border-radius: 3px;
+        padding: 0 4px;
+        margin-left: 4px;
+        white-space: nowrap;
+      }
+      .badge.watcher {
+        color: var(--mf-warning, #d8a657);
+      }
+      .badge.head {
+        color: var(--mf-ok, #56c44c);
+      }
+      .badge.revert {
+        color: var(--mf-accent, #4c56c4);
+      }
+      .label {
+        color: var(--mf-accent, #4c56c4);
+      }
+      .op {
+        border: 1px solid var(--mf-bg-raised, #26262e);
+        border-radius: 4px;
+        margin-bottom: 8px;
+      }
+      .op.selected {
+        border-color: var(--mf-accent, #4c56c4);
+      }
+      .op-head {
+        padding: 3px 8px;
+        background: var(--mf-bg-raised, #26262e);
+        font-family: var(--mf-font-mono, monospace);
+        font-size: 0.9em;
+      }
+      .entity {
+        padding: 3px 8px;
+        color: var(--mf-fg-dim, #8a8a96);
+      }
+      a.ref-link {
+        color: var(--mf-accent, #4c56c4);
+        font-family: var(--mf-font-mono, monospace);
+      }
+      /* Fixed columns, so the before/after of successive operations line up. */
+      table {
+        width: 100%;
+        border-collapse: collapse;
+        table-layout: fixed;
+      }
+      th:first-child {
+        width: 25%;
+      }
+      th {
+        text-align: left;
+        padding: 2px 8px;
+        color: var(--mf-fg-dim, #8a8a96);
+        font-weight: normal;
+      }
+      td {
+        padding: 2px 8px;
+        vertical-align: top;
+        word-break: break-word;
+      }
+      td.field {
+        white-space: nowrap;
+      }
+      tr.unchanged td {
+        color: var(--mf-fg-dim, #8a8a96);
+      }
+      tr.changed td.after,
+      tr.added td.after {
+        color: var(--mf-ok, #56c44c);
+      }
+      tr.changed td.before,
+      tr.removed td.before {
+        color: var(--mf-error, #e06c75);
+        text-decoration: line-through;
+      }
+      .value + .value::before {
+        content: ', ';
+      }
+      .absent {
+        color: var(--mf-fg-dim, #8a8a96);
+      }
+      #status-line {
+        padding: 3px 8px;
+        background: var(--mf-bg-raised, #26262e);
+        color: var(--mf-fg-dim, #8a8a96);
+        font-size: 0.9em;
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+      }
+    </style>
+  </head>
+  <body>
+    <div id="toolbar">
+      <button id="refresh">Refresh</button>
+      <button id="whole" hidden title="Show every operation of the revision, not only the selected one (log-detail:toggle whole)">
+        Whole revision
+      </button>
+      <label id="unchanged-toggle" class="toggle" title="Also list the fields an operation recorded but did not change (log-detail:toggle unchanged)"
+        ><input type="checkbox" id="unchanged" />Unchanged fields</label
+      >
+    </div>
+    <div id="content">
+      <p class="placeholder" id="placeholder">Select a revision in the log panel.</p>
+      <div id="detail" hidden></div>
+      <div id="more" class="placeholder" hidden>
+        <button id="show-more">Show more operations</button>
+      </div>
+    </div>
+    <div id="status-line"></div>
+  </body>
+</html>

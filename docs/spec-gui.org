@@ -78,6 +78,7 @@ Built-in panel types:
 | =workspace-info= | Current workspace variables — useful for debugging and scripting |
 | =message=        | Persistent log of status bar messages, shell output, and reconcile results |
 | =log=            | Event log (revisions and operations)                         |
+| =log-detail=     | What the revision or operation selected in =log= changed, field by field; follows =selected_log_entry= |
 | =repos=          | Repository list, init, load, unload, per-repo running tasks, tracking notices |
 | =treeref=        | TreeRef forest explorer; pick a TreeRef field, navigate roots→leaves |
 | =trash=          | Repository trash-bin: list, restore, delete, empty (see [[file:spec-trash.org][spec-trash.org]] "GUI") |
@@ -178,6 +179,7 @@ Standard variables:
 | =selected_paths=   | =string[]=                    | Absolute paths of the highlighted filesystem metarecord (usually one; multiple if the metarecord has several =mfr_path= values) |
 | =selected_metarecord=   | =\{uuid, repo\} \vert null=   | Metadata metarecord for the highlighted path (null if untracked) |
 | =selected_metarecords= | =string[]=                    | UUIDs of the /checked/ metarecords — the multi-selection, kept across list changes and shared by every panel of the workspace (see [[*The checked selection]]) |
+| =selected_log_entry= | =\{repo, rev_id, op_id\} \vert null= | Revision under the =log= panel's cursor, with the operation when the cursor is on one (=op_id= null otherwise); read by =log-detail= |
 | =selected_treeref= | =\{repo, field, uuid, path\} \vert null= | TreeRef node selected in the =treeref= panel |
 | =pick_request=     | =\{caller_ws, token, picker_slot, restore\} \vert null= | Set on a *picker* workspace at creation; marks it as a value picker linked back to =caller_ws=, with the slot to restore on close (see [[*Value picker]]) |
 | =pick_result=      | =\{token, uuid\} \vert \{token, path\} \vert \{token, cancelled\} \vert null= | Delivered to the *calling* workspace when a picker confirms (=uuid= or =path=, per the request's =result= kind) or cancels; the requesting form matches =token= and consumes it |
@@ -540,7 +542,7 @@ that state); a key that fits no continuation aborts the sequence and is
 in progress takes priority), and the shell flashes ='<sequence>' is
 undefined=. The defaults use this for panel type switching: =t=
 followed by one letter (=t l= metarecord-list, =t d= metarecord-detail, =t f=
-file, =t m= file-manager, =t o= log, =t r= repos, =t g= message, =t w=
+file, =t m= file-manager, =t o= log, =t e= log-detail, =t r= repos, =t g= message, =t w=
 workspace-info, =t t= treeref, =t b= trash, =t y= sync, =t v= recent, =t u=
 duplicates, =t h= help).
 
@@ -3506,6 +3508,37 @@ revisions and operations currently listed and, when the fetched window is only
 part of the log, the repository-wide totals it was cut from
 (=total_revisions= / =total_operations= of =GET .../log=) — so "Show older
 operations" has a visible destination.
+
+*** Log detail view (=log-detail= panel type)
+
+The =log= panel says /that/ a revision happened; =log-detail= says what it
+did. It follows =selected_log_entry=, which the =log= panel publishes on every
+cursor move (and clears when the selection is dropped or the repository
+changes), and reads =GET .../log/revisions/:rev_id= — the one endpoint carrying
+the snapshots.
+
+- A revision: its header (number, label, timestamp, =HEAD= and =watcher=
+  badges, operation count), then its operations. A reconcile writes one
+  revision holding every file it found, each operation with its snapshots, so
+  they are fetched a page of 100 at a time (=offset= / =limit=) with a "Show
+  more" button, never the whole revision at once.
+- An operation (the cursor inside an expanded revision): that operation alone
+  (=op=), highlighted; =log-detail:toggle whole= (the /Whole revision/
+  button) widens to the revision.
+
+Each operation shows its type, field name and =undo of op N= badge, the
+metarecord it wrote with that metarecord's /current/ path (clicking the uuid
+publishes the selection pair and reveals =metarecord-detail= in the other slot,
+the [[*Cross-panel selection]] open), and a before/after table built from its
+snapshots: one row per field name, the values of a name compared as a multiset
+(fields are a multi-map). Rows are marked added / removed / changed; fields the
+operation recorded but did not change are hidden unless
+=log-detail:toggle unchanged= is on, with a count of what is hidden. A
+=tree_ref= value is shown as the path it names, resolved through the daemon.
+
+The panel re-reads on =metarecords:dirty= (a rollback moves =HEAD=, a label
+may change). Commands: =log-detail:toggle whole|unchanged=,
+=log-detail:refresh=.
 
 *** Revision commands
 

@@ -305,6 +305,62 @@ async fn test_revision_detail_and_label() {
     std::fs::remove_dir_all(root).unwrap();
 }
 
+// A revision can hold every operation of a reconcile — hundreds of thousands,
+// each with its snapshots. The detail view pages through them, or asks for the
+// one operation the user selected, instead of pulling the whole revision.
+#[tokio::test]
+async fn test_revision_detail_pages_its_operations() {
+    let (app, repo, _root) = setup("rev_page").await;
+    for v in [1, 2, 3] {
+        create(&app, &repo, json!([{"name": "g", "value": {"type": "int", "value": v}}])).await;
+    }
+    // One revision, three operations.
+    let (status, _) = request(
+        &app,
+        "POST",
+        &format!("/repos/{repo}/query/fields/set"),
+        Some(json!({
+            "query": {"type": "is_present", "field": "g"},
+            "name": "seen",
+            "value": {"type": "bool", "value": true}
+        })),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+
+    let (_, whole) = request(&app, "GET", &format!("/repos/{repo}/log/revisions/head"), None).await;
+    let all: Vec<i64> =
+        whole["operations"].as_array().unwrap().iter().map(|o| o["id"].as_i64().unwrap()).collect();
+    assert_eq!(all.len(), 3);
+    assert_eq!(whole["revision"]["operation_count"], 3);
+
+    // A window: offset + limit, the count still the whole revision's.
+    let (status, page) =
+        request(&app, "GET", &format!("/repos/{repo}/log/revisions/head?offset=1&limit=1"), None)
+            .await;
+    assert_eq!(status, StatusCode::OK, "got: {page}");
+    let ids: Vec<i64> =
+        page["operations"].as_array().unwrap().iter().map(|o| o["id"].as_i64().unwrap()).collect();
+    assert_eq!(ids, vec![all[1]]);
+    assert_eq!(page["revision"]["operation_count"], 3);
+    assert_eq!(page["revision"]["is_head"], true, "HEAD is judged on the whole revision");
+
+    // One operation by id, with its snapshots.
+    let (status, one) =
+        request(&app, "GET", &format!("/repos/{repo}/log/revisions/head?op={}", all[2]), None)
+            .await;
+    assert_eq!(status, StatusCode::OK, "got: {one}");
+    let ops = one["operations"].as_array().unwrap();
+    assert_eq!(ops.len(), 1);
+    assert_eq!(ops[0]["id"].as_i64().unwrap(), all[2]);
+    assert!(ops[0]["snapshots_after"].is_array());
+
+    // An operation of another revision is not this revision's.
+    let (status, _) =
+        request(&app, "GET", &format!("/repos/{repo}/log/revisions/head?op=1"), None).await;
+    assert_eq!(status, StatusCode::NOT_FOUND);
+}
+
 // ── Rollback ──────────────────────────────────────────────────────────────────
 
 #[tokio::test]

@@ -1264,6 +1264,16 @@ intended for the detail view).
 =:rev_id= may be a numeric id or the literal =head= to target the revision that
 contains the current HEAD operation.
 
+A revision can hold every operation of a reconcile — hundreds of thousands, each
+with its snapshots — so the operations detailed can be narrowed (optional query
+parameters, added without an =API_VERSION= bump since the default is unchanged):
+
+- =offset= / =limit= — a window of the revision's operations, in order;
+- =op= — the one operation with that id (=404= if it is not in this revision).
+
+=revision.is_head= and =revision.operation_count= always describe the whole
+revision, whatever the window.
+
 Response body:
 #+BEGIN_SRC json
 {
@@ -1272,7 +1282,8 @@ Response body:
     "timestamp": 1700000001000,
     "label": "before-cleanup",
     "origin": null,
-    "is_head": true
+    "is_head": true,
+    "operation_count": 2
   },
   "operations": [
     {

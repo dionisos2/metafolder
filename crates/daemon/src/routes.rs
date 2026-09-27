@@ -1231,9 +1231,23 @@ async fn get_log_since(
     .await
 }
 
+/// Which operations of a revision `GET /log/revisions/:rev_id` details: a
+/// window (`offset`/`limit`) or one operation by id (`op`). A revision can hold
+/// every operation of a reconcile, and each carries its snapshots.
+#[derive(Deserialize)]
+struct RevisionParams {
+    #[serde(default)]
+    offset: Option<usize>,
+    #[serde(default)]
+    limit: Option<usize>,
+    #[serde(default)]
+    op: Option<i64>,
+}
+
 async fn get_revision(
     State(state): State<Arc<AppState>>,
     Path((repo, rev_id)): Path<(String, String)>,
+    Query(params): Query<RevisionParams>,
 ) -> Result<Json<serde_json::Value>, ApiError> {
     let repo_uuid = parse_uuid(&repo)?;
     with_repo(&state, repo_uuid, move |repo_state| {
@@ -1252,15 +1266,27 @@ async fn get_revision(
         };
 
         let mut revision = revision_json(&*conn, rev_id)?;
-        let mut ops = Vec::new();
-        let mut is_head = false;
-        for op in crate::store::Log::revision_ops(&*conn, rev_id)? {
-            if Some(op.id) == head {
-                is_head = true;
+        let all = crate::store::Log::revision_ops(&*conn, rev_id)?;
+        // HEAD and the count are the whole revision's, whatever the window.
+        revision["is_head"] = json!(all.iter().any(|op| Some(op.id) == head));
+        revision["operation_count"] = json!(all.len());
+        let selected: Vec<&crate::log::OpRow> = match params.op {
+            Some(id) => {
+                let op = all.iter().find(|op| op.id == id).ok_or_else(|| {
+                    ApiError::not_found(format!("operation {id} is not in revision {rev_id}"))
+                })?;
+                vec![op]
             }
-            ops.push(op_json(&conn, &op, true)?);
+            None => all
+                .iter()
+                .skip(params.offset.unwrap_or(0))
+                .take(params.limit.unwrap_or(usize::MAX))
+                .collect(),
+        };
+        let mut ops = Vec::with_capacity(selected.len());
+        for op in selected {
+            ops.push(op_json(&conn, op, true)?);
         }
-        revision["is_head"] = json!(is_head);
         Ok(Json(json!({"revision": revision, "operations": ops})))
     })
     .await

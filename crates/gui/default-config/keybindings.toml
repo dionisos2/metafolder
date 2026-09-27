@@ -96,6 +96,7 @@
 "t f" = { command = "panel:set type file" }
 "t m" = { command = "panel:set type file-manager" }
 "t o" = { command = "panel:set type log" }
+"t e" = { command = "panel:set type log-detail" }
 "t r" = { command = "panel:set type repos" }
 "t g" = { command = "panel:set type message" }
 "t w" = { command = "panel:set type workspace-info" }
