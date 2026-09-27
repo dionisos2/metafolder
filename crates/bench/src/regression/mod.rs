@@ -12,6 +12,7 @@
 
 pub mod history;
 pub mod memory;
+pub mod real;
 pub mod synth;
 
 use std::path::{Path, PathBuf};
@@ -120,6 +121,11 @@ struct Ctx {
     /// Where the repository is, for the one scenario that closes it.
     dir: PathBuf,
     head: i64,
+    /// The folder the combined scenarios look into, and the terms the finder
+    /// searches: fixed on the generated repositories, taken from a real path
+    /// on the real ones (a generated path finds nothing there).
+    folder: String,
+    terms: Vec<String>,
 }
 
 /// Makes each run of a scenario that writes a *different* write: setting a
@@ -191,7 +197,7 @@ async fn run_scenario(id: &str, ctx: &Ctx) -> Result<()> {
             .await?;
         }
         "query.finder" => {
-            let terms = ["dir1", "file12"];
+            let terms = &ctx.terms;
             let osm = |field: &str, mode: &str| json!({"type": "osm", "field": field, "terms": terms, "mode": mode});
             let finder = json!({"type": "or", "operands": [
                 osm("mfr_path", "path"), osm("kind", "direct"), osm("mfr_type", "direct"),
@@ -216,7 +222,7 @@ async fn run_scenario(id: &str, ctx: &Ctx) -> Result<()> {
         }
         "query.subtree_range_text" => {
             let q = json!({"type": "and", "operands": [
-                subtree("/dir1"),
+                subtree(&ctx.folder),
                 {"type": "gt", "field": "rating", "value": {"type": "int", "value": 4}},
                 {"type": "matches", "field": "mfr_path", "pattern": "file1", "aspect": "value"},
             ]});
@@ -229,7 +235,7 @@ async fn run_scenario(id: &str, ctx: &Ctx) -> Result<()> {
         "query.negation" => {
             let photo = eq("kind", json!({"type": "string", "value": "photo"}));
             let q = json!({"type": "and", "operands": [
-                {"type": "not", "operand": photo}, subtree("/dir1"),
+                {"type": "not", "operand": photo}, subtree(&ctx.folder),
             ]});
             post(
                 &format!("{url}/repos/{repo}/query"),
@@ -257,7 +263,7 @@ async fn run_scenario(id: &str, ctx: &Ctx) -> Result<()> {
         }
         "query.size_range_in_folder" => {
             let q = json!({"type": "and", "operands": [
-                subtree("/dir1"),
+                subtree(&ctx.folder),
                 {"type": "gt", "field": "mfr_size", "value": {"type": "int", "value": 900_000}},
             ]});
             post(
@@ -439,29 +445,40 @@ pub async fn run(opts: &Options) -> Result<i32> {
              \x20     run the suite again for a number worth keeping as a baseline."
         );
     }
+    let daemon = daemon_start(PORT)?;
+    daemon_wait_ready(&daemon.url).await?;
+
+    // The real folders, measured through copies of their own (see `real`).
     if opts.real {
-        for (label, dir) in
+        for (label, folder) in
             [("real-S", "benchmarks/bench_data"), ("real-M", "benchmarks/bench_data_big")]
         {
-            let path = root.join(dir);
-            if path.join(".metafolder").exists() {
-                repos.push((label.to_string(), path));
-            } else {
-                println!(
-                    "skipping {label}: {} is not a repository (init + reconcile it first)",
-                    path.display()
-                );
+            let src = root.join(folder);
+            if !src.is_dir() {
+                println!("skipping {label}: {} does not exist", src.display());
+                continue;
+            }
+            for &storage in &opts.storages {
+                let name = match storage {
+                    Storage::Kv => label.to_string(),
+                    Storage::Sqlite => format!("{label}-sqlite"),
+                };
+                let dest = root.join("target/bench-data").join(&name);
+                if real::ensure(&daemon.url, &src, &dest, &name, storage).await? {
+                    println!(
+                        "note: {name} was built just now, so its pages are still cold —\n\
+                         \x20     run the suite again for a number worth keeping as a baseline."
+                    );
+                }
+                repos.push((label.to_string(), dest));
             }
         }
     }
 
-    let daemon = daemon_start(PORT)?;
-    daemon_wait_ready(&daemon.url).await?;
-
     let mut records = Vec::new();
     for (size, dir) in &repos {
         let repo = load_repo(&daemon, dir).await?;
-        let ctx = context_for(&daemon, repo, dir).await?;
+        let ctx = context_for(&daemon, repo, dir, size.starts_with("real")).await?;
         let storage = storage_of(dir);
         println!("── size {size}, {storage} ({})", dir.display());
         for id in SCENARIOS {
@@ -665,7 +682,7 @@ async fn load_and_wait(url: &str, dir: &Path) -> Result<Uuid> {
 
 /// The per-repository facts the scenarios need: one existing metarecord, and
 /// the log's HEAD.
-async fn context_for(daemon: &Daemon, repo: Uuid, dir: &Path) -> Result<Ctx> {
+async fn context_for(daemon: &Daemon, repo: Uuid, dir: &Path, real: bool) -> Result<Ctx> {
     let url = daemon.url.clone();
     let body: serde_json::Value = client()
         .post(format!("{url}/repos/{repo}/query"))
@@ -690,7 +707,51 @@ async fn context_for(daemon: &Daemon, repo: Uuid, dir: &Path) -> Result<Ctx> {
         .json()
         .await?;
     let head = log["head"].as_i64().unwrap_or(0);
-    Ok(Ctx { url, repo, sample, page, dir: dir.to_path_buf(), head })
+    let (mut folder, mut terms) = ("/dir1".to_string(), vec!["dir1".into(), "file12".into()]);
+    if real {
+        (folder, terms) = real_search(&url, repo).await?;
+        println!("   real search: folder {folder}, terms {terms:?}");
+    }
+    Ok(Ctx { url, repo, sample, page, dir: dir.to_path_buf(), head, folder, terms })
+}
+
+/// A folder and finder terms from a real repository: its deepest path among
+/// a page of files — the top folder it is in, and the first letters of its
+/// parent's name and its own, what someone looking for it would type.
+async fn real_search(url: &str, repo: Uuid) -> Result<(String, Vec<String>)> {
+    let files = eq("mfr_type", json!({"type": "string", "value": "file"}));
+    let body: serde_json::Value = client()
+        .post(format!("{url}/repos/{repo}/query"))
+        .json(&json!({"query": files, "limit": 500}))
+        .send()
+        .await?
+        .error_for_status()?
+        .json()
+        .await?;
+    let uuids = body["results"].clone();
+    let paths: serde_json::Value = client()
+        .post(format!("{url}/repos/{repo}/query/fields/resolve-tree"))
+        .json(&json!({"query": {"type": "uuid_in", "uuids": uuids}, "field": "mfr_path"}))
+        .send()
+        .await?
+        .error_for_status()?
+        .json()
+        .await?;
+    let deepest = paths
+        .as_object()
+        .into_iter()
+        .flat_map(|m| m.values())
+        .filter_map(|v| v.as_array()?.first()?.as_str().map(str::to_string))
+        .max_by_key(|p| (p.matches('/').count(), p.clone()))
+        .context("no file path in the repository")?;
+    let parts: Vec<&str> = deepest.split('/').filter(|c| !c.is_empty()).collect();
+    let prefix = |c: &str| c.chars().take(4).collect::<String>().to_lowercase();
+    let terms = match parts.as_slice() {
+        [.., parent, name] => vec![prefix(parent), prefix(name)],
+        [name] => vec![prefix(name)],
+        [] => anyhow::bail!("an empty path"),
+    };
+    Ok((format!("/{}", parts[0]), terms))
 }
 
 // ─── The machine, the build ───────────────────────────────────────────────────

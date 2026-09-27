@@ -186,7 +186,11 @@ pub(crate) async fn api_init_repo(url: &str, root: &Path) -> Result<Uuid> {
 }
 
 /// Runs a query and returns the matching metarecord UUIDs (hex strings).
-async fn api_query(url: &str, repo: Uuid, query: serde_json::Value) -> Result<Vec<String>> {
+pub(crate) async fn api_query(
+    url: &str,
+    repo: Uuid,
+    query: serde_json::Value,
+) -> Result<Vec<String>> {
     Ok(daemon_client()
         .post(format!("{url}/repos/{repo}/query"))
         .json(&json!({ "query": query }))
@@ -199,7 +203,7 @@ async fn api_query(url: &str, repo: Uuid, query: serde_json::Value) -> Result<Ve
 
 /// The root metarecord's UUID. At init it is the only metarecord carrying an
 /// `mf_watch` field, which makes it cheap to locate.
-async fn api_root_uuid(url: &str, repo: Uuid) -> Result<String> {
+pub(crate) async fn api_root_uuid(url: &str, repo: Uuid) -> Result<String> {
     api_query(url, repo, is_present("mf_watch"))
         .await?
         .into_iter()
@@ -210,7 +214,7 @@ async fn api_root_uuid(url: &str, repo: Uuid) -> Result<String> {
 /// Enables tracking on the repository by setting `mf_watch = true` on the root.
 /// Tracking is opt-in: until this is set, both the watcher and reconcile treat
 /// every path as ineligible and create nothing.
-async fn api_enable_watch(url: &str, repo: Uuid) -> Result<()> {
+pub(crate) async fn api_enable_watch(url: &str, repo: Uuid) -> Result<()> {
     let root = api_root_uuid(url, repo).await?;
     daemon_client()
         .patch(format!("{url}/repos/{repo}/metarecords/{root}"))
@@ -224,7 +228,7 @@ async fn api_enable_watch(url: &str, repo: Uuid) -> Result<()> {
 /// Full reconcile: walks the repo root (eligibility-pruned) and creates the
 /// metarecords for the files on disk. Returns (created, moved). `mime` opens
 /// each file to sniff its type — disabled here to keep reconcile about indexing.
-async fn api_reconcile(url: &str, repo: Uuid, mime: bool) -> Result<(usize, usize)> {
+pub(crate) async fn api_reconcile(url: &str, repo: Uuid, mime: bool) -> Result<(usize, usize)> {
     // Reconcile is asynchronous (spec-tasks): start it, then poll the task.
     let started: serde_json::Value = daemon_client()
         .post(format!("{url}/repos/{repo}/reconcile"))

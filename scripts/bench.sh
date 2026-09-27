@@ -4,7 +4,7 @@
 #   scripts/bench.sh                  # the standard suite: generated data, release
 #   scripts/bench.sh --quick          # the small size only, for a fast answer
 #   scripts/bench.sh --big            # + the large size (minutes to generate)
-#   scripts/bench.sh --real           # + the persistent benchmarks/bench_data* repos
+#   scripts/bench.sh --real           # + copies of the benchmarks/bench_data* folders
 #   scripts/bench.sh --filter log.    # only the scenarios whose id starts with log.
 #   scripts/bench.sh --storage both   # kv (the default), sqlite, or both backends
 #   scripts/bench.sh --no-history     # measure and compare, record nothing

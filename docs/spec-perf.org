@@ -164,7 +164,15 @@ Two sources, because they answer different questions:
   consume-only folders the existing bench already uses. Representative in a way
   no generator is (real names, real sizes, real nesting), but they exist only on
   the developer's machine, so they are measured when present and skipped
-  otherwise.
+  otherwise. Consume-only means they are never made repositories in place: the
+  suite measures a copy of each under =target/bench-data/real-S=, =real-M=
+  (=-sqlite= for the other backend) — the files hard-linked, no byte copied, a
+  =.metafolder= at the source's top left out — initialised on the measured
+  backend, tracked, reconciled once, and reused while the wire version holds.
+  The combined scenarios look into the top folder of the deepest file among a
+  page of the copy's files and search for the first letters of its parent's
+  and its own name, what someone looking for it would type; the generated
+  repositories keep their fixed arguments.
 
 ** The history
 
