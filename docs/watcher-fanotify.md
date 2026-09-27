@@ -75,7 +75,16 @@ Verified against man-pages 6.19 and the kernel documentation:
 - **`FAN_RENAME` is a strict improvement over the inotify cookie.** Both sides
   (OLD_DFID_NAME + NEW_DFID_NAME) arrive in one event, and a move *into or out
   of* the repository is seen as a move rather than delete+create — which is what
-  "metadata follows files" wants.
+  "metadata follows files" wants. It must be asked for *alone*: a mark that
+  also asks for `FAN_MOVED_FROM`/`FAN_MOVED_TO` gets each move three times
+  (rename, from, to — in that order), and the one-sided pair read as a
+  departure plus an arrival, orphaning the moved file's metarecord (found
+  September 2026 by `early_journey` run under the broker). The pair is asked
+  for only when the kernel refuses `FAN_RENAME` (pre-5.17).
+- **A handle outlives its path.** A moved directory keeps its handle, so a
+  remembered handle → path answer is wrong after any directory move; the
+  broker forgets them all on one (a file created in a folder just moved was
+  otherwise reported at the folder's old path).
 - **Versions.** `FAN_REPORT_FID` (5.1), `FAN_REPORT_DFID_NAME` (5.9),
   `FAN_REPORT_TARGET_FID` (5.17, also 5.15.154 / 5.10.220). Feature-detect at
   startup; the full form is what makes renames complete.

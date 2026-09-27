@@ -822,9 +822,9 @@ impl Fanotify {
                 if op == FAN_MARK_ADD
                     && self.mask & FAN_RENAME != 0
                     && err.raw_os_error() == Some(libc::EINVAL)
-                    && mark(self.mask & !FAN_RENAME).is_ok() =>
+                    && mark(without_rename(self.mask)).is_ok() =>
             {
-                self.mask &= !FAN_RENAME;
+                self.mask = without_rename(self.mask);
                 Ok(())
             }
             Err(err) => Err(err).with_context(|| format!("fanotify_mark({at:?}) failed")),
@@ -835,22 +835,33 @@ impl Fanotify {
 /// The events the daemon's vocabulary needs, plus `FAN_ONDIR` — without it in
 /// the *mark mask* the kernel reports nothing about directory objects.
 ///
-/// `FAN_RENAME` is retried away on kernels that refuse it (pre-5.17): moves
-/// then arrive as `FAN_MOVED_FROM`/`FAN_MOVED_TO` pairs with nothing to
-/// correlate them by, and read as delete + create — the same degradation the
-/// notify sources have on backends without rename correlation (spec-file-
-/// tracking "File Watcher").
+/// A move is asked for in one form: `FAN_RENAME`. Asked for with
+/// `FAN_MOVED_FROM`/`FAN_MOVED_TO` too, a kernel that knows it reports each
+/// move three times (rename, then from, then to), and the one-sided pair —
+/// in that order, which the executor's compaction does not absorb — turned a
+/// rename into a departure plus an arrival: the metarecord orphaned, a new one
+/// created.
+///
+/// The pair is asked for only on kernels that refuse `FAN_RENAME` (pre-5.17,
+/// [`without_rename`]): moves then arrive as `FAN_MOVED_FROM`/`FAN_MOVED_TO`
+/// pairs with nothing to correlate them by, and read as delete + create — the
+/// same degradation the notify sources have on backends without rename
+/// correlation (spec-file-tracking "File Watcher").
 fn mask() -> u64 {
     FAN_CREATE
         | FAN_DELETE
         | FAN_DELETE_SELF
-        | FAN_MOVED_FROM
-        | FAN_MOVED_TO
         | FAN_RENAME
         | FAN_MODIFY
         | FAN_ATTRIB
         | FAN_CLOSE_WRITE
         | FAN_ONDIR
+}
+
+/// The mask for a kernel that refuses `FAN_RENAME` (pre-5.17): moves then
+/// arrive as `FAN_MOVED_FROM`/`FAN_MOVED_TO` pairs.
+fn without_rename(mask: u64) -> u64 {
+    (mask & !FAN_RENAME) | FAN_MOVED_FROM | FAN_MOVED_TO
 }
 
 /// The reading end of the group ([`Fanotify::reader`]).
@@ -1250,6 +1261,23 @@ mod tests {
             Some(&Event::Create { path: PathBuf::from("/repo/sorted/trip/y.jpg").into() }),
             "{after:?}"
         );
+    }
+
+    #[test]
+    fn test_a_move_is_asked_for_in_one_form_only() {
+        // Asked for both, a 5.17+ kernel reports one move three times —
+        // FAN_RENAME, then FAN_MOVED_FROM, then FAN_MOVED_TO — and the daemon
+        // read `notes.txt → notes-2024.txt` as a departure plus an arrival:
+        // the metarecord orphaned, a new one created (early_journey, under the
+        // broker). FAN_RENAME alone; the pair only where it is refused.
+        let wanted = mask();
+        assert_ne!(wanted & FAN_RENAME, 0);
+        assert_eq!(wanted & (FAN_MOVED_FROM | FAN_MOVED_TO), 0, "{wanted:#x}");
+
+        let old_kernel = without_rename(wanted);
+        assert_eq!(old_kernel & FAN_RENAME, 0);
+        assert_eq!(old_kernel & (FAN_MOVED_FROM | FAN_MOVED_TO), FAN_MOVED_FROM | FAN_MOVED_TO);
+        assert_eq!(old_kernel & !(FAN_MOVED_FROM | FAN_MOVED_TO), wanted & !FAN_RENAME);
     }
 
     #[test]
