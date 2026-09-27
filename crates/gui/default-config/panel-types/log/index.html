@@ -109,8 +109,10 @@
         padding: 0 8px;
         line-height: 1;
       }
-      #graph-toggle {
+      #watcher-toggle {
         margin-left: auto;
+      }
+      .toggle {
         display: flex;
         align-items: center;
         gap: 4px;
@@ -152,7 +154,8 @@
       </button>
       <button id="checkpoint" disabled>Label selected (log:mark)</button>
       <button id="prune" disabled>Prune before selected (log:prune)</button>
-      <label id="graph-toggle"><input type="checkbox" id="graph" />Graph</label>
+      <label id="watcher-toggle" class="toggle" title="Show the revisions the daemon wrote for the filesystem (log:toggle watcher, shift+w)"><input type="checkbox" id="show-watcher" checked />Watcher</label>
+      <label id="graph-toggle" class="toggle"><input type="checkbox" id="graph" />Graph</label>
     </div>
     <div id="revisions">
       <p class="placeholder" id="placeholder">Loading…</p>

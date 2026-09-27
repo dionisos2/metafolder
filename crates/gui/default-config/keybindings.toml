@@ -342,6 +342,7 @@
 "shift+v" = { command = "log:revert revision", when = "log" }
 "shift+l" = { command = "log:mark", when = "log" }
 "shift+g" = { command = "log:toggle graph", when = "log" }
+"shift+w" = { command = "log:toggle watcher", when = "log" }
 
 # file-manager: filesystem operations (clipboard, rename, duplicate, create).
 # All scoped to the panel; it has no text-input focus, so these plain

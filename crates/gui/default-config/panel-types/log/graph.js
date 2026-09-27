@@ -114,3 +114,30 @@ export function graphLayout(revs) {
 function trimEnd(chars) {
   return chars.join('').replace(/\s+$/, '');
 }
+
+/**
+ * Reattaches each shown revision to its nearest *shown* ancestor, so hiding
+ * revisions (the watcher's) leaves a graph whose lines still join up. Only the
+ * shown revisions are keys of the result; an ancestry that is entirely hidden,
+ * or leaves the fetched window, ends in null.
+ *
+ * @param {Map<number, number|null>} parents rev id → parent rev id (revisionParents)
+ * @param {Set<number>} shown
+ * @returns {Map<number, number|null>}
+ */
+export function collapseParents(parents, shown) {
+  /** @type {Map<number, number|null>} */
+  const out = new Map();
+  for (const rev of shown) {
+    let parent = parents.get(rev) ?? null;
+    // Parents always precede their children, so the walk ends; the guard only
+    // protects against a malformed map.
+    const seen = new Set();
+    while (parent !== null && !shown.has(parent) && !seen.has(parent)) {
+      seen.add(parent);
+      parent = parents.get(parent) ?? null;
+    }
+    out.set(rev, parent !== null && shown.has(parent) ? parent : null);
+  }
+  return out;
+}

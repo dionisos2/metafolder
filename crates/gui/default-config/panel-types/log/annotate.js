@@ -95,3 +95,18 @@ export function revertTarget(selection) {
   if (!selection) return null;
   return selection.kind === 'op' ? { op_ids: [selection.id] } : { rev_id: selection.id };
 }
+
+/**
+ * The revisions to list: all of them, or — with the watcher's hidden — only the
+ * ones the user wrote. The revision HEAD stands on is always kept, so where the
+ * history stands never disappears from the list.
+ *
+ * @template {{id: number, isHead?: boolean}} R
+ * @param {R[]} revs @param {Map<number, {watcher?: boolean}>} marks
+ * @param {boolean} showWatcher
+ * @returns {R[]}
+ */
+export function shownRevisions(revs, marks, showWatcher) {
+  if (showWatcher) return revs;
+  return revs.filter((rev) => rev.isHead || !marks.get(rev.id)?.watcher);
+}

@@ -25,7 +25,10 @@
   <li>
     <strong>watcher</strong> — the daemon wrote it for the filesystem (a file
     arrived, moved, went away). Not yours to undo: rewinding past it would
-    unrecord something that is really true on disk. Those rows are dimmed.
+    unrecord something that is really true on disk. Those rows are dimmed,
+    and <span data-mf-key="log:toggle watcher">Shift+W</span> (the
+    <em>Watcher</em> checkbox) hides them altogether, leaving only your own
+    changes — and HEAD, which is never hidden.
   </li>
   <li><strong>undo of #N</strong> — the revision is itself a revert of #N.</li>
   <li>

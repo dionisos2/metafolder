@@ -3464,7 +3464,20 @@ what decides whether undoing it makes sense:
 
 An expanded operation carrying =reverts_op_id= names the operation it reverted,
 and one that has been reverted is marked =undone=, so a correction and its cause
-are readable from one another in both directions. A =Graph= checkbox
+are readable from one another in both directions.
+
+A =Watcher= checkbox (command =log:toggle watcher=, default =shift+w=; checked
+by default) shows or hides the watcher's revisions. Hiding is a display filter
+over the fetched window — nothing is refetched — so the user's own changes are
+not buried under one revision per batch of filesystem events. Two rules keep it
+honest: the revision HEAD stands on is never hidden (where the history stands
+stays visible), and the status line says how many revisions are hidden. In the
+graph, a shown revision hangs from its nearest shown ancestor, so the lines
+still join up across the hidden ones. A selection inside a revision that gets
+hidden is dropped; a blocked revert whose blocker is a hidden watcher revision
+shows them again, since that is the row its message points at.
+
+A =Graph= checkbox
 (command =log:toggle graph=) switches the presentation, refetching the log:
 
 - Unchecked (default) — calls =GET .../log?mode=active=: the active line

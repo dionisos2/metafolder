@@ -4,8 +4,8 @@
 import { byId, el, qs } from '/__ui.js';
 import { registerFind } from '/__find-entry.js';
 import { moveSelection, edgeSelection } from './selection.js';
-import { graphLayout, revisionParents } from './graph.js';
-import { annotate, revertTarget } from './annotate.js';
+import { collapseParents, graphLayout, revisionParents } from './graph.js';
+import { annotate, revertTarget, shownRevisions } from './annotate.js';
 
 /**
  * A revision as this panel displays it (the daemon's rows, plus the operation
@@ -45,6 +45,10 @@ export async function mount(root, metafolder) {
    *  (see annotate.js). @type {Map<number, any>} */
   let marks = new Map();
   let graphMode = false; // false: active line (list); true: full branch graph
+  // The watcher writes a revision per batch of filesystem events, which can
+  // bury the user's own changes; hiding them keeps only what the user wrote
+  // (and HEAD). A display filter: the fetch is the same either way.
+  let showWatcher = true;
   // The list view fetches a bounded window of the most recent operations so a
   // repository with millions of them (a large initial reconcile) still loads;
   // "Show more" grows the window. The graph view is unbounded (it needs every
@@ -62,6 +66,7 @@ export async function mount(root, metafolder) {
   const pruneButton = byId(root, 'prune', HTMLButtonElement);
   const checkpointButton = byId(root, 'checkpoint', HTMLButtonElement);
   const graphCheckbox = byId(root, 'graph', HTMLInputElement);
+  const watcherCheckbox = byId(root, 'show-watcher', HTMLInputElement);
   const statusLine = byId(root, 'status-line');
   /** Repository-wide log size (`GET /log` totals), independent of the window
    *  actually fetched. @type {{operations: number, revisions: number}|null} */
@@ -140,7 +145,15 @@ export async function mount(root, metafolder) {
     if (totals && (totals.revisions > shownRevs || totals.operations > shownOps)) {
       line += ` — of ${totals.revisions} / ${totals.operations} in the repository`;
     }
+    const hidden = shownRevs - visible().length;
+    if (hidden > 0) line += ` · ${hidden} watcher revision${hidden === 1 ? '' : 's'} hidden`;
     statusLine.textContent = line;
+  }
+
+  /** The revisions on screen: every fetched one, less the watcher's when they
+   *  are hidden. */
+  function visible() {
+    return shownRevisions(revisions, marks, showWatcher);
   }
 
   /** The revision the selection is in — an operation belongs to one.
@@ -169,8 +182,8 @@ export async function mount(root, metafolder) {
   /** Every row the cursor can land on, in display order, keyed by kind so a
    *  revision and an operation sharing a number stay distinct. */
   function cursorRows() {
-    if (graphMode) return revisions.map((rev) => ({ id: `rev:${rev.id}` }));
-    return revisions.flatMap((rev) =>
+    if (graphMode) return visible().map((rev) => ({ id: `rev:${rev.id}` }));
+    return visible().flatMap((rev) =>
       expandedRev === rev.id
         ? [
             { id: `rev:${rev.id}` },
@@ -298,9 +311,12 @@ export async function mount(root, metafolder) {
   // Graph mode: a leading monospace gutter cell drawing the branch structure,
   // with connector rows between nodes. Nodes stay selectable like list rows.
   function graphRows() {
-    const revById = new Map(revisions.map((rev) => [rev.id, rev]));
-    const parents = revisionParents(operations);
-    const revs = revisions.map((rev) => ({ id: rev.id, parent: parents.get(rev.id) ?? null }));
+    const shown = visible();
+    const revById = new Map(shown.map((rev) => [rev.id, rev]));
+    // Hidden revisions are skipped over: each shown one hangs from its nearest
+    // shown ancestor, so the lines still join up.
+    const parents = collapseParents(revisionParents(operations), new Set(revById.keys()));
+    const revs = shown.map((rev) => ({ id: rev.id, parent: parents.get(rev.id) ?? null }));
     return graphLayout(revs).flatMap((line) => {
       if (line.type === 'connector') {
         return el('tr', { class: 'connector' }, el('td', { colSpan: 4, class: 'gutter' }, line.gutter));
@@ -348,11 +364,12 @@ export async function mount(root, metafolder) {
         ? `Revert op ${selection.id} (log:revert)`
         : 'Revert selected (log:revert)';
     graphCheckbox.checked = graphMode;
+    watcherCheckbox.checked = showWatcher;
 
     rows.replaceChildren(
       ...(graphMode
         ? graphRows()
-        : revisions.flatMap((rev) =>
+        : visible().flatMap((rev) =>
             expandedRev === rev.id
               ? [revisionRow(rev), ...operationsOf(rev.id).map(operationRow)]
               : [revisionRow(rev)],
@@ -466,6 +483,9 @@ export async function mount(root, metafolder) {
       if (blocker) {
         selection = { kind: 'rev', id: blocker.rev_id, revId: blocker.rev_id };
         expandedRev = blocker.rev_id;
+        // The blocker is often the watcher's: bring those back so the row the
+        // message points at is on screen.
+        if (!visible().some((rev) => rev.id === blocker.rev_id)) showWatcher = true;
         render();
         const also = extra > 1 ? ` (and ${extra - 1} more)` : '';
         void statusBar.message(
@@ -616,6 +636,19 @@ export async function mount(root, metafolder) {
   }
   graphCheckbox.addEventListener('change', () => void toggleGraph(graphCheckbox.checked));
 
+  // Showing/hiding the watcher's revisions is a display filter: no refetch. A
+  // selection inside a revision that disappears is dropped rather than left
+  // pointing at a row nobody can see.
+  /** @param {boolean} [on] */
+  function toggleWatcher(on) {
+    showWatcher = on ?? !showWatcher;
+    const ids = new Set(visible().map((rev) => rev.id));
+    if (selection && !ids.has(selection.revId)) selection = null;
+    if (expandedRev !== null && !ids.has(expandedRev)) expandedRev = null;
+    render();
+  }
+  watcherCheckbox.addEventListener('change', () => toggleWatcher(watcherCheckbox.checked));
+
   // Grow the fetched window by one page and reload (list view only).
   showMoreButton.addEventListener('click', () => {
     limit += LOG_PAGE;
@@ -676,6 +709,7 @@ export async function mount(root, metafolder) {
   /** @type {Record<string, () => unknown>} */
   const LOG_FLAGS = {
     graph: () => toggleGraph(),
+    watcher: () => toggleWatcher(),
     ops: () => {
       const rev = selectedRev();
       if (rev !== null) selectRevision(rev, { toggleOps: true });
@@ -683,7 +717,7 @@ export async function mount(root, metafolder) {
   };
 
   void commands.register('log:toggle', {
-    label: 'Log: toggle a view flag (branch graph / the selected revision’s operations)',
+    label: 'Log: toggle a view flag (branch graph / the watcher’s revisions / the selected revision’s operations)',
     args: [
       {
         name: 'flag',
@@ -722,12 +756,12 @@ export async function mount(root, metafolder) {
     label: 'Log: jump to a revision by number or label',
     prompt: 'Go to revision:',
     entries: () =>
-      revisions.map((rev) => ({
+      visible().map((rev) => ({
         name: `#${rev.id}`,
         label: rev.label ? `#${rev.id} — ${rev.label}` : `#${rev.id}`,
       })),
     select: (index) => {
-      const rev = revisions[index];
+      const rev = visible()[index];
       if (rev) selectRevision(rev.id);
     },
   });
