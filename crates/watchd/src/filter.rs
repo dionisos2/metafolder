@@ -293,6 +293,7 @@ mod tests {
     struct FakeCreds {
         dirs: HashMap<PathBuf, (u32, u32, u32)>,
         links: HashMap<PathBuf, PathBuf>,
+        files: std::collections::HashSet<PathBuf>,
         groups: HashMap<i32, Vec<u32>>,
         stats: std::sync::atomic::AtomicUsize,
     }
@@ -304,6 +305,7 @@ mod tests {
             Self {
                 dirs,
                 links: HashMap::new(),
+                files: std::collections::HashSet::new(),
                 groups: HashMap::new(),
                 stats: std::sync::atomic::AtomicUsize::new(0),
             }
@@ -316,6 +318,11 @@ mod tests {
 
         fn link(mut self, path: &str, target: &str) -> Self {
             self.links.insert(path.into(), target.into());
+            self
+        }
+
+        fn file(mut self, path: &str) -> Self {
+            self.files.insert(path.into());
             self
         }
 
@@ -337,6 +344,9 @@ mod tests {
         fn entry(&self, path: &Path) -> Option<Entry> {
             if let Some(target) = self.links.get(path) {
                 return Some(Entry::Link(target.clone()));
+            }
+            if self.files.contains(path) {
+                return Some(Entry::Other);
             }
             self.dir_meta(path).map(|(uid, gid, mode)| Entry::Dir { uid, gid, mode })
         }
@@ -546,5 +556,91 @@ mod tests {
         }
         // `/` and `/repo`, once each — not once per event.
         assert_eq!(f.creds.stats(), 2);
+    }
+
+    #[test]
+    fn test_a_root_through_a_file_resolves_to_nothing() {
+        // `/repo/notes.txt/x`: a file is no directory to walk through.
+        let creds = FakeCreds::new().dir("/repo", 1000, 100, 0o755).file("/repo/notes.txt");
+        let mut f = AccessFilter::new(creds);
+        assert_eq!(f.resolve(&user(1000), Path::new("/repo/notes.txt/x")), None);
+        assert_eq!(f.resolve(&user(1000), Path::new("repo")), None, "a relative root");
+    }
+
+    #[test]
+    fn test_the_filesystem_root_itself_has_no_parent_to_see_it_in() {
+        let mut f = AccessFilter::new(FakeCreds::new());
+        assert!(!f.may_see(&user(1000), Path::new("/"), Path::new("/")));
+    }
+
+    #[test]
+    fn test_root_sees_every_entry_under_its_root() {
+        // Past the walk, root skips the listing check on the directories
+        // between the root and the parent.
+        let creds =
+            FakeCreds::new().dir("/repo", 1000, 100, 0o700).dir("/repo/a", 1000, 100, 0o100);
+        let mut f = AccessFilter::new(creds);
+        assert!(f.may_see(&user(0), Path::new("/repo"), Path::new("/repo/a/x")));
+    }
+
+    #[test]
+    fn test_a_relative_root_is_refused() {
+        let mut f = AccessFilter::new(FakeCreds::new().dir("/repo", 1000, 100, 0o755));
+        assert!(!f.may_watch(&user(1000), Path::new("repo")));
+    }
+
+    #[test]
+    fn test_a_full_cache_is_dropped_and_restarted() {
+        // A hot stream touches few directories; past CACHE_MAX the whole cache
+        // goes, and the next check is a fresh `stat`.
+        let mut f = AccessFilter::new(FakeCreds::new());
+        for i in 0..CACHE_MAX - 1 {
+            f.may_watch(&user(1000), Path::new(&format!("/d{i}")));
+        }
+        assert_eq!(f.cache.len(), CACHE_MAX, "`/` plus the directories, until full");
+        let before = f.creds.stats();
+        f.may_watch(&user(1000), Path::new("/one-more"));
+        assert_eq!(f.cache.len(), 1, "dropped wholesale, then the new entry");
+        f.may_watch(&user(1000), Path::new("/one-more"));
+        assert_eq!(f.creds.stats(), before + 2, "`/` was forgotten and statted again");
+    }
+
+    #[test]
+    fn test_the_system_source_reads_the_real_filesystem() {
+        let base = std::env::temp_dir()
+            .join("metafolder-tests")
+            .join(format!("watchd-system-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&base);
+        std::fs::create_dir_all(base.join("dir")).unwrap();
+        std::fs::write(base.join("file"), b"x").unwrap();
+        std::os::unix::fs::symlink("dir", base.join("link")).unwrap();
+
+        let creds = SystemCreds;
+        let dir = creds.dir_meta(&base.join("dir"));
+        let file = creds.dir_meta(&base.join("file"));
+        let entries = ["dir", "file", "link", "absent"].map(|n| creds.entry(&base.join(n)));
+        let _ = std::fs::remove_dir_all(&base);
+
+        let (uid, _, mode) = dir.expect("a directory has meta");
+        assert_eq!(uid, unsafe { libc::geteuid() });
+        assert_eq!(mode & 0o700, 0o700);
+        assert_eq!(file, None, "a file is not a directory");
+        assert!(matches!(entries[0], Some(Entry::Dir { .. })));
+        assert_eq!(entries[1], Some(Entry::Other));
+        assert_eq!(entries[2], Some(Entry::Link(PathBuf::from("dir"))));
+        assert_eq!(entries[3], None);
+    }
+
+    #[test]
+    fn test_the_system_source_reads_a_process_group_list() {
+        // What `/proc/<pid>/status` says of this very process: `getgroups`.
+        let n = unsafe { libc::getgroups(0, std::ptr::null_mut()) };
+        let mut mine = vec![0 as libc::gid_t; n as usize];
+        unsafe { libc::getgroups(n, mine.as_mut_ptr()) };
+        let mut got = SystemCreds.groups_of(std::process::id() as i32);
+        got.sort_unstable();
+        mine.sort_unstable();
+        assert_eq!(got, mine);
+        assert_eq!(SystemCreds.groups_of(i32::MAX), Vec::<u32>::new(), "no such process");
     }
 }

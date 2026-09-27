@@ -30,10 +30,6 @@ impl WirePath {
     pub fn as_path(&self) -> &Path {
         &self.0
     }
-
-    pub fn into_path_buf(self) -> PathBuf {
-        self.0
-    }
 }
 
 impl From<PathBuf> for WirePath {
@@ -57,12 +53,6 @@ impl From<&str> for WirePath {
 impl From<String> for WirePath {
     fn from(p: String) -> Self {
         WirePath(PathBuf::from(p))
-    }
-}
-
-impl std::fmt::Display for WirePath {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        self.0.display().fmt(f)
     }
 }
 
@@ -344,6 +334,27 @@ mod tests {
 
         let ev = Event::Rename { from: "/elsewhere/a".into(), to: "/other/b".into() };
         assert_eq!(ev.adapt(&roots, &mut see_all), None);
+
+        let ev = Event::Rename { from: "/repo/a".into(), to: "/repo/b".into() };
+        assert_eq!(ev.adapt(&roots, &mut see_all), Some(ev.clone()), "both sides visible");
+    }
+
+    #[test]
+    fn test_every_event_names_its_paths() {
+        let p = |s: &str| WirePath::from(s);
+        let one_sided = [
+            Event::Create { path: p("/a") },
+            Event::Remove { path: p("/a") },
+            Event::RenameFrom { path: p("/a") },
+            Event::RenameTo { path: p("/a") },
+            Event::ModifyData { path: p("/a") },
+            Event::ModifyMeta { path: p("/a") },
+        ];
+        for ev in &one_sided {
+            assert_eq!(ev.paths(), vec![&p("/a")], "{ev:?}");
+        }
+        let ev = Event::Rename { from: p("/a"), to: p("/b") };
+        assert_eq!(ev.paths(), vec![&p("/a"), &p("/b")]);
     }
 
     #[test]

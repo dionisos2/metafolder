@@ -698,4 +698,188 @@ mod tests {
         assert!(matches!(next_msg(&mut r), ServerMsg::Overflow {}));
         assert!(matches!(next_msg(&mut r), ServerMsg::Event { .. }));
     }
+
+    /// A sink the event source refuses: the marks cannot be placed.
+    struct FailingSink;
+    impl RootSink for FailingSink {
+        fn set_roots(&self, _roots: Vec<PathBuf>) -> Result<()> {
+            anyhow::bail!("no mark for you")
+        }
+    }
+
+    fn wait_for_no_client<C: 'static + CredSource>(broker: &Broker<C>) {
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
+        while broker.client_count() != 0 && std::time::Instant::now() < deadline {
+            std::thread::sleep(std::time::Duration::from_millis(10));
+        }
+        assert_eq!(broker.client_count(), 0);
+    }
+
+    #[test]
+    fn test_a_subscriber_without_roots_yet_is_sent_nothing() {
+        let broker = Broker::new(AccessFilter::new(AllowAll), Arc::new(NoRoots));
+        let (client, _writer) = attach_pair(&broker);
+        let mut r = reader(&client);
+        broker.broadcast(&Event::Create { path: "/repo/before".into() });
+        subscribe(&client, &["/repo"]);
+        let _ = next_msg(&mut r);
+        broker.broadcast(&Event::Create { path: "/repo/after".into() });
+        assert_eq!(
+            next_msg(&mut r),
+            ServerMsg::Event { event: Event::Create { path: "/repo/after".into() } }
+        );
+    }
+
+    #[test]
+    fn test_an_unparsable_message_is_answered_and_the_connection_kept() {
+        let broker = Broker::new(AccessFilter::new(AllowAll), Arc::new(NoRoots));
+        let (mut client, _writer) = attach_pair(&broker);
+        let mut r = reader(&client);
+        client.write_all(b"not json\n").unwrap();
+        let ServerMsg::Error { message } = next_msg(&mut r) else { panic!("an error") };
+        assert!(message.starts_with("unparsable message"), "{message}");
+        subscribe(&client, &["/repo"]);
+        assert!(matches!(next_msg(&mut r), ServerMsg::Subscribed { .. }));
+    }
+
+    #[test]
+    fn test_a_peer_hanging_up_mid_line_is_let_go() {
+        let broker = Broker::new(AccessFilter::new(AllowAll), Arc::new(NoRoots));
+        let (mut client, _writer) = attach_pair(&broker);
+        client.write_all(b"{\"type\":\"subscr").unwrap();
+        client.shutdown(std::net::Shutdown::Write).unwrap();
+        client.set_read_timeout(Some(std::time::Duration::from_secs(5))).unwrap();
+        let mut rest = String::new();
+        assert_eq!(reader(&client).read_line(&mut rest).unwrap(), 0, "{rest:?}");
+        wait_for_no_client(&broker);
+    }
+
+    #[test]
+    fn test_marks_that_cannot_be_placed_are_reported_to_the_subscriber() {
+        let broker = Broker::new(AccessFilter::new(AllowAll), Arc::new(FailingSink));
+        let (client, _writer) = attach_pair(&broker);
+        let mut r = reader(&client);
+        subscribe(&client, &["/repo"]);
+        let ServerMsg::Error { message } = next_msg(&mut r) else { panic!("an error first") };
+        assert!(message.contains("no mark for you"), "{message}");
+        // Still answered: the subscription itself was recorded.
+        assert!(matches!(next_msg(&mut r), ServerMsg::Subscribed { .. }));
+        // Leaving runs the sink again (failing again): logged, and let go.
+        client.shutdown(std::net::Shutdown::Both).unwrap();
+        wait_for_no_client(&broker);
+    }
+
+    #[test]
+    fn test_a_connection_whose_peer_cannot_be_identified_is_refused() {
+        // SO_PEERCRED on something that is no socket: ENOTSOCK.
+        use std::os::unix::io::{FromRawFd, IntoRawFd};
+        let fd = std::fs::File::open("/dev/null").unwrap().into_raw_fd();
+        let not_a_socket = unsafe { UnixStream::from_raw_fd(fd) };
+        assert!(peer_creds(&not_a_socket).is_err());
+        let broker = Broker::new(AccessFilter::new(AllowAll), Arc::new(NoRoots));
+        broker.attach_stream(not_a_socket);
+        assert_eq!(broker.client_count(), 0);
+    }
+
+    #[test]
+    fn test_a_real_connection_is_identified_by_its_credentials() {
+        let broker = Broker::new(AccessFilter::new(AllowAll), Arc::new(NoRoots));
+        let (client, server) = UnixStream::pair().unwrap();
+        assert_eq!(
+            peer_creds(&server).unwrap(),
+            (unsafe { libc::geteuid() }, unsafe { libc::getegid() }, std::process::id() as i32)
+        );
+        broker.attach_stream(server);
+        assert_eq!(broker.client_count(), 1);
+        drop(client);
+        wait_for_no_client(&broker);
+    }
+
+    #[test]
+    fn test_a_peer_that_stops_reading_while_an_overflow_is_pending_is_let_go() {
+        // The in-order overflow marker is the write that fails.
+        let broker = Broker::new(AccessFilter::new(AllowAll), Arc::new(NoRoots));
+        let (client, _writer) = attach_pair(&broker);
+        let mut r = reader(&client);
+        subscribe(&client, &["/repo"]);
+        let _ = next_msg(&mut r);
+        client.shutdown(std::net::Shutdown::Read).unwrap();
+        broker.broadcast_overflow();
+        broker.broadcast(&Event::Create { path: "/repo/x".into() });
+        wait_for_no_client(&broker);
+    }
+
+    #[test]
+    fn test_a_listener_that_fails_stops_accepting() {
+        use std::os::unix::io::AsRawFd;
+        let dir = std::env::temp_dir()
+            .join("metafolder-tests")
+            .join(format!("watchd-accept-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("s.sock");
+        let listener = UnixListener::bind(&path).unwrap();
+        let fd = listener.as_raw_fd();
+        let (tx, rx) = std::sync::mpsc::channel();
+        let broker = Broker::new(AccessFilter::new(AllowAll), Arc::new(NoRoots));
+        let serving = std::thread::spawn(move || broker.serve(listener, rx));
+        // A live listener answers…
+        drop(UnixStream::connect(&path).unwrap());
+        // …until accept fails: the loop logs it and stops, and the listener
+        // goes with it.
+        unsafe { libc::shutdown(fd, libc::SHUT_RDWR) };
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
+        while UnixStream::connect(&path).is_ok() && std::time::Instant::now() < deadline {
+            std::thread::sleep(std::time::Duration::from_millis(10));
+        }
+        assert!(UnixStream::connect(&path).is_err(), "the listener is gone");
+        drop(tx); // The event source ends: serve returns.
+        serving.join().unwrap();
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    const CHILD_ENV: &str = "METAFOLDER_WATCHD_IN_CHILD";
+
+    /// `true` in a child process running `test` alone (run the body there);
+    /// outside, runs that child and returns `false`. For a test that changes
+    /// something process-wide — a resource limit.
+    fn in_child(test: &str) -> bool {
+        if std::env::var_os(CHILD_ENV).is_some() {
+            return true;
+        }
+        let out = std::process::Command::new(std::env::current_exe().unwrap())
+            .args([&format!("server::tests::{test}"), "--exact", "--nocapture", "--test-threads=1"])
+            .env(CHILD_ENV, "1")
+            .output()
+            .unwrap();
+        let text = String::from_utf8_lossy(&out.stdout).into_owned()
+            + &String::from_utf8_lossy(&out.stderr);
+        assert!(out.status.success() && text.contains("1 passed"), "{text}");
+        false
+    }
+
+    #[test]
+    fn test_a_connection_that_cannot_be_split_is_dropped() {
+        // No descriptor left for the writer's half (EMFILE): the connection is
+        // hung up rather than half served.
+        if !in_child("test_a_connection_that_cannot_be_split_is_dropped") {
+            return;
+        }
+        let broker = Broker::new(AccessFilter::new(AllowAll), Arc::new(NoRoots));
+        let (client, server) = UnixStream::pair().unwrap();
+        let peer = Subscriber { uid: 1000, gid: 1000, pid: 42, groups: vec![1000] };
+        // The lowest free descriptor becomes the limit: the next one fails.
+        let probe = unsafe { libc::dup(0) };
+        unsafe { libc::close(probe) };
+        let mut old = libc::rlimit { rlim_cur: 0, rlim_max: 0 };
+        unsafe { libc::getrlimit(libc::RLIMIT_NOFILE, &mut old) };
+        let low = libc::rlimit { rlim_cur: probe as libc::rlim_t, rlim_max: old.rlim_max };
+        unsafe { libc::setrlimit(libc::RLIMIT_NOFILE, &low) };
+        broker.attach(server, peer);
+        unsafe { libc::setrlimit(libc::RLIMIT_NOFILE, &old) };
+        assert_eq!(broker.client_count(), 0);
+        client.set_read_timeout(Some(std::time::Duration::from_secs(5))).unwrap();
+        let mut rest = String::new();
+        assert_eq!(reader(&client).read_line(&mut rest).unwrap(), 0, "hung up");
+    }
 }
