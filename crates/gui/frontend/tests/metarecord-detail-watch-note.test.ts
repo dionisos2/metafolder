@@ -65,7 +65,6 @@ async function mountPanel(
   rels: string[] = ['/notes.txt'],
 ) {
   const noop = () => {};
-  const REFRESH = Symbol('refresh');
   const store = new Map<string, unknown>([['selected_metarecord', { uuid: UUID, repo: REPO }]]);
   const fields = [
     {
@@ -91,6 +90,11 @@ async function mountPanel(
     whenVisible: (fn: () => unknown) => void fn(),
     bench: { measure: (_n: string, fn: () => unknown) => fn(), record: noop },
     daemon: {
+      query: async () => ({ uuids: [], nextCursor: null, total: 0 }),
+      treePaths: async (_repo: string, _field: string, uuids: string[]) =>
+        Object.fromEntries(uuids.map((uuid) => [uuid, rels])),
+      metarecords: async () => new Map(),
+      fields: async () => [],
       request: async () => ({ status: 200, body: null }),
       call: async (method: string, path: string, _callBody: unknown) => {
         const match = /\/metarecords\/([^/?]+)$/.exec(path);
@@ -111,19 +115,7 @@ async function mountPanel(
       repoInternalDir: async () => '/tmp/repo/.metafolder/internal',
       metarecordPaths: async () => ['/tmp/repo/notes.txt'],
     },
-    cache: {
-      query: async () => ({ uuids: [], nextCursor: null, total: 0 }),
-      fetchMetarecords: async () => {},
-      fetchTreeRefs: async () => {},
-      fetchFields: async () => {},
-      readMetarecord: () => null,
-      readTreeRef: () => rels,
-      readFields: () => [],
-      fieldType: () => 'tree_ref',
-      sync: async () => {},
-      subscribe: () => () => {},
-      REFRESH,
-    },
+    changes: { sync: async () => {}, subscribe: () => () => {} },
     query: { parse: async () => null, expand: async () => '', grammarSource: async () => '' },
     pick: { start: async () => '' },
     config: {

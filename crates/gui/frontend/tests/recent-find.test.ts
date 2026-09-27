@@ -40,23 +40,24 @@ function stub() {
   const handlers = new Map<string, Handler>();
   const specs = new Map<string, ArgSpec[]>();
   const statusBar = { message: vi.fn(async () => {}), error: vi.fn(async () => {}) };
-  const REFRESH = Symbol('refresh');
   const api = {
     settings: { statusErrorMs: 2000 },
     defaults: {},
     whenVisible: (fn: () => void) => fn(),
     recent: { list: vi.fn(async () => VIEWED.map((e) => ({ ...e }))) },
-    daemon: { repoRoot: vi.fn(async () => '/repo') },
-    cache: {
-      REFRESH,
-      fetchMetarecords: vi.fn(async () => {}),
-      fetchTreeRefs: vi.fn(async () => {}),
-      readMetarecord: (_r: string, uuid: string) => ({
-        uuid,
-        fields: [{ name: 'name', value: { type: 'string', value: NAMES[uuid] } }],
-      }),
-      readTreeRef: (_r: string, _f: string, uuid: string) => [PATHS[uuid]],
+    daemon: {
+      repoRoot: vi.fn(async () => '/repo'),
+      treePaths: async (_repo: string, _field: string, uuids: string[]) =>
+        Object.fromEntries(uuids.map((uuid) => [uuid, [PATHS[uuid]]])),
+      metarecords: async (_repo: string, uuids: string[]) =>
+        new Map(
+          uuids.map((uuid) => [
+            uuid,
+            { uuid, fields: [{ name: 'name', value: { type: 'string', value: NAMES[uuid] } }] },
+          ]),
+        ),
     },
+    changes: { sync: async () => {}, subscribe: () => () => {} },
     workspace: {
       get: vi.fn(async (key: string) => (key === 'active_repo' ? 'r' : null)),
       set: vi.fn(async () => {}),

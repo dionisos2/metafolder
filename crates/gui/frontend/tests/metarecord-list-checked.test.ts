@@ -69,6 +69,15 @@ function stub(vars: Record<string, unknown>, existing: Set<string>) {
     whenVisible: (fn: () => void) => fn(),
     bench: { measure: (_n: string, fn: () => unknown) => fn(), record: noop },
     daemon: {
+      query: async (_repo: string, body: unknown) => {
+              const query = (body as { query?: { text?: string } | null })?.query;
+              const records = query?.text === 'other' ? LIST_C : LIST_AB;
+              return { records, nextCursor: null, total: records.length };
+            },
+      treePaths: async (_repo: string, _field: string, uuids: string[]) =>
+        Object.fromEntries(uuids.map((uuid) => [uuid, [] as string[]])),
+      metarecords: async () => new Map(),
+      fields: async () => [],
       request: async () => ({ status: 200, body: null }),
       call: async (method: string, path: string, body: unknown) => {
         if (method === 'POST' && path.endsWith('/query')) {
@@ -87,23 +96,7 @@ function stub(vars: Record<string, unknown>, existing: Set<string>) {
       repoInternalDir: async () => '/repo/.metafolder/internal',
       metarecordPaths: async () => [],
     },
-    cache: {
-      query: async (_repo: string, body: unknown) => {
-        const query = (body as { query?: { text?: string } | null })?.query;
-        const records = query?.text === 'other' ? LIST_C : LIST_AB;
-        return { records, nextCursor: null, total: records.length };
-      },
-      fetchMetarecords: async () => {},
-      fetchTreeRefs: async () => {},
-      fetchFields: async () => {},
-      readMetarecord: () => null,
-      readTreeRef: () => [],
-      readFields: () => [],
-      fieldType: () => null,
-      sync: async () => {},
-      subscribe: () => () => {},
-      REFRESH: Symbol('refresh'),
-    },
+    changes: { sync: async () => {}, subscribe: () => () => {} },
     query: {
       // The simplified → DSL expansion is the identity here; the parse keeps
       // the text so the stub cache can tell one list from the other.

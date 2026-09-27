@@ -1,7 +1,7 @@
 // recent panel: the repository's recently-viewed metarecords (crate::recent),
 // newest first, one row "<name>  <mfr_path>  <viewed N ago>". A GUI-side
 // concern — the list comes from metafolder.recent (no daemon endpoint); the
-// display fields (label/name/mfr_path) are read from the shared cache. Opening
+// display fields (label/name/mfr_path) are read from the daemon. Opening
 // a row publishes the selection and reveals the viewer, like the metarecord
 // list. The list is a snapshot: it reloads on repo change, on a metarecord
 // change, or on an explicit refresh — not on every view — so it never reorders
@@ -37,9 +37,7 @@ export function formatViewedAge(iso, now = Date.now()) {
  * @param {ShadowRoot} root @param {MetafolderApi} metafolder
  */
 export function mount(root, metafolder) {
-  const { daemon, workspace, commands, statusBar, cache } = metafolder;
-  /** @type {Metafolder.Refresh} */
-  const REFRESH = cache.REFRESH;
+  const { daemon, workspace, commands, statusBar } = metafolder;
 
   /** @type {string|null} */
   let repo = null;
@@ -133,24 +131,24 @@ export function mount(root, metafolder) {
     }
     const uuids = entries.map((e) => e.uuid);
     const root_path = await daemon.repoRoot(r).catch(() => null);
-    await Promise.all([
-      cache.fetchMetarecords(r, uuids),
-      cache.fetchTreeRefs(r, 'mfr_path', uuids),
+    // A failed read leaves rows without their name or path, never without rows.
+    const [records, paths] = await Promise.all([
+      daemon.metarecords(r, uuids).catch(() => new Map()),
+      daemon.treePaths(r, 'mfr_path', uuids).catch(() => ({})),
     ]);
     rows = entries.map((e) => {
-      const rec = cache.readMetarecord(r, e.uuid);
-      const rel = cache.readTreeRef(r, 'mfr_path', e.uuid);
-      const relPaths = rel === REFRESH ? [] : rel;
+      const rec = records.get(e.uuid);
+      const relPaths = /** @type {Record<string, string[]>} */ (paths)[e.uuid] ?? [];
       const absPaths =
         root_path === null ? [] : relPaths.map((p) => (p === '' ? root_path : `${root_path}${p}`));
       return {
         uuid: e.uuid,
         viewedAt: e.viewed_at,
-        label: rec === REFRESH ? '' : fieldText(rec, 'label'),
-        name: rec === REFRESH ? '' : fieldText(rec, 'name'),
+        label: rec === undefined ? '' : fieldText(rec, 'label'),
+        name: rec === undefined ? '' : fieldText(rec, 'name'),
         relPath: relPaths[0] ?? '',
         absPaths,
-        isDir: rec !== REFRESH && fieldText(rec, 'mfr_type') === 'dir',
+        isDir: rec !== undefined && fieldText(rec, 'mfr_type') === 'dir',
       };
     });
     if (cursorIndex >= rows.length) cursorIndex = rows.length - 1;

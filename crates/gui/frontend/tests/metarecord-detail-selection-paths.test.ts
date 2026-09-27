@@ -51,7 +51,6 @@ function shadowFor(): ShadowRoot {
 
 async function mountPanel(firstUuid: string) {
   const noop = () => {};
-  const REFRESH = Symbol('refresh');
   const store = new Map<string, unknown>([
     ['selected_metarecord', { uuid: firstUuid, repo: REPO }],
     ['selected_paths', [pathOf(firstUuid)]],
@@ -73,6 +72,11 @@ async function mountPanel(firstUuid: string) {
     whenVisible: (fn: () => unknown) => void fn(),
     bench: { measure: (_n: string, fn: () => unknown) => fn(), record: noop },
     daemon: {
+      query: async () => ({ uuids: [], nextCursor: null, total: 0 }),
+      treePaths: async (_repo: string, _field: string, uuids: string[]) =>
+        Object.fromEntries(uuids.map((uuid) => [uuid, [] as string[]])),
+      metarecords: async () => new Map(),
+      fields: async () => [],
       request: async () => ({ status: 200, body: null }),
       call: async (method: string, path: string) => {
         const match = /\/metarecords\/([^/?]+)$/.exec(path);
@@ -90,19 +94,7 @@ async function mountPanel(firstUuid: string) {
         pathOf(metarecord.uuid),
       ],
     },
-    cache: {
-      query: async () => ({ uuids: [], nextCursor: null, total: 0 }),
-      fetchMetarecords: async () => {},
-      fetchTreeRefs: async () => {},
-      fetchFields: async () => {},
-      readMetarecord: () => null,
-      readTreeRef: () => [],
-      readFields: () => [],
-      fieldType: () => null,
-      sync: async () => {},
-      subscribe: () => () => {},
-      REFRESH,
-    },
+    changes: { sync: async () => {}, subscribe: () => () => {} },
     query: { parse: async () => null, expand: async () => '', grammarSource: async () => '' },
     pick: { start: async () => '' },
     config: {

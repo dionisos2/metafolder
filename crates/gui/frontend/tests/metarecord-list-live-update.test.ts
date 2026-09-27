@@ -1,14 +1,14 @@
 // The metarecord-list must stay truthful when the daemon changes underneath
 // it: renaming a tracked file (from a shell, another panel, or the file
 // manager) reaches the panel through the background change feed, and the rows
-// on screen have to follow. Driven through the *real* cache — the change feed,
-// its invalidation and the epoch guard are exactly what this is about, so a
-// stub cache would test nothing.
+// on screen have to follow. Driven through the *real* change feed and panel
+// API — what reaches the panel, and when, is exactly what this is about, so a
+// stub would test nothing.
 
 import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest';
 import { readFileSync } from 'node:fs';
 import { resolve as resolvePath } from 'node:path';
-import { createPanelApi, sharedCache } from '../src/lib/panels/api';
+import { changeFeed, createPanelApi } from '../src/lib/panels/api';
 
 const PANEL_DIR = resolvePath(process.cwd(), '../default-config/panel-types/metarecord-list');
 
@@ -32,11 +32,15 @@ const REPO = 'r1';
 const ROOT_PATH = '/tmp/repo';
 const ROOT_UUID = 'u-root';
 const NOTES_UUID = 'u-notes';
+const DOCS_UUID = 'u-docs';
+const REPORT_UUID = 'u-report';
 
 /** A daemon whose tracked file can be renamed mid-test, change feed included. */
 function fakeDaemon() {
   /** repo-relative path of the tracked file, and the on-disk truth. */
   let notesName = 'notes.txt';
+  /** A directory holding one file: renaming it moves the file's path. */
+  let docsName = 'docs';
   let head = 1;
   /** When set, tree resolutions wait on it (to overlap with another call). */
   let stall: Promise<void> | null = null;
@@ -57,8 +61,22 @@ function fakeDaemon() {
       { name: 'mfr_path', value: { type: 'tree_ref', value: { parent: ROOT_UUID, name: notesName } } },
       { name: 'mfr_type', value: { type: 'string', value: 'file' } },
     ]),
+    record(DOCS_UUID, [
+      { name: 'mfr_path', value: { type: 'tree_ref', value: { parent: ROOT_UUID, name: docsName } } },
+      { name: 'mfr_type', value: { type: 'string', value: 'dir' } },
+    ]),
+    record(REPORT_UUID, [
+      { name: 'mfr_path', value: { type: 'tree_ref', value: { parent: DOCS_UUID, name: 'report.txt' } } },
+      { name: 'mfr_type', value: { type: 'string', value: 'file' } },
+    ]),
   ];
-  const pathOf = (uuid: string) => (uuid === ROOT_UUID ? '' : `/${notesName}`);
+  const pathOf = (uuid: string) =>
+    ({
+      [ROOT_UUID]: '',
+      [NOTES_UUID]: `/${notesName}`,
+      [DOCS_UUID]: `/${docsName}`,
+      [REPORT_UUID]: `/${docsName}/report.txt`,
+    })[uuid] ?? '';
 
   function request(method: string, path: string, body: unknown) {
     const bare = path.split('?')[0];
@@ -100,10 +118,12 @@ function fakeDaemon() {
     if (method === 'POST' && bare === `/repos/${REPO}/query`) {
       const b = (body ?? {}) as { query?: { type?: string; uuids?: string[] } };
       const all = records();
+      // The listing leaves the directory out (as a files-only query would):
+      // the file below it is on screen, the directory is not.
       const results =
         b.query?.type === 'uuid_in'
           ? all.filter((r) => (b.query?.uuids ?? []).includes(r.uuid))
-          : all;
+          : all.filter((r) => r.uuid !== DOCS_UUID);
       return { status: 200, body: { results, next_cursor: null, total: results.length } };
     }
     if (method === 'POST' && bare === `/repos/${REPO}/query/fields/resolve-tree`) {
@@ -113,7 +133,7 @@ function fakeDaemon() {
       if (stall) return stall.then(() => ({ status: 200, body: out }));
       return { status: 200, body: out };
     }
-    // A write: the epoch moves, which is the point of the race test.
+    // A write landing while a read is in flight (the race test).
     if (method === 'PUT' && bare.startsWith(`/repos/${REPO}/metarecords/`)) {
       return { status: 200, body: {} };
     }
@@ -128,8 +148,18 @@ function fakeDaemon() {
       head += 1;
       ops.push({ head, entity: NOTES_UUID });
     },
+    /** A directory rename, as the daemon records it: the directory's own
+     *  `mfr_path` changes — one operation, on the directory alone. */
+    renameDir(to: string) {
+      docsName = to;
+      head += 1;
+      ops.push({ head, entity: DOCS_UUID });
+    },
     /** Absolute paths that exist on disk (the orphan check stats these). */
-    exists: (path: string) => path === ROOT_PATH || path === `${ROOT_PATH}/${notesName}`,
+    exists: (path: string) =>
+      [ROOT_PATH, `/${notesName}`, `/${docsName}`, `/${docsName}/report.txt`]
+        .map((p) => (p === ROOT_PATH ? p : `${ROOT_PATH}${p}`))
+        .includes(path),
     /** Holds every tree resolution until the returned function is called. */
     stallTreeResolution() {
       let release = () => {};
@@ -203,7 +233,7 @@ async function settle() {
 }
 
 /** Mounts the panel and registers its teardown: a panel left mounted keeps its
- *  cache subscription alive and would react to the next test's changes. */
+ *  change subscription alive and would react to the next test's changes. */
 async function mountPanel(api: unknown, shadow: ShadowRoot) {
   const mod = await import('../../default-config/panel-types/metarecord-list/main.js');
   const cleanup = await mod.mount(shadow, api as never);
@@ -229,7 +259,7 @@ describe('metarecord-list live update', () => {
   beforeEach(() => {
     // jsdom has no scrollIntoView, which the panel calls when moving the cursor.
     if (!Element.prototype.scrollIntoView) Element.prototype.scrollIntoView = () => {};
-    for (const repo of sharedCache.trackedRepos()) sharedCache.clearRepo(repo);
+    changeFeed._reset(); // the feed is the realm's: each test's daemon starts afresh
     vi.stubGlobal(
       'fetch',
       vi.fn(async () => new Response('[]', { status: 200 })),
@@ -250,9 +280,7 @@ describe('metarecord-list live update', () => {
     // The file is renamed on disk; the watcher records it, and the background
     // change-feed poll picks the operation up.
     daemon.rename('notes-renamed.txt');
-    await sharedCache.sync(REPO, (method, path, body) =>
-      api.daemon.request(method, path, body),
-    );
+    await api.changes.sync(REPO);
     await settle();
 
     const after = rows(shadow);
@@ -261,11 +289,10 @@ describe('metarecord-list live update', () => {
     expect(after.every((r) => !r.orphan)).toBe(true);
   });
 
-  // A path the cache could not hand over yet is not evidence that the file is
-  // gone. An invalidation landing while a resolution is in flight makes the
-  // cache drop that answer (it may already be stale), so the panel reads
-  // "unknown" — and must not turn that into "this file was deleted", which is
-  // what the user sees: healthy rows painted as orphans.
+  // A path the panel has not read yet is not evidence that the file is gone:
+  // while a resolution is in flight the row's path is "unknown" — and must not
+  // turn into "this file was deleted", which is what the user would see:
+  // healthy rows painted as orphans.
   test('an unresolved path is not reported as an orphaned metarecord', async () => {
     const { api, daemon } = setup();
     const shadow = shadowFor();
@@ -276,9 +303,7 @@ describe('metarecord-list live update', () => {
     // A refresh whose tree resolution is still in flight when a write lands.
     const release = daemon.stallTreeResolution();
     daemon.rename('notes-renamed.txt');
-    const polled = sharedCache.sync(REPO, (method, path, body) =>
-      api.daemon.request(method, path, body),
-    );
+    const polled = api.changes.sync(REPO);
     await settle();
     await api.daemon.request('PUT', `/repos/${REPO}/metarecords/${NOTES_UUID}/fields/x`, {});
     release();
@@ -286,5 +311,26 @@ describe('metarecord-list live update', () => {
     await settle();
 
     expect(rows(shadow).every((r) => !r.orphan)).toBe(true);
+  });
+
+  // A path spells every ancestor's name, but renaming a directory writes that
+  // directory alone: the change feed names it, not the files below it — and
+  // those are what the list shows. They must follow all the same.
+  test('renaming a directory repaints the paths of the files below it', async () => {
+    const { api, daemon } = setup();
+    const shadow = shadowFor();
+    await mountPanel(api, shadow);
+    await settle();
+    expect(rows(shadow).map((r) => r.path)).toContain('/docs/report.txt');
+
+    daemon.renameDir('papers');
+    await api.changes.sync(REPO);
+    await vi.waitFor(() =>
+      expect(rows(shadow).map((r) => r.path)).toContain('/papers/report.txt'),
+    );
+
+    const after = rows(shadow);
+    expect(after.map((r) => r.path)).not.toContain('/docs/report.txt');
+    expect(after.every((r) => !r.orphan)).toBe(true);
   });
 });

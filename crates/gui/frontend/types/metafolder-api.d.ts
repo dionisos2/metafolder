@@ -56,7 +56,7 @@ declare namespace Metafolder {
   }
 
   /** A daemon proxy response, as `daemon.request` returns it. */
-  type DaemonResponse = import('../src/lib/panels/cache.js').DaemonResponse;
+  type DaemonResponse = import('../src/lib/panels/reads.js').DaemonResponse;
 
   // ── The API surface ───────────────────────────────────────────────────────
 
@@ -117,15 +117,16 @@ declare namespace Metafolder {
     setContext(text: string | null): void;
     /** The raw round-trip: never throws on a 4xx/5xx, returns `{status, body}`. */
     request(method: string, path: string, body?: unknown): Promise<DaemonResponse>;
-    /** As `request`, but throws the daemon's `{"error": …}` message on >= 400,
-     *  and is transparently served from the shared cache when it can be. */
+    /** As `request`, but throws the daemon's `{"error": …}` message on >= 400.
+     *  Also answers two shorthands the daemon does not serve: `POST
+     *  …/metarecords/batch {uuids}` → `{uuid: metarecord}` and `POST
+     *  …/tree/resolve {field?, uuids}` → `{uuid: [paths]}`. */
     call(method: string, path: string, body?: unknown): Promise<unknown>;
     parseQuery(dsl: string): Promise<unknown>;
     expandQuery(simplified: string): Promise<unknown>;
-    /** The repo-root-relative path of a metarecord's `mfr_path` (memoized). */
+    /** The repo-root-relative path of a metarecord's `mfr_path`. */
     resolvePath(repo: string, uuid: string): Promise<string>;
     resolveTreeRef(repo: string, value: TreeRef): Promise<string>;
-    invalidatePath(repo: string, uuid: string): boolean;
     repoRoot(repo: string): Promise<string>;
     repoInternalDir(repo: string): Promise<string>;
     /** Absolute paths (multi-map: a file may sit at several tree positions). */
@@ -141,19 +142,10 @@ declare namespace Metafolder {
       noIgnore?: boolean;
       ignore?: string[];
     }): Promise<string>;
-  }
-
-  /** Returned by a synchronous cache read when the datum is absent: render a
-   *  placeholder and schedule a refresh. */
-  type Refresh = typeof import('../src/lib/panels/cache.js').REFRESH;
-
-  /** The shared daemon-data cache: `fetch*` (async, populates) then `read*`
-   *  (sync, for render). Cached data is read-only — never mutate it. */
-  interface Cache {
-    /** The page itself, not a DaemonResponse: uuids + the records + cursor +
-     *  optional total. `records` come straight from the response body, so a
-     *  panel renders them directly without re-reading the cache (which a
-     *  concurrent change-feed invalidation may have left unpopulated). */
+    // Reads that return what they read. Nothing is kept anywhere: each is a
+    // daemon round-trip, so the panel keeps what it displays and re-reads when
+    // `changes` says it moved.
+    /** One page of a query: uuids + records + cursor + optional total. */
     query(
       repo: string,
       body: Record<string, unknown>,
@@ -163,28 +155,29 @@ declare namespace Metafolder {
       nextCursor: string | null;
       total: number | null;
     }>;
-    /** Populates the cache; the data is then read back synchronously. */
-    fetchMetarecords(repo: string, uuids: string[]): Promise<void>;
-    fetchTreeRefs(repo: string, field: string, uuids: string[]): Promise<void>;
-    fetchFields(repo: string): Promise<void>;
-    readMetarecord(repo: string, uuid: string): Metarecord | Refresh;
-    readTreeRef(repo: string, field: string, uuid: string): string[] | Refresh;
-    readFields(repo: string): { name: string; type: string }[] | Refresh;
-    /** The single valid type of an existing field, so a form can lock its picker. */
-    fieldType(repo: string, name: string): string | null | Refresh;
-    /** Poll the change feed now — a deliberate freshness point (a query, a
-     *  refresh, a panel becoming visible), on top of the background timer. */
-    sync(repo: string): Promise<void>;
-    /** Subscribe to feed-driven changes so a panel can re-render its displayed
-     *  rows when the daemon reflects a watcher/rollback change (`uuids` are the
-     *  touched metarecords, `null` = a coarse whole-repo refresh). Returns an
-     *  unsubscribe fn — call it in the panel's cleanup. */
-    subscribe(cb: (event: CacheChange) => void): () => void;
-    readonly REFRESH: Refresh;
+    /** The named metarecords that exist, by uuid. */
+    metarecords(repo: string, uuids: string[]): Promise<Map<string, Metarecord>>;
+    /** Each named metarecord's resolved positions in a TreeRef field (`[]`
+     *  for one without any). */
+    treePaths(repo: string, field: string, uuids: string[]): Promise<Record<string, string[]>>;
+    /** The repository's field catalogue: each distinct name and its type. */
+    fields(repo: string): Promise<{ name: string; type: string }[]>;
   }
 
-  /** The payload of a {@link Cache.subscribe} notification. */
-  interface CacheChange {
+  /** The daemon change feed (GET /log/since): what changed that the panel did
+   *  not write itself. */
+  interface Changes {
+    /** Poll the feed now — a deliberate freshness point (a refresh, a
+     *  catch-up after a disk change), on top of the background timer. */
+    sync(repo: string): Promise<void>;
+    /** Runs `cb` on each change (`uuids` are the touched metarecords, `null`
+     *  the whole repository). Returns an unsubscribe fn — call it in the
+     *  panel's cleanup. */
+    subscribe(cb: (event: Change) => void): () => void;
+  }
+
+  /** The payload of a {@link Changes.subscribe} notification. */
+  interface Change {
     repo: string;
     uuids: string[] | null;
   }
@@ -541,7 +534,7 @@ declare namespace Metafolder {
     whenVisible(fn: () => void): void;
     readonly bench: Bench;
     readonly daemon: Daemon;
-    readonly cache: Cache;
+    readonly changes: Changes;
     readonly query: Query;
     readonly pick: Pick;
     readonly config: PanelConfig;

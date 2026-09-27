@@ -75,7 +75,7 @@ function stub() {
       repoRoot: async () => '/repo',
       repoInternalDir: async () => '/repo/.metafolder/internal',
     },
-    cache: { sync: vi.fn(async () => {}), subscribe: vi.fn(() => () => {}) },
+    changes: { sync: vi.fn(async () => {}), subscribe: vi.fn(() => () => {}) },
     workspace: {
       get: async (key: string) => (key === 'active_repo' ? 'r' : (vars[key] ?? null)),
       set: setVar,

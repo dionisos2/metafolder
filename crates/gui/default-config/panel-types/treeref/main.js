@@ -44,7 +44,7 @@ const DEFAULT_REF_FIELD = 'tag';
  * @param {ShadowRoot} root @param {MetafolderApi} metafolder
  */
 export async function mount(root, metafolder) {
-  const { daemon, workspace, commands, statusBar, cache } = metafolder;
+  const { daemon, workspace, commands, statusBar } = metafolder;
   const PAGE = metafolder.pageSize ?? PAGE_DEFAULT;
   const defaultField = metafolder.defaults.field ?? DEFAULT_FIELD;
   const defaultRefField = metafolder.defaults.refField ?? DEFAULT_REF_FIELD;
@@ -292,7 +292,6 @@ export async function mount(root, metafolder) {
     }
     try {
       if (reset) {
-        await cache.sync(r);
         children = [];
         nextCursor = null;
         cursorIndex = -1;
@@ -314,7 +313,7 @@ export async function mount(root, metafolder) {
             nextCursor = null;
           }
         } else {
-          const result = await cache.query(r, {
+          const result = await daemon.query(r, {
             query: childrenQuery(field, current),
             select: '*',
             limit: PAGE,

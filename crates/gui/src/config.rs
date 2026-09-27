@@ -72,25 +72,6 @@ impl Default for Settings {
     }
 }
 
-/// In-realm daemon-data cache budgets (the `[cache]` table), handed to the
-/// frontend cache singleton (LRU eviction beyond each cap).
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-#[serde(rename_all = "kebab-case", default)]
-pub struct CacheSizes {
-    /// Max cached metarecords.
-    pub max_entities: u32,
-    /// Max cached TreeRef paths.
-    pub max_tree_refs: u32,
-    /// Max cached query results.
-    pub max_queries: u32,
-}
-
-impl Default for CacheSizes {
-    fn default() -> Self {
-        CacheSizes { max_entities: 20000, max_tree_refs: 20000, max_queries: 256 }
-    }
-}
-
 /// UX timing knobs shared by the panels (the `[panels]` table), handed to each
 /// panel through the `metafolder` object (`metafolder.settings`).
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -145,8 +126,6 @@ pub struct GuiConfig {
     pub page_size: PageSizes,
     /// Miscellaneous Rust-side runtime settings (`[settings]`).
     pub settings: Settings,
-    /// In-realm daemon-data cache budgets (`[cache]`).
-    pub cache: CacheSizes,
     /// UX timing knobs shared by the panels (`[panels]`).
     pub panels: PanelSettings,
     /// Per-panel-type default values (`[panel-defaults.<panel-type>]`), passed
@@ -271,7 +250,6 @@ impl Default for GuiConfig {
             gui_port: 7524,
             page_size: PageSizes::default(),
             settings: Settings::default(),
-            cache: CacheSizes::default(),
             panels: PanelSettings::default(),
             panel_defaults: PanelDefaults::new(),
             picker_seeds: std::collections::HashMap::new(),
@@ -587,15 +565,12 @@ mod tests {
     }
 
     #[test]
-    fn test_cache_sizes_default_and_override() {
-        let empty: GuiConfig = toml::from_str("").unwrap();
-        assert_eq!(empty.cache, CacheSizes::default());
-        assert_eq!(empty.cache.max_entities, 20000);
-        assert_eq!(empty.cache.max_queries, 256);
-
-        let parsed: GuiConfig = toml::from_str("[cache]\nmax-queries = 1000\n").unwrap();
-        assert_eq!(parsed.cache.max_queries, 1000);
-        assert_eq!(parsed.cache.max_entities, 20000);
+    fn test_a_leftover_cache_table_is_ignored() {
+        // The GUI kept a daemon-data cache whose budgets lived in `[cache]`; it
+        // is gone, and a config written for it must still load.
+        let parsed: GuiConfig =
+            toml::from_str("[cache]\nmax-entities = 5\nmax-queries = 1000\n").unwrap();
+        assert_eq!(parsed, toml::from_str::<GuiConfig>("").unwrap());
     }
 
     #[test]

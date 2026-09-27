@@ -32,8 +32,6 @@ pub struct App {
     pub page_sizes: crate::config::PageSizes,
     /// Rust-side runtime settings (config.toml `[settings]`).
     pub settings: crate::config::Settings,
-    /// Frontend daemon-data cache budgets (config.toml `[cache]`).
-    pub cache_sizes: crate::config::CacheSizes,
     /// Shared panel UX timing knobs (config.toml `[panels]`).
     pub panel_settings: crate::config::PanelSettings,
     /// Per-panel-type default values (config.toml `[panel-defaults.<type>]`).
@@ -105,8 +103,6 @@ pub struct InitialState {
     pub daemon_url: String,
     /// Per-panel page sizes, keyed by panel-type name (kebab-case).
     pub page_sizes: crate::config::PageSizes,
-    /// Frontend daemon-data cache budgets (config.toml `[cache]`).
-    pub cache_sizes: crate::config::CacheSizes,
     /// Shared panel UX timing knobs, exposed to panels as `metafolder.settings`.
     pub panel_settings: crate::config::PanelSettings,
     /// Per-panel-type defaults, exposed to each panel as `metafolder.defaults`
@@ -129,7 +125,6 @@ pub fn get_initial_state(app: AppHandle) -> Result<InitialState, String> {
         gui_port: app.gui_port,
         daemon_url: app.daemon.base_url(),
         page_sizes: app.page_sizes.clone(),
-        cache_sizes: app.cache_sizes.clone(),
         panel_settings: app.panel_settings.clone(),
         panel_defaults: app.panel_defaults.clone(),
         session_token: app.gui_token.to_string(),

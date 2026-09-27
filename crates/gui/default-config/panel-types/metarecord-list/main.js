@@ -88,11 +88,7 @@ function parseColumnsOr(spec, fallback) {
  * @param {ShadowRoot} root @param {MetafolderApi} metafolder
  */
 export async function mount(root, metafolder) {
-  const { daemon, workspace, commands, statusBar, query, bench, cache } = metafolder;
-  // Annotated: an unannotated `const x = cache.REFRESH` widens the unique symbol
-  // to plain `symbol`, and `value === x` then narrows nothing.
-  /** @type {Metafolder.Refresh} */
-  const REFRESH = cache.REFRESH;
+  const { daemon, workspace, commands, statusBar, query, bench, changes } = metafolder;
   const defaultPageSize = metafolder.pageSize ?? DEFAULT_PAGE_SIZE_FALLBACK;
   // UX timing knobs (config.toml `[panels]`), with the module fallbacks below.
   const { settings } = metafolder;
@@ -253,10 +249,59 @@ export async function mount(root, metafolder) {
   });
   const queryHistory = attachHistory(queryInput, { zone: 'metarecord-list:query', ...historyDeps });
 
-  // ── Data access (all daemon data comes from the shared cache) ─────────────
+  // ── Display data ──────────────────────────────────────────────────────
+  // What the rows show besides their own fields — tree paths, followed Ref
+  // targets, their paths — read from the daemon per page and kept here, for
+  // the rows this panel displays only. Nothing is shared or cached: a change
+  // the feed reports makes the panel re-read it.
 
-  /** @type {string|null} absolute root path of the active repo (cached once) */
+  /** @type {string|null} absolute root path of the active repo (read once) */
   let repoRoot = null;
+
+  /**
+   * Keyed display data, where a slower, older read never overwrites a newer
+   * one: each read carries the sequence number of the prepare that made it.
+   * `undefined` from `get` means *not read yet* — never *absent*.
+   * @template T
+   */
+  function createDisplayStore() {
+    /** @type {Map<string, {seq: number, value: T}>} */
+    const entries = new Map();
+    return {
+      /** @param {string} key @param {number} seq @param {T} value */
+      put(key, seq, value) {
+        const current = entries.get(key);
+        if (!current || current.seq <= seq) entries.set(key, { seq, value });
+      },
+      /** @param {string} key @returns {T|undefined} */
+      get: (key) => entries.get(key)?.value,
+      clear: () => entries.clear(),
+    };
+  }
+  /** `${field}|${uuid}` → the metarecord's resolved paths in that TreeRef field
+   *  (the displayed rows *and* the followed Ref targets). */
+  /** @type {ReturnType<typeof createDisplayStore<string[]>>} */
+  const treePaths = createDisplayStore();
+  /** uuid → a followed Ref target (`null`: it does not exist). */
+  /** @type {ReturnType<typeof createDisplayStore<Metafolder.Metarecord|null>>} */
+  const targetRecords = createDisplayStore();
+  let prepareSeq = 0;
+  /** @param {string} field @param {string} uuid */
+  const pathsIn = (field, uuid) => treePaths.get(`${field}|${uuid}`);
+
+  /** Field name → its value type, for the finder's per-field mode. Re-read on
+   *  every fresh query (one in-memory daemon call). */
+  /** @type {Map<string, string>} */
+  let fieldTypes = new Map();
+  async function readFieldTypes() {
+    const r = repo;
+    if (!r) return;
+    try {
+      fieldTypes = new Map((await daemon.fields(r)).map((f) => [f.name, f.type]));
+    } catch {
+      // Unknown types only cost the finder its per-field mode detection.
+    }
+  }
 
   /** @param {Metafolder.Metarecord} metarecord @param {string} field */
   function hasTreeRef(metarecord, field) {
@@ -265,9 +310,8 @@ export async function mount(root, metafolder) {
 
   const treeFieldsOf = () => new Set(['mfr_path', ...treeRefFields(columns)]);
 
-  // Pre-fetches the display data for the ~ columns into the shared cache, then
-  // fills the columns from cache reads — rendering stays synchronous and never
-  // mutates the (shared, read-only) cached metarecords.
+  // Reads the display data the columns need, then fills them — rendering stays
+  // synchronous and never mutates the metarecords themselves.
   /** @param {Metafolder.Metarecord[]} subset @returns {Promise<void>} */
   function prepare(subset) {
     return bench.measure('mf:list:enrich', () => prepareNow(subset));
@@ -279,28 +323,45 @@ export async function mount(root, metafolder) {
     // narrow inside the callbacks below.
     const r = repo;
     if (subset.length === 0 || !r) return;
+    const seq = ++prepareSeq;
     if (repoRoot === null) repoRoot = await daemon.repoRoot(r);
+    /** @param {string} field @param {string[]} uuids */
+    const readTree = async (field, uuids) => {
+      const byUuid = await daemon.treePaths(r, field, uuids).catch(() => null);
+      if (!byUuid) return; // unanswered: those rows stay "not read yet"
+      for (const uuid of uuids) {
+        const paths = byUuid[uuid] ?? [];
+        // A row's orphan state was judged from its path: a new path (its own
+        // move, or an ancestor's rename) needs a new judgement.
+        const before = pathsIn(field, uuid);
+        if (field === 'mfr_path' && before && before.join('\n') !== paths.join('\n')) {
+          orphanCache.delete(uuid);
+        }
+        treePaths.put(`${field}|${uuid}`, seq, paths);
+      }
+    };
     await Promise.all(
       [...treeFieldsOf()].map((field) =>
-        cache.fetchTreeRefs(
-          r,
+        readTree(
           field,
           subset.filter((m) => hasTreeRef(m, field)).map((m) => m.uuid),
         ),
       ),
     );
     const targetUuids = refTargetUuids(columns, subset);
-    await cache.fetchMetarecords(r, targetUuids);
+    const targets = await daemon.metarecords(r, targetUuids).catch(() => null);
+    if (targets) {
+      for (const uuid of targetUuids) targetRecords.put(uuid, seq, targets.get(uuid) ?? null);
+    }
     // Phase 2: `tag>path:path` columns also need the followed targets' own tree
     // paths resolved (same machinery, on the target uuids).
     await Promise.all(
       followedTreeFields(columns).map((field) =>
-        cache.fetchTreeRefs(
-          r,
+        readTree(
           field,
           targetUuids.filter((u) => {
-            const t = cache.readMetarecord(r, u);
-            return t !== REFRESH && hasTreeRef(t, field);
+            const t = targetRecords.get(u);
+            return t != null && hasTreeRef(t, field);
           }),
         ),
       ),
@@ -312,14 +373,12 @@ export async function mount(root, metafolder) {
     const watchRels = new Set();
     for (const m of subset) {
       if (!hasTreeRef(m, 'mfr_path')) continue;
-      const rels = cache.readTreeRef(r, 'mfr_path', m.uuid);
-      if (rels === REFRESH) continue;
-      for (const rel of rels) watchRels.add(rel);
+      for (const rel of pathsIn('mfr_path', m.uuid) ?? []) watchRels.add(rel);
     }
     const byPath = await fetchWatched(daemon, r, [...watchRels]);
     for (const m of subset) {
-      const rels = hasTreeRef(m, 'mfr_path') ? cache.readTreeRef(r, 'mfr_path', m.uuid) : [];
-      if (rels === REFRESH || rels.length === 0) {
+      const rels = hasTreeRef(m, 'mfr_path') ? pathsIn('mfr_path', m.uuid) : [];
+      if (rels === undefined || rels.length === 0) {
         watchByUuid.delete(m.uuid); // nothing to judge (a deleted record, say)
         continue;
       }
@@ -327,48 +386,43 @@ export async function mount(root, metafolder) {
       if (summary) watchByUuid.set(m.uuid, summary);
       else watchByUuid.delete(m.uuid);
     }
-    fillFromCache(subset);
+    fillFromDisplayData(subset);
   }
 
   /** @param {Metafolder.Metarecord[]} subset */
-  function fillFromCache(subset) {
-    const r = repo;
-    if (!r) return;
+  function fillFromDisplayData(subset) {
     /** @type {Record<string, Record<string, string[]>>} */
     const pathsByField = {};
     for (const field of treeFieldsOf()) {
       pathsByField[field] = {};
       for (const m of subset) {
-        const paths = cache.readTreeRef(r, field, m.uuid);
-        if (paths !== REFRESH) pathsByField[field][m.uuid] = paths;
+        const paths = pathsIn(field, m.uuid);
+        if (paths !== undefined) pathsByField[field][m.uuid] = paths;
       }
     }
     const targetUuids = refTargetUuids(columns, subset);
     /** @type {Map<string, Metafolder.Metarecord|null>} */
     const targets = new Map();
-    for (const uuid of targetUuids) {
-      const target = cache.readMetarecord(r, uuid);
-      targets.set(uuid, target === REFRESH ? null : target);
-    }
+    for (const uuid of targetUuids) targets.set(uuid, targetRecords.get(uuid) ?? null);
     /** @type {Record<string, Record<string, string[]>>} */
     const followedPathsByField = {};
     for (const field of followedTreeFields(columns)) {
       followedPathsByField[field] = {};
       for (const uuid of targetUuids) {
-        const paths = cache.readTreeRef(r, field, uuid);
-        if (paths !== REFRESH) followedPathsByField[field][uuid] = paths;
+        const paths = pathsIn(field, uuid);
+        if (paths !== undefined) followedPathsByField[field][uuid] = paths;
       }
     }
     fillColumns(columns, subset, { pathsByField, targets, followedPathsByField });
   }
 
-  // Re-resolve + re-render the displayed rows after the change feed reports
-  // they changed daemon-side (e.g. the watcher reflected a GUI-initiated rename
-  // ~500 ms later, so mfr_path — and thus the orphan state and any path-derived
-  // column — is only now up to date). Non-disruptive: it keeps the loaded
-  // pages, cursor and selection, only re-resolving the (now invalidated) tree
-  // refs from the cache and repainting. Without this, a false "orphaned" marker
-  // painted from the pre-rename path would linger until a manual refresh.
+  // Re-read + re-render the displayed rows' display data after the change feed
+  // reports a change daemon-side (e.g. the watcher recorded a GUI-initiated
+  // rename a quiet period later, so mfr_path — and thus the orphan state and
+  // any path-derived column — is only now up to date). Non-disruptive: it keeps
+  // the loaded pages, cursor and selection, only re-reading the tree paths and
+  // repainting. Without this, a false "orphaned" marker painted from the
+  // pre-rename path would linger until a manual refresh.
   async function refreshDisplayed() {
     if (metarecords.length === 0) return;
     await prepareNow(metarecords);
@@ -376,27 +430,25 @@ export async function mount(root, metafolder) {
   }
 
   // Absolute filesystem paths of a metarecord's mfr_path positions (read-only,
-  // from the cache + the repo root) — replaces the old per-metarecord `.paths`.
+  // from the display data + the repo root).
   /** @param {Metafolder.Metarecord} metarecord @returns {string[]} */
   function pathsOf(metarecord) {
     const r = repo;
     const rootPath = repoRoot;
     if (!r || rootPath === null) return [];
-    const rel = cache.readTreeRef(r, 'mfr_path', metarecord.uuid);
-    if (rel === REFRESH) return [];
+    const rel = pathsIn('mfr_path', metarecord.uuid);
+    if (rel === undefined) return [];
     // Resolved paths are leading-"/"-rooted ('' is the repo root itself), so the
     // absolute path is a plain concatenation with the repo root.
     return rel.map((p) => (p === '' ? rootPath : `${rootPath}${p}`));
   }
 
-  // Whether the cache can currently answer for a metarecord's mfr_path
-  // positions. False while a fresh resolution is pending (REFRESH): an
-  // invalidation landing on an in-flight resolve makes the cache drop that
-  // answer, and the gap is not evidence about the file.
+  // Whether the panel has read a metarecord's mfr_path positions. False until
+  // the page's read lands (or when it failed): the gap is not evidence about
+  // the file.
   /** @param {Metafolder.Metarecord} metarecord */
   function pathsResolved(metarecord) {
-    const r = repo;
-    return !!r && cache.readTreeRef(r, 'mfr_path', metarecord.uuid) !== REFRESH;
+    return !!repo && pathsIn('mfr_path', metarecord.uuid) !== undefined;
   }
 
   // Whether a metarecord's mfr_type is a directory (picks the paste target for
@@ -416,7 +468,7 @@ export async function mount(root, metafolder) {
   // clause (mode auto-detected per field from the catalog). null = match all.
   function effectiveQuery() {
     const r = repo;
-    const targets = finderTargets(finderFields, (f) => (r ? cache.fieldType(r, f) : null));
+    const targets = finderTargets(finderFields, (f) => (r ? (fieldTypes.get(f) ?? null) : null));
     return composeQuery(queryIR, finderClause(splitTerms(finderText), targets));
   }
 
@@ -425,7 +477,7 @@ export async function mount(root, metafolder) {
   // finder-vectors.json). null = match all.
   function effectiveQueryText() {
     const r = repo;
-    const targets = finderTargets(finderFields, (f) => (r ? cache.fieldType(r, f) : null));
+    const targets = finderTargets(finderFields, (f) => (r ? (fieldTypes.get(f) ?? null) : null));
     return composeQueryText(queryText, finderClauseText(splitTerms(finderText), targets));
   }
 
@@ -438,10 +490,10 @@ export async function mount(root, metafolder) {
     if (!r || loading) return false;
     loading = true;
     try {
-      // A reset fetch is a deliberate freshness point (query, refresh, display):
-      // poll the change feed so stale cached data is dropped before we read.
-      if (reset) await cache.sync(r);
       if (reset) {
+        // The finder picks each field's match mode from its type: read the
+        // catalogue fresh (a field may have been added or retyped).
+        await readFieldTypes();
         // The checked selection outlives the list it was gathered in, so
         // nothing is dropped here for merely not matching the query — but a
         // metarecord that no longer exists is (it could never be shown or
@@ -463,6 +515,8 @@ export async function mount(root, metafolder) {
         countSeq += 1; // a count still on its way belongs to the old query
         orphanCache = new Map();
         watchByUuid = new Map();
+        treePaths.clear();
+        targetRecords.clear();
         void refreshMounts(); // a volume may have been plugged in or pulled out
       }
       // The query actually run (base + finder clause). Published on every reset
@@ -478,7 +532,7 @@ export async function mount(root, metafolder) {
       }
       let result;
       try {
-        result = await cache.query(r, {
+        result = await daemon.query(r, {
           query: effQuery,
           select: '*',
           limit: pageSize,
@@ -494,9 +548,6 @@ export async function mount(root, metafolder) {
         return;
       }
       fetchError = null; // a fresh page arrived; clear any stale error state
-      // The page's metarecords come straight from the query result — not re-read
-      // from the cache, which a concurrent change-feed invalidation may have left
-      // unpopulated (that would drop every row and render an empty list).
       const fetched = /** @type {Metafolder.Metarecord[]} */ (result.records);
       metarecords = metarecords.concat(fetched);
       nextCursor = result.nextCursor;
@@ -583,7 +634,7 @@ export async function mount(root, metafolder) {
   // disk stat (no daemon traffic during rendering).
   const orphanCtx = {
     // Async by contract (orphanState awaits it), though the paths are already
-    // resolved in the cache — the orphan check costs no daemon traffic.
+    // read with the page — the orphan check costs no daemon traffic.
     /** @param {Metafolder.Metarecord} metarecord */
     metarecordPaths: (metarecord) => Promise.resolve(pathsOf(metarecord)),
     /** @param {string} path — `fs.exists`, not `fs.stat`: the latter follows a
@@ -630,7 +681,7 @@ export async function mount(root, metafolder) {
       node.title = unavailableLabel(unmounted);
       return;
     }
-    // An mfr_path the cache has not resolved yet says nothing about the file.
+    // An mfr_path the panel has not read yet says nothing about the file.
     // Reading that gap as "no paths" would make the orphan check conclude the
     // file is missing and paint a healthy row as an orphan — leave it unmarked
     // and decide on a later render, once the path is known. Nothing is cached
@@ -1206,8 +1257,8 @@ export async function mount(root, metafolder) {
         `${op.verb} "${name}": ${updated} metarecord${updated === 1 ? '' : 's'} changed.`,
         statusMessageMs,
       );
-      // Refresh this list and any metarecord-detail mirror (the cache picks the
-      // write up via the change feed on the next reset fetch).
+      // Refresh this list and any metarecord-detail mirror (each re-reads the
+      // daemon).
       await workspace.set('metarecords:dirty', Date.now());
     } catch (error) {
       bulkError.textContent = messageOf(error);
@@ -1706,8 +1757,8 @@ export async function mount(root, metafolder) {
       await recomputeQuery();
     }
     if (repo !== null) {
-      // Warm the field catalog so the finder can auto-detect osm/osmd per field.
-      await cache.fetchFields(repo).catch(() => {});
+      // Read the field catalog so the finder can auto-detect osm/osmd per field.
+      await readFieldTypes();
       // Run eagerly: show the repo's contents on first display rather than
       // waiting for an explicit apply/refresh (searches are fast enough).
       queryRan = true;
@@ -1738,7 +1789,7 @@ export async function mount(root, metafolder) {
   function scheduleCatchupSync() {
     if (!repo) return;
     const target = repo;
-    catchup.schedule(target, [200, 1300], () => void cache.sync(target));
+    catchup.schedule(target, [200, 1300], () => void changes.sync(target));
   }
   workspace.onChange('metarecords:dirty', () => {
     metafolder.whenVisible(deferredStart);
@@ -1751,19 +1802,16 @@ export async function mount(root, metafolder) {
 
   // Keep the list live when the daemon reflects a change out-of-band from our
   // own query round-trip — chiefly a watcher-driven update (a GUI rename lands
-  // in the daemon ~500 ms after the fs.move, well after our immediate
-  // `metarecords:dirty` refresh already read the stale path). The background
-  // change-feed poll invalidates the cache; here we react to it so the affected
-  // rows are re-resolved and repainted (clearing any stale orphan marker).
-  const unsubscribeCache = cache.subscribe(({ repo: changedRepo, uuids }) => {
+  // in the daemon a quiet period after the fs.move, well after our immediate
+  // `metarecords:dirty` refresh already read the stale path). Every change of
+  // the repository re-reads the displayed rows' paths, not only a change *to*
+  // a displayed row: a path spells every ancestor's name, and renaming a
+  // directory writes that directory alone — the rows below it, which are what
+  // is on screen, are never named by the feed.
+  const unsubscribeChanges = changes.subscribe(({ repo: changedRepo, uuids }) => {
     if (changedRepo !== repo || metarecords.length === 0) return;
-    if (uuids === null) {
-      orphanCache = new Map(); // coarse refresh: the whole repo may have changed
-    } else {
-      const displayed = new Set(metarecords.map((m) => m.uuid));
-      if (!uuids.some((u) => displayed.has(u))) return; // nothing on screen changed
-      for (const u of uuids) orphanCache.delete(u);
-    }
+    if (uuids === null) orphanCache = new Map(); // the whole repo may have changed
+    else for (const u of uuids) orphanCache.delete(u);
     metafolder.whenVisible(() => void refreshDisplayed());
   });
   /** @param {unknown} value */
@@ -1826,7 +1874,7 @@ export async function mount(root, metafolder) {
     catchup.cancel();
     finderHistory.detach();
     queryHistory.detach();
-    unsubscribeCache();
+    unsubscribeChanges();
     document.removeEventListener('mousemove', /** @type {EventListener} */ (onMouseMove));
     document.removeEventListener('mouseup', onMouseUp);
     detachScroll();

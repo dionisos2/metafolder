@@ -49,6 +49,14 @@ function stubApi(vars: Record<string, unknown>, calls: Call[]) {
       whenVisible: (fn: () => void) => fn(),
       bench: { measure: (_n: string, fn: () => unknown) => fn(), record: noop },
       daemon: {
+        query: async (repo: string, body: unknown) => {
+                  calls.push({ method: 'QUERY', path: `/repos/${repo}/query`, body });
+                  return { records: [], nextCursor: null, total: 0 };
+                },
+        treePaths: async (_repo: string, _field: string, uuids: string[]) =>
+          Object.fromEntries(uuids.map((uuid) => [uuid, [] as string[]])),
+        metarecords: async () => new Map(),
+        fields: async () => [],
         request: async () => ({ status: 200, body: null }),
         call: async (method: string, path: string, body: unknown) => {
           calls.push({ method, path, body });
@@ -65,22 +73,7 @@ function stubApi(vars: Record<string, unknown>, calls: Call[]) {
         repoInternalDir: async () => '/repo/.metafolder/internal',
         metarecordPaths: async () => [],
       },
-      cache: {
-        query: async (repo: string, body: unknown) => {
-          calls.push({ method: 'QUERY', path: `/repos/${repo}/query`, body });
-          return { records: [], nextCursor: null, total: 0 };
-        },
-        fetchMetarecords: async () => {},
-        fetchTreeRefs: async () => {},
-        fetchFields: async () => {},
-        readMetarecord: () => null,
-        readTreeRef: () => [],
-        readFields: () => [],
-        fieldType: () => null,
-        sync: async () => {},
-        subscribe: () => () => {},
-        REFRESH: Symbol('refresh'),
-      },
+      changes: { sync: async () => {}, subscribe: () => () => {} },
       query: {
         parse: async (dsl: string) => ({ dsl }),
         expand: async (text: string) => text,

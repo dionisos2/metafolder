@@ -47,7 +47,6 @@ async function mountPanel(fields: Field[], catalog: Record<string, string> = {},
   const specs = new Map<string, Spec>();
   const calls: Call[] = [];
   const noop = () => {};
-  const REFRESH = Symbol('refresh');
   const store = new Map<string, unknown>([
     ['selected_metarecord', { uuid: UUID, repo: REPO }],
     ...Object.entries(vars),
@@ -66,6 +65,11 @@ async function mountPanel(fields: Field[], catalog: Record<string, string> = {},
     whenVisible: (fn: () => unknown) => void fn(),
     bench: { measure: (_n: string, fn: () => unknown) => fn(), record: noop },
     daemon: {
+      query: async () => ({ uuids: [], nextCursor: null, total: 0 }),
+      treePaths: async (_repo: string, _field: string, uuids: string[]) =>
+        Object.fromEntries(uuids.map((uuid) => [uuid, [] as string[]])),
+      metarecords: async () => new Map(),
+      fields: async () => Object.entries(catalog).map(([name, type]) => ({ name, type })),
       request: async () => ({ status: 200, body: null }),
       call: async (method: string, path: string, body: unknown = null) => {
         calls.push({ method, path, body });
@@ -87,19 +91,7 @@ async function mountPanel(fields: Field[], catalog: Record<string, string> = {},
       repoInternalDir: async () => '/tmp/repo/.metafolder/internal',
       metarecordPaths: async () => [],
     },
-    cache: {
-      query: async () => ({ uuids: [], nextCursor: null, total: 0 }),
-      fetchMetarecords: async () => {},
-      fetchTreeRefs: async () => {},
-      fetchFields: async () => {},
-      readMetarecord: () => null,
-      readTreeRef: () => [],
-      readFields: () => Object.entries(catalog).map(([name, type]) => ({ name, type })),
-      fieldType: (_repo: string, name: string) => catalog[name] ?? null,
-      sync: async () => {},
-      subscribe: () => () => {},
-      REFRESH,
-    },
+    changes: { sync: async () => {}, subscribe: () => () => {} },
     query: { parse: async () => null, expand: async () => '', grammarSource: async () => '' },
     pick: { start: async () => '' },
     config: {

@@ -63,8 +63,6 @@ export interface InitialState {
   daemon_url: string;
   /** Per-panel progressive-loading page sizes, keyed by panel-type name. */
   page_sizes: Record<string, number>;
-  /** In-realm daemon-data cache budgets (config.toml `[cache]`). */
-  cache_sizes: CacheSizes;
   /** Shared panel UX timing knobs (config.toml `[panels]`), kebab-cased keys. */
   panel_settings: Record<string, number>;
   /** Per-panel-type defaults, keyed by panel-type name (config.toml
@@ -74,9 +72,3 @@ export interface InitialState {
   session_token: string;
 }
 
-/** Daemon-data cache budgets, from config.toml `[cache]`. */
-export interface CacheSizes {
-  'max-entities': number;
-  'max-tree-refs': number;
-  'max-queries': number;
-}

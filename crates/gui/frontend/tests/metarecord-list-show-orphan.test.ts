@@ -58,6 +58,16 @@ function stubApi(handlers: Map<string, Handler>, calls: Call[], queryCalls: unkn
       whenVisible: (fn: () => void) => fn(),
       bench: { measure: (_n: string, fn: () => unknown) => fn(), record: noop },
       daemon: {
+        query: queryCalls
+                  ? async (_repo: string, ir: unknown) => {
+                      queryCalls.push(ir);
+                      return { records: [], nextCursor: null, total: 0 };
+                    }
+                  : async () => ({ records: [], nextCursor: null, total: 0 }),
+        treePaths: async (_repo: string, _field: string, uuids: string[]) =>
+          Object.fromEntries(uuids.map((uuid) => [uuid, [] as string[]])),
+        metarecords: async () => new Map(),
+        fields: async () => [],
         request: async () => ({ status: 200, body: null }),
         call: daemonStub(calls),
         parseQuery: async () => null,
@@ -69,24 +79,7 @@ function stubApi(handlers: Map<string, Handler>, calls: Call[], queryCalls: unkn
         repoInternalDir: async () => '/tmp/repo/.metafolder/internal',
         metarecordPaths: async () => [],
       },
-      cache: {
-        query: queryCalls
-          ? async (_repo: string, ir: unknown) => {
-              queryCalls.push(ir);
-              return { records: [], nextCursor: null, total: 0 };
-            }
-          : async () => ({ records: [], nextCursor: null, total: 0 }),
-        fetchMetarecords: async () => {},
-        fetchTreeRefs: async () => {},
-        fetchFields: async () => {},
-        readMetarecord: () => null,
-        readTreeRef: () => [],
-        readFields: () => [],
-        fieldType: () => null,
-        sync: async () => {},
-        subscribe: () => () => {},
-        REFRESH: Symbol('refresh'),
-      },
+      changes: { sync: async () => {}, subscribe: () => () => {} },
       query: {
         // The real parser lives in Rust; the marker query is the only DSL these
         // tests type, so the stub answers exactly it.

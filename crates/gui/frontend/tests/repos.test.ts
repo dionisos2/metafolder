@@ -11,7 +11,7 @@ import { beforeEach, describe, expect, test, vi } from 'vitest';
 import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { createPanelApi } from '../src/lib/panels/api';
-import { sharedCache } from '../src/lib/panels/api';
+import { changeFeed } from '../src/lib/panels/api';
 import { mount } from '../../default-config/panel-types/repos/main.js';
 
 /** The shell's mount path: index.html body (minus scripts/styles) in a Shadow root. */
@@ -220,9 +220,9 @@ function submitForm(shadow: ShadowRoot, id: string, values: Record<string, strin
 
 describe('repos panel', () => {
   beforeEach(() => {
-    // A fresh realm per test: the cache is a module-level singleton shared by
-    // every panel, so a repo listed in one test must not leak into the next.
-    for (const repo of sharedCache.trackedRepos()) sharedCache.clearRepo(repo);
+    // A fresh realm per test: the change feed is a module-level singleton
+    // shared by every panel, so one test's baselines must not leak into the next.
+    changeFeed._reset();
     vi.useRealTimers();
   });
 

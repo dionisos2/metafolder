@@ -52,7 +52,7 @@ const PAGE_DEFAULT = 200;
  * @param {ShadowRoot} root @param {MetafolderApi} metafolder
  */
 export async function mount(root, metafolder) {
-  const { fs, daemon, workspace, commands, statusBar, bench, cache, trash } = metafolder;
+  const { fs, daemon, workspace, commands, statusBar, bench, changes, trash } = metafolder;
   // Standard status-message duration (config.toml `[panels]`), with the former
   // hard-coded fallback.
   const statusMessageMs = metafolder.settings.statusMessageMs ?? 5000;
@@ -940,7 +940,6 @@ export async function mount(root, metafolder) {
   async function refresh() {
     if (currentDir === null) return;
     const keep = cursorIndex;
-    if (repo) await cache.sync(repo);
     await open(currentDir);
     if (keep >= 0) await select(keep);
   }
@@ -1140,7 +1139,6 @@ export async function mount(root, metafolder) {
     );
     if (repo !== null) {
       try {
-        await cache.sync(repo); // fresh tracked status on display
         repoRoot = await daemon.repoRoot(repo);
         internalDir = await daemon.repoInternalDir(repo);
       } catch (error) {
@@ -1187,20 +1185,19 @@ export async function mount(root, metafolder) {
   // immediate refresh read the not-yet-repaired state, so a renamed file would
   // linger as "untracked". Nudge the change feed a couple of times so the
   // repaired tracked status is picked up promptly rather than only on the 7 s
-  // background poll; each nudge invalidates the cache and the subscription below
-  // repaints.
+  // background poll; a nudge that finds a change makes the subscription below
+  // repaint.
   // The nudges are timed from the daemon's quiet period (GET /watch), not a
   // guess: shorter than it, they re-read the stale state.
   const catchup = createCatchup(daemon);
   function scheduleCatchupSync() {
     if (!repo) return;
     const target = repo;
-    catchup.schedule(target, [200, 1300], () => void cache.sync(target));
+    catchup.schedule(target, [200, 1300], () => void changes.sync(target));
   }
 
   async function onMetarecordsDirty() {
     if (currentDir === null) return; // not started yet (still hidden)
-    if (repo) await cache.sync(repo); // pick up the change before re-querying
     await refreshTracked();
     scheduleCatchupSync();
   }
@@ -1209,9 +1206,9 @@ export async function mount(root, metafolder) {
   // Keep the tracked badges live when the daemon reflects a change out of band
   // from our own round-trip — chiefly the watcher repairing a rename's
   // metarecord↔file link a quiet period after the fs.move, or an external change. The
-  // background change-feed poll (and our catch-up nudges above) invalidate the
-  // cache; here we react by re-querying this directory's tracked status.
-  const unsubscribeCache = cache.subscribe(({ repo: changedRepo }) => {
+  // background change-feed poll (and our catch-up nudges above) report it; here
+  // we react by re-querying this directory's tracked status.
+  const unsubscribeChanges = changes.subscribe(({ repo: changedRepo }) => {
     if (changedRepo !== repo || currentDir === null) return;
     metafolder.whenVisible(() => void refreshTracked());
   });
@@ -1220,7 +1217,7 @@ export async function mount(root, metafolder) {
 
   return () => {
     detachScroll();
-    unsubscribeCache();
+    unsubscribeChanges();
     catchup.cancel();
   };
 }

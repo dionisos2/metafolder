@@ -84,6 +84,11 @@ async function mountPanel(watchResults: Record<string, unknown>[] | null) {
     whenVisible: (fn: () => void) => fn(),
     bench: { measure: (_n: string, fn: () => unknown) => fn(), record: noop },
     daemon: {
+      query: async () => ({ records, nextCursor: null, total: records.length }),
+      treePaths: async (_repo: string, _field: string, uuids: string[]) =>
+        Object.fromEntries(uuids.map((uuid) => [uuid, uuid === ROOT_UUID ? [''] : ['/notes.txt']])),
+      metarecords: async () => new Map(),
+      fields: async () => [],
       request: async () => ({ status: 200, body: null }),
       call: async (method: string, path: string, callBody: unknown) => {
         calls.push({ method, path, body: callBody });
@@ -102,20 +107,7 @@ async function mountPanel(watchResults: Record<string, unknown>[] | null) {
       repoInternalDir: async () => '/tmp/repo/.metafolder/internal',
       metarecordPaths: async () => [],
     },
-    cache: {
-      query: async () => ({ records, nextCursor: null, total: records.length }),
-      fetchMetarecords: async () => {},
-      fetchTreeRefs: async () => {},
-      fetchFields: async () => {},
-      readMetarecord: () => null,
-      readTreeRef: (_repo: string, _field: string, uuid: string) =>
-        uuid === ROOT_UUID ? [''] : ['/notes.txt'],
-      readFields: () => [],
-      fieldType: () => 'tree_ref',
-      sync: async () => {},
-      subscribe: () => () => {},
-      REFRESH: Symbol('refresh'),
-    },
+    changes: { sync: async () => {}, subscribe: () => () => {} },
     query: { parse: async () => null, expand: async () => '', grammarSource: async () => '' },
     pick: { start: async () => '' },
     config: { pickerSeed: async () => null },

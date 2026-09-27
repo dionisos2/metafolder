@@ -55,6 +55,11 @@ function stub() {
     visible: true,
     whenVisible: (fn: () => void) => fn(),
     daemon: {
+      query: vi.fn(async () => ({ records: [], nextCursor: null })),
+      treePaths: async (_repo: string, _field: string, uuids: string[]) =>
+        Object.fromEntries(uuids.map((uuid) => [uuid, [] as string[]])),
+      metarecords: async () => new Map(),
+      fields: async () => [],
       call: vi.fn(async (_method: string, path: string) => {
         if (path.includes('/fields?type=tree_ref')) return [{ name: 'mfr_path' }, { name: 'tag' }];
         if (path.includes('/fields?type=ref')) return [{ name: 'tag' }];
@@ -63,7 +68,7 @@ function stub() {
       }),
       repoRoot: vi.fn(async () => '/repo'),
     },
-    cache: { sync: vi.fn(async () => {}), query: vi.fn(async () => ({ records: [], nextCursor: null })) },
+    changes: { sync: vi.fn(async () => {}), subscribe: () => () => {} },
     workspace: {
       get: vi.fn(async (key: string) => (key === 'active_repo' ? 'r' : null)),
       set: vi.fn(async () => {}),
@@ -121,10 +126,10 @@ describe('treeref:find', () => {
   test('a typed value matches by ordered substring, and selects — not descends', async () => {
     const s = stub();
     await mount(s);
-    s.api.cache.query.mockClear();
+    s.api.daemon.query.mockClear();
     await s.handlers.get('treeref:find')!('mo es');
     expect(cursorName(s.root)).toBe('movies');
-    expect(s.api.cache.query).not.toHaveBeenCalled();
+    expect(s.api.daemon.query).not.toHaveBeenCalled();
   });
 
   test('no match reports an error and leaves the cursor alone', async () => {

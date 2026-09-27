@@ -1,5 +1,5 @@
-// TreeRef path resolution (panel-shim/resolve.js): a memo cache over the
-// daemon's tree-resolve endpoint (no client-side chain walk).
+// TreeRef path resolution (panel-shim/resolve.js): a thin layer over the
+// daemon's tree-resolve endpoint (no client-side chain walk, nothing kept).
 
 import { describe, expect, test, vi } from 'vitest';
 import { createPathResolver } from '../../panel-shim/resolve.js';
@@ -29,13 +29,12 @@ describe('createPathResolver', () => {
     expect(await resolver.resolveUuid('music')).toBe('music');
   });
 
-  test('memoizes: each uuid is resolved at most once (no chain walk)', async () => {
+  test('asks the daemon every time: a path is never kept (no chain walk either)', async () => {
     const { resolver, resolvePaths } = setup();
     await resolver.resolveUuid('take5');
-    await resolver.resolveUuid('jazz');
     await resolver.resolveUuid('take5');
-    // take5, jazz — one call each; the parents are not walked client-side.
     expect(resolvePaths).toHaveBeenCalledTimes(2);
+    expect(resolvePaths).toHaveBeenCalledWith(['take5']);
   });
 
   test('resolveTreeRef resolves a raw value via its parent (named-root forest)', async () => {
@@ -53,14 +52,12 @@ describe('createPathResolver', () => {
     expect(await resolver.resolveTreeRef({ parent: null, name: '' })).toBe('');
   });
 
-  test('invalidate forces a re-resolve', async () => {
+  test('a rename is seen at once: nothing to invalidate', async () => {
     const paths = { ...PATHS };
-    const { resolver, resolvePaths } = setup(paths);
+    const { resolver } = setup(paths);
     await resolver.resolveUuid('take5');
     paths.take5 = 'music/renamed.mp3';
-    resolver.invalidate('take5');
     expect(await resolver.resolveUuid('take5')).toBe('music/renamed.mp3');
-    expect(resolvePaths.mock.calls.filter(([u]) => u[0] === 'take5').length).toBe(2);
   });
 
   test('a uuid with no resolvable path rejects', async () => {

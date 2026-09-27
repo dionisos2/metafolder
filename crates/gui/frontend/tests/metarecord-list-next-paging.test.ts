@@ -61,6 +61,20 @@ function stubApi(handlers: Map<string, Handler>, calls: QueryCall[], pages: numb
     whenVisible: (fn: () => void) => fn(), // …but the panel still ran its query
     bench: { measure: (_n: string, fn: () => unknown) => fn(), record: noop },
     daemon: {
+      query: async (_repo: string, body: { cursor?: string; limit: number }) => {
+              const cursor = body.cursor ?? null;
+              calls.push({ cursor, limit: body.limit });
+              const index = cursor === null ? 0 : Number(cursor);
+              return {
+                records: pageOf(index),
+                nextCursor: index + 1 < pages ? String(index + 1) : null,
+                total: pages * PAGE,
+              };
+            },
+      treePaths: async (_repo: string, _field: string, uuids: string[]) =>
+        Object.fromEntries(uuids.map((uuid) => [uuid, [] as string[]])),
+      metarecords: async () => new Map(),
+      fields: async () => [],
       request: async () => ({ status: 200, body: null }),
       call: async () => null,
       parseQuery: async () => null,
@@ -72,28 +86,7 @@ function stubApi(handlers: Map<string, Handler>, calls: QueryCall[], pages: numb
       repoInternalDir: async () => '/tmp/repo/.metafolder/internal',
       metarecordPaths: async () => [],
     },
-    cache: {
-      query: async (_repo: string, body: { cursor?: string; limit: number }) => {
-        const cursor = body.cursor ?? null;
-        calls.push({ cursor, limit: body.limit });
-        const index = cursor === null ? 0 : Number(cursor);
-        return {
-          records: pageOf(index),
-          nextCursor: index + 1 < pages ? String(index + 1) : null,
-          total: pages * PAGE,
-        };
-      },
-      fetchMetarecords: async () => {},
-      fetchTreeRefs: async () => {},
-      fetchFields: async () => {},
-      readMetarecord: () => null,
-      readTreeRef: () => [],
-      readFields: () => [],
-      fieldType: () => null,
-      sync: async () => {},
-      subscribe: () => () => {},
-      REFRESH: Symbol('refresh'),
-    },
+    changes: { sync: async () => {}, subscribe: () => () => {} },
     query: { parse: async () => null, expand: async () => '', grammarSource: async () => '' },
     pick: { start: async () => '' },
     config: { pickerSeed: async () => null },

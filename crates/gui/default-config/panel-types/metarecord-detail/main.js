@@ -42,7 +42,7 @@ import { settledType, splitTypeValue } from './field-args.js';
  * @param {ShadowRoot} root @param {MetafolderApi} metafolder
  */
 export async function mount(root, metafolder) {
-  const { daemon, workspace, commands, statusBar, bench, cache, config } = metafolder;
+  const { daemon, workspace, commands, statusBar, bench, changes, config } = metafolder;
   // Status-message durations (config.toml `[panels]`), with the fallbacks used
   // before they were configurable.
   const { settings } = metafolder;
@@ -119,7 +119,7 @@ export async function mount(root, metafolder) {
   // conflicting one, and the schema may force one), so when the typed add-name
   // already has a type we restrict the picker to it — plus `nothing`, which is
   // always offerable (clearing a field to explicit absence keeps no type). The
-  // type comes from the cached field catalog (which merges in schema types).
+  // type comes from the repo's field catalog (which merges in schema types).
   /** @returns {Promise<string|null>} */
   async function repoForAdd() {
     return /** @type {string|null} */ (
@@ -141,14 +141,10 @@ export async function mount(root, metafolder) {
     const repo = await repoForAdd();
     const name = addNameInput().value.trim();
     if (!repo || !name) return setTypeLock(null);
-    let type = cache.fieldType(repo, name);
-    if (type === cache.REFRESH) {
-      await cache.fetchFields(repo);
-      // The name may have changed while awaiting; re-read the current value.
-      if (addNameInput().value.trim() !== name) return;
-      type = cache.fieldType(repo, name);
-    }
-    setTypeLock(typeof type === 'string' ? type : null);
+    const types = await readCatalog(repo);
+    // The name may have changed while awaiting; re-read the current value.
+    if (addNameInput().value.trim() !== name) return;
+    setTypeLock(types.get(name) ?? null);
   }
   addNameInput().addEventListener('input', () => void syncTypeToName());
 
@@ -178,17 +174,36 @@ export async function mount(root, metafolder) {
     // new metarecord's fields (when `current` is still null).
     const repo = await repoForAdd();
     if (!repo) return;
-    let type = cache.fieldType(repo, name);
-    if (type === cache.REFRESH) {
-      await cache.fetchFields(repo);
-      type = cache.fieldType(repo, name);
-    }
+    const type = (await readCatalog(repo)).get(name);
     if (typeof type === 'string') {
       picker.setAllowed([type, 'nothing']);
       if (currentType === 'nothing') picker.set(type); // swaps in the typed widget
     } else {
       picker.setAllowed(null);
     }
+  }
+
+  /** The repository's field catalogue (name → type) as last read — what the
+   *  synchronous decisions (a type argument's `when`) consult. Every path that
+   *  leads to one of them reads it first, so it is never older than the
+   *  gesture; nothing else keeps it. @type {{repo: string|null, types: Map<string, string>}} */
+  let catalog = { repo: null, types: new Map() };
+  /** Reads `repo`'s field catalogue from the daemon (an in-memory answer). A
+   *  daemon that does not answer leaves the last one read.
+   *  @param {string} repo @returns {Promise<Map<string, string>>} */
+  async function readCatalog(repo) {
+    try {
+      const types = new Map((await daemon.fields(repo)).map((f) => [f.name, f.type]));
+      catalog = { repo, types };
+    } catch {
+      if (catalog.repo !== repo) catalog = { repo, types: new Map() };
+    }
+    return catalog.types;
+  }
+  /** The catalogue's type for `name`, as last read for `repo` (no call).
+   *  @param {string} repo @param {string} name */
+  function knownType(repo, name) {
+    return catalog.repo === repo ? (catalog.types.get(name) ?? null) : null;
   }
 
   /** @param {string} name */
@@ -545,15 +560,14 @@ export async function mount(root, metafolder) {
     if (!metarecord || !selection) return;
     const shown = metarecord;
     if (watchMemo.shown === shown) return; // already answered for this record
-    // The record's own repo-root-relative positions, straight from the shared
-    // cache (the same resolution the list panel marks with): `mfr_path` is a
-    // multi-map, so a record may sit at several paths. An invalidated ref says
-    // nothing about the watch — leave the note hidden and decide on a later
-    // load, like the orphan note does.
-    await cache.fetchTreeRefs(selection.repo, 'mfr_path', [shown.uuid]).catch(() => {});
-    const rels = cache.readTreeRef(selection.repo, 'mfr_path', shown.uuid);
+    // The record's own repo-root-relative positions (the same resolution the
+    // list panel marks with): `mfr_path` is a multi-map, so a record may sit at
+    // several paths. An unanswered read says nothing about the watch — leave
+    // the note hidden and decide on a later load, like the orphan note does.
+    const byUuid = await daemon.treePaths(selection.repo, 'mfr_path', [shown.uuid]).catch(() => null);
+    const rels = byUuid?.[shown.uuid];
     let info = null;
-    if (rels !== cache.REFRESH && rels.length > 0) {
+    if (rels && rels.length > 0) {
       const byPath = await fetchWatched(daemon, selection.repo, rels);
       info = summarizeWatched(rels.map((rel) => byPath.get(rel)));
     }
@@ -802,13 +816,8 @@ export async function mount(root, metafolder) {
     const names = new Set(recordFieldNames());
     const cur = current;
     if (cur) {
-      try {
-        await cache.fetchFields(cur.repo);
-        const catalog = cache.readFields(cur.repo);
-        if (catalog !== cache.REFRESH) for (const entry of catalog) names.add(entry.name);
-      } catch {
-        /* offline: the record's own names are enough */
-      }
+      // Offline: the record's own names are enough (readCatalog never throws).
+      for (const name of (await readCatalog(cur.repo)).keys()) names.add(name);
     }
     return [...names].sort();
   }
@@ -980,8 +989,8 @@ export async function mount(root, metafolder) {
     if (existing) return existing.value.type;
     const cur = current;
     if (cur) {
-      const t = cache.fieldType(cur.repo, field);
-      if (t && t !== cache.REFRESH) return t;
+      const t = (await readCatalog(cur.repo)).get(field);
+      if (t) return t;
     }
     return 'string';
   }
@@ -990,24 +999,23 @@ export async function mount(root, metafolder) {
    *  `nothing`, which is an absence and carries no value to parse. */
   const CONCRETE_TYPES = TYPES.filter((t) => t !== 'nothing');
 
-  /** Makes `repo`'s field catalogue readable *synchronously*, fetching it only
-   *  when the cache holds none. The type argument's `when` consults it and
-   *  cannot await, so a cold cache would have it ask for a type the repository
-   *  already knows; every path that leads to that decision warms it first.
+  /** Makes `repo`'s field catalogue readable *synchronously*. The type
+   *  argument's `when` consults it and cannot await, so an unread catalogue
+   *  would have it ask for a type the repository already knows; every path
+   *  that leads to that decision reads it first.
    *  @param {string|null} repo */
   async function warmFieldCatalog(repo) {
-    if (repo && cache.readFields(repo) === cache.REFRESH) await cache.fetchFields(repo);
+    if (repo) await readCatalog(repo);
   }
 
   /** The type `target` would be written as without asking — read from live
    *  state alone, since this is what the type argument's `when` decides on.
    *  @param {string} target */
   function settledTypeFor(target) {
-    const catalog = current ? cache.fieldType(current.repo, target) : null;
     return settledType({
       rows: metarecord?.fields ?? [],
       name: target,
-      catalog: typeof catalog === 'string' ? catalog : null,
+      catalog: current ? knownType(current.repo, target) : null,
     });
   }
 
@@ -1606,17 +1614,13 @@ export async function mount(root, metafolder) {
   /** @param {string|null} repo @returns {Promise<string[]>} */
   async function catalogFieldNames(repo) {
     if (!repo) return [];
-    await cache.fetchFields(repo);
-    const cat = cache.readFields(repo);
-    return cat === cache.REFRESH ? [] : cat.map((e) => e.name).sort();
+    return [...(await readCatalog(repo)).keys()].sort();
   }
 
   /** The value type recorded for `field` in the repo catalog, else `string`.
    *  @param {string} repo @param {string} field */
   async function catalogType(repo, field) {
-    await cache.fetchFields(repo);
-    const t = cache.fieldType(repo, field);
-    return t && t !== cache.REFRESH ? t : 'string';
+    return (await readCatalog(repo)).get(field) ?? 'string';
   }
 
   /** The value views for a bulk value arg (repo-wide type lookup); mirrors the
@@ -1639,8 +1643,7 @@ export async function mount(root, metafolder) {
    *  operation writes to *other* records. @param {string} field */
   function settledBulkType(field) {
     const repo = bulkArgRepo ?? current?.repo ?? null;
-    const catalog = repo ? cache.fieldType(repo, field) : null;
-    return settledType({ name: field, catalog: typeof catalog === 'string' ? catalog : null });
+    return settledType({ name: field, catalog: repo ? knownType(repo, field) : null });
   }
 
   /** The type of a bulk write whose invocation carried none — the inline case.
@@ -1648,7 +1651,7 @@ export async function mount(root, metafolder) {
    *  type"). @param {string} repo @param {string} field */
   async function requireBulkType(repo, field) {
     await warmFieldCatalog(repo);
-    const known = cache.fieldType(repo, field);
+    const known = knownType(repo, field);
     if (typeof known === 'string' && known !== 'nothing') return known;
     throw new Error(
       `no type known for "${field}" — name one: metarecord:bulk <op> <field> <type> <value>`,
@@ -2045,7 +2048,7 @@ export async function mount(root, metafolder) {
       addForm.classList.add('open');
       addNameInput().focus();
       const repo = await repoForAdd();
-      if (repo) await cache.fetchFields(repo); // warm the catalog for the type lock
+      if (repo) await readCatalog(repo); // read the catalog for the type lock
       void syncTypeToName();
     },
   });
@@ -2144,25 +2147,22 @@ export async function mount(root, metafolder) {
   });
 
   // Another panel changed metarecords (log rollback, file-manager track, …):
-  // reload — unless an edit is in progress. Sync the cache first so the reload
-  // reads fresh data even when the change came from a non-metarecord write
-  // (e.g. a rollback, which the per-write invalidation can't pinpoint).
-  async function onMetarecordsDirty() {
+  // reload — unless an edit is in progress.
+  function onMetarecordsDirty() {
     forgetTreePaths();
     if (editingField !== null || addFieldInProgress()) return;
-    if (current?.repo) await cache.sync(current.repo);
     void load();
   }
-  workspace.onChange('metarecords:dirty', () => void onMetarecordsDirty());
+  workspace.onChange('metarecords:dirty', () => onMetarecordsDirty());
 
   // A daemon-side change nobody in the GUI raised (a rename made outside it,
   // picked up by the change feed) must drop the memoized forest paths too, or
   // the value completion would keep offering positions that no longer exist.
-  const unsubscribeCache = cache.subscribe(() => forgetTreePaths());
+  const unsubscribeChanges = changes.subscribe(() => forgetTreePaths());
 
   current = /** @type {Selection|null} */ ((await workspace.get('selected_metarecord')) ?? null);
   await load();
-  return () => unsubscribeCache();
+  return () => unsubscribeChanges();
 }
 
 /** The payload a Value carries, or undefined for `nothing` (which has none) —

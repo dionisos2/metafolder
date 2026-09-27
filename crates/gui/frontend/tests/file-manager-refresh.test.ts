@@ -60,20 +60,21 @@ function stub(repo: string | null) {
     whenVisible: (fn: () => void) => fn(),
     bench: { measure: (_n: string, fn: () => unknown) => fn(), record: noop },
     daemon: {
+      treePaths: async (_repo: string, _field: string, uuids: string[]) =>
+        Object.fromEntries(uuids.map((uuid) => [uuid, [] as string[]])),
+      metarecords: async () => new Map(),
+      fields: async () => [],
       call: daemonCall,
       repoRoot: async () => '/',
       repoInternalDir: async () => '/.metafolder/internal',
     },
-    cache: {
-      sync: vi.fn(async () => {}),
-      subscribe: vi.fn((cb: ChangeCb) => {
+    changes: { sync: vi.fn(async () => {}), subscribe: vi.fn((cb: ChangeCb) => {
         subscribers.push(cb);
         return () => {
           const i = subscribers.indexOf(cb);
           if (i >= 0) subscribers.splice(i, 1);
         };
-      }),
-    },
+      }) },
     workspace: {
       get: async (key: string) => (key === 'active_repo' ? repo : null),
       set: vi.fn(async () => {}),
@@ -163,20 +164,20 @@ describe('file-manager live refresh', () => {
       const mod = await import('../../default-config/panel-types/file-manager/main.js');
       await mod.mount(root, s.api as never);
       await vi.runOnlyPendingTimersAsync();
-      s.api.cache.sync.mockClear();
+      s.api.changes.sync.mockClear();
 
       // A mutation elsewhere (or here) nudges the panel via metarecords:dirty.
       s.fireVar('metarecords:dirty', Date.now());
       await vi.advanceTimersByTimeAsync(0); // immediate sync in onMetarecordsDirty
-      const immediate = s.api.cache.sync.mock.calls.length;
+      const immediate = s.api.changes.sync.mock.calls.length;
 
       // The catch-up nudges fire after the daemon's quiet period (GET /watch,
       // 3 s here), never before it — a re-read then would see the stale state —
       // and well before the 7 s background poll.
       await vi.advanceTimersByTimeAsync(3000);
-      expect(s.api.cache.sync.mock.calls.length).toBe(immediate);
+      expect(s.api.changes.sync.mock.calls.length).toBe(immediate);
       await vi.advanceTimersByTimeAsync(300);
-      expect(s.api.cache.sync.mock.calls.length).toBeGreaterThan(immediate);
+      expect(s.api.changes.sync.mock.calls.length).toBeGreaterThan(immediate);
     } finally {
       vi.useRealTimers();
     }

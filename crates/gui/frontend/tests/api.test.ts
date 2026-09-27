@@ -172,16 +172,47 @@ describe('panel api — daemon', () => {
     expect(res).toEqual({ status: 200, body: { ok: 1 } });
   });
 
+  /** Answers the change feed's baseline poll, and `res` to everything else. */
+  function answering(invoke: ReturnType<typeof setup>['invoke'], res: unknown) {
+    invoke.mockImplementation(async (_cmd: string, args?: unknown) =>
+      (args as { path?: string })?.path?.includes('/log/since')
+        ? { status: 200, body: { head: 1, operations: [] } }
+        : res,
+    );
+  }
+
   test('call returns the body on success', async () => {
     const { api, invoke } = setup();
-    invoke.mockResolvedValueOnce({ status: 200, body: { uuid: 'x' } });
+    answering(invoke, { status: 200, body: { uuid: 'x' } });
     await expect(api.daemon.call('GET', '/repos/r/metarecords/x')).resolves.toEqual({ uuid: 'x' });
   });
 
   test('call throws on status >= 400 with the daemon error', async () => {
     const { api, invoke } = setup();
-    invoke.mockResolvedValueOnce({ status: 404, body: { error: 'not found' } });
+    answering(invoke, { status: 404, body: { error: 'not found' } });
     await expect(api.daemon.call('GET', '/repos/r/metarecords/x')).rejects.toThrow('not found');
+  });
+
+  test("a panel's first read of a repository takes the change feed's baseline first", async () => {
+    const { api, invoke } = setup();
+    answering(invoke, { status: 200, body: { results: [] } });
+    await api.daemon.query('fresh', { query: null });
+    await api.daemon.query('fresh', { query: null });
+    const paths = invoke.mock.calls
+      .filter((c) => c[0] === 'daemon_request')
+      .map((c) => (c[1] as { path: string }).path);
+    expect(paths).toEqual(['/repos/fresh/log/since', '/repos/fresh/query', '/repos/fresh/query']);
+  });
+
+  test('a read is never served from memory: asking twice asks the daemon twice', async () => {
+    const { api, invoke } = setup();
+    answering(invoke, { status: 200, body: { u1: ['/a'] } });
+    await api.daemon.treePaths('r2', 'mfr_path', ['u1']);
+    await api.daemon.call('POST', '/repos/r2/tree/resolve', { uuids: ['u1'] });
+    const resolves = invoke.mock.calls.filter(
+      (c) => (c[1] as { path?: string })?.path === '/repos/r2/query/fields/resolve-tree',
+    );
+    expect(resolves).toHaveLength(2);
   });
 
   test('repoRoot caches GET /repos across calls', async () => {

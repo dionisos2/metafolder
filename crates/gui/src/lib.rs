@@ -384,7 +384,6 @@ pub fn run(options: Options) {
     let completion = gui_config.completion.clone();
     let open_with = gui_config.open_with.clone();
     let settings = gui_config.settings.clone();
-    let cache_sizes = gui_config.cache.clone();
     let panel_settings = gui_config.panels.clone();
     let panel_defaults = gui_config.panel_defaults.clone();
     let health_poll_interval = settings.daemon_health_poll();
@@ -435,7 +434,6 @@ pub fn run(options: Options) {
                 completion: completion.clone(),
                 open_with: open_with.clone(),
                 settings: settings.clone(),
-                cache_sizes: cache_sizes.clone(),
                 panel_settings: panel_settings.clone(),
                 panel_defaults: panel_defaults.clone(),
                 daemon: daemon.clone(),

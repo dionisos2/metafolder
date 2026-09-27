@@ -116,7 +116,7 @@ function stub(vars: Record<string, unknown>, existing: Set<string>) {
       repoRoot: async () => '/repo',
       repoInternalDir: async () => '/repo/.metafolder/internal',
     },
-    cache: { sync: vi.fn(async () => {}), subscribe: vi.fn(() => () => {}) },
+    changes: { sync: vi.fn(async () => {}), subscribe: vi.fn(() => () => {}) },
     workspace: {
       get: async (key: string) => store.get(key) ?? null,
       set: async (key: string, value: unknown) => {

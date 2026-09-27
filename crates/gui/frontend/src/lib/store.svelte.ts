@@ -6,7 +6,7 @@ import { dispatch } from './commands';
 import { completionLabels } from './completions';
 import type { LoadedView } from './completions';
 import { invoke, listen } from './ipc';
-import { sharedCache, startCachePolling } from './panels/api';
+import { startChangePolling } from './panels/api';
 import type {
   Binding,
   CommandDef,
@@ -392,16 +392,6 @@ export async function initStore() {
   store.panelSettings = initial.panel_settings;
   store.panelDefaults = initial.panel_defaults;
   store.daemonUrl = initial.daemon_url;
-  // Apply the configured daemon-data cache budgets to the shared singleton
-  // (created at import time, before the initial state was available).
-  const c = initial.cache_sizes;
-  if (c) {
-    sharedCache.configure({
-      maxEntities: c['max-entities'],
-      maxTreeRefs: c['max-tree-refs'],
-      maxQueries: c['max-queries'],
-    });
-  }
   applyStyle(initial.style_css);
 
   await listen<{ workspaces: WorkspaceInfo[] }>('workspaces-changed', (event) => {
@@ -496,9 +486,9 @@ export async function initStore() {
     (event) => void onCommandRequested(event),
   );
 
-  // Keep the shared daemon-data cache fresh against background (watcher,
-  // reconcile, other clients) changes via the daemon's change feed.
-  startCachePolling();
+  // Tell the panels about the changes they did not make (watcher, reconcile,
+  // other clients) via the daemon's change feed.
+  startChangePolling();
 
   store.ready = true;
 }

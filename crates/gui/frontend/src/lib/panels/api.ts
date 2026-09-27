@@ -10,25 +10,30 @@ import { showMenu } from '../../../../panel-shim/menu.js';
 import { type ArgSpec, withTopLevelInvoke } from '../commands';
 import { invoke as ipcInvoke } from '../ipc';
 import { daemonWork } from '../working';
-import { createCache, type DaemonResponse, type RawFetcher } from './cache';
+import { createChangeFeed, type ChangeEvent } from './changes';
+import { createReads, translate, type DaemonResponse, type RawFetcher } from './reads';
 
-/** The shared daemon-data cache — one per realm, read by every panel. */
-export const sharedCache = createCache();
+/** The daemon change feed — one per realm, heard by every panel. */
+export const changeFeed = createChangeFeed();
 
 let pollTimer: ReturnType<typeof setInterval> | null = null;
 /**
- * Starts the background change-feed poll (GET /log/since) that keeps the cache
- * fresh. Called once by the shell; not started on import so unit tests stay
- * side-effect free.
+ * Starts the background change-feed poll (GET /log/since), so panels hear of
+ * the changes they did not make. Called once by the shell; not started on
+ * import so unit tests stay side-effect free.
  */
-export function startCachePolling(intervalMs = 7000) {
+export function startChangePolling(intervalMs = 7000) {
   if (pollTimer) return;
   const raw: RawFetcher = (method, path, body) =>
     ipcInvoke('daemon_request', { method, path, body });
   pollTimer = setInterval(() => {
-    for (const repo of sharedCache.trackedRepos()) void sharedCache.sync(repo, raw);
+    for (const repo of changeFeed.trackedRepos()) void changeFeed.sync(repo, raw);
   }, intervalMs);
 }
+
+// The repository a daemon path reads inside (`/repos/:repo/…`), for the poll.
+// A sub-path is required: `/repos/load`, `/repos/init` name no repository.
+const REPO_PATH = /^\/repos\/([^/?]+)\/[^?]/;
 
 /** The visibility gate created per panel (panel-shim/visibility.js). */
 interface VisibilityGate {
@@ -197,8 +202,7 @@ export function createPanelApi(deps: PanelApiDeps, ctx: PanelApiCtx): PanelApiIn
     return `mf:daemon ${method} ${norm}`;
   }
 
-  // Performs a real (bench-instrumented) daemon round-trip — the cache's miss
-  // path. Cache hits never reach here, so they cost nothing and record nothing.
+  // Performs a (bench-instrumented) daemon round-trip.
   // What the user last asked this panel for, in their own words (the DSL text
   // of a query). Sent with every call the panel makes and kept in the
   // slow-operation log when one turns out to be slow: the daemon receives the
@@ -220,9 +224,19 @@ export function createPanelApi(deps: PanelApiDeps, ctx: PanelApiCtx): PanelApiIn
       `${m} ${p.split('?')[0]}`,
     );
 
-  function daemonRequest(method: string, path: string, body: unknown = null): Promise<DaemonResponse> {
-    return sharedCache.request(method, path, body, rawFetch);
+  // Every call goes to the daemon. A repository it addresses joins the change
+  // feed's poll first — its baseline taken before this call — so the panel
+  // hears of every change to what it is about to read.
+  async function daemonRequest(
+    method: string,
+    path: string,
+    body: unknown = null,
+  ): Promise<DaemonResponse> {
+    const repo = path.match(REPO_PATH)?.[1];
+    if (repo !== undefined) await changeFeed.baseline(repo, rawFetch);
+    return translate(method, path, body, rawFetch);
   }
+  const reads = createReads((m, p, b) => daemonRequest(m, p, b));
 
   // Cached GET /repos lookup (root, internal_dir, ...). UUIDs are normalized
   // (dashes stripped) so a dashed active_repo matches GET /repos' hex form.
@@ -385,44 +399,29 @@ export function createPanelApi(deps: PanelApiDeps, ctx: PanelApiCtx): PanelApiIn
       resolvePath: (repo: string, uuid: string) => resolverFor(repo).resolveUuid(uuid),
       resolveTreeRef: (repo: string, value: { parent: string | null; name: string }) =>
         resolverFor(repo).resolveTreeRef(value),
-      invalidatePath: (repo: string, uuid: string) => resolverFor(repo).invalidate(uuid),
       repoRoot: async (repo: string) => (await repoInfo(repo)).root as string,
       repoInternalDir: async (repo: string) => (await repoInfo(repo)).internal_dir as string,
       metarecordPaths: async (repo: string, metarecord: { uuid: string }) => {
         const root = (await repoInfo(repo)).root as string;
-        const response = await daemonRequest('POST', `/repos/${repo}/tree/resolve`, {
-          uuids: [metarecord.uuid],
-        });
-        const relatives = (response.body as Record<string, string[]>)?.[metarecord.uuid] ?? [];
+        const relatives = (await reads.treePaths(repo, 'mfr_path', [metarecord.uuid]))[metarecord.uuid];
         return relatives.map((rel) => (rel === '' ? root : `${root}/${rel}`));
       },
+      // Reads that return what they read (nothing is kept — lib/panels/reads.ts).
+      query: (repo: string, body: Record<string, unknown>) => reads.query(repo, body),
+      metarecords: (repo: string, uuids: string[]) => reads.metarecords(repo, uuids),
+      treePaths: (repo: string, field: string, uuids: string[]) => reads.treePaths(repo, field, uuids),
+      fields: (repo: string) => reads.fields(repo),
     },
 
-    // Shared daemon-data cache: fetch (async, populates) then read (sync, for
-    // render). `read*` returns `cache.REFRESH` when a datum is absent — the
-    // panel renders a placeholder and schedules a refresh. Cached data is
-    // read-only (never mutate it).
-    cache: {
-      query: (repo: string, body: Record<string, unknown>) => sharedCache.query(repo, body, rawFetch),
-      fetchMetarecords: (repo: string, uuids: string[]) =>
-        sharedCache.fetchMetarecords(repo, uuids, rawFetch),
-      fetchTreeRefs: (repo: string, field: string, uuids: string[]) =>
-        sharedCache.fetchTreeRefs(repo, field, uuids, rawFetch),
-      fetchFields: (repo: string) => sharedCache.fetchFields(repo, rawFetch),
-      readMetarecord: (repo: string, uuid: string) => sharedCache.readMetarecord(repo, uuid),
-      readTreeRef: (repo: string, field: string, uuid: string) =>
-        sharedCache.readTreeRef(repo, field, uuid),
-      readFields: (repo: string) => sharedCache.readFields(repo),
-      fieldType: (repo: string, name: string) => sharedCache.fieldType(repo, name),
-      // Poll the change feed now (a deliberate freshness point: a query, a
-      // refresh, a panel becoming visible) — on top of the background timer.
-      sync: (repo: string) => sharedCache.sync(repo, rawFetch),
-      // Subscribe to feed-driven changes (a watcher-reflected write, a
-      // rollback…): the callback runs with the touched uuids (`null` = a coarse
-      // whole-repo refresh) so a panel can re-render its displayed rows. Returns
-      // an unsubscribe fn — call it in the panel's cleanup.
-      subscribe: (cb: (event: import('./cache').ChangeEvent) => void) => sharedCache.subscribe(cb),
-      REFRESH: sharedCache.REFRESH,
+    // The daemon change feed (GET /log/since): what changed that this panel
+    // did not write itself — a watcher-recorded rename, another panel, the CLI,
+    // a rollback. `sync` polls it now (a deliberate freshness point: a refresh,
+    // a catch-up after a disk change), on top of the background timer;
+    // `subscribe` runs the callback with the touched uuids (`null` = the whole
+    // repository) and returns the unsubscribe fn for the panel's cleanup.
+    changes: {
+      sync: (repo: string) => changeFeed.sync(repo, rawFetch),
+      subscribe: (cb: (event: ChangeEvent) => void) => changeFeed.subscribe(cb),
     },
 
     // Pure query transformations — run locally in the GUI backend (core).

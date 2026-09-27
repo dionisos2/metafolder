@@ -1276,7 +1276,7 @@ labelled =<METHOD> <path>=, spinning, with =+N= when others are queued behind
 the one named. It appears only once a call has outlasted a short grace period
 (300 ms), so the fast majority never make it strobe, and it names the *oldest*
 call still running — the one actually being waited on. Only calls made on the
-user's behalf are counted: the background polls (the cache's change feed, this
+user's behalf are counted: the background polls (the change feed, this
 bar's own task list) have nobody waiting on them and stay silent.
 
 ** Command input
@@ -2015,10 +2015,9 @@ const response = await metafolder.daemon.request('GET', '/repos')
 // Same, but throws Error(body.error) on status >= 400 and returns the
 // body directly — the usual form inside try/catch.
 const metarecord = await metafolder.daemon.call('GET', `/repos/${repo}/metarecords/${uuid}`)
-// Lazy memoized mfr_path resolution (see "Path display").
+// mfr_path resolution (see "Path display"), asked of the daemon each time.
 await metafolder.daemon.resolvePath(repo, uuid)
 await metafolder.daemon.resolveTreeRef(repo, { parent, name })
-metafolder.daemon.invalidatePath(repo, uuid)
 // Absolute root directory of a repository (cached GET /repos).
 const root = await metafolder.daemon.repoRoot(repo)
 // Absolute path of the repo's .metafolder/internal/ directory (cached
@@ -2027,6 +2026,28 @@ const internal = await metafolder.daemon.repoInternalDir(repo)
 // Absolute filesystem paths of a metarecord: one per mfr_path tree_ref
 // (multi-map), unresolvable (stale) refs skipped.
 const paths = await metafolder.daemon.metarecordPaths(repo, metarecord)
+// Reads that return what they read (see "Daemon data"):
+const { uuids, records, nextCursor, total } = await metafolder.daemon.query(repo, body)
+const byUuid = await metafolder.daemon.metarecords(repo, uuids)            // Map
+const paths = await metafolder.daemon.treePaths(repo, 'mfr_path', uuids)    // {uuid: [path]}
+const catalog = await metafolder.daemon.fields(repo)                       // [{name, type}]
+#+END_SRC
+
+=daemon.call= also answers two shorthands the daemon itself does not serve:
+=POST /repos/:repo/metarecords/batch {uuids}= (→ ={uuid: metarecord}=, one
+=uuid_in= query) and =POST /repos/:repo/tree/resolve {field?, uuids}= (→
+={uuid: [path]}=, one =query/fields/resolve-tree=).
+
+**** =metafolder.changes=
+
+The daemon change feed (see "Daemon data"): what changed that the panel did
+not write itself.
+
+#+BEGIN_SRC js
+// Called with the touched uuids, or null for the whole repository.
+const unsubscribe = metafolder.changes.subscribe(({ repo, uuids }) => { … })
+// Poll now, on top of the background timer (a catch-up after a disk change).
+await metafolder.changes.sync(repo)
 #+END_SRC
 
 **** =metafolder.query=
@@ -4036,8 +4057,10 @@ directly — there is no =postMessage= bridge. Because everything shares one
 realm, panel key events bubble to the shell's single key matcher (text-input
 detection pierces shadow roots via =composedPath()=).
 
-This abandons iframe isolation deliberately: it lets a later shared data cache
-live in the realm and be read by every panel without per-access copies. Panels
+This abandons iframe isolation deliberately: one realm lets every panel share
+the shell's services — one change feed, one key matcher — without a message
+bridge or per-access copies (a shared daemon-data cache was the first reason
+given; it was built, then removed — see [[*Daemon data]]). Panels
 are **trusted code** (they already have filesystem and shell access through the
 API — see [[*Custom panel type trust model]]); a throw in =mount= is contained
 by an error boundary, but a panel can otherwise touch shared state.
@@ -4052,42 +4075,51 @@ Panels and the shell reach the daemon through the Rust backend (a reqwest
 proxy exposed as =metafolder.daemon.request=). The WebView cannot call the
 daemon directly (CORS), and the daemon stays GUI-agnostic.
 
-** Data cache
+** Daemon data
 
-Because panels share one JS realm, a single in-realm cache holds daemon data —
-read directly by every panel, no per-panel copy. It has three stores per repo:
-metarecords (=uuid → metarecord=), TreeRef paths (=(uuid, field) → [path]=) and
-query results (=query → [uuid]=).
+Nothing on the GUI side keeps daemon data. Every read is a daemon round-trip —
+=metafolder.daemon.query= / =metarecords= / =treePaths= / =fields=, or
+=daemon.call= — answered from the daemon's in-memory index and tree cache in
+about a millisecond (spec-perf: a page of a query ≈ 1 ms, the paths of a page
+≈ 0.5 ms, one metarecord ≈ 0.15 ms on a 20 000-file repository). A panel keeps
+what it displays, for as long as it displays it, and reads it again when told
+it changed.
 
-Panels use =metafolder.cache=: =query(repo, body)= (returns the page's uuids +
-=nextCursor=/=total=, populating the entity store from a =select '*'= result),
-=fetchMetarecords= / =fetchTreeRefs= (fetch only the uuids not already cached),
-and the synchronous =readMetarecord= / =readTreeRef= used during render —
-returning =cache.REFRESH= when the datum is absent/invalidated, on which the
-panel renders a placeholder and schedules a refresh. So a metarecord-list query
-populates the entities the metarecord-detail panel then reads for free (the
-list↔detail dedup). =daemon.call= stays for writes and non-cacheable endpoints;
-its query / single-metarecord / batch / tree-resolve reads are also served from
-the cache transparently. Cached data is read-only — panels never mutate it.
+It used to be otherwise: a shared in-realm cache (metarecords, TreeRef paths,
+query results) served those reads, invalidated from the change feed. It was
+removed once the daemon made it pointless, and for what it cost. Every one of
+its bugs came from the same question — when does a kept answer stop being
+true? — and the answers kept being wrong:
 
-Freshness comes from the daemon change feed (=GET /log/since=, see
-[[file:spec-event-log.org][spec-event-log]]): a background poll (~7 s) plus
-deliberate points (a query, a refresh, a panel becoming visible) compare the
-log =head=; on a change the touched metarecords are invalidated by delta (fine)
-and query results cleared (coarse). A panel's own write invalidates the edited
-metarecord immediately. Memory is bounded by LRU eviction (reads keep an entry
-recent; an evicted datum is simply re-fetched on the next read).
+- A change *anywhere* in the repository landing while a read was in flight
+  threw the whole read away; the rows it was for then showed placeholders (a
+  =mfr_path:path= column showed leaf names) until something else repainted
+  them.
+- A daemon read sent as a POST (=tree/resolve-path=, =query/fields/
+  resolve-tree=…) was taken for a write and invalidated everything, with the
+  same effect — healthy rows marked as orphans.
+- A path spells every ancestor's name, but renaming a directory writes that
+  directory alone: the feed never named the files below it, and their kept
+  paths stayed wrong until evicted.
 
-What counts as a write is decided by method and path: any non-GET that is not a
-recognised read. Several daemon *reads* are POSTs because a body carries the
-query or the path (=query=, =query/fields/resolve-tree=, =tree/resolve-path=,
-=orphans/scan=, =schema/check=), and they must be listed as such. Mistaking a
-read for a write is not merely wasteful: the invalidation moves the repository's
-cache epoch, and a read already in flight is then discarded rather than cached —
-the panel that asked for it reads =REFRESH= where it expected data. Panels must
-treat that as *unknown*, never as *absent*: a =readTreeRef= that has not landed
-yet says nothing about where a file is, and reading it as "no path" is how a
-perfectly healthy row ends up marked as an orphaned metarecord.
+What remains shared is the *change feed* (=metafolder.changes=): =GET
+/repos/:repo/log/since= polled in the background (~7 s) for every repository a
+panel has read, and on demand (=changes.sync=, e.g. the catch-up after the GUI
+changed the disk itself, timed from the watcher's quiet period). It holds only
+the last head seen per repository and tells subscribers what changed — the
+touched uuids, or =null= for the whole repository (a rollback, a delta the
+daemon truncated, the empty→filled transition). A repository's baseline is
+taken *before* the first read of it: a baseline taken by the first poll after a
+read would swallow whatever changed in between.
+
+A subscriber re-reads what it shows. A panel that shows paths re-reads them on
+*any* change of its repository, not only on a change to a row it displays —
+the directory-rename case above: the feed names the directory, the screen shows
+its contents. That is one =resolve-tree= call for the loaded rows.
+
+A read that has not landed yet (or failed) is *unknown*, never *absent*: a path
+not read yet says nothing about where a file is, and reading it as "no path" is
+how a healthy row ends up marked as an orphaned metarecord.
 
 ** Commands targeting an absent panel type
 
@@ -4109,9 +4141,9 @@ It is general over any TreeRef field (=mfr_path= by default) and multi-map
 (an array per metarecord; stale positions skipped). A single metarecord can also
 use the direct =GET …/metarecords/:uuid/fields/:name/resolve-tree=. The CLI's =mf path= and the
 GUI shim's =metafolder.daemon.resolvePath= / =resolveTreeRef= /
-=metarecordPaths= are thin wrappers over it (the shim keeps a per-repo memo
-cache; =invalidatePath= drops one metarecord after a move); =repoRoot= gives the
-absolute root. Panels that render many rows resolve a whole page in batch when
+=metarecordPaths= / =treePaths= are thin wrappers over it (nothing memoized: a
+path goes stale with any ancestor's rename); =repoRoot= gives the absolute
+root. Panels that render many rows resolve a whole page in batch when
 it is fetched (see the =metarecord-list= data/view split) rather than per cell —
 rendering itself makes no daemon calls.
 
@@ -4315,7 +4347,7 @@ a security boundary against panel code — the boundary is Tauri's capability
 layer (GUI ↔ OS). Panel types are therefore treated as **trusted code**, and
 the GUI runs them in the shell's own JS realm (Shadow DOM for CSS isolation,
 no realm/process isolation; see [[*=metafolder= API delivery mechanism]]),
-which is what makes a single shared in-realm data cache possible. A throw in a
+which is what lets panels share the shell's services directly. A throw in a
 panel's =mount= is contained by an error boundary, but a buggy panel can still
 corrupt shared state. To be revisited only if a panel-type *distribution*
 mechanism (untrusted third-party panels) is ever added — that would need real
