@@ -7,6 +7,7 @@
 use metafolder_core::metarecord::{Field, Value};
 use metafolder_core::query::FollowTarget;
 use metafolder_core::query::{Aspect, OsmMode, Query};
+use metafolder_daemon::forest_query;
 use metafolder_daemon::index::{collect_path_targets, Eval, PageStrategy, QueryRoots, SortBy};
 use metafolder_daemon::kvstore::KvStore;
 use metafolder_daemon::log::Writer;
@@ -57,10 +58,13 @@ fn reads(kv: &KvStore, q: &Query, sort: &[(&str, bool)], count: bool) -> (usize,
             roots.path.insert((field, path), uuid);
         }
     }
-    let keys = SortKeys::with_store(&cache, kv);
-    roots.keys = Some(&keys);
     let src = kv.source().unwrap();
     let e = Eval { src: &src, strategy: PageStrategy::Auto };
+    // The forest's own leaves (an order-sensitive `osm` path), rewritten as
+    // the route rewrites them.
+    let q = &forest_query::resolve_path_leaves(&cache, kv, Some(&e), q).unwrap();
+    let keys = SortKeys::with_store(&cache, kv);
+    roots.keys = Some(&keys);
     let sort: Vec<SortBy> =
         sort.iter().map(|(f, asc)| SortBy { field: f.to_string(), ascending: *asc }).collect();
     let found = if count {
@@ -141,6 +145,19 @@ fn a_folder_page_sorted_by_path_reads_the_page() {
         inclusive: false,
     };
     bounded_on("a subtree by path", &below, &[("loc", true)], false, 16_000);
+}
+
+#[test]
+fn a_multi_term_path_search_reads_its_candidates_not_the_forest() {
+    // `d100` holds `file000123.txt` on either size; the other folders whose
+    // name contains `d100` (`d1000`, `d10000`, …) hold no `000123`.
+    let osm = Query::Osm {
+        field: "loc".into(),
+        terms: vec!["d100".into(), "000123".into()],
+        mode: OsmMode::Path,
+    };
+    bounded("multi-term path search", &osm, &[], false);
+    bounded("multi-term path search, counted", &osm, &[], true);
 }
 
 /// `n` files under `/top`, ten per folder: a subtree whose folders grow with

@@ -9,7 +9,7 @@
 use metafolder_core::query::Query;
 use metafolder_daemon::error::ApiError;
 use metafolder_daemon::index::{
-    collect_node_paths, collect_path_targets, PageStrategy, QueryRoots, RepoIndex, SortBy,
+    collect_node_paths, collect_path_targets, Eval, PageStrategy, QueryRoots, RepoIndex, SortBy,
 };
 use metafolder_daemon::query_result::{SortKey, SortOrder};
 use metafolder_daemon::store::Store;
@@ -79,7 +79,7 @@ pub fn indexed(
         .iter()
         .map(|k| SortBy { field: k.field.clone(), ascending: k.order == SortOrder::Asc })
         .collect();
-    let (roots, indexed) = prepare(cache, conn, query);
+    let (roots, indexed) = prepare(cache, conn, None, query);
     let keys = SortKeys::new(cache);
     let roots = QueryRoots { keys: Some(&keys), ..roots };
     let index = RepoIndex::build(conn).unwrap();
@@ -91,7 +91,9 @@ pub fn indexed(
     // the forest read from that store: a KV repository keeps none resident.
     let (kv, _dir) = super::kv::kv_mirror(conn);
     let mut no_forest = TreeCache::new(false).without_forest();
-    let (roots, indexed) = prepare(&mut no_forest, &kv, query);
+    let (roots, indexed) = super::kv::with_kv(&kv, PageStrategy::Auto, |e, _| {
+        prepare(&mut no_forest, &kv, Some(e), query)
+    });
     let keys = SortKeys::with_store(&no_forest, &kv);
     let roots = QueryRoots { keys: Some(&keys), ..roots };
     let on_kv = super::kv::with_kv(&kv, PageStrategy::Auto, |e, _| {
@@ -111,6 +113,7 @@ pub fn indexed(
 pub fn prepare(
     cache: &mut TreeCache,
     store: &dyn Store,
+    names: Option<&Eval>,
     query: &Query,
 ) -> (QueryRoots<'static>, Query) {
     let mut roots = QueryRoots::new();
@@ -127,6 +130,6 @@ pub fn prepare(
         let node = cache.resolve_path(store, &field, &path).unwrap();
         roots.node.insert((field, path), node);
     }
-    let indexed = forest_query::resolve_path_leaves(cache, store, query).unwrap();
+    let indexed = forest_query::resolve_path_leaves(cache, store, names, query).unwrap();
     (roots, indexed)
 }

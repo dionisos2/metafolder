@@ -281,8 +281,17 @@ What it buys:
 - *sort by path*, including a global one: a depth-first walk of =forest= in
   name order, pruning every subtree whose =descendants ∩ match= is empty,
   stopping at the k-th result — ≈ k × depth reads whatever the repository size;
-- =:path= and order-sensitive =Osm= path matching: the same walk, pruned by the
-  descendant bitmaps and by the term candidates the trigrams give;
+- order-sensitive =Osm= path matching without walking the forest: along a
+  matching path, the shortest matching prefix ends at a node whose own name
+  holds the end of the last term (what follows its last =/=), so the trigrams
+  give the candidate "anchors", each is verified on its assembled path (its
+  ancestors read once, shared between candidates), and the match set is the
+  union of the verified anchors' subtrees — the descendant bitmaps again. An
+  anchor matching only through a position other than its first matches alone,
+  its descendants hanging from the first. A last term *ending* with =/= has no
+  anchor and falls back to the walk (=forest_query.rs=). The =:path= aspect
+  still walks the whole forest :deferred: (/pruned =:path= walk/: an arbitrary
+  predicate on the path gives no anchor);
 - the forest invariants (no cycle, depth ≤ 1000) only need the ancestor chain:
   ≈ depth reads per checked write.
 

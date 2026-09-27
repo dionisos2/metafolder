@@ -3322,6 +3322,7 @@ fn engine<'a>(
 fn prepare_indexed_query<'a>(
     conn: &dyn crate::store::Store,
     cache: &mut crate::tree_cache::TreeCache,
+    index: &crate::index::Eval<'_>,
     query: &MetaQuery,
 ) -> Result<(crate::index::QueryRoots<'a>, MetaQuery), ApiError> {
     let _phase = slowlog::phase("prepare");
@@ -3346,7 +3347,7 @@ fn prepare_indexed_query<'a>(
     }
     // The forest's own leaves. A `Matches` or an `osm direct` needs no rewrite:
     // the index runs the regex over the field's distinct values in memory.
-    let indexed = crate::forest_query::resolve_path_leaves(cache, conn, query)?;
+    let indexed = crate::forest_query::resolve_path_leaves(cache, conn, Some(index), query)?;
     Ok((roots, indexed))
 }
 
@@ -3369,7 +3370,7 @@ fn resolve_query_uuids(
     let mut index_guard = slowlog::timed("wait:index", || repo_state.index.lock_recover());
     let engine = engine(conn, &mut index_guard, cancel)?;
     crate::query_validate::validate_query_types(query, &|f| engine.value_type(f))?;
-    let (roots, indexed) = prepare_indexed_query(conn, cache, query)?;
+    let (roots, indexed) = prepare_indexed_query(conn, cache, &engine.eval(), query)?;
     let evaluated = slowlog::timed("index.evaluate", || {
         engine.eval().evaluate_page_with_roots(&indexed, &[], None, None, &roots)
     });
@@ -3436,7 +3437,7 @@ fn run_query_filter(
     crate::query_validate::validate_query_types(&body.query, &|f| engine.value_type(f))?;
     let index = engine.eval();
 
-    let (mut roots, indexed_query) = prepare_indexed_query(conn, cache, &body.query)?;
+    let (mut roots, indexed_query) = prepare_indexed_query(conn, cache, &index, &body.query)?;
     // Full-path sort keys for a `tree_ref` sort key, rebuilt from the resident
     // forest — or from the store, where none is resident (spec-data-model
     // "Sort specification", spec-storage increment 4 e).

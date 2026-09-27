@@ -1175,7 +1175,7 @@ fn osm_path_separator_term_defers_and_matches_sql() {
         let index = RepoIndex::build(&o.conn).unwrap();
         assert!(index.evaluate(&q).is_err(), "a separator-bearing term must defer: {term:?}");
 
-        let rewritten = forest_query::resolve_path_leaves(&o.cache, &o.conn, &q).unwrap();
+        let rewritten = forest_query::resolve_path_leaves(&o.cache, &o.conn, None, &q).unwrap();
         let (mut sql, _) = query_exec::execute(&o.conn, &mut o.cache, &q, &[], None, None).unwrap();
         let (mut got, _) = index
             .evaluate_page_with_roots(&rewritten, &[], None, None, &QueryRoots::new())
@@ -1203,7 +1203,7 @@ fn osm_path_multi_term_via_leaf_rewrite_matches_sql() {
     o.cache.populate(&o.conn).unwrap();
     for terms in [vec!["video", "scien"], vec!["scien", "video"], vec!["ser", "vid"]] {
         let q = osm_path_q("loc", &terms);
-        let rewritten = forest_query::resolve_path_leaves(&o.cache, &o.conn, &q).unwrap();
+        let rewritten = forest_query::resolve_path_leaves(&o.cache, &o.conn, None, &q).unwrap();
         let index = RepoIndex::build(&o.conn).unwrap();
         let (mut sql, _) = query_exec::execute(&o.conn, &mut o.cache, &q, &[], None, None).unwrap();
         // A rewritten multi-term OSM path is a bare UuidIn — the index serves it
@@ -1240,7 +1240,7 @@ fn finder_shaped_query_via_leaf_rewrite_matches_sql() {
     // The same preparation `run_query_filter` runs: neither leaf needs a
     // rewrite here, and that is the point — both are served in memory.
     o.cache.populate(&o.conn).unwrap();
-    let rewritten = forest_query::resolve_path_leaves(&o.cache, &o.conn, &q).unwrap();
+    let rewritten = forest_query::resolve_path_leaves(&o.cache, &o.conn, None, &q).unwrap();
     let roots = QueryRoots::new();
 
     let index = RepoIndex::build(&o.conn).unwrap();
@@ -1640,8 +1640,8 @@ fn resolving_forest_leaves_is_deterministic() {
             ],
         },
     ] {
-        let once = forest_query::resolve_path_leaves(&o.cache, &o.conn, &q).unwrap();
-        let twice = forest_query::resolve_path_leaves(&o.cache, &o.conn, &q).unwrap();
+        let once = forest_query::resolve_path_leaves(&o.cache, &o.conn, None, &q).unwrap();
+        let twice = forest_query::resolve_path_leaves(&o.cache, &o.conn, None, &q).unwrap();
         assert_eq!(
             format!("{once:?}"),
             format!("{twice:?}"),
@@ -1781,7 +1781,7 @@ fn path_aspect_leaves_are_resolved_by_the_forest() {
         Query::IsPresent { field: "loc".into(), aspect: Aspect::Path },
         Query::IsAbsent { field: "loc".into(), aspect: Aspect::Path },
     ] {
-        let rewritten = forest_query::resolve_path_leaves(&o.cache, &o.conn, &q).unwrap();
+        let rewritten = forest_query::resolve_path_leaves(&o.cache, &o.conn, None, &q).unwrap();
         let index = RepoIndex::build(&o.conn).unwrap();
         let mut got = index.to_uuids(&index.evaluate(&rewritten).unwrap());
         let (mut sql, _) = query_exec::execute(&o.conn, &mut o.cache, &q, &[], None, None).unwrap();
@@ -1814,7 +1814,7 @@ fn a_path_leaf_on_a_non_tree_field_is_refused_before_any_engine() {
     // to, declining is a 500.
     let q = Query::Eq { field: "nowhere".into(), value: s("x"), aspect: Aspect::Path };
     assert!(query_validate::validate_query_types(&q, &|f| index.value_type(f)).is_ok());
-    let rewritten = forest_query::resolve_path_leaves(&o.cache, &o.conn, &q).unwrap();
+    let rewritten = forest_query::resolve_path_leaves(&o.cache, &o.conn, None, &q).unwrap();
     assert!(index.evaluate(&rewritten).unwrap().is_empty());
     let (sql, _) = query_exec::execute(&o.conn, &mut o.cache, &q, &[], None, None).unwrap();
     assert!(sql.is_empty());
