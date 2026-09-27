@@ -2640,10 +2640,12 @@ async fn watch_check(
             crate::watcher::Coverage::Tree
         };
         let conn = slowlog::timed("wait:conn", || repo_state.conn.lock_recover());
+        let rules = repo_state.watch_rules(&conn)?;
         let mut cache = slowlog::timed("wait:cache", || repo_state.lock_cache());
         let statuses = crate::watcher::explain_watched(
             &conn,
             &mut cache,
+            &rules,
             &repo_state.config.root,
             repo_state.internal_dir().as_path(),
             coverage,
@@ -3017,15 +3019,14 @@ struct EligibilityBody {
 }
 
 /// The most paths one `POST /eligibility` call may explain. A directory
-/// listing is the intended unit; a bigger batch is a client bug, and each path
-/// costs an ancestor-chain walk under the repo's cache lock.
+/// listing is the intended unit; a bigger batch is a client bug, answered while
+/// holding the repository's connection.
 const ELIGIBILITY_MAX_PATHS: usize = 1000;
 
 /// `POST /repos/:repo/eligibility`: read-only dry run of the watch/ignore
 /// algorithm for a batch of repo-root-relative paths, each with the reason it
-/// was decided (spec-file-tracking "Eligibility explain"). The whole batch
-/// shares one `EligibilityCache`, so ancestor fields and compiled patterns are
-/// read once for a listing.
+/// was decided (spec-file-tracking "Eligibility explain"). Answered from the
+/// rule index: no path costs a store read.
 async fn eligibility_explain(
     State(state): State<Arc<AppState>>,
     Path(repo): Path<String>,
@@ -3048,11 +3049,10 @@ async fn eligibility_explain(
     }
     with_repo(&state, repo_uuid, move |repo_state| {
         let conn = slowlog::timed("wait:conn", || repo_state.conn.lock_recover());
-        let mut cache = slowlog::timed("wait:cache", || repo_state.lock_cache());
-        let mut ec = crate::eligibility::EligibilityCache::default();
+        let rules = repo_state.watch_rules(&conn)?;
         let mut results = Vec::with_capacity(body.paths.len());
         for path in &body.paths {
-            let e = crate::eligibility::explain_cached(&conn, &mut cache, path, &mut ec)?;
+            let e = rules.explain(&crate::relpath::RelPath::from_display(path))?;
             results.push(json!({
                 "path": path,
                 "eligible": e.eligible,
@@ -3091,8 +3091,8 @@ async fn effective_ignore(
     }
     with_repo(&state, repo_uuid, move |repo_state| {
         let conn = slowlog::timed("wait:conn", || repo_state.conn.lock_recover());
-        let mut cache = slowlog::timed("wait:cache", || repo_state.lock_cache());
-        let e = crate::eligibility::effective_ignore(&conn, &mut cache, &params.path)?;
+        let rules = repo_state.watch_rules(&conn)?;
+        let e = rules.effective_ignore(&crate::relpath::RelPath::from_display(&params.path));
         Ok(Json(json!({
             "source": e.source,
             "source_uuid": e.source_uuid.map(hex),

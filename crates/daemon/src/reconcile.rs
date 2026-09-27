@@ -14,7 +14,7 @@ use uuid::Uuid;
 use metafolder_core::metarecord::{Field, TreeName, Value};
 use metafolder_core::sync::MutexExt;
 
-use crate::eligibility;
+use crate::eligibility::WatchRules;
 use crate::error::ApiError;
 use crate::executor::ensure_parent_metarecords;
 use crate::fingerprint;
@@ -129,21 +129,14 @@ pub fn reconcile_full_reported(
 
     // Step 2 — pure walk: collect eligible paths (no stat), BFS by depth.
     let internal_dir = repo.internal_dir();
-    let mut elig = eligibility::EligibilityCache::default();
+    // The rule index (spec-file-tracking "The rule index"): the walk's
+    // eligibility questions read nothing from the store.
+    let rules = repo.watch_rules(writer.store())?;
     // Declared mount points with nothing mounted on them: their subtrees are
     // frozen — not walked, not orphaned, not offered as candidates
     // (spec-file-tracking "Offline subtrees").
     let offline = crate::mount::offline(writer.store(), &mut cache, &root)?;
-    let paths = walk(
-        &mut writer,
-        &mut cache,
-        &root,
-        &internal_dir,
-        &RelPath::root(),
-        &mut elig,
-        &offline,
-        reporter,
-    )?;
+    let paths = walk(&root, &internal_dir, &RelPath::root(), &rules, &offline, reporter)?;
 
     // Stat phase: the total is now known, so this (the heavy syscall pass) is a
     // determinate phase (spec-tasks "Decompose walk").
@@ -509,7 +502,9 @@ pub fn reconcile_metarecord_reported(
 
     // Pure walk of the subtree (BFS, no stat) then the determinate stat phase,
     // same shape as the whole-repository reconcile (spec-tasks).
-    let mut elig = eligibility::EligibilityCache::default();
+    // The rule index (spec-file-tracking "The rule index"): the walk's
+    // eligibility questions read nothing from the store.
+    let rules = repo.watch_rules(writer.store())?;
     let mut paths: Vec<RelPath> = Vec::new();
     let base_rel = RelPath::from_display(&base);
     let abs_base = base_rel.to_abs(&root);
@@ -517,16 +512,7 @@ pub fn reconcile_metarecord_reported(
     // even though `exists()` follows it to nothing (see the orphan scan above).
     if metafolder_core::fsentry::path_present(&abs_base) {
         paths.push(base_rel.clone()); // The subtree root itself.
-        paths.extend(walk(
-            &mut writer,
-            &mut cache,
-            &root,
-            &repo.internal_dir(),
-            &base_rel,
-            &mut elig,
-            &offline,
-            reporter,
-        )?);
+        paths.extend(walk(&root, &repo.internal_dir(), &base_rel, &rules, &offline, reporter)?);
     }
     let mut fs_paths = stat_paths(&root, &paths, reporter);
     if reporter.is_cancelled() {
@@ -621,12 +607,10 @@ pub fn reconcile_metarecord_reported(
 /// `base` itself is not included.
 #[allow(clippy::too_many_arguments)]
 fn walk(
-    writer: &mut Writer,
-    cache: &mut TreeCache,
     root: &Path,
     internal_dir: &Path,
     base: &RelPath,
-    elig: &mut eligibility::EligibilityCache,
+    rules: &WatchRules,
     offline: &crate::mount::OfflineMounts,
     reporter: &Reporter,
 ) -> Result<Vec<RelPath>> {
@@ -666,10 +650,7 @@ fn walk(
                     continue;
                 }
                 let rel = dir.child(name);
-                // Ignore patterns are regexes over text, so they see the
-                // displayed path — the same one the user wrote them against.
-                let display = rel.display();
-                if !eligibility::is_eligible_cached(writer.store(), cache, &display, elig)? {
+                if !rules.is_eligible(&rel)? {
                     continue;
                 }
                 // `file_type` is free here (from the dir entry, no stat).
@@ -679,7 +660,7 @@ fn walk(
                     // An offline mount point is itself an ordinary directory
                     // (it exists, its own metadata is real); what is behind it
                     // is not there to be walked.
-                    if offline.contains(&display) {
+                    if offline.contains(&rel.display()) {
                         continue;
                     }
                     next.push(rel);

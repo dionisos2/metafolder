@@ -283,6 +283,39 @@ needs a different pattern set must re-declare all desired patterns in its own
 rows for the target directory (via inherited property lookup), copy them, write
 them to the directory metarecord, then remove the unwanted pattern.
 
+*** The rule index
+
+The algorithm reads three fields — =mf_watch=, =mf_ignore= and
+=mfr_watch_exceeded= ([[*The watch budget]]) — and only on the metarecords that
+hold them. Those are few: a handful of directories the user chose, plus the
+budget's frontier. So the daemon keeps them in memory, per repository, keyed by
+their =mfr_path=: the *rule index*. Each entry holds the uuid, the three values
+and the =mf_ignore= patterns already compiled.
+
+Evaluating a path is then a walk up its own prefixes (=/a/b/c=, =/a/b=, =/a=,
+the root) in that map: no database read, no tree-cache lookup, no lock but the
+index's own. Every eligibility decision in the daemon goes through it — the
+watcher's ingest filter and flush, the reconcile walk, the budget placement,
+=POST /eligibility=, =POST /watch/check=, =GET /ignore/effective= — so none of
+them can disagree with another. The chain walk it replaced (one tree lookup and
+two field reads per ancestor, for every event) is kept as the *test oracle* the
+index is held to, on generated trees and rules (=tests/eligibility_oracle.rs=).
+
+*Freshness.* The index records the HEAD it was read at. A reader that holds the
+connection compares it with the current HEAD — one read — and rebuilds on a
+difference; every committed write also rebuilds it on the spot (=settle=), so the
+next reader rarely has to. A rebuild reads the holders of the three fields and
+their paths: proportional to the number of rules, not to the repository.
+
+*Inside a flush.* The executor applies renames and removals before they are
+committed; a path's rules can move with them. When the executor moves, orphans or
+re-homes a metarecord that holds a rule or is an ancestor of one, it re-reads
+the index from its own uncommitted state before the next event.
+
+*The index is an eligibility source, not a cache of answers.* A path that has
+never been seen is answered like any other: the map holds the rules, not the
+paths they govern.
+
 *** Cascading skip
 
 When a directory is skipped (=mf_watch = false= or matched by an ignore
@@ -902,6 +935,37 @@ rollbackable as a unit.
 
 Processing the buffer happens in two steps:
 
+*Filtering at ingestion.* An event whose path is not eligible is dropped by the
+ingest thread, before it is buffered: it never reaches compaction, never keeps
+the quiet period open, never makes a flush. Under the coverage regime this is
+where most of the load of an ignored subtree ends (the kernel still delivers it
+— a filesystem mark cannot exclude a subtree — and [[*Watch activity]] still
+counts it). Under the budget regime it is exactly what not placing a watch
+already did for a directory, now applied to ignored *files* of a watched one
+too. The flush still checks eligibility itself: the ingest filter only spares it
+work.
+
+Only what cannot change the flush's outcome is dropped:
+
+- =Create=, =Remove=, =ModifyData=, =ModifyMeta= on an ineligible path;
+- a =Rename= whose *both* sides are ineligible (one eligible side keeps the
+  whole event: the flush decides between a move and a stale path);
+- never a one-sided =Rename(From)= / =Rename(To)=: dropping one half would break
+  the correlation of step 0.
+
+*Rules that are about to move.* The index reflects the committed state, while
+the buffer may already hold a rename or a removal of a directory that carries a
+rule, or of one of its ancestors. Filtering against the old positions would drop
+events the flush would have kept (a rule-carrying =/a= renamed away, a new =/a=
+created in its place). So an ingest batch holding such an event is not filtered,
+and filtering stays off until a flush that drained that event has committed and
+rebuilt the index. Rule-carrying directories move rarely; the filter being off
+for a flush costs nothing but the work it would have spared.
+
+A change of =mf_watch= / =mf_ignore= takes effect at the next ingest batch. Events
+already dropped are not revisited — an event that arrived while a subtree was
+not watched is, in the budget regime too, an event that was never seen.
+
 *Step 0 — Rename correlation.* A rename the backend reported as a separate
 =RenameFrom= / =RenameTo= pair is fused back into one =Rename= by matching the
 inotify cookie both halves carry. The lookup is by cookie, not by scanning the
@@ -968,6 +1032,11 @@ ignored file inside a watched directory still reaches the buffer — it is only
 turned away when the event is applied. Such a flush writes nothing, and from the
 outside is indistinguishable from one that happened for no reason at all. The
 line is what tells the two apart, and names the path responsible.
+
+Since the ingest thread drops ineligible events itself ([[*Event batching]],
+"Filtering at ingestion"), such a flush is rarer: it happens while that filter
+is off (a rule-carrying directory about to move), or for a path whose rules
+changed between ingestion and the flush. The count stays, for those.
 
 A flush with an empty buffer reports nothing: it registers no task either
 (see [[file:spec-tasks.org][spec-tasks.org]]), and there is nothing to say.
@@ -1556,9 +1625,9 @@ Response: one result per requested path, in the order given.
   pattern set, =null= when none has one.
 - =pattern= — the pattern that matched, only for =reason = "ignored"=.
 
-Evaluating a path costs an ancestor-chain walk served by the tree cache; the
-call compiles each pattern once for the whole batch (the reconcile walk's
-=EligibilityCache=), so a directory listing is one request.
+Evaluating a path is a walk up its own prefixes in the rule index ([[*The rule
+index]]): no store read, patterns compiled once when the index is read, so a
+directory listing is one cheap request.
 
 ** Watch check
 

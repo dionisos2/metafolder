@@ -22,6 +22,25 @@ use crate::tree_cache::TreeCache;
 /// one that is not.
 const SLOW_EVENT: std::time::Duration = std::time::Duration::from_secs(1);
 
+/// The published rule index of a repository, with the two counters that say
+/// whether the ingest thread may filter against it (spec-file-tracking
+/// "Filtering at ingestion", "Rules that are about to move").
+#[derive(Default)]
+struct RulesSlot {
+    rules: Option<Arc<crate::eligibility::WatchRules>>,
+    /// The HEAD the rules are known to describe: the one they were read at, or
+    /// a later one whose revisions moved no rule.
+    valid_at: Option<Option<i64>>,
+    /// Bumped by the ingest thread once it has buffered a batch holding an
+    /// event that touches a rule (a move or removal of a rule-carrying
+    /// directory or of one of its ancestors).
+    touched: u64,
+    /// The `touched` a flush read *before* draining the buffer, recorded once
+    /// that flush committed and the rules were re-read: every touching event
+    /// counted in it has been applied.
+    covered: u64,
+}
+
 /// One loaded repository. The SQLite connection and the tree cache each sit
 /// behind their own mutex; blocking work runs in `spawn_blocking`.
 pub struct RepoState {
@@ -100,6 +119,10 @@ pub struct RepoState {
     /// separate from `conn`: counting is on the ingest path and reading it must
     /// answer while a flush holds the connection.
     pub watch_activity: Mutex<crate::watch_activity::WatchActivity>,
+    /// The rule index (spec-file-tracking "The rule index") and how far the
+    /// ingest filter may trust it. Behind its own lock, held for a pointer copy:
+    /// the ingest thread reads it without ever waiting for the connection.
+    watch_rules: Mutex<RulesSlot>,
     /// How much history this repository's event log keeps behind HEAD: its own
     /// `config.json` override where set, the daemon's `[settings]` otherwise.
     /// Applied by every writer built through [`Self::writer`].
@@ -193,6 +216,7 @@ impl RepoState {
                 metafolder_core::date::now_ms(),
                 crate::watch_activity::DEFAULT_CAP,
             )),
+            watch_rules: Mutex::new(RulesSlot::default()),
             orphan_cascade_limit: settings.orphan_cascade_limit,
             log_retention,
             ingestion_paused: std::sync::atomic::AtomicBool::new(false),
@@ -249,6 +273,106 @@ impl RepoState {
         cfg.write(&self.metafolder_dir)?;
         *self.name.lock_recover() = new_name;
         Ok(())
+    }
+    /// The rule index, current as of the connection's HEAD: re-read when a
+    /// revision since the last read may have moved a rule, and published for
+    /// the ingest thread. One `head` read when nothing changed.
+    pub fn watch_rules(
+        &self,
+        conn: &dyn crate::store::Store,
+    ) -> anyhow::Result<Arc<crate::eligibility::WatchRules>> {
+        let head = conn.head()?;
+        {
+            let slot = self.watch_rules.lock_recover();
+            if let (Some(rules), Some(valid_at)) = (&slot.rules, slot.valid_at) {
+                if valid_at == head {
+                    return Ok(rules.clone());
+                }
+            }
+        }
+        let _phase = metafolder_core::slowlog::phase("rules.load");
+        let rules = Arc::new(crate::eligibility::WatchRules::load(conn, self.case_insensitive)?);
+        let mut slot = self.watch_rules.lock_recover();
+        slot.rules = Some(rules.clone());
+        slot.valid_at = Some(rules.head());
+        Ok(rules)
+    }
+
+    /// Brings the rule index in step with a revision just committed: re-read
+    /// when it wrote a rule or moved a metarecord a rule depends on, otherwise
+    /// only re-stamped with the new HEAD. A failure is logged — the next reader
+    /// re-reads.
+    fn settle_watch_rules(
+        &self,
+        conn: &dyn crate::store::Store,
+        effects: &crate::log::WriteEffects,
+    ) {
+        let moved_a_rule = {
+            let slot = self.watch_rules.lock_recover();
+            match &slot.rules {
+                None => return, // Never read: the first reader will.
+                Some(rules) => {
+                    effects.touches_watch()
+                        || effects
+                            .tree_ops()
+                            .iter()
+                            .any(|op| op.field() == "mfr_path" && rules.affects(op.uuid()))
+                }
+            }
+        };
+        let result = if moved_a_rule {
+            let _phase = metafolder_core::slowlog::phase("settle.rules");
+            crate::eligibility::WatchRules::load(conn, self.case_insensitive).map(|rules| {
+                let mut slot = self.watch_rules.lock_recover();
+                slot.valid_at = Some(rules.head());
+                slot.rules = Some(Arc::new(rules));
+            })
+        } else {
+            conn.head().map(|head| {
+                let mut slot = self.watch_rules.lock_recover();
+                // Only a stamp that described the state this revision started
+                // from moves forward: one already behind (a revision that did
+                // not settle, such as a flush) stays behind, and the next
+                // reader re-reads.
+                if slot.valid_at == Some(effects.base_head()) {
+                    slot.valid_at = Some(head);
+                }
+            })
+        };
+        if let Err(e) = result {
+            self.watch_rules.lock_recover().valid_at = None;
+            crate::diagnostics::warn_for(
+                "watcher",
+                format!("could not bring the watch rules up to the new revision: {e:#}"),
+                self.uuid(),
+            );
+        }
+    }
+
+    /// What the ingest thread filters with: the published rules, and whether
+    /// they can be trusted to drop ineligible events — not while a buffered
+    /// event that moves a rule is waiting for its flush.
+    pub fn ingest_rules(&self) -> (Option<Arc<crate::eligibility::WatchRules>>, bool) {
+        let slot = self.watch_rules.lock_recover();
+        (slot.rules.clone(), slot.touched <= slot.covered)
+    }
+
+    /// Records that a batch touching a rule has been buffered: filtering stays
+    /// off until a flush that drained it has committed ([`Self::rules_covered`]).
+    pub fn rules_touched(&self) {
+        self.watch_rules.lock_recover().touched += 1;
+    }
+
+    /// The touch count a flush reads *before* draining the buffer.
+    pub fn rules_touch_mark(&self) -> u64 {
+        self.watch_rules.lock_recover().touched
+    }
+
+    /// A flush that read `mark` before draining has committed, and the rules
+    /// were re-read after it: the touching events it counted are in them.
+    pub fn rules_covered(&self, mark: u64) {
+        let mut slot = self.watch_rules.lock_recover();
+        slot.covered = slot.covered.max(mark);
     }
 
     /// Locks the tree cache, recovering from a poisoned mutex. Unlike the
@@ -365,6 +489,7 @@ impl RepoState {
                 cache.populate(conn)?;
             }
         }
+        self.settle_watch_rules(conn, effects);
         if effects.touches_watch() {
             let _phase = metafolder_core::slowlog::phase("settle.watches");
             self.refresh_watches(conn);
@@ -410,6 +535,16 @@ impl RepoState {
     /// or a repository being torn down). `conn` is the already-locked
     /// connection; the tree cache is locked here.
     pub fn refresh_watches(&self, conn: &dyn crate::store::Store) -> usize {
+        // The ingest filter reads the published rules: a navigation that
+        // restored or took away a rule without settling must not leave it
+        // filtering against the old ones.
+        if let Err(err) = self.watch_rules(conn) {
+            crate::diagnostics::warn_for(
+                "watcher",
+                format!("could not re-read the watch rules: {err:#}"),
+                self.uuid(),
+            );
+        }
         let cap = crate::watcher::budget_cap_for(self.watch_budget_share);
         let placement = {
             let handles = self.handles.lock_recover();

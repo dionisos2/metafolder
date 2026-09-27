@@ -36,7 +36,7 @@ use metafolder_core::metarecord::TreeName;
 use metafolder_core::sync::MutexExt;
 use uuid::Uuid;
 
-use crate::eligibility::{self, EligibilityCache};
+use crate::eligibility::{self, WatchRules};
 use crate::executor::FsEvent;
 use crate::relpath::RelPath;
 use crate::state::RepoState;
@@ -250,7 +250,6 @@ pub fn compute_watched_dirs_timed(
 ) -> WatchPlan {
     let start = std::time::Instant::now();
     let mut elig = std::time::Duration::ZERO;
-    let mut ec = EligibilityCache::default();
     let mut out = HashSet::new();
     let mut frontier = Vec::new();
     // Paths that override an inherited exclusion back to `false`. Few by
@@ -261,7 +260,16 @@ pub fn compute_watched_dirs_timed(
     // The root directory is watched iff the root metarecord is eligible
     // (`mf_watch = true` set directly on it — the opt-in default is false).
     let t = std::time::Instant::now();
-    let root_eligible = eligibility::is_eligible_cached(conn, cache, "", &mut ec);
+    // Read once for the whole placement: every directory's eligibility is then
+    // a lookup (spec-file-tracking "The rule index").
+    let rules = match WatchRules::load(conn, cache.is_case_insensitive()) {
+        Ok(rules) => rules,
+        Err(err) => {
+            crate::diagnostics::warn("watcher", format!("reading the watch rules failed: {err:#}"));
+            return WatchPlan { dirs: out, frontier, total: start.elapsed(), eligibility: elig };
+        }
+    };
+    let root_eligible = rules.is_eligible(&RelPath::root());
     elig += t.elapsed();
     macro_rules! done {
         () => {
@@ -298,7 +306,7 @@ pub fn compute_watched_dirs_timed(
         frontier: &mut frontier,
         elig: &mut elig,
     };
-    collect_eligible_dirs(conn, cache, root, &RelPath::root(), &mut ec, &mut walk);
+    collect_eligible_dirs(root, &RelPath::root(), &rules, &mut walk);
     done!()
 }
 
@@ -357,14 +365,7 @@ impl Walk<'_> {
 /// `""` for the root), inserting the absolute path of every eligible descendant
 /// directory into `out`.
 #[allow(clippy::too_many_arguments)]
-fn collect_eligible_dirs(
-    conn: &dyn crate::store::Store,
-    cache: &mut TreeCache,
-    root: &Path,
-    base: &RelPath,
-    ec: &mut EligibilityCache,
-    walk: &mut Walk,
-) {
+fn collect_eligible_dirs(root: &Path, base: &RelPath, rules: &WatchRules, walk: &mut Walk) {
     // Each entry carries the exclusion inherited from its ancestors, so the
     // nearest-ancestor rule costs one field read per directory and not one
     // ancestor chain (spec-file-tracking "The watch budget").
@@ -392,12 +393,12 @@ fn collect_eligible_dirs(
             // path — the same one the user wrote them against.
             let display = rel.display();
             let t = std::time::Instant::now();
-            let eligible = eligibility::is_eligible_cached(conn, cache, &display, ec);
+            let eligible = rules.is_eligible(&rel);
             *walk.elig += t.elapsed();
             match eligible {
                 Ok(true) if walk.offline.contains(&display) => {} // Unplugged volume: frozen.
                 Ok(true) => {
-                    let excluded = exclusion_of(conn, cache, ec, &display, inherited_excluded);
+                    let excluded = rules.exceeded_own(&rel).unwrap_or(inherited_excluded);
                     if excluded {
                         // Not watched. Descended only when a deliberate override
                         // is known to be inside, so giving up a subtree does not
@@ -420,31 +421,6 @@ fn collect_eligible_dirs(
                     format!("eligibility check for {rel:?} failed: {err:#}"),
                 ),
             }
-        }
-    }
-}
-
-/// The effective `mfr_watch_exceeded` of `display`: its own value when it has
-/// one, else the value inherited from its ancestors.
-fn exclusion_of(
-    conn: &dyn crate::store::Store,
-    cache: &mut TreeCache,
-    ec: &mut EligibilityCache,
-    display: &str,
-    inherited: bool,
-) -> bool {
-    let Ok(Some(uuid)) = cache.resolve_path(conn, "mfr_path", display) else {
-        return inherited; // Not tracked yet: it can carry no value of its own.
-    };
-    match eligibility::cached_watch_exceeded(conn, ec, uuid) {
-        Ok(Some(own)) => own,
-        Ok(None) => inherited,
-        Err(err) => {
-            crate::diagnostics::warn(
-                "watcher",
-                format!("reading {} for {display:?} failed: {err:#}", eligibility::WATCH_EXCEEDED),
-            );
-            inherited
         }
     }
 }
@@ -492,7 +468,16 @@ fn maintain_watches(
     {
         let conn = repo.conn.lock_recover();
         let mut cache = repo.lock_cache();
-        let mut ec = EligibilityCache::default();
+        let rules = match repo.watch_rules(&conn) {
+            Ok(rules) => rules,
+            Err(err) => {
+                crate::diagnostics::warn(
+                    "watcher",
+                    format!("reading the watch rules failed: {err:#}"),
+                );
+                return;
+            }
+        };
         let offline = crate::mount::offline(&conn, &mut cache, root).unwrap_or_default();
         let overrides = watch_exceeded_overrides(&conn, &mut cache);
         for rel in arrivals {
@@ -503,7 +488,7 @@ fn maintain_watches(
                 _ => continue,
             }
             let display = rel.display();
-            match eligibility::is_eligible_cached(&conn, &mut cache, &display, &mut ec) {
+            match rules.is_eligible(rel) {
                 Ok(true) if !offline.contains(&display) => {}
                 _ => continue,
             }
@@ -520,7 +505,7 @@ fn maintain_watches(
                 frontier: &mut frontier,
                 elig: &mut elig,
             };
-            collect_eligible_dirs(&conn, &mut cache, root, rel, &mut ec, &mut walk);
+            collect_eligible_dirs(root, rel, &rules, &mut walk);
         }
     }
     for dir in &subtree {

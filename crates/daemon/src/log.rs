@@ -1250,6 +1250,9 @@ pub struct WriteEffects {
     /// changes and the order they are applied in is the order they were
     /// written in.
     tree: Vec<TreeOp>,
+    /// HEAD when the revision began: what the in-memory state settled by this
+    /// revision must have described for a cheap upkeep to be enough.
+    base_head: Option<i64>,
     /// Whether the revision wrote a field that decides which directories are
     /// watched.
     watch: bool,
@@ -1274,6 +1277,11 @@ impl WriteEffects {
     /// have changed.
     pub fn touches_watch(&self) -> bool {
         self.watch
+    }
+
+    /// HEAD when the revision began.
+    pub fn base_head(&self) -> Option<i64> {
+        self.base_head
     }
 }
 
@@ -1503,7 +1511,7 @@ impl<'c> Writer<'c> {
             field_types: HashMap::new(),
             deferred_types: None,
             retention,
-            effects: WriteEffects::default(),
+            effects: WriteEffects { base_head: head, ..WriteEffects::default() },
             tree_lost: Vec::new(),
             tree_lost_seen: HashMap::new(),
             reverting: None,

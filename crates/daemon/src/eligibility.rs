@@ -1,35 +1,28 @@
 //! Watch/ignore eligibility (spec-file-tracking "Watch and Ignore"): decides
 //! whether a repo-root-relative path should be tracked, from the `mf_watch`
 //! and `mf_ignore` fields inherited along the `mfr_path` ancestor chain.
+//!
+//! Every decision is answered by the [`WatchRules`] index (spec-file-tracking
+//! "The rule index"): the few metarecords holding a rule, keyed by their path,
+//! so that evaluating a path reads nothing from the store.
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
-use anyhow::{Context, Result};
+use anyhow::{anyhow, Result};
+use metafolder_core::metarecord::{TreeName, Value};
 use regex::Regex;
 use uuid::Uuid;
 
+use crate::relpath::RelPath;
 use crate::store::{Rows, Store};
-use crate::tree_cache::TreeCache;
+use crate::tree_cache::{normalize_name, TreeCache};
 
 /// The field recording a directory the watch budget could not afford
 /// (spec-file-tracking "The watch budget"). Reserved (`mfr_*`), inherited down
 /// the `mfr_path` tree like `mf_watch`.
 pub const WATCH_EXCEEDED: &str = "mfr_watch_exceeded";
 
-/// Per-run memoisation for [`is_eligible_cached`]. Ancestor `mf_watch` /
-/// `mf_ignore` values and compiled `mf_ignore` regexes are stable for the
-/// duration of a reconcile walk, so caching them turns the walk's per-entry
-/// cost from O(depth) SQLite queries + a regex recompile each into a handful of
-/// lookups. Reused across the whole walk; never persisted.
-#[derive(Default)]
-pub struct EligibilityCache {
-    regex: HashMap<String, Regex>,
-    watch: HashMap<Uuid, Option<bool>>,
-    ignore: HashMap<Uuid, Vec<String>>,
-    exceeded: HashMap<Uuid, Option<bool>>,
-}
-
-/// Why [`explain`] decided the way it did — the step of the eligibility
+/// Why [`WatchRules::explain`] decided the way it did — the step of the eligibility
 /// algorithm (spec-file-tracking "Eligibility algorithm") that settled it.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Reason {
@@ -76,134 +69,6 @@ pub struct Explanation {
     pub pattern: Option<String>,
 }
 
-/// Evaluates eligibility for `rel_path` (repo-root-relative, `/`-separated,
-/// leading slash; `""` is the root itself). Single-shot: compiles regexes and
-/// reads ancestor fields fresh. Hot loops (the reconcile walk) should use
-/// [`is_eligible_cached`] with a shared [`EligibilityCache`].
-pub fn is_eligible(conn: &dyn Store, cache: &mut TreeCache, rel_path: &str) -> Result<bool> {
-    is_eligible_cached(conn, cache, rel_path, &mut EligibilityCache::default())
-}
-
-/// Like [`is_eligible`] but memoising ancestor field reads and compiled regexes
-/// in `ec` across calls (spec-tasks "walk perf").
-pub fn is_eligible_cached(
-    conn: &dyn Store,
-    cache: &mut TreeCache,
-    rel_path: &str,
-    ec: &mut EligibilityCache,
-) -> Result<bool> {
-    Ok(explain_cached(conn, cache, rel_path, ec)?.eligible)
-}
-
-/// [`explain_cached`] with a throwaway cache.
-pub fn explain(conn: &dyn Store, cache: &mut TreeCache, rel_path: &str) -> Result<Explanation> {
-    explain_cached(conn, cache, rel_path, &mut EligibilityCache::default())
-}
-
-/// The eligibility algorithm itself, keeping the reason it stopped at. Every
-/// eligibility decision in the daemon goes through this function — the verdict
-/// and its explanation can therefore never disagree.
-pub fn explain_cached(
-    conn: &dyn Store,
-    cache: &mut TreeCache,
-    rel_path: &str,
-    ec: &mut EligibilityCache,
-) -> Result<Explanation> {
-    let full_idx = rel_path.split('/').count() - 1;
-    let chain = ancestor_chain(conn, cache, rel_path)?;
-    // The path's own metarecord, when it already exists.
-    let own_entry: Option<Uuid> = chain.last().and_then(|(i, u)| (*i == full_idx).then_some(*u));
-
-    // Steps 1–2: nearest metarecord (including the path itself) defining
-    // mf_watch. Its component index (`watch_idx`) marks the tracking-scope root:
-    // ignore patterns for a descendant are matched *relative to it* (below).
-    let mut watch: Option<(usize, Uuid, bool)> = None;
-    for (idx, uuid) in chain.iter().rev() {
-        if let Some(value) = cached_watch(conn, ec, *uuid)? {
-            watch = Some((*idx, *uuid, value));
-            break;
-        }
-    }
-    let Some((watch_idx, watch_entry, watch_value)) = watch else {
-        // No mf_watch anywhere: opt-in default.
-        return Ok(Explanation {
-            eligible: false,
-            reason: Reason::NoWatch,
-            watch_scope: None,
-            ignore_source: None,
-            pattern: None,
-        });
-    };
-    let scope = prefix_path(rel_path, watch_idx);
-    if !watch_value {
-        return Ok(Explanation {
-            eligible: false,
-            reason: Reason::WatchFalse,
-            watch_scope: Some(scope),
-            ignore_source: None,
-            pattern: None,
-        });
-    }
-    // Step 3: mf_watch set directly on the metarecord → tracked unconditionally.
-    if own_entry == Some(watch_entry) {
-        return Ok(Explanation {
-            eligible: true,
-            reason: Reason::DirectWatch,
-            watch_scope: Some(scope),
-            ignore_source: None,
-            pattern: None,
-        });
-    }
-
-    // The path against which ignore patterns are tested: `rel_path` re-anchored
-    // at the tracking-scope root (the directly-watched ancestor), i.e. with the
-    // watched directory's prefix stripped (spec-file-tracking "Eligibility
-    // algorithm"). When the scope root is the repository root (`watch_idx == 0`)
-    // this is `rel_path` unchanged. So a directly-watched hidden directory (e.g.
-    // `.config`) no longer prunes its own subtree, while patterns like `\.git`
-    // still apply *inside* the scope.
-    let comps: Vec<&str> = rel_path.split('/').collect();
-    let scoped = format!("/{}", comps[watch_idx + 1..].join("/"));
-
-    // Steps 4–5: nearest strict ancestor with mf_ignore rows provides the
-    // effective pattern set (sets are replaced, never merged).
-    for (i, uuid) in chain.iter().rev() {
-        if *i == full_idx && own_entry == Some(*uuid) {
-            continue; // The entry itself is excluded from the ignore search.
-        }
-        let patterns = cached_ignore(conn, ec, *uuid)?;
-        if patterns.is_empty() {
-            continue;
-        }
-        let source = prefix_path(rel_path, *i);
-        for pattern in &patterns {
-            if cached_regex(ec, pattern)?.is_match(&scoped) {
-                return Ok(Explanation {
-                    eligible: false,
-                    reason: Reason::Ignored,
-                    watch_scope: Some(scope),
-                    ignore_source: Some(source),
-                    pattern: Some(pattern.clone()),
-                });
-            }
-        }
-        return Ok(Explanation {
-            eligible: true,
-            reason: Reason::Tracked,
-            watch_scope: Some(scope),
-            ignore_source: Some(source),
-            pattern: None,
-        });
-    }
-    Ok(Explanation {
-        eligible: true,
-        reason: Reason::Tracked,
-        watch_scope: Some(scope),
-        ignore_source: None,
-        pattern: None,
-    })
-}
-
 /// The `mf_ignore` set that *governs* `rel_path`, and where it comes from
 /// (spec-file-tracking "Effective ignore set").
 #[derive(Debug, Clone)]
@@ -216,38 +81,6 @@ pub struct EffectiveIgnore {
     /// its own set rather than shadowing an inherited one.
     pub direct: bool,
     pub patterns: Vec<String>,
-}
-
-/// Resolves the effective ignore set of `rel_path`. Unlike the eligibility walk
-/// this *includes* the path itself: the question is "which set governs writes
-/// here", not "which set filtered this entry" (the algorithm's step 4 excludes
-/// the entry, which only matters for a file being tested).
-pub fn effective_ignore(
-    conn: &dyn Store,
-    cache: &mut TreeCache,
-    rel_path: &str,
-) -> Result<EffectiveIgnore> {
-    let full_idx = rel_path.split('/').count() - 1;
-    let chain = ancestor_chain(conn, cache, rel_path)?;
-    for (i, uuid) in chain.iter().rev() {
-        let patterns = Rows::string_fields(conn, *uuid, "mf_ignore")?;
-        if patterns.is_empty() {
-            continue;
-        }
-        return Ok(EffectiveIgnore {
-            source: Some(prefix_path(rel_path, *i)),
-            source_uuid: Some(*uuid),
-            direct: *i == full_idx,
-            patterns,
-        });
-    }
-    Ok(EffectiveIgnore { source: None, source_uuid: None, direct: false, patterns: Vec::new() })
-}
-
-/// The prefix of `rel_path` down to component `idx` — the path of the ancestor
-/// the chain's `(idx, uuid)` pair denotes (`""` for the repository root).
-fn prefix_path(rel_path: &str, idx: usize) -> String {
-    rel_path.split('/').take(idx + 1).collect::<Vec<_>>().join("/")
 }
 
 /// The metarecords existing along `rel_path`, as `(component_index, uuid)` from
@@ -286,53 +119,350 @@ pub fn resolve_mf_sync(conn: &dyn Store, cache: &mut TreeCache, rel_path: &str) 
     Ok("internal".to_string())
 }
 
-/// Cached `mf_watch` of a metarecord.
-fn cached_watch(conn: &dyn Store, ec: &mut EligibilityCache, uuid: Uuid) -> Result<Option<bool>> {
-    if let Some(v) = ec.watch.get(&uuid) {
-        return Ok(*v);
-    }
-    let v = Rows::bool_field(conn, uuid, "mf_watch")?;
-    ec.watch.insert(uuid, v);
-    Ok(v)
+/// Evaluates eligibility for `rel_path` (repo-root-relative, `/`-separated,
+/// leading slash; `""` is the root itself), reading the rules afresh. A caller
+/// with more than one path to ask loads a [`WatchRules`] once instead.
+pub fn is_eligible(conn: &dyn Store, cache: &mut TreeCache, rel_path: &str) -> Result<bool> {
+    Ok(explain(conn, cache, rel_path)?.eligible)
 }
 
-/// The value `mfr_watch_exceeded` takes *directly* on a metarecord, cached.
-///
-/// The field is inherited down the `mfr_path` tree like `mf_watch` — the
-/// nearest ancestor that defines it decides, a value set on the directory
-/// itself overrides — so the descent carries the inherited answer and consults
-/// this only for an override (spec-file-tracking "The watch budget").
-pub fn cached_watch_exceeded(
+/// [`WatchRules::explain`] on rules read afresh.
+pub fn explain(conn: &dyn Store, cache: &mut TreeCache, rel_path: &str) -> Result<Explanation> {
+    WatchRules::load(conn, cache.is_case_insensitive())?.explain(&RelPath::from_display(rel_path))
+}
+
+/// [`WatchRules::effective_ignore`] on rules read afresh.
+pub fn effective_ignore(
     conn: &dyn Store,
-    ec: &mut EligibilityCache,
+    cache: &mut TreeCache,
+    rel_path: &str,
+) -> Result<EffectiveIgnore> {
+    Ok(WatchRules::load(conn, cache.is_case_insensitive())?
+        .effective_ignore(&RelPath::from_display(rel_path)))
+}
+
+/// A path as the rule index keys it: its components' exact bytes, folded when
+/// the filesystem is case-insensitive — the tree cache's own key, so a path
+/// finds its rules exactly where the cache would find its metarecord.
+type Key = Vec<Vec<u8>>;
+
+/// The rules one metarecord holds.
+#[derive(Debug)]
+struct Carrier {
     uuid: Uuid,
-) -> Result<Option<bool>> {
-    if let Some(v) = ec.exceeded.get(&uuid) {
-        return Ok(*v);
-    }
-    let v = Rows::bool_field(conn, uuid, WATCH_EXCEEDED)?;
-    ec.exceeded.insert(uuid, v);
-    Ok(v)
+    watch: Option<bool>,
+    exceeded: Option<bool>,
+    /// `mf_ignore`, in row order, each compiled once. A pattern that does not
+    /// compile is kept with its error, raised when a path reaches it — as the
+    /// chain walk did.
+    ignore: Vec<(String, std::result::Result<Regex, String>)>,
 }
 
-/// Cached `mf_ignore` patterns of a metarecord.
-fn cached_ignore(conn: &dyn Store, ec: &mut EligibilityCache, uuid: Uuid) -> Result<Vec<String>> {
-    if let Some(v) = ec.ignore.get(&uuid) {
-        return Ok(v.clone());
-    }
-    let v = Rows::string_fields(conn, uuid, "mf_ignore")?;
-    ec.ignore.insert(uuid, v.clone());
-    Ok(v)
+/// The rule index (spec-file-tracking "The rule index"): every metarecord that
+/// holds `mf_watch`, `mf_ignore` or `mfr_watch_exceeded`, keyed by its
+/// `mfr_path`. Few entries — the directories the user chose plus the watch
+/// budget's frontier — so a path is evaluated by walking up its own prefixes in
+/// a map, without a store read, a tree lookup or a lock.
+///
+/// A snapshot: it answers for the state it was [`loaded`](Self::load) from,
+/// recorded as [`Self::head`].
+#[derive(Debug)]
+pub struct WatchRules {
+    case_insensitive: bool,
+    head: Option<i64>,
+    carriers: HashMap<Key, Carrier>,
+    /// The carriers' keys and every prefix of them: the paths whose move or
+    /// removal would move a rule ([`Self::touches`]).
+    anchors: HashSet<Key>,
+    /// The holders (placed or orphaned) and the ancestors of the placed ones:
+    /// the metarecords whose `mfr_path` changing would move a rule
+    /// ([`Self::affects`]).
+    affected: HashSet<Uuid>,
 }
 
-/// Cached compiled `mf_ignore` regex (compiled once per distinct pattern).
-/// `Regex` clones share the underlying automaton, so this is cheap.
-fn cached_regex(ec: &mut EligibilityCache, pattern: &str) -> Result<Regex> {
-    if let Some(re) = ec.regex.get(pattern) {
-        return Ok(re.clone());
+impl WatchRules {
+    /// Reads the rules from `store`: the holders of the three fields and their
+    /// paths — proportional to the number of rules, not to the repository.
+    pub fn load(store: &dyn Store, case_insensitive: bool) -> Result<Self> {
+        let head = store.head()?;
+        let mut holders: Vec<Uuid> = Vec::new();
+        for name in ["mf_watch", "mf_ignore", WATCH_EXCEEDED] {
+            holders.extend(store.holders(name)?);
+        }
+        holders.sort();
+        holders.dedup();
+
+        let mut rules = Self {
+            case_insensitive,
+            head,
+            carriers: HashMap::new(),
+            anchors: HashSet::new(),
+            affected: HashSet::new(),
+        };
+        let mut placed: HashMap<Uuid, Option<Placement>> = HashMap::new();
+        let mut compiled: HashMap<String, std::result::Result<Regex, String>> = HashMap::new();
+        for uuid in holders {
+            rules.affected.insert(uuid);
+            let watch = store.bool_field(uuid, "mf_watch")?;
+            let exceeded = store.bool_field(uuid, WATCH_EXCEEDED)?;
+            let ignore: Vec<(String, std::result::Result<Regex, String>)> = store
+                .string_fields(uuid, "mf_ignore")?
+                .into_iter()
+                .map(|pattern| {
+                    let regex = compiled
+                        .entry(pattern.clone())
+                        .or_insert_with(|| {
+                            crate::regexp::compile(&pattern).map_err(|e| e.to_string())
+                        })
+                        .clone();
+                    (pattern, regex)
+                })
+                .collect();
+            if watch.is_none() && exceeded.is_none() && ignore.is_empty() {
+                continue; // Holds the name, but no value the algorithm reads.
+            }
+            let Some(placement) = placement(store, uuid, &mut placed)? else {
+                continue; // Orphaned: no path, so it governs none.
+            };
+            rules.affected.extend(placement.chain.iter().copied());
+            let key: Key =
+                placement.names.iter().map(|n| normalize_name(n, case_insensitive)).collect();
+            for depth in 0..=key.len() {
+                rules.anchors.insert(key[..depth].to_vec());
+            }
+            rules.carriers.insert(key, Carrier { uuid, watch, exceeded, ignore });
+        }
+        Ok(rules)
     }
-    let re = crate::regexp::compile(pattern)
-        .with_context(|| format!("invalid mf_ignore pattern '{pattern}'"))?;
-    ec.regex.insert(pattern.to_string(), re.clone());
-    Ok(re)
+
+    /// The HEAD the rules were read at.
+    pub fn head(&self) -> Option<i64> {
+        self.head
+    }
+
+    fn key(&self, rel: &RelPath) -> Key {
+        rel.components().iter().map(|c| normalize_name(c, self.case_insensitive)).collect()
+    }
+
+    /// The eligibility algorithm itself (spec-file-tracking "Eligibility
+    /// algorithm"), keeping the reason it stopped at. Every eligibility decision
+    /// in the daemon comes here — the verdict and its explanation can therefore
+    /// never disagree. Fails only on an `mf_ignore` pattern that does not
+    /// compile, once a path reaches it.
+    pub fn explain(&self, rel: &RelPath) -> Result<Explanation> {
+        let comps = rel.components();
+        let key = self.key(rel);
+        let at = |depth: usize| self.carriers.get(&key[..depth]);
+
+        // Steps 1–2: the nearest `mf_watch`, the path itself included. Its
+        // depth marks the tracking-scope root, which ignore patterns are
+        // matched relative to.
+        let watch = (0..=comps.len())
+            .rev()
+            .find_map(|depth| at(depth).and_then(|c| c.watch).map(|value| (depth, value)));
+        let Some((watch_depth, watch_value)) = watch else {
+            return Ok(Explanation {
+                eligible: false,
+                reason: Reason::NoWatch,
+                watch_scope: None,
+                ignore_source: None,
+                pattern: None,
+            });
+        };
+        let scope = display_prefix(comps, watch_depth);
+        if !watch_value {
+            return Ok(Explanation {
+                eligible: false,
+                reason: Reason::WatchFalse,
+                watch_scope: Some(scope),
+                ignore_source: None,
+                pattern: None,
+            });
+        }
+        // Step 3: set directly on the path → tracked unconditionally.
+        if watch_depth == comps.len() {
+            return Ok(Explanation {
+                eligible: true,
+                reason: Reason::DirectWatch,
+                watch_scope: Some(scope),
+                ignore_source: None,
+                pattern: None,
+            });
+        }
+        // The path re-anchored at the tracking-scope root: a directly-watched
+        // hidden directory (`.config`) does not prune its own subtree, while
+        // `\.git` still applies inside the scope.
+        let scoped = display_prefix(&comps[watch_depth..], comps.len() - watch_depth);
+
+        // Steps 4–5: the nearest *strict* ancestor holding patterns provides
+        // the effective set (sets replace each other, never merge).
+        for depth in (0..comps.len()).rev() {
+            let Some(carrier) = at(depth).filter(|c| !c.ignore.is_empty()) else {
+                continue;
+            };
+            let source = display_prefix(comps, depth);
+            for (pattern, regex) in &carrier.ignore {
+                let regex = regex
+                    .as_ref()
+                    .map_err(|e| anyhow!("invalid mf_ignore pattern '{pattern}': {e}"))?;
+                if regex.is_match(&scoped) {
+                    return Ok(Explanation {
+                        eligible: false,
+                        reason: Reason::Ignored,
+                        watch_scope: Some(scope),
+                        ignore_source: Some(source),
+                        pattern: Some(pattern.clone()),
+                    });
+                }
+            }
+            return Ok(Explanation {
+                eligible: true,
+                reason: Reason::Tracked,
+                watch_scope: Some(scope),
+                ignore_source: Some(source),
+                pattern: None,
+            });
+        }
+        Ok(Explanation {
+            eligible: true,
+            reason: Reason::Tracked,
+            watch_scope: Some(scope),
+            ignore_source: None,
+            pattern: None,
+        })
+    }
+
+    /// Whether `rel` is to be tracked.
+    pub fn is_eligible(&self, rel: &RelPath) -> Result<bool> {
+        Ok(self.explain(rel)?.eligible)
+    }
+
+    /// The `mf_ignore` set that governs writes at `rel` (spec-file-tracking
+    /// "Effective ignore set"). Unlike [`Self::explain`] this *includes* the
+    /// path itself: the question is "which set governs writes here", not
+    /// "which set filtered this entry".
+    pub fn effective_ignore(&self, rel: &RelPath) -> EffectiveIgnore {
+        let comps = rel.components();
+        let key = self.key(rel);
+        for depth in (0..=comps.len()).rev() {
+            if let Some(carrier) = self.carriers.get(&key[..depth]) {
+                if !carrier.ignore.is_empty() {
+                    return EffectiveIgnore {
+                        source: Some(display_prefix(comps, depth)),
+                        source_uuid: Some(carrier.uuid),
+                        direct: depth == comps.len(),
+                        patterns: carrier.ignore.iter().map(|(p, _)| p.clone()).collect(),
+                    };
+                }
+            }
+        }
+        EffectiveIgnore { source: None, source_uuid: None, direct: false, patterns: Vec::new() }
+    }
+
+    /// The directory whose `mfr_watch_exceeded = true` covers `rel` (the path
+    /// itself included; the nearest value decides), `None` when nothing
+    /// excludes it (spec-file-tracking "The watch budget").
+    pub fn exceeded_by(&self, rel: &RelPath) -> Option<String> {
+        let comps = rel.components();
+        let key = self.key(rel);
+        (0..=comps.len()).rev().find_map(|depth| {
+            let value = self.carriers.get(&key[..depth]).and_then(|c| c.exceeded)?;
+            Some(value.then(|| display_prefix(comps, depth)))
+        })?
+    }
+
+    /// The `mfr_watch_exceeded` value set on `rel` itself, if any.
+    pub fn exceeded_own(&self, rel: &RelPath) -> Option<bool> {
+        self.carriers.get(&self.key(rel)).and_then(|c| c.exceeded)
+    }
+
+    /// Whether `rel` holds a rule or is an ancestor of one: moving or removing
+    /// it would move rules, so the index no longer describes the disk until
+    /// that change is committed.
+    pub fn touches(&self, rel: &RelPath) -> bool {
+        self.anchors.contains(&self.key(rel))
+    }
+
+    /// Whether writing `uuid`'s `mfr_path` could move a rule: it holds one
+    /// (placed or orphaned), or is an ancestor of one that is placed.
+    pub fn affects(&self, uuid: Uuid) -> bool {
+        self.affected.contains(&uuid)
+    }
+}
+
+/// `/a/b` for the first `depth` components (`""` for none — the root).
+fn display_prefix(comps: &[TreeName], depth: usize) -> String {
+    let mut out = String::new();
+    for comp in &comps[..depth] {
+        out.push('/');
+        out.push_str(&comp.display());
+    }
+    out
+}
+
+/// Where a metarecord sits in the `mfr_path` forest.
+#[derive(Clone)]
+struct Placement {
+    /// The names below the root, outermost first.
+    names: Vec<TreeName>,
+    /// The metarecords from the root down to this one, itself included.
+    chain: Vec<Uuid>,
+}
+
+/// The deepest a placement walk goes before it gives up on a cycle the forest
+/// constraint should have made impossible.
+const MAX_DEPTH: usize = 1100;
+
+/// The placement of `uuid`, memoised in `memo` (carriers share ancestors).
+/// `None` when it has no `mfr_path` — an orphan — or hangs below one that has
+/// none, or under a root that is not the repository's (named, not `""`).
+fn placement(
+    store: &dyn Store,
+    uuid: Uuid,
+    memo: &mut HashMap<Uuid, Option<Placement>>,
+) -> Result<Option<Placement>> {
+    // Up to the first known ancestor (or the root), then back down.
+    let mut pending: Vec<(Uuid, TreeName)> = Vec::new();
+    let mut cursor = uuid;
+    let base: Option<Placement> = loop {
+        if let Some(known) = memo.get(&cursor) {
+            break known.clone();
+        }
+        if pending.len() > MAX_DEPTH {
+            break None;
+        }
+        let position =
+            store.rows_named(cursor, "mfr_path")?.into_iter().find_map(|r| match r.value {
+                Value::TreeRef { parent, name } => Some((parent, name)),
+                _ => None,
+            });
+        match position {
+            None => break None,
+            Some((None, name)) => {
+                if name.as_bytes().is_empty() {
+                    let root = Placement { names: Vec::new(), chain: vec![cursor] };
+                    memo.insert(cursor, Some(root.clone()));
+                    break Some(root);
+                }
+                break None;
+            }
+            Some((Some(parent), name)) => {
+                pending.push((cursor, name));
+                cursor = parent;
+            }
+        }
+    };
+    let mut current = base;
+    for (node, name) in pending.into_iter().rev() {
+        current = current.map(|mut p| {
+            p.names.push(name);
+            p.chain.push(node);
+            p
+        });
+        memo.insert(node, current.clone());
+    }
+    if current.is_none() {
+        memo.insert(uuid, None);
+    }
+    Ok(current)
 }

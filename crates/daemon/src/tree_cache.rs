@@ -153,6 +153,43 @@ pub enum PathForm {
     Escaped,
 }
 
+/// The map key for a name: its exact bytes, with the *decodable* runs
+/// lowercased when the filesystem is case-insensitive. Shared with the rule
+/// index ([`crate::eligibility::WatchRules`]), which must find a path exactly
+/// where this cache does.
+///
+/// Folding only what decodes is what keeps two names differing in an
+/// undecodable byte apart: lowercasing the lossy text would map both onto
+/// the same replacement character and merge two distinct files.
+pub fn normalize_name(name: &TreeName, case_insensitive: bool) -> Vec<u8> {
+    let bytes = name.as_bytes();
+    if !case_insensitive {
+        return bytes.to_vec();
+    }
+    let mut out = Vec::with_capacity(bytes.len());
+    let mut rest = bytes;
+    loop {
+        match std::str::from_utf8(rest) {
+            Ok(text) => {
+                out.extend_from_slice(text.to_lowercase().as_bytes());
+                return out;
+            }
+            Err(err) => {
+                let (good, bad) = rest.split_at(err.valid_up_to());
+                // `good` is valid UTF-8 by construction.
+                out.extend_from_slice(
+                    std::str::from_utf8(good).unwrap_or_default().to_lowercase().as_bytes(),
+                );
+                // The undecodable bytes pass through untouched: they are
+                // what distinguishes this name from its look-alike.
+                let skip = err.error_len().unwrap_or(bad.len());
+                out.extend_from_slice(&bad[..skip]);
+                rest = &bad[skip..];
+            }
+        }
+    }
+}
+
 pub struct TreeCache {
     arena: Vec<Option<Node>>,
     free: Vec<usize>,
@@ -1082,39 +1119,15 @@ impl TreeCache {
         }
     }
 
-    /// The map key for a name: its exact bytes, with the *decodable* runs
-    /// lowercased when the filesystem is case-insensitive.
-    ///
-    /// Folding only what decodes is what keeps two names differing in an
-    /// undecodable byte apart: lowercasing the lossy text would map both onto
-    /// the same replacement character and merge two distinct files.
+    /// The map key for a name (see [`normalize_name`]).
     fn normalize(&self, name: &TreeName) -> Vec<u8> {
-        let bytes = name.as_bytes();
-        if !self.case_insensitive {
-            return bytes.to_vec();
-        }
-        let mut out = Vec::with_capacity(bytes.len());
-        let mut rest = bytes;
-        loop {
-            match std::str::from_utf8(rest) {
-                Ok(text) => {
-                    out.extend_from_slice(text.to_lowercase().as_bytes());
-                    return out;
-                }
-                Err(err) => {
-                    let (good, bad) = rest.split_at(err.valid_up_to());
-                    // `good` is valid UTF-8 by construction.
-                    out.extend_from_slice(
-                        std::str::from_utf8(good).unwrap_or_default().to_lowercase().as_bytes(),
-                    );
-                    // The undecodable bytes pass through untouched: they are
-                    // what distinguishes this name from its look-alike.
-                    let skip = err.error_len().unwrap_or(bad.len());
-                    out.extend_from_slice(&bad[..skip]);
-                    rest = &bad[skip..];
-                }
-            }
-        }
+        normalize_name(name, self.case_insensitive)
+    }
+
+    /// Whether names are compared case-insensitively (the filesystem's own
+    /// behaviour, probed at load).
+    pub fn is_case_insensitive(&self) -> bool {
+        self.case_insensitive
     }
 
     fn node(&self, idx: usize) -> &Node {

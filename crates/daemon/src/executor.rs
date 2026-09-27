@@ -25,7 +25,7 @@ use uuid::Uuid;
 use metafolder_core::metarecord::{Field, TreeName, Value};
 use metafolder_core::sync::MutexExt;
 
-use crate::eligibility;
+use crate::eligibility::WatchRules;
 use crate::fs_meta;
 use crate::log::{self, OpType, Writer};
 use crate::relpath::RelPath;
@@ -441,6 +441,10 @@ fn flush_pending_once(repo: &RepoState, report: FlushReport) -> Result<FlushStat
     // Taken whole: whatever the watcher buffers while this flush runs lands in
     // the now-empty buffer and is picked up by the next round. On any path that
     // does not apply the batch, it goes back (`return_pending`).
+    // Read *before* draining: every touching batch counted here is already in
+    // the buffer, hence in this flush (spec-file-tracking "Rules that are about
+    // to move").
+    let touch_mark = repo.rules_touch_mark();
     let taken = take_pending(repo);
     if taken.is_empty() {
         return Ok(FlushStats { events: 0, revisions: revisions_from_restore, cancelled: false });
@@ -505,10 +509,11 @@ fn flush_pending_once(repo: &RepoState, report: FlushReport) -> Result<FlushStat
     repo.tasks.mark_running(task);
     repo.tasks.set_progress(task, "flush", None, None);
 
-    // Ancestor watch/ignore reads and compiled patterns, shared by every event
-    // of the flush: a per-event cache re-reads the chain and recompiles each
-    // `mf_ignore` pattern for every single file.
-    let mut elig = eligibility::EligibilityCache::default();
+    // The rule index as of the batch's start (spec-file-tracking "The rule
+    // index"): every eligibility question of the flush is a lookup in it.
+    // Handed from group to group: a group that moves a rule re-reads it, and
+    // the groups after it must see where the rule went.
+    let mut rules = repo.watch_rules(&conn)?;
 
     // Cooperative stop: the registry flag is read at every event boundary (and
     // inside the two loops one event can hide a whole tree behind — a directory
@@ -541,7 +546,7 @@ fn flush_pending_once(repo: &RepoState, report: FlushReport) -> Result<FlushStat
                 orphan_limit: repo.orphan_cascade_limit,
                 repo_uuid: repo.uuid(),
                 departed_index: None,
-                elig: &mut elig,
+                rules: rules.clone(),
                 cancel: &cancel,
                 ignored: 0,
             };
@@ -560,6 +565,7 @@ fn flush_pending_once(repo: &RepoState, report: FlushReport) -> Result<FlushStat
             let wrote = apply.writer.op_count() > 0;
             // Read before the commit moves the writer out of `apply`.
             ignored += apply.ignored;
+            rules = apply.rules.clone();
             metafolder_core::slowlog::timed("commit", || apply.writer.commit())?;
             if wrote {
                 revisions += 1;
@@ -577,6 +583,16 @@ fn flush_pending_once(repo: &RepoState, report: FlushReport) -> Result<FlushStat
 
     match work {
         Ok((revisions, ignored)) => {
+            // The batch is committed: re-read the rules at the new HEAD, and let
+            // the ingest thread trust them for what this flush drained.
+            match repo.watch_rules(&conn) {
+                Ok(_) => repo.rules_covered(touch_mark),
+                Err(err) => crate::diagnostics::warn_for(
+                    "executor",
+                    format!("could not re-read the watch rules after a flush: {err:#}"),
+                    repo.uuid(),
+                ),
+            }
             repo.tasks.finish(task, None);
             crate::diagnostics::info_for(
                 "executor",
@@ -728,11 +744,12 @@ struct Apply<'a, 'c> {
     /// hundred files then holds the connection for minutes, and every query
     /// queues behind it.
     departed_index: Option<HashMap<StatKey, Vec<RelPath>>>,
-    /// Ancestor `mf_watch` / `mf_ignore` reads and compiled `mf_ignore`
-    /// regexes, shared by every event of the flush (the reconcile walk's
-    /// [`eligibility::EligibilityCache`]). Nothing the executor writes changes
-    /// those two fields, so no entry of it can go stale mid-flush.
-    elig: &'a mut eligibility::EligibilityCache,
+    /// The rule index the flush's eligibility questions are answered from. The
+    /// executor never writes a rule, but it moves paths: a move or an orphaning
+    /// of a metarecord a rule depends on re-reads it from the uncommitted state
+    /// ([`Apply::path_written`]), so the next event sees the rules where they
+    /// now are.
+    rules: Arc<WatchRules>,
     /// Cooperative stop probe (the flush task's cancellation flag). Read at
     /// every event, and inside the loops that can run long on a single event.
     cancel: &'a dyn Fn() -> bool,
@@ -818,12 +835,7 @@ impl Apply<'_, '_> {
 
     fn eligible(&mut self, rel: &RelPath) -> Result<bool> {
         self.step("eligibility walk");
-        let eligible = eligibility::is_eligible_cached(
-            self.writer.store(),
-            self.cache,
-            &rel.display(),
-            self.elig,
-        )?;
+        let eligible = self.rules.is_eligible(rel)?;
         if !eligible {
             self.ignored += 1;
         }
@@ -1043,6 +1055,17 @@ impl Apply<'_, '_> {
             crate::duplicates::leave_group(&mut self.writer, OpType::FileDeleted, u)?;
         }
         self.cache.apply_remove("mfr_path", uuid);
+        self.path_written(uuid)
+    }
+
+    /// Re-reads the rule index when `uuid`'s `mfr_path` just changed and a rule
+    /// depends on it — it holds one, or is an ancestor of one.
+    fn path_written(&mut self, uuid: Uuid) -> Result<()> {
+        if self.rules.affects(uuid) {
+            self.step("re-read the watch rules");
+            let reread = WatchRules::load(self.writer.store(), self.cache.is_case_insensitive())?;
+            self.rules = Arc::new(reread);
+        }
         Ok(())
     }
 
@@ -1075,7 +1098,7 @@ impl Apply<'_, '_> {
             Value::TreeRef { parent: Some(parent), name: name.clone() },
         )?;
         self.cache.apply_rename("mfr_path", src, Some(parent), &name);
-        Ok(())
+        self.path_written(src)
     }
 
     /// `Rename(To)`: a path arrived from outside. Reuse an orphaned metarecord

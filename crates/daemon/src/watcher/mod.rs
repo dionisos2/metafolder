@@ -17,7 +17,7 @@
 //! ingest thread ([`start`]); everything that can touch the database or the
 //! watch set runs there.
 
-use std::collections::{HashMap, HashSet};
+use std::collections::HashSet;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
@@ -26,7 +26,7 @@ use anyhow::Result;
 use metafolder_core::metarecord::TreeName;
 use metafolder_core::sync::MutexExt;
 
-use crate::eligibility::{self, EligibilityCache};
+use crate::eligibility::{self, WatchRules};
 use crate::executor::{self, ExecutorPinger, FsEvent};
 use crate::relpath::RelPath;
 use crate::state::RepoState;
@@ -320,31 +320,22 @@ pub struct WatchedStatus {
 /// one step past eligibility: a change at a path is recorded when the path is
 /// eligible AND the covering directory holds a watch, so a tracked file inside
 /// an excluded subtree or on an unplugged volume is still not watched, and the
-/// reason says which. Read-only; one shared [`EligibilityCache`] and one
-/// offline-mounts snapshot serve the whole batch.
+/// reason says which. Read-only; the rule index and one offline-mounts
+/// snapshot serve the whole batch.
 pub fn explain_watched(
     conn: &dyn crate::store::Store,
     cache: &mut TreeCache,
+    rules: &WatchRules,
     root: &Path,
     internal_dir: &Path,
     coverage: Coverage<'_>,
     rel_paths: &[String],
 ) -> Result<Vec<WatchedStatus>> {
-    let mut ec = EligibilityCache::default();
     let mut offline = None;
     rel_paths
         .iter()
         .map(|rel| {
-            explain_watched_one(
-                conn,
-                cache,
-                root,
-                internal_dir,
-                coverage,
-                rel,
-                &mut ec,
-                &mut offline,
-            )
+            explain_watched_one(conn, cache, rules, root, internal_dir, coverage, rel, &mut offline)
         })
         .collect()
 }
@@ -358,25 +349,22 @@ pub fn explain_watched(
 fn explain_watched_one(
     conn: &dyn crate::store::Store,
     cache: &mut TreeCache,
+    rules: &WatchRules,
     root: &Path,
     internal_dir: &Path,
     coverage: Coverage<'_>,
     rel_path: &str,
-    ec: &mut EligibilityCache,
     offline: &mut Option<crate::mount::OfflineMounts>,
 ) -> Result<WatchedStatus> {
     let is_dir = dir_like(conn, cache, root, rel_path)?;
     let cover = if is_dir { rel_path.to_string() } else { parent_of(rel_path) };
     let covered = match coverage {
         Coverage::Watches(set) => set.contains(&abs_of(root, &cover)),
-        Coverage::Tree => covered_by_tree(conn, cache, root, internal_dir, &cover, ec, offline)?,
+        Coverage::Tree => covered_by_tree(conn, cache, rules, root, internal_dir, &cover, offline),
     };
-    let eligibility = eligibility::explain_cached(conn, cache, rel_path, ec)?;
-    let dir_eligibility = if is_dir {
-        eligibility.clone()
-    } else {
-        eligibility::explain_cached(conn, cache, &cover, ec)?
-    };
+    let eligibility = rules.explain(&RelPath::from_display(rel_path))?;
+    let dir_eligibility =
+        if is_dir { eligibility.clone() } else { rules.explain(&RelPath::from_display(&cover))? };
     let watched = covered && eligibility.eligible;
     let (reason, excluded_by, offline_mount) = if watched {
         (WatchedReason::Watched, None, None)
@@ -393,7 +381,7 @@ fn explain_watched_one(
             .get_or_insert_with(|| crate::mount::offline(conn, cache, root).unwrap_or_default());
         if let Some(mount) = mounts.paths().iter().find(|m| covers(m, &cover)) {
             (WatchedReason::Offline, None, Some((*mount).clone()))
-        } else if let Some(by) = excluded_by(conn, cache, ec, &cover)? {
+        } else if let Some(by) = rules.exceeded_by(&RelPath::from_display(&cover)) {
             (WatchedReason::Excluded, Some(by), None)
         } else {
             (WatchedReason::Unwatched, None, None)
@@ -458,29 +446,6 @@ fn covers(m: &str, rel: &str) -> bool {
     rel == m || (rel.len() > m.len() && rel.starts_with(m) && rel.as_bytes()[m.len()] == b'/')
 }
 
-/// The nearest metarecord on the ancestor chain of `rel` (itself included)
-/// defining `mfr_watch_exceeded = true` — the subtree root the placement walk
-/// left unwatched, whether the budget recorded it or the user set it. `None`
-/// when nothing excludes the path: the nearest definition decides, and an
-/// unmetarecorded prefix carries none of its own.
-fn excluded_by(
-    conn: &dyn crate::store::Store,
-    cache: &mut TreeCache,
-    ec: &mut EligibilityCache,
-    rel: &str,
-) -> Result<Option<String>> {
-    let comps: Vec<&str> = rel.split('/').collect();
-    for i in (0..comps.len()).rev() {
-        let prefix = comps[..=i].join("/");
-        if let Some(uuid) = cache.resolve_path(conn, "mfr_path", &prefix)? {
-            if let Some(exceeded) = eligibility::cached_watch_exceeded(conn, ec, uuid)? {
-                return Ok(if exceeded { Some(prefix) } else { None });
-            }
-        }
-    }
-    Ok(None)
-}
-
 /// What the coverage regime knows about a covering directory: the kernel's
 /// registration reaches the whole tree, so the only ways a directory is *not*
 /// covered are the structural skips the reason ladder reports anyway — the
@@ -489,21 +454,21 @@ fn excluded_by(
 fn covered_by_tree(
     conn: &dyn crate::store::Store,
     cache: &mut TreeCache,
+    rules: &WatchRules,
     root: &Path,
     internal_dir: &Path,
     cover: &str,
-    ec: &mut EligibilityCache,
     offline: &mut Option<crate::mount::OfflineMounts>,
-) -> Result<bool> {
+) -> bool {
     if abs_of(root, cover).starts_with(internal_dir) {
-        return Ok(false);
+        return false;
     }
     let mounts =
         offline.get_or_insert_with(|| crate::mount::offline(conn, cache, root).unwrap_or_default());
     if mounts.paths().iter().any(|m| covers(m, cover)) {
-        return Ok(false);
+        return false;
     }
-    Ok(excluded_by(conn, cache, ec, cover)?.is_none())
+    rules.exceeded_by(&RelPath::from_display(cover)).is_none()
 }
 
 /// Converts an absolute path to the internal repo-root-relative form, keeping
@@ -608,23 +573,43 @@ fn ingest(
     // Counted as delivered, before any filter: what the kernel sends is the
     // load, whether or not it is recorded (spec-file-tracking "Watch activity").
     repo.watch_activity.lock_recover().record(&events);
+    let Some((rules, trusted)) = ingest_rules(repo) else {
+        // The rules could not be read: buffer everything, the flush decides.
+        executor::enqueue_all(repo, events.clone());
+        pinger.ping();
+        if let Some(source) = source {
+            source.maintain(repo, root, internal_dir, &events);
+        }
+        return;
+    };
+    // A batch that moves a rule is not filtered, and turns filtering off until
+    // a flush has applied it (spec-file-tracking "Rules that are about to
+    // move"). Counted *after* buffering, so that a flush that reads the count
+    // before draining has the batch.
+    let touching = touches_rules(&rules, &events);
     // The coverage regime honours `mfr_watch_exceeded` by *dropping* what
     // happens under it; the budget regime honours it by never seeing it (no
     // watch is placed there). A move across the boundary keeps only its
     // visible side — exactly what a move out of the watched tree looks like
     // (spec-file-tracking "Watch sources and regimes").
     let events = match source.map(Source::regime) {
-        Some(Regime::Coverage) => {
-            let conn = repo.conn.lock_recover();
-            let mut cache = repo.lock_cache();
-            drop_excluded(&conn, &mut cache, &events)
-        }
+        Some(Regime::Coverage) => drop_excluded(&rules, &events),
         _ => events,
     };
+    // What the flush would turn away anyway (spec-file-tracking "Filtering at
+    // ingestion"): dropped here, it never keeps the quiet period open nor makes
+    // a flush.
+    let events = if trusted && !touching { drop_ineligible(&rules, events) } else { events };
+    if events.is_empty() {
+        return;
+    }
     // Buffering is a push onto an in-memory vector: it cannot fail, and it does
     // not touch the repository's connection — so a mass arrival no longer
     // queues behind whatever holds it.
     executor::enqueue_all(repo, events.clone());
+    if touching {
+        repo.rules_touched();
+    }
     pinger.ping();
 
     // Keep the live watch set in step with directories that appeared or vanished
@@ -637,33 +622,75 @@ fn ingest(
     }
 }
 
+/// The rule index the ingest thread filters with, and whether it may drop
+/// ineligible events ([`RepoState::ingest_rules`]). Read once from the store
+/// when nothing has published it yet — only before the first flush or write of
+/// the repository. `None` when that read fails.
+fn ingest_rules(repo: &RepoState) -> Option<(Arc<WatchRules>, bool)> {
+    let (rules, trusted) = repo.ingest_rules();
+    if let Some(rules) = rules {
+        return Some((rules, trusted));
+    }
+    let conn = repo.conn.lock_recover();
+    match repo.watch_rules(&conn) {
+        Ok(rules) => Some((rules, trusted)),
+        Err(err) => {
+            crate::diagnostics::warn_for(
+                "watcher",
+                format!("could not read the watch rules: {err:#}"),
+                repo.uuid(),
+            );
+            None
+        }
+    }
+}
+
+/// Whether one of `events` could move a rule: a creation, removal or rename
+/// at a path that holds a rule or is an ancestor of one. A modification moves
+/// nothing.
+fn touches_rules(rules: &WatchRules, events: &[(FsEvent, Option<i64>)]) -> bool {
+    events.iter().any(|(ev, _)| match ev {
+        FsEvent::Create(p) | FsEvent::Remove(p) | FsEvent::RenameFrom(p) | FsEvent::RenameTo(p) => {
+            rules.touches(p)
+        }
+        FsEvent::Rename(a, b) => rules.touches(a) || rules.touches(b),
+        FsEvent::ModifyData(_) | FsEvent::ModifyMeta(_) => false,
+    })
+}
+
+/// Drops the events the flush would turn away as ineligible
+/// (spec-file-tracking "Filtering at ingestion"), and only those whose dropping
+/// cannot change what the flush does: a `Rename` with an eligible side is kept
+/// whole (the flush chooses between a move and a stale path), and a one-sided
+/// `Rename(From)` / `Rename(To)` is always kept — dropping one half would break
+/// the rename correlation. A path whose rules cannot be evaluated (a pattern
+/// that does not compile) is kept for the flush to report.
+fn drop_ineligible(
+    rules: &WatchRules,
+    events: Vec<(FsEvent, Option<i64>)>,
+) -> Vec<(FsEvent, Option<i64>)> {
+    let eligible = |p: &RelPath| rules.is_eligible(p).unwrap_or(true);
+    events
+        .into_iter()
+        .filter(|(ev, _)| match ev {
+            FsEvent::Create(p)
+            | FsEvent::Remove(p)
+            | FsEvent::ModifyData(p)
+            | FsEvent::ModifyMeta(p) => eligible(p),
+            FsEvent::Rename(a, b) => eligible(a) || eligible(b),
+            FsEvent::RenameFrom(_) | FsEvent::RenameTo(_) => true,
+        })
+        .collect()
+}
+
 /// The coverage-regime filter for `mfr_watch_exceeded`: events under an
 /// excluded subtree are dropped, and a move across the boundary keeps only its
-/// visible side. Memoised per directory path — a batch usually hammers a
-/// handful of directories, and the check is an ancestor walk each.
+/// visible side.
 fn drop_excluded(
-    conn: &dyn crate::store::Store,
-    cache: &mut TreeCache,
+    rules: &WatchRules,
     events: &[(FsEvent, Option<i64>)],
 ) -> Vec<(FsEvent, Option<i64>)> {
-    fn is_excluded(
-        conn: &dyn crate::store::Store,
-        cache: &mut TreeCache,
-        ec: &mut EligibilityCache,
-        memo: &mut HashMap<String, bool>,
-        rel: &RelPath,
-    ) -> bool {
-        let display = rel.display();
-        if let Some(known) = memo.get(&display) {
-            return *known;
-        }
-        let excluded = excluded_by(conn, cache, ec, &display).unwrap_or(None).is_some();
-        memo.insert(display, excluded);
-        excluded
-    }
-
-    let mut ec = EligibilityCache::default();
-    let mut memo: HashMap<String, bool> = HashMap::new();
+    let is_excluded = |p: &RelPath| rules.exceeded_by(p).is_some();
     let mut out = Vec::with_capacity(events.len());
     for (ev, tracker) in events {
         let kept = match ev {
@@ -672,14 +699,9 @@ fn drop_excluded(
             | FsEvent::RenameFrom(p)
             | FsEvent::RenameTo(p)
             | FsEvent::ModifyData(p)
-            | FsEvent::ModifyMeta(p) => {
-                (!is_excluded(conn, cache, &mut ec, &mut memo, p)).then(|| (ev.clone(), *tracker))
-            }
+            | FsEvent::ModifyMeta(p) => (!is_excluded(p)).then(|| (ev.clone(), *tracker)),
             FsEvent::Rename(a, b) => {
-                match (
-                    is_excluded(conn, cache, &mut ec, &mut memo, a),
-                    is_excluded(conn, cache, &mut ec, &mut memo, b),
-                ) {
+                match (is_excluded(a), is_excluded(b)) {
                     (false, false) => Some((FsEvent::Rename(a.clone(), b.clone()), *tracker)),
                     // The far side is in the excluded dark: what the daemon
                     // sees is an arrival / a departure, never a move.
@@ -697,9 +719,11 @@ fn drop_excluded(
 #[cfg(test)]
 mod tests {
     use super::{
-        drop_excluded, explain_watched, relative, Coverage, FsEvent, WatchedReason, WatchedStatus,
+        drop_excluded, drop_ineligible, explain_watched, relative, touches_rules, Coverage,
+        FsEvent, WatchedReason, WatchedStatus,
     };
     use crate::db;
+    use crate::eligibility::WatchRules;
     use crate::log::Writer;
     use crate::tree_cache::TreeCache;
     use metafolder_core::metarecord::{Field, Value};
@@ -742,8 +766,21 @@ mod tests {
         fn explain(&mut self, coverage: Coverage<'_>, paths: &[&str]) -> Vec<WatchedStatus> {
             let internal = self.internal_dir();
             let paths: Vec<String> = paths.iter().map(|p| p.to_string()).collect();
-            explain_watched(&self.conn, &mut self.cache, &self.root, &internal, coverage, &paths)
-                .unwrap()
+            let rules = self.rules();
+            explain_watched(
+                &self.conn,
+                &mut self.cache,
+                &rules,
+                &self.root,
+                &internal,
+                coverage,
+                &paths,
+            )
+            .unwrap()
+        }
+
+        fn rules(&self) -> WatchRules {
+            WatchRules::load(&self.conn, false).unwrap()
         }
 
         /// Gives `rel` its own metarecord carrying `mfr_watch_exceeded`.
@@ -839,7 +876,7 @@ mod tests {
             (FsEvent::Rename(fx.rel("/other/c"), fx.rel("/dir/d")), None),
             (FsEvent::Rename(fx.rel("/dir/e"), fx.rel("/dir/f")), None),
         ];
-        let kept = drop_excluded(&fx.conn, &mut fx.cache, &wire);
+        let kept = drop_excluded(&fx.rules(), &wire);
         let shapes: Vec<&str> = kept
             .iter()
             .map(|(ev, _)| match ev {
@@ -851,6 +888,67 @@ mod tests {
             })
             .collect();
         assert_eq!(shapes, vec!["create", "rename_to", "rename_from"], "{shapes:?}");
+    }
+
+    /// Gives `rel` (whose parent is tracked) its own metarecord with `fields`.
+    fn carry(fx: &mut Fixture, rel: &str, fields: Vec<Field>) {
+        let (parent_rel, name) = rel.rsplit_once('/').unwrap();
+        let parent = fx.cache.resolve_path(&fx.conn, "mfr_path", parent_rel).unwrap().unwrap();
+        let mut all = vec![Field::new(
+            "mfr_path",
+            Value::TreeRef { parent: Some(parent), name: name.into() },
+        )];
+        all.extend(fields);
+        let mut w = Writer::begin(&mut fx.conn, None).unwrap();
+        w.create_metarecord(all).unwrap();
+        w.commit().unwrap();
+        fx.cache.clear();
+    }
+
+    #[test]
+    fn test_ingest_drops_what_the_flush_would_turn_away_and_nothing_else() {
+        let mut fx = Fixture::new();
+        carry(&mut fx, "/dir", vec![Field::new("mf_watch", Value::Bool(false))]);
+        carry(&mut fx, "/other", vec![Field::new("mf_ignore", Value::String(r"\.tmp$".into()))]);
+        let wire = vec![
+            (FsEvent::Create(fx.rel("/dir/x")), None),
+            (FsEvent::ModifyData(fx.rel("/dir/x")), None),
+            (FsEvent::Remove(fx.rel("/dir/y")), None),
+            (FsEvent::ModifyMeta(fx.rel("/other/a.tmp")), None),
+            (FsEvent::Create(fx.rel("/other/a.txt")), None),
+            // One eligible side keeps the whole move: the flush decides.
+            (FsEvent::Rename(fx.rel("/dir/a"), fx.rel("/other/b")), None),
+            (FsEvent::Rename(fx.rel("/other/c"), fx.rel("/dir/d")), None),
+            (FsEvent::Rename(fx.rel("/dir/e"), fx.rel("/other/f.tmp")), None),
+            // Halves of a move are never dropped: their correlation would break.
+            (FsEvent::RenameFrom(fx.rel("/dir/g")), Some(7)),
+            (FsEvent::RenameTo(fx.rel("/dir/h")), Some(7)),
+        ];
+        let kept: Vec<String> = drop_ineligible(&fx.rules(), wire)
+            .iter()
+            .map(|(ev, _)| crate::executor::describe(ev))
+            .collect();
+        assert_eq!(kept.len(), 5, "{kept:?}");
+        assert!(kept.iter().any(|k| k.contains("/other/a.txt")), "{kept:?}");
+        assert!(kept.iter().any(|k| k.contains("/other/b")), "{kept:?}");
+        assert!(kept.iter().any(|k| k.contains("/other/c")), "{kept:?}");
+        assert!(kept.iter().any(|k| k.contains("/dir/g")), "{kept:?}");
+        assert!(kept.iter().any(|k| k.contains("/dir/h")), "{kept:?}");
+    }
+
+    #[test]
+    fn test_a_batch_that_moves_a_rule_is_recognised() {
+        let mut fx = Fixture::new();
+        carry(&mut fx, "/dir", vec![Field::new("mf_watch", Value::Bool(false))]);
+        let rules = fx.rules();
+        let touching = |ev: FsEvent| touches_rules(&rules, &[(ev, None)]);
+        assert!(touching(FsEvent::Rename(fx.rel("/dir"), fx.rel("/moved"))));
+        assert!(touching(FsEvent::Remove(fx.rel("/dir"))));
+        assert!(touching(FsEvent::RenameFrom(fx.rel("/dir"))));
+        assert!(touching(FsEvent::Create(fx.rel("/dir"))));
+        assert!(!touching(FsEvent::ModifyMeta(fx.rel("/dir"))), "a modification moves nothing");
+        assert!(!touching(FsEvent::Remove(fx.rel("/dir/inside"))), "below a rule: governed only");
+        assert!(!touching(FsEvent::Remove(fx.rel("/other"))));
     }
 
     #[test]

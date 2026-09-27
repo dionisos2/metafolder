@@ -739,8 +739,111 @@ async fn test_delivered_events_are_counted_per_subtree(regime: Regime) {
     panic!("the events under /busy were never counted; last seen {last}");
 }
 
+/// Sets `name` on the metarecord whose file name is `file_name` (unique in the
+/// repository) — waiting for the watcher to have recorded it first.
+async fn set_on(app: &Router, repo: &str, file_name: &str, name: &str, value: Value) {
+    let by_name = json!({"type": "matches", "field": "mfr_path", "aspect": "value",
+                         "pattern": format!("^{file_name}$")});
+    let hits = tokio::time::timeout(Duration::from_secs(20), wait_for_match(app, repo, by_name, 1))
+        .await
+        .expect("tracked");
+    let (status, body) = request(
+        app,
+        "PUT",
+        &format!("/repos/{repo}/metarecords/{}/fields/{name}", hits[0]),
+        Some(json!({"value": value})),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "setting {name} failed: {body}");
+}
+
+/// Ineligible events are dropped as they arrive, before the buffer
+/// (spec-file-tracking "Filtering at ingestion"): with ingestion paused, what
+/// waits in the buffer is exactly what was delivered for the eligible file.
+async fn test_ignored_events_never_reach_the_buffer(regime: Regime) {
+    let (app, repo, root) = watched_repo("e2e_ingest_filter", regime).await;
+    std::fs::write(root.join("keep.txt"), b"x").unwrap();
+    wait_for_paths(&app, &repo, &["", "keep.txt"]).await;
+    let (_, roots) = request(
+        &app,
+        "POST",
+        &format!("/repos/{repo}/query"),
+        Some(json!({"query": {"type": "is_present", "field": "mf_watch"}})),
+    )
+    .await;
+    let (status, body) = request(
+        &app,
+        "PUT",
+        &format!("/repos/{repo}/metarecords/{}/fields/mf_ignore", roots[0].as_str().unwrap()),
+        Some(json!({"value": {"type": "string", "value": "\\.tmp$"}})),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    let (status, body) = request(&app, "POST", &format!("/repos/{repo}/watch/pause"), None).await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+
+    for i in 0..5 {
+        std::fs::write(root.join(format!("junk{i}.tmp")), b"x").unwrap();
+    }
+    std::fs::write(root.join("ok.txt"), b"x").unwrap();
+
+    let mut last = Value::Null;
+    for _ in 0..100 {
+        let (_, activity) = request(
+            &app,
+            "POST",
+            &format!("/repos/{repo}/watch/activity"),
+            Some(json!({"paths": ["/junk4.tmp", "/ok.txt"]})),
+        )
+        .await;
+        let (_, watch) = request(&app, "GET", &format!("/repos/{repo}/watch"), None).await;
+        let junk = activity["results"][0]["events"].as_u64().unwrap();
+        let ok = activity["results"][1]["events"].as_u64().unwrap();
+        let pending = watch["pending_events"].as_u64().unwrap();
+        // Delivered in order, so once ok.txt's events are all buffered, the
+        // junk before them has been through the filter.
+        if junk >= 1 && ok >= 1 && pending == ok {
+            let (_, watch) =
+                request(&app, "POST", &format!("/repos/{repo}/watch/resume"), None).await;
+            assert!(!watch.is_null());
+            wait_for_paths(&app, &repo, &["", "keep.txt", "ok.txt"]).await;
+            std::fs::remove_dir_all(root).unwrap();
+            return;
+        }
+        last = json!({"junk": junk, "ok": ok, "pending": pending});
+        tokio::time::sleep(Duration::from_millis(100)).await;
+    }
+    panic!("ignored events reached the buffer; last seen {last}");
+}
+
+/// A directory carrying a rule, renamed away and re-created under its old name
+/// in one burst: the rules still place the rule at the old path until the
+/// flush, and filtering against them would drop the new directory. Ingestion
+/// stops filtering until that flush (spec-file-tracking "Rules that are about
+/// to move").
+async fn test_a_rule_directory_renamed_and_recreated_keeps_the_new_one(regime: Regime) {
+    let (app, repo, root) = watched_repo("e2e_rule_move", regime).await;
+    std::fs::create_dir(root.join("cfg")).unwrap();
+    wait_for_paths(&app, &repo, &["", "cfg"]).await;
+    set_on(&app, &repo, "cfg", "mf_watch", json!({"type": "bool", "value": false})).await;
+
+    std::fs::rename(root.join("cfg"), root.join("moved")).unwrap();
+    std::fs::create_dir(root.join("cfg")).unwrap();
+    std::fs::write(root.join("cfg/new.txt"), b"x").unwrap();
+
+    tokio::time::timeout(
+        Duration::from_secs(20),
+        wait_for_paths(&app, &repo, &["", "cfg", "cfg/new.txt", "moved"]),
+    )
+    .await
+    .expect("the re-created directory and its file are tracked");
+    std::fs::remove_dir_all(root).unwrap();
+}
+
 on_both_regimes!(
     test_delivered_events_are_counted_per_subtree,
+    test_ignored_events_never_reach_the_buffer,
+    test_a_rule_directory_renamed_and_recreated_keeps_the_new_one,
     test_watcher_tracks_create_rename_delete,
     test_load_succeeds_with_symlink_to_unreadable_dir,
     test_new_directory_does_not_wedge_the_daemon,
