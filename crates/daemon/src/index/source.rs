@@ -33,6 +33,16 @@ pub enum Follow {
 pub type RepReader<'a> = Box<dyn Fn(u32) -> Option<SortRep> + 'a>;
 
 /// The data a query is evaluated against.
+/// What a walk of the values hands over at once.
+pub enum Walked<'a> {
+    /// One id.
+    One(u32),
+    /// Ids sharing the representative, as a set — a frequent value's holders,
+    /// which the source need not read one by one. Ids of the same
+    /// representative may still come alone, before or after it.
+    Run(&'a RoaringBitmap),
+}
+
 pub trait Source {
     /// Every metarecord's id.
     fn universe(&self) -> Cow<'_, RoaringBitmap>;
@@ -100,16 +110,17 @@ pub trait Source {
     fn sort_reps(&self, field: &str, want_max: bool) -> RepReader<'_>;
     /// Walks `field`'s values in sort order — ascending on each id's smallest
     /// value, or descending on its largest (`want_max`) — from `start` on,
-    /// inclusive: `visit` receives each id once, with its representative, and
-    /// returns `false` to stop. Ties come in no particular order (the
-    /// evaluator orders them by uuid). `false` when the source has no ordered
-    /// structure to walk for this field, and the page is fetched instead.
+    /// inclusive: `visit` receives each id once, with its representative —
+    /// alone, or in a [`Walked::Run`] of ids sharing it — and returns `false`
+    /// to stop. Ties come in no particular order (the evaluator orders them by
+    /// uuid). `false` when the source has no ordered structure to walk for
+    /// this field, and the page is fetched instead.
     fn walk_values(
         &self,
         _field: &str,
         _want_max: bool,
         _start: Option<&SortRep>,
-        _visit: &mut dyn FnMut(&SortRep, u32) -> bool,
+        _visit: &mut dyn FnMut(&SortRep, Walked<'_>) -> bool,
     ) -> bool {
         false
     }

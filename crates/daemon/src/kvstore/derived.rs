@@ -6,7 +6,7 @@
 //! |-------|--------------------------------------|--------------------------|
 //! | ids   | uuid                                 | dense id (u32)           |
 //! | uuids | dense id                             | uuid                     |
-//! | sets  | kind · [field] · chunk               | a roaring bitmap         |
+//! | sets  | kind · [field] · [key] · chunk       | a roaring bitmap         |
 //! | parts | field · partition · key · dense id   | rows (count)             |
 //! | kids  | parent uuid · field · dense id       | rows (count)             |
 //! | grams | field · trigram · chunk              | a roaring bitmap         |
@@ -19,7 +19,9 @@
 //! (equality, ranges, the distinct-value scans), a `tree_ref`'s name, and the
 //! uuid a value points at (its referent, or its parent). `kids` is the forest
 //! keyed by parent first, so a metarecord arriving or leaving finds the fields
-//! it is a parent in without a scan.
+//! it is a parent in without a scan. A value held by [`POSTING_MIN`] records
+//! or more also gets a *posting*: its holders as one set, so an equality on a
+//! frequent value reads a key per 65 536 holders, not one per holder.
 //!
 //! Every row change goes through [`KvTxn::derive_row`], every metarecord
 //! creation and removal through [`KvTxn::derive_created`] /
@@ -41,7 +43,7 @@ use crate::store::Rows;
 
 /// The format of the derived key spaces. A store stamped with another (or
 /// none: a store from before they existed) is reindexed when it opens.
-pub(super) const DERIVED_VERSION: i64 = 3;
+pub(super) const DERIVED_VERSION: i64 = 4;
 
 /// Set kinds.
 pub(super) const UNIVERSE: u8 = 0;
@@ -63,6 +65,29 @@ pub(super) const REFERRERS: u8 = 5;
 /// where a node may hang at several places the closure would need its paths
 /// counted, and a subtree is expanded level by level instead.
 pub(super) const DESCENDANTS: u8 = 6;
+
+/// The holders of one value of a field (keyed by field and value key), for
+/// the values held by [`POSTING_MIN`] records or more (spec-storage "Key
+/// layout", `postings`). A rarer value is answered from its run in the value
+/// partition, where its ids are adjacent. A posting is never demoted: it
+/// stays, exact, when its value grows rarer, and goes only with its last
+/// holder — so "a value has a posting" always means "all its ids are in it".
+pub(super) const POSTINGS: u8 = 7;
+
+/// The ids holding several non-`Nothing` rows of a field — the ones whose
+/// sort representative is not simply their value, which a walk of the
+/// values must read one by one.
+pub(super) const MULTI: u8 = 8;
+
+/// How many holders promote a value to a posting.
+pub(crate) const POSTING_MIN: u64 = 64;
+
+/// The key of the posting of a value key in `field`, without its chunk. A
+/// value key is self-delimiting (fixed-width, or a text ended by its
+/// terminator or marker and hash), so no posting's prefix is another's.
+pub(super) fn posting_prefix(field: &str, key: &[u8]) -> Vec<u8> {
+    [&[POSTINGS][..], &name_key(field), key].concat()
+}
 
 /// The forests whose descendant bitmaps are kept: one position per node.
 pub(crate) const DESCENDANT_FIELDS: [&str; 1] = ["mfr_path"];
@@ -419,6 +444,61 @@ impl KvTxn<'_> {
         Ok(())
     }
 
+    /// Whether a chunked bitmap has any member, as the transaction sees it —
+    /// without decoding the stored chunks.
+    fn chunked_exists(&self, table: u8, prefix: &[u8]) -> Result<bool> {
+        let db = if table == SETS { self.t.sets } else { self.t.grams };
+        let whole = [&[table][..], prefix].concat();
+        let cached = self.cached_chunks.borrow().get(&whole).cloned().unwrap_or_default();
+        {
+            let cache = self.sets.borrow();
+            let key = |chunk: u16| [&whole[..], &chunk.to_be_bytes()].concat();
+            if cached.iter().any(|&c| cache.get(&key(c)).is_some_and(|bm| !bm.is_empty())) {
+                return Ok(true);
+            }
+        }
+        for entry in db.prefix_iter(&self.txn.borrow(), prefix)? {
+            let (k, _) = entry?;
+            if k.len() == prefix.len() + 2 {
+                let chunk = u16::from_be_bytes([k[k.len() - 2], k[k.len() - 1]]);
+                if !cached.contains(&chunk) {
+                    return Ok(true);
+                }
+            }
+        }
+        Ok(false)
+    }
+
+    /// The first `limit` holders of a value key in `field`'s value partition.
+    fn value_holders(&self, field: &str, key: &[u8], limit: u64) -> Result<RoaringBitmap> {
+        let prefix = [&part_prefix(field, VALUE)[..], key].concat();
+        let mut out = RoaringBitmap::new();
+        for entry in self.t.parts.prefix_iter(&self.txn.borrow(), &prefix)? {
+            let (k, _) = entry?;
+            out.insert(dense(&k[prefix.len()..]));
+            if out.len() >= limit {
+                break;
+            }
+        }
+        Ok(out)
+    }
+
+    /// Keeps `id` in the posting of `key` as it is in the value partition,
+    /// promoting the value once it has [`POSTING_MIN`] holders.
+    fn derive_posting(&self, field: &str, key: &[u8], id: u32) -> Result<()> {
+        let prefix = posting_prefix(field, key);
+        let held =
+            self.t.parts.get(&self.txn.borrow(), &part_key(field, VALUE, key, id))?.is_some();
+        if self.chunked_exists(SETS, &prefix)? {
+            return self.chunk_member(SETS, &prefix, id, held);
+        }
+        if held && self.value_holders(field, key, POSTING_MIN)?.len() >= POSTING_MIN {
+            let all = self.value_holders(field, key, u64::MAX)?;
+            self.chunk_apply(SETS, &prefix, &all, true)?;
+        }
+        Ok(())
+    }
+
     /// Adds `delta` to a row count, deleting the key at zero.
     fn bump(&self, db: super::Db, k: &[u8], delta: i64) -> Result<()> {
         let mut w = self.txn.borrow_mut();
@@ -492,6 +572,7 @@ impl KvTxn<'_> {
         let id = self.id(uuid.as_bytes())?.with_context(|| format!("no dense id for {uuid}"))?;
         if let Some(k) = value_key(value) {
             self.bump(self.t.parts, &part_key(field, VALUE, &k, id), delta)?;
+            self.derive_posting(field, &k, id)?;
         }
         if let Some(k) = name_part_key(value) {
             self.bump(self.t.parts, &part_key(field, NAME, &k, id), delta)?;
@@ -512,6 +593,8 @@ impl KvTxn<'_> {
         let absent = rows.iter().any(|r| matches!(r.value, Value::Nothing));
         self.set_member(PRESENT, Some(field), id, present)?;
         self.set_member(ABSENT, Some(field), id, absent)?;
+        let valued = rows.iter().filter(|r| !matches!(r.value, Value::Nothing)).count();
+        self.set_member(MULTI, Some(field), id, valued > 1)?;
         // Trigrams: the changed row's, held by the id while one of its
         // remaining texts still has them.
         if let Some(text) = search_text(value).filter(|t| t.len() <= TRIGRAM_MAX) {
@@ -639,6 +722,7 @@ impl KvStore {
         let mut sets: BTreeSet<(u8, String, Uuid)> = BTreeSet::new();
         let mut grams: BTreeSet<(String, [u8; 3], Uuid)> = BTreeSet::new();
         let mut referrers: BTreeSet<(String, [u8; 16], Uuid)> = BTreeSet::new();
+        let mut valued: BTreeMap<(String, Uuid), usize> = BTreeMap::new();
         // Per descendant field: each node's parent, for the closure below.
         let mut parent_of: BTreeMap<(String, Uuid), Uuid> = BTreeMap::new();
         for entry in t.cells.iter(&r)? {
@@ -683,7 +767,16 @@ impl KvStore {
                 }
             }
             let kind = if matches!(row.value, Value::Nothing) { ABSENT } else { PRESENT };
+            if kind == PRESENT {
+                *valued.entry((f.clone(), uuid)).or_default() += 1;
+            }
             sets.insert((kind, f, uuid));
+        }
+
+        for ((f, uuid), n) in valued {
+            if n > 1 {
+                sets.insert((MULTI, f, uuid));
+            }
         }
 
         // Actual: the id mappings first, then everything through them.
@@ -720,6 +813,7 @@ impl KvStore {
         let mut got_sets = BTreeSet::new();
         let mut got_referrers = BTreeSet::new();
         let mut got_descendants = BTreeSet::new();
+        let mut got_postings: BTreeMap<(String, Vec<u8>), BTreeSet<Uuid>> = BTreeMap::new();
         for entry in t.sets.iter(&r)? {
             let (k, v) = entry?;
             let kind = k[0];
@@ -736,6 +830,9 @@ impl KvStore {
                 } else if kind == REFERRERS {
                     let target: [u8; 16] = rest[..16].try_into().context("a target uuid")?;
                     got_referrers.insert((field.clone(), target, u));
+                } else if kind == POSTINGS {
+                    let key = rest[..rest.len() - 2].to_vec();
+                    got_postings.entry((field.clone(), key)).or_default().insert(u);
                 } else if kind == DESCENDANTS {
                     let node: [u8; 16] = rest[..16].try_into().context("a node uuid")?;
                     got_descendants.insert((field.clone(), node, u));
@@ -775,6 +872,31 @@ impl KvStore {
             got_parts.insert((field, part, key.to_vec(), u), from_be(v));
         }
         report(&mut diff, "part", lines(&parts), lines(&got_parts));
+
+        // Postings: required from the threshold on, and exact wherever kept
+        // (a value grown rarer keeps its posting).
+        let mut holders: BTreeMap<(String, Vec<u8>), BTreeSet<Uuid>> = BTreeMap::new();
+        for (field, part, key, u) in parts.keys() {
+            if *part == VALUE {
+                holders.entry((field.clone(), key.clone())).or_default().insert(*u);
+            }
+        }
+        for (value, ids) in &holders {
+            match got_postings.remove(value) {
+                Some(got) if got != *ids => diff.push(format!(
+                    "posting of {value:?}: {} ids, the value has {} holders",
+                    got.len(),
+                    ids.len()
+                )),
+                None if ids.len() as u64 >= POSTING_MIN => {
+                    diff.push(format!("posting missing: {value:?} ({} holders)", ids.len()))
+                }
+                _ => {}
+            }
+        }
+        for value in got_postings.keys() {
+            diff.push(format!("posting unexpected: {value:?} (no holder)"));
+        }
 
         let mut got_kids = BTreeMap::new();
         for entry in t.kids.iter(&r)? {

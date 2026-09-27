@@ -37,6 +37,7 @@ fn repository_in(n: usize, per_folder: usize) -> (KvStore, TempDir) {
             tree(Some(folder), &format!("file{i:06}.txt")),
             Field::new("name", Value::String(format!("file{i:06}.txt"))),
             Field::new("kind", Value::String(kind.into())),
+            Field::new("rating", Value::Int((i % 10) as i64)),
         ])
         .unwrap();
     }
@@ -85,14 +86,26 @@ fn bounded(what: &str, q: &Query, sort: &[(&str, bool)], count: bool) {
 
 /// [`bounded`] on repositories of `per_folder` files per directory.
 fn bounded_on(what: &str, q: &Query, sort: &[(&str, bool)], count: bool, per_folder: usize) {
-    let (small, _s) = repository_in(2_000, per_folder.min(2_000));
-    let (large, _l) = repository_in(16_000, per_folder);
+    bounded_sizes(what, q, sort, count, per_folder, (2_000, 16_000));
+}
+
+/// [`bounded_on`] between two repository sizes.
+fn bounded_sizes(
+    what: &str,
+    q: &Query,
+    sort: &[(&str, bool)],
+    count: bool,
+    per_folder: usize,
+    (small_n, large_n): (usize, usize),
+) {
+    let (small, _s) = repository_in(small_n, per_folder.min(small_n));
+    let (large, _l) = repository_in(large_n, per_folder);
     let (found_small, cost_small) = reads(&small, q, sort, count);
     let (found_large, cost_large) = reads(&large, q, sort, count);
     assert_eq!(found_small, found_large, "{what}: the answer should not grow");
     assert!(
         cost_large <= cost_small + cost_small / 2 + 20,
-        "{what}: {cost_small} keys on 2 000 records, {cost_large} on 16 000"
+        "{what}: {cost_small} keys on {small_n} records, {cost_large} on {large_n}"
     );
 }
 
@@ -145,6 +158,103 @@ fn a_folder_page_sorted_by_path_reads_the_page() {
         inclusive: false,
     };
     bounded_on("a subtree by path", &below, &[("loc", true)], false, 16_000);
+}
+
+fn and(operands: Vec<Query>) -> Query {
+    Query::And { operands }
+}
+
+fn osm(field: &str, terms: &[&str], mode: OsmMode) -> Query {
+    Query::Osm { field: field.into(), terms: terms.iter().map(|t| t.to_string()).collect(), mode }
+}
+
+fn value_matches(field: &str, pattern: &str) -> Query {
+    Query::Matches { field: field.into(), pattern: pattern.into(), aspect: Aspect::Value }
+}
+
+fn int(op: fn(String, Value) -> Query, field: &str, n: i64) -> Query {
+    op(field.into(), Value::Int(n))
+}
+
+fn gt(field: String, value: Value) -> Query {
+    Query::Gt { field, value, aspect: Aspect::Raw }
+}
+
+/// The folder `/d100` and everything below it: a hundred files on either size.
+fn subtree() -> Query {
+    Query::FollowsTransitive {
+        field: "loc".into(),
+        target: FollowTarget::Path("/d100".into()),
+        inclusive: true,
+    }
+}
+
+// Combinations of operands of different types. What the bitmaps buy is that
+// a query combining a wide operand with a narrow one costs about the narrow
+// one: none of these answers grows with the repository, so neither may the
+// keys read.
+
+#[test]
+fn the_finder_search_reads_its_candidates() {
+    // The GUI's search box: the same terms against the path, and the text of
+    // two fields.
+    let terms = ["d100", "000123"];
+    let finder = Query::Or {
+        operands: vec![
+            osm("loc", &terms, OsmMode::Path),
+            osm("name", &terms, OsmMode::Direct),
+            osm("kind", &terms, OsmMode::Direct),
+        ],
+    };
+    bounded("finder search", &finder, &[], false);
+    bounded("finder search, counted", &finder, &[], true);
+}
+
+#[test]
+fn a_wide_operand_and_a_rare_one_cost_the_rare_one() {
+    // A third of the repository, and a single name — in both orders.
+    let wide = eq("kind", "note");
+    let rare = eq("name", "file000123.txt");
+    bounded("wide and rare", &and(vec![wide.clone(), rare.clone()]), &[], true);
+    bounded("rare and wide", &and(vec![rare, wide]), &[], true);
+    // A range over every record, and a rare value.
+    let range = int(gt, "rating", 1);
+    bounded("range and rare", &and(vec![range, eq("kind", "rare")]), &[], true);
+}
+
+#[test]
+fn a_subtree_a_range_and_a_text_combine() {
+    let q = and(vec![subtree(), int(gt, "rating", 4), matches("name", "file0001")]);
+    bounded("subtree, range and text", &q, &[], true);
+    let q = and(vec![subtree(), value_matches("loc", "file0001")]);
+    bounded("subtree and name", &q, &[], true);
+}
+
+#[test]
+fn a_negation_combines_with_a_narrow_operand() {
+    let q = and(vec![Query::Not { operand: Box::new(eq("kind", "note")) }, subtree()]);
+    bounded("not wide, in a subtree", &q, &[], true);
+    let q = and(vec![matches("name", "file00012"), Query::Not { operand: Box::new(subtree()) }]);
+    bounded("text, not in a subtree", &q, &[], true);
+}
+
+#[test]
+fn a_combined_page_sorted_on_a_value_reads_the_page() {
+    // Most of the repository matches; one sorted page of it is asked for.
+    let q = and(vec![
+        present("name"),
+        int(gt, "rating", 2),
+        Query::Not { operand: Box::new(eq("kind", "photo")) },
+    ]);
+    bounded("combined page by name", &q, &[("name", true)], false);
+    // Sorted on a value with ten distinct values: the page's rating is held
+    // by a tenth of the repository, and ties go by uuid — the page costs
+    // about the page over the density of its matches, whatever the size.
+    // Past ~12 000 records the uuid order is the cheaper way through a run;
+    // both sizes are.
+    let sizes = (16_000, 64_000);
+    bounded_sizes("combined page by rating", &q, &[("rating", false)], false, 100, sizes);
+    bounded_sizes("combined page by rating, up", &q, &[("rating", true)], false, 100, sizes);
 }
 
 #[test]

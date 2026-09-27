@@ -743,9 +743,30 @@ f. *Trigrams* and the lazy text checks; postings for frequent values; the
    repository and on one eight times larger: a rare value, a page sorted on a
    value and a literal search read the same number (a search read the whole
    field before: 2 004 keys against 16 004). The lazy text checks already hold
-   on this backend (a deferred name check reads the record's positions);
-   postings for frequent values are not built — the value partition serves
-   equality with one key per holder.
+   on this backend (a deferred name check reads the record's positions).
+   *Postings for frequent values (done, sept. 2026)*: a value reaching 64
+   holders gets its posting in the same transaction (its run counted, then
+   read whole — at most 64 keys a write, until promoted) and keeps it,
+   exact, until its last holder goes; =check= requires one from 64 holders
+   on and holds any kept one to the value's holders. Equality reads the
+   posting; a range or a =!== takes each posted value's posting whole and
+   jumps past its run in the value partition, so =rating > 4= reads five
+   postings, not half the repository. A sorted walk hands a posted value's
+   holders over as one run — those with a single value of the field; the
+   ids holding several (a derived =multi= set per field) are still read one
+   by one, their representative deciding — and the evaluator takes the
+   run's first ids by uuid either by reading them all or by walking the
+   uuid order, whichever is expected cheaper: a page sorted on a field of
+   ten values costs about the page over the density of its ties, however
+   large the repository. Found by the combined-operand cost assertions
+   (=tests/kv_cost.rs=: a wide operand and a rare one, in both orders; a
+   subtree, a range and a text; a negation; a combined page sorted on a
+   value; the finder's search), which read 5 to 11 thousand keys on 16 000
+   records before — linear in the repository — and =tests/kv_postings.rs=
+   (answers and sorted pages against the oracle on values held past the
+   threshold). Still linear: a range over a high-cardinality numeric or
+   date field (=mfr_size > 1 MB=), which the =bsi= key space of the layout
+   would serve :deferred: (/KV bit-sliced index/).
 
 Each step leaves every suite green on both backends.
 

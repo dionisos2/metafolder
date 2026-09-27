@@ -39,7 +39,7 @@ use uuid::Uuid;
 use crate::db;
 use field_index::{CmpOp, FieldIndex, SortRep, SortReps};
 use id_registry::IdRegistry;
-pub use source::{Follow, RepReader, Source};
+pub use source::{Follow, RepReader, Source, Walked};
 
 /// One sort key: a field name and its direction.
 #[derive(Debug)]
@@ -1267,36 +1267,57 @@ impl Eval<'_> {
         let mut out: Vec<u32> = Vec::new();
         if walk {
             // One run of equal representatives at a time: sorted by uuid, and
-            // at the cursor's own value only what follows the cursor.
-            let flush = |run: &mut Vec<(Uuid, u32)>, rep: &SortRep, out: &mut Vec<u32>| {
-                run.sort_unstable();
+            // at the cursor's own value only what follows the cursor. A run
+            // handed over as a set adds only its first ids by uuid — no more
+            // than the page still wants can come from it.
+            let flush = |run: &mut Vec<(Uuid, u32)>,
+                         set: &mut RoaringBitmap,
+                         rep: &SortRep,
+                         out: &mut Vec<u32>| {
                 let from = start.as_ref().filter(|(r, _)| r == rep).map(|(_, u)| *u);
+                if !set.is_empty() {
+                    let n = want.saturating_sub(out.len());
+                    run.extend(self.first_by_uuid(set, from, n, accepts));
+                    set.clear();
+                }
+                run.sort_unstable();
                 out.extend(run.drain(..).filter(|(u, _)| from.is_none_or(|c| *u > c)).map(|x| x.1));
             };
             let mut run: Vec<(Uuid, u32)> = Vec::new();
+            let mut set = RoaringBitmap::new();
             let mut run_rep: Option<SortRep> = None;
             let (mut steps, mut over) = (0usize, false);
             let walked = self.src.walk_values(
                 field,
                 want_max,
                 start.as_ref().map(|(r, _)| r),
-                &mut |rep, id| {
-                    steps += 1;
-                    if steps > budget {
-                        over = true;
-                        return false;
-                    }
+                &mut |rep, walked| {
                     if run_rep.as_ref() != Some(rep) {
                         if let Some(done) = run_rep.take() {
-                            flush(&mut run, &done, &mut out);
+                            flush(&mut run, &mut set, &done, &mut out);
                             if out.len() >= want {
                                 return false;
                             }
                         }
                         run_rep = Some(rep.clone());
                     }
-                    if let Some(uuid) = self.src.uuid(id).filter(|&u| accepts(id, u)) {
-                        run.push((uuid, id));
+                    match walked {
+                        Walked::One(id) => {
+                            steps += 1;
+                            if let Some(uuid) = self.src.uuid(id).filter(|&u| accepts(id, u)) {
+                                run.push((uuid, id));
+                            }
+                        }
+                        Walked::Run(ids) => {
+                            // What picking its first ids by uuid will cost.
+                            let ids = ids & matched;
+                            steps += self.first_by_uuid_cost(&ids, want) as usize;
+                            set |= ids;
+                        }
+                    }
+                    if steps > budget {
+                        over = true;
+                        return false;
                     }
                     true
                 },
@@ -1305,7 +1326,7 @@ impl Eval<'_> {
                 return None;
             }
             if let Some(done) = run_rep {
-                flush(&mut run, &done, &mut out);
+                flush(&mut run, &mut set, &done, &mut out);
             }
         }
         if out.len() < want {
@@ -1393,6 +1414,49 @@ impl Eval<'_> {
         }
         rest.sort_unstable();
         rest.into_iter().map(|(_, id)| id).collect()
+    }
+
+    /// The `n` smallest-uuid ids of `set` after `after`, with their uuids: by
+    /// reading every id's uuid, or by walking the uuid order until `n` of them
+    /// have come — whichever [`Self::first_by_uuid_cost`] says is cheaper.
+    fn first_by_uuid(
+        &self,
+        set: &RoaringBitmap,
+        after: Option<Uuid>,
+        n: usize,
+        accepts: &dyn Fn(u32, Uuid) -> bool,
+    ) -> Vec<(Uuid, u32)> {
+        if n == 0 || set.is_empty() {
+            return Vec::new();
+        }
+        if self.walks_uuid_order(set, n) {
+            return self
+                .src
+                .in_uuid_order(after)
+                .filter(|&(uuid, id)| set.contains(id) && accepts(id, uuid))
+                .take(n)
+                .collect();
+        }
+        self.by_uuid_after(set, after, n, accepts)
+            .into_iter()
+            .map(|id| (self.src.uuid(id).expect("interned id"), id))
+            .collect()
+    }
+
+    /// Whether the uuid order finds `n` ids of `set` sooner than reading
+    /// all of theirs: spread evenly, they come every `span / |set|` steps.
+    fn walks_uuid_order(&self, set: &RoaringBitmap, n: usize) -> bool {
+        let every = self.src.id_count() / set.len().max(1);
+        (n as u64).saturating_mul(every.max(1)) < set.len()
+    }
+
+    /// The steps [`Self::first_by_uuid`] is expected to take for `n` ids.
+    fn first_by_uuid_cost(&self, set: &RoaringBitmap, n: usize) -> u64 {
+        if self.walks_uuid_order(set, n) {
+            (n as u64).saturating_mul((self.src.id_count() / set.len().max(1)).max(1))
+        } else {
+            set.len()
+        }
     }
 
     /// Up to `limit + 1` ids of `matched` sorted on one BSI key, after `after`:
