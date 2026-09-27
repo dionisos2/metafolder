@@ -85,6 +85,17 @@ Verified against man-pages 6.19 and the kernel documentation:
   remembered handle → path answer is wrong after any directory move; the
   broker forgets them all on one (a file created in a folder just moved was
   otherwise reported at the folder's old path).
+- **Resolving needs a live path on the filesystem.** `open_by_handle_at`
+  takes a descriptor on the handle's filesystem, opened at some path of it.
+  The broker keeps every subscribed root and mount of each filesystem for
+  that, refreshed on each resync, and uses the first that still is that
+  filesystem: it kept only the first root subscribed there, so deleting that
+  one repository blinded every other on the same disk (found September 2026,
+  tests running in parallel on one tmpfs).
+- **Info records are 4-aligned.** An event's records are walked by their
+  `len`, which includes the kernel's padding (`FANOTIFY_EVENT_ALIGN`, 4);
+  rounding it to 8 read every record after a 4-mod-8 one from the wrong place,
+  and lost the new side of renames.
 - **Versions.** `FAN_REPORT_FID` (5.1), `FAN_REPORT_DFID_NAME` (5.9),
   `FAN_REPORT_TARGET_FID` (5.17, also 5.15.154 / 5.10.220). Feature-detect at
   startup; the full form is what makes renames complete.

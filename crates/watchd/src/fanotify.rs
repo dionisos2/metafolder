@@ -188,16 +188,19 @@ impl<R: Resolve> Resolve for Memo<R> {
 /// [`end_batch`]: PathResolver::end_batch
 #[derive(Default)]
 pub struct PathResolver {
-    /// Where each covered filesystem was marked: a path to open a descriptor
-    /// on when one of its handles needs resolving.
-    fs_paths: HashMap<[i32; 2], PathBuf>,
+    /// Paths of each covered filesystem — every subscribed root and mount on
+    /// it — to open a descriptor at when one of its handles needs resolving.
+    /// All of them, not one: any may be deleted or moved while subscribed,
+    /// and one gone must not blind the others ([`fs_fd`](Self::fs_fd)).
+    fs_paths: HashMap<[i32; 2], Vec<PathBuf>>,
     /// The descriptors of the current batch.
     open: HashMap<[i32; 2], OwnedFd>,
 }
 
 impl PathResolver {
-    pub fn add_fs(&mut self, fsid: [i32; 2], at: PathBuf) {
-        self.fs_paths.insert(fsid, at);
+    /// Records where the filesystem `fsid` can be reached, replacing what was.
+    pub fn set_fs(&mut self, fsid: [i32; 2], paths: Vec<PathBuf>) {
+        self.fs_paths.insert(fsid, paths);
     }
 
     pub fn remove_fs(&mut self, fsid: [i32; 2]) {
@@ -215,16 +218,16 @@ impl PathResolver {
         self.open.len()
     }
 
-    /// A descriptor on the filesystem `fsid`, opened for this batch. `None`
-    /// when what is at the recorded path is no longer that filesystem (it was
-    /// unmounted: the path now names the directory underneath).
+    /// A descriptor on the filesystem `fsid`, opened for this batch at the
+    /// first of its paths that still is that filesystem — a path deleted
+    /// since, or one whose filesystem was unmounted (it then names the
+    /// directory underneath), is passed over. `None` when none is.
     fn fs_fd(&mut self, fsid: [i32; 2]) -> Option<RawFd> {
         if !self.open.contains_key(&fsid) {
-            let at = self.fs_paths.get(&fsid)?;
-            let fd = open_fs_fd(at).ok()?;
-            if fsid_of_fd(fd.as_raw_fd()).ok()? != fsid {
-                return None;
-            }
+            let fd = self.fs_paths.get(&fsid)?.iter().find_map(|at| {
+                let fd = open_fs_fd(at).ok()?;
+                (fsid_of_fd(fd.as_raw_fd()).ok()? == fsid).then_some(fd)
+            })?;
             self.open.insert(fsid, fd);
         }
         self.open.get(&fsid).map(AsRawFd::as_raw_fd)
@@ -325,6 +328,9 @@ fn require_fsid(fsid: [i32; 2]) -> Result<[i32; 2]> {
 struct Plan {
     /// fsid → (where to mark it, whether that is a root).
     wanted: HashMap<[i32; 2], (PathBuf, bool)>,
+    /// fsid → every root and mount on it, in order: where its handles can be
+    /// resolved from.
+    paths: HashMap<[i32; 2], Vec<PathBuf>>,
     /// Roots that cannot be covered: an error for their subscribers.
     failed: Vec<String>,
     /// Filesystems mounted beneath a root that cannot be covered: reported,
@@ -345,12 +351,14 @@ fn plan_marks(
         match fsid(root) {
             Ok(f) => {
                 plan.wanted.entry(f).or_insert((root.clone(), true));
+                plan.paths.entry(f).or_default().push(root.clone());
             }
             Err(err) => plan.failed.push(format!("{}: {err:#}", root.display())),
         }
         for at in covered_mounts(root, points) {
             match fsid(&at) {
                 Ok(f) => {
+                    plan.paths.entry(f).or_default().push(at.clone());
                     plan.wanted.entry(f).or_insert((at, false));
                 }
                 Err(err) => {
@@ -816,7 +824,8 @@ impl Fanotify {
         let points = std::fs::read("/proc/self/mountinfo")
             .map(|table| mount_points(&table))
             .unwrap_or_default();
-        let Plan { wanted, mut failed, skipped } = plan_marks(&self.roots, &points, coverable_fsid);
+        let Plan { wanted, mut paths, mut failed, skipped } =
+            plan_marks(&self.roots, &points, coverable_fsid);
         for message in skipped {
             eprintln!("[watchd] {message}");
         }
@@ -830,14 +839,19 @@ impl Fanotify {
             }
             self.resolver.inner.remove_fs(fsid);
         }
-        // The rest are placed.
+        // The rest are placed — and every mark, old or new, resolves from the
+        // paths its filesystem has *now*: the ones it was placed with may be
+        // gone (a subscribed root deleted, or unsubscribed and then deleted).
         for (fsid, (at, is_root)) in wanted {
-            if self.marks.contains_key(&fsid) {
+            let reachable = paths.remove(&fsid).unwrap_or_default();
+            if let Some(mark) = self.marks.get_mut(&fsid) {
+                mark.at = at;
+                self.resolver.inner.set_fs(fsid, reachable);
                 continue;
             }
             match self.mark_fs(&at, FAN_MARK_ADD) {
                 Ok(()) => {
-                    self.resolver.inner.add_fs(fsid, at.clone());
+                    self.resolver.inner.set_fs(fsid, reachable);
                     self.marks.insert(fsid, Mark { at });
                 }
                 Err(err) if is_root => failed.push(format!("{}: {err:#}", at.display())),
@@ -1365,6 +1379,21 @@ mod tests {
     }
 
     #[test]
+    fn test_a_record_whose_length_makes_no_sense_ends_the_walk_of_its_event() {
+        for bad_len in [0u16, 2, 400] {
+            let mut b = Buf::new(FAN_CREATE, 1);
+            b.fid_record(INFO_TYPE_DFID_NAME, &handle(7), Some("kept"));
+            b.0.extend_from_slice(&[INFO_TYPE_FID, 0]);
+            b.0.extend_from_slice(&bad_len.to_ne_bytes());
+            b.0.extend_from_slice(&[0; 4]);
+            let (events, _) = parse(&b.finish());
+            assert_eq!(events.len(), 1, "the event itself is kept");
+            assert_eq!(events[0].parent, Some((handle(7), OsString::from("kept"))));
+            assert_eq!(events[0].fid, None, "len {bad_len}: nothing read past it");
+        }
+    }
+
+    #[test]
     fn test_what_cannot_be_resolved_is_not_reported() {
         let nothing = &mut table(&[]);
         // An entry event whose directory is gone.
@@ -1541,6 +1570,9 @@ mod tests {
         assert_eq!(plan.wanted.len(), 2, "{plan:?}");
         assert_eq!(plan.wanted[&[1, 1]], (PathBuf::from("/repo"), true), "first come");
         assert_eq!(plan.wanted[&[2, 2]], (PathBuf::from("/repo/usb"), false));
+        let at = |ps: &[&str]| ps.iter().map(PathBuf::from).collect::<Vec<_>>();
+        assert_eq!(plan.paths[&[1, 1]], at(&["/repo", "/repo/sub", "/other"]), "every one");
+        assert_eq!(plan.paths[&[2, 2]], at(&["/repo/usb"]));
         assert_eq!(plan.failed, vec!["/missing: gone".to_string()]);
         assert_eq!(plan.skipped, vec!["cannot cover the mount /repo/nfs: gone".to_string()]);
     }
@@ -1663,7 +1695,7 @@ mod tests {
         let dir = std::env::temp_dir();
         let mut r = PathResolver::default();
         let fsid = statfs_fsid(&dir).unwrap();
-        r.add_fs(fsid, dir.clone());
+        r.set_fs(fsid, vec![dir.clone()]);
         let h = name_to_handle(&dir).unwrap();
         let _ = r.resolve(&h); // May be refused unprivileged; it opens all the same.
         assert_eq!(r.open_descriptors(), 1, "the batch has its descriptor");
@@ -2036,7 +2068,7 @@ mod tests {
         let dir = tmpfs("unplugged");
         let fsid = statfs_fsid(&dir).unwrap();
         let mut r = PathResolver::default();
-        r.add_fs(fsid, dir.clone());
+        r.set_fs(fsid, vec![dir.clone()]);
         let ok = std::process::Command::new("umount").arg(&dir).status();
         assert!(ok.is_ok_and(|s| s.success()));
         let h = Handle { fsid, handle_type: 1, bytes: vec![0; 8] };
@@ -2276,5 +2308,38 @@ mod tests {
         let expected: Vec<_> =
             names.iter().map(|n| (Some(n.clone()), Some(format!("{n}.moved")))).collect();
         assert_eq!(renames, expected);
+    }
+
+    #[test]
+    fn test_a_subscribed_root_that_disappears_does_not_blind_the_others() {
+        // Resolving a handle takes a descriptor on its filesystem, opened at a
+        // path of it. That path was the first root subscribed there, kept for
+        // good: once that root was deleted — a test's scratch repository, a
+        // repository the user removed — nothing on the filesystem resolved
+        // any more, and every other root on it went silent (early_journey,
+        // under the broker, depending on which test had subscribed first).
+        if !in_userns("test_a_subscribed_root_that_disappears_does_not_blind_the_others") {
+            return;
+        }
+        let fs = tmpfs("shared");
+        let (first, second) = (fs.join("first"), fs.join("second"));
+        std::fs::create_dir(&first).unwrap();
+        std::fs::create_dir(&second).unwrap();
+        let fsid = statfs_fsid(&fs).unwrap();
+        let mut fa = Fanotify::open().unwrap();
+        fa.sync_roots(&[first.clone(), second.clone()]).unwrap();
+        let h = Handle { fsid, handle_type: 1, bytes: vec![0; 8] };
+
+        // Deleted while still subscribed: another root of the filesystem does.
+        std::fs::remove_dir(&first).unwrap();
+        let _ = fa.resolver.inner.resolve(&h);
+        assert_eq!(fa.resolver.inner.open_descriptors(), 1, "a descriptor all the same");
+        fa.resolver.inner.end_batch();
+
+        // Unsubscribed: what remains is what the resolver opens on.
+        fa.sync_roots(std::slice::from_ref(&second)).unwrap();
+        assert_eq!(fa.resolver.inner.fs_paths[&fsid], vec![second.clone()]);
+        let _ = fa.resolver.inner.resolve(&h);
+        assert_eq!(fa.resolver.inner.open_descriptors(), 1);
     }
 }
