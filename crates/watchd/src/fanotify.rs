@@ -119,11 +119,16 @@ pub struct Handle {
 /// without it.
 pub trait Resolve {
     fn resolve(&mut self, handle: &Handle) -> Option<PathBuf>;
+    /// A directory moved: every remembered path may be wrong from here on.
+    fn forget(&mut self) {}
 }
 
 /// The real resolver: `open_by_handle_at` plus `/proc/self/fd`, memoised.
 /// A handle is stable for the life of the object, but the *path* is not (the
-/// object can be renamed under us), so entries are forgotten after a moment.
+/// object can be renamed under us), so entries are forgotten after a moment —
+/// and all at once on a directory move ([`translate_batch`]), which is what
+/// actually changes them: the moment alone let a file created in a folder just
+/// moved be reported at the folder's old path.
 ///
 /// `open_by_handle_at` needs a descriptor on the handle's filesystem. Those are
 /// opened for one batch of events and closed after it ([`end_batch`]), never
@@ -194,6 +199,10 @@ impl Resolve for PathResolver {
         }
         self.cache.insert((handle.fsid, handle.bytes.clone()), (path.clone(), Instant::now()));
         Some(path)
+    }
+
+    fn forget(&mut self) {
+        self.cache.clear();
     }
 }
 
@@ -531,6 +540,37 @@ pub fn translate(raw: &RawEvent, resolver: &mut dyn Resolve) -> Vec<Event> {
     out
 }
 
+/// One read's events, in order, filtered by [`Scope`] and translated.
+///
+/// A directory move makes the resolver forget every path it remembered, before
+/// anything after the move is resolved: a handle outlives its path — the
+/// moved directory keeps its handle, and so does everything below it — so a
+/// remembered answer would place what happens next in the moved subtree at its
+/// old location, a path that no longer exists. A *file* move changes no path
+/// the resolver keeps: it remembers directories (the parents events name); a
+/// file's own handle is resolved only for its deletion.
+pub fn translate_batch(
+    raws: &[RawEvent],
+    scope: &mut Scope,
+    resolver: &mut dyn Resolve,
+) -> Vec<Event> {
+    let mut events = Vec::new();
+    for raw in raws {
+        if is_directory_move(raw) {
+            resolver.forget();
+        }
+        if scope.relevant(raw, resolver) {
+            events.extend(translate(raw, resolver));
+        }
+    }
+    events
+}
+
+/// A directory moved: what [`Scope`] and the resolver remember may be wrong.
+fn is_directory_move(raw: &RawEvent) -> bool {
+    raw.mask & FAN_ONDIR != 0 && raw.mask & (FAN_RENAME | FAN_MOVED_FROM | FAN_MOVED_TO) != 0
+}
+
 // ── Scope: the parent-directory filter ───────────────────────────────────────
 
 /// Past this many remembered directories the verdicts start over — a bound on
@@ -561,8 +601,7 @@ impl Scope {
     /// (the root itself included). A directory move is seen here first, and
     /// forgets every verdict before any is read.
     pub fn relevant(&mut self, raw: &RawEvent, resolver: &mut dyn Resolve) -> bool {
-        let moves = FAN_RENAME | FAN_MOVED_FROM | FAN_MOVED_TO;
-        if raw.mask & FAN_ONDIR != 0 && raw.mask & moves != 0 {
+        if is_directory_move(raw) {
             self.verdicts.clear();
         }
         let dirs = [&raw.parent, &raw.old, &raw.new].into_iter().flatten().map(|(h, _)| h);
@@ -751,12 +790,7 @@ impl Fanotify {
     /// anything is resolved for it.
     pub fn translate(&mut self, buf: &[u8]) -> ReadOutcome {
         let (raws, kernel_overflow) = parse(buf);
-        let mut events = Vec::new();
-        for raw in &raws {
-            if self.scope.relevant(raw, &mut self.resolver) {
-                events.extend(translate(raw, &mut self.resolver));
-            }
-        }
+        let events = translate_batch(&raws, &mut self.scope, &mut self.resolver);
         self.resolver.end_batch();
         ReadOutcome { events, kernel_overflow }
     }
@@ -1156,6 +1190,66 @@ mod tests {
         scope.relevant(&parse(&b.finish()).0[0], &mut r);
 
         assert!(scope.relevant(&creation(&handle(1), "x"), &mut r), "recomputed after the move");
+    }
+
+    /// A [`Table`] that remembers what it resolved, as [`PathResolver`] does —
+    /// and forgets it when told a directory moved.
+    struct Memo {
+        table: Table,
+        seen: std::collections::HashMap<Vec<u8>, PathBuf>,
+    }
+
+    impl Resolve for Memo {
+        fn resolve(&mut self, h: &Handle) -> Option<PathBuf> {
+            if let Some(p) = self.seen.get(&h.bytes) {
+                return Some(p.clone());
+            }
+            let p = self.table.resolve(h)?;
+            self.seen.insert(h.bytes.clone(), p.clone());
+            Some(p)
+        }
+        fn forget(&mut self) {
+            self.seen.clear();
+        }
+    }
+
+    #[test]
+    fn test_a_file_created_in_a_moved_directory_is_reported_at_its_new_path() {
+        // A handle outlives its path: the directory keeps its handle when it
+        // moves, so a remembered handle → path answer goes stale with the move.
+        // It was: `y.jpg`, created in `sorted/trip` right after `inbox/trip`
+        // moved there, was reported at `/repo/inbox/trip/y.jpg` — a path that
+        // does not exist, so the daemon recorded nothing (early_journey, under
+        // the broker).
+        let trip = handle(1);
+        let mut r = Memo {
+            table: table(&[
+                (&trip, "/repo/inbox/trip"),
+                (&handle(2), "/repo/inbox"),
+                (&handle(3), "/repo/sorted"),
+            ]),
+            seen: std::collections::HashMap::new(),
+        };
+        let mut scope = scope_over(&["/repo"]);
+
+        let before = translate_batch(&[creation(&trip, "x.jpg")], &mut scope, &mut r);
+        assert_eq!(
+            before,
+            vec![Event::Create { path: PathBuf::from("/repo/inbox/trip/x.jpg").into() }]
+        );
+
+        r.table.0.insert(trip.bytes.clone(), PathBuf::from("/repo/sorted/trip"));
+        let mut b = Buf::new(FAN_RENAME | FAN_ONDIR, 1);
+        b.fid_record(INFO_TYPE_OLD_DFID_NAME, &handle(2), Some("trip"));
+        b.fid_record(INFO_TYPE_NEW_DFID_NAME, &handle(3), Some("trip"));
+        let moved = parse(&b.finish()).0.remove(0);
+
+        let after = translate_batch(&[moved, creation(&trip, "y.jpg")], &mut scope, &mut r);
+        assert_eq!(
+            after.last(),
+            Some(&Event::Create { path: PathBuf::from("/repo/sorted/trip/y.jpg").into() }),
+            "{after:?}"
+        );
     }
 
     #[test]
