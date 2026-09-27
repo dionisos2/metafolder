@@ -58,7 +58,12 @@ pub(crate) fn prng(i: u64) -> u64 {
 /// daemon could not load what this still had open.
 pub fn build(dir: &Path, shape: &Shape, storage: Storage) -> Result<Uuid> {
     std::fs::create_dir_all(dir).with_context(|| format!("create {}", dir.display()))?;
-    let opened = repo::init_repository_with(dir, None, Some(shape.label), false, storage)
+    // One daemon loads both backends' repositories: their names must differ.
+    let name = match storage {
+        Storage::Kv => shape.label.to_string(),
+        Storage::Sqlite => format!("{}-sqlite", shape.label),
+    };
+    let opened = repo::init_repository_with(dir, None, Some(&name), false, storage)
         .with_context(|| format!("init a repository at {}", dir.display()))?;
     let repo_uuid = opened.config.repo_uuid;
     let mut conn = opened.conn;
