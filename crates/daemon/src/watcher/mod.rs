@@ -362,9 +362,9 @@ fn explain_watched_one(
         Coverage::Watches(set) => set.contains(&abs_of(root, &cover)),
         Coverage::Tree => covered_by_tree(conn, cache, rules, root, internal_dir, &cover, offline),
     };
-    let eligibility = rules.explain(&RelPath::from_display(rel_path))?;
+    let eligibility = rules.explain(&rules.rel_of_text(rel_path))?;
     let dir_eligibility =
-        if is_dir { eligibility.clone() } else { rules.explain(&RelPath::from_display(&cover))? };
+        if is_dir { eligibility.clone() } else { rules.explain(&rules.rel_of_text(&cover))? };
     let watched = covered && eligibility.eligible;
     let (reason, excluded_by, offline_mount) = if watched {
         (WatchedReason::Watched, None, None)
@@ -381,7 +381,7 @@ fn explain_watched_one(
             .get_or_insert_with(|| crate::mount::offline(conn, cache, root).unwrap_or_default());
         if let Some(mount) = mounts.paths().iter().find(|m| covers(m, &cover)) {
             (WatchedReason::Offline, None, Some((*mount).clone()))
-        } else if let Some(by) = rules.exceeded_by(&RelPath::from_display(&cover)) {
+        } else if let Some(by) = rules.exceeded_by(&rules.rel_of_text(&cover)) {
             (WatchedReason::Excluded, Some(by), None)
         } else {
             (WatchedReason::Unwatched, None, None)
@@ -468,7 +468,7 @@ fn covered_by_tree(
     if mounts.paths().iter().any(|m| covers(m, cover)) {
         return false;
     }
-    rules.exceeded_by(&RelPath::from_display(cover)).is_none()
+    rules.exceeded_by(&rules.rel_of_text(cover)).is_none()
 }
 
 /// Converts an absolute path to the internal repo-root-relative form, keeping

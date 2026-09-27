@@ -308,6 +308,56 @@ fn a_name_that_is_not_text_is_matched_by_its_bytes() {
 }
 
 #[test]
+fn a_path_given_as_text_is_read_both_ways_like_the_tree_cache_reads_it() {
+    use metafolder_core::metarecord::TreeName;
+    let mut conn = db::open_in_memory().unwrap();
+    db::init_schema(&conn).unwrap();
+    let mut w = Writer::begin(&mut conn, None).unwrap();
+    let root = w
+        .create_metarecord(vec![
+            Field::new("mfr_path", Value::TreeRef { parent: None, name: "".into() }),
+            Field::new("mf_watch", Value::Bool(true)),
+        ])
+        .unwrap()
+        .uuid;
+    // One directory whose name holds the byte 0xE9, one whose name really is
+    // the text `x%E9`: the escaped text designates the first, the literal the
+    // second.
+    w.create_metarecord(vec![
+        Field::new(
+            "mfr_path",
+            Value::TreeRef { parent: Some(root), name: TreeName::from_bytes(vec![b'd', 0xE9]) },
+        ),
+        Field::new("mf_watch", Value::Bool(false)),
+    ])
+    .unwrap();
+    w.create_metarecord(vec![
+        Field::new("mfr_path", Value::TreeRef { parent: Some(root), name: "x%E9".into() }),
+        Field::new("mf_watch", Value::Bool(false)),
+    ])
+    .unwrap();
+    w.commit().unwrap();
+
+    let rules = WatchRules::load(&conn, false).unwrap();
+    let eligible = |text: &str| rules.explain(&rules.rel_of_text(text)).unwrap();
+    let escaped = eligible("/d%E9/f");
+    assert!(!escaped.eligible, "{escaped:?}");
+    assert_eq!(escaped.watch_scope.as_deref(), Some("/d%E9"));
+    assert!(!eligible("/x%E9/f").eligible, "the literal name is found verbatim");
+    assert!(eligible("/other%E9/f").eligible, "no rule down either reading");
+
+    // The text-taking entry points read it the same way.
+    let mut cache = TreeCache::new(false);
+    assert!(!metafolder_daemon::eligibility::is_eligible(&conn, &mut cache, "/d%E9/f").unwrap());
+    let oracle_verdict = oracle(&conn, &mut cache, "/d%E9/f");
+    assert_eq!(
+        oracle_verdict.reason,
+        Reason::WatchFalse,
+        "the chain walk agrees: {oracle_verdict:?}"
+    );
+}
+
+#[test]
 fn touches_names_the_rule_carriers_and_their_ancestors_only() {
     let mut conn = db::open_in_memory().unwrap();
     db::init_schema(&conn).unwrap();

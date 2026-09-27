@@ -128,7 +128,8 @@ pub fn is_eligible(conn: &dyn Store, cache: &mut TreeCache, rel_path: &str) -> R
 
 /// [`WatchRules::explain`] on rules read afresh.
 pub fn explain(conn: &dyn Store, cache: &mut TreeCache, rel_path: &str) -> Result<Explanation> {
-    WatchRules::load(conn, cache.is_case_insensitive())?.explain(&RelPath::from_display(rel_path))
+    let rules = WatchRules::load(conn, cache.is_case_insensitive())?;
+    rules.explain(&rules.rel_of_text(rel_path))
 }
 
 /// [`WatchRules::effective_ignore`] on rules read afresh.
@@ -137,8 +138,8 @@ pub fn effective_ignore(
     cache: &mut TreeCache,
     rel_path: &str,
 ) -> Result<EffectiveIgnore> {
-    Ok(WatchRules::load(conn, cache.is_case_insensitive())?
-        .effective_ignore(&RelPath::from_display(rel_path)))
+    let rules = WatchRules::load(conn, cache.is_case_insensitive())?;
+    Ok(rules.effective_ignore(&rules.rel_of_text(rel_path)))
 }
 
 /// A path as the rule index keys it: its components' exact bytes, folded when
@@ -238,6 +239,40 @@ impl WatchRules {
     /// The HEAD the rules were read at.
     pub fn head(&self) -> Option<i64> {
         self.head
+    }
+
+    /// A path given as *text* (an API parameter, a path typed by the user),
+    /// read the way the tree cache reads one (`PathForm::Any`): a component
+    /// that decodes as an escape (`%E9`) designates either the name that
+    /// really is that text or the one holding the bytes it escapes. The rules
+    /// only care about the reading that leads to one of them, so that reading
+    /// is taken; the verbatim one otherwise — and when both would, which only
+    /// two rule-carrying directories named alike could cause.
+    pub fn rel_of_text(&self, path: &str) -> RelPath {
+        let mut rel = RelPath::root();
+        let mut key: Key = Vec::new();
+        for comp in path.split('/').filter(|c| !c.is_empty()) {
+            let verbatim = TreeName::from(comp);
+            let chosen = match metafolder_core::metarecord::escaped_to_bytes(comp) {
+                Some(bytes) => {
+                    let escaped = TreeName::from_bytes(bytes);
+                    let leads = |name: &TreeName| {
+                        let mut k = key.clone();
+                        k.push(normalize_name(name, self.case_insensitive));
+                        self.anchors.contains(&k)
+                    };
+                    if leads(&escaped) && !leads(&verbatim) {
+                        escaped
+                    } else {
+                        verbatim
+                    }
+                }
+                None => verbatim,
+            };
+            key.push(normalize_name(&chosen, self.case_insensitive));
+            rel = rel.child(chosen);
+        }
+        rel
     }
 
     fn key(&self, rel: &RelPath) -> Key {

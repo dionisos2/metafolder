@@ -312,6 +312,15 @@ committed; a path's rules can move with them. When the executor moves, orphans o
 re-homes a metarecord that holds a rule or is an ancestor of one, it re-reads
 the index from its own uncommitted state before the next event.
 
+*Keys are bytes, paths given as text are read both ways.* The index keys a rule
+by the exact bytes of its path's names (folded like the tree cache's when the
+filesystem is case-insensitive), so a name that is not text is matched exactly.
+A path that arrives as *text* — an API parameter such as =POST /eligibility=, a
+client showing a non-text name in its escaped form =caf%E9= — is read the way
+the tree cache reads one: a component that decodes as an escape may designate
+the name that really is that text or the one holding the escaped bytes, and the
+reading that leads to a rule is the one taken.
+
 *The index is an eligibility source, not a cache of answers.* A path that has
 never been seen is answered like any other: the map holds the rules, not the
 paths they govern.

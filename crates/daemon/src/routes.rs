@@ -3052,7 +3052,7 @@ async fn eligibility_explain(
         let rules = repo_state.watch_rules(&conn)?;
         let mut results = Vec::with_capacity(body.paths.len());
         for path in &body.paths {
-            let e = rules.explain(&crate::relpath::RelPath::from_display(path))?;
+            let e = rules.explain(&rules.rel_of_text(path))?;
             results.push(json!({
                 "path": path,
                 "eligible": e.eligible,
@@ -3092,7 +3092,7 @@ async fn effective_ignore(
     with_repo(&state, repo_uuid, move |repo_state| {
         let conn = slowlog::timed("wait:conn", || repo_state.conn.lock_recover());
         let rules = repo_state.watch_rules(&conn)?;
-        let e = rules.effective_ignore(&crate::relpath::RelPath::from_display(&params.path));
+        let e = rules.effective_ignore(&rules.rel_of_text(&params.path));
         Ok(Json(json!({
             "source": e.source,
             "source_uuid": e.source_uuid.map(hex),
