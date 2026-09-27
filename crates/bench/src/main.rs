@@ -128,6 +128,13 @@ pub(crate) struct Daemon {
     pub(crate) url: String,
 }
 
+impl Daemon {
+    /// The daemon's process id, for reading its memory.
+    pub(crate) fn pid(&self) -> u32 {
+        self._proc.id()
+    }
+}
+
 impl Drop for Daemon {
     fn drop(&mut self) {
         let _ = self._proc.kill();
@@ -624,6 +631,15 @@ async fn main() -> Result<()> {
             "--no-history" => opts.no_history = true,
             "--report" => opts.report = true,
             "--filter" => opts.filter = Some(it.next().context("--filter needs a prefix")?),
+            "--storage" => {
+                use metafolder_daemon::config::Storage;
+                opts.storages = match it.next().as_deref() {
+                    Some("kv") => vec![Storage::Kv],
+                    Some("sqlite") => vec![Storage::Sqlite],
+                    Some("both") => vec![Storage::Kv, Storage::Sqlite],
+                    _ => anyhow::bail!("--storage needs kv, sqlite or both"),
+                }
+            }
             "--tolerance" => {
                 opts.tolerance =
                     it.next().context("--tolerance needs a fraction")?.parse::<f64>()?

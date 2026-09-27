@@ -11,6 +11,7 @@
 //! cost something.
 
 pub mod history;
+pub mod memory;
 pub mod synth;
 
 use std::path::{Path, PathBuf};
@@ -22,6 +23,7 @@ use uuid::Uuid;
 
 use crate::{daemon_client, daemon_start, daemon_wait_ready, ms, Daemon};
 use history::{Record, Verdict};
+use metafolder_daemon::config::Storage;
 
 /// Timed repetitions per scenario (plus one warm-up that is thrown away).
 const RUNS: usize = 5;
@@ -38,6 +40,9 @@ pub struct Options {
     pub real: bool,
     /// Only the scenarios whose id starts with this.
     pub filter: Option<String>,
+    /// The storage backends the generated repositories are built on — each
+    /// its own repository and its own series in the history.
+    pub storages: Vec<Storage>,
     /// Measure and compare, record nothing.
     pub no_history: bool,
     /// Print the history and exit.
@@ -52,6 +57,7 @@ impl Default for Options {
             big: false,
             real: false,
             filter: None,
+            storages: vec![Storage::Kv],
             no_history: false,
             report: false,
             tolerance: history::DEFAULT_TOLERANCE,
@@ -77,6 +83,20 @@ const SCENARIOS: &[&str] = &[
     "query.page",
     "query.sorted_page",
     "query.folder",
+    // Operands of different types combined — what the bitmaps are for: a
+    // wide operand and a narrow one cost the narrow one, whatever the order;
+    // the GUI's search box (the same terms against the path and two texts);
+    // a subtree, a range and a text; a negation; a page of a combination
+    // sorted on a value of ten distinct values. The last one is a known gap —
+    // a range over a high-cardinality number on a KV repository reads its
+    // matches one by one (spec-storage, deferred "KV bit-sliced index").
+    "query.finder",
+    "query.wide_and_rare",
+    "query.rare_and_wide",
+    "query.subtree_range_text",
+    "query.negation",
+    "query.combined_sorted",
+    "query.size_range_in_folder",
     // One metarecord, and one write (which pays for the index settle).
     "metarecord.get",
     "metarecord.write",
@@ -170,6 +190,82 @@ async fn run_scenario(id: &str, ctx: &Ctx) -> Result<()> {
             )
             .await?;
         }
+        "query.finder" => {
+            let terms = ["dir1", "file12"];
+            let osm = |field: &str, mode: &str| json!({"type": "osm", "field": field, "terms": terms, "mode": mode});
+            let finder = json!({"type": "or", "operands": [
+                osm("mfr_path", "path"), osm("kind", "direct"), osm("mfr_type", "direct"),
+            ]});
+            post(
+                &format!("{url}/repos/{repo}/query"),
+                &json!({"query": finder, "limit": 100, "count": true}),
+            )
+            .await?;
+        }
+        "query.wide_and_rare" | "query.rare_and_wide" => {
+            let wide = eq("mfr_type", json!({"type": "string", "value": "file"}));
+            let size = (synth::prng(7) % 1_000_000) as i64;
+            let rare = eq("mfr_size", json!({"type": "int", "value": size}));
+            let operands =
+                if id == "query.wide_and_rare" { json!([wide, rare]) } else { json!([rare, wide]) };
+            post(
+                &format!("{url}/repos/{repo}/query"),
+                &json!({"query": {"type": "and", "operands": operands}, "limit": 100, "count": true}),
+            )
+            .await?;
+        }
+        "query.subtree_range_text" => {
+            let q = json!({"type": "and", "operands": [
+                subtree("/dir1"),
+                {"type": "gt", "field": "rating", "value": {"type": "int", "value": 4}},
+                {"type": "matches", "field": "mfr_path", "pattern": "file1", "aspect": "value"},
+            ]});
+            post(
+                &format!("{url}/repos/{repo}/query"),
+                &json!({"query": q, "limit": 100, "count": true}),
+            )
+            .await?;
+        }
+        "query.negation" => {
+            let photo = eq("kind", json!({"type": "string", "value": "photo"}));
+            let q = json!({"type": "and", "operands": [
+                {"type": "not", "operand": photo}, subtree("/dir1"),
+            ]});
+            post(
+                &format!("{url}/repos/{repo}/query"),
+                &json!({"query": q, "limit": 100, "count": true}),
+            )
+            .await?;
+        }
+        "query.combined_sorted" => {
+            let photo = eq("kind", json!({"type": "string", "value": "photo"}));
+            let q = json!({"type": "and", "operands": [
+                present("mfr_size"),
+                {"type": "gt", "field": "rating", "value": {"type": "int", "value": 2}},
+                {"type": "not", "operand": photo},
+            ]});
+            post(
+                &format!("{url}/repos/{repo}/query"),
+                &json!({
+                    "query": q,
+                    "sort": [{"field": "rating", "order": "desc"}],
+                    "limit": 100,
+                    "count": true,
+                }),
+            )
+            .await?;
+        }
+        "query.size_range_in_folder" => {
+            let q = json!({"type": "and", "operands": [
+                subtree("/dir1"),
+                {"type": "gt", "field": "mfr_size", "value": {"type": "int", "value": 900_000}},
+            ]});
+            post(
+                &format!("{url}/repos/{repo}/query"),
+                &json!({"query": q, "limit": 100, "count": true}),
+            )
+            .await?;
+        }
         "metarecord.get" => {
             get(&format!("{url}/repos/{repo}/metarecords/{}", ctx.sample)).await?;
         }
@@ -242,6 +338,15 @@ fn present(field: &str) -> serde_json::Value {
     json!({ "type": "is_present", "field": field })
 }
 
+fn eq(field: &str, value: serde_json::Value) -> serde_json::Value {
+    json!({ "type": "eq", "field": field, "value": value })
+}
+
+/// Everything below a folder of the generated tree.
+fn subtree(path: &str) -> serde_json::Value {
+    json!({ "type": "follows_transitive", "field": "mfr_path", "target": path })
+}
+
 async fn get(url: &str) -> Result<()> {
     client().get(url).send().await?.error_for_status()?.bytes().await?;
     Ok(())
@@ -255,8 +360,12 @@ async fn post(url: &str, body: &serde_json::Value) -> Result<()> {
 // ─── Measurement ──────────────────────────────────────────────────────────────
 
 /// Runs one scenario [`RUNS`] times (after one warm-up) and returns
-/// `(median, min)` in milliseconds.
-async fn measure(id: &str, ctx: &Ctx) -> Result<(f64, f64)> {
+/// `(median, min)` in milliseconds, and what the daemon (process `pid`)
+/// allocated for it at its peak, in MiB — over every run, the warm-up
+/// included (an allocation the allocator keeps is only visible the first
+/// time). `None` for the memory where it cannot be read.
+async fn measure(id: &str, ctx: &Ctx, pid: u32) -> Result<(f64, f64, Option<f64>)> {
+    let sampler = memory::Sampler::start(pid);
     run_scenario(id, ctx).await.with_context(|| format!("scenario {id}"))?;
     let mut values = Vec::with_capacity(RUNS);
     for _ in 0..RUNS {
@@ -265,7 +374,8 @@ async fn measure(id: &str, ctx: &Ctx) -> Result<(f64, f64)> {
         values.push(ms(t.elapsed()));
     }
     let min = values.iter().copied().fold(f64::INFINITY, f64::min);
-    Ok((history::median(&values), min))
+    let mem = sampler.map(|s| s.finish(pid));
+    Ok((history::median(&values), min, mem))
 }
 
 // ─── The run ──────────────────────────────────────────────────────────────────
@@ -311,10 +421,17 @@ pub async fn run(opts: &Options) -> Result<i32> {
     // schema) changes.
     let mut repos: Vec<(String, PathBuf)> = Vec::new();
     let mut generated = false;
-    for shape in &shapes {
-        let dir = root.join("target/bench-data").join(shape.label);
-        generated |= ensure_repo(&dir, shape)?;
-        repos.push((shape.label.to_string(), dir));
+    for &storage in &opts.storages {
+        for shape in &shapes {
+            // The key-value repositories keep the plain name they always had.
+            let name = match storage {
+                Storage::Kv => shape.label.to_string(),
+                Storage::Sqlite => format!("{}-sqlite", shape.label),
+            };
+            let dir = root.join("target/bench-data").join(name);
+            generated |= ensure_repo(&dir, shape, storage)?;
+            repos.push((shape.label.to_string(), dir));
+        }
     }
     if generated {
         println!(
@@ -345,15 +462,16 @@ pub async fn run(opts: &Options) -> Result<i32> {
     for (size, dir) in &repos {
         let repo = load_repo(&daemon, dir).await?;
         let ctx = context_for(&daemon, repo, dir).await?;
-        println!("── size {size} ({})", dir.display());
+        let storage = storage_of(dir);
+        println!("── size {size}, {storage} ({})", dir.display());
         for id in SCENARIOS {
             if let Some(filter) = &opts.filter {
                 if !id.starts_with(filter.as_str()) {
                     continue;
                 }
             }
-            let (median, min) = measure(id, &ctx).await?;
-            records.push(Record {
+            let (median, min, mem) = measure(id, &ctx, daemon.pid()).await?;
+            let record = |scenario: String, unit: &str, median: f64, min: f64| Record {
                 at: now.clone(),
                 commit: commit.clone(),
                 dirty,
@@ -362,13 +480,19 @@ pub async fn run(opts: &Options) -> Result<i32> {
                 cores,
                 profile: profile.to_string(),
                 rustc: rustc.clone(),
-                scenario: (*id).to_string(),
+                scenario,
                 size: size.clone(),
-                unit: "ms".to_string(),
+                storage: storage.clone(),
+                unit: unit.to_string(),
                 median,
                 min,
                 runs: RUNS,
-            });
+            };
+            records.push(record((*id).to_string(), "ms", median, min));
+            // Memory has a series of its own, under its own name.
+            if let Some(mib) = mem {
+                records.push(record(format!("mem.{id}"), "MiB", mib, mib));
+            }
         }
     }
     drop(daemon);
@@ -400,22 +524,23 @@ fn print_table(
     tolerance: f64,
 ) -> usize {
     println!(
-        "\n{:<24} {:<7} {:>10} {:>10} {:>9}  verdict",
+        "\n{:<30} {:<9} {:>11} {:>11} {:>9}  verdict",
         "scenario", "size", "median", "baseline", "delta"
     );
     let mut regressions = 0;
     for record in records {
         let baseline = baselines.get(&record.key()).copied();
-        let (verdict, delta) = history::compare(record.median, baseline, tolerance);
+        let (verdict, delta) = history::compare(record.median, baseline, tolerance, &record.unit);
         if verdict == Verdict::Regressed {
             regressions += 1;
         }
+        let unit = &record.unit;
         println!(
-            "{:<24} {:<7} {:>9.2}ms {:>9} {:>9}  {}",
+            "{:<30} {:<9} {:>11} {:>11} {:>9}  {}",
             record.scenario,
-            record.size,
-            record.median,
-            baseline.map(|b| format!("{b:.2}ms")).unwrap_or_else(|| "—".into()),
+            format!("{}/{}", record.size, record.storage),
+            format!("{:.2}{unit}", record.median),
+            baseline.map(|b| format!("{b:.2}{unit}")).unwrap_or_else(|| "—".into()),
             delta.map(|d| format!("{d:+.1}%")).unwrap_or_else(|| "—".into()),
             verdict.mark(),
         );
@@ -431,12 +556,15 @@ fn report(path: &Path) -> Result<i32> {
         return Ok(0);
     }
     println!("{} measurement(s) in {}\n", history.len(), path.display());
-    let mut keys: Vec<_> = history.iter().map(|r| (r.scenario.clone(), r.size.clone())).collect();
+    let mut keys: Vec<_> =
+        history.iter().map(|r| (r.scenario.clone(), r.size.clone(), r.storage.clone())).collect();
     keys.sort();
     keys.dedup();
-    for (scenario, size) in keys {
-        let series: Vec<&Record> =
-            history.iter().filter(|r| r.scenario == scenario && r.size == size).collect();
+    for (scenario, size, storage) in keys {
+        let series: Vec<&Record> = history
+            .iter()
+            .filter(|r| r.scenario == scenario && r.size == size && r.storage == storage)
+            .collect();
         let values: Vec<String> = series
             .iter()
             .rev()
@@ -444,7 +572,8 @@ fn report(path: &Path) -> Result<i32> {
             .rev()
             .map(|r| format!("{:.1}{}", r.median, if r.dirty { "*" } else { "" }))
             .collect();
-        println!("{scenario:<24} {size:<7} {}", values.join("  "));
+        let size = format!("{size}/{storage}");
+        println!("{scenario:<30} {size:<9} {}", values.join("  "));
     }
     println!("\n(* measured on a dirty tree — never used as a baseline)");
     Ok(0)
@@ -452,12 +581,22 @@ fn report(path: &Path) -> Result<i32> {
 
 // ─── Repositories ─────────────────────────────────────────────────────────────
 
+/// The storage backend of the repository at `dir`, as its `config.json`
+/// names it (a repository from before the choice existed is SQLite).
+fn storage_of(dir: &Path) -> String {
+    std::fs::read_to_string(dir.join(".metafolder/config.json"))
+        .ok()
+        .and_then(|s| serde_json::from_str::<serde_json::Value>(&s).ok())
+        .and_then(|v| v["storage"].as_str().map(str::to_string))
+        .unwrap_or_else(|| "sqlite".into())
+}
+
 /// Builds the generated repository if it is missing or of a different shape.
 /// Returns whether it had to build it.
-fn ensure_repo(dir: &Path, shape: &synth::Shape) -> Result<bool> {
+fn ensure_repo(dir: &Path, shape: &synth::Shape, storage: Storage) -> Result<bool> {
     let stamp_path = dir.join(".bench-shape");
     let stamp = format!(
-        "{}:{}:{}:{}:api{}",
+        "{}:{}:{}:{}:api{}:{storage:?}",
         shape.label,
         shape.dirs,
         shape.files,
@@ -475,7 +614,7 @@ fn ensure_repo(dir: &Path, shape: &synth::Shape) -> Result<bool> {
     use std::io::Write as _;
     std::io::stdout().flush().ok();
     let t = Instant::now();
-    synth::build(dir, shape)?;
+    synth::build(dir, shape, storage)?;
     std::fs::write(&stamp_path, &stamp)?;
     println!("{:.1}s", t.elapsed().as_secs_f64());
     Ok(true)

@@ -28,9 +28,23 @@ pub const DEFAULT_TOLERANCE: f64 = 0.30;
 /// the difference between 0.6 ms and 0.85 ms, not between 0.6 ms and 5 ms.
 pub const NOISE_FLOOR_MS: f64 = 1.0;
 
+/// The same floor for what a scenario allocates: the allocator keeps and
+/// hands back memory in its own rhythm, and a few MiB either way say nothing.
+/// A query that materialises what it should only have streamed moves by tens.
+pub const NOISE_FLOOR_MIB: f64 = 8.0;
+
+/// The noise floor of a measurement's unit.
+fn noise_floor(unit: &str) -> f64 {
+    match unit {
+        "MiB" => NOISE_FLOOR_MIB,
+        _ => NOISE_FLOOR_MS,
+    }
+}
+
 /// What makes two measurements comparable: the same work, measured the same
-/// way, on the same machine — `(machine, profile, scenario, size)`.
-pub type Key = (String, String, String, String);
+/// way, on the same machine, by the same storage engine — `(machine, profile,
+/// scenario, size, storage)`.
+pub type Key = (String, String, String, String, String);
 
 /// One measurement: one scenario, at one size, on one machine, at one commit.
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -50,6 +64,10 @@ pub struct Record {
     pub rustc: String,
     pub scenario: String,
     pub size: String,
+    /// The repository's storage backend (`kv` or `sqlite`). The measurements
+    /// taken before the field existed were all on SQLite.
+    #[serde(default = "sqlite")]
+    pub storage: String,
     pub unit: String,
     pub median: f64,
     pub min: f64,
@@ -59,8 +77,18 @@ pub struct Record {
 impl Record {
     /// This measurement's [`Key`].
     pub fn key(&self) -> Key {
-        (self.machine.clone(), self.profile.clone(), self.scenario.clone(), self.size.clone())
+        (
+            self.machine.clone(),
+            self.profile.clone(),
+            self.scenario.clone(),
+            self.size.clone(),
+            self.storage.clone(),
+        )
     }
+}
+
+fn sqlite() -> String {
+    "sqlite".into()
 }
 
 /// The history file for `machine`, under `benchmarks/history/`.
@@ -138,15 +166,22 @@ impl Verdict {
     }
 }
 
-/// Compares a measurement against its baseline, at the given tolerance.
-pub fn compare(measured: f64, baseline: Option<f64>, tolerance: f64) -> (Verdict, Option<f64>) {
+/// Compares a measurement against its baseline, at the given tolerance and
+/// the noise floor of its unit.
+pub fn compare(
+    measured: f64,
+    baseline: Option<f64>,
+    tolerance: f64,
+    unit: &str,
+) -> (Verdict, Option<f64>) {
     let Some(baseline) = baseline else { return (Verdict::New, None) };
-    if baseline <= 0.0 {
+    if baseline <= 0.0 && unit != "MiB" {
         return (Verdict::New, None);
     }
-    let ratio = measured / baseline;
+    // A scenario that allocated nothing is a baseline too: the floor decides.
+    let ratio = measured / baseline.max(f64::MIN_POSITIVE);
     // Both a relative *and* an absolute change: see `NOISE_FLOOR_MS`.
-    let moved = (measured - baseline).abs() > NOISE_FLOOR_MS;
+    let moved = (measured - baseline).abs() > noise_floor(unit);
     let verdict = if moved && ratio > 1.0 + tolerance {
         Verdict::Regressed
     } else if moved && ratio < 1.0 - tolerance {
@@ -189,6 +224,7 @@ mod tests {
             rustc: "1.83.0".into(),
             scenario: scenario.into(),
             size: "S".into(),
+            storage: "kv".into(),
             unit: "ms".into(),
             median,
             min: median,
@@ -240,18 +276,47 @@ mod tests {
     fn a_sub_millisecond_wobble_is_not_a_regression() {
         // The fast scenarios move by a third between two runs of the same
         // binary. A verdict on a ratio alone would cry regression every time.
-        assert_eq!(compare(0.85, Some(0.61), 0.3).0, Verdict::Same);
+        assert_eq!(compare(0.85, Some(0.61), 0.3, "ms").0, Verdict::Same);
         // The same relative change, where it is worth a word.
-        assert_eq!(compare(85.0, Some(61.0), 0.3).0, Verdict::Regressed);
+        assert_eq!(compare(85.0, Some(61.0), 0.3, "ms").0, Verdict::Regressed);
+    }
+
+    #[test]
+    fn two_storage_backends_are_two_series() {
+        // The same scenario on SQLite and on the key-value store measures two
+        // different engines: neither is the other's baseline.
+        let mut sqlite = record("query.page", 1.0, false);
+        sqlite.storage = "sqlite".into();
+        let base = baselines(&[sqlite, record("query.page", 5.0, false)]);
+        assert_eq!(base.len(), 2);
+        assert_eq!(base[&record("query.page", 0.0, false).key()], 5.0);
+    }
+
+    #[test]
+    fn a_record_from_before_the_storage_field_was_measured_on_sqlite() {
+        let old = r#"{"at":"t","commit":"c","dirty":false,"machine":"m","cpu":"c","cores":4,
+            "profile":"release","rustc":"r","scenario":"query.page","size":"S","unit":"ms",
+            "median":1.0,"min":1.0,"runs":5}"#;
+        let record: Record = serde_json::from_str(old).unwrap();
+        assert_eq!(record.storage, "sqlite");
+    }
+
+    #[test]
+    fn a_memory_wobble_is_not_a_regression() {
+        // What a query allocates moves by a few MiB with the allocator's
+        // state; a query that materialises the repository moves by far more.
+        assert_eq!(compare(6.0, Some(2.0), 0.3, "MiB").0, Verdict::Same);
+        assert_eq!(compare(40.0, Some(2.0), 0.3, "MiB").0, Verdict::Regressed);
+        assert_eq!(compare(2.0, Some(40.0), 0.3, "MiB").0, Verdict::Improved);
     }
 
     #[test]
     fn a_verdict_needs_a_baseline_and_a_tolerance() {
-        assert_eq!(compare(10.0, None, 0.3).0, Verdict::New);
-        assert_eq!(compare(12.0, Some(10.0), 0.3).0, Verdict::Same);
-        assert_eq!(compare(14.0, Some(10.0), 0.3).0, Verdict::Regressed);
-        assert_eq!(compare(6.0, Some(10.0), 0.3).0, Verdict::Improved);
-        let (_, delta) = compare(15.0, Some(10.0), 0.3);
+        assert_eq!(compare(10.0, None, 0.3, "ms").0, Verdict::New);
+        assert_eq!(compare(12.0, Some(10.0), 0.3, "ms").0, Verdict::Same);
+        assert_eq!(compare(14.0, Some(10.0), 0.3, "ms").0, Verdict::Regressed);
+        assert_eq!(compare(6.0, Some(10.0), 0.3, "ms").0, Verdict::Improved);
+        let (_, delta) = compare(15.0, Some(10.0), 0.3, "ms");
         assert!((delta.unwrap() - 50.0).abs() < 1e-9);
     }
 }

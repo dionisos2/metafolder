@@ -91,6 +91,13 @@ a change of shape and not only of value.
 | =query.page=             | the first hundred results of a broad query                          |
 | =query.sorted_page=      | the same, sorted — the BSI path                                     |
 | =query.folder=           | opening a directory (=mfr_path ->* "/dir0"=)                        |
+| =query.finder=           | the GUI's search box: the same two terms as an =osm= path and two =osmd= |
+| =query.wide_and_rare=    | =mfr_type = "file"= (every file) and one =mfr_size= value           |
+| =query.rare_and_wide=    | the same, operands swapped — the order must not matter              |
+| =query.subtree_range_text= | a subtree, =rating > 4= and a name regex                          |
+| =query.negation=         | =not kind = "photo"= in a subtree                                   |
+| =query.combined_sorted=  | a page of three combined operands, sorted on a field of ten values  |
+| =query.size_range_in_folder= | a subtree and =mfr_size > 900 000= — a known gap on KV (below) |
 | =metarecord.get=         | one metarecord by uuid: the point read everything else is built on  |
 | =metarecord.write=       | one field write, index settle included                              |
 | =tree.resolve_page=      | the paths of a hundred metarecords — what a listing resolves per page |
@@ -106,6 +113,15 @@ reading the data, and it is the one that has regressed in practice.
 a graph cannot be drawn without every branch. It is measured so that the day it
 grows faster than the log does, the number says so.
 
+The =query.= scenarios after =query.folder= combine operands of different
+types, which is what the bitmaps are for: a combination has to cost about its
+narrowest operand, without the memory of its widest. They were added when a
+search that the single-operand scenarios never exercised took twenty seconds
+on a real repository. =query.size_range_in_folder= measures a known gap: on a
+key-value repository a range over a high-cardinality number reads its matches
+one by one (spec-storage, the deferred /KV bit-sliced index/). Their
+counterparts without a clock are in =crates/daemon/tests/kv_cost.rs=.
+
 =tree.write= moves a position in a forest of its own, so what it measures is the
 *upkeep* and not the size of the tree the write happens in. That is the point:
 settling one cell costs the cell, rebuilding the forest costs the repository,
@@ -120,6 +136,22 @@ built, the index built, the schema read, the migrations checked — and it is th
 only place those show up at all. The database's pages stay in the operating
 system's cache across the unload, so it measures the work and not the disk,
 which is the repeatable half.
+
+** Memory
+
+Every scenario also records what the daemon *allocated* for it, as a series of
+its own named =mem.<scenario>= (unit =MiB=): the daemon's anonymous resident
+set (=RssAnon= in =/proc/<pid>/status=), sampled every 2 ms from before the
+warm-up to after the last run, its peak minus its value at the start. Anonymous
+only: a key-value store's pages are mapped, and counting them would measure the
+operating system's cache, not what a query holds. The warm-up is included
+because an allocation the allocator keeps is only visible the first time. Where
+=/proc= cannot be read, the memory series is skipped.
+
+It is coarse — the allocator keeps and hands back memory in its own rhythm — so
+its noise floor is 8 MiB rather than a millisecond. It is not there to measure
+a query's working set to the kilobyte, but to see the day one materialises what
+it should have streamed.
 
 ** Where the data comes from
 
@@ -168,13 +200,19 @@ desktop's is worse than having no baseline at all.
 ** The comparison
 
 A run is compared against the **median of the last =k= (default 5) recorded
-values** for the same =(machine, profile, scenario, size)=. A scenario is
+values** for the same =(machine, profile, scenario, size, storage)=. The storage
+backend is part of the key since the key-value store became the default: until
+then every run had been SQLite, and the first KV runs were compared against
+SQLite baselines — two engines, one series. A record from before the field
+existed reads as =sqlite=. =--storage kv|sqlite|both= picks the backends the
+generated repositories are built on (=kv= by default, the default of a new
+repository); each has its own repository under =target/bench-data/=. A scenario is
 reported as a regression when it is slower than that baseline by more than a
 threshold (default 30 %), and as an improvement when it is faster by as much.
 
 Two rules keep that verdict honest:
 
-- **A noise floor of one millisecond.** A relative change alone is not a
+- **A noise floor of one millisecond** (8 MiB for the memory series). A relative change alone is not a
   verdict: the fast scenarios move by a third between two runs of the same
   binary (0.6 ms → 0.85 ms is +40 % and means nothing). A regression has to
   clear both the threshold *and* a millisecond of absolute difference. A suite
@@ -195,6 +233,7 @@ without appending it (a run on a dirty tree, an experiment).
   scripts/bench.sh --quick          # the small sizes only, for a fast answer
   scripts/bench.sh --real           # also the persistent data folders
   scripts/bench.sh --filter log.    # only the scenarios whose id starts with log.
+  scripts/bench.sh --storage both   # kv (default), sqlite, or both backends
   scripts/bench.sh --no-history     # measure and compare, record nothing
   scripts/bench.sh --report         # print the history, no measurement
 #+END_SRC

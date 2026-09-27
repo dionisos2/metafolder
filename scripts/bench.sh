@@ -6,6 +6,7 @@
 #   scripts/bench.sh --big            # + the large size (minutes to generate)
 #   scripts/bench.sh --real           # + the persistent benchmarks/bench_data* repos
 #   scripts/bench.sh --filter log.    # only the scenarios whose id starts with log.
+#   scripts/bench.sh --storage both   # kv (the default), sqlite, or both backends
 #   scripts/bench.sh --no-history     # measure and compare, record nothing
 #   scripts/bench.sh --report         # print the recorded history, measure nothing
 #   scripts/bench.sh --debug          # measure the debug build (its own history)
@@ -34,7 +35,7 @@ args=()
 for arg in "$@"; do
     case "$arg" in
         --debug) profile=debug ;;
-        -h|--help) sed -n '2,26p' "$0" | sed 's/^# \?//'; exit 0 ;;
+        -h|--help) sed -n '2,27p' "$0" | sed 's/^# \?//'; exit 0 ;;
         *) args+=("$arg") ;;
     esac
 done

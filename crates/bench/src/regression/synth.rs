@@ -13,6 +13,7 @@ use std::path::Path;
 
 use anyhow::{Context, Result};
 use metafolder_core::metarecord::{Field, Value};
+use metafolder_daemon::config::Storage;
 use metafolder_daemon::log::Writer;
 use metafolder_daemon::repo;
 use metafolder_daemon::store::{Begin as _, Rows as _};
@@ -44,20 +45,20 @@ pub const SHAPES: &[Shape] = &[
 pub const BIG: Shape = Shape { label: "L", dirs: 5_000, files: 100_000, revisions: 50_000 };
 
 /// Deterministic pseudo-random: the same repository on every machine.
-fn prng(i: u64) -> u64 {
+pub(crate) fn prng(i: u64) -> u64 {
     let x = i.wrapping_mul(2_654_435_761).wrapping_add(12_345);
     x ^ (x >> 13)
 }
 
 /// Builds a repository of the given shape at `dir` (which must not already be
-/// one), and returns its uuid.
+/// one) on the given storage backend, and returns its uuid.
 ///
 /// The connection is dropped before returning: the repository database is held
 /// under an exclusive SQLite lock for the lifetime of its connection, so a
 /// daemon could not load what this still had open.
-pub fn build(dir: &Path, shape: &Shape) -> Result<Uuid> {
+pub fn build(dir: &Path, shape: &Shape, storage: Storage) -> Result<Uuid> {
     std::fs::create_dir_all(dir).with_context(|| format!("create {}", dir.display()))?;
-    let opened = repo::init_repository(dir, None, Some(shape.label), false)
+    let opened = repo::init_repository_with(dir, None, Some(shape.label), false, storage)
         .with_context(|| format!("init a repository at {}", dir.display()))?;
     let repo_uuid = opened.config.repo_uuid;
     let mut conn = opened.conn;
