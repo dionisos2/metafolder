@@ -14,7 +14,14 @@ import type {
 } from './completions';
 import { setHelpCursor } from './cursor';
 import { closeFind, openFind, stepFind } from './find';
-import { ignorePresetCandidates, ignoreTarget, resolvePresetName, targetDir } from './ignore';
+import {
+  ignorePresetCandidates,
+  ignoreTarget,
+  orderTargetDir,
+  resolvePresetName,
+  targetDir,
+  type TargetDirOptions,
+} from './ignore';
 import { invoke } from './ipc';
 import { type ExpandDeps, expandShellPlaceholders } from './placeholders';
 import { focusedWs, flashStatus, store, workspaceById } from './store.svelte';
@@ -611,8 +618,14 @@ async function ignoreContext(): Promise<{ repo: string; dir: string } | null> {
 /** The directory a path-scoped builtin acts on by default: the file manager's
  *  current directory, else the selected metarecord's directory, else the
  *  repository root — as a repo-root-relative path (`''` is the root). Shared by
- *  the `ignore:*` commands and `mf:order`. */
+ *  the `ignore:*` commands. */
 async function defaultTargetDir(repo: string): Promise<string> {
+  return await targetDir(await targetDirContext(repo));
+}
+
+/** What the target-directory rules read: the file manager's current directory
+ *  and the workspace's selected metarecord. */
+async function targetDirContext(repo: string): Promise<TargetDirOptions> {
   const ws = focusedWs();
   const fmDir = ws
     ? await invoke<string | null>('ws_get_var', { wsId: ws, key: 'file-manager:dir' })
@@ -623,13 +636,13 @@ async function defaultTargetDir(repo: string): Promise<string> {
         key: 'selected_metarecord',
       })
     : null;
-  return await targetDir({
+  return {
     call: daemonJson,
     repo,
     repoRoot: await repoRoot(repo),
     fmDir: typeof fmDir === 'string' ? fmDir : null,
     selected: selected?.uuid ? { uuid: selected.uuid } : null,
-  });
+  };
 }
 
 /** Applies one preset to the context directory with the given mode, reporting
@@ -714,55 +727,21 @@ async function listIgnore(): Promise<void> {
 // ── Order a folder's children (the `mf:order` builtin) ─────────────────────
 // The GUI half of `mf order` (spec-gui "Order"): the heuristic and the daemon
 // work are shared Rust (`metafolder_core::order`, behind the `order_run`
-// command); the shell only collects *which* folder, in the minibuffer.
+// command); the shell only works out *which* folder — the selection's, asked
+// of nobody.
 
-/** The repo-root-relative form of a folder typed or picked in the minibuffer:
- *  `'/'` (and an empty draft) is the repository root — the empty path the
- *  daemon's tree uses — a missing leading slash is added and a trailing one
- *  dropped, so a hand-typed path resolves like a picked one. */
-export function orderFolderPath(raw: string): string {
-  const trimmed = raw.trim().replace(/\/+$/, '');
-  if (trimmed === '') return '';
-  return trimmed.startsWith('/') ? trimmed : `/${trimmed}`;
-}
-
-/** Completion candidates for the `folder` argument: every tracked directory of
- *  the active repository, the root shown as `/`. One `resolve-tree` round-trip
- *  over the `mfr_type = "dir"` set — the candidate list the input filters by
- *  ordered substring. */
-async function orderFolderCandidates(): Promise<string[]> {
-  const repo = focusedRepo();
-  if (!repo) return [];
-  const resolved = (await daemonJson('POST', `/repos/${repo}/query/fields/resolve-tree`, {
-    query: { type: 'eq', field: 'mfr_type', value: { type: 'string', value: 'dir' } },
-    field: 'mfr_path',
-  })) as Record<string, string[] | null> | null;
-  const paths = new Set<string>(['/']);
-  for (const list of Object.values(resolved ?? {})) {
-    for (const path of list ?? []) if (path) paths.add(path);
-  }
-  return [...paths].sort();
-}
-
-registerArgs('mf:order', [
-  {
-    name: 'folder',
-    prompt: () => 'Number the children of:',
-    initial: async () => {
-      const repo = focusedRepo();
-      if (!repo) return '/';
-      return (await defaultTargetDir(repo)) || '/';
-    },
-    complete: () => orderFolderCandidates(),
-  },
-]);
-
-/** `mf:order`: numbers the direct children of `path` (files and directories
- *  independently) and marks the folder, reporting what was written. */
-async function runOrder(path: string): Promise<void> {
+/** `mf:order`: numbers the direct children of the selected folder (or of the
+ *  selected file's folder; the file manager's directory when nothing is
+ *  selected), files and directories independently, and marks the folder. */
+async function runOrder(): Promise<void> {
   const repo = focusedRepo();
   if (!repo) {
     await status('no active repository');
+    return;
+  }
+  const path = await orderTargetDir(await targetDirContext(repo));
+  if (path === null) {
+    await status('no folder or file is selected: nothing to number');
     return;
   }
   const report = await invoke<{ message: string }>('order_run', { repo, path });
@@ -1520,7 +1499,7 @@ async function runCommand(name: string, args: string[], ws: string | null): Prom
       await listIgnore();
       return true;
     case 'mf:order':
-      await runOrder(orderFolderPath(args.join(' ')));
+      await runOrder();
       return true;
     case 'reconcile:run':
       if (ws) await invoke('reconcile_run', { wsId: ws });

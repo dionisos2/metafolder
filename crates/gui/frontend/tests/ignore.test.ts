@@ -12,6 +12,7 @@ import {
   patternForExtension,
   __resetIgnoreCaches,
   targetDir,
+  orderTargetDir,
 } from '../src/lib/ignore';
 
 function setup() {
@@ -253,5 +254,59 @@ describe('the command target directory', () => {
       selected: { uuid: 'u1' },
     });
     expect(rel).toBe('');
+  });
+});
+
+// `mf:order` acts on the selection without asking (spec-gui "Order a folder's
+// children"): the selected folder itself, or the folder of the selected file —
+// the selection wins over the file manager's current directory, and with
+// neither there is nothing to number (never a silent fallback to the root).
+describe('the mf:order target directory', () => {
+  const call = (paths: Record<string, string[]>, type: string) =>
+    vi.fn(async (method: string, path: string) => {
+      if (path.endsWith('/resolve-tree')) {
+        const uuid = path.split('/metarecords/')[1].split('/')[0];
+        return { paths: paths[uuid] ?? [] };
+      }
+      if (path.includes('/metarecords/')) {
+        return { fields: [{ name: 'mfr_type', value: { type: 'string', value: type } }] };
+      }
+      throw new Error(`unexpected ${method} ${path}`);
+    });
+  const base = { repo: 'r', repoRoot: '/home/u/music' };
+
+  test('a selected folder is the target, even inside the file manager', async () => {
+    const rel = await orderTargetDir({
+      ...base,
+      call: call({ u1: ['/live/2024'] }, 'dir'),
+      fmDir: '/home/u/music/live',
+      selected: { uuid: 'u1' },
+    });
+    expect(rel).toBe('/live/2024');
+  });
+
+  test('a selected file targets its folder', async () => {
+    const rel = await orderTargetDir({
+      ...base,
+      call: call({ u1: ['/live/set.flac'] }, 'file'),
+      fmDir: null,
+      selected: { uuid: 'u1' },
+    });
+    expect(rel).toBe('/live');
+  });
+
+  test('without a selection, the file manager’s directory', async () => {
+    const rel = await orderTargetDir({
+      ...base,
+      call: call({}, 'dir'),
+      fmDir: '/home/u/music/live',
+      selected: null,
+    });
+    expect(rel).toBe('/live');
+  });
+
+  test('with neither, there is no target', async () => {
+    const rel = await orderTargetDir({ ...base, call: call({}, 'dir'), fmDir: null, selected: null });
+    expect(rel).toBe(null);
   });
 });

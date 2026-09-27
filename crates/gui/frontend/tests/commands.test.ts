@@ -19,7 +19,6 @@ import {
   filterCompletions,
   listedCommands,
   needsMessagePanel,
-  orderFolderPath,
   parseInvocation,
   promptsForInput,
   registerArgs,
@@ -73,24 +72,12 @@ describe('recent (shipped commands.js)', () => {
   });
 });
 
-// `mf:order` collects the folder to number in the minibuffer (spec-gui
-// "Order"), pre-filled with the deduced target and completing over the
-// repository's tracked directories.
+// `mf:order` asks nothing: it numbers the selected folder (or the selected
+// file's folder) straight away (spec-gui "Order a folder's children").
 describe('mf:order builtin', () => {
-  test('registers its folder argument spec at module load', () => {
-    expect(argSpecFor('mf:order')?.map((s) => s.name)).toEqual(['folder']);
-    expect(promptsForInput('mf:order')).toBe(true);
-  });
-
-  test('normalises the typed folder to a repo-root-relative path', () => {
-    // The root is the empty path, and "/" is how it is shown and typed.
-    expect(orderFolderPath('/')).toBe('');
-    expect(orderFolderPath('')).toBe('');
-    expect(orderFolderPath('  /album ')).toBe('/album');
-    // A path typed without its leading slash still resolves.
-    expect(orderFolderPath('album/1999')).toBe('/album/1999');
-    // A trailing slash is decoration, not a different node.
-    expect(orderFolderPath('/album/')).toBe('/album');
+  test('takes no argument, so it runs without a prompt', () => {
+    expect(argSpecFor('mf:order')).toBeUndefined();
+    expect(promptsForInput('mf:order')).toBe(false);
   });
 });
 

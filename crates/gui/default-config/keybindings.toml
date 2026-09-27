@@ -149,6 +149,12 @@
 # manager included: "and now show me these as metarecords").
 "g f" = { command = "metarecord-list:folder" }
 
+# Number the selection's folder ("m o" = metarecord → order): `mf:order` on the
+# selected folder, or on the selected file's folder — no prompt, the status bar
+# names the folder it numbered. Global, like the "g" family: the selection is
+# the workspace's, whichever panel published it.
+"m o" = { command = "mf:order" }
+
 # ── Panel navigation and actions ─────────────────────────────────────────────
 # The list panels share the same navigation combos, each dispatched to its own
 # panel type via `when`. Commands are routed to their owning panel type whether

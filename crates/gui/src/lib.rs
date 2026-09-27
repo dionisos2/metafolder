@@ -124,7 +124,11 @@ fn register_builtins(registry: &CommandRegistry) {
             "Mark the active repository's orphaned metarecords orphan = true (mf orphan detect)",
             true,
         ),
-        ("mf:order", "Number a folder's direct children (order_file/order_dir)", true),
+        (
+            "mf:order",
+            "Number the selected folder's (or selected file's folder's) direct children",
+            true,
+        ),
         ("ignore:list", "Show the ignore presets and the target directory's patterns", true),
         ("ignore:add", "Append an ignore preset's patterns to the target directory", true),
         ("ignore:remove", "Remove an ignore preset's patterns from the target directory", true),

@@ -91,26 +91,39 @@ export interface TargetDirOptions {
  *  directory (itself when it is one, its parent otherwise), else the repository
  *  root. Always a repo-root-relative path. */
 export async function targetDir(opts: TargetDirOptions): Promise<string> {
-  const { call, repo, repoRoot, fmDir, selected } = opts;
-  if (fmDir) {
-    const rel = relativeToRoot(repoRoot, fmDir);
-    if (rel !== null) return rel;
-  }
-  if (selected?.uuid) {
-    const record = (await call('GET', `/repos/${repo}/metarecords/${selected.uuid}`)) as {
-      fields?: { name: string; value?: { value?: unknown } }[];
-    };
-    const type = record?.fields?.find((f) => f.name === 'mfr_type')?.value?.value;
-    const resolved = (await call(
-      'GET',
-      `/repos/${repo}/metarecords/${selected.uuid}/fields/mfr_path/resolve-tree`,
-    )) as { paths?: string[] };
-    const path: string | undefined = resolved?.paths?.[0];
-    if (typeof path === 'string') {
-      if (type === 'dir') return path;
-      const cut = path.lastIndexOf('/');
-      return cut <= 0 ? '' : path.slice(0, cut);
-    }
-  }
-  return '';
+  return fmRelDir(opts) ?? (await selectedDir(opts)) ?? '';
+}
+
+/** The directory `mf:order` numbers (spec-gui "Order a folder's children"):
+ *  the selected metarecord's directory (itself when it is one, its parent
+ *  otherwise) — the selection wins over the file manager's current directory,
+ *  which only stands in when nothing is selected. Null when there is neither:
+ *  numbering the root by default would be a surprise write. */
+export async function orderTargetDir(opts: TargetDirOptions): Promise<string | null> {
+  return (await selectedDir(opts)) ?? fmRelDir(opts);
+}
+
+/** The file manager's current directory, repo-root-relative; null when none is
+ *  open or it lies outside the repository. */
+function fmRelDir({ repoRoot, fmDir }: TargetDirOptions): string | null {
+  return fmDir ? relativeToRoot(repoRoot, fmDir) : null;
+}
+
+/** The selected metarecord's directory: itself when it is one, its parent
+ *  otherwise. Null when nothing is selected or its path does not resolve. */
+async function selectedDir({ call, repo, selected }: TargetDirOptions): Promise<string | null> {
+  if (!selected?.uuid) return null;
+  const record = (await call('GET', `/repos/${repo}/metarecords/${selected.uuid}`)) as {
+    fields?: { name: string; value?: { value?: unknown } }[];
+  };
+  const type = record?.fields?.find((f) => f.name === 'mfr_type')?.value?.value;
+  const resolved = (await call(
+    'GET',
+    `/repos/${repo}/metarecords/${selected.uuid}/fields/mfr_path/resolve-tree`,
+  )) as { paths?: string[] };
+  const path: string | undefined = resolved?.paths?.[0];
+  if (typeof path !== 'string') return null;
+  if (type === 'dir') return path;
+  const cut = path.lastIndexOf('/');
+  return cut <= 0 ? '' : path.slice(0, cut);
 }

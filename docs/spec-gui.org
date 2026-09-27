@@ -1357,7 +1357,7 @@ Behaviours:
 | =orphan:detect=      | Mark the active repo's orphaned metarecords =orphan = true= and unmark the rest (=POST /orphans/mark=) — the GUI half of =mf orphan detect=; the count lands in the status bar and the message log |
 | =orphan:delete=      | Delete the metarecords carrying the marker (=POST /query/delete= over =orphan = true=), after a confirmation naming the count. Detection is *not* re-run: what is marked is what goes |
 | =orphan:detect-delete= | =orphan:detect= then =orphan:delete=, one confirmation between the two — the convenience form for "find the records whose file is gone and be rid of them" |
-| =mf:order [folder]= | Number a folder's direct children (=order_file= / =order_dir=) and mark the folder =order_numbered= — the GUI half of =mf order=; the folder is collected in the minibuffer, pre-filled with the target directory and completing over the repository's tracked directories — see [[*Order a folder's children]] |
+| =mf:order= | Number the selected folder's direct children (=order_file= / =order_dir=) and mark the folder =order_numbered= — the GUI half of =mf order=; no prompt: the selected folder, or the selected file's folder (default =m o=) — see [[*Order a folder's children]] |
 | =script:run [name]=  | Run an installed helper script — completes over the scripts in =~/.config/metafolder/scripts/=, the description taken from each script's =# Summary:= header; the chosen script runs as a subprocess (output in the =message= panel) — see [[file:spec-config.org][spec-config.org]] "Shipped scripts" |
 | =metarecord:remove=   | Remove the selected metarecord (confirmed; default =delete=). Without a file this is a plain =metarecord:delete=; with one, the question settles the file: =OK= trashes it — and the metarecord with it, =metarecord:trash='s action, the question doubling as its confirmation — =Cancel= keeps it and deletes the metarecord alone (=metarecord:delete= confirms) — see [[file:spec-trash.org][spec-trash.org]] "GUI" |
 | =metarecord:trash=   | Send the selected metarecord's file to the trash (confirmed; default =ctrl+delete=) — see [[file:spec-trash.org][spec-trash.org]] "GUI" |
@@ -3262,15 +3262,19 @@ existing position never overwritten — and then marks the folder itself with
 =order_numbered = true=.
 
 The heuristic and the daemon orchestration are the CLI's, shared in
-=metafolder_core::order=; the shell only collects *which* folder, as an
-[[*Interactive command arguments (command mode)]] argument:
+=metafolder_core::order=; the shell only works out *which* folder, and asks
+nothing (default key =m o=):
 
-- prompt ="Number the children of:"=, pre-filled with the same target directory
-  the =ignore:*= commands use (the file manager's current directory, else the
-  selected metarecord's directory, else the repository root);
-- completion = every tracked directory of the active repository, the root shown
-  as =/=; a hand-typed path is accepted too (a missing leading =/= is added, a
-  trailing one dropped).
+- the selected metarecord's folder — itself when it is a directory, its
+  containing folder when it is a file. The selection wins over the file
+  manager's current directory: pointing at a subfolder in a listing numbers
+  that subfolder, not the listing;
+- with nothing selected, the file manager's current directory;
+- with neither, a status-bar error — never a silent fallback to the repository
+  root, which would number a folder nobody pointed at.
+
+(The =ignore:*= commands keep their own order — the file manager's directory
+first — because an ignore set is about the directory being browsed.)
 
 The folder is resolved to its metarecord through =POST .../tree/resolve-path=;
 an untracked path is a status-bar error, never a silent no-op. On success the
