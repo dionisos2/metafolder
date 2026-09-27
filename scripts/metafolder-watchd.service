@@ -1,11 +1,8 @@
 # The metafolder fanotify broker (docs/watcher-fanotify.md "The broker").
 #
-# Install:
-#   make install PREFIX=/usr/local    # puts metafolder-watchd on the system path
-#   sudo cp scripts/metafolder-watchd.sysusers /etc/sysusers.d/metafolder-watchd.conf
-#   sudo systemd-sysusers             # creates the metafolder-watchd system user
-#   sudo cp scripts/metafolder-watchd.service /etc/systemd/system/
-#   sudo systemctl daemon-reload && sudo systemctl enable --now metafolder-watchd
+# Install (and update): make install-watchd — builds the broker, installs it
+# at /usr/local/bin, creates its system user (metafolder-watchd.sysusers),
+# installs this unit, enables and (re)starts it. make uninstall-watchd undoes it.
 #
 # The two capabilities are the entire reason this service exists *beside* the
 # daemon: they are granted here and nowhere else, so the daemon — which talks

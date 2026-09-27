@@ -23,11 +23,16 @@ FRONTEND := crates/gui/frontend
 TARGET  := target/release
 
 # Binaries copied by `install` (name in target/release).
-# metafolder-watchd is the privileged fanotify broker (docs/watcher-fanotify.md):
-# the binary installs like the others, but running it needs its systemd unit —
-# see scripts/metafolder-watchd.service for the two capabilities it takes.
-BINS_HEADLESS := metafolder-daemon mf metafolder-watchd
+BINS_HEADLESS := metafolder-daemon mf
 BINS_GUI      := metafolder-gui
+
+# metafolder-watchd, the privileged fanotify broker (docs/watcher-fanotify.md),
+# is a system service, installed apart by `install-watchd`: root-owned, where
+# its unit runs it from — never under $(HOME), where a binary your user can
+# rewrite would run with CAP_SYS_ADMIN.
+WATCHD_BIN  := /usr/local/bin/metafolder-watchd
+WATCHD_UNIT := /etc/systemd/system/metafolder-watchd.service
+WATCHD_USER := /etc/sysusers.d/metafolder-watchd.conf
 
 .DEFAULT_GOAL := help
 
@@ -42,14 +47,13 @@ help:
 	@echo '  frontend           (re)build the GUI frontend bundle'
 	@echo ''
 	@echo '  install            build + install binaries into $(BINDIR) + user config'
-	@echo '  install-headless   daemon + cli + watchd + user config'
+	@echo '  install-headless   daemon + cli + user config'
 	@echo '  install-config     install/update ~/.config/metafolder/ (sync-config)'
 	@echo '  uninstall          remove installed binaries from $(BINDIR)'
 	@echo ''
-	@echo '  metafolder-watchd (the fanotify broker) also wants its user and unit:'
-	@echo '    sudo cp scripts/metafolder-watchd.sysusers /etc/sysusers.d/metafolder-watchd.conf'
-	@echo '    sudo systemd-sysusers'
-	@echo '    sudo cp scripts/metafolder-watchd.service /etc/systemd/system/'
+	@echo '  install-watchd     the fanotify broker as a system service (sudo):'
+	@echo '                     binary, system user, unit, (re)started; rerun to update'
+	@echo '  uninstall-watchd   stop and remove it (the daemon falls back to inotify)'
 	@echo ''
 	@echo '  run-daemon         run the daemon from the build tree'
 	@echo '  run-gui            build frontend + run the GUI from the build tree'
@@ -81,6 +85,10 @@ build-config:
 .PHONY: build-headless
 build-headless: build-config
 	$(CARGO) build --release -p metafolder-daemon -p metafolder-cli
+
+.PHONY: build-watchd
+build-watchd:
+	$(CARGO) build --release -p metafolder-watchd
 
 .PHONY: build-gui
 build-gui: frontend
@@ -114,6 +122,34 @@ install: check-deps build install-config | $(BINDIR)
 	    install -m 0755 $(TARGET)/$$b $(BINDIR)/$$b; \
 	done
 	@echo 'Installed. Ensure $(BINDIR) is on your PATH.'
+
+# The broker, in one command: built, installed root-owned, its system user
+# created, its unit installed, enabled and (re)started — rerunning it is how
+# the broker is updated. Daemons pick it up when they (re)load a repository.
+.PHONY: install-watchd
+install-watchd: build-watchd
+	sudo install -m 0755 $(TARGET)/metafolder-watchd $(WATCHD_BIN)
+	sudo install -m 0644 scripts/metafolder-watchd.sysusers $(WATCHD_USER)
+	sudo systemd-sysusers $(WATCHD_USER)
+	sudo install -m 0644 scripts/metafolder-watchd.service $(WATCHD_UNIT)
+	sudo systemctl daemon-reload
+	sudo systemctl enable metafolder-watchd
+	sudo systemctl restart metafolder-watchd
+	@sleep 1; if systemctl is-active --quiet metafolder-watchd; then \
+	    echo 'metafolder-watchd is running. Restart the daemon to watch with it;'; \
+	    echo '`mf -n <repo> watch status` then reports backend fanotify.'; \
+	else \
+	    echo 'metafolder-watchd failed to start:'; \
+	    sudo journalctl -u metafolder-watchd -n 30 --no-pager; exit 1; \
+	fi
+
+.PHONY: uninstall-watchd
+uninstall-watchd:
+	-sudo systemctl disable --now metafolder-watchd
+	sudo rm -f $(WATCHD_UNIT) $(WATCHD_BIN)
+	sudo systemctl daemon-reload
+	@echo 'Removed. Restart the daemon: it watches with inotify again.'
+	@echo '(The metafolder-watchd system user stays; remove $(WATCHD_USER) and the user to drop it.)'
 
 .PHONY: uninstall
 uninstall:
