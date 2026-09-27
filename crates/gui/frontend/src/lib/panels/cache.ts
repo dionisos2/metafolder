@@ -108,6 +108,43 @@ export function createCache(opts: CacheOptions = {}) {
   const epochs = new Map<string, number>();
   const epochOf = (repo: string) => epochs.get(repo) ?? 0;
   const bumpEpoch = (repo: string) => epochs.set(repo, epochOf(repo) + 1);
+  // The epoch is repo-wide, which is right for a query (any change may alter
+  // its membership) but far too coarse for a read of a *named* set: a change to
+  // one metarecord would throw away a whole batch of others, and the panel that
+  // asked reads REFRESH for rows nothing touched (a `:path` column then shows
+  // leaf names). Batch and tree-resolve reads therefore register here instead,
+  // and only lose the uuids invalidated while they were in flight — or all of
+  // them on a whole-repo clear.
+  interface PendingRead {
+    repo: string;
+    uuids: Set<string>;
+    stale: Set<string>;
+    allStale: boolean;
+  }
+  const pendingReads = new Set<PendingRead>();
+  /** Runs `fetch` registered as a read of `uuids`; returns its response and
+   *  whether each uuid's answer is still fit to cache. */
+  async function namedRead(
+    repo: string,
+    uuids: string[],
+    fetch: () => Promise<DaemonResponse>,
+  ): Promise<[DaemonResponse, (uuid: string) => boolean]> {
+    const read = { repo, uuids: new Set(uuids), stale: new Set<string>(), allStale: false };
+    pendingReads.add(read);
+    try {
+      const res = await fetch();
+      return [res, (uuid) => !read.allStale && !read.stale.has(uuid)];
+    } finally {
+      pendingReads.delete(read);
+    }
+  }
+  function staleReads(repo: string, uuid: string | null) {
+    for (const read of pendingReads) {
+      if (read.repo !== repo) continue;
+      if (uuid === null) read.allStale = true;
+      else if (read.uuids.has(uuid)) read.stale.add(uuid);
+    }
+  }
 
   const eKey = (repo: string, uuid: string) => `${repo}|${uuid}`;
   const tKey = (repo: string, field: string, uuid: string) => `${repo}|${field}|${uuid}`;
@@ -166,6 +203,7 @@ export function createCache(opts: CacheOptions = {}) {
   /** Drops every cached datum about one metarecord. */
   function invalidateMetarecord(repo: string, uuid: string) {
     bumpEpoch(repo);
+    staleReads(repo, uuid);
     entities.delete(eKey(repo, uuid));
     const suffix = `|${uuid}`;
     for (const key of treeRefs.keys()) {
@@ -174,6 +212,7 @@ export function createCache(opts: CacheOptions = {}) {
   }
 
   function clearRepo(repo: string) {
+    staleReads(repo, null);
     for (const map of [entities, treeRefs] as Map<string, unknown>[]) {
       for (const key of map.keys()) if (key.startsWith(`${repo}|`)) map.delete(key);
     }
@@ -191,6 +230,7 @@ export function createCache(opts: CacheOptions = {}) {
    *  identifies it (a field-row DELETE), so the owner cannot be pinpointed. */
   function clearRepoEntities(repo: string) {
     bumpEpoch(repo);
+    staleReads(repo, null);
     for (const map of [entities, treeRefs] as Map<string, unknown>[]) {
       for (const key of map.keys()) if (key.startsWith(`${repo}|`)) map.delete(key);
     }
@@ -248,18 +288,19 @@ export function createCache(opts: CacheOptions = {}) {
         else missing.push(uuid);
       }
       if (missing.length === 0) return ok(out);
-      const epoch = epochOf(repo);
       // Reading a named set is a uuid_in query (no batch endpoint).
-      const res = await raw('POST', `/repos/${repo}/query`, {
-        query: { type: 'uuid_in', uuids: missing },
-        select: '*',
-        limit: missing.length,
-      });
+      const [res, fresh] = await namedRead(repo, missing, () =>
+        raw('POST', `/repos/${repo}/query`, {
+          query: { type: 'uuid_in', uuids: missing },
+          select: '*',
+          limit: missing.length,
+        }),
+      );
       if (res.status !== 200) return res;
       const results = (res.body as { results?: Metarecord[] })?.results ?? [];
       const fetched: Record<string, Metarecord> = {};
       for (const r of results) fetched[r.uuid] = r;
-      if (epochOf(repo) === epoch) putEntities(repo, results);
+      putEntities(repo, results.filter((r) => fresh(r.uuid)));
       return ok({ ...out, ...fetched });
     }
 
@@ -277,17 +318,17 @@ export function createCache(opts: CacheOptions = {}) {
         else missing.push(uuid);
       }
       if (missing.length === 0) return ok(out);
-      const epoch = epochOf(repo);
-      const res = await raw('POST', `/repos/${repo}/query/fields/resolve-tree`, {
-        query: { type: 'uuid_in', uuids: missing },
-        field,
-      });
+      const [res, fresh] = await namedRead(repo, missing, () =>
+        raw('POST', `/repos/${repo}/query/fields/resolve-tree`, {
+          query: { type: 'uuid_in', uuids: missing },
+          field,
+        }),
+      );
       if (res.status !== 200) return res;
       const fetched = (res.body as Record<string, string[]>) ?? {};
-      const fresh = epochOf(repo) === epoch;
       for (const uuid of missing) {
         const paths = fetched[uuid] ?? [];
-        if (fresh) put(treeRefs, tKey(repo, field, uuid), paths, maxTreeRefs);
+        if (fresh(uuid)) put(treeRefs, tKey(repo, field, uuid), paths, maxTreeRefs);
         out[uuid] = paths;
       }
       return ok(out);

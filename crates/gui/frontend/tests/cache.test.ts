@@ -514,3 +514,75 @@ describe('cache — LRU pruning bounds memory', () => {
     expect(cache._stats().queries).toBe(1);
   });
 });
+
+describe('cache — a change elsewhere does not discard an in-flight batch read', () => {
+  // The epoch guard used to be repo-wide: any change in the repository landing
+  // while a `tree/resolve` (or `metarecords/batch`) was in flight threw the whole
+  // response away. The panel then read REFRESH for rows the change never
+  // touched — and, since its change subscription only repaints rows that *did*
+  // change, a `mfr_path:path` column kept showing the leaf name (its fallback
+  // "until resolved") for those rows, next to fully resolved ones.
+  function held() {
+    let land!: (v: { status: number; body: unknown }) => void;
+    const raw = vi.fn(() => new Promise((resolve) => (land = resolve)));
+    return { raw, land: (v: { status: number; body: unknown }) => land(v) };
+  }
+  async function baseline(cache: ReturnType<typeof createCache>) {
+    await cache.sync('r', async () => ok({ head: 10, operations: [] }));
+  }
+
+  test('tree/resolve is cached when the change touched another metarecord', async () => {
+    const cache = createCache();
+    await baseline(cache);
+    const { raw, land } = held();
+    const inFlight = cache.fetchTreeRefs('r', 'mfr_path', ['aaa', 'bbb'], raw as never);
+
+    await cache.sync('r', async () => ok({ head: 11, operations: [{ id: 11, entity_uuid: 'zzz' }] }));
+    land(ok({ aaa: ['/a/aaa'], bbb: ['/b/bbb'] }));
+    await inFlight;
+
+    expect(cache.readTreeRef('r', 'mfr_path', 'aaa')).toEqual(['/a/aaa']);
+    expect(cache.readTreeRef('r', 'mfr_path', 'bbb')).toEqual(['/b/bbb']);
+  });
+
+  test('tree/resolve drops only the metarecord the change touched', async () => {
+    const cache = createCache();
+    await baseline(cache);
+    const { raw, land } = held();
+    const inFlight = cache.fetchTreeRefs('r', 'mfr_path', ['aaa', 'bbb'], raw as never);
+
+    await cache.sync('r', async () => ok({ head: 11, operations: [{ id: 11, entity_uuid: 'aaa' }] }));
+    land(ok({ aaa: ['/a/aaa'], bbb: ['/b/bbb'] }));
+    await inFlight;
+
+    expect(cache.readTreeRef('r', 'mfr_path', 'aaa')).toBe(REFRESH); // may predate the change
+    expect(cache.readTreeRef('r', 'mfr_path', 'bbb')).toEqual(['/b/bbb']);
+  });
+
+  test('a coarse refresh still discards the whole in-flight response', async () => {
+    const cache = createCache();
+    await baseline(cache);
+    const { raw, land } = held();
+    const inFlight = cache.fetchTreeRefs('r', 'mfr_path', ['aaa'], raw as never);
+
+    await cache.sync('r', async () => ok({ head: 50, operations: [], truncated: true }));
+    land(ok({ aaa: ['/a/aaa'] }));
+    await inFlight;
+
+    expect(cache.readTreeRef('r', 'mfr_path', 'aaa')).toBe(REFRESH);
+  });
+
+  test('metarecords/batch is cached when the change touched another metarecord', async () => {
+    const cache = createCache();
+    await baseline(cache);
+    const { raw, land } = held();
+    const inFlight = cache.fetchMetarecords('r', ['aaa', 'bbb'], raw as never);
+
+    await cache.sync('r', async () => ok({ head: 11, operations: [{ id: 11, entity_uuid: 'bbb' }] }));
+    land(ok({ results: [rec('aaa'), rec('bbb')] }));
+    await inFlight;
+
+    expect(cache.readMetarecord('r', 'aaa')).toEqual(rec('aaa'));
+    expect(cache.readMetarecord('r', 'bbb')).toBe(REFRESH);
+  });
+});
