@@ -185,20 +185,28 @@ pub(crate) async fn api_init_repo(url: &str, root: &Path) -> Result<Uuid> {
     Ok(v["repo_uuid"].as_str().context("missing repo_uuid field")?.parse()?)
 }
 
-/// Runs a query and returns the matching metarecord UUIDs (hex strings).
+/// Runs a query and returns the matching metarecord UUIDs (hex strings) — the
+/// first page only (`{"results": [...], "next_cursor": ...}`), which is what
+/// every caller here needs.
 pub(crate) async fn api_query(
     url: &str,
     repo: Uuid,
     query: serde_json::Value,
 ) -> Result<Vec<String>> {
-    Ok(daemon_client()
+    let body: serde_json::Value = daemon_client()
         .post(format!("{url}/repos/{repo}/query"))
         .json(&json!({ "query": query }))
         .send()
         .await?
         .error_for_status()?
         .json()
-        .await?)
+        .await?;
+    Ok(body["results"]
+        .as_array()
+        .context("a query answer without results")?
+        .iter()
+        .filter_map(|v| v.as_str().map(str::to_string))
+        .collect())
 }
 
 /// The root metarecord's UUID. At init it is the only metarecord carrying an
@@ -217,8 +225,12 @@ pub(crate) async fn api_root_uuid(url: &str, repo: Uuid) -> Result<String> {
 pub(crate) async fn api_enable_watch(url: &str, repo: Uuid) -> Result<()> {
     let root = api_root_uuid(url, repo).await?;
     daemon_client()
-        .patch(format!("{url}/repos/{repo}/metarecords/{root}"))
-        .json(&json!({ "name": "mf_watch", "value": { "type": "bool", "value": true } }))
+        .post(format!("{url}/repos/{repo}/query/fields/set"))
+        .json(&json!({
+            "query": { "type": "uuid_in", "uuids": [root] },
+            "name": "mf_watch",
+            "value": { "type": "bool", "value": true },
+        }))
         .send()
         .await?
         .error_for_status()?;
@@ -255,8 +267,8 @@ pub(crate) async fn api_reconcile(url: &str, repo: Uuid, mime: bool) -> Result<(
                     r["moved"].as_u64().unwrap_or(0) as usize,
                 ));
             }
-            Some("failed") => {
-                anyhow::bail!("reconcile failed: {}", task["error"]);
+            Some("failed" | "cancelled") => {
+                anyhow::bail!("reconcile {}: {}", task["status"], task["error"]);
             }
             _ => tokio::time::sleep(std::time::Duration::from_millis(20)).await,
         }
