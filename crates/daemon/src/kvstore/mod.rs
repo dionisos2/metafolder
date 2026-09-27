@@ -89,6 +89,9 @@ pub struct KvStore {
     t: Tables,
     /// Held for the store's lifetime: one daemon per repository.
     _lock: File,
+    /// Where the store lives: the free space of its filesystem is the room
+    /// a write transaction starts with ([`map_to_grant`]).
+    dir: std::path::PathBuf,
     /// Keys read so far by the store's reads and its query sources — what
     /// the cost assertions count (`tests/kv_cost.rs`).
     reads: std::sync::atomic::AtomicU64,
@@ -353,11 +356,45 @@ fn dec_restoration(b: &[u8]) -> Result<Restoration> {
     })
 }
 
-/// The map a store opens on: an address-space reservation, not a size limit
-/// (it doubles as the store fills). Small, because a daemon holds one per
-/// loaded repository and a process has 128 TiB of address space in all — a
-/// fixed 1 TiB map ran out of it at ~120 repositories.
-pub(crate) const INITIAL_MAP: usize = 1 << 30;
+/// The map a store opens on at the least: an address-space reservation, not
+/// a size limit — the first write transaction grows it ([`map_to_grant`]).
+const INITIAL_MAP: usize = 1 << 30;
+
+/// The most room (map beyond what the store holds) one store reserves. LMDB
+/// grows a map only between transactions, so the room a write transaction
+/// starts with is the most it can write: that room is the free space of the
+/// disk — a transaction then fails for want of room only when the disk is
+/// full — but no more than this. A daemon holds one map per loaded
+/// repository and a process has 128 TiB of address space in all (a fixed
+/// 1 TiB map ran out of it at ~120 repositories): at 128 GiB, some 900
+/// repositories fit, and one transaction may always write at least half of it.
+const ROOM_CAP: usize = 128 << 30;
+
+/// The map to grow to before a write transaction, given what the store uses,
+/// its map, and the free space of its filesystem — or `None` to keep the
+/// map. Room is granted in full (`min(free, ROOM_CAP)`) and renewed once it
+/// falls below what must be guaranteed: all of the free space when the disk
+/// has less than the cap (as the store grows, free space and room shrink
+/// together, so this does not resize at every write), half the cap otherwise.
+fn map_to_grant(used: usize, map: usize, free: usize) -> Option<usize> {
+    let room = map.saturating_sub(used);
+    let (grant, floor) = if free >= ROOM_CAP { (ROOM_CAP, ROOM_CAP / 2) } else { (free, free) };
+    let wanted = page_multiple(used.saturating_add(grant));
+    (room < floor && wanted > map).then_some(wanted)
+}
+
+/// Bytes available to an unprivileged writer on the filesystem holding
+/// `dir`; `None` when it cannot be asked.
+fn free_space(dir: &Path) -> Option<usize> {
+    use std::os::unix::ffi::OsStrExt;
+    let c = std::ffi::CString::new(dir.as_os_str().as_bytes()).ok()?;
+    let mut st: libc::statvfs = unsafe { std::mem::zeroed() };
+    // SAFETY: a valid NUL-terminated path and a zeroed out-parameter.
+    if unsafe { libc::statvfs(c.as_ptr(), &mut st) } != 0 {
+        return None;
+    }
+    Some((st.f_bavail as u128 * st.f_frsize as u128).min(usize::MAX as u128) as usize)
+}
 
 /// `n` rounded up to the system's page size, as LMDB requires of a map size.
 fn page_multiple(n: usize) -> usize {
@@ -439,7 +476,8 @@ impl KvStore {
         };
         let derived = t.meta.get(&w, b"derived")?.map(from_be);
         w.commit()?;
-        let mut store = KvStore { env, t, _lock: lock, reads: Default::default() };
+        let mut store =
+            KvStore { env, t, _lock: lock, dir: dir.to_path_buf(), reads: Default::default() };
         // A store from before the derived key spaces (or of another format of
         // them) gets them derived now: their migration.
         if derived != Some(derived::DERIVED_VERSION) {
@@ -1126,16 +1164,18 @@ impl Begin for KvStore {
 }
 
 impl KvStore {
-    /// Doubles the map once the store fills half of it, so a write
-    /// transaction always starts with at least as much room as the store
-    /// already holds. Done here because LMDB allows a resize only while the
-    /// process has no transaction open — which `&mut self` guarantees: every
-    /// transaction borrows the store.
+    /// Grows the map so the write transaction about to start has the room
+    /// [`map_to_grant`] promises — the disk's free space, up to a cap: a
+    /// revision of any size commits unless the disk itself is full. Done here
+    /// because LMDB allows a resize only while the process has no transaction
+    /// open — which `&mut self` guarantees: every transaction borrows the
+    /// store.
     fn grow_map(&mut self) -> Result<()> {
         let info = self.env.info();
         let used = (info.last_page_number + 1) * self.env.stat().page_size as usize;
-        if used.saturating_mul(2) > info.map_size {
-            let size = page_multiple(info.map_size.saturating_mul(2).max(used.saturating_mul(2)));
+        // Unknown free space: at least as much room as the store holds.
+        let free = free_space(&self.dir).unwrap_or(used.max(INITIAL_MAP));
+        if let Some(size) = map_to_grant(used, info.map_size, free) {
             // SAFETY: no transaction is open in this process (see above), and
             // the repository lock keeps every other process out of the file.
             unsafe { self.env.resize(size) }.context("grow the key-value store's map")?;
@@ -1599,5 +1639,45 @@ impl WriteTxn for KvTxn<'_> {
 
     fn commit(self: Box<Self>) -> Result<()> {
         (*self).finish()
+    }
+}
+
+#[cfg(test)]
+mod map_tests {
+    use super::{map_to_grant, page_multiple, ROOM_CAP};
+
+    const G: usize = 1 << 30;
+
+    #[test]
+    fn test_a_transaction_starts_with_the_disks_free_space_as_room() {
+        // 1 GiB map, 10 MiB used, 50 GiB free: room becomes the 50 GiB.
+        let map = map_to_grant(10 << 20, G, 50 * G).expect("grown");
+        assert_eq!(map, page_multiple((10 << 20) + 50 * G));
+    }
+
+    #[test]
+    fn test_room_that_shrinks_with_the_free_space_is_not_regranted() {
+        // The store grew by 5 GiB into a map granted when 50 GiB were free:
+        // 45 GiB of room, 45 GiB free — nothing to do, no resize per write.
+        let map = page_multiple(50 * G);
+        assert_eq!(map_to_grant(5 * G, map, 45 * G), None);
+        // Space freed elsewhere on the disk: the room follows it.
+        assert!(map_to_grant(5 * G, map, 60 * G).is_some());
+    }
+
+    #[test]
+    fn test_room_is_capped_and_renewed_at_half_the_cap() {
+        let map = map_to_grant(0, G, 10 * ROOM_CAP).unwrap();
+        assert_eq!(map, page_multiple(ROOM_CAP));
+        // Still over half the cap of room: kept.
+        assert_eq!(map_to_grant(ROOM_CAP / 4, map, 10 * ROOM_CAP), None);
+        // Under half: renewed to a full cap beyond what is used.
+        let used = ROOM_CAP / 2 + G;
+        assert_eq!(map_to_grant(used, map, 10 * ROOM_CAP), Some(page_multiple(used + ROOM_CAP)));
+    }
+
+    #[test]
+    fn test_the_map_never_shrinks() {
+        assert_eq!(map_to_grant(G, 100 * G, 0), None);
     }
 }

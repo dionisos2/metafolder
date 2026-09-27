@@ -402,11 +402,18 @@ exclusive mode, so the "one daemon per repository" lock SQLite gets from
 =locking_mode = EXCLUSIVE= is an =flock= held for the store's lifetime).
 LMDB reserves its whole map in the address space up front, and a daemon holds
 one map per loaded repository: a fixed 1 TiB map ran the 128 TiB of x86-64
-out at about 120 repositories. So the map starts at 1 GiB (or twice what the
-store holds) and doubles, at the start of a write transaction, once the store
-fills half of it — the one moment LMDB allows a resize, no transaction being
-open. A single revision larger than the room left then fails whole, like any
-other failed write (=MDB_MAP_FULL=); it cannot corrupt the store. The
+out at about 120 repositories. And LMDB grows a map only between
+transactions, so the room a write transaction starts with is the most it can
+write. That room is the *free space of the disk*, capped at 128 GiB per store
+(=kvstore::map_to_grant=): granted at the start of a write transaction — the
+one moment LMDB allows a resize, no transaction being open — and renewed when
+it falls below the free space (below half the cap on a disk with more). A
+revision of any size — a first reconcile of a large tree, a conversion —
+therefore commits unless the disk is full (or, past the cap, beyond 64 GiB
+written in one revision); at 128 GiB some 900 repositories fit in the address
+space. The first version doubled the map once half full, so a revision larger
+than what the store already held failed whole with =MDB_MAP_FULL= (a 1 GiB
+repository could not be converted). Such a failure cannot corrupt the store. The
 legacy-layout migration at load is SQLite's alone — no KV repository predates
 =internal/=.
 
@@ -608,12 +615,8 @@ and =MDB_NOMETASYNC= saved almost nothing — one =fsync= dominates either way.
    (operations and snapshots, revisions, HEAD, queued restorations), and the
    id counters, so no id is ever handed out twice — through three import
    primitives both backends implement (=import_revision=, =import_op=,
-   =raise_counters=); the copy is one write transaction, and LMDB grows a map
-   only between transactions, so a KV target opens on a map sized from the
-   source (twice its bytes, at least the usual initial map) and, should that
-   still end in =MDB_MAP_FULL=, is thrown away and copied again on a map twice
-   as large (=convert::copy_into_kv=; a repository past 1 GiB failed before);
-   a KV target is reindexed for the locality of its dense ids; both stores are then read and compared (a digest of all of it); the
+   =raise_counters=), in one write transaction whatever the size (see
+   "Choosing the backend" for the room a KV one starts with); a KV target is reindexed for the locality of its dense ids; both stores are then read and compared (a digest of all of it); the
    new store takes its name; =config.json= — now always written atomically,
    a new file renamed over the old — switches; the old store is set aside as
    =internal/pre-convert-<time>-<name>=, for the user to delete. An

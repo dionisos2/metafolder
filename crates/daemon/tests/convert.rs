@@ -153,9 +153,9 @@ fn copies_faithfully(from: Backend, to: Backend) {
 }
 
 /// The copy is one write transaction, and a KV map can grow only between
-/// transactions: a repository larger than the map the new store opens on
-/// failed with MDB_MAP_FULL (a real one did, past 1 GiB). The copy must grow
-/// the map and start again, however small it began.
+/// transactions: a repository larger than the map the new store opened on
+/// failed with MDB_MAP_FULL (a real one did, past 1 GiB). It must commit
+/// however small the map began.
 #[test]
 fn a_copy_larger_than_the_new_stores_map_still_completes() {
     let (mut source, _a) = open(Backend::Sqlite);

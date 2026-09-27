@@ -696,6 +696,25 @@ fn a_kv_store_grows_past_its_initial_map() {
     assert_eq!(last.map(|s| s.len()), Some(blob.len()), "reopened below its size, it reads it all");
 }
 
+/// One revision far larger than the map the store began on — a first
+/// reconcile of a big tree, a conversion — must still commit: the room a
+/// write transaction starts with is the free space of the disk (up to a
+/// cap), not twice what the store happens to hold. Before, it failed whole
+/// with MDB_MAP_FULL.
+#[test]
+fn a_kv_revision_larger_than_the_map_commits() {
+    let dir = TempDir::new("kv-big-revision");
+    let mut store: Handle = Box::new(KvStore::open_with_map_size(dir.path(), 1 << 20).unwrap());
+    let blob = "x".repeat(64 * 1024);
+    let mut w = Writer::begin(&mut store, None).unwrap();
+    for _ in 0..64 {
+        // 4 MiB in one transaction, on a 1 MiB map.
+        w.create_metarecord(vec![Field::new("blob", Value::String(blob.clone()))]).unwrap();
+    }
+    w.commit().unwrap();
+    assert_eq!(store.metarecord_count().unwrap(), 64);
+}
+
 /// The store's lock is an `flock`, which a `fork` shares with the child
 /// until its `exec` closes it: a process that spawns anything holds its own
 /// lock, briefly, from another descriptor. Opening waits such a transient
