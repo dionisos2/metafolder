@@ -16,6 +16,8 @@
   --mf-warning: #d8a657;
   /* orphaned metarecords: the tracked file no longer exists on disk */
   --mf-orphan: #b07ad6;
+  /* file-manager rows left untracked on purpose (mf_ignore, mf_watch = false) */
+  --mf-unwatched: #9a9aae;
   /* Row selection. Two distinct fills, so "where the keyboard cursor is" and
      "which rows a bulk edit would touch" never have to be told apart by a
      hairline outline. */

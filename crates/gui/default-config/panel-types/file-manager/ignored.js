@@ -1,6 +1,7 @@
 /**
- * @file Ignore marking for the file manager (spec-gui "Ignore patterns"): which
- * entries of the current listing an `mf_ignore` pattern excludes, and why.
+ * @file Exclusion marking for the file manager (spec-gui "Ignore patterns"):
+ * which entries of the current listing are not tracked on purpose — excluded by
+ * an `mf_ignore` pattern, or where an `mf_watch = false` starts — and why.
  *
  * The whole computation is daemon-side (`POST /repos/:repo/eligibility`): the
  * ancestor walk, the nearest-ancestor-wins rule and the re-anchoring at the
@@ -21,6 +22,12 @@ export function scopedPath(rel, scope) {
 }
 
 /**
+ * Why a listed entry is not tracked on purpose.
+ * @typedef {{reason: 'ignored', pattern: string, source: string|null}
+ *   | {reason: 'watch_false', source: string}} Exclusion
+ */
+
+/**
  * Explains the current directory and its listed entries in one call.
  *
  * @param {Metafolder.Api['daemon']} daemon
@@ -28,15 +35,16 @@ export function scopedPath(rel, scope) {
  * @param {string|null} repoRoot
  * @param {string} dir absolute path of the current directory
  * @param {string[]} paths absolute paths of the listed entries
- * @returns {Promise<{ignored: Map<string, {pattern: string, source: string|null}>,
- *                    scope: string|null}>}
- *   `ignored` holds only the entries an ignore pattern excludes — an entry left
- *   untracked because nothing is watched yet is not "ignored", and dimming a
- *   whole listing for that would be noise. `scope` is the directory's tracking
- *   scope, null when unknown.
+ * @returns {Promise<{excluded: Map<string, Exclusion>, scope: string|null}>}
+ *   `excluded` holds the entries an ignore pattern excludes, and those where an
+ *   `mf_watch = false` takes effect: an entry whose tracking scope differs from
+ *   the directory's. The rest of an unwatched listing shares the directory's
+ *   scope and is not marked — a fresh repository (`mf_watch = false` on its
+ *   root) would otherwise have every row marked, which is noise. `scope` is the
+ *   directory's tracking scope, null when unknown.
  */
 export async function loadEligibility(daemon, repo, repoRoot, dir, paths) {
-  const empty = { ignored: new Map(), scope: null };
+  const empty = { excluded: new Map(), scope: null };
   if (!repo || repoRoot === null) return empty;
   const dirRel = relPath(dir, repoRoot);
   if (dirRel === null) return empty;
@@ -58,13 +66,22 @@ export async function loadEligibility(daemon, repo, repoRoot, dir, paths) {
     return empty;
   }
   const results = Array.isArray(response?.results) ? response.results : [];
-  const ignored = new Map();
-  let scope = null;
+  const own = results.find((/** @type {any} */ r) => r.path === dirRel);
+  const scope = own?.watch_scope ?? null;
+  /** @type {Map<string, Exclusion>} */
+  const excluded = new Map();
   for (const result of results) {
-    if (result.path === dirRel && scope === null) scope = result.watch_scope ?? null;
-    if (result.reason !== 'ignored') continue;
     const abs = entries.get(result.path);
-    if (abs) ignored.set(abs, { pattern: result.pattern, source: result.ignore_source ?? null });
+    if (!abs) continue;
+    if (result.reason === 'ignored') {
+      excluded.set(abs, {
+        reason: 'ignored',
+        pattern: result.pattern,
+        source: result.ignore_source ?? null,
+      });
+    } else if (result.reason === 'watch_false' && own && result.watch_scope !== own.watch_scope) {
+      excluded.set(abs, { reason: 'watch_false', source: result.watch_scope });
+    }
   }
-  return { ignored, scope };
+  return { excluded, scope };
 }

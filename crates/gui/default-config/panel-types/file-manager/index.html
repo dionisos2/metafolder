@@ -103,16 +103,17 @@
       li.internal .badge {
         color: var(--mf-error, #c44c56);
       }
-      /* Excluded by an mf_ignore pattern: dimmed, the pattern in the tooltip
-         (spec-gui "Ignore patterns"). Only real ignores are marked — an
-         untracked entry in an unwatched repo is not one. */
-      li.ignored .name,
-      li.ignored .icon {
-        opacity: 0.45;
+      /* Not watched on purpose — an mf_ignore pattern, or where an
+         mf_watch = false starts: a muted colour and a small marker, the reason
+         in the tooltip (spec-gui "Ignore patterns"). Kept readable: no
+         strike-through, no fading. An untracked entry in an unwatched repo is
+         not marked. */
+      li.unwatched .name {
+        color: var(--mf-unwatched, #9a9aae);
       }
-      li.ignored .name {
-        text-decoration: line-through;
-        text-decoration-thickness: 1px;
+      li.unwatched .name::before {
+        content: '⊘ ';
+        font-size: 0.85em;
       }
       /* A directory whose volume is not mounted: its content is unavailable,
          not deleted (spec-gui "Unmounted volumes"). Amber, never the error red

@@ -3484,11 +3484,17 @@ The =file-manager= panel is where ignoring is naturally decided, so it both
 *shows* and *offers* it:
 
 - *Showing.* After a listing is enriched, the panel batches its entries into one
-  =eligibility_explain= call and marks the excluded ones (dimmed row + a muted
-  =ignored= marker, with the matching pattern and its source in the row's
-  tooltip). Only =reason = "ignored"= is marked: an untracked entry in a repo
-  that simply is not watched yet is not "ignored", and dimming the whole listing
-  would be noise. The call is skipped when there is no active repo.
+  =eligibility_explain= call and marks the entries left untracked on purpose:
+  one mark for both causes — a muted name colour (=--mf-unwatched=) behind a
+  small =⊘= — never a strike-through or a fade, which get in the way of reading
+  the name. The badge and the tooltip tell the causes apart: =ignored= with the
+  matching pattern and its source, or =not watched= with the metarecord whose
+  =mf_watch = false= decided. =reason = "ignored"= is always marked;
+  =reason = "watch_false"= only where it takes effect — an entry whose
+  =watch_scope= differs from the listed directory's. The rest of an unwatched
+  listing shares the directory's scope and stays unmarked: a fresh repository
+  has =mf_watch = false= on its root, and marking every row of it would be
+  noise. The call is skipped when there is no active repo.
 - *Offering.* The row context menu gains an *Ignore* submenu: /this path
   exactly/, /every =<ext>= here/, and /apply a preset…/. The first two build the
   pattern from the row's path re-anchored at the tracking scope

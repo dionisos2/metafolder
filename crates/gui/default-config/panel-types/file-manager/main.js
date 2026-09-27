@@ -103,10 +103,11 @@ export async function mount(root, metafolder) {
   let dirEntries = [];
   /** @type {Map<string, string>} absolute path -> metarecord uuid (children of currentDir only) */
   let trackedPaths = new Map();
-  /** Entries of the current listing an `mf_ignore` pattern excludes, and why
-   *  (spec-gui "Ignore patterns"). Absolute path -> {pattern, source}.
-   *  @type {Map<string, {pattern: string, source: string|null}>} */
-  let ignoredPaths = new Map();
+  /** Entries of the current listing left untracked on purpose — by an
+   *  `mf_ignore` pattern or where an `mf_watch = false` starts — and why
+   *  (spec-gui "Ignore patterns"). Absolute path -> exclusion.
+   *  @type {Map<string, import('./ignored.js').Exclusion>} */
+  let excludedPaths = new Map();
   /** How many watcher events arrived under each listed entry since the load
    *  (spec-gui "Watch activity"; recursive counts). Null when unknown — the
    *  daemon did not answer — which shows nothing rather than zeros.
@@ -199,7 +200,7 @@ export async function mount(root, metafolder) {
     const paths = listing.slice(0, rendered).map((item) => item.path);
     const result = await loadEligibility(daemon, repo, repoRoot, dir, paths);
     if (currentDir !== dir) return; // the user navigated away meanwhile
-    ignoredPaths = result.ignored;
+    excludedPaths = result.excluded;
     watchScope = result.scope;
   }
 
@@ -297,7 +298,7 @@ export async function mount(root, metafolder) {
     listing = [...synthetic, ...dirEntries];
     currentDir = dir;
     trackedPaths = new Map();
-    ignoredPaths = new Map();
+    excludedPaths = new Map();
     watchScope = null;
     activity = null;
     cursorIndex = -1;
@@ -363,7 +364,7 @@ export async function mount(root, metafolder) {
       ...listing.slice(0, rendered).map((item, index) => {
         const internal = isWithin(item.path, internalDir);
         const uuid = trackedPaths.get(item.path);
-        const ignored = ignoredPaths.get(item.path);
+        const excluded = excludedPaths.get(item.path);
         const unmounted = offlineFor(item.path);
         const events = activityOf(item.path);
         const hot = activity !== null && isHot(events, activity.total);
@@ -371,10 +372,12 @@ export async function mount(root, metafolder) {
           ? unavailableLabel(unmounted)
           : internal
           ? 'always excluded from tracking (live database)'
-          : ignored
-            ? `ignored by ${ignored.pattern}` +
-              (ignored.source === null ? '' : ` (set on ${ignored.source || '/'})`)
-            : null;
+          : excluded?.reason === 'ignored'
+            ? `not watched: ignored by ${excluded.pattern}` +
+              (excluded.source === null ? '' : ` (set on ${excluded.source || '/'})`)
+            : excluded
+              ? `not watched: mf_watch = false on ${excluded.source || '/'}`
+              : null;
         return el(
           'li',
           {
@@ -383,7 +386,7 @@ export async function mount(root, metafolder) {
               uuid && 'tracked',
               uuid && selection.has(uuid) && 'checked',
               internal && 'internal',
-              ignored && 'ignored',
+              excluded && 'unwatched',
               unmounted && 'unmounted',
               hot && 'hot',
               item.escaped && 'escaped-name',
@@ -428,8 +431,10 @@ export async function mount(root, metafolder) {
               ? '⏏ not mounted'
               : internal
                 ? 'internal'
-                : ignored
+                : excluded?.reason === 'ignored'
                   ? 'ignored'
+                  : excluded
+                    ? 'not watched'
                   : trackedPaths.has(item.path)
                     ? 'tracked'
                     : '',

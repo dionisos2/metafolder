@@ -1,6 +1,7 @@
-// file-manager ignore marking (spec-gui "Ignore patterns"): a listing's
-// excluded entries come from a single POST /eligibility, and the same call
-// yields the tracking scope the ad-hoc patterns must be anchored at.
+// file-manager exclusion marking (spec-gui "Ignore patterns"): a listing's
+// excluded entries — by an mf_ignore pattern or by mf_watch = false — come from
+// a single POST /eligibility, and the same call yields the tracking scope the
+// ad-hoc patterns must be anchored at.
 
 import { describe, expect, test, vi } from 'vitest';
 import {
@@ -48,14 +49,15 @@ describe('loadEligibility', () => {
     expect(body).toEqual({ paths: ['/work', '/work/target', '/work/src'] });
 
     expect(result.scope).toBe('');
-    expect([...result.ignored.keys()]).toEqual(['/data/repo/work/target']);
-    expect(result.ignored.get('/data/repo/work/target')).toEqual({
+    expect([...result.excluded.keys()]).toEqual(['/data/repo/work/target']);
+    expect(result.excluded.get('/data/repo/work/target')).toEqual({
+      reason: 'ignored',
       pattern: 'target(/.*)?$',
       source: '/work',
     });
   });
 
-  test('only "ignored" is marked — an unwatched repo is not an ignored one', async () => {
+  test('an unwatched repo is not marked: the whole listing shares the directory scope', async () => {
     const { daemon } = daemonStub([
       { path: '', eligible: false, reason: 'watch_false', watch_scope: '', ignore_source: null },
       { path: '/a', eligible: false, reason: 'watch_false', watch_scope: '', ignore_source: null },
@@ -63,14 +65,58 @@ describe('loadEligibility', () => {
     const result = await loadEligibility(daemon, 'repo1', '/data/repo', '/data/repo', [
       '/data/repo/a',
     ]);
-    expect(result.ignored.size).toBe(0);
+    expect(result.excluded.size).toBe(0);
+  });
+
+  test('mf_watch = false is marked where it starts: an entry whose scope is not the directory\'s', async () => {
+    const { daemon } = daemonStub([
+      { path: '/cfg', eligible: true, reason: 'tracked', watch_scope: '', ignore_source: null },
+      {
+        path: '/cfg/db',
+        eligible: false,
+        reason: 'watch_false',
+        watch_scope: '/cfg/db',
+        ignore_source: null,
+      },
+      { path: '/cfg/x', eligible: true, reason: 'tracked', watch_scope: '', ignore_source: null },
+    ]);
+    const result = await loadEligibility(daemon, 'repo1', '/data/repo', '/data/repo/cfg', [
+      '/data/repo/cfg/db',
+      '/data/repo/cfg/x',
+    ]);
+    expect([...result.excluded.keys()]).toEqual(['/data/repo/cfg/db']);
+    expect(result.excluded.get('/data/repo/cfg/db')).toEqual({
+      reason: 'watch_false',
+      source: '/cfg/db',
+    });
+  });
+
+  test('inside an unwatched subtree the entries are not marked one by one', async () => {
+    const { daemon } = daemonStub([
+      { path: '/cfg/db', eligible: false, reason: 'watch_false', watch_scope: '/cfg/db' },
+      { path: '/cfg/db/f', eligible: false, reason: 'watch_false', watch_scope: '/cfg/db' },
+    ]);
+    const result = await loadEligibility(daemon, 'repo1', '/data/repo', '/data/repo/cfg/db', [
+      '/data/repo/cfg/db/f',
+    ]);
+    expect(result.excluded.size).toBe(0);
+  });
+
+  test('without the directory\'s own answer, no mf_watch = false boundary is guessed', async () => {
+    const { daemon } = daemonStub([
+      { path: '/a', eligible: false, reason: 'watch_false', watch_scope: '' },
+    ]);
+    const result = await loadEligibility(daemon, 'repo1', '/data/repo', '/data/repo/d', [
+      '/data/repo/a',
+    ]);
+    expect(result.excluded.size).toBe(0);
   });
 
   test('paths outside the repository are dropped, and a listing wholly outside skips the call', async () => {
     const { daemon, call } = daemonStub([]);
     const result = await loadEligibility(daemon, 'repo1', '/data/repo', '/etc', ['/etc/passwd']);
     expect(call).not.toHaveBeenCalled();
-    expect(result.ignored.size).toBe(0);
+    expect(result.excluded.size).toBe(0);
     expect(result.scope).toBe(null);
   });
 
@@ -78,7 +124,7 @@ describe('loadEligibility', () => {
     const { daemon, call } = daemonStub([]);
     const result = await loadEligibility(daemon, null, null, '/data/repo', ['/data/repo/a']);
     expect(call).not.toHaveBeenCalled();
-    expect(result.ignored.size).toBe(0);
+    expect(result.excluded.size).toBe(0);
   });
 
   test('a daemon failure degrades to "nothing is known to be ignored"', async () => {
@@ -90,7 +136,7 @@ describe('loadEligibility', () => {
     const result = await loadEligibility(daemon, 'repo1', '/data/repo', '/data/repo', [
       '/data/repo/a',
     ]);
-    expect(result.ignored.size).toBe(0);
+    expect(result.excluded.size).toBe(0);
     expect(result.scope).toBe(null);
   });
 });
