@@ -5,6 +5,7 @@ import { byId, el, valueEl } from '/__ui.js';
 import { orphanState, orphanLabel } from '/__orphan.js';
 import { fetchMounts, offlineMountFor, relativeTo, unavailableLabel } from '/__mounts.js';
 import { fetchWatched, summarizeWatched } from '/__watched.js';
+import { activityTitle, fetchActivity, isHot } from '/__activity.js';
 import {
   createTypePicker,
   parseRawValue,
@@ -82,6 +83,7 @@ export async function mount(root, metafolder) {
   const orphanNote = byId(root, 'orphan-note');
   const mountNote = byId(root, 'mount-note');
   const watchNote = byId(root, 'watch-note');
+  const activityNote = byId(root, 'activity-note');
   const errorBox = byId(root, 'error');
   const addForm = byId(root, 'add-form');
   const addValueSlot = byId(root, 'add-value');
@@ -246,6 +248,7 @@ export async function mount(root, metafolder) {
       orphanNote.hidden = true;
       mountNote.hidden = true;
       watchNote.hidden = true;
+      activityNote.hidden = true;
     }
     placeholder.classList.toggle('hidden', hasContent);
     content.classList.toggle('hidden', !hasContent);
@@ -459,6 +462,7 @@ export async function mount(root, metafolder) {
     orphanNote.hidden = true;
     mountNote.hidden = true;
     watchNote.hidden = true;
+    activityNote.hidden = true;
     render();
     void fillPaths(selection);
     void fillOrphanNote();
@@ -567,13 +571,17 @@ export async function mount(root, metafolder) {
     const byUuid = await daemon.treePaths(selection.repo, 'mfr_path', [shown.uuid]).catch(() => null);
     const rels = byUuid?.[shown.uuid];
     let info = null;
+    /** @type {import('/__activity.js').Activity|null} */
+    let activity = null;
     if (rels && rels.length > 0) {
       const byPath = await fetchWatched(daemon, selection.repo, rels);
       info = summarizeWatched(rels.map((rel) => byPath.get(rel)));
+      activity = await fetchActivity(daemon, selection.repo, rels);
     }
     if (metarecord !== shown) return;
     watchMemo = { shown, info };
     applyWatchNote(info);
+    applyActivityNote(activity, rels ?? []);
     // The reconcile button's label follows the fetched answer (needsWatch):
     // "Watch and reconcile" only when the record is genuinely not watched.
     render();
@@ -591,6 +599,23 @@ export async function mount(root, metafolder) {
   function applyWatchNote(info) {
     if (info) showWatchNote(info.title, info.watched);
     else watchNote.hidden = true;
+  }
+
+  /** The watch activity note (spec-gui "Watch activity"): how many watcher
+   *  events arrived at the record's file (under it, for a directory) since the
+   *  load. A record at several paths shows its busiest one — the counts of
+   *  nested paths overlap, so a sum would count events twice. Nothing is shown
+   *  for a quiet record or an unanswered call.
+   *  @param {import('/__activity.js').Activity|null} activity @param {string[]} rels */
+  function applyActivityNote(activity, rels) {
+    const events = Math.max(0, ...rels.map((rel) => activity?.counts.get(rel) ?? 0));
+    if (!activity || events === 0) {
+      activityNote.hidden = true;
+      return;
+    }
+    activityNote.textContent = activityTitle(events, activity.total, activity.sinceMs);
+    activityNote.classList.toggle('hot', isHot(events, activity.total));
+    activityNote.hidden = false;
   }
 
   /** @param {Field} field @param {Metafolder.Value} newValue */

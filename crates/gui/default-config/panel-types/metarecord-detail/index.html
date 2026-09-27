@@ -61,6 +61,15 @@
       #watch-note.unwatched {
         color: var(--mf-warning, #d6a75e);
       }
+      /* Watcher events at the record since the load (spec-gui "Watch
+         activity"): dim, amber on a hot spot — a tenth of all events. */
+      #activity-note {
+        margin-bottom: 8px;
+        color: var(--mf-fg-dim, #8a8a96);
+      }
+      #activity-note.hot {
+        color: var(--mf-warning, #d6a75e);
+      }
       table {
         width: 100%;
         border-collapse: collapse;
@@ -165,6 +174,7 @@
       <div id="mount-note" hidden></div>
       <div id="orphan-note" hidden></div>
       <div id="watch-note" hidden></div>
+      <div id="activity-note" hidden></div>
       <table>
         <tbody id="field-rows"></tbody>
       </table>

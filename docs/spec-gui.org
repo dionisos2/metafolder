@@ -3366,6 +3366,31 @@ The row colouring is independent of it and stays as it is: =metarecord-list=
 paints a row purple when the record it shows is orphaned (see the concept
 above), whether or not a detection has ever run.
 
+** Watch activity
+
+Where the watcher's events come from (spec-file-tracking "Watch activity"): the
+daemon counts, per path and *recursively*, the events delivered since the
+repository was loaded, and two panels show the counts.
+
+- =file-manager= — each row carries the count of events under it (compact:
+  =7=, =1.2k=, =46k=), the ="."= row being the current directory's own; the
+  hover says how many, since when, and what share of the repository's total. A
+  row holding a tenth of all events or more (once the repository has seen at
+  least a hundred) is a *hot spot*: its count turns amber and bold. Browsing
+  from the root down the hot rows leads to the source — the directory to give
+  =mf_watch = false= or an =mf_ignore= pattern. The counts are fetched with
+  the listing's window (one =POST /watch/activity= per window, like the ignore
+  marking) and refreshed with it.
+- =metarecord-detail= — a note under the watch note: the count at the record's
+  file (under it, for a directory), with the same wording and the same amber
+  for a hot spot. A record at several paths shows its busiest one: the counts
+  of nested paths overlap, and a sum would count events twice.
+
+A quiet path (zero) shows nothing, and so does an unanswered call (the daemon
+down, or older than the endpoint): unknown never reads as zero. Nothing is
+excluded automatically — telling a noisy directory from a busy one (a file
+edited all afternoon, a large copy) is the user's call.
+
 ** Ignore patterns
 
 The GUI counterpart of =mf ignore= (spec-file-tracking "Ignore presets"). Two

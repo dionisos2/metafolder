@@ -11,6 +11,9 @@ import { resolve } from 'node:path';
 const PANEL_DIR = resolve(process.cwd(), '../default-config/panel-types/metarecord-detail');
 
 const REPO = 'repo-1';
+
+/** What POST /watch/activity answers, path → count (null = the endpoint fails). */
+let activityCounts: Record<string, number> | null = null;
 const UUID = 'aaa';
 
 /** The shadow root the shell's mount path builds. */
@@ -96,7 +99,19 @@ async function mountPanel(
       metarecords: async () => new Map(),
       fields: async () => [],
       request: async () => ({ status: 200, body: null }),
-      call: async (method: string, path: string, _callBody: unknown) => {
+      call: async (method: string, path: string, callBody: unknown) => {
+        if (path.endsWith('/watch/activity')) {
+          if (activityCounts === null) throw new Error('no such endpoint');
+          const counts = activityCounts;
+          return {
+            since_ms: 0,
+            total: counts[''] ?? 0,
+            results: (callBody as { paths: string[] }).paths.map((p) => ({
+              path: p,
+              events: counts[p] ?? 0,
+            })),
+          };
+        }
         const match = /\/metarecords\/([^/?]+)$/.exec(path);
         if (method === 'GET' && match)
           return { uuid: match[1], version: 1, fields: structuredClone(fields) };
@@ -153,6 +168,7 @@ async function mountPanel(
     shadow,
     note: shadow.getElementById('watch-note') as HTMLElement,
     watchBtn: shadow.getElementById('watch-reconcile') as HTMLButtonElement,
+    activity: shadow.getElementById('activity-note') as HTMLElement,
   };
 }
 
@@ -160,6 +176,7 @@ describe('metarecord-detail watch note', () => {
   beforeEach(() => {
     Element.prototype.scrollIntoView = () => {};
     document.body.replaceChildren();
+    activityCounts = null;
   });
 
   test('a not-watched record shows the reason in amber, and the watch button', async () => {
@@ -195,5 +212,23 @@ describe('metarecord-detail watch note', () => {
     // note says nothing rather than a misleading "not watched".
     const p = await mountPanel([watchResult()], false, []);
     expect(p.note.hidden).toBe(true);
+  });
+
+  // spec-gui "Watch activity": how many watcher events the record's file
+  // received since the load, and its share of the repository's.
+  test('the activity note counts the events at the record, amber on a hot spot', async () => {
+    activityCounts = { '': 1000, '/notes.txt': 400 };
+    const p = await mountPanel([watchResult()]);
+    expect(p.activity.hidden).toBe(false);
+    expect(p.activity.textContent).toContain('400 watcher event(s) since');
+    expect(p.activity.textContent).toContain('40% of all events');
+    expect(p.activity.classList.contains('hot')).toBe(true);
+  });
+
+  test('a quiet record, or an unanswered call, shows no activity note', async () => {
+    activityCounts = { '': 1000 };
+    expect((await mountPanel([watchResult()])).activity.hidden).toBe(true);
+    activityCounts = null;
+    expect((await mountPanel([watchResult()])).activity.hidden).toBe(true);
   });
 });

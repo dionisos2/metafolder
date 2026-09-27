@@ -21,6 +21,7 @@ import {
 } from './tracked.js';
 import { loadEligibility, scopedPath } from './ignored.js';
 import { ignoreTarget, patternForExtension, patternForPath } from '/__ignore.js';
+import { activityLabel, activityTitle, fetchActivity, isHot } from '/__activity.js';
 import { fetchMounts, offlineMountFor, relativeTo, unavailableLabel } from '/__mounts.js';
 import {
   joinPath,
@@ -92,6 +93,11 @@ export async function mount(root, metafolder) {
    *  (spec-gui "Ignore patterns"). Absolute path -> {pattern, source}.
    *  @type {Map<string, {pattern: string, source: string|null}>} */
   let ignoredPaths = new Map();
+  /** How many watcher events arrived under each listed entry since the load
+   *  (spec-gui "Watch activity"; recursive counts). Null when unknown — the
+   *  daemon did not answer — which shows nothing rather than zeros.
+   *  @type {import('/__activity.js').Activity|null} */
+  let activity = null;
   /** The current directory's tracking scope — patterns are matched relative to
    *  it, so an ad-hoc pattern must be written in that frame. @type {string|null} */
   let watchScope = null;
@@ -182,6 +188,28 @@ export async function mount(root, metafolder) {
     watchScope = result.scope;
   }
 
+  // The watch activity of the directory and its rendered entries: one call for
+  // the window, like the eligibility (spec-gui "Watch activity").
+  async function refreshActivity() {
+    const dir = currentDir;
+    if (dir === null) return;
+    /** @type {string[]} */
+    const rels = [];
+    for (const item of listing.slice(0, rendered)) {
+      const rel = relPath(item.path, repoRoot);
+      if (rel !== null && !rels.includes(rel)) rels.push(rel);
+    }
+    const found = await fetchActivity(daemon, repo, rels);
+    if (currentDir === dir) activity = found;
+  }
+
+  /** The count of an absolute path, or 0 when unknown or quiet.
+   *  @param {string} path */
+  function activityOf(path) {
+    const rel = activity ? relPath(path, repoRoot) : null;
+    return (rel !== null && activity?.counts.get(rel)) || 0;
+  }
+
   // Re-query the tracked status of the current directory (after a write, or an
   // external change): drop the stale map and refill it from the daemon.
   async function reenrichVisible() {
@@ -189,6 +217,7 @@ export async function mount(root, metafolder) {
     const dirUuid = await enrichSelfParent();
     await enrichChildren(dirUuid);
     await refreshEligibility();
+    await refreshActivity();
   }
 
   /** @param {string} dir @returns {Promise<void>} */
@@ -225,6 +254,7 @@ export async function mount(root, metafolder) {
     trackedPaths = new Map();
     ignoredPaths = new Map();
     watchScope = null;
+    activity = null;
     cursorIndex = -1;
     rendered = Math.min(PAGE, listing.length);
     render(); // rows appear at once; tracked badges fill in just below
@@ -234,6 +264,7 @@ export async function mount(root, metafolder) {
     const dirUuid = await enrichSelfParent();
     await enrichChildren(dirUuid);
     await refreshEligibility();
+    await refreshActivity();
     await refreshMounts();
     // The checked selection outlives the listings it was gathered in (checking
     // rows in several places is what it is for) — but a metarecord that no
@@ -289,6 +320,8 @@ export async function mount(root, metafolder) {
         const uuid = trackedPaths.get(item.path);
         const ignored = ignoredPaths.get(item.path);
         const unmounted = offlineFor(item.path);
+        const events = activityOf(item.path);
+        const hot = activity !== null && isHot(events, activity.total);
         const title = unmounted
           ? unavailableLabel(unmounted)
           : internal
@@ -307,6 +340,7 @@ export async function mount(root, metafolder) {
               internal && 'internal',
               ignored && 'ignored',
               unmounted && 'unmounted',
+              hot && 'hot',
               item.escaped && 'escaped-name',
             ],
             onclick: () => select(index),
@@ -333,6 +367,15 @@ export async function mount(root, metafolder) {
                 ),
               ]
             : []),
+          el(
+            'span',
+            {
+              class: 'activity',
+              ...(events > 0 &&
+                activity && { title: activityTitle(events, activity.total, activity.sinceMs) }),
+            },
+            events > 0 ? activityLabel(events) : '',
+          ),
           el(
             'span',
             { class: 'badge' },
@@ -953,6 +996,9 @@ export async function mount(root, metafolder) {
     total: () => listing.length,
     loadMore: async () => {
       rendered = Math.min(listing.length, rendered + PAGE);
+      render();
+      // The activity counts are per window (the rows just revealed have none).
+      await refreshActivity();
       render();
     },
   });

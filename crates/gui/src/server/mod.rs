@@ -46,6 +46,7 @@ const MULTI_SELECT_JS: &str = include_str!("../../panel-shim/multi-select.js");
 const FILE_ACTIONS_JS: &str = include_str!("../../panel-shim/file-actions.js");
 const IGNORE_JS: &str = include_str!("../../panel-shim/ignore.js");
 const WATCHED_JS: &str = include_str!("../../panel-shim/watched.js");
+const ACTIVITY_JS: &str = include_str!("../../panel-shim/activity.js");
 const WATCHER_SETTLE_JS: &str = include_str!("../../panel-shim/watcher-settle.js");
 const FIND_ENTRY_JS: &str = include_str!("../../panel-shim/find-entry.js");
 const KEYHINTS_JS: &str = include_str!("../../panel-shim/keyhints.js");
@@ -69,6 +70,7 @@ pub fn build_router(state: ServerState) -> Router {
         .route("/__ui.js", get(|| async { javascript(UI_JS) }))
         .route("/__ignore.js", get(|| async { javascript(IGNORE_JS) }))
         .route("/__watched.js", get(|| async { javascript(WATCHED_JS) }))
+        .route("/__activity.js", get(|| async { javascript(ACTIVITY_JS) }))
         .route("/__watcher-settle.js", get(|| async { javascript(WATCHER_SETTLE_JS) }))
         .route("/__menu.js", get(|| async { javascript(MENU_JS) }))
         .route("/__mounts.js", get(|| async { javascript(MOUNTS_JS) }))
