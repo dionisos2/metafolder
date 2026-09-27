@@ -1503,3 +1503,73 @@ fn test_flush_leaves_the_query_index_at_head() {
     let built = repo.index.lock().unwrap().as_ref().and_then(|i| i.built_at_head());
     assert_eq!(built, head, "the flush must leave the index at HEAD, not the next reader");
 }
+
+fn metarecord_count(repo: &RepoState) -> usize {
+    let conn = repo.conn.lock().unwrap();
+    metafolder_daemon::store::Rows::metarecord_count(&*conn).unwrap()
+}
+
+/// A file moved into a directory created just before, told the way a source
+/// that covers the whole filesystem tells it (the fanotify broker): the new
+/// directory's creation, and the *whole* move — not only its departure, as
+/// inotify reports a move into a directory it does not watch yet. The new
+/// directory's scan finds the file already there; it must leave it to the
+/// move, which keeps its identity. Ingesting it created a second metarecord,
+/// which the move then orphaned (early_journey, under the broker).
+#[test]
+fn test_a_whole_move_into_a_new_directory_keeps_the_metarecord() {
+    let (repo, root, _) = setup("wholemove");
+    write_file(&root, "/photos/a.jpg", b"a");
+    enqueue(&repo, &[FsEvent::Create("/photos".into()), FsEvent::Create("/photos/a.jpg".into())]);
+    executor::flush_pending(&repo).unwrap();
+    let a = resolve(&repo, "/photos/a.jpg").unwrap();
+    let before = metarecord_count(&repo);
+
+    std::fs::create_dir(root.join("archive")).unwrap();
+    std::fs::rename(root.join("photos/a.jpg"), root.join("archive/a.jpg")).unwrap();
+    enqueue(
+        &repo,
+        &[
+            FsEvent::Create("/archive".into()),
+            FsEvent::Rename("/photos/a.jpg".into(), "/archive/a.jpg".into()),
+        ],
+    );
+    executor::flush_pending(&repo).unwrap();
+
+    assert_eq!(resolve(&repo, "/archive/a.jpg"), Some(a), "the same metarecord, moved");
+    assert_eq!(metarecord_count(&repo), before + 1, "only the new directory was created");
+}
+
+/// The same with a directory moved in: its whole subtree arrives with it.
+#[test]
+fn test_a_whole_directory_moved_into_a_new_directory_keeps_its_subtree() {
+    let (repo, root, _) = setup("wholedirmove");
+    write_file(&root, "/inbox/trip/x.jpg", b"x");
+    enqueue(
+        &repo,
+        &[
+            FsEvent::Create("/inbox".into()),
+            FsEvent::Create("/inbox/trip".into()),
+            FsEvent::Create("/inbox/trip/x.jpg".into()),
+        ],
+    );
+    executor::flush_pending(&repo).unwrap();
+    let trip = resolve(&repo, "/inbox/trip").unwrap();
+    let x = resolve(&repo, "/inbox/trip/x.jpg").unwrap();
+    let before = metarecord_count(&repo);
+
+    std::fs::create_dir(root.join("sorted")).unwrap();
+    std::fs::rename(root.join("inbox/trip"), root.join("sorted/trip")).unwrap();
+    enqueue(
+        &repo,
+        &[
+            FsEvent::Create("/sorted".into()),
+            FsEvent::Rename("/inbox/trip".into(), "/sorted/trip".into()),
+        ],
+    );
+    executor::flush_pending(&repo).unwrap();
+
+    assert_eq!(resolve(&repo, "/sorted/trip"), Some(trip));
+    assert_eq!(resolve(&repo, "/sorted/trip/x.jpg"), Some(x));
+    assert_eq!(metarecord_count(&repo), before + 1, "only the new directory was created");
+}

@@ -469,6 +469,20 @@ fn flush_pending_once(repo: &RepoState, report: FlushReport) -> Result<FlushStat
         })
         .collect();
 
+    // Where the batch's whole moves land. A source that sees both sides of a
+    // move into a directory created in the same batch (the fanotify broker
+    // covers the whole filesystem) reports the directory's creation *and* the
+    // move; the directory's scan must leave the moved path to the move, which
+    // keeps its identity — ingesting it first created a second metarecord,
+    // which the move then orphaned.
+    let arriving: std::collections::HashSet<RelPath> = events
+        .iter()
+        .filter_map(|ev| match ev {
+            FsEvent::Rename(_, to) => Some(to.clone()),
+            _ => None,
+        })
+        .collect();
+
     // Group by kind, keeping groups ordered by first occurrence.
     let mut groups: Vec<(GroupKind, Vec<FsEvent>)> = Vec::new();
     for ev in events {
@@ -522,6 +536,7 @@ fn flush_pending_once(repo: &RepoState, report: FlushReport) -> Result<FlushStat
                 cache: &mut cache,
                 root: &repo.config.root,
                 departed: &departed,
+                arriving: &arriving,
                 offline: &offline,
                 orphan_limit: repo.orphan_cascade_limit,
                 repo_uuid: repo.uuid(),
@@ -695,6 +710,9 @@ struct Apply<'a, 'c> {
     /// Paths renamed *out of* a watched directory in this same batch, whose
     /// destination the watcher never saw. See [`Apply::find_departed_match`].
     departed: &'a [RelPath],
+    /// Where this batch's whole moves land: a new directory's scan leaves them
+    /// (and what is under them) to the move. See [`Apply::scan_dir`].
+    arriving: &'a std::collections::HashSet<RelPath>,
     /// Mount points that are declared but not mounted right now: every event
     /// landing in one is dropped, because the content behind those paths is
     /// *unavailable*, not gone (spec-file-tracking "Offline subtrees").
@@ -863,6 +881,11 @@ impl Apply<'_, '_> {
                 let child = dir.child(TreeName::from_bytes(crate::relpath::file_name_bytes(
                     &entry.file_name(),
                 )));
+                // A move of this same batch lands here: it brings the path —
+                // and a directory's whole subtree — with its identity.
+                if self.arriving.contains(&child) {
+                    continue;
+                }
                 // Descend into an eligible subdirectory to reach its own
                 // contents; an ignored one (and its whole subtree) is skipped.
                 if self.ingest_arrival(&child)? && self.is_dir(&child) {

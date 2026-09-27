@@ -1091,6 +1091,14 @@ event is applied as an ordinary move (one =file_moved=, no orphan, no
 duplicate); a moved *directory* carries its whole subtree with it, since
 children reference their parent by uuid.
 
+A source that sees the whole filesystem — the fanotify broker (see [[*Watch
+sources and regimes]]) — delivers such a move *whole*: the new directory's
+=Create= and a =Rename(Both)= into it, in one batch. The new directory's scan
+then leaves every path a move of the same batch lands on (and, for a directory,
+what is under it) to that move, which keeps its identity. Ingesting it first
+created a second metarecord at the destination, which the move then orphaned as
+a file it had overwritten.
+
 The batch's departures are indexed by that key once, not walked per arrival:
 a flush holds the repository connection for its whole duration, so a pairing
 that cost a =stat= and a database read per (arrival, departure) *pair* turned a
