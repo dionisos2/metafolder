@@ -95,6 +95,11 @@ pub struct RepoState {
     /// coherence, cost a transaction on the watcher's hot path, and made a batch
     /// the executor could not apply outlive a restart.
     pub pending: Mutex<Vec<(crate::executor::FsEvent, Option<i64>)>>,
+    /// How many events the watcher delivered under each path since the load
+    /// (spec-file-tracking "Watch activity"). In memory, like the buffer, and
+    /// separate from `conn`: counting is on the ingest path and reading it must
+    /// answer while a flush holds the connection.
+    pub watch_activity: Mutex<crate::watch_activity::WatchActivity>,
     /// How much history this repository's event log keeps behind HEAD: its own
     /// `config.json` override where set, the daemon's `[settings]` otherwise.
     /// Applied by every writer built through [`Self::writer`].
@@ -184,6 +189,10 @@ impl RepoState {
             exceeded_dirs: std::sync::atomic::AtomicUsize::new(0),
             watch_quiet_period: settings.watch_quiet_period(),
             pending: Mutex::new(Vec::new()),
+            watch_activity: Mutex::new(crate::watch_activity::WatchActivity::new(
+                metafolder_core::date::now_ms(),
+                crate::watch_activity::DEFAULT_CAP,
+            )),
             orphan_cascade_limit: settings.orphan_cascade_limit,
             log_retention,
             ingestion_paused: std::sync::atomic::AtomicBool::new(false),

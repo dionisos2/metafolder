@@ -706,7 +706,41 @@ async fn test_swapping_two_tracked_files_keeps_both_metarecords(regime: Regime) 
     std::fs::remove_dir_all(root).unwrap();
 }
 
+/// What the watcher delivers is counted under every ancestor of its path
+/// (spec-file-tracking "Watch activity"), so a client can walk down from the
+/// root to where the events come from.
+async fn test_delivered_events_are_counted_per_subtree(regime: Regime) {
+    let (app, repo, root) = watched_repo("e2e_activity", regime).await;
+    std::fs::create_dir(root.join("busy")).unwrap();
+    wait_for_paths(&app, &repo, &["", "busy"]).await;
+    for i in 0..5 {
+        std::fs::write(root.join("busy").join(format!("f{i}")), b"x").unwrap();
+    }
+    let mut last = Value::Null;
+    for _ in 0..100 {
+        let (status, body) = request(
+            &app,
+            "POST",
+            &format!("/repos/{repo}/watch/activity"),
+            Some(json!({"paths": ["", "/busy", "/busy/f0", "/quiet"]})),
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK, "{body}");
+        let events = |i: usize| body["results"][i]["events"].as_u64().unwrap();
+        if events(2) >= 1 && events(1) >= 5 {
+            assert!(events(0) >= events(1), "the root counts everything: {body}");
+            assert_eq!(events(3), 0);
+            assert_eq!(body["total"].as_u64(), Some(events(0)));
+            return;
+        }
+        last = body;
+        tokio::time::sleep(Duration::from_millis(100)).await;
+    }
+    panic!("the events under /busy were never counted; last seen {last}");
+}
+
 on_both_regimes!(
+    test_delivered_events_are_counted_per_subtree,
     test_watcher_tracks_create_rename_delete,
     test_load_succeeds_with_symlink_to_unreadable_dir,
     test_new_directory_does_not_wedge_the_daemon,

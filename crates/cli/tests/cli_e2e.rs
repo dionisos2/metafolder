@@ -4601,3 +4601,46 @@ fn test_repo_backup() {
     assert_ok(&out);
     assert!(to.join("config.json").exists());
 }
+
+// `mf watch activity` walks down from the root to where the watcher's events
+// come from (spec-file-tracking "Watch activity").
+#[test]
+fn test_watch_activity_ranks_the_busy_subtree() {
+    let (repo, root) = init_repo("watch_activity");
+    std::fs::create_dir_all(root.join("busy/deep")).unwrap();
+    let root_uuid = mf(&["-u", &repo, "metarecord", "get"]).stdout.trim().to_string();
+    assert_ok(&mf(&[
+        "-u",
+        &repo,
+        "metarecord",
+        "-i",
+        &root_uuid,
+        "field",
+        "set",
+        "mf_watch:bool=true",
+    ]));
+    assert_ok(&mf(&["-u", &repo, "reconcile"]));
+    for i in 0..4 {
+        std::fs::write(root.join(format!("busy/deep/f{i}")), b"x").unwrap();
+    }
+    let out = poll_mf(&["-u", &repo, "watch", "activity"], |s| {
+        s.contains("/busy\n") || s.ends_with("/busy")
+    });
+    assert!(out.starts_with("/: "), "{out}");
+    let out = mf(&["-u", &repo, "watch", "activity", "/busy"]);
+    assert_ok(&out);
+    assert!(out.stdout.starts_with("/busy: "), "{}", out.stdout);
+    assert!(out.stdout.contains("/busy/deep"), "{}", out.stdout);
+
+    // Late events may land right after a reset, so it is checked by its clock.
+    let since = |out: &Out| -> i64 {
+        serde_json::from_str::<serde_json::Value>(&out.stdout).unwrap()["since_ms"]
+            .as_i64()
+            .unwrap()
+    };
+    let before = since(&mf(&["-u", &repo, "watch", "activity", "--json"]));
+    std::thread::sleep(std::time::Duration::from_millis(5));
+    let reset = mf(&["-u", &repo, "watch", "activity", "--reset", "--json"]);
+    assert_ok(&reset);
+    assert!(since(&reset) > before, "{}", reset.stdout);
+}

@@ -605,6 +605,9 @@ fn ingest(
     source: Option<&dyn Source>,
     events: Vec<(FsEvent, Option<i64>)>,
 ) {
+    // Counted as delivered, before any filter: what the kernel sends is the
+    // load, whether or not it is recorded (spec-file-tracking "Watch activity").
+    repo.watch_activity.lock_recover().record(&events);
     // The coverage regime honours `mfr_watch_exceeded` by *dropping* what
     // happens under it; the budget regime honours it by never seeing it (no
     // watch is placed there). A move across the boundary keeps only its

@@ -38,4 +38,5 @@ pub mod sync;
 pub mod tasks;
 pub mod tree_cache;
 pub mod version;
+pub mod watch_activity;
 pub mod watcher;

@@ -857,6 +857,22 @@ enum WatchCommand {
         #[arg(long)]
         json: bool,
     },
+    /// How many watcher events arrived under a directory since the load, and
+    /// under which of its children — walk down from / to find the noise
+    Activity {
+        /// Directory (absolute filesystem path, or repo-root-relative with a
+        /// leading slash); the repository root when omitted
+        path: Option<String>,
+        /// How many children to list
+        #[arg(long, default_value_t = 20)]
+        limit: usize,
+        /// Forget every count and start again
+        #[arg(long, conflicts_with = "path")]
+        reset: bool,
+        /// Print the raw JSON response body
+        #[arg(long)]
+        json: bool,
+    },
     /// Subtrees left unwatched for want of inotify watches (the budget)
     Exceeded {
         #[command(subcommand)]
@@ -1192,6 +1208,9 @@ fn dispatch(ctx: &Ctx, command: Command) -> CmdResult {
                 WatchCommand::Check { paths, json } => commands::watch_check(ctx, &paths, json),
                 WatchCommand::Pause { json } => commands::watch_pause(ctx, json),
                 WatchCommand::Resume { json } => commands::watch_resume(ctx, json),
+                WatchCommand::Activity { path, limit, reset, json } => {
+                    commands::watch_activity(ctx, path.as_deref(), limit, reset, json)
+                }
                 WatchCommand::Exceeded { command, json } => {
                     match command.unwrap_or(ExceededCommand::List) {
                         ExceededCommand::List => commands::watch_exceeded_list(ctx, json),

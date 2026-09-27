@@ -110,6 +110,8 @@ pub fn build(state: Arc<AppState>) -> Router {
         .route("/repos/:repo/watch/resume", post(watch_resume))
         .route("/repos/:repo/watch/exceeded", get(watch_exceeded_list).post(watch_exceeded_set))
         .route("/repos/:repo/watch/check", post(watch_check))
+        .route("/repos/:repo/watch/activity", get(watch_activity_children).post(watch_activity_of))
+        .route("/repos/:repo/watch/activity/reset", post(watch_activity_reset))
         .route("/repos/:repo/orphans/scan", post(orphans_scan))
         .route("/repos/:repo/orphans/clear", post(orphans_clear))
         .route("/repos/:repo/orphans/mark", post(orphans_mark))
@@ -2503,6 +2505,97 @@ async fn watch_resume(
     let repo_state = state.repo(repo_uuid)?;
     repo_state.resume_ingestion();
     Ok(Json(watch_view(&repo_state)))
+}
+
+/// The most children `GET /watch/activity` lists when no `limit` is given.
+const ACTIVITY_DEFAULT_CHILDREN: usize = 50;
+
+/// A repo-root-relative path as the watch routes take it: `""` for the root,
+/// a leading slash otherwise.
+fn watch_rel_path(path: &str) -> Result<crate::relpath::RelPath, ApiError> {
+    if !path.is_empty() && !path.starts_with('/') {
+        return Err(ApiError::bad_request(format!(
+            "path must be repo-root-relative with a leading slash: {path:?}"
+        )));
+    }
+    Ok(crate::relpath::RelPath::from_display(path))
+}
+
+fn activity_entry(path: &crate::relpath::RelPath, events: u64) -> serde_json::Value {
+    json!({ "path": path.display(), "events": events })
+}
+
+#[derive(Deserialize)]
+struct WatchActivityBody {
+    paths: Vec<String>,
+}
+
+/// `POST /repos/:repo/watch/activity`: how many watcher events were delivered
+/// under each of the given paths (recursive; spec-file-tracking "Watch
+/// activity"). In memory: never waits for the connection.
+async fn watch_activity_of(
+    State(state): State<Arc<AppState>>,
+    Path(repo): Path<String>,
+    payload: Result<Json<WatchActivityBody>, JsonRejection>,
+) -> Result<Json<serde_json::Value>, ApiError> {
+    let Json(body) = payload?;
+    let repo_state = state.repo(parse_uuid(&repo)?)?;
+    if body.paths.len() > ELIGIBILITY_MAX_PATHS {
+        return Err(ApiError::bad_request(format!(
+            "at most {ELIGIBILITY_MAX_PATHS} paths per call, got {}",
+            body.paths.len()
+        )));
+    }
+    let paths = body.paths.iter().map(|p| watch_rel_path(p)).collect::<Result<Vec<_>, _>>()?;
+    let activity = repo_state.watch_activity.lock_recover();
+    let results: Vec<_> = paths.iter().map(|p| activity_entry(p, activity.count(p))).collect();
+    Ok(Json(json!({
+        "since_ms": activity.since_ms(),
+        "total": activity.total(),
+        "results": results,
+    })))
+}
+
+#[derive(Deserialize)]
+struct WatchActivityParams {
+    #[serde(default)]
+    path: String,
+    limit: Option<usize>,
+}
+
+/// `GET /repos/:repo/watch/activity?path=&limit=`: one path's count and its
+/// busiest direct children — one step of the walk down from the root to where
+/// the events come from.
+async fn watch_activity_children(
+    State(state): State<Arc<AppState>>,
+    Path(repo): Path<String>,
+    Query(params): Query<WatchActivityParams>,
+) -> Result<Json<serde_json::Value>, ApiError> {
+    let repo_state = state.repo(parse_uuid(&repo)?)?;
+    let path = watch_rel_path(&params.path)?;
+    let limit = params.limit.unwrap_or(ACTIVITY_DEFAULT_CHILDREN);
+    let activity = repo_state.watch_activity.lock_recover();
+    let children: Vec<_> =
+        activity.children(&path, limit).iter().map(|(p, n)| activity_entry(p, *n)).collect();
+    Ok(Json(json!({
+        "since_ms": activity.since_ms(),
+        "total": activity.total(),
+        "path": path.display(),
+        "events": activity.count(&path),
+        "children": children,
+    })))
+}
+
+/// `POST /repos/:repo/watch/activity/reset`: forgets every count and restarts
+/// the clock.
+async fn watch_activity_reset(
+    State(state): State<Arc<AppState>>,
+    Path(repo): Path<String>,
+) -> Result<Json<serde_json::Value>, ApiError> {
+    let repo_state = state.repo(parse_uuid(&repo)?)?;
+    let mut activity = repo_state.watch_activity.lock_recover();
+    activity.reset(metafolder_core::date::now_ms());
+    Ok(Json(json!({ "since_ms": activity.since_ms(), "total": activity.total() })))
 }
 
 #[derive(Deserialize)]

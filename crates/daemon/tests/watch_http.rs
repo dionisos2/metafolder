@@ -375,3 +375,113 @@ async fn watch_check_validates_its_input() {
     .await;
     assert_eq!(status, StatusCode::NOT_FOUND);
 }
+
+// ── Watch activity (spec-file-tracking "Watch activity") ────────────────────
+
+/// Feeds events to the repository's activity counter as the watcher would.
+fn deliver(state: &AppState, repo: &str, paths: &[&str]) {
+    use metafolder_daemon::executor::FsEvent;
+    use metafolder_daemon::relpath::RelPath;
+    let repo_state = state.repo(uuid::Uuid::parse_str(repo).unwrap()).unwrap();
+    let events: Vec<(FsEvent, Option<i64>)> =
+        paths.iter().map(|p| (FsEvent::ModifyData(RelPath::from_display(p)), None)).collect();
+    repo_state.watch_activity.lock().unwrap().record(&events);
+}
+
+#[tokio::test]
+async fn watch_activity_counts_recursively_per_path() {
+    let state = std::sync::Arc::new(AppState::new());
+    let app = routes::build(state.clone());
+    let root = TempDir::new("watch_activity");
+    let repo = init_repo(&app, &root).await;
+
+    let (status, body) = request(
+        &app,
+        "POST",
+        &format!("/repos/{repo}/watch/activity"),
+        Some(json!({"paths": ["", "/a"]})),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    assert_eq!(body["total"], json!(0));
+    assert!(body["since_ms"].as_i64().unwrap() > 0);
+
+    deliver(&state, &repo, &["/a/b/x", "/a/b/y", "/a/c", "/d"]);
+
+    let (status, body) = request(
+        &app,
+        "POST",
+        &format!("/repos/{repo}/watch/activity"),
+        Some(json!({"paths": ["", "/a", "/a/b", "/d", "/nowhere"]})),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    assert_eq!(body["total"], json!(4));
+    assert_eq!(
+        body["results"],
+        json!([
+            {"path": "", "events": 4},
+            {"path": "/a", "events": 3},
+            {"path": "/a/b", "events": 2},
+            {"path": "/d", "events": 1},
+            {"path": "/nowhere", "events": 0},
+        ])
+    );
+}
+
+#[tokio::test]
+async fn watch_activity_lists_the_busiest_children_and_resets() {
+    let state = std::sync::Arc::new(AppState::new());
+    let app = routes::build(state.clone());
+    let root = TempDir::new("watch_activity_children");
+    let repo = init_repo(&app, &root).await;
+    deliver(&state, &repo, &["/a/b/x", "/a/b/y", "/a/c", "/d"]);
+
+    let (status, body) = request(&app, "GET", &format!("/repos/{repo}/watch/activity"), None).await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    assert_eq!(body["path"], json!(""));
+    assert_eq!(body["events"], json!(4));
+    assert_eq!(body["total"], json!(4));
+    assert_eq!(body["children"], json!([{"path": "/a", "events": 3}, {"path": "/d", "events": 1}]));
+
+    let (status, body) =
+        request(&app, "GET", &format!("/repos/{repo}/watch/activity?path=/a&limit=1"), None).await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    assert_eq!(body["events"], json!(3));
+    assert_eq!(body["children"], json!([{"path": "/a/b", "events": 2}]));
+
+    let (status, body) =
+        request(&app, "POST", &format!("/repos/{repo}/watch/activity/reset"), Some(json!({})))
+            .await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    assert_eq!(body["total"], json!(0));
+    let (_, body) = request(&app, "GET", &format!("/repos/{repo}/watch/activity"), None).await;
+    assert_eq!(body["children"], json!([]));
+}
+
+#[tokio::test]
+async fn watch_activity_validates_its_input() {
+    let app = routes::build(std::sync::Arc::new(AppState::new()));
+    let root = TempDir::new("watch_activity_validate");
+    let repo = init_repo(&app, &root).await;
+    let (status, _) = request(
+        &app,
+        "POST",
+        &format!("/repos/{repo}/watch/activity"),
+        Some(json!({"paths": ["relative"]})),
+    )
+    .await;
+    assert_eq!(status, StatusCode::BAD_REQUEST);
+    let too_many: Vec<String> = (0..1001).map(|i| format!("/{i}")).collect();
+    let (status, _) = request(
+        &app,
+        "POST",
+        &format!("/repos/{repo}/watch/activity"),
+        Some(json!({ "paths": too_many })),
+    )
+    .await;
+    assert_eq!(status, StatusCode::BAD_REQUEST);
+    let (status, _) =
+        request(&app, "GET", &format!("/repos/{repo}/watch/activity?path=relative"), None).await;
+    assert_eq!(status, StatusCode::BAD_REQUEST);
+}

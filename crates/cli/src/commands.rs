@@ -2321,6 +2321,71 @@ pub fn watch_check(ctx: &Ctx, paths: &[String], raw_json: bool) -> Result<i32, C
     Ok(if unwatched > 0 { 1 } else { 0 })
 }
 
+/// `mf watch activity [path]`: one step of the walk from the root down to where
+/// the watcher's events come from (spec-file-tracking "Watch activity").
+pub fn watch_activity(
+    ctx: &Ctx,
+    path: Option<&str>,
+    limit: usize,
+    reset: bool,
+    raw_json: bool,
+) -> Result<i32, CliError> {
+    let base = ctx.repo_base()?;
+    if reset {
+        let resp = ctx.client.post(&format!("{base}/watch/activity/reset"), &json!({}))?;
+        if raw_json {
+            print_pretty(&resp);
+        } else {
+            println!("watch activity reset");
+        }
+        return Ok(0);
+    }
+    let rel = match path {
+        Some(raw) => {
+            let info = ctx.repo_info()?;
+            let root = info["root"]
+                .as_str()
+                .ok_or_else(|| CliError::Op("daemon did not report the repo root".into()))?;
+            watch_check_rel(Path::new(root), raw)?
+        }
+        None => String::new(),
+    };
+    let resp = ctx.client.request(
+        "GET",
+        &format!("{base}/watch/activity"),
+        &[("path", rel), ("limit", limit.to_string())],
+        None,
+    )?;
+    if raw_json {
+        print_pretty(&resp);
+    } else {
+        print!("{}", format_watch_activity(&resp));
+    }
+    Ok(0)
+}
+
+/// The path's count, then its busiest children, each as a share of the total —
+/// the share of the whole load is what says whether a subtree is worth
+/// excluding.
+fn format_watch_activity(resp: &Json) -> String {
+    let total = resp["total"].as_u64().unwrap_or(0);
+    let events = resp["events"].as_u64().unwrap_or(0);
+    let pct = |n: u64| if total == 0 { 0.0 } else { n as f64 * 100.0 / total as f64 };
+    let path = shown_path(resp, "path");
+    let since = metafolder_core::date::iso8601_from_ms(resp["since_ms"].as_i64().unwrap_or(0));
+    let mut out = format!("{path}: {events} event(s) since {since}");
+    if path != "/" {
+        out.push_str(&format!(" ({:.1}% of {total})", pct(events)));
+    }
+    out.push('\n');
+    for child in resp["children"].as_array().into_iter().flatten() {
+        let n = child["events"].as_u64().unwrap_or(0);
+        let p = child["path"].as_str().unwrap_or_default();
+        out.push_str(&format!("{n:>8}  {:>5.1}%  {p}\n", pct(n)));
+    }
+    out
+}
+
 pub fn watch_pause(ctx: &Ctx, raw_json: bool) -> Result<i32, CliError> {
     let base = ctx.repo_base()?;
     let resp = ctx.client.post(&format!("{base}/watch/pause"), &json!({}))?;
@@ -2789,6 +2854,22 @@ pub fn trash_prune_mode(
 
 #[cfg(test)]
 mod tests {
+
+    #[test]
+    fn watch_activity_names_the_path_and_ranks_its_children_against_the_total() {
+        let resp = json!({
+            "since_ms": 0, "total": 200, "path": "/dev", "events": 150,
+            "children": [{"path": "/dev/proj", "events": 120}, {"path": "/dev/x", "events": 30}],
+        });
+        assert_eq!(
+            format_watch_activity(&resp),
+            "/dev: 150 event(s) since 1970-01-01T00:00:00Z (75.0% of 200)\n\
+             \x20    120   60.0%  /dev/proj\n\
+             \x20     30   15.0%  /dev/x\n"
+        );
+        let root = json!({"since_ms": 0, "total": 0, "path": "", "events": 0, "children": []});
+        assert_eq!(format_watch_activity(&root), "/: 0 event(s) since 1970-01-01T00:00:00Z\n");
+    }
     use super::*;
 
     // ── --eq / --tsv helpers ─────────────────────────────────────────────────

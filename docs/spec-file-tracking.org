@@ -1650,9 +1650,77 @@ skips, then the unexplained remainder — the last one budget-only).
 The GUI marks unwatched records in the
 [[file:spec-gui.org][spec-gui.org]] metarecord-list (amber, reason on hover)
 and states the verdict in metarecord-detail; the CLI command is =check= under
-[[*mf watch {status, pause, resume, check, exceeded}]]. Both treat a missing
+[[*mf watch {status, pause, resume, check, activity, exceeded}]]. Both treat a missing
 answer (daemon down, or older than the endpoint) as "unknown", never as
 "unwatched".
+
+** Watch activity
+
+#+BEGIN_SRC
+POST /repos/:repo_uuid/watch/activity
+GET  /repos/:repo_uuid/watch/activity?path=<repo-root-relative>&limit=<n>
+POST /repos/:repo_uuid/watch/activity/reset
+#+END_SRC
+
+*Where do the events come from?* A repository can receive far more events than
+its user makes — a build tree, a browser cache, a package manager's objects —
+and neither =mf_ignore= patterns written in advance nor a hunt for the culprit
+directory by hand find them all. So the daemon counts, per path, the events the
+watcher delivers.
+
+- *Recursive.* An event at =/a/b/c= counts once on =/a/b/c=, =/a/b=, =/a= and
+  the root; a rename counts once on every path along either of its sides. The
+  root's count is therefore the total, and following the largest count down
+  from it leads to the source. A per-directory count would not: a build tree
+  scatters its events over hundreds of hash-named directories, each quiet on
+  its own, and the directory responsible never shows.
+- *As delivered.* Counted when the event reaches the watcher's ingest thread,
+  before compaction and before any filter. What the kernel sends is the load —
+  under the coverage regime ([[*Watch sources and regimes]]) an untracked
+  subtree still sends events and still counts; under the budget regime it holds
+  no watch and sends nothing.
+- *In memory only.* The counter starts at zero when the repository is loaded
+  (=since_ms=) and on =reset=. It is a diagnosis of the current load, not a
+  history: nothing is written to the database, which would add a revision per
+  flush to the very log the noise already floods.
+- *Bounded.* At most 100 000 paths are held. Past that the least active are
+  dropped — deepest first among equal counts, so a path never outlives its
+  parent. A dropped path that becomes active again restarts from zero: small
+  counts are approximate, large ones exact.
+
+Nothing is excluded automatically. Telling a noisy directory from a busy one is
+the user's call — a file being edited all afternoon, a large copy, a build
+directory all produce many events, and only the last is noise — so the counter
+informs the decision (=mf_watch = false=, an =mf_ignore= pattern) and does not
+take it.
+
+*=POST /watch/activity=* — the counts of a list of paths (leading slash, =""= is
+the root, at most 1000 per call: one request per directory listing):
+
+#+BEGIN_SRC json
+{"since_ms": 1759000000000, "total": 182340,
+ "results": [{"path": "/dev/proj", "events": 111204},
+             {"path": "/music", "events": 0}]}
+#+END_SRC
+
+*=GET /watch/activity=* — one path's count (=path=, default the root) and its
+busiest direct children, most active first, at most =limit= (default 50): one
+step of the walk down from the root.
+
+#+BEGIN_SRC json
+{"since_ms": 1759000000000, "total": 182340, "path": "", "events": 182340,
+ "children": [{"path": "/dev", "events": 111210},
+              {"path": "/.cache", "events": 40118}]}
+#+END_SRC
+
+*=POST /watch/activity/reset=* — forgets every count and restarts the clock;
+answers ={"since_ms": …, "total": 0}=.
+
+All three answer from memory and never wait for the repository's connection, so
+they answer during a long flush — which is when the question is asked. The CLI
+command is =activity= under [[*mf watch {status, pause, resume, check, activity, exceeded}]];
+the GUI shows the count in the file-manager and metarecord-detail
+([[file:spec-gui.org][spec-gui.org]]).
 
 ** Effective ignore set
 
@@ -1772,11 +1840,12 @@ unless =-y= is given.
 There is no =mf mount add=: mount points are detected, not declared. Mounting a
 volume and running =mf reconcile= is what records one.
 
-** =mf watch {status, pause, resume, check, exceeded}=
+** =mf watch {status, pause, resume, check, activity, exceeded}=
 
 Controls the ingestion of filesystem events for the repository (see
-[[*Pausing ingestion]]), the watch budget (see [[*The watch budget]]), and the
-watch state of individual paths (see [[*Watch check]]).
+[[*Pausing ingestion]]), the watch budget (see [[*The watch budget]]), the
+watch state of individual paths (see [[*Watch check]]), and shows where the
+events come from (see [[*Watch activity]]).
 
 =status= (the default) calls =GET /watch= and prints one line — =running= or
 =paused=, the number of buffered events, and the coverage with the active source
@@ -1812,6 +1881,20 @@ from disk is taken as already repo-root-relative (an orphan's stale path). The
 exit code is 1 ("found problems") when any path is not watched, so a script can
 assert on watchability the way =mf schema check= does on violations. =--json=
 prints the raw response body.
+
+=activity [<dir>] [--limit N]= calls =GET /watch/activity= (see [[*Watch
+activity]]) and prints the directory's count (the repository root by default)
+followed by its busiest children, each as a share of the total — one step of
+the walk down to the noise; run it again on the child that dominates:
+
+#+BEGIN_SRC
+/: 182340 event(s) since 2026-09-27T14:02:11Z
+  111210   61.0%  /dev
+   40118   22.0%  /.cache
+#+END_SRC
+
+The directory is taken as in =check=. =--limit= (default 20) bounds the list,
+=--reset= calls =POST /watch/activity/reset=, =--json= prints the raw body.
 
 =exceeded= manages =mfr_watch_exceeded=, the subtrees left *uncovered* — by
 want of budget, or deliberately. It is named after the field rather than after
