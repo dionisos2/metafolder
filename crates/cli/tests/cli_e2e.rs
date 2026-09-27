@@ -4602,6 +4602,29 @@ fn test_repo_backup() {
     assert!(to.join("config.json").exists());
 }
 
+/// `mf repo restore` puts the most recent backup back: what was written
+/// since is gone, and the command says so and advises a reconcile. With
+/// `--path`, it restores a repository by its root.
+#[test]
+fn test_repo_restore() {
+    let (repo, root) = init_repo("restore");
+    let kept = create_metarecord(&repo, &["note:string=kept"]);
+    assert_ok(&mf(&["-u", &repo, "repo", "backup"]));
+    create_metarecord(&repo, &["note:string=lost"]);
+
+    let out = mf(&["-u", &repo, "repo", "restore"]);
+    assert_ok(&out);
+    assert!(out.stdout.contains("restored from"), "{}", out.stdout);
+    assert!(out.stderr.contains("mf reconcile"), "{}", out.stderr);
+    let out = mf(&["-u", &repo, "metarecord", "-q", "note IS PRESENT", "get"]);
+    assert_ok(&out);
+    assert_eq!(out.stdout.trim(), kept);
+
+    let out = mf(&["repo", "restore", "--path", root.to_str().unwrap()]);
+    assert_ok(&out);
+    assert!(out.stdout.contains("restored from"), "{}", out.stdout);
+}
+
 // `mf watch activity` walks down from the root to where the watcher's events
 // come from (spec-file-tracking "Watch activity").
 #[test]

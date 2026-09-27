@@ -306,6 +306,51 @@ pub fn backup_repo(ctx: &Ctx, to: Option<&Path>) -> Result<i32, CliError> {
     Ok(0)
 }
 
+/// `mf repo restore [--from DIR] [--path ROOT | --metafolder DIR]`: prints
+/// the backup put back and where the old store went; everything since the
+/// backup is lost, which it says on stderr with the advice to reconcile.
+pub fn restore_repo(
+    ctx: &Ctx,
+    from: Option<&Path>,
+    root: Option<&Path>,
+    metafolder: Option<&Path>,
+) -> Result<i32, CliError> {
+    let mut body = json!({});
+    if let Some(from) = from {
+        body["from"] = json!(absolutize(from)?);
+    }
+    let url = match (root, metafolder) {
+        (None, None) => format!("{}/restore", ctx.repo_base()?),
+        (Some(root), _) => {
+            body["root"] = json!(absolutize(root)?);
+            "/repos/restore".to_string()
+        }
+        (None, Some(dir)) => {
+            body["metafolder"] = json!(absolutize(dir)?);
+            "/repos/restore".to_string()
+        }
+    };
+    let resp = ctx.client.request("POST", &url, &[], Some(&body))?;
+    let backup = &resp["backup"];
+    let taken = backup["created_at_ms"]
+        .as_i64()
+        .map(metafolder_core::date::iso8601_from_ms)
+        .unwrap_or_else(|| "?".into());
+    println!(
+        "restored from {} (taken {taken}, {}, {} metarecords)",
+        backup["path"].as_str().unwrap_or_default(),
+        backup["storage"].as_str().unwrap_or("?"),
+        backup["metarecords"].as_u64().unwrap_or(0),
+    );
+    if let Some(old) = resp["old_store"].as_str() {
+        println!("previous store set aside: {old}");
+    }
+    eprintln!(
+        "everything written since {taken} is lost; run `mf reconcile` to catch up with the files"
+    );
+    Ok(0)
+}
+
 /// `mf repo reindex`.
 pub fn reindex_repo(ctx: &Ctx) -> Result<i32, CliError> {
     let base = ctx.repo_base()?;

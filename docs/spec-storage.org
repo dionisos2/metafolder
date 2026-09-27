@@ -655,9 +655,37 @@ and =MDB_NOMETASYNC= saved almost nothing — one =fsync= dominates either way.
    /automatic/ backup every =auto-backup-days= days (daemon settings, default
    1, 0 turns it off) into the single slot =internal/backups/auto/=, looking
    at startup and then every hour; a failure is a warning in the repository's
-   diagnostics. Restoring is manual: with the daemon stopped, the backup's
-   =db.sqlite= or =kv/= goes back into =.metafolder/internal/= (and its
-   =config.json= into =.metafolder/=, if the config itself was lost).
+   diagnostics.
+   *(restore)* =mf repo restore [--from DIR]= puts a backup back. The
+   repository is either a loaded one (=-n=/=-u=, =POST /repos/:repo/restore=)
+   or — since the usual reason to restore is a store that no longer loads —
+   one named by its path (=mf repo restore --path ROOT=, =--metafolder DIR=
+   for an external one; =POST /repos/restore {root|metafolder, from?}=). A
+   loaded repository is unloaded, restored and loaded back, as a conversion
+   does (the path form of a loaded one takes the same route); an unloaded one
+   is loaded once restored. The backup is =--from DIR= or, by default, the
+   most recent one under =internal/backups/= (by the time in its
+   =backup.json=; a directory without one is not a backup). It must be the
+   same repository — its =config.json= names the same =repo_uuid= — and is
+   refused otherwise. Its store is copied beside the current one
+   (=internal/restoring-…=), opened and checked: a backup that no longer
+   checks clean changes nothing. Then the current store, if there is one, is
+   set aside as =internal/pre-restore-<time>-<name>= (the daemon never
+   deletes it), the copy takes its place, and =config.json= switches to the
+   backup's backend (the repository may have been converted since). An
+   interruption leaves the old store set aside, and restoring again completes
+   it. When =config.json= itself was lost, the backup's is written; otherwise
+   only its =storage= changes. =schema.json= is not touched: it is ordinary
+   trackable content, and the backup's copy is there to take by hand.
+   Everything written since the backup is lost — the user's edits and the
+   file changes the watcher recorded. The command says when the backup was
+   taken and advises =mf reconcile= to catch up with the files; it does not
+   run it (user decision). A repository whose store is missing does not
+   load (a load used to create an empty store in its place — a repository
+   that forgets everything, which a reconcile then filled and the automatic
+   backup took over the last good one): the path form is how it comes back.
+   The log's head moves back, which a client of
+   =GET /log/since= sees as a moved head without operations — a full refresh.
 
 ** Increment 4, concretely
 

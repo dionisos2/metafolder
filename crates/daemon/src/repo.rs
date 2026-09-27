@@ -232,14 +232,26 @@ pub fn load_repository(locator: RepoLocator) -> Result<OpenedRepo> {
     let internal_dir = metafolder_dir.join(INTERNAL_DIR);
     std::fs::create_dir_all(&internal_dir)
         .with_context(|| format!("Failed to create {internal_dir:?}"))?;
+    if config.storage == Storage::Sqlite {
+        let _p = Phase::begin(&who, "migrate the on-disk layout");
+        migrate_legacy_db_layout(&metafolder_dir, &internal_dir)?;
+    }
+    // Opening a store that is not there would create an empty one in its
+    // place — a repository that loads, and forgets everything.
+    let store = internal_dir.join(match config.storage {
+        Storage::Sqlite => DB_FILE,
+        Storage::Kv => KV_DIR,
+    });
+    if !store.exists() {
+        return Err(DomainError::NotFound(format!(
+            "the store of {:?} is missing ({}); `mf repo restore --path` puts a backup back",
+            config.name,
+            store.display()
+        ))
+        .into());
+    }
     let conn: crate::store::Handle = match config.storage {
-        Storage::Sqlite => {
-            {
-                let _p = Phase::begin(&who, "migrate the on-disk layout");
-                migrate_legacy_db_layout(&metafolder_dir, &internal_dir)?;
-            }
-            Box::new(db::open_database(&internal_dir.join(DB_FILE), &who)?)
-        }
+        Storage::Sqlite => Box::new(db::open_database(&internal_dir.join(DB_FILE), &who)?),
         Storage::Kv => {
             let _p = Phase::begin(&who, "open the key-value store");
             Box::new(crate::kvstore::KvStore::open(&internal_dir.join(KV_DIR))?)

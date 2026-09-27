@@ -1237,12 +1237,23 @@ impl AppState {
                 storage_name(to)
             )));
         }
+        drop(repo_state);
+        let locator = self.release(repo_uuid)?;
+        let converted = crate::convert::convert_repository(locator.clone(), to);
+        self.reload(locator)?;
+        converted.map_err(|e| ApiError::internal(format!("conversion failed: {e:#}")))
+    }
+
+    /// Unloads a repository and waits until its store is released — a
+    /// request still running holds it a moment longer, and its store (and
+    /// its lock) goes with the last reference. Answers where it lives, to
+    /// load it back.
+    fn release(&self, repo_uuid: Uuid) -> Result<RepoLocator, ApiError> {
+        let repo_state = self.repo(repo_uuid)?;
         let locator = RepoLocator::Metafolder(repo_state.metafolder_dir.clone());
         let released = Arc::downgrade(&repo_state);
         drop(repo_state);
         self.unload_repo(repo_uuid)?;
-        // A request still running holds the repository a moment longer; its
-        // store (and its lock) goes with the last reference.
         let deadline = std::time::Instant::now() + std::time::Duration::from_secs(60);
         while released.strong_count() > 0 {
             if std::time::Instant::now() > deadline {
@@ -1251,9 +1262,57 @@ impl AppState {
             }
             std::thread::sleep(std::time::Duration::from_millis(20));
         }
-        let converted = crate::convert::convert_repository(locator.clone(), to);
-        self.reload(locator)?;
-        converted.map_err(|e| ApiError::internal(format!("conversion failed: {e:#}")))
+        Ok(locator)
+    }
+
+    /// Restores a repository from a backup (`mf repo restore`, spec-storage
+    /// increment 5): `from`, or its most recent one. A loaded repository is
+    /// released, restored and loaded back — on its old store when the
+    /// restore failed, which then changed nothing; one that is not loaded
+    /// (its store may be what no longer loads) is restored and then loaded.
+    pub fn restore_repo(
+        &self,
+        locator: RepoLocator,
+        from: Option<PathBuf>,
+    ) -> Result<(Uuid, crate::backup::Restored), ApiError> {
+        // Resolved by hand: `config.json` may be what was lost.
+        let metafolder = match &locator {
+            RepoLocator::Root(root) => root
+                .canonicalize()
+                .map_err(|_| {
+                    ApiError::bad_request(format!(
+                        "Cannot resolve path {root:?}: the root directory must exist"
+                    ))
+                })?
+                .join(".metafolder"),
+            RepoLocator::Metafolder(dir) => dir.clone(),
+        };
+        if !metafolder.is_dir() {
+            return Err(ApiError::bad_request(format!(
+                "No repository found at {metafolder:?} (no such directory)"
+            )));
+        }
+        let loaded = RepoConfig::read(&metafolder)
+            .ok()
+            .map(|config| config.repo_uuid)
+            .filter(|uuid| self.repos.lock_recover().contains_key(uuid));
+        let metafolder = match loaded {
+            Some(uuid) => match self.release(uuid)? {
+                RepoLocator::Metafolder(dir) => dir,
+                RepoLocator::Root(_) => unreachable!("release answers the metafolder"),
+            },
+            None => metafolder,
+        };
+        let restored = crate::backup::restore(&metafolder, from.as_deref());
+        if restored.is_ok() || loaded.is_some() {
+            let back = self.reload(RepoLocator::Metafolder(metafolder.clone()));
+            if restored.is_ok() {
+                back?;
+            }
+        }
+        let restored = restored.map_err(ApiError::from)?;
+        let uuid = RepoConfig::read(&metafolder)?.repo_uuid;
+        Ok((uuid, restored))
     }
 
     /// Loads a repository back and warms it before it answers.

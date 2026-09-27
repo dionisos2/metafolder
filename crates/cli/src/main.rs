@@ -323,12 +323,32 @@ enum RepoCommand {
     ///
     /// A consistent copy of its store (taken while the daemon runs) with its
     /// config.json and schema.json, verified before it is kept. By default
-    /// under .metafolder/internal/backups/. To restore: stop the daemon, put
-    /// the backup's db.sqlite or kv/ back into .metafolder/internal/.
+    /// under .metafolder/internal/backups/; `mf repo restore` puts it back.
     Backup {
         /// A new directory to write the backup to (on another disk, say)
         #[arg(long)]
         to: Option<PathBuf>,
+    },
+    /// Put a backup of a repository back (the most recent one by default)
+    ///
+    /// The backup is checked first; the current store is set aside under
+    /// .metafolder/internal/pre-restore-*. Everything written since the
+    /// backup is lost: run `mf reconcile` afterwards to catch up with the
+    /// files. The repository is the selected one, or — when its store no
+    /// longer loads — one named by --path/--metafolder; either way it is
+    /// loaded afterwards.
+    Restore {
+        /// The backup directory (default: the most recent one under
+        /// .metafolder/internal/backups/)
+        #[arg(long)]
+        from: Option<PathBuf>,
+        /// The repository's root, instead of a selected repository
+        #[arg(long, conflicts_with = "metafolder")]
+        path: Option<PathBuf>,
+        /// The repository's external .metafolder directory, instead of a
+        /// selected repository
+        #[arg(long)]
+        metafolder: Option<PathBuf>,
     },
 }
 
@@ -1192,6 +1212,9 @@ fn dispatch(ctx: &Ctx, command: Command) -> CmdResult {
             RepoCommand::Check => commands::check_repo(ctx),
             RepoCommand::Reindex => commands::reindex_repo(ctx),
             RepoCommand::Backup { to } => commands::backup_repo(ctx, to.as_deref()),
+            RepoCommand::Restore { from, path, metafolder } => {
+                commands::restore_repo(ctx, from.as_deref(), path.as_deref(), metafolder.as_deref())
+            }
         },
         Command::Task { command } => {
             match command.unwrap_or(TaskCommand::List { all: false, json: false }) {

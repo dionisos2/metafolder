@@ -42,6 +42,8 @@ pub fn build(state: Arc<AppState>) -> Router {
         .route("/repos/:repo/convert", post(convert_repo))
         .route("/repos/:repo/check", post(check_repo))
         .route("/repos/:repo/backup", post(backup_repo))
+        .route("/repos/:repo/restore", post(restore_loaded_repo))
+        .route("/repos/restore", post(restore_repo))
         .route("/repos/:repo/reindex", post(reindex_repo))
         .route("/repos/load", post(load_repo))
         .route("/repos/:repo", get(get_repo).patch(rename_repo))
@@ -990,6 +992,78 @@ async fn reindex_repo(
         Ok(Json(json!({"storage": repo_state.config.storage})))
     })
     .await
+}
+
+#[derive(Deserialize, Default)]
+struct RestoreBody {
+    /// The repository, when it is named by its path (`POST /repos/restore`).
+    #[serde(default)]
+    root: Option<PathBuf>,
+    #[serde(default)]
+    metafolder: Option<PathBuf>,
+    /// The backup; by default the most recent one under `internal/backups/`.
+    #[serde(default)]
+    from: Option<PathBuf>,
+}
+
+fn restore_body(body: &[u8]) -> Result<RestoreBody, ApiError> {
+    if body.is_empty() {
+        return Ok(RestoreBody::default());
+    }
+    serde_json::from_slice(body).map_err(|e| ApiError::bad_request(format!("invalid body: {e}")))
+}
+
+fn restored_json(uuid: Uuid, restored: crate::backup::Restored) -> Json<serde_json::Value> {
+    let info = restored.backup;
+    Json(json!({
+        "repo_uuid": hex(uuid),
+        "backup": {
+            "path": info.path,
+            "created_at_ms": info.created_at_ms,
+            "storage": info.storage,
+            "metarecords": info.metarecords,
+        },
+        "old_store": restored.old_store,
+    }))
+}
+
+/// `POST /repos/:repo/restore` — restores a loaded repository from a backup
+/// (spec-storage increment 5) and loads it back. The body (`from`) is
+/// optional.
+async fn restore_loaded_repo(
+    State(state): State<Arc<AppState>>,
+    Path(repo): Path<String>,
+    body: axum::body::Bytes,
+) -> Result<Json<serde_json::Value>, ApiError> {
+    let repo_uuid = parse_uuid(&repo)?;
+    let body = restore_body(&body)?;
+    let metafolder = state.repo(repo_uuid)?.metafolder_dir.clone();
+    let (uuid, restored) = tokio::task::spawn_blocking(move || {
+        state.restore_repo(RepoLocator::Metafolder(metafolder), body.from)
+    })
+    .await
+    .map_err(|e| ApiError::internal(format!("blocking task failed: {e}")))??;
+    Ok(restored_json(uuid, restored))
+}
+
+/// `POST /repos/restore {root | metafolder, from?}` — restores a repository
+/// named by its path, loaded or not (its store may be what no longer loads),
+/// and loads it.
+async fn restore_repo(
+    State(state): State<Arc<AppState>>,
+    body: axum::body::Bytes,
+) -> Result<Json<serde_json::Value>, ApiError> {
+    let body = restore_body(&body)?;
+    let locator = match (body.root, body.metafolder) {
+        (Some(root), None) => RepoLocator::Root(root),
+        (None, Some(dir)) => RepoLocator::Metafolder(dir),
+        _ => return Err(ApiError::bad_request("exactly one of root or metafolder is required")),
+    };
+    let (uuid, restored) =
+        tokio::task::spawn_blocking(move || state.restore_repo(locator, body.from))
+            .await
+            .map_err(|e| ApiError::internal(format!("blocking task failed: {e}")))??;
+    Ok(restored_json(uuid, restored))
 }
 
 #[derive(Deserialize)]
