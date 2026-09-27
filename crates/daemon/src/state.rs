@@ -794,6 +794,11 @@ impl RepoState {
         Ok(())
     }
 
+    /// How long the executor waits with no new event before flushing.
+    pub fn watch_quiet_period(&self) -> std::time::Duration {
+        self.watch_quiet_period
+    }
+
     /// The share of the kernel's watch limit this repository may spend.
     pub fn watch_budget_share(&self) -> u8 {
         self.watch_budget_share

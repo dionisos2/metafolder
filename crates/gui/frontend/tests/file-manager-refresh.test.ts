@@ -43,6 +43,7 @@ function stub(repo: string | null) {
   // is reported tracked — every call is counted, so a re-enrich is observable.
   const daemonCall = vi.fn(async (method: string, path: string) => {
     if (path.includes('/tree/resolve-path')) return { uuid: 'diruuid' };
+    if (path.endsWith('/watch')) return { quiet_period_ms: 3000 };
     if (path.includes('/tree/children')) return [{ uuid: 'songuuid', name: 'song.mp3' }];
     return { results: [], next_cursor: null };
   });
@@ -169,9 +170,12 @@ describe('file-manager live refresh', () => {
       await vi.advanceTimersByTimeAsync(0); // immediate sync in onMetarecordsDirty
       const immediate = s.api.cache.sync.mock.calls.length;
 
-      // The catch-up nudges fire after the watcher's quiet period (~500 ms) so
-      // the repaired link is reflected well before the 7 s background poll.
-      await vi.advanceTimersByTimeAsync(2000);
+      // The catch-up nudges fire after the daemon's quiet period (GET /watch,
+      // 3 s here), never before it — a re-read then would see the stale state —
+      // and well before the 7 s background poll.
+      await vi.advanceTimersByTimeAsync(3000);
+      expect(s.api.cache.sync.mock.calls.length).toBe(immediate);
+      await vi.advanceTimersByTimeAsync(300);
       expect(s.api.cache.sync.mock.calls.length).toBeGreaterThan(immediate);
     } finally {
       vi.useRealTimers();

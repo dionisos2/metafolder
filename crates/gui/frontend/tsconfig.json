@@ -30,7 +30,8 @@
       "/__multi-select.js": ["../panel-shim/multi-select.js"],
       "/__file-actions.js": ["../panel-shim/file-actions.js"],
       "/__ignore.js": ["../panel-shim/ignore.js"],
-      "/__watched.js": ["../panel-shim/watched.js"]
+      "/__watched.js": ["../panel-shim/watched.js"],
+      "/__watcher-settle.js": ["../panel-shim/watcher-settle.js"]
     }
   },
   "include": ["src", "tests", "types", "../panel-shim", "../default-config/panel-types"]

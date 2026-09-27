@@ -23,8 +23,10 @@
 # buffered filesystem events (it waits until no new event has arrived for this
 # long, then compacts and applies them). Larger values batch more aggressively
 # — fewer revisions but more latency before changes show up; helpful on slow or
-# network filesystems that emit bursts of events. Default: 500.
-watch-quiet-period-ms = 500
+# network filesystems that emit bursts of events. Each flush is one revision
+# (per kind of change) in the log, so a short period splits one gesture — a
+# save, a copy, an extraction — into many revisions. Default: 2000.
+watch-quiet-period-ms = 2000
 
 # Percentage of the kernel's per-user inotify watch limit
 # (fs.inotify.max_user_watches) that this daemon will spend. One watch is needed

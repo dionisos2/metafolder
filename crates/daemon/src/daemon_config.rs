@@ -14,7 +14,11 @@ use crate::state::AppState;
 
 /// Default watcher quiet period (ms): how long the executor waits with no new
 /// filesystem event before flushing the pending buffer. See [`DaemonSettings`].
-pub const DEFAULT_WATCH_QUIET_PERIOD_MS: u64 = 500;
+/// Two seconds rather than the former half second: an editor's save, a copy,
+/// an archive extraction arrive as bursts spread over more than 500 ms, and
+/// each flush is a revision of its own — they buried the user's own changes
+/// in the log and ate the log-retention budget.
+pub const DEFAULT_WATCH_QUIET_PERIOD_MS: u64 = 2000;
 
 /// Default share of the kernel's per-user watch limit one daemon will spend.
 /// Half, so a second metafolder daemon and every other program that watches
@@ -270,7 +274,7 @@ mod tests {
         // An empty config (and a missing file) yields the documented defaults.
         let empty: DaemonSettings = toml::from_str("").unwrap();
         assert_eq!(empty.watch_quiet_period_ms, DEFAULT_WATCH_QUIET_PERIOD_MS);
-        assert_eq!(empty.watch_quiet_period(), Duration::from_millis(500));
+        assert_eq!(empty.watch_quiet_period(), Duration::from_millis(2000));
         assert_eq!(empty.orphan_cascade_limit, DEFAULT_ORPHAN_CASCADE_LIMIT);
         assert_eq!(empty.watchd_socket, PathBuf::from(DEFAULT_WATCHD_SOCKET));
         assert_eq!(

@@ -55,6 +55,13 @@ async fn watch_reports_running_and_pause_resume_flip_it() {
     assert_eq!(status, StatusCode::OK);
     assert_eq!(body["paused"], json!(false), "a freshly loaded repository ingests");
     assert_eq!(body["pending_events"], json!(0));
+    // How long the executor waits before applying what it buffered: what a
+    // client needs to know to re-read once the watcher has recorded a change
+    // it just made on disk.
+    assert_eq!(
+        body["quiet_period_ms"],
+        json!(metafolder_daemon::daemon_config::DEFAULT_WATCH_QUIET_PERIOD_MS)
+    );
 
     let (status, body) =
         request(&app, "POST", &format!("/repos/{repo}/watch/pause"), Some(json!({}))).await;

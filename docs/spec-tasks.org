@@ -353,7 +353,7 @@ When the executor flushes the =pending_operation= buffer (see
 registers a =flush= task for the duration of the flush. It is internal
 (not client-initiated) but observable, and is shown by default alongside
 user-initiated tasks. (Clients MAY offer a filter to hide =flush= tasks, since
-flushes are frequent — one per 500 ms quiet period of filesystem activity — but
+flushes are frequent — one per 2 s quiet period of filesystem activity — but
 the default is to show them.)
 
 It is also *cancellable*, unlike the other internal kinds: a flush is the one

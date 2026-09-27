@@ -1330,7 +1330,7 @@ impl ExecutorPinger {
 }
 
 /// Background thread flushing the pending buffer after a quiet period
-/// (default 500 ms) with no new activity.
+/// (default 2 s, `watch-quiet-period-ms`) with no new activity.
 pub struct ExecutorHandle {
     tx: mpsc::Sender<ExecMsg>,
     join: Option<std::thread::JoinHandle<()>>,

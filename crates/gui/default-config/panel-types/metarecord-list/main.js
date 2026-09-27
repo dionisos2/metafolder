@@ -20,6 +20,7 @@ import { fileMenuItems, metarecordMenuItems } from '/__file-actions.js';
 import { attachHistory } from '/__history.js';
 import { latestOnly } from '/__coalesce.js';
 import { fetchWatched, summarizeWatched } from '/__watched.js';
+import { createCatchup } from '/__watcher-settle.js';
 import {
   parseColumns,
   isSortable,
@@ -1728,18 +1729,16 @@ export async function mount(root, metafolder) {
   const deferredStart = () => void start();
   // A `metarecords:dirty` nudge fires right after a local mutation (e.g. a
   // rename's fs.move), but a watcher-driven daemon write only lands after its
-  // ~500 ms quiet period — after our immediate refresh has already read the
+  // quiet period (GET /watch) — after our immediate refresh has already read the
   // stale path. Poll the change feed a couple of times over the next seconds so
   // the settled change is picked up promptly (the subscription above then
   // repaints), rather than waiting for the slow background poll. The 7 s timer
   // remains the backstop.
-  /** @type {ReturnType<typeof setTimeout>[]} */
-  let catchupTimers = [];
+  const catchup = createCatchup(daemon);
   function scheduleCatchupSync() {
-    for (const t of catchupTimers) clearTimeout(t); // supersede the previous nudge
-    catchupTimers = [700, 1800].map((delay) =>
-      setTimeout(() => void (repo && cache.sync(repo)), delay),
-    );
+    if (!repo) return;
+    const target = repo;
+    catchup.schedule(target, [200, 1300], () => void cache.sync(target));
   }
   workspace.onChange('metarecords:dirty', () => {
     metafolder.whenVisible(deferredStart);
@@ -1824,7 +1823,7 @@ export async function mount(root, metafolder) {
 
   return () => {
     clearTimeout(finderTimer);
-    for (const t of catchupTimers) clearTimeout(t);
+    catchup.cancel();
     finderHistory.detach();
     queryHistory.detach();
     unsubscribeCache();

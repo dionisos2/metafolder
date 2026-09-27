@@ -8,6 +8,7 @@ import { createPagedList } from '/__paged-list.js';
 import { createMultiSelect } from '/__multi-select.js';
 import { latestOnly } from '/__coalesce.js';
 import { registerFind } from '/__find-entry.js';
+import { createCatchup } from '/__watcher-settle.js';
 import {
   relPath,
   loadTrackedChildren,
@@ -1182,19 +1183,19 @@ export async function mount(root, metafolder) {
   }
 
   // After a mutation the watcher reflects the on-disk change (and repairs the
-  // metarecord↔file link) only after its ~500 ms quiet period — well after our
+  // metarecord↔file link) only after its quiet period — well after our
   // immediate refresh read the not-yet-repaired state, so a renamed file would
   // linger as "untracked". Nudge the change feed a couple of times so the
   // repaired tracked status is picked up promptly rather than only on the 7 s
   // background poll; each nudge invalidates the cache and the subscription below
   // repaints.
-  /** @type {ReturnType<typeof setTimeout>[]} */
-  let catchupTimers = [];
+  // The nudges are timed from the daemon's quiet period (GET /watch), not a
+  // guess: shorter than it, they re-read the stale state.
+  const catchup = createCatchup(daemon);
   function scheduleCatchupSync() {
-    for (const t of catchupTimers) clearTimeout(t); // supersede the previous nudge
-    catchupTimers = [700, 1800].map((delay) =>
-      setTimeout(() => void (repo && cache.sync(repo)), delay),
-    );
+    if (!repo) return;
+    const target = repo;
+    catchup.schedule(target, [200, 1300], () => void cache.sync(target));
   }
 
   async function onMetarecordsDirty() {
@@ -1207,7 +1208,7 @@ export async function mount(root, metafolder) {
 
   // Keep the tracked badges live when the daemon reflects a change out of band
   // from our own round-trip — chiefly the watcher repairing a rename's
-  // metarecord↔file link ~500 ms after the fs.move, or an external change. The
+  // metarecord↔file link a quiet period after the fs.move, or an external change. The
   // background change-feed poll (and our catch-up nudges above) invalidate the
   // cache; here we react by re-querying this directory's tracked status.
   const unsubscribeCache = cache.subscribe(({ repo: changedRepo }) => {
@@ -1220,6 +1221,6 @@ export async function mount(root, metafolder) {
   return () => {
     detachScroll();
     unsubscribeCache();
-    for (const t of catchupTimers) clearTimeout(t);
+    catchup.cancel();
   };
 }

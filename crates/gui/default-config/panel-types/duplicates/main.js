@@ -20,6 +20,7 @@
 
 import { byId, el, field, formatValue } from '/__ui.js';
 import { registerFind } from '/__find-entry.js';
+import { createCatchup } from '/__watcher-settle.js';
 import { rowActionsProvider, baseName } from '/__file-actions.js';
 
 const GROUP_QUERY = { type: 'eq', field: 'mf_schema', value: { type: 'string', value: 'duplicate_group' } };
@@ -98,8 +99,9 @@ export function mount(root, metafolder) {
   /** The value of the last `metarecords:dirty` we published ourselves, so the
    *  reload it triggers everywhere else does not undo our own local update. */
   let ownNudge = 0;
-  /** @type {ReturnType<typeof setTimeout>[]} */
-  let catchupTimers = [];
+  /** Reloads timed from the daemon's quiet period, once the watcher has
+   *  recorded what we just trashed. */
+  const catchup = createCatchup(daemon);
 
   const entriesList = byId(root, 'entries');
   const placeholder = byId(root, 'placeholder');
@@ -316,8 +318,7 @@ export function mount(root, metafolder) {
    *  reloads for after the watcher has recorded it (the 7 s background poll is
    *  the backstop; the metarecord list schedules its catch-up the same way). */
   async function notifyChanged() {
-    for (const timer of catchupTimers) clearTimeout(timer);
-    catchupTimers = [900, 2500].map((delay) => setTimeout(() => void load(), delay));
+    if (repo !== null) catchup.schedule(repo, [400, 2000], () => void load());
     ownNudge = Date.now();
     await workspace.set('metarecords:dirty', ownNudge);
   }
@@ -490,7 +491,7 @@ export function mount(root, metafolder) {
   // A scan writes group metarecords, so the ordinary dirty flag is the signal
   // to reload — no special coupling to the scan command. Our own nudge is the
   // exception: the trash we just did reaches the daemon only after the
-  // watcher's ~500 ms quiet period, so reloading on it would paint the numbers
+  // watcher's quiet period, so reloading on it would paint the numbers
   // we have just corrected back to their stale values. The catch-up timers read
   // the settled truth instead.
   workspace.onChange('metarecords:dirty', (value) => {
@@ -500,6 +501,6 @@ export function mount(root, metafolder) {
   metafolder.whenVisible(deferredStart);
 
   return () => {
-    for (const timer of catchupTimers) clearTimeout(timer);
+    catchup.cancel();
   };
 }

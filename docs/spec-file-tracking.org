@@ -859,8 +859,14 @@ fixture exceeds it.
 
 The watcher does not process events one by one. Instead, it buffers incoming
 events *in memory* and the executor applies the buffer once a quiet period of
-*500 ms* has elapsed with no new events. This default is configurable per
-repository.
+*2 s* has elapsed with no new events (=watch-quiet-period-ms= in the daemon
+configuration). It was 500 ms: short enough that an editor's save, a copy or an
+archive extraction — bursts spread over more than half a second — landed as
+several flushes, each a revision of its own, burying the user's own changes in
+the log and spending the log-retention budget. The cost of the longer period is
+latency: a change appears two seconds after the filesystem goes quiet. The
+period is a debounce, not a cap — a stream of events with no two-second pause
+is flushed when it stops.
 
 The buffer does **not** survive the daemon. It used to: the watcher wrote each
 event into the =pending_operation= table and the buffer was replayed at load.
@@ -1445,7 +1451,7 @@ Reads and sets whether the executor is ingesting filesystem events for this
 repository (see [[*Pausing ingestion]]). All three answer the same body:
 
 #+BEGIN_SRC json
-{"paused": true, "pending_events": 12043, "backend": "inotify",
+{"paused": true, "pending_events": 12043, "quiet_period_ms": 2000, "backend": "inotify",
  "watched_dirs": 22838,
  "watch_budget": {"limit": 524288, "share": 50, "cap": 262144,
                   "starved": false, "exceeded_dirs": 3}}
@@ -1455,7 +1461,7 @@ The same body under the coverage regime ([[*Watch sources and regimes]]) — no
 per-directory state, nothing to run out of:
 
 #+BEGIN_SRC json
-{"paused": false, "pending_events": 0, "backend": "fanotify",
+{"paused": false, "pending_events": 0, "quiet_period_ms": 2000, "backend": "fanotify",
  "backend_reason": null, "watched_dirs": null, "watch_budget": null}
 #+END_SRC
 
@@ -1474,6 +1480,11 @@ per-directory state, nothing to run out of:
   buffer (what a resume would apply). Always exact: reading it does not touch
   the repository's connection, so it answers even while the flush the caller is
   trying to stop is holding it.
+- =quiet_period_ms= — the executor's quiet period ([[*Event batching]]): how
+  long after the filesystem goes quiet a change is recorded. A client that has
+  just changed the disk itself (the GUI renaming or trashing a file) schedules
+  its re-read from it rather than from a guess, since the period is
+  configurable.
 - =watched_dirs= — how many directories the watcher holds a watch on: one
   kernel watch each (see [[*The watch budget]]). =null= in the coverage regime,
   where one registration covers the tree and there is no per-directory state.

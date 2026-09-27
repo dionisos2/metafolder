@@ -2427,7 +2427,8 @@ async fn mounts(
 
 /// The body all three `watch` routes answer with (spec-file-tracking "Watch
 /// status, pause and resume"): whether ingestion is paused, how many
-/// filesystem events are waiting to be applied, which watch source is active
+/// filesystem events are waiting to be applied, how long the executor waits
+/// before applying them (`quiet_period_ms`), which watch source is active
 /// (`backend`, [[spec-file-tracking "Watch sources and regimes"]]), and —
 /// budget regime only — the two budget fields, which answer `null` under
 /// coverage: no per-directory state, nothing to run out of.
@@ -2454,6 +2455,9 @@ fn watch_view(repo_state: &RepoState) -> serde_json::Value {
     json!({
         "paused": repo_state.is_ingestion_paused(),
         "pending_events": crate::executor::pending_count(repo_state),
+        // How long after the filesystem goes quiet a change is recorded — what
+        // a client re-reads after, having just changed the disk itself.
+        "quiet_period_ms": repo_state.watch_quiet_period().as_millis() as u64,
         "backend": repo_state.watch_backend(),
         "backend_reason": repo_state.watch_backend_reason(),
         "watched_dirs": watched_dirs,

@@ -501,7 +501,8 @@ reconcile and sync independently of duplicate detection.
   copy is left, with the same arithmetic the daemon applies (=reclaimableOf=
   mirrors =reclaimable_of=, hard links included). The daemon's own update lands
   a watcher quiet period later — "Leaving a group" — so the panel schedules a
-  reload to confirm it, and ignores the =metarecords:dirty= nudge it published
+  reload to confirm it (timed from the =quiet_period_ms= of =GET .../watch=,
+  since the period is configurable), and ignores the =metarecords:dirty= nudge it published
   itself, which would otherwise repaint the stale numbers. A reload keeps the
   expanded groups expanded and the cursor where it was: it happens while the
   user is working inside a group.
