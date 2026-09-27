@@ -810,6 +810,18 @@ mod tests {
     }
 
     #[test]
+    fn test_a_peer_that_stops_reading_is_let_go_at_the_next_message() {
+        let broker = Broker::new(AccessFilter::new(AllowAll), Arc::new(NoRoots));
+        let (client, _writer) = attach_pair(&broker);
+        let mut r = reader(&client);
+        subscribe(&client, &["/repo"]);
+        let _ = next_msg(&mut r);
+        client.shutdown(std::net::Shutdown::Read).unwrap();
+        broker.broadcast(&Event::Create { path: "/repo/x".into() });
+        wait_for_no_client(&broker);
+    }
+
+    #[test]
     fn test_a_listener_that_fails_stops_accepting() {
         use std::os::unix::io::AsRawFd;
         let dir = std::env::temp_dir()
@@ -838,31 +850,13 @@ mod tests {
         let _ = std::fs::remove_dir_all(&dir);
     }
 
-    const CHILD_ENV: &str = "METAFOLDER_WATCHD_IN_CHILD";
-
-    /// `true` in a child process running `test` alone (run the body there);
-    /// outside, runs that child and returns `false`. For a test that changes
-    /// something process-wide — a resource limit.
-    fn in_child(test: &str) -> bool {
-        if std::env::var_os(CHILD_ENV).is_some() {
-            return true;
-        }
-        let out = std::process::Command::new(std::env::current_exe().unwrap())
-            .args([&format!("server::tests::{test}"), "--exact", "--nocapture", "--test-threads=1"])
-            .env(CHILD_ENV, "1")
-            .output()
-            .unwrap();
-        let text = String::from_utf8_lossy(&out.stdout).into_owned()
-            + &String::from_utf8_lossy(&out.stderr);
-        assert!(out.status.success() && text.contains("1 passed"), "{text}");
-        false
-    }
-
     #[test]
     fn test_a_connection_that_cannot_be_split_is_dropped() {
         // No descriptor left for the writer's half (EMFILE): the connection is
         // hung up rather than half served.
-        if !in_child("test_a_connection_that_cannot_be_split_is_dropped") {
+        if !crate::test_support::in_child(
+            "server::tests::test_a_connection_that_cannot_be_split_is_dropped",
+        ) {
             return;
         }
         let broker = Broker::new(AccessFilter::new(AllowAll), Arc::new(NoRoots));

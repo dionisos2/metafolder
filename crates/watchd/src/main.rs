@@ -9,21 +9,13 @@
 //! `CAP_SYS_ADMIN` (to mark a filesystem) and `CAP_DAC_READ_SEARCH` (to resolve a
 //! file handle to a path) — and nothing else in the process is privileged by
 //! construction: the daemon stays unprivileged, which is the whole point of
-//! the split. [`fanotify::preflight`] fails at startup with the remedy named
+//! the split. `fanotify::preflight` fails at startup with the remedy named
 //! when they are missing.
 
-use std::os::unix::fs::PermissionsExt;
-use std::os::unix::net::UnixListener;
-use std::path::{Path, PathBuf};
-use std::sync::{Arc, Mutex, MutexGuard};
+use std::path::PathBuf;
 
-use anyhow::{Context, Result};
+use anyhow::Result;
 use clap::Parser;
-
-use metafolder_watchd::fanotify::{self, Fanotify};
-use metafolder_watchd::filter::{AccessFilter, SystemCreds};
-use metafolder_watchd::proto::Event;
-use metafolder_watchd::server::{Broker, RootSink};
 
 #[derive(Parser)]
 #[command(
@@ -35,116 +27,6 @@ struct Args {
     socket: PathBuf,
 }
 
-/// The bridge from subscriptions to filesystem marks: whatever the subscribers
-/// watch is what the kernel is asked to report on.
-struct MarkSink {
-    fanotify: Arc<Mutex<Fanotify>>,
-}
-
-impl RootSink for MarkSink {
-    fn set_roots(&self, roots: Vec<PathBuf>) -> Result<()> {
-        lock(&self.fanotify).sync_roots(&roots)
-    }
-}
-
-/// `std::sync::Mutex` that survives a poisoned sibling (see `server::lock`).
-fn lock<T>(m: &Mutex<T>) -> MutexGuard<'_, T> {
-    m.lock().unwrap_or_else(|e| e.into_inner())
-}
-
 fn main() -> Result<()> {
-    let args = Args::parse();
-
-    // Fail closed, with the remedy in hand: a broker that cannot mark a filesystem
-    // or resolve a handle is a broker that would silently stream nothing.
-    let probe =
-        args.socket.parent().filter(|p| !p.as_os_str().is_empty()).unwrap_or(Path::new("/"));
-    fanotify::preflight(probe).context("refusing to start")?;
-
-    let fanotify = Arc::new(Mutex::new(Fanotify::open()?));
-    let sink = Arc::new(MarkSink { fanotify: Arc::clone(&fanotify) });
-    let broker = Arc::new(Broker::new(AccessFilter::new(SystemCreds), sink));
-
-    let listener = bind(&args.socket)?;
-
-    // The kernel side: one thread reads the group and feeds the broadcast loop
-    // that `serve` runs below. A read error is reported and retried — the
-    // group is the machine's only source of events.
-    let (tx, rx) = std::sync::mpsc::channel::<Event>();
-    {
-        let fanotify = Arc::clone(&fanotify);
-        let broker = Arc::clone(&broker);
-        // The read happens *outside* the lock: it blocks until something
-        // happens, and a subscription must be able to place its marks
-        // meanwhile.
-        let reader = lock(&fanotify).reader();
-        std::thread::spawn(move || {
-            let mut buf = vec![0u8; 64 * 1024];
-            loop {
-                let n = match reader.read(&mut buf) {
-                    Ok(n) => n,
-                    Err(err) => {
-                        eprintln!("[watchd] {err:#}");
-                        std::thread::sleep(std::time::Duration::from_millis(100));
-                        continue;
-                    }
-                };
-                let out = lock(&fanotify).translate(&buf[..n]);
-                for event in out.events {
-                    if tx.send(event).is_err() {
-                        return; // The broker is shutting down.
-                    }
-                }
-                if out.kernel_overflow {
-                    // The kernel dropped events: every subscriber must
-                    // reconcile, so everyone is told.
-                    broker.broadcast_overflow();
-                }
-            }
-        });
-    }
-
-    // The mount table: a filesystem mounted under a subscribed root (a drive
-    // plugged in) is one more filesystem to mark, one unmounted is a mark to
-    // lift. Without the watch, coverage follows only the subscriptions.
-    match fanotify::MountWatch::open() {
-        Ok(mut watch) => {
-            let fanotify = Arc::clone(&fanotify);
-            std::thread::spawn(move || loop {
-                if let Err(err) = watch.wait() {
-                    eprintln!("[watchd] the mount table can no longer be watched: {err:#}");
-                    return;
-                }
-                if let Err(err) = lock(&fanotify).resync() {
-                    eprintln!("[watchd] {err:#}");
-                }
-            });
-        }
-        Err(err) => eprintln!("[watchd] mounts appearing later will not be covered: {err:#}"),
-    }
-
-    eprintln!("[watchd] listening on {}", args.socket.display());
-    broker.serve(listener, rx);
-    Ok(())
-}
-
-/// Binds the socket, replacing a stale one. World-connectable *on purpose*:
-/// the gate is the per-uid filter, not the socket's mode — a subscriber can
-/// always connect and then learns only what its own uid may see
-/// (docs/watcher-fanotify.md "Permissions").
-fn bind(socket: &Path) -> Result<UnixListener> {
-    // `symlink_metadata`, never `exists()`: a stale socket left as a broken
-    // symlink is a stale socket all the same, and `bind` would then fail with
-    // EADDRINUSE instead of replacing it.
-    if std::fs::symlink_metadata(socket).is_ok() {
-        std::fs::remove_file(socket)
-            .with_context(|| format!("cannot remove the stale socket at {socket:?}"))?;
-    }
-    if let Some(dir) = socket.parent() {
-        std::fs::create_dir_all(dir).with_context(|| format!("cannot create {dir:?}"))?;
-    }
-    let listener = UnixListener::bind(socket).with_context(|| format!("cannot bind {socket:?}"))?;
-    std::fs::set_permissions(socket, std::fs::Permissions::from_mode(0o666))
-        .with_context(|| format!("cannot open up {socket:?}"))?;
-    Ok(listener)
+    metafolder_watchd::service::run(&Args::parse().socket)
 }
