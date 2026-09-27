@@ -128,10 +128,10 @@ install: check-deps build install-config | $(BINDIR)
 # the broker is updated. Daemons pick it up when they (re)load a repository.
 .PHONY: install-watchd
 install-watchd: build-watchd
-	sudo install -m 0755 $(TARGET)/metafolder-watchd $(WATCHD_BIN)
-	sudo install -m 0644 scripts/metafolder-watchd.sysusers $(WATCHD_USER)
+	sudo install -D -m 0755 $(TARGET)/metafolder-watchd $(WATCHD_BIN)
+	sudo install -D -m 0644 scripts/metafolder-watchd.sysusers $(WATCHD_USER)
 	sudo systemd-sysusers $(WATCHD_USER)
-	sudo install -m 0644 scripts/metafolder-watchd.service $(WATCHD_UNIT)
+	sudo install -D -m 0644 scripts/metafolder-watchd.service $(WATCHD_UNIT)
 	sudo systemctl daemon-reload
 	sudo systemctl enable metafolder-watchd
 	sudo systemctl restart metafolder-watchd
