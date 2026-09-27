@@ -486,7 +486,7 @@ pub struct RawEvent {
 }
 
 /// Splits a `read(2)` buffer into events. Records are walked by their `len`
-/// (8-aligned, as the kernel emits them); anything malformed ends the walk
+/// (each `len` includes its padding, as the kernel emits them); anything malformed ends the walk
 /// rather than guessing — a half-parsed buffer is worse than a dropped one,
 /// and the queue overflow marker below is the designed recovery.
 pub fn parse(buf: &[u8]) -> (Vec<RawEvent>, bool) {
@@ -532,16 +532,15 @@ pub fn parse(buf: &[u8]) -> (Vec<RawEvent>, bool) {
                 }
                 _ => {} // pidfd, error, range, mnt: not ours.
             }
-            pos += align8(len);
+            // `len` already holds the kernel's padding (FANOTIFY_EVENT_ALIGN,
+            // 4 bytes): the next record starts right there. Rounding it to 8
+            // read every record after a 4-mod-8 one from the wrong place.
+            pos += len;
         }
         events.push(raw);
         off += event_len;
     }
     (events, overflow)
-}
-
-fn align8(n: usize) -> usize {
-    (n + 7) & !7
 }
 
 /// One info record: header (4) + `__kernel_fsid_t` (8) + `struct file_handle`
@@ -1013,7 +1012,9 @@ mod tests {
         fn fid_record_bytes(&mut self, info_type: u8, handle: &Handle, name: Option<&[u8]>) {
             let name_bytes = name.unwrap_or_default();
             let raw_len = 20 + handle.bytes.len() + name_bytes.len() + usize::from(name.is_some());
-            let len = align8(raw_len);
+            // FANOTIFY_EVENT_ALIGN: the kernel pads a record to 4 bytes, and
+            // its `len` includes the padding.
+            let len = raw_len.next_multiple_of(4);
             let mut rec = vec![0u8; len];
             rec[0] = info_type;
             rec[2..4].copy_from_slice(&(len as u16).to_ne_bytes());
@@ -2220,5 +2221,60 @@ mod tests {
             Ok(path) => assert_eq!(path, file),
             Err(err) => assert!(format!("{err:#}").contains("open_by_handle_at"), "{err:#}"),
         }
+    }
+
+    #[test]
+    fn test_records_are_walked_by_their_length_whatever_it_is() {
+        // "notes.txt" makes a 44-byte record: 4-aligned, not 8. Walked as if
+        // records were 8-aligned, the next one was read 4 bytes late — the new
+        // side of a rename in the same directory lost, so renaming a file read
+        // as the file leaving (early_journey, under the broker).
+        let mut b = Buf::new(FAN_RENAME, 1);
+        b.fid_record(INFO_TYPE_OLD_DFID_NAME, &handle(1), Some("notes.txt"));
+        b.fid_record(INFO_TYPE_NEW_DFID_NAME, &handle(1), Some("notes-2024.txt"));
+        let raw = parse(&b.finish()).0.remove(0);
+        assert_eq!(raw.old, Some((handle(1), OsString::from("notes.txt"))));
+        assert_eq!(raw.new, Some((handle(1), OsString::from("notes-2024.txt"))));
+    }
+
+    #[test]
+    fn test_the_kernels_own_records_parse_whole() {
+        // The same, against what the kernel really emits — names of every
+        // length modulo 8, each renamed within its directory.
+        if !in_userns("test_the_kernels_own_records_parse_whole") {
+            return;
+        }
+        let root = tmpfs("records");
+        let names: Vec<String> = (1..=8).map(|n| "n".repeat(n)).collect();
+        for name in &names {
+            std::fs::write(root.join(name), b"x").unwrap();
+        }
+        let mut fa = Fanotify::open().unwrap();
+        fa.sync_roots(std::slice::from_ref(&root)).unwrap();
+        for name in &names {
+            std::fs::rename(root.join(name), root.join(format!("{name}.moved"))).unwrap();
+        }
+        unsafe { libc::fcntl(fa.fd.as_raw_fd(), libc::F_SETFL, libc::O_NONBLOCK) };
+        let mut renames = Vec::new();
+        let deadline = Instant::now() + std::time::Duration::from_secs(5);
+        let mut buf = vec![0u8; 65536];
+        while renames.len() < names.len() && Instant::now() < deadline {
+            let n = unsafe { libc::read(fa.fd.as_raw_fd(), buf.as_mut_ptr().cast(), buf.len()) };
+            if n <= 0 {
+                std::thread::sleep(std::time::Duration::from_millis(20));
+                continue;
+            }
+            for raw in parse(&buf[..n as usize]).0 {
+                if raw.mask & FAN_RENAME != 0 {
+                    renames.push((
+                        raw.old.map(|(_, n)| n.to_string_lossy().into_owned()),
+                        raw.new.map(|(_, n)| n.to_string_lossy().into_owned()),
+                    ));
+                }
+            }
+        }
+        let expected: Vec<_> =
+            names.iter().map(|n| (Some(n.clone()), Some(format!("{n}.moved")))).collect();
+        assert_eq!(renames, expected);
     }
 }
