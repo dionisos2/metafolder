@@ -622,6 +622,11 @@ pub struct LogArgs {
 /// when none was asked for.
 const DEFAULT_LOG_WINDOW: usize = 20;
 
+/// The operations a listing by revision reads at most. A revision holds
+/// anything from one operation to a whole reconcile's tens of thousands; the
+/// oldest revision the cap cuts is shown with how much of it is missing.
+const LOG_OP_CAP: usize = 500;
+
 /// The query string `mf log list` sends.
 ///
 /// The bound matters: the listing displays a window, and asking the daemon for
@@ -647,8 +652,12 @@ fn log_query(args: &LogArgs) -> Result<Vec<(&'static str, String)>, CliError> {
         let window = args.limit.unwrap_or(DEFAULT_LOG_WINDOW);
         // `--ops` counts operations, the default counts revisions — each asks
         // for exactly what it displays.
-        let key = if args.ops { "limit" } else { "revisions" };
-        query.push((key, window.to_string()));
+        if args.ops {
+            query.push(("limit", window.to_string()));
+        } else {
+            query.push(("revisions", window.to_string()));
+            query.push(("limit", LOG_OP_CAP.max(window).to_string()));
+        }
     }
     Ok(query)
 }
@@ -663,11 +672,16 @@ pub fn log(ctx: &Ctx, args: &LogArgs) -> Result<i32, CliError> {
         resp["operations"].as_array().map(|a| a.iter().collect()).unwrap_or_default();
     let mut rev_meta: std::collections::HashMap<i64, (i64, Option<String>)> =
         std::collections::HashMap::new();
+    // The revisions the operation cap cut: how many operations each holds.
+    let mut partial: std::collections::HashMap<i64, i64> = std::collections::HashMap::new();
     for rev in resp["revisions"].as_array().into_iter().flatten() {
         if let Some(id) = rev["id"].as_i64() {
             let ts = rev["timestamp"].as_i64().unwrap_or(0);
             let label = rev["label"].as_str().map(str::to_string);
             rev_meta.insert(id, (ts, label));
+            if rev["partial"].as_bool() == Some(true) {
+                partial.insert(id, rev["op_count"].as_i64().unwrap_or(0));
+            }
         }
     }
 
@@ -731,6 +745,9 @@ pub fn log(ctx: &Ctx, args: &LogArgs) -> Result<i32, CliError> {
             line.push_str(&format!("  \"{label}\""));
         } else if ops_sorted.len() > 1 {
             line.push_str(&format!("  ({})", op_breakdown(&ops_sorted)));
+        }
+        if let Some(total) = partial.get(rev_id) {
+            line.push_str(&format!("  [{} of {total} operations shown]", ops_sorted.len()));
         }
         if is_head {
             line.push_str("   \u{2190} HEAD");
@@ -1188,6 +1205,11 @@ mod tests {
         assert!(
             q.contains(&("revisions", "20".to_string())),
             "the default listing must bound the read by revisions: {q:?}"
+        );
+        // And by operations: one revision can hold a whole reconcile.
+        assert!(
+            q.contains(&("limit", LOG_OP_CAP.to_string())),
+            "the default listing must bound the read by operations too: {q:?}"
         );
         assert!(q.contains(&("mode", "active".to_string())));
 

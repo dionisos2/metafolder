@@ -139,6 +139,80 @@ fn a_revision_bound_returns_whole_revisions_newest_first() {
     assert_eq!(body["total_revisions"], 40, "the totals still cover the whole log");
 }
 
+/// A log whose first revision is a reconcile of `big` operations, followed by
+/// `small` revisions of one operation each.
+fn repo_after_reconcile(big: usize, small: usize) -> Connection {
+    let mut conn = db::open_in_memory().unwrap();
+    db::init_schema(&conn).unwrap();
+    let mut w = Writer::begin(&mut conn, Some("reconcile".into())).unwrap();
+    for i in 0..big {
+        w.create_metarecord(vec![Field::new("rank", Value::Int(i as i64))]).unwrap();
+    }
+    w.commit().unwrap();
+    for i in 0..small {
+        let mut w = Writer::begin(&mut conn, None).unwrap();
+        w.create_metarecord(vec![Field::new("edit", Value::Int(i as i64))]).unwrap();
+        w.commit().unwrap();
+    }
+    conn
+}
+
+/// `mf log list` asks for twenty revisions *and* a number of operations: a
+/// reconcile's revision holds tens of thousands, and reading it whole to show
+/// its line cost 0.7 s and 400 MB on a 50 000-file repository.
+fn revisions_and_ops(revisions: usize, limit: usize) -> LogQuery {
+    LogQuery {
+        mode: Mode::Active,
+        revisions: Some(revisions),
+        limit: Some(limit),
+        ..LogQuery::default()
+    }
+}
+
+#[test]
+fn a_revision_window_is_bounded_by_operations_too() {
+    let conn = repo_after_reconcile(800, 5);
+    let body = listing(&conn, &revisions_and_ops(20, 100)).unwrap();
+    let ops = body["operations"].as_array().unwrap();
+    assert_eq!(ops.len(), 100, "at most the operations asked for");
+    let revisions = body["revisions"].as_array().unwrap();
+    assert_eq!(revisions.len(), 6, "the five edits, and the reconcile in part");
+    // The reconcile is the oldest revision shown, and the one cut: it says so,
+    // and how many operations it holds in all.
+    let reconcile = &revisions[0];
+    assert_eq!(reconcile["partial"], true, "{reconcile}");
+    assert_eq!(reconcile["op_count"], 800, "{reconcile}");
+    assert_eq!(ops.iter().filter(|o| o["rev_id"] == reconcile["id"]).count(), 95);
+    // The whole ones say nothing.
+    for whole in &revisions[1..] {
+        assert!(whole.get("partial").is_none(), "{whole}");
+    }
+    // Twenty revisions of one operation each are still all there.
+    let conn = repo_with_log(40);
+    let body = listing(&conn, &revisions_and_ops(20, 100)).unwrap();
+    assert_eq!(body["revisions"].as_array().unwrap().len(), 20);
+    assert_eq!(body["operations"].as_array().unwrap().len(), 20);
+}
+
+#[test]
+fn a_revision_window_costs_the_same_behind_a_larger_reconcile() {
+    let q = revisions_and_ops(20, 100);
+    let mut small = repo_after_reconcile(400, 5);
+    let mut big = repo_after_reconcile(6_400, 5);
+    let small_cost = cost_of(&mut small, &q);
+    let big_cost = cost_of(&mut big, &q);
+    assert_eq!(
+        small_cost.count(),
+        big_cost.count(),
+        "a listing bounded by operations grew with the reconcile behind it:\n\
+         — small reconcile —\n{}\n— big reconcile —\n{}",
+        small_cost.report(&small),
+        big_cost.report(&big)
+    );
+    let (body, _) = measure(&mut big, |c| listing(c, &q).unwrap());
+    assert_eq!(body["operations"].as_array().unwrap().len(), 100);
+}
+
 /// Not the log: the point read every panel, every `mf metarecord get` and every
 /// cache miss does. It must cost the same on a repository of any size — and
 /// the moment it does not, it is the whole interface that slows down at once.

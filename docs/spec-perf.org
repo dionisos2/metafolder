@@ -83,7 +83,7 @@ a change of shape and not only of value.
 | Scenario                 | What it measures                                                    |
 |--------------------------+---------------------------------------------------------------------|
 | =log.window_ops=         | =GET /log?mode=active&limit=50= — the GUI log panel's window        |
-| =log.window_revisions=   | =GET /log?mode=active&revisions=20= — what =mf log list= asks for   |
+| =log.window_revisions=   | =GET /log?mode=active&revisions=20&limit=500= — what =mf log list= asks for |
 | =log.undo_window=        | =GET /log?mode=linear&limit=500= — the window =mf log undo= reads   |
 | =log.change_feed=        | =GET /log/since= — the delta every client polls for invalidation    |
 | =log.whole_tree=         | =GET /log?mode=tree= — the unbounded read the graph needs           |

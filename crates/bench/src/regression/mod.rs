@@ -145,7 +145,9 @@ async fn run_scenario(id: &str, ctx: &Ctx) -> Result<()> {
             get(&format!("{url}/repos/{repo}/log?mode=active&limit=50")).await?;
         }
         "log.window_revisions" => {
-            get(&format!("{url}/repos/{repo}/log?mode=active&revisions=20")).await?;
+            // What `mf log list` asks for: twenty revisions, at most 500
+            // operations (a reconcile's revision holds tens of thousands).
+            get(&format!("{url}/repos/{repo}/log?mode=active&revisions=20&limit=500")).await?;
         }
         "log.undo_window" => {
             get(&format!("{url}/repos/{repo}/log?mode=linear&limit=500")).await?;

@@ -1170,7 +1170,7 @@ Query parameters:
 | =mode=               | =linear=   | =linear=: HEAD ancestry only (root → HEAD); =active=: the line through HEAD (ancestry + forward to the most-recent leaf); =tree=: all branches |
 | =metarecord_uuid=         | —          | Only operations whose =entity_uuid= matches this metarecord UUID                          |
 | =limit=              | —          | Maximum number of operations to return (the most recent ones)                        |
-| =revisions=          | —          | Maximum number of *revisions* to return, whole (the most recent ones)                |
+| =revisions=          | —          | Maximum number of *revisions* to return (the most recent ones) — whole, unless =limit= cuts the oldest |
 | =since=              | —          | Include only operations in revisions with timestamp ≥ T (Unix ms)                    |
 | =until=              | —          | Include only operations in revisions with timestamp ≤ T (Unix ms)                    |
 | =include_snapshots=  | =false=    | If =true=, each operation includes =snapshots_before= and =snapshots_after= arrays   |
@@ -1201,6 +1201,21 @@ writes, so asking for operations either fetches far too many or cuts a revision
 in half. Revisions are returned *whole* — an operation is never shown without
 its siblings — and the newest ones first, so a window of twenty revisions costs
 the twenty revisions and not the log behind them.
+
+That is not a bound, though, when one revision is a reconcile: twenty revisions
+of a freshly reconciled 50 000-file repository are 50 000 operations, and
+=mf log list= spent 0.7 s and 400 MB reading them to print twenty lines. So
+=revisions= and =limit= combine as two *maxima*: the answer holds at most
+=revisions= revisions and at most =limit= operations, the newest ones — the
+walk stops at whichever bound it reaches first. Only the oldest revision of the
+window can be cut, and it says so: its entry in =revisions= carries
+="partial": true= and =op_count=, how many operations it holds in all (the
+newest of a revision's operations are the ones kept, and =seq= numbers them
+from 1, so the highest =seq= shown is that count). A revision shown whole
+carries neither. Under a =metarecord_uuid= filter nothing is marked: the filter
+leaves out most of every revision by design. =mf log list= asks for twenty
+revisions and at most 500 operations, and prints a cut revision's line with
+=[95 of 50000 operations shown]=.
 
 **A bound is a bound on what is returned, not a promise to stop looking.** When
 the request also filters (=metarecord_uuid=, =since=, =until=), the walk widens

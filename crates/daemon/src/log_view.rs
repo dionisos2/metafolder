@@ -47,7 +47,8 @@ pub struct LogQuery {
     pub mode: Mode,
     /// Cap on the number of *operations* returned (the most recent ones).
     pub limit: Option<usize>,
-    /// Cap on the number of *revisions* returned.
+    /// Cap on the number of *revisions* returned — whole ones, unless `limit`
+    /// cuts the oldest (then marked `partial`).
     pub revisions: Option<usize>,
     pub entity: Option<Uuid>,
     pub since: Option<i64>,
@@ -79,6 +80,18 @@ pub fn listing(log: &dyn Log, q: &LogQuery) -> Result<serde_json::Value> {
     // (spec-perf "Cost assertions").
     let rev_meta = revision_meta(log, ops.iter().map(|op| op.rev_id))?;
 
+    // A revision whose first operation is not in the window was cut by the
+    // operation bound (only the oldest can be: the window keeps the newest).
+    // Its operations are numbered `seq` 1.. in order, so the newest one shown
+    // says how many it holds in all. Not under a metarecord filter, which
+    // leaves out most of every revision on purpose.
+    let mut seqs: HashMap<i64, (i64, i64)> = HashMap::new();
+    for op in ops.iter().filter(|_| q.entity.is_none()) {
+        let (lo, hi) = seqs.entry(op.rev_id).or_insert((op.seq, op.seq));
+        *lo = (*lo).min(op.seq);
+        *hi = (*hi).max(op.seq);
+    }
+
     let mut op_values = Vec::with_capacity(ops.len());
     let mut seen_revs = HashSet::new();
     let mut revisions = Vec::new();
@@ -86,9 +99,14 @@ pub fn listing(log: &dyn Log, q: &LogQuery) -> Result<serde_json::Value> {
         op_values.push(op_json(log, op, q.include_snapshots)?);
         if seen_revs.insert(op.rev_id) {
             if let Some(m) = rev_meta.get(&op.rev_id) {
-                revisions.push(json!({
+                let mut rev = json!({
                     "id": op.rev_id, "timestamp": m.timestamp, "label": m.label, "origin": m.origin,
-                }));
+                });
+                if let Some(&(_, hi)) = seqs.get(&op.rev_id).filter(|(lo, _)| *lo > 1) {
+                    rev["partial"] = json!(true);
+                    rev["op_count"] = json!(hi);
+                }
+                revisions.push(rev);
             }
         }
     }
@@ -192,18 +210,18 @@ fn filter_ops(log: &dyn Log, q: &LogQuery, ops: &mut Vec<OpRow>) -> Result<()> {
     Ok(())
 }
 
-/// Whether the walk so far already holds everything the request will return.
+/// Whether the walk so far already holds everything the request will return:
+/// either bound reached is enough, the answer being trimmed by both.
 ///
-/// A revision bound needs one revision more than it returns: the oldest one in
-/// the window is the one the walk may have cut in half, and a client must never
-/// be shown half a revision.
+/// A revision bound alone needs one revision more than it returns: the oldest
+/// one in the walk may be cut in half, and without an operation bound a
+/// revision is shown whole. With one, the operations are what is bounded —
+/// a reconcile's revision holds tens of thousands — and the revision it cuts
+/// is marked `partial`.
 fn satisfied(q: &LogQuery, ops: &[OpRow]) -> bool {
     let by_limit = q.limit.is_some_and(|l| ops.len() >= l);
     let by_revisions = q.revisions.is_some_and(|r| distinct_revisions(ops) > r);
-    match (q.limit, q.revisions) {
-        (Some(_), Some(_)) => by_limit && by_revisions,
-        _ => by_limit || by_revisions,
-    }
+    by_limit || by_revisions
 }
 
 fn distinct_revisions(ops: &[OpRow]) -> usize {
@@ -211,8 +229,8 @@ fn distinct_revisions(ops: &[OpRow]) -> usize {
 }
 
 /// Trims the selection to what was asked for: the most recent `limit`
-/// operations, then the most recent `revisions` revisions — whole ones, so an
-/// operation is never shown without its siblings.
+/// operations, then the most recent `revisions` revisions — whole ones, but
+/// for the oldest, which `limit` may have cut (and `listing` marks).
 fn bound_ops(q: &LogQuery, ops: &mut Vec<OpRow>) {
     if let Some(limit) = q.limit {
         if ops.len() > limit {
