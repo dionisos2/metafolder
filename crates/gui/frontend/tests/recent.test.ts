@@ -50,7 +50,7 @@ function fakeMf() {
 }
 
 function complete() {
-  return shipped['recent'].args[0].complete(fakeMf() as never) as Promise<string[]>;
+  return shipped['recent'].args[0].complete(fakeMf() as never);
 }
 
 function run(choice: string) {

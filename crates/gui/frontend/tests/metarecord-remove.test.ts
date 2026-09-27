@@ -29,7 +29,7 @@ const state = {
   paths: [] as string[],
   root: '/srv',
   trashed: 'song.mp3',
-  trashError: null as unknown,
+  trashError: null as Error | null,
 };
 
 /** The `mf` a user command is handed (spec-gui "User commands"), faked: the

@@ -18,9 +18,9 @@ const calls = {
 
 const state = {
   marked: 3,
-  countError: null as unknown,
-  deleteError: null as unknown,
-  detectError: null as unknown,
+  countError: null as Error | null,
+  deleteError: null as Error | null,
+  detectError: null as Error | null,
 };
 
 /** The `mf` a user command is handed (spec-gui "User commands"), faked: the

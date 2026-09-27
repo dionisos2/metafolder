@@ -59,7 +59,7 @@ function fakeMf() {
 /** The completion pass, exactly as the command input runs it (it rebuilds the
  *  picked-line map on the way). */
 function complete() {
-  return shipped['repos:switch'].args[0].complete(fakeMf() as never) as Promise<string[]>;
+  return shipped['repos:switch'].args[0].complete(fakeMf() as never);
 }
 
 function run(choice: string) {
