@@ -301,4 +301,13 @@ mkdir -p "$inc/s-hmaaaaaaaa-0000001-oldsvh" "$inc/s-hmbbbbbbbb-0000002-newsvh"
 [ -e "$inc/s-hmaaaaaaaa-0000001-oldsvh" ] || fail "--dry-run must not delete a session"
 ok "dry run leaves sessions alone"
 
+echo "== scenario 13: an empty incremental/ is not an error"
+# cargo creates <profile>/incremental/ before compiling anything into it: a
+# profile whose first build was interrupted (or is still running) has it empty.
+# The glob over its cache dirs then matches nothing and stays literal.
+make_target
+mkdir -p target/release/deps target/release/incremental
+"$prune" >/dev/null || fail "an empty incremental/ must not abort the prune"
+ok "empty incremental/"
+
 echo "all prune-target tests passed"

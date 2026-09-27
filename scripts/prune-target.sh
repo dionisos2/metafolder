@@ -262,6 +262,8 @@ for p in "$target_dir"/*/; do
     [ -d "${p}incremental" ] || continue
     for cache in "${p}"incremental/*/; do
         cache=${cache%/}
+        # An empty incremental/ leaves the glob unexpanded.
+        [ -d "$cache" ] || continue
         [ -z "${doomed_path[$cache]+x}" ] || continue
         newest=$(find "$cache" -mindepth 1 -maxdepth 1 -type d -name 's-*' \
                      ! -name '*-working' -printf '%f\n' | sort | tail -1)
