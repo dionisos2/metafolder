@@ -1456,12 +1456,18 @@ per-directory state, nothing to run out of:
 
 #+BEGIN_SRC json
 {"paused": false, "pending_events": 0, "backend": "fanotify",
- "watched_dirs": null, "watch_budget": null}
+ "backend_reason": null, "watched_dirs": null, "watch_budget": null}
 #+END_SRC
 
 - =backend= — the active watch source: =inotify=, =fanotify=, =fsevents= or
   =readdirectorychangesw= ([[*Watch sources and regimes]]). Its regime is what
   decides whether the two budget-only fields below carry anything.
+- =backend_reason= — why the repository is not on the fanotify broker, when
+  it is not: what the probe at load met (no broker at the socket, the broker
+  refusing the root as =not accessible=, a handshake timeout…). =null= on the
+  broker. =mf watch status= prints it as =fanotify broker not used: …=, so a
+  repository left on inotify says why where the user looks, not only in the
+  daemon's log.
 - =paused= — whether ingestion is paused. In memory: a reload or a daemon
   restart starts unpaused.
 - =pending_events= — how many filesystem events are waiting in the in-memory

@@ -4053,6 +4053,28 @@ fn test_watch_status_pause_and_resume() {
     assert!(out.stdout.starts_with("running"), "stdout: {}", out.stdout);
 }
 
+/// A repository left on inotify says why, in `watch status` itself: which
+/// broker was probed and what it answered (or that none did).
+#[test]
+fn test_watch_status_says_why_the_broker_is_not_used() {
+    let (repo, _root) = init_repo("watchwhy");
+    let json = mf(&["-u", &repo, "watch", "status", "--json"]);
+    assert_ok(&json);
+    let body: serde_json::Value = serde_json::from_str(&json.stdout).unwrap();
+    let out = mf(&["-u", &repo, "watch", "status"]);
+    assert_ok(&out);
+    if body["backend"] == "fanotify" {
+        // A real broker on this machine: nothing to explain.
+        assert!(body["backend_reason"].is_null(), "{body}");
+        assert!(!out.stdout.contains("broker not used"), "stdout: {}", out.stdout);
+    } else {
+        let reason = body["backend_reason"].as_str().expect("a reason for the fallback");
+        assert!(reason.contains("broker"), "{reason}");
+        assert!(out.stdout.contains("fanotify broker not used:"), "stdout: {}", out.stdout);
+        assert!(out.stdout.contains(reason), "stdout: {}", out.stdout);
+    }
+}
+
 #[test]
 fn test_mount_list_and_forget() {
     let (repo, root) = init_repo("mount");

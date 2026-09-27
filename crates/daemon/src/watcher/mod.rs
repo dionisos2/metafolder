@@ -121,9 +121,18 @@ pub struct WatcherHandle {
     // Dropping the last strong `Arc` drops the source (stopping event
     // delivery). The event callback holds only a `Weak`, so it is not a cycle.
     source: Arc<dyn Source>,
+    /// Why the fanotify source was not taken, when it was not: `GET /watch`
+    /// `backend_reason`, so `mf watch status` can say it where the user looks.
+    fallback: Option<String>,
 }
 
 impl WatcherHandle {
+    /// Why this repository is not on the fanotify broker (no broker at the
+    /// socket, the root refused…); `None` when it is.
+    pub fn backend_reason(&self) -> Option<&str> {
+        self.fallback.as_deref()
+    }
+
     /// What the active source is called on the wire (`GET /watch` `backend`):
     /// "inotify", "fanotify", … (spec-file-tracking "Watch sources and regimes").
     pub fn backend(&self) -> &'static str {
@@ -172,7 +181,7 @@ pub fn start(repo: &Arc<RepoState>, pinger: ExecutorPinger) -> Result<WatcherHan
     // and the coverage maintenance for new directories. It ends when the sender
     // dies with the source (repository unloaded).
     let (tx, rx) = std::sync::mpsc::channel::<Vec<(FsEvent, Option<i64>)>>();
-    let source: Arc<dyn Source> = open_source(repo, tx)?;
+    let (source, fallback) = open_source(repo, tx)?;
 
     // Weaks: neither the ingest thread nor the callback may keep the repository
     // (and its exclusive lock) or the source alive.
@@ -208,7 +217,7 @@ pub fn start(repo: &Arc<RepoState>, pinger: ExecutorPinger) -> Result<WatcherHan
     // cache) via `RepoState::refresh_watches` — there each directory's
     // eligibility is served from memory instead of a per-directory DB walk. Until
     // then the watcher holds no watches (a fresh repo watches nothing anyway).
-    Ok(WatcherHandle { source })
+    Ok(WatcherHandle { source, fallback })
 }
 
 /// Opens the watch source (spec-file-tracking "Watch sources and regimes"):
@@ -216,27 +225,28 @@ pub fn start(repo: &Arc<RepoState>, pinger: ExecutorPinger) -> Result<WatcherHan
 /// the notify source otherwise — announced, never silent. Probed once, at
 /// load: a restart is what re-decides (a broker that comes up later is picked
 /// up by the next load).
+/// The source, and why the broker was not taken when it was not.
 fn open_source(
     repo: &Arc<RepoState>,
     tx: std::sync::mpsc::Sender<Vec<(FsEvent, Option<i64>)>>,
-) -> Result<Arc<dyn Source>> {
+) -> Result<(Arc<dyn Source>, Option<String>)> {
     let socket = repo.watchd_socket().to_path_buf();
-    let source: Arc<dyn Source> = match fanotify::Source::start(repo, &socket, tx.clone()) {
-        Ok(source) => source,
+    match fanotify::Source::start(repo, &socket, tx.clone()) {
+        Ok(source) => Ok((source, None)),
         Err(err) => {
+            let reason = format!("{err:#}");
             crate::diagnostics::warn_for(
                 "watcher",
                 format!(
-                    "no fanotify broker at {}: {err:#} — watching with the inotify source \
+                    "no fanotify broker at {}: {reason} — watching with the inotify source \
                      (one watch per directory)",
                     socket.display()
                 ),
                 repo.uuid(),
             );
-            inotify::Source::start(repo, tx)?
+            Ok((inotify::Source::start(repo, tx)?, Some(reason)))
         }
-    };
-    Ok(source)
+    }
 }
 
 // ── Watch check (spec-file-tracking "Watch check") ───────────────────────────

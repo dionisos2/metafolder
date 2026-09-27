@@ -2091,6 +2091,11 @@ fn print_watch(resp: &serde_json::Value, raw_json: bool) -> Result<i32, CliError
     // and regimes").
     let waiting = resp["pending_events"].as_i64().unwrap_or(0);
     println!("{state:<10}\t{waiting} event(s) waiting\t{}", coverage(resp));
+    // A repository left on inotify says why — no broker at the socket, the
+    // root refused… — here, rather than only in the daemon's log.
+    if let Some(reason) = resp["backend_reason"].as_str() {
+        println!("fanotify broker not used: {reason}");
+    }
     // A budget in trouble adds its own lines, so neither condition passes
     // unnoticed (spec-file-tracking "The watch budget").
     let budget = &resp["watch_budget"];

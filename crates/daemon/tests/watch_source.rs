@@ -52,6 +52,16 @@ struct FakeBroker {
 
 impl FakeBroker {
     fn start(socket: PathBuf, script: Vec<ServerMsg>) -> Self {
+        Self::start_answering(socket, script, false)
+    }
+
+    /// A broker that refuses every root, as the real one does a root its
+    /// subscriber may not list.
+    fn refusing(socket: PathBuf) -> Self {
+        Self::start_answering(socket, Vec::new(), true)
+    }
+
+    fn start_answering(socket: PathBuf, script: Vec<ServerMsg>, refuse: bool) -> Self {
         std::fs::create_dir_all(socket.parent().unwrap()).unwrap();
         let _ = std::fs::remove_file(&socket);
         let listener = UnixListener::bind(&socket).unwrap();
@@ -63,12 +73,16 @@ impl FakeBroker {
                 let roots = match proto::decode::<ClientMsg>(&line).unwrap() {
                     ClientMsg::Subscribe { roots } => roots,
                 };
-                stream
-                    .write_all(
-                        proto::encode(&ServerMsg::Subscribed { roots, denied: Vec::new() })
-                            .as_bytes(),
-                    )
-                    .unwrap();
+                let answer = if refuse {
+                    let denied = roots
+                        .into_iter()
+                        .map(|root| proto::Denied { root, reason: "not accessible".into() })
+                        .collect();
+                    ServerMsg::Subscribed { roots: Vec::new(), denied }
+                } else {
+                    ServerMsg::Subscribed { roots, denied: Vec::new() }
+                };
+                stream.write_all(proto::encode(&answer).as_bytes()).unwrap();
                 for msg in &script {
                     stream.write_all(proto::encode(msg).as_bytes()).unwrap();
                 }
@@ -176,6 +190,23 @@ fn test_without_a_broker_the_notify_source_watches_and_says_so() {
         .into_iter()
         .any(|e| e.scope == "watcher" && e.message.contains(&needle));
     assert!(said, "the fallback names the socket it probed");
+    // …and keeps saying it where the user looks (`mf watch status`), not only
+    // in a log that scrolls away.
+    let reason = handle.backend_reason().expect("an inotify fallback has a reason");
+    assert!(reason.contains(&needle), "{reason}");
+    std::fs::remove_dir_all(root).ok();
+}
+
+#[test]
+fn test_a_root_the_broker_refuses_falls_back_with_the_brokers_reason() {
+    let socket = dead_socket();
+    let (repo, root) = setup("refused", fanotify_settings(&socket));
+    let _broker = FakeBroker::refusing(socket);
+    let executor = executor::spawn(&repo, Duration::from_millis(25));
+    let handle = watcher::start(&repo, executor.pinger()).unwrap();
+    assert_eq!(handle.backend(), "inotify");
+    let reason = handle.backend_reason().expect("a reason");
+    assert!(reason.contains("not accessible"), "{reason}");
     std::fs::remove_dir_all(root).ok();
 }
 
@@ -198,6 +229,7 @@ fn test_events_from_the_broker_become_metarecords() {
     let executor = executor::spawn(&repo, Duration::from_millis(25));
     let handle = watcher::start(&repo, executor.pinger()).unwrap();
     assert_eq!(handle.backend(), "fanotify");
+    assert_eq!(handle.backend_reason(), None, "nothing to explain when fanotify is in use");
     wait_for("the broker's event to become a metarecord", || resolve(&repo, "/dir/x").is_some());
     std::fs::remove_dir_all(root).ok();
 }

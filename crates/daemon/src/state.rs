@@ -453,6 +453,16 @@ impl RepoState {
     /// (spec-file-tracking "Watch sources and regimes"). While the watcher is
     /// not running (unit tests, a repository being torn down) the platform's
     /// notify backend is named, so the view still answers.
+    /// Why this repository is not on the fanotify broker, when it is not
+    /// (`GET /watch` `backend_reason`); `None` on the broker, or before the
+    /// watcher started.
+    pub fn watch_backend_reason(&self) -> Option<String> {
+        self.handles
+            .lock_recover()
+            .as_ref()
+            .and_then(|h| h.watcher.backend_reason().map(str::to_string))
+    }
+
     pub fn watch_backend(&self) -> &'static str {
         self.handles
             .lock_recover()

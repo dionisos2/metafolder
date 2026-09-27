@@ -2429,6 +2429,7 @@ fn watch_view(repo_state: &RepoState) -> serde_json::Value {
         "paused": repo_state.is_ingestion_paused(),
         "pending_events": crate::executor::pending_count(repo_state),
         "backend": repo_state.watch_backend(),
+        "backend_reason": repo_state.watch_backend_reason(),
         "watched_dirs": watched_dirs,
         "watch_budget": watch_budget,
     })
