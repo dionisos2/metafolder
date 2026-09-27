@@ -3381,6 +3381,13 @@ repository was loaded, and two panels show the counts.
   =mf_watch = false= or an =mf_ignore= pattern. The counts are fetched with
   the listing's window (one =POST /watch/activity= per window, like the ignore
   marking) and refreshed with it.
+
+  *Sort by activity* (the =by activity= checkbox, =file-manager:toggle
+  activity=, =ctrl+shift+a=) orders the entries busiest first, quiet ones after
+  in the disk's order, the ="."= / =".."= rows staying on top. The order comes
+  from one =GET /watch/activity?path=<dir>= for the whole directory — the
+  per-window counts could not sort rows that are not rendered yet — and is
+  recomputed with the counts; the cursor stays on its entry.
 - =metarecord-detail= — a note under the watch note: the count at the record's
   file (under it, for a directory), with the same wording and the same amber
   for a hot spot. A record at several paths shows its busiest one: the counts

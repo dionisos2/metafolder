@@ -369,6 +369,9 @@
 # Browse the repository root ⇄ the whole filesystem — the other thing this panel
 # toggles, and the only one of the pair that had no key.
 "ctrl+r" = { command = "file-manager:toggle root", when = "file-manager" }
+# Busiest entries first (watch activity): the walk down to where the watcher's
+# events come from.
+"ctrl+shift+a" = { command = "file-manager:toggle activity", when = "file-manager" }
 
 # metarecord-list: selection, finder, query editing. Space checks the row under
 # the cursor into the multi-selection — the workspace-wide set the bulk

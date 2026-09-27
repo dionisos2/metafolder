@@ -93,3 +93,40 @@ export function activityTitle(events, total, sinceMs, nowMs = Date.now()) {
 export function isHot(events, total) {
   return total >= HOT_MIN_TOTAL && events >= total * HOT_SHARE;
 }
+
+/**
+ * The counts of a directory's direct children, most active first — one call
+ * whatever the directory's size, so a listing can be *sorted* by activity
+ * (`GET /repos/:repo/watch/activity?path=`). Quiet children are absent (read
+ * them as 0). Null when the daemon did not answer.
+ *
+ * @param {Daemon} daemon @param {string|null} repo @param {string} dirRel
+ * @param {number} limit
+ * @returns {Promise<Map<string, number>|null>}
+ */
+export async function fetchActivityChildren(daemon, repo, dirRel, limit) {
+  if (!repo) return null;
+  try {
+    const query = `path=${encodeURIComponent(dirRel)}&limit=${limit}`;
+    const body = /** @type {{children?: Array<{path: string, events: number}>}} */ (
+      await daemon.call('GET', `/repos/${repo}/watch/activity?${query}`)
+    );
+    return new Map((body?.children ?? []).map((c) => [c.path, c.events]));
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * `items` most active first; entries with equal counts — the quiet ones
+ * included — keep their original order.
+ * @template T
+ * @param {T[]} items @param {(item: T) => number} countOf
+ * @returns {T[]}
+ */
+export function orderByActivity(items, countOf) {
+  return items
+    .map((item, index) => ({ item, index, n: countOf(item) }))
+    .sort((a, b) => b.n - a.n || a.index - b.index)
+    .map((e) => e.item);
+}

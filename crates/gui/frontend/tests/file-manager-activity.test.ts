@@ -31,6 +31,7 @@ type ChangeCb = (event: { repo: string; uuids: string[] | null }) => void;
 const DIR_ENTRIES = [
   { name: 'build', path: '/r/build', is_dir: true },
   { name: 'song.mp3', path: '/r/song.mp3', is_dir: false },
+  { name: 'zcache', path: '/r/zcache', is_dir: true },
 ];
 
 function stub(repo: string | null, activity: Record<string, number> | null) {
@@ -45,6 +46,15 @@ function stub(repo: string | null, activity: Record<string, number> | null) {
     if (path.includes('/tree/resolve-path')) return { uuid: 'diruuid' };
     if (path.endsWith('/watch')) return { quiet_period_ms: 3000 };
     if (path.includes('/tree/children')) return [{ uuid: 'songuuid', name: 'song.mp3' }];
+    if (path.startsWith('/repos/r1/watch/activity?')) {
+      if (activity === null) throw new Error('no such endpoint');
+      const counts = activity;
+      const children = Object.keys(counts)
+        .filter((p) => p !== '' && p.lastIndexOf('/') === 0)
+        .map((p) => ({ path: p, events: counts[p] }))
+        .sort((a, b) => b.events - a.events);
+      return { since_ms: 0, total: counts[''] ?? 0, path: '', events: counts[''] ?? 0, children };
+    }
     if (path.endsWith('/watch/activity')) {
       if (activity === null) throw new Error('no such endpoint');
       return {
@@ -150,7 +160,7 @@ describe('file-manager watch activity', () => {
   test('each row carries its count, the hot spot is marked', async () => {
     const { root, daemonCall } = await mount('r1', { '': 1000, '/build': 900, '/song.mp3': 3 });
     const call = daemonCall.mock.calls.find((c) => c[1] === '/repos/r1/watch/activity');
-    expect(call?.[2]).toEqual({ paths: ['', '/build', '/song.mp3'] });
+    expect(call?.[2]).toEqual({ paths: ['', '/build', '/song.mp3', '/zcache'] });
 
     const build = row(root, 'build').querySelector('.activity') as HTMLElement;
     expect(build.textContent).toBe('900');
@@ -166,5 +176,32 @@ describe('file-manager watch activity', () => {
     expect(row(quiet.root, 'song.mp3').querySelector('.activity')?.textContent ?? '').toBe('');
     const unknown = await mount('r1', null);
     expect(row(unknown.root, 'build').querySelector('.activity')?.textContent ?? '').toBe('');
+  });
+
+  /** The names of the rendered rows, in order. */
+  const names = (root: ShadowRoot) =>
+    [...root.querySelectorAll('#entries li .name')].map((n) => n.textContent);
+
+  test('sorting by activity puts the busiest entries first, "." stays on top', async () => {
+    const { root, handlers } = await mount('r1', { '': 1000, '/zcache': 700, '/song.mp3': 200 });
+    expect(names(root)).toEqual(['.', 'build', 'song.mp3', 'zcache']);
+    await handlers.get('file-manager:toggle')!('activity');
+    expect(names(root)).toEqual(['.', 'zcache', 'song.mp3', 'build']);
+    expect((root.getElementById('sort-activity') as HTMLInputElement).checked).toBe(true);
+    // The counts follow the rows they belong to.
+    expect(row(root, 'zcache').querySelector('.activity')?.textContent).toBe('700');
+
+    await handlers.get('file-manager:toggle')!('activity');
+    expect(names(root)).toEqual(['.', 'build', 'song.mp3', 'zcache']);
+  });
+
+  test('the checkbox toggles the same sort', async () => {
+    const { root } = await mount('r1', { '': 1000, '/zcache': 700 });
+    const box = root.getElementById('sort-activity') as HTMLInputElement;
+    box.checked = true;
+    box.dispatchEvent(new Event('change'));
+    await new Promise((r) => setTimeout(r, 0));
+    await new Promise((r) => setTimeout(r, 0));
+    expect(names(root)).toEqual(['.', 'zcache', 'build', 'song.mp3']);
   });
 });

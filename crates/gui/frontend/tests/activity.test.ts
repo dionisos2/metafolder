@@ -3,7 +3,14 @@
 // metarecord-detail note.
 
 import { describe, expect, test, vi } from 'vitest';
-import { activityLabel, activityTitle, fetchActivity, isHot } from '../../panel-shim/activity.js';
+import {
+  activityLabel,
+  activityTitle,
+  fetchActivity,
+  fetchActivityChildren,
+  isHot,
+  orderByActivity,
+} from '../../panel-shim/activity.js';
 
 describe('fetchActivity', () => {
   test('asks for the paths in one call and maps them', async () => {
@@ -73,5 +80,46 @@ describe('labels', () => {
     expect(isHot(30, 100)).toBe(true);
     expect(isHot(5, 100)).toBe(false);
     expect(isHot(3, 5)).toBe(false); // too few events to call anything noisy
+  });
+});
+
+describe('fetchActivityChildren', () => {
+  test('one GET for the directory, children mapped by path', async () => {
+    const call = vi.fn(async () => ({
+      since_ms: 1,
+      total: 10,
+      path: '/a b',
+      events: 9,
+      children: [
+        { path: '/a b/x', events: 7 },
+        { path: '/a b/y', events: 2 },
+      ],
+    }));
+    const got = await fetchActivityChildren({ call }, 'r1', '/a b', 300);
+    expect(call).toHaveBeenCalledWith('GET', '/repos/r1/watch/activity?path=%2Fa%20b&limit=300');
+    expect([...(got ?? new Map())]).toEqual([
+      ['/a b/x', 7],
+      ['/a b/y', 2],
+    ]);
+  });
+
+  test('a failed call is unknown (null)', async () => {
+    const call = vi.fn(async () => {
+      throw new Error('down');
+    });
+    expect(await fetchActivityChildren({ call }, 'r1', '', 10)).toBe(null);
+    expect(await fetchActivityChildren({ call }, null, '', 10)).toBe(null);
+  });
+});
+
+describe('orderByActivity', () => {
+  test('most active first, quiet entries after in their original order', () => {
+    const items = ['a', 'b', 'c', 'd', 'e'];
+    const counts = new Map([
+      ['c', 5],
+      ['e', 9],
+      ['a', 5],
+    ]);
+    expect(orderByActivity(items, (i) => counts.get(i) ?? 0)).toEqual(['e', 'a', 'c', 'b', 'd']);
   });
 });

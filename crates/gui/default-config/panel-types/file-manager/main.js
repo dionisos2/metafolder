@@ -21,7 +21,14 @@ import {
 } from './tracked.js';
 import { loadEligibility, scopedPath } from './ignored.js';
 import { ignoreTarget, patternForExtension, patternForPath } from '/__ignore.js';
-import { activityLabel, activityTitle, fetchActivity, isHot } from '/__activity.js';
+import {
+  activityLabel,
+  activityTitle,
+  fetchActivity,
+  fetchActivityChildren,
+  isHot,
+  orderByActivity,
+} from '/__activity.js';
 import { fetchMounts, offlineMountFor, relativeTo, unavailableLabel } from '/__mounts.js';
 import {
   joinPath,
@@ -87,6 +94,13 @@ export async function mount(root, metafolder) {
   let cursorIndex = -1;
   let constrainToRoot = true;
   let showHidden = false;
+  /** Order the entries by watch activity, busiest first (spec-gui "Watch
+   *  activity"), instead of the disk's order. */
+  let sortActivity = false;
+  /** The directory's entries in the disk's order (hidden ones filtered), what
+   *  `listing` is rebuilt from when the activity order changes.
+   *  @type {Entry[]} */
+  let dirEntries = [];
   /** @type {Map<string, string>} absolute path -> metarecord uuid (children of currentDir only) */
   let trackedPaths = new Map();
   /** Entries of the current listing an `mf_ignore` pattern excludes, and why
@@ -123,6 +137,7 @@ export async function mount(root, metafolder) {
   const constrainBox = byId(root, 'constrain', HTMLInputElement);
   const gotoRootButton = byId(root, 'goto-root');
   const showHiddenBox = byId(root, 'show-hidden', HTMLInputElement);
+  const sortActivityBox = byId(root, 'sort-activity', HTMLInputElement);
   const statusLine = byId(root, 'status-line');
   const listingElement = byId(root, 'listing');
 
@@ -193,6 +208,8 @@ export async function mount(root, metafolder) {
   async function refreshActivity() {
     const dir = currentDir;
     if (dir === null) return;
+    await applyActivityOrder();
+    if (currentDir !== dir) return;
     /** @type {string[]} */
     const rels = [];
     for (const item of listing.slice(0, rendered)) {
@@ -201,6 +218,33 @@ export async function mount(root, metafolder) {
     }
     const found = await fetchActivity(daemon, repo, rels);
     if (currentDir === dir) activity = found;
+  }
+
+  // Rebuilds `listing` in the activity order (or back in the disk's), from one
+  // call for the whole directory: the per-window counts cannot sort rows that
+  // are not rendered yet. The synthetic rows stay on top, and the cursor stays
+  // on the entry it was on.
+  async function applyActivityOrder() {
+    const dir = currentDir;
+    if (dir === null) return;
+    const dirRel = relPath(dir, repoRoot);
+    const children =
+      sortActivity && dirRel !== null
+        ? await fetchActivityChildren(daemon, repo, dirRel, Math.max(1, dirEntries.length))
+        : null;
+    if (currentDir !== dir) return;
+    const body = children
+      ? orderByActivity(dirEntries, (item) => {
+          const rel = relPath(item.path, repoRoot);
+          return (rel !== null && children.get(rel)) || 0;
+        })
+      : dirEntries;
+    const cursorPath = listing[cursorIndex]?.path;
+    listing = [...listing.slice(0, syntheticCount), ...body];
+    if (cursorPath !== undefined) {
+      cursorIndex = listing.findIndex((item) => item.path === cursorPath);
+      if (cursorIndex >= rendered) rendered = cursorIndex + 1;
+    }
   }
 
   /** The count of an absolute path, or 0 when unknown or quiet.
@@ -249,7 +293,8 @@ export async function mount(root, metafolder) {
     loadError = null; // a fresh listing arrived; clear any stale error state
     const synthetic = syntheticRows(dir, repoRoot, constrainToRoot);
     syntheticCount = synthetic.length;
-    listing = [...synthetic, ...filterHidden(items, showHidden)];
+    dirEntries = filterHidden(items, showHidden);
+    listing = [...synthetic, ...dirEntries];
     currentDir = dir;
     trackedPaths = new Map();
     ignoredPaths = new Map();
@@ -1020,6 +1065,16 @@ export async function mount(root, metafolder) {
     if (currentDir !== null) await open(currentDir);
   }
   showHiddenBox.addEventListener('change', () => void setShowHidden(showHiddenBox.checked));
+  // Re-order the listing in place: the counts and the order come from the
+  // daemon, the directory is not re-read.
+  /** @param {boolean} on */
+  async function setSortActivity(on) {
+    sortActivity = on;
+    sortActivityBox.checked = on;
+    await refreshActivity();
+    render();
+  }
+  sortActivityBox.addEventListener('change', () => void setSortActivity(sortActivityBox.checked));
   const detachScroll = pager.attach(listingElement);
   byId(root, 'up').addEventListener('click', () => void goUp());
   gotoRootButton.addEventListener('click', () => void gotoRoot());
@@ -1039,10 +1094,13 @@ export async function mount(root, metafolder) {
   const FM_FLAGS = {
     root: () => setConstrain(!constrainToRoot),
     hidden: () => setShowHidden(!showHidden),
+    activity: () => setSortActivity(!sortActivity),
   };
 
   void commands.register('file-manager:toggle', {
-    label: 'File manager: toggle a view flag (root constraint / hidden dot-entries)',
+    label:
+      'File manager: toggle a view flag (root constraint / hidden dot-entries / ' +
+      'sort by watch activity)',
     args: [
       {
         name: 'flag',
