@@ -24,6 +24,10 @@ rules:
       - pattern-either:
           - pattern: $C.execute($SQL, ...)
           - pattern: $C.execute_batch($SQL)
+      # SQLite's `WriteTxn` (store.rs) holds the primitives the Writer itself
+      # writes through: it is the storage layer, like db.rs, not a bypass.
+      - pattern-not-inside: |
+          impl WriteTxn for $T { ... }
       # `UPDATE revision SET label` is deliberately not matched: labelling a
       # revision annotates the log, it does not change data, so it produces no
       # operation. Creating or removing a revision outside the Writer would.
