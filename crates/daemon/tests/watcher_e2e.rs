@@ -13,7 +13,7 @@ use serde_json::{json, Value};
 use tower::util::ServiceExt;
 
 mod common;
-use common::TempDir;
+use common::{Regime, TempDir};
 
 async fn request(
     app: &Router,
@@ -122,8 +122,8 @@ async fn wait_for_paths(app: &Router, repo: &str, expected: &[&str]) {
 
 /// A repository initialised through the HTTP API with tracking enabled on its
 /// root — the state a user reaches right after creating their first repository.
-async fn watched_repo(prefix: &str) -> (Router, String, TempDir) {
-    let app = routes::build(std::sync::Arc::new(common::watching_state()));
+async fn watched_repo(prefix: &str, regime: Regime) -> (Router, String, TempDir) {
+    let app = routes::build(std::sync::Arc::new(common::watching_state_on(regime)));
     let root = TempDir::new(prefix);
     let (status, body) =
         request(&app, "POST", "/repos/init", Some(json!({"root": root.to_str().unwrap()}))).await;
@@ -146,18 +146,26 @@ async fn watched_repo(prefix: &str) -> (Router, String, TempDir) {
     )
     .await;
     assert_eq!(status, StatusCode::OK, "enabling mf_watch failed: {body}");
+    assert_backend(&app, &repo, regime).await;
     (app, repo, root)
 }
 
-#[tokio::test(flavor = "multi_thread")]
-async fn test_watcher_tracks_create_rename_delete() {
-    let app = routes::build(std::sync::Arc::new(common::watching_state()));
+/// The regime asked for is the one running: otherwise both variants would test
+/// the same source under two names.
+async fn assert_backend(app: &Router, repo: &str, regime: Regime) {
+    let (_, watch) = request(app, "GET", &format!("/repos/{repo}/watch"), None).await;
+    assert_eq!(watch["backend"], regime.backend(), "watch source: {watch}");
+}
+
+async fn test_watcher_tracks_create_rename_delete(regime: Regime) {
+    let app = routes::build(std::sync::Arc::new(common::watching_state_on(regime)));
     let root = TempDir::new("e2e");
 
     let (status, body) =
         request(&app, "POST", "/repos/init", Some(json!({"root": root.to_str().unwrap()}))).await;
     assert_eq!(status, StatusCode::OK, "init failed: {body}");
     let repo = body["repo_uuid"].as_str().unwrap().to_string();
+    assert_backend(&app, &repo, regime).await;
 
     // Enable tracking on the root entry.
     let (_, roots) = request(
@@ -202,11 +210,10 @@ async fn test_watcher_tracks_create_rename_delete() {
 /// daemon cannot read (the classic Wine `~/.wine/dosdevices/z: -> /` case) must
 /// still load. The watcher must not follow the symlink, and one unwatchable
 /// path must never abort the whole load.
-#[tokio::test(flavor = "multi_thread")]
-async fn test_load_succeeds_with_symlink_to_unreadable_dir() {
+async fn test_load_succeeds_with_symlink_to_unreadable_dir(regime: Regime) {
     use std::os::unix::fs::PermissionsExt;
 
-    let app = routes::build(std::sync::Arc::new(common::watching_state()));
+    let app = routes::build(std::sync::Arc::new(common::watching_state_on(regime)));
     let root = TempDir::new("symlink");
 
     // A readable directory outside the repo that itself contains an *unreadable*
@@ -227,6 +234,7 @@ async fn test_load_succeeds_with_symlink_to_unreadable_dir() {
         request(&app, "POST", "/repos/init", Some(json!({"root": root.to_str().unwrap()}))).await;
     assert_eq!(status, StatusCode::OK, "init must not fail on the symlink: {body}");
     let repo = body["repo_uuid"].as_str().unwrap().to_string();
+    assert_backend(&app, &repo, regime).await;
 
     // Enabling watch on the root triggers a watch refresh that walks the tree:
     // it must skip the symlink (not a real directory) and not EACCES.
@@ -267,15 +275,15 @@ async fn test_load_succeeds_with_symlink_to_unreadable_dir() {
 /// inside its own event callback — it waits for the very event loop that is
 /// running the callback. Doing so blocks the watcher thread forever while it
 /// holds the repository connection, and every request then hangs behind it.
-#[tokio::test(flavor = "multi_thread")]
-async fn test_new_directory_does_not_wedge_the_daemon() {
-    let app = routes::build(std::sync::Arc::new(common::watching_state()));
+async fn test_new_directory_does_not_wedge_the_daemon(regime: Regime) {
+    let app = routes::build(std::sync::Arc::new(common::watching_state_on(regime)));
     let root = TempDir::new("newdir");
 
     let (status, body) =
         request(&app, "POST", "/repos/init", Some(json!({"root": root.to_str().unwrap()}))).await;
     assert_eq!(status, StatusCode::OK, "init failed: {body}");
     let repo = body["repo_uuid"].as_str().unwrap().to_string();
+    assert_backend(&app, &repo, regime).await;
 
     let (_, roots) = request(
         &app,
@@ -322,9 +330,8 @@ async fn test_new_directory_does_not_wedge_the_daemon() {
 /// live set has to follow the filesystem or later events land under a stale
 /// path (or nowhere at all). The executor tests cover the same semantics from
 /// synthetic events — what they cannot see is whether the events arrive.
-#[tokio::test(flavor = "multi_thread")]
-async fn test_renamed_directory_keeps_being_watched() {
-    let (app, repo, root) = watched_repo("dirrename").await;
+async fn test_renamed_directory_keeps_being_watched(regime: Regime) {
+    let (app, repo, root) = watched_repo("dirrename", regime).await;
 
     std::fs::create_dir(root.join("A")).unwrap();
     std::fs::write(root.join("A/one.txt"), b"1").unwrap();
@@ -365,9 +372,8 @@ async fn test_renamed_directory_keeps_being_watched() {
 /// arrival of the new name re-places them, by walking the subtree. Miss that
 /// walk and the rename looks fine while everything below the second level has
 /// quietly stopped being watched.
-#[tokio::test(flavor = "multi_thread")]
-async fn test_renaming_a_directory_keeps_its_whole_subtree_watched() {
-    let (app, repo, root) = watched_repo("deeprename").await;
+async fn test_renaming_a_directory_keeps_its_whole_subtree_watched(regime: Regime) {
+    let (app, repo, root) = watched_repo("deeprename", regime).await;
 
     std::fs::create_dir_all(root.join("A/x/y")).unwrap();
     std::fs::write(root.join("A/x/y/one.txt"), b"1").unwrap();
@@ -400,9 +406,8 @@ async fn test_renaming_a_directory_keeps_its_whole_subtree_watched() {
 
 /// A file moved between two watched directories keeps its metarecord and lands
 /// at the new path (one revision, not delete + create).
-#[tokio::test(flavor = "multi_thread")]
-async fn test_file_moved_between_directories_keeps_its_metarecord() {
-    let (app, repo, root) = watched_repo("dirmove").await;
+async fn test_file_moved_between_directories_keeps_its_metarecord(regime: Regime) {
+    let (app, repo, root) = watched_repo("dirmove", regime).await;
 
     std::fs::create_dir(root.join("src")).unwrap();
     std::fs::create_dir(root.join("dst")).unwrap();
@@ -437,9 +442,8 @@ async fn test_file_moved_between_directories_keeps_its_metarecord() {
 /// A whole subtree created at once (`mkdir -p a/b` then a file) is ingested:
 /// the watch on each new directory has to be placed before its own children
 /// arrive, and whatever slipped through has to be caught by the arrival scan.
-#[tokio::test(flavor = "multi_thread")]
-async fn test_nested_subtree_created_at_once_is_ingested() {
-    let (app, repo, root) = watched_repo("subtree").await;
+async fn test_nested_subtree_created_at_once_is_ingested(regime: Regime) {
+    let (app, repo, root) = watched_repo("subtree", regime).await;
 
     std::fs::create_dir_all(root.join("a/b/c")).unwrap();
     std::fs::write(root.join("a/b/c/deep.txt"), b"deep").unwrap();
@@ -465,9 +469,8 @@ async fn test_nested_subtree_created_at_once_is_ingested() {
 /// Removing a directory orphans its whole subtree, and recreating the same path
 /// starts tracking again (the watch was dropped with the directory and has to be
 /// placed anew).
-#[tokio::test(flavor = "multi_thread")]
-async fn test_removed_directory_can_be_recreated_and_tracked_again() {
-    let (app, repo, root) = watched_repo("dirremove").await;
+async fn test_removed_directory_can_be_recreated_and_tracked_again(regime: Regime) {
+    let (app, repo, root) = watched_repo("dirremove", regime).await;
 
     std::fs::create_dir(root.join("d")).unwrap();
     std::fs::write(root.join("d/f.txt"), b"f").unwrap();
@@ -500,9 +503,8 @@ async fn test_removed_directory_can_be_recreated_and_tracked_again() {
 /// file must keep its metarecord: everything the user attached to it (tags,
 /// ratings, notes) hangs off that identity, and a fresh metarecord at the new
 /// path silently leaves all of it behind on an orphan.
-#[tokio::test(flavor = "multi_thread")]
-async fn test_move_into_a_brand_new_directory_keeps_the_metarecord() {
-    let (app, repo, root) = watched_repo("newdirmove").await;
+async fn test_move_into_a_brand_new_directory_keeps_the_metarecord(regime: Regime) {
+    let (app, repo, root) = watched_repo("newdirmove", regime).await;
 
     std::fs::write(root.join("x.txt"), b"x").unwrap();
     let by_name =
@@ -549,9 +551,8 @@ async fn test_move_into_a_brand_new_directory_keeps_the_metarecord() {
 /// it". The subtree must keep its metarecords — children reference their parent
 /// by uuid, so re-homing the directory carries them along; duplicating it
 /// instead orphans the whole subtree at once.
-#[tokio::test(flavor = "multi_thread")]
-async fn test_move_a_directory_into_a_brand_new_directory_keeps_the_subtree() {
-    let (app, repo, root) = watched_repo("newdirdirmove").await;
+async fn test_move_a_directory_into_a_brand_new_directory_keeps_the_subtree(regime: Regime) {
+    let (app, repo, root) = watched_repo("newdirdirmove", regime).await;
 
     std::fs::create_dir(root.join("trip")).unwrap();
     std::fs::write(root.join("trip/x.jpg"), b"x").unwrap();
@@ -600,9 +601,8 @@ async fn test_move_a_directory_into_a_brand_new_directory_keeps_the_subtree() {
 /// recording *anything* for that repository from then on — including across a
 /// restart, since the pending buffer is replayed at load. The last assertion is
 /// that one: the watcher is still alive afterwards.
-#[tokio::test(flavor = "multi_thread")]
-async fn test_overwriting_a_tracked_file_keeps_the_watcher_alive() {
-    let (app, repo, root) = watched_repo("overwrite").await;
+async fn test_overwriting_a_tracked_file_keeps_the_watcher_alive(regime: Regime) {
+    let (app, repo, root) = watched_repo("overwrite", regime).await;
 
     std::fs::write(root.join("a.txt"), b"AAA").unwrap();
     std::fs::write(root.join("b.txt"), b"BBB").unwrap();
@@ -668,9 +668,8 @@ async fn test_overwriting_a_tracked_file_keeps_the_watcher_alive() {
 /// batch, each landing on a path another metarecord held moments before. Both
 /// records must survive and end up crossed over; evicting a destination too
 /// eagerly would orphan a record that the next rename was about to fill.
-#[tokio::test(flavor = "multi_thread")]
-async fn test_swapping_two_tracked_files_keeps_both_metarecords() {
-    let (app, repo, root) = watched_repo("swap").await;
+async fn test_swapping_two_tracked_files_keeps_both_metarecords(regime: Regime) {
+    let (app, repo, root) = watched_repo("swap", regime).await;
 
     std::fs::write(root.join("a.txt"), b"AAAA").unwrap();
     std::fs::write(root.join("b.txt"), b"BB").unwrap();
@@ -706,3 +705,18 @@ async fn test_swapping_two_tracked_files_keeps_both_metarecords() {
 
     std::fs::remove_dir_all(root).unwrap();
 }
+
+on_both_regimes!(
+    test_watcher_tracks_create_rename_delete,
+    test_load_succeeds_with_symlink_to_unreadable_dir,
+    test_new_directory_does_not_wedge_the_daemon,
+    test_renamed_directory_keeps_being_watched,
+    test_renaming_a_directory_keeps_its_whole_subtree_watched,
+    test_file_moved_between_directories_keeps_its_metarecord,
+    test_nested_subtree_created_at_once_is_ingested,
+    test_removed_directory_can_be_recreated_and_tracked_again,
+    test_move_into_a_brand_new_directory_keeps_the_metarecord,
+    test_move_a_directory_into_a_brand_new_directory_keeps_the_subtree,
+    test_overwriting_a_tracked_file_keeps_the_watcher_alive,
+    test_swapping_two_tracked_files_keeps_both_metarecords,
+);

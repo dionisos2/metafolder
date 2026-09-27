@@ -17,18 +17,96 @@ pub mod engines;
 pub mod kv;
 pub mod sqlcost;
 
-/// A daemon state for the tests that drive the live watcher: its quiet period
-/// is the 500 ms these suites were written and timed against, not the shipped
-/// default (2 s, `DEFAULT_WATCH_QUIET_PERIOD_MS`). What they check is what the
-/// watcher records, not how long it waits first — and their settle budgets
-/// (a few seconds per step) leave the 2 s default no margin on a loaded
-/// machine: `early_journey` failed that way in a full run.
-pub fn watching_state() -> metafolder_daemon::state::AppState {
+/// The two watch sources a repository can run on (spec-file-tracking "Watch
+/// sources and regimes"): the inotify source, and the fanotify broker
+/// (`metafolder-watchd`) when one answers.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Regime {
+    Inotify,
+    Fanotify,
+}
+
+impl Regime {
+    /// What `GET /repos/:repo/watch` reports as `backend` under this regime.
+    pub fn backend(self) -> &'static str {
+        match self {
+            Regime::Inotify => "inotify",
+            Regime::Fanotify => "fanotify",
+        }
+    }
+}
+
+/// Whether a fanotify broker answers at the daemon's default socket — the
+/// condition for the `fanotify::` variants to run rather than skip.
+pub fn broker_available() -> bool {
+    std::os::unix::net::UnixStream::connect(metafolder_daemon::daemon_config::DEFAULT_WATCHD_SOCKET)
+        .is_ok()
+}
+
+/// A daemon state for the tests that drive the live watcher, on `regime`.
+///
+/// The watch source is chosen, not inherited from the machine: the daemon takes
+/// the broker whenever one answers at `watchd-socket`, so with the shipped
+/// default a developer running `metafolder-watchd` would test fanotify and
+/// everyone else inotify, under the same test names. `Inotify` points the
+/// socket at a path where nothing listens; `Fanotify` keeps the default.
+///
+/// The quiet period is the 500 ms these suites were written and timed against,
+/// not the shipped default (2 s, `DEFAULT_WATCH_QUIET_PERIOD_MS`). What they
+/// check is what the watcher records, not how long it waits first — and their
+/// settle budgets (a few seconds per step) leave the 2 s default no margin on
+/// a loaded machine.
+pub fn watching_state_on(regime: Regime) -> metafolder_daemon::state::AppState {
+    let defaults = metafolder_daemon::daemon_config::DaemonSettings::default();
+    let watchd_socket = match regime {
+        Regime::Inotify => tests_root().join("no-broker-here.sock"),
+        Regime::Fanotify => defaults.watchd_socket.clone(),
+    };
     let settings = metafolder_daemon::daemon_config::DaemonSettings {
         watch_quiet_period_ms: 500,
-        ..Default::default()
+        watchd_socket,
+        ..defaults
     };
     metafolder_daemon::state::AppState::new().with_settings(settings)
+}
+
+/// [`watching_state_on`] the inotify source: the deterministic default for a
+/// suite that does not run under both regimes.
+pub fn watching_state() -> metafolder_daemon::state::AppState {
+    watching_state_on(Regime::Inotify)
+}
+
+/// Runs each listed `async fn name(regime: Regime)` under both watch sources:
+/// `inotify::name` always, `fanotify::name` when a broker answers — and a
+/// skip, announced on stderr (`--nocapture` shows it), when none does.
+#[macro_export]
+macro_rules! on_both_regimes {
+    ($($name:ident),* $(,)?) => {
+        mod inotify {
+            $(
+                #[tokio::test(flavor = "multi_thread")]
+                async fn $name() {
+                    super::$name(super::common::Regime::Inotify).await
+                }
+            )*
+        }
+        mod fanotify {
+            $(
+                #[tokio::test(flavor = "multi_thread")]
+                async fn $name() {
+                    if !super::common::broker_available() {
+                        eprintln!(
+                            "SKIP fanotify::{}: no broker at {}",
+                            stringify!($name),
+                            metafolder_daemon::daemon_config::DEFAULT_WATCHD_SOCKET,
+                        );
+                        return;
+                    }
+                    super::$name(super::common::Regime::Fanotify).await
+                }
+            )*
+        }
+    };
 }
 
 use std::path::{Path, PathBuf};

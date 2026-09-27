@@ -26,7 +26,7 @@ use serde_json::{json, Value};
 use tower::util::ServiceExt;
 
 mod common;
-use common::TempDir;
+use common::{Regime, TempDir};
 
 async fn request(
     app: &Router,
@@ -67,8 +67,8 @@ fn default_ignore_patterns() -> Vec<String> {
 
 /// A repository as a user gets one: created on an existing folder, with the
 /// default ignore set applied client-side, and tracking turned on.
-async fn journey_repo(prefix: &str) -> (Router, String, TempDir) {
-    let app = routes::build(std::sync::Arc::new(common::watching_state()));
+async fn journey_repo(prefix: &str, regime: Regime) -> (Router, String, TempDir) {
+    let app = routes::build(std::sync::Arc::new(common::watching_state_on(regime)));
     let root = TempDir::new(&format!("journey_{prefix}"));
 
     let (status, body) =
@@ -97,6 +97,11 @@ async fn journey_repo(prefix: &str) -> (Router, String, TempDir) {
     )
     .await;
     assert_eq!(status, StatusCode::OK, "enabling mf_watch failed: {body}");
+
+    // The regime asked for is the one running: otherwise both variants would
+    // test the same source under two names.
+    let (_, watch) = request(&app, "GET", &format!("/repos/{repo}/watch"), None).await;
+    assert_eq!(watch["backend"], regime.backend(), "watch source: {watch}");
 
     (app, repo, root)
 }
@@ -205,12 +210,11 @@ async fn orphan_count(app: &Router, repo: &str) -> usize {
     body.as_array().map(|a| a.len()).unwrap_or(0)
 }
 
-#[tokio::test(flavor = "multi_thread")]
-async fn test_first_minutes_of_a_repository() {
+async fn test_first_minutes_of_a_repository(regime: Regime) {
     // A folder that already holds content when the repository is created —
     // including the build junk and VCS metadata the default preset ignores.
     let app_root = {
-        let (app, repo, root) = journey_repo("firstuse").await;
+        let (app, repo, root) = journey_repo("firstuse", regime).await;
         std::fs::create_dir_all(root.join("photos/2024")).unwrap();
         std::fs::write(root.join("photos/2024/a.jpg"), b"a").unwrap();
         std::fs::write(root.join("notes.txt"), b"hello").unwrap();
@@ -304,9 +308,8 @@ async fn test_first_minutes_of_a_repository() {
 
 /// The same oracle for the operation a user reaches for constantly: moving a
 /// whole folder somewhere else, then working inside it at its new place.
-#[tokio::test(flavor = "multi_thread")]
-async fn test_moving_a_folder_keeps_the_watcher_and_reconcile_in_agreement() {
-    let (app, repo, root) = journey_repo("foldermove").await;
+async fn test_moving_a_folder_keeps_the_watcher_and_reconcile_in_agreement(regime: Regime) {
+    let (app, repo, root) = journey_repo("foldermove", regime).await;
     std::fs::create_dir_all(root.join("inbox/trip")).unwrap();
     std::fs::write(root.join("inbox/trip/x.jpg"), b"x").unwrap();
     std::fs::create_dir(root.join("sorted")).unwrap();
@@ -331,3 +334,8 @@ async fn test_moving_a_folder_keeps_the_watcher_and_reconcile_in_agreement() {
 
     std::fs::remove_dir_all(root).unwrap();
 }
+
+on_both_regimes!(
+    test_first_minutes_of_a_repository,
+    test_moving_a_folder_keeps_the_watcher_and_reconcile_in_agreement,
+);
