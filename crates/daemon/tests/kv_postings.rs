@@ -7,13 +7,11 @@
 
 use metafolder_core::metarecord::{Field, Value};
 use metafolder_core::query::{Aspect, Query};
-use metafolder_daemon::db;
 use metafolder_daemon::index::{PageStrategy, QueryRoots, SortBy};
 use metafolder_daemon::kvstore::KvStore;
 use metafolder_daemon::log::{self, Writer};
 use metafolder_daemon::query_result::{SortKey, SortOrder};
 use metafolder_daemon::store::Log;
-use metafolder_daemon::tree_cache::TreeCache;
 use metafolder_query_oracle as query_exec;
 use uuid::Uuid;
 
@@ -69,8 +67,7 @@ fn not(q: Query) -> Query {
 
 #[test]
 fn frequent_values_answer_as_the_oracle_does() {
-    let conn = db::open_in_memory().unwrap();
-    db::init_schema(&conn).unwrap();
+    let (conn, _conn_dir) = common::kv::store();
     let mut first = None;
     {
         let mut conn = conn;
@@ -84,8 +81,7 @@ fn frequent_values_answer_as_the_oracle_does() {
     }
 }
 
-fn run_battery(conn: &rusqlite::Connection, first: Uuid) {
-    let mut cache = TreeCache::new(false);
+fn run_battery(conn: &KvStore, first: Uuid) {
     let int = |n: i64| Value::Int(n);
     let rating =
         |op: fn(String, Value, Aspect) -> Query, n: i64| op("rating".into(), int(n), Aspect::Raw);
@@ -117,7 +113,7 @@ fn run_battery(conn: &rusqlite::Connection, first: Uuid) {
         },
     ];
     for q in &battery {
-        let found = common::engines::both(conn, &mut cache, q, &[]);
+        let found = common::engines::both(conn, q, &[]);
         assert!(!found.is_empty() || matches!(q, Query::Neq { .. }), "{q:?} proves nothing");
     }
     // Sorted, page by page: a frequent value's holders are one long run of

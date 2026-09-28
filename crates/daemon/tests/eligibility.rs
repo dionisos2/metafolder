@@ -2,12 +2,14 @@
 //! (spec-file-tracking "Watch and Ignore").
 
 use metafolder_core::metarecord::{Field, Value};
-use metafolder_daemon::db;
 use metafolder_daemon::eligibility::is_eligible;
 use metafolder_daemon::log::Writer;
 use metafolder_daemon::tree_cache::TreeCache;
-use rusqlite::Connection;
 use uuid::Uuid;
+
+use metafolder_daemon::kvstore::KvStore;
+
+mod common;
 
 /// A representative default-like ignore set, mirroring the shipped `default`
 /// ignore preset (spec-file-tracking "Ignore presets"). Used to exercise the
@@ -23,7 +25,8 @@ const DEFAULT_PATTERNS: &[&str] = &[
 ];
 
 struct Fixture {
-    conn: Connection,
+    conn: KvStore,
+    _dir: common::TempDir,
     cache: TreeCache,
     root: Uuid,
 }
@@ -32,8 +35,7 @@ impl Fixture {
     /// Repository with a root entry: mf_watch = `watch`, plus the default
     /// `.git` ignore pattern.
     fn new(watch: bool) -> Self {
-        let mut conn = db::open_in_memory().unwrap();
-        db::init_schema(&conn).unwrap();
+        let (mut conn, _conn_dir) = common::kv::store();
         let mut w = Writer::begin(&mut conn, None).unwrap();
         let root = w
             .create_metarecord(vec![
@@ -44,7 +46,7 @@ impl Fixture {
             .unwrap()
             .uuid;
         w.commit().unwrap();
-        Self { conn, cache: TreeCache::new(false), root }
+        Self { conn, _dir: _conn_dir, cache: TreeCache::new(false), root }
     }
 
     fn entry(&mut self, parent: Uuid, name: &str, extra: Vec<Field>) -> Uuid {
@@ -92,8 +94,7 @@ fn test_ignore_pattern_blocks_matching_paths() {
 fn test_default_patterns_ignore_metafolder_and_hidden() {
     // A root carrying the shipped default ignore patterns: the .metafolder
     // config directory and any hidden (dot-prefixed) entry are excluded.
-    let mut conn = db::open_in_memory().unwrap();
-    db::init_schema(&conn).unwrap();
+    let (mut conn, _conn_dir) = common::kv::store();
     let mut w = Writer::begin(&mut conn, None).unwrap();
     let mut fields = vec![
         Field::new("mfr_path", Value::TreeRef { parent: None, name: "".into() }),
@@ -124,8 +125,7 @@ fn test_default_patterns_ignore_cargo_build_intermediates() {
     // examples} (and the cross-compile target/<triple>/<profile>/… form) is
     // excluded, while the final artifacts sitting directly in target/<profile>/
     // (the binaries and libraries) stay tracked.
-    let mut conn = db::open_in_memory().unwrap();
-    db::init_schema(&conn).unwrap();
+    let (mut conn, _conn_dir) = common::kv::store();
     let mut w = Writer::begin(&mut conn, None).unwrap();
     let mut fields = vec![
         Field::new("mfr_path", Value::TreeRef { parent: None, name: "".into() }),
@@ -232,8 +232,7 @@ fn test_direct_watch_reanchors_ignore_to_its_scope() {
     // patterns are matched relative to the watched directory (so `.config` being
     // hidden no longer prunes the whole subtree), while the patterns still apply
     // *inside* the scope.
-    let mut conn = db::open_in_memory().unwrap();
-    db::init_schema(&conn).unwrap();
+    let (mut conn, _conn_dir) = common::kv::store();
 
     let mut w = Writer::begin(&mut conn, None).unwrap();
     let mut fields = vec![
@@ -295,8 +294,7 @@ fn test_nearest_ignore_ancestor_replaces_patterns() {
 #[test]
 fn test_watch_default_is_false_when_no_ancestor_defines_it() {
     // A repository whose root entry carries no mf_watch at all.
-    let mut conn = db::open_in_memory().unwrap();
-    db::init_schema(&conn).unwrap();
+    let (mut conn, _conn_dir) = common::kv::store();
     let mut w = Writer::begin(&mut conn, None).unwrap();
     w.create_metarecord(vec![Field::new(
         "mfr_path",
@@ -399,8 +397,7 @@ fn test_explain_reports_watch_reasons() {
 #[test]
 fn test_explain_no_watch_anywhere() {
     use metafolder_daemon::eligibility::{explain, Reason};
-    let mut conn = db::open_in_memory().unwrap();
-    db::init_schema(&conn).unwrap();
+    let (mut conn, _conn_dir) = common::kv::store();
     let mut w = Writer::begin(&mut conn, None).unwrap();
     w.create_metarecord(vec![Field::new(
         "mfr_path",
@@ -451,8 +448,7 @@ fn test_effective_ignore_set_and_its_source() {
 #[test]
 fn test_effective_ignore_set_when_nothing_is_defined() {
     use metafolder_daemon::eligibility::effective_ignore;
-    let mut conn = db::open_in_memory().unwrap();
-    db::init_schema(&conn).unwrap();
+    let (mut conn, _conn_dir) = common::kv::store();
     let mut w = Writer::begin(&mut conn, None).unwrap();
     w.create_metarecord(vec![Field::new(
         "mfr_path",

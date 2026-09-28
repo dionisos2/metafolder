@@ -15,7 +15,6 @@
 
 use metafolder_core::metarecord::{Field, Value};
 use metafolder_core::query::{Aspect, FollowTarget, OsmMode, Query};
-use metafolder_daemon::db;
 use metafolder_daemon::forest_query;
 use metafolder_daemon::index::{
     collect_node_paths, collect_path_targets, PageStrategy, QueryRoots, RepoIndex, SortBy,
@@ -25,22 +24,23 @@ use metafolder_daemon::query_result::{SortKey, SortOrder};
 use metafolder_daemon::query_validate;
 use metafolder_daemon::tree_cache::{SortKeys, TreeCache};
 use metafolder_query_oracle as query_exec;
-use rusqlite::Connection;
 use uuid::Uuid;
+
+use metafolder_daemon::kvstore::KvStore;
 
 mod common;
 use common::kv::{kv_mirror, uuids, with_kv};
 
 struct Oracle {
-    conn: Connection,
+    conn: KvStore,
+    _dir: common::TempDir,
     cache: TreeCache,
 }
 
 impl Oracle {
     fn new() -> Self {
-        let conn = db::open_in_memory().unwrap();
-        db::init_schema(&conn).unwrap();
-        Self { conn, cache: TreeCache::new(false) }
+        let (conn, _conn_dir) = common::kv::store();
+        Self { conn, _dir: _conn_dir, cache: TreeCache::new(false) }
     }
 
     fn create(&mut self, fields: Vec<Field>) -> Uuid {
@@ -100,11 +100,11 @@ impl Oracle {
     /// `distinct_field_names` — unfiltered and for each value type present.
     fn check_catalog(&mut self) {
         let index = RepoIndex::build(&self.conn).unwrap();
-        let sql = db::distinct_field_names(&self.conn, None).unwrap();
+        let sql = query_exec::field_catalog(&self.conn, None).unwrap();
         assert_eq!(index.field_catalog(None), sql, "catalog divergence (unfiltered)");
         let types: std::collections::BTreeSet<&str> = sql.iter().map(|(_, t)| t.as_str()).collect();
         for ty in types {
-            let sql = db::distinct_field_names(&self.conn, Some(ty)).unwrap();
+            let sql = query_exec::field_catalog(&self.conn, Some(ty)).unwrap();
             assert_eq!(index.field_catalog(Some(ty)), sql, "catalog divergence (?type={ty})");
         }
     }
@@ -395,7 +395,7 @@ fn field_catalog_drops_field_when_last_value_removed() {
     w.commit().unwrap();
     index.refresh(&o.conn, &|| false).unwrap();
 
-    let sql = db::distinct_field_names(&o.conn, None).unwrap();
+    let sql = query_exec::field_catalog(&o.conn, None).unwrap();
     assert!(sql.is_empty(), "SQL reference no longer lists the field");
     assert_eq!(index.field_catalog(None), sql, "catalog must drop the emptied field");
 }
@@ -438,7 +438,7 @@ fn refresh_over_set_record_stays_incremental() {
         index.to_uuids(&index.evaluate(&eq("rating", Value::Int(7))).unwrap()),
         fresh.to_uuids(&fresh.evaluate(&eq("rating", Value::Int(7))).unwrap()),
     );
-    assert_eq!(index.field_catalog(None), db::distinct_field_names(&o.conn, None).unwrap());
+    assert_eq!(index.field_catalog(None), query_exec::field_catalog(&o.conn, None).unwrap());
 }
 
 /// Subtrees stay right through incremental refreshes: moves, a leaf becoming a
@@ -1470,12 +1470,7 @@ fn tree_ref_sort_with_a_detached_node() {
     // opposite ends of the order.
     o.create(vec![tref("loc", Some(gone), "zzz"), Field::new("k", s("x"))]);
     o.create(vec![tref("loc", Some(root), "other"), Field::new("k", s("x"))]);
-    o.conn
-        .execute(
-            "DELETE FROM field WHERE metarecord_uuid = ?1 AND field_name = 'loc'",
-            rusqlite::params![db::uuid_to_bytes(gone)],
-        )
-        .unwrap();
+    common::kv::delete_rows(&mut o.conn, gone, "loc");
     let all = eq("k", s("x"));
     o.check_paginated_with_roots(&all, &[("loc", true)], 1);
     o.check_paginated_with_roots(&all, &[("loc", false)], 1);

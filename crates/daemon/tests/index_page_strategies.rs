@@ -9,7 +9,6 @@
 
 use metafolder_core::metarecord::{Field, Value};
 use metafolder_core::query::{Aspect, FollowTarget, OsmMode, Query};
-use metafolder_daemon::db;
 use metafolder_daemon::index::{
     collect_path_targets, Eval, PageStrategy, QueryRoots, RepoIndex, SortBy,
 };
@@ -17,8 +16,9 @@ use metafolder_daemon::log::Writer;
 use metafolder_daemon::query_result::{SortKey, SortOrder};
 use metafolder_daemon::tree_cache::{SortKeys, TreeCache};
 use metafolder_query_oracle as query_exec;
-use rusqlite::Connection;
 use uuid::Uuid;
+
+use metafolder_daemon::kvstore::KvStore;
 
 mod common;
 use common::kv::{kv_mirror, with_kv};
@@ -50,9 +50,8 @@ fn s(v: &str) -> Value {
 }
 
 /// A repository whose every sort has something to trip on.
-fn fixture() -> Connection {
-    let mut conn = db::open_in_memory().unwrap();
-    db::init_schema(&conn).unwrap();
+fn fixture() -> (KvStore, common::TempDir) {
+    let (mut conn, _conn_dir) = common::kv::store();
     let mut rng = Rng(0x9E37_79B9_7F4A_7C15);
     let mut w = Writer::begin(&mut conn, None).unwrap();
     let root = w.create_metarecord(vec![tref(None, "")]).unwrap().uuid;
@@ -124,15 +123,11 @@ fn fixture() -> Connection {
         w.create_metarecord(vec![tref(Some(gone), name), Field::new("kind", s("photo"))]).unwrap();
     }
     w.commit().unwrap();
-    conn.execute(
-        "DELETE FROM field WHERE metarecord_uuid = ?1 AND field_name = ?2",
-        rusqlite::params![gone.as_bytes().to_vec(), P],
-    )
-    .unwrap();
-    conn
+    common::kv::delete_rows(&mut conn, gone, P);
+    (conn, _conn_dir)
 }
 
-fn queries(conn: &Connection, cache: &mut TreeCache) -> Vec<Query> {
+fn queries(conn: &KvStore, cache: &mut TreeCache) -> Vec<Query> {
     let present = |f: &str| Query::IsPresent { field: f.into(), aspect: Default::default() };
     let eq =
         |f: &str, v: Value| Query::Eq { field: f.into(), value: v, aspect: Default::default() };
@@ -190,7 +185,7 @@ fn sorts() -> Vec<Vec<(&'static str, bool)>> {
 }
 
 /// The oracle's pages, cursor by cursor.
-fn oracle_pages(conn: &Connection, q: &Query, by: &[(&str, bool)], limit: usize) -> Vec<Vec<Uuid>> {
+fn oracle_pages(conn: &KvStore, q: &Query, by: &[(&str, bool)], limit: usize) -> Vec<Vec<Uuid>> {
     let sql_keys: Vec<SortKey> = by
         .iter()
         .map(|(f, asc)| SortKey {
@@ -267,7 +262,7 @@ fn eval_pages(
 
 #[test]
 fn every_page_strategy_gives_the_oracles_pages() {
-    let conn = fixture();
+    let (conn, _dir) = fixture();
     let mut cache = TreeCache::new(false);
     let mut index = RepoIndex::build(&conn).unwrap();
     let (kv, _dir) = kv_mirror(&conn);

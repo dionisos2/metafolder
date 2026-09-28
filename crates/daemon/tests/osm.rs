@@ -4,25 +4,22 @@
 
 use metafolder_core::metarecord::{Field, Value};
 use metafolder_core::query::{OsmMode, Query};
-use metafolder_daemon::db;
 use metafolder_daemon::log::Writer;
-use metafolder_daemon::tree_cache::TreeCache;
-use metafolder_query_oracle as query_exec;
-use rusqlite::Connection;
 use uuid::Uuid;
+
+use metafolder_daemon::kvstore::KvStore;
 
 mod common;
 
 struct Fixture {
-    conn: Connection,
-    cache: TreeCache,
+    conn: KvStore,
+    _dir: common::TempDir,
 }
 
 impl Fixture {
     fn new() -> Self {
-        let conn = db::open_in_memory().unwrap();
-        db::init_schema(&conn).unwrap();
-        Self { conn, cache: TreeCache::new(false) }
+        let (conn, _conn_dir) = common::kv::store();
+        Self { conn, _dir: _conn_dir }
     }
 
     fn create(&mut self, fields: Vec<Field>) -> Uuid {
@@ -41,16 +38,7 @@ impl Fixture {
     }
 
     fn run(&mut self, query: &Query) -> Vec<Uuid> {
-        common::engines::both(&self.conn, &mut self.cache, query, &[])
-    }
-
-    /// The oracle alone, on whatever state the cache is in. Only for the test
-    /// that asserts the SQL engine's *cold* path (its DB walks) agrees with its
-    /// warm one: the serving path always has a complete forest, and comparing
-    /// against it would populate the cache and erase the very state under test.
-    fn run_cold(&mut self, query: &Query) -> Vec<Uuid> {
-        let (uuids, _) = query_exec::execute(&self.conn, query, &[], None, None).unwrap();
-        uuids
+        common::engines::both(&self.conn, query, &[])
     }
 
     /// A query that may be refused — by both engines, or by neither.
@@ -59,7 +47,7 @@ impl Fixture {
         query: &Query,
     ) -> Result<Vec<Uuid>, metafolder_daemon::error::ApiError> {
         common::engines::validate(&self.conn, query)?;
-        Ok(common::engines::both(&self.conn, &mut self.cache, query, &[]))
+        Ok(common::engines::both(&self.conn, query, &[]))
     }
 }
 
@@ -184,7 +172,7 @@ fn test_osmd_ordered_and_case_insensitive() {
     assert_same_set(f.run(&osmd("title", "con def")), vec![a]);
 }
 
-// ── complete tree cache (production path) ────────────────────────────────────
+// ── multi-term paths and deep chains ──────────────────────────────────────────
 
 /// Builds a deep chain of directories, returning the leaf's uuid.
 fn chain(f: &mut Fixture, root: Uuid, segments: &[&str]) -> Uuid {
@@ -196,13 +184,10 @@ fn chain(f: &mut Fixture, root: Uuid, segments: &[&str]) -> Uuid {
 }
 
 #[test]
-fn test_osm_path_agrees_between_cache_states() {
-    // The path match has two implementations — a walk of the in-memory forest
-    // (production, complete cache) and the candidate-pruning DB path (cold
-    // cache) — so they need an oracle against each other. Multi-term shapes are
-    // where they can drift: ordering, terms landing in the same segment, a term
-    // spanning the `/` separator, case folding, and terms shorter than the FTS
-    // trigram floor.
+fn test_osm_path_multi_term_battery() {
+    // Multi-term shapes are where a path match drifts: ordering, terms landing
+    // in the same segment, a term spanning the `/` separator, case folding,
+    // and terms shorter than the trigram floor. Each is held to the oracle.
     let mut f = Fixture::new();
     let root = f.node(None, "", vec![]);
     let video = f.node(Some(root), "video", vec![]);
@@ -239,36 +224,16 @@ fn test_osm_path_agrees_between_cache_states() {
         "vid series/",
         "a/ab/ abc",
     ];
-    // Cold first — the cache only ever populates lazily here, never completely.
-    let cold: Vec<Vec<Uuid>> = BATTERY
-        .iter()
-        .map(|terms| {
-            let mut hits = f.run_cold(&osm("mfr_path", terms));
-            hits.sort();
-            hits
-        })
-        .collect();
-    assert!(!f.cache.is_complete(), "the cold run must not complete the cache");
-
+    let hits: Vec<Vec<Uuid>> = BATTERY.iter().map(|terms| f.run(&osm("mfr_path", terms))).collect();
     // Guard against a battery that proves nothing because everything is empty.
     assert!(
-        cold.iter().filter(|hits| !hits.is_empty()).count() >= 12,
+        hits.iter().filter(|hits| !hits.is_empty()).count() >= 12,
         "too few discriminating terms in the battery"
     );
-
-    f.cache.populate(&f.conn).unwrap();
-    assert!(f.cache.is_complete());
-    for (terms, want) in BATTERY.iter().zip(cold) {
-        let mut got = f.run(&osm("mfr_path", terms));
-        got.sort();
-        assert_eq!(got, want, "cache-state divergence on terms {terms:?}");
-    }
 }
 
 #[test]
-fn test_osm_path_with_complete_cache() {
-    // Mirrors production: the tree cache is eagerly populated (is_complete()),
-    // so descendants/paths come from memory, not the DB walk the other tests use.
+fn test_osm_path_through_a_deep_chain() {
     let mut f = Fixture::new();
     let root = f.node(None, "", vec![]);
     // A deep random-looking path that contains neither "documents" nor "art".
@@ -281,9 +246,6 @@ fn test_osm_path_with_complete_cache() {
     // A real "documents" directory with a file under it.
     let docs = f.node(Some(root), "documents", vec![]);
     let docs_file = f.node(Some(docs), "report.pdf", vec![]);
-
-    f.cache.populate(&f.conn).unwrap();
-    assert!(f.cache.is_complete());
 
     // "art" must find everything on a path through the art/ directory, and must
     // NOT be empty just because no leaf filename contains "art".

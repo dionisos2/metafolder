@@ -1,7 +1,5 @@
-//! The key-value store as a third engine (spec-storage "Three engines, one
-//! answer"): the tests' SQLite data copied into a `KvStore`, and queries
-//! evaluated over its derived key spaces by the same evaluator the resident
-//! index runs.
+//! The key-value store the low-level tests write into, and the evaluator over
+//! its derived key spaces — the serving path the oracle is held to.
 
 use metafolder_daemon::index::{Eval, PageStrategy};
 use metafolder_daemon::kvstore::{KvSource, KvStore};
@@ -10,6 +8,23 @@ use roaring::RoaringBitmap;
 use uuid::Uuid;
 
 use super::TempDir;
+
+/// A fresh, empty key-value store in a directory that removes itself — the
+/// repository every low-level test writes into. Keep the directory bound as
+/// long as the store: `let (mut conn, _dir) = common::kv::store();`.
+pub fn store() -> (KvStore, TempDir) {
+    let dir = TempDir::new("kv");
+    let kv = KvStore::open(dir.path()).unwrap();
+    (kv, dir)
+}
+
+/// Deletes `uuid`'s rows of `field` directly, behind the `Writer`'s back —
+/// the state a rollback or an older daemon can leave, which no write makes.
+pub fn delete_rows(kv: &mut KvStore, uuid: Uuid, field: &str) {
+    let txn = kv.begin_write().unwrap();
+    txn.delete_rows(uuid, Some(field)).unwrap();
+    txn.commit().unwrap();
+}
 
 /// A KV store holding what `store` holds: the same metarecords, rows and row
 /// ids (the log is not copied — no query reads it).

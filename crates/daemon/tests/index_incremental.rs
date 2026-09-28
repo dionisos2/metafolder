@@ -9,23 +9,27 @@
 
 use metafolder_core::metarecord::{Field, Value};
 use metafolder_core::query::{Aspect, FollowTarget, Query};
-use metafolder_daemon::db;
 use metafolder_daemon::index::{RepoIndex, SortBy};
 use metafolder_daemon::log::Writer;
-use rusqlite::Connection;
 use uuid::Uuid;
 
+use metafolder_daemon::kvstore::KvStore;
+
+use metafolder_daemon::store::Log as _;
+
+mod common;
+
 struct Repo {
-    conn: Connection,
+    conn: KvStore,
+    _dir: common::TempDir,
     index: RepoIndex,
 }
 
 impl Repo {
     fn new() -> Self {
-        let conn = db::open_in_memory().unwrap();
-        db::init_schema(&conn).unwrap();
+        let (conn, _conn_dir) = common::kv::store();
         let index = RepoIndex::build(&conn).unwrap();
-        Self { conn, index }
+        Self { conn, _dir: _conn_dir, index }
     }
 
     /// Runs a write closure in one revision, then refreshes the index
@@ -265,7 +269,7 @@ fn incremental_tombstones_are_compacted() {
 fn incremental_rollback_falls_back_to_rebuild() {
     let mut r = Repo::new();
     let (_root, file, _rate_id) = seed(&mut r);
-    let checkpoint = db::current_head(&r.conn).unwrap();
+    let checkpoint = r.conn.head().unwrap();
     r.write(|w| w.set_field(file, "rate", i(99)).unwrap());
     r.write(|w| w.set_field(file, "kind", s("dir")).unwrap());
 

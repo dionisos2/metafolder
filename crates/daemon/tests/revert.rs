@@ -8,60 +8,49 @@
 
 use metafolder_core::metarecord::{Field, Value};
 use metafolder_daemon::log::{self, OpType, Writer};
-use metafolder_daemon::{db, revert};
-use rusqlite::Connection;
+use metafolder_daemon::revert;
 use uuid::Uuid;
 
-fn test_conn() -> Connection {
-    let conn = db::open_in_memory().unwrap();
-    db::init_schema(&conn).unwrap();
-    conn
+use metafolder_daemon::kvstore::KvStore;
+
+use metafolder_daemon::store::{Log as _, Rows as _};
+
+mod common;
+
+fn test_conn() -> (KvStore, common::TempDir) {
+    common::kv::store()
 }
 
 /// The whole database as `(uuid, field name, value)`, sorted — ids excluded on
 /// purpose: a revert restores values, never the row ids they used to have.
-fn state(conn: &Connection) -> Vec<(String, String, String)> {
-    let mut stmt = conn
-        .prepare(
-            "SELECT m.uuid, f.field_name, f.value_type, f.value_text, f.value_int,
-                    f.value_real, f.value_name
-             FROM metarecord m LEFT JOIN field f ON f.metarecord_uuid = m.uuid",
-        )
-        .unwrap();
-    let mut rows: Vec<(String, String, String)> = stmt
-        .query_map([], |r| {
-            let uuid: Vec<u8> = r.get(0)?;
-            let name: Option<String> = r.get(1)?;
-            let rendered = format!(
-                "{:?}/{:?}/{:?}/{:?}/{:?}",
-                r.get::<_, Option<String>>(2)?,
-                r.get::<_, Option<String>>(3)?,
-                r.get::<_, Option<i64>>(4)?,
-                r.get::<_, Option<f64>>(5)?,
-                r.get::<_, Option<String>>(6)?,
-            );
-            Ok((format!("{uuid:02x?}"), name.unwrap_or_default(), rendered))
-        })
-        .unwrap()
-        .collect::<Result<_, _>>()
-        .unwrap();
+fn state(conn: &KvStore) -> Vec<(String, String, String)> {
+    let mut rows = Vec::new();
+    for uuid in conn.metarecords().unwrap() {
+        let fields = conn.rows(uuid).unwrap();
+        if fields.is_empty() {
+            rows.push((uuid.to_string(), String::new(), String::new()));
+        }
+        for row in fields {
+            rows.push((uuid.to_string(), row.name, format!("{:?}", row.value)));
+        }
+    }
     rows.sort();
     rows
 }
 
 /// Reverts `ops` (oldest first) as one new revision, the way the route does.
-fn revert_ops(conn: &mut Connection, ops: &[log::OpRow]) {
+fn revert_ops(conn: &mut KvStore, ops: &[log::OpRow]) {
     let mut w = Writer::begin(conn, None).unwrap();
     revert::apply(&mut w, ops).unwrap();
     w.commit().unwrap();
 }
 
-fn ops_of_revision(conn: &Connection, rev_id: i64) -> Vec<log::OpRow> {
+fn ops_of_revision(conn: &KvStore, rev_id: i64) -> Vec<log::OpRow> {
     revert::revision_ops(conn, rev_id).unwrap()
 }
 
-fn field_values(conn: &Connection, uuid: Uuid, name: &str) -> Vec<Value> {
-    db::get_field_rows_named(conn, uuid, name).unwrap().into_iter().map(|r| r.value).collect()
+fn field_values(conn: &KvStore, uuid: Uuid, name: &str) -> Vec<Value> {
+    conn.rows_named(uuid, name).unwrap().into_iter().map(|r| r.value).collect()
 }
 
 // ── The id remap ──────────────────────────────────────────────────────────────
@@ -72,7 +61,7 @@ fn field_values(conn: &Connection, uuid: Uuid, name: &str) -> Vec<Value> {
 /// deletes nothing and leaves a row the revert invented.
 #[test]
 fn test_revert_of_an_append_then_delete_of_the_same_row() {
-    let mut conn = test_conn();
+    let (mut conn, _dir) = test_conn();
     let uuid = {
         let mut w = Writer::begin(&mut conn, None).unwrap();
         let m = w.create_metarecord(vec![Field::new("tag", Value::String("keep".into()))]).unwrap();
@@ -104,7 +93,7 @@ fn test_revert_of_an_append_then_delete_of_the_same_row() {
 /// new id — and the inverse of the append must then find *that* row.
 #[test]
 fn test_revert_of_an_append_then_set_on_the_same_cell() {
-    let mut conn = test_conn();
+    let (mut conn, _dir) = test_conn();
     let uuid = {
         let mut w = Writer::begin(&mut conn, None).unwrap();
         let m = w.create_metarecord(vec![Field::new("tag", Value::String("a".into()))]).unwrap();
@@ -144,7 +133,7 @@ fn test_revert_of_an_append_then_set_on_the_same_cell() {
 /// the state it actually lands on.
 #[test]
 fn test_revert_of_a_retype_shaped_revision_restores_both_rows() {
-    let mut conn = test_conn();
+    let (mut conn, _dir) = test_conn();
     let uuid = {
         let mut w = Writer::begin(&mut conn, None).unwrap();
         let m = w
@@ -187,7 +176,7 @@ fn test_revert_of_a_retype_shaped_revision_restores_both_rows() {
 /// an int would leave two types under one name. That is refused, at commit.
 #[test]
 fn test_a_revert_still_refuses_a_real_type_conflict() {
-    let mut conn = test_conn();
+    let (mut conn, _dir) = test_conn();
     let (uuid, other) = {
         let mut w = Writer::begin(&mut conn, None).unwrap();
         let a = w.create_metarecord(vec![Field::new("rating", Value::Int(3))]).unwrap();
@@ -228,7 +217,7 @@ fn test_a_revert_still_refuses_a_real_type_conflict() {
 /// objected to are never examined by anything.
 #[test]
 fn test_rollback_across_a_retype_works_where_a_revert_cannot() {
-    let mut conn = test_conn();
+    let (mut conn, _dir) = test_conn();
     let uuid = {
         let mut w = Writer::begin(&mut conn, None).unwrap();
         let m = w
@@ -241,7 +230,7 @@ fn test_rollback_across_a_retype_works_where_a_revert_cannot() {
         m.uuid
     };
     let before = state(&conn);
-    let checkpoint = log::get_head(&conn).unwrap();
+    let checkpoint = conn.head().unwrap();
 
     {
         let mut w = Writer::begin(&mut conn, None).unwrap();
@@ -263,7 +252,7 @@ fn test_rollback_across_a_retype_works_where_a_revert_cannot() {
 
 #[test]
 fn test_revert_of_a_set_record_restores_every_field() {
-    let mut conn = test_conn();
+    let (mut conn, _dir) = test_conn();
     let uuid = {
         let mut w = Writer::begin(&mut conn, None).unwrap();
         let m = w
@@ -293,7 +282,7 @@ fn test_revert_of_a_set_record_restores_every_field() {
 
 #[test]
 fn test_revert_of_a_delete_record_recreates_it_with_the_same_uuid() {
-    let mut conn = test_conn();
+    let (mut conn, _dir) = test_conn();
     let uuid = {
         let mut w = Writer::begin(&mut conn, None).unwrap();
         let m = w.create_metarecord(vec![Field::new("a", Value::Int(1))]).unwrap();
@@ -321,7 +310,7 @@ fn test_revert_of_a_delete_record_recreates_it_with_the_same_uuid() {
 /// restores row ids exactly and a revert deliberately does not.
 #[test]
 fn test_revert_of_the_last_revisions_matches_a_rollback() {
-    let mut conn = test_conn();
+    let (mut conn, _dir) = test_conn();
     let uuid = {
         let mut w = Writer::begin(&mut conn, None).unwrap();
         let m = w.create_metarecord(vec![Field::new("a", Value::Int(1))]).unwrap();
@@ -329,7 +318,7 @@ fn test_revert_of_the_last_revisions_matches_a_rollback() {
         m.uuid
     };
 
-    let checkpoint = log::get_head(&conn).unwrap();
+    let checkpoint = conn.head().unwrap();
     let expected = state(&conn);
 
     // Three revisions of assorted shapes.
@@ -358,7 +347,7 @@ fn test_revert_of_the_last_revisions_matches_a_rollback() {
 
     // Redo, then get there by reverting instead.
     let tip = {
-        let ops = log::all_ops(&conn).unwrap();
+        let ops = conn.all_ops().unwrap();
         ops.last().unwrap().id
     };
     log::navigate(&mut conn, Some(tip)).unwrap();
@@ -383,7 +372,7 @@ fn test_revert_of_the_last_revisions_matches_a_rollback() {
 /// later navigation to move the file when it crosses this operation.
 #[test]
 fn test_reverting_a_file_event_records_a_file_op_type() {
-    let mut conn = test_conn();
+    let (mut conn, _dir) = test_conn();
     let uuid = {
         let mut w = Writer::begin(&mut conn, None).unwrap();
         let m = w.create_metarecord(vec![Field::new("mfr_size", Value::Int(1))]).unwrap();
@@ -400,8 +389,8 @@ fn test_reverting_a_file_event_records_a_file_op_type() {
     let ops = ops_of_revision(&conn, rev);
     revert_ops(&mut conn, &ops);
 
-    let head = log::get_head(&conn).unwrap().unwrap();
-    let written = log::get_op(&conn, head).unwrap().unwrap();
+    let head = conn.head().unwrap().unwrap();
+    let written = conn.op(head).unwrap().unwrap();
     assert_eq!(written.op_type, "file_modified", "not set_field: navigation keys on this");
     assert_eq!(field_values(&conn, uuid, "mfr_size"), vec![Value::Int(1)]);
 }

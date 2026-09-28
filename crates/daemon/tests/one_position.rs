@@ -4,17 +4,16 @@
 //! rows to `Nothing` as it demotes any other forest violation.
 
 use metafolder_core::metarecord::{Field, FieldType, Value};
-use metafolder_daemon::db;
 use metafolder_daemon::log::Writer;
-use rusqlite::Connection;
+use metafolder_daemon::store::Begin;
 use uuid::Uuid;
+
+use metafolder_daemon::kvstore::KvStore;
 
 mod common;
 
-fn repo() -> Connection {
-    let conn = db::open_in_memory().unwrap();
-    db::init_schema(&conn).unwrap();
-    conn
+fn repo() -> (KvStore, common::TempDir) {
+    common::kv::store()
 }
 
 fn tree(parent: Option<Uuid>, name: &str) -> Value {
@@ -22,7 +21,7 @@ fn tree(parent: Option<Uuid>, name: &str) -> Value {
 }
 
 /// `tags` with `red` and `blue` below it, and `test` under `red`.
-fn forest(conn: &mut Connection) -> (Uuid, Uuid, Uuid) {
+fn forest(conn: &mut KvStore) -> (Uuid, Uuid, Uuid) {
     let mut w = Writer::begin(conn, None).unwrap();
     let tags = w.create_metarecord(vec![Field::new("tag", tree(None, "tags"))]).unwrap().uuid;
     let red = w.create_metarecord(vec![Field::new("tag", tree(Some(tags), "red"))]).unwrap().uuid;
@@ -39,7 +38,7 @@ fn refused(result: anyhow::Result<impl std::fmt::Debug>) {
 
 #[test]
 fn a_record_cannot_be_created_at_two_positions() {
-    let mut conn = repo();
+    let (mut conn, _dir) = repo();
     let (blue, red, _) = forest(&mut conn);
     let mut w = Writer::begin(&mut conn, None).unwrap();
     refused(w.create_metarecord(vec![
@@ -50,7 +49,7 @@ fn a_record_cannot_be_created_at_two_positions() {
 
 #[test]
 fn a_second_position_cannot_be_added() {
-    let mut conn = repo();
+    let (mut conn, _dir) = repo();
     let (blue, _, test) = forest(&mut conn);
     let mut w = Writer::begin(&mut conn, None).unwrap();
     refused(w.append_field(test, "tag", tree(Some(blue), "test")));
@@ -61,7 +60,7 @@ fn a_second_position_cannot_be_added() {
 
 #[test]
 fn a_set_or_an_overwrite_cannot_hold_two_positions() {
-    let mut conn = repo();
+    let (mut conn, _dir) = repo();
     let (blue, red, test) = forest(&mut conn);
     let mut w = Writer::begin(&mut conn, None).unwrap();
     refused(w.set_field_multi(test, "tag", vec![tree(Some(red), "t"), tree(Some(blue), "t")]));
@@ -76,7 +75,7 @@ fn a_set_or_an_overwrite_cannot_hold_two_positions() {
 
 #[test]
 fn a_row_cannot_be_edited_into_a_second_position() {
-    let mut conn = repo();
+    let (mut conn, _dir) = repo();
     let (blue, _, test) = forest(&mut conn);
     let mut w = Writer::begin(&mut conn, None).unwrap();
     let other = match w.append_field(test, "note", Value::String("n".into())).unwrap() {
@@ -92,7 +91,7 @@ fn a_row_cannot_be_edited_into_a_second_position() {
 
 #[test]
 fn a_position_beside_a_nothing_row_is_still_one() {
-    let mut conn = repo();
+    let (mut conn, _dir) = repo();
     let (_, red, _) = forest(&mut conn);
     let mut w = Writer::begin(&mut conn, None).unwrap();
     let rec = w
@@ -108,7 +107,7 @@ fn a_position_beside_a_nothing_row_is_still_one() {
 
 #[test]
 fn a_retype_keeps_one_position_and_demotes_the_rest() {
-    let mut conn = repo();
+    let (mut conn, _dir) = repo();
     let mut w = Writer::begin(&mut conn, None).unwrap();
     let rec = w
         .create_metarecord(vec![
@@ -126,17 +125,15 @@ fn a_retype_keeps_one_position_and_demotes_the_rest() {
 }
 
 /// A repository written before the rule may still hold a node at two
-/// positions: `mf repo check` names it, on either backend.
+/// positions: `mf repo check` names it.
 #[test]
 fn a_check_names_a_record_left_at_two_positions() {
     use metafolder_daemon::store::one_position_problems;
-    let dir = common::TempDir::new("one-position-check");
-    let kv = metafolder_daemon::kvstore::KvStore::open(dir.path()).unwrap();
-    let stores: Vec<Box<dyn metafolder_daemon::store::Database>> =
-        vec![Box::new(repo()), Box::new(kv)];
-    for mut store in stores {
+    let (mut store, _dir) = repo();
+    {
+        let store = &mut store;
         let (blue, test) = {
-            let mut w = Writer::begin(&mut *store, None).unwrap();
+            let mut w = Writer::begin(store, None).unwrap();
             let tags =
                 w.create_metarecord(vec![Field::new("tag", tree(None, "tags"))]).unwrap().uuid;
             let red =
@@ -148,12 +145,12 @@ fn a_check_names_a_record_left_at_two_positions() {
             w.commit().unwrap();
             (blue.uuid, test.uuid)
         };
-        assert!(one_position_problems(&*store).unwrap().is_empty());
+        assert!(one_position_problems(store).unwrap().is_empty());
         // What an older daemon let through, written under the Writer.
         let tx = store.begin_write().unwrap();
         tx.insert_row(test, "tag", &tree(Some(blue), "test"), None).unwrap();
         tx.commit().unwrap();
-        let problems = one_position_problems(&*store).unwrap();
+        let problems = one_position_problems(store).unwrap();
         assert_eq!(problems.len(), 1, "{problems:?}");
         assert!(problems[0].contains(&test.to_string()) && problems[0].contains("'tag'"));
     }

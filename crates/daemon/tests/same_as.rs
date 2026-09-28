@@ -4,24 +4,22 @@
 
 use metafolder_core::metarecord::{Field, Value};
 use metafolder_core::query::{Aspect, Query};
-use metafolder_daemon::db;
 use metafolder_daemon::log::Writer;
-use metafolder_daemon::tree_cache::TreeCache;
+
+use metafolder_daemon::kvstore::KvStore;
 
 mod common;
-use rusqlite::Connection;
 use uuid::Uuid;
 
 struct Fixture {
-    conn: Connection,
-    cache: TreeCache,
+    conn: KvStore,
+    _dir: common::TempDir,
 }
 
 impl Fixture {
     fn new() -> Self {
-        let conn = db::open_in_memory().unwrap();
-        db::init_schema(&conn).unwrap();
-        Self { conn, cache: TreeCache::new(false) }
+        let (conn, _conn_dir) = common::kv::store();
+        Self { conn, _dir: _conn_dir }
     }
 
     fn create(&mut self, fields: Vec<Field>) -> Uuid {
@@ -32,7 +30,7 @@ impl Fixture {
     }
 
     fn run(&mut self, query: &Query) -> Vec<Uuid> {
-        common::engines::both(&self.conn, &mut self.cache, query, &[])
+        common::engines::both(&self.conn, query, &[])
     }
 }
 

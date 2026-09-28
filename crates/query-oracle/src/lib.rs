@@ -242,6 +242,28 @@ pub fn stored_type(store: &dyn Rows, field: &str) -> Result<Option<String>, ApiE
     Ok(Data::read(store)?.stored_type(field))
 }
 
+/// Every `(field name, value type)` the repository holds, `Nothing` aside,
+/// sorted — only those of `type_filter` when given.
+pub fn field_catalog(
+    store: &dyn Rows,
+    type_filter: Option<&str>,
+) -> Result<Vec<(String, String)>, ApiError> {
+    let data = Data::read(store)?;
+    let mut out: Vec<(String, String)> = data
+        .by_field
+        .iter()
+        .flat_map(|(name, rows)| {
+            rows.iter()
+                .filter(|(_, r)| !matches!(r.value, Value::Nothing))
+                .map(move |(_, r)| (name.clone(), r.value.type_str().to_string()))
+        })
+        .filter(|(_, ty)| type_filter.is_none_or(|t| t == ty))
+        .collect();
+    out.sort();
+    out.dedup();
+    Ok(out)
+}
+
 /// The number of metarecords matching `query`.
 pub fn count(store: &dyn Rows, query: &Query) -> Result<usize, ApiError> {
     let data = Data::read(store)?;

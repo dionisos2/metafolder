@@ -3,20 +3,24 @@
 //! collection, LRU eviction, case sensitivity.
 
 use metafolder_core::metarecord::{Field, TreeName, Value};
-use metafolder_daemon::db;
 use metafolder_daemon::log::Writer;
 use metafolder_daemon::tree_cache::{PathForm, TreeCache};
-use rusqlite::Connection;
 use uuid::Uuid;
 
-fn test_conn() -> Connection {
-    let conn = db::open_in_memory().unwrap();
-    db::init_schema(&conn).unwrap();
-    conn
+use metafolder_daemon::kvstore::KvStore;
+
+use metafolder_daemon::store::Rows as _;
+
+use metafolder_daemon::db;
+
+mod common;
+
+fn test_conn() -> (KvStore, common::TempDir) {
+    common::kv::store()
 }
 
 /// Creates an entry holding a single TreeRef field and returns its UUID.
-fn tree_entry(conn: &mut Connection, field: &str, parent: Option<Uuid>, name: &str) -> Uuid {
+fn tree_entry(conn: &mut KvStore, field: &str, parent: Option<Uuid>, name: &str) -> Uuid {
     let mut w = Writer::begin(conn, None).unwrap();
     let m = w
         .create_metarecord(vec![Field::new(field, Value::TreeRef { parent, name: name.into() })])
@@ -26,7 +30,7 @@ fn tree_entry(conn: &mut Connection, field: &str, parent: Option<Uuid>, name: &s
 }
 
 /// Builds the filesystem tree: "" → music → jazz → file.mp3, plus a tag tree.
-fn build_tree(conn: &mut Connection) -> (Uuid, Uuid, Uuid, Uuid) {
+fn build_tree(conn: &mut KvStore) -> (Uuid, Uuid, Uuid, Uuid) {
     let root = tree_entry(conn, "mfr_path", None, "");
     let music = tree_entry(conn, "mfr_path", Some(root), "music");
     let jazz = tree_entry(conn, "mfr_path", Some(music), "jazz");
@@ -38,7 +42,7 @@ fn build_tree(conn: &mut Connection) -> (Uuid, Uuid, Uuid, Uuid) {
 
 #[test]
 fn test_resolve_filesystem_paths() {
-    let mut conn = test_conn();
+    let (mut conn, _dir) = test_conn();
     let (root, music, jazz, file) = build_tree(&mut conn);
     let mut cache = TreeCache::new(false);
 
@@ -58,7 +62,7 @@ fn test_resolve_filesystem_paths() {
 /// matched nothing at all.
 #[test]
 fn test_redundant_slashes_resolve_to_the_same_node() {
-    let mut conn = test_conn();
+    let (mut conn, _dir) = test_conn();
     let (root, music, jazz, _file) = build_tree(&mut conn);
     let mut cache = TreeCache::new(false);
 
@@ -69,7 +73,7 @@ fn test_redundant_slashes_resolve_to_the_same_node() {
 
 #[test]
 fn test_resolve_tag_tree_without_leading_slash() {
-    let mut conn = test_conn();
+    let (mut conn, _dir) = test_conn();
     let tag1 = tree_entry(&mut conn, "parent", None, "tag1");
     let tag2 = tree_entry(&mut conn, "parent", Some(tag1), "tag2");
     let mut cache = TreeCache::new(false);
@@ -83,7 +87,7 @@ fn test_resolve_tag_tree_without_leading_slash() {
 
 #[test]
 fn test_paths_of_single_position() {
-    let mut conn = test_conn();
+    let (mut conn, _dir) = test_conn();
     let (_root, _music, jazz, file) = build_tree(&mut conn);
     let mut cache = TreeCache::new(false);
     assert_eq!(cache.paths_of(&conn, "mfr_path", file).unwrap(), vec!["/music/jazz/file.mp3"]);
@@ -92,7 +96,7 @@ fn test_paths_of_single_position() {
 
 #[test]
 fn test_paths_of_root_level_value() {
-    let mut conn = test_conn();
+    let (mut conn, _dir) = test_conn();
     let root = tree_entry(&mut conn, "mfr_path", None, "");
     let top = tree_entry(&mut conn, "mfr_path", Some(root), "top.txt");
     let mut cache = TreeCache::new(false);
@@ -101,23 +105,19 @@ fn test_paths_of_root_level_value() {
 
 #[test]
 fn test_paths_of_skips_stale_parent() {
-    let mut conn = test_conn();
+    let (mut conn, _dir) = test_conn();
     let root = tree_entry(&mut conn, "mfr_path", None, "");
     let dir = tree_entry(&mut conn, "mfr_path", Some(root), "dir");
     let child = tree_entry(&mut conn, "mfr_path", Some(dir), "file.txt");
     // Simulate the parent dir being deleted: drop its position from the DB.
-    conn.execute(
-        "DELETE FROM field WHERE metarecord_uuid = ?1 AND field_name = 'mfr_path'",
-        rusqlite::params![db::uuid_to_bytes(dir)],
-    )
-    .unwrap();
+    common::kv::delete_rows(&mut conn, dir, "mfr_path");
     let mut cache = TreeCache::new(false);
     assert!(cache.paths_of(&conn, "mfr_path", child).unwrap().is_empty());
 }
 
 #[test]
 fn test_paths_of_without_the_field_is_empty() {
-    let mut conn = test_conn();
+    let (mut conn, _dir) = test_conn();
     let m = tree_entry(&mut conn, "parent", None, "x");
     let mut cache = TreeCache::new(false);
     assert!(cache.paths_of(&conn, "mfr_path", m).unwrap().is_empty());
@@ -131,7 +131,7 @@ fn test_populate_from_forest_matches_db_populate() {
     // Populating from the rows the index build collects (in `field.id` order)
     // must yield the same forest as the DB scan (`load_tree_forest`, ordered by
     // field_name, metarecord_uuid, id).
-    let mut conn = test_conn();
+    let (mut conn, _dir) = test_conn();
     let (root, music, jazz, file) = build_tree(&mut conn);
     let rock = tree_entry(&mut conn, "mfr_path", Some(music), "rock");
     // A second forest.
@@ -164,7 +164,7 @@ fn test_populate_from_forest_matches_db_populate() {
 
 #[test]
 fn test_children_of_lists_direct_children_cache_and_fallback() {
-    let mut conn = test_conn();
+    let (mut conn, _dir) = test_conn();
     let (root, music, jazz, file) = build_tree(&mut conn);
     let rock = tree_entry(&mut conn, "mfr_path", Some(music), "rock");
 
@@ -194,7 +194,7 @@ fn test_children_of_lists_direct_children_cache_and_fallback() {
 
 #[test]
 fn test_resolution_is_cached() {
-    let mut conn = test_conn();
+    let (mut conn, _dir) = test_conn();
     let (_, _, _, file) = build_tree(&mut conn);
     let mut cache = TreeCache::new(false);
 
@@ -209,7 +209,7 @@ fn test_resolution_is_cached() {
 
 #[test]
 fn test_fields_are_independent_trees() {
-    let mut conn = test_conn();
+    let (mut conn, _dir) = test_conn();
     let fs_root = tree_entry(&mut conn, "mfr_path", None, "");
     let _x = tree_entry(&mut conn, "mfr_path", Some(fs_root), "x");
     let mut cache = TreeCache::new(false);
@@ -222,7 +222,7 @@ fn test_fields_are_independent_trees() {
 
 #[test]
 fn test_path_of_roundtrip() {
-    let mut conn = test_conn();
+    let (mut conn, _dir) = test_conn();
     let (root, _, _, file) = build_tree(&mut conn);
     let mut cache = TreeCache::new(false);
 
@@ -238,7 +238,7 @@ fn test_path_of_roundtrip() {
 
 #[test]
 fn test_descendants_collects_transitively() {
-    let mut conn = test_conn();
+    let (mut conn, _dir) = test_conn();
     let (root, music, jazz, file) = build_tree(&mut conn);
     let rock = tree_entry(&mut conn, "mfr_path", Some(music), "rock");
     let mut cache = TreeCache::new(false);
@@ -260,7 +260,7 @@ fn test_descendants_collects_transitively() {
 fn test_populate_serves_reads_without_db() {
     // After an eager populate, the whole forest is resident: every read-side
     // navigation is served from memory, so `misses` (DB fallbacks) stays 0.
-    let mut conn = test_conn();
+    let (mut conn, _dir) = test_conn();
     let (root, music, jazz, file) = build_tree(&mut conn);
     let rock = tree_entry(&mut conn, "mfr_path", Some(music), "rock");
 
@@ -295,7 +295,7 @@ fn test_populate_serves_reads_without_db() {
 #[test]
 fn test_populate_matches_lazy_descendants() {
     // The eager walk must return exactly what the DB walk returns.
-    let mut conn = test_conn();
+    let (mut conn, _dir) = test_conn();
     let (root, music, _, _) = build_tree(&mut conn);
     let _rock = tree_entry(&mut conn, "mfr_path", Some(music), "rock");
 
@@ -313,7 +313,7 @@ fn test_populate_matches_lazy_descendants() {
 
 #[test]
 fn test_populate_then_mutations_stay_complete_and_correct() {
-    let mut conn = test_conn();
+    let (mut conn, _dir) = test_conn();
     let (root, music, jazz, _file) = build_tree(&mut conn);
 
     let mut cache = TreeCache::new(false);
@@ -337,7 +337,7 @@ fn test_populate_then_mutations_stay_complete_and_correct() {
 
 #[test]
 fn test_apply_rename_in_place() {
-    let mut conn = test_conn();
+    let (mut conn, _dir) = test_conn();
     let (_, music, jazz, file) = build_tree(&mut conn);
     let mut cache = TreeCache::new(false);
     cache.resolve_path(&conn, "mfr_path", "/music/jazz/file.mp3").unwrap();
@@ -362,7 +362,7 @@ fn test_apply_rename_in_place() {
 
 #[test]
 fn test_apply_move_to_other_parent() {
-    let mut conn = test_conn();
+    let (mut conn, _dir) = test_conn();
     let (root, music, jazz, file) = build_tree(&mut conn);
     let archive = tree_entry(&mut conn, "mfr_path", Some(root), "archive");
     let mut cache = TreeCache::new(false);
@@ -385,7 +385,7 @@ fn test_apply_move_to_other_parent() {
 
 #[test]
 fn test_apply_remove_drops_subtree() {
-    let mut conn = test_conn();
+    let (mut conn, _dir) = test_conn();
     let (_, _, jazz, file) = build_tree(&mut conn);
     let mut cache = TreeCache::new(false);
     cache.resolve_path(&conn, "mfr_path", "/music/jazz/file.mp3").unwrap();
@@ -403,7 +403,7 @@ fn test_apply_remove_drops_subtree() {
 
 #[test]
 fn test_apply_insert_makes_child_resolvable_without_db_miss() {
-    let mut conn = test_conn();
+    let (mut conn, _dir) = test_conn();
     let (_, music, _, _) = build_tree(&mut conn);
     let mut cache = TreeCache::new(false);
     cache.resolve_path(&conn, "mfr_path", "/music").unwrap();
@@ -420,7 +420,7 @@ fn test_apply_insert_makes_child_resolvable_without_db_miss() {
 
 #[test]
 fn test_case_insensitive_resolution() {
-    let mut conn = test_conn();
+    let (mut conn, _dir) = test_conn();
     let root = tree_entry(&mut conn, "mfr_path", None, "");
     let music = tree_entry(&mut conn, "mfr_path", Some(root), "Music");
 
@@ -439,7 +439,7 @@ fn test_case_insensitive_resolution() {
 // ── Undecodable names (spec-data-model "Tree names") ─────────────────────────
 
 /// Creates a tree entry whose name is given as exact bytes.
-fn tree_entry_bytes(conn: &mut Connection, field: &str, parent: Option<Uuid>, name: &[u8]) -> Uuid {
+fn tree_entry_bytes(conn: &mut KvStore, field: &str, parent: Option<Uuid>, name: &[u8]) -> Uuid {
     let mut w = Writer::begin(conn, None).unwrap();
     let m = w
         .create_metarecord(vec![Field::new(
@@ -456,7 +456,7 @@ fn test_two_siblings_differing_only_in_undecodable_bytes_are_distinct_nodes() {
     // They display identically, so a text-keyed cache would collapse them into
     // one — and reconcile would then reuse one file's metarecord for the other.
     // Identity is the bytes.
-    let mut conn = test_conn();
+    let (mut conn, _dir) = test_conn();
     let root = tree_entry(&mut conn, "mfr_path", None, "");
     let a = tree_entry_bytes(&mut conn, "mfr_path", Some(root), b"caf\xe9.mp4");
     let b = tree_entry_bytes(&mut conn, "mfr_path", Some(root), b"caf\xff.mp4");
@@ -476,7 +476,7 @@ fn test_two_siblings_differing_only_in_undecodable_bytes_are_distinct_nodes() {
 fn test_a_node_with_an_undecodable_name_resolves_by_its_displayed_path() {
     // The name metafolder shows escapes the faulty byte, and that spelling is
     // what resolves — typeable, and exact.
-    let mut conn = test_conn();
+    let (mut conn, _dir) = test_conn();
     let root = tree_entry(&mut conn, "mfr_path", None, "");
     let file = tree_entry_bytes(&mut conn, "mfr_path", Some(root), b"caf\xe9.mp4");
 
@@ -495,7 +495,7 @@ fn test_a_node_with_an_undecodable_name_resolves_by_its_displayed_path() {
 
 #[test]
 fn test_case_folding_still_applies_but_keeps_undecodable_bytes_distinct() {
-    let mut conn = test_conn();
+    let (mut conn, _dir) = test_conn();
     let root = tree_entry(&mut conn, "mfr_path", None, "");
     let upper = tree_entry(&mut conn, "mfr_path", Some(root), "Photos");
     let a = tree_entry_bytes(&mut conn, "mfr_path", Some(root), b"x\xe9");
@@ -517,7 +517,7 @@ fn test_case_folding_still_applies_but_keeps_undecodable_bytes_distinct() {
 fn test_two_undecodable_siblings_each_resolve_on_their_own() {
     // They used to display alike and be indistinguishable; escaping the byte
     // value tells them apart, so neither lookup is ambiguous any more.
-    let mut conn = test_conn();
+    let (mut conn, _dir) = test_conn();
     let root = tree_entry(&mut conn, "mfr_path", None, "");
     let a = tree_entry_bytes(&mut conn, "mfr_path", Some(root), b"caf\xe9.mp4");
     let b = tree_entry_bytes(&mut conn, "mfr_path", Some(root), b"caf\xff.mp4");
@@ -535,7 +535,7 @@ fn test_two_undecodable_siblings_each_resolve_on_their_own() {
 fn test_a_name_that_really_contains_the_escape_is_found_verbatim() {
     // "%E9.txt" is both how an undecodable byte is shown and a legal file name.
     // Typing it must find the real file — the reading a user means naturally.
-    let mut conn = test_conn();
+    let (mut conn, _dir) = test_conn();
     let root = tree_entry(&mut conn, "mfr_path", None, "");
     let literal = tree_entry(&mut conn, "mfr_path", Some(root), "%E9.txt");
 
@@ -550,7 +550,7 @@ fn test_a_name_that_really_contains_the_escape_is_found_verbatim() {
 fn test_a_path_with_no_escape_is_untouched_by_any_of_this() {
     // The common case must not pay for the rare one: "100%.txt" is not an
     // escape, and resolves as the plain name it is.
-    let mut conn = test_conn();
+    let (mut conn, _dir) = test_conn();
     let root = tree_entry(&mut conn, "mfr_path", None, "");
     let plain = tree_entry(&mut conn, "mfr_path", Some(root), "100%.txt");
 
@@ -565,7 +565,7 @@ fn test_a_path_with_no_escape_is_untouched_by_any_of_this() {
 
 /// A directory holding both a file *really* named "caf%E9.mp4" and one whose
 /// name is the byte 0xE9 — the only pair that still displays alike.
-fn look_alikes(conn: &mut Connection) -> (TreeCache, Uuid, Uuid, Uuid) {
+fn look_alikes(conn: &mut KvStore) -> (TreeCache, Uuid, Uuid, Uuid) {
     let root = tree_entry(conn, "mfr_path", None, "");
     let literal = tree_entry(conn, "mfr_path", Some(root), "caf%E9.mp4");
     let escaped = tree_entry_bytes(conn, "mfr_path", Some(root), b"caf\xe9.mp4");
@@ -583,7 +583,7 @@ fn look_alikes(conn: &mut Connection) -> (TreeCache, Uuid, Uuid, Uuid) {
 
 #[test]
 fn test_a_single_uuid_resolution_refuses_to_pick_between_the_two_readings() {
-    let mut conn = test_conn();
+    let (mut conn, _dir) = test_conn();
     let (mut cache, _, _, _) = look_alikes(&mut conn);
     // Both readings match different files: the path names neither on its own.
     assert_eq!(cache.resolve_path(&conn, "mfr_path", "/caf%E9.mp4").unwrap(), None);
@@ -591,7 +591,7 @@ fn test_a_single_uuid_resolution_refuses_to_pick_between_the_two_readings() {
 
 #[test]
 fn test_naming_the_reading_resolves_it_unambiguously() {
-    let mut conn = test_conn();
+    let (mut conn, _dir) = test_conn();
     let (mut cache, _, literal, escaped) = look_alikes(&mut conn);
     let resolve = |cache: &mut TreeCache, form| {
         cache.resolve_path_as(&conn, "mfr_path", "/caf%E9.mp4", form).unwrap()
@@ -602,7 +602,7 @@ fn test_naming_the_reading_resolves_it_unambiguously() {
 
 #[test]
 fn test_a_form_that_matches_nothing_resolves_to_nothing() {
-    let mut conn = test_conn();
+    let (mut conn, _dir) = test_conn();
     let root = tree_entry(&mut conn, "mfr_path", None, "");
     let escaped = tree_entry_bytes(&mut conn, "mfr_path", Some(root), b"caf\xe9.mp4");
     let mut cache = TreeCache::new(false);
@@ -629,7 +629,7 @@ fn test_resolving_by_exact_bytes_never_consults_the_other_reading() {
     // What the daemon's own walk does: it holds the real bytes, so it must
     // never fall onto a file that merely *displays* the same.
     use metafolder_daemon::relpath::RelPath;
-    let mut conn = test_conn();
+    let (mut conn, _dir) = test_conn();
     let (mut cache, _, _, escaped) = look_alikes(&mut conn);
     let rel = RelPath::root().child(TreeName::from_bytes(b"caf\xe9.mp4".to_vec()));
     assert_eq!(cache.resolve_rel(&conn, "mfr_path", &rel).unwrap(), Some(escaped));
@@ -645,12 +645,12 @@ fn test_resolving_by_exact_bytes_never_consults_the_other_reading() {
 /// Panics unless `cache` reports exactly what a fresh `populate` would: same
 /// residency, same node count, and, for every TreeRef position in the database,
 /// the same paths, children and descendants.
-fn assert_matches_fresh(conn: &Connection, cache: &mut TreeCache) {
+fn assert_matches_fresh(conn: &KvStore, cache: &mut TreeCache) {
     let mut fresh = TreeCache::new(false);
     fresh.populate(conn).unwrap();
     assert_eq!(cache.is_complete(), fresh.is_complete(), "residency");
     assert_eq!(cache.len(), fresh.len(), "node count");
-    for row in db::load_tree_forest(conn).unwrap() {
+    for row in conn.forest().unwrap() {
         let (field, uuid) = (row.field_name.as_str(), row.uuid);
         assert_eq!(
             cache.paths_of(conn, field, uuid).unwrap(),
@@ -687,7 +687,7 @@ fn commit_and_settle(w: Writer<'_>, cache: &mut TreeCache) -> bool {
 }
 
 fn manual_set(
-    conn: &mut Connection,
+    conn: &mut KvStore,
     cache: &mut TreeCache,
     uuid: Uuid,
     field: &str,
@@ -699,7 +699,7 @@ fn manual_set(
 }
 
 /// A populated cache over the standard filesystem tree.
-fn warm_tree(conn: &mut Connection) -> (TreeCache, Uuid, Uuid, Uuid, Uuid) {
+fn warm_tree(conn: &mut KvStore) -> (TreeCache, Uuid, Uuid, Uuid, Uuid) {
     let (root, music, jazz, file) = build_tree(conn);
     let mut cache = TreeCache::new(false);
     cache.populate(conn).unwrap();
@@ -708,7 +708,7 @@ fn warm_tree(conn: &mut Connection) -> (TreeCache, Uuid, Uuid, Uuid, Uuid) {
 
 #[test]
 fn test_manual_write_adds_a_child_without_a_rebuild() {
-    let mut conn = test_conn();
+    let (mut conn, _dir) = test_conn();
     let (mut cache, _root, music, _jazz, _file) = warm_tree(&mut conn);
 
     // A brand-new metarecord given its position by a manual write.
@@ -724,7 +724,7 @@ fn test_manual_write_adds_a_child_without_a_rebuild() {
 
 #[test]
 fn test_manual_write_adds_a_root_without_a_rebuild() {
-    let mut conn = test_conn();
+    let (mut conn, _dir) = test_conn();
     let (mut cache, ..) = warm_tree(&mut conn);
 
     let mut w = Writer::begin(&mut conn, None).unwrap();
@@ -739,7 +739,7 @@ fn test_manual_write_adds_a_root_without_a_rebuild() {
 
 #[test]
 fn test_manual_rename_keeps_the_subtree() {
-    let mut conn = test_conn();
+    let (mut conn, _dir) = test_conn();
     let (mut cache, root, music, jazz, file) = warm_tree(&mut conn);
 
     let value = Value::TreeRef { parent: Some(root), name: "sound".into() };
@@ -756,7 +756,7 @@ fn test_manual_rename_keeps_the_subtree() {
 
 #[test]
 fn test_manual_move_to_another_parent_keeps_the_subtree() {
-    let mut conn = test_conn();
+    let (mut conn, _dir) = test_conn();
     let (mut cache, root, _music, jazz, _file) = warm_tree(&mut conn);
 
     let value = Value::TreeRef { parent: Some(root), name: "jazz".into() };
@@ -769,7 +769,7 @@ fn test_manual_move_to_another_parent_keeps_the_subtree() {
 
 #[test]
 fn test_manual_unset_of_a_leaf_drops_its_node() {
-    let mut conn = test_conn();
+    let (mut conn, _dir) = test_conn();
     let (mut cache, _root, _music, _jazz, file) = warm_tree(&mut conn);
 
     let mut w = Writer::begin(&mut conn, None).unwrap();
@@ -782,7 +782,7 @@ fn test_manual_unset_of_a_leaf_drops_its_node() {
 
 #[test]
 fn test_a_write_that_changes_no_position_is_a_no_op() {
-    let mut conn = test_conn();
+    let (mut conn, _dir) = test_conn();
     let (mut cache, _root, music, ..) = warm_tree(&mut conn);
     let before = cache.len();
 
@@ -793,8 +793,8 @@ fn test_a_write_that_changes_no_position_is_a_no_op() {
 }
 
 /// The parent uuid of `uuid`'s `mfr_path` position, read from the database.
-fn cache_parent(conn: &Connection, uuid: Uuid) -> Option<Uuid> {
-    db::get_field_rows_named(conn, uuid, "mfr_path")
+fn cache_parent(conn: &KvStore, uuid: Uuid) -> Option<Uuid> {
+    conn.rows_named(uuid, "mfr_path")
         .unwrap()
         .into_iter()
         .find_map(|r| match r.value {
@@ -806,7 +806,7 @@ fn cache_parent(conn: &Connection, uuid: Uuid) -> Option<Uuid> {
 
 #[test]
 fn test_a_parent_and_its_child_written_by_one_revision() {
-    let mut conn = test_conn();
+    let (mut conn, _dir) = test_conn();
     let (mut cache, root, ..) = warm_tree(&mut conn);
 
     let mut w = Writer::begin(&mut conn, None).unwrap();
@@ -826,7 +826,7 @@ fn test_a_child_settled_before_its_parent_still_lands() {
     // The cells are replayed in write order, so the parent normally comes
     // first — but nothing may depend on that: settling waits for a parent that
     // is itself part of the batch.
-    let mut conn = test_conn();
+    let (mut conn, _dir) = test_conn();
     let (mut cache, root, ..) = warm_tree(&mut conn);
 
     let mut w = Writer::begin(&mut conn, None).unwrap();
@@ -845,7 +845,7 @@ fn test_a_child_settled_before_its_parent_still_lands() {
 fn test_two_siblings_swapping_names_in_one_revision() {
     // Neither rename can be applied first while the other still holds the name:
     // settling detaches everything it is about to move before placing any of it.
-    let mut conn = test_conn();
+    let (mut conn, _dir) = test_conn();
     let (mut cache, root, music, ..) = warm_tree(&mut conn);
     let mut w = Writer::begin(&mut conn, None).unwrap();
     let films = w
@@ -877,7 +877,7 @@ fn test_two_siblings_swapping_names_in_one_revision() {
 
 #[test]
 fn test_an_incomplete_cache_asks_for_a_rebuild() {
-    let mut conn = test_conn();
+    let (mut conn, _dir) = test_conn();
     let (root, ..) = build_tree(&mut conn);
     let mut cache = TreeCache::new(false);
     // Never populated: what it holds is not the whole forest, so what one
@@ -893,7 +893,7 @@ fn test_populating_keeps_a_name_s_exact_bytes() {
     // The forest scan used to read back the *displayed* name, so a node named
     // with an undecodable byte was cached under the bytes of its own escape —
     // and then answered to neither reading of its path.
-    let mut conn = test_conn();
+    let (mut conn, _dir) = test_conn();
     let root = tree_entry(&mut conn, "mfr_path", None, "");
     let escaped = tree_entry_bytes(&mut conn, "mfr_path", Some(root), b"caf\xe9.mp4");
     let literal = tree_entry(&mut conn, "mfr_path", Some(root), "caf%E9.mp4");
@@ -932,7 +932,7 @@ fn orphan_forest(child: Uuid, ghost: Uuid) -> Vec<db::TreeRow> {
 
 #[test]
 fn test_a_node_waiting_for_a_parent_is_adopted_when_it_arrives() {
-    let conn = test_conn();
+    let (conn, _dir) = test_conn();
     let (file, ghost) = (Uuid::new_v4(), Uuid::new_v4());
     let mut cache = TreeCache::new(false);
     cache.populate_from_forest(orphan_forest(file, ghost));
@@ -947,7 +947,7 @@ fn test_a_node_waiting_for_a_parent_is_adopted_when_it_arrives() {
 
 #[test]
 fn test_an_insert_under_an_unknown_parent_keeps_the_node() {
-    let conn = test_conn();
+    let (conn, _dir) = test_conn();
     let (file, ghost) = (Uuid::new_v4(), Uuid::new_v4());
     let mut cache = TreeCache::new(false);
     cache.populate_from_forest(Vec::new());
@@ -962,7 +962,7 @@ fn test_an_insert_under_an_unknown_parent_keeps_the_node() {
 
 #[test]
 fn test_a_waiting_node_that_moves_stops_waiting() {
-    let conn = test_conn();
+    let (conn, _dir) = test_conn();
     let (file, ghost) = (Uuid::new_v4(), Uuid::new_v4());
     let mut cache = TreeCache::new(false);
     cache.populate_from_forest(orphan_forest(file, ghost));
@@ -985,7 +985,7 @@ fn test_a_waiting_node_that_moves_stops_waiting() {
 
 #[test]
 fn test_a_cell_settled_before_its_parents_still_lands() {
-    let mut conn = test_conn();
+    let (mut conn, _dir) = test_conn();
     let (mut cache, root, _music, jazz, _file) = warm_tree(&mut conn);
 
     // The node is already in the forest, keeps its children through the move,

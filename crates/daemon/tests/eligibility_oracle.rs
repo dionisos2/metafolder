@@ -8,14 +8,16 @@
 //! right, and independent of the index.
 
 use metafolder_core::metarecord::{Field, Value};
-use metafolder_daemon::db;
 use metafolder_daemon::eligibility::{Reason, WatchRules};
 use metafolder_daemon::log::Writer;
 use metafolder_daemon::relpath::RelPath;
 use metafolder_daemon::store::Rows;
 use metafolder_daemon::tree_cache::TreeCache;
-use rusqlite::Connection;
 use uuid::Uuid;
+
+use metafolder_daemon::kvstore::KvStore;
+
+mod common;
 
 struct Rng(u64);
 
@@ -52,7 +54,7 @@ fn prefixes(path: &str) -> Vec<String> {
 
 /// The chain walk (spec-file-tracking "Eligibility algorithm"), reading the
 /// store at every step.
-fn oracle(conn: &Connection, cache: &mut TreeCache, path: &str) -> Verdict {
+fn oracle(conn: &KvStore, cache: &mut TreeCache, path: &str) -> Verdict {
     let comps: Vec<&str> = path.split('/').collect();
     let full_idx = comps.len() - 1;
     let mut chain = Vec::new();
@@ -135,7 +137,7 @@ fn oracle(conn: &Connection, cache: &mut TreeCache, path: &str) -> Verdict {
 
 /// The nearest `mfr_watch_exceeded` on the path's own prefixes, the path
 /// included: `Some(prefix)` when it is `true` there.
-fn oracle_exceeded(conn: &Connection, cache: &mut TreeCache, path: &str) -> Option<String> {
+fn oracle_exceeded(conn: &KvStore, cache: &mut TreeCache, path: &str) -> Option<String> {
     for prefix in prefixes(path).iter().rev() {
         if let Some(u) = cache.resolve_path(conn, "mfr_path", prefix).unwrap() {
             if let Some(v) = Rows::bool_field(conn, u, "mfr_watch_exceeded").unwrap() {
@@ -147,7 +149,7 @@ fn oracle_exceeded(conn: &Connection, cache: &mut TreeCache, path: &str) -> Opti
 }
 
 /// The nearest set of patterns on the path's prefixes, the path included.
-fn oracle_effective(conn: &Connection, cache: &mut TreeCache, path: &str) -> Option<String> {
+fn oracle_effective(conn: &KvStore, cache: &mut TreeCache, path: &str) -> Option<String> {
     for prefix in prefixes(path).iter().rev() {
         if let Some(u) = cache.resolve_path(conn, "mfr_path", prefix).unwrap() {
             if !Rows::string_fields(conn, u, "mf_ignore").unwrap().is_empty() {
@@ -160,9 +162,8 @@ fn oracle_effective(conn: &Connection, cache: &mut TreeCache, path: &str) -> Opt
 
 /// A random tree of tracked directories, each carrying random rules. Returns the
 /// connection and every tracked path.
-fn generate(rng: &mut Rng) -> (Connection, Vec<String>) {
-    let mut conn = db::open_in_memory().unwrap();
-    db::init_schema(&conn).unwrap();
+fn generate(rng: &mut Rng) -> (KvStore, common::TempDir, Vec<String>) {
+    let (mut conn, _conn_dir) = common::kv::store();
     let mut nodes: Vec<(Uuid, String)> = Vec::new();
     let mut w = Writer::begin(&mut conn, None).unwrap();
     let rules = |rng: &mut Rng, fields: &mut Vec<Field>| {
@@ -207,7 +208,7 @@ fn generate(rng: &mut Rng) -> (Connection, Vec<String>) {
         nodes.push((uuid, path));
     }
     w.commit().unwrap();
-    (conn, nodes.into_iter().map(|(_, p)| p).collect())
+    (conn, _conn_dir, nodes.into_iter().map(|(_, p)| p).collect())
 }
 
 #[test]
@@ -215,7 +216,7 @@ fn the_rule_index_answers_like_the_chain_walk() {
     let mut rng = Rng(0x9e37_79b9_7f4a_7c15);
     let mut probes_checked = 0;
     for _ in 0..60 {
-        let (conn, tracked) = generate(&mut rng);
+        let (conn, _dir, tracked) = generate(&mut rng);
         let mut cache = TreeCache::new(false);
         let rules = WatchRules::load(&conn, false).unwrap();
         // Every tracked path, an untracked child of each, and one deeper.
@@ -254,8 +255,7 @@ fn the_rule_index_answers_like_the_chain_walk() {
 
 #[test]
 fn a_case_insensitive_repository_finds_its_rules_whatever_the_case() {
-    let mut conn = db::open_in_memory().unwrap();
-    db::init_schema(&conn).unwrap();
+    let (mut conn, _conn_dir) = common::kv::store();
     let mut w = Writer::begin(&mut conn, None).unwrap();
     let root = w
         .create_metarecord(vec![
@@ -282,8 +282,7 @@ fn a_case_insensitive_repository_finds_its_rules_whatever_the_case() {
 #[test]
 fn a_name_that_is_not_text_is_matched_by_its_bytes() {
     use metafolder_core::metarecord::TreeName;
-    let mut conn = db::open_in_memory().unwrap();
-    db::init_schema(&conn).unwrap();
+    let (mut conn, _conn_dir) = common::kv::store();
     let mut w = Writer::begin(&mut conn, None).unwrap();
     let root = w
         .create_metarecord(vec![
@@ -310,8 +309,7 @@ fn a_name_that_is_not_text_is_matched_by_its_bytes() {
 #[test]
 fn a_path_given_as_text_is_read_both_ways_like_the_tree_cache_reads_it() {
     use metafolder_core::metarecord::TreeName;
-    let mut conn = db::open_in_memory().unwrap();
-    db::init_schema(&conn).unwrap();
+    let (mut conn, _conn_dir) = common::kv::store();
     let mut w = Writer::begin(&mut conn, None).unwrap();
     let root = w
         .create_metarecord(vec![
@@ -359,8 +357,7 @@ fn a_path_given_as_text_is_read_both_ways_like_the_tree_cache_reads_it() {
 
 #[test]
 fn touches_names_the_rule_carriers_and_their_ancestors_only() {
-    let mut conn = db::open_in_memory().unwrap();
-    db::init_schema(&conn).unwrap();
+    let (mut conn, _conn_dir) = common::kv::store();
     let mut w = Writer::begin(&mut conn, None).unwrap();
     let root = w
         .create_metarecord(vec![

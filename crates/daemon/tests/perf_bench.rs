@@ -474,8 +474,7 @@ fn bench_bulk_settle_against_rebuild() {
     use metafolder_daemon::tree_cache::TreeCache;
 
     const FOREST: usize = 5_000;
-    let mut conn = db::open_in_memory().unwrap();
-    db::init_schema(&conn).unwrap();
+    let (mut conn, _conn_dir) = common::kv::store();
 
     let mut w = Writer::begin(&mut conn, None).unwrap();
     let root = w

@@ -10,12 +10,14 @@ use std::time::Instant;
 
 use metafolder_core::metarecord::{Field, Value};
 use metafolder_core::query::{Aspect, FollowTarget, Query};
-use metafolder_daemon::db;
 use metafolder_daemon::index::{RepoIndex, SortBy};
 use metafolder_daemon::log::Writer;
 use metafolder_daemon::query_result::{SortKey, SortOrder};
 use metafolder_query_oracle as query_exec;
-use rusqlite::Connection;
+
+use metafolder_daemon::kvstore::KvStore;
+
+mod common;
 
 /// Deterministic, reproducible pseudo-random (no Math.random / clock).
 fn prng(i: u64) -> u64 {
@@ -30,10 +32,9 @@ fn s(v: &str) -> Value {
 /// Populates a fresh repo with `dirs` directory metarecords forming a tree and
 /// `files` file metarecords, each carrying ~5 fields (loc/kind/rate/size/added),
 /// mirroring a real reconciled repository. Returns the connection.
-fn build_repo(dirs: usize, files: usize) -> Connection {
+fn build_repo(dirs: usize, files: usize) -> (KvStore, common::TempDir) {
     const FANOUT: usize = 8;
-    let mut conn = db::open_in_memory().unwrap();
-    db::init_schema(&conn).unwrap();
+    let (mut conn, _conn_dir) = common::kv::store();
 
     let mut w = Writer::begin(&mut conn, None).unwrap();
     let mut dir_uuids = Vec::with_capacity(dirs);
@@ -66,7 +67,7 @@ fn build_repo(dirs: usize, files: usize) -> Connection {
         .unwrap();
     }
     w.commit().unwrap();
-    conn
+    (conn, _conn_dir)
 }
 
 fn follows_t(field: &str, cond: Query) -> Query {
@@ -113,7 +114,7 @@ fn battery() -> Vec<(&'static str, Query)> {
 
 fn run_scale(dirs: usize, files: usize, compare_sql_sort: bool) {
     let n = dirs + files;
-    let conn = build_repo(dirs, files);
+    let (conn, _dir) = build_repo(dirs, files);
 
     let t = Instant::now();
     let index = RepoIndex::build(&conn).unwrap();
