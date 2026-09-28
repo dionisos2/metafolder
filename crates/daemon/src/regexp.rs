@@ -108,6 +108,32 @@ pub fn required_literals(pattern: &str) -> Vec<String> {
     out
 }
 
+/// The literal text every match of `pattern` starts with, when the pattern is
+/// anchored at the start of the text — what a walk of a sorted forest can seek
+/// instead of visiting every path (spec-storage "The forest"). `None` when
+/// there is no such text: not anchored, anchored under an alternation, or
+/// opening on anything but a literal.
+pub fn anchored_prefix(pattern: &str) -> Option<String> {
+    use regex_syntax::hir::{HirKind, Look};
+
+    let hir = regex_syntax::parse(pattern).ok()?;
+    let HirKind::Concat(items) = hir.kind() else { return None };
+    let mut items = items.iter().peekable();
+    let mut anchored = false;
+    while items.next_if(|i| matches!(i.kind(), HirKind::Look(Look::Start))).is_some() {
+        anchored = true;
+    }
+    if !anchored {
+        return None;
+    }
+    let mut prefix = String::new();
+    for item in items {
+        let HirKind::Literal(lit) = item.kind() else { break };
+        prefix.push_str(std::str::from_utf8(&lit.0).ok()?);
+    }
+    (!prefix.is_empty()).then_some(prefix)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -123,6 +149,24 @@ mod tests {
         assert_eq!(lits("(abc)*x"), ["x"], "an optional group guarantees nothing");
         assert!(lits("abc|abd").is_empty(), "an alternation guarantees no one literal");
         assert!(lits(".*").is_empty());
+    }
+
+    #[test]
+    fn anchored_prefix_is_what_every_match_starts_with() {
+        let prefix = |p: &str| anchored_prefix(p);
+        assert_eq!(prefix("^/music/").as_deref(), Some("/music/"));
+        assert_eq!(prefix("^/mu?").as_deref(), Some("/m"), "an optional char is not required");
+        assert_eq!(prefix("^/music{2}").as_deref(), Some("/musi"));
+        assert_eq!(prefix(r"^\/music\b").as_deref(), Some("/music"), "escapes, then a look");
+        assert_eq!(prefix("^/(music|video)").as_deref(), Some("/"), "up to the group");
+        assert_eq!(prefix("^^/music").as_deref(), Some("/music"));
+        assert_eq!(prefix("(?i)^/MUSIC").as_deref(), Some("/"), "a folded letter is no literal");
+        assert_eq!(prefix("^/music|^/video"), None, "an alternation has no one prefix");
+        assert_eq!(prefix("(?m)^/x"), None, "a line start is not the text's");
+        assert_eq!(prefix("mp3$"), None, "not anchored");
+        assert_eq!(prefix("^"), None, "nothing to seek");
+        assert_eq!(prefix("^.x"), None);
+        assert_eq!(prefix("^("), None, "not a pattern");
     }
 
     #[test]

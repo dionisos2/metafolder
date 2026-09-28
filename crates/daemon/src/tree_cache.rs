@@ -640,6 +640,81 @@ impl TreeCache {
         Ok(out)
     }
 
+    /// [`Self::path_matches_with`], seeking in the store what `seek` says can
+    /// match instead of walking the whole stored forest (spec-storage "The
+    /// forest"): an exact path costs its depth, a prefix the subtrees it
+    /// reaches. Visits and paths are the walk's, so the answer is too.
+    pub fn path_matches_seeking(
+        &self,
+        store: &dyn Rows,
+        field: &str,
+        seek: PathSeek<'_>,
+        pred: &dyn Fn(&str) -> bool,
+    ) -> Result<Vec<Uuid>> {
+        if let Some(out) = self.path_matches(field, pred)? {
+            return Ok(out);
+        }
+        let mut matched = HashSet::new();
+        match seek {
+            PathSeek::Exact(path) => {
+                if let Some(node) = seek_stored(store, field, path, false)? {
+                    if pred(path) {
+                        matched.insert(node);
+                    }
+                }
+            }
+            PathSeek::Prefix(prefix) => {
+                // The node holding the prefix's last separator, and the start
+                // of the names below it the prefix goes on with.
+                let (above, start) = match prefix.rfind('/') {
+                    None => (None, prefix),
+                    Some(i) => (Some(&prefix[..i]), &prefix[i + 1..]),
+                };
+                let (parent, depth) = match above {
+                    None => (None, 1),
+                    Some(dir) => match seek_stored(store, field, dir, true)? {
+                        Some(node) => (Some(node), dir.split('/').count() + 1),
+                        None => return Ok(Vec::new()),
+                    },
+                };
+                for (child, name) in children_starting(store, field, parent, start)? {
+                    let path = match above {
+                        None => name.clone(),
+                        Some(dir) => format!("{dir}/{name}"),
+                    };
+                    if pred(&path) {
+                        matched.insert(child);
+                    }
+                    let first = store.positions(field, child)?.into_iter().next();
+                    if first.is_some_and(|(p, n)| p == parent && n == name) {
+                        walk_stored_from(
+                            store,
+                            field,
+                            (child, path, (), depth),
+                            &mut |(), u, p| {
+                                if pred(p) {
+                                    matched.insert(u);
+                                }
+                                Some(())
+                            },
+                        )?;
+                    }
+                }
+            }
+            PathSeek::Below(may_hold) => {
+                walk_stored(store, field, (), &mut |(), uuid, path| {
+                    if pred(path) {
+                        matched.insert(uuid);
+                    }
+                    may_hold(&format!("{path}/")).then_some(())
+                })?;
+            }
+        }
+        let mut out: Vec<Uuid> = matched.into_iter().collect();
+        out.sort_unstable();
+        Ok(out)
+    }
+
     /// [`Self::osm_path_matches`], from the store when the forest is not
     /// resident. A branch that has consumed every term matches whole, as in
     /// the resident walk.
@@ -2038,8 +2113,20 @@ fn walk_stored<S: Copy>(
     start: S,
     visit: &mut dyn FnMut(S, Uuid, &str) -> Option<S>,
 ) -> Result<()> {
+    walk_stored_from(store, field, (Uuid::nil(), String::new(), start, 0), visit)
+}
+
+/// [`walk_stored`] below one node: `(node, its path, the state it passes
+/// down, its depth)`, a root at depth 1 — `Uuid::nil()` at depth 0 being the
+/// forest itself.
+fn walk_stored_from<S: Copy>(
+    store: &dyn Rows,
+    field: &str,
+    top: (Uuid, String, S, usize),
+    visit: &mut dyn FnMut(S, Uuid, &str) -> Option<S>,
+) -> Result<()> {
     // (parent, the parent's path, the state it passes down, depth)
-    let mut stack: Vec<(Uuid, String, S, usize)> = vec![(Uuid::nil(), String::new(), start, 0)];
+    let mut stack: Vec<(Uuid, String, S, usize)> = vec![top];
     while let Some((parent, parent_path, state, depth)) = stack.pop() {
         if depth >= MAX_TREE_DEPTH {
             anyhow::bail!("TreeRef chain deeper than {MAX_TREE_DEPTH} in field '{field}'");
@@ -2056,6 +2143,75 @@ fn walk_stored<S: Copy>(
         }
     }
     Ok(())
+}
+
+/// What a `:path` predicate lets a walk of the stored forest leave out.
+pub enum PathSeek<'a> {
+    /// The one path that can match.
+    Exact(&'a str),
+    /// The text every matching path starts with.
+    Prefix(&'a str),
+    /// Whether the subtree of a node can hold a match, given the text all its
+    /// paths start with (the node's path and the separator).
+    Below(&'a dyn Fn(&str) -> bool),
+}
+
+/// The node at `path` in the stored forest as the walk reaches it: each node
+/// above through its first position — the one its children hang from — and
+/// the last one too when `descend` (its children are wanted), else through
+/// any of its positions.
+fn seek_stored(store: &dyn Rows, field: &str, path: &str, descend: bool) -> Result<Option<Uuid>> {
+    let mut parent = None;
+    let mut names = path.split('/').peekable();
+    while let Some(name) = names.next() {
+        let Some(child) = store.child_by_bytes(field, parent, name.as_bytes())? else {
+            return Ok(None);
+        };
+        if descend || names.peek().is_some() {
+            let first = store.positions(field, child)?.into_iter().next();
+            if !first.is_some_and(|(p, n)| p == parent && n == name) {
+                return Ok(None);
+            }
+        }
+        parent = Some(child);
+    }
+    Ok(parent)
+}
+
+/// The children of `parent` (`None`: the roots) whose name starts with
+/// `start`, read from the store in name order from there on.
+fn children_starting(
+    store: &dyn Rows,
+    field: &str,
+    parent: Option<Uuid>,
+    start: &str,
+) -> Result<Vec<(Uuid, String)>> {
+    let mut out = Vec::new();
+    if let Some(child) = store.child_by_bytes(field, parent, start.as_bytes())? {
+        out.push((child, start.to_string()));
+    }
+    let (mut after, mut chunk) = (start.as_bytes().to_vec(), 64);
+    loop {
+        let page = store.children_page(
+            field,
+            parent.unwrap_or(Uuid::nil()),
+            Some(&after),
+            false,
+            chunk,
+        )?;
+        let last_page = page.len() < chunk;
+        for (child, name) in page {
+            if !name.starts_with(start.as_bytes()) {
+                return Ok(out);
+            }
+            out.push((child, String::from_utf8_lossy(&name).into_owned()));
+            after = name;
+        }
+        if last_page {
+            return Ok(out);
+        }
+        chunk = (chunk * 2).min(4096);
+    }
 }
 
 fn join_key(parent_key: &str, name: &str) -> Arc<str> {

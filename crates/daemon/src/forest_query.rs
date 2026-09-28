@@ -12,7 +12,8 @@
 //! other operand like any other bitmap. Where no forest is resident (a
 //! key-value repository), an `osm` path is instead rewritten into the subtrees
 //! of its verified anchors (see [`osm_path_seeded`]), which the index expands
-//! from its descendant bitmaps: walking the stored forest read every node.
+//! from its descendant bitmaps, and a `:path` comparison seeks the paths it
+//! can match (`PathSeek`): walking the stored forest read every node.
 
 use std::collections::HashMap;
 
@@ -24,7 +25,7 @@ use crate::error::ApiError;
 use crate::index::{Eval, QueryRoots};
 use crate::log::MAX_TREE_DEPTH;
 use crate::store::Rows;
-use crate::tree_cache::TreeCache;
+use crate::tree_cache::{PathSeek, TreeCache};
 
 /// Rewrites every forest-served leaf of `q` into the `uuid_in` set it matches.
 ///
@@ -134,9 +135,55 @@ fn path_leaf_matches(
         }
         return Ok(Some(rewritten));
     }
-    let Some((field, pred)) = path_predicate(q) else { return Ok(None) };
-    let matched = cache.path_matches_with(store, field, pred.as_ref()).map_err(ApiError::from)?;
-    Ok(Some(Query::UuidIn { uuids: matched }))
+    let Some((field, pred, narrow)) = path_predicate(q) else { return Ok(None) };
+    if let Some(matched) = cache.path_matches(field, pred.as_ref()).map_err(ApiError::from)? {
+        return Ok(Some(Query::UuidIn { uuids: matched }));
+    }
+    // No resident forest: seek in the store what can match, rather than walk
+    // every node of it (spec-storage "The forest").
+    let below = |operand: &str, op: Op| -> Box<dyn Fn(&str) -> bool + '_> {
+        let operand = operand.to_string();
+        Box::new(move |start: &str| match op {
+            // Every path below starts with `start`, and is greater than it.
+            Op::Lt | Op::Lte => start < operand.as_str(),
+            _ => start > operand.as_str() || operand.starts_with(start),
+        })
+    };
+    let seek_all = |seek: PathSeek<'_>| {
+        cache.path_matches_seeking(store, field, seek, pred.as_ref()).map_err(ApiError::from)
+    };
+    let uuids = match &narrow {
+        // A path assembled from a name the store does not hold as text is
+        // not one a seek can spell: walk.
+        Narrow::Exact(p) | Narrow::Differs(p) | Narrow::Prefix(p) | Narrow::Range(_, p)
+            if p.contains(char::REPLACEMENT_CHARACTER) =>
+        {
+            cache.path_matches_with(store, field, pred.as_ref()).map_err(ApiError::from)?
+        }
+        Narrow::Exact(path) => seek_all(PathSeek::Exact(path))?,
+        Narrow::Prefix(prefix) => seek_all(PathSeek::Prefix(prefix))?,
+        Narrow::Range(op, operand) => seek_all(PathSeek::Below(below(operand, *op).as_ref()))?,
+        // Every node has one path per position, all different: only a node
+        // whose single path is the operand fails to differ from it.
+        Narrow::Differs(path) => {
+            let present = Query::IsPresent { field: field.to_string(), aspect: Aspect::Path };
+            let at = cache
+                .path_matches_seeking(store, field, PathSeek::Exact(path), &|_| true)
+                .map_err(ApiError::from)?;
+            let only = match at.first() {
+                Some(&node) if store.positions(field, node).map_err(ApiError::from)?.len() == 1 => {
+                    node
+                }
+                _ => return Ok(Some(present)),
+            };
+            let not_it = Query::Not { operand: Box::new(Query::UuidIn { uuids: vec![only] }) };
+            return Ok(Some(Query::And { operands: vec![present, not_it] }));
+        }
+        Narrow::Walk => {
+            cache.path_matches_with(store, field, pred.as_ref()).map_err(ApiError::from)?
+        }
+    };
+    Ok(Some(Query::UuidIn { uuids }))
 }
 
 /// An order-sensitive `osm` path answered from the store without walking the
@@ -291,11 +338,27 @@ impl AncestorPaths<'_> {
     }
 }
 
-/// A `:path` leaf's field and the test its assembled path must pass.
-type PathPredicate<'a> = (&'a str, Box<dyn Fn(&str) -> bool + 'a>);
+/// A `:path` leaf's field, the test its assembled path must pass, and what
+/// that test lets a walk of the stored forest leave out.
+type PathPredicate<'a> = (&'a str, Box<dyn Fn(&str) -> bool + 'a>, Narrow);
 
-/// The `(field, predicate on the assembled path)` a `:path` leaf reads, mirror
-/// for mirror of what the oracle's SQL compiler builds for the same node.
+/// Where the paths a `:path` leaf matches can be.
+enum Narrow {
+    /// This path alone.
+    Exact(String),
+    /// Every path but this one.
+    Differs(String),
+    /// The paths starting with this text.
+    Prefix(String),
+    /// The paths on one side of this one.
+    Range(Op, String),
+    /// Anywhere.
+    Walk,
+}
+
+/// The `(field, predicate on the assembled path, narrowing)` a `:path` leaf
+/// reads, mirror for mirror of what the oracle's SQL compiler builds for the
+/// same node.
 fn path_predicate(q: &Query) -> Option<PathPredicate<'_>> {
     use metafolder_core::query::Query as Q;
     let (field, value, op): (&String, &Value, Op) = match q {
@@ -308,12 +371,19 @@ fn path_predicate(q: &Query) -> Option<PathPredicate<'_>> {
         Q::Matches { field, pattern, aspect: Aspect::Path } => {
             // An invalid pattern is a 400, raised where every other one is.
             let re = crate::regexp::compile(pattern).ok()?;
-            return Some((field, Box::new(move |path: &str| re.is_match(path))));
+            let narrow =
+                crate::regexp::anchored_prefix(pattern).map_or(Narrow::Walk, Narrow::Prefix);
+            return Some((field, Box::new(move |path: &str| re.is_match(path)), narrow));
         }
         _ => return None,
     };
     // `:path` compares against a string; any other operand is a 400.
     let Value::String(operand) = value else { return None };
+    let narrow = match op {
+        Op::Eq => Narrow::Exact(operand.clone()),
+        Op::Neq => Narrow::Differs(operand.clone()),
+        _ => Narrow::Range(op, operand.clone()),
+    };
     let operand = operand.clone();
     Some((
         field,
@@ -327,6 +397,7 @@ fn path_predicate(q: &Query) -> Option<PathPredicate<'_>> {
             Op::Gt => path > operand.as_str(),
             Op::Gte => path >= operand.as_str(),
         }),
+        narrow,
     ))
 }
 

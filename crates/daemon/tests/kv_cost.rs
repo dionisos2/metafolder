@@ -365,3 +365,40 @@ fn an_osm_path_reads_each_candidates_rows_once() {
         "{cost_path} keys for the path, {cost_scan} for the name scan of {candidates} candidates"
     );
 }
+
+fn path_leaf(op: fn(String, Value) -> Query, value: &str) -> Query {
+    op("loc".into(), Value::String(value.into()))
+}
+
+fn path_eq(field: String, value: Value) -> Query {
+    Query::Eq { field, value, aspect: Aspect::Path }
+}
+
+fn path_neq(field: String, value: Value) -> Query {
+    Query::Neq { field, value, aspect: Aspect::Path }
+}
+
+fn path_matches(pattern: &str) -> Query {
+    Query::Matches { field: "loc".into(), pattern: pattern.into(), aspect: Aspect::Path }
+}
+
+/// A `:path` comparison seeks its path down the stored forest instead of
+/// walking all of it (spec-storage "pruned `:path` walk"): an exact path
+/// costs its depth, a difference the same plus the holders of the field.
+#[test]
+fn a_path_comparison_seeks_its_path_not_the_forest() {
+    let exact = path_leaf(path_eq, "/d0/file000003.txt");
+    bounded("exact path", &exact, &[], false);
+    bounded("exact path, counted", &exact, &[], true);
+    bounded("missing path", &path_leaf(path_eq, "/d0/nope"), &[], true);
+    bounded("differing path", &path_leaf(path_neq, "/d0/file000003.txt"), &[], false);
+}
+
+/// A pattern anchored on a literal prefix walks the subtrees that prefix
+/// reaches, not the forest: `d0` holds the same hundred files on either size.
+#[test]
+fn an_anchored_path_pattern_walks_its_prefix_only() {
+    bounded("anchored folder", &path_matches("^/d0/"), &[], true);
+    bounded("anchored name prefix", &path_matches("^/d0/file00000"), &[], true);
+    bounded("anchored, then any", &path_matches("^/d0/file.*3\\.txt$"), &[], true);
+}

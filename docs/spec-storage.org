@@ -309,9 +309,16 @@ What it buys:
   union of the verified anchors' subtrees — the descendant bitmaps again. An
   anchor matching only through a position other than its first matches alone,
   its descendants hanging from the first. A last term *ending* with =/= has no
-  anchor and falls back to the walk (=forest_query.rs=). The =:path= aspect
-  still walks the whole forest :deferred: (/pruned =:path= walk/: an arbitrary
-  predicate on the path gives no anchor);
+  anchor and falls back to the walk (=forest_query.rs=);
+- a =:path= comparison seeks rather than walks (=PathSeek=): =field:path =
+  "<p>"= goes down =p='s names one keyed read per level (≈ depth reads), and
+  =!== is every holder but the node whose single path that is; a pattern
+  anchored on a literal prefix (=^/music/j=) seeks the folder holding the
+  prefix's last separator, then reads its children from the first name
+  starting with the rest, walking only their subtrees; an ordering (=<=, =>=…)
+  enters only the subtrees whose paths — all starting with the node's path and
+  the separator — can fall on the right side. An unanchored pattern
+  (=mp3$=) still walks the whole forest: it gives nothing to seek;
 - the forest invariants (no cycle, depth ≤ 1000) only need the ancestor chain:
   ≈ depth reads per checked write.
 
