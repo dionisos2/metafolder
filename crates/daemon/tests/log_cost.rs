@@ -44,6 +44,13 @@ fn reads_of<R>(kv: &mut KvStore, f: impl FnOnce(&mut KvStore) -> R) -> (R, u64) 
     (out, kv.reads() - before)
 }
 
+/// A log longer than any window below reads — the first walk of a window of
+/// 20 revisions reads 160 operations — and one sixteen times longer. On a
+/// log shorter than the window the whole log *is* the window, and the two
+/// would read different amounts for the right reason.
+const SHORT_LOG: usize = 200;
+const LONG_LOG: usize = 16 * SHORT_LOG;
+
 fn bounded(mode: Mode) -> LogQuery {
     LogQuery { mode, limit: Some(50), ..LogQuery::default() }
 }
@@ -56,23 +63,21 @@ fn cost_of(kv: &mut KvStore, q: &LogQuery) -> u64 {
 }
 
 #[test]
-#[ignore = "KV: a linear window reads more on a longer log (123 → 153 keys); fixed next"]
 fn bounded_log_read_costs_the_same_on_a_log_sixteen_times_longer() {
     for mode in [Mode::Linear, Mode::Active] {
         let q = bounded(mode);
-        let (mut small, _s) = repo_with_log(40);
-        let (mut big, _b) = repo_with_log(640);
+        let (mut small, _s) = repo_with_log(SHORT_LOG);
+        let (mut big, _b) = repo_with_log(LONG_LOG);
         let (small_cost, big_cost) = (cost_of(&mut small, &q), cost_of(&mut big, &q));
         assert_eq!(small_cost, big_cost, "the keys read grew with the log ({mode:?})");
     }
 }
 
 #[test]
-#[ignore = "KV: a revision-bounded window reads the whole log (104 → 344 keys); fixed next"]
 fn a_log_read_bounded_by_revisions_costs_the_same_on_a_longer_log() {
     let q = LogQuery { mode: Mode::Active, revisions: Some(20), ..LogQuery::default() };
-    let (mut small, _s) = repo_with_log(40);
-    let (mut big, _b) = repo_with_log(640);
+    let (mut small, _s) = repo_with_log(SHORT_LOG);
+    let (mut big, _b) = repo_with_log(LONG_LOG);
     let (small_cost, big_cost) = (cost_of(&mut small, &q), cost_of(&mut big, &q));
     assert_eq!(small_cost, big_cost, "a listing bounded by revisions grew with the log");
 }
