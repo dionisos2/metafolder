@@ -309,7 +309,14 @@ What it buys:
   union of the verified anchors' subtrees — the descendant bitmaps again. An
   anchor matching only through a position other than its first matches alone,
   its descendants hanging from the first. A last term *ending* with =/= has no
-  anchor and falls back to the walk (=forest_query.rs=);
+  anchor and falls back to the walk (=forest_query.rs=). The one cost choice
+  of this step: an earlier term free of =/= lies within one name, so every
+  match sits at or below a node naming it; when the rarest such term's
+  trigram superset holds fewer folders than half the anchors, the anchors are
+  first cut to those nodes and their descendants (a read per folder, against
+  two per anchor saved) — a folder name before a file extension reads the
+  folder's subtree, not every file (=dir4321 file= on 100 000 records: 210 008
+  keys → 75);
 - a =:path= comparison seeks rather than walks (=PathSeek=): =field:path =
   "<p>"= goes down =p='s names one keyed read per level (≈ depth reads), and
   =!== is every holder but the node whose single path that is; a pattern

@@ -70,7 +70,8 @@ Profiled 28 September 2026 (=examples/profile_query.rs=, L, warm pages):
   can anchor (the match set is the subtrees of its nodes); the lever is a
   prefilter of those anchors — the descendants of the nodes naming an earlier
   term — worth its reads when that term is rare (its trigram posting is
-  small) and the anchors many: a real cost choice, unlike the above.
+  small) and the anchors many: a real cost choice, unlike the above. Built:
+  =dir4321 file= 214 ms → 0.85 ms, the bench's own finder unchanged.
 
 ** TODO =mf order= writes one revision per child
 N children cost N =PUT=s: N transactions, N fsyncs and N revisions, so undoing

@@ -15,6 +15,7 @@
 //! from its descendant bitmaps, and a `:path` comparison seeks the paths it
 //! can match (`PathSeek`): walking the stored forest read every node.
 
+use roaring::RoaringBitmap;
 use std::collections::HashMap;
 
 use metafolder_core::metarecord::Value;
@@ -200,14 +201,14 @@ fn osm_path_seeded(
     };
     // The regex the single-term search seeds with, over the same names.
     let pattern = format!("(?i){}", regex::escape(anchor));
+    let literals = crate::regexp::required_literals(&pattern);
+    let within = anchors_within(names, field, &terms[..terms.len() - 1], &literals);
     // The candidates with their positions, from one read of their rows where
     // the source can; else the names scanned, then the positions read.
     let found = match crate::regexp::compile(&pattern) {
-        Ok(re) => names.src.named_positions(
-            field,
-            &|name| re.is_match(name),
-            &crate::regexp::required_literals(&pattern),
-        ),
+        Ok(re) => {
+            names.src.named_positions(field, &|name| re.is_match(name), &literals, within.as_ref())
+        }
         Err(_) => None,
     };
     let found = match found {
@@ -255,6 +256,45 @@ fn osm_path_seeded(
         target: FollowTarget::Condition(Box::new(Query::UuidIn { uuids: subtrees })),
         inclusive: true,
     }))
+}
+
+/// Where the anchors of an `osm` path can be, when an earlier term says so
+/// for less than reading them would cost — `None` to read them all.
+///
+/// A term free of the separator lies within one name of the path, so every
+/// match sits at or below a node whose name holds it: among the nodes the
+/// text index gives for the term (a superset), and their descendants. That
+/// costs a read per node *with children* among them, and saves the rows of
+/// every anchor outside (two reads each, before its ancestry): worth it when
+/// the term is rare — a folder's name — and the anchors many — a file
+/// extension, a common word. The rarest such term is the one taken.
+fn anchors_within(
+    names: &Eval<'_>,
+    field: &str,
+    earlier: &[String],
+    anchor_literals: &[String],
+) -> Option<RoaringBitmap> {
+    let src = names.src;
+    let anchors = src.text_superset(field, anchor_literals, None)?;
+    let parents = src.parents(field);
+    let rarest = earlier
+        .iter()
+        .filter(|t| !t.contains('/'))
+        .filter_map(|t| {
+            let pattern = format!("(?i){}", regex::escape(t));
+            let holders =
+                src.text_superset(field, &crate::regexp::required_literals(&pattern), None)?;
+            let folders = holders.intersection_len(&parents);
+            Some((folders, holders))
+        })
+        .min_by_key(|(folders, _)| *folders)?;
+    let (folders, holders) = rarest;
+    if folders.saturating_mul(2) >= anchors.len() {
+        return None;
+    }
+    let mut within = src.descendants(field, &holders)?;
+    within |= holders;
+    Some(within)
 }
 
 /// Lower-cases like the resident walk: char by char, so a word-final sigma

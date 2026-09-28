@@ -472,7 +472,7 @@ impl Eval<'_> {
             // leaf keeping one candidate in a hundred would otherwise make it
             // walk a hundred times further than it planned.
             let literals = crate::regexp::required_literals(&pattern);
-            if let Some(superset) = self.src.text_superset(field, &literals, &candidates) {
+            if let Some(superset) = self.src.text_superset(field, &literals, Some(&candidates)) {
                 candidates = superset;
             }
             let re = crate::regexp::compile(&pattern)

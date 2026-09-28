@@ -233,6 +233,42 @@ fn test_osm_path_multi_term_battery() {
 }
 
 #[test]
+fn test_osm_path_with_a_rare_earlier_term() {
+    // Many names hold the last term and few folders an earlier one, so the
+    // anchors are cut to what lies at or below those folders before any is
+    // read. Every way an earlier term can be met must survive the cut: in a
+    // folder above, in the anchor's own name, in another case, several terms.
+    let mut f = Fixture::new();
+    let root = f.node(None, "", vec![]);
+    let special = f.node(Some(root), "Special", vec![]);
+    let sub = f.node(Some(special), "subdir", vec![]);
+    f.node(Some(sub), "file-a.txt", vec![]);
+    f.node(Some(special), "file-b.txt", vec![]);
+    let other = f.node(Some(root), "other", vec![]);
+    f.node(Some(other), "specialfile.txt", vec![]);
+    f.node(Some(other), "file-special.txt", vec![]);
+    let deep = chain(&mut f, root, &["one", "two", "three"]);
+    for i in 0..40 {
+        f.node(Some(if i % 2 == 0 { other } else { deep }), &format!("file{i:02}.txt"), vec![]);
+    }
+    for terms in [
+        "special file",
+        "SPECIAL FILE",
+        "special sub file",
+        "spec file-a",
+        "special txt",
+        "other special",
+        "two thr file",
+        "nothing file",
+        "file special",
+    ] {
+        f.run(&osm("mfr_path", terms));
+    }
+    // Below Special (two), and a name holding both terms in order.
+    assert_eq!(f.run(&osm("mfr_path", "special file")).len(), 3);
+}
+
+#[test]
 fn test_osm_path_through_a_deep_chain() {
     let mut f = Fixture::new();
     let root = f.node(None, "", vec![]);

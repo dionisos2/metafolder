@@ -366,6 +366,17 @@ fn a_candidate_check_reads_the_searched_field_only() {
     }
 }
 
+/// A multi-term path search whose last term every file holds, and whose first
+/// names one folder: its anchors are the whole repository, but only the ones
+/// below that folder can match, and the rare term says which they are before
+/// any anchor is read.
+#[test]
+fn a_path_search_with_a_rare_first_term_reads_below_it() {
+    let osm = osm("loc", &["d1900", "file"], OsmMode::Path);
+    bounded("rare folder, common name", &osm, &[], false);
+    bounded("rare folder, common name, counted", &osm, &[], true);
+}
+
 /// An `osm` path reads each candidate anchor's rows once, for its name and
 /// its positions together: it costs about the name scan of its last term,
 /// plus a descendant bitmap per anchor for the subtrees — not that scan and

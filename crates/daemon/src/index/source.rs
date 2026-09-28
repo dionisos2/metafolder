@@ -91,8 +91,8 @@ pub trait Source {
         restrict: Option<&RoaringBitmap>,
     ) -> RoaringBitmap;
 
-    /// A superset of the ids of `restrict` whose text in `field` holds every
-    /// one of `literals` (ignoring case), read from a text index without
+    /// A superset of the ids (of `restrict`, when given) whose text in `field`
+    /// holds every one of `literals` (ignoring case), read from a text index without
     /// testing a value — what a check left for later is narrowed with before
     /// anything is counted on it. `None` when the source keeps no such index,
     /// or the literals give it nothing to look up.
@@ -100,7 +100,7 @@ pub trait Source {
         &self,
         _field: &str,
         _literals: &[String],
-        _restrict: &RoaringBitmap,
+        _restrict: Option<&RoaringBitmap>,
     ) -> Option<RoaringBitmap> {
         None
     }
@@ -108,14 +108,15 @@ pub trait Source {
     /// The nodes of `field`'s forest whose name satisfies `keep`, each with
     /// every position it holds, `(parent, name)` in row-id order — read once
     /// for both, what an `osm` path checks its anchors on. `literals` as for
-    /// [`Source::scan_names`]. `None` when the source cannot narrow the
-    /// candidates with them: the caller scans the names, then reads the
-    /// positions of what matched.
+    /// [`Source::scan_names`]; `within` bounds the nodes read. `None` when the
+    /// source cannot narrow the candidates with them: the caller scans the
+    /// names, then reads the positions of what matched.
     fn named_positions(
         &self,
         _field: &str,
         _keep: &dyn Fn(&str) -> bool,
         _literals: &[String],
+        _within: Option<&RoaringBitmap>,
     ) -> Option<Vec<NamedNode>> {
         None
     }

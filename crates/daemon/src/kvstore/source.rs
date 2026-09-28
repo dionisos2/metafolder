@@ -908,9 +908,9 @@ impl Source for KvSource<'_> {
         &self,
         field: &str,
         literals: &[String],
-        restrict: &RoaringBitmap,
+        restrict: Option<&RoaringBitmap>,
     ) -> Option<RoaringBitmap> {
-        self.text_candidates(field, literals, Some(restrict))
+        self.text_candidates(field, literals, restrict)
     }
 
     fn named_positions(
@@ -918,11 +918,12 @@ impl Source for KvSource<'_> {
         field: &str,
         keep: &dyn Fn(&str) -> bool,
         literals: &[String],
+        within: Option<&RoaringBitmap>,
     ) -> Option<Vec<NamedNode>> {
         if self.kind(field) != Some(Kind::Reference { tree: true }) {
             return Some(Vec::new());
         }
-        let candidates = self.text_candidates(field, literals, None)?;
+        let candidates = self.text_candidates(field, literals, within)?;
         let read = || -> Result<Vec<NamedNode>> {
             let mut out = Vec::new();
             for id in &candidates {
