@@ -16,6 +16,8 @@
 //! is a dev-dependency of the daemon and of nothing else, so no shipped binary
 //! links it.
 
+pub mod naive;
+
 use anyhow::Result;
 use rusqlite::types::Value as SqlValue;
 use rusqlite::Connection;
@@ -101,6 +103,12 @@ const ZERO_BLOB_SQL: &str = "x'00000000000000000000000000000000'";
 /// Counts the matching metarecords without fetching them: the same CTE chain
 /// as `execute`, wrapped in a `COUNT(*)` (no sort CTEs, no pagination).
 pub fn count(conn: &Connection, cache: &mut TreeCache, query: &Query) -> Result<usize, ApiError> {
+    let sql = sql_count(conn, cache, query);
+    agree(&sql, &naive::count(conn, query), &format!("count of {query:?}"));
+    sql
+}
+
+fn sql_count(conn: &Connection, cache: &mut TreeCache, query: &Query) -> Result<usize, ApiError> {
     check_query_size(query)?;
     validate_query(query)?;
     validate_query_types(query, &|f| stored_type(conn, f).ok().flatten())?;
@@ -122,6 +130,41 @@ pub fn count(conn: &Connection, cache: &mut TreeCache, query: &Query) -> Result<
 /// Executes a query: returns one page of matching UUIDs in query order plus
 /// the next cursor (always None when `limit` is absent).
 pub fn execute(
+    conn: &Connection,
+    cache: &mut TreeCache,
+    query: &Query,
+    sort: &[SortKey],
+    limit: Option<usize>,
+    cursor: Option<&str>,
+) -> Result<(Vec<Uuid>, Option<String>), ApiError> {
+    let sql = sql_execute(conn, cache, query, sort, limit, cursor);
+    agree(
+        &sql,
+        &naive::execute(conn, query, sort, limit, cursor),
+        &format!("{query:?} sorted by {sort:?}, limit {limit:?}, cursor {cursor:?}"),
+    );
+    sql
+}
+
+/// Holds the naive oracle to the SQL one while both exist: the same answer,
+/// or the same rejection.
+fn agree<T: PartialEq + std::fmt::Debug>(
+    sql: &Result<T, ApiError>,
+    naive: &Result<T, ApiError>,
+    what: &str,
+) {
+    match (sql, naive) {
+        (Ok(a), Ok(b)) => assert_eq!(a, b, "naive/SQL oracle divergence on {what}"),
+        (Err(a), Err(b)) => assert_eq!(
+            (a.status, &a.message),
+            (b.status, &b.message),
+            "naive/SQL oracle rejections differ on {what}"
+        ),
+        _ => panic!("naive/SQL oracle divergence on {what}: SQL {sql:?}, naive {naive:?}"),
+    }
+}
+
+fn sql_execute(
     conn: &Connection,
     cache: &mut TreeCache,
     query: &Query,
@@ -476,6 +519,11 @@ pub fn osm_path_matches(
 ) -> Result<Vec<Uuid>, ApiError> {
     let mut matched = osm_path_matches_unordered(conn, cache, field, terms)?;
     matched.sort_unstable();
+    agree(
+        &Ok(matched.clone()),
+        &naive::osm_path_matches(conn, field, terms),
+        &format!("osm path {terms:?} on {field}"),
+    );
     Ok(matched)
 }
 
