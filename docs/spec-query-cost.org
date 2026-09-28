@@ -6,7 +6,8 @@
 *Not implemented.* This is a design document: there is no =query/explain= route
 and no cost model in the code. What it describes the daemon *doing* is therefore
 a proposal; what it describes the daemon *being* (one engine, three providers,
-the preparation) is current, and is specified in
+the preparation) is current — with the key-value store's derived key spaces
+in place of the resident bitmaps since September 2026 — and is specified in
 [[file:spec-indexing.org][spec-indexing]] and [[file:spec-query.org][spec-query]].
 
 * Overview
@@ -121,12 +122,12 @@ table below readable — each category is one system's work.
 |--------------------------------+------------------------------------------+-------------------------------------------------|
 | the forest (=tree_cache=)      | the TreeRef trees: path ↔ node, children | =path.resolve=, =path.assemble=, tree sort keys |
 | the bitmaps (=index/=)         | the per-field roaring / BSI encodings    | =bitmap.leaf=, =bitmap.combine=, =sort=, =count= |
-| SQLite (=field=)               | the authoritative rows                   | =assemble= — and nothing else                   |
+| the store's rows               | the authoritative rows                   | =assemble= — and nothing else                   |
 
 Only one of them *evaluates a filter*: the bitmaps. The forest answers the two
 leaves no bitmap can hold (the =:path= aspect, an order-sensitive =osm= path) by
 rewriting each into the uuid set it matches, before evaluation, and resolves the
-path seeds and the =tree_ref= sort keys. SQLite is asked for rows *by uuid*, once
+path seeds and the =tree_ref= sort keys. The rows are read *by uuid*, once
 the answer is known: it holds the authoritative data but takes no part in
 deciding what matches ([[file:spec-indexing.org][spec-indexing]] "No operand
 runs in SQL").
@@ -151,7 +152,7 @@ calibration ([[*Calibration]]).
 | =path.assemble=     | nodes of the field × average depth | one walk of the resident forest   | =t_path=  |
 | =sort=              | =K= reps + =K log K=               | BSI / store representatives       | =t_sort=  |
 | =count=             | 0                                  | O(1) from the result bitmap       | —         |
-| =assemble=          | =N= × selected fields              | row read + serialisation (SQLite) | =t_row=   |
+| =assemble=          | =N= × selected fields              | row read + serialisation          | =t_row=   |
 
 Three of these rows are the ones that surprise people, and they are the reason
 the table exists rather than a single number:
@@ -192,15 +193,10 @@ followed by a =follow.transitive= (the expansion from it), where
 | =path.assemble=     | the =:path= aspect, order-sensitive =osm= | forest | one walk, then the leaf becomes a =uuid_in=   |
 | =sort=              | each =sort= key                         | bitmaps  | one rep per id, then the page (tree keys: forest) |
 | =count=             | =count: true=                           | bitmaps  | =matched.len()=, O(1)                         |
-| =assemble=          | always, for the page's uuids            | SQLite   | =versions_for= + =field_rows_for=             |
+| =assemble=          | always, for the page's uuids            | store    | =versions_for= + =rows_for=                   |
 
-Only the last row reaches SQLite, and it is addressed by uuid:
-
-#+BEGIN_SRC sql
-  -- assemble: the page's rows, for uuids already decided.
-  SELECT metarecord_uuid, field_name, value_type, ... FROM field
-   WHERE metarecord_uuid IN (…)
-#+END_SRC
+Only the last row reads the rows, and it addresses them by uuid: the page's
+rows, for uuids already decided.
 
 No relational form of a filter survives: the test oracle
 (=crates/query-oracle=) is a naive scan of every row, not a plan, and no

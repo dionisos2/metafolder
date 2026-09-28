@@ -4,7 +4,7 @@
 * Overview
 
 Every write operation on metadata metarecords is recorded in an append-only event
-log stored in the same =db.sqlite= file. The log maintains a tree of /operations/
+log stored in the repository's store, beside its data. The log maintains a tree of /operations/
 that enables:
 
 - *Auditing*: full history of changes to any metarecord.
@@ -115,7 +115,7 @@ A singleton table =log_head= records the current operation. All data tables
 operation at HEAD.
 
 Invariant: HEAD and the data tables are always mutually consistent. Every HEAD
-update and every data change execute in a single SQLite transaction, so a crash
+update and every data change execute in a single transaction, so a crash
 leaves both in a consistent state.
 
 ** Label
@@ -406,108 +406,47 @@ would find its target "already undone" and refuse to take it back a second time.
 
 * Daemon
 
-** SQLite Schema
+** Storage
 
-#+BEGIN_SRC sql
--- Grouping annotation for operations produced by a single API call.
-CREATE TABLE revision (
-    id         INTEGER PRIMARY KEY AUTOINCREMENT,
-    timestamp  INTEGER NOT NULL,   -- Unix ms
-    label      TEXT               -- optional; see Label
-);
+The log lives in the repository's key-value store, beside the data it
+describes (spec-storage "Key layout"): one transaction writes both. A
+*revision* holds its timestamp, optional label and origin; an *operation*
+holds the fields below; each operation keeps its before and after snapshot
+rows; HEAD is a record of its own; the restoration ops a skipped navigation
+step leaves (see [[*Coordinated navigation]]) wait in their own table and
+survive a daemon crash. Watcher events are not held here: they are buffered in
+memory (spec-file-tracking "Event batching"). The log was a set of SQLite
+tables until September 2026 (=revision=, =operation=, =op_snapshot=,
+=log_head=, =pending_operation=); their names survive in the text below.
 
--- Tree node: one row per atomic change.
-CREATE TABLE operation (
-    id                    INTEGER PRIMARY KEY AUTOINCREMENT,
-    parent_id             INTEGER REFERENCES operation(id),  -- NULL for the root operation
-    rev_id                INTEGER NOT NULL REFERENCES revision(id) ON DELETE CASCADE,
-    seq                   INTEGER NOT NULL,    -- ordering within the revision (1-based, for display)
-    op_type               TEXT    NOT NULL,    -- see Operation types
-    entity_uuid           BLOB    NOT NULL,    -- UUID of the affected metadata metarecord
-    entity_version_before INTEGER,             -- metadata.version before this op (provenance, not authority)
-    entity_version_after  INTEGER,             -- metadata.version after this op (provenance, not authority)
-    field_name            TEXT,                -- for field operations; NULL otherwise
-    reverts_op_id         INTEGER REFERENCES operation(id)  -- see Revert
-);
+| Operation field         | Holds                                                                 |
+|-------------------------+-----------------------------------------------------------------------|
+| =id=                    | never reused                                                          |
+| =parent_id=             | the operation it follows; none for the root                          |
+| =rev_id=                | its revision                                                          |
+| =seq=                   | its position in the revision (1-based)                                |
+| =op_type=               | see Operation types                                                   |
+| =entity_uuid=           | the metarecord it changed                                             |
+| =entity_version_before= | the metarecord's version before it (provenance, not authority)        |
+| =entity_version_after=  | … and after it                                                        |
+| =field_name=            | the field it changed, for a field operation                           |
+| =reverts_op_id=         | the operation it undid, for one a revert wrote (see [[*Revert]])      |
 
--- Before/after snapshots for each operation, stored as normalized rows
--- mirroring the field table. is_new=0: state before the op; is_new=1: after.
--- field_id is the original field.id, restored exactly on inverse.
-CREATE TABLE op_snapshot (
-    op_id          INTEGER NOT NULL REFERENCES operation(id) ON DELETE CASCADE,
-    is_new         INTEGER NOT NULL CHECK (is_new IN (0, 1)),
-    field_id       INTEGER NOT NULL,   -- original field.id
-    field_name     TEXT    NOT NULL,
-    value_type     TEXT    NOT NULL,
-    value_text     TEXT,
-    value_int      INTEGER,
-    value_real     REAL,
-    value_uuid     BLOB,
-    value_ref_repo BLOB,
-    value_name     TEXT,
-    PRIMARY KEY (op_id, is_new, field_id)
-);
-
--- Singleton: current position in the history tree.
--- Inserted with op_id = NULL at repo init time.
-CREATE TABLE log_head (
-    singleton  INTEGER PRIMARY KEY CHECK (singleton = 1),
-    op_id      INTEGER REFERENCES operation(id)
-);
-
-CREATE INDEX idx_operation_parent ON operation(parent_id);
-CREATE INDEX idx_operation_rev    ON operation(rev_id, seq);
-CREATE INDEX idx_operation_entity ON operation(entity_uuid, id);
--- Not for reading, for deleting: see `reverts_op_id` below.
-CREATE INDEX idx_operation_reverts ON operation(reverts_op_id);
-
--- Restoration ops awaiting commit (rollback `skip`). Execution is suspended
--- during rollback lock; they survive a daemon crash and are replayed on
--- restart. Watcher events are NOT held here: they are buffered in memory
--- (spec-file-tracking "Event batching"). The path/tracker columns below are
--- what a daemon that did persist them used, kept so an older database opens.
-CREATE TABLE pending_operation (
-    id             INTEGER PRIMARY KEY AUTOINCREMENT,
-    op_type        TEXT NOT NULL,  -- watcher event type or restoration op type
-    entity_uuid    BLOB,           -- NULL for unresolved path-based watcher events
-    path           TEXT,           -- for watcher events: affected path
-    from_path      TEXT,           -- for file_moved watcher events
-    to_path        TEXT,           -- for file_moved watcher events
-    field_name     TEXT,           -- for restoration ops
-    value_type     TEXT,           -- for restoration ops: new value to set
-    value_text     TEXT,
-    value_int      INTEGER,
-    value_real     REAL,
-    value_uuid     BLOB,
-    value_ref_repo BLOB,
-    value_name     TEXT
-);
-#+END_SRC
+Beside them the store keeps an operation's children, a revision's operations
+in =seq= order, and a metarecord's operations, so a walk down the tree, a
+revision's listing and a metarecord's history are each a prefix read.
 
 =reverts_op_id= is set on each operation a [[*Revert]] writes, naming the
 operation it undid. Two readers use it: displays, and [[*Undo]] — which is why a
 revert has to record it and not merely look like one. Nothing in the /write/
-path branches on it, and it is allowed to dangle: [[*Log pruning]] and a retention trim (see
-[[*Automatic retention]]) may remove the operation it points at, and neither
-goes back to clear the column. A database written before the column existed is
-migrated by adding it (=ALTER TABLE operation ADD COLUMN=), which leaves every
-existing operation with =NULL=: no revert has happened yet.
-
-It nevertheless carries an index (=idx_operation_reverts=), and not for any of
-its readers — none of them looks an operation up by what it reverts. The index
-is what makes *deleting* an operation cheap. Being a foreign key back into
-=operation=, every delete has to establish that no row still points at the one
-going away; unindexed, SQLite answers that by scanning the whole table, once per
-deleted row, so a trim or a prune costs O(deleted × log) rather than
-O(deleted) — two hours instead of eight seconds on a log of 300 000 operations.
-A repository written before the index picks it up at the next load, before any
-migration that deletes from the log runs. Pinned by the cost assertion
-=trimming_the_log_does_not_scan_the_operations_it_keeps= ([[file:spec-perf.org][spec-perf.org]]).
+path branches on it, and it is allowed to dangle: [[*Log pruning]] and a
+retention trim (see [[*Automatic retention]]) may remove the operation it
+points at, and neither goes back to clear it.
 
 *** Snapshot rows (=op_snapshot=)
 
-Each operation stores its before/after state as rows in =op_snapshot=,
-mirroring the =field= table columns. =is_new=0= = state before the op;
+Each operation stores its before/after state as snapshot rows, in the column
+form of a field row (spec-data-model "Storage"). =is_new=0= = state before the op;
 =is_new=1= = state after. =field_id= is the original =field.id= and is
 restored exactly on inverse (see [[*Field ID and version stability]]).
 
@@ -530,9 +469,8 @@ snapshot rows are inserted in bulk for large cascades.
 
 *** Field ID and version stability
 
-=field.id= is =AUTOINCREMENT=. Snapshot rows in =op_snapshot= preserve the
-original =field_id=. On inverse, the daemon restores rows with their original
-primary key: =INSERT INTO field (id, …) VALUES (?, …)=. This ensures that
+A field row's id is never reused. Snapshot rows preserve the original
+=field_id=. On inverse, the daemon restores rows under their original id. This ensures that
 operations on other branches that reference the same =field_id= remain valid
 after navigating across that operation's boundary.
 
@@ -563,7 +501,7 @@ navigation step reads them to decide what to write.
 
 Every API call that modifies metadata:
 
-1. Opens a SQLite transaction.
+1. Opens a write transaction.
 2. Inserts one =revision= row with the optional =label= from the request.
 3. For each change (first to last):
    a. Records the before state: reads the affected =field= rows and the current
@@ -610,7 +548,7 @@ Given =current= (=log_head.op_id=) and =target=:
    excluded), ordered most-recent-first.
 3. Collect the /apply path/: operations from LCA to =target= (LCA excluded),
    ordered oldest-first.
-4. Execute in a single SQLite transaction:
+4. Execute in a single transaction:
    a. For each operation on the unapply path: execute its inverse (see below).
    b. For each operation on the apply path: execute its forward action.
    c. Update =log_head.op_id= to =target=.
@@ -985,7 +923,7 @@ before X.
 so the database state at X cannot be reconstructed from the log alone. This
 does not affect navigation within the remaining tree (operations X→HEAD are
 intact), but a fresh replay from scratch is no longer possible. For disaster
-recovery, use a filesystem-level backup of =db.sqlite= rather than relying on
+recovery, use a backup of the store (=mf repo backup=, spec-storage) rather than relying on
 log replay.
 
 *** Linearize(X)
@@ -1106,7 +1044,7 @@ and replayed automatically on restart before the daemon accepts new requests.
 
 If the daemon crashes during a coordinated navigation:
 
-- HEAD reflects the last committed =step= (SQLite ACID).
+- HEAD reflects the last committed =step= (one transaction per step).
 - The rollback lock is not restored on restart.
 - Restoration ops from =skip= are held in =pending_operation= and replayed
   automatically on restart as a new revision. Buffered *watcher events* are not:
@@ -1341,7 +1279,7 @@ Request body: ={"label": "before-cleanup"}= or ={"label": null}=
 
 *** =POST /repos/:repo_uuid/rollback=
 
-Metadata-only rollback: navigates HEAD to the target in a single atomic SQLite
+Metadata-only rollback: navigates HEAD to the target in a single atomic
 transaction. For =file_moved= operations in the path, only the metadata change
 is applied — the file is not moved. Use the coordinated navigation protocol
 if filesystem coordination is needed.

@@ -51,9 +51,9 @@ one node: a *bare UUID atom* for a single metarecord, and the list form
 
 ** Evaluation
 
-A query is *not* compiled to SQL. Every operand is answered from a resident
-structure — the bitmap/BSI index, or the TreeRef forest through the tree cache
-— and SQLite is only asked for the rows of the metarecords that came out
+A query is *not* compiled to SQL. Every operand is answered from the store's
+derived key spaces — bitmaps of dense ids, the forest's positions — and the
+rows are read only for the metarecords that came out
 ([[file:spec-indexing.org][spec-indexing.org]] "No operand runs in SQL"). There
 is no second engine and no fallback: a shape the index cannot serve is a daemon
 bug, answered =500=, not a slow answer.
@@ -199,9 +199,8 @@ front of the pattern opts out; =Osm= is the case-insensitive operator). On a
 =TreeRef= field it requires an aspect (above): =field:value MATCHES …= applies
 the regex to the leaf name, =field:path MATCHES …= to the assembled path. The
 pattern is run over the field's distinct values in memory (see "MATCHES is
-answered in memory"); the same =regex= crate is registered on the SQLite
-connection as a =REGEXP= user-defined function, which is what the oracle uses,
-so the two cannot diverge.
+answered in memory"); the test oracle compiles its patterns through the same
+=regexp::compile=, so the two cannot diverge.
 
 ** Comparison typing
 

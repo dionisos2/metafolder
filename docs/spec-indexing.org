@@ -480,7 +480,9 @@ replace the bitmap/BSI/reverse-bitmap core.
 resident structure — the bitmaps or the forest — and no part of a filter runs in
 SQL. What reaches SQLite is a list of uuids and the rows to read or write for
 it. All five increments below have landed; what follows records why, and in what
-order.
+order. (Since September 2026 there is no SQLite at all: the resident index this
+document describes went with it, and the same evaluator runs over the key-value
+store's derived key spaces — spec-storage increment 4.)
 
 The argument was that nothing was missing to do it. The bitmaps already held a
 complete value → ids partition for *every* field, strings included

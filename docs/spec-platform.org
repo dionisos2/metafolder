@@ -410,13 +410,12 @@ must absorb:
 
 ** Network and special filesystems
 
-SQLite WAL mode requires shared-memory files (=.wal-shm=), which network
-filesystems (SSHFS, NFS, SMB/UNC shares) generally do not support. When a
-repository's =.metafolder/= directory resides on such a filesystem, the
-daemon switches that connection to =PRAGMA journal_mode=DELETE=. The switch
-is per-connection and does not alter the database permanently; the next local
-connection resumes WAL. Detection: the daemon attempts to open in WAL mode
-and falls back to DELETE if SQLite reports an error.
+The store's memory map and locks are not safe on network filesystems (SSHFS,
+NFS, SMB/UNC shares): a =.metafolder/= on one is refused at =init= and at load
+(spec-storage "Safety"). The repository's files may stay on the share; its
+=.metafolder/= goes on a local disk, as an external one. (The SQLite backend,
+which fell back to =journal_mode=DELETE= there, was dropped in September
+2026.)
 
 ** GUI WebView
 
@@ -444,8 +443,8 @@ hardening is an open question (deferred with v1).
 - The daemon never creates files outside =.metafolder/=, so Windows reserved
   device names (=CON=, =NUL=, ...) only matter when *reading* the tree: such
   names are tracked like any other if the filesystem reports them.
-- The exclusive-lock invariant (=PRAGMA locking_mode = EXCLUSIVE=) works on
-  all three platforms via SQLite's portable locking.
+- The exclusive-lock invariant is an =flock= on the store's =daemon.lock=
+  (Unix); Windows would need its own (=LockFileEx=), not written yet.
 
 * CLI
 

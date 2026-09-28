@@ -19,7 +19,7 @@ four crates:
 
 The daemon is a long-running background HTTP server that manages one or more
 /repositories/. A repository is a directory tree on the filesystem whose
-metarecords are tracked in a local SQLite database. The daemon exposes a REST API
+metarecords are tracked in a local key-value store (LMDB, spec-storage). The daemon exposes a REST API
 consumed by the CLI and GUI.
 
 The daemon is local-only (binds to =127.0.0.1= by default). It performs no
@@ -85,37 +85,20 @@ progress reporting ([[file:spec-tasks.org][spec-tasks.org]]), the trash-bin
   field states imply equal versions, by construction, on every branch of the log
   and across rollback/redo cycles. Nothing restores a version — restoring the
   field rows restores it.
-- A repository database must be held under an exclusive SQLite lock for the
-  entire lifetime of the daemon connection (=PRAGMA locking_mode = EXCLUSIVE=).
-  This prevents a second daemon instance from loading the same repo
+- A repository's store must be held under an exclusive lock for the entire
+  lifetime of the daemon's handle on it (an =flock= on =internal/kv/daemon.lock=,
+  spec-storage "Choosing the backend"). This prevents a second daemon instance from loading the same repo
   simultaneously, which would cause version drift and watcher conflicts (e.g.
   one daemon's watcher updating =mfr_path= and moving =version= while the other
   is committing a sync). A load that finds the lock already held is refused
   *immediately* — the lock belongs to a live daemon and waiting for it is
   pointless — with a =409 Conflict= naming the cause: another metafolder daemon
-  is already using this repository. In particular the connection's busy handler
-  must not be left to retry the lock, or every repository already held costs
-  seconds of silence at startup.
-- Opening a repository database performs *no* schema work once it is
-  up to date. Each migration is idempotent, which is not enough on its own: it
-  must also detect that its result is already in place and do nothing, rather
-  than re-apply it. A migration that re-does its work costs nothing on a small
-  database and minutes of full CPU at *every* startup on a large one — an index
-  re-keyed by dropping and recreating it is the shape to watch for. The witness
-  is =PRAGMA schema_version=, which counts DDL: it must not move across two
-  consecutive opens of the same database.
-- A query that joins =field= to itself on =metarecord_uuid= must say
-  =INDEXED BY idx_field_metarecord= on every correlated side. The EAV schema
-  offers two indexes with two equality columns each —
-  =idx_field_name_type(field_name, value_type)= and
-  =idx_field_metarecord(metarecord_uuid, field_name)= — and the database carries
-  no statistics (=ANALYZE= is never run), so SQLite is free to pick the first.
-  It does not carry the uuid, so the correlated side then *scans every row of
-  that field name in the repository* to keep one: the read becomes quadratic in
-  the repository. Measured on the bundled SQLite with 20 000 orphaned
-  metarecords, the orphan read took 39.9 s unguarded against 17 ms guarded. A
-  =CROSS JOIN= pins the join *order* and says nothing about the index, so it is
-  not a substitute.
+  is already using this repository (a transient holder, such as a child
+  process that inherited the descriptor for an instant, is waited out for a
+  second).
+- Opening a repository's store performs *no* rewrite once it is up to date: a
+  layout or derived-data migration detects that its result is in place and
+  does nothing (the store records its =layout= and =derived= versions).
 - =TreeRef= references must form a forest (no cycles per =field_name=) with a
   maximum depth of 1000. The daemon rejects any write that would create a cycle
   or exceed this depth. The check walks the parent chain iteratively using the
@@ -445,7 +428,7 @@ Response body: ={"repo_uuid": "...", "task_id": "...|null"}=
 *** =POST /repos/:repo_uuid/unload=
 
 Unloads a loaded repository: removes it from the daemon's in-memory state,
-stops its file watcher and executor, and releases the exclusive SQLite lock — so
+stops its file watcher and executor, and releases the store's exclusive lock — so
 the repository can be re-loaded later or opened by another daemon. The on-disk
 data is untouched (this is *not* a delete). No request body.
 

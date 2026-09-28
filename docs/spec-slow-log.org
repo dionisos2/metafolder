@@ -87,7 +87,7 @@ inventing a synonym):
 
 | Phase              | What it covers                                             |
 |--------------------+------------------------------------------------------------|
-| =wait:conn=        | waiting for the repository's SQLite connection lock         |
+| =wait:conn=        | waiting for the repository's store handle lock              |
 | =wait:cache=       | waiting for the tree-cache lock                             |
 | =wait:index=       | waiting for the query index lock                            |
 | =prepare=          | resolving path targets/exact nodes and the forest's leaves  |

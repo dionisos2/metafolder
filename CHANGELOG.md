@@ -161,6 +161,25 @@ than breaking them.
   `stay` is still text; a literal trailing "stay" takes double quotes (spec-gui
   "Command names (non-exhaustive default set)", "User commands").
 
+### Removed
+- **The SQLite backend** (**breaking**, `API_VERSION` 15). The key-value store
+  (LMDB) is the only store a repository has: `mf repo convert`, `POST
+  /repos/:repo/convert`, `mf repo init --storage`, `METAFOLDER_DEFAULT_STORAGE`
+  and the `storage` field of `GET /repos`, check, backup, restore and reindex
+  are gone, and so are the resident query index and the resident tree cache
+  that served SQLite repositories. **No conversion ships with this version**:
+  a repository still on SQLite (a `config.json` without `storage`, or with
+  `"sqlite"`) is refused at load with a message saying to convert it with an
+  earlier version (`mf repo convert --to kv`) — a deliberate exception to the
+  on-disk policy above, taken when no real repository was on SQLite. A SQLite
+  backup is refused by `mf repo restore` likewise. The test oracle is now a
+  naive evaluator reading every row through the storage traits.
+- **Repositories on network filesystems.** A `.metafolder/` on NFS, SMB, SSHFS
+  or another network filesystem is refused at init and at load (LMDB's memory
+  map and locks are not safe there); the files may stay on the share, with the
+  `.metafolder/` on a local disk (an external one). Cross-machine sync by
+  mounting the remote repository over SSHFS is deferred (spec-sync).
+
 ### Fixed
 - **A rollback left the watch set behind, and a nested tracking scope was never
   watched at all.** Two halves of one symptom — `mf watch check` answering
@@ -223,6 +242,16 @@ than breaking them.
   GUI JavaScript (`checkJs`, no exceptions) instead of floating above it.
 
 ### Performance
+- **A coordinated rollback plans its path once.** Each `POST /rollback/step`
+  recomputed the whole path to its target to apply one operation, so a
+  navigation of N operations read N²/2: one step read 173 keys 80 operations
+  away against 13 now, whatever the distance.
+- **The log trim reads what it cuts, not what it keeps.** The retention trim
+  (once every tenth of the retention's writes) read every operation of the
+  log; behind a kept reconcile of 2 000 operations it read 9 023 keys to cut
+  100 one-operation revisions, now 1 027 either way.
+- **Generating the benchmark repositories no longer syncs every revision**
+  (`KvStore::open_unsynced`, also used by the test stores).
 - **Reading the log back is bounded again.** A listing of the most recent
   operations read every row of the `revision` table to build its timestamp map,
   so the cost of showing fifty operations grew with the whole log: 330 ms on a

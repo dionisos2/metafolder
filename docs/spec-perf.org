@@ -35,29 +35,28 @@ tight enough to catch a 3× regression is loose enough to fail on a loaded
 machine ([[file:spec-slow-log.org][spec-slow-log.org]]'s own tests taught us that — see the test-suite notes
 in =CLAUDE.md=).
 
-So the first layer measures **counters, not durations**:
+So the first layer measures a **counter, not a duration**: the number of keys
+the store reads for an operation — its queries' and its writes' alike
+(=KvStore::reads=). It is exact, reproducible and machine-independent, so it
+runs in the ordinary =cargo test= suite and in =scripts/check.sh=, and a
+regression fails the build like any other broken test (=tests/kv_cost.rs= for
+the queries, =tests/log_cost.rs= for the log).
 
-- the number of SQL statements an operation executes, and
-- the set of those statements whose query plan scans a whole table.
+One assertion carries the layer, **growth invariance**: the same operation is
+run against a repository of size =N= and of size =16N= (or against the same
+work behind more data: a trim behind a larger kept revision, a navigation step
+further from its target). A bounded operation (=GET /log?limit=50=, a point
+lookup, a limited query, a trim, one navigation step) must read the *same number
+of keys* on both. A count that grows with the data is the N+1 family, or a
+scan, caught at =N= = a few thousand rows in under a second. The repository
+must be larger than the bound: on a log shorter than the window the whole log
+*is* the window.
 
-Both are exact, reproducible and machine-independent, so they run in the
-ordinary =cargo test= suite and in =scripts/check.sh=, and a regression fails the
-build like any other broken test.
-
-Two assertions carry the layer:
-
-1. **Growth invariance.** The same operation is run against a repository of size
-   =N= and of size =16N=. A bounded read (=GET /log?limit=50=, a point lookup, a
-   limited query) must execute the *same number of statements* on both. A count
-   that grows with the data is the N+1 family, caught at =N= = a few thousand
-   rows in under a second.
-
-2. **The full-scan whitelist.** Every statement the operation ran is replayed
-   through =EXPLAIN QUERY PLAN=; those whose plan contains a =SCAN= of a table
-   (as opposed to a =SEARCH= through an index) are compared against an explicit
-   list written into the test. A new full scan on a hot path fails, and the fix
-   is either an index or an argued addition to the list — the point is that
-   nobody adds one by accident.
+Until September 2026 the layer counted SQL statements and read their query
+plans (=tests/perf_cost.rs=, a whitelist of full scans); it went with the
+SQLite backend, and =log_cost.rs= holds the same questions on the key-value
+store — where two of them, the trim and the navigation step, turned out not
+to hold, and were fixed then.
 
 ** Timed benchmarks — the size of the work
 
@@ -166,9 +165,9 @@ Two sources, because they answer different questions:
   the developer's machine, so they are measured when present and skipped
   otherwise. Consume-only means they are never made repositories in place: the
   suite measures a copy of each under =target/bench-data/real-S=, =real-M=
-  (=-sqlite= for the other backend) — the files hard-linked, no byte copied, a
-  =.metafolder= at the source's top left out — initialised on the measured
-  backend, tracked, reconciled once, and reused while the wire version holds.
+  — the files hard-linked, no byte copied, a =.metafolder= at the source's top
+  left out — initialised, tracked, reconciled once, and reused while the wire
+  version holds.
   The combined scenarios look into the top folder of the deepest file among a
   page of the copy's files and search for the first letters of its parent's
   and its own name, what someone looking for it would type; the generated
@@ -212,9 +211,8 @@ values** for the same =(machine, profile, scenario, size, storage)=. The storage
 backend is part of the key since the key-value store became the default: until
 then every run had been SQLite, and the first KV runs were compared against
 SQLite baselines — two engines, one series. A record from before the field
-existed reads as =sqlite=. =--storage kv|sqlite|both= picks the backends the
-generated repositories are built on (=kv= by default, the default of a new
-repository); each has its own repository under =target/bench-data/=. A scenario is
+existed reads as =sqlite=; every record since SQLite was dropped (September
+2026) reads =kv=, so the older series stay apart. A scenario is
 reported as a regression when it is slower than that baseline by more than a
 threshold (default 30 %), and as an improvement when it is faster by as much.
 
@@ -241,7 +239,6 @@ without appending it (a run on a dirty tree, an experiment).
   scripts/bench.sh --quick          # the small sizes only, for a fast answer
   scripts/bench.sh --real           # also the persistent data folders
   scripts/bench.sh --filter log.    # only the scenarios whose id starts with log.
-  scripts/bench.sh --storage both   # kv (default), sqlite, or both backends
   scripts/bench.sh --no-history     # measure and compare, record nothing
   scripts/bench.sh --report         # print the history, no measurement
 #+END_SRC

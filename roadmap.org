@@ -8,21 +8,19 @@ keeping in view are listed at the end.
 * TODO drop SQLite
 Decided 28 September 2026: no real repository is on SQLite (only test and
 benchmark ones), so the backend goes, and with it every use of =rusqlite=.
-Accepted loss: a repository on a network filesystem (LMDB refuses NFS/SMB;
-spec-storage kept SQLite for that case) — copy it locally instead. No
-conversion is shipped: no =sync-*.sqlite= nor =trash/index.sqlite= exists
-outside the tests. One commit per step, in this order:
-1. a naive oracle reading only the primary data through the =Store= traits
-   (no derived key space, no resident index), checked against the SQL oracle
-   while both exist;
-2. every test on the new oracle, =crates/query-oracle= removed;
-3. the SQLite backend removed: =db.rs=, SQLite's =Store=, =convert=, the
-   resident index (=index/field_index.rs=, =id_registry.rs=), the in-memory
-   forest of =tree_cache.rs=, =sqlcost.rs= / =perf_cost.rs= (their assertions
-   moved to =kv_cost.rs=), the legacy migrations; specs and =API_VERSION=;
-4. the per-pair sync database on LMDB;
-5. the trash index on LMDB (or plain files: it is a few rows per entry);
-   =rusqlite= leaves the workspace.
+Accepted loss: a repository on a network filesystem (refused at init and at
+load since =46f0cf3=) — copy it locally instead. No conversion is shipped: no
+=sync-*.sqlite= nor =trash/index.sqlite= exists outside the tests.
+1. *(done, =dec3989=, =0f2fccf=)* a naive oracle over the primary data;
+2. *(done, =3ac643a= … =a9a32a2=)* the tests on the key-value store, the
+   log's cost assertions on it (=log_cost.rs=, which found the trim and the
+   navigation step reading the whole log — both fixed), the backend, the
+   resident index and the resident forest removed (=API_VERSION= 15);
+3. the per-pair sync database on LMDB — and, in spec-sync, cross-machine sync
+   over SSHFS deferred, with the way the user proposed: copy the remote
+   =.metafolder/= locally (roots rewritten), sync, send it back, the remote
+   locked meanwhile;
+4. the trash index on LMDB; =rusqlite= leaves the workspace.
 
 * TODO performance
 The recurring defect of this project is a cost that grows with the repository

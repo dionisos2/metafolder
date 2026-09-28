@@ -519,10 +519,12 @@ re-verifies every path against the disk before writing =Nothing=.
 
 ** Tree Cache
 
-The daemon maintains one in-memory tree per loaded repository for resolving path
-strings to metarecord UUIDs without issuing recursive SQL queries. The cache is shared
-across all =TreeRef= field names within a repository; the field name forms the
-first level of the tree.
+The daemon answers the forest's questions — a path string to a metarecord and
+back, a node's children and descendants, path matches, path sort keys — from
+the repository's store, whose forest key space is keyed by parent and name
+(spec-storage "The forest"). One =TreeCache= per repository holds, for the
+duration of one lookup, the nodes that lookup reads; it is shared across all
+=TreeRef= field names, the field name forming the first level.
 
 *** Path string format
 
@@ -543,150 +545,28 @@ The root's own =value_name= determines whether paths in the tree have a leading
 For the filesystem tree the root has =value_name = ""=, so all paths naturally
 start with =/=. For other trees (e.g. tags) the roots have non-empty names and
 there is no leading =/=. Multiple roots are allowed within the same field name.
-The uniqueness of the filesystem root =(field_name='mfr_path', value_uuid=x'00...00',
-value_name='')= is enforced by the =idx_field_tree= UNIQUE index.
-
-*** Structure
-
-#+BEGIN_SRC
-root (virtual)
-├── "mfr_path"
-│   └── [root metarecord, parent=NULL]
-│       └── "music"  → uuid_music
-│           └── "jazz"  → uuid_jazz
-│               └── "file.mp3"  → uuid_file
-└── "parent"
-    └── "animaux"  → uuid_animaux
-        └── "félins"  → uuid_felins
-#+END_SRC
-
-Each node stores:
-- =children=: map of name → child node
-- =uuid=: the metarecord UUID at this position (=None= for the virtual root and field-name nodes)
-- =last_used=: logical clock updated on every traversal of this node
+A position (field, parent, name) is held once — the store refuses a second
+node there — so the filesystem root, the node named =""= with no parent, is
+unique.
 
 *** No node budget
 
-The forest is *fully resident*, with no size limit and no eviction.
-
-It used to have both: a node budget (=tree-cache-max-nodes=, ~100 MB by
-default) beyond which leaves were evicted LRU and navigation fell back to
-database walks. That was one memory policy too many. The query index, built
-from the same repository at the same moment and at least as large, has never
-had a budget — so the daemon refused to hold the forest while holding the index
-unconditionally, and the only thing the budget bought was a second, slower code
-path that had to stay correct. Path reconstruction for a =tree_ref= sort needs
-the forest in memory (the index holds the forest inverted — name → ids, parent →
-children — which cannot walk *up* from a node), so exceeding the budget also
-silently degraded sorting to the SQL engine of the time (there is none now:
-spec-indexing "No operand runs in SQL").
-
-One policy, then: both accelerators are resident, or the repository does not
-serve (spec-main "POST /repos/load"). The setting is retired; a configuration
-still carrying it is not malformed, the key is ignored.
-
-*** Operations
-
-| Operation              | Complexity       | Notes                                                        |
-|------------------------+------------------+--------------------------------------------------------------|
-| Path → UUID (hit)      | O(depth)         | Traverse tree; update =last_used= on each node              |
-| Path → UUID (miss)     | O(depth × log n) | Iterative indexed DB queries; populate tree on the way      |
-| Rename (same parent)   | O(1)             | Update label of one node                                     |
-| Move (different parent)| O(1)             | Detach node, reattach under new parent; descendants follow   |
-
-*** Startup
-
-The whole TreeRef forest is loaded into the cache at repository load, in a
-single scan of the =tree_ref= rows, so that read-side navigation (path
-resolution, descendant collection, path reconstruction) is served entirely from
-memory rather than walking the database node by node — the dominant cost of a
-first =FollowsTransitive= query on a large repository. The load builds it before
-the repository serves anything, so through the API the forest is always
-resident. The lazy, DB-backed path (populate-on-miss, descendant walk) survives
-only for a cache built directly, as unit tests do.
+Nothing is resident, so nothing needs a budget: the cache keeps no node from
+one lookup to the next, and every question reads the store — a path of depth
+=d= costs =d= keyed reads, a folder's children one prefix read, a subtree one
+read of its descendant bitmap. It used to hold the whole forest in memory,
+populated at load and kept in step with every write (with, earlier still, a
+node budget and LRU eviction); that resident forest served the SQLite backend
+and went with it in September 2026.
 
 *** Upkeep after a write
 
-The watcher and reconcile keep the cache in step as they go. A *manual API
-write* does not pass through them, so a committed revision says what it did to
-the forest and the daemon settles the cache against that.
-
-What it says is one entry per operation that moved a TreeRef position, in write
-order, never truncated — and it is *derived from the rows the operation moved*,
-not read back from the database afterwards. There is one shape per kind of
-operation:
-
-- a field set, and a record created, replaced or deleted, say =Set=: the cell
-  holds exactly these positions now (none, when the write took its last one
-  away or gave the field another type);
-- an append says =Add= and a row deletion says =Remove=: they name the positions
-  they move and leave the rest of the cell alone.
-
-Each position carries the =field= row that holds it. That is what keeps a cell
-in the order a load would read it in: positions are ordered by row id, the first
-one is where the forest hangs this metarecord's children, and an operation that
-puts a row *back* under its original id — a navigation, an edit by row id —
-belongs at that place in the order rather than at the end.
-
-The same description serves the *coordinated navigation*, derived from an
-operation read back out of the log: its snapshots carry both the rows it put in
-place and the rows it replaced, and undoing one is applying it with the two
-sides exchanged (an append undone is a removal). So the cache has one way of
-following a write, whoever wrote it.
-
-Settling is in two phases, which together are what make it able to reproduce any
-revision rather than most of them:
-
-1. *Unlink* every cell the run touches, keeping the nodes and the subtrees
-   hanging off them, and remember what each held. Emptying all of the name slots
-   before filling any is what makes the order the names are taken and released
-   in irrelevant — two siblings that swap names have no valid one-at-a-time
-   order — and the remembered positions are what an =Add= or a =Remove= needs.
-2. *Place* each operation's cell, in order, against what the operations before
-   it left there.
-
-A metarecord's nodes are reused *in order*, so the first one — the one a full
-load hangs its children under — keeps its subtree through a rename, a move, or a
-change in how many positions there are. Positions left over are freed; they
-carry no children, because a load places children under the first position only,
-and because a position with children cannot be removed at all
-(see [[file:spec-data-model.org][spec-data-model.org]] "Referential integrity of
-a forest" — that check is what makes half of these cases unreachable rather than
-merely handled).
-
-*The cache is never rebuilt by a write.* It is built once at load, and rebuilt
-only where history is rewritten wholesale and there is nothing incremental to
-say: an atomic rollback (=POST /rollback=, which applies the whole path in one
-transaction), the replay of a skipped restoration, and the resync after a flush
-that was abandoned mid-way (the writes roll back, the in-memory cache does not).
-
-A *coordinated navigation step* is not one of them, though it rewrites history
-too: it applies exactly one operation, and an operation says what it did to the
-forest (above), so it settles like any other write. It has to: the client is
-handed one operation at a time, so a rebuild there is paid once per operation,
-and taking back a tag applied to a folder of two thousand files then meant two
-thousand scans of the whole =field= table under the connection lock (six
-minutes, against one second for the write it was undoing).
-
-A step is nevertheless only *part* of a revision, and a part cannot be ordered:
-undoing a whole deleted subtree restores a child before the operation that
-restores its parent. So the forest does not require an order. A position whose
-parent metarecord holds no position of its own is *waiting*: the node is
-resident and findable by uuid, it is in no path — which is exactly where a fresh
-load leaves it, and what the database fallback answers for a stale parent — and
-the field's waiting index links it the moment that parent gets a position.
-
-That is what makes every producer interchangeable. A load, a watcher event, a
-manual write's cells and a navigation step all put a position into the forest
-the same way: create the node, link it where its position says, adopt whatever
-was waiting for it. None of them has to sort its work by the parent relation,
-and the settling of a whole revision no longer does either.
-
-Rebuilding on *every* TreeRef write is what this replaced. It cost one full scan
-of the =field= table per write — seconds on a large repository — with the
-repository connection held throughout, so setting a single field also blocked
-every read of that repository for as long as it took, with nothing on screen to
-say why.
+There is none: a cache that keeps nothing between lookups has nothing to keep
+up. The store's forest key space and the descendant bitmaps are updated by the
+write itself, in its transaction (spec-storage "Derived data"). The resident
+forest this section used to describe was reconciled cell by cell from what
+each revision said it did, never rebuilt by a write; a navigation step and a
+watcher event do not touch the cache either.
 
 ** File Watcher
 
@@ -2090,8 +1970,8 @@ mf add <dir_uuid> 'mf_ignore:string=target(/.*)?$'
 A removable volume *inside* a repository is specified — see [[*Mount points]].
 The remaining hole is the repository *root* itself going away while the daemon
 runs (the whole repo on the unplugged drive, or the root renamed): the root has
-no ancestor to compare device ids with, its =.metafolder/internal/db.sqlite= may
-vanish under an open, exclusively-locked connection, and the absolute =root= in
+no ancestor to compare device ids with, its =.metafolder/internal/kv/= may
+vanish under an open, exclusively-locked store, and the absolute =root= in
 =config.json= is not a stable identity across remounts. The daemon should detect
 this, mark the repository unavailable and drop its connection — and, on the way
 back, be able to find the repository by volume identity rather than by absolute

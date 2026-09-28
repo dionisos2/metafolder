@@ -20,9 +20,7 @@ The database and other daemon-managed volatile files live in the
 =.metafolder/internal/= subdirectory, which is always excluded from tracking
 (see [[file:spec-file-tracking.org][spec-file-tracking.org]]). The rest of
 =.metafolder/= (=config.json=, =schema.json=) is ordinary content that the
-user may track like any other file. Repositories created before the
-=internal/= layout are migrated automatically at load time (the =db.sqlite*=
-family is moved into =internal/=).
+user may track like any other file.
 
 | Field       | Type   | Description                            |
 |-------------+--------+----------------------------------------|
@@ -155,8 +153,8 @@ A field is a =(name, value)= pair. Value is one of:
 | =ExternalRef=  | =(UUID, UUID)= | Cross-repo reference: (repo UUID, metarecord UUID)              |
 
 A =TreeRef= stores the position of a metarecord in a named tree as =(parent_uuid, name)=,
-kept in the =value_uuid= and =value_name= columns of the =field= table
-(see [[*SQLite Schema]]):
+kept in the =value_uuid= and =value_name= columns of its column form
+(see [[*Storage]]):
 
 - =value_uuid=: UUID of the parent metarecord (zero UUID =x'00...00'= for root nodes).
 - =value_name=: the name component as *displayed* (e.g. filename, tag name) — what
@@ -449,11 +447,9 @@ row. The unknown/absent distinction is untouched.
 recorded, ids included, so a revision written before this rule is returned to
 faithfully (and a duplicate it recorded comes back with it).
 
-Repositories written before this rule are deduplicated *once*, at their first
-open under it: the lowest row id of each =(metarecord, name, value)= group is
-kept, outside the event log (a migration is not a revision). The pass records
-itself in =migration_state= so no later open re-scans the =field= table
-(see [[*SQLite Schema]]).
+Repositories written before this rule were deduplicated *once*, at their first
+open under it, by the SQLite backend (the lowest row id of each
+=(metarecord, name, value)= group was kept, outside the event log).
 
 ** Reserved fields
 
@@ -545,84 +541,46 @@ field across all ancestors at once, keeping the closest result.
 
 * Daemon
 
-** SQLite Schema
+** Storage
 
-Each repository uses its own =.metafolder/internal/db.sqlite= file (WAL mode, foreign
-keys enabled). Exception: when a repository is loaded from a network
-filesystem (e.g. SSHFS, NFS, SMB), the daemon switches to =DELETE= journal
-mode (=PRAGMA journal_mode=DELETE=) at connection time, because WAL requires
-shared-memory files (=.wal-shm=) which network filesystems do not support
-(see [[file:spec-platform.org][spec-platform.org]]). This switch is applied
-per-connection and does not modify the database permanently — the next local
-connection resumes WAL mode normally. A benchmark should be run once sync is
-implemented to verify that DELETE journal mode is acceptable for large syncs.
+Each repository keeps its data in its own key-value store,
+=.metafolder/internal/kv/= (LMDB); its keys are
+[[file:spec-storage.org][spec-storage.org]]'s "Key layout". The SQLite database
+that held them until September 2026 is gone, and a repository still on it is
+refused at load (spec-storage "Choosing the backend").
 
 *** UUID encoding
 
-All UUIDs (metarecord UUIDs and repository UUIDs) are stored as =BLOB= (16 bytes,
-raw binary). This applies uniformly to every UUID column in the schema.
-
+All UUIDs (metarecord UUIDs and repository UUIDs) are stored as 16 raw bytes.
 The HTTP API encodes UUIDs as 32-char lowercase hex strings (no hyphens) for
 readability and interoperability.
 
-Rationale: 16-byte BLOBs enable fast binary comparison in SQLite indexes and
-are the most compact representation. Hex encoding in the API is standard and
-unambiguous.
-
-The zero UUID (=x'00000000000000000000000000000000'=) is reserved as a sentinel
+The zero UUID (=00000000000000000000000000000000=) is reserved as a sentinel
 for =TreeRef= root nodes and must never be assigned to a real metarecord. UUID v4
 has 122 random bits (2¹²² ≈ 5×10³⁶ possible values); the probability of
 collision among 1 billion metarecords is ≈ 10⁻¹⁹ — negligible in practice.
 
-#+BEGIN_SRC sql
-CREATE TABLE metarecord (
-    uuid          BLOB    PRIMARY KEY NOT NULL,  -- 16-byte UUID
-    version       INTEGER NOT NULL DEFAULT 0     -- content hash of the fields (see "Version")
-);
+*** The column form of a value
 
--- The version is a hash of the metarecord's own content, materialized here so
--- that a read never recomputes it and maintained incrementally by every write
--- (see "Version"). It is stored as the i64 bit pattern of the u64 hash.
--- Equal versions imply identical field states and identical field states imply
--- equal versions, by construction — there is no allocator to keep monotonic and
--- nothing for navigation to restore. Cross-repo sync's change detection relies
--- on this ([[file:spec-sync.org][spec-sync.org]]).
+A row's value is stored in a *column form*: its =value_type= and the one or two
+columns that type uses (=crates/daemon/src/rows.rs=). It is the key-value
+store's persisted form of a row, and the form a log snapshot is shown in
+([[file:spec-event-log.org][spec-event-log.org]] "=GET /log="), so it changes
+only with a migration.
 
-CREATE TABLE field (
-    id              INTEGER PRIMARY KEY AUTOINCREMENT,
-    metarecord_uuid   BLOB    NOT NULL REFERENCES metarecord(uuid) ON DELETE CASCADE,
-    field_name      TEXT    NOT NULL,
-    value_type      TEXT    NOT NULL,  -- nothing | string | int | float | bool |
-                                       -- datetime | ref |
-                                       -- tree_ref | refbase | externalref
-    value_text      TEXT,              -- string
-    value_int       INTEGER,           -- int, bool (0/1), datetime (Unix ms)
-    value_real      REAL,              -- float
-    value_uuid      BLOB,              -- ref/externalref: metarecord UUID; tree_ref: parent UUID (zero UUID for root)
-    value_ref_repo  BLOB,              -- externalref only: repo UUID
-    value_name      TEXT,              -- tree_ref: name component, as displayed
-    value_name_bytes BLOB              -- tree_ref: that name's exact bytes (identity)
-);
+| Column             | Holds                                                                  |
+|--------------------+------------------------------------------------------------------------|
+| =value_type=       | =nothing= · =string= · =int= · =float= · =bool= · =datetime= · =ref= · =tree_ref= · =refbase= · =externalref= |
+| =value_text=       | =string=                                                               |
+| =value_int=        | =int=, =bool= (0/1), =datetime= (Unix ms)                              |
+| =value_real=       | =float=                                                                |
+| =value_uuid=       | =ref=/=refbase=/=externalref=: the metarecord; =tree_ref=: the parent (the zero UUID for a root) |
+| =value_ref_repo=   | =externalref=: the repository                                          |
+| =value_name=       | =tree_ref=: the name as displayed                                      |
+| =value_name_bytes= | =tree_ref=: the name's exact bytes (its identity)                      |
 
-CREATE INDEX idx_field_metarecord        ON field(metarecord_uuid, field_name);
-CREATE INDEX idx_field_reverse      ON field(field_name, value_uuid, value_ref_repo)
-    WHERE value_type IN ('ref', 'externalref');
-CREATE UNIQUE INDEX idx_field_tree  ON field(field_name, value_uuid, value_name_bytes)
-    WHERE value_type = 'tree_ref';
-
--- One-shot migrations that cannot be made into a cheap probe record themselves
--- here, so that opening a repository keeps doing no schema work
--- (see [[*No duplicate rows]]).
-CREATE TABLE migration_state (
-    name     TEXT PRIMARY KEY NOT NULL,
-    done_at  TEXT NOT NULL                -- ISO-8601 UTC
-);
-#+END_SRC
-
-There is deliberately *no* unique index over the value columns to enforce
-[[*No duplicate rows]]: it would index every field row a second time, by its whole
-value, roughly doubling the database — for an invariant the write path already
-holds (it reads the rows of =(metarecord, name)= before writing them anyway).
+The version of a metarecord (see "Version") is stored beside its rows, so a read
+never recomputes it; it is maintained incrementally by every write.
 
 ** Pagination
 
