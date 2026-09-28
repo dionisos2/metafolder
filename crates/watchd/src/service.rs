@@ -15,22 +15,24 @@ use anyhow::{anyhow, Context, Result};
 use crate::fanotify::{self, Fanotify, MountWatch, ReadOutcome};
 use crate::filter::{AccessFilter, CredSource, SystemCreds};
 use crate::proto::Event;
-use crate::server::{Broker, RootSink};
+use crate::server::{Broker, RootSink, Uncovered};
 
 /// What the broker needs of the kernel side: marks that follow the
 /// subscriptions, and one read's bytes turned into wire events. [`Fanotify`]
 /// is the real one; `crate::sim` stands in for it where no capability is
 /// held — everything above this seam (server, filter, protocol) is the same.
 pub trait Group: Send + 'static {
-    /// Covers `roots` (the union of every subscriber's) and nothing else.
-    fn sync_roots(&mut self, roots: &[PathBuf]) -> Result<()>;
+    /// Covers `roots` (the union of every subscriber's) and nothing else, and
+    /// answers the roots it could not cover.
+    fn cover(&mut self, roots: &[PathBuf]) -> Vec<Uncovered>;
     /// One read's bytes, as wire events.
     fn translate(&mut self, buf: &[u8]) -> ReadOutcome;
 }
 
 impl Group for Fanotify {
-    fn sync_roots(&mut self, roots: &[PathBuf]) -> Result<()> {
-        Fanotify::sync_roots(self, roots)
+    fn cover(&mut self, roots: &[PathBuf]) -> Vec<Uncovered> {
+        self.set_roots(roots);
+        self.place_marks()
     }
 
     fn translate(&mut self, buf: &[u8]) -> ReadOutcome {
@@ -45,8 +47,8 @@ pub struct MarkSink<G: Group> {
 }
 
 impl<G: Group> RootSink for MarkSink<G> {
-    fn set_roots(&self, roots: Vec<PathBuf>) -> Result<()> {
-        lock(&self.group).sync_roots(&roots)
+    fn set_roots(&self, roots: Vec<PathBuf>) -> Vec<Uncovered> {
+        lock(&self.group).cover(&roots)
     }
 }
 
@@ -315,8 +317,10 @@ mod tests {
         let ok = std::process::Command::new("mount").args(["-t", "tmpfs", "t"]).arg(&root).status();
         assert!(ok.is_ok_and(|s| s.success()));
         let sink = MarkSink { group: Arc::new(Mutex::new(Fanotify::open().unwrap())) };
-        sink.set_roots(vec![root.clone()]).unwrap();
-        assert!(sink.set_roots(vec![root.join("nope")]).is_err());
+        assert_eq!(sink.set_roots(vec![root.clone()]), vec![]);
+        let uncovered = sink.set_roots(vec![root.clone(), root.join("nope")]);
+        assert_eq!(uncovered.len(), 1, "{uncovered:?}");
+        assert_eq!(uncovered[0].root, root.join("nope"), "the other root is covered");
     }
 
     #[test]

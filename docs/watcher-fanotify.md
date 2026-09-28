@@ -171,6 +171,13 @@ What earlier versions got wrong, fixed since (each with its test):
   on a quiet machine the first subscription could never place its marks and
   was never answered (its daemon fell back to inotify after the handshake
   timeout). The group is read through a `Reader` sharing only the descriptor.
+- **A root no mark could cover failed the next subscriber.** The marks are
+  placed for the union of every subscriber's roots, and the error of one root
+  (a repository deleted while its daemon subscribes) went to whichever
+  subscriber changed the union next — before its `Subscribed`, so its daemon
+  took the answer for a refusal and fell back to inotify. `RootSink` now
+  answers the roots it could not cover: a subscriber's own are `denied` to
+  it, another's are only logged.
 - **One descriptor kept open per covered filesystem** (for
   `open_by_handle_at`) — which makes `umount` fail with EBUSY, so a drive under
   a repository could not be unplugged. Descriptors now live for one batch of

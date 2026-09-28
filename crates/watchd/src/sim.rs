@@ -51,6 +51,7 @@ use crate::fanotify::{
     INFO_TYPE_FID, INFO_TYPE_NEW_DFID_NAME, INFO_TYPE_OLD_DFID_NAME, METADATA_LEN,
 };
 use crate::filter::{AccessFilter, SystemCreds};
+use crate::server::Uncovered;
 use crate::service::{self, Group};
 
 /// The simulated filesystem's id: every handle it hands out carries it.
@@ -751,17 +752,17 @@ impl Resolve for SimResolver {
 }
 
 impl Group for SimGroup {
-    fn sync_roots(&mut self, roots: &[PathBuf]) -> Result<()> {
+    fn cover(&mut self, roots: &[PathBuf]) -> Vec<Uncovered> {
         let mut st = lock(&self.fs.shared.state);
-        for root in roots {
-            if !root.starts_with(&st.mount) || !root.is_dir() {
-                anyhow::bail!("cannot cover {}: not on the simulated filesystem", root.display());
-            }
-        }
-        st.marked = !roots.is_empty();
+        let (covered, uncovered): (Vec<PathBuf>, Vec<PathBuf>) =
+            roots.iter().cloned().partition(|root| root.starts_with(&st.mount) && root.is_dir());
+        st.marked = !covered.is_empty();
         drop(st);
-        self.translator.set_roots(roots.to_vec());
-        Ok(())
+        self.translator.set_roots(covered);
+        uncovered
+            .into_iter()
+            .map(|root| Uncovered { root, reason: "not on the simulated filesystem".to_string() })
+            .collect()
     }
 
     fn translate(&mut self, buf: &[u8]) -> ReadOutcome {
@@ -978,6 +979,46 @@ mod tests {
     }
 
     #[test]
+    fn test_another_subscribers_root_gone_does_not_concern_a_new_one() {
+        // A repository deleted while its daemon still subscribes: its root can
+        // no longer be covered. That is nothing to the next subscriber, whose
+        // handshake must be the plain answer to its own subscription.
+        let (broker, root, _first) = started("goneroot");
+        std::fs::remove_dir_all(&root).unwrap();
+        let other = broker.fs().mount().join("other");
+        std::fs::create_dir(&other).unwrap();
+        let stream = UnixStream::connect(broker.socket()).unwrap();
+        stream.set_read_timeout(Some(Duration::from_secs(5))).unwrap();
+        let sub = ClientMsg::Subscribe { roots: vec![other.as_path().into()] };
+        (&stream).write_all(proto::encode(&sub).as_bytes()).unwrap();
+        let mut r = BufReader::new(stream);
+        assert_eq!(
+            next(&mut r),
+            Some(ServerMsg::Subscribed { roots: vec![other.as_path().into()], denied: vec![] })
+        );
+    }
+
+    #[test]
+    fn test_a_root_that_cannot_be_covered_is_denied_to_its_subscriber() {
+        // Accessible, but not on the (simulated) filesystem: no mark covers it,
+        // and its subscriber must not believe it is covered.
+        let (broker, _root, _first) = started("uncoverable");
+        let stream = UnixStream::connect(broker.socket()).unwrap();
+        stream.set_read_timeout(Some(Duration::from_secs(5))).unwrap();
+        let sub = ClientMsg::Subscribe { roots: vec!["/".into()] };
+        (&stream).write_all(proto::encode(&sub).as_bytes()).unwrap();
+        let mut r = BufReader::new(stream);
+        match next(&mut r) {
+            Some(ServerMsg::Subscribed { roots, denied }) => {
+                assert!(roots.is_empty(), "{roots:?}");
+                assert_eq!(denied.len(), 1);
+                assert!(denied[0].reason.starts_with("cannot be watched"), "{:?}", denied[0]);
+            }
+            other => panic!("expected Subscribed, got {other:?}"),
+        }
+    }
+
+    #[test]
     fn test_a_file_removed_and_made_again_unread_arrives_in_that_order() {
         // Two objects, so two events the kernel keeps apart (the object's
         // handle is in each): the removal, then the creation.
@@ -1056,17 +1097,19 @@ mod tests {
         fs.write(mount.join("f"), b"f").unwrap();
         assert!(fs.take_bytes().is_empty());
         let mut group = fs.group();
-        group.sync_roots(std::slice::from_ref(&mount)).unwrap();
+        assert!(group.cover(std::slice::from_ref(&mount)).is_empty());
         fs.write(mount.join("g"), b"g").unwrap();
         assert!(!fs.take_bytes().is_empty());
-        assert!(group.sync_roots(&[PathBuf::from("/not/under/the/mount")]).is_err());
+        assert_eq!(group.cover(&[PathBuf::from("/not/under/the/mount")]).len(), 1);
+        fs.write(mount.join("h"), b"h").unwrap();
+        assert!(fs.take_bytes().is_empty(), "nothing covered, nothing queued");
     }
 
     #[test]
     fn test_a_read_takes_whole_events_that_fit() {
         let mount = scratch("fit");
         let fs = SimFs::new(&mount).unwrap();
-        fs.group().sync_roots(std::slice::from_ref(&mount)).unwrap();
+        assert!(fs.group().cover(std::slice::from_ref(&mount)).is_empty());
         for n in 0..3 {
             fs.create_dir(mount.join(format!("d{n}"))).unwrap();
         }
@@ -1268,7 +1311,7 @@ mod tests {
 
         let sroot = tmpfs("sim");
         let fs = SimFs::new(&sroot).unwrap();
-        fs.group().sync_roots(std::slice::from_ref(&sroot)).unwrap();
+        assert!(fs.group().cover(std::slice::from_ref(&sroot)).is_empty());
         let mut sim = Vec::new();
         let mut sseen = Vec::new();
         script(&fs, &sroot, &mut |step| {

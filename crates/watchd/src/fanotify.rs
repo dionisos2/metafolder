@@ -46,6 +46,7 @@ use std::time::Instant;
 use anyhow::{bail, Context, Result};
 
 use crate::proto::{Event, WirePath};
+use crate::server::Uncovered;
 
 // ── linux/fanotify.h ─────────────────────────────────────────────────────────
 // Copied, not guessed: these values are the uapi ABI.
@@ -354,8 +355,11 @@ struct Plan {
     /// fsid → every root and mount on it, in order: where its handles can be
     /// resolved from.
     paths: HashMap<[i32; 2], Vec<PathBuf>>,
+    /// fsid → the roots on it (mounts beneath them left out): the roots a
+    /// failed mark leaves uncovered.
+    roots_on: HashMap<[i32; 2], Vec<PathBuf>>,
     /// Roots that cannot be covered: an error for their subscribers.
-    failed: Vec<String>,
+    failed: Vec<Uncovered>,
     /// Filesystems mounted beneath a root that cannot be covered: reported,
     /// the rest of the tree still covered.
     skipped: Vec<String>,
@@ -375,8 +379,11 @@ fn plan_marks(
             Ok(f) => {
                 plan.wanted.entry(f).or_insert((root.clone(), true));
                 plan.paths.entry(f).or_default().push(root.clone());
+                plan.roots_on.entry(f).or_default().push(root.clone());
             }
-            Err(err) => plan.failed.push(format!("{}: {err:#}", root.display())),
+            Err(err) => {
+                plan.failed.push(Uncovered { root: root.clone(), reason: format!("{err:#}") })
+            }
         }
         for at in covered_mounts(root, points) {
             match fsid(&at) {
@@ -900,9 +907,15 @@ impl Fanotify {
     /// Brings the marks in line with `roots` (the union of everything every
     /// subscriber watches).
     pub fn sync_roots(&mut self, roots: &[PathBuf]) -> Result<()> {
+        self.set_roots(roots);
+        self.resync()
+    }
+
+    /// Records `roots` as the union to cover — [`place_marks`](Self::place_marks)
+    /// is what covers them.
+    pub fn set_roots(&mut self, roots: &[PathBuf]) {
         self.roots = roots.to_vec();
         self.translator.set_roots(roots.to_vec());
-        self.resync()
     }
 
     /// Brings the marks in line with the roots and the mount table as it is
@@ -917,10 +930,23 @@ impl Fanotify {
     /// believe it is covered); a filesystem mounted beneath one is reported
     /// and skipped — the rest of the tree is still covered.
     pub fn resync(&mut self) -> Result<()> {
+        let failed = self.place_marks();
+        if failed.is_empty() {
+            Ok(())
+        } else {
+            let failed: Vec<String> =
+                failed.iter().map(|u| format!("{}: {}", u.root.display(), u.reason)).collect();
+            bail!("cannot cover {}", failed.join("; "))
+        }
+    }
+
+    /// [`resync`](Self::resync), answering each root it could not cover with
+    /// why — every other root is covered.
+    pub fn place_marks(&mut self) -> Vec<Uncovered> {
         let points = std::fs::read("/proc/self/mountinfo")
             .map(|table| mount_points(&table))
             .unwrap_or_default();
-        let Plan { wanted, mut paths, mut failed, skipped } =
+        let Plan { wanted, mut paths, roots_on, mut failed, skipped } =
             plan_marks(&self.roots, &points, coverable_fsid);
         for message in skipped {
             eprintln!("[watchd] {message}");
@@ -950,17 +976,18 @@ impl Fanotify {
                     self.translator.resolver.inner.set_fs(fsid, reachable);
                     self.marks.insert(fsid, Mark { at });
                 }
-                Err(err) if is_root => failed.push(format!("{}: {err:#}", at.display())),
+                Err(err) if is_root => {
+                    // Every root on the filesystem shares the mark it lacks.
+                    for root in roots_on.get(&fsid).into_iter().flatten() {
+                        failed.push(Uncovered { root: root.clone(), reason: format!("{err:#}") });
+                    }
+                }
                 Err(err) => {
                     eprintln!("[watchd] cannot cover the mount {}: {err:#}", at.display())
                 }
             }
         }
-        if failed.is_empty() {
-            Ok(())
-        } else {
-            bail!("cannot cover {}", failed.join("; "))
-        }
+        failed
     }
 
     /// A handle that reads the group without holding it. The read blocks
@@ -1743,7 +1770,11 @@ mod tests {
         let at = |ps: &[&str]| ps.iter().map(PathBuf::from).collect::<Vec<_>>();
         assert_eq!(plan.paths[&[1, 1]], at(&["/repo", "/repo/sub", "/other"]), "every one");
         assert_eq!(plan.paths[&[2, 2]], at(&["/repo/usb"]));
-        assert_eq!(plan.failed, vec!["/missing: gone".to_string()]);
+        assert_eq!(plan.roots_on[&[1, 1]], at(&["/repo", "/other"]), "roots only");
+        assert_eq!(
+            plan.failed,
+            vec![Uncovered { root: PathBuf::from("/missing"), reason: "gone".to_string() }]
+        );
         assert_eq!(plan.skipped, vec!["cannot cover the mount /repo/nfs: gone".to_string()]);
     }
 

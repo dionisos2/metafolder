@@ -16,8 +16,6 @@ use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::mpsc::{Receiver, SyncSender, TrySendError};
 use std::sync::{Arc, Mutex, MutexGuard};
 
-use anyhow::Result;
-
 use crate::filter::{AccessFilter, CredSource, Subscriber};
 use crate::proto::{self, ClientMsg, Denied, Event, ServerMsg, WirePath};
 
@@ -57,15 +55,26 @@ const MAX_LINE: usize = 256 * 1024;
 /// subscribers watch, after every subscription change. The fanotify side uses
 /// it to place and lift its filesystem marks.
 pub trait RootSink: Send + Sync {
-    fn set_roots(&self, roots: Vec<PathBuf>) -> Result<()>;
+    /// Covers `roots`, and answers the ones it could not — every other root is
+    /// covered. One root failing must not fail the others: a repository deleted
+    /// while its daemon still subscribes is a root no mark can cover, and the
+    /// next subscriber has nothing to do with it.
+    fn set_roots(&self, roots: Vec<PathBuf>) -> Vec<Uncovered>;
+}
+
+/// A root the event source could not cover, and why.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Uncovered {
+    pub root: PathBuf,
+    pub reason: String,
 }
 
 /// A sink that keeps nothing — for tests, and for a broker fed synthetically.
 pub struct NoRoots;
 
 impl RootSink for NoRoots {
-    fn set_roots(&self, _roots: Vec<PathBuf>) -> Result<()> {
-        Ok(())
+    fn set_roots(&self, _roots: Vec<PathBuf>) -> Vec<Uncovered> {
+        Vec::new()
     }
 }
 
@@ -328,9 +337,7 @@ fn drop_client<C: CredSource>(inner: &Arc<Inner<C>>, id: u64) {
     if clients.len() != before {
         let roots = union_roots(&clients);
         drop(clients);
-        if let Err(err) = inner.sink.set_roots(roots) {
-            eprintln!("[watchd] could not update the marks: {err:#}");
-        }
+        report_uncovered(inner.sink.set_roots(roots));
     }
 }
 
@@ -367,13 +374,34 @@ fn apply_subscription<C: CredSource>(
     }
     *lock(&client.roots) = allowed.clone();
     let union = union_roots(&lock(&inner.clients));
-    if let Err(err) = inner.sink.set_roots(union) {
-        let _ = client.tx.try_send(Out::Msg(ServerMsg::Error { message: format!("{err:#}") }));
+    // What cannot be covered is this subscriber's business only when the root
+    // is its own: it is refused that root, never told it is covered. Another
+    // subscriber's (deleted since it subscribed, say) is logged, not sent.
+    let (mine, others): (Vec<Uncovered>, Vec<Uncovered>) =
+        inner.sink.set_roots(union).into_iter().partition(|u| allowed.contains(&u.root));
+    report_uncovered(others);
+    if !mine.is_empty() {
+        allowed.retain(|root| !mine.iter().any(|u| u.root == *root));
+        *lock(&client.roots) = allowed.clone();
+        for u in mine {
+            denied.push(Denied {
+                root: WirePath::from(u.root),
+                reason: format!("cannot be watched: {}", u.reason),
+            });
+        }
     }
     let _ = client.tx.try_send(Out::Msg(ServerMsg::Subscribed {
         roots: allowed.iter().map(|p| WirePath::from(p.as_path())).collect(),
         denied,
     }));
+}
+
+/// Roots no mark covers that no subscriber is being answered about: said in
+/// the broker's own log.
+fn report_uncovered(uncovered: Vec<Uncovered>) {
+    for u in uncovered {
+        eprintln!("[watchd] cannot cover {}: {}", u.root.display(), u.reason);
+    }
 }
 
 fn union_roots(clients: &[Arc<Client>]) -> Vec<PathBuf> {
@@ -457,9 +485,9 @@ mod tests {
         seen: std::sync::Mutex<Vec<Vec<PathBuf>>>,
     }
     impl RootSink for RecordingSink {
-        fn set_roots(&self, roots: Vec<PathBuf>) -> Result<()> {
+        fn set_roots(&self, roots: Vec<PathBuf>) -> Vec<Uncovered> {
             self.seen.lock().unwrap().push(roots);
-            Ok(())
+            Vec::new()
         }
     }
 
@@ -699,11 +727,15 @@ mod tests {
         assert!(matches!(next_msg(&mut r), ServerMsg::Event { .. }));
     }
 
-    /// A sink the event source refuses: the marks cannot be placed.
+    /// A sink that cannot cover the roots under `/gone`.
     struct FailingSink;
     impl RootSink for FailingSink {
-        fn set_roots(&self, _roots: Vec<PathBuf>) -> Result<()> {
-            anyhow::bail!("no mark for you")
+        fn set_roots(&self, roots: Vec<PathBuf>) -> Vec<Uncovered> {
+            roots
+                .into_iter()
+                .filter(|r| r.starts_with("/gone"))
+                .map(|root| Uncovered { root, reason: "no mark for you".to_string() })
+                .collect()
         }
     }
 
@@ -755,18 +787,67 @@ mod tests {
     }
 
     #[test]
-    fn test_marks_that_cannot_be_placed_are_reported_to_the_subscriber() {
+    fn test_a_root_no_mark_can_cover_is_refused_to_its_subscriber() {
         let broker = Broker::new(AccessFilter::new(AllowAll), Arc::new(FailingSink));
         let (client, _writer) = attach_pair(&broker);
         let mut r = reader(&client);
-        subscribe(&client, &["/repo"]);
-        let ServerMsg::Error { message } = next_msg(&mut r) else { panic!("an error first") };
-        assert!(message.contains("no mark for you"), "{message}");
-        // Still answered: the subscription itself was recorded.
-        assert!(matches!(next_msg(&mut r), ServerMsg::Subscribed { .. }));
+        subscribe(&client, &["/gone/repo", "/repo"]);
+        let ServerMsg::Subscribed { roots, denied } = next_msg(&mut r) else {
+            panic!("the answer, and nothing before it")
+        };
+        assert_eq!(roots, vec!["/repo".into()], "the other root is covered");
+        assert_eq!(denied.len(), 1);
+        assert_eq!(denied[0].root, "/gone/repo".into());
+        assert_eq!(denied[0].reason, "cannot be watched: no mark for you");
+        // Refused, so out of its roots: nothing is sent from there.
+        broker.broadcast(&Event::Create { path: "/gone/repo/x".into() });
+        broker.broadcast(&Event::Create { path: "/repo/y".into() });
+        assert_eq!(
+            next_msg(&mut r),
+            ServerMsg::Event { event: Event::Create { path: "/repo/y".into() } }
+        );
         // Leaving runs the sink again (failing again): logged, and let go.
         client.shutdown(std::net::Shutdown::Both).unwrap();
         wait_for_no_client(&broker);
+    }
+
+    /// A sink that stops covering a root once it is declared gone.
+    #[derive(Default)]
+    struct VanishingSink {
+        gone: std::sync::Mutex<Vec<PathBuf>>,
+    }
+    impl RootSink for VanishingSink {
+        fn set_roots(&self, roots: Vec<PathBuf>) -> Vec<Uncovered> {
+            let gone = self.gone.lock().unwrap();
+            roots
+                .into_iter()
+                .filter(|r| gone.contains(r))
+                .map(|root| Uncovered { root, reason: "no such directory".to_string() })
+                .collect()
+        }
+    }
+
+    #[test]
+    fn test_a_root_of_another_that_cannot_be_covered_is_not_this_subscribers_business() {
+        // A repository deleted while its daemon subscribes: its root can no
+        // longer be covered. The next subscriber's answer is its own, and
+        // nothing comes before it.
+        let sink = Arc::new(VanishingSink::default());
+        let broker = Broker::new(AccessFilter::new(AllowAll), Arc::clone(&sink) as _);
+        let (first, _w1) = attach_pair(&broker);
+        let mut r1 = reader(&first);
+        subscribe(&first, &["/theirs"]);
+        assert!(
+            matches!(next_msg(&mut r1), ServerMsg::Subscribed { denied, .. } if denied.is_empty())
+        );
+        sink.gone.lock().unwrap().push(PathBuf::from("/theirs"));
+        let (second, _w2) = attach_pair(&broker);
+        let mut r2 = reader(&second);
+        subscribe(&second, &["/mine"]);
+        assert_eq!(
+            next_msg(&mut r2),
+            ServerMsg::Subscribed { roots: vec!["/mine".into()], denied: vec![] }
+        );
     }
 
     #[test]

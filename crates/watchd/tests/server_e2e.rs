@@ -11,11 +11,9 @@ use std::path::{Path, PathBuf};
 use std::sync::mpsc;
 use std::sync::Arc;
 
-use anyhow::Result;
-
 use metafolder_watchd::filter::{AccessFilter, CredSource, Subscriber};
 use metafolder_watchd::proto::{self, ClientMsg, Event, ServerMsg};
-use metafolder_watchd::server::{Broker, RootSink};
+use metafolder_watchd::server::{Broker, RootSink, Uncovered};
 
 /// Everyone may see everything under `/repo`; nothing under `/locked`.
 struct FakeCreds;
@@ -40,9 +38,9 @@ struct RecordingSink {
 }
 
 impl RootSink for RecordingSink {
-    fn set_roots(&self, roots: Vec<PathBuf>) -> Result<()> {
+    fn set_roots(&self, roots: Vec<PathBuf>) -> Vec<Uncovered> {
         self.seen.lock().unwrap().push(roots);
-        Ok(())
+        Vec::new()
     }
 }
 
