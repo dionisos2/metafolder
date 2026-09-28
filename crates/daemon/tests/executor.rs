@@ -5,7 +5,6 @@ use std::path::Path;
 use std::sync::Arc;
 
 use metafolder_core::metarecord::{Field, Value};
-use metafolder_daemon::config::Storage;
 use metafolder_daemon::executor::{self, FsEvent};
 use metafolder_daemon::log::{self, Writer};
 use metafolder_daemon::repo;
@@ -19,13 +18,8 @@ use common::TempDir;
 /// Initialises a repository with tracking enabled on the root. The returned
 /// directory removes itself when it goes out of scope, panic included.
 fn setup(prefix: &str) -> (Arc<RepoState>, TempDir, Uuid) {
-    setup_on(prefix, Storage::default_for_init())
-}
-
-/// [`setup`] on a chosen storage backend.
-fn setup_on(prefix: &str, storage: Storage) -> (Arc<RepoState>, TempDir, Uuid) {
     let root = TempDir::new(&format!("exec_{prefix}"));
-    let opened = repo::init_repository_with(&root, None, None, false, storage).unwrap();
+    let opened = repo::init_repository(&root, None, None, false).unwrap();
     let repo_state = Arc::new(RepoState::from_opened(opened));
 
     let root_uuid = {
@@ -1569,29 +1563,6 @@ fn test_a_watcher_revision_records_its_origin() {
     w.commit().unwrap();
     let (_, origin) = newest_revision(&*conn);
     assert_eq!(origin, None, "an ordinary write is nobody's but the writer's");
-}
-
-// The watcher's flushes are what accumulate unattended: a daemon that has been
-// writing all night hands the first reader of the morning the whole delta, and
-// past `REBUILD_OVER` operations that is a full index rebuild inside their
-// request. The flush holds the connection anyway — it brings the index up with
-// it, like the tree cache it already keeps in step.
-#[test]
-fn test_flush_leaves_the_query_index_at_head() {
-    // The resident index is what this pins: a SQLite repository.
-    let (repo, root, _) = setup_on("index_settle", Storage::Sqlite);
-    repo.warmup(&|_, _, _| {}).unwrap();
-    write_file(&root, "a.txt", b"hello");
-    enqueue(&repo, &[FsEvent::Create("/a.txt".into())]);
-
-    executor::flush_pending(&repo).unwrap();
-
-    let head = {
-        let conn = repo.conn.lock().unwrap();
-        metafolder_daemon::store::Log::head(&*conn).unwrap()
-    };
-    let built = repo.index.lock().unwrap().as_ref().and_then(|i| i.built_at_head());
-    assert_eq!(built, head, "the flush must leave the index at HEAD, not the next reader");
 }
 
 fn metarecord_count(repo: &RepoState) -> usize {

@@ -11,7 +11,7 @@ use metafolder_daemon::kvstore::KvStore;
 
 use metafolder_daemon::store::Rows as _;
 
-use metafolder_daemon::db;
+use metafolder_daemon::rows;
 
 mod common;
 
@@ -920,8 +920,8 @@ fn test_populating_keeps_a_name_s_exact_bytes() {
 // operation upkeep (a navigation step, an event) has no such order to offer.
 
 /// A forest holding one node under a parent that has no position.
-fn orphan_forest(child: Uuid, ghost: Uuid) -> Vec<db::TreeRow> {
-    vec![db::TreeRow {
+fn orphan_forest(child: Uuid, ghost: Uuid) -> Vec<rows::TreeRow> {
+    vec![rows::TreeRow {
         id: 1,
         field_name: "mfr_path".into(),
         uuid: child,

@@ -24,7 +24,6 @@ use uuid::Uuid;
 
 use crate::{daemon_client, daemon_start, daemon_wait_ready, ms, Daemon};
 use history::{Record, Verdict};
-use metafolder_daemon::config::Storage;
 
 /// Timed repetitions per scenario (plus one warm-up that is thrown away).
 const RUNS: usize = 5;
@@ -41,9 +40,6 @@ pub struct Options {
     pub real: bool,
     /// Only the scenarios whose id starts with this.
     pub filter: Option<String>,
-    /// The storage backends the generated repositories are built on — each
-    /// its own repository and its own series in the history.
-    pub storages: Vec<Storage>,
     /// Measure and compare, record nothing.
     pub no_history: bool,
     /// Print the history and exit.
@@ -58,7 +54,6 @@ impl Default for Options {
             big: false,
             real: false,
             filter: None,
-            storages: vec![Storage::Kv],
             no_history: false,
             report: false,
             tolerance: history::DEFAULT_TOLERANCE,
@@ -429,17 +424,10 @@ pub async fn run(opts: &Options) -> Result<i32> {
     // schema) changes.
     let mut repos: Vec<(String, PathBuf)> = Vec::new();
     let mut generated = false;
-    for &storage in &opts.storages {
-        for shape in &shapes {
-            // The key-value repositories keep the plain name they always had.
-            let name = match storage {
-                Storage::Kv => shape.label.to_string(),
-                Storage::Sqlite => format!("{}-sqlite", shape.label),
-            };
-            let dir = root.join("target/bench-data").join(name);
-            generated |= ensure_repo(&dir, shape, storage)?;
-            repos.push((shape.label.to_string(), dir));
-        }
+    for shape in &shapes {
+        let dir = root.join("target/bench-data").join(shape.label);
+        generated |= ensure_repo(&dir, shape)?;
+        repos.push((shape.label.to_string(), dir));
     }
     if generated {
         println!(
@@ -460,20 +448,14 @@ pub async fn run(opts: &Options) -> Result<i32> {
                 println!("skipping {label}: {} does not exist", src.display());
                 continue;
             }
-            for &storage in &opts.storages {
-                let name = match storage {
-                    Storage::Kv => label.to_string(),
-                    Storage::Sqlite => format!("{label}-sqlite"),
-                };
-                let dest = root.join("target/bench-data").join(&name);
-                if real::ensure(&daemon.url, &src, &dest, &name, storage).await? {
-                    println!(
-                        "note: {name} was built just now, so its pages are still cold —\n\
-                         \x20     run the suite again for a number worth keeping as a baseline."
-                    );
-                }
-                repos.push((label.to_string(), dest));
+            let dest = root.join("target/bench-data").join(label);
+            if real::ensure(&daemon.url, &src, &dest, label).await? {
+                println!(
+                    "note: {label} was built just now, so its pages are still cold —\n\
+                     \x20     run the suite again for a number worth keeping as a baseline."
+                );
             }
+            repos.push((label.to_string(), dest));
         }
     }
 
@@ -481,8 +463,10 @@ pub async fn run(opts: &Options) -> Result<i32> {
     for (size, dir) in &repos {
         let repo = load_repo(&daemon, dir).await?;
         let ctx = context_for(&daemon, repo, dir, size.starts_with("real")).await?;
-        let storage = storage_of(dir);
-        println!("── size {size}, {storage} ({})", dir.display());
+        // Every record since SQLite was dropped is the key-value store's; the
+        // history keeps the field, so the older series stay apart.
+        let storage = "kv".to_string();
+        println!("── size {size} ({})", dir.display());
         for id in SCENARIOS {
             if let Some(filter) = &opts.filter {
                 if !id.starts_with(filter.as_str()) {
@@ -600,22 +584,12 @@ fn report(path: &Path) -> Result<i32> {
 
 // ─── Repositories ─────────────────────────────────────────────────────────────
 
-/// The storage backend of the repository at `dir`, as its `config.json`
-/// names it (a repository from before the choice existed is SQLite).
-fn storage_of(dir: &Path) -> String {
-    std::fs::read_to_string(dir.join(".metafolder/config.json"))
-        .ok()
-        .and_then(|s| serde_json::from_str::<serde_json::Value>(&s).ok())
-        .and_then(|v| v["storage"].as_str().map(str::to_string))
-        .unwrap_or_else(|| "sqlite".into())
-}
-
 /// Builds the generated repository if it is missing or of a different shape.
 /// Returns whether it had to build it.
-fn ensure_repo(dir: &Path, shape: &synth::Shape, storage: Storage) -> Result<bool> {
+fn ensure_repo(dir: &Path, shape: &synth::Shape) -> Result<bool> {
     let stamp_path = dir.join(".bench-shape");
     let stamp = format!(
-        "{}:{}:{}:{}:api{}:{storage:?}",
+        "{}:{}:{}:{}:api{}:Kv",
         shape.label,
         shape.dirs,
         shape.files,
@@ -633,7 +607,7 @@ fn ensure_repo(dir: &Path, shape: &synth::Shape, storage: Storage) -> Result<boo
     use std::io::Write as _;
     std::io::stdout().flush().ok();
     let t = Instant::now();
-    synth::build(dir, shape, storage)?;
+    synth::build(dir, shape)?;
     std::fs::write(&stamp_path, &stamp)?;
     println!("{:.1}s", t.elapsed().as_secs_f64());
     Ok(true)

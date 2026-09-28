@@ -18,10 +18,10 @@ use metafolder_core::date::ms_from_systemtime;
 use metafolder_core::metarecord::{Field, Value};
 use metafolder_core::sync::MutexExt;
 
-use crate::db::{self, StoredHashes};
 use crate::error::ApiError;
 use crate::fingerprint;
 use crate::log::{OpType, Writer};
+use crate::rows::{self, StoredHashes};
 use crate::state::RepoState;
 use crate::tasks::Reporter;
 
@@ -512,7 +512,7 @@ fn write_class_groups(
     conn: &mut dyn crate::store::Database,
     size: i64,
     members: &[Candidate],
-    existing: &mut HashMap<(i64, String), db::DuplicateGroup>,
+    existing: &mut HashMap<(i64, String), rows::DuplicateGroup>,
     links: &mut HashMap<Uuid, Uuid>,
     grouped: &mut HashSet<Uuid>,
     touched: &mut HashSet<Uuid>,
@@ -560,7 +560,7 @@ fn write_class_groups(
                     ])
                     .map_err(ApiError::from)?
                     .uuid;
-                e.insert(db::DuplicateGroup { uuid: created, count: None, reclaimable: None })
+                e.insert(rows::DuplicateGroup { uuid: created, count: None, reclaimable: None })
             }
         };
         let group = entry.uuid;
@@ -615,7 +615,7 @@ fn write_class_groups(
 fn prune(
     retention: crate::log::Retention,
     conn: &mut dyn crate::store::Database,
-    existing: &HashMap<(i64, String), db::DuplicateGroup>,
+    existing: &HashMap<(i64, String), rows::DuplicateGroup>,
     links: &mut HashMap<Uuid, Uuid>,
     grouped: &HashSet<Uuid>,
     touched: &HashSet<Uuid>,

@@ -36,7 +36,7 @@ use roaring::{MultiOps, RoaringBitmap};
 use crate::store::Store;
 use uuid::Uuid;
 
-use crate::db;
+use crate::rows;
 use field_index::{CmpOp, FieldIndex, SortRep, SortReps};
 use id_registry::IdRegistry;
 pub use source::{Follow, NamedNode, RepReader, Source, Walked};
@@ -335,7 +335,7 @@ pub struct RepoIndex {
     registry: IdRegistry,
     strategy: PageStrategy,
     /// All interned ids: every metarecord of this repository's database
-    /// (`db::list_entries`). Complement base for `Not` / `IsUnknown`.
+    /// (`rows::list_entries`). Complement base for `Not` / `IsUnknown`.
     ///
     /// This is the whole universe, with nothing to filter out: ownership is
     /// implicit in which database file holds a metarecord (one repository per
@@ -390,10 +390,10 @@ impl RepoIndex {
     /// [`Self::build_reported`] that also collects every TreeRef position it
     /// scans into `forest` (in `field.id` order), so the caller can populate the
     /// tree cache from the *same* single pass over the `field` table instead of a
-    /// second full scan (`db::load_tree_forest`). See `RepoState::warmup`.
+    /// second full scan (`rows::load_tree_forest`). See `RepoState::warmup`.
     pub fn build_reported_collecting(
         store: &dyn Store,
-        forest: &mut Vec<db::TreeRow>,
+        forest: &mut Vec<rows::TreeRow>,
         progress: &dyn Fn(u64, u64),
         cancel: &dyn Fn() -> bool,
     ) -> anyhow::Result<RepoIndex> {
@@ -402,7 +402,7 @@ impl RepoIndex {
 
     fn build_inner(
         store: &dyn Store,
-        mut forest: Option<&mut Vec<db::TreeRow>>,
+        mut forest: Option<&mut Vec<rows::TreeRow>>,
         progress: &dyn Fn(u64, u64),
         cancel: &dyn Fn() -> bool,
     ) -> anyhow::Result<RepoIndex> {
@@ -443,7 +443,7 @@ impl RepoIndex {
             if let (Some(sink), Value::TreeRef { parent, name }) =
                 (forest.as_deref_mut(), &row.value)
             {
-                sink.push(db::TreeRow {
+                sink.push(rows::TreeRow {
                     id: row.id,
                     field_name: row.name.clone(),
                     uuid,
@@ -836,7 +836,7 @@ impl RepoIndex {
 
     /// The distinct `(field_name, value_type)` pairs of the exclusively-owned
     /// universe, optionally restricted to a single value type — the in-memory
-    /// equivalent of `db::distinct_field_names` (backs `GET /repos/:repo/fields`).
+    /// equivalent of `rows::distinct_field_names` (backs `GET /repos/:repo/fields`).
     /// A name is reported iff it has ≥1 non-`Nothing` row (`present` non-empty),
     /// so emptied names drop out; ordered by name (each name has one type, so the
     /// secondary key is moot). Served from memory, no DB scan.

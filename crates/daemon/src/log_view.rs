@@ -13,8 +13,8 @@ use anyhow::Result;
 use serde_json::json;
 use uuid::Uuid;
 
-use crate::db;
 use crate::log::OpRow;
+use crate::rows;
 use crate::store::{Log, RevisionMeta};
 
 /// Which line through the log to read.
@@ -315,7 +315,7 @@ pub fn snapshots_json(log: &dyn Log, op_id: i64, after: bool) -> Result<serde_js
     let mut out = Vec::new();
     for row in log.snapshots(op_id, after)? {
         // Raw column form (spec-event-log examples), null columns omitted.
-        let encoded = db::encode_value(&row.value);
+        let encoded = rows::encode_value(&row.value);
         let mut snapshot = json!({
             "field_id": row.id,
             "field_name": row.name,

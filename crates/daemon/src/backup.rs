@@ -10,7 +10,7 @@
 //! single, overwritten automatic slot needs to be worth keeping.
 //!
 //! [`restore`] puts one back: the store checked first, the current one set
-//! aside, `config.json` switched to the backup's backend.
+//! aside, `config.json` switched to the backup's store.
 
 use std::path::{Path, PathBuf};
 
@@ -19,7 +19,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::config::{RepoConfig, Storage};
 use crate::error::DomainError;
-use crate::repo::{DB_FILE, INTERNAL_DIR, KV_DIR};
+use crate::repo::{INTERNAL_DIR, KV_DIR};
 use crate::store::Database;
 
 /// What a backup holds, as its `backup.json` records it.
@@ -29,6 +29,8 @@ pub struct BackupInfo {
     pub path: PathBuf,
     /// When it was taken, Unix milliseconds.
     pub created_at_ms: i64,
+    /// The store it holds: the key-value store. A backup taken of a SQLite
+    /// repository says `sqlite`, and is refused by [`restore`].
     pub storage: Storage,
     pub metarecords: usize,
 }
@@ -56,12 +58,7 @@ fn remove(path: &Path) -> Result<()> {
 
 /// Writes a verified backup of an open repository to `dest`, replacing what
 /// is there only once the new one checks clean.
-pub fn write_backup(
-    store: &dyn Database,
-    metafolder: &Path,
-    config: &RepoConfig,
-    dest: &Path,
-) -> Result<BackupInfo> {
+pub fn write_backup(store: &dyn Database, metafolder: &Path, dest: &Path) -> Result<BackupInfo> {
     let name = dest.file_name().context("a backup needs a directory name")?.to_string_lossy();
     let parent = dest.parent().context("a backup needs a parent directory")?;
     std::fs::create_dir_all(parent).with_context(|| format!("create {}", parent.display()))?;
@@ -80,13 +77,7 @@ pub fn write_backup(
 
     // The copy is only a backup once it opens and checks clean.
     let metarecords = {
-        let copy = match config.storage {
-            Storage::Sqlite => {
-                crate::repo::open_store(&temp.join(DB_FILE), Storage::Sqlite, "backup")
-            }
-            Storage::Kv => crate::repo::open_store(&temp.join(KV_DIR), Storage::Kv, "backup"),
-        }
-        .context("open the backup")?;
+        let copy = crate::repo::open_store(&temp.join(KV_DIR)).context("open the backup")?;
         let problems = copy.check().context("check the backup")?;
         if !problems.is_empty() {
             remove(&temp)?;
@@ -99,17 +90,10 @@ pub fn write_backup(
         }
         copy.metarecord_count()?
     };
-    if config.storage == Storage::Sqlite {
-        // The copy was opened in WAL mode: fold it back, only files move.
-        for suffix in ["-wal", "-shm"] {
-            remove(&PathBuf::from(format!("{}{suffix}", temp.join(DB_FILE).display())))?;
-        }
-    }
-
     let info = BackupInfo {
         path: dest.to_path_buf(),
         created_at_ms: metafolder_core::date::now_ms(),
-        storage: config.storage,
+        storage: Storage::Kv,
         metarecords,
     };
     std::fs::write(temp.join(INFO_FILE), serde_json::to_string_pretty(&info)?)
@@ -152,13 +136,9 @@ pub fn latest(dir: &Path) -> Option<BackupInfo> {
         .max_by_key(|info| info.created_at_ms)
 }
 
-/// Where a backend keeps its store, under `internal/` or in a backup.
-fn store_name(storage: Storage) -> &'static str {
-    match storage {
-        Storage::Sqlite => DB_FILE,
-        Storage::Kv => KV_DIR,
-    }
-}
+/// Where a SQLite repository kept its store, under `internal/`: set aside,
+/// like any current store, when a backup is restored over one.
+const SQLITE_STORE: &str = "db.sqlite";
 
 /// Copies a file, or a directory and everything under it.
 fn copy_tree(from: &Path, to: &Path) -> Result<()> {
@@ -246,21 +226,23 @@ pub fn restore(metafolder: &Path, from: Option<&Path>) -> Result<Restored> {
     }
 
     std::fs::create_dir_all(&internal).with_context(|| format!("create {}", internal.display()))?;
-    let name = store_name(info.storage);
+    if info.storage == Storage::Sqlite {
+        return Err(DomainError::BadRequest(format!(
+            "{} is a backup of a SQLite repository, which this version of metafolder no longer \
+             reads",
+            dir.display()
+        ))
+        .into());
+    }
+    let name = KV_DIR;
     let temp = internal.join(format!("restoring-{name}"));
     remove(&temp)?;
     copy_tree(&dir.join(name), &temp).context("copy the backup's store")?;
     // The copy is only restored once it opens and checks clean.
     let problems = {
-        let copy = crate::repo::open_store(&temp, info.storage, "restore")
-            .context("open the backup's store")?;
+        let copy = crate::repo::open_store(&temp).context("open the backup's store")?;
         copy.check().context("check the backup's store")?
     };
-    if info.storage == Storage::Sqlite {
-        for suffix in ["-wal", "-shm"] {
-            remove(&PathBuf::from(format!("{}{suffix}", temp.display())))?;
-        }
-    }
     if !problems.is_empty() {
         remove(&temp)?;
         bail!(
@@ -270,10 +252,13 @@ pub fn restore(metafolder: &Path, from: Option<&Path>) -> Result<Restored> {
         );
     }
 
-    // The current store is set aside — and whatever holds the place the
-    // backup's store goes to, when the backend differs.
+    // The current store is set aside — a SQLite one too, which the restored
+    // repository replaces.
     let old_store = match &ours {
-        Some(ours) => set_aside(&internal, &internal.join(store_name(ours.storage)))?,
+        Some(ours) if ours.storage == Storage::Sqlite => {
+            set_aside(&internal, &internal.join(SQLITE_STORE))?
+        }
+        Some(_) => set_aside(&internal, &internal.join(KV_DIR))?,
         None => None,
     };
     let target = internal.join(name);

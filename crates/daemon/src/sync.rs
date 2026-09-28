@@ -14,7 +14,21 @@ use uuid::Uuid;
 
 use metafolder_core::metarecord::Value;
 
-use crate::db::{self, uuid_to_bytes};
+use crate::rows::{self, uuid_to_bytes};
+
+/// The value columns of one `snapshot_field` row, read by name.
+fn raw_value(row: &rusqlite::Row<'_>) -> rusqlite::Result<rows::RawValue> {
+    Ok(rows::RawValue {
+        value_type: row.get("value_type")?,
+        text: row.get("value_text")?,
+        int: row.get("value_int")?,
+        real: row.get("value_real")?,
+        uuid: row.get("value_uuid")?,
+        ref_repo: row.get("value_ref_repo")?,
+        name: row.get("value_name")?,
+        name_bytes: row.get("value_name_bytes")?,
+    })
+}
 
 pub const FORMAT_VERSION: &str = "1";
 
@@ -222,7 +236,7 @@ pub fn read_snapshot(conn: &Connection, link: Uuid) -> Result<Vec<SnapshotField>
     )?;
     let rows = stmt
         .query_map(params![uuid_to_bytes(link)], |r| {
-            let value = db::decode_value(db::RawValue::from_row(r)?)
+            let value = rows::decode_value(raw_value(r)?)
                 .map_err(|e| rusqlite::Error::ToSqlConversionFailure(e.into()))?;
             let value_uuid_b: Option<Vec<u8>> = r.get("value_uuid_b")?;
             Ok(SnapshotField {
@@ -259,7 +273,7 @@ pub fn commit_batch(conn: &mut Connection, commits: &[Commit]) -> Result<()> {
             params![uuid_to_bytes(c.link)],
         )?;
         for f in &c.snapshot {
-            let e = db::encode_value(&f.value);
+            let e = rows::encode_value(&f.value);
             tx.execute(
                 "INSERT INTO snapshot_field
                      (link_uuid, field_name, value_type, value_text, value_int,

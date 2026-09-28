@@ -188,16 +188,12 @@ pub fn init(
     metafolder: Option<&Path>,
     ignore: Vec<String>,
     no_ignore: bool,
-    storage: Option<String>,
 ) -> Result<i32, CliError> {
     use metafolder_core::repo_init::{init_repo, InitIgnore};
 
     let mut body = json!({"root": absolutize(root)?});
     if let Some(dir) = metafolder {
         body["metafolder"] = json!(absolutize(dir)?);
-    }
-    if let Some(storage) = storage {
-        body["storage"] = json!(storage);
     }
     let client = TrashDaemon(&ctx.client);
 
@@ -263,34 +259,20 @@ pub fn repos(ctx: &Ctx, all: bool) -> Result<i32, CliError> {
 /// `mf unload`: unloads the repository from the daemon (`POST …/unload`),
 /// printing its UUID. A repository not loaded (404) or in a rollback navigation
 /// (409) is reported as an error.
-/// `mf repo convert --to <backend>` (spec-storage increment 5): prints what
-/// was copied and where the old store was set aside.
-pub fn convert(ctx: &Ctx, to: &str) -> Result<i32, CliError> {
-    let base = ctx.repo_base()?;
-    let report =
-        ctx.client.request("POST", &format!("{base}/convert"), &[], Some(&json!({"to": to})))?;
-    println!("{}", serde_json::to_string_pretty(&report).unwrap_or_default());
-    Ok(0)
-}
-
 /// `mf repo check`: "ok" on a healthy store, else one problem per line and
 /// exit 1.
 pub fn check_repo(ctx: &Ctx) -> Result<i32, CliError> {
     let base = ctx.repo_base()?;
     let report = ctx.client.request("POST", &format!("{base}/check"), &[], None)?;
-    let storage = report["storage"].as_str().unwrap_or("?");
     let problems = report["problems"].as_array().cloned().unwrap_or_default();
     if problems.is_empty() {
-        println!("ok ({storage})");
+        println!("ok");
         return Ok(0);
     }
     for p in &problems {
         println!("{}", p.as_str().unwrap_or_default());
     }
-    eprintln!(
-        "{} problem(s) in the {storage} store; `mf repo reindex` repairs derived data",
-        problems.len()
-    );
+    eprintln!("{} problem(s) in the store; `mf repo reindex` repairs derived data", problems.len());
     Ok(1)
 }
 
@@ -337,9 +319,8 @@ pub fn restore_repo(
         .map(metafolder_core::date::iso8601_from_ms)
         .unwrap_or_else(|| "?".into());
     println!(
-        "restored from {} (taken {taken}, {}, {} metarecords)",
+        "restored from {} (taken {taken}, {} metarecords)",
         backup["path"].as_str().unwrap_or_default(),
-        backup["storage"].as_str().unwrap_or("?"),
         backup["metarecords"].as_u64().unwrap_or(0),
     );
     if let Some(old) = resp["old_store"].as_str() {
@@ -354,8 +335,8 @@ pub fn restore_repo(
 /// `mf repo reindex`.
 pub fn reindex_repo(ctx: &Ctx) -> Result<i32, CliError> {
     let base = ctx.repo_base()?;
-    let report = ctx.client.request("POST", &format!("{base}/reindex"), &[], None)?;
-    println!("reindexed ({})", report["storage"].as_str().unwrap_or("?"));
+    ctx.client.request("POST", &format!("{base}/reindex"), &[], None)?;
+    println!("reindexed");
     Ok(0)
 }
 

@@ -621,11 +621,9 @@ impl crate::watcher::Source for Source {
 #[cfg(test)]
 mod tests {
     use super::{budget_cap, budget_report, compute_watched_dirs_timed, is_watch_budget_exhausted};
-    use crate::db;
     use crate::log::Writer;
     use crate::tree_cache::TreeCache;
     use metafolder_core::metarecord::{Field, Value};
-    use rusqlite::Connection;
     use std::collections::HashSet;
     use std::path::{Path, PathBuf};
 
@@ -634,7 +632,8 @@ mod tests {
     /// need no metarecords: eligibility is inherited from the root, exactly as
     /// during a first reconcile.
     struct Fixture {
-        conn: Connection,
+        conn: crate::kvstore::KvStore,
+        _store_dir: crate::kvstore::TestDir,
         cache: TreeCache,
         root: PathBuf,
     }
@@ -645,8 +644,7 @@ mod tests {
                 .join("metafolder-tests")
                 .join(format!("metafolder_watch_{}", uuid::Uuid::new_v4()));
             std::fs::create_dir_all(&root).unwrap();
-            let mut conn = db::open_in_memory().unwrap();
-            db::init_schema(&conn).unwrap();
+            let (mut conn, store_dir) = crate::kvstore::test_store();
             let mut w = Writer::begin(&mut conn, None).unwrap();
             w.create_metarecord(vec![
                 Field::new("mfr_path", Value::TreeRef { parent: None, name: "".into() }),
@@ -654,7 +652,7 @@ mod tests {
             ])
             .unwrap();
             w.commit().unwrap();
-            Self { conn, cache: TreeCache::new(false), root }
+            Self { conn, _store_dir: store_dir, cache: TreeCache::new(false), root }
         }
 
         fn internal_dir(&self) -> PathBuf {

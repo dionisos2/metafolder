@@ -722,12 +722,10 @@ mod tests {
         drop_excluded, drop_ineligible, explain_watched, relative, touches_rules, Coverage,
         FsEvent, WatchedReason, WatchedStatus,
     };
-    use crate::db;
     use crate::eligibility::WatchRules;
     use crate::log::Writer;
     use crate::tree_cache::TreeCache;
     use metafolder_core::metarecord::{Field, Value};
-    use rusqlite::Connection;
     use std::collections::HashSet;
     use std::path::{Path, PathBuf};
 
@@ -735,7 +733,8 @@ mod tests {
     /// backed by a real temporary directory — the shape `explain_watched` and
     /// `drop_excluded` need (eligibility from the tree cache, names on disk).
     struct Fixture {
-        conn: Connection,
+        conn: crate::kvstore::KvStore,
+        _store_dir: crate::kvstore::TestDir,
         cache: TreeCache,
         root: PathBuf,
     }
@@ -747,8 +746,7 @@ mod tests {
                 .join(format!("metafolder_cov_{}", uuid::Uuid::new_v4()));
             std::fs::create_dir_all(root.join("dir")).unwrap();
             std::fs::create_dir_all(root.join("other")).unwrap();
-            let mut conn = db::open_in_memory().unwrap();
-            db::init_schema(&conn).unwrap();
+            let (mut conn, store_dir) = crate::kvstore::test_store();
             let mut w = Writer::begin(&mut conn, None).unwrap();
             w.create_metarecord(vec![
                 Field::new("mfr_path", Value::TreeRef { parent: None, name: "".into() }),
@@ -756,7 +754,7 @@ mod tests {
             ])
             .unwrap();
             w.commit().unwrap();
-            Self { conn, cache: TreeCache::new(false), root }
+            Self { conn, _store_dir: store_dir, cache: TreeCache::new(false), root }
         }
 
         fn internal_dir(&self) -> PathBuf {

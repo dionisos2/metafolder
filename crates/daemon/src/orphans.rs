@@ -19,9 +19,9 @@ use metafolder_core::metarecord::Value;
 use metafolder_core::sync::MutexExt;
 use uuid::Uuid;
 
-use crate::db;
 use crate::error::ApiError;
 use crate::log::{OpType, Writer};
+use crate::rows;
 use crate::state::RepoState;
 
 /// One orphaned metarecord: its uuid and the stale path its `mfr_path` still
@@ -274,7 +274,7 @@ pub fn relink_reported(
     // the only thing comparable without reading a file, so it is what keeps the
     // hashing down to the candidates that could possibly match.
     reporter.progress("orphans", None, None);
-    let mut by_size: HashMap<i64, Vec<db::OrphanCandidate>> = HashMap::new();
+    let mut by_size: HashMap<i64, Vec<rows::OrphanCandidate>> = HashMap::new();
     for candidate in crate::store::Questions::hashed_orphans(&conn)? {
         by_size.entry(candidate.size).or_default().push(candidate);
     }
@@ -320,7 +320,7 @@ pub fn relink_reported(
 
 /// The orphan whose stored full hash `abs` matches, if any. Hashes lazily: the
 /// partial hash first, the full one only once a partial has matched.
-fn confirm(abs: &Path, candidates: &[db::OrphanCandidate]) -> Option<Uuid> {
+fn confirm(abs: &Path, candidates: &[rows::OrphanCandidate]) -> Option<Uuid> {
     if candidates.is_empty() {
         return None;
     }

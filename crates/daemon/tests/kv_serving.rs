@@ -6,7 +6,6 @@ use axum::body::Body;
 use axum::http::{Request, StatusCode};
 use axum::Router;
 use http_body_util::BodyExt;
-use metafolder_daemon::config::Storage;
 use metafolder_daemon::routes;
 use metafolder_daemon::state::AppState;
 use serde_json::{json, Value};
@@ -100,33 +99,7 @@ async fn a_kv_repository_serves_queries_without_the_resident_index() {
     assert!(body.to_string().contains("\"tag\""), "the catalog lists tag: {body}");
 
     let repo_state = state.repo(repo.parse().unwrap()).unwrap();
-    let on_kv = repo_state.config.storage == Storage::Kv;
-    assert_eq!(
-        repo_state.index.lock().unwrap().is_none(),
-        on_kv,
-        "a KV repository never builds the resident index; a SQLite one does"
-    );
-}
-
-/// `POST /repos/init` takes the backend: `storage` is `"kv"` or `"sqlite"`,
-/// the daemon's default when absent.
-#[tokio::test]
-async fn init_takes_the_storage_backend() {
-    let state = std::sync::Arc::new(AppState::new());
-    let app = routes::build(state.clone());
-    for (asked, want) in [("sqlite", Storage::Sqlite), ("kv", Storage::Kv)] {
-        let root = temp_dir(asked);
-        let (status, body) = request(
-            &app,
-            "POST",
-            "/repos/init",
-            Some(json!({"root": root.to_str().unwrap(), "storage": asked})),
-        )
-        .await;
-        assert_eq!(status, StatusCode::OK, "init failed: {body}");
-        let repo = state.repo(body["repo_uuid"].as_str().unwrap().parse().unwrap()).unwrap();
-        assert_eq!(repo.config.storage, want);
-    }
+    assert!(repo_state.index.lock().unwrap().is_none(), "no resident index is built");
 }
 
 /// A KV repository keeps no forest in memory (spec-storage increment 4 e):
@@ -136,9 +109,6 @@ async fn init_takes_the_storage_backend() {
 async fn a_kv_repository_keeps_no_forest_in_memory() {
     let (app, repo, _root, state) = setup("forest").await;
     let repo_state = state.repo(repo.parse().unwrap()).unwrap();
-    if repo_state.config.storage != Storage::Kv {
-        return; // the resident forest is what a SQLite repository keeps
-    }
     let tref = |parent: Option<&str>, name: &str| {
         json!([{"name": "loc", "value": {"type": "tree_ref",
                  "value": {"parent": parent, "name": name}}}])
@@ -182,77 +152,24 @@ async fn a_kv_repository_keeps_no_forest_in_memory() {
     assert!(repo_state.lock_cache().len() <= 2, "at most the last lookup's path is held");
 }
 
-/// `POST /repos/:repo/convert` converts a loaded repository in place — it
-/// is unloaded, converted, loaded back — and it keeps answering.
+/// `POST /repos/:repo/check` reports what no longer holds together (nothing,
+/// here) and `POST /repos/:repo/reindex` derives again.
 #[tokio::test]
-async fn a_loaded_repository_converts_and_answers() {
-    let state = std::sync::Arc::new(AppState::new());
-    let app = routes::build(state.clone());
-    let root = temp_dir("convert");
-    let (status, body) = request(
-        &app,
-        "POST",
-        "/repos/init",
-        Some(json!({"root": root.to_str().unwrap(), "storage": "sqlite"})),
-    )
-    .await;
-    assert_eq!(status, StatusCode::OK, "{body}");
-    let repo = body["repo_uuid"].as_str().unwrap().to_string();
+async fn check_and_reindex() {
+    let (app, repo, _root, _state) = setup("check").await;
     let tag = json!([{"name": "tag", "value": {"type": "string", "value": "kept"}}]);
     let kept = create(&app, &repo, tag).await;
+
+    let (status, body) = request(&app, "POST", &format!("/repos/{repo}/check"), None).await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    assert_eq!(body, json!({"problems": []}));
+    let (status, body) = request(&app, "POST", &format!("/repos/{repo}/reindex"), None).await;
+    assert_eq!(status, StatusCode::OK, "{body}");
     let query = json!({"query": {"type": "eq", "field": "tag",
                                  "value": {"type": "string", "value": "kept"}}});
-
-    for (to, storage) in [("kv", Storage::Kv), ("sqlite", Storage::Sqlite)] {
-        let (status, body) =
-            request(&app, "POST", &format!("/repos/{repo}/convert"), Some(json!({"to": to}))).await;
-        assert_eq!(status, StatusCode::OK, "{body}");
-        assert_eq!(body["metarecords"], json!(2), "{body}");
-        let repo_state = state.repo(repo.parse().unwrap()).unwrap();
-        assert_eq!(repo_state.config.storage, storage);
-        let (status, body) =
-            request(&app, "POST", &format!("/repos/{repo}/query"), Some(query.clone())).await;
-        assert_eq!(status, StatusCode::OK, "{body}");
-        assert_eq!(body, json!([kept]));
-    }
-    let (status, _) =
-        request(&app, "POST", &format!("/repos/{repo}/convert"), Some(json!({"to": "sqlite"})))
-            .await;
-    assert_eq!(status, StatusCode::BAD_REQUEST, "already on sqlite");
-}
-
-/// `POST /repos/:repo/check` reports what no longer holds together (nothing,
-/// here) and `POST /repos/:repo/reindex` derives again; on either backend.
-#[tokio::test]
-async fn check_and_reindex_on_both_backends() {
-    let state = std::sync::Arc::new(AppState::new());
-    let app = routes::build(state.clone());
-    for storage in ["kv", "sqlite"] {
-        let root = temp_dir(&format!("check_{storage}"));
-        let (status, body) = request(
-            &app,
-            "POST",
-            "/repos/init",
-            Some(json!({"root": root.to_str().unwrap(), "storage": storage})),
-        )
-        .await;
-        assert_eq!(status, StatusCode::OK, "{body}");
-        let repo = body["repo_uuid"].as_str().unwrap().to_string();
-        let tag = json!([{"name": "tag", "value": {"type": "string", "value": "kept"}}]);
-        let kept = create(&app, &repo, tag).await;
-
-        let (status, body) = request(&app, "POST", &format!("/repos/{repo}/check"), None).await;
-        assert_eq!(status, StatusCode::OK, "{body}");
-        assert_eq!(body, json!({"storage": storage, "problems": []}));
-        let (status, body) = request(&app, "POST", &format!("/repos/{repo}/reindex"), None).await;
-        assert_eq!(status, StatusCode::OK, "{body}");
-        let query = json!({"query": {"type": "eq", "field": "tag",
-                                     "value": {"type": "string", "value": "kept"}}});
-        let (status, body) =
-            request(&app, "POST", &format!("/repos/{repo}/query"), Some(query)).await;
-        assert_eq!(status, StatusCode::OK, "{body}");
-        assert_eq!(body, json!([kept]), "answers after a reindex");
-    }
+    let (status, body) = request(&app, "POST", &format!("/repos/{repo}/query"), Some(query)).await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    assert_eq!(body, json!([kept]), "answers after a reindex");
 }
 
 /// `POST /repos/:repo/backup` takes a verified backup — by default under
@@ -280,16 +197,11 @@ async fn backups_by_request_and_when_due() {
     assert!(root.path().join(".metafolder/internal/backups/auto/backup.json").exists());
 }
 
-/// Initialises a repository on `storage` with a `kept` note, takes a backup
-/// of it, then writes a `lost` note.
-async fn backed_up(app: &Router, root: &TempDir, storage: &str) -> String {
-    let (status, body) = request(
-        app,
-        "POST",
-        "/repos/init",
-        Some(json!({"root": root.to_str().unwrap(), "storage": storage})),
-    )
-    .await;
+/// Initialises a repository with a `kept` note, takes a backup of it, then
+/// writes a `lost` note.
+async fn backed_up(app: &Router, root: &TempDir) -> String {
+    let (status, body) =
+        request(app, "POST", "/repos/init", Some(json!({"root": root.to_str().unwrap()}))).await;
     assert_eq!(status, StatusCode::OK, "{body}");
     let repo = body["repo_uuid"].as_str().unwrap().to_string();
     create(app, &repo, json!([{"name": "note", "value": {"type": "string", "value": "kept"}}]))
@@ -323,25 +235,23 @@ async fn notes(app: &Router, repo: &str) -> Vec<String> {
 async fn a_loaded_repository_is_restored_and_answers() {
     let state = std::sync::Arc::new(AppState::new());
     let app = routes::build(state.clone());
-    for storage in ["kv", "sqlite"] {
-        let root = temp_dir(&format!("restore_{storage}"));
-        let repo = backed_up(&app, &root, storage).await;
-        assert_eq!(notes(&app, &repo).await, ["kept", "lost"]);
-        let (_, since) = request(&app, "GET", &format!("/repos/{repo}/log/since"), None).await;
-        let head = since["head"].as_i64().unwrap();
+    let root = temp_dir("restore");
+    let repo = backed_up(&app, &root).await;
+    assert_eq!(notes(&app, &repo).await, ["kept", "lost"]);
+    let (_, since) = request(&app, "GET", &format!("/repos/{repo}/log/since"), None).await;
+    let head = since["head"].as_i64().unwrap();
 
-        let (status, body) = request(&app, "POST", &format!("/repos/{repo}/restore"), None).await;
-        assert_eq!(status, StatusCode::OK, "{body}");
-        assert_eq!(body["repo_uuid"], json!(repo));
-        assert!(body["backup"]["created_at_ms"].as_i64().is_some(), "{body}");
-        assert!(body["old_store"].as_str().unwrap().contains("pre-restore-"), "{body}");
-        assert_eq!(notes(&app, &repo).await, ["kept"], "{storage}");
+    let (status, body) = request(&app, "POST", &format!("/repos/{repo}/restore"), None).await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    assert_eq!(body["repo_uuid"], json!(repo));
+    assert!(body["backup"]["created_at_ms"].as_i64().is_some(), "{body}");
+    assert!(body["old_store"].as_str().unwrap().contains("pre-restore-"), "{body}");
+    assert_eq!(notes(&app, &repo).await, ["kept"]);
 
-        let (_, since) =
-            request(&app, "GET", &format!("/repos/{repo}/log/since?op={head}"), None).await;
-        assert_ne!(since["head"].as_i64(), Some(head), "{since}");
-        assert_eq!(since["operations"], json!([]), "{since}");
-    }
+    let (_, since) =
+        request(&app, "GET", &format!("/repos/{repo}/log/since?op={head}"), None).await;
+    assert_ne!(since["head"].as_i64(), Some(head), "{since}");
+    assert_eq!(since["operations"], json!([]), "{since}");
 }
 
 /// `POST /repos/restore` restores a repository named by its path — here one
@@ -351,7 +261,7 @@ async fn an_unloadable_repository_is_restored_by_its_path() {
     let state = std::sync::Arc::new(AppState::new());
     let app = routes::build(state.clone());
     let root = temp_dir("restore_path");
-    let repo = backed_up(&app, &root, "kv").await;
+    let repo = backed_up(&app, &root).await;
     let (status, body) = request(&app, "POST", &format!("/repos/{repo}/unload"), None).await;
     assert_eq!(status, StatusCode::OK, "{body}");
     std::fs::remove_dir_all(root.join(".metafolder/internal/kv")).unwrap();
@@ -374,7 +284,7 @@ async fn a_loaded_repository_is_restored_by_its_path_too() {
     let state = std::sync::Arc::new(AppState::new());
     let app = routes::build(state.clone());
     let root = temp_dir("restore_loaded_path");
-    let repo = backed_up(&app, &root, "sqlite").await;
+    let repo = backed_up(&app, &root).await;
     let (status, body) =
         request(&app, "POST", "/repos/restore", Some(json!({"root": root.to_str().unwrap()})))
             .await;
@@ -387,13 +297,8 @@ async fn a_restore_names_its_errors() {
     let state = std::sync::Arc::new(AppState::new());
     let app = routes::build(state.clone());
     let root = temp_dir("restore_errors");
-    let (status, body) = request(
-        &app,
-        "POST",
-        "/repos/init",
-        Some(json!({"root": root.to_str().unwrap(), "storage": "kv"})),
-    )
-    .await;
+    let (status, body) =
+        request(&app, "POST", "/repos/init", Some(json!({"root": root.to_str().unwrap()}))).await;
     assert_eq!(status, StatusCode::OK, "{body}");
     let repo = body["repo_uuid"].as_str().unwrap().to_string();
     let (status, body) = request(&app, "POST", &format!("/repos/{repo}/restore"), None).await;

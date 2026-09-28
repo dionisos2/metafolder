@@ -425,7 +425,7 @@ async fn build_repo(url: &str, dir: &Path, label: &str) -> Result<DataRepo> {
     let recon = t.elapsed();
 
     let total = api_query(url, repo, is_present("mfr_path")).await?.len();
-    let db_bytes = std::fs::metadata(dir.join(".metafolder").join("internal").join("db.sqlite"))
+    let db_bytes = std::fs::metadata(dir.join(".metafolder/internal/kv/data.mdb"))
         .map(|m| m.len())
         .unwrap_or(0);
     println!(
@@ -640,15 +640,6 @@ async fn main() -> Result<()> {
             "--no-history" => opts.no_history = true,
             "--report" => opts.report = true,
             "--filter" => opts.filter = Some(it.next().context("--filter needs a prefix")?),
-            "--storage" => {
-                use metafolder_daemon::config::Storage;
-                opts.storages = match it.next().as_deref() {
-                    Some("kv") => vec![Storage::Kv],
-                    Some("sqlite") => vec![Storage::Sqlite],
-                    Some("both") => vec![Storage::Kv, Storage::Sqlite],
-                    _ => anyhow::bail!("--storage needs kv, sqlite or both"),
-                }
-            }
             "--tolerance" => {
                 opts.tolerance =
                     it.next().context("--tolerance needs a fraction")?.parse::<f64>()?

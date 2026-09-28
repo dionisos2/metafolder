@@ -1,8 +1,6 @@
 pub mod backup;
 pub mod config;
-pub mod convert;
 pub mod daemon_config;
-pub mod db;
 pub mod diagnostics;
 pub mod duplicates;
 pub mod eligibility;
@@ -30,6 +28,7 @@ pub mod repo;
 pub mod reserved;
 pub mod revert;
 pub mod routes;
+pub mod rows;
 pub mod schema;
 pub mod similarity;
 pub mod state;

@@ -15,7 +15,6 @@
 
 pub mod engines;
 pub mod kv;
-pub mod sqlcost;
 
 /// The two watch sources a repository can run on (spec-file-tracking "Watch
 /// sources and regimes"): the inotify source, and the fanotify broker

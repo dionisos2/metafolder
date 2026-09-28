@@ -283,9 +283,6 @@ enum RepoCommand {
         /// Leave the new root's mf_ignore set empty
         #[arg(long = "no-ignore")]
         no_ignore: bool,
-        /// The storage backend: kv (the daemon's default) or sqlite
-        #[arg(long, value_parser = ["kv", "sqlite"])]
-        storage: Option<String>,
     },
     /// Load an existing repository, wait for its warmup and print its UUID
     Load {
@@ -299,22 +296,10 @@ enum RepoCommand {
     },
     /// Unload the selected repository (stops its watcher, releases its DB lock)
     Unload,
-    /// Convert the selected repository to another storage backend, in place
-    ///
-    /// The daemon unloads it, copies everything (data and history) into the
-    /// new store, verifies the copy, switches, and loads it back; the old
-    /// store is set aside under .metafolder/internal/ (delete it once the
-    /// repository is known to work).
-    Convert {
-        /// The backend to convert to
-        #[arg(long, value_parser = ["kv", "sqlite"])]
-        to: String,
-    },
     /// Check that the selected repository's store holds together
     ///
-    /// On the key-value store: its indexes against a rebuild from its data;
-    /// on SQLite: its integrity check. Exits 1 when a problem is found —
-    /// `mf repo reindex` repairs what is derived.
+    /// Its indexes against a rebuild from its data. Exits 1 when a problem is
+    /// found — `mf repo reindex` repairs what is derived.
     Check,
     /// Rebuild what the selected repository derives from its data (its
     /// indexes)
@@ -1201,14 +1186,13 @@ fn dispatch(ctx: &Ctx, command: Command) -> CmdResult {
     match command {
         Command::Repo { command } => match command.unwrap_or(RepoCommand::List { all: false }) {
             RepoCommand::List { all } => commands::repos(ctx, all),
-            RepoCommand::Init { root, metafolder, ignore, no_ignore, storage } => {
-                commands::init(ctx, &root, metafolder.as_deref(), ignore, no_ignore, storage)
+            RepoCommand::Init { root, metafolder, ignore, no_ignore } => {
+                commands::init(ctx, &root, metafolder.as_deref(), ignore, no_ignore)
             }
             RepoCommand::Load { root, metafolder, no_wait } => {
                 commands::load(ctx, root.as_deref(), metafolder.as_deref(), no_wait)
             }
             RepoCommand::Unload => commands::unload(ctx),
-            RepoCommand::Convert { to } => commands::convert(ctx, &to),
             RepoCommand::Check => commands::check_repo(ctx),
             RepoCommand::Reindex => commands::reindex_repo(ctx),
             RepoCommand::Backup { to } => commands::backup_repo(ctx, to.as_deref()),

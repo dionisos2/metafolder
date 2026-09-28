@@ -16,8 +16,8 @@ use anyhow::Result;
 use metafolder_core::metarecord::Field;
 use uuid::Uuid;
 
-use crate::db::FieldRow;
 use crate::log::{OpRow, OpType, Writer};
+use crate::rows::FieldRow;
 use crate::store::Log;
 
 /// The cell an operation writes: one field of an entity, or the whole entity

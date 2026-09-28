@@ -5,26 +5,24 @@
 //! by navigation); `Log` is the event log. The questions a query answers are
 //! not here: they belong to the index.
 //!
-//! SQLite is the one backend today, implemented directly on
-//! `rusqlite::Connection` (a transaction dereferences to one). The traits grow
-//! as the modules that still carry a connection move onto them.
+//! The key-value store (`crate::kvstore`, LMDB) is the one backend; the traits
+//! are what a second one would implement (`tests/store_contract.rs`).
 
 use std::collections::HashMap;
 
-use anyhow::{Context, Result};
+use anyhow::Result;
 use metafolder_core::metarecord::{Field, MetaRecord, TreeName, Value};
-use rusqlite::{params, Connection, Transaction};
 use uuid::Uuid;
 
-use crate::db::{self, DuplicateGroup, FieldRow, OrphanCandidate, StoredHashes, TreeRow};
-use crate::log::{self, Delta, OpRow, OpType, Retention};
+use crate::log::{Delta, OpRow, OpType, Retention};
+use crate::rows::{DuplicateGroup, FieldRow, OrphanCandidate, StoredHashes, TreeRow};
 
-/// Implements `Rows` and `Log` for a type holding a SQLite connection, by
-/// handing every call to the `Connection` implementation.
-macro_rules! forward_to_connection {
+/// Implements `Rows`, `Log` and `Questions` for a type holding a store, by
+/// handing every call to the store it holds.
+macro_rules! forward_to_store {
     ($ty:ty, |$me:ident| $conn:expr) => {
-        forward_to_connection!(@rows_log $ty, |$me| $conn);
-        forward_to_connection!(@questions $ty, |$me| $conn);
+        forward_to_store!(@rows_log $ty, |$me| $conn);
+        forward_to_store!(@questions $ty, |$me| $conn);
     };
     (@rows_log $ty:ty, |$me:ident| $conn:expr) => {
         impl Rows for $ty {
@@ -587,13 +585,13 @@ pub mod derive {
     use uuid::Uuid;
 
     use super::Rows;
-    use crate::db::{self, DuplicateGroup, FieldRow, OrphanCandidate, StoredHashes};
+    use crate::rows::{self, DuplicateGroup, FieldRow, OrphanCandidate, StoredHashes};
 
     fn type_of(v: &Value) -> &'static str {
-        db::encode_value(v).value_type
+        rows::encode_value(v).value_type
     }
     fn int_of(v: &Value) -> Option<i64> {
-        db::encode_value(v).int
+        rows::encode_value(v).int
     }
     fn text_of(v: &Value) -> Option<String> {
         match v {
@@ -816,61 +814,6 @@ pub mod derive {
     }
 }
 
-/// The SQLite answers: the indexed queries of `db.rs` where there is one.
-impl Questions for Connection {
-    fn holding(&self, name: &str, value: &Value) -> Result<Vec<Uuid>> {
-        match value {
-            Value::Bool(b) => db::metarecords_with_bool(self, name, *b),
-            Value::Nothing => db::metarecords_with_absent_field(self, name),
-            other => derive::holding(self, name, other),
-        }
-    }
-    fn string_owners(&self, name: &str) -> Result<Vec<(Uuid, String)>> {
-        db::string_field_owners(self, name)
-    }
-    fn ref_map(&self, name: &str) -> Result<HashMap<Uuid, Uuid>> {
-        db::ref_field_map(self, name)
-    }
-    fn hash_cache(&self) -> Result<HashMap<Uuid, StoredHashes>> {
-        db::hash_cache(self)
-    }
-    fn tracked_files_with_size(&self) -> Result<Vec<(Uuid, i64)>> {
-        db::tracked_files_with_size(self)
-    }
-    fn duplicate_groups(&self) -> Result<HashMap<(i64, String), DuplicateGroup>> {
-        db::duplicate_groups(self)
-    }
-    fn duplicate_group_members(&self, group: Uuid) -> Result<Vec<Uuid>> {
-        db::duplicate_group_members(self, group)
-    }
-    fn hashed_orphans(&self) -> Result<Vec<OrphanCandidate>> {
-        db::hashed_orphans(self)
-    }
-    fn wrong_type(&self, field: &str, allowed: &str, limit: i64) -> Result<Vec<Uuid>> {
-        db::uuids_field_wrong_type(self, field, allowed, limit)
-    }
-    fn count_over(&self, field: &str, max: i64, limit: i64) -> Result<Vec<Uuid>> {
-        db::uuids_field_count_over(self, field, max, limit)
-    }
-    fn count_under(&self, field: &str, min: i64, limit: i64) -> Result<Vec<Uuid>> {
-        db::uuids_field_count_under(self, field, min, limit)
-    }
-    fn missing(&self, field: &str, limit: i64) -> Result<Vec<Uuid>> {
-        db::uuids_missing_field(self, field, limit)
-    }
-    fn typed_missing(&self, types: &[String], field: &str, limit: i64) -> Result<Vec<Uuid>> {
-        db::uuids_typed_missing_field(self, types, field, limit)
-    }
-}
-
-/// A SQLite store answering every [`Questions`] with its derived default —
-/// what the contract test holds the SQLite overrides to.
-pub struct Derived<'a>(pub &'a Connection);
-
-forward_to_connection!(@rows_log Derived<'_>, |d| d.0);
-
-impl Questions for Derived<'_> {}
-
 /// One operation a write transaction appends to the log.
 pub struct NewOp {
     pub op_type: OpType,
@@ -943,12 +886,6 @@ pub trait WriteTxn: Store {
     fn raise_counters(&self, counters: Counters) -> Result<()>;
 
     fn commit(self: Box<Self>) -> Result<()>;
-
-    /// The SQLite connection underneath, for the callers that still read
-    /// through it. Transitional: they move onto the traits, and this goes.
-    fn as_sqlite(&self) -> Option<&Connection> {
-        None
-    }
 }
 
 /// The next id each of a store's counters hands out: rows, operations,
@@ -963,21 +900,6 @@ pub struct Counters {
 /// Opens write transactions.
 pub trait Begin {
     fn begin_write(&mut self) -> Result<Box<dyn WriteTxn + '_>>;
-    /// Returns the space deleted data held to the filesystem, when the
-    /// backend keeps it (SQLite's `VACUUM`); nothing to do by default.
-    fn compact(&mut self) -> Result<()> {
-        Ok(())
-    }
-    /// The SQLite connection underneath, when there is one — transitional,
-    /// for the tests (and the few callers) still reading through SQL.
-    fn as_sqlite(&self) -> Option<&Connection> {
-        None
-    }
-    /// Something that aborts the statement this database is running, from
-    /// another thread (a task's Stop); `None` when there is nothing to abort.
-    fn interrupter(&self) -> Option<Box<dyn Fn() + Send + Sync>> {
-        None
-    }
     /// What in the store no longer holds together, one line each — derived
     /// data differing from what its primary data derives, a damaged page;
     /// empty when healthy (`mf repo check`, spec-storage increment 5).
@@ -986,7 +908,7 @@ pub trait Begin {
     /// (`mf repo reindex`).
     fn reindex(&mut self) -> Result<()>;
     /// Writes a consistent copy of the store into the directory `dir`, as
-    /// the store's own file layout (`db.sqlite`, or `kv/`) — taken while the
+    /// the store's own file layout (`kv/`) — taken while the
     /// store stays open (`mf repo backup`, spec-storage increment 5).
     fn backup_to(&self, dir: &std::path::Path) -> Result<()>;
 }
@@ -1020,105 +942,12 @@ pub trait Database: Begin + Store {}
 
 impl<T: Begin + Store + ?Sized> Database for T {}
 
-impl Begin for Connection {
-    fn begin_write(&mut self) -> Result<Box<dyn WriteTxn + '_>> {
-        Ok(Box::new(SqliteTxn(self.transaction()?)))
-    }
-    fn compact(&mut self) -> Result<()> {
-        self.execute_batch("VACUUM; PRAGMA wal_checkpoint(TRUNCATE);")?;
-        Ok(())
-    }
-    fn as_sqlite(&self) -> Option<&Connection> {
-        Some(self)
-    }
-    fn interrupter(&self) -> Option<Box<dyn Fn() + Send + Sync>> {
-        let handle = self.get_interrupt_handle();
-        Some(Box::new(move || handle.interrupt()))
-    }
-    fn check(&self) -> Result<Vec<String>> {
-        // SQLite's own consistency check: pages, and every index against
-        // its table. One row, "ok", when healthy.
-        let mut stmt = self.prepare("PRAGMA integrity_check")?;
-        let rows: Vec<String> =
-            stmt.query_map([], |r| r.get(0))?.collect::<rusqlite::Result<_>>()?;
-        Ok(rows.into_iter().filter(|r| r != "ok").collect())
-    }
-    fn reindex(&mut self) -> Result<()> {
-        self.execute_batch("REINDEX")?;
-        Ok(())
-    }
-    fn backup_to(&self, dir: &std::path::Path) -> Result<()> {
-        // A transactional copy into a fresh file, compacted on the way.
-        let path = dir.join(crate::repo::DB_FILE);
-        self.execute("VACUUM INTO ?1", params![path.to_string_lossy()])?;
-        Ok(())
-    }
-}
-
-/// A SQLite write transaction.
-pub struct SqliteTxn<'c>(Transaction<'c>);
-
-/// Stays under SQLITE_MAX_VARIABLE_NUMBER (32766 for the bundled SQLite).
-const MAX_PARAMS: usize = 16_000;
-
-fn bulk_insert(
-    tx: &Transaction<'_>,
-    insert_sql: &str,
-    row_width: usize,
-    rows: &[Vec<rusqlite::types::Value>],
-) -> Result<()> {
-    let rows_per_chunk = (MAX_PARAMS / row_width).max(1);
-    let row_placeholder = format!("({})", vec!["?"; row_width].join(", "));
-    for chunk in rows.chunks(rows_per_chunk) {
-        let placeholders = vec![row_placeholder.as_str(); chunk.len()].join(", ");
-        let sql = format!("{insert_sql} VALUES {placeholders}");
-        tx.execute(&sql, rusqlite::params_from_iter(chunk.iter().flatten()))?;
-    }
-    Ok(())
-}
-
-forward_to_connection!(SqliteTxn<'_>, |t| &*t.0);
-forward_to_connection!(std::sync::MutexGuard<'_, Connection>, |g| &**g);
-
-impl Begin for std::sync::MutexGuard<'_, Connection> {
-    fn begin_write(&mut self) -> Result<Box<dyn WriteTxn + '_>> {
-        Begin::begin_write(&mut **self)
-    }
-    fn compact(&mut self) -> Result<()> {
-        Begin::compact(&mut **self)
-    }
-    fn as_sqlite(&self) -> Option<&Connection> {
-        Some(self)
-    }
-    fn interrupter(&self) -> Option<Box<dyn Fn() + Send + Sync>> {
-        Begin::interrupter(&**self)
-    }
-    fn check(&self) -> Result<Vec<String>> {
-        Begin::check(&**self)
-    }
-    fn reindex(&mut self) -> Result<()> {
-        Begin::reindex(&mut **self)
-    }
-    fn backup_to(&self, dir: &std::path::Path) -> Result<()> {
-        Begin::backup_to(&**self, dir)
-    }
-}
-
-forward_to_connection!(Handle, |b| &**b);
-forward_to_connection!(std::sync::MutexGuard<'_, Handle>, |g| &***g);
+forward_to_store!(Handle, |b| &**b);
+forward_to_store!(std::sync::MutexGuard<'_, Handle>, |g| &***g);
 
 impl Begin for Handle {
     fn begin_write(&mut self) -> Result<Box<dyn WriteTxn + '_>> {
         (**self).begin_write()
-    }
-    fn compact(&mut self) -> Result<()> {
-        (**self).compact()
-    }
-    fn as_sqlite(&self) -> Option<&Connection> {
-        (**self).as_sqlite()
-    }
-    fn interrupter(&self) -> Option<Box<dyn Fn() + Send + Sync>> {
-        (**self).interrupter()
     }
     fn check(&self) -> Result<Vec<String>> {
         (**self).check()
@@ -1135,15 +964,6 @@ impl Begin for std::sync::MutexGuard<'_, Handle> {
     fn begin_write(&mut self) -> Result<Box<dyn WriteTxn + '_>> {
         (***self).begin_write()
     }
-    fn compact(&mut self) -> Result<()> {
-        (***self).compact()
-    }
-    fn as_sqlite(&self) -> Option<&Connection> {
-        (***self).as_sqlite()
-    }
-    fn interrupter(&self) -> Option<Box<dyn Fn() + Send + Sync>> {
-        (***self).interrupter()
-    }
     fn check(&self) -> Result<Vec<String>> {
         (***self).check()
     }
@@ -1152,508 +972,5 @@ impl Begin for std::sync::MutexGuard<'_, Handle> {
     }
     fn backup_to(&self, dir: &std::path::Path) -> Result<()> {
         (***self).backup_to(dir)
-    }
-}
-
-impl WriteTxn for SqliteTxn<'_> {
-    fn create_metarecord(&self, uuid: Uuid, version: u64) -> Result<()> {
-        self.0
-            .prepare_cached("INSERT INTO metarecord (uuid, version) VALUES (?1, ?2)")?
-            .execute(params![db::uuid_to_bytes(uuid), version as i64])?;
-        Ok(())
-    }
-    fn remove_metarecord(&self, uuid: Uuid) -> Result<()> {
-        // The rows go with it (`ON DELETE CASCADE`).
-        self.0
-            .execute("DELETE FROM metarecord WHERE uuid = ?1", params![db::uuid_to_bytes(uuid)])?;
-        Ok(())
-    }
-    fn set_version(&self, uuid: Uuid, version: u64) -> Result<()> {
-        self.0
-            .prepare_cached("UPDATE metarecord SET version = ?1 WHERE uuid = ?2")?
-            .execute(params![version as i64, db::uuid_to_bytes(uuid)])?;
-        Ok(())
-    }
-    fn insert_row(&self, uuid: Uuid, name: &str, value: &Value, id: Option<i64>) -> Result<i64> {
-        db::insert_field_row(&self.0, uuid, name, value, id)
-    }
-    fn delete_row(&self, id: i64) -> Result<()> {
-        self.0.execute("DELETE FROM field WHERE id = ?1", params![id])?;
-        Ok(())
-    }
-    fn delete_rows(&self, uuid: Uuid, name: Option<&str>) -> Result<()> {
-        match name {
-            Some(name) => self
-                .0
-                .prepare_cached("DELETE FROM field WHERE metarecord_uuid = ?1 AND field_name = ?2")?
-                .execute(params![db::uuid_to_bytes(uuid), name])?,
-            None => self
-                .0
-                .prepare_cached("DELETE FROM field WHERE metarecord_uuid = ?1")?
-                .execute(params![db::uuid_to_bytes(uuid)])?,
-        };
-        Ok(())
-    }
-    fn begin_revision(&self, label: Option<&str>, timestamp_ms: i64) -> Result<i64> {
-        self.0.execute(
-            "INSERT INTO revision (timestamp, label) VALUES (?1, ?2)",
-            params![timestamp_ms, label],
-        )?;
-        Ok(self.0.last_insert_rowid())
-    }
-    fn set_revision_origin(&self, rev: i64, origin: &str) -> Result<()> {
-        self.0.execute("UPDATE revision SET origin = ?1 WHERE id = ?2", params![origin, rev])?;
-        Ok(())
-    }
-    fn drop_revision(&self, rev: i64) -> Result<()> {
-        self.0.execute("DELETE FROM revision WHERE id = ?1", params![rev])?;
-        Ok(())
-    }
-    fn set_revision_label(&self, rev: i64, label: Option<&str>) -> Result<bool> {
-        let changed =
-            self.0.execute("UPDATE revision SET label = ?1 WHERE id = ?2", params![label, rev])?;
-        Ok(changed > 0)
-    }
-    /// Operation ids are assigned up front from `sqlite_sequence` so the parent
-    /// chain is known before inserting; explicit-id inserts into an
-    /// AUTOINCREMENT table keep the sequence in step, preserving the
-    /// never-reused-id guarantee. All rows go in as a few multi-row inserts
-    /// (spec-event-log "Normal write flow").
-    fn append_ops(
-        &self,
-        rev: i64,
-        parent: Option<i64>,
-        first_seq: i64,
-        ops: &[NewOp],
-    ) -> Result<i64> {
-        use rusqlite::types::Value as Sql;
-        use rusqlite::OptionalExtension as _;
-
-        let last_id: Option<i64> = self
-            .0
-            .query_row("SELECT seq FROM sqlite_sequence WHERE name = 'operation'", [], |r| r.get(0))
-            .optional()?;
-        let base = last_id.unwrap_or(0) + 1;
-        let mut op_rows: Vec<Vec<Sql>> = Vec::with_capacity(ops.len());
-        let mut snapshot_rows: Vec<Vec<Sql>> = Vec::new();
-        for (i, op) in ops.iter().enumerate() {
-            let op_id = base + i as i64;
-            let parent = if i == 0 { parent } else { Some(op_id - 1) };
-            op_rows.push(vec![
-                Sql::Integer(op_id),
-                parent.map_or(Sql::Null, Sql::Integer),
-                Sql::Integer(rev),
-                Sql::Integer(first_seq + i as i64),
-                Sql::Text(op.op_type.as_str().to_string()),
-                Sql::Blob(db::uuid_to_bytes(op.entity)),
-                op.version_before.map_or(Sql::Null, |v| Sql::Integer(v as i64)),
-                op.version_after.map_or(Sql::Null, |v| Sql::Integer(v as i64)),
-                op.field_name.clone().map_or(Sql::Null, Sql::Text),
-                op.reverts_op_id.map_or(Sql::Null, Sql::Integer),
-            ]);
-            for (is_new, rows) in [(0, &op.before), (1, &op.after)] {
-                for row in rows {
-                    let e = db::encode_value(&row.value);
-                    snapshot_rows.push(vec![
-                        Sql::Integer(op_id),
-                        Sql::Integer(is_new),
-                        Sql::Integer(row.id),
-                        Sql::Text(row.name.clone()),
-                        Sql::Text(e.value_type.to_string()),
-                        e.text.map_or(Sql::Null, Sql::Text),
-                        e.int.map_or(Sql::Null, Sql::Integer),
-                        e.real.map_or(Sql::Null, Sql::Real),
-                        e.uuid.map_or(Sql::Null, Sql::Blob),
-                        e.ref_repo.map_or(Sql::Null, Sql::Blob),
-                        e.name.map_or(Sql::Null, Sql::Text),
-                        e.name_bytes.map_or(Sql::Null, Sql::Blob),
-                    ]);
-                }
-            }
-        }
-        bulk_insert(
-            &self.0,
-            "INSERT INTO operation
-                 (id, parent_id, rev_id, seq, op_type, entity_uuid,
-                  entity_version_before, entity_version_after, field_name,
-                  reverts_op_id)",
-            10,
-            &op_rows,
-        )?;
-        bulk_insert(
-            &self.0,
-            "INSERT INTO op_snapshot
-                 (op_id, is_new, field_id, field_name, value_type, value_text,
-                  value_int, value_real, value_uuid, value_ref_repo, value_name,
-                  value_name_bytes)",
-            12,
-            &snapshot_rows,
-        )?;
-        Ok(base + ops.len() as i64 - 1)
-    }
-    fn set_head(&self, op: Option<i64>) -> Result<()> {
-        self.0.execute("UPDATE log_head SET op_id = ?1 WHERE singleton = 1", params![op])?;
-        Ok(())
-    }
-    fn trim(&self, retention: Retention, head: i64) -> Result<usize> {
-        log::trim(&self.0, retention, head)
-    }
-    fn clear_metarecords(&self) -> Result<()> {
-        self.0.execute("DELETE FROM metarecord", [])?;
-        Ok(())
-    }
-    fn detach_op(&self, op: i64) -> Result<()> {
-        self.0.execute("UPDATE operation SET parent_id = NULL WHERE id = ?1", params![op])?;
-        Ok(())
-    }
-    fn delete_ops(&self, ids: &[i64]) -> Result<()> {
-        let mut stmt = self.0.prepare_cached("DELETE FROM operation WHERE id = ?1")?;
-        for id in ids {
-            stmt.execute(params![id])?;
-        }
-        Ok(())
-    }
-    fn drop_empty_revisions(&self) -> Result<()> {
-        self.0.execute(
-            "DELETE FROM revision WHERE id NOT IN (SELECT DISTINCT rev_id FROM operation)",
-            [],
-        )?;
-        Ok(())
-    }
-    fn queue_restoration(&self, restoration: &Restoration) -> Result<()> {
-        let hex = |u: &Uuid| u.as_simple().to_string();
-        match restoration {
-            Restoration::SetPath { entity, parent, name } => self.0.execute(
-                "INSERT INTO pending_operation (op_type, path, from_path, to_path)
-                 VALUES ('restore_set_path', ?1, ?2, ?3)",
-                params![
-                    hex(entity),
-                    parent.as_ref().map(hex).unwrap_or_default(),
-                    name.display().as_ref()
-                ],
-            )?,
-            Restoration::ClearPath { entity } => self.0.execute(
-                "INSERT INTO pending_operation (op_type, path) VALUES ('restore_clear_path', ?1)",
-                params![hex(entity)],
-            )?,
-            Restoration::ClearHashes { entity } => self.0.execute(
-                "INSERT INTO pending_operation (op_type, path) VALUES ('restore_clear_hashes', ?1)",
-                params![hex(entity)],
-            )?,
-        };
-        Ok(())
-    }
-    fn drop_restorations(&self, up_to: i64) -> Result<()> {
-        self.0.execute(
-            "DELETE FROM pending_operation WHERE id <= ?1 AND op_type LIKE 'restore_%'",
-            params![up_to],
-        )?;
-        Ok(())
-    }
-    fn import_revision(&self, id: i64, meta: &RevisionMeta) -> Result<()> {
-        self.0.execute(
-            "INSERT INTO revision (id, timestamp, label, origin) VALUES (?1, ?2, ?3, ?4)",
-            params![id, meta.timestamp, meta.label, meta.origin],
-        )?;
-        Ok(())
-    }
-    fn import_op(&self, op: &OpRow, before: &[FieldRow], after: &[FieldRow]) -> Result<()> {
-        self.0
-            .prepare_cached(
-                "INSERT INTO operation
-                     (id, parent_id, rev_id, seq, op_type, entity_uuid,
-                      entity_version_before, entity_version_after, field_name,
-                      reverts_op_id)
-                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)",
-            )?
-            .execute(params![
-                op.id,
-                op.parent_id,
-                op.rev_id,
-                op.seq,
-                op.op_type,
-                db::uuid_to_bytes(op.entity_uuid),
-                op.entity_version_before.map(|v| v as i64),
-                op.entity_version_after.map(|v| v as i64),
-                op.field_name,
-                op.reverts_op_id,
-            ])?;
-        let mut stmt = self.0.prepare_cached(
-            "INSERT INTO op_snapshot
-                 (op_id, is_new, field_id, field_name, value_type, value_text,
-                  value_int, value_real, value_uuid, value_ref_repo, value_name,
-                  value_name_bytes)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12)",
-        )?;
-        for (is_new, rows) in [(0, before), (1, after)] {
-            for row in rows {
-                let e = db::encode_value(&row.value);
-                stmt.execute(params![
-                    op.id,
-                    is_new,
-                    row.id,
-                    row.name,
-                    e.value_type,
-                    e.text,
-                    e.int,
-                    e.real,
-                    e.uuid,
-                    e.ref_repo,
-                    e.name,
-                    e.name_bytes,
-                ])?;
-            }
-        }
-        Ok(())
-    }
-    fn raise_counters(&self, counters: Counters) -> Result<()> {
-        for (table, next) in [
-            ("field", counters.next_row),
-            ("operation", counters.next_op),
-            ("revision", counters.next_rev),
-        ] {
-            let changed = self.0.execute(
-                "UPDATE sqlite_sequence SET seq = MAX(seq, ?2) WHERE name = ?1",
-                params![table, next - 1],
-            )?;
-            if changed == 0 && next > 1 {
-                self.0.execute(
-                    "INSERT INTO sqlite_sequence (name, seq) VALUES (?1, ?2)",
-                    params![table, next - 1],
-                )?;
-            }
-        }
-        Ok(())
-    }
-    fn commit(self: Box<Self>) -> Result<()> {
-        self.0.commit().context("Failed to commit write transaction")
-    }
-    fn as_sqlite(&self) -> Option<&Connection> {
-        Some(&self.0)
-    }
-}
-
-impl Rows for Connection {
-    fn version(&self, uuid: Uuid) -> Result<Option<u64>> {
-        db::get_version(self, uuid)
-    }
-    fn rows(&self, uuid: Uuid) -> Result<Vec<FieldRow>> {
-        db::get_field_rows(self, uuid)
-    }
-    fn rows_named(&self, uuid: Uuid, name: &str) -> Result<Vec<FieldRow>> {
-        db::get_field_rows_named(self, uuid, name)
-    }
-    fn rows_for(&self, uuids: &[Uuid]) -> Result<HashMap<Uuid, Vec<FieldRow>>> {
-        db::field_rows_for(self, uuids)
-    }
-    fn versions_for(&self, uuids: &[Uuid]) -> Result<HashMap<Uuid, u64>> {
-        db::versions_for(self, uuids)
-    }
-    fn metarecord_count(&self) -> Result<usize> {
-        db::count_metarecords(self)
-    }
-    fn row(&self, id: i64) -> Result<Option<FieldRow>> {
-        db::get_field_row_by_id(self, id)
-    }
-    fn owner_of_row(&self, id: i64) -> Result<Option<Uuid>> {
-        db::metarecord_of_field(self, id)
-    }
-    fn metarecords(&self) -> Result<Vec<Uuid>> {
-        db::list_entries(self)
-    }
-    fn field_rows(&self, name: &str) -> Result<Vec<(Uuid, FieldRow)>> {
-        db::rows_of_field(self, name)
-    }
-    fn for_each_row(&self, f: &mut dyn FnMut(Uuid, FieldRow) -> Result<()>) -> Result<()> {
-        db::for_each_field_row(self, f)
-    }
-    fn max_row_id(&self) -> Result<i64> {
-        db::max_field_id(self)
-    }
-    fn value_types(&self, name: &str) -> Result<Vec<String>> {
-        db::distinct_value_types(self, name)
-    }
-    fn holders(&self, name: &str) -> Result<Vec<Uuid>> {
-        db::metarecords_with_field(self, name)
-    }
-    fn children(&self, field: &str, parent: Uuid) -> Result<Vec<(Uuid, String)>> {
-        db::tree_children(self, field, parent)
-    }
-    fn child_by_bytes(
-        &self,
-        field: &str,
-        parent: Option<Uuid>,
-        name: &[u8],
-    ) -> Result<Option<Uuid>> {
-        db::find_tree_child_by_bytes(self, field, parent, name)
-    }
-    fn child_by_text(
-        &self,
-        field: &str,
-        parent: Option<Uuid>,
-        name: &str,
-        nocase: bool,
-    ) -> Result<Option<Uuid>> {
-        db::find_tree_child_opts(self, field, parent, name, nocase)
-    }
-    fn forest(&self) -> Result<Vec<TreeRow>> {
-        db::load_tree_forest(self)
-    }
-}
-
-impl Log for Connection {
-    fn head(&self) -> Result<Option<i64>> {
-        db::current_head(self)
-    }
-    fn op(&self, id: i64) -> Result<Option<OpRow>> {
-        log::get_op(self, id)
-    }
-    fn snapshots(&self, op_id: i64, after: bool) -> Result<Vec<FieldRow>> {
-        log::snapshots(self, op_id, after as i64)
-    }
-    fn ops_until(&self, from: i64, until: i64, max: usize) -> Result<Delta> {
-        log::delta_until(self, from, until, max)
-    }
-    fn ancestry(&self, from: i64) -> Result<Vec<i64>> {
-        log::ancestry(self, from)
-    }
-    fn ancestry_ops(&self, from: i64, max: Option<usize>) -> Result<Vec<OpRow>> {
-        match max {
-            Some(max) => log::ancestry_ops_limited(self, from, max),
-            None => log::ancestry_ops(self, from),
-        }
-    }
-    fn all_ops(&self) -> Result<Vec<OpRow>> {
-        log::all_ops(self)
-    }
-    fn active_line(&self, head: i64) -> Result<Vec<OpRow>> {
-        log::active_line_ops(self, head)
-    }
-    fn has_children(&self, op: i64) -> Result<bool> {
-        log::has_children(self, op)
-    }
-    /// A few hundred ids per `IN (…)` (SQLite allows 32 766 parameters),
-    /// which keeps the prepared-statement cache useful on a large window.
-    fn revisions(&self, ids: &[i64]) -> Result<HashMap<i64, RevisionMeta>> {
-        const CHUNK: usize = 256;
-        let mut out = HashMap::with_capacity(ids.len());
-        for chunk in ids.chunks(CHUNK) {
-            let placeholders = std::iter::repeat_n("?", chunk.len()).collect::<Vec<_>>().join(",");
-            let mut stmt = self.prepare_cached(&format!(
-                "SELECT id, timestamp, label, origin FROM revision WHERE id IN ({placeholders})"
-            ))?;
-            let rows = stmt.query_map(rusqlite::params_from_iter(chunk.iter()), |r| {
-                Ok((r.get::<_, i64>(0)?, r.get(1)?, r.get(2)?, r.get(3)?))
-            })?;
-            for row in rows {
-                let (id, timestamp, label, origin) = row?;
-                out.insert(id, RevisionMeta { timestamp, label, origin });
-            }
-        }
-        Ok(out)
-    }
-    fn counts(&self) -> Result<(i64, i64)> {
-        let ops = self.query_row("SELECT COUNT(*) FROM operation", [], |r| r.get(0))?;
-        let revs = self.query_row("SELECT COUNT(*) FROM revision", [], |r| r.get(0))?;
-        Ok((ops, revs))
-    }
-    fn counters(&self) -> Result<Counters> {
-        use rusqlite::OptionalExtension as _;
-        // AUTOINCREMENT keeps the largest id ever handed out per table.
-        let next = |table: &str| -> Result<i64> {
-            let seq: Option<i64> = self
-                .query_row("SELECT seq FROM sqlite_sequence WHERE name = ?1", params![table], |r| {
-                    r.get(0)
-                })
-                .optional()?;
-            Ok(seq.unwrap_or(0) + 1)
-        };
-        Ok(Counters {
-            next_row: next("field")?,
-            next_op: next("operation")?,
-            next_rev: next("revision")?,
-        })
-    }
-    fn revision_ops(&self, rev: i64) -> Result<Vec<OpRow>> {
-        let ids: Vec<i64> = self
-            .prepare_cached("SELECT id FROM operation WHERE rev_id = ?1 ORDER BY seq, id")?
-            .query_map(params![rev], |r| r.get(0))?
-            .collect::<rusqlite::Result<_>>()?;
-        ids.into_iter()
-            .map(|id| {
-                log::get_op(self, id)?
-                    .ok_or_else(|| anyhow::anyhow!("operation {id} vanished from revision {rev}"))
-            })
-            .collect()
-    }
-    fn version_before_revision(&self, rev: i64, entity: Uuid) -> Result<Option<u64>> {
-        log::entity_version_before_revision(self, rev, entity)
-    }
-    fn ops_after(&self, op: i64) -> Result<Vec<OpRow>> {
-        log::ops_since(self, op)
-    }
-    fn ops_after_count(&self, op: i64) -> Result<i64> {
-        log::ops_since_count(self, op)
-    }
-    fn ancestor_at_or_before(&self, head: i64, timestamp_ms: i64) -> Result<Option<i64>> {
-        log::ancestor_where(self, head, "r.timestamp <= ?3", &timestamp_ms)
-    }
-    fn ancestor_labelled(&self, head: i64, label: &str) -> Result<Option<i64>> {
-        log::ancestor_where(self, head, "r.label = ?3", &label)
-    }
-    fn before_revision_of(&self, op: i64) -> Result<Option<i64>> {
-        Ok(self.query_row(
-            "SELECT parent_id FROM operation
-             WHERE rev_id = (SELECT rev_id FROM operation WHERE id = ?1)
-             ORDER BY seq LIMIT 1",
-            params![op],
-            |r| r.get(0),
-        )?)
-    }
-    /// Served by `idx_operation_entity (entity_uuid, id)`.
-    fn entity_ops_after(&self, entity: Uuid, after: i64) -> Result<Vec<OpRow>> {
-        let ids: Vec<i64> = self
-            .prepare_cached(
-                "SELECT id FROM operation WHERE entity_uuid = ?1 AND id > ?2 ORDER BY id",
-            )?
-            .query_map(params![db::uuid_to_bytes(entity), after], |r| r.get(0))?
-            .collect::<rusqlite::Result<_>>()?;
-        ids.into_iter()
-            .map(|id| {
-                log::get_op(self, id)?.ok_or_else(|| anyhow::anyhow!("operation {id} vanished"))
-            })
-            .collect()
-    }
-    fn restorations(&self) -> Result<Vec<(i64, Restoration)>> {
-        let mut stmt = self.prepare(
-            "SELECT id, op_type, path, from_path, to_path FROM pending_operation
-             WHERE op_type LIKE 'restore_%' ORDER BY id",
-        )?;
-        type Raw = (i64, String, Option<String>, Option<String>, Option<String>);
-        let raw: Vec<Raw> = stmt
-            .query_map([], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?, r.get(4)?)))?
-            .collect::<rusqlite::Result<_>>()?;
-        let parse = |s: &str| -> Result<Uuid> {
-            Uuid::parse_str(s).with_context(|| format!("invalid uuid in restoration op: {s}"))
-        };
-        raw.into_iter()
-            .map(|(id, op_type, path, from_path, to_path)| {
-                let entity = parse(path.as_deref().context("restoration op missing entity")?)?;
-                let r = match op_type.as_str() {
-                    "restore_set_path" => Restoration::SetPath {
-                        entity,
-                        parent: match from_path.as_deref() {
-                            Some(p) if !p.is_empty() => Some(parse(p)?),
-                            _ => None,
-                        },
-                        name: to_path.unwrap_or_default().into(),
-                    },
-                    "restore_clear_path" => Restoration::ClearPath { entity },
-                    "restore_clear_hashes" => Restoration::ClearHashes { entity },
-                    other => anyhow::bail!("unknown restoration op_type '{other}'"),
-                };
-                Ok((id, r))
-            })
-            .collect()
     }
 }

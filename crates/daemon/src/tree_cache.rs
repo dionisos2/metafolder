@@ -15,8 +15,8 @@ use uuid::Uuid;
 use metafolder_core::metarecord::TreeName;
 use metafolder_core::query::OsmProgress;
 
-use crate::db;
 use crate::log::{TreeOp, TreePos, MAX_TREE_DEPTH, UNKNOWN_ROW};
+use crate::rows;
 use crate::store::Rows;
 
 /// Separator joining the components of a *sort key* — the form a `tree_ref`
@@ -255,11 +255,11 @@ impl TreeCache {
     }
 
     /// Populates the cache from a forest already read out of the `field` table
-    /// (`db::TreeRow`s in `field.id` order), skipping the DB scan `populate`
+    /// (`rows::TreeRow`s in `field.id` order), skipping the DB scan `populate`
     /// does — used at load, where the index build's single pass over `field`
     /// collects them (see `RepoIndex::build_reported_collecting`). Replaces any
     /// current contents.
-    pub fn populate_from_forest(&mut self, rows: Vec<db::TreeRow>) {
+    pub fn populate_from_forest(&mut self, rows: Vec<rows::TreeRow>) {
         if !self.resident {
             self.clear();
             return;

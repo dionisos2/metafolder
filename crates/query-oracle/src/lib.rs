@@ -23,7 +23,6 @@ use uuid::Uuid;
 use metafolder_core::metarecord::{escaped_to_bytes, TreeName, Value};
 use metafolder_core::query::{osm_ordered_match, Aspect, FollowTarget, OsmMode, Query};
 
-use metafolder_daemon::db::FieldRow;
 use metafolder_daemon::error::ApiError;
 use metafolder_daemon::log::MAX_TREE_DEPTH;
 use metafolder_daemon::pagination::{self, Cursor};
@@ -32,6 +31,7 @@ use metafolder_daemon::query_validate::{
     check_query_size, too_wide_message, validate_query, validate_query_types,
     MAX_COMBINATOR_OPERANDS,
 };
+use metafolder_daemon::rows::FieldRow;
 use metafolder_daemon::store::Rows;
 use metafolder_daemon::tree_cache::PATH_KEY_SEP;
 

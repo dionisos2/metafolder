@@ -28,7 +28,7 @@
 use metafolder_core::metarecord::{MetaRecordId as Uuid, Value};
 use xxhash_rust::xxh3::Xxh3;
 
-use crate::db::{self, FieldRow};
+use crate::rows::{self, FieldRow};
 
 /// Width of a version in bits.
 pub const BITS: u32 = 53;
@@ -70,7 +70,7 @@ pub fn base(uuid: Uuid) -> u64 {
 /// changes the version. The row's `id` is deliberately *not* part of it: a row
 /// id is storage identity, not content.
 pub fn row(name: &str, value: &Value) -> u64 {
-    let e = db::encode_value(value);
+    let e = rows::encode_value(value);
     let mut h = Xxh3::new();
     feed(&mut h, b"field");
     feed(&mut h, name.as_bytes());

@@ -442,9 +442,8 @@ mod tests {
         )
         .unwrap();
 
-        let mut conn = crate::db::open_in_memory().unwrap();
-        crate::db::init_schema(&conn).unwrap();
-        let mk = |conn: &mut rusqlite::Connection, fields: Vec<Field>| -> Uuid {
+        let (mut conn, _dir) = crate::kvstore::test_store();
+        let mk = |conn: &mut crate::kvstore::KvStore, fields: Vec<Field>| -> Uuid {
             let mut w = Writer::begin(conn, None).unwrap();
             let m = w.create_metarecord(fields).unwrap();
             w.commit().unwrap();

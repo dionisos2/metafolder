@@ -183,14 +183,9 @@ impl RepoState {
         ));
         Self {
             conn: Mutex::new(opened.conn),
-            // A key-value repository keeps no forest in memory: its store
-            // answers (spec-storage increment 4 e).
-            cache: Mutex::new(match opened.config.storage {
-                crate::config::Storage::Kv => {
-                    TreeCache::new(opened.case_insensitive).without_forest()
-                }
-                crate::config::Storage::Sqlite => TreeCache::new(opened.case_insensitive),
-            }),
+            // No forest in memory: the store answers (spec-storage increment
+            // 4 e).
+            cache: Mutex::new(TreeCache::new(opened.case_insensitive).without_forest()),
             config: opened.config,
             name,
             metafolder_dir: opened.metafolder_dir,
@@ -261,7 +256,6 @@ impl RepoState {
             internal_dir: self.internal_dir(),
             created_at: self.config.created_at,
             system: self.config.system,
-            storage: self.config.storage,
         }
     }
 
@@ -765,7 +759,7 @@ impl RepoState {
             }
         };
         let conn = self.conn.lock_recover();
-        crate::backup::write_backup(&**conn, &self.metafolder_dir, &self.config, &dest)
+        crate::backup::write_backup(&**conn, &self.metafolder_dir, &dest)
             .map_err(|e| ApiError::internal(format!("backup failed: {e:#}")))
     }
 
@@ -789,7 +783,7 @@ impl RepoState {
             }
         }
         let conn = self.conn.lock_recover();
-        crate::backup::write_backup(&**conn, &self.metafolder_dir, &self.config, &dest)
+        crate::backup::write_backup(&**conn, &self.metafolder_dir, &dest)
             .map(Some)
             .map_err(|e| ApiError::internal(format!("automatic backup failed: {e:#}")))
     }
@@ -1078,8 +1072,6 @@ pub struct RepoInfo {
     /// A daemon-internal repository (spec-sync plan repo), hidden from the
     /// default `GET /repos` listing.
     pub system: bool,
-    /// The storage backend (`"kv"` / `"sqlite"`, spec-storage).
-    pub storage: crate::config::Storage,
 }
 
 impl AppState {
@@ -1109,21 +1101,7 @@ impl AppState {
         name: Option<&str>,
         system: bool,
     ) -> Result<Uuid, ApiError> {
-        self.init_repo_with(root, metafolder, name, system, None)
-    }
-
-    /// [`Self::init_repo`] on a chosen storage backend (`None`: the default,
-    /// [`crate::config::Storage::default_for_init`]).
-    pub fn init_repo_with(
-        &self,
-        root: &Path,
-        metafolder: Option<&Path>,
-        name: Option<&str>,
-        system: bool,
-        storage: Option<crate::config::Storage>,
-    ) -> Result<Uuid, ApiError> {
-        let storage = storage.unwrap_or_else(crate::config::Storage::default_for_init);
-        let opened = repo::init_repository_with(root, metafolder, name, system, storage)?;
+        let opened = repo::init_repository(root, metafolder, name, system)?;
         let uuid = opened.config.repo_uuid;
         self.ensure_name_available(&opened.config.name)?;
         // Seed the per-repo schema from the shipped default (best-effort),
@@ -1223,30 +1201,6 @@ impl AppState {
             drop(live);
             std::thread::sleep(std::time::Duration::from_secs(3600));
         });
-    }
-
-    /// Converts a loaded repository to another storage backend
-    /// (spec-storage increment 5): unloads it, waits until its store is
-    /// released, converts it on disk ([`crate::convert::convert_repository`])
-    /// and loads it back — on its old backend when the conversion failed,
-    /// which then changed nothing.
-    pub fn convert_repo(
-        &self,
-        repo_uuid: Uuid,
-        to: crate::config::Storage,
-    ) -> Result<crate::convert::Report, ApiError> {
-        let repo_state = self.repo(repo_uuid)?;
-        if repo_state.config.storage == to {
-            return Err(ApiError::bad_request(format!(
-                "the repository is already on {}",
-                storage_name(to)
-            )));
-        }
-        drop(repo_state);
-        let locator = self.release(repo_uuid)?;
-        let converted = crate::convert::convert_repository(locator.clone(), to);
-        self.reload(locator)?;
-        converted.map_err(|e| ApiError::internal(format!("conversion failed: {e:#}")))
     }
 
     /// Unloads a repository and waits until its store is released — a
@@ -1444,13 +1398,5 @@ impl AppState {
             repos.values().flat_map(|r| r.tasks.list()).collect();
         tasks.sort_by(|a, b| a.started_at.cmp(&b.started_at).then(a.id.cmp(&b.id)));
         tasks
-    }
-}
-
-/// A backend's name, as `config.json` spells it.
-fn storage_name(storage: crate::config::Storage) -> &'static str {
-    match storage {
-        crate::config::Storage::Sqlite => "sqlite",
-        crate::config::Storage::Kv => "kv",
     }
 }

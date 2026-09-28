@@ -2,13 +2,12 @@
 //! data comes from"): `benchmarks/bench_data*` are consume-only — the data
 //! bench inits them in place and needs them bare — so the suite measures a
 //! copy of each under `target/bench-data/`, its files hard-linked (no byte
-//! copied) and its repository built on the storage backend being measured.
+//! copied) and its repository built.
 
 use std::path::Path;
 use std::time::Instant;
 
 use anyhow::{Context, Result};
-use metafolder_daemon::config::Storage;
 use serde_json::json;
 use uuid::Uuid;
 
@@ -40,16 +39,10 @@ pub fn link_tree(src: &Path, dest: &Path) -> Result<usize> {
 }
 
 /// Builds (or reuses) the measured copy of the real folder `src` at `dest`:
-/// linked files, a repository on `storage` named `name`, tracking enabled
+/// linked files, a repository named `name`, tracking enabled
 /// and a full reconcile run — through the suite's daemon at `url`, which is
 /// left without it loaded. Returns whether it had to build it.
-pub async fn ensure(
-    url: &str,
-    src: &Path,
-    dest: &Path,
-    name: &str,
-    storage: Storage,
-) -> Result<bool> {
+pub async fn ensure(url: &str, src: &Path, dest: &Path, name: &str) -> Result<bool> {
     let stamp_path = dest.join(".bench-shape");
     let stamp = format!("{name}:{}:api{}", src.display(), metafolder_core::API_VERSION);
     if std::fs::read_to_string(&stamp_path).is_ok_and(|s| s.trim() == stamp) {
@@ -64,13 +57,9 @@ pub async fn ensure(
     std::io::stdout().flush().ok();
     let t = Instant::now();
     let files = link_tree(src, dest)?;
-    let storage = match storage {
-        Storage::Kv => "kv",
-        Storage::Sqlite => "sqlite",
-    };
     let v: serde_json::Value = crate::daemon_client()
         .post(format!("{url}/repos/init"))
-        .json(&json!({"root": dest, "name": name, "storage": storage}))
+        .json(&json!({"root": dest, "name": name}))
         .send()
         .await?
         .error_for_status()?

@@ -425,7 +425,17 @@ writes). Readers never block.
 
 * Choosing the backend
 
-The backend is a property of the repository, recorded in
+Since September 2026 there is one backend: the key-value store. SQLite was
+dropped (roadmap "drop SQLite") once no real repository was on it, and with it
+the choice at =init=, =mf repo convert= and =METAFOLDER_DEFAULT_STORAGE=.
+=.metafolder/config.json= still says =storage: "kv"=, always written: a
+=config.json= without it — every repository written before the choice existed —
+or with ="sqlite"= is a SQLite repository, and a load refuses it with what to
+do (convert it with an earlier version, =mf repo convert --to kv=); a SQLite
+backup is refused by =mf repo restore= the same way. The rest of this section,
+and increment 5 below, describe the two-backend era as it was built.
+
+The backend was a property of the repository, recorded in
 =.metafolder/config.json= (=storage: "sqlite" | "kv"=, absent = =sqlite=), chosen
 at =init= and changed only by a conversion (=mf repo convert=, both directions,
 an observable task that writes the new store beside the old one and switches on

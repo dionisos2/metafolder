@@ -8,12 +8,9 @@ use anyhow::{bail, Context, Result};
 use metafolder_core::metarecord::{Field, TreeName, Value};
 
 use crate::config::{RepoConfig, Storage};
-use crate::db;
 use crate::error::DomainError;
 use crate::log::Writer;
 use crate::phase::Phase;
-
-pub const DB_FILE: &str = "db.sqlite";
 
 /// The key-value store's directory inside `internal/` (spec-storage).
 pub const KV_DIR: &str = "kv";
@@ -26,7 +23,7 @@ pub const KV_DIR: &str = "kv";
 pub const INTERNAL_DIR: &str = "internal";
 
 /// An initialised or loaded repository: its config, its open (exclusive)
-/// database, whatever the backend, and the location of its `.metafolder/`.
+/// store, and the location of its `.metafolder/`.
 pub struct OpenedRepo {
     pub config: RepoConfig,
     pub conn: crate::store::Handle,
@@ -79,17 +76,6 @@ pub fn init_repository(
     name: Option<&str>,
     system: bool,
 ) -> Result<OpenedRepo> {
-    init_repository_with(root, metafolder, name, system, Storage::default_for_init())
-}
-
-/// [`init_repository`] on an explicit storage backend.
-pub fn init_repository_with(
-    root: &Path,
-    metafolder: Option<&Path>,
-    name: Option<&str>,
-    system: bool,
-    storage: Storage,
-) -> Result<OpenedRepo> {
     let root = root.canonicalize().map_err(|e| {
         DomainError::BadRequest(format!(
             "Cannot resolve path {root:?}: the root directory must exist ({e})"
@@ -125,17 +111,10 @@ pub fn init_repository_with(
     };
     let mut config = RepoConfig::new(root, name);
     config.system = system;
-    config.storage = storage;
     config.write(&metafolder_dir)?;
 
-    let mut conn: crate::store::Handle = match storage {
-        Storage::Sqlite => {
-            let conn = db::open_database(&internal_dir.join(DB_FILE), &config.name)?;
-            db::init_schema(&conn)?;
-            Box::new(conn)
-        }
-        Storage::Kv => Box::new(crate::kvstore::KvStore::open(&internal_dir.join(KV_DIR))?),
-    };
+    let mut conn: crate::store::Handle =
+        Box::new(crate::kvstore::KvStore::open(&internal_dir.join(KV_DIR))?);
     create_root_entry(&mut conn)?;
 
     let case_insensitive = probe_case_insensitive(&internal_dir);
@@ -200,29 +179,9 @@ impl RepoLocator {
     }
 }
 
-/// Opens the store of a backend at `path` (`who` names the repository in
-/// the slow-operation log).
-pub(crate) fn open_store(path: &Path, storage: Storage, who: &str) -> Result<crate::store::Handle> {
-    Ok(match storage {
-        Storage::Sqlite => Box::new(db::open_database(path, who)?),
-        Storage::Kv => Box::new(crate::kvstore::KvStore::open(path)?),
-    })
-}
-
-/// Creates an empty store of a backend at `path`.
-pub(crate) fn create_store(
-    path: &Path,
-    storage: Storage,
-    who: &str,
-) -> Result<crate::store::Handle> {
-    Ok(match storage {
-        Storage::Sqlite => {
-            let conn = db::open_database(path, who)?;
-            db::init_schema(&conn)?;
-            Box::new(conn)
-        }
-        Storage::Kv => Box::new(crate::kvstore::KvStore::open(path)?),
-    })
+/// Opens the store at `path`.
+pub(crate) fn open_store(path: &Path) -> Result<crate::store::Handle> {
+    Ok(Box::new(crate::kvstore::KvStore::open(path)?))
 }
 
 pub fn load_repository(locator: RepoLocator) -> Result<OpenedRepo> {
@@ -233,15 +192,16 @@ pub fn load_repository(locator: RepoLocator) -> Result<OpenedRepo> {
     std::fs::create_dir_all(&internal_dir)
         .with_context(|| format!("Failed to create {internal_dir:?}"))?;
     if config.storage == Storage::Sqlite {
-        let _p = Phase::begin(&who, "migrate the on-disk layout");
-        migrate_legacy_db_layout(&metafolder_dir, &internal_dir)?;
+        return Err(DomainError::BadRequest(format!(
+            "{:?} is a SQLite repository, which this version of metafolder no longer reads: \
+             convert it with an earlier one (`mf repo convert --to kv`) before loading it here",
+            config.name
+        ))
+        .into());
     }
     // Opening a store that is not there would create an empty one in its
     // place — a repository that loads, and forgets everything.
-    let store = internal_dir.join(match config.storage {
-        Storage::Sqlite => DB_FILE,
-        Storage::Kv => KV_DIR,
-    });
+    let store = internal_dir.join(KV_DIR);
     if !store.exists() {
         return Err(DomainError::NotFound(format!(
             "the store of {:?} is missing ({}); `mf repo restore --path` puts a backup back",
@@ -250,34 +210,13 @@ pub fn load_repository(locator: RepoLocator) -> Result<OpenedRepo> {
         ))
         .into());
     }
-    let conn: crate::store::Handle = match config.storage {
-        Storage::Sqlite => Box::new(db::open_database(&internal_dir.join(DB_FILE), &who)?),
-        Storage::Kv => {
-            let _p = Phase::begin(&who, "open the key-value store");
-            Box::new(crate::kvstore::KvStore::open(&internal_dir.join(KV_DIR))?)
-        }
+    let conn: crate::store::Handle = {
+        let _p = Phase::begin(&who, "open the key-value store");
+        Box::new(crate::kvstore::KvStore::open(&internal_dir.join(KV_DIR))?)
     };
     let case_insensitive = {
         let _p = Phase::begin(&who, "probe case sensitivity");
         probe_case_insensitive(&internal_dir)
     };
     Ok(OpenedRepo { config, conn, metafolder_dir, case_insensitive })
-}
-
-/// Moves a pre-`internal/` database into `internal/`. The whole `db.sqlite*`
-/// family moves together (-wal, -shm, and a possible hot -journal must stay
-/// next to the main file for SQLite recovery to find them).
-fn migrate_legacy_db_layout(metafolder_dir: &Path, internal_dir: &Path) -> Result<()> {
-    if !metafolder_dir.join(DB_FILE).exists() {
-        return Ok(());
-    }
-    for entry in std::fs::read_dir(metafolder_dir)? {
-        let entry = entry?;
-        let name = entry.file_name();
-        if name.to_string_lossy().starts_with(DB_FILE) && entry.path().is_file() {
-            std::fs::rename(entry.path(), internal_dir.join(&name))
-                .with_context(|| format!("Failed to move legacy {name:?} into {internal_dir:?}"))?;
-        }
-    }
-    Ok(())
 }

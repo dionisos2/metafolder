@@ -6,7 +6,6 @@
 #   scripts/bench.sh --big            # + the large size (minutes to generate)
 #   scripts/bench.sh --real           # + copies of the benchmarks/bench_data* folders
 #   scripts/bench.sh --filter log.    # only the scenarios whose id starts with log.
-#   scripts/bench.sh --storage both   # kv (the default), sqlite, or both backends
 #   scripts/bench.sh --no-history     # measure and compare, record nothing
 #   scripts/bench.sh --report         # print the recorded history, measure nothing
 #   scripts/bench.sh --debug          # measure the debug build (its own history)
@@ -22,8 +21,8 @@
 # deliberately NOT part of scripts/check.sh: a machine-dependent measurement
 # that fails a build teaches people to ignore failing builds. The check that
 # *is* in check.sh is the other half — the cost assertions in
-# crates/daemon/tests/perf_cost.rs, which count SQL statements instead of
-# milliseconds and so cannot flake.
+# crates/daemon/tests/{kv_cost,log_cost}.rs, which count the keys a store
+# reads instead of milliseconds and so cannot flake.
 
 set -uo pipefail
 

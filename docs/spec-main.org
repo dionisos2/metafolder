@@ -343,25 +343,12 @@ unique among loaded repos (=409= on collision), since =-n <name>= resolves it to
 a UUID. The new name is persisted to =config.json=. Response: the updated repo
 info object.
 
-*** =POST /repos/:repo_uuid/convert=
-
-Converts a loaded repository to another storage backend (spec-storage
-"Choosing the backend", increment 5). Body ={"to": "kv"}= or ={"to":
-"sqlite"}=. The daemon unloads the repository (=409= while a task runs or a
-navigation holds it), converts it on disk — a verified, faithful copy of its
-data and history — and loads it back; on failure nothing is switched and it
-is loaded back on its old backend. =400= when it is already on that backend.
-Response: ={"metarecords", "rows", "operations", "revisions", "old_store"}=,
-the last naming where the former store was set aside.
-
 *** =POST /repos/:repo_uuid/check= and =…/reindex=
 
-=check= answers ={"storage", "problems": [...]}=: what no longer holds
-together in the repository's store, one line each, empty when healthy (on
-the key-value store its derived data against a rebuild, on SQLite its
-integrity check). =reindex= derives again what the store derives — and the
-resident index and forest a SQLite repository keeps — and answers
-={"storage"}=. Both hold the repository while they run (spec-storage
+=check= answers ={"problems": [...]}=: what no longer holds together in the
+repository's store — its derived data against a rebuild — one line each,
+empty when healthy. =reindex= derives again what the store derives and
+answers ={}=. Both hold the repository while they run (spec-storage
 increment 5).
 
 *** =POST /repos/:repo_uuid/backup=
@@ -371,18 +358,14 @@ it stays loaded, with its =config.json= and =schema.json=, verified (opened and
 checked) before it is kept (spec-storage increment 5). Optional body
 ={"to": "/a/new/dir"}=; by default a new =.metafolder/internal/backups/manual-<time>/=.
 =400= when =to= already exists. Response: ={"path", "created_at_ms",
-"storage", "metarecords"}=. The daemon also takes each repository's automatic
+"metarecords"}=. The daemon also takes each repository's automatic
 backup every =auto-backup-days= days (daemon settings).
 
 *** =POST /repos/init=
 
 Initialises a new repository. Creates =config.json= and the store — the
-key-value store =internal/kv/= by default, =internal/db.sqlite= on SQLite —
-inside the =.metafolder/= directory. Fails if a repository already exists
-there.
-
-Optional: =storage= (="kv"= or ="sqlite"=) chooses the backend
-(spec-storage "Choosing the backend"); absent, the daemon's default.
+key-value store =internal/kv/= — inside the =.metafolder/= directory. Fails if
+a repository already exists there.
 
 Request body:
 #+BEGIN_SRC json

@@ -13,10 +13,10 @@ use std::path::Path;
 
 use anyhow::{Context, Result};
 use metafolder_core::metarecord::{Field, Value};
-use metafolder_daemon::config::Storage;
+use metafolder_daemon::kvstore::KvStore;
 use metafolder_daemon::log::Writer;
 use metafolder_daemon::repo;
-use metafolder_daemon::store::{Begin as _, Rows as _};
+use metafolder_daemon::store::Rows as _;
 use uuid::Uuid;
 
 /// A repository size. The identifier is part of every measurement's key, so
@@ -51,28 +51,21 @@ pub(crate) fn prng(i: u64) -> u64 {
 }
 
 /// Builds a repository of the given shape at `dir` (which must not already be
-/// one) on the given storage backend, and returns its uuid.
+/// one), and returns its uuid.
 ///
-/// The connection is dropped before returning: the repository database is held
-/// under an exclusive SQLite lock for the lifetime of its connection, so a
-/// daemon could not load what this still had open.
-pub fn build(dir: &Path, shape: &Shape, storage: Storage) -> Result<Uuid> {
+/// The store is dropped before returning: it is held under an exclusive lock
+/// for its lifetime, so a daemon could not load what this still had open.
+pub fn build(dir: &Path, shape: &Shape) -> Result<Uuid> {
     std::fs::create_dir_all(dir).with_context(|| format!("create {}", dir.display()))?;
-    // One daemon loads both backends' repositories: their names must differ.
-    let name = match storage {
-        Storage::Kv => shape.label.to_string(),
-        Storage::Sqlite => format!("{}-sqlite", shape.label),
-    };
-    let opened = repo::init_repository_with(dir, None, Some(&name), false, storage)
+    let opened = repo::init_repository(dir, None, Some(shape.label), false)
         .with_context(|| format!("init a repository at {}", dir.display()))?;
     let repo_uuid = opened.config.repo_uuid;
-    let mut conn = opened.conn;
-
-    // Generation only: a fsync per revision would make building the log longer
-    // than the whole measurement (and the generated repository is disposable).
-    if let Some(sqlite) = conn.as_sqlite() {
-        sqlite.pragma_update(None, "synchronous", "OFF")?;
-    }
+    let store = opened.metafolder_dir.join(repo::INTERNAL_DIR).join(repo::KV_DIR);
+    drop(opened.conn);
+    // Generation only: an fsync per revision would make building the log
+    // longer than the whole measurement (and the generated repository is
+    // disposable).
+    let mut conn = KvStore::open_unsynced(&store)?;
 
     // The forest root the repository's own init created — the generated tree
     // hangs under it, so `mfr_path` stays one forest.
@@ -122,15 +115,6 @@ pub fn build(dir: &Path, shape: &Shape, storage: Storage) -> Result<Uuid> {
             Field::new("kind", Value::String("note".into())),
         ])?;
         writer.commit()?;
-    }
-
-    // Fold the write-ahead log back into the database before handing it over.
-    // Without this the first run after a generation measures a repository whose
-    // every page is still in a multi-megabyte WAL, and reads it three times
-    // slower than every run after it — a difference of the harness, not of the
-    // code under test.
-    if let Some(sqlite) = conn.as_sqlite() {
-        sqlite.pragma_update(None, "wal_checkpoint", "TRUNCATE")?;
     }
 
     drop(conn);

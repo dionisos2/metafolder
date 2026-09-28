@@ -39,7 +39,6 @@ pub fn build(state: Arc<AppState>) -> Router {
         .route("/tasks", get(list_all_tasks))
         .route("/repos", get(list_repos))
         .route("/repos/init", post(init_repo))
-        .route("/repos/:repo/convert", post(convert_repo))
         .route("/repos/:repo/check", post(check_repo))
         .route("/repos/:repo/backup", post(backup_repo))
         .route("/repos/:repo/restore", post(restore_loaded_repo))
@@ -442,13 +441,7 @@ async fn list_fields(
         // A key-value repository has no resident catalog to read past a
         // writer: it waits for the store (until reads stop taking the
         // connection, spec-storage increment 4).
-        let conn = slowlog::timed("wait:conn", || {
-            if repo_state.config.storage == crate::config::Storage::Kv {
-                Some(repo_state.conn.lock_recover())
-            } else {
-                repo_state.conn.try_lock_recover()
-            }
-        });
+        let conn = slowlog::timed("wait:conn", || Some(repo_state.conn.lock_recover()));
         let mut index_guard = slowlog::timed("wait:index", || repo_state.index.lock_recover());
         let data = match conn.as_deref() {
             // `ensure_index` rather than a refresh of our own: the acquisition
@@ -905,10 +898,6 @@ struct InitBody {
     /// hidden from `GET /repos` unless `?all=true`.
     #[serde(default)]
     system: bool,
-    /// The storage backend (`"kv"` / `"sqlite"`, spec-storage "Choosing the
-    /// backend"); the daemon's default when absent.
-    #[serde(default)]
-    storage: Option<crate::config::Storage>,
 }
 
 async fn init_repo(
@@ -919,13 +908,7 @@ async fn init_repo(
     // An empty/whitespace name falls back to the directory-derived default.
     let name = body.name.filter(|n| !n.trim().is_empty());
     let uuid = tokio::task::spawn_blocking(move || {
-        state.init_repo_with(
-            &body.root,
-            body.metafolder.as_deref(),
-            name.as_deref(),
-            body.system,
-            body.storage,
-        )
+        state.init_repo(&body.root, body.metafolder.as_deref(), name.as_deref(), body.system)
     })
     .await
     .map_err(|e| ApiError::internal(format!("blocking task failed: {e}")))??;
@@ -933,7 +916,7 @@ async fn init_repo(
 }
 
 /// `POST /repos/:repo/check` — what no longer holds together in the store
-/// (spec-storage increment 5): `{"storage", "problems": [...]}`.
+/// (spec-storage increment 5): `{"problems": [...]}`.
 async fn check_repo(
     State(state): State<Arc<AppState>>,
     Path(repo): Path<String>,
@@ -941,7 +924,7 @@ async fn check_repo(
     let repo_uuid = parse_uuid(&repo)?;
     with_repo(&state, repo_uuid, move |repo_state| {
         let problems = repo_state.check_store()?;
-        Ok(Json(json!({"storage": repo_state.config.storage, "problems": problems})))
+        Ok(Json(json!({"problems": problems})))
     })
     .await
 }
@@ -973,7 +956,6 @@ async fn backup_repo(
         Ok(Json(json!({
             "path": info.path,
             "created_at_ms": info.created_at_ms,
-            "storage": info.storage,
             "metarecords": info.metarecords,
         })))
     })
@@ -989,7 +971,7 @@ async fn reindex_repo(
     let repo_uuid = parse_uuid(&repo)?;
     with_repo(&state, repo_uuid, move |repo_state| {
         repo_state.reindex_store()?;
-        Ok(Json(json!({"storage": repo_state.config.storage})))
+        Ok(Json(json!({})))
     })
     .await
 }
@@ -1020,7 +1002,6 @@ fn restored_json(uuid: Uuid, restored: crate::backup::Restored) -> Json<serde_js
         "backup": {
             "path": info.path,
             "created_at_ms": info.created_at_ms,
-            "storage": info.storage,
             "metarecords": info.metarecords,
         },
         "old_store": restored.old_store,
@@ -1064,34 +1045,6 @@ async fn restore_repo(
             .await
             .map_err(|e| ApiError::internal(format!("blocking task failed: {e}")))??;
     Ok(restored_json(uuid, restored))
-}
-
-#[derive(Deserialize)]
-struct ConvertBody {
-    /// The backend to convert to: `"kv"` or `"sqlite"`.
-    to: crate::config::Storage,
-}
-
-/// `POST /repos/:repo/convert` — converts a loaded repository to another
-/// storage backend and loads it back (spec-storage increment 5). Answers what
-/// was copied and where the old store was set aside.
-async fn convert_repo(
-    State(state): State<Arc<AppState>>,
-    Path(repo): Path<String>,
-    payload: Result<Json<ConvertBody>, JsonRejection>,
-) -> Result<Json<serde_json::Value>, ApiError> {
-    let Json(body) = payload?;
-    let repo_uuid = parse_uuid(&repo)?;
-    let report = tokio::task::spawn_blocking(move || state.convert_repo(repo_uuid, body.to))
-        .await
-        .map_err(|e| ApiError::internal(format!("blocking task failed: {e}")))??;
-    Ok(Json(json!({
-        "metarecords": report.metarecords,
-        "rows": report.rows,
-        "operations": report.operations,
-        "revisions": report.revisions,
-        "old_store": report.old_store,
-    })))
 }
 
 #[derive(Deserialize)]
@@ -3593,15 +3546,8 @@ fn run_query_inner(
             return Err(ApiError::bad_request("'count' requires 'limit'"));
         }
         let conn = slowlog::timed("wait:conn", || repo_state.conn.lock_recover());
-        // Register the SQLite interrupt handle so `POST …/tasks/:id/cancel` can
-        // abort this query while it runs (spec-tasks "Cancellation"). The handle
-        // is harmless once the query finishes (no running statement to stop).
-        if let Some(stop) = crate::store::Begin::interrupter(&conn) {
-            repo_state.tasks.set_canceller(task, stop);
-        }
-        // Cooperative cancellation (spec-tasks): the SQLite interrupt only aborts
-        // a running statement, so it cannot stop the index build/evaluation or the
-        // result assembly (all Rust). Those phases poll this flag instead.
+        // Cooperative cancellation (spec-tasks): the evaluation and the result
+        // assembly poll this flag.
         let cancel = || repo_state.tasks.is_cancel_requested(task);
         let mut cache = slowlog::timed("wait:cache", || repo_state.lock_cache());
         note_query(&body.query);

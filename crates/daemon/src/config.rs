@@ -5,35 +5,18 @@ use anyhow::Context;
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
-/// A repository's storage backend (docs/spec-storage.org).
+/// The store a repository's `config.json` says it is on (docs/spec-storage.org
+/// "Choosing the backend"). Only the key-value store is read: SQLite is
+/// recognised to be refused with a clear message, never opened.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
 pub enum Storage {
-    /// SQLite (`internal/db.sqlite`).
+    /// SQLite (`internal/db.sqlite`), no longer read. A `config.json` without
+    /// `storage` was written before the choice existed, so it is one.
     #[default]
     Sqlite,
     /// The key-value store (`internal/kv/`, LMDB).
     Kv,
-}
-
-impl Storage {
-    fn is_sqlite(&self) -> bool {
-        *self == Storage::Sqlite
-    }
-
-    /// The backend a repository is created on when the caller does not say:
-    /// the key-value store, unless `METAFOLDER_DEFAULT_STORAGE=sqlite`.
-    pub fn default_for_init() -> Storage {
-        Storage::for_init(std::env::var("METAFOLDER_DEFAULT_STORAGE").ok().as_deref())
-    }
-
-    /// [`Storage::default_for_init`] given the variable's value.
-    fn for_init(var: Option<&str>) -> Storage {
-        match var {
-            Some("sqlite") => Storage::Sqlite,
-            _ => Storage::Kv,
-        }
-    }
 }
 
 const CONFIG_FILE: &str = "config.json";
@@ -74,11 +57,10 @@ pub struct RepoConfig {
     /// `GET /repos` unless `?all=true`.
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub system: bool,
-    /// The storage backend holding this repository's data (spec-storage
-    /// "Choosing the backend"), chosen at init (the key-value store by
-    /// default). Absent — every repository written before the choice
-    /// existed — is SQLite.
-    #[serde(default, skip_serializing_if = "Storage::is_sqlite")]
+    /// The store holding this repository's data: always the key-value store
+    /// for one this version writes. Absent — every repository written before
+    /// the choice existed — is SQLite, which is refused at load.
+    #[serde(default)]
     pub storage: Storage,
 }
 
@@ -95,7 +77,7 @@ impl RepoConfig {
             log_retention_revisions: None,
             log_retention_keep_labels: None,
             system: false,
-            storage: Storage::Sqlite,
+            storage: Storage::Kv,
         }
     }
 
@@ -152,10 +134,14 @@ mod tests {
     use super::*;
 
     #[test]
-    fn a_new_repository_is_kv_unless_sqlite_is_asked_for() {
-        assert_eq!(Storage::for_init(None), Storage::Kv);
-        assert_eq!(Storage::for_init(Some("kv")), Storage::Kv);
-        assert_eq!(Storage::for_init(Some("sqlite")), Storage::Sqlite);
+    fn a_new_repository_says_kv_and_an_old_config_reads_as_sqlite() {
+        let config = RepoConfig::new(PathBuf::from("/r"), "r".into());
+        let json = serde_json::to_value(&config).unwrap();
+        assert_eq!(json["storage"], "kv", "written out, so a reader never has to guess");
+        let mut old = json.clone();
+        old.as_object_mut().unwrap().remove("storage");
+        let old: RepoConfig = serde_json::from_value(old).unwrap();
+        assert_eq!(old.storage, Storage::Sqlite, "a config from before the choice");
     }
 
     fn temp_dir() -> PathBuf {

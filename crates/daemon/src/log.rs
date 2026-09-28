@@ -7,14 +7,13 @@
 use std::collections::{HashMap, HashSet};
 
 use anyhow::{Context, Result};
-use rusqlite::{params, Transaction};
 use uuid::Uuid;
 
 pub use metafolder_core::date::now_ms;
 use metafolder_core::metarecord::{Field, FieldType, MetaRecord, Value};
 
-use crate::db::{self, FieldRow};
 use crate::error::DomainError;
+use crate::rows::{self, FieldRow};
 use crate::store::{Begin, Database, Log, NewOp, Restoration, Store, WriteTxn};
 use crate::version;
 
@@ -128,214 +127,6 @@ pub struct OpRow {
     pub origin: Option<String>,
 }
 
-/// The version `op`'s entity held *before the whole revision* `op` belongs to —
-/// the `entity_version_before` of the revision's *first* operation on it.
-///
-/// Selected by `seq`, and not as the smallest of the revision's values: a
-/// version is a content hash and carries no order (spec-data-model "Version"),
-/// so "before the revision" is a position in the revision, not a minimum.
-///
-/// One event can write several fields of one record (orphaning writes both
-/// `mfr_path` and `mfr_path_old`), and each operation then restores to its own
-/// intermediate version. Anything that observed the record from *outside* the
-/// revision — a trash entry, which records the version at the moment the file
-/// was trashed — knows only this pre-revision version, so the rollback
-/// correlation must be made against it and not against a per-op version
-/// (spec-trash "rollback auto-restore").
-pub fn entity_version_before_revision(
-    conn: &rusqlite::Connection,
-    rev: i64,
-    entity: Uuid,
-) -> Result<Option<u64>> {
-    use rusqlite::OptionalExtension as _;
-    let first: Option<Option<i64>> = conn
-        .query_row(
-            "SELECT entity_version_before FROM operation \
-             WHERE rev_id = ?1 AND entity_uuid = ?2 ORDER BY seq LIMIT 1",
-            params![rev, db::uuid_to_bytes(entity)],
-            |r| r.get(0),
-        )
-        .optional()?;
-    Ok(first.flatten().map(|v| v as u64))
-}
-
-pub fn get_head(conn: &rusqlite::Connection) -> Result<Option<i64>> {
-    Ok(conn.query_row("SELECT op_id FROM log_head WHERE singleton = 1", [], |r| r.get(0))?)
-}
-
-/// The `operation` columns `row_to_op` reads, qualified with `alias` — the
-/// table's name or its alias in the query.
-///
-/// One source of truth on purpose: six queries read this row shape, three of
-/// them through a CTE join that has to qualify every name. A column added to
-/// one list and not the others is not a compile error, it is an "Invalid
-/// column index" the first time that path runs.
-fn op_columns(alias: &str) -> String {
-    format!(
-        "{alias}.id, {alias}.parent_id, {alias}.rev_id, {alias}.seq, {alias}.op_type, \
-         {alias}.entity_uuid, {alias}.entity_version_before, {alias}.entity_version_after, \
-         {alias}.field_name, {alias}.reverts_op_id, \
-         (SELECT origin FROM revision WHERE revision.id = {alias}.rev_id)"
-    )
-}
-
-fn row_to_op(row: &rusqlite::Row<'_>) -> rusqlite::Result<(OpRow, Vec<u8>)> {
-    let entity: Vec<u8> = row.get(5)?;
-    Ok((
-        OpRow {
-            id: row.get(0)?,
-            parent_id: row.get(1)?,
-            rev_id: row.get(2)?,
-            seq: row.get(3)?,
-            op_type: row.get(4)?,
-            entity_uuid: Uuid::nil(), // patched by the caller from the blob
-            entity_version_before: row.get::<_, Option<i64>>(6)?.map(|v| v as u64),
-            entity_version_after: row.get::<_, Option<i64>>(7)?.map(|v| v as u64),
-            field_name: row.get(8)?,
-            reverts_op_id: row.get(9)?,
-            origin: row.get(10)?,
-        },
-        entity,
-    ))
-}
-
-pub fn get_op(conn: &rusqlite::Connection, id: i64) -> Result<Option<OpRow>> {
-    use rusqlite::OptionalExtension as _;
-    let row = conn
-        .prepare_cached(&format!(
-            "SELECT {} FROM operation WHERE id = ?1",
-            op_columns("operation")
-        ))?
-        .query_row(params![id], row_to_op)
-        .optional()?;
-    row.map(|(mut op, entity)| {
-        op.entity_uuid = db::bytes_to_uuid(entity)?;
-        Ok(op)
-    })
-    .transpose()
-}
-
-/// All operations, in insertion order.
-pub fn all_ops(conn: &rusqlite::Connection) -> Result<Vec<OpRow>> {
-    let mut stmt =
-        conn.prepare(&format!("SELECT {} FROM operation ORDER BY id", op_columns("operation")))?;
-    let ops = stmt
-        .query_map([], row_to_op)?
-        .map(|r| {
-            let (mut op, entity) = r?;
-            op.entity_uuid = db::bytes_to_uuid(entity)?;
-            Ok(op)
-        })
-        .collect::<Result<Vec<OpRow>>>()?;
-    Ok(ops)
-}
-
-/// Operations created after `op_id` — by creation order, across *all* branches
-/// (a new edit after a rollback is parented elsewhere but still has a larger
-/// id). The change delta a client polls to learn which metarecords were touched
-/// since it last synced (each op names its `entity_uuid`).
-/// How many operations are newer than `op_id`. Cheap count used by the change
-/// feed to decide whether a delta is small enough to stream op-by-op or must be
-/// collapsed to a coarse "everything changed" signal (a large reconcile would
-/// otherwise flood the client with tens of thousands of operations).
-pub fn ops_since_count(conn: &rusqlite::Connection, op_id: i64) -> Result<i64> {
-    Ok(conn.query_row("SELECT COUNT(*) FROM operation WHERE id > ?1", [op_id], |r| r.get(0))?)
-}
-
-pub fn ops_since(conn: &rusqlite::Connection, op_id: i64) -> Result<Vec<OpRow>> {
-    let mut stmt = conn.prepare(&format!(
-        "SELECT {} FROM operation WHERE id > ?1 ORDER BY id",
-        op_columns("operation")
-    ))?;
-    let ops = stmt
-        .query_map([op_id], row_to_op)?
-        .map(|r| {
-            let (mut op, entity) = r?;
-            op.entity_uuid = db::bytes_to_uuid(entity)?;
-            Ok(op)
-        })
-        .collect::<Result<Vec<OpRow>>>()?;
-    Ok(ops)
-}
-
-/// The recursive CTE walking the parent chain from `?1` up to the root.
-/// `?2` caps the walk at (operation count + 1) rows so a corrupted log with a
-/// cycle terminates instead of looping; the duplicate id is detected in Rust.
-const ANCESTRY_CTE: &str = "
-    WITH RECURSIVE chain(id, depth) AS (
-        SELECT ?1, 0
-        UNION ALL
-        SELECT o.parent_id, c.depth + 1
-        FROM chain c JOIN operation o ON o.id = c.id
-        WHERE o.parent_id IS NOT NULL
-        LIMIT ?2
-    )";
-
-fn cycle_cap(conn: &rusqlite::Connection) -> Result<i64> {
-    let count: i64 = conn.query_row("SELECT COUNT(*) FROM operation", [], |r| r.get(0))?;
-    Ok(count + 1)
-}
-
-/// Ancestor chain from `from` (inclusive) up to the root, in that order.
-/// One recursive CTE instead of one query per operation.
-pub fn ancestry(conn: &rusqlite::Connection, from: i64) -> Result<Vec<i64>> {
-    Ok(ancestry_ops(conn, from)?.into_iter().map(|op| op.id).collect())
-}
-
-/// Full operation rows of the ancestor chain from `from` (inclusive) up to
-/// the root, in that order.
-pub fn ancestry_ops(conn: &rusqlite::Connection, from: i64) -> Result<Vec<OpRow>> {
-    let cols = op_columns("o");
-    let mut stmt = conn.prepare_cached(&format!(
-        "{ANCESTRY_CTE}
-         SELECT {cols}
-         FROM chain c JOIN operation o ON o.id = c.id
-         ORDER BY c.depth"
-    ))?;
-    let ops = stmt
-        .query_map(params![from, cycle_cap(conn)?], row_to_op)?
-        .map(|r| {
-            let (mut op, entity) = r?;
-            op.entity_uuid = db::bytes_to_uuid(entity)?;
-            Ok(op)
-        })
-        .collect::<Result<Vec<OpRow>>>()?;
-    if ops.is_empty() {
-        return Err(DomainError::NotFound(format!("operation {from} not found")).into());
-    }
-    let mut seen = HashSet::new();
-    for op in &ops {
-        if !seen.insert(op.id) {
-            anyhow::bail!("operation history contains a cycle at op {}", op.id);
-        }
-    }
-    Ok(ops)
-}
-
-/// The ancestor chain from `from` (inclusive) back to — but *excluding* —
-/// `until`, HEAD-first; `None` if `until` was not reached within `max`
-/// operations (it is not on the chain, or the delta is larger than the budget).
-///
-/// Unlike [`ancestry_ops`] the recursion *stops* at the anchor instead of
-/// materialising the whole chain up to the root, and unlike
-/// [`ancestry_ops_limited`] it never reads `max` rows just because the budget
-/// allows it. This is what the bitmap index's forward delta needs: after a write
-/// the delta is one or two operations, and it is read on the read path before
-/// every query that follows a write — walking to the root there made every such
-/// query cost O(total log length). Like the bounded walk it does not validate
-/// the chain against cycles (the budget bounds it).
-pub fn ancestry_ops_until(
-    conn: &rusqlite::Connection,
-    from: i64,
-    until: i64,
-    max: usize,
-) -> Result<Option<Vec<OpRow>>> {
-    Ok(match delta_until(conn, from, until, max)? {
-        Delta::Found(ops) => Some(ops),
-        Delta::Budget | Delta::Unrelated => None,
-    })
-}
-
 /// What a bounded ancestor walk found. [`ancestry_ops_until`] flattens the two
 /// failures into `None`; they are kept apart here for the caller that *widens*
 /// its budget ([`linear_path`]), which has to tell "not far enough yet" from
@@ -351,109 +142,6 @@ pub enum Delta {
     /// The walk reached the root of the history without meeting the anchor, so
     /// the anchor is not an ancestor of `from` at all.
     Unrelated,
-}
-
-pub(crate) fn delta_until(
-    conn: &rusqlite::Connection,
-    from: i64,
-    until: i64,
-    max: usize,
-) -> Result<Delta> {
-    if from == until {
-        return Ok(Delta::Found(Vec::new()));
-    }
-    // `c.id <> ?2` stops the expansion once the anchor is reached, so the anchor
-    // itself is the last row produced and its parent is never visited. `max + 1`
-    // rows leaves room for that trailing anchor row on a maximal delta — and is
-    // what tells a truncated walk from one that ran out of history.
-    let cols = op_columns("o");
-    let mut stmt = conn.prepare_cached(&format!(
-        "WITH RECURSIVE chain(id, depth) AS (
-             SELECT ?1, 0
-             UNION ALL
-             SELECT o.parent_id, c.depth + 1
-             FROM chain c JOIN operation o ON o.id = c.id
-             WHERE o.parent_id IS NOT NULL AND c.id <> ?2
-             LIMIT ?3
-         )
-         SELECT {cols}
-         FROM chain c JOIN operation o ON o.id = c.id
-         ORDER BY c.depth"
-    ))?;
-    let mut ops = stmt
-        .query_map(params![from, until, max as i64 + 1], row_to_op)?
-        .map(|r| {
-            let (mut op, entity) = r?;
-            op.entity_uuid = db::bytes_to_uuid(entity)?;
-            Ok(op)
-        })
-        .collect::<Result<Vec<OpRow>>>()?;
-    match ops.last() {
-        // The anchor closed the walk: drop it, the delta is what sits on top.
-        Some(last) if last.id == until => {
-            ops.pop();
-            Ok(Delta::Found(ops))
-        }
-        // Every row the budget allowed, and still no anchor.
-        _ if ops.len() > max => Ok(Delta::Budget),
-        // The walk stopped on a row with no parent (or `from` does not exist):
-        // the anchor is nowhere on this chain.
-        _ => Ok(Delta::Unrelated),
-    }
-}
-
-/// The most-recent `max` operations of the ancestor chain from `from`
-/// (inclusive), HEAD-first: `from` and its `max - 1` nearest ancestors. Unlike
-/// [`ancestry_ops`] the walk is bounded by a small `LIMIT`, so it stays O(max)
-/// on a huge log (each step is a primary-key lookup up the parent chain); it
-/// therefore does not validate the chain against cycles. Backs the bounded log
-/// listing that keeps `GET /log?…&limit=N` fast on repositories with millions
-/// of operations.
-pub fn ancestry_ops_limited(
-    conn: &rusqlite::Connection,
-    from: i64,
-    max: usize,
-) -> Result<Vec<OpRow>> {
-    let cols = op_columns("o");
-    let mut stmt = conn.prepare_cached(&format!(
-        "{ANCESTRY_CTE}
-         SELECT {cols}
-         FROM chain c JOIN operation o ON o.id = c.id
-         ORDER BY c.depth"
-    ))?;
-    let ops = stmt
-        .query_map(params![from, max as i64], row_to_op)?
-        .map(|r| {
-            let (mut op, entity) = r?;
-            op.entity_uuid = db::bytes_to_uuid(entity)?;
-            Ok(op)
-        })
-        .collect::<Result<Vec<OpRow>>>()?;
-    Ok(ops)
-}
-
-/// Whether any operation has `op_id` as its `parent_id` — i.e. whether a forward
-/// continuation (a rolled-back redo future, or a divergent branch) exists below
-/// `op_id`. Indexed lookup (`idx_operation_parent`), so O(log N) even on a huge
-/// log; used to take the cheap bounded-ancestry path in the log listing when
-/// HEAD is a plain tip.
-pub fn has_children(conn: &rusqlite::Connection, op_id: i64) -> Result<bool> {
-    let exists: bool = conn.query_row(
-        "SELECT EXISTS(SELECT 1 FROM operation WHERE parent_id = ?1)",
-        [op_id],
-        |r| r.get(0),
-    )?;
-    Ok(exists)
-}
-
-/// The "active line" through HEAD: the ancestry path root→HEAD followed by the
-/// forward continuation that, at each fork below HEAD, follows the child whose
-/// subtree contains the most recently created operation (largest id). This
-/// reconstructs the branch the user was last on, so a rolled-back "future"
-/// stays visible (for redo) while operations on divergent branches are hidden.
-/// Returned root→leaf (oldest first), like the `linear` mode.
-pub fn active_line_ops(conn: &rusqlite::Connection, head: i64) -> Result<Vec<OpRow>> {
-    Ok(active_line_of(ancestry_ops(conn, head)?, all_ops(conn)?, head))
 }
 
 /// The active line through `head` from its ancestry (HEAD-first) and every
@@ -500,26 +188,6 @@ pub(crate) fn active_line_of(ancestry: Vec<OpRow>, all: Vec<OpRow>, head: i64) -
         cur = next;
     }
     line
-}
-
-/// Snapshot rows of one operation (`is_new` 0 = before, 1 = after).
-pub fn snapshots(conn: &rusqlite::Connection, op_id: i64, is_new: i64) -> Result<Vec<FieldRow>> {
-    let mut stmt = conn.prepare_cached(
-        "SELECT field_id, field_name, value_type, value_text, value_int, value_real,
-                value_uuid, value_ref_repo, value_name, value_name_bytes
-         FROM op_snapshot WHERE op_id = ?1 AND is_new = ?2 ORDER BY field_id",
-    )?;
-    let rows = stmt
-        .query_map(params![op_id, is_new], |row| {
-            Ok((row.get::<_, i64>(0)?, row.get::<_, String>(1)?, db::RawValue::from_row(row)?))
-        })?
-        .map(|r| {
-            let (id, name, raw) = r?;
-            let value = db::decode_value(raw)?;
-            Ok(FieldRow { id, name, value })
-        })
-        .collect::<Result<Vec<FieldRow>>>()?;
-    Ok(rows)
 }
 
 // ── Navigation (spec-event-log "Navigation") ──────────────────────────────────
@@ -571,28 +239,6 @@ pub fn resolve_target(log: &dyn Log, target: &Target) -> Result<Option<i64>> {
             log.before_revision_of(head)
         }
     }
-}
-
-/// Walking back from `head` along the ancestry, the first operation whose
-/// revision satisfies `condition` (on `r`, the revision; `?3` is `value`).
-pub(crate) fn ancestor_where(
-    conn: &rusqlite::Connection,
-    head: i64,
-    condition: &str,
-    value: &dyn rusqlite::ToSql,
-) -> Result<Option<i64>> {
-    use rusqlite::OptionalExtension as _;
-    Ok(conn
-        .prepare_cached(&format!(
-            "{ANCESTRY_CTE}
-             SELECT c.id FROM chain c
-             JOIN operation o ON o.id = c.id
-             JOIN revision r ON r.id = o.rev_id
-             WHERE {condition}
-             ORDER BY c.depth LIMIT 1"
-        ))?
-        .query_row(params![head, cycle_cap(conn)?, value], |r| r.get(0))
-        .optional()?)
 }
 
 #[derive(Debug, serde::Serialize)]
@@ -1125,35 +771,9 @@ pub fn prune(conn: &mut dyn Database, mode: PruneMode, target: i64) -> Result<(u
     tx.commit()?;
     let (_, revisions_after) = conn.counts()?;
 
-    // Return the freed pages to the filesystem (best-effort): the deleted
-    // snapshots would otherwise keep the file at its high-water size
-    // (spec-event-log "Log pruning"). The deletion above is already committed,
-    // so a VACUUM failure (no room for its temp copy, a read-only filesystem…)
-    // must not turn a successful prune into an error — it only defers the
-    // space reclaim to a later prune.
-    compact_best_effort(conn);
-
     Ok((to_delete.len(), (revisions_before - revisions_after) as usize))
 }
 
-/// Compacts the database to release freed pages, best-effort. Returns whether
-/// it succeeded; a failure is logged, not propagated, because the caller's
-/// write is already committed (see [`prune`]).
-fn compact_best_effort(conn: &mut dyn Begin) -> bool {
-    match conn.compact() {
-        Ok(()) => true,
-        Err(e) => {
-            crate::diagnostics::warn(
-                "prune",
-                format!("could not compact the database after prune: {e}"),
-            );
-            false
-        }
-    }
-}
-
-/// Multi-row INSERT in chunks. `insert_sql` is the statement up to (and
-/// excluding) the VALUES clause; every row must have `row_width` parameters.
 /// Buffered operations are flushed to the database once this many accumulate,
 /// keeping the Writer's memory bounded on huge revisions (e.g. reconcile).
 pub const FLUSH_THRESHOLD: usize = 4096;
@@ -1387,119 +1007,6 @@ impl Retention {
     pub(crate) fn enabled(&self) -> bool {
         self.revisions > 0
     }
-}
-
-/// Drops the revisions that fall outside `retention`, oldest first. Returns the
-/// number of operations removed.
-///
-/// The log is a tree, so "the oldest" is not an id range: a branch rooted below
-/// the cut loses its ancestry and must go with it. The doomed set is therefore
-/// the operations older than the cutoff *plus their descendants*, and the
-/// cutoff is severed from its parent first so that the surviving history is not
-/// itself reachable from the set.
-pub(crate) fn trim(tx: &Transaction<'_>, retention: Retention, head: i64) -> Result<usize> {
-    if !retention.enabled() {
-        return Ok(0);
-    }
-    let kept: u64 =
-        tx.query_row("SELECT COUNT(*) FROM revision", [], |r| r.get::<_, i64>(0))? as u64;
-    if kept <= retention.revisions + Retention::slack(retention.revisions) {
-        return Ok(0);
-    }
-
-    // The oldest revision to keep: the `revisions`-th newest.
-    let mut keep_from: i64 = tx.query_row(
-        "SELECT id FROM revision ORDER BY id DESC LIMIT 1 OFFSET ?1",
-        params![retention.revisions as i64 - 1],
-        |r| r.get(0),
-    )?;
-    if retention.keep_labels {
-        let oldest_label: Option<i64> =
-            tx.query_row("SELECT MIN(id) FROM revision WHERE label IS NOT NULL", [], |r| r.get(0))?;
-        if let Some(label) = oldest_label {
-            keep_from = keep_from.min(label);
-        }
-    }
-    // First operation of that revision: the cutoff, and the log's new root.
-    let cutoff: Option<i64> =
-        tx.query_row("SELECT MIN(id) FROM operation WHERE rev_id = ?1", params![keep_from], |r| {
-            r.get(0)
-        })?;
-    let Some(cutoff) = cutoff else { return Ok(0) };
-    let oldest: Option<i64> = tx.query_row("SELECT MIN(id) FROM operation", [], |r| r.get(0))?;
-    if oldest == Some(cutoff) {
-        return Ok(0);
-    }
-
-    let savepoint = "log_trim";
-    tx.execute_batch(&format!("SAVEPOINT {savepoint}"))?;
-    let outcome = trim_at(tx, cutoff, head);
-    match outcome {
-        Ok(Some(pruned)) => {
-            tx.execute_batch(&format!("RELEASE {savepoint}"))?;
-            Ok(pruned)
-        }
-        Ok(None) => {
-            // The cutoff is not on HEAD's line of history — the newest
-            // revisions sit on a branch abandoned by a rollback. Cutting there
-            // would delete the history HEAD stands on, so decline: retention
-            // resumes on its own once the current line is again the newest.
-            tx.execute_batch(&format!("ROLLBACK TO {savepoint}; RELEASE {savepoint}"))?;
-            Ok(0)
-        }
-        Err(e) => {
-            let _ = tx.execute_batch(&format!("ROLLBACK TO {savepoint}; RELEASE {savepoint}"));
-            Err(e)
-        }
-    }
-}
-
-/// Makes `cutoff` the new root and deletes everything that no longer hangs off
-/// it. `Ok(None)` when `cutoff` is not an ancestor of `head` (nothing done).
-fn trim_at(tx: &Transaction<'_>, cutoff: i64, head: i64) -> Result<Option<usize>> {
-    // Sever the cutoff first: the walk below descends from the operations older
-    // than it, and would otherwise reach the whole surviving history through it.
-    tx.execute("UPDATE operation SET parent_id = NULL WHERE id = ?1", params![cutoff])?;
-    if !ancestry(tx, head)?.contains(&cutoff) {
-        return Ok(None);
-    }
-
-    tx.execute_batch(
-        "CREATE TEMP TABLE IF NOT EXISTS log_trim_doomed (id INTEGER PRIMARY KEY);
-         DELETE FROM log_trim_doomed;",
-    )?;
-    tx.execute(
-        "INSERT INTO log_trim_doomed (id)
-         WITH RECURSIVE doomed(id) AS (
-             SELECT id FROM operation WHERE id < ?1
-             UNION
-             SELECT o.id FROM operation o JOIN doomed d ON o.parent_id = d.id)
-         SELECT id FROM doomed",
-        params![cutoff],
-    )?;
-    // Revisions to reconsider afterwards: collected before the operations that
-    // name them are gone.
-    tx.execute_batch(
-        "CREATE TEMP TABLE IF NOT EXISTS log_trim_revs (id INTEGER PRIMARY KEY);
-         DELETE FROM log_trim_revs;",
-    )?;
-    tx.execute(
-        "INSERT INTO log_trim_revs (id) SELECT DISTINCT rev_id FROM operation \
-         WHERE id IN (SELECT id FROM log_trim_doomed)",
-        [],
-    )?;
-    // One statement, so SQLite checks the self-referencing foreign key once at
-    // its end rather than per row — a parent and its child may go together.
-    // `op_snapshot` follows by cascade.
-    let pruned =
-        tx.execute("DELETE FROM operation WHERE id IN (SELECT id FROM log_trim_doomed)", [])?;
-    tx.execute(
-        "DELETE FROM revision WHERE id IN (SELECT id FROM log_trim_revs) \
-         AND NOT EXISTS (SELECT 1 FROM operation WHERE rev_id = revision.id)",
-        [],
-    )?;
-    tx.execute_batch("DELETE FROM log_trim_doomed; DELETE FROM log_trim_revs;")?;
-    Ok(Some(pruned))
 }
 
 /// A single logged write transaction. All changes made through one Writer
@@ -2293,7 +1800,7 @@ impl<'c> Writer<'c> {
             deferred.insert(field_name.to_string());
             return Ok(());
         }
-        let new_type = db::encode_value(value).value_type;
+        let new_type = rows::encode_value(value).value_type;
 
         if let Some(established) = self.field_types.get(field_name) {
             return if established == new_type {
@@ -2495,23 +2002,4 @@ fn collapse_duplicate_fields(fields: Vec<Field>) -> Vec<Field> {
         }
     }
     kept
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn compact_best_effort_swallows_a_vacuum_failure() {
-        let mut conn = rusqlite::Connection::open_in_memory().unwrap();
-        // Idle connection: VACUUM runs.
-        assert!(compact_best_effort(&mut conn), "VACUUM should succeed on an idle connection");
-
-        // VACUUM cannot run inside an open transaction; the failure must be
-        // swallowed (returned as false), not propagated — a committed prune is
-        // never failed by its best-effort compaction.
-        conn.execute_batch("BEGIN").unwrap();
-        assert!(!compact_best_effort(&mut conn), "a VACUUM failure must be reported, not raised");
-        conn.execute_batch("ROLLBACK").unwrap();
-    }
 }

@@ -2,10 +2,9 @@
 
 use metafolder_core::metarecord::Value;
 use metafolder_daemon::config::{RepoConfig, Storage};
-use metafolder_daemon::db;
 use metafolder_daemon::repo::{self, RepoLocator};
 use metafolder_daemon::state::AppState;
-use metafolder_daemon::store::Begin as _;
+use metafolder_daemon::store::{Log as _, Rows as _};
 use uuid::Uuid;
 
 mod common;
@@ -13,17 +12,6 @@ use common::TempDir;
 
 fn temp_dir(prefix: &str) -> TempDir {
     TempDir::new(&format!("metafolder_{prefix}"))
-}
-
-/// A repository on SQLite whatever `METAFOLDER_DEFAULT_STORAGE` says: for the
-/// tests about SQLite's own layout (its file, its tables, its migrations).
-fn init_sqlite(
-    root: &std::path::Path,
-    metafolder: Option<&std::path::Path>,
-    name: Option<&str>,
-    system: bool,
-) -> anyhow::Result<repo::OpenedRepo> {
-    repo::init_repository_with(root, metafolder, name, system, Storage::Sqlite)
 }
 
 #[test]
@@ -60,19 +48,20 @@ fn test_init_without_seed_has_no_schema() {
 #[test]
 fn test_init_creates_structure_and_root_metarecord() {
     let root = temp_dir("init");
-    let opened = init_sqlite(&root, None, None, false).unwrap();
+    let opened = repo::init_repository(&root, None, None, false).unwrap();
 
     assert!(root.join(".metafolder/config.json").exists());
-    assert!(root.join(".metafolder/internal/db.sqlite").exists());
-    assert!(!root.join(".metafolder/db.sqlite").exists());
+    assert!(root.join(".metafolder/internal/kv").is_dir());
     assert_eq!(opened.config.root, root.canonicalize().unwrap());
     assert_eq!(opened.config.name, root.file_name().unwrap().to_string_lossy().to_string());
 
     // The filesystem root entry exists with the spec'd defaults.
-    let root_uuid = db::find_tree_child(opened.conn.as_sqlite().unwrap(), "mfr_path", None, "")
+    let root_uuid = opened
+        .conn
+        .child_by_bytes("mfr_path", None, b"")
         .unwrap()
         .expect("filesystem root entry must exist");
-    let entry = db::get_metarecord(opened.conn.as_sqlite().unwrap(), root_uuid).unwrap().unwrap();
+    let entry = opened.conn.metarecord(root_uuid).unwrap().unwrap();
     assert_eq!(entry.get("mfr_type"), Some(&Value::String("dir".into())));
     assert_eq!(entry.get("mf_watch"), Some(&Value::Bool(false)));
     // The daemon writes no mf_ignore at init: it carries no built-in ignore
@@ -82,15 +71,8 @@ fn test_init_creates_structure_and_root_metarecord() {
     assert!(entry.get_all("mf_ignore").is_empty(), "no ignore patterns are written at init");
 
     // The root entry creation went through the event log.
-    let n_ops: i64 = opened
-        .conn
-        .as_sqlite()
-        .unwrap()
-        .query_row("SELECT COUNT(*) FROM operation WHERE op_type = 'create_metarecord'", [], |r| {
-            r.get(0)
-        })
-        .unwrap();
-    assert_eq!(n_ops, 1);
+    let ops = opened.conn.all_ops().unwrap();
+    assert_eq!(ops.iter().filter(|o| o.op_type == "create_metarecord").count(), 1);
 
     drop(opened);
     std::fs::remove_dir_all(root).unwrap();
@@ -128,11 +110,7 @@ fn test_init_with_external_metafolder() {
 
     let opened = repo::init_repository(&root, Some(&meta), None, false).unwrap();
     assert!(meta.join("config.json").exists());
-    let store = match opened.config.storage {
-        Storage::Sqlite => "internal/db.sqlite",
-        Storage::Kv => "internal/kv",
-    };
-    assert!(meta.join(store).exists(), "{store}");
+    assert!(meta.join("internal/kv").is_dir());
     assert!(!root.join(".metafolder").exists());
     assert_eq!(opened.config.root, root.canonicalize().unwrap());
     drop(opened);
@@ -159,149 +137,10 @@ fn test_load_standard_form_restores_uuid() {
 }
 
 #[test]
-fn test_load_migrates_legacy_db_layout() {
-    let root = temp_dir("migrate");
-    let created = init_sqlite(&root, None, None, false).unwrap();
-    let uuid = created.config.repo_uuid;
-    drop(created);
-
-    // Recreate the legacy layout: the whole db.sqlite* family directly in
-    // .metafolder/, no internal/ directory.
-    let metafolder = root.join(".metafolder");
-    let internal = metafolder.join("internal");
-    for entry in std::fs::read_dir(&internal).unwrap() {
-        let entry = entry.unwrap();
-        std::fs::rename(entry.path(), metafolder.join(entry.file_name())).unwrap();
-    }
-    std::fs::remove_dir(&internal).unwrap();
-    assert!(metafolder.join("db.sqlite").exists());
-
-    let loaded = repo::load_repository(RepoLocator::Root(root.to_path_buf())).unwrap();
-    assert_eq!(loaded.config.repo_uuid, uuid);
-    assert!(internal.join("db.sqlite").exists());
-    assert!(!metafolder.join("db.sqlite").exists());
-    assert!(!metafolder.join("db.sqlite-wal").exists());
-    // The loaded repository is functional: the root entry is readable.
-    assert!(db::find_tree_child(loaded.conn.as_sqlite().unwrap(), "mfr_path", None, "")
-        .unwrap()
-        .is_some());
-    drop(loaded);
-    std::fs::remove_dir_all(root).unwrap();
-}
-
-#[test]
-fn test_load_migrates_legacy_table_names() {
-    let root = temp_dir("sql_migrate");
-    let created = init_sqlite(&root, None, None, false).unwrap();
-    let uuid = created.config.repo_uuid;
-    drop(created);
-
-    // Downgrade the schema to the pre-rename names (metadata / metadata_db /
-    // metadata_uuid columns / *_entry op types).
-    let db_path = root.join(".metafolder/internal/db.sqlite");
-    let conn = rusqlite::Connection::open(&db_path).unwrap();
-    conn.execute_batch(
-        "ALTER TABLE metarecord RENAME TO metadata;
-         CREATE TABLE metadata_db (metadata_uuid BLOB NOT NULL, db_id BLOB NOT NULL);
-         ALTER TABLE field RENAME COLUMN metarecord_uuid TO metadata_uuid;
-         UPDATE operation SET op_type = 'create_entry' WHERE op_type = 'create_metarecord';
-         UPDATE operation SET op_type = 'delete_entry' WHERE op_type = 'delete_metarecord';",
-    )
-    .unwrap();
-    drop(conn);
-
-    let loaded = repo::load_repository(RepoLocator::Root(root.to_path_buf())).unwrap();
-    assert_eq!(loaded.config.repo_uuid, uuid);
-    // The schema is migrated and functional: the root metarecord is readable
-    // and its creation op uses the new op type.
-    let root_uuid = db::find_tree_child(loaded.conn.as_sqlite().unwrap(), "mfr_path", None, "")
-        .unwrap()
-        .unwrap();
-    assert!(db::get_metarecord(loaded.conn.as_sqlite().unwrap(), root_uuid).unwrap().is_some());
-    let n: i64 = loaded
-        .conn
-        .as_sqlite()
-        .unwrap()
-        .query_row("SELECT COUNT(*) FROM operation WHERE op_type = 'create_metarecord'", [], |r| {
-            r.get(0)
-        })
-        .unwrap();
-    assert_eq!(n, 1);
-    let legacy: i64 = loaded
-        .conn
-        .as_sqlite()
-        .unwrap()
-        .query_row(
-            "SELECT COUNT(*) FROM sqlite_master WHERE type = 'table' AND name = 'metadata'",
-            [],
-            |r| r.get(0),
-        )
-        .unwrap();
-    assert_eq!(legacy, 0, "the legacy table name must be gone");
-    drop(loaded);
-    std::fs::remove_dir_all(root).unwrap();
-}
-
-#[test]
-fn test_load_migrates_record_era_table_names() {
-    let root = temp_dir("sql_migrate_rec");
-    let created = init_sqlite(&root, None, None, false).unwrap();
-    let uuid = created.config.repo_uuid;
-    drop(created);
-
-    // Downgrade to the short-lived intermediate naming (record / record_db /
-    // record_uuid columns / *_record op types).
-    let db_path = root.join(".metafolder/internal/db.sqlite");
-    let conn = rusqlite::Connection::open(&db_path).unwrap();
-    conn.execute_batch(
-        "ALTER TABLE metarecord RENAME TO record;
-         CREATE TABLE record_db (record_uuid BLOB NOT NULL, db_id BLOB NOT NULL);
-         ALTER TABLE field RENAME COLUMN metarecord_uuid TO record_uuid;
-         UPDATE operation SET op_type = 'create_record' WHERE op_type = 'create_metarecord';
-         UPDATE operation SET op_type = 'delete_record' WHERE op_type = 'delete_metarecord';",
-    )
-    .unwrap();
-    drop(conn);
-
-    let loaded = repo::load_repository(RepoLocator::Root(root.to_path_buf())).unwrap();
-    assert_eq!(loaded.config.repo_uuid, uuid);
-    let root_uuid = db::find_tree_child(loaded.conn.as_sqlite().unwrap(), "mfr_path", None, "")
-        .unwrap()
-        .unwrap();
-    assert!(db::get_metarecord(loaded.conn.as_sqlite().unwrap(), root_uuid).unwrap().is_some());
-    let n: i64 = loaded
-        .conn
-        .as_sqlite()
-        .unwrap()
-        .query_row("SELECT COUNT(*) FROM operation WHERE op_type = 'create_metarecord'", [], |r| {
-            r.get(0)
-        })
-        .unwrap();
-    assert_eq!(n, 1);
-    drop(loaded);
-    std::fs::remove_dir_all(root).unwrap();
-}
-
-#[test]
 fn test_load_fails_when_no_repository() {
     let root = temp_dir("noload");
     let err = repo::load_repository(RepoLocator::Root(root.to_path_buf())).unwrap_err();
     assert!(err.to_string().to_lowercase().contains("no repository"), "unexpected error: {err}");
-    std::fs::remove_dir_all(root).unwrap();
-}
-
-#[test]
-fn test_exclusive_lock_blocks_second_connection() {
-    let root = temp_dir("lock");
-    let opened = init_sqlite(&root, None, None, false).unwrap();
-
-    // The first connection holds an EXCLUSIVE lock (it has already written);
-    // a second connection must not be able to read or write.
-    let second = rusqlite::Connection::open(root.join(".metafolder/internal/db.sqlite")).unwrap();
-    let res: Result<i64, _> = second.query_row("SELECT COUNT(*) FROM metarecord", [], |r| r.get(0));
-    assert!(res.is_err(), "second connection must be locked out");
-
-    drop(opened);
     std::fs::remove_dir_all(root).unwrap();
 }
 
@@ -400,8 +239,7 @@ fn a_repository_on_the_kv_backend_reloads_its_data() {
 
     let root = temp_dir("kv_backend");
     let written = {
-        let mut opened =
-            repo::init_repository_with(root.path(), None, None, false, Storage::Kv).unwrap();
+        let mut opened = repo::init_repository(root.path(), None, None, false).unwrap();
         assert_eq!(opened.config.storage, Storage::Kv);
         let mut w = Writer::begin(&mut opened.conn, None).unwrap();
         let made = w
@@ -424,27 +262,48 @@ fn a_repository_on_the_kv_backend_reloads_its_data() {
     assert_eq!(Rows::metarecord_count(&opened.conn).unwrap(), 2, "the root and the note");
 }
 
-/// A config written before the field existed is a SQLite repository.
-#[test]
-fn a_config_without_a_storage_field_is_sqlite() {
-    let root = temp_dir("storage_default");
-    let opened =
-        repo::init_repository_with(root.path(), None, None, false, Storage::Sqlite).unwrap();
-    let meta = opened.metafolder_dir.clone();
-    drop(opened);
-    let raw = std::fs::read_to_string(meta.join("config.json")).unwrap();
-    assert!(!raw.contains("\"storage\":"), "the default is not written: {raw}");
-    assert_eq!(RepoConfig::read(&meta).unwrap().storage, Storage::Sqlite);
-}
-
 /// The KV store's "one daemon per repository": a second load of a repository
 /// that is open fails instead of sharing it.
 #[test]
 fn a_kv_repository_cannot_be_opened_twice() {
     let root = temp_dir("kv_lock");
-    let opened = repo::init_repository_with(root.path(), None, None, false, Storage::Kv).unwrap();
+    let opened = repo::init_repository(root.path(), None, None, false).unwrap();
     let second = repo::load_repository(RepoLocator::Root(root.path().to_path_buf()));
     assert!(second.is_err(), "a second opening must be refused");
     drop(opened);
+    assert!(repo::load_repository(RepoLocator::Root(root.path().to_path_buf())).is_ok());
+}
+
+/// A repository written before the key-value store — its `config.json` names
+/// no store, or SQLite — is refused with what to do about it, and its files
+/// are left as they are.
+#[test]
+fn a_sqlite_repository_is_refused_at_load() {
+    let root = temp_dir("sqlite_refused");
+    let opened = repo::init_repository(root.path(), None, None, false).unwrap();
+    let meta = opened.metafolder_dir.clone();
+    drop(opened);
+    for config in [
+        |mut c: serde_json::Value| {
+            c.as_object_mut().unwrap().remove("storage");
+            c
+        },
+        |mut c: serde_json::Value| {
+            c["storage"] = "sqlite".into();
+            c
+        },
+    ] {
+        let path = meta.join("config.json");
+        let current: serde_json::Value =
+            serde_json::from_str(&std::fs::read_to_string(&path).unwrap()).unwrap();
+        let old = config(current.clone());
+        std::fs::write(&path, old.to_string()).unwrap();
+        let err = repo::load_repository(RepoLocator::Root(root.path().to_path_buf())).unwrap_err();
+        let message = err.to_string();
+        assert!(message.contains("SQLite repository"), "{message}");
+        assert!(message.contains("mf repo convert --to kv"), "{message}");
+        assert_eq!(RepoConfig::read(&meta).unwrap().storage, Storage::Sqlite);
+        std::fs::write(&path, current.to_string()).unwrap();
+    }
     assert!(repo::load_repository(RepoLocator::Root(root.path().to_path_buf())).is_ok());
 }

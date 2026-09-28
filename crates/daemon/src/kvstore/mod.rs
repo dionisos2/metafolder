@@ -48,9 +48,9 @@ use heed::{Database, Env, EnvOpenOptions, RoTxn, RwTxn, WithoutTls};
 use metafolder_core::metarecord::{TreeName, Value};
 use uuid::Uuid;
 
-use crate::db::{self, FieldRow, RawValue, TreeRow};
 use crate::error::DomainError;
 use crate::log::{self, Delta, OpRow, Retention};
+use crate::rows::{self, FieldRow, RawValue, TreeRow};
 use crate::store::{
     Begin, Counters, Log, NewOp, Questions, Restoration, RevisionMeta, Rows, WriteTxn,
 };
@@ -102,6 +102,27 @@ pub struct KvStore {
     /// Keys read so far by the store's reads and its query sources — what
     /// the cost assertions count (`tests/kv_cost.rs`).
     reads: std::sync::atomic::AtomicU64,
+}
+
+/// A directory that removes itself when dropped, for the unit tests' stores.
+#[cfg(test)]
+pub(crate) struct TestDir(pub std::path::PathBuf);
+
+#[cfg(test)]
+impl Drop for TestDir {
+    fn drop(&mut self) {
+        let _ = std::fs::remove_dir_all(&self.0);
+    }
+}
+
+/// A fresh store for a unit test, in `$TMPDIR/metafolder-tests/`, unsynced.
+/// Keep the directory bound as long as the store.
+#[cfg(test)]
+pub(crate) fn test_store() -> (KvStore, TestDir) {
+    let dir =
+        std::env::temp_dir().join("metafolder-tests").join(format!("unit_kv_{}", Uuid::new_v4()));
+    let kv = KvStore::open_unsynced(&dir).expect("open a test store");
+    (kv, TestDir(dir))
 }
 
 // ── Encoding ────────────────────────────────────────────────────────────────
@@ -240,7 +261,7 @@ impl<'a> In<'a> {
 /// A value, column by column as SQLite stores it (the same `encode_value` /
 /// `decode_value` pair), so a name's exact bytes survive.
 fn put_value(out: &mut Out, v: &Value) {
-    let e = db::encode_value(v);
+    let e = rows::encode_value(v);
     out.bytes(e.value_type.as_bytes())
         .opt_bytes(e.text.as_deref().map(str::as_bytes))
         .opt_int(e.int)
@@ -262,7 +283,7 @@ fn get_value(r: &mut In) -> Result<Value> {
         name: r.opt_string()?,
         name_bytes: r.opt_bytes()?.map(<[u8]>::to_vec),
     };
-    db::decode_value(raw)
+    rows::decode_value(raw)
 }
 
 fn enc_row(row: &FieldRow) -> Vec<u8> {
@@ -1369,7 +1390,7 @@ impl KvTxn<'_> {
         if matches!(value, Value::Nothing) {
             return Ok(());
         }
-        let k = key(&[&name_key(name), db::encode_value(value).value_type.as_bytes()]);
+        let k = key(&[&name_key(name), rows::encode_value(value).value_type.as_bytes()]);
         let mut w = self.txn.borrow_mut();
         let n = self.t.field_types.get(&w, &k)?.map_or(0, from_be) + delta;
         if n <= 0 {
