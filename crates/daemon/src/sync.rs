@@ -1,36 +1,40 @@
 //! Cross-repo synchronisation state (spec-sync.org). Sync state — the links
 //! between metarecords of two repositories and the snapshot of their common
 //! field state at the last sync — lives *outside the data model*, in a
-//! per-pair SQLite file (`sync-<uuid_a>-<uuid_b>.sqlite`) held under one repo's
-//! `internal/`. This module is the storage layer over that file; the cross-repo
-//! orchestration (status truth table, candidates, records inline) lives in the
-//! HTTP handlers, which hold both repositories' connections.
+//! per-pair key-value store (`sync-<uuid_a>-<uuid_b>/`, LMDB) held under one
+//! repo's `internal/`. This module is the storage layer over that store; the
+//! cross-repo orchestration (status truth table, candidates, records inline)
+//! lives in the HTTP handlers, which hold both repositories.
+//!
+//! | table  | key                    | value                                   |
+//! |--------|------------------------|-----------------------------------------|
+//! | meta   | name                   | text                                    |
+//! | links  | link uuid              | record_a · record_b · version_a · _b    |
+//! | by_a   | record_a               | link uuid                               |
+//! | by_b   | record_b               | link uuid                               |
+//! | snaps  | link uuid · index      | one snapshot field (JSON)               |
 
+use std::collections::HashMap;
 use std::path::{Path, PathBuf};
+use std::sync::{LazyLock, Mutex};
 
-use anyhow::{Context, Result};
-use rusqlite::{params, Connection, OptionalExtension};
+use anyhow::{bail, Context, Result};
+use heed::types::Bytes;
+use heed::{Database, Env, EnvOpenOptions, WithoutTls};
+use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
+use metafolder_core::hex;
 use metafolder_core::metarecord::Value;
+use metafolder_core::sync::MutexExt;
 
-use crate::rows::{self, uuid_to_bytes};
+use crate::rows;
 
-/// The value columns of one `snapshot_field` row, read by name.
-fn raw_value(row: &rusqlite::Row<'_>) -> rusqlite::Result<rows::RawValue> {
-    Ok(rows::RawValue {
-        value_type: row.get("value_type")?,
-        text: row.get("value_text")?,
-        int: row.get("value_int")?,
-        real: row.get("value_real")?,
-        uuid: row.get("value_uuid")?,
-        ref_repo: row.get("value_ref_repo")?,
-        name: row.get("value_name")?,
-        name_bytes: row.get("value_name_bytes")?,
-    })
-}
+pub const FORMAT_VERSION: &str = "2";
 
-pub const FORMAT_VERSION: &str = "1";
+/// The room a pair's store reserves: address space, not disk — the file grows
+/// with what it holds.
+const MAP_SIZE: usize = 8 << 30;
 
 /// Orders a pair of repo UUIDs into canonical `(a, b)` roles: the
 /// lexicographically smaller 32-char-hex UUID is repo A. `None` when the two
@@ -43,72 +47,75 @@ pub fn canonical_pair(x: Uuid, y: Uuid) -> Option<(Uuid, Uuid)> {
     }
 }
 
-/// The sync-database file name for a canonical pair.
+/// The sync store's directory name for a canonical pair.
 pub fn sync_db_filename(a: Uuid, b: Uuid) -> String {
-    format!("sync-{}-{}.sqlite", a.as_simple(), b.as_simple())
+    format!("sync-{}-{}", a.as_simple(), b.as_simple())
 }
 
-/// Opens (creating the schema if new) a pair's sync database. Never WAL: one
-/// copy may live on a network filesystem (spec-sync "The sync database").
-pub fn open(path: &Path) -> Result<Connection> {
-    let conn = Connection::open(path)
-        .with_context(|| format!("Failed to open sync database at {path:?}"))?;
-    conn.pragma_update(None, "journal_mode", "DELETE")?;
-    conn.pragma_update(None, "synchronous", "FULL")?;
-    conn.pragma_update(None, "foreign_keys", "ON")?;
-    conn.execute_batch(
-        "CREATE TABLE IF NOT EXISTS meta (key TEXT PRIMARY KEY, value TEXT NOT NULL);
-         CREATE TABLE IF NOT EXISTS link (
-             uuid       BLOB PRIMARY KEY,
-             record_a   BLOB NOT NULL UNIQUE,
-             record_b   BLOB NOT NULL UNIQUE,
-             version_a  INTEGER,
-             version_b  INTEGER
-         );
-         CREATE TABLE IF NOT EXISTS snapshot_field (
-             link_uuid   BLOB NOT NULL REFERENCES link(uuid) ON DELETE CASCADE,
-             field_name  TEXT NOT NULL,
-             value_type  TEXT NOT NULL,
-             value_text  TEXT,
-             value_int   INTEGER,
-             value_real  REAL,
-             value_uuid  BLOB,
-             value_uuid_b BLOB,
-             value_ref_repo BLOB,
-             value_name  TEXT,
-             value_name_bytes BLOB
-         );
-         CREATE INDEX IF NOT EXISTS idx_snapshot_link ON snapshot_field(link_uuid);",
-    )
-    .context("Failed to initialise sync database schema")?;
-    Ok(conn)
+/// A pair's sync store.
+#[derive(Clone)]
+pub struct SyncDb {
+    env: Env<WithoutTls>,
+    meta: Database<Bytes, Bytes>,
+    links: Database<Bytes, Bytes>,
+    by_a: Database<Bytes, Bytes>,
+    by_b: Database<Bytes, Bytes>,
+    snaps: Database<Bytes, Bytes>,
 }
 
-/// Writes the identification `meta` rows into a freshly created sync database.
-pub fn write_meta(conn: &Connection, a: Uuid, b: Uuid, host: Uuid) -> Result<()> {
+/// The stores this process has open, by path. LMDB allows one environment
+/// per file in a process (heed refuses a second opening), and two requests on
+/// one pair can run at once: they share it.
+static OPEN: LazyLock<Mutex<HashMap<PathBuf, SyncDb>>> = LazyLock::new(Default::default);
+
+/// Opens (creating it if new) a pair's sync store.
+pub fn open(path: &Path) -> Result<SyncDb> {
+    std::fs::create_dir_all(path).with_context(|| format!("create {}", path.display()))?;
+    let key = path.canonicalize().with_context(|| format!("resolve {}", path.display()))?;
+    let mut open = OPEN.lock_recover();
+    if let Some(db) = open.get(&key) {
+        return Ok(db.clone());
+    }
+    // SAFETY: the registry above makes this the environment's one opening in
+    // the process; the map is read-only (no WRITEMAP).
+    let env = unsafe {
+        let mut options = EnvOpenOptions::new().read_txn_without_tls();
+        options.map_size(MAP_SIZE).max_dbs(8);
+        options.open(&key)
+    }
+    .with_context(|| format!("open the sync store at {}", key.display()))?;
+    let mut w = env.write_txn()?;
+    let mut table = |name| env.create_database::<Bytes, Bytes>(&mut w, Some(name));
+    let (meta, links, by_a, by_b, snaps) =
+        (table("meta")?, table("links")?, table("by_a")?, table("by_b")?, table("snaps")?);
+    w.commit()?;
+    let db = SyncDb { env, meta, links, by_a, by_b, snaps };
+    open.insert(key, db.clone());
+    Ok(db)
+}
+
+/// Writes the identification `meta` rows into a sync store.
+pub fn write_meta(db: &SyncDb, a: Uuid, b: Uuid, host: Uuid) -> Result<()> {
+    let mut w = db.env.write_txn()?;
     for (k, v) in [
         ("format_version", FORMAT_VERSION.to_string()),
         ("repo_a", a.as_simple().to_string()),
         ("repo_b", b.as_simple().to_string()),
         ("host", host.as_simple().to_string()),
     ] {
-        conn.execute(
-            "INSERT INTO meta (key, value) VALUES (?1, ?2)
-             ON CONFLICT(key) DO UPDATE SET value = excluded.value",
-            params![k, v],
-        )?;
+        db.meta.put(&mut w, k.as_bytes(), v.as_bytes())?;
     }
+    w.commit()?;
     Ok(())
 }
 
 /// Reads a `meta` value.
-pub fn read_meta(conn: &Connection, key: &str) -> Result<Option<String>> {
-    Ok(conn
-        .query_row("SELECT value FROM meta WHERE key = ?1", params![key], |r| r.get(0))
-        .optional()?)
+pub fn read_meta(db: &SyncDb, key: &str) -> Result<Option<String>> {
+    let r = db.env.read_txn()?;
+    Ok(db.meta.get(&r, key.as_bytes())?.map(|v| String::from_utf8_lossy(v).into_owned()))
 }
 
-/// The result of locating a pair's sync database across the two loaded repos'
+/// The result of locating a pair's sync store across the two loaded repos'
 /// `internal/` directories (spec-sync "Location and discovery").
 pub enum Located {
     /// Found in exactly one repo's `internal/`.
@@ -119,8 +126,8 @@ pub enum Located {
     Ambiguous,
 }
 
-/// Locates the sync-database file for canonical pair `(a, b)` given the two
-/// repos' `internal/` directories.
+/// Locates the sync store for canonical pair `(a, b)` given the two repos'
+/// `internal/` directories.
 pub fn locate(a_internal: &Path, b_internal: &Path, a: Uuid, b: Uuid) -> Located {
     let name = sync_db_filename(a, b);
     let in_a = a_internal.join(&name);
@@ -133,7 +140,7 @@ pub fn locate(a_internal: &Path, b_internal: &Path, a: Uuid, b: Uuid) -> Located
     }
 }
 
-/// One link row (spec-sync `link` table).
+/// One link (spec-sync "Links").
 #[derive(Debug, Clone)]
 pub struct Link {
     pub uuid: Uuid,
@@ -143,54 +150,71 @@ pub struct Link {
     pub version_b: Option<u64>,
 }
 
-fn row_to_link(r: &rusqlite::Row<'_>) -> rusqlite::Result<Link> {
-    Ok(Link {
-        uuid: bytes_to_uuid(r.get::<_, Vec<u8>>(0)?),
-        record_a: bytes_to_uuid(r.get::<_, Vec<u8>>(1)?),
-        record_b: bytes_to_uuid(r.get::<_, Vec<u8>>(2)?),
-        version_a: r.get::<_, Option<i64>>(3)?.map(|v| v as u64),
-        version_b: r.get::<_, Option<i64>>(4)?.map(|v| v as u64),
-    })
+fn enc_version(out: &mut Vec<u8>, v: Option<u64>) {
+    match v {
+        None => out.push(0),
+        Some(v) => {
+            out.push(1);
+            out.extend_from_slice(&v.to_be_bytes());
+        }
+    }
 }
 
-fn bytes_to_uuid(b: Vec<u8>) -> Uuid {
-    Uuid::from_slice(&b).unwrap_or(Uuid::nil())
+fn enc_link(l: &Link) -> Vec<u8> {
+    let mut out = Vec::with_capacity(50);
+    out.extend_from_slice(l.record_a.as_bytes());
+    out.extend_from_slice(l.record_b.as_bytes());
+    enc_version(&mut out, l.version_a);
+    enc_version(&mut out, l.version_b);
+    out
+}
+
+fn dec_link(uuid: Uuid, b: &[u8]) -> Result<Link> {
+    let uuid_at = |i: usize| -> Result<Uuid> {
+        Ok(Uuid::from_slice(b.get(i..i + 16).context("a truncated link")?)?)
+    };
+    let mut at = 32;
+    let mut version = || -> Result<Option<u64>> {
+        let flag = *b.get(at).context("a truncated link")?;
+        at += 1;
+        if flag == 0 {
+            return Ok(None);
+        }
+        let bytes: [u8; 8] = b.get(at..at + 8).context("a truncated link")?.try_into()?;
+        at += 8;
+        Ok(Some(u64::from_be_bytes(bytes)))
+    };
+    let (version_a, version_b) = (version()?, version()?);
+    Ok(Link { uuid, record_a: uuid_at(0)?, record_b: uuid_at(16)?, version_a, version_b })
 }
 
 /// All links, ordered by UUID.
-pub fn list_links(conn: &Connection) -> Result<Vec<Link>> {
-    let mut stmt = conn
-        .prepare("SELECT uuid, record_a, record_b, version_a, version_b FROM link ORDER BY uuid")?;
-    let links = stmt.query_map([], row_to_link)?.collect::<rusqlite::Result<Vec<_>>>()?;
-    Ok(links)
+pub fn list_links(db: &SyncDb) -> Result<Vec<Link>> {
+    let r = db.env.read_txn()?;
+    let mut out = Vec::new();
+    for e in db.links.iter(&r)? {
+        let (k, v) = e?;
+        out.push(dec_link(Uuid::from_slice(k)?, v)?);
+    }
+    Ok(out)
 }
 
 /// One link by its UUID.
-pub fn get_link(conn: &Connection, uuid: Uuid) -> Result<Option<Link>> {
-    Ok(conn
-        .query_row(
-            "SELECT uuid, record_a, record_b, version_a, version_b FROM link WHERE uuid = ?1",
-            params![uuid_to_bytes(uuid)],
-            row_to_link,
-        )
-        .optional()?)
+pub fn get_link(db: &SyncDb, uuid: Uuid) -> Result<Option<Link>> {
+    let r = db.env.read_txn()?;
+    db.links.get(&r, uuid.as_bytes())?.map(|v| dec_link(uuid, v)).transpose()
 }
 
 /// The link (if any) whose given-side record is `record`.
-pub fn link_for_record(conn: &Connection, side: Side, record: Uuid) -> Result<Option<Link>> {
-    let col = match side {
-        Side::A => "record_a",
-        Side::B => "record_b",
+pub fn link_for_record(db: &SyncDb, side: Side, record: Uuid) -> Result<Option<Link>> {
+    let r = db.env.read_txn()?;
+    let index = match side {
+        Side::A => db.by_a,
+        Side::B => db.by_b,
     };
-    Ok(conn
-        .query_row(
-            &format!(
-                "SELECT uuid, record_a, record_b, version_a, version_b FROM link WHERE {col} = ?1"
-            ),
-            params![uuid_to_bytes(record)],
-            row_to_link,
-        )
-        .optional()?)
+    let Some(link) = index.get(&r, record.as_bytes())? else { return Ok(None) };
+    let uuid = Uuid::from_slice(link)?;
+    db.links.get(&r, uuid.as_bytes())?.map(|v| dec_link(uuid, v)).transpose()
 }
 
 /// Canonical role of a repo within a pair.
@@ -201,20 +225,35 @@ pub enum Side {
 }
 
 /// Creates a link with no versions and no snapshot (state `never_synced`).
-/// The two `UNIQUE` constraints reject a record already linked in this pair.
-pub fn create_link(conn: &Connection, record_a: Uuid, record_b: Uuid) -> Result<Link> {
-    let uuid = Uuid::new_v4();
-    conn.execute(
-        "INSERT INTO link (uuid, record_a, record_b) VALUES (?1, ?2, ?3)",
-        params![uuid_to_bytes(uuid), uuid_to_bytes(record_a), uuid_to_bytes(record_b)],
-    )?;
-    Ok(Link { uuid, record_a, record_b, version_a: None, version_b: None })
+/// A record already linked in this pair, on either side, is refused.
+pub fn create_link(db: &SyncDb, record_a: Uuid, record_b: Uuid) -> Result<Link> {
+    let mut w = db.env.write_txn()?;
+    if db.by_a.get(&w, record_a.as_bytes())?.is_some()
+        || db.by_b.get(&w, record_b.as_bytes())?.is_some()
+    {
+        bail!("a record is already linked in this pair");
+    }
+    let link = Link { uuid: Uuid::new_v4(), record_a, record_b, version_a: None, version_b: None };
+    db.links.put(&mut w, link.uuid.as_bytes(), &enc_link(&link))?;
+    db.by_a.put(&mut w, record_a.as_bytes(), link.uuid.as_bytes())?;
+    db.by_b.put(&mut w, record_b.as_bytes(), link.uuid.as_bytes())?;
+    w.commit()?;
+    Ok(link)
 }
 
-/// Deletes a link and (by cascade) its snapshot rows.
-pub fn delete_link(conn: &Connection, uuid: Uuid) -> Result<bool> {
-    let n = conn.execute("DELETE FROM link WHERE uuid = ?1", params![uuid_to_bytes(uuid)])?;
-    Ok(n > 0)
+/// Deletes a link and its snapshot.
+pub fn delete_link(db: &SyncDb, uuid: Uuid) -> Result<bool> {
+    let mut w = db.env.write_txn()?;
+    let Some(link) = db.links.get(&w, uuid.as_bytes())?.map(|v| dec_link(uuid, v)).transpose()?
+    else {
+        return Ok(false);
+    };
+    db.links.delete(&mut w, uuid.as_bytes())?;
+    db.by_a.delete(&mut w, link.record_a.as_bytes())?;
+    db.by_b.delete(&mut w, link.record_b.as_bytes())?;
+    delete_snapshot(db, &mut w, uuid)?;
+    w.commit()?;
+    Ok(true)
 }
 
 /// One snapshot field: the common value at the last sync, in dual perspective
@@ -227,26 +266,76 @@ pub struct SnapshotField {
     pub value_uuid_b: Option<Uuid>,
 }
 
-/// The snapshot rows of a link.
-pub fn read_snapshot(conn: &Connection, link: Uuid) -> Result<Vec<SnapshotField>> {
-    let mut stmt = conn.prepare(
-        "SELECT field_name, value_type, value_text, value_int, value_real,
-                value_uuid, value_ref_repo, value_name, value_uuid_b, value_name_bytes
-         FROM snapshot_field WHERE link_uuid = ?1",
-    )?;
-    let rows = stmt
-        .query_map(params![uuid_to_bytes(link)], |r| {
-            let value = rows::decode_value(raw_value(r)?)
-                .map_err(|e| rusqlite::Error::ToSqlConversionFailure(e.into()))?;
-            let value_uuid_b: Option<Vec<u8>> = r.get("value_uuid_b")?;
-            Ok(SnapshotField {
-                name: r.get(0)?,
-                value,
-                value_uuid_b: value_uuid_b.map(bytes_to_uuid),
-            })
-        })?
-        .collect::<rusqlite::Result<Vec<_>>>()?;
-    Ok(rows)
+/// A snapshot field as stored: the value in its column form
+/// (spec-data-model "Storage"), byte strings in hex.
+#[derive(Serialize, Deserialize)]
+struct StoredField {
+    name: String,
+    value_type: String,
+    text: Option<String>,
+    int: Option<i64>,
+    real: Option<f64>,
+    uuid: Option<String>,
+    ref_repo: Option<String>,
+    value_name: Option<String>,
+    name_bytes: Option<String>,
+    uuid_b: Option<String>,
+}
+
+fn enc_field(f: &SnapshotField) -> Result<Vec<u8>> {
+    let e = rows::encode_value(&f.value);
+    let h = |b: Option<Vec<u8>>| b.map(|b| hex::encode(&b));
+    Ok(serde_json::to_vec(&StoredField {
+        name: f.name.clone(),
+        value_type: e.value_type.to_string(),
+        text: e.text,
+        int: e.int,
+        real: e.real,
+        uuid: h(e.uuid),
+        ref_repo: h(e.ref_repo),
+        value_name: e.name,
+        name_bytes: h(e.name_bytes),
+        uuid_b: f.value_uuid_b.map(|u| hex::encode(u.as_bytes())),
+    })?)
+}
+
+fn dec_field(b: &[u8]) -> Result<SnapshotField> {
+    let s: StoredField = serde_json::from_slice(b).context("a snapshot field")?;
+    let bytes = |h: Option<String>| -> Result<Option<Vec<u8>>> {
+        h.map(|h| hex::decode(&h).context("a hex column")).transpose()
+    };
+    let value = rows::decode_value(rows::RawValue {
+        value_type: s.value_type,
+        text: s.text,
+        int: s.int,
+        real: s.real,
+        uuid: bytes(s.uuid)?,
+        ref_repo: bytes(s.ref_repo)?,
+        name: s.value_name,
+        name_bytes: bytes(s.name_bytes)?,
+    })?;
+    let value_uuid_b = bytes(s.uuid_b)?.map(|b| Uuid::from_slice(&b)).transpose()?;
+    Ok(SnapshotField { name: s.name, value, value_uuid_b })
+}
+
+/// Deletes one link's snapshot fields: the keys its uuid prefixes.
+fn delete_snapshot(db: &SyncDb, w: &mut heed::RwTxn, link: Uuid) -> Result<()> {
+    let mut end = link.as_bytes().to_vec();
+    end.extend_from_slice(&[0xff; 4]);
+    let range =
+        (std::ops::Bound::Included(&link.as_bytes()[..]), std::ops::Bound::Included(&end[..]));
+    db.snaps.delete_range(w, &range)?;
+    Ok(())
+}
+
+/// The snapshot fields of a link.
+pub fn read_snapshot(db: &SyncDb, link: Uuid) -> Result<Vec<SnapshotField>> {
+    let r = db.env.read_txn()?;
+    let mut out = Vec::new();
+    for e in db.snaps.prefix_iter(&r, link.as_bytes())? {
+        out.push(dec_field(e?.1)?);
+    }
+    Ok(out)
 }
 
 /// One entry of a sync-commit batch: set a link's recorded versions and replace
@@ -260,42 +349,108 @@ pub struct Commit {
 
 /// Applies a batch of sync-commits in a single transaction (spec-sync
 /// `POST …/links/commit`): per commit, update the link's versions and replace
-/// its `snapshot_field` rows.
-pub fn commit_batch(conn: &mut Connection, commits: &[Commit]) -> Result<()> {
-    let tx = conn.transaction()?;
+/// its snapshot.
+pub fn commit_batch(db: &SyncDb, commits: &[Commit]) -> Result<()> {
+    let mut w = db.env.write_txn()?;
     for c in commits {
-        tx.execute(
-            "UPDATE link SET version_a = ?2, version_b = ?3 WHERE uuid = ?1",
-            params![uuid_to_bytes(c.link), c.version_a as i64, c.version_b as i64],
-        )?;
-        tx.execute(
-            "DELETE FROM snapshot_field WHERE link_uuid = ?1",
-            params![uuid_to_bytes(c.link)],
-        )?;
-        for f in &c.snapshot {
-            let e = rows::encode_value(&f.value);
-            tx.execute(
-                "INSERT INTO snapshot_field
-                     (link_uuid, field_name, value_type, value_text, value_int,
-                      value_real, value_uuid, value_uuid_b, value_ref_repo, value_name,
-                      value_name_bytes)
-                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11)",
-                params![
-                    uuid_to_bytes(c.link),
-                    f.name,
-                    e.value_type,
-                    e.text,
-                    e.int,
-                    e.real,
-                    e.uuid,
-                    f.value_uuid_b.map(uuid_to_bytes),
-                    e.ref_repo,
-                    e.name,
-                    e.name_bytes,
-                ],
-            )?;
+        let Some(mut link) =
+            db.links.get(&w, c.link.as_bytes())?.map(|v| dec_link(c.link, v)).transpose()?
+        else {
+            bail!("link not found: {}", c.link);
+        };
+        link.version_a = Some(c.version_a);
+        link.version_b = Some(c.version_b);
+        db.links.put(&mut w, c.link.as_bytes(), &enc_link(&link))?;
+        delete_snapshot(db, &mut w, c.link)?;
+        for (i, f) in c.snapshot.iter().enumerate() {
+            let mut key = c.link.as_bytes().to_vec();
+            key.extend_from_slice(&(i as u32).to_be_bytes());
+            db.snaps.put(&mut w, &key, &enc_field(f)?)?;
         }
     }
-    tx.commit()?;
+    w.commit()?;
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn dir(tag: &str) -> PathBuf {
+        let d = std::env::temp_dir()
+            .join("metafolder-tests")
+            .join(format!("sync_{tag}_{}", Uuid::new_v4()));
+        std::fs::create_dir_all(&d).unwrap();
+        d
+    }
+
+    /// Two requests on one pair open its store at once: they share it rather
+    /// than the second failing on LMDB's one-opening-per-process rule.
+    #[test]
+    fn a_store_opened_twice_is_shared() {
+        let root = dir("twice");
+        let path = root.join(sync_db_filename(Uuid::new_v4(), Uuid::new_v4()));
+        let first = open(&path).unwrap();
+        let second = open(&path).unwrap();
+        let (a, b) = (Uuid::new_v4(), Uuid::new_v4());
+        let link = create_link(&first, a, b).unwrap();
+        assert_eq!(get_link(&second, link.uuid).unwrap().unwrap().record_b, b);
+        std::fs::remove_dir_all(root).ok();
+    }
+
+    /// A snapshot keeps every value type, a name that is not UTF-8 included,
+    /// and a commit replaces it whole.
+    #[test]
+    fn snapshots_round_trip_and_are_replaced() {
+        use metafolder_core::metarecord::TreeName;
+        let root = dir("snap");
+        let db = open(&root.join("s")).unwrap();
+        let (a, b) = (Uuid::new_v4(), Uuid::new_v4());
+        let link = create_link(&db, a, b).unwrap();
+        let parent = Uuid::new_v4();
+        let fields = vec![
+            SnapshotField {
+                name: "s".into(),
+                value: Value::String("x".into()),
+                value_uuid_b: None,
+            },
+            SnapshotField { name: "f".into(), value: Value::Float(1.5), value_uuid_b: None },
+            SnapshotField {
+                name: "p".into(),
+                value: Value::TreeRef {
+                    parent: Some(parent),
+                    name: TreeName::from_bytes(b"caf\xe9".to_vec()),
+                },
+                value_uuid_b: Some(Uuid::new_v4()),
+            },
+        ];
+        commit_batch(
+            &db,
+            &[Commit { link: link.uuid, version_a: 1, version_b: 2, snapshot: fields.clone() }],
+        )
+        .unwrap();
+        let got = read_snapshot(&db, link.uuid).unwrap();
+        assert_eq!(got.len(), 3);
+        for (g, w) in got.iter().zip(&fields) {
+            assert_eq!((&g.name, &g.value, g.value_uuid_b), (&w.name, &w.value, w.value_uuid_b));
+        }
+        let l = get_link(&db, link.uuid).unwrap().unwrap();
+        assert_eq!((l.version_a, l.version_b), (Some(1), Some(2)));
+
+        commit_batch(
+            &db,
+            &[Commit {
+                link: link.uuid,
+                version_a: 3,
+                version_b: 4,
+                snapshot: fields[..1].to_vec(),
+            }],
+        )
+        .unwrap();
+        assert_eq!(read_snapshot(&db, link.uuid).unwrap().len(), 1, "replaced, not appended");
+        assert!(delete_link(&db, link.uuid).unwrap());
+        assert!(read_snapshot(&db, link.uuid).unwrap().is_empty(), "the snapshot goes too");
+        assert!(link_for_record(&db, Side::A, a).unwrap().is_none());
+        std::fs::remove_dir_all(root).ok();
+    }
 }

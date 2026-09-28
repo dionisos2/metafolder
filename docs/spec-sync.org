@@ -9,7 +9,7 @@ lives in the CLI (=mf sync=) and user scripts.
 
 Sync state — the links between metarecords of two repositories and the
 snapshot of their common state at the last sync — lives *outside the data
-model*, in a dedicated per-pair SQLite database (see [[*The sync database]]).
+model*, in a dedicated per-pair key-value store (see [[*The sync database]]).
 Links and snapshots are not metarecords: they never appear in queries, are
 absent from the event log, and are not subject to rollback.
 
@@ -33,9 +33,10 @@ absent from the event log, and are not subject to rollback.
   =mf_sync= field (=internal= / =external=).
 - Both repos must be loaded in the same daemon instance for every sync
   primitive (link creation/deletion, status, commit).
-- For cross-machine sync, the recommended approach is to mount the remote
-  repository root over SSH (e.g. SSHFS) and load it into the local daemon.
-  The daemon itself makes no network calls.
+- The daemon itself makes no network calls. Syncing with a repository on
+  another machine is deferred (see [[*Cross-machine sync]]): mounting it over
+  SSHFS and loading it, the way this used to recommend, is refused since a
+  repository's store may not live on a network filesystem.
 - Sync state is bookkeeping, not user data: it lives outside the data model
   and the event log, so the log, rollback, queries and the index are entirely
   unaffected by sync. (A rollback still moves the linked metarecords' own
@@ -45,18 +46,20 @@ absent from the event log, and are not subject to rollback.
 ** The sync database
 
 Each synchronised pair of repositories =(A, B)= shares one *sync database*: a
-single SQLite file named
+key-value store (LMDB), the directory
 
-: .metafolder/internal/sync-<uuid_A>-<uuid_B>.sqlite
+: .metafolder/internal/sync-<uuid_A>-<uuid_B>/
 
 where =<uuid_A>= and =<uuid_B>= are the 32-char lowercase hex repo UUIDs in
 canonical order (see below). The file lives in the =internal/= directory of
 *one* of the two repos — the *host* repo, chosen when the pair is first
 created (see [[*Location and discovery]]). Living under =internal/=, it is
-excluded from tracking like =db.sqlite=.
+excluded from tracking like the repository's own store. (It was a SQLite file,
+=sync-<uuid_A>-<uuid_B>.sqlite=, until September 2026; none existed outside the
+tests, so nothing converts one.)
 
 There is exactly one copy: every sync-state mutation is a single ordinary
-SQLite transaction, so link state is always internally consistent — no
+transaction, so link state is always internally consistent — no
 replication, no repair protocol. The trade-off is redundancy: if the file is
 lost or corrupted, the pair's sync state is gone and the next sync starts
 over as a first sync (divergent fields resurface as immediate conflicts;
@@ -72,7 +75,7 @@ The two repo UUIDs are ordered lexicographically (as 32-char lowercase hex):
 the smaller UUID is *repo A*, the larger is *repo B*. This order is derivable
 from the pair alone and is used consistently for:
 
-- the file name (=sync-<uuid_A>-<uuid_B>.sqlite=),
+- the store's name (=sync-<uuid_A>-<uuid_B>=),
 - the =a=/=b= role names in the schema and the HTTP API,
 - the canonical perspective of snapshots (see
   [[*Ref and TreeRef fields in the snapshot]]).
@@ -86,52 +89,29 @@ therefore never say "a" or "b" — they name the repo (see [[*Conflict resolutio
 
 *** Schema
 
-#+BEGIN_SRC sql
--- Identification and format version. Rows: format_version (currently "1"),
--- repo_a, repo_b, host (32-char hex). On open, repo_a/repo_b must match the
--- file name and the repo pair being synced; a mismatch (e.g. a file copied
--- from another pair) is an error and the file is not used. host records the
--- repo whose internal/ holds the file (updated if the file is moved).
-CREATE TABLE meta (
-    key    TEXT PRIMARY KEY,
-    value  TEXT NOT NULL
-);
+| table  | key                 | value                                                  |
+|--------+---------------------+--------------------------------------------------------|
+| meta   | name                | text: =format_version= ("2"), =repo_a=, =repo_b=, =host= |
+| links  | link uuid           | =record_a=, =record_b=, =version_a=, =version_b=        |
+| by_a   | =record_a=          | link uuid                                              |
+| by_b   | =record_b=          | link uuid                                              |
+| snaps  | link uuid · index   | one snapshot field                                     |
 
-CREATE TABLE link (
-    uuid       BLOB PRIMARY KEY,        -- 16-byte link id
-    record_a   BLOB NOT NULL UNIQUE,    -- metarecord UUID in repo A
-    record_b   BLOB NOT NULL UNIQUE,    -- metarecord UUID in repo B
-    version_a  INTEGER,                 -- E_A.version at last sync-commit (NULL before)
-    version_b  INTEGER                  -- E_B.version at last sync-commit (NULL before)
-);
+On open, =repo_a= / =repo_b= must match the directory name and the pair being
+synced; a mismatch (e.g. a store copied from another pair) is an error and the
+store is not used. =host= records the repo whose =internal/= holds it (updated
+if it is moved). =version_a= / =version_b= are absent before the first
+sync-commit.
 
--- Snapshot of the common field state at the last sync-commit. Value columns
--- are encoded exactly like the =field= table of the main database (same
--- value_type tags, same column usage), from repo A's perspective; for =ref=
--- and =tree_ref= rows, =value_uuid_b= additionally stores the B-perspective
--- UUID captured at commit time (dual perspective — see
--- [[*Ref and TreeRef fields in the snapshot]]).
-CREATE TABLE snapshot_field (
-    link_uuid   BLOB NOT NULL REFERENCES link(uuid) ON DELETE CASCADE,
-    field_name  TEXT NOT NULL,
-    value_type  TEXT NOT NULL,
-    value_text  TEXT,
-    value_int   INTEGER,
-    value_real  REAL,
-    value_uuid  BLOB,
-    value_uuid_b BLOB,
-    value_ref_repo BLOB,
-    value_name  TEXT
-);
-CREATE INDEX idx_snapshot_link ON snapshot_field(link_uuid);
-#+END_SRC
-
-The sync database is opened on demand with journal mode =DELETE= and
-=synchronous = FULL= — never WAL: the host repo may be the SSHFS-mounted
-one, and WAL's shared-memory file cannot work on a network filesystem.
+A snapshot field is the common field state at the last sync-commit: its name
+and its value in the column form of a field row (spec-data-model "Storage"),
+from repo A's perspective; for =ref= and =tree_ref= values, =value_uuid_b=
+additionally holds the B-perspective UUID captured at commit time (dual
+perspective — see [[*Ref and TreeRef fields in the snapshot]]).
 
 Links are 1:1: a metarecord of A is linked to at most one metarecord of B and
-vice versa — enforced by the two =UNIQUE= constraints.
+vice versa — =by_a= and =by_b= hold one link per record, and a link to a
+record already linked is refused.
 
 The =version_a= / =version_b= columns are written only by the sync-commit
 primitive; =record_a= / =record_b= are immutable after creation. (There is
@@ -145,16 +125,15 @@ The sync database lives in the =internal/= directory of one of the two
 repos, the *host*. The first mutating primitive on a pair creates the file
 (with its =meta= rows); the request designates the host repo, defaulting to
 canonical repo A. Choosing the host lets the user keep sync state on the
-machine that orchestrates the syncs (e.g. the local repo rather than the
-SSHFS-mounted one).
+machine that orchestrates the syncs.
 
 The two repo UUIDs of a pair must differ (=400= otherwise). Every pair
 primitive locates the file by checking both loaded repos' =internal/=
 directories, then checks its =meta= table matches the file name and the pair
 (=409= on mismatch):
 
-- found in exactly one → use it (and update =meta.host= if the file was
-  moved by hand — relocation is supported: move the file, nothing else).
+- found in exactly one → use it (and update =meta.host= if it was moved by
+  hand — relocation is supported: move the directory, nothing else).
 - found in neither → the pair has no sync state yet (empty link set;
   mutating primitives create the file, read-only ones return empty).
 - found in both → ambiguous (=409=); the user deletes the stale one. The
@@ -166,10 +145,11 @@ starts over as a first sync).
 
 *** Consistency and access
 
-The daemon opens the file on demand, for the duration of one primitive call,
-and closes it afterwards — no handle is kept in the repo state. Every
-sync-state mutation (link creation, deletion, batched sync-commit) is one
-ordinary SQLite transaction on the single file, so link state is always
+The daemon opens the store on demand, the first time a primitive needs it, and
+keeps it open for the process — LMDB allows one opening of a store per process,
+and two calls on one pair may run at once; no handle is kept in the repo
+state. Every sync-state mutation (link creation, deletion, batched
+sync-commit) is one transaction on the one store, so link state is always
 internally consistent, whatever crashes. Cross-database consistency (sync
 state vs. the two main databases) is the job of the change-detection
 machinery: a crash between a metadata write and its sync-commit simply
@@ -178,11 +158,8 @@ leaves the link "changed", re-detected and re-committed on the next run
 
 Concurrent primitive calls on the same pair are serialised by the daemon
 (the two repos' locks are acquired in canonical order, so no deadlock).
-Concurrent mutation from *two* daemons is excluded by the main databases'
-exclusive locks (both repos must be loaded to touch a pair); on network
-filesystems with unreliable locks (SSHFS) that exclusion can weaken, and the
-sync database's own SQLite locking is then the last line of defence —
-syncing the same pair from two daemons concurrently is unsupported.
+Concurrent mutation from *two* daemons is excluded by the repositories'
+exclusive locks (both repos must be loaded to touch a pair).
 
 ** Version-based change detection
 
@@ -843,6 +820,27 @@ be loaded (=404= otherwise).
   commit, the link columns are updated and the =snapshot_field= rows
   replaced. Returns ={ "committed": N }=.
 
+** Cross-machine sync                                                :deferred:
+
+Both repositories of a pair must be loaded in one daemon, and a repository's
+store may not live on a network filesystem (spec-storage "Safety"): a
+repository on another machine can no longer be mounted over SSHFS and loaded,
+which is how this document used to say cross-machine sync is done. Until it
+has a design of its own, the way proposed (September 2026) is to bring the
+remote repository's store to the local machine for the sync:
+
+1. copy the remote =.metafolder/= to the local disk, as an external
+   =.metafolder= whose =root= is the mount of the remote files (the roots
+   rewritten, the store copied consistently — =mf repo backup=);
+2. sync against that local copy, as against any loaded repository;
+3. send the synced =.metafolder/= back, replacing the remote one.
+
+The remote repository must not change in between — nothing on the remote
+machine may write to it while the copy is away — or step 3 loses those
+writes: the copy has to hold a lock on the remote (a marker the remote daemon
+refuses to load past, lifted by step 3). Neither the commands nor that lock
+exist yet.
+
 ** Performance concerns                                             :deferred:
 
 =internal= transfers/moves are native (=fs::copy= / =fs::rename=), one call
@@ -850,8 +848,7 @@ per record, no process spawn — so a large batch of small files costs syscalls,
 not =fork+exec=. The concerns below are about the daemon round-trips, not the
 file operations.
 
-1. *Batching*: when the sync database is hosted on the SSHFS-mounted repo,
-   each transaction is slow. Batch transactions (the =commits= array) reduce
+1. *Batching*: each transaction costs a sync to disk. Batch transactions (the =commits= array) reduce
    this cost at the price of more re-work after a crash (at most one batch
    to redo). The optimal batch size is to be determined by benchmark; it is
    configurable in the intents file (=[settings]=). For file metarecords,
@@ -882,8 +879,8 @@ mf sync run  <repo_a> <repo_b> [--yes]
 
 =<repo_a>= / =<repo_b>= are repo names or UUIDs; their order on the command
 line does not matter (roles are canonical — see [[*Canonical pair order]]).
-Both repositories must be loaded in the same daemon instance (for a remote
-repo: mount it, e.g. over SSHFS, and =mf repo load= it first). The plan lives
+Both repositories must be loaded in the same daemon instance (a remote one
+cannot, for now: see [[*Cross-machine sync]]). The plan lives
 in a per-pair plan repo (see [[*The plan repo]]), not a file — nothing to clean
 up, and only the latest plan exists.
 

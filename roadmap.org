@@ -16,10 +16,10 @@ load since =46f0cf3=) — copy it locally instead. No conversion is shipped: no
    log's cost assertions on it (=log_cost.rs=, which found the trim and the
    navigation step reading the whole log — both fixed), the backend, the
    resident index and the resident forest removed (=API_VERSION= 15);
-3. the per-pair sync database on LMDB — and, in spec-sync, cross-machine sync
-   over SSHFS deferred, with the way the user proposed: copy the remote
-   =.metafolder/= locally (roots rewritten), sync, send it back, the remote
-   locked meanwhile;
+3. *(done)* the per-pair sync database on LMDB; cross-machine sync over
+   SSHFS deferred in spec-sync ("Cross-machine sync"), with the way the user
+   proposed: copy the remote =.metafolder/= locally (roots rewritten), sync,
+   send it back, the remote locked meanwhile;
 4. the trash index on LMDB; =rusqlite= leaves the workspace.
 
 * TODO performance

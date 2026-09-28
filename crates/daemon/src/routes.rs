@@ -4284,7 +4284,7 @@ where
 
 /// An opened per-pair sync database plus the repo hosting its file.
 struct PairDb {
-    conn: rusqlite::Connection,
+    conn: sync::SyncDb,
     host: Uuid,
 }
 
@@ -4577,7 +4577,7 @@ async fn sync_commit(
 ) -> Result<Json<serde_json::Value>, ApiError> {
     let Json(body) = payload?;
     with_pair(&state, &a, &b, move |repo_a, repo_b| {
-        let mut db = open_pair_db(repo_a, repo_b, Some(repo_a.config.repo_uuid))?
+        let db = open_pair_db(repo_a, repo_b, Some(repo_a.config.repo_uuid))?
             .expect("create_host given");
         let mut commits = Vec::with_capacity(body.commits.len());
         for c in body.commits {
@@ -4600,7 +4600,7 @@ async fn sync_commit(
             });
         }
         let n = commits.len();
-        sync::commit_batch(&mut db.conn, &commits)?;
+        sync::commit_batch(&db.conn, &commits)?;
         Ok(Json(json!({ "committed": n })))
     })
     .await

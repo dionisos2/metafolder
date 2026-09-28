@@ -13,7 +13,6 @@ metafolder-core = { path = "../core" }
 metafolder-watchd = { path = "../watchd" }
 tokio = { version = "1", features = ["full"] }
 axum = "0.7"
-rusqlite = { version = "0.31", features = ["bundled", "functions"] }
 notify = "6"
 clap = { version = "4", features = ["derive"] }
 uuid = { version = "1", features = ["v4", "serde"] }
@@ -22,7 +21,7 @@ serde_json = "1"
 toml = "1.0"
 regex = "1"
 # Companion to `regex`: parse a pattern to HIR to extract a required literal
-# substring for the FTS5 trigram pre-filter (spec-query "MATCHES via FTS5").
+# substring for the store's trigram pre-filter (spec-storage "Text: trigrams").
 regex-syntax = "0.8"
 base64 = "0.22"
 xxhash-rust = { version = "0.8", features = ["xxh3"] }
@@ -32,19 +31,13 @@ roaring = "0.10"
 # The key-value storage backend (docs/spec-storage.org): LMDB, a memory-mapped
 # copy-on-write B+tree — the page cache is its cache.
 heed = { version = "0.22", default-features = false }
-# flock(2), for the one-daemon-per-repository lock the KV backend takes itself
-# (SQLite's EXCLUSIVE locking mode gives the other backend its own).
+# flock(2), for the one-daemon-per-repository lock the store takes itself.
 libc = "0.2"
 lofty = "0.25.0"
 nom-exif = "3.6.2"
 
 [dev-dependencies]
-# SQLite's own profile callback, which the cost assertions count statements
-# with (spec-perf, `tests/common/sqlcost.rs`). A pure-Rust feature of rusqlite:
-# it changes nothing in the bundled SQLite, and it is a dev-dependency because
-# no shipped binary installs a callback.
-rusqlite = { version = "0.31", features = ["trace"] }
-# The SQL engine, kept as the oracle the index is validated against
+# The naive query oracle the evaluator is validated against
 # (spec-indexing "It stays as the oracle"). A dev-dependency cycle, which cargo
 # allows: nothing but the tests links it.
 metafolder-query-oracle = { path = "../query-oracle" }
