@@ -27,7 +27,7 @@ meaning — a file that went away without being asked to (see
 [[file:spec-file-tracking.org][spec-file-tracking.org]] "Orphan scan").
 
 The trash-bin is filesystem state managed by the clients — the CLI and the GUI;
-it lives under =internal/=, excluded from tracking like =db.sqlite=. The daemon
+it lives under =internal/=, excluded from tracking like the repository's store. The daemon
 still never touches a file. It now owns exactly one half of the operation, the
 half that is its own: deleting the metarecords, through a single endpoint
 ([[*Deleting the metarecords]]). The shared layer (=TrashDir=: locate, move,
@@ -39,53 +39,47 @@ rollback that walks back over the trashing. Nothing restores them on its own.
 
 * Layout
 
-: .metafolder/internal/trash/<id>          -- the trashed file's bytes (the blob)
-: .metafolder/internal/trash/index.sqlite  -- the entry index (dedicated database)
+': .metafolder/internal/trash/<id>    -- the trashed file's bytes (the blob)
+: .metafolder/internal/trash/index/  -- the entry index (a dedicated store)
 
 =<id>= is a fresh 32-char lowercase hex UUID (collision-free; the blob carries
 no extension — the original name lives in the index). One directory, flat, no
-per-reason subdirectories. Everything under it except =index.sqlite= (and its
-journal) is a blob.
+per-reason subdirectories. Everything under it except =index/= is a blob (or a
+leftover =index.sqlite=, the SQLite index this one replaced in September 2026 —
+never read, swept by =prune --all=).
 
-The index is a small **dedicated** SQLite database (not the daemon's
-exclusively-locked =db.sqlite=): the trash is pure client state (CLI and GUI),
-so this DB is opened directly by them, short-lived, one connection per
-operation. SQLite buys locking against concurrent =mf trash=, atomic writes,
-indexed lookup, corruption resistance, and queryable prune (by size/age without
-reading every entry) — cheap to adopt pre-distribution. Two tables:
+The index is a small **dedicated** key-value store (LMDB, not the daemon's
+exclusively-locked repository store): the trash is pure client state (CLI and
+GUI), so it is opened directly by them. LMDB buys locking between processes (a
+=mf trash= while the GUI runs one), atomic writes and corruption resistance; a
+process opens it once and shares it between its commands. Two tables:
 
-#+BEGIN_SRC sql
-CREATE TABLE entry (
-  id TEXT PRIMARY KEY,            -- <32-hex>; the blob file name
-  original_path TEXT,            -- absolute path the file was at (restore target)
-  original_name TEXT,            -- basename, for display
-  trashed_at INTEGER,            -- unix-ms — prune -d and list order
-  size INTEGER,                  -- bytes (recursive total for a directory) — prune -s
-  is_dir INTEGER,                -- the blob is a directory (a whole subtree)
-  reason TEXT,                   -- rollback | sync | manual
-  revision INTEGER,              -- op id that trashed it, or NULL
-  metarecord TEXT,               -- the record it belonged to, or NULL
-  version INTEGER                -- the record's version when trashed (provenance)
-);
-CREATE TABLE node (              -- the captured metarecords: one row each
-  entry_id TEXT REFERENCES entry(id) ON DELETE CASCADE,
-  uuid TEXT, parent TEXT, name TEXT, -- its original mfr_path TreeRef
-  fields TEXT,                       -- its fields, as JSON (NULL: pre-capture entry)
-  trashed INTEGER                    -- 1: deleted with the entry; 0: an ancestor
-);
-#+END_SRC
+| table     | key                   | value                                               |
+|-----------+-----------------------+-----------------------------------------------------|
+| =entries= | =<id>=                | the entry, as JSON (the fields below)               |
+| =by_time= | =trashed_at= · =<id>= | — (the order of =list=, and the walk of =prune=)    |
+
+An entry holds =id= (the blob's name), =original_path= (the absolute path the
+file was at: the restore target), =original_name= (for display), =trashed_at=
+(unix-ms: =prune -d= and the list order), =size= (bytes, the recursive total for
+a directory: =prune -s=), =is_dir= (the blob is a whole subtree), =reason=
+(=rollback= | =sync= | =manual=), =revision= (the op that trashed it), =metarecord=
+(the record it belonged to), =version= (that record's version when trashed), and
+=subtree= — the captured metarecords, one node each: =uuid=, =parent=, =name=
+(its original =mfr_path= TreeRef), =fields= (its fields, as JSON; absent on a
+pre-capture entry) and =trashed= (deleted with the entry, or an ancestor).
 
 =fields= holds the metarecord's fields exactly as the daemon renders them and
 exactly as they will be sent back to =POST …/metarecords/bulk=. It is *JSON*,
-which the rest of the system deliberately avoids: =field= and =op_snapshot=
-decompose a value into typed columns because the daemon *queries* those columns.
+which the rest of the system deliberately avoids: a field row and a log snapshot
+decompose a value into typed columns because the daemon *queries* them.
 Nothing queries these. They leave the daemon as JSON and return to it as JSON,
 so decomposing them would be work in the service of no question.
 
 =trashed= says what the trashing *deletes*. The capture reaches past the trashed
 subtree: it also walks *up*, recording the ancestors, so a restore can rebuild
 the chain. Those ancestors are not being trashed — the parent directory stays —
-so they are captured with =trashed = 0= and are never deleted.
+so they are captured with =trashed = false= and are never deleted.
 
 It does *not* say what a restore puts back. A restore recreates every captured
 node the repository no longer holds, ancestors included: normally they are still
@@ -93,20 +87,13 @@ there and the recreation passes over them, but when the parent directory was
 trashed in its own right afterwards, recreating it is exactly what lets the file
 hang from its chain again.
 
-The index has no schema-version mechanism: =open()= issues =CREATE TABLE IF NOT
-EXISTS= and nothing else. Columns added later therefore need an explicit
-=PRAGMA table_info= probe followed by =ALTER TABLE=, in the shape the daemon's
-own migrations use. A database written before =fields= existed reads it as
-=NULL=, which is exactly the "nothing captured" case a restore must already
-handle.
-
-The blob is moved *before* the row is written, so a row always implies its blob;
+The blob is moved *before* the entry is written, so an entry always implies its blob;
 an index failure only ever leaks an unindexed blob, swept by =prune --all=.
 =reason=/=revision=/=version= are provenance: they let the user see which
 operation displaced a given version, but nothing routes on them. =metarecord= is
 different — it is the *key* a rollback uses to find the entry holding a given
 metarecord ([[*Finding the entry]]). Where the bytes go back is not their
-business either: that is =original_path= alone. The =node= rows are what let a
+business either: that is =original_path= alone. The =subtree= nodes are what let a
 restore rebuild the *whole* trashed subtree ([[*Restoring]]).
 
 * Moving into and out of the trash

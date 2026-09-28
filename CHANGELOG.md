@@ -173,7 +173,12 @@ than breaking them.
   earlier version (`mf repo convert --to kv`) — a deliberate exception to the
   on-disk policy above, taken when no real repository was on SQLite. A SQLite
   backup is refused by `mf repo restore` likewise. The test oracle is now a
-  naive evaluator reading every row through the storage traits.
+  naive evaluator reading every row through the storage traits. The per-pair
+  sync database (`internal/sync-<a>-<b>/`) and the trash index
+  (`internal/trash/index/`) are key-value stores too; `rusqlite` has left the
+  workspace. No `sync-*.sqlite` existed and no trash index held an entry, so
+  neither is converted: an old `trash/index.sqlite` is ignored, and swept by
+  `mf trash prune --all`.
 - **Repositories on network filesystems.** A `.metafolder/` on NFS, SMB, SSHFS
   or another network filesystem is refused at init and at load (LMDB's memory
   map and locks are not safe there); the files may stay on the share, with the

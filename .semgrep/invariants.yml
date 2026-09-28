@@ -10,30 +10,22 @@ rules:
     languages: [rust]
     severity: ERROR
     message: >-
-      Direct SQL write to a data table. Every write must go through
-      `log::Writer`, which is what keeps the event log, HEAD and the data
-      tables mutually consistent in a single transaction. Add an operation
-      type to log.rs instead.
+      A write transaction opened outside the storage layer. Every write to a
+      repository must go through `log::Writer`, which is what keeps the event
+      log, HEAD and the data mutually consistent in a single transaction. Add
+      an operation type to log.rs instead.
     paths:
       include:
         - crates/daemon/src/**
       exclude:
+        # The Writer and the navigation (log.rs), and the storage layer the
+        # Writer writes through (store.rs, kvstore/): not a bypass.
         - crates/daemon/src/log.rs
-        - crates/daemon/src/db.rs
+        - crates/daemon/src/store.rs
+        - crates/daemon/src/kvstore/**
     patterns:
-      - pattern-either:
-          - pattern: $C.execute($SQL, ...)
-          - pattern: $C.execute_batch($SQL)
-      # SQLite's `WriteTxn` (store.rs) holds the primitives the Writer itself
-      # writes through: it is the storage layer, like db.rs, not a bypass.
-      - pattern-not-inside: |
-          impl WriteTxn for $T { ... }
-      # `UPDATE revision SET label` is deliberately not matched: labelling a
-      # revision annotates the log, it does not change data, so it produces no
-      # operation. Creating or removing a revision outside the Writer would.
-      - metavariable-regex:
-          metavariable: $SQL
-          regex: (?i).*((insert\s+into|update|delete\s+from)\s+(field|metarecord|metarecord_db|operation|op_snapshot|log_head)|(insert\s+into|delete\s+from)\s+revision)\b.*
+      - pattern: $S.begin_write()
+      - pattern-not-inside: mod tests { ... }
 
   - id: mf-writer-bypasses-retention
     languages: [rust]
@@ -83,7 +75,7 @@ rules:
     severity: ERROR
     message: >-
       The watcher and executor must hold a `Weak<RepoState>`, never an Arc:
-      an Arc would keep the repo — and its exclusive SQLite lock — alive
+      an Arc would keep the repo — and its store's exclusive lock — alive
       forever, so the repo could never be unloaded. Use `Arc::downgrade` and
       `upgrade()` at each tick.
     paths:

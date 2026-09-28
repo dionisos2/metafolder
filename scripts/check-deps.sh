@@ -47,7 +47,7 @@ fi
 #         | emoji (an emoji font in fontconfig) | gst (gst-inspect element)
 deps=(
     "cargo|build|cmd|cargo|rust|Rust toolchain (compiler + cargo)"
-    "cc|build|cmd|cc|base-devel|C toolchain (bundled SQLite/libgit2)"
+    "cc|build|cmd|cc|base-devel|C toolchain (bundled LMDB/libgit2)"
     "pkg-config|build|cmd|pkg-config|base-devel|locate system libraries"
     "node|build|cmd|node|nodejs|build the GUI frontend bundle"
     "npm|build|cmd|npm|npm|build the GUI frontend bundle"
