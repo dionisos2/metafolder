@@ -9,10 +9,6 @@ use uuid::Uuid;
 
 use metafolder_daemon::kvstore::KvStore;
 
-use metafolder_daemon::store::Rows as _;
-
-use metafolder_daemon::rows;
-
 mod common;
 
 fn test_conn() -> (KvStore, common::TempDir) {
@@ -126,7 +122,7 @@ fn test_paths_of_without_the_field_is_empty() {
 // ── Direct children (children_of) ───────────────────────────────────────────
 
 #[test]
-fn test_children_of_lists_direct_children_cache_and_fallback() {
+fn test_children_of_lists_direct_children() {
     let (mut conn, _dir) = test_conn();
     let (root, music, jazz, file) = build_tree(&mut conn);
     let rock = tree_entry(&mut conn, "mfr_path", Some(music), "rock");
@@ -134,7 +130,6 @@ fn test_children_of_lists_direct_children_cache_and_fallback() {
     let mut want = vec![("jazz".to_string(), jazz), ("rock".to_string(), rock)];
     want.sort();
 
-    // DB-fallback path (cache not populated → not complete).
     let mut cache = TreeCache::new(false);
     let mut got = cache.children_of(&conn, "mfr_path", music).unwrap();
     got.sort();
@@ -145,29 +140,6 @@ fn test_children_of_lists_direct_children_cache_and_fallback() {
         "root's only child is music"
     );
     assert!(cache.children_of(&conn, "mfr_path", file).unwrap().is_empty(), "a leaf has none");
-
-    // In-memory path (fully populated) yields the same.
-    let mut warm = TreeCache::new(false);
-    warm.populate(&conn).unwrap();
-    assert!(warm.is_complete());
-    let mut got_warm = warm.children_of(&conn, "mfr_path", music).unwrap();
-    got_warm.sort();
-    assert_eq!(got_warm, want, "cache and fallback agree");
-}
-
-#[test]
-fn test_resolution_is_cached() {
-    let (mut conn, _dir) = test_conn();
-    let (_, _, _, file) = build_tree(&mut conn);
-    let mut cache = TreeCache::new(false);
-
-    cache.resolve_path(&conn, "mfr_path", "/music/jazz/file.mp3").unwrap();
-    let misses_after_first = cache.misses();
-    assert!(misses_after_first > 0);
-
-    let got = cache.resolve_path(&conn, "mfr_path", "/music/jazz/file.mp3").unwrap();
-    assert_eq!(got, Some(file));
-    assert_eq!(cache.misses(), misses_after_first, "second resolution must be a pure cache hit");
 }
 
 #[test]
@@ -217,168 +189,6 @@ fn test_descendants_collects_transitively() {
     assert!(cache.descendants(&conn, "mfr_path", file).unwrap().is_empty());
 }
 
-// ── Eager population ────────────────────────────────────────────────────────
-
-#[test]
-fn test_populate_serves_reads_without_db() {
-    // After an eager populate, the whole forest is resident: every read-side
-    // navigation is served from memory, so `misses` (DB fallbacks) stays 0.
-    let (mut conn, _dir) = test_conn();
-    let (root, music, jazz, file) = build_tree(&mut conn);
-    let rock = tree_entry(&mut conn, "mfr_path", Some(music), "rock");
-
-    let mut cache = TreeCache::new(false);
-    cache.populate(&conn).unwrap();
-    assert!(cache.is_complete(), "a forest within budget populates completely");
-
-    assert_eq!(cache.resolve_path(&conn, "mfr_path", "/music/jazz").unwrap(), Some(jazz));
-    assert_eq!(cache.resolve_path(&conn, "mfr_path", "/music/jazz/file.mp3").unwrap(), Some(file));
-    // A genuinely absent path resolves to None without touching the DB.
-    assert_eq!(cache.resolve_path(&conn, "mfr_path", "/music/none").unwrap(), None);
-
-    assert_eq!(
-        cache.path_of(&conn, "mfr_path", file).unwrap(),
-        Some("/music/jazz/file.mp3".to_string())
-    );
-    // `paths_of` now agrees with `path_of` above (leading "/" for the
-    // filesystem forest).
-    assert_eq!(cache.paths_of(&conn, "mfr_path", file).unwrap(), vec!["/music/jazz/file.mp3"]);
-
-    let mut got = cache.descendants(&conn, "mfr_path", music).unwrap();
-    got.sort();
-    let mut expected = vec![jazz, file, rock];
-    expected.sort();
-    assert_eq!(got, expected);
-    assert_eq!(cache.descendants(&conn, "mfr_path", root).unwrap().len(), 4);
-    assert!(cache.descendants(&conn, "mfr_path", file).unwrap().is_empty());
-
-    assert_eq!(cache.misses(), 0, "no read should fall back to the database");
-}
-
-#[test]
-fn test_populate_matches_lazy_descendants() {
-    // The eager walk must return exactly what the DB walk returns.
-    let (mut conn, _dir) = test_conn();
-    let (root, music, _, _) = build_tree(&mut conn);
-    let _rock = tree_entry(&mut conn, "mfr_path", Some(music), "rock");
-
-    let mut lazy = TreeCache::new(false);
-    let mut from_db = lazy.descendants(&conn, "mfr_path", root).unwrap();
-    from_db.sort();
-
-    let mut eager = TreeCache::new(false);
-    eager.populate(&conn).unwrap();
-    let mut from_cache = eager.descendants(&conn, "mfr_path", root).unwrap();
-    from_cache.sort();
-
-    assert_eq!(from_cache, from_db);
-}
-
-#[test]
-fn test_populate_then_mutations_stay_complete_and_correct() {
-    let (mut conn, _dir) = test_conn();
-    let (root, music, jazz, _file) = build_tree(&mut conn);
-
-    let mut cache = TreeCache::new(false);
-    cache.populate(&conn).unwrap();
-
-    // Insert a new file under jazz: cache stays complete and reflects it.
-    let new = tree_entry(&mut conn, "mfr_path", Some(jazz), "b.mp3");
-    cache.apply_insert("mfr_path", Some(jazz), &TreeName::from("b.mp3"), new);
-    assert!(cache.is_complete());
-    assert!(cache.descendants(&conn, "mfr_path", root).unwrap().contains(&new));
-    assert_eq!(cache.resolve_path(&conn, "mfr_path", "/music/jazz/b.mp3").unwrap(), Some(new));
-
-    // Remove the jazz subtree: descendants no longer include it.
-    cache.apply_remove("mfr_path", jazz);
-    let ds = cache.descendants(&conn, "mfr_path", music).unwrap();
-    assert!(!ds.contains(&jazz) && !ds.contains(&new));
-    assert_eq!(cache.misses(), 0, "maintenance keeps reads in memory");
-}
-
-// ── Mutations ─────────────────────────────────────────────────────────────────
-
-#[test]
-fn test_apply_rename_in_place() {
-    let (mut conn, _dir) = test_conn();
-    let (_, music, jazz, file) = build_tree(&mut conn);
-    let mut cache = TreeCache::new(false);
-    cache.resolve_path(&conn, "mfr_path", "/music/jazz/file.mp3").unwrap();
-
-    // Rename jazz → blues (same parent), DB first, then cache.
-    let mut w = Writer::begin(&mut conn, None).unwrap();
-    w.set_field(jazz, "mfr_path", Value::TreeRef { parent: Some(music), name: "blues".into() })
-        .unwrap();
-    w.commit().unwrap();
-    cache.apply_rename("mfr_path", jazz, Some(music), &TreeName::from("blues"));
-
-    let misses = cache.misses();
-    assert_eq!(cache.resolve_path(&conn, "mfr_path", "/music/blues").unwrap(), Some(jazz));
-    assert_eq!(
-        cache.resolve_path(&conn, "mfr_path", "/music/blues/file.mp3").unwrap(),
-        Some(file),
-        "children must follow a renamed directory"
-    );
-    assert_eq!(cache.misses(), misses, "rename must keep the subtree cached");
-    assert_eq!(cache.resolve_path(&conn, "mfr_path", "/music/jazz").unwrap(), None);
-}
-
-#[test]
-fn test_apply_move_to_other_parent() {
-    let (mut conn, _dir) = test_conn();
-    let (root, music, jazz, file) = build_tree(&mut conn);
-    let archive = tree_entry(&mut conn, "mfr_path", Some(root), "archive");
-    let mut cache = TreeCache::new(false);
-    cache.resolve_path(&conn, "mfr_path", "/music/jazz/file.mp3").unwrap();
-    cache.resolve_path(&conn, "mfr_path", "/archive").unwrap();
-
-    let mut w = Writer::begin(&mut conn, None).unwrap();
-    w.set_field(jazz, "mfr_path", Value::TreeRef { parent: Some(archive), name: "jazz".into() })
-        .unwrap();
-    w.commit().unwrap();
-    cache.apply_rename("mfr_path", jazz, Some(archive), &TreeName::from("jazz"));
-
-    assert_eq!(
-        cache.resolve_path(&conn, "mfr_path", "/archive/jazz/file.mp3").unwrap(),
-        Some(file)
-    );
-    assert_eq!(cache.resolve_path(&conn, "mfr_path", "/music/jazz").unwrap(), None);
-    let _ = music;
-}
-
-#[test]
-fn test_apply_remove_drops_subtree() {
-    let (mut conn, _dir) = test_conn();
-    let (_, _, jazz, file) = build_tree(&mut conn);
-    let mut cache = TreeCache::new(false);
-    cache.resolve_path(&conn, "mfr_path", "/music/jazz/file.mp3").unwrap();
-
-    // Delete from DB, then notify the cache.
-    let mut w = Writer::begin(&mut conn, None).unwrap();
-    w.delete_metarecord(file).unwrap();
-    w.delete_metarecord(jazz).unwrap();
-    w.commit().unwrap();
-    cache.apply_remove("mfr_path", jazz);
-
-    assert_eq!(cache.resolve_path(&conn, "mfr_path", "/music/jazz").unwrap(), None);
-    assert_eq!(cache.resolve_path(&conn, "mfr_path", "/music/jazz/file.mp3").unwrap(), None);
-}
-
-#[test]
-fn test_apply_insert_makes_child_resolvable_without_db_miss() {
-    let (mut conn, _dir) = test_conn();
-    let (_, music, _, _) = build_tree(&mut conn);
-    let mut cache = TreeCache::new(false);
-    cache.resolve_path(&conn, "mfr_path", "/music").unwrap();
-
-    let blues = tree_entry(&mut conn, "mfr_path", Some(music), "blues");
-    cache.apply_insert("mfr_path", Some(music), &TreeName::from("blues"), blues);
-
-    let misses = cache.misses();
-    assert_eq!(cache.resolve_path(&conn, "mfr_path", "/music/blues").unwrap(), Some(blues));
-    assert_eq!(cache.misses(), misses);
-}
-
 // ── Case sensitivity ──────────────────────────────────────────────────────────
 
 #[test]
@@ -393,10 +203,7 @@ fn test_case_insensitive_resolution() {
 
     let mut insensitive = TreeCache::new(true);
     assert_eq!(insensitive.resolve_path(&conn, "mfr_path", "/music").unwrap(), Some(music));
-    // And through the cache (no extra miss for the other casing).
-    let misses = insensitive.misses();
     assert_eq!(insensitive.resolve_path(&conn, "mfr_path", "/MUSIC").unwrap(), Some(music));
-    assert_eq!(insensitive.misses(), misses);
 }
 
 // ── Undecodable names (spec-data-model "Tree names") ─────────────────────────
@@ -425,9 +232,6 @@ fn test_two_siblings_differing_only_in_undecodable_bytes_are_distinct_nodes() {
     let b = tree_entry_bytes(&mut conn, "mfr_path", Some(root), b"caf\xff.mp4");
 
     let mut cache = TreeCache::new(false);
-    cache.apply_insert("mfr_path", None, &TreeName::from(""), root);
-    cache.apply_insert("mfr_path", Some(root), &TreeName::from_bytes(b"caf\xe9.mp4".to_vec()), a);
-    cache.apply_insert("mfr_path", Some(root), &TreeName::from_bytes(b"caf\xff.mp4".to_vec()), b);
 
     let children = cache.children_of(&conn, "mfr_path", root).unwrap();
     assert_eq!(children.len(), 2, "both siblings are cached: {children:?}");
@@ -444,13 +248,6 @@ fn test_a_node_with_an_undecodable_name_resolves_by_its_displayed_path() {
     let file = tree_entry_bytes(&mut conn, "mfr_path", Some(root), b"caf\xe9.mp4");
 
     let mut cache = TreeCache::new(false);
-    cache.apply_insert("mfr_path", None, &TreeName::from(""), root);
-    cache.apply_insert(
-        "mfr_path",
-        Some(root),
-        &TreeName::from_bytes(b"caf\xe9.mp4".to_vec()),
-        file,
-    );
 
     assert_eq!(cache.resolve_path(&conn, "mfr_path", "/caf%E9.mp4").unwrap(), Some(file));
     assert_eq!(cache.path_of(&conn, "mfr_path", file).unwrap().as_deref(), Some("/caf%E9.mp4"));
@@ -465,15 +262,14 @@ fn test_case_folding_still_applies_but_keeps_undecodable_bytes_distinct() {
     let b = tree_entry_bytes(&mut conn, "mfr_path", Some(root), b"x\xff");
 
     let mut cache = TreeCache::new(true); // case-insensitive
-    cache.apply_insert("mfr_path", None, &TreeName::from(""), root);
-    cache.apply_insert("mfr_path", Some(root), &TreeName::from("Photos"), upper);
-    cache.apply_insert("mfr_path", Some(root), &TreeName::from_bytes(b"x\xe9".to_vec()), a);
-    cache.apply_insert("mfr_path", Some(root), &TreeName::from_bytes(b"x\xff".to_vec()), b);
 
     // ASCII case still folds...
     assert_eq!(cache.resolve_path(&conn, "mfr_path", "/photos").unwrap(), Some(upper));
     // ...and the two undecodable siblings stay two nodes.
-    assert_eq!(cache.children_of(&conn, "mfr_path", root).unwrap().len(), 3);
+    let children: Vec<Uuid> =
+        cache.children_of(&conn, "mfr_path", root).unwrap().into_iter().map(|(_, u)| u).collect();
+    assert_eq!(children.len(), 3);
+    assert!(children.contains(&a) && children.contains(&b));
 }
 
 #[test]
@@ -486,9 +282,6 @@ fn test_two_undecodable_siblings_each_resolve_on_their_own() {
     let b = tree_entry_bytes(&mut conn, "mfr_path", Some(root), b"caf\xff.mp4");
 
     let mut cache = TreeCache::new(false);
-    cache.apply_insert("mfr_path", None, &TreeName::from(""), root);
-    cache.apply_insert("mfr_path", Some(root), &TreeName::from_bytes(b"caf\xe9.mp4".to_vec()), a);
-    cache.apply_insert("mfr_path", Some(root), &TreeName::from_bytes(b"caf\xff.mp4".to_vec()), b);
 
     assert_eq!(cache.resolve_path(&conn, "mfr_path", "/caf%E9.mp4").unwrap(), Some(a));
     assert_eq!(cache.resolve_path(&conn, "mfr_path", "/caf%FF.mp4").unwrap(), Some(b));
@@ -503,8 +296,6 @@ fn test_a_name_that_really_contains_the_escape_is_found_verbatim() {
     let literal = tree_entry(&mut conn, "mfr_path", Some(root), "%E9.txt");
 
     let mut cache = TreeCache::new(false);
-    cache.apply_insert("mfr_path", None, &TreeName::from(""), root);
-    cache.apply_insert("mfr_path", Some(root), &TreeName::from("%E9.txt"), literal);
 
     assert_eq!(cache.resolve_path(&conn, "mfr_path", "/%E9.txt").unwrap(), Some(literal));
 }
@@ -518,8 +309,6 @@ fn test_a_path_with_no_escape_is_untouched_by_any_of_this() {
     let plain = tree_entry(&mut conn, "mfr_path", Some(root), "100%.txt");
 
     let mut cache = TreeCache::new(false);
-    cache.apply_insert("mfr_path", None, &TreeName::from(""), root);
-    cache.apply_insert("mfr_path", Some(root), &TreeName::from("100%.txt"), plain);
 
     assert_eq!(cache.resolve_path(&conn, "mfr_path", "/100%.txt").unwrap(), Some(plain));
 }
@@ -532,15 +321,7 @@ fn look_alikes(conn: &mut KvStore) -> (TreeCache, Uuid, Uuid, Uuid) {
     let root = tree_entry(conn, "mfr_path", None, "");
     let literal = tree_entry(conn, "mfr_path", Some(root), "caf%E9.mp4");
     let escaped = tree_entry_bytes(conn, "mfr_path", Some(root), b"caf\xe9.mp4");
-    let mut cache = TreeCache::new(false);
-    cache.apply_insert("mfr_path", None, &TreeName::from(""), root);
-    cache.apply_insert("mfr_path", Some(root), &TreeName::from("caf%E9.mp4"), literal);
-    cache.apply_insert(
-        "mfr_path",
-        Some(root),
-        &TreeName::from_bytes(b"caf\xe9.mp4".to_vec()),
-        escaped,
-    );
+    let cache = TreeCache::new(false);
     (cache, root, literal, escaped)
 }
 
@@ -569,13 +350,6 @@ fn test_a_form_that_matches_nothing_resolves_to_nothing() {
     let root = tree_entry(&mut conn, "mfr_path", None, "");
     let escaped = tree_entry_bytes(&mut conn, "mfr_path", Some(root), b"caf\xe9.mp4");
     let mut cache = TreeCache::new(false);
-    cache.apply_insert("mfr_path", None, &TreeName::from(""), root);
-    cache.apply_insert(
-        "mfr_path",
-        Some(root),
-        &TreeName::from_bytes(b"caf\xe9.mp4".to_vec()),
-        escaped,
-    );
     // Only the escaped reading exists here.
     let p = "/caf%E9.mp4";
     assert_eq!(cache.resolve_path_as(&conn, "mfr_path", p, PathForm::Verbatim).unwrap(), None);
@@ -596,366 +370,4 @@ fn test_resolving_by_exact_bytes_never_consults_the_other_reading() {
     let (mut cache, _, _, escaped) = look_alikes(&mut conn);
     let rel = RelPath::root().child(TreeName::from_bytes(b"caf\xe9.mp4".to_vec()));
     assert_eq!(cache.resolve_rel(&conn, "mfr_path", &rel).unwrap(), Some(escaped));
-}
-
-// ── Incremental upkeep after a manual write ──────────────────────────────────
-//
-// A manual API write used to rebuild the whole forest (one full scan of the
-// `field` table per write). `apply_cell` reconciles just the cell that changed,
-// and reports whether it could: the oracle below is that a cache maintained
-// this way is indistinguishable from one freshly populated.
-
-/// Panics unless `cache` reports exactly what a fresh `populate` would: same
-/// residency, same node count, and, for every TreeRef position in the database,
-/// the same paths, children and descendants.
-fn assert_matches_fresh(conn: &KvStore, cache: &mut TreeCache) {
-    let mut fresh = TreeCache::new(false);
-    fresh.populate(conn).unwrap();
-    assert_eq!(cache.is_complete(), fresh.is_complete(), "residency");
-    assert_eq!(cache.len(), fresh.len(), "node count");
-    for row in conn.forest().unwrap() {
-        let (field, uuid) = (row.field_name.as_str(), row.uuid);
-        assert_eq!(
-            cache.paths_of(conn, field, uuid).unwrap(),
-            fresh.paths_of(conn, field, uuid).unwrap(),
-            "paths of {uuid} in {field}"
-        );
-        let (mut got, mut want) = (
-            cache.children_of(conn, field, uuid).unwrap(),
-            fresh.children_of(conn, field, uuid).unwrap(),
-        );
-        got.sort();
-        want.sort();
-        assert_eq!(got, want, "children of {uuid} in {field}");
-        let (mut got, mut want) = (
-            cache.descendants(conn, field, uuid).unwrap(),
-            fresh.descendants(conn, field, uuid).unwrap(),
-        );
-        got.sort();
-        want.sort();
-        assert_eq!(got, want, "descendants of {uuid} in {field}");
-    }
-}
-
-/// Sets one TreeRef field of `uuid` through a `Writer` (a manual API write) and
-/// brings `cache` back in step the way the routes do. Returns what `apply_cell`
-/// reported: false means it declined, and the caller must rebuild.
-/// Commits a writer and brings `cache` back in step exactly as
-/// `RepoState::settle` does: through what the revision says it did to the
-/// forest, with no second look at the database.
-fn commit_and_settle(w: Writer<'_>, cache: &mut TreeCache) -> bool {
-    let effects = w.effects();
-    w.commit().unwrap();
-    cache.apply_ops(effects.tree_ops())
-}
-
-fn manual_set(
-    conn: &mut KvStore,
-    cache: &mut TreeCache,
-    uuid: Uuid,
-    field: &str,
-    value: Value,
-) -> bool {
-    let mut w = Writer::begin(conn, None).unwrap();
-    w.set_field(uuid, field, value).unwrap();
-    commit_and_settle(w, cache)
-}
-
-/// A populated cache over the standard filesystem tree.
-fn warm_tree(conn: &mut KvStore) -> (TreeCache, Uuid, Uuid, Uuid, Uuid) {
-    let (root, music, jazz, file) = build_tree(conn);
-    let mut cache = TreeCache::new(false);
-    cache.populate(conn).unwrap();
-    (cache, root, music, jazz, file)
-}
-
-#[test]
-fn test_manual_write_adds_a_child_without_a_rebuild() {
-    let (mut conn, _dir) = test_conn();
-    let (mut cache, _root, music, _jazz, _file) = warm_tree(&mut conn);
-
-    // A brand-new metarecord given its position by a manual write.
-    let mut w = Writer::begin(&mut conn, None).unwrap();
-    let rock = w.create_metarecord(vec![]).unwrap().uuid;
-    w.commit().unwrap();
-    let value = Value::TreeRef { parent: Some(music), name: "rock".into() };
-    assert!(manual_set(&mut conn, &mut cache, rock, "mfr_path", value));
-
-    assert_eq!(cache.resolve_path(&conn, "mfr_path", "/music/rock").unwrap(), Some(rock));
-    assert_matches_fresh(&conn, &mut cache);
-}
-
-#[test]
-fn test_manual_write_adds_a_root_without_a_rebuild() {
-    let (mut conn, _dir) = test_conn();
-    let (mut cache, ..) = warm_tree(&mut conn);
-
-    let mut w = Writer::begin(&mut conn, None).unwrap();
-    let tag = w.create_metarecord(vec![]).unwrap().uuid;
-    w.commit().unwrap();
-    let value = Value::TreeRef { parent: None, name: "animals".into() };
-    assert!(manual_set(&mut conn, &mut cache, tag, "tag", value));
-
-    assert_eq!(cache.resolve_path(&conn, "tag", "animals").unwrap(), Some(tag));
-    assert_matches_fresh(&conn, &mut cache);
-}
-
-#[test]
-fn test_manual_rename_keeps_the_subtree() {
-    let (mut conn, _dir) = test_conn();
-    let (mut cache, root, music, jazz, file) = warm_tree(&mut conn);
-
-    let value = Value::TreeRef { parent: Some(root), name: "sound".into() };
-    assert!(manual_set(&mut conn, &mut cache, music, "mfr_path", value));
-
-    assert_eq!(cache.resolve_path(&conn, "mfr_path", "/sound/jazz").unwrap(), Some(jazz));
-    assert_eq!(
-        cache.path_of(&conn, "mfr_path", file).unwrap(),
-        Some("/sound/jazz/file.mp3".to_string()),
-        "the whole subtree follows its directory"
-    );
-    assert_matches_fresh(&conn, &mut cache);
-}
-
-#[test]
-fn test_manual_move_to_another_parent_keeps_the_subtree() {
-    let (mut conn, _dir) = test_conn();
-    let (mut cache, root, _music, jazz, _file) = warm_tree(&mut conn);
-
-    let value = Value::TreeRef { parent: Some(root), name: "jazz".into() };
-    assert!(manual_set(&mut conn, &mut cache, jazz, "mfr_path", value));
-
-    assert_eq!(cache.resolve_path(&conn, "mfr_path", "/jazz").unwrap(), Some(jazz));
-    assert_eq!(cache.resolve_path(&conn, "mfr_path", "/music/jazz").unwrap(), None);
-    assert_matches_fresh(&conn, &mut cache);
-}
-
-#[test]
-fn test_manual_unset_of_a_leaf_drops_its_node() {
-    let (mut conn, _dir) = test_conn();
-    let (mut cache, _root, _music, _jazz, file) = warm_tree(&mut conn);
-
-    let mut w = Writer::begin(&mut conn, None).unwrap();
-    w.delete_fields_named(file, "mfr_path").unwrap();
-    assert!(commit_and_settle(w, &mut cache));
-
-    assert_eq!(cache.resolve_path(&conn, "mfr_path", "/music/jazz/file.mp3").unwrap(), None);
-    assert_matches_fresh(&conn, &mut cache);
-}
-
-#[test]
-fn test_a_write_that_changes_no_position_is_a_no_op() {
-    let (mut conn, _dir) = test_conn();
-    let (mut cache, _root, music, ..) = warm_tree(&mut conn);
-    let before = cache.len();
-
-    let value = Value::TreeRef { parent: cache_parent(&conn, music), name: "music".into() };
-    assert!(manual_set(&mut conn, &mut cache, music, "mfr_path", value));
-    assert_eq!(cache.len(), before);
-    assert_matches_fresh(&conn, &mut cache);
-}
-
-/// The parent uuid of `uuid`'s `mfr_path` position, read from the database.
-fn cache_parent(conn: &KvStore, uuid: Uuid) -> Option<Uuid> {
-    conn.rows_named(uuid, "mfr_path")
-        .unwrap()
-        .into_iter()
-        .find_map(|r| match r.value {
-            Value::TreeRef { parent, .. } => Some(parent),
-            _ => None,
-        })
-        .flatten()
-}
-
-#[test]
-fn test_a_parent_and_its_child_written_by_one_revision() {
-    let (mut conn, _dir) = test_conn();
-    let (mut cache, root, ..) = warm_tree(&mut conn);
-
-    let mut w = Writer::begin(&mut conn, None).unwrap();
-    let parent = w.create_metarecord(vec![]).unwrap().uuid;
-    let child = w.create_metarecord(vec![]).unwrap().uuid;
-    w.set_field(parent, "mfr_path", Value::TreeRef { parent: Some(root), name: "docs".into() })
-        .unwrap();
-    w.set_field(child, "mfr_path", Value::TreeRef { parent: Some(parent), name: "a.txt".into() })
-        .unwrap();
-    assert!(commit_and_settle(w, &mut cache));
-    assert_eq!(cache.resolve_path(&conn, "mfr_path", "/docs/a.txt").unwrap(), Some(child));
-    assert_matches_fresh(&conn, &mut cache);
-}
-
-#[test]
-fn test_a_child_settled_before_its_parent_still_lands() {
-    // The cells are replayed in write order, so the parent normally comes
-    // first — but nothing may depend on that: settling waits for a parent that
-    // is itself part of the batch.
-    let (mut conn, _dir) = test_conn();
-    let (mut cache, root, ..) = warm_tree(&mut conn);
-
-    let mut w = Writer::begin(&mut conn, None).unwrap();
-    let parent = w.create_metarecord(vec![]).unwrap().uuid;
-    let child = w.create_metarecord(vec![]).unwrap().uuid;
-    w.set_field(parent, "mfr_path", Value::TreeRef { parent: Some(root), name: "docs".into() })
-        .unwrap();
-    w.set_field(child, "mfr_path", Value::TreeRef { parent: Some(parent), name: "a.txt".into() })
-        .unwrap();
-    assert!(commit_and_settle(w, &mut cache));
-    assert_eq!(cache.resolve_path(&conn, "mfr_path", "/docs/a.txt").unwrap(), Some(child));
-    assert_matches_fresh(&conn, &mut cache);
-}
-
-#[test]
-fn test_two_siblings_swapping_names_in_one_revision() {
-    // Neither rename can be applied first while the other still holds the name:
-    // settling detaches everything it is about to move before placing any of it.
-    let (mut conn, _dir) = test_conn();
-    let (mut cache, root, music, ..) = warm_tree(&mut conn);
-    let mut w = Writer::begin(&mut conn, None).unwrap();
-    let films = w
-        .create_metarecord(vec![Field::new(
-            "mfr_path",
-            Value::TreeRef { parent: Some(root), name: "films".into() },
-        )])
-        .unwrap()
-        .uuid;
-    w.commit().unwrap();
-    cache.populate(&conn).unwrap();
-
-    let mut w = Writer::begin(&mut conn, None).unwrap();
-    w.set_field(music, "mfr_path", Value::TreeRef { parent: Some(root), name: "tmp".into() })
-        .unwrap();
-    w.set_field(films, "mfr_path", Value::TreeRef { parent: Some(root), name: "music".into() })
-        .unwrap();
-    w.set_field(music, "mfr_path", Value::TreeRef { parent: Some(root), name: "films".into() })
-        .unwrap();
-    assert!(commit_and_settle(w, &mut cache));
-    assert_eq!(cache.resolve_path(&conn, "mfr_path", "/films").unwrap(), Some(music));
-    assert_eq!(cache.resolve_path(&conn, "mfr_path", "/music").unwrap(), Some(films));
-    assert!(
-        cache.resolve_path(&conn, "mfr_path", "/films/jazz/file.mp3").unwrap().is_some(),
-        "the subtree followed the node that moved, not the name"
-    );
-    assert_matches_fresh(&conn, &mut cache);
-}
-
-#[test]
-fn test_an_incomplete_cache_asks_for_a_rebuild() {
-    let (mut conn, _dir) = test_conn();
-    let (root, ..) = build_tree(&mut conn);
-    let mut cache = TreeCache::new(false);
-    // Never populated: what it holds is not the whole forest, so what one
-    // revision did tells it nothing about the rest. Only reachable before the
-    // repository's initial load — through the API it never happens.
-    let mut w = Writer::begin(&mut conn, None).unwrap();
-    w.set_field(root, "mfr_path", Value::TreeRef { parent: None, name: "".into() }).unwrap();
-    assert!(!commit_and_settle(w, &mut cache));
-}
-
-#[test]
-fn test_populating_keeps_a_name_s_exact_bytes() {
-    // The forest scan used to read back the *displayed* name, so a node named
-    // with an undecodable byte was cached under the bytes of its own escape —
-    // and then answered to neither reading of its path.
-    let (mut conn, _dir) = test_conn();
-    let root = tree_entry(&mut conn, "mfr_path", None, "");
-    let escaped = tree_entry_bytes(&mut conn, "mfr_path", Some(root), b"caf\xe9.mp4");
-    let literal = tree_entry(&mut conn, "mfr_path", Some(root), "caf%E9.mp4");
-
-    let mut cache = TreeCache::new(false);
-    cache.populate(&conn).unwrap();
-    let p = "/caf%E9.mp4";
-    assert_eq!(
-        cache.resolve_path_as(&conn, "mfr_path", p, PathForm::Escaped).unwrap(),
-        Some(escaped)
-    );
-    assert_eq!(
-        cache.resolve_path_as(&conn, "mfr_path", p, PathForm::Verbatim).unwrap(),
-        Some(literal)
-    );
-}
-
-// ── Waiting for a parent (spec-file-tracking "Upkeep after a write") ────────
-// A node whose parent holds no position of its own cannot be linked to
-// anything. It stays resident and findable by uuid — exactly where a fresh load
-// leaves it — and the forest must bring it back the moment that parent gets a
-// position, whichever mechanism does it. Without that, the order positions
-// arrive in decides whether a subtree is reachable, and an operation-by-
-// operation upkeep (a navigation step, an event) has no such order to offer.
-
-/// A forest holding one node under a parent that has no position.
-fn orphan_forest(child: Uuid, ghost: Uuid) -> Vec<rows::TreeRow> {
-    vec![rows::TreeRow {
-        id: 1,
-        field_name: "mfr_path".into(),
-        uuid: child,
-        parent: Some(ghost),
-        name: TreeName::from("file.mp3"),
-    }]
-}
-
-#[test]
-fn test_a_node_waiting_for_a_parent_is_adopted_when_it_arrives() {
-    let (conn, _dir) = test_conn();
-    let (file, ghost) = (Uuid::new_v4(), Uuid::new_v4());
-    let mut cache = TreeCache::new(false);
-    cache.populate_from_forest(orphan_forest(file, ghost));
-    assert_eq!(cache.len(), 1, "the node is resident, as a load leaves it");
-    assert_eq!(cache.paths_of(&conn, "mfr_path", file).unwrap(), Vec::<String>::new());
-
-    cache.apply_insert("mfr_path", None, &TreeName::from("music"), ghost);
-
-    assert_eq!(cache.resolve_path(&conn, "mfr_path", "music/file.mp3").unwrap(), Some(file));
-    assert_eq!(cache.children_of(&conn, "mfr_path", ghost).unwrap().len(), 1);
-}
-
-#[test]
-fn test_an_insert_under_an_unknown_parent_keeps_the_node() {
-    let (conn, _dir) = test_conn();
-    let (file, ghost) = (Uuid::new_v4(), Uuid::new_v4());
-    let mut cache = TreeCache::new(false);
-    cache.populate_from_forest(Vec::new());
-
-    // The child first, its parent second: the reverse of the order a load sees,
-    // and the order a rollback undoing a deleted subtree produces.
-    cache.apply_insert("mfr_path", Some(ghost), &TreeName::from("file.mp3"), file);
-    cache.apply_insert("mfr_path", None, &TreeName::from("music"), ghost);
-
-    assert_eq!(cache.resolve_path(&conn, "mfr_path", "music/file.mp3").unwrap(), Some(file));
-}
-
-#[test]
-fn test_a_waiting_node_that_moves_stops_waiting() {
-    let (conn, _dir) = test_conn();
-    let (file, ghost) = (Uuid::new_v4(), Uuid::new_v4());
-    let mut cache = TreeCache::new(false);
-    cache.populate_from_forest(orphan_forest(file, ghost));
-
-    // It is given a real home before its ghost parent ever shows up; the
-    // parent's later arrival must not claim it back.
-    cache.apply_insert("mfr_path", None, &TreeName::from("music"), ghost);
-    cache.apply_rename("mfr_path", file, None, &TreeName::from("file.mp3"));
-    cache.apply_insert("mfr_path", None, &TreeName::from("other"), Uuid::new_v4());
-
-    assert_eq!(cache.resolve_path(&conn, "mfr_path", "file.mp3").unwrap(), Some(file));
-    assert!(cache.children_of(&conn, "mfr_path", ghost).unwrap().is_empty());
-}
-
-// ── One cell at a time (spec-file-tracking "Upkeep after a write") ───────────
-// A coordinated navigation step commits one operation per transaction, so the
-// cache is handed *part* of a revision where a write hands it all of it. It
-// must land where a rebuild would anyway — the waiting index is what makes the
-// order irrelevant (see above).
-
-#[test]
-fn test_a_cell_settled_before_its_parents_still_lands() {
-    let (mut conn, _dir) = test_conn();
-    let (mut cache, root, _music, jazz, _file) = warm_tree(&mut conn);
-
-    // The node is already in the forest, keeps its children through the move,
-    // and its new parent is resident: the ordinary case, settled in place.
-    let mut w = Writer::begin(&mut conn, None).unwrap();
-    w.set_field(jazz, "mfr_path", Value::TreeRef { parent: Some(root), name: "jazz".into() })
-        .unwrap();
-    assert!(commit_and_settle(w, &mut cache));
-    assert_matches_fresh(&conn, &mut cache);
 }

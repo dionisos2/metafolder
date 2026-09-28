@@ -480,16 +480,13 @@ impl NavPlan {
     }
 
     /// Applies the next step in one transaction and advances HEAD; see
-    /// [`coordinated_step`]. `(HEAD, [])` once the plan is done.
-    pub fn step(
-        &mut self,
-        store: &mut dyn Begin,
-        skip: bool,
-    ) -> Result<(Option<i64>, Vec<TreeOp>)> {
+    /// [`coordinated_step`]. Answers the new HEAD — the current one once the
+    /// plan is done.
+    pub fn step(&mut self, store: &mut dyn Begin, skip: bool) -> Result<Option<i64>> {
         let tx = store.begin_write()?;
         let head = tx.head()?;
         let Some((id, dir)) = self.steps.front().copied() else {
-            return Ok((head, vec![]));
+            return Ok(head);
         };
         let op = tx.op(id)?.context("operation vanished during navigation")?;
         let expected = match dir {
@@ -502,7 +499,6 @@ impl NavPlan {
                  {expected:?}"
             );
         }
-        let tree = nav_tree_ops(&*tx, &op, dir)?;
         if skip {
             enqueue_restoration(&*tx, &op, dir)?;
         }
@@ -519,16 +515,14 @@ impl NavPlan {
         tx.set_head(new_head)?;
         tx.commit()?;
         self.steps.pop_front();
-        Ok((new_head, tree))
+        Ok(new_head)
     }
 }
 
 /// Applies the *first* operation on the path from the current HEAD toward
 /// `target` (one atomic step) and advances HEAD. Plans the whole path to take
 /// its first step: a navigation of several steps plans once instead
-/// ([`NavPlan`]). Returns the new HEAD and what
-/// the step did to the forest, for the caller's tree cache
-/// ([`crate::tree_cache::TreeCache::apply_ops`]). When `skip` is set and the
+/// ([`NavPlan`]). Returns the new HEAD. When `skip` is set and the
 /// operation is a file op, a restoration entry is enqueued in
 /// `pending_operation` (replayed as a new branch once the lock is released —
 /// spec-event-log "skip").
@@ -536,29 +530,13 @@ pub fn coordinated_step(
     store: &mut dyn Begin,
     target: Option<i64>,
     skip: bool,
-) -> Result<(Option<i64>, Vec<TreeOp>)> {
+) -> Result<Option<i64>> {
     let mut plan = {
         // Read in a transaction dropped unwritten: a plain read of the store.
         let tx = store.begin_write()?;
         NavPlan::new(&*tx, target)?
     };
     plan.step(store, skip)
-}
-
-/// What one navigation step does to the forest: the same description a
-/// [`Writer`] records for its own writes ([`tree_ops_of`]), derived from the
-/// operation's snapshots instead — which carry both the rows it put in place
-/// and the rows it replaced, so nothing has to be read back afterwards.
-fn nav_tree_ops(log: &dyn Log, op: &OpRow, dir: NavDir) -> Result<Vec<TreeOp>> {
-    let Some(op_type) = OpType::parse(&op.op_type) else {
-        return Ok(Vec::new());
-    };
-    let before = log.snapshots(op.id, false)?;
-    let after = log.snapshots(op.id, true)?;
-    Ok(match dir {
-        NavDir::Forward => tree_ops_of(op_type, &before, &after, op.entity_uuid),
-        NavDir::Inverse => inverse_tree_ops(op_type, &before, &after, op.entity_uuid),
-    })
 }
 
 /// Enqueues the restoration operation for a skipped file op: a synthetic

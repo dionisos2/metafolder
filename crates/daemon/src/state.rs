@@ -179,7 +179,7 @@ impl RepoState {
             conn: Mutex::new(opened.conn),
             // No forest in memory: the store answers (spec-storage increment
             // 4 e).
-            cache: Mutex::new(TreeCache::new(opened.case_insensitive).without_forest()),
+            cache: Mutex::new(TreeCache::new(opened.case_insensitive)),
             config: opened.config,
             name,
             metafolder_dir: opened.metafolder_dir,
@@ -463,16 +463,6 @@ impl RepoState {
         conn: &dyn crate::store::Store,
         effects: &crate::log::WriteEffects,
     ) -> anyhow::Result<()> {
-        if effects.touches_tree() {
-            let _phase = metafolder_core::slowlog::phase("settle.tree");
-            let mut cache = self.lock_cache();
-            if !cache.apply_ops(effects.tree_ops()) {
-                // Only before the repository's initial load, which through the
-                // API cannot happen: it serves nothing until the forest is
-                // resident (spec-main "POST /repos/load").
-                cache.populate(conn)?;
-            }
-        }
         self.settle_watch_rules(conn, effects);
         if effects.touches_watch() {
             let _phase = metafolder_core::slowlog::phase("settle.watches");
@@ -926,7 +916,6 @@ fn write_watch_frontier(
                         metafolder_core::metarecord::Value::String("dir".into()),
                     ),
                 ])?;
-                cache.apply_insert("mfr_path", Some(parent), &name, created.uuid);
                 created.uuid
             }
         };

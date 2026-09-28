@@ -165,7 +165,7 @@ impl Oracle {
     /// unchanged.
     fn check_paginated_with_roots(&mut self, q: &Query, by: &[(&str, bool)], limit: usize) {
         let want = self.oracle_pages(q, by, limit);
-        let mut no_forest = TreeCache::new(false).without_forest();
+        let mut no_forest = TreeCache::new(false);
         let mut roots = QueryRoots::new();
         let mut targets = Vec::new();
         collect_path_targets(q, &mut targets);
@@ -174,7 +174,7 @@ impl Oracle {
                 roots.path.insert((field, path), uuid);
             }
         }
-        let keys = SortKeys::with_store(&no_forest, &self.conn);
+        let keys = SortKeys::new(&self.conn);
         roots.keys = Some(&keys);
         let index = Index(&self.conn);
         let by_keys = sort_by(by);
@@ -1057,7 +1057,6 @@ fn osm_path_separator_term_defers_and_matches_sql() {
     let _track = o.create(vec![tref("loc", Some(jazz), "take-five.flac")]);
     let _other = o.create(vec![tref("loc", Some(root), "jazz")]);
 
-    o.cache.populate(&o.conn).unwrap();
     for term in ["music/jazz", "root/music", "zz/take"] {
         let q = osm_path_q("loc", &[term]);
         let index = Index(&o.conn);
@@ -1088,7 +1087,6 @@ fn osm_path_multi_term_via_leaf_rewrite_matches_sql() {
     let _scifi = o.create(vec![tref("loc", Some(series), "science-fiction")]);
     let _music = o.create(vec![tref("loc", Some(root), "music")]);
 
-    o.cache.populate(&o.conn).unwrap();
     for terms in [vec!["video", "scien"], vec!["scien", "video"], vec!["ser", "vid"]] {
         let q = osm_path_q("loc", &terms);
         let rewritten = forest_query::resolve_path_leaves(&o.cache, &o.conn, None, &q).unwrap();
@@ -1127,7 +1125,6 @@ fn finder_shaped_query_via_leaf_rewrite_matches_sql() {
 
     // The same preparation `run_query_filter` runs: neither leaf needs a
     // rewrite here, and that is the point — both are served in memory.
-    o.cache.populate(&o.conn).unwrap();
     let rewritten = forest_query::resolve_path_leaves(&o.cache, &o.conn, None, &q).unwrap();
     let roots = QueryRoots::new();
 
@@ -1334,25 +1331,16 @@ fn tree_ref_sort_matches_sql_engine() {
 }
 
 #[test]
-fn tree_ref_sort_without_a_resident_forest_is_unsupported() {
-    // No resolver (or an unpopulated cache) ⇒ the index refuses the sort. On the
-    // serving path that cannot happen (a repository serves nothing until its
-    // forest is resident), so it is a `Gap::State` — a 500 naming a daemon bug,
-    // not a fall back.
+fn tree_ref_sort_without_sort_keys_is_unsupported() {
+    // No resolver of the path keys ⇒ the evaluator refuses the sort. On the
+    // serving path that cannot happen (the route always hands it one), so it
+    // is a `Gap::State` — a 500 naming a daemon bug, not a fall back.
     let o = tree_sorted();
     let index = Index(&o.conn);
     let all =
         Query::Eq { field: "k".into(), value: Value::String("x".into()), aspect: Aspect::Raw };
     let by = [SortBy { field: "mfr_path".into(), ascending: true }];
     assert!(index.evaluate_sorted(&all, &by, None).is_err(), "no resolver at all");
-
-    let keys = SortKeys::new(&o.cache); // never populated ⇒ not resident
-    let mut roots = QueryRoots::new();
-    roots.keys = Some(&keys);
-    assert!(
-        index.evaluate_page_with_roots(&all, &by, None, None, &roots).is_err(),
-        "resolver over an incomplete forest"
-    );
     // A non-tree sort is unaffected by the absence of a resolver.
     let by = [SortBy { field: "k".into(), ascending: true }];
     assert!(index.evaluate_sorted(&all, &by, None).is_ok());
@@ -1488,7 +1476,6 @@ fn resolving_forest_leaves_is_deterministic() {
         o.create(vec![tref("loc", Some(sci), &format!("ep{i}.mkv"))]);
     }
 
-    o.cache.populate(&o.conn).unwrap();
     for q in [
         osm_path_q("loc", &["sci", "ep"]),
         osm_path_q("loc", &["root/science"]),
@@ -1609,7 +1596,6 @@ fn path_aspect_leaves_are_resolved_by_the_forest() {
     // SQL").
     let (mut o, [_root, _b, _c, _d]) = forest();
     let _unrelated = o.create(vec![Field::new("kind", s("file"))]);
-    o.cache.populate(&o.conn).unwrap();
 
     let path_leaf = |q: Query| q;
     for q in [
@@ -1653,7 +1639,6 @@ fn a_path_leaf_on_a_non_tree_field_is_refused_before_any_engine() {
     // preserve the mistake by leaving the leaf alone.
     let mut o = Oracle::new();
     o.create(vec![Field::new("title", s("hello"))]);
-    o.cache.populate(&o.conn).unwrap();
     let index = Index(&o.conn);
 
     let q = Query::Eq { field: "title".into(), value: s("hello"), aspect: Aspect::Path };

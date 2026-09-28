@@ -63,7 +63,7 @@ fn repository_with(n: usize, per_folder: usize, extra: usize) -> (KvStore, TempD
 /// resolution and the path sort keys), prepared as the route prepares it.
 fn reads(kv: &KvStore, q: &Query, sort: &[(&str, bool)], count: bool) -> (usize, u64) {
     let before = kv.reads();
-    let mut cache = TreeCache::new(false).without_forest();
+    let mut cache = TreeCache::new(false);
     let mut roots = QueryRoots::new();
     let mut targets = Vec::new();
     collect_path_targets(q, &mut targets);
@@ -77,7 +77,7 @@ fn reads(kv: &KvStore, q: &Query, sort: &[(&str, bool)], count: bool) -> (usize,
     // The forest's own leaves (an order-sensitive `osm` path), rewritten as
     // the route rewrites them.
     let q = &forest_query::resolve_path_leaves(&cache, kv, Some(&e), q).unwrap();
-    let keys = SortKeys::with_store(&cache, kv);
+    let keys = SortKeys::new(kv);
     roots.keys = Some(&keys);
     let sort: Vec<SortBy> =
         sort.iter().map(|(f, asc)| SortBy { field: f.to_string(), ascending: *asc }).collect();

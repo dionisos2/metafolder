@@ -436,7 +436,7 @@ fn flush_pending_once(repo: &RepoState, report: FlushReport) -> Result<FlushStat
     // Restoration ops from skipped rollback steps are replayed first, as their
     // own revision, before the watcher events recorded during the lock.
     let mut revisions_from_restore = 0;
-    revisions_from_restore += flush_restorations(&mut conn, &mut cache, repo.log_retention())?;
+    revisions_from_restore += flush_restorations(&mut conn, repo.log_retention())?;
 
     // Taken whole: whatever the watcher buffers while this flush runs lands in
     // the now-empty buffer and is picked up by the next round. On any path that
@@ -630,7 +630,6 @@ fn flush_pending_once(repo: &RepoState, report: FlushReport) -> Result<FlushStat
         // the flush just stopped.
         Err(e) if is_cancelled(&e) => {
             return_pending(repo, taken);
-            resync_cache(&conn, &mut cache);
             repo.pause_ingestion();
             repo.tasks.mark_cancelled(task);
             crate::diagnostics::warn_for(
@@ -648,39 +647,15 @@ fn flush_pending_once(repo: &RepoState, report: FlushReport) -> Result<FlushStat
             // replaces, a batch that can never be applied no longer outlives a
             // restart, so it needs no failure budget to escape.
             return_pending(repo, taken);
-            resync_cache(&conn, &mut cache);
             repo.tasks.fail(task, &e.to_string());
             Err(e)
         }
     }
 }
 
-/// Rebuilds the tree cache from the database after a group was abandoned.
-///
-/// The cache is maintained *incrementally* as events are applied (`apply_insert`
-/// / `apply_rename` / `apply_remove`), in memory, next to the writes — and a
-/// dropped writer rolls the writes back but not the cache. Without this, a
-/// stopped (or failed) flush leaves the cache claiming paths no committed
-/// metarecord holds, and every later resolution of them answers a uuid that is
-/// not there. Rebuilding costs one scan of the forest and only happens on a
-/// path that has already given up.
-fn resync_cache(conn: &dyn Rows, cache: &mut TreeCache) {
-    if let Err(err) = cache.populate(conn) {
-        crate::diagnostics::error(
-            "executor",
-            format!("could not rebuild the tree cache after an abandoned flush: {err:#}"),
-        );
-    }
-}
-
 /// Replays restoration ops left by skipped coordinated-rollback steps as a
-/// single revision (spec-event-log "skip"), then deletes them. The tree cache
-/// is cleared afterwards because `mfr_path` restorations move tree positions.
-fn flush_restorations(
-    conn: &mut dyn Database,
-    cache: &mut TreeCache,
-    retention: crate::log::Retention,
-) -> Result<usize> {
+/// single revision (spec-event-log "skip"), then deletes them.
+fn flush_restorations(conn: &mut dyn Database, retention: crate::log::Retention) -> Result<usize> {
     let rows = conn.restorations()?;
     if rows.is_empty() {
         return Ok(0);
@@ -721,9 +696,6 @@ fn flush_restorations(
     writer.drop_restorations(max_id)?;
     let wrote = writer.op_count() > 0;
     writer.commit()?;
-    // The restore rewrote tree positions arbitrarily: rebuild the cache from
-    // the new state (keeps it complete; `populate` clears first).
-    cache.populate(conn)?;
     Ok(if wrote { 1 } else { 0 })
 }
 
@@ -984,8 +956,7 @@ impl Apply<'_, '_> {
             Value::TreeRef { parent: Some(parent), name: name.clone() },
         )];
         fields.extend(stat);
-        let created = self.writer.create_metarecord(fields)?;
-        self.cache.apply_insert("mfr_path", Some(parent), &name, created.uuid);
+        self.writer.create_metarecord(fields)?;
         Ok(())
     }
 
@@ -1109,7 +1080,6 @@ impl Apply<'_, '_> {
             // "Invariant", "Leaving a group").
             crate::duplicates::leave_group(&mut self.writer, OpType::FileDeleted, u)?;
         }
-        self.cache.apply_remove("mfr_path", uuid);
         self.path_written(uuid)
     }
 
@@ -1152,7 +1122,6 @@ impl Apply<'_, '_> {
             "mfr_path",
             Value::TreeRef { parent: Some(parent), name: name.clone() },
         )?;
-        self.cache.apply_rename("mfr_path", src, Some(parent), &name);
         self.path_written(src)
     }
 
@@ -1450,7 +1419,6 @@ pub(crate) fn ensure_parent_metarecords(
         }
         fields.extend(extra_fields.iter().cloned());
         let created = writer.create_metarecord(fields)?;
-        cache.apply_insert("mfr_path", Some(parent), comp, created.uuid);
         parent = created.uuid;
     }
     Ok(parent)

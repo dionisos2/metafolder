@@ -113,14 +113,9 @@ fn path_leaf_matches(
         if terms.is_empty() || crate::index::osm_path_indexable(terms).is_some() {
             return Ok(None);
         }
-        // The resident forest: one walk carrying the match position down each
-        // branch, taking a whole subtree at once when a branch has consumed
-        // every term.
-        let resident = cache.osm_path_matches(field, terms).map_err(ApiError::from)?;
-        let seeded = match (resident, names) {
-            (Some(matched), _) => Some(Query::UuidIn { uuids: matched }),
-            (None, Some(names)) => osm_path_seeded(store, names, field, terms)?,
-            (None, None) => None,
+        let seeded = match names {
+            Some(names) => osm_path_seeded(store, names, field, terms)?,
+            None => None,
         };
         let mut rewritten = match seeded {
             Some(rewritten) => rewritten,
@@ -136,11 +131,8 @@ fn path_leaf_matches(
         return Ok(Some(rewritten));
     }
     let Some((field, pred, narrow)) = path_predicate(q) else { return Ok(None) };
-    if let Some(matched) = cache.path_matches(field, pred.as_ref()).map_err(ApiError::from)? {
-        return Ok(Some(Query::UuidIn { uuids: matched }));
-    }
-    // No resident forest: seek in the store what can match, rather than walk
-    // every node of it (spec-storage "The forest").
+    // Seek in the store what can match, rather than walk every node of it
+    // (spec-storage "The forest").
     let below = |operand: &str, op: Op| -> Box<dyn Fn(&str) -> bool + '_> {
         let operand = operand.to_string();
         Box::new(move |start: &str| match op {

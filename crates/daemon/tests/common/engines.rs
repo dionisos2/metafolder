@@ -72,11 +72,11 @@ pub fn indexed(kv: &KvStore, query: &Query, sort: &[SortKey]) -> Vec<Uuid> {
         .iter()
         .map(|k| SortBy { field: k.field.clone(), ascending: k.order == SortOrder::Asc })
         .collect();
-    let mut no_forest = TreeCache::new(false).without_forest();
+    let mut no_forest = TreeCache::new(false);
     let (roots, indexed) = super::kv::with_kv(kv, PageStrategy::Auto, |e, _| {
         prepare(&mut no_forest, kv, Some(e), query)
     });
-    let keys = SortKeys::with_store(&no_forest, kv);
+    let keys = SortKeys::new(kv);
     let roots = QueryRoots { keys: Some(&keys), ..roots };
     let got = super::kv::with_kv(kv, PageStrategy::Auto, |e, _| {
         e.evaluate_page_with_roots(&indexed, &sort_by, None, None, &roots)

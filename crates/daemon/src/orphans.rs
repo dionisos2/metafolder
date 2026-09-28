@@ -104,7 +104,6 @@ pub fn clear_orphans(repo: &RepoState, uuids: &[Uuid]) -> Result<usize, ApiError
             // re-counted (spec-duplicates "Leaving a group").
             crate::duplicates::leave_group(&mut writer, OpType::FileDeleted, u)?;
         }
-        cache.apply_remove("mfr_path", uuid);
         cleared += 1;
     }
 
@@ -362,7 +361,6 @@ fn adopt(
     // The holder leaves the position first: one metarecord holds a given tree
     // position, so the orphan cannot take it while the holder is still there.
     writer.delete_metarecord(holder)?;
-    cache.apply_remove("mfr_path", holder);
     let path = crate::relpath::RelPath::from_display(rel);
     let parent = crate::executor::ensure_parent_metarecords(&mut writer, cache, root, &path, &[])?;
     let name = path.name().cloned().unwrap_or_default();
@@ -372,7 +370,6 @@ fn adopt(
         "mfr_path",
         Value::TreeRef { parent: Some(parent), name: name.clone() },
     )?;
-    cache.apply_insert("mfr_path", Some(parent), &name, orphan);
     writer.commit()?;
     Ok(())
 }

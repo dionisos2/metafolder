@@ -1383,9 +1383,6 @@ async fn rollback(
             let mut conn = slowlog::timed("wait:conn", || repo_state.conn.lock_recover());
             let resolved = crate::log::resolve_target(&*conn, &target)?;
             let result = crate::log::navigate(&mut *conn, resolved)?;
-            // Navigation rewrites tree positions arbitrarily: rebuild the cache
-            // from the new state (keeps it complete; `populate` clears first).
-            repo_state.lock_cache().populate(&conn)?;
             // And the watch set with it: navigation restores `mf_watch`/
             // `mf_ignore` rows like any other, so the live watches must follow
             // the state HEAD landed on (spec-event-log "Upkeep after a
@@ -2198,25 +2195,10 @@ async fn rollback_step(
         };
         let done = {
             let mut conn = slowlog::timed("wait:conn", || repo_state.conn.lock_recover());
-            let tree = match plan.step(&mut *conn, skip) {
-                Ok((_, tree)) => tree,
-                Err(e) => {
-                    put_back(plan);
-                    return Err(e.into());
-                }
-            };
-            // The step says which TreeRef cells it rewrote, and the cache
-            // settles exactly those (spec-file-tracking "Upkeep after a
-            // write"). Rebuilding here instead is one scan of the `field`
-            // table per *operation* — a navigation of a thousand of them, which
-            // is what one "back" over a tagged folder is, then pays a thousand
-            // scans of the whole repository under the connection lock.
-            //
-            // A step is only part of a revision, and may well restore a child
-            // before its parent; the cache holds such a node until the position
-            // it waits for arrives, so the order the operations come in is not
-            // this caller's problem.
-            repo_state.lock_cache().apply_ops(&tree);
+            if let Err(e) = plan.step(&mut *conn, skip) {
+                put_back(plan);
+                return Err(e.into());
+            }
             if let Some((id, dir)) = plan.next() {
                 let described = crate::store::Log::op(&*conn, id)
                     .map_err(ApiError::from)
@@ -3432,7 +3414,7 @@ fn run_query_filter(
     // Full-path sort keys for a `tree_ref` sort key, rebuilt from the resident
     // forest — or from the store, where none is resident (spec-data-model
     // "Sort specification", spec-storage increment 4 e).
-    let sort_keys = crate::tree_cache::SortKeys::with_store(cache, conn);
+    let sort_keys = crate::tree_cache::SortKeys::new(conn);
     roots.keys = Some(&sort_keys);
     // The index build/refresh above is the heavy phase on a large repo; if a
     // Stop landed during it, don't start the (also non-trivial) evaluation.

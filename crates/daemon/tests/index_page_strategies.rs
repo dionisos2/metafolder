@@ -234,7 +234,7 @@ fn eval_pages(
 fn every_page_strategy_gives_the_oracles_pages() {
     let (conn, _dir) = fixture();
     // As the route prepares a query: the forest is read from the store.
-    let mut cache = TreeCache::new(false).without_forest();
+    let mut cache = TreeCache::new(false);
     for q in queries(&conn, &mut cache) {
         for by in sorts() {
             for limit in [10, 50] {
@@ -248,7 +248,7 @@ fn every_page_strategy_gives_the_oracles_pages() {
                         roots.path.insert((field, path), uuid);
                     }
                 }
-                let keys = SortKeys::with_store(&cache, &conn);
+                let keys = SortKeys::new(&conn);
                 roots.keys = Some(&keys);
                 for strategy in [PageStrategy::Fetch, PageStrategy::Walk, PageStrategy::Auto] {
                     let got =

@@ -399,7 +399,7 @@ impl Eval<'_> {
     ) -> Result<(Vec<Uuid>, Option<String>), Unsupported> {
         // A page without a count need not know every match: a text leaf on a
         // forest's names is checked on the ids a walk visits.
-        let keys = roots.and_then(|r| r.keys).filter(|k| k.is_resident());
+        let keys = roots.and_then(|r| r.keys);
         if let (Some(_), Some(keys)) = (limit.filter(|&l| l > 0), keys) {
             if let Some((rest, leaves)) = self.deferrable_text(q) {
                 let (candidates, residual) = self.defer_text(&rest, leaves, roots, keys)?;
@@ -647,7 +647,7 @@ impl Eval<'_> {
             }
             // A path sort walks the resident forest in key order.
             let tree = self.src.value_type(key.field.as_str()) == Some("tree_ref");
-            let keys = roots.and_then(|r| r.keys).filter(|k| k.is_resident());
+            let keys = roots.and_then(|r| r.keys);
             if let (true, Some(keys)) = (tree, keys) {
                 let within = roots.and_then(|r| walk_bound(q, &key.field, r));
                 let descending = !key.ascending;
@@ -942,7 +942,6 @@ impl Eval<'_> {
                     // serves at all, so this is an invariant, not a fallback.
                     let keys = roots
                         .and_then(|r| r.keys)
-                        .filter(|keys| keys.is_resident())
                         .ok_or_else(|| not_ready("tree_ref sort without a resident forest"))?;
                     Some((k.field.as_str(), keys))
                 } else {

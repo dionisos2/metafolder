@@ -731,7 +731,6 @@ pub(crate) fn create_record_for(
     }
     fields.extend(extra_fields.iter().cloned());
     let created = writer.create_metarecord(fields)?;
-    cache.apply_insert("mfr_path", Some(parent), &name, created.uuid);
     Ok(created.uuid)
 }
 
@@ -752,8 +751,6 @@ fn apply_move(
         "mfr_path",
         Value::TreeRef { parent: Some(parent), name: name.clone() },
     )?;
-    cache.apply_remove("mfr_path", uuid);
-    cache.apply_insert("mfr_path", Some(parent), &name, uuid);
     refresh_stat_fields(writer, root, uuid, rel)
 }
 
