@@ -206,32 +206,33 @@ fn a_filtered_bounded_read_looks_past_the_window_for_matches() {
     }
 }
 
-/// The keys one write reads when it trims the log to `keep` revisions.
-fn trim_cost(log: usize, keep: u64) -> u64 {
-    let (mut kv, _dir) = repo_with_log(log);
+/// The keys one write reads when it trims 100 revisions of one operation off
+/// a log that keeps 20: 18 of one operation, then one of `big` operations
+/// (a reconcile's, say), then the write's own.
+fn trim_cost(big: usize) -> u64 {
+    let (mut kv, _dir) = repo_with_log(118);
+    let mut w = Writer::begin(&mut kv, None).unwrap();
+    for i in 0..big {
+        w.create_metarecord(vec![Field::new("rank", Value::Int(i as i64))]).unwrap();
+    }
+    w.commit().unwrap();
     let (_, reads) = reads_of(&mut kv, |kv| {
-        let retention = Retention { revisions: keep, keep_labels: false };
+        let retention = Retention { revisions: 20, keep_labels: false };
         let mut w = Writer::begin_with_retention(kv, None, retention).unwrap();
         w.create_metarecord(vec![Field::new("kind", Value::String("new".into()))]).unwrap();
         w.commit().unwrap();
     });
-    let kept = kv.counts().unwrap().1 as u64;
-    assert!(kept <= keep + Retention::slack(keep), "the trim kept {kept} revisions");
+    assert_eq!(kv.counts().unwrap().1, 20, "the trim kept 20 revisions");
     reads
 }
 
-/// The retention trim deletes a bounded slice of the oldest operations. What
-/// it reads must depend on what it deletes, never on what it *keeps*: a trim
-/// that looks at the whole log costs O(log) per write, invisible on a test
-/// repository and hours on a real one (the unindexed-foreign-key trim of the
-/// SQLite era was O(deleted × log)).
+/// The retention trim deletes the oldest revisions. What it reads must depend
+/// on what it deletes, never on how much the revisions it *keeps* hold: it
+/// runs once every `slack` writes, and a trim that reads the whole log reads
+/// a reconcile's tens of thousands of operations each time.
 #[test]
-#[ignore = "KV: the trim reads every operation of the log (1036 → 2836 keys); fixed next"]
 fn trimming_the_log_does_not_read_the_operations_it_keeps() {
-    // The same 100 revisions deleted, behind 20 kept and behind 320.
-    let short = trim_cost(120, 20);
-    let long = trim_cost(420, 320);
-    assert_eq!(short, long, "the trim read more for a longer kept log");
+    assert_eq!(trim_cost(1), trim_cost(2_000), "the trim read the operations it keeps");
 }
 
 // ── Going back (spec-gui "Reserved keys") ────────────────────────────────────

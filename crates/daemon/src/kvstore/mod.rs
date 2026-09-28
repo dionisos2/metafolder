@@ -704,6 +704,16 @@ impl Read<'_> {
         Ok(out)
     }
 
+    /// The parent of `op`, refused when it is not older: children always have
+    /// larger ids than their parents, so a parent that does not is a cycle (or
+    /// a corruption heading into one), and a walk down would never end.
+    fn older_parent(op: &OpRow) -> Result<Option<i64>> {
+        match op.parent_id {
+            Some(p) if p >= op.id => bail!("operation history contains a cycle at op {}", op.id),
+            p => Ok(p),
+        }
+    }
+
     /// The ancestor chain from `from`, at most `max` operations, HEAD-first.
     fn chain(&self, from: i64, max: usize) -> Result<Vec<OpRow>> {
         let mut out = Vec::new();
@@ -717,7 +727,7 @@ impl Read<'_> {
             let Some(b) = self.t.ops.get(self.r, &be(id))? else { break };
             let mut op = dec_op(id, b)?;
             op.origin = self.origin(op.rev_id, &mut cache)?;
-            cur = op.parent_id;
+            cur = Read::older_parent(&op)?;
             out.push(op);
         }
         Ok(out)
@@ -768,7 +778,7 @@ impl Read<'_> {
             if ok {
                 return Ok(Some(id));
             }
-            cur = op.parent_id;
+            cur = Read::older_parent(&op)?;
         }
         Ok(None)
     }
@@ -1028,7 +1038,7 @@ macro_rules! kv_reads {
                         let Some(b) = $read.t.ops.get($read.r, &be(id))? else { break };
                         let mut op = dec_op(id, b)?;
                         op.origin = $read.origin(op.rev_id, &mut cache)?;
-                        cur = if id == until { None } else { op.parent_id };
+                        cur = if id == until { None } else { Read::older_parent(&op)? };
                         rows.push(op);
                     }
                     Ok(match rows.last() {
@@ -1376,6 +1386,43 @@ impl KvTxn<'_> {
         Some(key(&[&name_key(name), &p, &node_key(node.as_bytes())]))
     }
 
+    /// A revision's first operation (the smallest id: its operations are
+    /// numbered in order), `None` when it holds none. One key.
+    fn first_op_of(&self, rev: i64) -> Result<Option<i64>> {
+        let txn = self.txn.borrow();
+        self.reads.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        let first = self.t.ops_by_rev.prefix_iter(&txn, &be(rev))?.next();
+        Ok(match first {
+            Some(e) => Some(from_be(&e?.0[16..])),
+            None => None,
+        })
+    }
+
+    /// Whether `op` is on HEAD's line. A revision's operations are one chain,
+    /// so the walk down from `head` goes a revision at a time — its first
+    /// operation, then that one's parent — reading three keys per revision
+    /// whatever they hold. Ids only decrease going down, so it stops at the
+    /// first one not above `op`.
+    fn on_line(&self, head: i64, op: i64) -> Result<bool> {
+        let target_rev = Log::op(self, op)?.context("the cutoff operation")?.rev_id;
+        let mut cur = Some(head);
+        while let Some(id) = cur {
+            if id <= op {
+                return Ok(id == op);
+            }
+            let rev = Log::op(self, id)?.context("an operation on HEAD's line")?.rev_id;
+            if rev == target_rev {
+                // Within one revision's chain, which starts at `op` itself
+                // when `op` is the revision's first.
+                return Ok(self.first_op_of(rev)? == Some(op));
+            }
+            let first = self.first_op_of(rev)?.context("a revision without operations")?;
+            let first = Log::op(self, first)?.context("a revision's first operation")?;
+            cur = Read::older_parent(&first)?;
+        }
+        Ok(false)
+    }
+
     fn remove_op(&self, id: i64) -> Result<()> {
         let Some(op) = Log::op(self, id)? else { return Ok(()) };
         let mut w = self.txn.borrow_mut();
@@ -1588,77 +1635,98 @@ impl WriteTxn for KvTxn<'_> {
     /// (and, when asked, everything from the oldest labelled one), cutting at
     /// the first operation of the oldest kept revision — only when that cut is
     /// on HEAD's line of history.
+    /// Reads what it deletes, and one key or three per revision it keeps —
+    /// never the operations those hold (`tests/log_cost.rs`): it runs once
+    /// every `slack` writes, and the kept revisions may be a reconcile's.
     fn trim(&self, retention: Retention, head: i64) -> Result<usize> {
         if !retention.enabled() {
             return Ok(0);
         }
-        let revs: Vec<(i64, RevisionMeta)> = {
+        let count = |n: usize| {
+            self.reads.fetch_add(n as u64, std::sync::atomic::Ordering::Relaxed);
+        };
+        let total = self.t.revisions.len(&self.txn.borrow())?;
+        count(1);
+        if total <= retention.revisions + Retention::slack(retention.revisions) {
+            return Ok(0);
+        }
+        // The oldest revisions, up to the first one kept: the ones cut, and
+        // the one the cut stops at (or, keeping labels, the oldest label).
+        let cut = (total - retention.revisions) as usize;
+        let oldest: Vec<(i64, RevisionMeta)> = {
             let txn = self.txn.borrow();
-            let mut out = Vec::new();
-            for e in self.t.revisions.iter(&txn)? {
+            let mut out = Vec::with_capacity(cut + 1);
+            for e in self.t.revisions.iter(&txn)?.take(cut + 1) {
                 let (k, v) = e?;
                 out.push((from_be(k), dec_revision(v)?));
             }
-            self.reads.fetch_add(out.len() as u64 + 1, std::sync::atomic::Ordering::Relaxed);
             out
         };
-        let kept = revs.len() as u64;
-        if kept <= retention.revisions + Retention::slack(retention.revisions) {
-            return Ok(0);
-        }
-        let mut keep_from = revs[revs.len() - retention.revisions as usize].0;
+        count(oldest.len());
+        let mut keep_from = oldest[cut].0;
         if retention.keep_labels {
-            if let Some((id, _)) = revs.iter().find(|(_, m)| m.label.is_some()) {
+            if let Some((id, _)) = oldest.iter().find(|(_, m)| m.label.is_some()) {
                 keep_from = keep_from.min(*id);
             }
         }
-        let first = {
-            let txn = self.txn.borrow();
-            Read { t: &self.t, r: &txn, reads: Some(self.reads) }.revision_op_ids(keep_from)?
-        };
-        let Some(cutoff) = first.into_iter().min() else { return Ok(0) };
-        let all = {
-            let txn = self.txn.borrow();
-            Read { t: &self.t, r: &txn, reads: Some(self.reads) }.all_op_ids()?
-        };
-        if all.first() == Some(&cutoff) {
+        let Some(cutoff) = self.first_op_of(keep_from)? else { return Ok(0) };
+        let first_op = self.t.ops.first(&self.txn.borrow())?.map(|(k, _)| from_be(k));
+        count(1);
+        if first_op == Some(cutoff) {
             return Ok(0);
         }
-        if !Log::ancestry(self, head)?.contains(&cutoff) {
+        if !self.on_line(head, cutoff)? {
             // Not on HEAD's line: the newest revisions sit on a branch a
             // rollback abandoned; cutting would delete what HEAD stands on.
             return Ok(0);
         }
         self.detach_op(cutoff)?;
-        // Older than the cutoff, or below something doomed: children always
-        // have larger ids than their parents, so one ascending pass settles it.
-        let mut doomed: HashSet<i64> = HashSet::new();
-        let mut revs_hit: HashSet<i64> = HashSet::new();
-        for id in all {
-            if id == cutoff {
-                continue;
+        // Everything older than the cutoff, and every branch hanging below it
+        // (a branch rooted before the cutoff cannot survive it): found through
+        // the children index, so the operations kept are never listed.
+        let mut doomed: Vec<i64> = {
+            let txn = self.txn.borrow();
+            let end = be(cutoff);
+            let range = (std::ops::Bound::Unbounded, std::ops::Bound::Excluded(&end[..]));
+            let mut out = Vec::new();
+            for e in self.t.ops.range(&txn, &range)? {
+                out.push(from_be(e?.0));
             }
-            let op = Log::op(self, id)?.context("an operation listed a moment ago")?;
-            if id < cutoff || op.parent_id.is_some_and(|p| doomed.contains(&p)) {
-                doomed.insert(id);
-                revs_hit.insert(op.rev_id);
+            out
+        };
+        count(doomed.len() + 1);
+        let mut seen: HashSet<i64> = doomed.iter().copied().collect();
+        let mut frontier = doomed.clone();
+        while let Some(op) = frontier.pop() {
+            let children: Vec<i64> = {
+                let txn = self.txn.borrow();
+                let mut out = Vec::new();
+                for e in self.t.op_children.prefix_iter(&txn, &be(op))? {
+                    out.push(from_be(&e?.0[8..]));
+                }
+                out
+            };
+            count(children.len() + 1);
+            for child in children {
+                if seen.insert(child) {
+                    doomed.push(child);
+                    frontier.push(child);
+                }
             }
         }
-        let mut ordered: Vec<i64> = doomed.iter().copied().collect();
-        ordered.sort_unstable_by(|a, b| b.cmp(a));
-        self.delete_ops(&ordered)?;
+        let mut revs_hit: HashSet<i64> = HashSet::new();
+        for &id in &doomed {
+            revs_hit.insert(Log::op(self, id)?.context("an operation listed a moment ago")?.rev_id);
+        }
+        // Children before parents: every child has a larger id.
+        doomed.sort_unstable_by(|a, b| b.cmp(a));
+        self.delete_ops(&doomed)?;
         for rev in revs_hit {
-            let empty = {
-                let txn = self.txn.borrow();
-                Read { t: &self.t, r: &txn, reads: Some(self.reads) }
-                    .revision_op_ids(rev)?
-                    .is_empty()
-            };
-            if empty {
+            if self.first_op_of(rev)?.is_none() {
                 self.t.revisions.delete(&mut self.txn.borrow_mut(), &be(rev))?;
             }
         }
-        Ok(ordered.len())
+        Ok(doomed.len())
     }
 
     fn clear_metarecords(&self) -> Result<()> {
