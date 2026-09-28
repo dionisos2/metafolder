@@ -993,13 +993,52 @@ impl Apply<'_, '_> {
         // freshly-tracked file has no stored full hash for the fingerprint
         // search to re-home it). Skip the stale removal; the arrival/create in
         // the same batch refreshes the still-linked metarecord instead.
+        //
+        // A *directory* made again is another matter below it: what the old
+        // one held is gone unless it came back too. A source that covers the
+        // whole filesystem reports `rm -r d && mkdir d` as the removal of `d`
+        // alone — the entries inside it name a parent that no longer resolves
+        // by the time they are read — so the cascade is the only word on them.
         if std::fs::symlink_metadata(self.abs(rel)).is_ok() {
+            if self.is_dir(rel) {
+                self.orphan_what_is_gone_under(uuid, rel)?;
+            }
             return Ok(());
         }
         if !self.eligible(rel)? {
             return Ok(()); // Out of watch scope: metadata left unchanged.
         }
         self.orphan_subtree(uuid)
+    }
+
+    /// The cascade of a removal under `rel`, a directory removed and made
+    /// again: each tracked entry below it that is not on disk any more is
+    /// orphaned with its subtree; one that is keeps its record, as `rel` does.
+    fn orphan_what_is_gone_under(&mut self, uuid: Uuid, rel: &RelPath) -> Result<()> {
+        let mut stack = vec![(uuid, rel.clone())];
+        while let Some((dir, at)) = stack.pop() {
+            for (_, child) in self.cache.children_of(self.writer.store(), "mfr_path", dir)? {
+                self.check_cancelled()?;
+                // The exact name, from the record: the cache's is for display.
+                let name = Rows::rows_named(self.writer.store(), child, "mfr_path")?
+                    .into_iter()
+                    .find_map(|row| match row.value {
+                        Value::TreeRef { parent: Some(p), name } if p == dir => Some(name),
+                        _ => None,
+                    });
+                let Some(name) = name else { continue };
+                let path = at.child(name);
+                if !self.eligible(&path)? {
+                    continue; // Out of watch scope: metadata left unchanged.
+                }
+                match std::fs::symlink_metadata(self.abs(&path)) {
+                    Ok(meta) if meta.is_dir() => stack.push((child, path)),
+                    Ok(_) => {}
+                    Err(_) => self.orphan_subtree(child)?,
+                }
+            }
+        }
+        Ok(())
     }
 
     /// Orphans `uuid` and every descendant: `mfr_path` becomes Nothing, the

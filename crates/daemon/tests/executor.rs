@@ -322,6 +322,57 @@ fn test_remove_sets_nothing_and_cascades() {
 }
 
 #[test]
+fn test_a_directory_removed_and_made_again_orphans_what_is_gone_under_it() {
+    // `rm -r d && mkdir d` within one batch, as a source that covers the whole
+    // filesystem reports it: the removal of `d` alone — the entries inside it
+    // name a parent that no longer resolves by the time they are read — then
+    // the new directory. The name is back, so `d` keeps its record; what was
+    // under it and is gone must not stay tracked.
+    let (repo, root, _) = setup("remade_dir");
+    write_file(&root, "d/old.txt", b"o");
+    write_file(&root, "d/kept.txt", b"k");
+    write_file(&root, "d/sub/deep.txt", b"x");
+    enqueue(
+        &repo,
+        &[
+            FsEvent::Create("/d".into()),
+            FsEvent::Create("/d/old.txt".into()),
+            FsEvent::Create("/d/kept.txt".into()),
+            FsEvent::Create("/d/sub".into()),
+            FsEvent::Create("/d/sub/deep.txt".into()),
+        ],
+    );
+    executor::flush_pending(&repo).unwrap();
+    let d = resolve(&repo, "/d").unwrap();
+    let old = resolve(&repo, "/d/old.txt").unwrap();
+    let kept = resolve(&repo, "/d/kept.txt").unwrap();
+    let sub = resolve(&repo, "/d/sub").unwrap();
+    let deep = resolve(&repo, "/d/sub/deep.txt").unwrap();
+
+    std::fs::remove_dir_all(root.join("d")).unwrap();
+    write_file(&root, "d/kept.txt", b"k2");
+    write_file(&root, "d/new.txt", b"n");
+    enqueue(
+        &repo,
+        &[
+            FsEvent::Remove("/d".into()),
+            FsEvent::Create("/d".into()),
+            FsEvent::Create("/d/kept.txt".into()),
+            FsEvent::Create("/d/new.txt".into()),
+        ],
+    );
+    executor::flush_pending(&repo).unwrap();
+
+    for (uuid, what) in [(old, "d/old.txt"), (sub, "d/sub"), (deep, "d/sub/deep.txt")] {
+        assert_eq!(field_value(&repo, uuid, "mfr_path"), Some(Value::Nothing), "{what} is gone");
+    }
+    assert_eq!(resolve(&repo, "/d"), Some(d), "the name is back: its record stays");
+    assert_eq!(resolve(&repo, "/d/kept.txt"), Some(kept), "so is this one's");
+    assert!(resolve(&repo, "/d/new.txt").is_some());
+    std::fs::remove_dir_all(root).unwrap();
+}
+
+#[test]
 fn test_remove_records_mfr_path_old_for_the_whole_subtree() {
     // Orphaning a subtree snapshots each metarecord's last real path into
     // `mfr_path_old` (a frozen String) so the origin of every orphan is legible
