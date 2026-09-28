@@ -467,6 +467,14 @@ impl Eval<'_> {
                 _ => unreachable!("a deferrable leaf"),
             };
             candidates &= &*self.src.present(field.as_str());
+            // The texts that cannot hold the pattern's literals leave now, from
+            // the text index: the page walk is budgeted on what remains, and a
+            // leaf keeping one candidate in a hundred would otherwise make it
+            // walk a hundred times further than it planned.
+            let literals = crate::regexp::required_literals(&pattern);
+            if let Some(superset) = self.src.text_superset(field, &literals, &candidates) {
+                candidates = superset;
+            }
             let re = crate::regexp::compile(&pattern)
                 .map_err(|e| unsupported(format!("pattern the index cannot compile: {e}")))?;
             checks.push((field.as_str(), re));

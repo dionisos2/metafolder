@@ -58,14 +58,19 @@ Profiled 28 September 2026 (=examples/profile_query.rs=, L, warm pages):
   regex keeps one in ten, and each check reads a name. The walk budget knows
   neither the residual's selectivity nor its per-id cost. A real planner
   choice (walk with a residual vs evaluate the leaf over the candidates), and
-  the one the GUI's second pages take.
+  the one the GUI's second pages take. Fixed without a cost model: the
+  candidates are first narrowed by the trigram index (what spec-storage
+  already said they were) — 20 931 → 3 045 keys.
 - =finder= ≈ 5-8 ms, not 22 (load): nearly all of it the rewrite of the
   two-term =osm= path — the names holding the last term (1 111 candidates,
   1.7 ms), then each one's ancestry (≈ 1 280 point reads at ≈ 2 µs, a random
   B-tree seek). Computing it term by term as bitmaps (names ∩ descendants of
   the previous term's matches) is exact for separator-free terms but costs as
-  much here (one term alone, =dir1=, reads 5 565 keys). Choosing the anchor
-  term by its trigram posting size is the planner's lever there.
+  much here (one term alone, =dir1=, reads 5 565 keys). Only the last term
+  can anchor (the match set is the subtrees of its nodes); the lever is a
+  prefilter of those anchors — the descendants of the nodes naming an earlier
+  term — worth its reads when that term is rare (its trigram posting is
+  small) and the anchors many: a real cost choice, unlike the above.
 
 ** TODO =mf order= writes one revision per child
 N children cost N =PUT=s: N transactions, N fsyncs and N revisions, so undoing

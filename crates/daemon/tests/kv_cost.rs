@@ -243,6 +243,18 @@ fn a_subtree_a_range_and_a_text_combine() {
     bounded("subtree and name", &q, &[], true);
 }
 
+/// A page without its count, where the text leaf on a forest's names can wait
+/// for the page walk: the walk's candidates are half the repository, but the
+/// name keeps one in a hundred of them. Walking the uuid order for them reads
+/// the repository; evaluating the leaf over the candidates reads its matches.
+#[test]
+fn a_page_with_a_wide_operand_and_a_rare_name_reads_the_name() {
+    let q = and(vec![int(gt, "rating", 4), value_matches("loc", "file0001")]);
+    bounded("wide range and a rare name, a page", &q, &[], false);
+    let q = and(vec![int(gt, "rating", 4), osm("loc", &["file0001"], OsmMode::Direct)]);
+    bounded("wide range and a rare osm name, a page", &q, &[], false);
+}
+
 #[test]
 fn a_negation_combines_with_a_narrow_operand() {
     let q = and(vec![Query::Not { operand: Box::new(eq("kind", "note")) }, subtree()]);

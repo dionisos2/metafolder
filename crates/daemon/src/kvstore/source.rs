@@ -904,6 +904,15 @@ impl Source for KvSource<'_> {
         self.scan(field, NAME, &name_of, keep, literals, restrict)
     }
 
+    fn text_superset(
+        &self,
+        field: &str,
+        literals: &[String],
+        restrict: &RoaringBitmap,
+    ) -> Option<RoaringBitmap> {
+        self.text_candidates(field, literals, Some(restrict))
+    }
+
     fn named_positions(
         &self,
         field: &str,

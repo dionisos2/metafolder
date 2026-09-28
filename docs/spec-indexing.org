@@ -378,7 +378,9 @@ position per forest").
 =value= aspect or an =osm direct= on a =tree_ref= field — alone, or among the
 operands of an =and= — is not evaluated up front when the request does not ask
 for a count: the other operands give the candidates (within the holders of the
-leaf's field), and the regex is run on the names of the ids a walk visits,
+leaf's field, and of the texts holding the pattern's literals, by the trigram
+index — without that, a walk budgeted on candidates the regex mostly rejects
+walks the repository), and the regex is run on the names of the ids a walk visits,
 which the resident forest holds per metarecord (=SortKeys::any_name=, the same
 display form the name partition is keyed by). A search as you type then costs
 its page instead of a scan of every distinct name. When the page is not walked

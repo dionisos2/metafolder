@@ -91,6 +91,20 @@ pub trait Source {
         restrict: Option<&RoaringBitmap>,
     ) -> RoaringBitmap;
 
+    /// A superset of the ids of `restrict` whose text in `field` holds every
+    /// one of `literals` (ignoring case), read from a text index without
+    /// testing a value — what a check left for later is narrowed with before
+    /// anything is counted on it. `None` when the source keeps no such index,
+    /// or the literals give it nothing to look up.
+    fn text_superset(
+        &self,
+        _field: &str,
+        _literals: &[String],
+        _restrict: &RoaringBitmap,
+    ) -> Option<RoaringBitmap> {
+        None
+    }
+
     /// The nodes of `field`'s forest whose name satisfies `keep`, each with
     /// every position it holds, `(parent, name)` in row-id order — read once
     /// for both, what an `osm` path checks its anchors on. `literals` as for
