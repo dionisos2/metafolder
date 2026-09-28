@@ -518,7 +518,9 @@ impl SimFs {
         let path = path.as_ref();
         let mut missing = Vec::new();
         let mut at = Some(path);
-        while let Some(p) = at.filter(|p| !p.as_os_str().is_empty() && !p.exists()) {
+        while let Some(p) =
+            at.filter(|p| !p.as_os_str().is_empty() && std::fs::symlink_metadata(p).is_err())
+        {
             missing.push(p.to_path_buf());
             at = p.parent();
         }
