@@ -1,172 +1,258 @@
-//! The SQL query engine — the **oracle** the bitmap index is validated against
+//! The query oracle: every question answered by reading every row — the
+//! second implementation the index and the key-value store are held to
 //! (spec-indexing "It stays as the oracle").
 //!
-//! A `Query` compiles to a CTE chain — one CTE per node — over the EAV `field`
-//! table, restricted to metarecords owned exclusively by the current
-//! repository; `Follows`/`FollowsTransitive` path targets and the `:path`
-//! aspect are resolved through the tree cache before SQL generation (hybrid
-//! execution); sorting and keyset pagination follow spec-data-model
-//! "Pagination".
+//! It reads the primary data only — the metarecords and their field rows,
+//! through the storage traits ([`Rows`]) — and nothing derived: no index, no
+//! tree cache, no partition. The forest, the paths and the sort keys are
+//! rebuilt from the rows on every call. That makes it slow and obviously
+//! independent of whatever it checks, which is the whole point of an oracle:
+//! a mistake in a derived structure cannot be reproduced here by sharing it.
 //!
-//! It served every query the bitmap index declined, until nothing was left to
-//! decline. It is now a *second implementation* of the same questions, kept
-//! because a shape no oracle cross-checks rots unnoticed — `MATCHES` under the
-//! `:parent` aspect answered the `:value` question for as long as the index
-//! declined the aspect and the comparison was therefore never made. This crate
-//! is a dev-dependency of the daemon and of nothing else, so no shipped binary
-//! links it.
+//! It replaced a SQL engine (a CTE per query node over the SQLite schema)
+//! that had been the daemon's query engine before the bitmap index; the two
+//! were held to each other over the whole test battery before the SQL one
+//! went, cursors and rejections included. This crate is a dev-dependency of
+//! the daemon and of nothing else, so no shipped binary links it.
 
-pub mod naive;
+use std::cmp::Ordering;
+use std::collections::{BTreeSet, HashMap};
 
-use anyhow::Result;
-use rusqlite::types::Value as SqlValue;
-use rusqlite::Connection;
 use uuid::Uuid;
 
-use metafolder_core::metarecord::{Value, ZERO_UUID};
-use metafolder_core::query::{Aspect, FollowTarget, OsmMode, Query};
+use metafolder_core::metarecord::{escaped_to_bytes, TreeName, Value};
+use metafolder_core::query::{osm_ordered_match, Aspect, FollowTarget, OsmMode, Query};
 
-use metafolder_daemon::db;
+use metafolder_daemon::db::FieldRow;
 use metafolder_daemon::error::ApiError;
+use metafolder_daemon::log::MAX_TREE_DEPTH;
 use metafolder_daemon::pagination::{self, Cursor};
 use metafolder_daemon::query_result::{osm_regex, SortKey, SortOrder};
 use metafolder_daemon::query_validate::{
     check_query_size, too_wide_message, validate_query, validate_query_types,
     MAX_COMBINATOR_OPERANDS,
 };
-use metafolder_daemon::tree_cache::TreeCache;
+use metafolder_daemon::store::Rows;
+use metafolder_daemon::tree_cache::PATH_KEY_SEP;
 
-/// Sentinel replacing NULL numeric key components so that keyset comparisons
-/// stay two-valued. A NULL component only ever meets another NULL (the
-/// type-group column discriminates first), so sentinels never decide an
-/// ordering between two real values.
-const NUM_SENTINEL: &str = "-9e99";
+use metafolder_core::hex::encode as hex_encode;
 
-/// The recursive CTE that reconstructs the full-path sort key of every
-/// `tree_ref` row of sort key `i`'s field, for the rows of the filtered universe
-/// `_res`. Emitted for every sort key: on a non-`tree_ref` field the base case
-/// selects nothing, so it costs one empty scan.
-///
-/// Each step prepends the parent's name, so a row's *terminal* tuple — the one
-/// the walk could not extend — carries the components of its whole path joined
-/// by [`metafolder_daemon::tree_cache::PATH_KEY_SEP`], a separator below every character a
-/// name can hold, which makes a plain byte comparison of two keys a
-/// component-by-component comparison of the two paths (spec-data-model "Sorting
-/// a `TreeRef` field").
-///
-/// Two details exist only to reproduce, row for row, what the tree cache does
-/// with the same forest — the in-memory index builds its keys from it
-/// (`tree_cache::SortKeys`) and the two engines must not diverge
-/// (`tests/index_oracle.rs`):
-///
-/// - a node is linked under its parent's *first* position, so the step joins the
-///   lowest-id row of the parent rather than all of them;
-/// - a node whose parent has no `tree_ref` row is left detached, i.e. treated as
-///   a root — so the walk stops there too, which is what the terminal predicate
-///   [`path_key_terminal`] adds to "the parent is the root sentinel".
-fn path_key_cte(i: usize) -> String {
-    let sep = metafolder_daemon::tree_cache::PATH_KEY_SEP as u32;
-    let max_depth = metafolder_daemon::log::MAX_TREE_DEPTH;
-    format!(
-        "SELECT f.id, f.value_uuid, f.value_name, 0 \
-           FROM field f JOIN _res ON _res.uuid = f.metarecord_uuid \
-          WHERE f.field_name = ? AND f.value_type = 'tree_ref' \
-         UNION ALL \
-         SELECT p.id, pf.value_uuid, pf.value_name || char({sep}) || p.path_key, p.depth + 1 \
-           FROM _p{i} p JOIN field pf ON pf.id = ({FIRST_TREE_ROW}) \
-          WHERE p.depth < {max_depth} AND p.parent != {ZERO_BLOB_SQL}"
-    )
+/// The placeholder of an absent numeric sort component, so that a cursor
+/// carries a number in every slot. It only ever meets another placeholder:
+/// the type group, compared first, keeps it from deciding between two values.
+const NUM_SENTINEL: f64 = -9e99;
+
+type Set = BTreeSet<Uuid>;
+
+/// Every metarecord and every row of the repository, read once.
+struct Data {
+    universe: Set,
+    /// Each field's rows, in row-id order.
+    by_field: HashMap<String, Vec<(Uuid, FieldRow)>>,
 }
 
-/// The join condition selecting a row's *terminal* path tuple out of
-/// [`path_key_cte`]'s chain: the walk stopped either at a root or at a parent
-/// carrying no `tree_ref` row (a detached node, which the tree cache treats as a
-/// root as well).
-fn path_key_terminal(i: usize) -> String {
-    format!(
-        "_p{i}.id = field.id AND (_p{i}.parent = {ZERO_BLOB_SQL} \
-             OR NOT EXISTS (SELECT 1 FROM field x \
-                  WHERE x.metarecord_uuid = _p{i}.parent \
-                    AND x.field_name = ? AND x.value_type = 'tree_ref'))"
-    )
-}
+impl Data {
+    fn read(store: &dyn Rows) -> Result<Self, ApiError> {
+        let universe: Set = store.metarecords()?.into_iter().collect();
+        let mut by_field: HashMap<String, Vec<(Uuid, FieldRow)>> = HashMap::new();
+        store.for_each_row(&mut |uuid, row| {
+            by_field.entry(row.name.clone()).or_default().push((uuid, row));
+            Ok(())
+        })?;
+        for rows in by_field.values_mut() {
+            rows.sort_by_key(|(_, r)| r.id);
+        }
+        Ok(Self { universe, by_field })
+    }
 
-/// The lowest-id `tree_ref` row of the node `p.parent` — the position the tree
-/// cache links a child under when its parent is itself multi-position.
-const FIRST_TREE_ROW: &str = "SELECT MIN(x.id) FROM field x \
-     WHERE x.metarecord_uuid = p.parent AND x.field_name = ? AND x.value_type = 'tree_ref'";
+    fn rows(&self, field: &str) -> &[(Uuid, FieldRow)] {
+        self.by_field.get(field).map(Vec::as_slice).unwrap_or(&[])
+    }
 
-/// The 16 zero bytes a root `tree_ref` row stores as its parent
-/// ([`metafolder_core::metarecord::ZERO_UUID`]), as a SQL blob literal.
-const ZERO_BLOB_SQL: &str = "x'00000000000000000000000000000000'";
+    /// The owners of the rows of `field` satisfying `pred`.
+    fn holders(&self, field: &str, pred: impl Fn(Uuid, &Value) -> bool) -> Set {
+        self.rows(field).iter().filter(|(u, r)| pred(*u, &r.value)).map(|(u, _)| *u).collect()
+    }
 
-/// Counts the matching metarecords without fetching them: the same CTE chain
-/// as `execute`, wrapped in a `COUNT(*)` (no sort CTEs, no pagination).
-pub fn count(conn: &Connection, cache: &mut TreeCache, query: &Query) -> Result<usize, ApiError> {
-    let sql = sql_count(conn, cache, query);
-    agree(&sql, &naive::count(conn, query), &format!("count of {query:?}"));
-    sql
-}
+    /// What a field holds, as the type check before evaluation asks it:
+    /// `tree_ref` when any row is one, else a type it carries.
+    fn stored_type(&self, field: &str) -> Option<String> {
+        let mut other = None;
+        for (_, row) in self.rows(field) {
+            match &row.value {
+                Value::TreeRef { .. } => return Some("tree_ref".into()),
+                Value::Nothing => {}
+                v => other = Some(v.type_str().to_string()),
+            }
+        }
+        other
+    }
 
-fn sql_count(conn: &Connection, cache: &mut TreeCache, query: &Query) -> Result<usize, ApiError> {
-    check_query_size(query)?;
-    validate_query(query)?;
-    validate_query_types(query, &|f| stored_type(conn, f).ok().flatten())?;
-    let mut compiler = Compiler::new(conn, cache);
-    let last = compiler.compile_node(query)?;
-    let Compiler { ctes, params, .. } = compiler;
-    let cte_sql: Vec<String> =
-        ctes.into_iter().map(|(name, body)| format!("{name} AS ({body})")).collect();
-    let sql = format!(
-        "WITH {} SELECT COUNT(*) FROM {last} WHERE uuid IN (SELECT uuid FROM _repo)",
-        cte_sql.join(", ")
-    );
-    let total: i64 = conn
-        .query_row(&sql, rusqlite::params_from_iter(params.iter()), |row| row.get(0))
-        .map_err(anyhow::Error::from)?;
-    Ok(total as usize)
-}
-
-/// Executes a query: returns one page of matching UUIDs in query order plus
-/// the next cursor (always None when `limit` is absent).
-pub fn execute(
-    conn: &Connection,
-    cache: &mut TreeCache,
-    query: &Query,
-    sort: &[SortKey],
-    limit: Option<usize>,
-    cursor: Option<&str>,
-) -> Result<(Vec<Uuid>, Option<String>), ApiError> {
-    let sql = sql_execute(conn, cache, query, sort, limit, cursor);
-    agree(
-        &sql,
-        &naive::execute(conn, query, sort, limit, cursor),
-        &format!("{query:?} sorted by {sort:?}, limit {limit:?}, cursor {cursor:?}"),
-    );
-    sql
-}
-
-/// Holds the naive oracle to the SQL one while both exist: the same answer,
-/// or the same rejection.
-fn agree<T: PartialEq + std::fmt::Debug>(
-    sql: &Result<T, ApiError>,
-    naive: &Result<T, ApiError>,
-    what: &str,
-) {
-    match (sql, naive) {
-        (Ok(a), Ok(b)) => assert_eq!(a, b, "naive/SQL oracle divergence on {what}"),
-        (Err(a), Err(b)) => assert_eq!(
-            (a.status, &a.message),
-            (b.status, &b.message),
-            "naive/SQL oracle rejections differ on {what}"
-        ),
-        _ => panic!("naive/SQL oracle divergence on {what}: SQL {sql:?}, naive {naive:?}"),
+    fn forest(&self, field: &str) -> Forest<'_> {
+        Forest::new(self.rows(field))
     }
 }
 
-fn sql_execute(
-    conn: &Connection,
-    cache: &mut TreeCache,
+/// One field's forest, rebuilt from its `tree_ref` rows.
+struct Forest<'a> {
+    /// Every position, in row-id order: `(node, parent, name)`.
+    positions: Vec<(Uuid, Option<Uuid>, &'a TreeName)>,
+    /// The first (lowest-id) position of each node.
+    first: HashMap<Uuid, (Option<Uuid>, &'a TreeName)>,
+    /// Each node's positions, and each parent's children, in row-id order.
+    of_node: HashMap<Uuid, Vec<(Option<Uuid>, &'a TreeName)>>,
+    below: HashMap<Option<Uuid>, Vec<(Uuid, &'a TreeName)>>,
+}
+
+impl<'a> Forest<'a> {
+    fn new(rows: &'a [(Uuid, FieldRow)]) -> Self {
+        let mut positions = Vec::new();
+        let mut first = HashMap::new();
+        let mut of_node: HashMap<_, Vec<_>> = HashMap::new();
+        let mut below: HashMap<_, Vec<_>> = HashMap::new();
+        for (uuid, row) in rows {
+            if let Value::TreeRef { parent, name } = &row.value {
+                positions.push((*uuid, *parent, name));
+                first.entry(*uuid).or_insert((*parent, name));
+                of_node.entry(*uuid).or_default().push((*parent, name));
+                below.entry(*parent).or_default().push((*uuid, name));
+            }
+        }
+        Self { positions, first, of_node, below }
+    }
+
+    fn is_empty(&self) -> bool {
+        self.positions.is_empty()
+    }
+
+    fn nodes(&self) -> Set {
+        self.positions.iter().map(|(u, _, _)| *u).collect()
+    }
+
+    fn children(&self, parent: Option<Uuid>) -> impl Iterator<Item = (Uuid, &'a TreeName)> + '_ {
+        self.below.get(&parent).into_iter().flatten().copied()
+    }
+
+    /// The node a typed path names: the first component is a root's name,
+    /// every other one a child's; empty components after the first are
+    /// redundant slashes. A component reads as typed or, when it holds an
+    /// escape, as the bytes it decodes to — and names nothing when the two
+    /// readings land on two different nodes.
+    fn resolve(&self, path: &str) -> Option<Uuid> {
+        let split: Vec<&str> = path.split('/').collect();
+        let mut comps = vec![split[0]];
+        comps.extend(split[1..].iter().copied().filter(|c| !c.is_empty()));
+        let mut cur: Option<Uuid> = None;
+        for comp in comps {
+            let mut readings = vec![comp.as_bytes().to_vec()];
+            readings.extend(escaped_to_bytes(comp));
+            let found: BTreeSet<Uuid> = self
+                .children(cur)
+                .filter(|(_, name)| readings.iter().any(|r| r.as_slice() == name.as_bytes()))
+                .map(|(u, _)| u)
+                .collect();
+            if found.len() != 1 {
+                return None;
+            }
+            cur = found.into_iter().next();
+        }
+        cur
+    }
+
+    /// The path of a node through its first positions, `None` when the chain
+    /// meets a parent outside the forest.
+    fn path_of(&self, node: Uuid) -> Option<String> {
+        let mut comps = Vec::new();
+        let mut cur = node;
+        for _ in 0..MAX_TREE_DEPTH {
+            let (parent, name) = self.first.get(&cur)?;
+            comps.push(name.display().into_owned());
+            match parent {
+                Some(p) => cur = *p,
+                None => {
+                    comps.reverse();
+                    return Some(comps.join("/"));
+                }
+            }
+        }
+        None
+    }
+
+    /// Every path of a node, one per position whose parent chain reaches a
+    /// root. A filesystem root is named `""`, so its descendants' paths start
+    /// with `/`; a named root's do not.
+    fn paths_of(&self, node: Uuid) -> Vec<String> {
+        self.of_node
+            .get(&node)
+            .into_iter()
+            .flatten()
+            .filter_map(|(parent, name)| match parent {
+                None => Some(name.display().into_owned()),
+                Some(p) => self.path_of(*p).map(|pp| format!("{pp}/{}", name.display())),
+            })
+            .collect()
+    }
+
+    /// The nodes with at least one path satisfying `pred`.
+    fn nodes_whose_path(&self, pred: impl Fn(&str) -> bool) -> Set {
+        self.nodes().into_iter().filter(|n| self.paths_of(*n).iter().any(|p| pred(p))).collect()
+    }
+
+    /// Everything below `root`, at any depth (not `root` itself, unless a
+    /// cycle brings it back).
+    fn descendants(&self, root: Uuid) -> Set {
+        let mut out = Set::new();
+        let mut frontier = vec![root];
+        while let Some(node) = frontier.pop() {
+            for (child, _) in self.children(Some(node)) {
+                if out.insert(child) {
+                    frontier.push(child);
+                }
+            }
+        }
+        out
+    }
+
+    /// The sort key of one position: the names from the top of its chain down
+    /// to it, joined by [`PATH_KEY_SEP`]. The chain climbs through first
+    /// positions and stops at a root, or at a parent outside the forest (a
+    /// detached node counts as a root).
+    fn sort_key(&self, parent: Option<Uuid>, name: &TreeName) -> String {
+        let mut comps = vec![name.display().into_owned()];
+        let mut cur = parent;
+        let mut depth = 0;
+        while let Some(p) = cur {
+            if depth >= MAX_TREE_DEPTH {
+                break;
+            }
+            let Some((pp, pname)) = self.first.get(&p) else { break };
+            comps.push(pname.display().into_owned());
+            cur = *pp;
+            depth += 1;
+        }
+        comps.reverse();
+        comps.join(&PATH_KEY_SEP.to_string())
+    }
+}
+
+// ── Public surface ────────────────────────────────────────────────────────────
+
+/// What a field holds, for the type check a query goes through.
+pub fn stored_type(store: &dyn Rows, field: &str) -> Result<Option<String>, ApiError> {
+    Ok(Data::read(store)?.stored_type(field))
+}
+
+/// The number of metarecords matching `query`.
+pub fn count(store: &dyn Rows, query: &Query) -> Result<usize, ApiError> {
+    let data = Data::read(store)?;
+    validate(&data, query)?;
+    Ok(eval(&data, query)?.len())
+}
+
+/// One page of the metarecords matching `query`, in `sort` order (uuid order
+/// last), and the cursor of the next page when `limit` leaves some out.
+pub fn execute(
+    store: &dyn Rows,
     query: &Query,
     sort: &[SortKey],
     limit: Option<usize>,
@@ -175,448 +261,97 @@ fn sql_execute(
     if cursor.is_some() && limit.is_none() {
         return Err(ApiError::bad_request("'cursor' requires 'limit'"));
     }
-    check_query_size(query)?;
-    validate_query(query)?;
-    validate_query_types(query, &|f| stored_type(conn, f).ok().flatten())?;
-
-    // The cursor is bound to the exact (query, sort) pair that produced it.
+    let data = Data::read(store)?;
+    validate(&data, query)?;
+    // A cursor is bound to the (query, sort) pair that produced it.
     let hash = pagination::context_hash(&[
         "query",
         &serde_json::to_string(query).map_err(|e| ApiError::internal(e.to_string()))?,
         &serde_json::to_string(sort).map_err(|e| ApiError::internal(e.to_string()))?,
     ]);
+    let matched = eval(&data, query)?;
 
-    let mut compiler = Compiler::new(conn, cache);
-    let last = compiler.compile_node(query)?;
-    let Compiler { mut ctes, mut params, .. } = compiler;
-
-    // The filtered universe. Marked MATERIALIZED where the CTEs are emitted
-    // below, so it is computed once and joined to `field` per sort key rather
-    // than re-evaluated each time (which re-runs the whole filter — see there).
-    ctes.push((
-        "_res".into(),
-        format!("SELECT uuid FROM {last} WHERE uuid IN (SELECT uuid FROM _repo)"),
-    ));
-
-    // One CTE per sort key: the metarecord's representative row for that field
-    // (min for asc, max for desc), normalised into comparable components. Each
-    // `_s{i}` is built by joining the *filtered* universe `_res` to `field`
-    // (LEFT, so a metarecord lacking the field still yields one row, flagged
-    // `present = 0`), so it carries exactly the `_res` uuids — one per uuid.
-    // The window is therefore computed only over the filtered rows, and the
-    // final query drives straight from `_s0` (no `_res LEFT JOIN _s{i}` against
-    // an unindexed window output, which was the O(filtered × total) trap that
-    // used to make `FollowsTransitive` + sort pathological on large repos).
-    let driver = if sort.is_empty() { "_res" } else { "_s0" };
-    let mut joins = String::new();
-    let mut select_cols = format!("{driver}.uuid AS uuid");
-    let mut order_by = Vec::new();
-    // (alias, ascending) pairs forming the total order.
-    let mut components: Vec<(String, bool)> = Vec::new();
-
-    for (i, key) in sort.iter().enumerate() {
-        let dir = match key.order {
-            SortOrder::Asc => "ASC",
-            SortOrder::Desc => "DESC",
-        };
-        let grp = "CASE field.value_type \
-             WHEN 'bool' THEN 0 WHEN 'int' THEN 1 WHEN 'float' THEN 1 \
-             WHEN 'string' THEN 2 WHEN 'datetime' THEN 3 \
-             WHEN 'ref' THEN 4 WHEN 'refbase' THEN 4 WHEN 'externalref' THEN 4 \
-             WHEN 'tree_ref' THEN 5 ELSE 6 END";
-        // datetime is stored as Unix ms in value_int, so it sorts numerically;
-        // its own `grp` (3) keeps it from interleaving with bool/int/float.
-        let num = "CASE WHEN field.value_type IN ('bool', 'int', 'datetime') \
-                THEN CAST(field.value_int AS REAL) \
-             WHEN field.value_type = 'float' THEN field.value_real END";
-        // A `tree_ref` sorts on its *whole* path, not on the last component
-        // (spec-data-model "Sorting a `TreeRef` field"): `_p{i}` reconstructs
-        // one key per row of the sort field, walking the parent chain up to a
-        // root. The in-memory engine builds the same key from the tree cache.
-        let text = format!(
-            "CASE WHEN field.value_type = 'string' THEN field.value_text \
-             WHEN field.value_type = 'tree_ref' THEN _p{i}.path_key END"
-        );
-        let blob = "CASE WHEN field.value_type IN ('ref', 'refbase', 'externalref') \
-             THEN field.value_uuid END";
-        ctes.push((format!("_p{i}(id, parent, path_key, depth)"), path_key_cte(i)));
-        // The two `?` of `_p{i}`: the base case's field name, then the
-        // recursive step's (inside `FIRST_TREE_ROW`).
-        params.push(SqlValue::Text(key.field.clone()));
-        params.push(SqlValue::Text(key.field.clone()));
-        let terminal = path_key_terminal(i);
-        ctes.push((
-            format!("_s{i}"),
-            format!(
-                "SELECT uuid, present, grp, vnum, vtext, vblob FROM ( \
-                   SELECT _res.uuid AS uuid, \
-                          CASE WHEN field.metarecord_uuid IS NULL THEN 0 ELSE 1 END AS present, \
-                          {grp} AS grp, {num} AS vnum, {text} AS vtext, {blob} AS vblob, \
-                          ROW_NUMBER() OVER (PARTITION BY _res.uuid \
-                              ORDER BY {grp} {dir}, {num} {dir}, {text} {dir}, {blob} {dir}) \
-                              AS rn \
-                   FROM _res LEFT JOIN field \
-                     ON field.metarecord_uuid = _res.uuid \
-                        AND field.field_name = ? AND field.value_type != 'nothing' \
-                   LEFT JOIN _p{i} ON {terminal} \
-                 ) WHERE rn = 1"
-            ),
-        ));
-        // `_s{i}`'s two `?`: the `field` join's name, then `terminal`'s.
-        params.push(SqlValue::Text(key.field.clone()));
-        params.push(SqlValue::Text(key.field.clone()));
-
-        // `_s0` is the driver; later keys join 1:1 on uuid (same uuid set).
-        if i > 0 {
-            joins.push_str(&format!(" LEFT JOIN _s{i} ON _s{i}.uuid = _s0.uuid"));
-        }
-        select_cols.push_str(&format!(
-            ", CASE WHEN _s{i}.present = 0 THEN 1 ELSE 0 END AS nf{i}, \
-               COALESCE(_s{i}.grp, -1) AS g{i}, COALESCE(_s{i}.vnum, {NUM_SENTINEL}) AS n{i}, \
-               COALESCE(_s{i}.vtext, '') AS t{i}, COALESCE(_s{i}.vblob, x'') AS b{i}"
-        ));
-        // Metarecords without the sort field always come last, whatever `order`.
-        order_by.push(format!("nf{i} ASC"));
-        components.push((format!("nf{i}"), true));
-        let asc = key.order == SortOrder::Asc;
-        for col in ["g", "n", "t", "b"] {
-            order_by.push(format!("{col}{i} {dir}"));
-            components.push((format!("{col}{i}"), asc));
-        }
-    }
-    order_by.push("uuid ASC".to_string());
-    components.push(("uuid".to_string(), true));
-
-    // Keyset resumption: skip everything up to and including the cursor row.
-    let mut where_clause = String::new();
-    if let Some(token) = cursor {
-        let parsed = pagination::decode(token, hash)?;
-        let values = cursor_values(&parsed, sort.len())?;
-        where_clause = format!(" WHERE {}", keyset_predicate(&components, &values, &mut params));
-    }
-
-    let cte_sql: Vec<String> = ctes
-        .into_iter()
-        .map(|(name, body)| {
-            // Force materialisation of the filtered universe: it is joined
-            // to `field` once per sort CTE (and is the driver when there is
-            // no sort), and re-evaluating it per reference (SQLite's default
-            // for an inlined view) re-runs the whole filter each time —
-            // catastrophic when the filter is itself a tree walk.
-            let hint = if name == "_res" { " MATERIALIZED" } else { "" };
-            format!("{name} AS{hint} ({body})")
+    // Per sort key, each metarecord's values of the key's field.
+    let forests: Vec<Forest<'_>> = sort.iter().map(|k| data.forest(&k.field)).collect();
+    let values: Vec<HashMap<Uuid, Vec<&Value>>> = sort
+        .iter()
+        .map(|k| {
+            let mut by_owner: HashMap<Uuid, Vec<&Value>> = HashMap::new();
+            for (u, r) in data.rows(&k.field) {
+                by_owner.entry(*u).or_default().push(&r.value);
+            }
+            by_owner
         })
         .collect();
-    let mut sql = format!(
-        "WITH RECURSIVE {} SELECT * FROM (SELECT {select_cols} FROM {driver}{joins}){where_clause} ORDER BY {}",
-        cte_sql.join(", "),
-        order_by.join(", ")
-    );
-    if let Some(limit) = limit {
-        sql.push_str(" LIMIT ?");
-        params.push(SqlValue::Integer(limit as i64 + 1));
-    }
-
-    // Execute; keep each row's key components to build the next cursor from
-    // the last *returned* row (the lookahead row is discarded).
-    let mut stmt = conn.prepare(&sql).map_err(anyhow::Error::from)?;
-    let mut rows =
-        stmt.query(rusqlite::params_from_iter(params.iter())).map_err(anyhow::Error::from)?;
-    let mut page: Vec<(Uuid, Vec<serde_json::Value>)> = Vec::new();
-    while let Some(row) = rows.next().map_err(anyhow::Error::from)? {
-        let uuid = db::bytes_to_uuid(row.get::<_, Vec<u8>>(0).map_err(anyhow::Error::from)?)?;
-        let mut keys = Vec::new();
-        if limit.is_some() {
-            for c in 0..(5 * sort.len()) {
-                // Component layout per sort key: nf, g (ints), n (real,
-                // IEEE-754 bits hex-encoded), t (text), b (blob, hex-encoded).
-                let col = c + 1;
-                let v = match c % 5 {
-                    0 | 1 => {
-                        serde_json::json!(row.get::<_, i64>(col).map_err(anyhow::Error::from)?)
-                    }
-                    2 => float_to_cursor(row.get::<_, f64>(col).map_err(anyhow::Error::from)?),
-                    3 => {
-                        serde_json::json!(row.get::<_, String>(col).map_err(anyhow::Error::from)?)
-                    }
-                    _ => serde_json::json!(hex_encode(
-                        &row.get::<_, Vec<u8>>(col).map_err(anyhow::Error::from)?
-                    )),
-                };
-                keys.push(v);
-            }
-        }
-        page.push((uuid, keys));
-    }
-
-    match limit {
-        None => Ok((page.into_iter().map(|(u, _)| u).collect(), None)),
-        Some(limit) => {
-            let has_more = page.len() > limit;
-            page.truncate(limit);
-            let next = if has_more && !page.is_empty() {
-                let (last_uuid, keys) = page.last().expect("non-empty page");
-                Some(pagination::encode(&Cursor {
-                    keys: keys.clone(),
-                    uuid: last_uuid.as_simple().to_string(),
-                    h: hash,
-                }))
-            } else {
-                None
-            };
-            Ok((page.into_iter().map(|(u, _)| u).collect(), next))
-        }
-    }
-}
-
-/// Converts the JSON cursor key components back into typed SQL values, in
-/// component order (5 per sort key, then the metarecord UUID).
-fn cursor_values(cursor: &Cursor, n_sort: usize) -> Result<Vec<SqlValue>, ApiError> {
-    let invalid = || ApiError::bad_request("invalid cursor");
-    if cursor.keys.len() != 5 * n_sort {
-        return Err(invalid());
-    }
-    let mut values = Vec::with_capacity(cursor.keys.len() + 1);
-    for (i, key) in cursor.keys.iter().enumerate() {
-        let v = match i % 5 {
-            0 | 1 => SqlValue::Integer(key.as_i64().ok_or_else(invalid)?),
-            2 => SqlValue::Real(float_from_cursor(key)?),
-            3 => SqlValue::Text(key.as_str().ok_or_else(invalid)?.to_string()),
-            _ => SqlValue::Blob(hex_decode(key.as_str().ok_or_else(invalid)?)?),
-        };
-        values.push(v);
-    }
-    values.push(SqlValue::Blob(db::uuid_to_bytes(cursor.last_uuid()?)));
-    Ok(values)
-}
-
-/// Builds the strict "row is after the cursor" predicate:
-/// `(c0 > v0 OR (c0 = v0 AND (c1 > v1 OR ...)))` with per-component
-/// direction. Parameters are appended in text order.
-fn keyset_predicate(
-    components: &[(String, bool)],
-    values: &[SqlValue],
-    params: &mut Vec<SqlValue>,
-) -> String {
-    fn build(
-        components: &[(String, bool)],
-        values: &[SqlValue],
-        params: &mut Vec<SqlValue>,
-        i: usize,
-    ) -> String {
-        let (name, asc) = &components[i];
-        let op = if *asc { ">" } else { "<" };
-        params.push(values[i].clone());
-        if i == components.len() - 1 {
-            format!("{name} {op} ?")
-        } else {
-            params.push(values[i].clone());
-            let rest = build(components, values, params, i + 1);
-            format!("({name} {op} ? OR ({name} = ? AND {rest}))")
-        }
-    }
-    build(components, values, params, 0)
-}
-
-use metafolder_core::hex::encode as hex_encode;
-
-/// The metarecord uuids whose `field` `tree_ref` name contains `term`
-/// (case-insensitive), trigram-pre-filtered when `term` is ≥ 3 chars. Shared by
-/// the SQL OSM `Path` engine and, so the bitmap index can accelerate a
-/// single-term OSM path, by `run_query_filter` — which resolves these "term
-/// nodes" and hands them to the index as the seeds of a subtree expansion (the
-/// index has no substring-of-name index of its own), mirroring how it resolves
-/// `Path` targets to root metarecords.
-pub fn osm_name_nodes(conn: &Connection, field: &str, term: &str) -> Result<Vec<Uuid>, ApiError> {
-    let pattern = format!("(?i){}", regex::escape(term));
-    let collect = |sql: &str, params: &[&dyn rusqlite::ToSql]| -> Result<Vec<Uuid>, ApiError> {
-        let mut stmt = conn.prepare(sql).map_err(anyhow::Error::from)?;
-        let rows =
-            stmt.query_map(params, |row| row.get::<_, Vec<u8>>(0)).map_err(anyhow::Error::from)?;
-        let mut out = Vec::new();
-        for bytes in rows {
-            out.push(db::bytes_to_uuid(bytes.map_err(anyhow::Error::from)?)?);
-        }
-        Ok(out)
-    };
-    collect(
-        "SELECT DISTINCT metarecord_uuid FROM field \
-         WHERE field_name = ?1 AND value_type = 'tree_ref' AND value_name REGEXP ?2",
-        &[&field, &pattern],
-    )
-}
-
-/// Every metarecord with a `tree_ref` value in `field` (the unpruned candidate
-/// set for an all-short-terms or empty OSM path query).
-fn all_tree_ref_nodes(conn: &Connection, field: &str) -> Result<Vec<Uuid>, ApiError> {
-    let mut stmt = conn
-        .prepare(
-            "SELECT DISTINCT metarecord_uuid FROM field \
-             WHERE field_name = ?1 AND value_type = 'tree_ref'",
-        )
-        .map_err(anyhow::Error::from)?;
-    let rows =
-        stmt.query_map([field], |row| row.get::<_, Vec<u8>>(0)).map_err(anyhow::Error::from)?;
-    let mut out = Vec::new();
-    for bytes in rows {
-        out.push(db::bytes_to_uuid(bytes.map_err(anyhow::Error::from)?)?);
-    }
-    Ok(out)
-}
-
-/// The metarecords matching an OSM `Path` query, as a plain uuid list — WITHOUT
-/// the SQL `VALUES` inlining the query engine would wrap around them, which on a
-/// large result set is a multi-megabyte statement to build and parse. Shared by
-/// the SQL engine (`Compiler::osm_path`, which still inlines to form a CTE) and
-/// by `resolve_index_leaves`, which hands the result to the bitmap index as a
-/// `UuidIn` (so a multi-term path search composes with the rest of the query and
-/// gets an O(1) count). Candidate pruning is by the ≥3-char terms' name nodes
-/// and their subtrees; a single ≥3-char term is exact without the per-path check
-/// (every candidate lies under a node whose name holds the term), while
-/// multi-term (order-sensitive) and all-short-term queries verify the assembled
-/// path. Rejects a non-`tree_ref` field with 400, like the engine.
-/// What a field holds, for [`crate::query_validate::validate_query_types`]:
-/// `tree_ref` when the field is a forest, else any other type it carries,
-/// `None` for a field with no data. The SQL side's answer to the question the
-/// index answers from its `types` map.
-pub fn stored_type(conn: &Connection, field: &str) -> Result<Option<String>, ApiError> {
-    let mut stmt = conn
-        .prepare_cached("SELECT DISTINCT value_type FROM field WHERE field_name = ?1")
-        .map_err(anyhow::Error::from)?;
-    let types =
-        stmt.query_map([field], |row| row.get::<_, String>(0)).map_err(anyhow::Error::from)?;
-    let mut other = None;
-    for value_type in types {
-        let value_type = value_type.map_err(anyhow::Error::from)?;
-        if value_type == "tree_ref" {
-            return Ok(Some(value_type));
-        }
-        if value_type != "nothing" {
-            other = Some(value_type);
-        }
-    }
-    Ok(other)
-}
-
-/// The metarecords whose assembled `field` path matches `terms` in order.
-///
-/// The result is **sorted**, and that is part of the contract, not a detail of
-/// how it was computed. This set is inlined verbatim into a `UuidIn` leaf — by
-/// [`resolve_index_leaves`] for the index, by the compiler for SQL — and
-/// `resolve_index_leaves` runs again on *every page* of a paginated query. The
-/// index binds its cursor to a hash of the query it was handed, so a set whose
-/// order drifts between two calls makes page 2 look like a cursor from some
-/// other query: the index defers, the SQL engine is passed a cursor it cannot
-/// decode, and a two-word search dies on "invalid cursor" halfway through.
-/// Three of the four ways out of this function build their answer in a
-/// `HashSet`, whose iteration order differs between instances — hence the sort
-/// at the one place every path goes through.
-pub fn osm_path_matches(
-    conn: &Connection,
-    cache: &mut TreeCache,
-    field: &str,
-    terms: &[String],
-) -> Result<Vec<Uuid>, ApiError> {
-    let mut matched = osm_path_matches_unordered(conn, cache, field, terms)?;
-    matched.sort_unstable();
-    agree(
-        &Ok(matched.clone()),
-        &naive::osm_path_matches(conn, field, terms),
-        &format!("osm path {terms:?} on {field}"),
-    );
-    Ok(matched)
-}
-
-fn osm_path_matches_unordered(
-    conn: &Connection,
-    cache: &mut TreeCache,
-    field: &str,
-    terms: &[String],
-) -> Result<Vec<Uuid>, ApiError> {
-    // A blank query matches every metarecord with a path in this forest.
-    if terms.is_empty() {
-        return all_tree_ref_nodes(conn, field);
-    }
-    // The production path: one walk of the resident forest, no SQL at all.
-    if let Some(matched) = cache.osm_path_matches(field, terms)? {
-        return Ok(matched);
-    }
-    // Pruning by node *name* is only sound for a term that fits inside one
-    // segment: a term containing the separator can only match across segments,
-    // so no name contains it and it would prune everything away.
-    let prunable = |t: &&String| t.chars().count() >= 3 && !t.contains('/');
-    let mut candidates: Option<std::collections::HashSet<Uuid>> = None;
-    for term in terms.iter().filter(prunable) {
-        let mut reachable = std::collections::HashSet::new();
-        for node in osm_name_nodes(conn, field, term)? {
-            reachable.insert(node);
-            for desc in cache.descendants(conn, field, node)? {
-                reachable.insert(desc);
-            }
-        }
-        candidates = Some(match candidates.take() {
-            None => reachable,
-            Some(prev) => &prev & &reachable,
-        });
-        if candidates.as_ref().is_some_and(|c| c.is_empty()) {
-            return Ok(Vec::new());
-        }
-    }
-    // A single ≥3-char, separator-free term needs no ordered check: every
-    // candidate lies under a node whose name contains the term, so its path
-    // contains the term.
-    if matches!(terms, [only] if prunable(&only)) {
-        return Ok(candidates.map(|s| s.into_iter().collect()).unwrap_or_default());
-    }
-    // Otherwise verify the ordered match on the real path. With no ≥3-char term
-    // nothing was pruned, so every path-bearing metarecord is a candidate.
-    let candidates: Vec<Uuid> = match candidates {
-        Some(set) => set.into_iter().collect(),
-        None => all_tree_ref_nodes(conn, field)?,
-    };
-    let mut matched = Vec::new();
-    for uuid in candidates {
-        for path in cache.paths_of(conn, field, uuid)? {
-            if metafolder_core::query::osm_ordered_match(&path.to_lowercase(), terms) {
-                matched.push(uuid);
-                break;
-            }
-        }
-    }
-    Ok(matched)
-}
-
-fn hex_decode(s: &str) -> Result<Vec<u8>, ApiError> {
-    if !s.len().is_multiple_of(2) {
-        return Err(ApiError::bad_request("invalid cursor"));
-    }
-    (0..s.len())
-        .step_by(2)
-        .map(|i| {
-            u8::from_str_radix(&s[i..i + 2], 16)
-                .map_err(|_| ApiError::bad_request("invalid cursor"))
+    let mut rows: Vec<(Vec<Component>, Uuid)> = matched
+        .iter()
+        .map(|&uuid| {
+            let keys = sort
+                .iter()
+                .zip(&forests)
+                .zip(&values)
+                .flat_map(|((key, forest), values)| {
+                    let held = values.get(&uuid).map(Vec::as_slice).unwrap_or(&[]);
+                    sort_components(forest, key, held)
+                })
+                .collect();
+            (keys, uuid)
         })
-        .collect()
+        .collect();
+    let directions: Vec<bool> = sort
+        .iter()
+        .flat_map(|k| {
+            let asc = k.order == SortOrder::Asc;
+            // Missing-last first, whatever the order; then the four value
+            // components in the key's direction.
+            [true, asc, asc, asc, asc]
+        })
+        .collect();
+    let order = |a: &(Vec<Component>, Uuid), b: &(Vec<Component>, Uuid)| {
+        compare_rows(&directions, &a.0, a.1, &b.0, b.1)
+    };
+    rows.sort_by(order);
+
+    if let Some(token) = cursor {
+        let parsed = pagination::decode(token, hash)?;
+        let after = (cursor_components(&parsed, sort.len())?, parsed.last_uuid()?);
+        rows.retain(|r| order(r, &after) == Ordering::Greater);
+    }
+
+    let Some(limit) = limit else {
+        return Ok((rows.into_iter().map(|(_, u)| u).collect(), None));
+    };
+    let has_more = rows.len() > limit;
+    rows.truncate(limit);
+    let next = match rows.last() {
+        Some((keys, uuid)) if has_more => Some(pagination::encode(&Cursor {
+            keys: keys.iter().map(Component::to_cursor).collect(),
+            uuid: uuid.as_simple().to_string(),
+            h: hash,
+        })),
+        _ => None,
+    };
+    Ok((rows.into_iter().map(|(_, u)| u).collect(), next))
 }
 
-/// Encodes a float sort-key value into the cursor as the hex of its raw
-/// IEEE-754 bits (not a JSON number). serde_json's default float parser is not
-/// correctly rounded, so a decimal encoding can come back off by 1 ULP, which
-/// at a page boundary duplicates or skips a row; the bit form round-trips
-/// exactly, like the blob component.
-fn float_to_cursor(f: f64) -> serde_json::Value {
-    serde_json::json!(hex_encode(&f.to_bits().to_be_bytes()))
+/// The metarecords whose assembled `field` path matches `terms` as ordered,
+/// case-insensitive substrings (every path-bearing one for no term), sorted.
+pub fn osm_path_matches(
+    store: &dyn Rows,
+    field: &str,
+    terms: &[String],
+) -> Result<Vec<Uuid>, ApiError> {
+    let data = Data::read(store)?;
+    Ok(osm_path(&data, field, terms).into_iter().collect())
 }
 
-/// Inverse of [`float_to_cursor`].
-fn float_from_cursor(key: &serde_json::Value) -> Result<f64, ApiError> {
-    let invalid = || ApiError::bad_request("invalid cursor");
-    let bytes = hex_decode(key.as_str().ok_or_else(invalid)?)?;
-    let arr: [u8; 8] = bytes.as_slice().try_into().map_err(|_| invalid())?;
-    Ok(f64::from_bits(u64::from_be_bytes(arr)))
+fn validate(data: &Data, query: &Query) -> Result<(), ApiError> {
+    check_query_size(query)?;
+    validate_query(query)?;
+    validate_query_types(query, &|f| data.stored_type(f))
 }
 
-// ── Compiler ──────────────────────────────────────────────────────────────────
+// ── Evaluation ────────────────────────────────────────────────────────────────
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum CmpOp {
@@ -628,623 +363,476 @@ enum CmpOp {
 }
 
 impl CmpOp {
-    fn symbol(&self) -> &'static str {
+    fn holds(self, ord: Option<Ordering>) -> bool {
+        let Some(ord) = ord else { return false };
         match self {
-            CmpOp::Eq => "=",
-            CmpOp::Lt => "<",
-            CmpOp::Lte => "<=",
-            CmpOp::Gt => ">",
-            CmpOp::Gte => ">=",
+            CmpOp::Eq => ord == Ordering::Equal,
+            CmpOp::Lt => ord == Ordering::Less,
+            CmpOp::Lte => ord != Ordering::Greater,
+            CmpOp::Gt => ord == Ordering::Greater,
+            CmpOp::Gte => ord != Ordering::Less,
         }
     }
 
-    fn is_ordered(&self) -> bool {
-        !matches!(self, CmpOp::Eq)
+    fn is_ordered(self) -> bool {
+        self != CmpOp::Eq
     }
 }
 
-struct Compiler<'a> {
-    conn: &'a Connection,
-    cache: &'a mut TreeCache,
-    ctes: Vec<(String, String)>,
-    params: Vec<SqlValue>,
-    counter: usize,
-}
-
-impl<'a> Compiler<'a> {
-    /// The `_repo` CTE (declared first) holds the universe: every metarecord of
-    /// the repository (one repository per database file). It both isolates
-    /// results and serves as the complement base for `Not`.
-    fn new(conn: &'a Connection, cache: &'a mut TreeCache) -> Self {
-        let ctes = vec![("_repo".to_string(), "SELECT uuid FROM metarecord".to_string())];
-        Self { conn, cache, ctes, params: Vec::new(), counter: 0 }
-    }
-
-    /// Runs a sub-query on its own (a fresh compiler and statement) and
-    /// returns the matching UUIDs, repo-filtered like a top-level query.
-    /// Used by the hybrid `FollowsTransitive` execution, whose tree-cache
-    /// walk needs the root set before SQL generation.
-    fn execute_condition(&mut self, cond: &Query) -> Result<Vec<Uuid>, ApiError> {
-        let mut sub = Compiler::new(self.conn, self.cache);
-        let last = sub.compile_node(cond)?;
-        let Compiler { ctes, params, .. } = sub;
-        let cte_sql: Vec<String> =
-            ctes.into_iter().map(|(name, body)| format!("{name} AS ({body})")).collect();
-        let sql = format!(
-            "WITH {} SELECT uuid FROM {last} WHERE uuid IN (SELECT uuid FROM _repo)",
-            cte_sql.join(", ")
-        );
-        let mut stmt = self.conn.prepare(&sql).map_err(anyhow::Error::from)?;
-        let mut rows =
-            stmt.query(rusqlite::params_from_iter(params.iter())).map_err(anyhow::Error::from)?;
-        let mut uuids = Vec::new();
-        while let Some(row) = rows.next().map_err(anyhow::Error::from)? {
-            uuids.push(db::bytes_to_uuid(row.get::<_, Vec<u8>>(0).map_err(anyhow::Error::from)?)?);
+/// Every operand is evaluated, left to right, even where the answer is
+/// already known: a rejection further right must not depend on what came
+/// before it.
+fn eval(data: &Data, q: &Query) -> Result<Set, ApiError> {
+    Ok(match q {
+        Query::IsPresent { field, aspect } => presence(data, field, *aspect, true),
+        Query::IsAbsent { field, aspect } => presence(data, field, *aspect, false),
+        Query::IsUnknown { field } => {
+            let known = data.holders(field, |_, _| true);
+            data.universe.difference(&known).copied().collect()
         }
-        Ok(uuids)
-    }
-
-    fn fresh(&mut self) -> String {
-        let name = format!("_q{}", self.counter);
-        self.counter += 1;
-        name
-    }
-
-    fn add(&mut self, body: String) -> String {
-        let name = self.fresh();
-        self.ctes.push((name.clone(), body));
-        name
-    }
-
-    fn empty(&mut self) -> String {
-        self.add("SELECT x'' AS uuid WHERE 0".to_string())
-    }
-
-    fn push_text(&mut self, s: &str) {
-        self.params.push(SqlValue::Text(s.to_string()));
-    }
-
-    /// `Matches` (regex), in the two shapes it takes: a `Path` aspect is
-    /// answered from the tree cache and inlined, anything else is a `REGEXP`
-    /// scan of the field's rows.
-    fn matches(&mut self, field: &str, pattern: &str, aspect: Aspect) -> Result<String, ApiError> {
-        metafolder_daemon::regexp::compile(pattern)
-            .map_err(|e| ApiError::bad_request(format!("invalid regex pattern: {e}")))?;
-        if aspect == Aspect::Path {
-            // Hybrid, like osm path mode: the assembled paths are built
-            // through the tree cache and the matching uuids inlined.
+        Query::Eq { field, value, aspect } => comparison(data, field, value, CmpOp::Eq, *aspect)?,
+        Query::Lt { field, value, aspect } => comparison(data, field, value, CmpOp::Lt, *aspect)?,
+        Query::Lte { field, value, aspect } => comparison(data, field, value, CmpOp::Lte, *aspect)?,
+        Query::Gt { field, value, aspect } => comparison(data, field, value, CmpOp::Gt, *aspect)?,
+        Query::Gte { field, value, aspect } => comparison(data, field, value, CmpOp::Gte, *aspect)?,
+        Query::Neq { field, value, aspect } => {
+            // At least one occurrence differing from `value` — not the
+            // complement of `Eq`: a multi-valued field can do both.
+            if *aspect == Aspect::Path {
+                let operand = path_operand(value)?;
+                return Ok(data.forest(field).nodes_whose_path(|p| p != operand));
+            }
+            let pred = row_predicate(data, field, value, CmpOp::Eq, *aspect)?;
+            data.holders(field, |u, v| !matches!(v, Value::Nothing) && !pred(u, v))
+        }
+        Query::And { operands } | Query::Or { operands } => {
+            if operands.is_empty() {
+                return Err(ApiError::bad_request("'and'/'or' need at least one operand"));
+            }
+            if operands.len() > MAX_COMBINATOR_OPERANDS {
+                return Err(ApiError::bad_request(too_wide_message(operands.len())));
+            }
+            let sets = operands.iter().map(|o| eval(data, o)).collect::<Result<Vec<_>, _>>()?;
+            let is_and = matches!(q, Query::And { .. });
+            let mut sets = sets.into_iter();
+            let first = sets.next().expect("at least one operand");
+            sets.fold(first, |acc, s| {
+                if is_and {
+                    acc.intersection(&s).copied().collect()
+                } else {
+                    acc.union(&s).copied().collect()
+                }
+            })
+        }
+        Query::Not { operand } => {
+            let sub = eval(data, operand)?;
+            data.universe.difference(&sub).copied().collect()
+        }
+        Query::Matches { field, pattern, aspect } => {
             let re = metafolder_daemon::regexp::compile(pattern)
                 .map_err(|e| ApiError::bad_request(format!("invalid regex pattern: {e}")))?;
-            let matched = self.path_matches(field, &|path: &str| re.is_match(path))?;
-            return self.inline_uuids(matched);
+            if *aspect == Aspect::Path {
+                data.forest(field).nodes_whose_path(|p| re.is_match(p))
+            } else {
+                data.holders(field, |_, v| text_of(v).is_some_and(|t| re.is_match(&t)))
+            }
         }
-        // A plain scan of the field's rows. It used to be narrowed by a
-        // trigram FTS pre-filter, which existed to make *this* engine bearable
-        // on a large repository; an oracle wants to be obviously right rather
-        // than fast, and the index it pre-filtered from is gone (spec-indexing
-        // "No operand runs in SQL").
-        self.push_text(field);
-        self.push_text(pattern);
-        self.push_text(pattern);
-        Ok(self.add(
-            "SELECT DISTINCT metarecord_uuid AS uuid FROM field \
-                 WHERE field_name = ? AND \
-                   ((value_type = 'string' AND value_text REGEXP ?) OR \
-                    (value_type = 'tree_ref' AND value_name REGEXP ?))"
-                .to_string(),
-        ))
-    }
-
-    /// `SameAs`: the rows of `field` whose value tuple also occurs among the
-    /// `field` rows of the target set.
-    ///
-    /// The whole tuple is compared with `IS` (NULL-safe equality) under an equal
-    /// `value_type`, so one statement covers every value type — the unused
-    /// columns are NULL on both sides and compare equal. `Nothing` rows are
-    /// excluded on both sides: sharing an absence is not sharing a value.
-    fn same_as(&mut self, field: &str, target: &Query) -> Result<String, ApiError> {
-        // The sub-query is compiled first so its `?` placeholders are
-        // pushed before this node's, matching the order they appear in
-        // the assembled SQL.
-        let sub = self.compile_node(target)?;
-        self.push_text(field);
-        self.push_text(field);
-        Ok(self.add(format!(
-            "SELECT DISTINCT a.metarecord_uuid AS uuid FROM field a \
-                 WHERE a.field_name = ? AND a.value_type != 'nothing' \
-                   AND EXISTS (SELECT 1 FROM field b \
-                                WHERE b.field_name = ? AND b.value_type != 'nothing' \
-                                  AND b.metarecord_uuid IN (SELECT uuid FROM {sub}) \
-                                  AND b.value_type = a.value_type \
-                                  AND b.value_text IS a.value_text \
-                                  AND b.value_int IS a.value_int \
-                                  AND b.value_real IS a.value_real \
-                                  AND b.value_uuid IS a.value_uuid \
-                                  AND b.value_ref_repo IS a.value_ref_repo \
-                                  AND b.value_name_bytes IS a.value_name_bytes)"
-        )))
-    }
-
-    /// `Follows` (`->`): the metarecords whose `field` points at the target —
-    /// every match of a sub-query, or the single node at a path.
-    fn follows(&mut self, field: &str, target: &FollowTarget) -> Result<String, ApiError> {
-        match target {
+        Query::Osm { field, terms, mode } => match mode {
+            OsmMode::Direct => {
+                let re = metafolder_daemon::regexp::compile(&osm_regex(terms))
+                    .map_err(|e| ApiError::bad_request(format!("invalid regex pattern: {e}")))?;
+                data.holders(field, |_, v| text_of(v).is_some_and(|t| re.is_match(&t)))
+            }
+            OsmMode::Path => osm_path(data, field, terms),
+        },
+        Query::SameAs { field, target } => {
+            let targets = eval(data, target)?;
+            let wanted: Vec<&Value> = data
+                .rows(field)
+                .iter()
+                .filter(|(u, r)| targets.contains(u) && !matches!(r.value, Value::Nothing))
+                .map(|(_, r)| &r.value)
+                .collect();
+            data.holders(field, |_, v| {
+                !matches!(v, Value::Nothing) && wanted.iter().any(|w| same_value(v, w))
+            })
+        }
+        Query::Follows { field, target } => match target {
             FollowTarget::Condition(cond) => {
-                let sub = self.compile_node(cond)?;
-                self.push_text(field);
-                Ok(self.add(format!(
-                    "SELECT DISTINCT metarecord_uuid AS uuid FROM field \
-                     WHERE field_name = ? AND value_type IN ('ref', 'tree_ref') \
-                       AND value_uuid IN (SELECT uuid FROM {sub})"
-                )))
+                let targets = eval(data, cond)?;
+                data.holders(field, |_, v| match v {
+                    Value::Ref(t) => targets.contains(t),
+                    Value::TreeRef { parent: Some(p), .. } => targets.contains(p),
+                    _ => false,
+                })
             }
-            FollowTarget::Path(path) => {
-                let conn = self.conn;
-                let target = self.cache.resolve_path(conn, field, path)?;
-                match target {
-                    None => Ok(self.empty()),
-                    Some(uuid) => {
-                        self.push_text(field);
-                        self.params.push(SqlValue::Blob(db::uuid_to_bytes(uuid)));
-                        Ok(self.add(
-                            "SELECT DISTINCT metarecord_uuid AS uuid FROM field \
-                             WHERE field_name = ? AND value_type = 'tree_ref' \
-                               AND value_uuid = ?"
-                                .to_string(),
-                        ))
-                    }
-                }
-            }
-        }
-    }
-
-    /// `FollowsTransitive` (`->*` / `=>*`): the descendants — and, when the
-    /// query is inclusive, the roots themselves — of a node set in `field`'s
-    /// forest.
-    fn follows_transitive(
-        &mut self,
-        field: &str,
-        target: &FollowTarget,
-        inclusive: bool,
-    ) -> Result<String, ApiError> {
-        // Hybrid execution: the root set (one path-resolved metarecord,
-        // or every match of the condition sub-query) and its
-        // descendants are collected through the tree cache, then
-        // injected as inline literals (no bound parameter limit).
-        // Only TreeRef trees have descendants; on a Ref field this
-        // matches nothing by construction. When `inclusive` (DSL `=>*`),
-        // the roots themselves are part of the result (whole subtree).
-        let conn = self.conn;
-        let roots = match target {
-            FollowTarget::Path(path) => match self.cache.resolve_path(conn, field, path)? {
-                None => Vec::new(),
-                Some(uuid) => vec![uuid],
+            FollowTarget::Path(path) => match data.forest(field).resolve(path) {
+                None => Set::new(),
+                Some(node) => data.holders(
+                    field,
+                    |_, v| matches!(v, Value::TreeRef { parent: Some(p), .. } if *p == node),
+                ),
             },
-            FollowTarget::Condition(cond) => self.execute_condition(cond)?,
-        };
-        // The inclusive form keeps the roots only on an actual tree_ref
-        // forest — on a ref field FollowsTransitive matches nothing
-        // (TreeRef-only), matching the bitmap index's `supports_transitive`
-        // gate. `descendants` is already empty for a non-forest field.
-        let include_roots = inclusive && self.field_is_tree_ref(field)?;
-        let mut descendants = Vec::new();
-        let mut seen = std::collections::HashSet::new();
-        for root in roots {
-            if include_roots && seen.insert(root) {
-                descendants.push(root);
-            }
-            for d in self.cache.descendants(conn, field, root)? {
-                if seen.insert(d) {
-                    descendants.push(d);
+        },
+        Query::FollowsTransitive { field, target, inclusive } => {
+            let forest = data.forest(field);
+            let roots: Set = match target {
+                FollowTarget::Path(path) => forest.resolve(path).into_iter().collect(),
+                FollowTarget::Condition(cond) => eval(data, cond)?,
+            };
+            // Only a forest has descendants; its roots are kept by the
+            // inclusive form alone, and only on a forest.
+            let mut out = Set::new();
+            for root in roots {
+                if *inclusive && !forest.is_empty() {
+                    out.insert(root);
                 }
+                out.extend(forest.descendants(root));
             }
+            out
         }
-        if descendants.is_empty() {
-            return Ok(self.empty());
+        Query::UuidIn { uuids } => {
+            uuids.iter().filter(|u| data.universe.contains(u)).copied().collect()
         }
-        let literals: Vec<String> =
-            descendants.iter().map(|u| format!("(x'{}')", hex_encode(u.as_bytes()))).collect();
-        Ok(self.add(format!("SELECT column1 AS uuid FROM (VALUES {})", literals.join(","))))
+    })
+}
+
+/// `IsPresent` / `IsAbsent`. Under `parent`, whether a position has a real
+/// parent — so `field:parent IS ABSENT` names the roots. Otherwise a row that
+/// is, or is not, the explicit absence `Nothing`.
+fn presence(data: &Data, field: &str, aspect: Aspect, present: bool) -> Set {
+    if aspect == Aspect::Parent {
+        return data.holders(field, |_, v| match v {
+            Value::TreeRef { parent, .. } => parent.is_some() == present,
+            _ => false,
+        });
     }
+    data.holders(field, |_, v| matches!(v, Value::Nothing) != present)
+}
 
-    fn compile_node(&mut self, q: &Query) -> Result<String, ApiError> {
-        match q {
-            Query::IsPresent { field, aspect } => self.presence(field, *aspect, true),
-            Query::IsAbsent { field, aspect } => self.presence(field, *aspect, false),
-            Query::IsUnknown { field } => {
-                self.push_text(field);
-                Ok(self.add(
-                    "SELECT uuid FROM _repo WHERE uuid NOT IN \
-                     (SELECT metarecord_uuid FROM field WHERE field_name = ?)"
-                        .to_string(),
-                ))
-            }
-
-            Query::Eq { field, value, aspect } => self.comparison(field, value, CmpOp::Eq, *aspect),
-            Query::Lt { field, value, aspect } => self.comparison(field, value, CmpOp::Lt, *aspect),
-            Query::Lte { field, value, aspect } => {
-                self.comparison(field, value, CmpOp::Lte, *aspect)
-            }
-            Query::Gt { field, value, aspect } => self.comparison(field, value, CmpOp::Gt, *aspect),
-            Query::Gte { field, value, aspect } => {
-                self.comparison(field, value, CmpOp::Gte, *aspect)
-            }
-            Query::Neq { field, value, aspect } => {
-                // At least one non-Nothing occurrence differing from `value`
-                // (a different value type counts as differing).
-                if *aspect == Aspect::Path {
-                    // The path is assembled outside SQL, so the negation is
-                    // taken there too. Like every `Neq`, it asks for at least
-                    // one *differing* occurrence — not the complement of `Eq`:
-                    // a multi-valued node holding one matching and one differing
-                    // path satisfies both.
-                    let matched = self.path_comparison_differs(field, value)?;
-                    return self.inline_uuids(matched);
-                }
-                self.push_text(field);
-                let pred = self.scalar_predicate(field, value, CmpOp::Eq, *aspect)?;
-                Ok(self.add(format!(
-                    "SELECT DISTINCT metarecord_uuid AS uuid FROM field \
-                     WHERE field_name = ? AND value_type != 'nothing' AND NOT ({pred})"
-                )))
-            }
-
-            Query::And { operands } => self.combine(operands, "INTERSECT"),
-            Query::Or { operands } => self.combine(operands, "UNION"),
-            Query::Not { operand } => {
-                let sub = self.compile_node(operand)?;
-                Ok(self.add(format!("SELECT uuid FROM _repo EXCEPT SELECT uuid FROM {sub}")))
-            }
-
-            Query::Matches { field, pattern, aspect } => self.matches(field, pattern, *aspect),
-
-            Query::Osm { field, terms, mode } => match mode {
-                OsmMode::Direct => self.osm_direct(field, terms),
-                OsmMode::Path => self.osm_path(field, terms),
-            },
-
-            Query::SameAs { field, target } => self.same_as(field, target),
-
-            Query::Follows { field, target } => self.follows(field, target),
-
-            Query::FollowsTransitive { field, target, inclusive } => {
-                self.follows_transitive(field, target, *inclusive)
-            }
-
-            Query::UuidIn { uuids } => {
-                if uuids.is_empty() {
-                    return Ok(self.empty());
-                }
-                // Inline the uuids as literals (no bound-parameter limit) and
-                // intersect with `_repo` so non-owned / unknown uuids drop out.
-                let literals: Vec<String> =
-                    uuids.iter().map(|u| format!("(x'{}')", hex_encode(u.as_bytes()))).collect();
-                Ok(self.add(format!(
-                    "SELECT uuid FROM _repo WHERE uuid IN (SELECT column1 FROM (VALUES {}))",
-                    literals.join(",")
-                )))
-            }
-        }
+fn comparison(
+    data: &Data,
+    field: &str,
+    value: &Value,
+    op: CmpOp,
+    aspect: Aspect,
+) -> Result<Set, ApiError> {
+    if aspect == Aspect::Path {
+        let operand = path_operand(value)?;
+        return Ok(data.forest(field).nodes_whose_path(|p| op.holds(Some(p.cmp(operand)))));
     }
+    let pred = row_predicate(data, field, value, op, aspect)?;
+    Ok(data.holders(field, pred))
+}
 
-    /// OSM `Direct` mode: an ordered-substring match over the field row's own
-    /// text (`value_text` / `value_name`), as one `REGEXP` scan of the field's
-    /// rows.
-    fn osm_direct(&mut self, field: &str, terms: &[String]) -> Result<String, ApiError> {
-        let pattern = osm_regex(terms);
-        self.push_text(field);
-        self.push_text(&pattern);
-        self.push_text(&pattern);
-        Ok(self.add(
-            "SELECT DISTINCT metarecord_uuid AS uuid FROM field \
-             WHERE field_name = ? AND \
-               ((value_type = 'string' AND value_text REGEXP ?) OR \
-                (value_type = 'tree_ref' AND value_name REGEXP ?))"
-                .to_string(),
-        ))
+/// The string a `:path` comparison is made against.
+fn path_operand(value: &Value) -> Result<&str, ApiError> {
+    match value {
+        Value::String(s) => Ok(s),
+        _ => Err(ApiError::bad_request(format!(
+            "the ':path' aspect compares against a string, got {}",
+            value.type_str()
+        ))),
     }
+}
 
-    /// OSM `Path` mode (TreeRef only): an ordered-substring match over the
-    /// assembled path `seg1/…/segN`. Hybrid, like `FollowsTransitive` — the
-    /// matching metarecords are computed through the tree cache and inlined as
-    /// literals. Candidate pruning: for each ≥ 3-char term, the nodes whose
-    /// *name* contains it (trigram-indexed) expanded to descendants-or-self;
-    /// their intersection is a superset of the matches (each term lies within
-    /// one segment), verified by the final ordered check on the real path.
-    fn osm_path(&mut self, field: &str, terms: &[String]) -> Result<String, ApiError> {
-        if terms.is_empty() {
-            // A blank query matches every path-bearing metarecord: a direct
-            // scan, no inlining.
-            self.push_text(field);
-            return Ok(self.add(
-                "SELECT DISTINCT metarecord_uuid AS uuid FROM field \
-                 WHERE field_name = ? AND value_type = 'tree_ref'"
-                    .to_string(),
-            ));
-        }
-        // The matching uuids (pruned + order-verified) computed without the
-        // VALUES inlining, then wrapped in a VALUES CTE for the engine.
-        let matched = osm_path_matches(self.conn, self.cache, field, terms)?;
-        if matched.is_empty() {
-            return Ok(self.empty());
-        }
-        let literals: Vec<String> =
-            matched.iter().map(|u| format!("(x'{}')", hex_encode(u.as_bytes()))).collect();
-        Ok(self.add(format!("SELECT column1 AS uuid FROM (VALUES {})", literals.join(","))))
+/// The text a row offers to a pattern or to a `:value` string comparison: a
+/// string, or the name of a position.
+fn text_of(v: &Value) -> Option<std::borrow::Cow<'_, str>> {
+    match v {
+        Value::String(s) => Some(std::borrow::Cow::Borrowed(s)),
+        Value::TreeRef { name, .. } => Some(name.display()),
+        _ => None,
     }
+}
 
-    fn field_is_tree_ref(&self, field: &str) -> Result<bool, ApiError> {
-        Ok(self
-            .conn
-            .query_row(
-                "SELECT EXISTS(SELECT 1 FROM field \
-                 WHERE field_name = ?1 AND value_type = 'tree_ref')",
-                [field],
-                |row| row.get::<_, bool>(0),
-            )
-            .map_err(anyhow::Error::from)?)
-    }
+/// Whether one row `(owner, value)` holds.
+type RowPredicate<'a> = Box<dyn Fn(Uuid, &Value) -> bool + 'a>;
 
-    /// `IsPresent` / `IsAbsent`, aspect-aware. Under `parent` the question is
-    /// whether the node has a real parent: a forest root's parent is the root
-    /// sentinel, so `field:parent IS ABSENT` is the predicate form of "is a
-    /// root" — the one the `Follows` arrow cannot express.
-    fn presence(&mut self, field: &str, aspect: Aspect, present: bool) -> Result<String, ApiError> {
-        if aspect == Aspect::Parent {
-            self.push_text(field);
-            self.params.push(SqlValue::Blob(db::uuid_to_bytes(Uuid::nil())));
-            let sym = if present { "!=" } else { "=" };
-            return Ok(self.add(format!(
-                "SELECT DISTINCT metarecord_uuid AS uuid FROM field \
-                 WHERE field_name = ? AND value_type = 'tree_ref' AND value_uuid {sym} ?"
-            )));
-        }
-        self.push_text(field);
-        let sym = if present { "!=" } else { "=" };
-        Ok(self.add(format!(
-            "SELECT DISTINCT metarecord_uuid AS uuid FROM field \
-             WHERE field_name = ? AND value_type {sym} 'nothing'"
+/// Whether one row `(owner, value)` compares to `value` as `op` asks.
+fn row_predicate<'a>(
+    data: &Data,
+    field: &str,
+    value: &'a Value,
+    op: CmpOp,
+    aspect: Aspect,
+) -> Result<RowPredicate<'a>, ApiError> {
+    let equality_only = |type_name: &str| {
+        Err(ApiError::bad_request(format!(
+            "ordered comparison is not supported on {type_name} values"
         )))
-    }
-
-    /// Wraps a computed UUID set as a `VALUES` CTE (the hybrid shape shared
-    /// with `osm_path` and `FollowsTransitive`).
-    fn inline_uuids(&mut self, uuids: Vec<Uuid>) -> Result<String, ApiError> {
-        if uuids.is_empty() {
-            return Ok(self.empty());
-        }
-        let literals: Vec<String> =
-            uuids.iter().map(|u| format!("(x'{}')", hex_encode(u.as_bytes()))).collect();
-        Ok(self.add(format!("SELECT column1 AS uuid FROM (VALUES {})", literals.join(","))))
-    }
-
-    /// The field's tree nodes whose *assembled path* satisfies `pred`. Hybrid,
-    /// like osm path mode: the paths come from the tree cache, never from SQL.
-    /// A multi-valued node matches when any of its paths does.
-    fn path_matches(
-        &mut self,
-        field: &str,
-        pred: &dyn Fn(&str) -> bool,
-    ) -> Result<Vec<Uuid>, ApiError> {
-        let mut matched = Vec::new();
-        for uuid in all_tree_ref_nodes(self.conn, field)? {
-            for path in self.cache.paths_of(self.conn, field, uuid)? {
-                if pred(&path) {
-                    matched.push(uuid);
-                    break;
-                }
-            }
-        }
-        Ok(matched)
-    }
-
-    /// `path_matches` for a comparison against a string operand.
-    fn path_comparison_matches(
-        &mut self,
-        field: &str,
-        value: &Value,
-        op: CmpOp,
-    ) -> Result<Vec<Uuid>, ApiError> {
-        let Value::String(operand) = value else {
-            return Err(ApiError::bad_request(format!(
-                "the ':path' aspect compares against a string, got {}",
-                value.type_str()
-            )));
-        };
-        let operand = operand.clone();
-        self.path_matches(field, &move |path: &str| match op {
-            CmpOp::Eq => path == operand,
-            CmpOp::Lt => path < operand.as_str(),
-            CmpOp::Lte => path <= operand.as_str(),
-            CmpOp::Gt => path > operand.as_str(),
-            CmpOp::Gte => path >= operand.as_str(),
-        })
-    }
-
-    /// The `Neq` counterpart of [`Self::path_comparison_matches`]: the nodes
-    /// holding at least one path *different* from the operand.
-    fn path_comparison_differs(
-        &mut self,
-        field: &str,
-        value: &Value,
-    ) -> Result<Vec<Uuid>, ApiError> {
-        let Value::String(operand) = value else {
-            return Err(ApiError::bad_request(format!(
-                "the ':path' aspect compares against a string, got {}",
-                value.type_str()
-            )));
-        };
-        let operand = operand.clone();
-        self.path_matches(field, &move |path: &str| path != operand)
-    }
-
-    fn comparison(
-        &mut self,
-        field: &str,
-        value: &Value,
-        op: CmpOp,
-        aspect: Aspect,
-    ) -> Result<String, ApiError> {
-        if aspect == Aspect::Path {
-            let matched = self.path_comparison_matches(field, value, op)?;
-            return self.inline_uuids(matched);
-        }
-        self.push_text(field);
-        let pred = self.scalar_predicate(field, value, op, aspect)?;
-        Ok(self.add(format!(
-            "SELECT DISTINCT metarecord_uuid AS uuid FROM field \
-             WHERE field_name = ? AND ({pred})"
-        )))
-    }
-
-    fn combine(&mut self, operands: &[Query], set_op: &str) -> Result<String, ApiError> {
-        if operands.is_empty() {
-            return Err(ApiError::bad_request("'and'/'or' need at least one operand"));
-        }
-        // `check_query_size` already rejected this upfront; kept so the limit
-        // still holds for any future caller that compiles without it.
-        if operands.len() > MAX_COMBINATOR_OPERANDS {
-            return Err(ApiError::bad_request(too_wide_message(operands.len())));
-        }
-        let mut parts = Vec::with_capacity(operands.len());
-        for operand in operands {
-            let sub = self.compile_node(operand)?;
-            parts.push(format!("SELECT uuid FROM {sub}"));
-        }
-        Ok(self.add(parts.join(&format!(" {set_op} "))))
-    }
-
-    /// Row-level predicate for one comparison operand; pushes its parameters.
-    /// `field` is needed for the exact-node path case (below).
-    fn scalar_predicate(
-        &mut self,
-        field: &str,
-        value: &Value,
-        op: CmpOp,
-        aspect: Aspect,
-    ) -> Result<String, ApiError> {
-        let sym = op.symbol();
-        let ordered_only_eq = |type_name: &str| {
-            ApiError::bad_request(format!(
-                "ordered comparison is not supported on {type_name} values"
-            ))
-        };
-        match value {
-            Value::Nothing => Err(ApiError::bad_request(
+    };
+    Ok(match value {
+        Value::Nothing => {
+            return Err(ApiError::bad_request(
                 "comparisons with 'nothing' are not allowed; use is_absent / is_unknown",
-            )),
-            // Int and Float compare numerically together.
-            Value::Int(n) => {
-                self.params.push(SqlValue::Real(*n as f64));
-                Ok(format!(
-                    "value_type IN ('int', 'float') AND \
-                     COALESCE(CAST(value_int AS REAL), value_real) {sym} ?"
-                ))
+            ))
+        }
+        // Int and Float compare numerically together.
+        Value::Int(_) | Value::Float(_) => {
+            let x = match value {
+                Value::Int(n) => *n as f64,
+                Value::Float(f) => *f,
+                _ => unreachable!(),
+            };
+            Box::new(move |_, v| match v {
+                Value::Int(n) => op.holds((*n as f64).partial_cmp(&x)),
+                Value::Float(f) => op.holds(f.partial_cmp(&x)),
+                _ => false,
+            })
+        }
+        Value::String(text) => {
+            // `:parent` names the parent by its path: the positions under it.
+            if aspect == Aspect::Parent {
+                let node = data.forest(field).resolve(text);
+                return Ok(Box::new(move |_, v| match (v, node) {
+                    (Value::TreeRef { parent: Some(p), .. }, Some(n)) => *p == n,
+                    _ => false,
+                }));
             }
-            Value::Float(f) => {
-                self.params.push(SqlValue::Real(*f));
-                Ok(format!(
-                    "value_type IN ('int', 'float') AND \
-                     COALESCE(CAST(value_int AS REAL), value_real) {sym} ?"
-                ))
+            // Raw equality on a forest is the exact node the path names; on a
+            // string, the literal.
+            if aspect == Aspect::Raw && op == CmpOp::Eq {
+                let node = data.forest(field).resolve(text);
+                return Ok(Box::new(move |owner, v| match v {
+                    Value::String(s) => s == text,
+                    Value::TreeRef { .. } => Some(owner) == node,
+                    _ => false,
+                }));
             }
-            Value::String(text) => {
-                // The `parent` aspect compares the TreeRef parent, addressed by
-                // the path of the node it must be (spec-query "Field aspects").
-                // The same set as `field -> "<path>"`, spelled as a comparison.
-                if aspect == Aspect::Parent {
-                    let conn = self.conn;
-                    let node = self.cache.resolve_path(conn, field, text)?;
-                    return Ok(match node {
-                        Some(u) => {
-                            self.params.push(SqlValue::Blob(db::uuid_to_bytes(u)));
-                            "value_type = 'tree_ref' AND value_uuid = ?".to_string()
-                        }
-                        None => "0".to_string(),
-                    });
+            // The row's own text: a string, or a position's name.
+            Box::new(move |_, v| match v {
+                Value::String(s) => op.holds(Some(s.as_str().cmp(text))),
+                Value::TreeRef { name, .. } => op.holds(Some(name.display().as_ref().cmp(text))),
+                _ => false,
+            })
+        }
+        // A datetime compares only with a datetime.
+        Value::DateTime(ms) => Box::new(move |_, v| match v {
+            Value::DateTime(x) => op.holds(Some(x.cmp(ms))),
+            _ => false,
+        }),
+        Value::Bool(b) => {
+            if op.is_ordered() {
+                return equality_only("bool");
+            }
+            Box::new(move |_, v| matches!(v, Value::Bool(x) if x == b))
+        }
+        Value::Ref(u) => {
+            if op.is_ordered() {
+                return equality_only("ref");
+            }
+            Box::new(move |_, v| matches!(v, Value::Ref(x) if x == u))
+        }
+        Value::RefBase(u) => {
+            if op.is_ordered() {
+                return equality_only("refbase");
+            }
+            Box::new(move |_, v| matches!(v, Value::RefBase(x) if x == u))
+        }
+        Value::TreeRef { parent, name } => {
+            if op.is_ordered() {
+                return equality_only("tree_ref");
+            }
+            Box::new(move |_, v| match v {
+                Value::TreeRef { parent: p, name: n } => {
+                    p == parent && n.display() == name.display()
                 }
-                // Default (`raw`) equality on a tree_ref field is the *exact
-                // node*: the operand is a path, resolved through the tree cache,
-                // and identity (metarecord_uuid) is compared — at every depth,
-                // a forest root included. On a string field the path never
-                // resolves, leaving plain literal equality. Neq compiles as a
-                // negated Eq, so `op` is Eq here; `check_aspect` has already
-                // refused a bare ordered comparison on a tree_ref.
-                if aspect == Aspect::Raw && matches!(op, CmpOp::Eq) {
-                    let conn = self.conn;
-                    let node = self.cache.resolve_path(conn, field, text)?;
-                    self.push_text(text); // the string-field literal branch
-                    return Ok(match node {
-                        Some(u) => {
-                            self.params.push(SqlValue::Blob(db::uuid_to_bytes(u)));
-                            "(value_type = 'string' AND value_text = ?) OR \
-                             (value_type = 'tree_ref' AND metarecord_uuid = ?)"
-                                .to_string()
-                        }
-                        None => "value_type = 'string' AND value_text = ?".to_string(),
-                    });
-                }
-                // The `value` aspect: the row's own text — `value_text`, or
-                // `value_name` (the leaf name) on a tree_ref row.
-                self.push_text(text);
-                self.push_text(text);
-                Ok(format!(
-                    "(value_type = 'string' AND value_text {sym} ?) OR \
-                     (value_type = 'tree_ref' AND value_name {sym} ?)"
-                ))
+                _ => false,
+            })
+        }
+        Value::ExternalRef { repo, metarecord } => {
+            if op.is_ordered() {
+                return equality_only("externalref");
             }
-            Value::DateTime(ms) => {
-                // datetime is stored as Unix ms in value_int and compares
-                // numerically, but only against other datetime values.
-                self.params.push(SqlValue::Integer(*ms));
-                Ok(format!("value_type = 'datetime' AND value_int {sym} ?"))
-            }
-            Value::Bool(b) => {
-                if op.is_ordered() {
-                    return Err(ordered_only_eq("bool"));
-                }
-                self.params.push(SqlValue::Integer(*b as i64));
-                Ok("value_type = 'bool' AND value_int = ?".to_string())
-            }
-            Value::Ref(u) => {
-                if op.is_ordered() {
-                    return Err(ordered_only_eq("ref"));
-                }
-                self.params.push(SqlValue::Blob(db::uuid_to_bytes(*u)));
-                Ok("value_type = 'ref' AND value_uuid = ?".to_string())
-            }
-            Value::RefBase(u) => {
-                if op.is_ordered() {
-                    return Err(ordered_only_eq("refbase"));
-                }
-                self.params.push(SqlValue::Blob(db::uuid_to_bytes(*u)));
-                Ok("value_type = 'refbase' AND value_uuid = ?".to_string())
-            }
-            Value::TreeRef { parent, name } => {
-                if op.is_ordered() {
-                    return Err(ordered_only_eq("tree_ref"));
-                }
-                self.params.push(SqlValue::Blob(db::uuid_to_bytes(parent.unwrap_or(ZERO_UUID))));
-                self.push_text(name.display().as_ref());
-                Ok("value_type = 'tree_ref' AND value_uuid = ? AND value_name = ?".to_string())
-            }
-            Value::ExternalRef { repo, metarecord } => {
-                if op.is_ordered() {
-                    return Err(ordered_only_eq("externalref"));
-                }
-                self.params.push(SqlValue::Blob(db::uuid_to_bytes(*metarecord)));
-                self.params.push(SqlValue::Blob(db::uuid_to_bytes(*repo)));
-                Ok("value_type = 'externalref' AND value_uuid = ? AND value_ref_repo = ?"
-                    .to_string())
-            }
+            Box::new(
+                move |_, v| matches!(v, Value::ExternalRef { repo: r, metarecord: m } if r == repo && m == metarecord),
+            )
+        }
+    })
+}
+
+/// Two rows holding the same value: the same type and the same stored value
+/// (a number numerically, so `0.0` and `-0.0` are one value).
+fn same_value(a: &Value, b: &Value) -> bool {
+    match (a, b) {
+        (Value::Float(x), Value::Float(y)) => x == y,
+        (Value::TreeRef { parent: p, name: n }, Value::TreeRef { parent: q, name: m }) => {
+            p == q && n.as_bytes() == m.as_bytes()
+        }
+        _ => a == b,
+    }
+}
+
+/// OSM `Path`: the nodes of `field`'s forest with a path matching `terms`
+/// in order, case-insensitively — every node for no term.
+fn osm_path(data: &Data, field: &str, terms: &[String]) -> Set {
+    let forest = data.forest(field);
+    if terms.is_empty() {
+        return forest.nodes();
+    }
+    forest.nodes_whose_path(|p| osm_ordered_match(&p.to_lowercase(), terms))
+}
+
+// ── Sorting ───────────────────────────────────────────────────────────────────
+
+/// One component of a row's position in the order. Per sort key there are
+/// five — missing-last flag, type group, number, text, bytes — then the uuid.
+#[derive(Debug, Clone)]
+enum Component {
+    Int(i64),
+    Num(f64),
+    Text(String),
+    Bytes(Vec<u8>),
+}
+
+impl Component {
+    fn cmp(&self, other: &Self) -> Ordering {
+        match (self, other) {
+            (Component::Int(a), Component::Int(b)) => a.cmp(b),
+            (Component::Num(a), Component::Num(b)) => a.partial_cmp(b).unwrap_or(Ordering::Equal),
+            (Component::Text(a), Component::Text(b)) => a.cmp(b),
+            (Component::Bytes(a), Component::Bytes(b)) => a.cmp(b),
+            _ => Ordering::Equal,
         }
     }
+
+    fn to_cursor(&self) -> serde_json::Value {
+        match self {
+            Component::Int(n) => serde_json::json!(n),
+            Component::Num(f) => serde_json::json!(hex_encode(&f.to_bits().to_be_bytes())),
+            Component::Text(s) => serde_json::json!(s),
+            Component::Bytes(b) => serde_json::json!(hex_encode(b)),
+        }
+    }
+}
+
+/// A row's value for sorting: type group, number, text, bytes — each absent
+/// where the type has none.
+type SortValue = (i64, Option<f64>, Option<String>, Option<Vec<u8>>);
+
+fn sort_value(forest: &Forest<'_>, v: &Value) -> Option<SortValue> {
+    Some(match v {
+        Value::Nothing => return None,
+        Value::Bool(b) => (0, Some(*b as i64 as f64), None, None),
+        Value::Int(n) => (1, Some(*n as f64), None, None),
+        Value::Float(f) => (1, Some(*f), None, None),
+        Value::String(s) => (2, None, Some(s.clone()), None),
+        Value::DateTime(ms) => (3, Some(*ms as f64), None, None),
+        Value::Ref(u) | Value::RefBase(u) => (4, None, None, Some(u.as_bytes().to_vec())),
+        Value::ExternalRef { metarecord, .. } => {
+            (4, None, None, Some(metarecord.as_bytes().to_vec()))
+        }
+        Value::TreeRef { parent, name } => (5, None, Some(forest.sort_key(*parent, name)), None),
+    })
+}
+
+/// Absent sorts before present, as SQL's `NULL` does.
+fn cmp_sort_values(a: &SortValue, b: &SortValue) -> Ordering {
+    fn opt<T>(a: &Option<T>, b: &Option<T>, f: impl Fn(&T, &T) -> Ordering) -> Ordering {
+        match (a, b) {
+            (None, None) => Ordering::Equal,
+            (None, Some(_)) => Ordering::Less,
+            (Some(_), None) => Ordering::Greater,
+            (Some(x), Some(y)) => f(x, y),
+        }
+    }
+    a.0.cmp(&b.0)
+        .then_with(|| opt(&a.1, &b.1, |x, y| x.partial_cmp(y).unwrap_or(Ordering::Equal)))
+        .then_with(|| opt(&a.2, &b.2, |x, y| x.cmp(y)))
+        .then_with(|| opt(&a.3, &b.3, |x, y| x.cmp(y)))
+}
+
+/// The five components of one metarecord for one sort key: its
+/// representative value — the least of its values ascending, the greatest
+/// descending — or, lacking the field, the missing-last placeholders.
+fn sort_components(forest: &Forest<'_>, key: &SortKey, held: &[&Value]) -> [Component; 5] {
+    let values = held.iter().filter_map(|v| sort_value(forest, v));
+    let rep = match key.order {
+        SortOrder::Asc => values.min_by(cmp_sort_values),
+        SortOrder::Desc => values.max_by(cmp_sort_values),
+    };
+    match rep {
+        // A metarecord lacking the field: its type group is the one past
+        // every type, as the SQL oracle's `CASE … ELSE 6` gave it.
+        None => [
+            Component::Int(1),
+            Component::Int(6),
+            Component::Num(NUM_SENTINEL),
+            Component::Text(String::new()),
+            Component::Bytes(Vec::new()),
+        ],
+        Some((group, num, text, bytes)) => [
+            Component::Int(0),
+            Component::Int(group),
+            Component::Num(num.unwrap_or(NUM_SENTINEL)),
+            Component::Text(text.unwrap_or_default()),
+            Component::Bytes(bytes.unwrap_or_default()),
+        ],
+    }
+}
+
+fn compare_rows(
+    directions: &[bool],
+    a: &[Component],
+    a_uuid: Uuid,
+    b: &[Component],
+    b_uuid: Uuid,
+) -> Ordering {
+    for ((x, y), asc) in a.iter().zip(b).zip(directions) {
+        let ord = x.cmp(y);
+        if ord != Ordering::Equal {
+            return if *asc { ord } else { ord.reverse() };
+        }
+    }
+    a_uuid.cmp(&b_uuid)
+}
+
+/// The components a cursor carries, typed back.
+fn cursor_components(cursor: &Cursor, n_sort: usize) -> Result<Vec<Component>, ApiError> {
+    let invalid = || ApiError::bad_request("invalid cursor");
+    if cursor.keys.len() != 5 * n_sort {
+        return Err(invalid());
+    }
+    cursor
+        .keys
+        .iter()
+        .enumerate()
+        .map(|(i, key)| {
+            Ok(match i % 5 {
+                0 | 1 => Component::Int(key.as_i64().ok_or_else(invalid)?),
+                2 => {
+                    let bytes = hex_decode(key.as_str().ok_or_else(invalid)?)?;
+                    let arr: [u8; 8] = bytes.as_slice().try_into().map_err(|_| invalid())?;
+                    Component::Num(f64::from_bits(u64::from_be_bytes(arr)))
+                }
+                3 => Component::Text(key.as_str().ok_or_else(invalid)?.to_string()),
+                _ => Component::Bytes(hex_decode(key.as_str().ok_or_else(invalid)?)?),
+            })
+        })
+        .collect()
+}
+
+fn hex_decode(s: &str) -> Result<Vec<u8>, ApiError> {
+    if !s.len().is_multiple_of(2) || !s.is_ascii() {
+        return Err(ApiError::bad_request("invalid cursor"));
+    }
+    (0..s.len())
+        .step_by(2)
+        .map(|i| {
+            u8::from_str_radix(&s[i..i + 2], 16)
+                .map_err(|_| ApiError::bad_request("invalid cursor"))
+        })
+        .collect()
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
 
+    /// A float sort key travels in the cursor as the hex of its bits: a
+    /// decimal JSON number can come back one ULP off, which at a page
+    /// boundary duplicates or skips a row.
     #[test]
     fn float_cursor_roundtrip_is_bit_exact() {
         let mut cases = vec![
@@ -1260,8 +848,6 @@ mod tests {
             f64::MIN,
             2f64.powi(53) + 2.0,
         ];
-        // Deterministic sweep of bit patterns (one such value drifts by 1 ULP
-        // through a decimal JSON round-trip, which this encoding avoids).
         for i in 0..5000u64 {
             let f = f64::from_bits(i.wrapping_mul(0x9E37_79B9_7F4A_7C15));
             if f.is_finite() {
@@ -1269,10 +855,20 @@ mod tests {
             }
         }
         for &f in &cases {
+            let keys = vec![
+                Component::Int(0).to_cursor(),
+                Component::Int(1).to_cursor(),
+                Component::Num(f).to_cursor(),
+                Component::Text(String::new()).to_cursor(),
+                Component::Bytes(Vec::new()).to_cursor(),
+            ];
             // Through the same JSON serialization the cursor undergoes.
-            let value = float_to_cursor(f);
-            let json = serde_json::to_vec(&value).unwrap();
-            let back = float_from_cursor(&serde_json::from_slice(&json).unwrap()).unwrap();
+            let json = serde_json::to_vec(&keys).unwrap();
+            let cursor =
+                Cursor { keys: serde_json::from_slice(&json).unwrap(), uuid: String::new(), h: 0 };
+            let Component::Num(back) = cursor_components(&cursor, 1).unwrap()[2] else {
+                panic!("not a number")
+            };
             assert_eq!(f.to_bits(), back.to_bits(), "diverged at {f}");
         }
     }

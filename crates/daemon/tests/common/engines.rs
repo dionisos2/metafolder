@@ -1,6 +1,7 @@
 //! Running a query through both engines, and asserting they agree.
 //!
-//! The SQL engine is the oracle; the bitmap index (plus the forest, through the
+//! The naive oracle (`metafolder-query-oracle`, which reads every row) is the
+//! reference; the bitmap index (plus the forest, through the
 //! route's own preparation) is what the daemon actually serves from
 //! (spec-indexing "No operand runs in SQL"). The semantics batteries in this
 //! directory pin what a query *means*, so running them on the oracle alone
@@ -36,13 +37,13 @@ pub fn both(
     query: &Query,
     sort: &[SortKey],
 ) -> Vec<Uuid> {
-    let (sql, _) = query_exec::execute(conn, cache, query, sort, None, None).unwrap();
+    let (sql, _) = query_exec::execute(conn, query, sort, None, None).unwrap();
     let got = indexed(conn, cache, query, sort);
     if sort.is_empty() {
         let (mut got, mut want) = (got, sql.clone());
         got.sort();
         want.sort();
-        assert_eq!(got, want, "index/SQL divergence on {query:?}");
+        assert_eq!(got, want, "index/oracle divergence on {query:?}");
     } else {
         assert_eq!(got, sql, "sort divergence on {query:?} by {sort:?}");
     }
@@ -52,8 +53,8 @@ pub fn both(
 /// Asserts both engines refuse `query`, and returns the oracle's message. A
 /// rejection only one of them makes is a rejection that depends on who ran the
 /// query.
-pub fn both_refuse(conn: &Connection, cache: &mut TreeCache, query: &Query) -> String {
-    let sql = match query_exec::execute(conn, cache, query, &[], None, None) {
+pub fn both_refuse(conn: &Connection, query: &Query) -> String {
+    let sql = match query_exec::execute(conn, query, &[], None, None) {
         Ok(_) => panic!("query should have been rejected"),
         Err(e) => format!("{e:?}"),
     };

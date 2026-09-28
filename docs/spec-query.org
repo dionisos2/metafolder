@@ -66,12 +66,14 @@ index then combines with every other operand. =Path=-target
 resolve their root through the tree cache and expand it by iterative bitmap
 expansion.
 
-The relational form of each operand still exists, as
-=crates/query-oracle= — the *test oracle* the index is validated against
-(=tests/index_oracle.rs=, and the semantics batteries, which run both). It is a
-dev-dependency of the daemon and of nothing else, so no shipped binary links
-it, and no request is ever served by it. Where this document says "in SQL" of a
-semantics, it describes that oracle.
+A second evaluator exists, as =crates/query-oracle= — the *test oracle* the
+index is validated against (=tests/index_oracle.rs=, and the semantics
+batteries, which run both): a naive scan of every row, rebuilding the forest
+and the sort keys from the rows. It is a dev-dependency of the daemon and of
+nothing else, so no shipped binary links it, and no request is ever served by
+it. Where this document says "in SQL" of a semantics, it describes the SQL
+engine that was the oracle until September 2026; the naive oracle answers the
+same (it was held to it over the whole battery).
 
 =Follows= takes either a condition (sub-query) or a path string as right-hand
 side. With a condition, it matches metarecords whose =value_uuid= (the =Ref=

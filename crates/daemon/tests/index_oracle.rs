@@ -53,8 +53,7 @@ impl Oracle {
     /// Asserts the bitmap index agrees with the SQL engine on `q`.
     fn check(&mut self, q: &Query) {
         let index = RepoIndex::build(&self.conn).unwrap();
-        let (mut sql, _) =
-            query_exec::execute(&self.conn, &mut self.cache, q, &[], None, None).unwrap();
+        let (mut sql, _) = query_exec::execute(&self.conn, q, &[], None, None).unwrap();
         let mut got = index.to_uuids(&index.evaluate(q).unwrap());
         sql.sort();
         got.sort();
@@ -77,8 +76,7 @@ impl Oracle {
                 order: if *asc { SortOrder::Asc } else { SortOrder::Desc },
             })
             .collect();
-        let (sql, _) =
-            query_exec::execute(&self.conn, &mut self.cache, q, &sql_keys, limit, None).unwrap();
+        let (sql, _) = query_exec::execute(&self.conn, q, &sql_keys, limit, None).unwrap();
         let idx_keys: Vec<SortBy> =
             by.iter().map(|(f, asc)| SortBy { field: f.to_string(), ascending: *asc }).collect();
         let got = index.evaluate_sorted(q, &idx_keys, limit).unwrap();
@@ -91,7 +89,7 @@ impl Oracle {
     /// Asserts the index `count` matches the SQL `COUNT`.
     fn check_count(&mut self, q: &Query) {
         let index = RepoIndex::build(&self.conn).unwrap();
-        let sql = query_exec::count(&self.conn, &mut self.cache, q).unwrap();
+        let sql = query_exec::count(&self.conn, q).unwrap();
         assert_eq!(index.count(q).unwrap() as usize, sql, "count divergence on {q:?}");
         let (kv, _dir) = kv_mirror(&self.conn);
         let got = with_kv(&kv, PageStrategy::Auto, |e, _| e.count(q).unwrap());
@@ -141,15 +139,9 @@ impl Oracle {
         let mut spages: Vec<Vec<Uuid>> = Vec::new();
         let mut scursor: Option<String> = None;
         loop {
-            let (page, next) = query_exec::execute(
-                &self.conn,
-                &mut self.cache,
-                q,
-                &sql_keys,
-                Some(limit),
-                scursor.as_deref(),
-            )
-            .unwrap();
+            let (page, next) =
+                query_exec::execute(&self.conn, q, &sql_keys, Some(limit), scursor.as_deref())
+                    .unwrap();
             spages.push(page);
             match next {
                 Some(c) => scursor = Some(c),
@@ -187,15 +179,9 @@ impl Oracle {
         let mut spages: Vec<Vec<Uuid>> = Vec::new();
         let mut scursor: Option<String> = None;
         loop {
-            let (page, next) = query_exec::execute(
-                &self.conn,
-                &mut self.cache,
-                q,
-                &sql_keys,
-                Some(limit),
-                scursor.as_deref(),
-            )
-            .unwrap();
+            let (page, next) =
+                query_exec::execute(&self.conn, q, &sql_keys, Some(limit), scursor.as_deref())
+                    .unwrap();
             spages.push(page);
             match next {
                 Some(c) => scursor = Some(c),
@@ -478,8 +464,7 @@ fn subtrees_stay_right_through_incremental_refreshes() {
         index.refresh(&o.conn, &|| false).unwrap();
         for &n in nodes {
             let q = under(n);
-            let (mut sql, _) =
-                query_exec::execute(&o.conn, &mut o.cache, &q, &[], None, None).unwrap();
+            let (mut sql, _) = query_exec::execute(&o.conn, &q, &[], None, None).unwrap();
             let mut got = index.to_uuids(&index.evaluate(&q).unwrap());
             sql.sort();
             got.sort();
@@ -834,8 +819,7 @@ fn exact_node_path_equality_matches_sql_with_node_roots() {
             }
             let index = RepoIndex::build(&o.conn).unwrap();
 
-            let (mut sql, _) =
-                query_exec::execute(&o.conn, &mut o.cache, &q, &[], None, None).unwrap();
+            let (mut sql, _) = query_exec::execute(&o.conn, &q, &[], None, None).unwrap();
             let (mut got, _) = index.evaluate_page_with_roots(&q, &[], None, None, &roots).unwrap();
             sql.sort();
             got.sort();
@@ -843,7 +827,7 @@ fn exact_node_path_equality_matches_sql_with_node_roots() {
 
             assert_eq!(
                 index.count_with_roots(&q, &roots).unwrap() as usize,
-                query_exec::count(&o.conn, &mut o.cache, &q).unwrap(),
+                query_exec::count(&o.conn, &q).unwrap(),
                 "count divergence on {q:?}"
             );
         }
@@ -883,8 +867,7 @@ fn exact_node_path_inequality_matches_sql_with_node_roots() {
             }
             let index = RepoIndex::build(&o.conn).unwrap();
 
-            let (mut sql, _) =
-                query_exec::execute(&o.conn, &mut o.cache, &q, &[], None, None).unwrap();
+            let (mut sql, _) = query_exec::execute(&o.conn, &q, &[], None, None).unwrap();
             let (mut got, _) = index.evaluate_page_with_roots(&q, &[], None, None, &roots).unwrap();
             sql.sort();
             got.sort();
@@ -892,7 +875,7 @@ fn exact_node_path_inequality_matches_sql_with_node_roots() {
 
             assert_eq!(
                 index.count_with_roots(&q, &roots).unwrap() as usize,
-                query_exec::count(&o.conn, &mut o.cache, &q).unwrap(),
+                query_exec::count(&o.conn, &q).unwrap(),
                 "count divergence on {q:?}"
             );
         }
@@ -928,14 +911,13 @@ fn reverse_tree_follows_path_target_matches_sql() {
             }
             let index = RepoIndex::build(&o.conn).unwrap();
 
-            let (mut sql, _) =
-                query_exec::execute(&o.conn, &mut o.cache, &q, &[], None, None).unwrap();
+            let (mut sql, _) = query_exec::execute(&o.conn, &q, &[], None, None).unwrap();
             let (mut got, _) = index.evaluate_page_with_roots(&q, &[], None, None, &roots).unwrap();
             sql.sort();
             got.sort();
             assert_eq!(got, sql, "path divergence on {q:?}");
 
-            let sql_count = query_exec::count(&o.conn, &mut o.cache, &q).unwrap();
+            let sql_count = query_exec::count(&o.conn, &q).unwrap();
             assert_eq!(
                 index.count_with_roots(&q, &roots).unwrap() as usize,
                 sql_count,
@@ -1088,14 +1070,14 @@ fn osm_path_empty_terms_matches_sql() {
 
     let q = osm_path_q("loc", &[]);
     let index = RepoIndex::build(&o.conn).unwrap();
-    let (mut sql, _) = query_exec::execute(&o.conn, &mut o.cache, &q, &[], None, None).unwrap();
+    let (mut sql, _) = query_exec::execute(&o.conn, &q, &[], None, None).unwrap();
     let mut got = index.to_uuids(&index.evaluate(&q).unwrap());
     sql.sort();
     got.sort();
     assert_eq!(got, sql, "empty-terms osm path divergence");
     assert_eq!(
         index.count(&q).unwrap() as usize,
-        query_exec::count(&o.conn, &mut o.cache, &q).unwrap(),
+        query_exec::count(&o.conn, &q).unwrap(),
         "empty-terms osm path count divergence"
     );
     // It is exactly `is_present` on the field.
@@ -1132,13 +1114,13 @@ fn osm_path_single_term_matches_sql() {
         let q = osm_path_q("loc", &[term]);
         let index = RepoIndex::build(&o.conn).unwrap();
 
-        let (mut sql, _) = query_exec::execute(&o.conn, &mut o.cache, &q, &[], None, None).unwrap();
+        let (mut sql, _) = query_exec::execute(&o.conn, &q, &[], None, None).unwrap();
         let mut got = index.to_uuids(&index.evaluate(&q).unwrap());
         sql.sort();
         got.sort();
         assert_eq!(got, sql, "osm path divergence on term {term:?}");
 
-        let sql_count = query_exec::count(&o.conn, &mut o.cache, &q).unwrap();
+        let sql_count = query_exec::count(&o.conn, &q).unwrap();
         assert_eq!(
             index.count(&q).unwrap() as usize,
             sql_count,
@@ -1176,7 +1158,7 @@ fn osm_path_separator_term_defers_and_matches_sql() {
         assert!(index.evaluate(&q).is_err(), "a separator-bearing term must defer: {term:?}");
 
         let rewritten = forest_query::resolve_path_leaves(&o.cache, &o.conn, None, &q).unwrap();
-        let (mut sql, _) = query_exec::execute(&o.conn, &mut o.cache, &q, &[], None, None).unwrap();
+        let (mut sql, _) = query_exec::execute(&o.conn, &q, &[], None, None).unwrap();
         let (mut got, _) = index
             .evaluate_page_with_roots(&rewritten, &[], None, None, &QueryRoots::new())
             .unwrap();
@@ -1205,7 +1187,7 @@ fn osm_path_multi_term_via_leaf_rewrite_matches_sql() {
         let q = osm_path_q("loc", &terms);
         let rewritten = forest_query::resolve_path_leaves(&o.cache, &o.conn, None, &q).unwrap();
         let index = RepoIndex::build(&o.conn).unwrap();
-        let (mut sql, _) = query_exec::execute(&o.conn, &mut o.cache, &q, &[], None, None).unwrap();
+        let (mut sql, _) = query_exec::execute(&o.conn, &q, &[], None, None).unwrap();
         // A rewritten multi-term OSM path is a bare UuidIn — the index serves it
         // with no roots needed.
         let (mut got, _) = index
@@ -1244,14 +1226,14 @@ fn finder_shaped_query_via_leaf_rewrite_matches_sql() {
     let roots = QueryRoots::new();
 
     let index = RepoIndex::build(&o.conn).unwrap();
-    let (mut sql, _) = query_exec::execute(&o.conn, &mut o.cache, &q, &[], None, None).unwrap();
+    let (mut sql, _) = query_exec::execute(&o.conn, &q, &[], None, None).unwrap();
     let (mut got, _) = index.evaluate_page_with_roots(&rewritten, &[], None, None, &roots).unwrap();
     sql.sort();
     got.sort();
     assert_eq!(got, sql, "finder-shaped query divergence");
     assert_eq!(
         index.count_with_roots(&rewritten, &roots).unwrap() as usize,
-        query_exec::count(&o.conn, &mut o.cache, &q).unwrap(),
+        query_exec::count(&o.conn, &q).unwrap(),
         "finder-shaped count divergence"
     );
 }
@@ -1379,17 +1361,14 @@ fn keyset_pagination_is_stable_under_insertion() {
 
     let index = RepoIndex::build(&o.conn).unwrap();
     let (_p1, icur) = index.evaluate_page(&q, &idx_keys, Some(2), None).unwrap();
-    let (_s1, scur) =
-        query_exec::execute(&o.conn, &mut o.cache, &q, &sql_keys, Some(2), None).unwrap();
+    let (_s1, scur) = query_exec::execute(&o.conn, &q, &sql_keys, Some(2), None).unwrap();
 
     // Insert a row (rate 15) that sorts within the already-returned region.
     o.create(vec![Field::new("all", Value::Bool(true)), Field::new("rate", i(15))]);
 
     let index2 = RepoIndex::build(&o.conn).unwrap();
     let (ip2, _) = index2.evaluate_page(&q, &idx_keys, Some(2), icur.as_deref()).unwrap();
-    let (sp2, _) =
-        query_exec::execute(&o.conn, &mut o.cache, &q, &sql_keys, Some(2), scur.as_deref())
-            .unwrap();
+    let (sp2, _) = query_exec::execute(&o.conn, &q, &sql_keys, Some(2), scur.as_deref()).unwrap();
 
     // Both resume strictly after rate=20 → rates 30, 40 (never re-showing 15).
     assert_eq!(ip2, sp2, "index keyset page must match the SQL keyset page");
@@ -1681,15 +1660,14 @@ fn parent_aspect_equality_matches_sql_with_node_roots() {
             }
             let index = RepoIndex::build(&o.conn).unwrap();
 
-            let (mut sql, _) =
-                query_exec::execute(&o.conn, &mut o.cache, &q, &[], None, None).unwrap();
+            let (mut sql, _) = query_exec::execute(&o.conn, &q, &[], None, None).unwrap();
             let (mut got, _) = index.evaluate_page_with_roots(&q, &[], None, None, &roots).unwrap();
             sql.sort();
             got.sort();
             assert_eq!(got, sql, "':parent' equality divergence on {q:?}");
             assert_eq!(
                 index.count_with_roots(&q, &roots).unwrap() as usize,
-                query_exec::count(&o.conn, &mut o.cache, &q).unwrap(),
+                query_exec::count(&o.conn, &q).unwrap(),
                 "count divergence on {q:?}"
             );
         }
@@ -1760,7 +1738,7 @@ fn path_aspect_leaves_are_resolved_by_the_forest() {
         let rewritten = forest_query::resolve_path_leaves(&o.cache, &o.conn, None, &q).unwrap();
         let index = RepoIndex::build(&o.conn).unwrap();
         let mut got = index.to_uuids(&index.evaluate(&rewritten).unwrap());
-        let (mut sql, _) = query_exec::execute(&o.conn, &mut o.cache, &q, &[], None, None).unwrap();
+        let (mut sql, _) = query_exec::execute(&o.conn, &q, &[], None, None).unwrap();
         got.sort();
         sql.sort();
         assert_eq!(got, sql, "':path' divergence on {q:?}");
@@ -1782,7 +1760,7 @@ fn a_path_leaf_on_a_non_tree_field_is_refused_before_any_engine() {
         query_validate::validate_query_types(&q, &|f| index.value_type(f)).is_err(),
         "a ':path' leaf on a string field must be a 400"
     );
-    assert!(query_exec::execute(&o.conn, &mut o.cache, &q, &[], None, None).is_err());
+    assert!(query_exec::execute(&o.conn, &q, &[], None, None).is_err());
 
     // A field with no data at all is the other half of the same question, and
     // it is *not* an error: it matches nothing, in both engines. The resolver
@@ -1792,7 +1770,7 @@ fn a_path_leaf_on_a_non_tree_field_is_refused_before_any_engine() {
     assert!(query_validate::validate_query_types(&q, &|f| index.value_type(f)).is_ok());
     let rewritten = forest_query::resolve_path_leaves(&o.cache, &o.conn, None, &q).unwrap();
     assert!(index.evaluate(&rewritten).unwrap().is_empty());
-    let (sql, _) = query_exec::execute(&o.conn, &mut o.cache, &q, &[], None, None).unwrap();
+    let (sql, _) = query_exec::execute(&o.conn, &q, &[], None, None).unwrap();
     assert!(sql.is_empty());
 }
 

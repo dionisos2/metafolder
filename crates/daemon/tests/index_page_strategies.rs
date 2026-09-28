@@ -190,13 +190,7 @@ fn sorts() -> Vec<Vec<(&'static str, bool)>> {
 }
 
 /// The oracle's pages, cursor by cursor.
-fn oracle_pages(
-    conn: &Connection,
-    cache: &mut TreeCache,
-    q: &Query,
-    by: &[(&str, bool)],
-    limit: usize,
-) -> Vec<Vec<Uuid>> {
+fn oracle_pages(conn: &Connection, q: &Query, by: &[(&str, bool)], limit: usize) -> Vec<Vec<Uuid>> {
     let sql_keys: Vec<SortKey> = by
         .iter()
         .map(|(f, asc)| SortKey {
@@ -208,7 +202,7 @@ fn oracle_pages(
     let mut cursor: Option<String> = None;
     loop {
         let (page, next) =
-            query_exec::execute(conn, cache, q, &sql_keys, Some(limit), cursor.as_deref()).unwrap();
+            query_exec::execute(conn, q, &sql_keys, Some(limit), cursor.as_deref()).unwrap();
         pages.push(page);
         match next {
             Some(c) => cursor = Some(c),
@@ -280,7 +274,7 @@ fn every_page_strategy_gives_the_oracles_pages() {
     for q in queries(&conn, &mut cache) {
         for by in sorts() {
             for limit in [10, 50] {
-                let want = oracle_pages(&conn, &mut cache, &q, &by, limit);
+                let want = oracle_pages(&conn, &q, &by, limit);
                 // What `run_query_filter` resolves through the tree cache.
                 let mut targets = Vec::new();
                 collect_path_targets(&q, &mut targets);

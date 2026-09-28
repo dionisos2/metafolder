@@ -49,8 +49,7 @@ impl Fixture {
     /// warm one: the serving path always has a complete forest, and comparing
     /// against it would populate the cache and erase the very state under test.
     fn run_cold(&mut self, query: &Query) -> Vec<Uuid> {
-        let (uuids, _) =
-            query_exec::execute(&self.conn, &mut self.cache, query, &[], None, None).unwrap();
+        let (uuids, _) = query_exec::execute(&self.conn, query, &[], None, None).unwrap();
         uuids
     }
 

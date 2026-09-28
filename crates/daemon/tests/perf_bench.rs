@@ -203,15 +203,9 @@ fn bench_index_build_and_folder_query() {
     // reproducible here.
     let mut cache = repo.cache.lock().unwrap();
     let t = Instant::now();
-    let (old_hits, _) = query_exec::execute(
-        conn.as_sqlite().unwrap(),
-        &mut cache,
-        &old_query,
-        &[],
-        Some(names.len()),
-        None,
-    )
-    .unwrap();
+    let (old_hits, _) =
+        query_exec::execute(conn.as_sqlite().unwrap(), &old_query, &[], Some(names.len()), None)
+            .unwrap();
     let old_q = t.elapsed();
 
     // NEW: a plain Follows the bitmap index serves, path target resolved
@@ -334,8 +328,7 @@ fn bench_index_build_and_folder_query() {
     // OLD: Unsupported by the index → the SQL engine scans every mfr_path row.
     let t = Instant::now();
     let (old_hits, _) =
-        query_exec::execute(conn.as_sqlite().unwrap(), &mut cache, &node_query, &[], None, None)
-            .unwrap();
+        query_exec::execute(conn.as_sqlite().unwrap(), &node_query, &[], None, None).unwrap();
     let old_q = t.elapsed();
 
     // NEW: the node is resolved through the tree cache and handed to the index.
@@ -386,19 +379,14 @@ fn bench_index_build_and_folder_query() {
         );
     }
 
-    let mut cache = repo.cache.lock().unwrap();
     for list in [vec!["sample"], vec!["drafts", "sample"]] {
         let ts = terms(&list);
         let t = Instant::now();
-        let all =
-            query_exec::osm_path_matches(conn.as_sqlite().unwrap(), &mut cache, "mfr_path", &ts)
-                .unwrap();
+        let all = query_exec::osm_path_matches(conn.as_sqlite().unwrap(), "mfr_path", &ts).unwrap();
         eprintln!("   osm_path_matches {list:?} : {:?}  ({} hits)", t.elapsed(), all.len());
     }
-    drop(cache);
 
     // ── #7: the text predicates, on the oracle's row scan (the old baseline) ─
-    let mut cache = repo.cache.lock().unwrap();
     for (label, q) in [
         (
             "matches, strong literal",
@@ -427,11 +415,9 @@ fn bench_index_build_and_folder_query() {
     ] {
         let t = Instant::now();
         let (hits, _) =
-            query_exec::execute(conn.as_sqlite().unwrap(), &mut cache, &q, &[], None, None)
-                .unwrap();
+            query_exec::execute(conn.as_sqlite().unwrap(), &q, &[], None, None).unwrap();
         eprintln!("#7 {label:<24} via the oracle's SQL : {:?}  ({} hits)", t.elapsed(), hits.len());
     }
-    drop(cache);
 
     // ── #8: settling the tree cache after a manual TreeRef write ────────────
     // Any field write touching a `tree_ref` row used to rebuild the whole

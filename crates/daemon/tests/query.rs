@@ -39,7 +39,7 @@ impl Fixture {
 
     /// The error message of a query the engines must refuse.
     fn run_err(&mut self, query: &Query) -> String {
-        common::engines::both_refuse(&self.conn, &mut self.cache, query)
+        common::engines::both_refuse(&self.conn, query)
     }
 
     fn run_sorted(&mut self, query: &Query, sort: &[SortKey]) -> Vec<Uuid> {
@@ -332,7 +332,6 @@ fn test_comparison_with_nothing_is_rejected() {
     f.create(vec![Field::new("rating", Value::Int(1))]);
     let err = query_exec::execute(
         &f.conn,
-        &mut f.cache,
         &Query::Eq { field: "rating".into(), value: Value::Nothing, aspect: Aspect::Raw },
         &[],
         None,
@@ -437,7 +436,7 @@ fn test_oversized_query_is_rejected() {
             .map(|_| Query::IsPresent { field: "rating".into(), aspect: Aspect::Raw })
             .collect(),
     };
-    let err = query_exec::execute(&f.conn, &mut f.cache, &huge, &[], None, None).unwrap_err();
+    let err = query_exec::execute(&f.conn, &huge, &[], None, None).unwrap_err();
     assert!(err.message.contains("too large"), "unexpected error: {}", err.message);
     // A normal small query is unaffected.
     let ok = Query::Or {
@@ -446,7 +445,7 @@ fn test_oversized_query_is_rejected() {
             Query::IsAbsent { field: "rating".into(), aspect: Aspect::Raw },
         ],
     };
-    assert!(query_exec::execute(&f.conn, &mut f.cache, &ok, &[], None, None).is_ok());
+    assert!(query_exec::execute(&f.conn, &ok, &[], None, None).is_ok());
 }
 
 #[test]
@@ -461,14 +460,14 @@ fn test_wide_combinator_is_rejected_with_clear_message() {
     let over = Query::Or {
         operands: (0..=query_validate::MAX_COMBINATOR_OPERANDS).map(|_| leaf()).collect(),
     };
-    let err = query_exec::execute(&f.conn, &mut f.cache, &over, &[], None, None).unwrap_err();
+    let err = query_exec::execute(&f.conn, &over, &[], None, None).unwrap_err();
     assert!(err.message.contains("operands"), "unexpected error: {}", err.message);
 
     // Exactly the limit compiles and runs in SQLite.
     let at_limit = Query::Or {
         operands: (0..query_validate::MAX_COMBINATOR_OPERANDS).map(|_| leaf()).collect(),
     };
-    assert!(query_exec::execute(&f.conn, &mut f.cache, &at_limit, &[], None, None).is_ok());
+    assert!(query_exec::execute(&f.conn, &at_limit, &[], None, None).is_ok());
 }
 
 // ── Combinators ───────────────────────────────────────────────────────────────
@@ -538,7 +537,6 @@ fn test_matches_invalid_regex_is_rejected() {
     f.create(vec![Field::new("title", s("x"))]);
     let res = query_exec::execute(
         &f.conn,
-        &mut f.cache,
         &Query::Matches { field: "title".into(), pattern: "[unclosed".into(), aspect: Aspect::Raw },
         &[],
         None,
@@ -1267,8 +1265,7 @@ fn test_pagination_with_sort_covers_all_without_duplicates() {
     let mut cursor: Option<String> = None;
     loop {
         let (page, next) =
-            query_exec::execute(&f.conn, &mut f.cache, &all, &sort, Some(5), cursor.as_deref())
-                .unwrap();
+            query_exec::execute(&f.conn, &all, &sort, Some(5), cursor.as_deref()).unwrap();
         paged.extend(page);
         match next {
             Some(c) => cursor = Some(c),
@@ -1285,14 +1282,12 @@ fn test_cursor_is_rejected_for_different_query_or_sort() {
         f.create(vec![Field::new("n", Value::Int(i)), Field::new("k", s("x"))]);
     }
     let all = Query::Eq { field: "k".into(), value: s("x"), aspect: Aspect::Raw };
-    let (_, cursor) =
-        query_exec::execute(&f.conn, &mut f.cache, &all, &[sort_asc("n")], Some(2), None).unwrap();
+    let (_, cursor) = query_exec::execute(&f.conn, &all, &[sort_asc("n")], Some(2), None).unwrap();
     let cursor = cursor.unwrap();
 
     // Same cursor with a different sort → 400.
     let err =
-        query_exec::execute(&f.conn, &mut f.cache, &all, &[sort_desc("n")], Some(2), Some(&cursor))
-            .unwrap_err();
+        query_exec::execute(&f.conn, &all, &[sort_desc("n")], Some(2), Some(&cursor)).unwrap_err();
     assert!(err.message.contains("cursor"), "unexpected error: {}", err.message);
 }
 

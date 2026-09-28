@@ -471,9 +471,9 @@ page cache anyway, is decided by measurement, not in advance.
 - *Every integration test runs on both backends*, the way
   =tests/common/engines.rs= already runs both query engines. A behaviour tested
   on one backend only is where the two drift.
-- *The oracle stays SQL.* =crates/query-oracle= compiles to the SQLite schema;
-  on the KV backend the tests export the repository into a throwaway SQLite
-  database and compare. Three engines, one answer.
+- *The oracle reads rows.* =crates/query-oracle= (SQL until September 2026)
+  is a naive evaluator over the =Rows= trait: it reads the primary data of
+  either backend and nothing derived. Three engines, one answer.
 - *Scale is tested by counting, not timing* — the =perf_cost.rs= idea applied
   to page and key reads: opening a folder reads the same number of keys on a
   5 k and an 80 k repository; a tag filter reads a number of containers

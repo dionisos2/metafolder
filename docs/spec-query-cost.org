@@ -202,12 +202,10 @@ Only the last row reaches SQLite, and it is addressed by uuid:
    WHERE metarecord_uuid IN (…)
 #+END_SRC
 
-The relational form of each *filter* category still exists in
-=crates/query-oracle=, where it is the equivalence oracle
-(=tests/index_oracle.rs=) and not a plan: its =_repo= universe CTE, its per-leaf
-=field= scan and its window-function sorts describe what the index is checked
-against, never what a request runs. An explain term therefore has no SQL to
-quote, which is the point of the model being written per provider.
+No relational form of a filter survives: the test oracle
+(=crates/query-oracle=) is a naive scan of every row, not a plan, and no
+request runs it. An explain term therefore has no SQL to quote, which is the
+point of the model being written per provider.
 
 The code calls a resolved path a *seed* (=expand_subtrees= grows a frontier from
 it, =prepare_indexed_query= resolves "the query's index seeds"), and the category

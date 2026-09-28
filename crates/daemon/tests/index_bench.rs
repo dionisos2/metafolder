@@ -14,7 +14,6 @@ use metafolder_daemon::db;
 use metafolder_daemon::index::{RepoIndex, SortBy};
 use metafolder_daemon::log::Writer;
 use metafolder_daemon::query_result::{SortKey, SortOrder};
-use metafolder_daemon::tree_cache::TreeCache;
 use metafolder_query_oracle as query_exec;
 use rusqlite::Connection;
 
@@ -137,10 +136,9 @@ fn run_scale(dirs: usize, files: usize, compare_sql_sort: bool) {
         "query", "results", "sql (ms)", "index (ms)", "speedup"
     );
 
-    let mut cache = TreeCache::new(false);
     for (name, q) in battery() {
         let t = Instant::now();
-        let (mut sql, _) = query_exec::execute(&conn, &mut cache, &q, &[], None, None).unwrap();
+        let (mut sql, _) = query_exec::execute(&conn, &q, &[], None, None).unwrap();
         let sql_ms = t.elapsed().as_secs_f64() * 1e3;
 
         let t = Instant::now();
@@ -197,8 +195,7 @@ fn run_scale(dirs: usize, files: usize, compare_sql_sort: bool) {
                 order: if asc { SortOrder::Asc } else { SortOrder::Desc },
             }];
             let t = Instant::now();
-            let (sql, _) =
-                query_exec::execute(&conn, &mut cache, &q, &sql_keys, Some(100), None).unwrap();
+            let (sql, _) = query_exec::execute(&conn, &q, &sql_keys, Some(100), None).unwrap();
             let sql_ms = t.elapsed().as_secs_f64() * 1e3;
             assert_eq!(got, sql, "sorted divergence at scale on {name}");
             println!(

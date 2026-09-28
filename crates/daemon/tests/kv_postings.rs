@@ -135,8 +135,7 @@ fn run_battery(conn: &rusqlite::Connection, first: Uuid) {
         let order = if *ascending { SortOrder::Asc } else { SortOrder::Desc };
         let key = SortKey { field: field.to_string(), order };
         let (want, _) =
-            query_exec::execute(conn, &mut cache, q, std::slice::from_ref(&key), None, None)
-                .unwrap();
+            query_exec::execute(conn, q, std::slice::from_ref(&key), None, None).unwrap();
         for strategy in [PageStrategy::Auto, PageStrategy::Walk] {
             let by = [SortBy { field: field.to_string(), ascending: *ascending }];
             let mut got = Vec::new();

@@ -336,7 +336,7 @@ fetch, so a wrong guess costs at most three fetches. The extra id tells whether
 another page follows; the cursor is the fetch's cursor, built from the last id's
 representatives, so the two strategies interleave freely across pages.
 =PageStrategy= forces one or the other; =tests/index_page_strategies.rs= holds
-both to the SQL oracle, page after page, on a repository built for their edge
+both to the oracle, page after page, on a repository built for their edge
 cases.
 
 | Sort                    | Walks                                       |
@@ -510,22 +510,30 @@ The daemon therefore keeps no query compiler at all — no =_repo= CTE, no sort
 CTEs, no SQL cursors, and nothing taking a =&mut TreeCache= to build a =VALUES=
 list: **the SQL layer stopped knowing about the forest**, which was the coupling
 that made "which engine" and "which provider" two different questions. (The
-compiler still exists in =crates/query-oracle=, with all of that intact — see
-below.)
+compiler survived in =crates/query-oracle= as the test oracle until September
+2026, when a naive oracle replaced it — see below.)
 
 ** It stays as the oracle, outside the daemon
 
-The SQL engine is *not* deleted. It lives in **=crates/query-oracle=**, a
+A second implementation stays. It lives in **=crates/query-oracle=**, a
 dev-dependency of the daemon and of nothing else, so no shipped binary links it —
-and the daemon's own sources hold no query compiler at all, which is what makes
-"the SQL layer does not know the forest" true of the code rather than of a
-convention. (Cargo allows the dependency cycle this creates: the oracle depends
-on the daemon for =db=, =tree_cache= and the error type.)
+and the daemon's own sources hold no second evaluator. (Cargo allows the
+dependency cycle this creates: the oracle depends on the daemon for the storage
+traits, the validation and the error type.)
+
+Until September 2026 it was the old SQL engine. It is now a *naive* evaluator:
+it reads every metarecord and every row through the storage traits (=Rows=) and
+nothing derived — no index, no tree cache, no partition — and rebuilds the
+forest, the paths and the sort keys from the rows on each call. Slow, and
+independent of what it checks by construction: a mistake in a derived structure
+cannot be shared with it. It was held to the SQL engine over the whole battery
+before that one went (=dec3989=): the same pages, the same cursors, the same
+rejections. It was the first step of dropping SQLite (roadmap).
 
 It is exercised by the equivalence battery (=tests/index_oracle.rs=) and by the
 semantics batteries (=tests/query.rs=, =tests/osm.rs=, =tests/same_as.rs=),
-which run *both* engines through =tests/common/engines.rs= and assert they
-agree. The reason is written in
+which run the oracle, the index and the key-value store through
+=tests/common/engines.rs= and assert they agree. The reason is written in
 this document's own history: a shape the oracle does not cross-check rots
 unnoticed — =MATCHES= under =:parent= answered the =:value= question, and an
 ordered operator under it compared for equality, for as long as the index
