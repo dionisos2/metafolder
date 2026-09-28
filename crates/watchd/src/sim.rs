@@ -47,9 +47,8 @@ use anyhow::Result;
 
 use crate::fanotify::{
     Handle, ReadOutcome, Resolve, Translator, FAN_ATTRIB, FAN_CLOSE_WRITE, FAN_CREATE, FAN_DELETE,
-    FAN_DELETE_SELF, FAN_MODIFY, FAN_MOVED_FROM, FAN_MOVED_TO, FAN_ONDIR, FAN_Q_OVERFLOW,
-    FAN_RENAME, INFO_TYPE_DFID_NAME, INFO_TYPE_FID, INFO_TYPE_NEW_DFID_NAME,
-    INFO_TYPE_OLD_DFID_NAME, METADATA_LEN,
+    FAN_DELETE_SELF, FAN_MODIFY, FAN_ONDIR, FAN_Q_OVERFLOW, FAN_RENAME, INFO_TYPE_DFID_NAME,
+    INFO_TYPE_FID, INFO_TYPE_NEW_DFID_NAME, INFO_TYPE_OLD_DFID_NAME, METADATA_LEN,
 };
 use crate::filter::{AccessFilter, SystemCreds};
 use crate::service::{self, Group};
@@ -174,11 +173,6 @@ fn id_of(handle: &Handle) -> Option<usize> {
     Some(u64::from_ne_bytes(handle.bytes.as_slice().try_into().ok()?) as usize)
 }
 
-/// The kinds that change a directory's entries: never merged with a kind
-/// that does not (the kernel's `fanotify_should_merge`, through its record
-/// types).
-const DIRENT: u64 = FAN_CREATE | FAN_DELETE | FAN_MOVED_FROM | FAN_MOVED_TO | FAN_RENAME;
-
 /// How far back an event looks for one to merge into (the kernel's
 /// `FANOTIFY_MAX_MERGE_EVENTS`).
 const MERGE_WINDOW: usize = 128;
@@ -281,8 +275,9 @@ impl State {
     }
 
     /// Queues one event — merged into an unread one with the very same
-    /// records, as the kernel does, dirent kinds included (an unread
-    /// creation and deletion of one name become one event).
+    /// records, as the kernel does (`fanotify_should_merge`): a creation, the
+    /// data written and the close are one event; a move repeated before the
+    /// read is one move.
     fn push(&mut self, mask: u64, records: Vec<Record>) {
         if !self.marked {
             return;
@@ -292,7 +287,6 @@ impl State {
             q.mask & FAN_Q_OVERFLOW == 0
                 && q.mask & FAN_ONDIR == new.mask & FAN_ONDIR
                 && q.mask & FAN_RENAME == new.mask & FAN_RENAME
-                && (q.mask & DIRENT == 0) == (new.mask & DIRENT == 0)
                 && q.records == new.records
         };
         if new.mask & FAN_Q_OVERFLOW == 0 {
@@ -309,6 +303,12 @@ impl State {
     fn entry(&self, id: usize) -> Record {
         let obj = &self.objects[id];
         Record { info_type: INFO_TYPE_DFID_NAME, object: obj.parent, name: Some(obj.name.clone()) }
+    }
+
+    /// The records of an event on an entry that names its object too
+    /// (`FAN_REPORT_TARGET_FID`): creations, deletions, moves.
+    fn dirent(&self, id: usize) -> Vec<Record> {
+        vec![self.entry(id), Record { info_type: INFO_TYPE_FID, object: id, name: None }]
     }
 
     /// The records of an event about an object: a file by its own handle and
@@ -330,19 +330,18 @@ impl State {
     }
 
     fn created(&mut self, id: usize) {
-        let r = self.entry(id);
-        self.push(FAN_CREATE | self.ondir(id), vec![r]);
+        self.push(FAN_CREATE | self.ondir(id), self.dirent(id));
     }
 
     /// The last link of `id` is gone: the object's own end, then its name's.
     fn deleted(&mut self, id: usize) {
-        let entry = self.entry(id);
+        let entry = self.dirent(id);
         if self.objects[id].dir {
             self.push(FAN_DELETE_SELF | FAN_ONDIR, self.about(id));
-            self.push(FAN_DELETE | FAN_ONDIR, vec![entry]);
+            self.push(FAN_DELETE | FAN_ONDIR, entry);
         } else {
             self.self_gone(id);
-            self.push(FAN_DELETE, vec![entry]);
+            self.push(FAN_DELETE, entry);
         }
         self.kill(id);
     }
@@ -548,7 +547,8 @@ impl SimFs {
                 name: Some(b.last().unwrap().clone()),
             };
             let old = Record { info_type: INFO_TYPE_OLD_DFID_NAME, ..old };
-            st.push(FAN_RENAME | st.ondir(obj), vec![old, new]);
+            let fid = Record { info_type: INFO_TYPE_FID, object: obj, name: None };
+            st.push(FAN_RENAME | st.ondir(obj), vec![old, new, fid]);
             if let Some(victim) = victim {
                 st.self_gone(victim);
                 st.kill(victim);
@@ -636,11 +636,11 @@ impl SimFs {
             let (mask, records) = match raw {
                 Raw::Create { path, dir } => {
                     let id = at(&path, dir)?;
-                    (FAN_CREATE | dirbit(dir), vec![st.entry(id)])
+                    (FAN_CREATE | dirbit(dir), st.dirent(id))
                 }
                 Raw::Delete { path, dir } => {
                     let id = at(&path, dir)?;
-                    (FAN_DELETE | dirbit(dir), vec![st.entry(id)])
+                    (FAN_DELETE | dirbit(dir), st.dirent(id))
                 }
                 Raw::DeleteSelf { path, dir } => {
                     let id = at(&path, dir)?;
@@ -661,7 +661,8 @@ impl SimFs {
                         object: parent,
                         name: Some(b.last().unwrap().clone()),
                     };
-                    (FAN_RENAME | dirbit(dir), vec![old, new])
+                    let fid = Record { info_type: INFO_TYPE_FID, object: a, name: None };
+                    (FAN_RENAME | dirbit(dir), vec![old, new, fid])
                 }
                 Raw::Modify { path } => {
                     let id = at(&path, false)?;
@@ -947,6 +948,51 @@ mod tests {
                 Event::Create { path: p(&root, "f/z") },
                 Event::Rename { from: p(&root, "e"), to: p(&root, "f") },
             ]
+        );
+    }
+
+    #[test]
+    fn test_a_rename_the_kernel_merged_away_is_restored() {
+        // `a→b, b→a, a→b` unread: the kernel merges the third into the first
+        // (identical records) and queues two renames — the stream alone ends
+        // with the file at `a`. The object is at `b`, and the hop the stream
+        // lacks repeats one it holds: the broker puts it back.
+        let (broker, root, mut r) = started("pingpong");
+        let fs = broker.fs();
+        fs.write(root.join("ping"), b"p").unwrap();
+        received(&mut r);
+        {
+            let _held = fs.hold();
+            fs.rename(root.join("ping"), root.join("pong")).unwrap();
+            fs.rename(root.join("pong"), root.join("ping")).unwrap();
+            fs.rename(root.join("ping"), root.join("pong")).unwrap();
+        }
+        assert_eq!(
+            tree(&received(&mut r)),
+            vec![
+                Event::Rename { from: p(&root, "ping"), to: p(&root, "pong") },
+                Event::Rename { from: p(&root, "pong"), to: p(&root, "ping") },
+                Event::Rename { from: p(&root, "ping"), to: p(&root, "pong") },
+            ]
+        );
+    }
+
+    #[test]
+    fn test_a_file_removed_and_made_again_unread_arrives_in_that_order() {
+        // Two objects, so two events the kernel keeps apart (the object's
+        // handle is in each): the removal, then the creation.
+        let (broker, root, mut r) = started("remade");
+        let fs = broker.fs();
+        fs.write(root.join("doc"), b"1").unwrap();
+        received(&mut r);
+        {
+            let _held = fs.hold();
+            fs.remove_file(root.join("doc")).unwrap();
+            fs.write(root.join("doc"), b"2").unwrap();
+        }
+        assert_eq!(
+            tree(&received(&mut r)),
+            vec![Event::Remove { path: p(&root, "doc") }, Event::Create { path: p(&root, "doc") }]
         );
     }
 

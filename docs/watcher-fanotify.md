@@ -92,6 +92,18 @@ Verified against man-pages 6.19 and the kernel documentation:
   filesystem: it kept only the first root subscribed there, so deleting that
   one repository blinded every other on the same disk (found September 2026,
   tests running in parallel on one tmpfs).
+- **The kernel merges what is still unread.** An event joins an identical
+  unread one (`fanotify_should_merge`: same records, same `ONDIR`, both or
+  neither `FAN_RENAME`; up to 128 events back) and takes its place in the
+  queue. Without the object's handle in entry events the records of "`x`
+  deleted" and a new "`x` created" are identical: one `CREATE|DELETE` event,
+  its order lost — so the group asks for `FAN_REPORT_TARGET_FID` (below).
+  With it a move repeated before the read (`a→b, b→a, a→b`) is still one
+  event, and the stream ends with the object at `a`; the broker checks each
+  moved object's position at the end of a batch and puts back a hop that
+  repeats a move already in the batch — only a merge makes one vanish that
+  way (`fanotify::restore_merged_moves`; found September 2026 with the
+  simulated kernel, and checked against the real one).
 - **Info records are 4-aligned.** An event's records are walked by their
   `len`, which includes the kernel's padding (`FANOTIFY_EVENT_ALIGN`, 4);
   rounding it to 8 read every record after a 4-mod-8 one from the wrong place,
@@ -151,7 +163,7 @@ tree name on the daemon's API (spec-data-model "Tree names"), `bytes` in
 lowercase hex and authoritative. A file with a Latin-1 name is watched like
 any other; the first version dropped its events.
 
-Three things the first version got wrong, fixed since (each with its test):
+What earlier versions got wrong, fixed since (each with its test):
 
 - **Mount marks** — refused for every entry event (above). Now one filesystem
   mark per filesystem, nested mounts included, the mount table followed.
@@ -340,9 +352,8 @@ Done:
   before one read, handles then resolving where the objects are *by then*. It
   is held to the kernel by a fidelity test run in a user namespace: the same
   script against a real group and against the simulator, masks, records,
-  order and **merges** compared step by step — the kernel merges an unread
-  deletion and re-creation of one name into one `CREATE|DELETE` event, and an
-  unread `a→b, b→a, a→b` into two renames. It lets the daemon's fanotify
+  order and **merges** compared step by step (the kernel merges an unread
+  `a→b, b→a, a→b` into two renames; see "Why a broker"). It lets the daemon's fanotify
   source run in any sandbox, unprivileged: the daemon's watcher suites
   (`early_journey`, `watcher_e2e`) run under `Regime::Simulated` too, a test
   changing files through `regime.fs()`.

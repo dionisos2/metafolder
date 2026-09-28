@@ -13,6 +13,13 @@
 //! - `FAN_RENAME` (5.17+): both sides of a move in one event, with both
 //!   parents and both names — no cookie correlation, and a move is a move even
 //!   when one side leaves the covered roots.
+//! - `FAN_REPORT_TARGET_FID` (5.17+): the *object's* handle in every creation,
+//!   deletion and move. The kernel merges an unread event into an identical
+//!   one; without the object in the records, "`x` deleted" and a new "`x`
+//!   created" were identical and became one `CREATE|DELETE` event whose order
+//!   is lost, and a move merged away cannot be told from the object's
+//!   position ([`restore_merged_moves`]). Refused by an older kernel, which is
+//!   then asked without it ([`init_group`]).
 //! - One `FAN_MARK_FILESYSTEM` per filesystem instead of one watch per
 //!   directory: the whole point. A filesystem mark, not a mount mark: the
 //!   kernel refuses every entry event (create, delete, move, attributes) on a
@@ -61,6 +68,7 @@ pub(crate) const FAN_REPORT_FID: u32 = 0x0000_0200;
 pub(crate) const FAN_REPORT_DIR_FID: u32 = 0x0000_0400;
 pub(crate) const FAN_REPORT_NAME: u32 = 0x0000_0800;
 pub(crate) const FAN_REPORT_DFID_NAME: u32 = FAN_REPORT_DIR_FID | FAN_REPORT_NAME;
+pub(crate) const FAN_REPORT_TARGET_FID: u32 = 0x0000_1000;
 
 pub(crate) const FAN_MARK_ADD: u32 = 0x0000_0001;
 pub(crate) const FAN_MARK_REMOVE: u32 = 0x0000_0002;
@@ -128,6 +136,11 @@ pub trait Resolve {
     fn forget(&mut self) {}
     /// One read's events are translated: release what was held for it.
     fn end_batch(&mut self) {}
+    /// Where the object is *now*, asked of the kernel even when an answer is
+    /// remembered — a file moving forgets nothing ([`Memo`]).
+    fn resolve_fresh(&mut self, handle: &Handle) -> Option<PathBuf> {
+        self.resolve(handle)
+    }
 }
 
 /// A resolver's answers, remembered. A handle is stable for the life of the
@@ -180,6 +193,10 @@ impl<R: Resolve> Resolve for Memo<R> {
 
     fn end_batch(&mut self) {
         self.inner.end_batch();
+    }
+
+    fn resolve_fresh(&mut self, handle: &Handle) -> Option<PathBuf> {
+        self.inner.resolve(handle)
     }
 }
 
@@ -661,15 +678,62 @@ pub fn translate_batch(
     resolver: &mut dyn Resolve,
 ) -> Vec<Event> {
     let mut events = Vec::new();
+    let mut moves = Moves::default();
     for raw in raws {
         if is_directory_move(raw) {
             resolver.forget();
         }
         if scope.relevant(raw, resolver) {
-            events.extend(translate(raw, resolver));
+            let translated = translate(raw, resolver);
+            if let (Some(object), Some(Event::Rename { from, to })) = (&raw.fid, translated.last())
+            {
+                moves.hop(object, from, to);
+            }
+            events.extend(translated);
         }
     }
+    events.extend(restore_merged_moves(moves, resolver));
     events
+}
+
+/// The moves of one batch, per object (its handle), in order.
+#[derive(Default)]
+struct Moves {
+    objects: Vec<(Handle, Vec<(WirePath, WirePath)>)>,
+}
+
+impl Moves {
+    fn hop(&mut self, object: &Handle, from: &WirePath, to: &WirePath) {
+        let hop = (from.clone(), to.clone());
+        match self.objects.iter_mut().find(|(h, _)| h == object) {
+            Some((_, hops)) => hops.push(hop),
+            None => self.objects.push((object.clone(), vec![hop])),
+        }
+    }
+}
+
+/// The moves the kernel merged away, put back.
+///
+/// The kernel merges an unread event into an identical earlier one: `a→b,
+/// b→a, a→b` queues as `a→b, b→a` — the stream ends with the object at `a`,
+/// where it is not. What gives it away is the object itself (its handle is in
+/// each move, `FAN_REPORT_TARGET_FID`): it is not where the batch leaves it,
+/// and the hop from there to where it is *repeats a move already in the
+/// batch* — which only a merge makes vanish. That hop is appended.
+///
+/// Nothing else is: an object not where the batch leaves it has usually just
+/// moved on, its next move still unread — that one comes in its own right,
+/// and inventing it here would put it ahead of the moves between.
+fn restore_merged_moves(moves: Moves, resolver: &mut dyn Resolve) -> Vec<Event> {
+    let mut restored = Vec::new();
+    for (object, hops) in moves.objects {
+        let Some((_, last)) = hops.last() else { continue };
+        let Some(now) = resolver.resolve_fresh(&object).map(WirePath::from) else { continue };
+        if now != *last && hops.iter().any(|(from, to)| from == last && *to == now) {
+            restored.push(Event::Rename { from: last.clone(), to: now });
+        }
+    }
+    restored
 }
 
 /// A directory moved: what [`Scope`] and the resolver remember may be wrong.
@@ -815,18 +879,13 @@ pub struct Fanotify {
 impl Fanotify {
     /// Opens the machine's one fanotify group.
     pub fn open() -> Result<Self> {
-        let fd = unsafe {
+        let fd = init_group(|flags| unsafe {
             libc::fanotify_init(
-                // `FAN_REPORT_FID` alongside `FAN_REPORT_DFID_NAME` is what
-                // makes the *object's own* handle appear too (for the events
-                // that are about the object, not about a name in its parent).
-                FAN_CLASS_NOTIF | FAN_REPORT_FID | FAN_REPORT_DFID_NAME | FAN_CLOEXEC,
+                flags,
                 (libc::O_RDONLY | libc::O_CLOEXEC | libc::O_LARGEFILE) as u32,
             )
-        };
-        if fd < 0 {
-            return Err(io::Error::last_os_error()).context("fanotify_init failed");
-        }
+        })
+        .context("fanotify_init failed")?;
         // SAFETY: a fresh descriptor, owned by nothing else.
         let fd = Arc::new(unsafe { OwnedFd::from_raw_fd(fd) });
         Ok(Self {
@@ -955,6 +1014,31 @@ impl Fanotify {
         self.mask = place_mark(op, self.mask, mark)
             .with_context(|| format!("fanotify_mark({at:?}) failed"))?;
         Ok(())
+    }
+}
+
+/// Opens the group through `init` (`fanotify_init` given its flags): with
+/// `FAN_REPORT_TARGET_FID`, and without it on a kernel that refuses it
+/// (EINVAL, pre-5.17 — where `FAN_RENAME` is refused too, and moves arrive
+/// as pairs that carry no object anyway).
+fn init_group(mut init: impl FnMut(u32) -> RawFd) -> io::Result<RawFd> {
+    // `FAN_REPORT_FID` alongside `FAN_REPORT_DFID_NAME` is what makes the
+    // *object's own* handle appear too (for the events that are about the
+    // object, not about a name in its parent).
+    let flags = FAN_CLASS_NOTIF | FAN_REPORT_FID | FAN_REPORT_DFID_NAME | FAN_CLOEXEC;
+    let fd = init(flags | FAN_REPORT_TARGET_FID);
+    if fd >= 0 {
+        return Ok(fd);
+    }
+    let err = io::Error::last_os_error();
+    if err.raw_os_error() != Some(libc::EINVAL) {
+        return Err(err);
+    }
+    let fd = init(flags);
+    if fd >= 0 {
+        Ok(fd)
+    } else {
+        Err(io::Error::last_os_error())
     }
 }
 
@@ -1568,6 +1652,43 @@ mod tests {
         let (mark, asked) = scripted(vec![None]);
         assert_eq!(place_mark(FAN_MARK_ADD, mask(), mark).unwrap(), mask());
         assert_eq!(*asked.borrow(), vec![mask()]);
+    }
+
+    /// A failed `fanotify_init`: -1 with `errno` set.
+    fn refused(errno: i32) -> RawFd {
+        unsafe { *libc::__errno_location() = errno };
+        -1
+    }
+
+    #[test]
+    fn test_a_kernel_without_target_fid_gets_a_group_without_it() {
+        let mut asked = Vec::new();
+        let fd = init_group(|flags| {
+            asked.push(flags);
+            if flags & FAN_REPORT_TARGET_FID != 0 {
+                refused(libc::EINVAL)
+            } else {
+                7
+            }
+        });
+        assert_eq!(fd.unwrap(), 7);
+        assert_eq!(asked.len(), 2);
+        assert_ne!(asked[0] & FAN_REPORT_TARGET_FID, 0, "asked with it first");
+        assert_eq!(asked[1], asked[0] & !FAN_REPORT_TARGET_FID, "then without, and only that");
+    }
+
+    #[test]
+    fn test_a_group_refused_for_another_reason_says_that_reason() {
+        let mut calls = 0;
+        let err = init_group(|_| {
+            calls += 1;
+            refused(libc::EMFILE)
+        })
+        .unwrap_err();
+        assert_eq!((err.raw_os_error(), calls), (Some(libc::EMFILE), 1), "not asked again");
+        let mut answers = vec![libc::EINVAL, libc::EPERM].into_iter();
+        let err = init_group(|_| refused(answers.next().unwrap())).unwrap_err();
+        assert_eq!(err.raw_os_error(), Some(libc::EPERM), "the retry's own refusal");
     }
 
     #[test]
