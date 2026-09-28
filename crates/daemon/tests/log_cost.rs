@@ -242,12 +242,14 @@ fn steps_back(kv: &KvStore, n: usize) -> Option<i64> {
     Some(kv.ancestry(head).unwrap()[n])
 }
 
-/// The keys one coordinated step towards `n` operations back reads, on a log
-/// of `log` revisions.
+/// The keys one step of a navigation towards `n` operations back reads, on a
+/// log of `log` revisions. The navigation is planned once, when it starts —
+/// what a step costs is the step alone.
 fn step_cost(log: usize, n: usize) -> u64 {
     let (mut kv, _dir) = repo_with_log(log);
     let target = steps_back(&kv, n);
-    reads_of(&mut kv, |kv| log::coordinated_step(kv, target, false).unwrap()).1
+    let mut plan = log::NavPlan::new(&kv, target).unwrap();
+    reads_of(&mut kv, |kv| plan.step(kv, false).unwrap()).1
 }
 
 #[test]
@@ -256,7 +258,6 @@ fn one_navigation_step_costs_the_same_on_a_log_sixteen_times_longer() {
 }
 
 #[test]
-#[ignore = "KV: a step reads the whole path to its target (23 → 173 keys); fixed next"]
 fn a_navigation_step_costs_the_same_however_far_the_target_is() {
     assert_eq!(
         step_cost(400, 5),

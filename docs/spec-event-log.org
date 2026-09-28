@@ -1461,10 +1461,16 @@ The daemon does not check the filesystem state. The CLI inspects it and
 decides whether to proceed with the =mv= or call =step= with =skip: true=.
 
 *** =POST /repos/:repo_uuid/rollback/step=
-Applies the inverse of the current operation atomically (SQLite transaction),
+Applies the inverse of the current operation atomically (one transaction),
 advances HEAD, and returns the next operation to process. The daemon always
-knows the current position (=log_head.op_id=) and the target (stored at lock
-time) — no =op_id= is needed from the client.
+knows the current position (=log_head.op_id=) and the path to the target —
+planned once, at =start=, and held with the lock — so no =op_id= is needed from
+the client, and a step costs the operation it applies: re-reading the path at
+every step made a navigation of N operations cost N² (=tests/log_cost.rs=).
+Nothing else writes while the lock is held, so the plan stays true; a step that
+finds HEAD elsewhere than the plan expects fails rather than guess, and leaves
+the plan for a retry or an =abort=. A second step sent while one is running is
+answered =409=.
 
 Request body (normal — apply inverse):
 #+BEGIN_SRC json

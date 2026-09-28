@@ -1704,15 +1704,16 @@ async fn rollback_start(
             // Nothing to do: the lock is not entered.
             return Ok(Json(json!({"op": null, "remaining": 0})));
         }
-        let path = crate::log::nav_path(&*conn, head, resolved)?;
-        let (op, dir) = path.first().expect("non-empty path when head != target");
+        let plan = crate::log::NavPlan::new(&*conn, resolved)?;
+        let (id, dir) = plan.next().expect("a non-empty plan when head != target");
+        let op = crate::store::Log::op(&*conn, id)?
+            .ok_or_else(|| ApiError::internal("operation vanished during navigation"))?;
         let mut cache = slowlog::timed("wait:cache", || repo_state.lock_cache());
-        let first = action_op_json(&conn, &mut cache, &repo_state.config.root, op, *dir)?;
-        let remaining = path.len() - 1;
+        let first = action_op_json(&conn, &mut cache, &repo_state.config.root, &op, dir)?;
+        let remaining = plan.len() - 1;
         drop(cache);
         drop(conn);
-        *repo_state.rollback_lock.lock_recover() =
-            Some(RollbackLock::Navigate { target: resolved });
+        *repo_state.rollback_lock.lock_recover() = Some(RollbackLock::Navigate { plan });
         Ok(Json(json!({"op": first, "remaining": remaining})))
     })
     .await
@@ -2222,10 +2223,17 @@ async fn rollback_step(
     let skip = payload.map(|Json(b)| b.skip).unwrap_or(false);
     let repo_uuid = parse_uuid(&repo)?;
     with_repo(&state, repo_uuid, move |repo_state| {
-        let target = {
-            let guard = repo_state.rollback_lock.lock_recover();
-            match guard.as_ref() {
-                Some(RollbackLock::Navigate { target }) => *target,
+        // The plan is taken out for the step and put back after it, so the
+        // rollback lock is not held across the connection's. The lock stays
+        // entered meanwhile, with an empty plan: a navigation's plan is empty
+        // only while one of its steps runs (a finished one leaves the lock).
+        let mut plan = {
+            let mut guard = repo_state.rollback_lock.lock_recover();
+            match guard.as_mut() {
+                Some(RollbackLock::Navigate { plan }) if plan.is_empty() => {
+                    return Err(ApiError::conflict("a rollback step is already running"))
+                }
+                Some(RollbackLock::Navigate { plan }) => std::mem::take(plan),
                 Some(RollbackLock::Revert { .. }) => {
                     return Err(ApiError::conflict(
                         "a coordinated revert is in progress; finish it with revert/commit \
@@ -2240,9 +2248,21 @@ async fn rollback_step(
             }
         };
 
+        // An error leaves the plan where it was — a failed step applied
+        // nothing, and a failed description after it applied its operation and
+        // took it off the plan — so the client may retry or abort.
+        let put_back = |plan: crate::log::NavPlan| {
+            *repo_state.rollback_lock.lock_recover() = Some(RollbackLock::Navigate { plan });
+        };
         let done = {
             let mut conn = slowlog::timed("wait:conn", || repo_state.conn.lock_recover());
-            let (new_head, tree) = crate::log::coordinated_step(&mut *conn, target, skip)?;
+            let tree = match plan.step(&mut *conn, skip) {
+                Ok((_, tree)) => tree,
+                Err(e) => {
+                    put_back(plan);
+                    return Err(e.into());
+                }
+            };
             // The step says which TreeRef cells it rewrote, and the cache
             // settles exactly those (spec-file-tracking "Upkeep after a
             // write"). Rebuilding here instead is one scan of the `field`
@@ -2255,12 +2275,19 @@ async fn rollback_step(
             // it waits for arrives, so the order the operations come in is not
             // this caller's problem.
             repo_state.lock_cache().apply_ops(&tree);
-            let next = crate::log::nav_path(&*conn, new_head, target)?;
-            if let Some((op, dir)) = next.first() {
-                let mut cache = slowlog::timed("wait:cache", || repo_state.lock_cache());
-                let op_json = action_op_json(&conn, &mut cache, &repo_state.config.root, op, *dir)?;
-                let remaining = next.len() - 1;
-                return Ok(Json(json!({"op": op_json, "remaining": remaining})));
+            if let Some((id, dir)) = plan.next() {
+                let described = crate::store::Log::op(&*conn, id)
+                    .map_err(ApiError::from)
+                    .and_then(|op| {
+                        op.ok_or_else(|| ApiError::internal("operation vanished during navigation"))
+                    })
+                    .and_then(|op| {
+                        let mut cache = slowlog::timed("wait:cache", || repo_state.lock_cache());
+                        action_op_json(&conn, &mut cache, &repo_state.config.root, &op, dir)
+                    });
+                let remaining = plan.len() - 1;
+                put_back(plan);
+                return Ok(Json(json!({"op": described?, "remaining": remaining})));
             }
             true
         };

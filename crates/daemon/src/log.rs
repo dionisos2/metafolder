@@ -798,8 +798,89 @@ pub fn nav_path(
     Ok(out)
 }
 
+/// A coordinated navigation's remaining steps, fixed when it starts.
+///
+/// Planning reads the path from HEAD to the target once; a step then takes
+/// the next operation instead of reading the path again, so each step costs
+/// the operation it applies — re-planning at every step made a navigation of
+/// N operations cost N² (`tests/log_cost.rs`). The plan stays true because
+/// nothing else writes while a navigation holds the rollback lock; a step
+/// that finds HEAD elsewhere than the plan expects refuses rather than guess.
+#[derive(Debug, Clone, Default)]
+pub struct NavPlan {
+    steps: std::collections::VecDeque<(i64, NavDir)>,
+}
+
+impl NavPlan {
+    /// The steps from the current HEAD to `target`.
+    pub fn new(log: &dyn Log, target: Option<i64>) -> Result<NavPlan> {
+        let head = log.head()?;
+        let steps = nav_path(log, head, target)?.into_iter().map(|(op, dir)| (op.id, dir));
+        Ok(NavPlan { steps: steps.collect() })
+    }
+
+    /// How many steps are left.
+    pub fn len(&self) -> usize {
+        self.steps.len()
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.steps.is_empty()
+    }
+
+    /// The operation the next step applies, and in which direction.
+    pub fn next(&self) -> Option<(i64, NavDir)> {
+        self.steps.front().copied()
+    }
+
+    /// Applies the next step in one transaction and advances HEAD; see
+    /// [`coordinated_step`]. `(HEAD, [])` once the plan is done.
+    pub fn step(
+        &mut self,
+        store: &mut dyn Begin,
+        skip: bool,
+    ) -> Result<(Option<i64>, Vec<TreeOp>)> {
+        let tx = store.begin_write()?;
+        let head = tx.head()?;
+        let Some((id, dir)) = self.steps.front().copied() else {
+            return Ok((head, vec![]));
+        };
+        let op = tx.op(id)?.context("operation vanished during navigation")?;
+        let expected = match dir {
+            NavDir::Inverse => Some(op.id),
+            NavDir::Forward => op.parent_id,
+        };
+        if head != expected {
+            anyhow::bail!(
+                "the log moved during the navigation: HEAD is {head:?}, the plan expected \
+                 {expected:?}"
+            );
+        }
+        let tree = nav_tree_ops(&*tx, &op, dir)?;
+        if skip {
+            enqueue_restoration(&*tx, &op, dir)?;
+        }
+        let new_head = match dir {
+            NavDir::Inverse => {
+                apply_inverse(&*tx, &op)?;
+                op.parent_id
+            }
+            NavDir::Forward => {
+                apply_forward(&*tx, &op)?;
+                Some(op.id)
+            }
+        };
+        tx.set_head(new_head)?;
+        tx.commit()?;
+        self.steps.pop_front();
+        Ok((new_head, tree))
+    }
+}
+
 /// Applies the *first* operation on the path from the current HEAD toward
-/// `target` (one atomic step) and advances HEAD. Returns the new HEAD and what
+/// `target` (one atomic step) and advances HEAD. Plans the whole path to take
+/// its first step: a navigation of several steps plans once instead
+/// ([`NavPlan`]). Returns the new HEAD and what
 /// the step did to the forest, for the caller's tree cache
 /// ([`crate::tree_cache::TreeCache::apply_ops`]). When `skip` is set and the
 /// operation is a file op, a restoration entry is enqueued in
@@ -810,29 +891,12 @@ pub fn coordinated_step(
     target: Option<i64>,
     skip: bool,
 ) -> Result<(Option<i64>, Vec<TreeOp>)> {
-    let tx = store.begin_write()?;
-    let head = tx.head()?;
-    let path = nav_path(&*tx, head, target)?;
-    let Some((op, dir)) = path.into_iter().next() else {
-        return Ok((head, vec![])); // Already at the target.
+    let mut plan = {
+        // Read in a transaction dropped unwritten: a plain read of the store.
+        let tx = store.begin_write()?;
+        NavPlan::new(&*tx, target)?
     };
-    let tree = nav_tree_ops(&*tx, &op, dir)?;
-    if skip {
-        enqueue_restoration(&*tx, &op, dir)?;
-    }
-    let new_head = match dir {
-        NavDir::Inverse => {
-            apply_inverse(&*tx, &op)?;
-            op.parent_id
-        }
-        NavDir::Forward => {
-            apply_forward(&*tx, &op)?;
-            Some(op.id)
-        }
-    };
-    tx.set_head(new_head)?;
-    tx.commit()?;
-    Ok((new_head, tree))
+    plan.step(store, skip)
 }
 
 /// What one navigation step does to the forest: the same description a

@@ -147,9 +147,9 @@ pub struct RepoState {
 /// to move files, and the metadata explaining those moves is not written yet
 /// (spec-event-log "Rollback lock").
 pub enum RollbackLock {
-    /// A coordinated rollback navigation: the resolved target operation id;
-    /// `None` is the empty state.
-    Navigate { target: Option<i64> },
+    /// A coordinated rollback navigation: the steps left to its target,
+    /// planned once at `start` (nothing else writes while it runs).
+    Navigate { plan: crate::log::NavPlan },
     /// A coordinated revert: the operations `start` fixed. `commit` may only
     /// narrow this set, never widen it.
     Revert { ops: Vec<i64> },

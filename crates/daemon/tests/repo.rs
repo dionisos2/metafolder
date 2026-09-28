@@ -372,7 +372,7 @@ fn test_unload_refused_during_rollback_navigation() {
 
     // Simulate an in-progress coordinated rollback navigation.
     *state.repo(uuid).unwrap().rollback_lock.lock().unwrap() =
-        Some(RollbackLock::Navigate { target: None });
+        Some(RollbackLock::Navigate { plan: Default::default() });
 
     // Unload is refused with a 409 while the navigation holds the lock.
     let err = state.unload_repo(uuid).unwrap_err();
