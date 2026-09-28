@@ -778,12 +778,17 @@ e. *The forest on disk*: the tree cache is no longer built for a KV
    - /Children bitmaps/: the ids pointing at a uuid in a field (a folder's
      children, a =ref='s referrers) are one chunked bitmap per (field,
      target), so a folder filter reads a key per 65 536 children.
-   - /Descendant bitmaps/, for =mfr_path= only: there a node holds one
-     position, so a move is set arithmetic — the moved node's descendants
-     plus itself leave each old ancestor's bitmap and join each new one's,
-     ≈ depth chunk writes, independent of the subtree's size. A forest whose
-     nodes may hang at several places keeps the level-by-level expansion
-     (maintaining the closure there would need its paths counted).
+   - /Descendant bitmaps/, for every =tree_ref= field: a node holds one
+     position per forest (spec-data-model "One position per forest"), so a
+     move is set arithmetic — the moved node's descendants plus itself leave
+     each old ancestor's bitmap and join each new one's, ≈ depth chunk
+     writes per forest written, independent of the subtree's size. A tag
+     subtree (=tag ->* (path =>* "music")=) is one read, as a folder's is.
+     Kept for =mfr_path= only at first (derived format 4), when a node could
+     hang at several places in the other forests; format 5 keeps them all,
+     and a store of format 4 is reindexed when it opens. Many nodes at once
+     (an =osm= path's anchors) are sifted by the forest's =parents= set
+     first: a leaf has no bitmap to look up.
    =tests/kv_cost.rs= pins all three: a page of a 16 000-entry folder by path
    (either way), a subtree by path, and a count over a subtree of 800
    folders read what they read on the eighth of it.

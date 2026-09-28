@@ -958,10 +958,19 @@ impl Source for KvSource<'_> {
         self.all_but(field, TARGET, except.as_ref().map(|u| &u[..]))
     }
 
+    // Every forest keeps its descendant bitmaps; another field has none, and
+    // no node below anything, as its expansion would find.
     fn descendants(&self, field: &str, of: &RoaringBitmap) -> Option<RoaringBitmap> {
-        if !derived::DESCENDANT_FIELDS.contains(&field) {
-            return None;
-        }
+        // Only a node with children has descendants: many nodes (the anchors
+        // of an `osm` path, mostly files) are sifted by the parents set, a
+        // read per 65 536 ids, rather than looked up one by one.
+        let sifted;
+        let of = if of.len() > 1 {
+            sifted = of & &*self.parents(field);
+            &sifted
+        } else {
+            of
+        };
         let read = || -> Result<RoaringBitmap> {
             let mut out = RoaringBitmap::new();
             for id in of {

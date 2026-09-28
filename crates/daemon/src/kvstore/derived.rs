@@ -42,8 +42,9 @@ use crate::index::field_index::{dt_key, num_key};
 use crate::store::Rows;
 
 /// The format of the derived key spaces. A store stamped with another (or
-/// none: a store from before they existed) is reindexed when it opens.
-pub(super) const DERIVED_VERSION: i64 = 4;
+/// none: a store from before they existed) is reindexed when it opens. 5:
+/// descendant bitmaps for every forest (4 kept `mfr_path`'s only).
+pub(super) const DERIVED_VERSION: i64 = 5;
 
 /// Set kinds.
 pub(super) const UNIVERSE: u8 = 0;
@@ -58,12 +59,11 @@ pub(super) const LONG_TEXTS: u8 = 4;
 /// a read per 65 536 children (spec-storage "Key layout", `children`).
 pub(super) const REFERRERS: u8 = 5;
 
-/// Every id below a node of a file tree, keyed by field and node — what
-/// makes a subtree one bitmap read (spec-storage "The forest: descendant
-/// bitmaps"). Kept for the fields in [`DESCENDANT_FIELDS`] only: a node there
-/// holds one position, so the tree is a tree and a move is set arithmetic;
-/// where a node may hang at several places the closure would need its paths
-/// counted, and a subtree is expanded level by level instead.
+/// Every id below a node of a forest, keyed by field and node — what makes a
+/// subtree one bitmap read (spec-storage "The forest: descendant bitmaps").
+/// Kept for every `tree_ref` field: a node holds one position per forest
+/// (spec-data-model "One position per forest"), so the tree is a tree and a
+/// move is set arithmetic.
 pub(super) const DESCENDANTS: u8 = 6;
 
 /// The holders of one value of a field (keyed by field and value key), for
@@ -88,9 +88,6 @@ pub(crate) const POSTING_MIN: u64 = 64;
 pub(super) fn posting_prefix(field: &str, key: &[u8]) -> Vec<u8> {
     [&[POSTINGS][..], &name_key(field), key].concat()
 }
-
-/// The forests whose descendant bitmaps are kept: one position per node.
-pub(crate) const DESCENDANT_FIELDS: [&str; 1] = ["mfr_path"];
 
 /// The key of the descendants of `node` in `field`, without its chunk.
 pub(super) fn descendants_prefix(field: &str, node: &[u8; 16]) -> Vec<u8> {
@@ -615,14 +612,12 @@ impl KvTxn<'_> {
             self.chunk_member(SETS, &referrers_prefix(field, &target), id, held)?;
         }
         if let Value::TreeRef { parent: Some(parent), .. } = value {
-            if DESCENDANT_FIELDS.contains(&field) {
-                self.derive_descendants(uuid, id, field, *parent, delta > 0)?;
-            }
+            self.derive_descendants(uuid, id, field, *parent, delta > 0)?;
         }
         Ok(())
     }
 
-    /// A position of `uuid` under `parent` in a file tree came (`add`) or
+    /// A position of `uuid` under `parent` in a forest came (`add`) or
     /// went: the node and everything below it join, or leave, the descendants
     /// of `parent` and of each of its ancestors — a node there holds one
     /// position, so the chain up is its one path.
@@ -723,7 +718,7 @@ impl KvStore {
         let mut grams: BTreeSet<(String, [u8; 3], Uuid)> = BTreeSet::new();
         let mut referrers: BTreeSet<(String, [u8; 16], Uuid)> = BTreeSet::new();
         let mut valued: BTreeMap<(String, Uuid), usize> = BTreeMap::new();
-        // Per descendant field: each node's parent, for the closure below.
+        // Per forest: each node's parent, for the closure below.
         let mut parent_of: BTreeMap<(String, Uuid), Uuid> = BTreeMap::new();
         for entry in t.cells.iter(&r)? {
             let (k, v) = entry?;
@@ -762,9 +757,7 @@ impl KvStore {
                 referrers.insert((f.clone(), target, uuid));
             }
             if let Value::TreeRef { parent: Some(p), .. } = &row.value {
-                if DESCENDANT_FIELDS.contains(&f.as_str()) {
-                    parent_of.insert((f.clone(), uuid), *p);
-                }
+                parent_of.insert((f.clone(), uuid), *p);
             }
             let kind = if matches!(row.value, Value::Nothing) { ABSENT } else { PRESENT };
             if kind == PRESENT {

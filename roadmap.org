@@ -32,22 +32,9 @@ to be noise. A few runs on an idle machine, committed.
 The recurring defect of this project is a cost that grows with the repository
 where it should grow with the answer. Each item names where.
 
-** TODO KV descendant bitmaps for every =tree_ref= field
-On the key-value store, a subtree is one bitmap read for =mfr_path= only
-(=kvstore/derived.rs=, =DESCENDANT_FIELDS=): the bitmaps were limited to the
-forest where a node could not hang at several places. Since one position per
-forest is a rule for every field, they can be kept for all of them — a tag
-subtree (=tag ->* (path =>* "music")=) would stop being expanded level by
-level.
-
-It changes the derived data a KV repository holds, so it ships with its
-conversion (a reindex at open, recorded like the primary layout's migration),
-and the maintenance cost grows with the number of forests (≈ depth container
-writes per tree write, per field).
-
 ** TODO =FollowsTransitive= materialises the whole subtree
 The expansion is in memory (resident index: bitmap union per level; KV: one
-descendant bitmap for =mfr_path=, see above) — but the whole subtree is still
+descendant bitmap per root, on every forest) — but the whole subtree is still
 built where only the page is wanted. Only an unsorted query could stop early:
 a sort needs the full candidate set. =docs/review-followups.md= §7 is the
 longer account, and its first half (the SQL costs) no longer applies.

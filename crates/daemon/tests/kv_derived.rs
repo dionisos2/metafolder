@@ -186,13 +186,20 @@ fn check_finds_damaged_derived_data_and_reindex_repairs_it() {
     assert!(Begin::check(&store).unwrap().is_empty(), "reindex repairs it");
 }
 
-/// The file tree's descendant bitmaps follow every change: a subtree moved
-/// under another folder, a node deleted, the log navigated back and forth.
+/// A forest's descendant bitmaps follow every change: a subtree moved under
+/// another folder, a node deleted, the log navigated back and forth — the
+/// file tree's, and any other `tree_ref` field's (a tag tree).
 #[test]
 fn descendants_follow_moves_deletions_and_navigation() {
+    for field in ["mfr_path", "path"] {
+        descendants_follow_moves_deletions_and_navigation_in(field);
+    }
+}
+
+fn descendants_follow_moves_deletions_and_navigation_in(field: &str) {
     let (mut store, _dir) = open();
     let path = |parent: Option<Uuid>, name: &str| {
-        Field::new("mfr_path", Value::TreeRef { parent, name: TreeName::from(name) })
+        Field::new(field, Value::TreeRef { parent, name: TreeName::from(name) })
     };
     let mut w = Writer::begin(&mut store, None).unwrap();
     let root = w.create_metarecord(vec![path(None, "")]).unwrap().uuid;
@@ -207,7 +214,7 @@ fn descendants_follow_moves_deletions_and_navigation() {
 
     // Move `sub` (and its files) from `a` to `b`.
     let mut w = Writer::begin(&mut store, None).unwrap();
-    w.set_field(sub, "mfr_path", Value::TreeRef { parent: Some(b), name: "sub".into() }).unwrap();
+    w.set_field(sub, field, Value::TreeRef { parent: Some(b), name: "sub".into() }).unwrap();
     w.commit().unwrap();
     check(&store);
 
@@ -221,5 +228,36 @@ fn descendants_follow_moves_deletions_and_navigation() {
     log::navigate(&mut store, None).unwrap();
     check(&store);
     store.reindex().unwrap();
+    check(&store);
+}
+
+/// A store whose derived data predates the descendant bitmaps of every
+/// forest (format 4: `mfr_path`'s only) is reindexed when it opens, and gains
+/// the bitmaps of its other forests.
+#[test]
+fn a_store_of_the_previous_derived_format_is_reindexed_when_it_opens() {
+    type Raw = heed::Database<heed::types::Bytes, heed::types::Bytes>;
+    let (mut store, dir) = open();
+    populate(&mut store);
+    drop(store);
+    {
+        // As format 4 left it: no descendant bitmap outside `mfr_path` (the
+        // populated forest is `loc`), and the format stamped 4.
+        let env =
+            unsafe { heed::EnvOpenOptions::new().max_dbs(32).map_size(1 << 30).open(dir.path()) }
+                .unwrap();
+        let mut w = env.write_txn().unwrap();
+        let sets: Raw = env.open_database(&w, Some("sets")).unwrap().unwrap();
+        let meta: Raw = env.open_database(&w, Some("meta")).unwrap().unwrap();
+        let descendants: Vec<Vec<u8>> =
+            sets.iter(&w).unwrap().map(|e| e.unwrap().0.to_vec()).filter(|k| k[0] == 6).collect();
+        assert!(!descendants.is_empty(), "the `loc` forest has descendant bitmaps");
+        for k in descendants {
+            sets.delete(&mut w, &k).unwrap();
+        }
+        meta.put(&mut w, b"derived", &4u64.to_be_bytes()).unwrap();
+        w.commit().unwrap();
+    }
+    let store = KvStore::open(dir.path()).unwrap();
     check(&store);
 }

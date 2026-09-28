@@ -283,14 +283,14 @@ fn a_multi_term_path_search_reads_its_candidates_not_the_forest() {
     bounded("multi-term path search, counted", &osm, &[], true);
 }
 
-/// `n` files under `/top`, ten per folder: a subtree whose folders grow with
-/// the repository.
-fn nested(n: usize) -> (KvStore, TempDir) {
+/// `n` nodes under `/top` in the forest `field`, ten per folder: a subtree
+/// whose folders grow with the repository.
+fn nested(field: &str, n: usize) -> (KvStore, TempDir) {
     let dir = TempDir::new("kv-cost-nested");
     let mut kv = KvStore::open(dir.path()).unwrap();
     let mut w = Writer::begin(&mut kv, None).unwrap();
     let tree = |parent: Option<Uuid>, name: &str| {
-        Field::new("mfr_path", Value::TreeRef { parent, name: name.into() })
+        Field::new(field, Value::TreeRef { parent, name: name.into() })
     };
     let root = w.create_metarecord(vec![tree(None, "")]).unwrap().uuid;
     let top = w.create_metarecord(vec![tree(Some(root), "top")]).unwrap().uuid;
@@ -305,21 +305,29 @@ fn nested(n: usize) -> (KvStore, TempDir) {
     (kv, dir)
 }
 
+/// A subtree is one descendant bitmap on every forest — the file tree's and
+/// a tag tree's alike (`tag ->* (path =>* "music")` reads the second).
 #[test]
 fn a_subtree_count_reads_no_more_for_more_folders() {
+    for field in ["mfr_path", "path"] {
+        a_subtree_count_reads_no_more_for_more_folders_in(field);
+    }
+}
+
+fn a_subtree_count_reads_no_more_for_more_folders_in(field: &str) {
     let below = Query::FollowsTransitive {
-        field: "mfr_path".into(),
+        field: field.into(),
         target: FollowTarget::Path("/top".into()),
         inclusive: false,
     };
-    let (small, _s) = nested(1_000);
-    let (large, _l) = nested(8_000);
+    let (small, _s) = nested(field, 1_000);
+    let (large, _l) = nested(field, 8_000);
     let (found_small, cost_small) = reads(&small, &below, &[], true);
     let (found_large, cost_large) = reads(&large, &below, &[], true);
     assert_eq!((found_small, found_large), (1_100, 8_800), "files and folders below /top");
     assert!(
         cost_large <= cost_small + cost_small / 2 + 20,
-        "subtree count: {cost_small} keys for 100 folders, {cost_large} for 800"
+        "subtree count in {field}: {cost_small} keys for 100 folders, {cost_large} for 800"
     );
 }
 
