@@ -1,354 +1,196 @@
-* TODO v0.3 release
-** TODO whole-project review pass (docs/code coherence, bugs, refactors)
-A pass ran in September 2026: 5 bugs fixed (a broken symlink read as absent, in
-seven places; a copy dereferencing a symlink; a redundant slash naming no tree
-node), 6 refactors, and the sync linking phase taken from 6 reads per record to
-1. What it found and left is listed under "known issues and deferred work" below.
-** DONE one engine on the serving path (September 2026)
-The daemon no longer has a second query engine. Every operand is now served from
-a resident structure — the bitmaps, or the forest through the tree cache — and
-=POST /query= does not fall back: an =Unsupported= shape is a daemon bug (a
-=500=), not a slow answer (spec-indexing "No operand runs in SQL").
+#+TITLE: Roadmap
 
-What it took, in order: the bitmap index serves =:parent= (a uuid, so a regex and
-an ordering on it are refused, and =!== is served); the forest answers =:path=
-leaves and order-sensitive =osm= paths by rewriting each into the =uuid_in= set it
-matches (=daemon/src/forest_query.rs=) instead of handing SQLite a =VALUES= list;
-type validation moved ahead of any engine (=query_validate.rs=); the SQL engine
-left the daemon for =crates/query-oracle=, a dev-dependency of the daemon and of
-nothing else, where it stays as the *test oracle* the index is validated against
-(the semantics batteries run on both engines). The FTS5 trigram index was dropped
-in the same pass, with a migration.
+What is left to do, most urgent first. Done work is not kept here: it is in
+the git history and the CHANGELOG. Deferred work inside a spec is tagged
+=:deferred:= and named there (spec-main "Version scope"); the ones worth
+keeping in view are listed at the end.
 
-Three items below shrank or changed shape as a consequence, and two sections of
-=docs/review-followups.md= (§7, §8) now describe a component that is no longer on
-the serving path — see "documentation drift" below.
-* TODO known issues and deferred work
-Found by the whole-project review pass and not (yet) fixed. Items already
-written up in =docs/review-followups.md= are referenced by their section rather
-than repeated; everything else is described here.
+* TODO actions on the user's machine
+Nothing to write, but nothing else can do them: they need the real
+repositories or root.
 
-** TODO performance — one request per metarecord
-The recurring defect of this project, in its HTTP form.
+** TODO =mf repo check= on every repository
+Since =4ffe261= a metarecord holds one position per forest (spec-data-model
+"One position per forest"), and =mf repo check= names the metarecords an older
+daemon let hold several. Run it on each repository; a hit is fixed by setting
+the field to the one position to keep. The resident cache still tolerates such
+a node, but nothing promises what a query says about it any more.
 
-*** TODO =mf order= writes one revision per child
-Measured with a counting stub: N children cost N+1 =PUT=s, so N transactions,
-N fsyncs, and — the part that matters — *N revisions of the log*, where every
-other bulk operation in the project is one revision (see the =write_matches=
-scaffold in =routes.rs=). Undoing a numbering therefore takes N rollbacks.
+** TODO rebuild and restart the fanotify broker
+=metafolder-watchd= runs privileged (=/run/metafolder/watchd.sock=), so it is
+rebuilt and restarted by hand. The running one predates =8dea90c= (moves the
+kernel merged away are put back) and =3a9c64a= (a root no mark can cover no
+longer fails the next subscriber's handshake).
 
-The read side is already bulk (one paginated =follows= pass over the children,
-one =resolve-tree=); only the write loop is left (=core/src/order.rs=, the
-=client.put= per planned position).
+** TODO grow the benchmark history
+=scripts/bench.sh= compares each number against the median of the last five
+runs on the machine, and the history (=benchmarks/history/=) is still too thin:
+a single run flagged "regressions" that alternating old and new builds proved
+to be noise. A few runs on an idle machine, committed.
 
-Blocked on a decision: the set layer applies the *same* value to a whole set,
-while each child here gets its own position. It needs an endpoint taking
-=(uuid, value)= pairs — purely additive, so no =API_VERSION= bump.
+* TODO performance
+The recurring defect of this project is a cost that grows with the repository
+where it should grow with the answer. Each item names where.
 
-*** TODO =mf sync plan=: the target-side position lookup is still per-record
-The bulk pass took the linking phase from 6 reads per scope record to 1. The one
-left is =record_at_path= (=core/src/sync/plan.rs=), which asks for the occupant of
-a position on the *other* side, once per identity position.
+** TODO KV descendant bitmaps for every =tree_ref= field
+On the key-value store, a subtree is one bitmap read for =mfr_path= only
+(=kvstore/derived.rs=, =DESCENDANT_FIELDS=): the bitmaps were limited to the
+forest where a node could not hang at several places. Since one position per
+forest is a rule for every field, they can be kept for all of them — a tag
+subtree (=tag ->* (path =>* "music")=) would stop being expanded level by
+level.
 
-*Unblocked since it was written.* It was waiting on a set endpoint able to answer
-"who is at this path", and the =:path= aspect now is one: =field:path = "/a/b"= is
-an exact-node predicate the forest resolves in memory, so N positions are one
-=Or= of =:path= equalities — rewritten into a single =uuid_in= set before the
-index sees it — and =query/fields/resolve-tree= maps the answers back to their
-paths. What is left is the rewrite of the caller, not a missing mechanism.
+It changes the derived data a KV repository holds, so it ships with its
+conversion (a reindex at open, recorded like the primary layout's migration),
+and the maintenance cost grows with the number of forests (≈ depth container
+writes per tree write, per field).
 
-*** TODO =FollowsTransitive=: linear in the subtree, but no longer in SQL
-=docs/review-followups.md= §7 described the hybrid compilation: a BFS over the DB
-(one =tree_children= query per node) whose result was inlined as =VALUES=
-literals — ~19 Mo of SQL text for 500k descendants. *Both costs are gone*: the
-index expands the subtree by iterative bitmap expansion over the reverse
-(direct-children) index (=index::expand_subtrees=), in memory, with no SQL and no
-per-node round-trip.
+** TODO =FollowsTransitive= materialises the whole subtree
+The expansion is in memory (resident index: bitmap union per level; KV: one
+descendant bitmap for =mfr_path=, see above) — but the whole subtree is still
+built where only the page is wanted. Only an unsorted query could stop early:
+a sort needs the full candidate set. =docs/review-followups.md= §7 is the
+longer account, and its first half (the SQL costs) no longer applies.
 
-What §7 called the real problem stands: the whole subtree is still materialised
-where only the page is wanted. It is now a bitmap union per level rather than a
-DB walk, so the constant is small — and the inherent limit named there has not
-moved: sorting by a field needs the full candidate set anyway, so only unsorted
-queries could ever stop early. Rewrite §7 to match when it is next touched.
+** TODO unanchored =:path= patterns walk the whole stored forest
+=aff0be6= made a =:path= comparison and a pattern anchored on a literal prefix
+seek their paths on KV (=PathSeek=, 64 648 → 6 key reads for an exact path).
+A pattern with no anchor (=mfr_path:path ~ "mp3$"=) still walks every node.
+The =osm= path's way out applies in part: a pattern ending with =$= and no =/=
+in its last literal can only match on the last name, so the trigrams of that
+literal give the candidates, verified on their assembled paths. Low priority:
+the GUI's finder builds =osm= queries, not these.
 
-** TODO query API limits
-*** TODO execution timeout
-The node cap bounds a query's *compilation*, never its *time*. A small, slow query
-(a =matches= regex over millions of rows, a =->*= across the whole repo) is still
-unbounded. Cancellation exists — a query task polls =cancel()= between phases, so
-a client can stop one — but nothing enforces a deadline on its own. §8's SQLite
-lead (=progress_handler=, =interrupt()=) is obsolete with SQL off the path; the
-place to poll is the index evaluation loop.
+** TODO a minimal query planner for KV
+The adaptive planner of spec-indexing was dropped in the SQL era, when every
+operand had one resident way to be answered. On KV an operand can again be
+answered several ways (posting / partition scan / per-candidate check /
+uuid-order walk), and small cost-based choices already exist (the
+read-or-walk choice for a run of ties, =876d4cc=). Reconsidered, not decided:
+if built, from a minimal KV-oriented design, not from the old document.
 
-*** DONE a DSL spelling for an explicit list of UUIDs (September 2026)
-There was never a cost argument here: an =Or= of bare UUID atoms is *not* N
-predicate nodes — the parser folds it, concatenating the lists whenever every
-operand of an =Or= is a =UuidIn= (=core/src/dsl.rs=, =or_expr_inner=) — only a
-spelling one, N =OR= keywords for N uuids in the query box.
+** TODO =mf order= writes one revision per child
+N children cost N =PUT=s: N transactions, N fsyncs and N revisions, so undoing
+a numbering takes N undos. The read side is bulk already; the write loop is
+=core/src/order.rs= (=client.put= per planned position). Blocked on a
+decision: the set layer applies the *same* value to a whole set, and each
+child here gets its own — it needs an endpoint taking =(uuid, value)= pairs
+(additive, no =API_VERSION= bump).
 
-Shipped as =uuid_in(<uuid>, <uuid>, …)=, compiling to that same single node. The
-form is the =osm=/=osmd=/=same= one, a word recognised only when immediately
-followed by =(=, and *not* the bracketed =uuid_in [...]= this entry used to
-propose: brackets would spend two of the free punctuation characters the DSL
-deliberately keeps in reserve, and the named-operator precedent spends none. A
-trailing comma is accepted (a loop emits one) and =uuid_in()= is the empty set,
-so a client with an empty selection needs no special case. The simplified
-language gets nothing: =+= already joins pasted uuids there.
+** TODO =mf sync plan=: the target-side position lookup is per record
+=record_at_path= (=core/src/sync/plan.rs=, also used by =run.rs=) asks for the
+occupant of one position on the other side, once per identity position. The
+mechanism for a set is there: an =Or= of =field:path = "…"= equalities is
+resolved by the forest into one =uuid_in= set (and on KV each one is now a
+seek, not a walk), and =query/fields/resolve-tree= maps the answers back to
+their paths. What is left is rewriting the caller.
 
-*** TODO the CLI cannot read a scope by batches: no =--cursor=
-The daemon already pages: =POST /query= takes =limit= + an opaque keyset
-=cursor=, answers =next_cursor=, and returns the full =total= on =count: true=
-(O(1) through the bitmap index). *Half of it now reaches the shell.* =mf
-metarecord get --limit N= caps the *total* and loops over the pages internally
-(=commands.rs=, the =next_cursor= loop), so there is still no way to say "the
-next 100 after those" — a shell client either takes everything or takes a
-prefix.
+* TODO query API
+** TODO execution timeout
+The node cap bounds a query's size, never its time. A small, slow query (a
+regex over millions of values, a =->*= across the repository) is unbounded.
+Cancellation exists — a query task polls =cancel()= between phases — but
+nothing sets a deadline on its own. The place to poll is the index evaluation
+loop.
 
-=--count= is *done* (September 2026): =mf metarecord [-q …] get --count= prints
-the match count, one round-trip, exact, query selectors only. It was the one
-prerequisite left for [[file:docs/gui-tag-folder-rework.md][gui-tag-folder-rework]], and it removes the reason those
-scripts count by counting lines.
+** TODO the CLI cannot read a scope by batches: no =--cursor=
+The daemon pages (=POST /query=: =limit=, an opaque keyset =cursor=,
+=next_cursor=), and =mf metarecord get --count= exists, but =--limit N= caps the
+total and pages internally: a shell client takes everything or a prefix. What
+is left is exposure: print =next_cursor= and accept =--cursor <token>=. To
+write down in the spec with it: a cursor is bound to a hash of (query, sort),
+and a record edited between two pages moves with its sort key.
 
-What is left is the =--cursor= half, and it is still exposure rather than new
-machinery: print =next_cursor= (stderr, or a =--tsv= column) and accept
-=--cursor <token>=. Performance is unaffected: keyset pagination is index-backed
-and stable under concurrent writes (unlike an offset), which is precisely why
-the cursor is what should be exposed rather than a =--offset=.
+* TODO watcher
+** TODO keep hunting with the simulated kernel
+=watchd/src/sim.rs= (a kernel kept in step with the real filesystem, held to
+the real one by a fidelity test) found a bug a commit on its first day
+(=8dea90c=, =3a9c64a=, =287a225=, and the inotify one it led to, =5e013ff=).
+Not yet driven:
+bursts mixing renames and removals of the same names while the broker is
+held, several subscribers on one filesystem with overlapping roots.
 
-Two caveats to spell out in the spec when it is done: a cursor is bound to a
-hash of (query, sort) and is rejected by any other request shape, and a record
-edited between two pages moves with its sort key like any keyset paging.
+** TODO fanotify: what the note leaves open
+From [[file:docs/watcher-fanotify.md][docs/watcher-fanotify.md]] "Open questions":
+- events of the covered filesystems outside the roots are dropped by the
+  broker, but still queued and read: a flood of them can overflow the group's
+  queue for everyone. Ignore marks (=FAN_MARK_IGNORE=, 6.0+) on the busiest
+  outside directories would stop them in the kernel;
+- a mark whose filesystem left the root but is still mounted elsewhere stays
+  until the broker restarts (costs work, not correctness);
+- network filesystems: a per-repository override of the source, not asked
+  for so far.
 
-** TODO correctness, minor
-*** TODO =daemon/src/sync.rs= =locate()= uses =Path::exists()=
-It follows symlinks, like the seven sites fixed in "a broken symlink is a file
-that is there". Harmless here — it probes the sync database file that metafolder
-creates itself under =internal/=, never a tracked path — which is why it was left
-alone and excluded from the =mf-path-exists-follows-symlinks= semgrep rule's
-scope. Worth revisiting only if that file ever becomes user-placeable.
+* TODO correctness, minor
+** TODO a rollback can bring back a node at several positions
+Navigation puts rows back without going through the Writer's checks (as it does
+for a detached node, see =index_oracle.rs= =tree_ref_sort_with_a_detached_node=),
+so rolling back to a state written before =4ffe261= can restore a metarecord
+at two positions. =mf repo check= names it afterwards. Refuse it, or accept and
+document it — to decide.
 
-*** TODO =compute_watched_dirs= swallows an unreadable directory entry
+** TODO =compute_watched_dirs= swallows an unreadable directory entry
 It mirrors =reconcile::walk=, but the walk propagates a failed =DirEntry=
-(=entry?=) while the watcher's version drops it (=entries.flatten()=). The two
-therefore disagree about a directory whose entry cannot be read: the reconcile
-aborts, the watcher silently skips. Decide which is right and make both do it.
+(=entry?=, =reconcile.rs=) while the watcher's version drops it
+(=entries.flatten()=, =watcher/inotify.rs=). The reconcile aborts where the
+watcher silently skips. Decide which is right and make both do it.
 
-*** TODO the GUI orphan fix has no integration test
-=fs_exists= (the entry itself, links included) is unit-tested in Rust and the
-wiring is enforced by =tsc=, but no test mounts =metarecord-list= with a broken
-symlink and checks the row is not coloured as an orphan. The harness exists —
-=frontend/tests/metarecord-list-live-update.test.ts= already models "which paths
-are on disk" and routes =fs_exists=. Still open after orphan detection moved to a
-field (=orphan = true=, =POST /orphans/mark=): the mode and its banner are gone,
-the purple row colouring the test would cover is not.
+** TODO the GUI orphan colouring has no test on a broken symlink
+=fs_exists= (the entry itself, links included) is unit-tested in Rust, but no
+frontend test mounts =metarecord-list= with a broken symlink and checks the
+row is not coloured as an orphan. The harness is there
+(=metarecord-list-live-update.test.ts= models the files on disk and routes
+=fs_exists=).
 
-** DONE documentation drift after the engine unification (September 2026)
-One pass over every mention of the departed engine, fixing the ones that
-described a *fallback path* and leaving the ones that compare against the
-oracle's behaviour — now spelled "the oracle" wherever the two readings were
-only told apart by already knowing the answer. =index/mod.rs= (its header first:
-it said the caller "falls back to the SQL engine on any =Unsupported="; it is a
-=500=), =field_index.rs= (with a header note saying that "SQL" throughout names
-the oracle), =forest_query.rs=, =query_validate.rs=, =routes.rs=, =db.rs=, and
-the test batteries that asserted a routing decision rather than an answer.
+** TODO =daemon/src/sync.rs= =locate()= uses =Path::exists()=
+It follows symlinks. Harmless — it probes the sync database file metafolder
+creates under =internal/=, never a tracked path, which is why the
+=mf-path-exists-follows-symlinks= semgrep rule leaves it out. Revisit only if
+that file ever becomes user-placeable.
 
-The =400=\s were the subtler half: a dozen comments said the index "hands over"
-an invalid pattern, an ordered operator under =:parent=, an =osm path= on a
-non-forest field — to an engine that would raise the error. Every one of those
-rejections now happens in =query_validate=, *before* the index runs, and the
-=Unsupported= branches behind them are backstops. A comment that still promised
-a fallback promised a =500=.
+* TODO data
+** TODO tags still in the old format
+The tag model moved to singular names and a =path= TreeRef (=tag=,
+=negative_tag=, =mixed_tag=). Tags written before (refs =tags= /
+=negative_tags=, the hierarchy in a string =name=) are invisible to =mf tag=.
+No conversion was shipped, because it is not known whether any such data
+exists: check, and write the conversion if it does.
 
-Documents: =spec-query= ("Compilation" → "Evaluation"; the =Limits= rationale,
-which was SQLite's compound-select cap), =spec-indexing= ("Two kinds of gap"
-rewritten and renamed "Three" — the coverage list is paid to zero, and =Cursor=
-named as the third kind — plus the increments put in the past tense),
-=spec-query-cost= (the
-largest: it priced a two-engine world — "Three providers, two engines" → "one
-engine", the =SQL path= column and the =sql.scan= category dropped, =fts.scan=
-renamed =text.scan= since the FTS5 table is gone, =engine= / =fallback[]=
-removed from the response as the document itself said they should be, and a
-=Status= header saying the endpoint is unimplemented), =spec-data-model=,
-=spec-file-tracking=, =gui-tag-folder-rework= (its first prerequisite marked
-done), and =review-followups= §7 / §8.
+* TODO tooling
+** TODO =scripts/check.sh= lets =target/= fill the disk
+=scripts/complete-build.sh= prunes =target/= every time, =check.sh= never: on
+28 September 2026 =target/debug= had reached 38 GB and a test failed on "No
+space left on device" (15 GB came back with =scripts/prune-target.sh=). Prune
+at the end of =check.sh= too, or at least warn when the disk is nearly full.
 
-Found while doing it, and *not* a documentation fix — see the item below.
+** TODO test coverage has not been measured outside the broker
+=cargo llvm-cov= is wired into =scripts/check.sh= behind =--coverage=; it has
+only been used on =metafolder-watchd= (100 % of its production lines, the
+privileged ones on the host). One pass over the daemon, the CLI and the GUI
+crate to find what is untested.
 
-** DONE the "link-aware reads" item was about a concept that no longer exists
-Raised by the documentation pass above and *wrong the day it was written*. It
-claimed reads had stopped excluding *link metarecords* — a metarecord owned by
-more than one repository — because the departed SQL engine's =_repo= CTE
-demanded exclusive ownership (=COUNT(*) = 1= over =metarecord_db=) and the
-bitmap index's universe is =SELECT uuid FROM metarecord=.
+* TODO structure
+Not problems of behaviour; worth doing for navigability, each a large diff.
+- =routes.rs=: 4 719 lines, 97 handlers. Splitting it into =routes/=
+  submodules is filing, not simplification.
+- The big panels are one =mount()= each (=metarecord-list= 1 895 lines,
+  =metarecord-detail= 2 203): they share the instance's state, so extracting
+  anything means passing an explicit context — a rewrite, not to start
+  casually.
+- Long sequential functions (=reconcile_full_reported= 326 lines,
+  =flush_pending_once= 243): linear phase sequences over shared state;
+  extraction would cost ten-parameter signatures. Left alone deliberately.
 
-Neither half holds. The multi-owner concept was retired when sync was
-redesigned: links live in the per-pair sync database, outside the data model
-(see [[file:docs/spec-sync.org][spec-sync.org]]), so the ownership table and
-=MetaRecord.db_ids= became a singleton and were removed outright in =6357e5b=
-(August 2026) — ownership is implicit in which database file holds a
-metarecord, and a second owner is not representable. The oracle kept in
-=crates/query-oracle= was updated in the same commit: its =_repo= CTE *is*
-=SELECT uuid FROM metarecord=, the same universe the index builds, so there is
-nothing for the two to disagree about.
+* TODO shipped tagging scripts
+See =docs/review-followups.md=: §10 (the mock =mf= log loses argument
+boundaries — deferred, cost above gain) and §11 (=mf path= per question in the
+tagging scripts, waiting on a CLI that prints a repository's root, e.g.
+=mf repo root=).
 
-What was left was stale prose describing a future nobody plans any more:
-=index/mod.rs= (the =universe= doc comment), =docs/review-followups.md= §9,
-=spec-data-model= (the version-hash exclusion list and the field-catalog
-universe), =spec-indexing= (a baseline index on a table that no longer exists)
-and =decisions.md=. Cleared, together with the =:v2:= version tags that dated
-from the same era (see [[*DONE the =:v2:= tags meant version 0.2]]).
-
-** DONE the =:v2:= tags meant version 0.2
-A notation error, cleared in September 2026. Headings tagged =:v2:= and
-passages marked =[v2]= were meant to read "deferred to version *0.2*"; they
-read as "version 2", a release that does not exist in this project's numbering.
-0.2 and 0.3 shipped in the meantime, and with them most of what carried the
-tag — =mf sync= above all, whose whole spec was still headed =:v2:=.
-
-Every occurrence is gone. =spec-main= "Version scope" now says these documents
-describe 0.3 and that deferred work is tagged =:deferred:= and *named*, instead
-of pointing at a version number; =spec-sync= loses the tag on its overview and
-on =mf sync= (both implemented) and keeps =:deferred:= on "Performance
-concerns"; =spec-indexing= (on-disk persistence), =spec-config= (binary-only
-install) and =spec-trash= (sync as a future caller) say what is missing in
-words. The =CLAUDE.md= sentences that repeated the tag went with them.
-
-** TODO fanotify watch source
-From the watcher discussion (September 2026), not the review pass. Designed in
-[[file:docs/watcher-fanotify.md][docs/watcher-fanotify.md]] and implemented: a second watch *source* for Linux — a
-small privileged broker (fanotify marks on filesystems, FID→path resolution, per-uid
-filtering) streaming events over a Unix socket — behind the existing pipeline,
-with the inotify source kept as the no-privilege default and fallback. One mark
-per mount removes the per-directory watches, the placement walk and the watch
-budget (=mfr_watch_exceeded= and friends). The motivating case: a personal
-repository sitting close to =fs.inotify.max_user_watches=, with a placement walk
-that is felt.
-
-Settled in spec-file-tracking (September 2026) before any code: the *budget*
-and *coverage* regimes ([[file:docs/spec-file-tracking.org][spec-file-tracking]]
-"Watch sources and regimes"), =mfr_watch_exceeded= honoured in both (=watch
-check= keeps one answer ladder; only =unwatched= is budget-only), the active
-backend reported by =GET /watch=. The =watcher/= split, the =Source= seam, the
-broker and the daemon-side =fanotify= source are done (below); what remains is
-a run against a real privileged broker (handle resolution cannot run in the
-unprivileged harness; the marks now can, in a user namespace), the conformance
-battery against both sources, and the note's open questions (network
-filesystems, kernel-side ignore marks for busy directories outside the roots).
-Settled: reconciling is purely manual — an overflow or a reconnection is
-announced with a suggestion, never an automatic reconcile. Done since: events
-outside the roots are filtered by parent directory before any path is
-resolved (=fanotify::Scope=).
-The permission model is decided (strictly single-user daemon; no hop reveals
-more than the next hop's own credentials could discover, see the note) and
-implemented in the broker.
-
-*** DONE the review pass over the fanotify source (September 2026)
-Five defects, each fixed with a test that failed first:
-- *Mount marks cannot report entry events* — the kernel answers EINVAL to
-  =FAN_CREATE=/=FAN_DELETE=/=FAN_RENAME=/=FAN_ATTRIB= on a =FAN_MARK_MOUNT=
-  (verified in a user namespace), so the broker could not have started. One
-  =FAN_MARK_FILESYSTEM= per filesystem the roots span, nested mounts included,
-  the mount table followed (=POLLPRI= on =/proc/self/mountinfo=).
-- *The reading thread held the group's lock while blocked in =read(2)=*: on a
-  quiet machine the first subscriber was never answered.
-- *One descriptor kept open per covered filesystem*: =umount= fails with EBUSY
-  — a drive under a repository could not be unplugged.
-- *The daemon's client thread never ended*: after an unload it kept the
-  subscription and reconnected for ever, one more thread per load cycle.
-- *Non-UTF-8 names were dropped* by the broker (JSON strings are text): paths
-  on the wire are now byte strings, the tree-name object form.
-The kernel-side tests re-run themselves under =unshare -rm=, where a user
-namespace may mark a tmpfs it mounted.
-
-*** DONE the broker: =crates/watchd= (September 2026)
-=metafolder-watchd= — one per machine, the two capabilities
-(=CAP_SYS_ADMIN=, =CAP_DAC_READ_SEARCH=) granted by its unit and nowhere else.
-One fanotify group, one mark per covered filesystem (=FAN_MARK_FILESYSTEM=; first
-shipped with mount marks, see the review pass above), file-handle
-events (=FAN_REPORT_DFID_NAME=, =FAN_RENAME=) resolved to paths, NDJSON over a
-Unix socket. Per-subscriber filtering by =SO_PEERCRED= uid + userspace DAC (the
-permission invariant of the note); per-subscriber bounded queues with in-order
-=Overflow= markers; =FAN_Q_OVERFLOW= broadcast to everyone. 34 tests at landing (42 now), including
-an unprivileged fanotify smoke test against the real kernel (group, marks,
-record layout) and an end-to-end over a real socket.
-
-*** DONE the =fanotify= source behind the trait (September 2026)
-=watcher/fanotify.rs= — the daemon-side client: a synchronous handshake whose
-answer *means* "you are covered" (a refused root falls back, announced), then a
-reconnecting reader thread
-holding no =Arc<RepoState>=. Wire events become =FsEvent=s through the shared
-pipeline; the coverage regime drops what happens under =mfr_watch_exceeded= at
-ingestion (=drop_excluded=, a move out of it reads as an arrival), and
-=watch check= answers from =Coverage::Tree= (exclusion / offline / internal —
-the structural skips the ladder already names). =[settings] watchd-socket= is
-the whole switch: probed at load, fanotify when it answers, inotify (announced)
-when it does not. 3 integration tests through the real pipeline
-(stand-in broker → metarecords) plus unit tests for the client and the filter.
-
-*** DONE the =watcher/= split and the =Source= seam (September 2026)
-=watcher.rs= is now =watcher/mod.rs= (the pipeline: pure =translate=, the
-ingest thread, =WatcherHandle=, the watch-check ladder) and
-=watcher/inotify.rs= (the notify source — placement walk, watch budget,
-maintenance), behind the =Source= trait (=name= / =regime= / =refresh= /
-=watched= / =watched_set= / =maintain=). Behaviour unchanged: the daemon suite
-passes. =GET /watch= reports =backend= and answers =null= for
-=watched_dirs= / =watch_budget= under the coverage regime, =mf watch status=
-prints the coverage line (=22838 directory(ies) watched (inotify)= /
-=tree covered (fanotify)=).
-
-** TODO structure
-*** TODO =routes.rs= is 4105 lines and 85 handlers
-Splitting it into =routes/= submodules is filing, not simplification — a large
-mechanical diff. Worth doing for navigability, not for complexity.
-
-*** TODO the big panels are one =mount()= each
-=metarecord-list= 1596 lines over 93 closures, =metarecord-detail= 1513. They all
-share the panel instance's state, so extracting anything means passing an
-explicit context: a rewrite, against 71% JS coverage. Not to be started casually.
-
-*** TODO long sequential functions
-=reconcile_full_reported= (334 lines), =flush_pending_once= (198). Long but
-linear — phase sequences over shared state, not tangled logic. Extraction would
-cost ten-parameter signatures for a debatable gain; left alone deliberately.
-(=query_exec::execute=, the third of this list, left the daemon with the SQL
-engine.)
-
-** TODO tooling
-*** TODO test coverage has never been measured here
-=cargo llvm-cov= is wired into =scripts/check.sh= behind =--coverage= and was not
-run during the review. Worth one pass to find what is untested.
-
-*** TODO =scripts/check.sh= cannot run in one block on this machine
-Killed three times for low memory (1.9 GiB available, swap already at 6 GiB).
-Run it crate by crate instead — same checks, see [[file:docs/review-followups.md][review-followups]] for the
-pattern. An environment limit, not a defect of the script.
-
-** TODO shipped tagging scripts
-*** TODO deferred items from the scripts pass
-See =docs/review-followups.md= §10 (mock =mf= argument boundaries) and §11
-(=mf path= per question — one round-trip per *keypress*, waiting on a CLI that
-prints a repository's root). §12 is done, below.
-
-*** DONE =gui-tag-folder.sh=: the query is the walk state (September 2026)
-Coded to [[file:docs/gui-tag-folder-rework.md][docs/gui-tag-folder-rework.md]], which now records the four places the
-implementation departed from it. An answer is already a write, so "what is left
-to ask" is a query rather than bash bookkeeping: one question per step with
-=--limit 1= over =<scope> AND <undecided> AND <not skipped>=, a =--count= for
-the counter, and a walk holding one string — the current folder, since *the path
-is the stack*. Gone with it: the in-memory scope, =DECIDED=/=PRUNED=/=SUBTREE=/
-=RANK=/=KIND=/=PATH_OF=/=ENTRIES=/=WALK=/=STEPS=, the external =sort=, and
-=MF_GUI_MAX_ENTRIES= for this script — while the =mf order= walk order and the
-exact counter both stay.
-
-Two things the design did not have. A *skip* is now recorded (a
-=gui_tag_skipped= field holding a ref to the tag entry, one marker per tag), so
-it survives the run, is undone by =back= like any other answer, and is offered
-for cleanup at the end and again at the next run's start. And =--redo=, which
-drops the clauses that would narrow the query, keeps its own =uuid_in= list of
-what it has asked — bounded by keypresses, like the skipped-folder list.
-
-Prerequisites, both met on the way: =:parent= served by the index, then
-=mf … --count=. =docs/review-followups.md= §12 is rewritten, and its conclusion
-("paging costs either the walk order or the exact total") is recorded there as
-wrong. The other two tagging scripts still read their scope up front — they
-classify one metarecord or a pair, not a subtree, so the bound suffices.
+* Deferred in the specs
+Named where they are, kept here so they are not forgotten:
+- spec-storage: readers that never block on KV (operations stay sequential —
+  decided September 2026); a KV bit-sliced index.
+- spec-sync: "Performance concerns".
+- spec-query-cost: =POST /query/explain=, entirely unimplemented.
+- spec-indexing: on-disk persistence of the resident index.
