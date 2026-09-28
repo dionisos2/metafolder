@@ -37,6 +37,11 @@ pub const MAX_READ_LIMIT: usize = 500;
 /// the log with one entry.
 pub const MAX_CONTEXT_CHARS: usize = 200;
 
+/// Longest query kept in an entry's context: whole, so that the entry can be
+/// replayed (`mf slow replay`) — a generated query runs to kilobytes, and one
+/// cut short is not a query any more. A larger one is kept cut, and cannot.
+pub const MAX_QUERY_CHARS: usize = 64 * 1024;
+
 /// One named span inside an operation. Durations are **inclusive** — a phase
 /// covers the phases nested in it, and `depth` is what tells a reader so.
 /// Repeated occurrences of a name are summed into one `Phase` with `count`.
@@ -420,6 +425,8 @@ struct Op {
     reads_at_start: u64,
     /// Whether the operation committed a write ([`mark_write`]).
     wrote: bool,
+    /// Set by [`discard`]: the operation is not recorded, whatever it cost.
+    discarded: bool,
 }
 
 thread_local! {
@@ -467,17 +474,7 @@ pub fn begin(recorder: std::sync::Arc<Recorder>, op: impl Into<String>) -> OpGua
         if current.is_some() {
             return OpGuard { owner: false };
         }
-        *current = Some(Op {
-            recorder,
-            op: op.into(),
-            at_ms: crate::date::now_ms(),
-            start: Instant::now(),
-            op_id: None,
-            context: Vec::new(),
-            timeline: Timeline::new(),
-            reads_at_start: reads_so_far(),
-            wrote: false,
-        });
+        *current = Some(Op::new(recorder, op.into()));
         OpGuard { owner: true }
     })
 }
@@ -499,6 +496,13 @@ pub fn note(key: &str, value: impl Into<String>) {
 /// [`Recorder::with_read_threshold`]).
 pub fn mark_write() {
     with_op(|op| op.wrote = true);
+}
+
+/// Leaves the running operation out of the log, whatever it costs — for an
+/// operation whose cost is the point of the call, like the replay of a slow
+/// query (spec-slow-log "Replaying a query").
+pub fn discard() {
+    with_op(|op| op.discarded = true);
 }
 
 /// Sets the id correlating this operation with a client's entry for it.
@@ -536,26 +540,79 @@ impl Drop for PhaseGuard {
     }
 }
 
+impl Op {
+    fn new(recorder: std::sync::Arc<Recorder>, op: String) -> Op {
+        Op {
+            recorder,
+            op,
+            at_ms: crate::date::now_ms(),
+            start: Instant::now(),
+            op_id: None,
+            context: Vec::new(),
+            timeline: Timeline::new(),
+            reads_at_start: reads_so_far(),
+            wrote: false,
+            discarded: false,
+        }
+    }
+
+    /// The entry this operation makes, ending now.
+    fn into_entry(self) -> (Entry, std::sync::Arc<Recorder>, bool) {
+        let ended = Instant::now();
+        let mut entry = Entry::new(
+            self.recorder.source(),
+            self.op,
+            self.at_ms,
+            ended.saturating_duration_since(self.start).as_millis() as u64,
+        );
+        let reads = reads_so_far().wrapping_sub(self.reads_at_start);
+        entry.reads = reads;
+        entry.op_id = self.op_id;
+        entry.context = self.context;
+        entry.phases = self.timeline.finish_counted(ended, reads);
+        (entry, self.recorder, self.wrote)
+    }
+}
+
 impl Drop for OpGuard {
     fn drop(&mut self) {
         if !self.owner {
             return;
         }
         let Some(op) = CURRENT.with(|current| current.borrow_mut().take()) else { return };
-        let ended = Instant::now();
-        let mut entry = Entry::new(
-            op.recorder.source(),
-            op.op,
-            op.at_ms,
-            ended.saturating_duration_since(op.start).as_millis() as u64,
-        );
-        let reads = reads_so_far().wrapping_sub(op.reads_at_start);
-        entry.reads = reads;
-        entry.op_id = op.op_id;
-        entry.context = op.context;
-        entry.phases = op.timeline.finish_counted(ended, reads);
-        op.recorder.record_as(&entry, op.wrote);
+        if op.discarded {
+            return;
+        }
+        let (entry, recorder, wrote) = op.into_entry();
+        recorder.record_as(&entry, wrote);
     }
+}
+
+/// Runs `f` as an operation of its own and hands back its entry — phases,
+/// reads, context — whatever its duration, writing nothing: what replaying a
+/// logged query wants (spec-slow-log "Replaying a query"). An operation
+/// already running on this thread is set aside for the while, and sees none
+/// of the captured phases.
+pub fn capture<T>(op: &str, f: impl FnOnce() -> T) -> (T, Entry) {
+    let fresh = Op::new(std::sync::Arc::new(Recorder::disabled("daemon")), op.to_string());
+    let outer = CURRENT.with(|current| current.borrow_mut().replace(fresh));
+    // Restores the outer operation even if `f` unwinds.
+    struct Restore(Option<Option<Op>>);
+    impl Drop for Restore {
+        fn drop(&mut self) {
+            if let Some(outer) = self.0.take() {
+                CURRENT.with(|current| *current.borrow_mut() = outer);
+            }
+        }
+    }
+    let mut restore = Restore(Some(outer));
+    let out = f();
+    let captured = CURRENT.with(|current| current.borrow_mut().take());
+    if let Some(outer) = restore.0.take() {
+        CURRENT.with(|current| *current.borrow_mut() = outer);
+    }
+    let (entry, _, _) = captured.expect("the captured operation is in place").into_entry();
+    (out, entry)
 }
 
 #[cfg(test)]
@@ -686,6 +743,52 @@ mod tests {
     #[test]
     fn test_a_write_outside_an_operation_is_ignored() {
         mark_write();
+    }
+
+    #[test]
+    fn test_a_capture_returns_the_breakdown_and_writes_nothing() {
+        // Replaying a query wants its phases now, whatever its time, and
+        // must not add to the log it was read from.
+        let dir = tmp();
+        let (answer, entry) = {
+            let _outer = begin(recorder(&dir, NEVER), "POST /repos/:repo/query/profile");
+            let captured = capture("POST /repos/:repo/query", || {
+                let _p = phase("index.evaluate");
+                count_reads(12);
+                note("results", "3");
+                42
+            });
+            // The outer operation is back in place once the capture ends.
+            let _p = phase("assemble");
+            captured
+        };
+        assert_eq!(answer, 42);
+        assert_eq!(entry.op, "POST /repos/:repo/query");
+        assert_eq!(entry.reads, 12);
+        assert_eq!(entry.phases.len(), 1, "only its own phases: {entry:?}");
+        assert_eq!(entry.phases[0].reads, 12);
+        assert_eq!(entry.context, vec![("results".to_string(), "3".to_string())]);
+        assert!(read(&dir, 10, None).0.is_empty(), "a capture is not logged");
+    }
+
+    #[test]
+    fn test_a_discarded_operation_is_not_logged() {
+        // The replay of a slow query is as slow, and is not news.
+        let dir = tmp();
+        {
+            let _op = begin(recorder(&dir, 1), "POST /repos/:repo/query/profile");
+            discard();
+            std::thread::sleep(std::time::Duration::from_millis(3));
+        }
+        assert!(read(&dir, 10, None).0.is_empty());
+    }
+
+    #[test]
+    fn test_a_capture_works_without_an_operation_or_a_log() {
+        let (_, entry) = capture("op", || {
+            let _p = phase("prepare");
+        });
+        assert_eq!(entry.phases[0].name, "prepare");
     }
 
     #[test]

@@ -695,6 +695,23 @@ enum SlowCommand {
         #[arg(long)]
         json: bool,
     },
+    /// Run a query again and show where its time goes, now: the newest logged
+    /// query, the one logged at --at, or one typed with -q. Not itself logged
+    Replay {
+        /// The logged query to replay, by its start time in Unix ms (`--json`
+        /// lists show it as `at_ms`); default the newest one
+        #[arg(long, conflicts_with = "query")]
+        at: Option<i64>,
+        /// A query to profile instead of a logged one (DSL)
+        #[arg(short = 'q', long = "query")]
+        query: Option<String>,
+        /// -q is simplified-language text
+        #[arg(short = 's', long, requires = "query")]
+        simplified: bool,
+        /// Print the entry as one JSON object
+        #[arg(long)]
+        json: bool,
+    },
     /// Empty the log (the clean slate a reproduction starts from)
     Clear {
         /// Do not ask for confirmation
@@ -1630,6 +1647,9 @@ fn dispatch_slow(ctx: &Ctx, command: Option<SlowCommand>) -> CmdResult {
     match command.unwrap_or(SlowCommand::List { limit: 50, since: None, op: None, json: false }) {
         SlowCommand::List { limit, since, op, json } => {
             commands::slow_list(ctx, limit, since.as_deref(), op.as_deref(), json)
+        }
+        SlowCommand::Replay { at, query, simplified, json } => {
+            commands::slow_replay(ctx, at, query.as_deref(), simplified, json)
         }
         SlowCommand::Clear { yes } => commands::slow_clear(ctx, yes),
     }

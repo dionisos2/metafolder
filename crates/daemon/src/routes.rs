@@ -76,6 +76,7 @@ pub fn build(state: Arc<AppState>) -> Router {
         .route("/repos/:repo/tree/resolve-path", post(resolve_tree_path))
         // ── Set layer (by predicate) ─────────────────────────────────────────
         .route("/repos/:repo/query", post(run_query))
+        .route("/repos/:repo/query/profile", post(profile_query))
         .route("/repos/:repo/query/delete", post(delete_by_query))
         .route("/repos/:repo/query/fields/set", post(batch_set))
         .route("/repos/:repo/query/fields/add", post(batch_add))
@@ -254,12 +255,23 @@ where
     .map_err(|e| ApiError::internal(format!("blocking task failed: {e}")))?
 }
 
-/// Records the query a slow operation ran, compactly: the daemon receives the
-/// IR, not the text that produced it, and the whole IR of a generated query can
-/// be kilobytes.
-fn note_query(query: &MetaQuery) {
-    if let Ok(json) = serde_json::to_string(query) {
-        slowlog::note("query", json.chars().take(slowlog::MAX_CONTEXT_CHARS).collect::<String>());
+/// Records what a slow query ran — the IR whole (the daemon receives it, not
+/// the text that produced it), with the sort, limit and count that decide how
+/// it was evaluated: enough to replay it (spec-slow-log "Replaying a query").
+fn note_query(body: &QueryBody) {
+    if let Ok(json) = serde_json::to_string(&body.query) {
+        slowlog::note("query", json.chars().take(slowlog::MAX_QUERY_CHARS).collect::<String>());
+    }
+    if !body.sort.is_empty() {
+        if let Ok(json) = serde_json::to_string(&body.sort) {
+            slowlog::note("sort", json);
+        }
+    }
+    if let Some(limit) = body.limit {
+        slowlog::note("limit", limit.to_string());
+    }
+    if body.count {
+        slowlog::note("count", "true");
     }
 }
 
@@ -3250,6 +3262,34 @@ async fn run_query(
     .await
 }
 
+/// `POST /repos/:repo/query/profile` — runs a query as `/query` does and
+/// answers with its slow-log entry instead of its results: the phases, their
+/// time and the keys each read, whatever the query cost (spec-slow-log
+/// "Replaying a query"). The replay itself is not logged.
+async fn profile_query(
+    State(state): State<Arc<AppState>>,
+    Path(repo): Path<String>,
+    payload: Result<Json<QueryBody>, JsonRejection>,
+) -> Result<Json<serde_json::Value>, ApiError> {
+    let Json(body) = payload?;
+    let repo_uuid = parse_uuid(&repo)?;
+    with_repo(&state, repo_uuid, move |repo_state| {
+        slowlog::discard();
+        let task = repo_state.tasks.start(TaskKind::Query);
+        repo_state.tasks.mark_running(task);
+        let (outcome, entry) = slowlog::capture("POST /repos/:repo/query", || {
+            run_query_inner(repo_state, &body, task)
+        });
+        match &outcome {
+            Ok(_) => repo_state.tasks.finish(task, None),
+            Err(e) => repo_state.tasks.fail(task, &e.message),
+        }
+        outcome?;
+        Ok(Json(json!({ "entry": entry })))
+    })
+    .await
+}
+
 /// One page of query results: the metarecords, the cursor for the next page
 /// (`None` at the end), and the total — present only when the body asked to
 /// `count`.
@@ -3469,7 +3509,7 @@ fn run_query_inner(
         // assembly poll this flag.
         let cancel = || repo_state.tasks.is_cancel_requested(task);
         let mut cache = slowlog::timed("wait:cache", || repo_state.lock_cache());
-        note_query(&body.query);
+        note_query(body);
         let (uuids, next_cursor, total) = run_query_filter(&conn, &mut cache, body, &cancel)?;
         drop(cache);
         slowlog::note("results", uuids.len().to_string());

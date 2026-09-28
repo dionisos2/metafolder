@@ -19,7 +19,7 @@ pub fn render(entry: &Entry) -> Vec<String> {
         lines.push(format!("    {:<10}{id}", "op-id"));
     }
     for (key, value) in &entry.context {
-        lines.push(format!("    {key:<10}{value}"));
+        lines.push(format!("    {key:<10}{}", readable(value)));
     }
     if entry.reads > 0 {
         lines.push(format!("    {:<10}{}", "keys", format_count(entry.reads)));
@@ -28,6 +28,19 @@ pub fn render(entry: &Entry) -> Vec<String> {
         lines.push(render_phase(phase));
     }
     lines
+}
+
+/// A context value as a person reads it: whole up to a line's worth, cut
+/// beyond. A query is logged whole so that it can be replayed, and printed
+/// whole it would be the only thing on the screen; `--json` keeps it all.
+fn readable(value: &str) -> String {
+    const SHOWN: usize = metafolder_core::slowlog::MAX_CONTEXT_CHARS;
+    if value.chars().count() <= SHOWN {
+        return value.to_string();
+    }
+    let mut cut: String = value.chars().take(SHOWN).collect();
+    cut.push('…');
+    cut
 }
 
 /// A phase line: indented by its depth, so a phase nested in another reads as
@@ -57,6 +70,33 @@ fn format_count(n: u64) -> String {
         out.push(c);
     }
     out
+}
+
+/// The `/query/profile` body that runs a logged query again: its query, and
+/// the sort, limit and count it was evaluated with — the ones that decide how
+/// (spec-slow-log "Replaying a query"). An error names why an entry cannot be
+/// replayed: not a query, or a query cut short.
+pub fn replay_body(entry: &Entry) -> Result<serde_json::Value, String> {
+    let context = |key: &str| entry.context.iter().find(|(k, _)| k == key).map(|(_, v)| v);
+    let Some(text) = context("query") else {
+        return Err(format!("the entry of '{}' records no query to replay", entry.op));
+    };
+    let query: serde_json::Value = serde_json::from_str(text).map_err(|_| {
+        "the logged query was not kept whole (too long, or logged before queries were), \
+         so it cannot be replayed"
+            .to_string()
+    })?;
+    let mut body = serde_json::json!({ "query": query });
+    if let Some(sort) = context("sort").and_then(|s| serde_json::from_str(s).ok()) {
+        body["sort"] = sort;
+    }
+    if let Some(limit) = context("limit").and_then(|l| l.parse::<u64>().ok()) {
+        body["limit"] = limit.into();
+    }
+    if context("count").is_some_and(|c| c == "true") {
+        body["count"] = true.into();
+    }
+    Ok(body)
 }
 
 /// `2026-09-09 14:03:22` — the ISO form without the `T` and the `Z`, which is
@@ -149,6 +189,50 @@ mod tests {
         e.phases.iter_mut().for_each(|p| p.reads = 0);
         let lines = render(&e);
         assert!(!lines.iter().any(|l| l.contains("keys")), "{lines:#?}");
+    }
+
+    #[test]
+    fn test_a_logged_query_replays_with_its_sort_limit_and_count() {
+        let mut e = Entry::new("daemon", "POST /repos/:repo/query", 0, 4820);
+        e.note("query", r#"{"type":"is_present","field":"rating"}"#);
+        e.note("sort", r#"[{"field":"rating","order":"desc"}]"#);
+        e.note("limit", "50");
+        e.note("count", "true");
+        let body = replay_body(&e).unwrap();
+        assert_eq!(body["query"]["field"], "rating");
+        assert_eq!(body["sort"][0]["order"], "desc");
+        assert_eq!(body["limit"], 50);
+        assert_eq!(body["count"], true);
+    }
+
+    #[test]
+    fn test_a_query_logged_without_limit_or_count_replays_without_them() {
+        let mut e = Entry::new("daemon", "POST /repos/:repo/query", 0, 4820);
+        e.note("query", r#"{"type":"is_present","field":"rating"}"#);
+        let body = replay_body(&e).unwrap();
+        assert!(body.get("limit").is_none() && body.get("count").is_none(), "{body}");
+    }
+
+    #[test]
+    fn test_a_query_cut_short_cannot_be_replayed() {
+        // An entry from before queries were kept whole, or a giant one.
+        let mut e = Entry::new("daemon", "POST /repos/:repo/query", 0, 4820);
+        e.note("query", r#"{"type":"or","operands":[{"type":"eq","fie"#);
+        let err = replay_body(&e).unwrap_err();
+        assert!(err.contains("whole"), "{err}");
+        let err = replay_body(&Entry::new("daemon", "watcher.flush", 0, 1)).unwrap_err();
+        assert!(err.contains("query"), "{err}");
+    }
+
+    #[test]
+    fn test_a_long_context_value_is_cut_for_reading() {
+        // A query is kept whole to be replayed; printed whole, it would be
+        // the only thing on the screen. `--json` has it all.
+        let mut e = entry();
+        e.note("query", "x".repeat(5_000));
+        let line = render(&e).into_iter().find(|l| l.trim_start().starts_with("query")).unwrap();
+        assert!(line.chars().count() < 300, "{} chars", line.chars().count());
+        assert!(line.ends_with('…'), "{line}");
     }
 
     #[test]

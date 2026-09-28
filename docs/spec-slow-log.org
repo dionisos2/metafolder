@@ -70,7 +70,10 @@ One JSON object per line (JSONL), written when the operation ends:
 - =phases= — the breakdown, see below.
 - =context= — free-form string pairs, in insertion order. Whatever the site
   knows that a reader would ask for next: the query, the number of results, the
-  field being written, the number of events in a flush.
+  field being written, the number of events in a flush. A query is kept
+  *whole* (up to 64 KiB), with the =sort=, =limit= and =count= it was
+  evaluated with, so that the entry can be replayed (see "Replaying a
+  query"); =mf slow= cuts it for reading, =--json= does not.
 
 ** Phases
 
@@ -225,6 +228,7 @@ slowdown deliberately.
 
 #+BEGIN_SRC
 mf slow [list [--limit <n>] [--since <duration>] [--op <substring>] [--json]]
+mf slow replay [--at <at_ms> | -q <query> [-s]] [--json]
 mf slow clear [--yes]
 #+END_SRC
 
@@ -250,6 +254,35 @@ phases indented by depth:
 
 =mf slow clear= asks for confirmation unless =--yes= is given, like every other
 destructive CLI verb.
+
+* Replaying a query
+
+An entry says where the time went *then*; the next question is whether it
+still goes there — after a fix, on a warm cache, on another machine — and
+answering it by hand meant copying the query out of the entry into a tool that
+opens the store, which the daemon holds locked.
+
+#+BEGIN_SRC
+POST /repos/:repo/query/profile      (the body of POST /repos/:repo/query)
+#+END_SRC
+
+runs the query exactly as =/query= does and answers ={"entry": <entry>}= — its
+phases, their time and their reads, its context (=results=, =query=…) —
+*whatever it cost*, instead of its results. The replay is not itself logged
+(=slowlog::discard=): a slow query replayed is as slow, and not news. It is
+additive: no =API_VERSION= change.
+
+=mf slow replay= sends it the newest logged query, or the one whose =at_ms= is
+=--at=, rebuilt from the entry's context (query, sort, limit, count); or, with
+=-q= (=-s= for simplified text), any query, as the first page of a list asks
+for it (=limit= 100 with its count). It prints the entry as =mf slow= prints
+one. An entry whose query was not kept whole — longer than 64 KiB, or logged
+before queries were kept whole — cannot be replayed, and says so.
+
+The replay measures the query *now*: a =wait:conn= that dominated the logged
+entry and is absent from the replay was the diagnosis — something else held
+the repository — and a phase whose reads did not change while its time did
+waited on the disk or the machine, not on the query.
 
 * The GUI side
 

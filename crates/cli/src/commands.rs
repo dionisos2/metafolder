@@ -2778,6 +2778,56 @@ pub fn slow_list(
     Ok(0)
 }
 
+/// `mf slow replay` — runs a query again through `POST /query/profile` and
+/// prints its breakdown as `mf slow` prints an entry: the newest logged query,
+/// the one logged at `at`, or the one typed with `-q` (spec-slow-log
+/// "Replaying a query").
+pub fn slow_replay(
+    ctx: &Ctx,
+    at: Option<i64>,
+    query: Option<&str>,
+    simplified: bool,
+    json: bool,
+) -> Result<i32, CliError> {
+    let base = ctx.repo_base()?;
+    let body = match query {
+        Some(text) => {
+            let text = if simplified { expand_simplified(text)? } else { text.to_string() };
+            // The page a list asks for first, with its count.
+            serde_json::json!({ "query": parse_dsl(&text)?, "limit": 100, "count": true })
+        }
+        None => {
+            let limit = metafolder_core::slowlog::MAX_READ_LIMIT.to_string();
+            let listed = ctx.client.get(&format!("{base}/slow"), &[("limit", limit)])?;
+            let entries: Vec<metafolder_core::slowlog::Entry> =
+                serde_json::from_value(listed["entries"].clone())
+                    .map_err(|e| CliError::Op(format!("unexpected slow-log response: {e}")))?;
+            let entry = entries
+                .iter()
+                .filter(|e| e.op.ends_with("/query"))
+                .find(|e| at.is_none_or(|at| e.at_ms == at))
+                .ok_or_else(|| {
+                    CliError::Op(match at {
+                        Some(at) => format!("no logged query started at {at}"),
+                        None => "no query in the slow-operation log".into(),
+                    })
+                })?;
+            crate::slow::replay_body(entry).map_err(CliError::Op)?
+        }
+    };
+    let answer = ctx.client.post(&format!("{base}/query/profile"), &body)?;
+    let entry: metafolder_core::slowlog::Entry = serde_json::from_value(answer["entry"].clone())
+        .map_err(|e| CliError::Op(format!("unexpected profile response: {e}")))?;
+    if json {
+        println!("{}", serde_json::to_string(&entry).unwrap_or_default());
+    } else {
+        for line in crate::slow::render(&entry) {
+            println!("{line}");
+        }
+    }
+    Ok(0)
+}
+
 /// `mf slow clear` — empties the log, so the next reproduction starts clean.
 pub fn slow_clear(ctx: &Ctx, yes: bool) -> Result<i32, CliError> {
     let base = ctx.repo_base()?;

@@ -4159,6 +4159,47 @@ fn test_slow_lists_the_log_newest_first_and_clears_it() {
     assert!(out.stdout.contains("Nothing has been slow"), "{}", out.stdout);
 }
 
+#[test]
+fn test_slow_replay_runs_a_logged_query_again_and_shows_where_it_goes() {
+    use metafolder_core::slowlog::{self, Entry};
+
+    let (repo, root) = init_repo("slow-replay");
+    create_metarecord(&repo, &["rating:int=5"]);
+    let dir = slowlog::slow_dir(&root.join(".metafolder").join("internal"));
+    let logged = |at: i64, query: &str| {
+        let mut e = Entry::new("daemon", "POST /repos/:repo/query", at, 4820);
+        e.note("query", query);
+        e.note("limit", "10");
+        e.note("count", "true");
+        e
+    };
+    let older = r#"{"type":"is_present","field":"rating"}"#;
+    let newer = r#"{"type":"is_present","field":"nothing_has_this"}"#;
+    slowlog::Sink::new(&dir, "daemon").append(&logged(1_757_426_600_000, older));
+    slowlog::Sink::new(&dir, "daemon").append(&logged(1_757_426_602_000, newer));
+
+    // The newest logged query by default: its phases, run now.
+    let out = mf(&["-u", &repo, "slow", "replay"]);
+    assert_ok(&out);
+    assert!(out.stdout.contains("index.evaluate"), "{}", out.stdout);
+    assert!(out.stdout.contains("results   0"), "the newest: {}", out.stdout);
+
+    // Another one by its start time, as `mf slow` lists it.
+    let out = mf(&["-u", &repo, "slow", "replay", "--at", "1757426600000"]);
+    assert_ok(&out);
+    assert!(out.stdout.contains("results   1"), "the older: {}", out.stdout);
+
+    // Or any query, typed.
+    let out = mf(&["-u", &repo, "slow", "replay", "-q", "rating > 3", "--json"]);
+    assert_ok(&out);
+    let entry: Entry = serde_json::from_str(out.stdout.trim()).expect(&out.stdout);
+    assert!(entry.phases.iter().any(|p| p.name == "index.evaluate"), "{entry:?}");
+
+    // The replays added nothing to the log.
+    let out = mf(&["-u", &repo, "slow", "list", "--json"]);
+    assert_eq!(out.stdout.lines().count(), 2, "{}", out.stdout);
+}
+
 // ── `mf log revert` (spec-event-log "mf revert") ──────────────────────────────
 
 #[tokio::test(flavor = "current_thread")]

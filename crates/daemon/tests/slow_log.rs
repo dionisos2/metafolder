@@ -230,6 +230,56 @@ async fn test_a_read_is_held_to_the_read_threshold_and_a_write_is_not() {
 }
 
 #[tokio::test]
+async fn test_a_logged_query_keeps_what_replaying_it_needs() {
+    // A generated query runs to kilobytes; one cut at 200 characters cannot be
+    // run again, and neither can one without its sort, its limit, its count.
+    let f = fixture("replayable", 1).await;
+    let operands: Vec<Value> = (0..30)
+        .map(|i| json!({"type": "eq", "field": "title", "value": {"type": "string", "value": format!("t{i}")}}))
+        .collect();
+    let query = json!({"type": "or", "operands": operands});
+    let sort = json!([{"field": "title", "order": "desc"}]);
+    let (status, _) = f
+        .while_busy(
+            "POST",
+            &format!("/repos/{}/query", f.repo),
+            Some(json!({"query": query, "sort": sort, "limit": 10, "count": true})),
+            &[],
+        )
+        .await;
+    assert_eq!(status, StatusCode::OK);
+    let entry = &f.entries()[0];
+    let logged: Value = serde_json::from_str(context(entry, "query").unwrap()).unwrap();
+    assert_eq!(logged, query, "the whole query");
+    let logged_sort: Value = serde_json::from_str(context(entry, "sort").unwrap()).unwrap();
+    assert_eq!(logged_sort, sort);
+    assert_eq!(context(entry, "limit"), Some("10"));
+    assert_eq!(context(entry, "count"), Some("true"));
+}
+
+#[tokio::test]
+async fn test_a_query_profile_returns_its_breakdown_and_is_not_logged() {
+    // `mf slow replay`: the phases of a query now, whatever it costs, without
+    // adding the replay to the log it came from.
+    let f = fixture("profile", 1).await;
+    let (status, body) = f
+        .while_busy(
+            "POST",
+            &format!("/repos/{}/query/profile", f.repo),
+            Some(json!({"query": {"type": "is_present", "field": "mfr_path"}, "limit": 10, "count": true})),
+            &[],
+        )
+        .await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    let entry: slowlog::Entry = serde_json::from_value(body["entry"].clone()).unwrap();
+    assert_eq!(entry.op, "POST /repos/:repo/query");
+    assert!(phase(&entry, "wait:conn").is_some_and(|p| p.ms >= 100), "{entry:?}");
+    assert!(phase(&entry, "index.evaluate").is_some_and(|p| p.reads > 0), "{entry:?}");
+    assert_eq!(context(&entry, "results"), Some("1"), "the root: {entry:?}");
+    assert!(f.entries().is_empty(), "nothing logged: {:?}", f.entries());
+}
+
+#[tokio::test]
 async fn test_a_quick_operation_is_not_logged() {
     // The log's value is that everything in it is worth reading.
     let f = fixture("quick", slowlog::DEFAULT_THRESHOLD_MS).await;
