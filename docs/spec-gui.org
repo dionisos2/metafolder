@@ -176,7 +176,7 @@ Standard variables:
 | Key                | Type                          | Description                        |
 |--------------------+-------------------------------+------------------------------------|
 | =active_repo=      | =string \vert null=           | UUID of the active repository      |
-| =selected_paths=   | =string[]=                    | Absolute paths of the highlighted filesystem metarecord (usually one; multiple if the metarecord has several =mfr_path= values) |
+| =selected_paths=   | =string[]=                    | Absolute path of the highlighted filesystem metarecord — at most one entry, a metarecord holding one =mfr_path= position (the variable stays a list: scripts read it as one) |
 | =selected_metarecord=   | =\{uuid, repo\} \vert null=   | Metadata metarecord for the highlighted path (null if untracked) |
 | =selected_metarecords= | =string[]=                    | UUIDs of the /checked/ metarecords — the multi-selection, kept across list changes and shared by every panel of the workspace (see [[*The checked selection]]) |
 | =selected_log_entry= | =\{repo, rev_id, op_id\} \vert null= | Revision under the =log= panel's cursor, with the operation when the cursor is on one (=op_id= null otherwise); read by =log-detail= |

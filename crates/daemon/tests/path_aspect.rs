@@ -51,8 +51,8 @@ impl Fixture {
 
 /// A file tree under the `""` root, with names that sort around the
 /// separator (`music-extra`, `musicals`, `music!`), a record whose file is
-/// gone, and a tag forest under a named root where `shared` hangs under `red`
-/// (its first position) and under `blue`, with `leaf` below it.
+/// gone, and a tag forest under a named root: `shared` under `red`, with
+/// `leaf` below it, and `blue` beside `red`.
 fn fixture() -> Fixture {
     let mut f = Fixture::new();
     let root = f.at("mfr_path", &[(None, "")]);
@@ -73,7 +73,8 @@ fn fixture() -> Fixture {
     let tags = f.at("tag", &[(None, "tags")]);
     let red = f.at("tag", &[(Some(tags), "red")]);
     let blue = f.at("tag", &[(Some(tags), "blue")]);
-    let shared = f.at("tag", &[(Some(red), "shared"), (Some(blue), "shared")]);
+    f.at("tag", &[(Some(blue), "b")]);
+    let shared = f.at("tag", &[(Some(red), "shared")]);
     f.at("tag", &[(Some(shared), "leaf")]);
     f.at("tag", &[(None, "other")]);
     f
@@ -147,23 +148,21 @@ fn path_comparisons_agree_on_every_engine() {
 }
 
 #[test]
-fn an_exact_path_is_one_node_even_through_a_second_position() {
+fn an_exact_path_is_one_node() {
     let mut f = fixture();
     assert_eq!(f.run(&cmp(eq, "mfr_path", "/music/jazz/a.mp3")).len(), 1);
     assert_eq!(f.run(&cmp(eq, "mfr_path", "")).len(), 1);
-    // `shared` is reached under `blue` too; what hangs below it is not.
-    assert_eq!(f.run(&cmp(eq, "tag", "tags/blue/shared")).len(), 1);
-    assert!(f.run(&cmp(eq, "tag", "tags/blue/shared/leaf")).is_empty());
     assert_eq!(f.run(&cmp(eq, "tag", "tags/red/shared/leaf")).len(), 1);
+    assert!(f.run(&cmp(eq, "tag", "tags/blue/shared")).is_empty());
 }
 
 #[test]
-fn a_differing_path_keeps_a_node_with_another_one() {
+fn a_differing_path_is_every_other_node() {
     let mut f = fixture();
-    // Every tag node but the root; `shared` stays, its other path differs.
-    let differing = f.run(&cmp(neq, "tag", "tags/blue/shared"));
-    assert_eq!(differing.len(), 6);
-    assert_eq!(f.run(&cmp(neq, "tag", "tags")).len(), 5);
+    // Seven tag nodes: all but the one at the path, or all when none is.
+    assert_eq!(f.run(&cmp(neq, "tag", "tags/red/shared")).len(), 6);
+    assert_eq!(f.run(&cmp(neq, "tag", "tags")).len(), 6);
+    assert_eq!(f.run(&cmp(neq, "tag", "tags/blue/shared")).len(), 7);
 }
 
 #[test]

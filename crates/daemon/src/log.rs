@@ -1709,6 +1709,7 @@ impl<'c> Writer<'c> {
         // Repeated (name, value) pairs are written once (spec-data-model
         // "No duplicate rows"); the record returned mirrors what is stored.
         let fields = collapse_duplicate_fields(fields);
+        validate_one_position_each(uuid, fields.iter().map(|f| (f.name.as_str(), &f.value)))?;
         for f in &fields {
             self.validate_tree_ref(uuid, &f.name, &f.value)?;
         }
@@ -1768,6 +1769,7 @@ impl<'c> Writer<'c> {
     /// every old row is dropped, including reserved ones not in `fields`.
     pub fn set_record(&mut self, uuid: Uuid, fields: Vec<Field>) -> Result<MetaRecord> {
         let fields = collapse_duplicate_fields(fields); // spec-data-model "No duplicate rows"
+        validate_one_position_each(uuid, fields.iter().map(|f| (f.name.as_str(), &f.value)))?;
         let version_before = self.current_version(uuid)?; // errors NotFound if absent
         let before = self.tx.rows(uuid)?;
         self.tx.delete_rows(uuid, None)?;
@@ -1841,6 +1843,7 @@ impl<'c> Writer<'c> {
         name: &str,
         values: Vec<Value>,
     ) -> Result<Vec<i64>> {
+        validate_one_position_each(uuid, values.iter().map(|v| (name, v)))?;
         for value in &values {
             self.validate_tree_ref(uuid, name, value)?;
             self.validate_value_type(name, value)?;
@@ -1872,6 +1875,7 @@ impl<'c> Writer<'c> {
     /// is logged, the version does not move, and the row that already holds it
     /// is reported as [`Appended::AlreadyPresent`].
     pub fn append_field(&mut self, uuid: Uuid, name: &str, value: Value) -> Result<Appended> {
+        self.validate_one_position(uuid, name, &value, None)?;
         self.validate_tree_ref(uuid, name, &value)?;
         self.validate_value_type(name, &value)?;
         let twin = self.tx.rows_named(uuid, name)?.into_iter().find(|r| r.value == value);
@@ -1892,6 +1896,7 @@ impl<'c> Writer<'c> {
     pub fn replace_field(&mut self, uuid: Uuid, field_id: i64, value: Value) -> Result<()> {
         let old = self.get_owned_row(uuid, field_id)?;
         let name = old.name.clone();
+        self.validate_one_position(uuid, &name, &value, Some(field_id))?;
         self.validate_tree_ref(uuid, &name, &value)?;
         self.validate_value_type(&name, &value)?;
         self.reject_duplicate(uuid, field_id, &name, &value)?;
@@ -1940,6 +1945,7 @@ impl<'c> Writer<'c> {
         value: Value,
     ) -> Result<()> {
         let old = self.get_owned_row(uuid, field_id)?;
+        self.validate_one_position(uuid, new_name, &value, Some(field_id))?;
         self.validate_tree_ref(uuid, new_name, &value)?;
         self.validate_value_type(new_name, &value)?;
         self.reject_duplicate(uuid, field_id, new_name, &value)?;
@@ -2008,7 +2014,10 @@ impl<'c> Writer<'c> {
                 // other write; a violating value is demoted to the Nothing
                 // sentinel (and reported) so the retype as a whole still succeeds.
                 if matches!(new_value, Value::TreeRef { .. }) {
-                    if let Err(e) = self.validate_tree_ref(uuid, &row.name, &new_value) {
+                    let valid = self
+                        .validate_one_position(uuid, &row.name, &new_value, Some(row.id))
+                        .and_then(|()| self.validate_tree_ref(uuid, &row.name, &new_value));
+                    if let Err(e) = valid {
                         if e.downcast_ref::<DomainError>().is_some() {
                             new_value = Value::Nothing;
                             fell_back = true;
@@ -2249,6 +2258,30 @@ impl<'c> Writer<'c> {
         .into()
     }
 
+    /// A metarecord holds at most one position in a forest (spec-data-model
+    /// "One position per forest"): a `tree_ref` value joins `uuid`'s rows of
+    /// `name` only if no row staying beside it — every one but `replaced` — is
+    /// a position already, other than this very value (an append of it is a
+    /// no-op).
+    fn validate_one_position(
+        &self,
+        uuid: Uuid,
+        name: &str,
+        value: &Value,
+        replaced: Option<i64>,
+    ) -> Result<()> {
+        if !matches!(value, Value::TreeRef { .. }) {
+            return Ok(());
+        }
+        let taken = self.tx.rows_named(uuid, name)?.into_iter().any(|r| {
+            Some(r.id) != replaced && matches!(r.value, Value::TreeRef { .. }) && r.value != *value
+        });
+        if taken {
+            return Err(second_position(uuid, name));
+        }
+        Ok(())
+    }
+
     /// For TreeRef values: the parent must be null (root) or an existing metarecord
     /// carrying a TreeRef of the same field name; the write must not create a
     /// cycle nor exceed [`MAX_TREE_DEPTH`] (spec-main invariants).
@@ -2315,6 +2348,34 @@ impl<'c> Writer<'c> {
         }
         Ok(())
     }
+}
+
+/// [`Writer::validate_one_position`] over the whole row set a write leaves on
+/// `uuid` — a creation, an overwrite, a multi-valued set: at most one distinct
+/// `tree_ref` value per name.
+fn validate_one_position_each<'v>(
+    uuid: Uuid,
+    rows: impl Iterator<Item = (&'v str, &'v Value)>,
+) -> Result<()> {
+    let mut seen: HashMap<&str, &Value> = HashMap::new();
+    for (name, value) in rows {
+        if !matches!(value, Value::TreeRef { .. }) {
+            continue;
+        }
+        match seen.insert(name, value) {
+            Some(other) if other != value => return Err(second_position(uuid, name)),
+            _ => {}
+        }
+    }
+    Ok(())
+}
+
+fn second_position(uuid: Uuid, name: &str) -> anyhow::Error {
+    DomainError::BadRequest(format!(
+        "metarecord {uuid} would hold two positions in the '{name}' forest: a \
+         metarecord has one position per forest (set the field to move it)"
+    ))
+    .into()
 }
 
 /// The outcome of [`Writer::append_field`]: either the row it wrote, or the row

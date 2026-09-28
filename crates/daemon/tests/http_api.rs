@@ -669,6 +669,26 @@ async fn test_tree_ref_validation_is_bad_request() {
 }
 
 #[tokio::test]
+async fn test_a_second_tree_position_is_bad_request() {
+    // spec-data-model "One position per forest".
+    let (app, repo, _root) = app_with_repo("second_position").await;
+    let tree = |parent: Option<&str>, name: &str| json!({"name": "tag", "value": {"type": "tree_ref", "value": {"parent": parent, "name": name}}});
+    let uuid = |v: &Value| v["uuid"].as_str().unwrap().to_string();
+    let tags = uuid(&create_metarecord(&app, &repo, json!([tree(None, "tags")])).await);
+    let red = uuid(&create_metarecord(&app, &repo, json!([tree(Some(&tags), "red")])).await);
+    let blue = uuid(&create_metarecord(&app, &repo, json!([tree(Some(&tags), "blue")])).await);
+    let (status, body) = request(
+        &app,
+        "POST",
+        &format!("/repos/{repo}/metarecords"),
+        Some(json!({"fields": [tree(Some(&red), "x"), tree(Some(&blue), "x")]})),
+    )
+    .await;
+    assert_eq!(status, StatusCode::BAD_REQUEST, "got: {body}");
+    assert!(body["error"].as_str().unwrap().contains("one position per forest"), "{body}");
+}
+
+#[tokio::test]
 async fn test_tree_resolve_endpoint() {
     let (app, repo, root_dir) = app_with_repo("treeresolve").await;
     // A custom (non-reserved) TreeRef field: the endpoint is general, mfr_path

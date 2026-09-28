@@ -100,30 +100,6 @@ fn test_paths_of_root_level_value() {
 }
 
 #[test]
-fn test_paths_of_multi_map() {
-    // A metarecord at two positions in the same forest. `mfr_path` is
-    // single-valued (one path per metarecord), so a genuinely multi-positioned
-    // field is a user tree_ref like a tag's `path`; the resolution is generic.
-    let mut conn = test_conn();
-    let root = tree_entry(&mut conn, "path", None, "");
-    let dir = tree_entry(&mut conn, "path", Some(root), "dir");
-    let mut w = Writer::begin(&mut conn, None).unwrap();
-    let m = w
-        .create_metarecord(vec![
-            Field::new("path", Value::TreeRef { parent: Some(root), name: "a.txt".into() }),
-            Field::new("path", Value::TreeRef { parent: Some(dir), name: "b.txt".into() }),
-        ])
-        .unwrap();
-    w.commit().unwrap();
-    let mut cache = TreeCache::new(false);
-    let mut paths = cache.paths_of(&conn, "path", m.uuid).unwrap();
-    paths.sort();
-    // The empty-named root contributes a leading "/" (this forest is
-    // filesystem-shaped: root name = "").
-    assert_eq!(paths.iter().map(String::as_str).collect::<Vec<_>>(), vec!["/a.txt", "/dir/b.txt"]);
-}
-
-#[test]
 fn test_paths_of_skips_stale_parent() {
     let mut conn = test_conn();
     let root = tree_entry(&mut conn, "mfr_path", None, "");
@@ -154,21 +130,13 @@ fn test_populate_from_forest_matches_db_populate() {
     use metafolder_daemon::index::RepoIndex;
     // Populating from the rows the index build collects (in `field.id` order)
     // must yield the same forest as the DB scan (`load_tree_forest`, ordered by
-    // field_name, metarecord_uuid, id) — including a multi-position metarecord,
-    // where per-uuid position order matters.
+    // field_name, metarecord_uuid, id).
     let mut conn = test_conn();
     let (root, music, jazz, file) = build_tree(&mut conn);
     let rock = tree_entry(&mut conn, "mfr_path", Some(music), "rock");
-    // A second forest with a two-position metarecord.
+    // A second forest.
     let top = tree_entry(&mut conn, "path", None, "top");
-    let mut w = Writer::begin(&mut conn, None).unwrap();
-    let m = w
-        .create_metarecord(vec![
-            Field::new("path", Value::TreeRef { parent: Some(top), name: "a".into() }),
-            Field::new("path", Value::TreeRef { parent: Some(top), name: "b".into() }),
-        ])
-        .unwrap();
-    w.commit().unwrap();
+    let m = tree_entry(&mut conn, "path", Some(top), "a");
 
     let mut from_db = TreeCache::new(false);
     from_db.populate(&conn).unwrap();
@@ -178,7 +146,7 @@ fn test_populate_from_forest_matches_db_populate() {
     let mut from_scan = TreeCache::new(false);
     from_scan.populate_from_forest(forest);
 
-    for uuid in [root, music, jazz, file, rock, top, m.uuid] {
+    for uuid in [root, music, jazz, file, rock, top, m] {
         for field in ["mfr_path", "path"] {
             let mut pa = from_db.paths_of(&conn, field, uuid).unwrap();
             let mut pb = from_scan.paths_of(&conn, field, uuid).unwrap();
@@ -907,83 +875,6 @@ fn test_two_siblings_swapping_names_in_one_revision() {
     assert_matches_fresh(&conn, &mut cache);
 }
 
-/// A tag forest — `mfr_path` is single-valued (a metarecord tracks one path), so
-/// multi-map positions are tested on an ordinary user field. Returns
-/// `(cache, animals, cat)` with `cat` under `animals`.
-fn warm_tags(conn: &mut Connection) -> (TreeCache, Uuid, Uuid) {
-    let animals = tree_entry(conn, "tag", None, "animals");
-    let cat = tree_entry(conn, "tag", Some(animals), "cat");
-    let mut cache = TreeCache::new(false);
-    cache.populate(conn).unwrap();
-    (cache, animals, cat)
-}
-
-#[test]
-fn test_a_cell_gaining_a_second_position_keeps_its_subtree() {
-    // A multi-map TreeRef: the metarecord is in the forest twice. A fresh load
-    // hangs the children under the *first* position, so settling must too.
-    let mut conn = test_conn();
-    let (mut cache, animals, cat) = warm_tags(&mut conn);
-    let other = tree_entry(&mut conn, "tag", None, "pets");
-    cache.populate(&conn).unwrap();
-
-    let mut w = Writer::begin(&mut conn, None).unwrap();
-    w.append_field(animals, "tag", Value::TreeRef { parent: Some(other), name: "beasts".into() })
-        .unwrap();
-    assert!(commit_and_settle(w, &mut cache));
-    assert_eq!(cache.paths_of(&conn, "tag", animals).unwrap(), vec!["animals", "pets/beasts"]);
-    assert_eq!(
-        cache.path_of(&conn, "tag", cat).unwrap(),
-        Some("animals/cat".to_string()),
-        "the children stay under the first position"
-    );
-    assert_matches_fresh(&conn, &mut cache);
-}
-
-#[test]
-fn test_a_cell_losing_its_second_position_keeps_its_subtree() {
-    let mut conn = test_conn();
-    let (mut cache, animals, cat) = warm_tags(&mut conn);
-    let other = tree_entry(&mut conn, "tag", None, "pets");
-    cache.populate(&conn).unwrap();
-    let mut w = Writer::begin(&mut conn, None).unwrap();
-    w.append_field(animals, "tag", Value::TreeRef { parent: Some(other), name: "beasts".into() })
-        .unwrap();
-    commit_and_settle(w, &mut cache);
-
-    // Back to a single position.
-    let rows = db::get_field_rows_named(&conn, animals, "tag").unwrap();
-    let second = rows.last().unwrap().id;
-    let mut w = Writer::begin(&mut conn, None).unwrap();
-    w.delete_field(animals, second).unwrap();
-    assert!(commit_and_settle(w, &mut cache));
-    assert_eq!(cache.paths_of(&conn, "tag", animals).unwrap(), vec!["animals"]);
-    assert_eq!(cache.path_of(&conn, "tag", cat).unwrap(), Some("animals/cat".to_string()));
-    assert_matches_fresh(&conn, &mut cache);
-}
-
-#[test]
-fn test_the_first_position_moving_carries_the_subtree() {
-    // The children hang under position 0; when *that* position moves, they must
-    // move with it, and the second position must stay where it is.
-    let mut conn = test_conn();
-    let (mut cache, animals, cat) = warm_tags(&mut conn);
-    let other = tree_entry(&mut conn, "tag", None, "pets");
-    cache.populate(&conn).unwrap();
-    let mut w = Writer::begin(&mut conn, None).unwrap();
-    w.append_field(animals, "tag", Value::TreeRef { parent: Some(other), name: "beasts".into() })
-        .unwrap();
-    commit_and_settle(w, &mut cache);
-
-    let rows = db::get_field_rows_named(&conn, animals, "tag").unwrap();
-    let first = rows.first().unwrap().id;
-    let mut w = Writer::begin(&mut conn, None).unwrap();
-    w.replace_field(animals, first, Value::TreeRef { parent: None, name: "fauna".into() }).unwrap();
-    assert!(commit_and_settle(w, &mut cache));
-    assert_eq!(cache.path_of(&conn, "tag", cat).unwrap(), Some("fauna/cat".to_string()));
-    assert_matches_fresh(&conn, &mut cache);
-}
-
 #[test]
 fn test_an_incomplete_cache_asks_for_a_rebuild() {
     let mut conn = test_conn();
@@ -1104,53 +995,4 @@ fn test_a_cell_settled_before_its_parents_still_lands() {
         .unwrap();
     assert!(commit_and_settle(w, &mut cache));
     assert_matches_fresh(&conn, &mut cache);
-}
-
-// ── Multi-position count ──────────────────────────────────────────────────────
-
-/// How many metarecords hold several positions in a forest — what tells a
-/// sorted walk whether it may start below a node (spec-indexing "A page costs
-/// the page") — follows every kind of upkeep, and agrees with a fresh load.
-#[test]
-fn the_multi_position_count_follows_the_upkeep() {
-    use metafolder_daemon::log::{TreeOp, TreePos, UNKNOWN_ROW};
-    let mut conn = test_conn();
-    let root = tree_entry(&mut conn, "loc", None, "");
-    let a = tree_entry(&mut conn, "loc", Some(root), "a");
-    let b = tree_entry(&mut conn, "loc", Some(root), "b");
-    let x = Uuid::new_v4();
-    let mut cache = TreeCache::new(false);
-    cache.populate(&conn).unwrap();
-    assert_eq!(cache.multi_positioned("loc"), 0);
-
-    let pos = |parent: Uuid, name: &str| TreePos {
-        row: UNKNOWN_ROW,
-        parent: Some(parent),
-        name: TreeName::from(name.to_string()),
-    };
-    let set = |positions: Vec<TreePos>| TreeOp::Set { field: "loc".into(), uuid: x, positions };
-    assert!(cache.apply_ops(&[set(vec![pos(a, "x"), pos(b, "x")])]));
-    assert_eq!(cache.multi_positioned("loc"), 1);
-    assert!(cache.apply_ops(&[set(vec![pos(a, "x")])]));
-    assert_eq!(cache.multi_positioned("loc"), 0);
-    assert!(cache.apply_ops(&[TreeOp::Add {
-        field: "loc".into(),
-        uuid: x,
-        positions: vec![pos(b, "x")]
-    }]));
-    assert_eq!(cache.multi_positioned("loc"), 1);
-    cache.apply_remove("loc", x);
-    assert_eq!(cache.multi_positioned("loc"), 0);
-
-    // A load counts what the database holds.
-    let mut w = Writer::begin(&mut conn, None).unwrap();
-    w.create_metarecord(vec![
-        Field::new("loc", Value::TreeRef { parent: Some(a), name: "y".into() }),
-        Field::new("loc", Value::TreeRef { parent: Some(b), name: "y".into() }),
-    ])
-    .unwrap();
-    w.commit().unwrap();
-    cache.populate(&conn).unwrap();
-    assert_eq!(cache.multi_positioned("loc"), 1);
-    assert_eq!(cache.multi_positioned("mfr_path"), 0);
 }

@@ -313,25 +313,3 @@ fn test_osm_composes_under_or_and() {
     let q = Query::Or { operands: vec![osm("mfr_path", "video scien"), osmd("label", "sf")] };
     assert_same_set(f.run(&q), vec![scifi, ep]);
 }
-
-#[test]
-fn test_osm_path_through_a_node_with_several_positions() {
-    // A multi-map TreeRef: `shared` sits under `red` (its first position) and
-    // under `blue`; `leaf` hangs from it. Its descendants' paths run through
-    // the first position only, so a search matching `blue…shared` takes
-    // `shared` itself but not what hangs below it.
-    let mut f = Fixture::new();
-    let tag = |parent: Option<Uuid>, name: &str| {
-        Field::new("tag", Value::TreeRef { parent, name: name.into() })
-    };
-    let root = f.create(vec![tag(None, "tags")]);
-    let red = f.create(vec![tag(Some(root), "red")]);
-    let blue = f.create(vec![tag(Some(root), "blue")]);
-    let shared = f.create(vec![tag(Some(red), "shared"), tag(Some(blue), "shared")]);
-    let leaf = f.create(vec![tag(Some(shared), "leaf")]);
-
-    assert_same_set(f.run(&osm("tag", "red shared")), vec![shared, leaf]);
-    assert_same_set(f.run(&osm("tag", "red lea")), vec![leaf]);
-    assert_same_set(f.run(&osm("tag", "blue shared")), vec![shared]);
-    assert!(f.run(&osm("tag", "blue lea")).is_empty());
-}

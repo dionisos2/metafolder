@@ -455,7 +455,9 @@ fn test_mfr_path_is_single_valued() {
         )],
     );
 
-    // Appending a second mfr_path is rejected — a metarecord tracks one path.
+    // Appending a second mfr_path is rejected — a metarecord tracks one path
+    // (the Writer's rule for every forest, spec-data-model "One position per
+    // forest"; the storage layer holds `mfr_path` to it on its own too).
     let mut w = Writer::begin(&mut conn, None).unwrap();
     let err = w
         .append_field(
@@ -464,7 +466,7 @@ fn test_mfr_path_is_single_valued() {
             Value::TreeRef { parent: Some(root.uuid), name: "b.mp3".into() },
         )
         .unwrap_err();
-    assert!(err.to_string().to_lowercase().contains("single-valued"), "got: {err}");
+    assert!(err.to_string().contains("one position per forest"), "got: {err}");
     drop(w);
 
     // Creating a metarecord with two mfr_path fields is likewise rejected.
@@ -475,7 +477,7 @@ fn test_mfr_path_is_single_valued() {
             Field::new("mfr_path", Value::TreeRef { parent: Some(root.uuid), name: "y".into() }),
         ])
         .unwrap_err();
-    assert!(err.to_string().to_lowercase().contains("single-valued"), "got: {err}");
+    assert!(err.to_string().contains("one position per forest"), "got: {err}");
 }
 
 // ── Value encoding roundtrip through the field table ──────────────────────────
@@ -1795,8 +1797,7 @@ fn test_a_revision_reports_what_it_did_to_the_forest_in_write_order() {
 
 /// One description per *shape* of operation, and it has to be the right one:
 /// a set replaces the cell, an append and a row deletion name only what they
-/// move. Getting that wrong is invisible on a single-position field and loses
-/// a position on a multi-map one.
+/// move.
 #[test]
 fn test_each_shape_of_operation_says_what_it_did_to_the_forest() {
     use metafolder_daemon::log::TreeOp;
@@ -1812,18 +1813,20 @@ fn test_each_shape_of_operation_says_what_it_did_to_the_forest() {
     w.commit().unwrap();
     assert!(matches!(effects.tree_ops(), [TreeOp::Set { positions, .. }] if positions.len() == 1));
 
-    // An append adds to it.
+    // An append adds to it — to a record with no position yet (a second one
+    // is refused).
+    let c = create(&mut conn, vec![Field::new("note", Value::String("c".into()))]).uuid;
     let mut w = Writer::begin(&mut conn, None).unwrap();
-    w.append_field(a, "p", tree_ref(Some(root), "a3")).unwrap();
+    w.append_field(c, "p", tree_ref(Some(root), "c")).unwrap();
     let effects = w.effects();
     w.commit().unwrap();
     assert!(matches!(effects.tree_ops(), [TreeOp::Add { positions, .. }] if positions.len() == 1));
 
     // Deleting one row takes that position out, and names it.
-    let rows = metafolder_daemon::db::get_field_rows_named(&conn, a, "p").unwrap();
+    let rows = metafolder_daemon::db::get_field_rows_named(&conn, c, "p").unwrap();
     let second = rows.last().unwrap().id;
     let mut w = Writer::begin(&mut conn, None).unwrap();
-    w.delete_field(a, second).unwrap();
+    w.delete_field(c, second).unwrap();
     let effects = w.effects();
     w.commit().unwrap();
     match effects.tree_ops() {

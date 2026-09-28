@@ -1337,29 +1337,3 @@ fn test_sort_tree_ref_orders_by_full_path() {
     reversed.reverse();
     assert_eq!(f.run_sorted(&all, &[sort_desc("mfr_path")]), reversed);
 }
-
-#[test]
-fn test_sort_tree_ref_multimap_uses_min_path_for_asc() {
-    // A metarecord at two locations sorts on its smallest path ascending and on
-    // its largest descending — the multi-map rule, applied to full paths.
-    let mut f = Fixture::new();
-    let root = f.create(vec![Field::new("loc", Value::TreeRef { parent: None, name: "".into() })]);
-    let mk = |f: &mut Fixture, name: &str| {
-        f.create(vec![
-            Field::new("loc", Value::TreeRef { parent: Some(root), name: name.into() }),
-            Field::new("k", s("x")),
-        ])
-    };
-    let a = mk(&mut f, "a");
-    let m = mk(&mut f, "m");
-    // `both` lives at /a/x and /m/x: min path "/a/x" < "/m/…", max "/m/x" > "/a/…".
-    let both = f.create(vec![
-        Field::new("loc", Value::TreeRef { parent: Some(a), name: "x".into() }),
-        Field::new("loc", Value::TreeRef { parent: Some(m), name: "x".into() }),
-        Field::new("k", s("x")),
-    ]);
-
-    let all = Query::Eq { field: "k".into(), value: s("x"), aspect: Aspect::Raw };
-    assert_eq!(f.run_sorted(&all, &[sort_asc("loc")]), vec![a, both, m], "asc: min = /a/x");
-    assert_eq!(f.run_sorted(&all, &[sort_desc("loc")]), vec![both, m, a], "desc: max = /m/x");
-}

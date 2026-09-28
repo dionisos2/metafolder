@@ -798,8 +798,13 @@ impl RepoState {
     /// spec-storage increment 5); empty when healthy.
     pub fn check_store(&self) -> Result<Vec<String>, ApiError> {
         let conn = self.conn.lock_recover();
-        crate::store::Begin::check(&conn)
-            .map_err(|e| ApiError::internal(format!("the check could not run: {e:#}")))
+        let mut problems = crate::store::Begin::check(&conn)
+            .map_err(|e| ApiError::internal(format!("the check could not run: {e:#}")))?;
+        problems.extend(
+            crate::store::one_position_problems(&**conn)
+                .map_err(|e| ApiError::internal(format!("the check could not run: {e:#}")))?,
+        );
+        Ok(problems)
     }
 
     /// Derives again what the store derives (`mf repo reindex`) — and, on a

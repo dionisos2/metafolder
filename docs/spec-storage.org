@@ -669,7 +669,11 @@ and =MDB_NOMETASYNC= saved almost nothing — one =fsync= dominates either way.
    derives again: the KV store's derived key spaces (=KvStore::reindex=), or
    SQLite's =REINDEX= and then the resident index and forest, rebuilt as a
    load builds them. Both are methods of the store's =Begin= trait, required
-   of every backend, and hold the repository while they run.
+   of every backend, and hold the repository while they run. The check also
+   names, on either backend, the metarecords an older daemon let hold several
+   positions in one forest (spec-data-model "One position per forest",
+   =store::one_position_problems=): the data is not damaged, but the daemon
+   no longer means anything by it.
    *(backup done)* =mf repo backup [--to DIR]= (=POST /repos/:repo/backup=)
    takes a consistent copy of the store while the daemon runs — LMDB's
    compacting hot copy, SQLite's =VACUUM INTO=, both =Begin::backup_to= —

@@ -1474,27 +1474,6 @@ fn tree_ref_sort_without_a_resident_forest_is_unsupported() {
 }
 
 #[test]
-fn tree_ref_sort_with_a_multi_position_directory() {
-    // A directory at two locations: the tree cache links each child under its
-    // parent's *first* position, and the SQL engine's path CTE must pick the
-    // same one — otherwise the two engines order the subtree differently.
-    let mut o = Oracle::new();
-    let root = o.create(vec![tref("loc", None, "root")]);
-    let side = o.create(vec![tref("loc", Some(root), "side")]);
-    let dir = o.create(vec![
-        tref("loc", Some(root), "dir"),
-        tref("loc", Some(side), "dir"),
-        Field::new("k", s("x")),
-    ]);
-    for name in ["a", "b"] {
-        o.create(vec![tref("loc", Some(dir), name), Field::new("k", s("x"))]);
-    }
-    let all = eq("k", s("x"));
-    o.check_paginated_with_roots(&all, &[("loc", true)], 2);
-    o.check_paginated_with_roots(&all, &[("loc", false)], 2);
-}
-
-#[test]
 fn tree_ref_sort_with_a_detached_node() {
     // A node whose parent lost its own TreeRef row. A manual write can no longer
     // produce this (spec-data-model "Referential integrity of a forest"), but a
@@ -1655,13 +1634,10 @@ fn parent_aspect_presence_matches_sql() {
     // `field:parent IS ABSENT` is the forest roots, `IS PRESENT` every node
     // under a real parent (spec-query "Forest roots"). Both are partitions the
     // reverse index already holds, so neither may be declined.
-    let (mut o, [_root, b, _c, _d]) = forest();
+    let (mut o, [_root, _b, _c, _d]) = forest();
     let _second_root = o.create(vec![tref("loc", None, "other")]);
     let _no_loc = o.create(vec![Field::new("kind", s("file"))]);
     let _nothing = o.create(vec![Field::new("loc", Value::Nothing)]);
-    // A multi-position node: a root *and* a child. It satisfies both
-    // predicates, so neither set is the complement of the other.
-    let _multi = o.create(vec![tref("loc", None, "multi"), tref("loc", Some(b), "multi")]);
 
     for q in [
         Query::IsAbsent { field: "loc".into(), aspect: Aspect::Parent },

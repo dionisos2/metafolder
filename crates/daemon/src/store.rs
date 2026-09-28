@@ -991,6 +991,27 @@ pub trait Begin {
     fn backup_to(&self, dir: &std::path::Path) -> Result<()>;
 }
 
+/// The metarecords holding more than one position in a forest, which the
+/// daemon refuses to write since September 2026 but an older one let through
+/// (spec-data-model "One position per forest") — one line each, for
+/// `mf repo check`. Fixed by setting the field to the one position to keep.
+pub fn one_position_problems(store: &dyn Rows) -> Result<Vec<String>> {
+    let mut count: std::collections::BTreeMap<(String, Uuid), usize> = Default::default();
+    for row in store.forest()? {
+        *count.entry((row.field_name, row.uuid)).or_default() += 1;
+    }
+    Ok(count
+        .into_iter()
+        .filter(|(_, n)| *n > 1)
+        .map(|((field, uuid), n)| {
+            format!(
+                "metarecord {uuid} holds {n} positions in the '{field}' forest (one per \
+                 forest): set the field to the one to keep"
+            )
+        })
+        .collect())
+}
+
 /// What a loaded repository holds: its database, whatever the backend.
 pub type Handle = Box<dyn Database + Send>;
 
