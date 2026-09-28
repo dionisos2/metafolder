@@ -9,9 +9,7 @@
 
 use metafolder_core::metarecord::{Field, Value};
 use metafolder_core::query::{Aspect, FollowTarget, OsmMode, Query};
-use metafolder_daemon::index::{
-    collect_path_targets, Eval, PageStrategy, QueryRoots, RepoIndex, SortBy,
-};
+use metafolder_daemon::index::{collect_path_targets, Eval, PageStrategy, QueryRoots, SortBy};
 use metafolder_daemon::log::Writer;
 use metafolder_daemon::query_result::{SortKey, SortOrder};
 use metafolder_daemon::tree_cache::{SortKeys, TreeCache};
@@ -21,7 +19,7 @@ use uuid::Uuid;
 use metafolder_daemon::kvstore::KvStore;
 
 mod common;
-use common::kv::{kv_mirror, with_kv};
+use common::kv::with_kv;
 
 struct Rng(u64);
 
@@ -207,34 +205,6 @@ fn oracle_pages(conn: &KvStore, q: &Query, by: &[(&str, bool)], limit: usize) ->
     pages
 }
 
-/// The index's pages under `strategy`, cursor by cursor.
-fn index_pages(
-    index: &mut RepoIndex,
-    roots: &QueryRoots,
-    q: &Query,
-    by: &[(&str, bool)],
-    limit: usize,
-    strategy: PageStrategy,
-) -> Vec<Vec<Uuid>> {
-    let keys: Vec<SortBy> =
-        by.iter().map(|(f, asc)| SortBy { field: f.to_string(), ascending: *asc }).collect();
-    index.set_page_strategy(strategy);
-    let mut pages = Vec::new();
-    let mut cursor: Option<String> = None;
-    loop {
-        let (page, next) = index
-            .evaluate_page_with_roots(q, &keys, Some(limit), cursor.as_deref(), roots)
-            .unwrap();
-        pages.push(page);
-        match next {
-            Some(c) => cursor = Some(c),
-            None => break,
-        }
-        assert!(pages.len() < 10_000, "runaway pagination");
-    }
-    pages
-}
-
 /// The pages of an evaluator (the KV source's), cursor by cursor.
 fn eval_pages(
     e: &Eval,
@@ -263,9 +233,8 @@ fn eval_pages(
 #[test]
 fn every_page_strategy_gives_the_oracles_pages() {
     let (conn, _dir) = fixture();
-    let mut cache = TreeCache::new(false);
-    let mut index = RepoIndex::build(&conn).unwrap();
-    let (kv, _dir) = kv_mirror(&conn);
+    // As the route prepares a query: the forest is read from the store.
+    let mut cache = TreeCache::new(false).without_forest();
     for q in queries(&conn, &mut cache) {
         for by in sorts() {
             for limit in [10, 50] {
@@ -279,14 +248,12 @@ fn every_page_strategy_gives_the_oracles_pages() {
                         roots.path.insert((field, path), uuid);
                     }
                 }
-                cache.populate(&conn).unwrap();
-                let keys = SortKeys::new(&cache);
+                let keys = SortKeys::with_store(&cache, &conn);
                 roots.keys = Some(&keys);
                 for strategy in [PageStrategy::Fetch, PageStrategy::Walk, PageStrategy::Auto] {
-                    let got = index_pages(&mut index, &roots, &q, &by, limit, strategy);
+                    let got =
+                        with_kv(&conn, strategy, |e, _| eval_pages(e, &roots, &q, &by, limit));
                     assert_eq!(got, want, "{strategy:?}: {q:?} by {by:?}, pages of {limit}");
-                    let got = with_kv(&kv, strategy, |e, _| eval_pages(e, &roots, &q, &by, limit));
-                    assert_eq!(got, want, "KV {strategy:?}: {q:?} by {by:?}, pages of {limit}");
                 }
             }
         }

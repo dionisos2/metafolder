@@ -68,7 +68,7 @@ async fn create(app: &Router, repo: &str, fields: Value) -> String {
 
 #[tokio::test]
 async fn a_kv_repository_serves_queries_without_the_resident_index() {
-    let (app, repo, _root, state) = setup("serve").await;
+    let (app, repo, _root, _state) = setup("serve").await;
     let tag = |t: &str| json!([{"name": "tag", "value": {"type": "string", "value": t}}]);
     let jazz = create(&app, &repo, tag("jazz")).await;
     let rock = create(&app, &repo, tag("rock")).await;
@@ -97,9 +97,6 @@ async fn a_kv_repository_serves_queries_without_the_resident_index() {
     let (status, body) = request(&app, "GET", &format!("/repos/{repo}/fields"), None).await;
     assert_eq!(status, StatusCode::OK, "{body}");
     assert!(body.to_string().contains("\"tag\""), "the catalog lists tag: {body}");
-
-    let repo_state = state.repo(repo.parse().unwrap()).unwrap();
-    assert!(repo_state.index.lock().unwrap().is_none(), "no resident index is built");
 }
 
 /// A KV repository keeps no forest in memory (spec-storage increment 4 e):

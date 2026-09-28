@@ -70,12 +70,6 @@ pub struct RepoState {
     /// separate from `conn` so progress reads never block behind a running
     /// reconcile.
     pub tasks: crate::tasks::TaskRegistry,
-    /// Derived in-memory query accelerator (spec-indexing). Built at load by
-    /// [`Self::warmup`], then kept at the log HEAD by every commit
-    /// ([`Self::settle_index`]) so no reader inherits an accumulated delta;
-    /// a read still refreshes it ([`crate::index::RepoIndex::refresh`]), which
-    /// is where the rebuild a commit declines to do finally happens.
-    pub index: Mutex<Option<crate::index::RepoIndex>>,
     /// The repository's declared mount points as of the last read that could
     /// take the repository (spec-file-tracking "Mount status"). Filled by the
     /// load and refreshed by every unblocked `GET …/mounts`; served as it stands
@@ -198,7 +192,6 @@ impl RepoState {
             ),
             rollback_lock: Mutex::new(None),
             tasks: crate::tasks::TaskRegistry::new(repo_uuid),
-            index: Mutex::new(None),
             declared_mounts: Mutex::new(Arc::new(Vec::new())),
             ready: std::sync::atomic::AtomicBool::new(false),
             watch_budget_share: settings.watch_budget_share,
@@ -470,9 +463,6 @@ impl RepoState {
         conn: &dyn crate::store::Store,
         effects: &crate::log::WriteEffects,
     ) -> anyhow::Result<()> {
-        // Unconditional: every revision moves HEAD, whatever it touched, and the
-        // index is behind by exactly that much.
-        self.settle_index(conn);
         if effects.touches_tree() {
             let _phase = metafolder_core::slowlog::phase("settle.tree");
             let mut cache = self.lock_cache();
@@ -489,37 +479,6 @@ impl RepoState {
             self.refresh_watches(conn);
         }
         Ok(())
-    }
-
-    /// Brings the resident query index up to the revision just committed on
-    /// `conn` — incrementally, or not at all.
-    ///
-    /// The index used to be refreshed only when something read it, so each write
-    /// left it further behind and the next reader paid the whole accumulated
-    /// catch-up. Past [`crate::index`]'s rebuild bound that catch-up is a full
-    /// rebuild — one scan of the `field` table, inside somebody's request: the
-    /// minute-long `GET /repos/:repo/fields` seen on opening a repository, whose
-    /// time was entirely in `index.refresh` with the connection free.
-    ///
-    /// What it deliberately does *not* do is rebuild. A rebuild here would hold
-    /// the connection for that whole scan, which is the mistake the tree cache
-    /// already made and stopped making (see [`Self::settle`]). It declines
-    /// instead, and the next reader rebuilds — a case that stops arising once
-    /// every commit catches up, since the delta is then one revision.
-    ///
-    /// A failure is logged, never propagated: the revision is already committed,
-    /// and an index left stale is slow, not wrong.
-    pub fn settle_index(&self, conn: &dyn crate::store::Store) {
-        let _phase = metafolder_core::slowlog::phase("settle.index");
-        let mut guard = self.index.lock_recover();
-        let Some(index) = guard.as_mut() else { return };
-        if let Err(e) = index.refresh_incremental(conn) {
-            crate::diagnostics::warn_for(
-                "index",
-                format!("could not bring the query index up to the new revision: {e:#}"),
-                self.uuid(),
-            );
-        }
     }
 
     /// Recomputes the watcher's eligible-directory set after a manual write that
@@ -626,64 +585,14 @@ impl RepoState {
         self.handles.lock_recover().as_ref().map_or_else(HashSet::new, |h| h.watcher.watched_set())
     }
 
-    /// Warms the in-memory accelerators of a freshly loaded repository:
-    /// eagerly populates the tree cache (so tree navigation is served from
-    /// memory — spec-file-tracking "Tree Cache") and builds the query index (so
-    /// the first query pays no build cost — spec-indexing). Both are
-    /// best-effort: a failure just leaves the repository in DB-fallback mode,
-    /// which is correct, only slower. `progress` reports `(phase, done, total)`
-    /// for the load progress bar; it is a no-op for the synchronous callers
-    /// (startup auto-load, `init`).
-    ///
-    /// Holds the connection for its duration (a single bulk read), so queries
-    /// on this repository wait until it finishes — the load progress bar tells
-    /// the user why. Idempotent enough: re-running on an already-warm repo just
-    /// rebuilds, so callers skip it when [`TreeCache::is_complete`] already holds.
+    /// Prepares a freshly loaded repository to serve: reads its declared mount
+    /// points. There is nothing else to warm — the queries and the forest are
+    /// answered by the store itself (spec-storage increment 4) — but the load
+    /// is still reported through `progress` `(phase, done, total)`, a no-op
+    /// for the synchronous callers (startup auto-load, `init`).
     pub fn warmup(&self, progress: ProgressFn) -> Result<(), ApiError> {
         let conn = self.conn.lock_recover();
-        // Per-phase timings are logged (`[warmup <name>] …`): a persistent load
-        // report, so a slow phase on a large repository is visible without a
-        // profiler. See also the `[tree cache]` and `[watcher]` split lines.
-        let who = self.name();
-
-        // Build the index first: its single scan of the whole `field` table is
-        // the load's cold-I/O floor (on first open the table is read from disk),
-        // and it reports a determinate progress bar. Populating the tree cache
-        // afterwards re-reads the same, now warm, pages — so it is fast, where
-        // run first it would silently absorb that cold cost under an
-        // indeterminate spinner. The single scan over `field` collects the
-        // TreeRef forest too, so the tree cache is then built from those rows in
-        // memory — no second scan.
-        //
-        // Neither is best-effort any more. They used to be, because a
-        // repository without them fell back to the SQL engine; the executor and
-        // the query engine now both work against them, so a repository that
-        // cannot build them is one that cannot serve, and the load says so
-        // rather than degrading quietly.
-        let mut forest = Vec::new();
-        if crate::store::Rows::as_kv(&*conn).is_some() {
-            // A key-value repository is queried from the store itself:
-            // no resident index (spec-storage increment 4 d), and no resident
-            // forest either (4 e) — nothing to build.
-        } else {
-            let _p = Phase::begin(&who, "build the query index");
-            let index = crate::index::RepoIndex::build_reported_collecting(
-                &*conn,
-                &mut forest,
-                &|done, total| progress("index", Some(done), Some(total)),
-                &|| false, // the load warmup is not cancellable (spec-tasks)
-            )
-            .map_err(|e| ApiError::internal(format!("failed to build the query index: {e:#}")))?;
-            *self.index.lock_recover() = Some(index);
-        }
-
-        progress("tree cache", None, None);
-        {
-            let mut p = Phase::begin(&who, "populate the tree cache");
-            p.detail(format!("{} nodes, from the index scan", forest.len()));
-            self.lock_cache().populate_from_forest(forest);
-        }
-
+        progress("mounts", None, None);
         // The declared mount points, read once here so they are resident from
         // the start: a repository is very often opened *while* something writes
         // to it (the load's own event replay, an auto-reconcile), and the first
@@ -801,20 +710,11 @@ impl RepoState {
         Ok(problems)
     }
 
-    /// Derives again what the store derives (`mf repo reindex`) — and, on a
-    /// repository that keeps them, the resident index and forest, rebuilt
-    /// from the store as a load builds them.
+    /// Derives again what the store derives (`mf repo reindex`).
     pub fn reindex_store(&self) -> Result<(), ApiError> {
-        let resident = {
-            let mut conn = self.conn.lock_recover();
-            crate::store::Begin::reindex(&mut conn)
-                .map_err(|e| ApiError::internal(format!("reindex failed: {e:#}")))?;
-            crate::store::Rows::as_kv(&*conn).is_none()
-        };
-        if resident {
-            self.warmup(&|_, _, _| {})?;
-        }
-        Ok(())
+        let mut conn = self.conn.lock_recover();
+        crate::store::Begin::reindex(&mut conn)
+            .map_err(|e| ApiError::internal(format!("reindex failed: {e:#}")))
     }
 
     pub fn warm(self: &Arc<Self>, progress: ProgressFn) -> Result<(), ApiError> {

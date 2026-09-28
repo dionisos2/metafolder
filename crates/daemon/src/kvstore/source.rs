@@ -31,7 +31,7 @@ use super::derived::{
     TARGET, VALUE,
 };
 use super::{dec_row, name_key, uuid_of, KvStore, Tables};
-use crate::index::field_index::{sort_rep, CmpOp, FieldIndex, SortRep};
+use crate::index::keys::{sort_rep, CmpOp, SortRep};
 use crate::index::{unsupported, Follow, NamedNode, RepReader, Source, Unsupported, Walked};
 
 /// A read snapshot of a KV store, answering the evaluator's questions.
@@ -1028,9 +1028,5 @@ impl Source for KvSource<'_> {
         let r = self.walk(field, want_max, start, start_key.as_deref(), visit);
         self.ok(r, ());
         true
-    }
-
-    fn bsi(&self, _field: &str) -> Option<&FieldIndex> {
-        None
     }
 }

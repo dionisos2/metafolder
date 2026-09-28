@@ -1071,24 +1071,6 @@ fn test_ancestry_ops_until_stops_at_the_anchor() {
 }
 
 #[test]
-fn test_index_build_is_cancellable() {
-    use metafolder_daemon::index::RepoIndex;
-    // The heavy per-metarecord scan that builds the query index must honour a
-    // cancellation probe (spec-tasks "Cancellation"), so a Stop on a query that
-    // triggered a rebuild actually stops it.
-    let (mut conn, _dir) = test_conn();
-    create(&mut conn, vec![Field::new("a", Value::Int(1))]);
-    assert!(
-        RepoIndex::build_reported(&conn, &|_, _| {}, &|| true).is_err(),
-        "a pre-cancelled index build must bail"
-    );
-    assert!(
-        RepoIndex::build_reported(&conn, &|_, _| {}, &|| false).is_ok(),
-        "a non-cancelled build succeeds"
-    );
-}
-
-#[test]
 fn test_assemble_selected_is_cancellable() {
     use metafolder_daemon::query_result as query_exec;
     // The select-projection loop (the dominant cost of `select=*` over many

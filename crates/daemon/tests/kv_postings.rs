@@ -118,7 +118,6 @@ fn run_battery(conn: &KvStore, first: Uuid) {
     }
     // Sorted, page by page: a frequent value's holders are one long run of
     // ties, ordered by uuid across the pages.
-    let (kv, _dir) = common::kv::kv_mirror(conn);
     let sorted = [
         (Query::IsPresent { field: "rating".into(), aspect: Aspect::Raw }, "rating", false),
         (Query::IsPresent { field: "rating".into(), aspect: Aspect::Raw }, "rating", true),
@@ -137,7 +136,7 @@ fn run_battery(conn: &KvStore, first: Uuid) {
             let mut got = Vec::new();
             let mut cursor: Option<String> = None;
             loop {
-                let (page, next) = common::kv::with_kv(&kv, strategy, |e, _| {
+                let (page, next) = common::kv::with_kv(conn, strategy, |e, _| {
                     e.evaluate_page_with_roots(
                         q,
                         &by,

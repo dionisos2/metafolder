@@ -278,9 +278,8 @@ macro_rules! forward_to_store {
 
 /// Metarecords and their field rows.
 pub trait Rows {
-    /// The key-value store behind this one, when it is one: a KV repository
-    /// is queried from the store itself (spec-storage increment 4 d), not
-    /// through the resident index.
+    /// The key-value store behind this one, when it is one: a repository is
+    /// queried from the store itself (spec-storage increment 4 d).
     fn as_kv(&self) -> Option<&crate::kvstore::KvStore> {
         None
     }

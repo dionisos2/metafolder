@@ -377,10 +377,10 @@ mod tests {
         let warnings = apply_with_progress(&state, config, &mut out, true);
         assert!(warnings.is_empty(), "{warnings:?}");
         let out = String::from_utf8(out).unwrap();
-        // At least one in-place frame (the warmup always reports "tree cache"),
+        // At least one in-place frame (the warmup always reports "mounts"),
         // then the line is cleared before the plain completion line.
         assert!(
-            out.contains(&format!("\rload {name}: tree cache")),
+            out.contains(&format!("\rload {name}: mounts")),
             "no progress frame in {out:?}"
         );
         assert!(out.contains("\r\x1b[K[daemon] Loaded"), "no clear before the summary: {out:?}");

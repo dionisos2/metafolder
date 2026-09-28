@@ -3,7 +3,7 @@
 
 use metafolder_daemon::index::{Eval, PageStrategy};
 use metafolder_daemon::kvstore::{KvSource, KvStore};
-use metafolder_daemon::store::{Begin, Store};
+use metafolder_daemon::store::Begin;
 use roaring::RoaringBitmap;
 use uuid::Uuid;
 
@@ -25,25 +25,6 @@ pub fn delete_rows(kv: &mut KvStore, uuid: Uuid, field: &str) {
     let txn = kv.begin_write().unwrap();
     txn.delete_rows(uuid, Some(field)).unwrap();
     txn.commit().unwrap();
-}
-
-/// A KV store holding what `store` holds: the same metarecords, rows and row
-/// ids (the log is not copied — no query reads it).
-pub fn kv_mirror(store: &dyn Store) -> (KvStore, TempDir) {
-    let dir = TempDir::new("kv-mirror");
-    let mut kv = KvStore::open(dir.path()).unwrap();
-    let txn = kv.begin_write().unwrap();
-    for uuid in store.metarecords().unwrap() {
-        txn.create_metarecord(uuid, store.version(uuid).unwrap().unwrap()).unwrap();
-    }
-    store
-        .for_each_row(&mut |uuid, row| {
-            txn.insert_row(uuid, &row.name, &row.value, Some(row.id))?;
-            Ok(())
-        })
-        .unwrap();
-    txn.commit().unwrap();
-    (kv, dir)
 }
 
 /// Runs `f` with an evaluator over `kv`, failing on a read error.

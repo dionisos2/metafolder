@@ -38,7 +38,7 @@ use roaring::RoaringBitmap;
 use uuid::Uuid;
 
 use super::{be, dec_row, from_be, name_key, uuid_of, KvStore, KvTxn, Tables};
-use crate::index::field_index::{dt_key, num_key};
+use crate::index::keys::{dt_key, num_key};
 use crate::store::Rows;
 
 /// The format of the derived key spaces. A store stamped with another (or

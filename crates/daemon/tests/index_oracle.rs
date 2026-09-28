@@ -1,23 +1,23 @@
-//! Equivalence oracle for the in-memory bitmap index (spec-indexing.org).
+//! Equivalence oracle for the query evaluator (spec-indexing.org).
 //!
-//! Every query in the battery is run through BOTH `RepoIndex::evaluate` — the
-//! serving path — and the SQL oracle (`metafolder-query-oracle`, aliased
-//! `query_exec` below), asserting an identical result *set* (order is
-//! irrelevant except where a test says otherwise). Fixtures are crafted to
-//! exercise the correctness pitfalls: present/absent overlap, multi-map
-//! min/max, the exclusively-owned universe, ZERO_UUID tree roots.
+//! Every query in the battery is run through BOTH the evaluator over the
+//! key-value store's derived key spaces — the serving path — and the naive
+//! oracle (`metafolder-query-oracle`, aliased `query_exec` below), asserting an
+//! identical result *set* (order is irrelevant except where a test says
+//! otherwise). Fixtures are crafted to exercise the correctness pitfalls:
+//! present/absent overlap, multi-map min/max, ZERO_UUID tree roots.
 //!
-//! "the SQL engine" in this file always means that oracle: it is a
-//! dev-dependency and a *reference implementation*, never something a request
-//! falls back to (spec-indexing "No operand runs in SQL"). Where a test asserts
-//! the index declines a shape, what follows the decline is a `500`, not a
-//! second engine.
+//! "the SQL engine" in a test's comment means that oracle, which was a SQL
+//! engine until September 2026: a *reference implementation*, never something
+//! a request falls back to (spec-indexing "No operand runs in SQL"). Where a
+//! test asserts the evaluator declines a shape, what follows the decline is a
+//! `500`, not a second engine.
 
 use metafolder_core::metarecord::{Field, Value};
 use metafolder_core::query::{Aspect, FollowTarget, OsmMode, Query};
 use metafolder_daemon::forest_query;
 use metafolder_daemon::index::{
-    collect_node_paths, collect_path_targets, PageStrategy, QueryRoots, RepoIndex, SortBy,
+    collect_node_paths, collect_path_targets, PageStrategy, QueryRoots, SortBy, Unsupported,
 };
 use metafolder_daemon::log::Writer;
 use metafolder_daemon::query_result::{SortKey, SortOrder};
@@ -29,7 +29,60 @@ use uuid::Uuid;
 use metafolder_daemon::kvstore::KvStore;
 
 mod common;
-use common::kv::{kv_mirror, uuids, with_kv};
+use common::kv::{uuids, with_kv};
+
+/// The serving evaluator over a store, with the questions the tests ask of it
+/// — each one on a fresh snapshot of the store.
+struct Index<'a>(&'a KvStore);
+
+impl Index<'_> {
+    fn evaluate(&self, q: &Query) -> Result<Vec<Uuid>, Unsupported> {
+        with_kv(self.0, PageStrategy::Auto, |e, src| e.evaluate(q).map(|bm| uuids(src, &bm)))
+    }
+    fn evaluate_sorted(
+        &self,
+        q: &Query,
+        by: &[SortBy],
+        limit: Option<usize>,
+    ) -> Result<Vec<Uuid>, Unsupported> {
+        with_kv(self.0, PageStrategy::Auto, |e, _| e.evaluate_sorted(q, by, limit))
+    }
+    fn evaluate_page(
+        &self,
+        q: &Query,
+        by: &[SortBy],
+        limit: Option<usize>,
+        cursor: Option<&str>,
+    ) -> Result<(Vec<Uuid>, Option<String>), Unsupported> {
+        with_kv(self.0, PageStrategy::Auto, |e, _| e.evaluate_page(q, by, limit, cursor))
+    }
+    fn evaluate_page_with_roots(
+        &self,
+        q: &Query,
+        by: &[SortBy],
+        limit: Option<usize>,
+        cursor: Option<&str>,
+        roots: &QueryRoots,
+    ) -> Result<(Vec<Uuid>, Option<String>), Unsupported> {
+        with_kv(self.0, PageStrategy::Auto, |e, _| {
+            e.evaluate_page_with_roots(q, by, limit, cursor, roots)
+        })
+    }
+    fn count(&self, q: &Query) -> Result<u64, Unsupported> {
+        with_kv(self.0, PageStrategy::Auto, |e, _| e.count(q))
+    }
+    fn count_with_roots(&self, q: &Query, roots: &QueryRoots) -> Result<u64, Unsupported> {
+        with_kv(self.0, PageStrategy::Auto, |e, _| e.count_with_roots(q, roots))
+    }
+    fn value_type(&self, field: &str) -> Option<String> {
+        with_kv(self.0, PageStrategy::Auto, |_, src| {
+            metafolder_daemon::index::Source::value_type(src, field).map(str::to_string)
+        })
+    }
+    fn field_catalog(&self, type_filter: Option<&str>) -> Vec<(String, String)> {
+        with_kv(self.0, PageStrategy::Auto, |_, src| src.field_catalog(type_filter))
+    }
+}
 
 struct Oracle {
     conn: KvStore,
@@ -50,197 +103,101 @@ impl Oracle {
         m.uuid
     }
 
-    /// Asserts the bitmap index agrees with the SQL engine on `q`.
+    /// Asserts the evaluator agrees with the oracle on `q`.
     fn check(&mut self, q: &Query) {
-        let index = RepoIndex::build(&self.conn).unwrap();
-        let (mut sql, _) = query_exec::execute(&self.conn, q, &[], None, None).unwrap();
-        let mut got = index.to_uuids(&index.evaluate(q).unwrap());
-        sql.sort();
+        let (mut want, _) = query_exec::execute(&self.conn, q, &[], None, None).unwrap();
+        let mut got = Index(&self.conn).evaluate(q).unwrap();
+        want.sort();
         got.sort();
-        assert_eq!(got, sql, "divergence on {q:?}");
-        let (kv, _dir) = kv_mirror(&self.conn);
-        let mut got =
-            with_kv(&kv, PageStrategy::Auto, |e, src| uuids(src, &e.evaluate(q).unwrap()));
-        got.sort();
-        assert_eq!(got, sql, "KV divergence on {q:?}");
+        assert_eq!(got, want, "divergence on {q:?}");
     }
 
-    /// Asserts the bitmap index agrees with the SQL engine on the *ordered*,
-    /// limited result of `q` (comparison is order-sensitive — a `Vec`, not a set).
+    /// Asserts the evaluator agrees with the oracle on the *ordered*, limited
+    /// result of `q` (comparison is order-sensitive — a `Vec`, not a set).
     fn check_sorted(&mut self, q: &Query, by: &[(&str, bool)], limit: Option<usize>) {
-        let index = RepoIndex::build(&self.conn).unwrap();
-        let sql_keys: Vec<SortKey> = by
-            .iter()
-            .map(|(f, asc)| SortKey {
-                field: f.to_string(),
-                order: if *asc { SortOrder::Asc } else { SortOrder::Desc },
-            })
-            .collect();
-        let (sql, _) = query_exec::execute(&self.conn, q, &sql_keys, limit, None).unwrap();
-        let idx_keys: Vec<SortBy> =
-            by.iter().map(|(f, asc)| SortBy { field: f.to_string(), ascending: *asc }).collect();
-        let got = index.evaluate_sorted(q, &idx_keys, limit).unwrap();
-        assert_eq!(got, sql, "sort divergence on {q:?} by {by:?} limit {limit:?}");
-        let (kv, _dir) = kv_mirror(&self.conn);
-        let got = with_kv(&kv, PageStrategy::Auto, |e, _| e.evaluate_sorted(q, &idx_keys, limit));
-        assert_eq!(got.unwrap(), sql, "KV sort divergence on {q:?} by {by:?} limit {limit:?}");
+        let (want, _) = query_exec::execute(&self.conn, q, &sort_keys(by), limit, None).unwrap();
+        let got = Index(&self.conn).evaluate_sorted(q, &sort_by(by), limit).unwrap();
+        assert_eq!(got, want, "sort divergence on {q:?} by {by:?} limit {limit:?}");
     }
 
-    /// Asserts the index `count` matches the SQL `COUNT`.
+    /// Asserts the evaluator's `count` matches the oracle's.
     fn check_count(&mut self, q: &Query) {
-        let index = RepoIndex::build(&self.conn).unwrap();
-        let sql = query_exec::count(&self.conn, q).unwrap();
-        assert_eq!(index.count(q).unwrap() as usize, sql, "count divergence on {q:?}");
-        let (kv, _dir) = kv_mirror(&self.conn);
-        let got = with_kv(&kv, PageStrategy::Auto, |e, _| e.count(q).unwrap());
-        assert_eq!(got as usize, sql, "KV count divergence on {q:?}");
+        let want = query_exec::count(&self.conn, q).unwrap();
+        assert_eq!(Index(&self.conn).count(q).unwrap() as usize, want, "count divergence on {q:?}");
     }
 
-    /// Asserts the in-memory field catalog agrees with the SQL
-    /// `distinct_field_names` — unfiltered and for each value type present.
+    /// Asserts the field catalogue agrees with the oracle's — unfiltered and
+    /// for each value type present.
     fn check_catalog(&mut self) {
-        let index = RepoIndex::build(&self.conn).unwrap();
-        let sql = query_exec::field_catalog(&self.conn, None).unwrap();
-        assert_eq!(index.field_catalog(None), sql, "catalog divergence (unfiltered)");
-        let types: std::collections::BTreeSet<&str> = sql.iter().map(|(_, t)| t.as_str()).collect();
+        let index = Index(&self.conn);
+        let want = query_exec::field_catalog(&self.conn, None).unwrap();
+        assert_eq!(index.field_catalog(None), want, "catalog divergence (unfiltered)");
+        let types: std::collections::BTreeSet<&str> =
+            want.iter().map(|(_, t)| t.as_str()).collect();
         for ty in types {
-            let sql = query_exec::field_catalog(&self.conn, Some(ty)).unwrap();
-            assert_eq!(index.field_catalog(Some(ty)), sql, "catalog divergence (?type={ty})");
+            let want = query_exec::field_catalog(&self.conn, Some(ty)).unwrap();
+            assert_eq!(index.field_catalog(Some(ty)), want, "catalog divergence (?type={ty})");
         }
     }
 
-    /// Walks both engines page by page through the whole sorted result and
-    /// asserts every page (and thus the partitioning) is identical.
+    /// The oracle's pages, cursor by cursor.
+    fn oracle_pages(&self, q: &Query, by: &[(&str, bool)], limit: usize) -> Vec<Vec<Uuid>> {
+        let keys = sort_keys(by);
+        pages(|cursor| query_exec::execute(&self.conn, q, &keys, Some(limit), cursor).unwrap())
+    }
+
+    /// Walks both page by page through the whole sorted result and asserts
+    /// every page (and thus the partitioning) is identical.
     fn check_paginated(&mut self, q: &Query, by: &[(&str, bool)], limit: usize) {
-        let index = RepoIndex::build(&self.conn).unwrap();
-        let sql_keys: Vec<SortKey> = by
-            .iter()
-            .map(|(f, asc)| SortKey {
-                field: f.to_string(),
-                order: if *asc { SortOrder::Asc } else { SortOrder::Desc },
-            })
-            .collect();
-        let idx_keys: Vec<SortBy> =
-            by.iter().map(|(f, asc)| SortBy { field: f.to_string(), ascending: *asc }).collect();
-
-        let mut ipages: Vec<Vec<Uuid>> = Vec::new();
-        let mut cursor: Option<String> = None;
-        loop {
-            let (page, next) =
-                index.evaluate_page(q, &idx_keys, Some(limit), cursor.as_deref()).unwrap();
-            ipages.push(page);
-            match next {
-                Some(c) => cursor = Some(c),
-                None => break,
-            }
-            assert!(ipages.len() < 10_000, "runaway index pagination");
-        }
-
-        let mut spages: Vec<Vec<Uuid>> = Vec::new();
-        let mut scursor: Option<String> = None;
-        loop {
-            let (page, next) =
-                query_exec::execute(&self.conn, q, &sql_keys, Some(limit), scursor.as_deref())
-                    .unwrap();
-            spages.push(page);
-            match next {
-                Some(c) => scursor = Some(c),
-                None => break,
-            }
-            assert!(spages.len() < 10_000, "runaway sql pagination");
-        }
-
-        assert_eq!(ipages, spages, "pagination divergence on {q:?} by {by:?} limit {limit}");
-        let (kv, _dir) = kv_mirror(&self.conn);
-        let kpages = with_kv(&kv, PageStrategy::Auto, |e, _| {
-            pages(|cursor| e.evaluate_page(q, &idx_keys, Some(limit), cursor).unwrap())
-        });
-        assert_eq!(kpages, spages, "KV pagination divergence on {q:?} by {by:?} limit {limit}");
+        let want = self.oracle_pages(q, by, limit);
+        let index = Index(&self.conn);
+        let keys = sort_by(by);
+        let got = pages(|cursor| index.evaluate_page(q, &keys, Some(limit), cursor).unwrap());
+        assert_eq!(got, want, "pagination divergence on {q:?} by {by:?} limit {limit}");
     }
 
-    /// Like [`Self::check_paginated`] but supplying the index every seed
+    /// Like [`Self::check_paginated`] but supplying the evaluator every seed
     /// `run_query_filter` resolves through the tree cache: the roots of a
     /// `Path`-target follow, and the full-path sort keys of a `tree_ref` sort
-    /// key. This is the GUI's real scenario (browse a subtree, paginate by a
-    /// sort key). The SQL engine resolves both itself, so it takes the query
+    /// key — the forest read from the store, as a repository keeps none
+    /// resident. This is the GUI's real scenario (browse a subtree, paginate
+    /// by a sort key). The oracle resolves both itself, so it takes the query
     /// unchanged.
     fn check_paginated_with_roots(&mut self, q: &Query, by: &[(&str, bool)], limit: usize) {
-        let index = RepoIndex::build(&self.conn).unwrap();
-        let sql_keys: Vec<SortKey> = by
-            .iter()
-            .map(|(f, asc)| SortKey {
-                field: f.to_string(),
-                order: if *asc { SortOrder::Asc } else { SortOrder::Desc },
-            })
-            .collect();
-        let idx_keys: Vec<SortBy> =
-            by.iter().map(|(f, asc)| SortBy { field: f.to_string(), ascending: *asc }).collect();
-
-        let mut spages: Vec<Vec<Uuid>> = Vec::new();
-        let mut scursor: Option<String> = None;
-        loop {
-            let (page, next) =
-                query_exec::execute(&self.conn, q, &sql_keys, Some(limit), scursor.as_deref())
-                    .unwrap();
-            spages.push(page);
-            match next {
-                Some(c) => scursor = Some(c),
-                None => break,
-            }
-            assert!(spages.len() < 10_000, "runaway sql pagination");
-        }
-
-        let mut targets = Vec::new();
-        collect_path_targets(q, &mut targets);
-        let mut resolved = Vec::new();
-        for (field, path) in targets {
-            if let Some(uuid) = self.cache.resolve_path(&self.conn, &field, &path).unwrap() {
-                resolved.push(((field, path), uuid));
-            }
-        }
-        // The daemon warms the whole forest at repo load; a tree sort needs it.
-        self.cache.populate(&self.conn).unwrap();
-        let keys = SortKeys::new(&self.cache);
-        let mut roots = QueryRoots::new();
-        roots.path.extend(resolved);
-        roots.keys = Some(&keys);
-
-        let mut ipages: Vec<Vec<Uuid>> = Vec::new();
-        let mut cursor: Option<String> = None;
-        loop {
-            let (page, next) = index
-                .evaluate_page_with_roots(q, &idx_keys, Some(limit), cursor.as_deref(), &roots)
-                .unwrap();
-            ipages.push(page);
-            match next {
-                Some(c) => cursor = Some(c),
-                None => break,
-            }
-            assert!(ipages.len() < 10_000, "runaway index pagination");
-        }
-
-        assert_eq!(ipages, spages, "pagination divergence on {q:?} by {by:?} limit {limit}");
-        // The KV engine, with its forest read from the store (a KV
-        // repository keeps none resident).
-        let (kv, _dir) = kv_mirror(&self.conn);
+        let want = self.oracle_pages(q, by, limit);
         let mut no_forest = TreeCache::new(false).without_forest();
         let mut roots = QueryRoots::new();
         let mut targets = Vec::new();
         collect_path_targets(q, &mut targets);
         for (field, path) in targets {
-            if let Some(uuid) = no_forest.resolve_path(&kv, &field, &path).unwrap() {
+            if let Some(uuid) = no_forest.resolve_path(&self.conn, &field, &path).unwrap() {
                 roots.path.insert((field, path), uuid);
             }
         }
-        let keys = SortKeys::with_store(&no_forest, &kv);
+        let keys = SortKeys::with_store(&no_forest, &self.conn);
         roots.keys = Some(&keys);
-        let kpages = with_kv(&kv, PageStrategy::Auto, |e, _| {
-            pages(|cursor| {
-                e.evaluate_page_with_roots(q, &idx_keys, Some(limit), cursor, &roots).unwrap()
-            })
+        let index = Index(&self.conn);
+        let by_keys = sort_by(by);
+        let got = pages(|cursor| {
+            index.evaluate_page_with_roots(q, &by_keys, Some(limit), cursor, &roots).unwrap()
         });
-        assert_eq!(kpages, spages, "KV pagination divergence on {q:?} by {by:?} limit {limit}");
+        assert_eq!(got, want, "pagination divergence on {q:?} by {by:?} limit {limit}");
     }
+}
+
+/// `by` as the oracle's sort keys.
+fn sort_keys(by: &[(&str, bool)]) -> Vec<SortKey> {
+    by.iter()
+        .map(|(f, asc)| SortKey {
+            field: f.to_string(),
+            order: if *asc { SortOrder::Asc } else { SortOrder::Desc },
+        })
+        .collect()
+}
+
+/// `by` as the evaluator's.
+fn sort_by(by: &[(&str, bool)]) -> Vec<SortBy> {
+    by.iter().map(|(f, asc)| SortBy { field: f.to_string(), ascending: *asc }).collect()
 }
 
 /// Every page of a paginated evaluation, following the cursors.
@@ -382,72 +339,27 @@ fn field_catalog_matches_sql() {
 
 #[test]
 fn field_catalog_drops_field_when_last_value_removed() {
-    // After *incremental* maintenance empties a field's `present` bitmap, the
-    // name must disappear from the catalog (recompute_field empties the bitmap
-    // but keeps the key, so the catalog must gate on non-emptiness).
+    // Once a field's last value is gone, the name must disappear from the
+    // catalog, whatever of it the derived data still keeps.
     let mut o = Oracle::new();
     let m = o.create(vec![Field::new("rating", Value::Int(5))]);
-    let mut index = RepoIndex::build(&o.conn).unwrap();
-    assert_eq!(index.field_catalog(None), vec![("rating".to_string(), "int".to_string())]);
+    let catalog = Index(&o.conn).field_catalog(None);
+    assert_eq!(catalog, vec![("rating".to_string(), "int".to_string())]);
 
     let mut w = Writer::begin(&mut o.conn, None).unwrap();
     w.set_field(m, "rating", Value::Nothing).unwrap();
     w.commit().unwrap();
-    index.refresh(&o.conn, &|| false).unwrap();
 
-    let sql = query_exec::field_catalog(&o.conn, None).unwrap();
-    assert!(sql.is_empty(), "SQL reference no longer lists the field");
-    assert_eq!(index.field_catalog(None), sql, "catalog must drop the emptied field");
+    let want = query_exec::field_catalog(&o.conn, None).unwrap();
+    assert!(want.is_empty(), "the oracle no longer lists the field");
+    assert_eq!(Index(&o.conn).field_catalog(None), want, "catalog must drop the emptied field");
 }
 
+/// Subtrees stay right through writes: moves, a leaf becoming a directory, a
+/// directory emptied, deletes, creations under a moved branch. The store keeps
+/// each node's descendants, so that knowledge must follow every write.
 #[test]
-fn refresh_over_set_record_stays_incremental() {
-    // `apply_ops` handles the `set_metarecord` op (whole-record set), so it must
-    // also be in `forward_delta`'s KNOWN list — otherwise a whole-record set
-    // (CLI `mf metarecord set`, or the whole-record PUT) forces a full index
-    // rebuild on the next refresh, the multi-second stall this guards against on
-    // a large repository. Observed through the dense-id count: the incremental
-    // path keeps a deleted metarecord's tombstone id, whereas a full rebuild
-    // re-interns only the live set and reclaims it.
-    let mut o = Oracle::new();
-    let a = o.create(vec![Field::new("tag", s("a"))]);
-    let b = o.create(vec![Field::new("tag", s("b"))]);
-    let mut index = RepoIndex::build(&o.conn).unwrap();
-    assert_eq!(index.dense_id_count(), 2, "both metarecords interned");
-
-    // Delete A (incremental, leaves a tombstone id) then set B whole-record.
-    let mut w = Writer::begin(&mut o.conn, None).unwrap();
-    w.delete_metarecord(a).unwrap();
-    w.commit().unwrap();
-    let mut w = Writer::begin(&mut o.conn, None).unwrap();
-    w.set_record(b, vec![Field::new("tag", s("b2")), Field::new("rating", Value::Int(7))]).unwrap();
-    w.commit().unwrap();
-
-    index.refresh(&o.conn, &|| false).unwrap();
-
-    // A full rebuild would reclaim A's id (dense_id_count == 1); the incremental
-    // path keeps the tombstone (== 2).
-    assert_eq!(
-        index.dense_id_count(),
-        2,
-        "set_metarecord must refresh incrementally, not trigger a full rebuild",
-    );
-    // Correctness of the incremental set_metarecord handling.
-    let fresh = RepoIndex::build(&o.conn).unwrap();
-    assert_eq!(
-        index.to_uuids(&index.evaluate(&eq("rating", Value::Int(7))).unwrap()),
-        fresh.to_uuids(&fresh.evaluate(&eq("rating", Value::Int(7))).unwrap()),
-    );
-    assert_eq!(index.field_catalog(None), query_exec::field_catalog(&o.conn, None).unwrap());
-}
-
-/// Subtrees stay right through incremental refreshes: moves, a leaf becoming a
-/// directory, a directory emptied, deletes, creations under a moved branch.
-/// The expansion only asks the nodes the index knows to have children, so that
-/// knowledge must follow every write (spec-indexing "FollowsTransitive by
-/// iterative bitmap expansion").
-#[test]
-fn subtrees_stay_right_through_incremental_refreshes() {
+fn subtrees_stay_right_through_writes() {
     let mut o = Oracle::new();
     let root = o.create(vec![tref("loc", None, "root")]);
     let a = o.create(vec![tref("loc", Some(root), "a")]);
@@ -457,15 +369,14 @@ fn subtrees_stay_right_through_incremental_refreshes() {
     for (i, parent) in [a, a, b, c, c, c].into_iter().enumerate() {
         files.push(o.create(vec![tref("loc", Some(parent), &format!("f{i}"))]));
     }
-    let mut index = RepoIndex::build(&o.conn).unwrap();
     let under = |u: Uuid| follows_t("loc", Query::UuidIn { uuids: vec![u] });
 
-    let check = |o: &mut Oracle, index: &mut RepoIndex, nodes: &[Uuid]| {
-        index.refresh(&o.conn, &|| false).unwrap();
+    let check = |o: &mut Oracle, nodes: &[Uuid]| {
+        let index = Index(&o.conn);
         for &n in nodes {
             let q = under(n);
             let (mut sql, _) = query_exec::execute(&o.conn, &q, &[], None, None).unwrap();
-            let mut got = index.to_uuids(&index.evaluate(&q).unwrap());
+            let mut got = index.evaluate(&q).unwrap();
             sql.sort();
             got.sort();
             assert_eq!(got, sql, "below {n}");
@@ -473,13 +384,13 @@ fn subtrees_stay_right_through_incremental_refreshes() {
     };
     let mut all = vec![root, a, b, c];
     all.extend(&files);
-    check(&mut o, &mut index, &all);
+    check(&mut o, &all);
 
     // c (with its files) moves under b.
     let mut w = Writer::begin(&mut o.conn, None).unwrap();
     w.set_field(c, "loc", Value::TreeRef { parent: Some(b), name: "c".into() }).unwrap();
     w.commit().unwrap();
-    check(&mut o, &mut index, &all);
+    check(&mut o, &all);
 
     // A leaf becomes a directory; b's only direct file leaves the forest.
     let leaf = files[0];
@@ -488,7 +399,7 @@ fn subtrees_stay_right_through_incremental_refreshes() {
     let mut w = Writer::begin(&mut o.conn, None).unwrap();
     w.set_field(files[2], "loc", Value::Nothing).unwrap();
     w.commit().unwrap();
-    check(&mut o, &mut index, &all);
+    check(&mut o, &all);
 
     // The new directory is emptied again, then deleted along with a file.
     let mut w = Writer::begin(&mut o.conn, None).unwrap();
@@ -496,15 +407,13 @@ fn subtrees_stay_right_through_incremental_refreshes() {
     w.delete_metarecord(files[5]).unwrap();
     w.commit().unwrap();
     all.retain(|u| *u != child && *u != files[5]);
-    check(&mut o, &mut index, &all);
+    check(&mut o, &all);
 
     // A new branch under the moved directory, created parent first.
     let d = o.create(vec![tref("loc", Some(c), "d")]);
     let e = o.create(vec![tref("loc", Some(d), "e")]);
     all.extend([d, e]);
-    check(&mut o, &mut index, &all);
-    // Incremental all along: a rebuild would have reclaimed the deleted ids.
-    assert!(index.dense_id_count() > index.universe_len(), "a refresh rebuilt the index");
+    check(&mut o, &all);
 }
 
 // ── Categorical: string ─────────────────────────────────────────────────────
@@ -781,7 +690,7 @@ fn exact_node_path_equality_declines_without_roots() {
     // the wrong value_name-based bitmap); the route resolves every one of them,
     // so a decline here would be a daemon bug reported as such.
     let (o, _) = forest();
-    let index = RepoIndex::build(&o.conn).unwrap();
+    let index = Index(&o.conn);
     assert!(index.evaluate(&eq("loc", s("root/b"))).is_err());
     assert!(index
         .evaluate(&Query::Neq { field: "loc".into(), value: s("root/b"), aspect: Aspect::Raw })
@@ -817,7 +726,7 @@ fn exact_node_path_equality_matches_sql_with_node_roots() {
                 let node = o.cache.resolve_path(&o.conn, &field, &target).unwrap();
                 roots.node.insert((field, target), node);
             }
-            let index = RepoIndex::build(&o.conn).unwrap();
+            let index = Index(&o.conn);
 
             let (mut sql, _) = query_exec::execute(&o.conn, &q, &[], None, None).unwrap();
             let (mut got, _) = index.evaluate_page_with_roots(&q, &[], None, None, &roots).unwrap();
@@ -865,7 +774,7 @@ fn exact_node_path_inequality_matches_sql_with_node_roots() {
                 let node = o.cache.resolve_path(&o.conn, &field, &target).unwrap();
                 roots.node.insert((field, target), node);
             }
-            let index = RepoIndex::build(&o.conn).unwrap();
+            let index = Index(&o.conn);
 
             let (mut sql, _) = query_exec::execute(&o.conn, &q, &[], None, None).unwrap();
             let (mut got, _) = index.evaluate_page_with_roots(&q, &[], None, None, &roots).unwrap();
@@ -881,7 +790,7 @@ fn exact_node_path_inequality_matches_sql_with_node_roots() {
         }
     }
     // Without a resolved node it still defers to SQL.
-    let index = RepoIndex::build(&o.conn).unwrap();
+    let index = Index(&o.conn);
     assert!(index
         .evaluate(&Query::Neq { field: "loc".into(), value: s("root/b"), aspect: Aspect::Raw })
         .is_err());
@@ -909,7 +818,7 @@ fn reverse_tree_follows_path_target_matches_sql() {
             if let Some(uuid) = o.cache.resolve_path(&o.conn, "loc", path).unwrap() {
                 roots.path.insert(("loc".to_string(), path.to_string()), uuid);
             }
-            let index = RepoIndex::build(&o.conn).unwrap();
+            let index = Index(&o.conn);
 
             let (mut sql, _) = query_exec::execute(&o.conn, &q, &[], None, None).unwrap();
             let (mut got, _) = index.evaluate_page_with_roots(&q, &[], None, None, &roots).unwrap();
@@ -1069,9 +978,9 @@ fn osm_path_empty_terms_matches_sql() {
     let _unrelated = o.create(vec![Field::new("kind", s("file"))]);
 
     let q = osm_path_q("loc", &[]);
-    let index = RepoIndex::build(&o.conn).unwrap();
+    let index = Index(&o.conn);
     let (mut sql, _) = query_exec::execute(&o.conn, &q, &[], None, None).unwrap();
-    let mut got = index.to_uuids(&index.evaluate(&q).unwrap());
+    let mut got = index.evaluate(&q).unwrap();
     sql.sort();
     got.sort();
     assert_eq!(got, sql, "empty-terms osm path divergence");
@@ -1082,11 +991,8 @@ fn osm_path_empty_terms_matches_sql() {
     );
     // It is exactly `is_present` on the field.
     assert_eq!(got, {
-        let mut p = index.to_uuids(
-            &index
-                .evaluate(&Query::IsPresent { field: "loc".into(), aspect: Aspect::Raw })
-                .unwrap(),
-        );
+        let mut p =
+            index.evaluate(&Query::IsPresent { field: "loc".into(), aspect: Aspect::Raw }).unwrap();
         p.sort();
         p
     });
@@ -1112,10 +1018,10 @@ fn osm_path_single_term_matches_sql() {
 
     for term in ["s", "sc", "sci", "science", "SCI", "root", "fic", "nope", "mus", ".", "e.a"] {
         let q = osm_path_q("loc", &[term]);
-        let index = RepoIndex::build(&o.conn).unwrap();
+        let index = Index(&o.conn);
 
         let (mut sql, _) = query_exec::execute(&o.conn, &q, &[], None, None).unwrap();
-        let mut got = index.to_uuids(&index.evaluate(&q).unwrap());
+        let mut got = index.evaluate(&q).unwrap();
         sql.sort();
         got.sort();
         assert_eq!(got, sql, "osm path divergence on term {term:?}");
@@ -1128,7 +1034,7 @@ fn osm_path_single_term_matches_sql() {
         );
     }
 
-    let index = RepoIndex::build(&o.conn).unwrap();
+    let index = Index(&o.conn);
     // Multi-term OSM path (order-sensitive) is not accelerated — index defers.
     let multi = osm_path_q("loc", &["science", "fiction"]);
     assert!(
@@ -1154,7 +1060,7 @@ fn osm_path_separator_term_defers_and_matches_sql() {
     o.cache.populate(&o.conn).unwrap();
     for term in ["music/jazz", "root/music", "zz/take"] {
         let q = osm_path_q("loc", &[term]);
-        let index = RepoIndex::build(&o.conn).unwrap();
+        let index = Index(&o.conn);
         assert!(index.evaluate(&q).is_err(), "a separator-bearing term must defer: {term:?}");
 
         let rewritten = forest_query::resolve_path_leaves(&o.cache, &o.conn, None, &q).unwrap();
@@ -1186,7 +1092,7 @@ fn osm_path_multi_term_via_leaf_rewrite_matches_sql() {
     for terms in [vec!["video", "scien"], vec!["scien", "video"], vec!["ser", "vid"]] {
         let q = osm_path_q("loc", &terms);
         let rewritten = forest_query::resolve_path_leaves(&o.cache, &o.conn, None, &q).unwrap();
-        let index = RepoIndex::build(&o.conn).unwrap();
+        let index = Index(&o.conn);
         let (mut sql, _) = query_exec::execute(&o.conn, &q, &[], None, None).unwrap();
         // A rewritten multi-term OSM path is a bare UuidIn — the index serves it
         // with no roots needed.
@@ -1225,7 +1131,7 @@ fn finder_shaped_query_via_leaf_rewrite_matches_sql() {
     let rewritten = forest_query::resolve_path_leaves(&o.cache, &o.conn, None, &q).unwrap();
     let roots = QueryRoots::new();
 
-    let index = RepoIndex::build(&o.conn).unwrap();
+    let index = Index(&o.conn);
     let (mut sql, _) = query_exec::execute(&o.conn, &q, &[], None, None).unwrap();
     let (mut got, _) = index.evaluate_page_with_roots(&rewritten, &[], None, None, &roots).unwrap();
     sql.sort();
@@ -1359,14 +1265,14 @@ fn keyset_pagination_is_stable_under_insertion() {
     let idx_keys = [SortBy { field: "rate".into(), ascending: true }];
     let sql_keys = [SortKey { field: "rate".into(), order: SortOrder::Asc }];
 
-    let index = RepoIndex::build(&o.conn).unwrap();
+    let index = Index(&o.conn);
     let (_p1, icur) = index.evaluate_page(&q, &idx_keys, Some(2), None).unwrap();
     let (_s1, scur) = query_exec::execute(&o.conn, &q, &sql_keys, Some(2), None).unwrap();
 
     // Insert a row (rate 15) that sorts within the already-returned region.
     o.create(vec![Field::new("all", Value::Bool(true)), Field::new("rate", i(15))]);
 
-    let index2 = RepoIndex::build(&o.conn).unwrap();
+    let index2 = Index(&o.conn);
     let (ip2, _) = index2.evaluate_page(&q, &idx_keys, Some(2), icur.as_deref()).unwrap();
     let (sp2, _) = query_exec::execute(&o.conn, &q, &sql_keys, Some(2), scur.as_deref()).unwrap();
 
@@ -1377,7 +1283,7 @@ fn keyset_pagination_is_stable_under_insertion() {
 #[test]
 fn cursor_is_bound_to_query_and_sort() {
     let o = sortable();
-    let index = RepoIndex::build(&o.conn).unwrap();
+    let index = Index(&o.conn);
     let by_rate = [SortBy { field: "rate".into(), ascending: true }];
     let (_p, next) = index.evaluate_page(&present("all"), &by_rate, Some(2), None).unwrap();
     let cursor = next.expect("more pages");
@@ -1434,7 +1340,7 @@ fn tree_ref_sort_without_a_resident_forest_is_unsupported() {
     // forest is resident), so it is a `Gap::State` — a 500 naming a daemon bug,
     // not a fall back.
     let o = tree_sorted();
-    let index = RepoIndex::build(&o.conn).unwrap();
+    let index = Index(&o.conn);
     let all =
         Query::Eq { field: "k".into(), value: Value::String("x".into()), aspect: Aspect::Raw };
     let by = [SortBy { field: "mfr_path".into(), ascending: true }];
@@ -1624,7 +1530,7 @@ fn parent_aspect_presence_matches_sql() {
 
     // On a field that is not a tree_ref the aspect is a 400, which only the SQL
     // engine raises: the index must hand the query over, not answer empty.
-    let index = RepoIndex::build(&o.conn).unwrap();
+    let index = Index(&o.conn);
     assert!(index
         .evaluate(&Query::IsAbsent { field: "kind".into(), aspect: Aspect::Parent })
         .is_err());
@@ -1653,7 +1559,7 @@ fn parent_aspect_equality_matches_sql_with_node_roots() {
                 let node = o.cache.resolve_path(&o.conn, &field, &target).unwrap();
                 roots.node.insert((field, target), node);
             }
-            let index = RepoIndex::build(&o.conn).unwrap();
+            let index = Index(&o.conn);
 
             let (mut sql, _) = query_exec::execute(&o.conn, &q, &[], None, None).unwrap();
             let (mut got, _) = index.evaluate_page_with_roots(&q, &[], None, None, &roots).unwrap();
@@ -1668,7 +1574,7 @@ fn parent_aspect_equality_matches_sql_with_node_roots() {
         }
     }
 
-    let index = RepoIndex::build(&o.conn).unwrap();
+    let index = Index(&o.conn);
     // Unresolved (nobody supplied the node): defer, never answer from the
     // name-based bitmap.
     assert!(index
@@ -1731,8 +1637,8 @@ fn path_aspect_leaves_are_resolved_by_the_forest() {
         Query::IsAbsent { field: "loc".into(), aspect: Aspect::Path },
     ] {
         let rewritten = forest_query::resolve_path_leaves(&o.cache, &o.conn, None, &q).unwrap();
-        let index = RepoIndex::build(&o.conn).unwrap();
-        let mut got = index.to_uuids(&index.evaluate(&rewritten).unwrap());
+        let index = Index(&o.conn);
+        let mut got = index.evaluate(&rewritten).unwrap();
         let (mut sql, _) = query_exec::execute(&o.conn, &q, &[], None, None).unwrap();
         got.sort();
         sql.sort();
@@ -1748,7 +1654,7 @@ fn a_path_leaf_on_a_non_tree_field_is_refused_before_any_engine() {
     let mut o = Oracle::new();
     o.create(vec![Field::new("title", s("hello"))]);
     o.cache.populate(&o.conn).unwrap();
-    let index = RepoIndex::build(&o.conn).unwrap();
+    let index = Index(&o.conn);
 
     let q = Query::Eq { field: "title".into(), value: s("hello"), aspect: Aspect::Path };
     assert!(

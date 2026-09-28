@@ -291,7 +291,7 @@ async fn query_resolve_tree(
     with_repo(&state, repo_uuid, move |repo_state| {
         let conn = slowlog::timed("wait:conn", || repo_state.conn.lock_recover());
         let mut cache = slowlog::timed("wait:cache", || repo_state.lock_cache());
-        let uuids = resolve_query_uuids(repo_state, &conn, &mut cache, &body.query, &|| false)?;
+        let uuids = resolve_query_uuids(&conn, &mut cache, &body.query)?;
         let mut out = serde_json::Map::new();
         for uuid in uuids {
             let paths = cache.paths_of(&conn, &field, uuid)?;
@@ -441,19 +441,8 @@ async fn list_fields(
         // A key-value repository has no resident catalog to read past a
         // writer: it waits for the store (until reads stop taking the
         // connection, spec-storage increment 4).
-        let conn = slowlog::timed("wait:conn", || Some(repo_state.conn.lock_recover()));
-        let mut index_guard = slowlog::timed("wait:index", || repo_state.index.lock_recover());
-        let data = match conn.as_deref() {
-            // `ensure_index` rather than a refresh of our own: the acquisition
-            // the live-query paths share, so the two cannot drift.
-            Some(conn) => engine(conn, &mut index_guard, &|| false)?.field_catalog(None),
-            None => index_guard
-                .as_ref()
-                .ok_or_else(|| {
-                    ApiError::internal("the query index is missing on a ready repository")
-                })?
-                .field_catalog(None),
-        };
+        let conn = slowlog::timed("wait:conn", || repo_state.conn.lock_recover());
+        let data = engine(&*conn)?.field_catalog(None);
         // Merge in the schema (schema-priority, schema-only fields added), then
         // apply the `?type=` filter (so a schema-only field of that type shows).
         let names =
@@ -633,7 +622,7 @@ where
         slowlog::note("field", name.as_str());
         let mut conn = slowlog::timed("wait:conn", || repo_state.conn.lock_recover());
         let mut cache = slowlog::timed("wait:cache", || repo_state.lock_cache());
-        let uuids = resolve_query_uuids(repo_state, &conn, &mut cache, &query, &|| false)?;
+        let uuids = resolve_query_uuids(&conn, &mut cache, &query)?;
         drop(cache);
 
         let mut writer = repo_state.writer(&mut conn, None)?;
@@ -2355,7 +2344,7 @@ async fn check_schema(
             let uuids = match &body.query {
                 Some(query) => {
                     let mut cache = slowlog::timed("wait:cache", || repo_state.lock_cache());
-                    resolve_query_uuids(repo_state, &conn, &mut cache, query, &|| false)?
+                    resolve_query_uuids(&conn, &mut cache, query)?
                 }
                 None => crate::schema::violation_candidates(
                     schema,
@@ -3284,85 +3273,38 @@ async fn run_query(
 /// `count`.
 type QueryPage = (Vec<Uuid>, Option<String>, Option<usize>);
 
-/// Brings the repo's in-memory index up to the current HEAD, then hands back a
-/// shared reference to it. The single acquisition point for the two live-query
-/// call sites (`field_catalog` and `run_query_filter`) so they cannot drift.
-fn ensure_index<'g>(
-    conn: &dyn crate::store::Store,
-    guard: &'g mut Option<crate::index::RepoIndex>,
-    cancel: &dyn Fn() -> bool,
-) -> Result<&'g crate::index::RepoIndex, ApiError> {
-    // Built by the load, before the repository serves anything (spec-main
-    // "POST /repos/load"): here it is only brought up to the current HEAD —
-    // incrementally when the delta is a forward extension, else an internal
-    // full rebuild, which polls `cancel` so a Stop on the query that triggered
-    // it works.
-    let index = guard
-        .as_mut()
-        .ok_or_else(|| ApiError::internal("the query index is missing on a ready repository"))?;
-    slowlog::timed("index.refresh", || index.refresh(conn, cancel))?;
-    Ok(index)
-}
-
-/// What a repository's queries are evaluated against: its resident index, or
-/// — on the key-value store — the store's own derived key spaces, read in one
-/// snapshot (spec-storage increment 4 d). One evaluator either way.
-enum Engine<'a> {
-    Resident(&'a crate::index::RepoIndex),
-    Disk(Box<crate::kvstore::KvSource<'a>>),
-}
+/// What a repository's queries are evaluated against: the store's own derived
+/// key spaces, read in one snapshot (spec-storage increment 4 d).
+struct Engine<'a>(Box<crate::kvstore::KvSource<'a>>);
 
 impl Engine<'_> {
     fn eval(&self) -> crate::index::Eval<'_> {
-        match self {
-            Engine::Resident(index) => index.evaluator(),
-            Engine::Disk(src) => {
-                crate::index::Eval { src: &**src, strategy: crate::index::PageStrategy::Auto }
-            }
-        }
+        crate::index::Eval { src: &*self.0, strategy: crate::index::PageStrategy::Auto }
     }
 
     fn value_type(&self, field: &str) -> Option<String> {
-        match self {
-            Engine::Resident(index) => index.value_type(field),
-            Engine::Disk(src) => {
-                crate::index::Source::value_type(&**src, field).map(str::to_string)
-            }
-        }
+        crate::index::Source::value_type(&*self.0, field).map(str::to_string)
     }
 
     fn field_catalog(&self, type_filter: Option<&str>) -> Vec<(String, String)> {
-        match self {
-            Engine::Resident(index) => index.field_catalog(type_filter),
-            Engine::Disk(src) => src.field_catalog(type_filter),
-        }
+        self.0.field_catalog(type_filter)
     }
 
-    /// Fails with the read error the disk source met, if it met one: its
-    /// answers went empty from there, so they must not be served.
+    /// Fails with the read error the source met, if it met one: its answers
+    /// went empty from there, so they must not be served.
     fn check(&self) -> Result<(), ApiError> {
-        match self {
-            Engine::Disk(src) => match src.take_error() {
-                Some(e) => Err(ApiError::internal(format!("reading the store failed: {e:#}"))),
-                None => Ok(()),
-            },
-            Engine::Resident(_) => Ok(()),
+        match self.0.take_error() {
+            Some(e) => Err(ApiError::internal(format!("reading the store failed: {e:#}"))),
+            None => Ok(()),
         }
     }
 }
 
-/// The repository's [`Engine`]: the store itself on the key-value backend,
-/// else the resident index brought up to HEAD ([`ensure_index`]).
-fn engine<'a>(
-    conn: &'a dyn crate::store::Store,
-    guard: &'a mut Option<crate::index::RepoIndex>,
-    cancel: &dyn Fn() -> bool,
-) -> Result<Engine<'a>, ApiError> {
-    if let Some(kv) = conn.as_kv() {
-        let src = kv.source().map_err(|e| ApiError::internal(format!("{e:#}")))?;
-        return Ok(Engine::Disk(Box::new(src)));
-    }
-    Ok(Engine::Resident(ensure_index(conn, guard, cancel)?))
+/// The repository's [`Engine`].
+fn engine(conn: &dyn crate::store::Store) -> Result<Engine<'_>, ApiError> {
+    let kv = conn.as_kv().ok_or_else(|| ApiError::internal("a repository not on its store"))?;
+    let src = kv.source().map_err(|e| ApiError::internal(format!("{e:#}")))?;
+    Ok(Engine(Box::new(src)))
 }
 
 /// Resolves a query's index seeds and rewrites its index-unsupported text leaves
@@ -3412,17 +3354,14 @@ fn prepare_indexed_query<'a>(
 /// acceleration as reads; an unsupported shape is reported by [`index_gap`],
 /// there being nothing else to ask.
 fn resolve_query_uuids(
-    repo_state: &RepoState,
     conn: &dyn crate::store::Store,
     cache: &mut crate::tree_cache::TreeCache,
     query: &MetaQuery,
-    cancel: &dyn Fn() -> bool,
 ) -> Result<Vec<Uuid>, ApiError> {
     let _phase = slowlog::phase("resolve.uuids");
     crate::query_validate::validate_query(query)?;
     crate::query_validate::check_query_size(query)?;
-    let mut index_guard = slowlog::timed("wait:index", || repo_state.index.lock_recover());
-    let engine = engine(conn, &mut index_guard, cancel)?;
+    let engine = engine(conn)?;
     crate::query_validate::validate_query_types(query, &|f| engine.value_type(f))?;
     let (roots, indexed) = prepare_indexed_query(conn, cache, &engine.eval(), query)?;
     let evaluated = slowlog::timed("index.evaluate", || {
@@ -3454,7 +3393,6 @@ fn index_gap(gap: crate::index::Unsupported) -> ApiError {
 /// second engine to defer to: a shape that comes back `Unsupported` is a daemon
 /// bug (see [`index_gap`]).
 fn run_query_filter(
-    repo_state: &RepoState,
     conn: &dyn crate::store::Store,
     cache: &mut crate::tree_cache::TreeCache,
     body: &QueryBody,
@@ -3486,8 +3424,7 @@ fn run_query_filter(
     // that changed what is prepared, page 1 and page 2 would be evaluating
     // different queries and would reject each other's cursor (which is bound to
     // a hash of the rewritten query).
-    let mut index_guard = slowlog::timed("wait:index", || repo_state.index.lock_recover());
-    let engine = engine(conn, &mut index_guard, cancel)?;
+    let engine = engine(conn)?;
     crate::query_validate::validate_query_types(&body.query, &|f| engine.value_type(f))?;
     let index = engine.eval();
 
@@ -3551,8 +3488,7 @@ fn run_query_inner(
         let cancel = || repo_state.tasks.is_cancel_requested(task);
         let mut cache = slowlog::timed("wait:cache", || repo_state.lock_cache());
         note_query(&body.query);
-        let (uuids, next_cursor, total) =
-            run_query_filter(repo_state, &conn, &mut cache, body, &cancel)?;
+        let (uuids, next_cursor, total) = run_query_filter(&conn, &mut cache, body, &cancel)?;
         drop(cache);
         slowlog::note("results", uuids.len().to_string());
 
@@ -3777,7 +3713,7 @@ async fn delete_by_query(
         repo_state.ensure_writable()?;
         let mut conn = slowlog::timed("wait:conn", || repo_state.conn.lock_recover());
         let mut cache = slowlog::timed("wait:cache", || repo_state.lock_cache());
-        let uuids = resolve_query_uuids(repo_state, &conn, &mut cache, &body.query, &|| false)?;
+        let uuids = resolve_query_uuids(&conn, &mut cache, &body.query)?;
         drop(cache);
 
         let mut writer = repo_state.writer(&mut conn, None)?;
@@ -3825,15 +3761,12 @@ struct TrashDeleteBody {
 /// inbound reference of either kind is not seen. The gap is named in spec-trash
 /// "Refusing to break a reference" rather than left to be discovered.
 fn inbound_referrers(
-    repo_state: &RepoState,
     conn: &dyn crate::store::Store,
     cache: &mut crate::tree_cache::TreeCache,
     targets: &[Uuid],
 ) -> Result<Vec<Uuid>, ApiError> {
-    // Scoped: `resolve_query_uuids` takes the index lock itself.
     let fields: Vec<String> = {
-        let mut guard = slowlog::timed("wait:index", || repo_state.index.lock_recover());
-        let engine = engine(conn, &mut guard, &|| false)?;
+        let engine = engine(conn)?;
         ["ref", "tree_ref"]
             .iter()
             .flat_map(|ty| engine.field_catalog(Some(ty)))
@@ -3859,7 +3792,7 @@ fn inbound_referrers(
             1 => operands.into_iter().next().expect("one operand"),
             _ => MetaQuery::Or { operands },
         };
-        for uuid in resolve_query_uuids(repo_state, conn, cache, &query, &|| false)? {
+        for uuid in resolve_query_uuids(conn, cache, &query)? {
             // A reference from inside the set travels with it and comes back on
             // a restore: only the ones from outside would be left dangling.
             if !in_set.contains(&uuid) && !referrers.contains(&uuid) {
@@ -3902,7 +3835,7 @@ async fn trash_delete_endpoint(
 
         if !body.force {
             let mut cache = slowlog::timed("wait:cache", || repo_state.lock_cache());
-            let referrers = inbound_referrers(repo_state, &conn, &mut cache, &uuids)?;
+            let referrers = inbound_referrers(&conn, &mut cache, &uuids)?;
             drop(cache);
             if !referrers.is_empty() {
                 let named: Vec<String> =

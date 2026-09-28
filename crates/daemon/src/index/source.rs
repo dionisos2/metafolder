@@ -1,9 +1,9 @@
 //! What the query evaluator asks of the data it evaluates against
 //! (docs/spec-storage.org, "Increment 4, concretely"): one evaluator —
 //! [`super::Eval`], which holds the query semantics the oracle validates —
-//! and as many sources as there are ways to hold the bitmaps. The resident
-//! [`super::RepoIndex`] is one; the key-value store's derived key spaces are
-//! the other.
+//! and a source of the bitmaps: the key-value store's derived key spaces
+//! (`crate::kvstore::KvSource`). A resident index was the other, until the
+//! SQLite backend it served went (September 2026).
 //!
 //! Every answer is a set of dense ids. A field the source knows nothing about
 //! answers empty everywhere, as a field without rows does in the oracle.
@@ -14,7 +14,7 @@ use metafolder_core::metarecord::Value;
 use roaring::RoaringBitmap;
 use uuid::Uuid;
 
-use super::field_index::{CmpOp, FieldIndex, SortRep};
+use super::keys::{CmpOp, SortRep};
 use super::Unsupported;
 
 /// Which traversals a field's values support.
@@ -143,8 +143,4 @@ pub trait Source {
     ) -> bool {
         false
     }
-    /// The resident bit-sliced index of a numeric or date field holding no
-    /// value of another type, which serves a page without reading every
-    /// match's key; `None` on a source without one.
-    fn bsi(&self, field: &str) -> Option<&FieldIndex>;
 }
