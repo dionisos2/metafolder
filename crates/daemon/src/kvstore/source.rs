@@ -525,12 +525,9 @@ impl KvSource<'_> {
                 return Ok(Vec::new());
             };
             let mut out = Vec::new();
-            for entry in self.t.cells.prefix_iter(&self.r, uuid)? {
+            for entry in self.t.cells.prefix_iter(&self.r, &super::cell_prefix(uuid, field))? {
                 self.read_keys(1);
-                let row = dec_row(entry?.1)?;
-                if row.name == field {
-                    out.push(row.value);
-                }
+                out.push(dec_row(entry?.1)?.value);
             }
             Ok(out)
         };

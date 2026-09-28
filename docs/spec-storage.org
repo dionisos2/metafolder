@@ -231,6 +231,24 @@ lexicographically, integers big-endian so that byte order is numeric order.
 | log         | =op_id=                      | operation + snapshots          | history, undo/redo, navigation, incremental reads |
 | meta        | name                         | HEAD, format version, …        |                                                 |
 
+*As built*, a metarecord's rows live in =field_cells=, keyed =uuid · field name ·
+row id= (the table of =kvstore/mod.rs= lists every table): a record's rows
+come under its uuid, and its rows *of one field* under a longer prefix of it.
+That second prefix is what a candidate check reads — a text search verifies
+each candidate on the one field it searched, an =osm= path reads each
+anchor's positions — and a real file holds a dozen =mfr_*= and metadata
+fields besides: the first layout (=uuid · row id=) read all of them to find
+one. On a real repository (50 000 records), a finder search whose last term
+names 2 819 nodes read 73 000 keys in 19 ms; this layout reads 21 000 in
+12 ms. =row_owner=
+maps a row id to =uuid · field name=, the prefix of its cell's key, so a row
+is still addressed by its id alone. A whole record's rows are read in field
+order and put back in row-id order, the order =Rows::rows= promises. The
+layout's version is =layout= in =meta= (absent: the first one); a store of
+the first layout is migrated when it opens, in one transaction that rewrites
+=row_owner= and moves the rows from =cells= into =field_cells=, a batch at a
+time (3.6 s for that repository) — the other tables do not change.
+
 =chunk= is the high 16 bits of an id: one roaring container covers 65 536 ids,
 so a bitmap is read container by container and a write rewrites at most a few
 KB. A value gets a posting only once 64 records hold it; a rarer one is

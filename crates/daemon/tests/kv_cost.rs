@@ -20,6 +20,12 @@ use common::TempDir;
 /// `n` files named `file000000.txt`…, `per_folder` per directory (`d0`, …);
 /// a `kind` of three common values, and ten files of a rare one.
 fn repository_in(n: usize, per_folder: usize) -> (KvStore, TempDir) {
+    repository_with(n, per_folder, 0)
+}
+
+/// [`repository_in`] whose files each carry `extra` more fields, as a real
+/// file carries its `mfr_*` and metadata fields.
+fn repository_with(n: usize, per_folder: usize, extra: usize) -> (KvStore, TempDir) {
     let dir = TempDir::new("kv-cost");
     let mut kv = KvStore::open(dir.path()).unwrap();
     let mut w = Writer::begin(&mut kv, None).unwrap();
@@ -33,12 +39,19 @@ fn repository_in(n: usize, per_folder: usize) -> (KvStore, TempDir) {
             folder = w.create_metarecord(vec![tree(Some(root), &format!("d{i}"))]).unwrap().uuid;
         }
         let kind = if i % (n / 10) == 7 { "rare" } else { ["note", "photo", "song"][i % 3] };
-        w.create_metarecord(vec![
-            tree(Some(folder), &format!("file{i:06}.txt")),
-            Field::new("name", Value::String(format!("file{i:06}.txt"))),
-            Field::new("kind", Value::String(kind.into())),
-            Field::new("rating", Value::Int((i % 10) as i64)),
-        ])
+        w.create_metarecord(
+            vec![
+                tree(Some(folder), &format!("file{i:06}.txt")),
+                Field::new("name", Value::String(format!("file{i:06}.txt"))),
+                Field::new("kind", Value::String(kind.into())),
+                Field::new("rating", Value::Int((i % 10) as i64)),
+            ]
+            .into_iter()
+            .chain(
+                (0..extra).map(|j| Field::new(format!("extra{j:02}"), Value::Int((i + j) as i64))),
+            )
+            .collect(),
+        )
         .unwrap();
     }
     w.commit().unwrap();
@@ -308,4 +321,27 @@ fn a_subtree_count_reads_no_more_for_more_folders() {
         cost_large <= cost_small + cost_small / 2 + 20,
         "subtree count: {cost_small} keys for 100 folders, {cost_large} for 800"
     );
+}
+
+/// A candidate is checked on the field searched — its name, its positions —
+/// not on every field its record holds: records carrying twenty more fields
+/// cost the same keys.
+#[test]
+fn a_candidate_check_reads_the_searched_field_only() {
+    let (lean, _l) = repository_with(2_000, 100, 0);
+    let (wide, _w) = repository_with(2_000, 100, 20);
+    let terms = ["d100", "0001"];
+    for (what, q) in [
+        ("text search", matches("name", "file0001")),
+        ("osm path", osm("loc", &terms, OsmMode::Path)),
+    ] {
+        let (found_lean, cost_lean) = reads(&lean, &q, &[], true);
+        let (found_wide, cost_wide) = reads(&wide, &q, &[], true);
+        assert!(found_lean > 0, "{what}: something to check");
+        assert_eq!(found_lean, found_wide, "{what}");
+        assert!(
+            cost_wide <= cost_lean + cost_lean / 10 + 5,
+            "{what}: {cost_lean} keys with four fields a record, {cost_wide} with twenty-four"
+        );
+    }
 }

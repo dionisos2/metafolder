@@ -12,8 +12,8 @@
 //! |---------------|----------------------------------|---------------------------|
 //! | meta          | name                             | counter / HEAD            |
 //! | metarecords   | uuid                             | version                   |
-//! | cells         | uuid · row id                    | field name · value        |
-//! | row_owner     | row id                           | uuid                      |
+//! | field_cells   | uuid · field name · row id       | field name · value        |
+//! | row_owner     | row id                           | uuid · field name         |
 //! | by_field      | name · row id                    | uuid                      |
 //! | field_types   | name · value type                | rows of that type         |
 //! | forest        | field · parent · name bytes      | uuid · row id             |
@@ -24,6 +24,13 @@
 //! | ops_by_entity | uuid · op id                     | —                         |
 //! | revisions     | revision id                      | timestamp · label · origin|
 //! | restorations  | position                         | a restoration             |
+//!
+//! A record's rows of one field are one prefix of `field_cells`: checking a
+//! candidate on the field searched reads those rows, not all of its record's
+//! (docs/spec-storage.org "Key layout"). `row_owner` holds that prefix, so a
+//! row is still addressed by its id alone. The first layout kept the rows in
+//! `cells` keyed `uuid · row id`; [`KvStore::open`] migrates it
+//! ([`LAYOUT`]).
 //!
 //! Row ids, operation ids and revision ids are allocated from counters in
 //! `meta` and never reused, as SQLite's AUTOINCREMENT guarantees; a row put
@@ -114,6 +121,16 @@ fn uuid_of(b: &[u8]) -> Uuid {
 fn key(parts: &[&[u8]]) -> Vec<u8> {
     parts.concat()
 }
+
+/// The prefix of a record's rows of one field in `field_cells` — and what
+/// `row_owner` maps each of their ids to.
+fn cell_prefix(uuid: &[u8], field: &str) -> Vec<u8> {
+    key(&[uuid, &name_key(field)])
+}
+
+/// The version of the primary layout this code writes, `layout` in `meta`
+/// (absent: the first one, rows keyed `uuid · row id` in `cells`).
+const LAYOUT: i64 = 2;
 
 /// A name inside a composite key: escaped, then terminated.
 fn name_key(name: &str) -> Vec<u8> {
@@ -455,7 +472,7 @@ impl KvStore {
         let t = Tables {
             meta: db("meta")?,
             metarecords: db("metarecords")?,
-            cells: db("cells")?,
+            cells: db("field_cells")?,
             row_owner: db("row_owner")?,
             by_field: db("by_field")?,
             field_types: db("field_types")?,
@@ -475,9 +492,13 @@ impl KvStore {
             grams: db("grams")?,
         };
         let derived = t.meta.get(&w, b"derived")?.map(from_be);
+        let layout = t.meta.get(&w, b"layout")?.map(from_be);
         w.commit()?;
         let mut store =
             KvStore { env, t, _lock: lock, dir: dir.to_path_buf(), reads: Default::default() };
+        if layout != Some(LAYOUT) {
+            store.migrate_layout().context("migrate the key-value store's rows")?;
+        }
         // A store from before the derived key spaces (or of another format of
         // them) gets them derived now: their migration.
         if derived != Some(derived::DERIVED_VERSION) {
@@ -505,9 +526,22 @@ impl Read<'_> {
         Ok(self.t.metarecords.get(self.r, uuid.as_bytes())?.map(|b| from_be(b) as u64))
     }
 
+    /// A record's rows, in row-id order (they are kept in field order).
     fn rows(&self, uuid: Uuid) -> Result<Vec<FieldRow>> {
         let mut out = Vec::new();
         for e in self.t.cells.prefix_iter(self.r, uuid.as_bytes())? {
+            let (_, v) = e?;
+            out.push(dec_row(v)?);
+        }
+        self.count(out.len() as u64 + 1);
+        out.sort_unstable_by_key(|r| r.id);
+        Ok(out)
+    }
+
+    /// A record's rows of one field, in row-id order: one prefix.
+    fn rows_named(&self, uuid: Uuid, name: &str) -> Result<Vec<FieldRow>> {
+        let mut out = Vec::new();
+        for e in self.t.cells.prefix_iter(self.r, &cell_prefix(uuid.as_bytes(), name))? {
             let (_, v) = e?;
             out.push(dec_row(v)?);
         }
@@ -522,11 +556,10 @@ impl Read<'_> {
     }
 
     fn row(&self, id: i64) -> Result<Option<(Uuid, FieldRow)>> {
-        let Some(owner) = self.t.row_owner.get(self.r, &be(id))? else { return Ok(None) };
-        let owner = uuid_of(owner);
-        let cell = self.t.cells.get(self.r, &key(&[owner.as_bytes(), &be(id)]))?;
+        let Some(prefix) = self.t.row_owner.get(self.r, &be(id))? else { return Ok(None) };
+        let cell = self.t.cells.get(self.r, &key(&[prefix, &be(id)]))?;
         Ok(match cell {
-            Some(v) => Some((owner, dec_row(v)?)),
+            Some(v) => Some((uuid_of(prefix), dec_row(v)?)),
             None => None,
         })
     }
@@ -536,9 +569,8 @@ impl Read<'_> {
         for e in self.t.by_field.prefix_iter(self.r, &name_key(name))? {
             let (k, owner) = e?;
             let id = from_be(&k[k.len() - 8..]);
-            let owner = uuid_of(owner);
-            let cell = self.t.cells.get(self.r, &key(&[owner.as_bytes(), &be(id)]))?;
-            out.push((owner, dec_row(cell.context("a row the field index names")?)?));
+            let cell = self.t.cells.get(self.r, &key(&[&cell_prefix(owner, name), &be(id)]))?;
+            out.push((uuid_of(owner), dec_row(cell.context("a row the field index names")?)?));
         }
         Ok(out)
     }
@@ -548,7 +580,11 @@ impl Read<'_> {
         let mut out = Vec::new();
         for e in self.t.forest.prefix_iter(self.r, &prefix)? {
             let (k, v) = e?;
-            out.push((uuid_of(v), self.node_name(&k[prefix.len()..], v)?, from_be(&v[16..])));
+            out.push((
+                uuid_of(v),
+                self.node_name(field, &k[prefix.len()..], v)?,
+                from_be(&v[16..]),
+            ));
         }
         self.count(out.len() as u64 + 1);
         Ok(out)
@@ -588,7 +624,7 @@ impl Read<'_> {
             if !k.starts_with(&prefix) {
                 break;
             }
-            out.push((uuid_of(v), self.node_name(&k[prefix.len()..], v)?));
+            out.push((uuid_of(v), self.node_name(field, &k[prefix.len()..], v)?));
             if out.len() >= limit {
                 break;
             }
@@ -599,11 +635,12 @@ impl Read<'_> {
 
     /// A position's name, from the end of its forest key — or, for a name
     /// too long to be keyed whole, from its row (`v` is uuid · row id).
-    fn node_name(&self, key_end: &[u8], v: &[u8]) -> Result<Vec<u8>> {
+    fn node_name(&self, field: &str, key_end: &[u8], v: &[u8]) -> Result<Vec<u8>> {
         if key_end.len() <= NODE_MAX {
             return Ok(key_end.to_vec());
         }
-        let row = self.t.cells.get(self.r, v)?.context("a forest position without its row")?;
+        let cell = key(&[&cell_prefix(&v[..16], field), &v[16..24]]);
+        let row = self.t.cells.get(self.r, &cell)?.context("a forest position without its row")?;
         match dec_row(row)?.value {
             Value::TreeRef { name, .. } => Ok(name.as_bytes().to_vec()),
             _ => bail!("a forest position whose row is no tree_ref"),
@@ -726,7 +763,8 @@ macro_rules! kv_reads {
                 $with(&mut |$read: &Read| $read.rows(uuid))
             }
             fn rows_named(&self, uuid: Uuid, name: &str) -> Result<Vec<FieldRow>> {
-                Ok(self.rows(uuid)?.into_iter().filter(|r| r.name == name).collect())
+                let $me = self;
+                $with(&mut |$read: &Read| $read.rows_named(uuid, name))
             }
             fn rows_for(&self, uuids: &[Uuid]) -> Result<HashMap<Uuid, Vec<FieldRow>>> {
                 let $me = self;
@@ -783,10 +821,12 @@ macro_rules! kv_reads {
                 let $me = self;
                 $with(&mut |$read: &Read| {
                     for e in $read.t.row_owner.iter($read.r)? {
-                        let (k, owner) = e?;
-                        let owner = uuid_of(owner);
-                        let cell = $read.t.cells.get($read.r, &key(&[owner.as_bytes(), k]))?;
-                        f(owner, dec_row(cell.context("a row its owner does not hold")?)?)?;
+                        let (k, prefix) = e?;
+                        let cell = $read.t.cells.get($read.r, &key(&[prefix, k]))?;
+                        f(
+                            uuid_of(prefix),
+                            dec_row(cell.context("a row its owner does not hold")?)?,
+                        )?;
                     }
                     Ok(())
                 })
@@ -860,7 +900,7 @@ macro_rules! kv_reads {
                     let Some(v) = $read.t.forest.get($read.r, &k)? else { return Ok(None) };
                     // A hashed key names the right position only if the name
                     // read back is the one asked for.
-                    let found = $read.node_name(&k[k.len() - node_key(name).len()..], v)?;
+                    let found = $read.node_name(field, &k[k.len() - node_key(name).len()..], v)?;
                     Ok((found == name).then(|| uuid_of(v)))
                 })
             }
@@ -899,11 +939,12 @@ macro_rules! kv_reads {
                             field.push(k[i]);
                             i += if k[i] == 0 { 2 } else { 1 };
                         }
+                        let field = String::from_utf8(field)?;
                         let parent = uuid_of(&k[end + 2..end + 18]);
-                        let name = $read.node_name(&k[end + 18..], v)?;
+                        let name = $read.node_name(&field, &k[end + 18..], v)?;
                         out.push(TreeRow {
                             id: from_be(&v[16..]),
-                            field_name: String::from_utf8(field)?,
+                            field_name: field,
                             uuid: uuid_of(v),
                             parent: (!parent.is_nil()).then_some(parent),
                             name: TreeName::from_bytes(name),
@@ -1184,6 +1225,50 @@ impl KvStore {
     }
 }
 
+impl KvStore {
+    /// Moves the rows of a store of the first layout (`cells`, keyed
+    /// `uuid · row id`) into `field_cells`, keyed by field, and points
+    /// `row_owner` at their new prefixes — in one transaction, a batch of
+    /// rows in memory at a time. A new store has nothing to move and only
+    /// records the layout.
+    fn migrate_layout(&mut self) -> Result<()> {
+        const BATCH: usize = 10_000;
+        let env = self.env.clone();
+        let txn = KvTxn::new(self)?;
+        {
+            let mut w = txn.txn.borrow_mut();
+            let t = txn.t;
+            if let Some(old) = env.open_database::<Bytes, Bytes>(&w, Some("cells"))? {
+                let mut after: Option<Vec<u8>> = None;
+                loop {
+                    let batch: Vec<(Vec<u8>, Vec<u8>)> = {
+                        let lo = match &after {
+                            Some(k) => std::ops::Bound::Excluded(k.as_slice()),
+                            None => std::ops::Bound::Unbounded,
+                        };
+                        let range = (lo, std::ops::Bound::Unbounded);
+                        old.range(&w, &range)?
+                            .take(BATCH)
+                            .map(|e| e.map(|(k, v)| (k.to_vec(), v.to_vec())))
+                            .collect::<heed::Result<_>>()?
+                    };
+                    let Some((last, _)) = batch.last() else { break };
+                    after = Some(last.clone());
+                    for (k, v) in &batch {
+                        let (uuid, id) = (&k[..16], &k[16..24]);
+                        let prefix = cell_prefix(uuid, &dec_row(v)?.name);
+                        t.cells.put(&mut w, &key(&[&prefix, id]), v)?;
+                        t.row_owner.put(&mut w, id, &prefix)?;
+                    }
+                }
+                old.clear(&mut w)?;
+            }
+        }
+        txn.meta_put("layout", LAYOUT)?;
+        txn.finish()
+    }
+}
+
 impl<'e> KvTxn<'e> {
     fn new(store: &'e mut KvStore) -> Result<KvTxn<'e>> {
         store.grow_map()?;
@@ -1327,8 +1412,9 @@ impl WriteTxn for KvTxn<'_> {
         {
             let mut w = self.txn.borrow_mut();
             let t = self.t;
-            t.cells.put(&mut w, &key(&[uuid.as_bytes(), &be(id)]), &enc_row(&row))?;
-            t.row_owner.put(&mut w, &be(id), uuid.as_bytes())?;
+            let prefix = cell_prefix(uuid.as_bytes(), name);
+            t.cells.put(&mut w, &key(&[&prefix, &be(id)]), &enc_row(&row))?;
+            t.row_owner.put(&mut w, &be(id), &prefix)?;
             t.by_field.put(&mut w, &key(&[&name_key(name), &be(id)]), uuid.as_bytes())?;
             if let Some(k) = &forest {
                 t.forest.put(&mut w, k, &key(&[uuid.as_bytes(), &be(id)]))?;
@@ -1349,7 +1435,7 @@ impl WriteTxn for KvTxn<'_> {
         {
             let mut w = self.txn.borrow_mut();
             let t = self.t;
-            t.cells.delete(&mut w, &key(&[owner.as_bytes(), &be(id)]))?;
+            t.cells.delete(&mut w, &key(&[&cell_prefix(owner.as_bytes(), &row.name), &be(id)]))?;
             t.row_owner.delete(&mut w, &be(id))?;
             t.by_field.delete(&mut w, &key(&[&name_key(&row.name), &be(id)]))?;
             if let Some(k) = Self::forest_key(&row.name, &row.value) {
