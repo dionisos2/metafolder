@@ -683,10 +683,24 @@ async fn context_for(daemon: &Daemon, repo: Uuid, dir: &Path, real: bool) -> Res
         .json()
         .await?;
     let head = log["head"].as_i64().unwrap_or(0);
-    let (mut folder, mut terms) = ("/dir1".to_string(), vec!["dir1".into(), "file12".into()]);
+    let (mut folder, mut terms) = ("/dir0/dir1".to_string(), vec!["dir1".into(), "file12".into()]);
     if real {
         (folder, terms) = real_search(&url, repo).await?;
         println!("   real search: folder {folder}, terms {terms:?}");
+    }
+    // A folder that names no node is an empty subtree, and every scenario
+    // looking into it would measure nothing — silently, as they did for a
+    // while on the generated repositories.
+    let inside: serde_json::Value = client()
+        .post(format!("{url}/repos/{repo}/query"))
+        .json(&json!({"query": subtree(&folder), "limit": 1, "count": true}))
+        .send()
+        .await?
+        .error_for_status()?
+        .json()
+        .await?;
+    if inside["total"].as_u64().unwrap_or(0) == 0 {
+        anyhow::bail!("the folder the scenarios look into, {folder}, holds nothing");
     }
     Ok(Ctx { url, repo, sample, page, dir: dir.to_path_buf(), head, folder, terms })
 }
