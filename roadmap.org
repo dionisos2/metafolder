@@ -47,6 +47,25 @@ reference that goes away with SQLite):
   GUI's finder at every keystroke;
 - =query.subtree_range_text= 1.5 ms on KV, 7.9 ms resident.
 Profile these first: they, not the old design, say what the planner chooses.
+Profiled 28 September 2026 (=examples/profile_query.rs=, L, warm pages):
+- =rare_and_wide= is gone: 6 keys and a few µs in either order. The 4.17 ms
+  was a store read cold, just after its generation.
+- =subtree_range_text= measured an *empty* subtree on the generated sizes
+  until =5225eb1= (="/dir1"= is ="/dir0/dir1"=). On the real folder: the
+  page with its count reads 3 036 keys; the page *without* the count reads
+  20 931 — the deferred text leaf makes it walk the uuid order, with a budget
+  sized on the candidates (≈ 9 500) as though every one passed, where the
+  regex keeps one in ten, and each check reads a name. The walk budget knows
+  neither the residual's selectivity nor its per-id cost. A real planner
+  choice (walk with a residual vs evaluate the leaf over the candidates), and
+  the one the GUI's second pages take.
+- =finder= ≈ 5-8 ms, not 22 (load): nearly all of it the rewrite of the
+  two-term =osm= path — the names holding the last term (1 111 candidates,
+  1.7 ms), then each one's ancestry (≈ 1 280 point reads at ≈ 2 µs, a random
+  B-tree seek). Computing it term by term as bitmaps (names ∩ descendants of
+  the previous term's matches) is exact for separator-free terms but costs as
+  much here (one term alone, =dir1=, reads 5 565 keys). Choosing the anchor
+  term by its trigram posting size is the planner's lever there.
 
 ** TODO =mf order= writes one revision per child
 N children cost N =PUT=s: N transactions, N fsyncs and N revisions, so undoing
