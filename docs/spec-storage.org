@@ -303,7 +303,9 @@ What it buys:
   matching path, the shortest matching prefix ends at a node whose own name
   holds the end of the last term (what follows its last =/=), so the trigrams
   give the candidate "anchors", each is verified on its assembled path (its
-  ancestors read once, shared between candidates), and the match set is the
+  ancestors read once, shared between candidates; its name and its positions
+  from one read of its rows — =Source::named_positions=, which halved the
+  keys this step read), and the match set is the
   union of the verified anchors' subtrees — the descendant bitmaps again. An
   anchor matching only through a position other than its first matches alone,
   its descendants hanging from the first. A last term *ending* with =/= has no

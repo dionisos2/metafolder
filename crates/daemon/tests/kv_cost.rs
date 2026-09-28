@@ -345,3 +345,23 @@ fn a_candidate_check_reads_the_searched_field_only() {
         );
     }
 }
+
+/// An `osm` path reads each candidate anchor's rows once, for its name and
+/// its positions together: it costs about the name scan of its last term,
+/// plus a descendant bitmap per anchor for the subtrees — not that scan and
+/// then a second read of every candidate (6 965 keys here, against 3 593).
+#[test]
+fn an_osm_path_reads_each_candidates_rows_once() {
+    let (kv, _d) = repository_in(4_000, 100);
+    let path = osm("loc", &["d", "001"], OsmMode::Path);
+    let scan = value_matches("loc", "(?i)001");
+    let (_, cost_path) = reads(&kv, &path, &[], true);
+    let (candidates, cost_scan) = reads(&kv, &scan, &[], true);
+    assert!(candidates > 100, "{candidates}: enough candidates to tell");
+    // Every candidate is an anchor here (every path holds a `d`).
+    let candidates = candidates as u64;
+    assert!(
+        cost_path < cost_scan + candidates + candidates / 4,
+        "{cost_path} keys for the path, {cost_scan} for the name scan of {candidates} candidates"
+    );
+}

@@ -39,7 +39,7 @@ use uuid::Uuid;
 use crate::db;
 use field_index::{CmpOp, FieldIndex, SortRep, SortReps};
 use id_registry::IdRegistry;
-pub use source::{Follow, RepReader, Source, Walked};
+pub use source::{Follow, NamedNode, RepReader, Source, Walked};
 
 /// One sort key: a field name and its direction.
 #[derive(Debug)]

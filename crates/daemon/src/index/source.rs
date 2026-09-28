@@ -43,6 +43,10 @@ pub enum Walked<'a> {
     Run(&'a RoaringBitmap),
 }
 
+/// A forest node and every position it holds, `(parent, name)` (`None` for
+/// a root's parent) in row-id order.
+pub type NamedNode = (Uuid, Vec<(Option<Uuid>, String)>);
+
 pub trait Source {
     /// Every metarecord's id.
     fn universe(&self) -> Cow<'_, RoaringBitmap>;
@@ -86,6 +90,21 @@ pub trait Source {
         literals: &[String],
         restrict: Option<&RoaringBitmap>,
     ) -> RoaringBitmap;
+
+    /// The nodes of `field`'s forest whose name satisfies `keep`, each with
+    /// every position it holds, `(parent, name)` in row-id order — read once
+    /// for both, what an `osm` path checks its anchors on. `literals` as for
+    /// [`Source::scan_names`]. `None` when the source cannot narrow the
+    /// candidates with them: the caller scans the names, then reads the
+    /// positions of what matched.
+    fn named_positions(
+        &self,
+        _field: &str,
+        _keep: &dyn Fn(&str) -> bool,
+        _literals: &[String],
+    ) -> Option<Vec<NamedNode>> {
+        None
+    }
 
     /// What `field` can be followed along; `None` for a field without values.
     fn follow(&self, field: &str) -> Option<Follow>;

@@ -164,24 +164,44 @@ fn osm_path_seeded(
         return Ok(None);
     };
     // The regex the single-term search seeds with, over the same names.
-    let probe = Query::Matches {
-        field: field.to_string(),
-        pattern: format!("(?i){}", regex::escape(anchor)),
-        // On a tree_ref, the `value` aspect is the node's name.
-        aspect: Aspect::Value,
+    let pattern = format!("(?i){}", regex::escape(anchor));
+    // The candidates with their positions, from one read of their rows where
+    // the source can; else the names scanned, then the positions read.
+    let found = match crate::regexp::compile(&pattern) {
+        Ok(re) => names.src.named_positions(
+            field,
+            &|name| re.is_match(name),
+            &crate::regexp::required_literals(&pattern),
+        ),
+        Err(_) => None,
     };
-    let Ok((candidates, _)) =
-        names.evaluate_page_with_roots(&probe, &[], None, None, &QueryRoots::new())
-    else {
-        return Ok(None);
+    let found = match found {
+        Some(found) => found,
+        None => {
+            let probe = Query::Matches {
+                field: field.to_string(),
+                pattern,
+                // On a tree_ref, the `value` aspect is the node's name.
+                aspect: Aspect::Value,
+            };
+            let Ok((candidates, _)) =
+                names.evaluate_page_with_roots(&probe, &[], None, None, &QueryRoots::new())
+            else {
+                return Ok(None);
+            };
+            let mut found = Vec::with_capacity(candidates.len());
+            for uuid in candidates {
+                found.push((uuid, store.positions(field, uuid).map_err(ApiError::from)?));
+            }
+            found
+        }
     };
     let terms_lower: Vec<String> = terms.iter().map(|t| lower(t)).collect();
     let mut paths = AncestorPaths { store, field, known: HashMap::new() };
     // Descendants hang from a node's first position only: an anchor matching
     // through another one matches alone.
     let (mut subtrees, mut alone) = (Vec::new(), Vec::new());
-    for uuid in candidates {
-        let positions = store.positions(field, uuid).map_err(ApiError::from)?;
+    for (uuid, positions) in found {
         for (i, (parent, name)) in positions.into_iter().enumerate() {
             // A root's path is its bare name; every other node joins with '/'.
             let path = match parent {

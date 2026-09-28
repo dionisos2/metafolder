@@ -32,7 +32,7 @@ use super::derived::{
 };
 use super::{dec_row, name_key, uuid_of, KvStore, Tables};
 use crate::index::field_index::{sort_rep, CmpOp, FieldIndex, SortRep};
-use crate::index::{unsupported, Follow, RepReader, Source, Unsupported, Walked};
+use crate::index::{unsupported, Follow, NamedNode, RepReader, Source, Unsupported, Walked};
 
 /// A read snapshot of a KV store, answering the evaluator's questions.
 pub struct KvSource<'s> {
@@ -534,6 +534,41 @@ impl KvSource<'_> {
         self.ok(read(), Vec::new())
     }
 
+    /// The ids whose text in `field` may hold every one of `literals`: the
+    /// intersection of their trigrams' bitmaps (plus the texts too long to be
+    /// split), within `restrict` — a superset of the answer, each candidate
+    /// then checked on its values. `None` when the literals hold no trigram.
+    fn text_candidates(
+        &self,
+        field: &str,
+        literals: &[String],
+        restrict: Option<&RoaringBitmap>,
+    ) -> Option<RoaringBitmap> {
+        let grams: std::collections::BTreeSet<[u8; 3]> =
+            literals.iter().flat_map(|l| derived::trigrams(l)).collect();
+        if grams.is_empty() {
+            return None;
+        }
+        let mut candidates: Option<RoaringBitmap> = restrict.cloned();
+        for gram in &grams {
+            let ids = self.gram_set(field, gram);
+            candidates = Some(match candidates {
+                None => ids,
+                Some(c) => c & ids,
+            });
+            if candidates.as_ref().is_some_and(RoaringBitmap::is_empty) {
+                break;
+            }
+        }
+        let mut candidates = candidates.unwrap_or_default();
+        let mut long = self.set(derived::LONG_TEXTS, Some(field));
+        if let Some(r) = restrict {
+            long &= r;
+        }
+        candidates |= long;
+        Some(candidates)
+    }
+
     /// The ids of `field`'s partition `part` whose text satisfies `keep`,
     /// within `restrict`. A small candidate set reads its own rows; a large
     /// one scans the distinct keys, testing each once.
@@ -547,29 +582,7 @@ impl KvSource<'_> {
         restrict: Option<&RoaringBitmap>,
     ) -> RoaringBitmap {
         let text = |v: &Value| text_of(v).is_some_and(|t| keep(&t));
-        // The trigrams every accepted text holds: their bitmaps' intersection
-        // (plus the texts too long to be split) is a superset of the answer,
-        // each candidate then checked on its values.
-        let grams: std::collections::BTreeSet<[u8; 3]> =
-            literals.iter().flat_map(|l| derived::trigrams(l)).collect();
-        if !grams.is_empty() {
-            let mut candidates: Option<RoaringBitmap> = restrict.cloned();
-            for gram in &grams {
-                let ids = self.gram_set(field, gram);
-                candidates = Some(match candidates {
-                    None => ids,
-                    Some(c) => c & ids,
-                });
-                if candidates.as_ref().is_some_and(RoaringBitmap::is_empty) {
-                    break;
-                }
-            }
-            let mut candidates = candidates.unwrap_or_default();
-            let mut long = self.set(derived::LONG_TEXTS, Some(field));
-            if let Some(r) = restrict {
-                long &= r;
-            }
-            candidates |= long;
+        if let Some(candidates) = self.text_candidates(field, literals, restrict) {
             return self.having(candidates, field, &text);
         }
         if let Some(r) = restrict {
@@ -889,6 +902,38 @@ impl Source for KvSource<'_> {
             return RoaringBitmap::new();
         }
         self.scan(field, NAME, &name_of, keep, literals, restrict)
+    }
+
+    fn named_positions(
+        &self,
+        field: &str,
+        keep: &dyn Fn(&str) -> bool,
+        literals: &[String],
+    ) -> Option<Vec<NamedNode>> {
+        if self.kind(field) != Some(Kind::Reference { tree: true }) {
+            return Some(Vec::new());
+        }
+        let candidates = self.text_candidates(field, literals, None)?;
+        let read = || -> Result<Vec<NamedNode>> {
+            let mut out = Vec::new();
+            for id in &candidates {
+                self.read_keys(1);
+                let Some(uuid) = self.t.uuids.get(&self.r, &id.to_be_bytes())? else { continue };
+                // A record's rows of one field are one prefix, in row-id order.
+                let mut positions = Vec::new();
+                for entry in self.t.cells.prefix_iter(&self.r, &super::cell_prefix(uuid, field))? {
+                    self.read_keys(1);
+                    if let Value::TreeRef { parent, name } = dec_row(entry?.1)?.value {
+                        positions.push((parent, name.display().into_owned()));
+                    }
+                }
+                if positions.iter().any(|(_, name)| keep(name)) {
+                    out.push((uuid_of(uuid), positions));
+                }
+            }
+            Ok(out)
+        };
+        Some(self.ok(read(), Vec::new()))
     }
 
     fn follow(&self, field: &str) -> Option<Follow> {
