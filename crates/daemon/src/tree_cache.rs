@@ -72,8 +72,9 @@ struct Node {
 struct FieldTree {
     /// Root nodes by normalized name bytes.
     roots: HashMap<Vec<u8>, usize>,
-    /// Cached nodes by metarecord UUID. A metarecord with several positions
-    /// (multi-map TreeRef) can have several nodes.
+    /// Cached nodes by metarecord UUID: one each (spec-data-model "One
+    /// position per forest"), save in a repository an older daemon let hold
+    /// more, which `mf repo check` names.
     by_uuid: HashMap<Uuid, Vec<usize>>,
     /// Nodes waiting for a parent, by the metarecord uuid they wait for. What
     /// makes the upkeep independent of the order positions arrive in: a child
@@ -81,47 +82,27 @@ struct FieldTree {
     /// producer has to sort its work — and none of them can
     /// (see [`TreeCache::adopt`]).
     waiting: HashMap<Uuid, Vec<usize>>,
-    /// How many `by_uuid` entries hold more than one node — kept by the three
-    /// methods below, the only writers of `by_uuid`.
-    multi: usize,
 }
 
 impl FieldTree {
-    fn count(&mut self, before: usize, after: usize) {
-        match (before > 1, after > 1) {
-            (false, true) => self.multi += 1,
-            (true, false) => self.multi -= 1,
-            _ => {}
-        }
-    }
-
     fn push_node(&mut self, uuid: Uuid, idx: usize) {
-        let list = self.by_uuid.entry(uuid).or_default();
-        list.push(idx);
-        let after = list.len();
-        self.count(after - 1, after);
+        self.by_uuid.entry(uuid).or_default().push(idx);
     }
 
     fn set_nodes(&mut self, uuid: Uuid, nodes: Vec<usize>) {
-        let before = self.by_uuid.get(&uuid).map_or(0, Vec::len);
-        let after = nodes.len();
         if nodes.is_empty() {
             self.by_uuid.remove(&uuid);
         } else {
             self.by_uuid.insert(uuid, nodes);
         }
-        self.count(before, after);
     }
 
     fn drop_node(&mut self, uuid: Uuid, idx: usize) {
         let Some(list) = self.by_uuid.get_mut(&uuid) else { return };
-        let before = list.len();
         list.retain(|&n| n != idx);
-        let after = list.len();
-        if after == 0 {
+        if list.is_empty() {
             self.by_uuid.remove(&uuid);
         }
-        self.count(before, after);
     }
 }
 
@@ -242,11 +223,6 @@ impl TreeCache {
         if !self.resident && self.live > 0 {
             self.clear();
         }
-    }
-
-    /// How many metarecords hold several positions in `field`'s forest.
-    pub fn multi_positioned(&self, field: &str) -> usize {
-        self.fields.get(field).map_or(0, |ft| ft.multi)
     }
 
     /// True while the whole forest is resident in memory (see [`Self::populate`]).
@@ -408,7 +384,7 @@ impl TreeCache {
     }
 
     /// Reconstructs the path string of a metarecord by walking up its parents
-    /// in the database (first position for multi-map fields).
+    /// in the database.
     pub fn path_of(&mut self, store: &dyn Rows, field: &str, uuid: Uuid) -> Result<Option<String>> {
         if self.complete {
             return Ok(self.path_of_in_cache(field, uuid));
@@ -433,9 +409,10 @@ impl TreeCache {
     }
 
     /// All filesystem-style paths of a metarecord in `field`'s forest, one per
-    /// position (fields are a multi-map: e.g. hardlinks give several
-    /// `mfr_path`). Positions whose parent is not in the forest (stale) are
-    /// skipped. The reverse of [`Self::resolve_path`].
+    /// position — one, save in a repository an older daemon let hold more
+    /// (spec-data-model "One position per forest"). Positions whose parent is
+    /// not in the forest (stale) are skipped. The reverse of
+    /// [`Self::resolve_path`].
     pub fn paths_of(&mut self, store: &dyn Rows, field: &str, uuid: Uuid) -> Result<Vec<String>> {
         if self.complete {
             return Ok(self.paths_of_in_cache(field, uuid));
@@ -657,7 +634,7 @@ impl TreeCache {
         let mut matched = HashSet::new();
         match seek {
             PathSeek::Exact(path) => {
-                if let Some(node) = seek_stored(store, field, path, false)? {
+                if let Some(node) = seek_stored(store, field, path)? {
                     if pred(path) {
                         matched.insert(node);
                     }
@@ -672,7 +649,7 @@ impl TreeCache {
                 };
                 let (parent, depth) = match above {
                     None => (None, 1),
-                    Some(dir) => match seek_stored(store, field, dir, true)? {
+                    Some(dir) => match seek_stored(store, field, dir)? {
                         Some(node) => (Some(node), dir.split('/').count() + 1),
                         None => return Ok(Vec::new()),
                     },
@@ -685,20 +662,12 @@ impl TreeCache {
                     if pred(&path) {
                         matched.insert(child);
                     }
-                    let first = store.positions(field, child)?.into_iter().next();
-                    if first.is_some_and(|(p, n)| p == parent && n == name) {
-                        walk_stored_from(
-                            store,
-                            field,
-                            (child, path, (), depth),
-                            &mut |(), u, p| {
-                                if pred(p) {
-                                    matched.insert(u);
-                                }
-                                Some(())
-                            },
-                        )?;
-                    }
+                    walk_stored_from(store, field, (child, path, (), depth), &mut |(), u, p| {
+                        if pred(p) {
+                            matched.insert(u);
+                        }
+                        Some(())
+                    })?;
                 }
             }
             PathSeek::Below(may_hold) => {
@@ -1779,11 +1748,8 @@ impl<'a> SortKeys<'a> {
     /// Detached nodes are roots by their bare names, as in [`Self::pick`].
     ///
     /// `within` restricts the walk to the descendants of that metarecord (the
-    /// caller knows every match is one of them: a path-target follow). Only
-    /// while no metarecord of the forest holds several positions: one could
-    /// match below `within` and sort on a position elsewhere, which a bounded
-    /// walk would never meet before its page is full — the walk then starts
-    /// at the roots, as without a bound.
+    /// caller knows every match is one of them: a path-target follow) — each
+    /// of which has its one position, so its one sort key, below it.
     /// `resume = (uuid, key)` starts strictly after the node of `uuid` whose
     /// key is `key` (a keyset cursor). The page strategies of the query index
     /// use this to stop at the page's end (spec-indexing "A page costs the
@@ -1811,7 +1777,7 @@ impl<'a> SortKeys<'a> {
         let Some(tree) = self.cache.fields.get(field) else { return WalkEnd::Completed };
         // The top of the walk: the forest's roots (detached nodes among them),
         // or the children of the bounding metarecord's positions.
-        let (top, bound): (Vec<usize>, Option<usize>) = match within.filter(|_| tree.multi == 0) {
+        let (top, bound): (Vec<usize>, Option<usize>) = match within {
             None => (
                 tree.roots.values().chain(tree.waiting.values().flatten()).copied().collect(),
                 None,
@@ -2103,9 +2069,8 @@ impl<'a> SortKeys<'a> {
 /// Walks `field`'s forest in the store from its roots, depth first, as the
 /// resident walks do: a node is visited once per position, with the path of
 /// that position (a root's is its bare name, every other joins its parent's
-/// with `/`), and its children are reached under its *first* position only —
-/// where a load hangs them. A node whose parent holds no position is in no
-/// path, so it is never reached. `visit` gets the state its parent passed
+/// with `/`). A node whose parent holds no position is in no path, so it is
+/// never reached. `visit` gets the state its parent passed
 /// down and returns the state for the node's children, or `None` to skip them.
 fn walk_stored<S: Copy>(
     store: &dyn Rows,
@@ -2134,12 +2099,7 @@ fn walk_stored_from<S: Copy>(
         for (child, name) in store.children(field, parent)? {
             let path = if depth == 0 { name.clone() } else { format!("{parent_path}/{name}") };
             let Some(next) = visit(state, child, &path) else { continue };
-            // Descend only from the child's first position.
-            let here = if depth == 0 { None } else { Some(parent) };
-            let first = store.positions(field, child)?.into_iter().next();
-            if first.is_some_and(|(p, n)| p == here && n == name) {
-                stack.push((child, path, next, depth + 1));
-            }
+            stack.push((child, path, next, depth + 1));
         }
     }
     Ok(())
@@ -2156,24 +2116,14 @@ pub enum PathSeek<'a> {
     Below(&'a dyn Fn(&str) -> bool),
 }
 
-/// The node at `path` in the stored forest as the walk reaches it: each node
-/// above through its first position — the one its children hang from — and
-/// the last one too when `descend` (its children are wanted), else through
-/// any of its positions.
-fn seek_stored(store: &dyn Rows, field: &str, path: &str, descend: bool) -> Result<Option<Uuid>> {
+/// The node at `path` in the stored forest: one keyed read per component.
+fn seek_stored(store: &dyn Rows, field: &str, path: &str) -> Result<Option<Uuid>> {
     let mut parent = None;
-    let mut names = path.split('/').peekable();
-    while let Some(name) = names.next() {
-        let Some(child) = store.child_by_bytes(field, parent, name.as_bytes())? else {
-            return Ok(None);
-        };
-        if descend || names.peek().is_some() {
-            let first = store.positions(field, child)?.into_iter().next();
-            if !first.is_some_and(|(p, n)| p == parent && n == name) {
-                return Ok(None);
-            }
+    for name in path.split('/') {
+        match store.child_by_bytes(field, parent, name.as_bytes())? {
+            Some(child) => parent = Some(child),
+            None => return Ok(None),
         }
-        parent = Some(child);
     }
     Ok(parent)
 }

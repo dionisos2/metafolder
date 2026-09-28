@@ -761,8 +761,8 @@ e. *The forest on disk*: the tree cache is no longer built for a KV
    grows and nothing goes stale). Every forest question goes to the store:
    paths resolve component by component, the full-path sort keys and the
    =:path= / =osm= path leaves are computed from the store's positions by the
-   resident rules (a child hangs under its parent's first position; a node
-   whose parent holds no position is in no path), and the key-order walk of a
+   resident rules (a node whose parent holds no position is in no path), and
+   the key-order walk of a
    path sort declines, so a path-sorted page is fetched. Measured (quick bench,
    size S): opening a folder 0.53 → 1.44 ms, resolving a page of paths 0.41 →
    1.21 ms — costs of the result, not of the repository. Then *(done)*:

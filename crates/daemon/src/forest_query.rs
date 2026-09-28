@@ -163,20 +163,16 @@ fn path_leaf_matches(
         Narrow::Exact(path) => seek_all(PathSeek::Exact(path))?,
         Narrow::Prefix(prefix) => seek_all(PathSeek::Prefix(prefix))?,
         Narrow::Range(op, operand) => seek_all(PathSeek::Below(below(operand, *op).as_ref()))?,
-        // Every node has one path per position, all different: only a node
-        // whose single path is the operand fails to differ from it.
+        // Every node has one path: all but the one at the operand.
         Narrow::Differs(path) => {
             let present = Query::IsPresent { field: field.to_string(), aspect: Aspect::Path };
             let at = cache
                 .path_matches_seeking(store, field, PathSeek::Exact(path), &|_| true)
                 .map_err(ApiError::from)?;
-            let only = match at.first() {
-                Some(&node) if store.positions(field, node).map_err(ApiError::from)?.len() == 1 => {
-                    node
-                }
-                _ => return Ok(Some(present)),
-            };
-            let not_it = Query::Not { operand: Box::new(Query::UuidIn { uuids: vec![only] }) };
+            if at.is_empty() {
+                return Ok(Some(present));
+            }
+            let not_it = Query::Not { operand: Box::new(Query::UuidIn { uuids: at }) };
             return Ok(Some(Query::And { operands: vec![present, not_it] }));
         }
         Narrow::Walk => {
@@ -245,41 +241,27 @@ fn osm_path_seeded(
     };
     let terms_lower: Vec<String> = terms.iter().map(|t| lower(t)).collect();
     let mut paths = AncestorPaths { store, field, known: HashMap::new() };
-    // Descendants hang from a node's first position only: an anchor matching
-    // through another one matches alone.
-    let (mut subtrees, mut alone) = (Vec::new(), Vec::new());
+    let mut subtrees = Vec::new();
     for (uuid, positions) in found {
-        for (i, (parent, name)) in positions.into_iter().enumerate() {
-            // A root's path is its bare name; every other node joins with '/'.
-            let path = match parent {
-                None => lower(&name),
-                Some(parent) => match paths.first_path(parent)? {
-                    Some(above) => format!("{above}/{}", lower(&name)),
-                    None => continue, // a stale position: no path through it
-                },
-            };
-            if osm_advance(&path, &terms_lower, OsmProgress::default()).matched == terms_lower.len()
-            {
-                if i == 0 {
-                    subtrees.push(uuid)
-                } else {
-                    alone.push(uuid)
-                }
-                break;
-            }
+        // One position per forest (spec-data-model).
+        let Some((parent, name)) = positions.into_iter().next() else { continue };
+        // A root's path is its bare name; every other node joins with '/'.
+        let path = match parent {
+            None => lower(&name),
+            Some(parent) => match paths.path(parent)? {
+                Some(above) => format!("{above}/{}", lower(&name)),
+                None => continue, // a stale position: no path through it
+            },
+        };
+        if osm_advance(&path, &terms_lower, OsmProgress::default()).matched == terms_lower.len() {
+            subtrees.push(uuid);
         }
     }
     subtrees.sort_unstable();
-    alone.sort_unstable();
-    let whole = Query::FollowsTransitive {
+    Ok(Some(Query::FollowsTransitive {
         field: field.to_string(),
         target: FollowTarget::Condition(Box::new(Query::UuidIn { uuids: subtrees })),
         inclusive: true,
-    };
-    Ok(Some(if alone.is_empty() {
-        whole
-    } else {
-        Query::Or { operands: vec![whole, Query::UuidIn { uuids: alone }] }
     }))
 }
 
@@ -289,12 +271,11 @@ fn lower(s: &str) -> String {
     s.chars().flat_map(char::to_lowercase).collect()
 }
 
-/// The lower-cased path of each node through its first position — the one its
-/// descendants hang from, as `TreeCache::path_of` assembles it — remembered,
-/// so candidates sharing a folder read its ancestry once.
 /// A node's `(parent, name)` in a forest — `None` for a root's parent.
 type Position = (Option<Uuid>, String);
 
+/// The lower-cased path of each node, as `TreeCache::path_of` assembles it,
+/// remembered, so candidates sharing a folder read its ancestry once.
 struct AncestorPaths<'a> {
     store: &'a dyn Rows,
     field: &'a str,
@@ -302,7 +283,7 @@ struct AncestorPaths<'a> {
 }
 
 impl AncestorPaths<'_> {
-    fn first_path(&mut self, uuid: Uuid) -> Result<Option<String>, ApiError> {
+    fn path(&mut self, uuid: Uuid) -> Result<Option<String>, ApiError> {
         // Climb to a node already known (or a root), then settle the chain
         // back down.
         let mut chain: Vec<(Uuid, Option<Position>)> = Vec::new();
