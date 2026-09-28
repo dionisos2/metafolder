@@ -157,6 +157,8 @@ metafolder = "/ssd/meta/music/.metafolder"
   =slow-operation-threshold-ms= (default 2000, =0= to disable: how long an
   operation must take before it is written to the repository's slow-operation
   log — see [[file:spec-slow-log.org][spec-slow-log.org]]),
+  =slow-read-threshold-ms= (default 100, =0= for the main one: the same for
+  an operation that wrote nothing — a query, a listing),
   =slow-operation-reads-threshold= (default 100 000, =0= to leave it to time
   alone: how many keys an operation must read before it is logged however
   quick it was). A key

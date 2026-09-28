@@ -176,7 +176,8 @@ impl RepoState {
                 "daemon",
                 settings.slow_operation_threshold_ms,
             )
-            .with_reads_threshold(settings.slow_operation_reads_threshold),
+            .with_reads_threshold(settings.slow_operation_reads_threshold)
+            .with_read_threshold(settings.slow_read_threshold_ms),
         );
         Self {
             conn: Mutex::new(opened.conn),

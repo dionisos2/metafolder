@@ -51,6 +51,11 @@ pub const DEFAULT_SLOW_OPERATION_THRESHOLD_MS: u64 = metafolder_core::slowlog::D
 /// of a large repository does not.
 pub const DEFAULT_SLOW_OPERATION_READS_THRESHOLD: u64 = 100_000;
 
+/// Default time threshold for an operation that wrote nothing: a query is
+/// felt at a tenth of a second — the GUI's finder sends one per keystroke —
+/// long before a write or a watcher flush is.
+pub const DEFAULT_SLOW_READ_THRESHOLD_MS: u64 = 100;
+
 /// Default mass-orphan circuit breaker: the largest cascade of
 /// `mfr_path = Nothing` a single watcher batch may apply (spec-file-tracking
 /// "Mass-orphan circuit breaker"). `0` disables the check.
@@ -101,6 +106,9 @@ pub struct DaemonSettings {
     /// How many keys an operation must read before it is written to the
     /// slow-operation log whatever its duration. `0`: time alone decides.
     pub slow_operation_reads_threshold: u64,
+    /// How long an operation that wrote nothing (a query, a listing) must
+    /// take before it is logged. `0`: the main threshold.
+    pub slow_read_threshold_ms: u64,
     /// Every how many days each loaded repository's automatic backup is
     /// taken, into `.metafolder/internal/backups/auto/` — one slot, replaced
     /// only by a backup that checks clean. `0` turns it off.
@@ -118,6 +126,7 @@ impl Default for DaemonSettings {
             log_retention_keep_labels: true,
             slow_operation_threshold_ms: DEFAULT_SLOW_OPERATION_THRESHOLD_MS,
             slow_operation_reads_threshold: DEFAULT_SLOW_OPERATION_READS_THRESHOLD,
+            slow_read_threshold_ms: DEFAULT_SLOW_READ_THRESHOLD_MS,
             auto_backup_days: DEFAULT_AUTO_BACKUP_DAYS,
         }
     }

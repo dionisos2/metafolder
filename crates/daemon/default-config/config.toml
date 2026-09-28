@@ -86,6 +86,12 @@ log-retention-keep-labels = true
 # them. 0 turns the log off; set it to 1 to record everything. Default: 2000.
 slow-operation-threshold-ms = 2000
 
+# The same, for an operation that wrote nothing — a query, a listing, a read of
+# the log. What you wait for at every keystroke (the GUI's finder sends a query
+# per key) is slow long before a write or a watcher flush is. 0: the threshold
+# above. Default: 100.
+slow-read-threshold-ms = 100
+
 # How many keys an operation must read before it is logged however quick it
 # was. A duration depends on the machine and its load; a count of keys does
 # not, so this catches an operation that reads a large part of the repository

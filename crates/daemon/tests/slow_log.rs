@@ -35,8 +35,16 @@ struct Fixture {
 }
 
 async fn fixture(prefix: &str, threshold_ms: u64) -> Fixture {
-    let settings =
-        DaemonSettings { slow_operation_threshold_ms: threshold_ms, ..Default::default() };
+    // The read threshold is left out, so each test says which one it holds.
+    let settings = DaemonSettings {
+        slow_operation_threshold_ms: threshold_ms,
+        slow_read_threshold_ms: 0,
+        ..Default::default()
+    };
+    fixture_with(prefix, settings).await
+}
+
+async fn fixture_with(prefix: &str, settings: DaemonSettings) -> Fixture {
     let state = Arc::new(AppState::new().with_settings(settings));
     let app = routes::build(state.clone());
     let root = TempDir::new(&format!("slowlog_{prefix}"));
@@ -172,6 +180,53 @@ async fn test_a_query_that_read_past_the_reads_threshold_is_logged_with_its_read
     let evaluate = phase(entry, "index.evaluate").expect("the evaluation phase");
     assert!(evaluate.reads > 0, "the phase that read says so: {entry:?}");
     assert!(evaluate.reads <= entry.reads);
+}
+
+#[tokio::test]
+async fn test_a_read_is_held_to_the_read_threshold_and_a_write_is_not() {
+    // A query is slow long before a write is: the same wait logs the one and
+    // not the other.
+    let settings = DaemonSettings {
+        slow_operation_threshold_ms: 3_600_000,
+        slow_read_threshold_ms: 1,
+        slow_operation_reads_threshold: 0,
+        ..Default::default()
+    };
+    let f = fixture_with("read_threshold", settings).await;
+    let (status, body) = request(
+        &f.app,
+        "POST",
+        &format!("/repos/{}/metarecords", f.repo),
+        Some(json!({"fields": [{"name": "title", "value": {"type": "string", "value": "x"}}]})),
+        &[],
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    let (status, _) = f
+        .while_busy(
+            "POST",
+            &format!("/repos/{}/query", f.repo),
+            Some(json!({"query": {"type": "is_present", "field": "title"}})),
+            &[],
+        )
+        .await;
+    assert_eq!(status, StatusCode::OK);
+    let (status, _) = f
+        .while_busy(
+            "POST",
+            &format!("/repos/{}/query/fields/set", f.repo),
+            Some(json!({
+                "query": {"type": "is_present", "field": "title"},
+                "name": "rating",
+                "value": {"type": "int", "value": 5}
+            })),
+            &[],
+        )
+        .await;
+    assert_eq!(status, StatusCode::OK);
+
+    let ops: Vec<String> = f.entries().into_iter().map(|e| e.op).collect();
+    assert_eq!(ops, vec!["POST /repos/:repo/query".to_string()], "the write waited as long");
 }
 
 #[tokio::test]

@@ -11,7 +11,8 @@ does not answer it either — the load report ([[file:spec-main.org][spec-main.o
 covers repository load only, and it goes to stderr, which no GUI user ever sees.
 
 So every repository keeps a **slow-operation log**: one entry per operation that
-took longer than a threshold (2 s by default), carrying enough context to say
+took longer than a threshold (2 s by default, 100 ms for one that only read),
+carrying enough context to say
 *where* the time went — not that a query was slow, but that it waited three
 seconds for the store handle a watcher flush was holding, then spent the rest
 evaluating.
@@ -159,6 +160,7 @@ Daemon, =~/.config/metafolder/daemon/config.toml=:
 #+BEGIN_SRC toml
   [settings]
   slow-operation-threshold-ms = 2000
+  slow-read-threshold-ms = 100
   slow-operation-reads-threshold = 100000
 #+END_SRC
 
@@ -167,6 +169,15 @@ GUI, =~/.config/metafolder/gui/config.toml=: the same key, its own value.
 - The default is =2000= in both.
 - =0= turns the log off entirely — nothing is timed and no file is created.
 - There is no "log everything" value; set the threshold to =1= to get one.
+- =slow-read-threshold-ms= (daemon only, default =100=) is the threshold of
+  an operation that *wrote nothing* — a query, a listing, a read of the log.
+  A query is felt at a tenth of a second (the GUI's finder sends one per
+  keystroke) long before a write or a watcher flush is, and a single
+  threshold was either blind to queries or flooded by flushes. What wrote is
+  not decided per route: the store's write transaction says so as it commits
+  (=slowlog::mark_write=), so every operation that never committed is a read
+  — a new route needs no classification. =0= holds reads to the main
+  threshold.
 - =slow-operation-reads-threshold= (daemon only, default =100000=) logs an
   operation that read at least that many keys *however quick it was*. A
   duration depends on the machine and its load; a count of keys does not, so

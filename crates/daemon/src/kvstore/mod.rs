@@ -1366,7 +1366,11 @@ impl<'e> KvTxn<'e> {
     /// Writes what the transaction still holds in memory, and commits.
     fn finish(self) -> Result<()> {
         self.flush_sets()?;
-        self.txn.into_inner().commit().context("Failed to commit write transaction")
+        self.txn.into_inner().commit().context("Failed to commit write transaction")?;
+        // Every write commits here: an operation that never did is a read,
+        // held to its own threshold in the slow-operation log.
+        metafolder_core::slowlog::mark_write();
+        Ok(())
     }
 }
 

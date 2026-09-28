@@ -330,6 +330,9 @@ pub struct Recorder {
     /// Keys read past which an operation is logged whatever its time; `0`
     /// for no such threshold.
     reads_threshold: u64,
+    /// The time threshold of an operation that wrote nothing; `0` for the
+    /// main one.
+    read_threshold_ms: u64,
 }
 
 impl Recorder {
@@ -341,7 +344,16 @@ impl Recorder {
             source,
             threshold_ms,
             reads_threshold: 0,
+            read_threshold_ms: 0,
         }
+    }
+
+    /// Gives an operation that wrote nothing — a query, a listing, a read
+    /// of the log — a threshold of its own (`0`: the main one). What the user
+    /// waits for at every keystroke is slow long before a write or a flush is.
+    pub fn with_read_threshold(mut self, ms: u64) -> Recorder {
+        self.read_threshold_ms = ms;
+        self
     }
 
     /// Also logs an operation that read at least `reads` keys, however quick
@@ -353,7 +365,7 @@ impl Recorder {
     }
 
     pub fn disabled(source: &'static str) -> Recorder {
-        Recorder { sink: None, source, threshold_ms: 0, reads_threshold: 0 }
+        Recorder { sink: None, source, threshold_ms: 0, reads_threshold: 0, read_threshold_ms: 0 }
     }
 
     pub fn enabled(&self) -> bool {
@@ -368,8 +380,18 @@ impl Recorder {
     /// decision is made, so a hand-built entry (the GUI's round-trip) is
     /// filtered exactly like an instrumented one.
     pub fn record(&self, entry: &Entry) {
+        self.record_as(entry, true)
+    }
+
+    /// [`Self::record`], saying whether the operation wrote: one that did
+    /// not is held to the read threshold when there is one.
+    pub fn record_as(&self, entry: &Entry, wrote: bool) {
         if let Some(sink) = &self.sink {
-            let slow = entry.ms >= self.threshold_ms;
+            let threshold = match self.read_threshold_ms {
+                ms if ms > 0 && !wrote => ms,
+                _ => self.threshold_ms,
+            };
+            let slow = entry.ms >= threshold;
             let heavy = self.reads_threshold > 0 && entry.reads >= self.reads_threshold;
             if self.threshold_ms > 0 && (slow || heavy) {
                 sink.append(entry);
@@ -396,6 +418,8 @@ struct Op {
     timeline: Timeline,
     /// This thread's read counter when the operation began.
     reads_at_start: u64,
+    /// Whether the operation committed a write ([`mark_write`]).
+    wrote: bool,
 }
 
 thread_local! {
@@ -452,6 +476,7 @@ pub fn begin(recorder: std::sync::Arc<Recorder>, op: impl Into<String>) -> OpGua
             context: Vec::new(),
             timeline: Timeline::new(),
             reads_at_start: reads_so_far(),
+            wrote: false,
         });
         OpGuard { owner: true }
     })
@@ -467,6 +492,13 @@ pub fn note(key: &str, value: impl Into<String>) {
             None => op.context.push((key.to_string(), value)),
         }
     });
+}
+
+/// Says the running operation wrote — called where every write commits, so
+/// an operation that never gets here is a read (see
+/// [`Recorder::with_read_threshold`]).
+pub fn mark_write() {
+    with_op(|op| op.wrote = true);
 }
 
 /// Sets the id correlating this operation with a client's entry for it.
@@ -522,7 +554,7 @@ impl Drop for OpGuard {
         entry.op_id = op.op_id;
         entry.context = op.context;
         entry.phases = op.timeline.finish_counted(ended, reads);
-        op.recorder.record(&entry);
+        op.recorder.record_as(&entry, op.wrote);
     }
 }
 
@@ -619,6 +651,41 @@ mod tests {
         }
         let ops: Vec<String> = read(&dir, 10, None).0.into_iter().map(|e| e.op).collect();
         assert_eq!(ops, vec!["heavy".to_string()]);
+    }
+
+    #[test]
+    fn test_a_read_crosses_its_own_lower_threshold() {
+        // What the user waits for at every keystroke is slow long before a
+        // write or a flush is: a read has a threshold of its own.
+        let dir = tmp();
+        let recorder =
+            Arc::new(Recorder::new(Some(dir.clone()), "daemon", NEVER).with_read_threshold(1));
+        {
+            let _op = begin(recorder.clone(), "read");
+            std::thread::sleep(std::time::Duration::from_millis(3));
+        }
+        {
+            let _op = begin(recorder.clone(), "write");
+            mark_write();
+            std::thread::sleep(std::time::Duration::from_millis(3));
+        }
+        let ops: Vec<String> = read(&dir, 10, None).0.into_iter().map(|e| e.op).collect();
+        assert_eq!(ops, vec!["read".to_string()], "the write keeps the main threshold");
+    }
+
+    #[test]
+    fn test_without_a_read_threshold_a_read_keeps_the_main_one() {
+        let dir = tmp();
+        {
+            let _op = begin(recorder(&dir, NEVER), "read");
+            std::thread::sleep(std::time::Duration::from_millis(3));
+        }
+        assert!(read(&dir, 10, None).0.is_empty());
+    }
+
+    #[test]
+    fn test_a_write_outside_an_operation_is_ignored() {
+        mark_write();
     }
 
     #[test]
