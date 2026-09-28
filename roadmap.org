@@ -5,6 +5,25 @@ the git history and the CHANGELOG. Deferred work inside a spec is tagged
 =:deferred:= and named there (spec-main "Version scope"); the ones worth
 keeping in view are listed at the end.
 
+* TODO drop SQLite
+Decided 28 September 2026: no real repository is on SQLite (only test and
+benchmark ones), so the backend goes, and with it every use of =rusqlite=.
+Accepted loss: a repository on a network filesystem (LMDB refuses NFS/SMB;
+spec-storage kept SQLite for that case) — copy it locally instead. No
+conversion is shipped: no =sync-*.sqlite= nor =trash/index.sqlite= exists
+outside the tests. One commit per step, in this order:
+1. a naive oracle reading only the primary data through the =Store= traits
+   (no derived key space, no resident index), checked against the SQL oracle
+   while both exist;
+2. every test on the new oracle, =crates/query-oracle= removed;
+3. the SQLite backend removed: =db.rs=, SQLite's =Store=, =convert=, the
+   resident index (=index/field_index.rs=, =id_registry.rs=), the in-memory
+   forest of =tree_cache.rs=, =sqlcost.rs= / =perf_cost.rs= (their assertions
+   moved to =kv_cost.rs=), the legacy migrations; specs and =API_VERSION=;
+4. the per-pair sync database on LMDB;
+5. the trash index on LMDB (or plain files: it is a few rows per entry);
+   =rusqlite= leaves the workspace.
+
 * TODO performance
 The recurring defect of this project is a cost that grows with the repository
 where it should grow with the answer. Each item names where.
@@ -15,6 +34,12 @@ descendant bitmap per root, on every forest) — but the whole subtree is still
 built where only the page is wanted. Only an unsorted query could stop early:
 a sort needs the full candidate set. =docs/review-followups.md= §7 is the
 longer account, and its first half (the SQL costs) no longer applies.
+Measured 28 September 2026 (=query.folder=, a page of 100 under a folder
+holding the whole repository, L = 105 000 nodes): +0.4 ms over =query.page= on
+KV (one descendant bitmap read), +2.5 ms on the resident index (level-by-level
+union) — about 4 ms and 25 ms extrapolated to a million. Real, small: not a
+reason for a planner on its own; it becomes one of the planner's choices
+(per-candidate ancestry check with early stop, unsorted pages only).
 
 ** TODO unanchored =:path= patterns walk the whole stored forest
 =aff0be6= made a =:path= comparison and a pattern anchored on a literal prefix
@@ -32,6 +57,15 @@ answered several ways (posting / partition scan / per-candidate check /
 uuid-order walk), and small cost-based choices already exist (the
 read-or-walk choice for a run of ties, =876d4cc=). Reconsidered, not decided:
 if built, from a minimal KV-oriented design, not from the old document.
+Decided 28 September 2026: built, after SQLite is dropped (KV only). Cases
+the same run showed (L, KV unless said; the resident numbers are the
+reference that goes away with SQLite):
+- =query.rare_and_wide= 4.17 ms vs =query.wide_and_rare= 0.81 ms: the order
+  of the operands matters on KV (0.91 ms either way on the resident index);
+- =query.finder= 22 ms on both backends, the costliest query, sent by the
+  GUI's finder at every keystroke;
+- =query.subtree_range_text= 1.5 ms on KV, 7.9 ms resident.
+Profile these first: they, not the old design, say what the planner chooses.
 
 ** TODO =mf order= writes one revision per child
 N children cost N =PUT=s: N transactions, N fsyncs and N revisions, so undoing
