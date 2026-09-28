@@ -435,6 +435,18 @@ impl KvStore {
     /// only reserves address space; [`Begin::begin_write`] doubles it as the
     /// store fills.
     pub fn open_with_map_size(dir: &Path, map_size: usize) -> Result<KvStore> {
+        KvStore::open_with(dir, map_size, true)
+    }
+
+    /// [`KvStore::open`] without an `fsync` per commit, for a store nobody
+    /// needs back after a crash: a test's, a benchmark's while it is being
+    /// generated. A commit is then a write to the page cache; a crash may
+    /// lose the last ones, or leave the store unreadable.
+    pub fn open_unsynced(dir: &Path) -> Result<KvStore> {
+        KvStore::open_with(dir, INITIAL_MAP, false)
+    }
+
+    fn open_with(dir: &Path, map_size: usize, durable: bool) -> Result<KvStore> {
         std::fs::create_dir_all(dir).with_context(|| format!("create {}", dir.display()))?;
         let lock = File::create(dir.join("daemon.lock"))?;
         {
@@ -464,7 +476,14 @@ impl KvStore {
         let env = unsafe {
             let held = std::fs::metadata(dir.join("data.mdb")).map_or(0, |m| m.len() as usize);
             let map_size = page_multiple(map_size.max(held.saturating_mul(2)));
-            EnvOpenOptions::new().read_txn_without_tls().map_size(map_size).max_dbs(32).open(dir)
+            let mut options = EnvOpenOptions::new().read_txn_without_tls();
+            options.map_size(map_size).max_dbs(32);
+            if !durable {
+                // SAFETY: NO_SYNC trades durability for speed, which is the
+                // caller's stated choice (`open_unsynced`).
+                options.flags(heed::EnvFlags::NO_SYNC);
+            }
+            options.open(dir)
         }
         .with_context(|| format!("open the key-value store in {}", dir.display()))?;
         let mut w = env.write_txn()?;
@@ -513,7 +532,7 @@ impl KvStore {
 struct Read<'a> {
     t: &'a Tables,
     r: &'a RoTxn<'a>,
-    /// The store's read counter; `None` inside a write transaction.
+    /// The store's read counter; `None` where nothing counts.
     reads: Option<&'a std::sync::atomic::AtomicU64>,
 }
 
@@ -651,6 +670,7 @@ impl Read<'_> {
         if let Some(o) = cache.get(&rev) {
             return Ok(o.clone());
         }
+        self.count(1);
         let o = match self.t.revisions.get(self.r, &be(rev))? {
             Some(b) => dec_revision(b)?.origin,
             None => None,
@@ -660,6 +680,7 @@ impl Read<'_> {
     }
 
     fn op(&self, id: i64) -> Result<Option<OpRow>> {
+        self.count(1);
         let Some(b) = self.t.ops.get(self.r, &be(id))? else { return Ok(None) };
         let mut op = dec_op(id, b)?;
         op.origin = self.origin(op.rev_id, &mut HashMap::new())?;
@@ -670,6 +691,7 @@ impl Read<'_> {
         let mut cache = HashMap::new();
         let mut out = Vec::new();
         for id in ids {
+            self.count(1);
             let b = self
                 .t
                 .ops
@@ -691,6 +713,7 @@ impl Read<'_> {
             if out.len() >= max {
                 break;
             }
+            self.count(1);
             let Some(b) = self.t.ops.get(self.r, &be(id))? else { break };
             let mut op = dec_op(id, b)?;
             op.origin = self.origin(op.rev_id, &mut cache)?;
@@ -705,6 +728,7 @@ impl Read<'_> {
         for e in self.t.ops.iter(self.r)? {
             out.push(from_be(e?.0));
         }
+        self.count(out.len() as u64 + 1);
         Ok(out)
     }
 
@@ -714,6 +738,7 @@ impl Read<'_> {
             let (k, _) = e?;
             out.push(from_be(&k[16..]));
         }
+        self.count(out.len() as u64 + 1);
         Ok(out)
     }
 
@@ -725,11 +750,13 @@ impl Read<'_> {
         let mut seen: HashMap<i64, bool> = HashMap::new();
         let mut cur = Some(head);
         while let Some(id) = cur {
+            self.count(1);
             let Some(b) = self.t.ops.get(self.r, &be(id))? else { return Ok(None) };
             let op = dec_op(id, b)?;
             let ok = match seen.get(&op.rev_id) {
                 Some(ok) => *ok,
                 None => {
+                    self.count(1);
                     let ok = match self.t.revisions.get(self.r, &be(op.rev_id))? {
                         Some(b) => keep(&dec_revision(b)?),
                         None => false,
@@ -961,7 +988,10 @@ macro_rules! kv_reads {
         impl Log for $ty {
             fn head(&self) -> Result<Option<i64>> {
                 let $me = self;
-                $with(&mut |$read: &Read| $read.meta("head"))
+                $with(&mut |$read: &Read| {
+                    $read.count(1);
+                    $read.meta("head")
+                })
             }
             fn op(&self, id: i64) -> Result<Option<OpRow>> {
                 let $me = self;
@@ -975,6 +1005,7 @@ macro_rules! kv_reads {
                     for e in $read.t.snaps.prefix_iter($read.r, &prefix)? {
                         out.push(dec_row(e?.1)?);
                     }
+                    $read.count(out.len() as u64 + 1);
                     Ok(out)
                 })
             }
@@ -993,6 +1024,7 @@ macro_rules! kv_reads {
                         if rows.len() == max + 1 {
                             break;
                         }
+                        $read.count(1);
                         let Some(b) = $read.t.ops.get($read.r, &be(id))? else { break };
                         let mut op = dec_op(id, b)?;
                         op.origin = $read.origin(op.rev_id, &mut cache)?;
@@ -1020,6 +1052,7 @@ macro_rules! kv_reads {
                         let (k, v) = e?;
                         out.push((from_be(k), dec_restoration(v)?));
                     }
+                    $read.count(out.len() as u64 + 1);
                     Ok(out)
                 })
             }
@@ -1040,6 +1073,7 @@ macro_rules! kv_reads {
             fn has_children(&self, op: i64) -> Result<bool> {
                 let $me = self;
                 $with(&mut |$read: &Read| {
+                    $read.count(1);
                     Ok($read.t.op_children.prefix_iter($read.r, &be(op))?.next().is_some())
                 })
             }
@@ -1047,6 +1081,7 @@ macro_rules! kv_reads {
                 let $me = self;
                 $with(&mut |$read: &Read| {
                     let mut out = HashMap::new();
+                    $read.count(ids.len() as u64);
                     for &id in ids {
                         if let Some(b) = $read.t.revisions.get($read.r, &be(id))? {
                             out.insert(id, dec_revision(b)?);
@@ -1058,6 +1093,8 @@ macro_rules! kv_reads {
             fn counts(&self) -> Result<(i64, i64)> {
                 let $me = self;
                 $with(&mut |$read: &Read| {
+                    // Two B-tree statistics, not a walk.
+                    $read.count(2);
                     Ok(($read.t.ops.len($read.r)? as i64, $read.t.revisions.len($read.r)? as i64))
                 })
             }
@@ -1083,6 +1120,7 @@ macro_rules! kv_reads {
                 $with(&mut |$read: &Read| {
                     let mut ids = Vec::new();
                     for e in $read.t.ops_by_entity.prefix_iter($read.r, entity.as_bytes())? {
+                        $read.count(1);
                         let id = from_be(&e?.0[16..]);
                         if id > after {
                             ids.push(id);
@@ -1107,6 +1145,7 @@ macro_rules! kv_reads {
                     for e in $read.t.ops.range($read.r, &range)? {
                         ids.push(from_be(e?.0));
                     }
+                    $read.count(ids.len() as u64 + 1);
                     $read.ops_with_origins(ids.into_iter())
                 })
             }
@@ -1115,7 +1154,9 @@ macro_rules! kv_reads {
                 $with(&mut |$read: &Read| {
                     let from = be(op.saturating_add(1));
                     let range = (std::ops::Bound::Included(&from[..]), std::ops::Bound::Unbounded);
-                    Ok($read.t.ops.range($read.r, &range)?.count() as i64)
+                    let n = $read.t.ops.range($read.r, &range)?.count();
+                    $read.count(n as u64 + 1);
+                    Ok(n as i64)
                 })
             }
             fn ancestor_at_or_before(&self, head: i64, timestamp_ms: i64) -> Result<Option<i64>> {
@@ -1176,11 +1217,14 @@ pub struct KvTxn<'e> {
     /// Which chunks of each bitmap (table tag · key without chunk) the cache
     /// holds: a bitmap is read back whole without scanning the cache.
     cached_chunks: RefCell<HashMap<Vec<u8>, std::collections::BTreeSet<u16>>>,
+    /// The store's read counter: a write's reads count as much as a query's
+    /// (`tests/log_cost.rs` holds the trim and the navigation to it).
+    reads: &'e std::sync::atomic::AtomicU64,
 }
 
 kv_reads!(KvTxn<'_>, |me, read| |f: &mut dyn FnMut(&Read) -> Result<_>| {
     let txn = me.txn.borrow();
-    f(&Read { t: &me.t, r: &txn, reads: None })
+    f(&Read { t: &me.t, r: &txn, reads: Some(me.reads) })
 });
 
 impl Begin for KvStore {
@@ -1272,11 +1316,13 @@ impl KvStore {
 impl<'e> KvTxn<'e> {
     fn new(store: &'e mut KvStore) -> Result<KvTxn<'e>> {
         store.grow_map()?;
+        let store: &'e KvStore = store;
         Ok(KvTxn {
             t: store.t,
             txn: RefCell::new(store.env.write_txn()?),
             sets: RefCell::new(HashMap::new()),
             cached_chunks: RefCell::new(HashMap::new()),
+            reads: &store.reads,
         })
     }
 
@@ -1428,7 +1474,7 @@ impl WriteTxn for KvTxn<'_> {
     fn delete_row(&self, id: i64) -> Result<()> {
         let Some((owner, row)) = ({
             let txn = self.txn.borrow();
-            Read { t: &self.t, r: &txn, reads: None }.row(id)?
+            Read { t: &self.t, r: &txn, reads: Some(self.reads) }.row(id)?
         }) else {
             return Ok(());
         };
@@ -1484,7 +1530,7 @@ impl WriteTxn for KvTxn<'_> {
     fn drop_revision(&self, rev: i64) -> Result<()> {
         for id in {
             let txn = self.txn.borrow();
-            Read { t: &self.t, r: &txn, reads: None }.revision_op_ids(rev)?
+            Read { t: &self.t, r: &txn, reads: Some(self.reads) }.revision_op_ids(rev)?
         } {
             self.remove_op(id)?;
         }
@@ -1553,6 +1599,7 @@ impl WriteTxn for KvTxn<'_> {
                 let (k, v) = e?;
                 out.push((from_be(k), dec_revision(v)?));
             }
+            self.reads.fetch_add(out.len() as u64 + 1, std::sync::atomic::Ordering::Relaxed);
             out
         };
         let kept = revs.len() as u64;
@@ -1567,12 +1614,12 @@ impl WriteTxn for KvTxn<'_> {
         }
         let first = {
             let txn = self.txn.borrow();
-            Read { t: &self.t, r: &txn, reads: None }.revision_op_ids(keep_from)?
+            Read { t: &self.t, r: &txn, reads: Some(self.reads) }.revision_op_ids(keep_from)?
         };
         let Some(cutoff) = first.into_iter().min() else { return Ok(0) };
         let all = {
             let txn = self.txn.borrow();
-            Read { t: &self.t, r: &txn, reads: None }.all_op_ids()?
+            Read { t: &self.t, r: &txn, reads: Some(self.reads) }.all_op_ids()?
         };
         if all.first() == Some(&cutoff) {
             return Ok(0);
@@ -1603,7 +1650,9 @@ impl WriteTxn for KvTxn<'_> {
         for rev in revs_hit {
             let empty = {
                 let txn = self.txn.borrow();
-                Read { t: &self.t, r: &txn, reads: None }.revision_op_ids(rev)?.is_empty()
+                Read { t: &self.t, r: &txn, reads: Some(self.reads) }
+                    .revision_op_ids(rev)?
+                    .is_empty()
             };
             if empty {
                 self.t.revisions.delete(&mut self.txn.borrow_mut(), &be(rev))?;
@@ -1655,7 +1704,9 @@ impl WriteTxn for KvTxn<'_> {
         for rev in revs {
             let empty = {
                 let txn = self.txn.borrow();
-                Read { t: &self.t, r: &txn, reads: None }.revision_op_ids(rev)?.is_empty()
+                Read { t: &self.t, r: &txn, reads: Some(self.reads) }
+                    .revision_op_ids(rev)?
+                    .is_empty()
             };
             if empty {
                 self.t.revisions.delete(&mut self.txn.borrow_mut(), &be(rev))?;

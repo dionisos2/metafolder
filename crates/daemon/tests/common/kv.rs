@@ -10,11 +10,12 @@ use uuid::Uuid;
 use super::TempDir;
 
 /// A fresh, empty key-value store in a directory that removes itself — the
-/// repository every low-level test writes into. Keep the directory bound as
+/// repository every low-level test writes into, without an `fsync` per
+/// commit (nothing needs it back after a crash). Keep the directory bound as
 /// long as the store: `let (mut conn, _dir) = common::kv::store();`.
 pub fn store() -> (KvStore, TempDir) {
     let dir = TempDir::new("kv");
-    let kv = KvStore::open(dir.path()).unwrap();
+    let kv = KvStore::open_unsynced(dir.path()).unwrap();
     (kv, dir)
 }
 
