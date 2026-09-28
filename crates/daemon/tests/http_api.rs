@@ -99,7 +99,19 @@ async fn test_diagnostics_feed_serves_what_the_daemon_warned_about() {
 
     let (status, body) = request(&app, "GET", &format!("/diagnostics?since={since}"), None).await;
     assert_eq!(status, StatusCode::OK);
-    let entries = body["entries"].as_array().unwrap();
+    // Tests running alongside record into it too (a repository loaded without
+    // a fanotify broker says so): read ours only.
+    let ours = |body: &Value| -> Vec<Value> {
+        let mine = ["failed to watch /some/dir", "flush failed"];
+        body["entries"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .filter(|e| mine.iter().any(|m| e["message"] == json!(m)))
+            .cloned()
+            .collect()
+    };
+    let entries = ours(&body);
     assert_eq!(entries.len(), 2, "both warnings should be served: {body}");
     assert_eq!(entries[0]["scope"], json!("watcher"));
     assert_eq!(entries[0]["level"], json!("warning"));
@@ -110,8 +122,7 @@ async fn test_diagnostics_feed_serves_what_the_daemon_warned_about() {
     // Resuming from where it said leaves nothing to read.
     let resume = body["next_since"].as_u64().unwrap();
     let (_, again) = request(&app, "GET", &format!("/diagnostics?since={resume}"), None).await;
-    assert!(again["entries"].as_array().unwrap().is_empty());
-    assert_eq!(again["dropped"], json!(0));
+    assert!(ours(&again).is_empty(), "{again}");
 }
 
 #[tokio::test]
