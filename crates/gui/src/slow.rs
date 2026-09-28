@@ -94,7 +94,7 @@ impl SlowLog {
         let recorder = self.recorder_for(repo_uuid, internal_dir);
         let mut entry = Entry::new("gui", op, metafolder_core::date::now_ms() - ms as i64, ms);
         entry.op_id = Some(op_id.to_string());
-        entry.phases.push(Phase { name: "http".into(), ms, count: 1, depth: 0 });
+        entry.phases.push(Phase { name: "http".into(), ms, count: 1, depth: 0, reads: 0 });
         if let Some(client) = client {
             entry.note("client", client);
         }

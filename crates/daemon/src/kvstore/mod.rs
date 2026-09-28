@@ -592,6 +592,7 @@ impl Read<'_> {
     fn count(&self, n: u64) {
         if let Some(reads) = self.reads {
             reads.fetch_add(n, std::sync::atomic::Ordering::Relaxed);
+            metafolder_core::slowlog::count_reads(n);
         }
     }
 
@@ -1412,6 +1413,7 @@ impl KvTxn<'_> {
     fn first_op_of(&self, rev: i64) -> Result<Option<i64>> {
         let txn = self.txn.borrow();
         self.reads.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        metafolder_core::slowlog::count_reads(1);
         let first = self.t.ops_by_rev.prefix_iter(&txn, &be(rev))?.next();
         Ok(match first {
             Some(e) => Some(from_be(&e?.0[16..])),
@@ -1665,6 +1667,7 @@ impl WriteTxn for KvTxn<'_> {
         }
         let count = |n: usize| {
             self.reads.fetch_add(n as u64, std::sync::atomic::Ordering::Relaxed);
+            metafolder_core::slowlog::count_reads(n as u64);
         };
         let total = self.t.revisions.len(&self.txn.borrow())?;
         count(1);

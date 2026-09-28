@@ -25,7 +25,8 @@ Two properties make it a diagnosis tool rather than a metric:
   the user already knew. The breakdown is the answer.
 
 It is deliberately *not* a profiler and *not* a metrics system: no aggregates,
-no percentiles, no sampling of fast operations. Only what crossed the threshold.
+no percentiles, no sampling of fast operations. Only what crossed a threshold —
+of time, or of keys read (see "Threshold and configuration").
 
 * What is recorded
 
@@ -37,12 +38,13 @@ One JSON object per line (JSONL), written when the operation ends:
   "source": "daemon",
   "op": "POST /repos/:repo/query",
   "ms": 4820,
+  "reads": 210314,
   "op_id": "9f3c1d0a4b7e4f2a",
   "phases": [
   {"name": "wait:conn", "ms": 3100, "count": 1, "depth": 0},
   {"name": "wait:cache", "ms": 0, "count": 1, "depth": 0},
-  {"name": "prepare", "ms": 1650, "count": 1, "depth": 0},
-  {"name": "index.evaluate", "ms": 40, "count": 1, "depth": 0}
+  {"name": "prepare", "ms": 1650, "count": 1, "depth": 0, "reads": 210008},
+  {"name": "index.evaluate", "ms": 40, "count": 1, "depth": 0, "reads": 306}
   ],
   "context": {
   "client": "mfr_path ->* \"/2024\" and rating > 3",
@@ -60,6 +62,8 @@ One JSON object per line (JSONL), written when the operation ends:
   *matched route pattern* (=POST /repos/:repo/query=), never the concrete URL:
   a route is a shape one can group by, a URL is one occurrence.
 - =ms= — the total, measured end to end by the process that recorded it.
+- =reads= — the keys the store read during the operation, on its thread;
+  absent when none (the GUI's entries, which read no store).
 - =op_id= — an opaque short id correlating a GUI entry with the daemon entry
   for the same request; absent when the client did not supply one.
 - =phases= — the breakdown, see below.
@@ -110,6 +114,14 @@ with SQLite (September 2026), and every query reads the store as committed.
 A =wait:*= phase is the load-bearing one: it is what distinguishes "this query
 is expensive" from "this query is fine and something else held the repository".
 
+Each phase also carries its =reads= (inclusive, like its time; absent when
+none): the keys the store read inside it. Time cannot tell "read a lot" from
+"waited" — for a lock, for a page cache gone cold, for a loaded machine — and
+the count can: a phase that took long and read little waited. The store counts
+every key it reads into a per-thread counter (=slowlog::count_reads=), and a
+phase takes the difference across it; a repository operation runs on one
+thread, so what another operation reads meanwhile is not attributed to it.
+
 ** What is left out
 
 Operations whose slowness is expected and already reported elsewhere are *not*
@@ -147,6 +159,7 @@ Daemon, =~/.config/metafolder/daemon/config.toml=:
 #+BEGIN_SRC toml
   [settings]
   slow-operation-threshold-ms = 2000
+  slow-operation-reads-threshold = 100000
 #+END_SRC
 
 GUI, =~/.config/metafolder/gui/config.toml=: the same key, its own value.
@@ -154,6 +167,12 @@ GUI, =~/.config/metafolder/gui/config.toml=: the same key, its own value.
 - The default is =2000= in both.
 - =0= turns the log off entirely — nothing is timed and no file is created.
 - There is no "log everything" value; set the threshold to =1= to get one.
+- =slow-operation-reads-threshold= (daemon only, default =100000=) logs an
+  operation that read at least that many keys *however quick it was*. A
+  duration depends on the machine and its load; a count of keys does not, so
+  an operation that reads a large part of a repository is caught on a
+  machine fast enough to hide it. Every bounded read stays far below the
+  default. =0= leaves it to time alone; with the log off it does nothing.
 
 * Correlating the GUI and the daemon
 
@@ -211,10 +230,11 @@ phases indented by depth:
 2026-09-09 14:03:22  4.82s  daemon  POST /repos/:repo/query
     client    mfr_path ->* "/2024" and rating > 3
     results   1240
+    keys      210 314
     wait:conn         3.10s
     wait:cache           0ms
-    prepare           1.65s
-    index.evaluate      40ms
+    prepare           1.65s       210 008 keys
+    index.evaluate      40ms           306 keys
 #+END_SRC
 
 =mf slow clear= asks for confirmation unless =--yes= is given, like every other

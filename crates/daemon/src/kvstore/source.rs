@@ -281,6 +281,7 @@ impl KvSource<'_> {
 
     fn read_keys(&self, n: u64) {
         self.reads.set(self.reads.get() + n);
+        metafolder_core::slowlog::count_reads(n);
         self.store_reads.fetch_add(n, std::sync::atomic::Ordering::Relaxed);
     }
 

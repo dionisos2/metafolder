@@ -4127,7 +4127,7 @@ fn test_slow_lists_the_log_newest_first_and_clears_it() {
     let dir = slowlog::slow_dir(&root.join(".metafolder").join("internal"));
     let mut slow = Entry::new("daemon", "POST /repos/:repo/query", 1_757_426_602_000, 4820);
     slow.note("client", "rating > 3");
-    slow.phases.push(Phase { name: "wait:conn".into(), ms: 3100, count: 1, depth: 0 });
+    slow.phases.push(Phase { name: "wait:conn".into(), ms: 3100, count: 1, depth: 0, reads: 0 });
     slowlog::Sink::new(&dir, "daemon").append(&slow);
     slowlog::Sink::new(&dir, "gui").append(&Entry::new(
         "gui",

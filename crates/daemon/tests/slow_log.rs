@@ -136,6 +136,45 @@ async fn test_a_query_that_waited_for_the_database_says_so() {
 }
 
 #[tokio::test]
+async fn test_a_query_that_read_past_the_reads_threshold_is_logged_with_its_reads() {
+    // Quick, but heavy: the keys read say so whatever the machine's load, and
+    // each phase says which part read them.
+    let settings = DaemonSettings {
+        slow_operation_threshold_ms: 3_600_000,
+        slow_operation_reads_threshold: 1,
+        ..Default::default()
+    };
+    let state = Arc::new(AppState::new().with_settings(settings));
+    let app = routes::build(state.clone());
+    let root = TempDir::new("slowlog_reads");
+    let (status, body) =
+        request(&app, "POST", "/repos/init", Some(json!({"root": root.to_str().unwrap()})), &[])
+            .await;
+    assert_eq!(status, StatusCode::OK, "init failed: {body}");
+    let repo = body["repo_uuid"].as_str().unwrap().to_string();
+    let f = Fixture { app, state, repo, _root: root };
+
+    let (status, _) = request(
+        &f.app,
+        "POST",
+        &format!("/repos/{}/query", f.repo),
+        Some(json!({"query": {"type": "is_present", "field": "mfr_path"}, "limit": 10})),
+        &[],
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+
+    let entries: Vec<_> =
+        f.entries().into_iter().filter(|e| e.op == "POST /repos/:repo/query").collect();
+    assert_eq!(entries.len(), 1, "logged for its reads alone: {entries:?}");
+    let entry = &entries[0];
+    assert!(entry.reads > 0, "the entry counts its reads: {entry:?}");
+    let evaluate = phase(entry, "index.evaluate").expect("the evaluation phase");
+    assert!(evaluate.reads > 0, "the phase that read says so: {entry:?}");
+    assert!(evaluate.reads <= entry.reads);
+}
+
+#[tokio::test]
 async fn test_a_quick_operation_is_not_logged() {
     // The log's value is that everything in it is worth reading.
     let f = fixture("quick", slowlog::DEFAULT_THRESHOLD_MS).await;

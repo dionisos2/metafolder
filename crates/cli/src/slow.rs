@@ -21,6 +21,9 @@ pub fn render(entry: &Entry) -> Vec<String> {
     for (key, value) in &entry.context {
         lines.push(format!("    {key:<10}{value}"));
     }
+    if entry.reads > 0 {
+        lines.push(format!("    {:<10}{}", "keys", format_count(entry.reads)));
+    }
     for phase in &entry.phases {
         lines.push(render_phase(phase));
     }
@@ -36,7 +39,24 @@ fn render_phase(phase: &Phase) -> String {
     } else {
         phase.name.clone()
     };
-    format!("{indent}{name:<24}{:>8}", format_ms(phase.ms))
+    let line = format!("{indent}{name:<24}{:>8}", format_ms(phase.ms));
+    if phase.reads == 0 {
+        return line;
+    }
+    format!("{line}{:>14} keys", format_count(phase.reads))
+}
+
+/// `210 008` — thousands apart, so a count of keys reads at a glance too.
+fn format_count(n: u64) -> String {
+    let digits = n.to_string();
+    let mut out = String::new();
+    for (i, c) in digits.chars().enumerate() {
+        if i > 0 && (digits.len() - i).is_multiple_of(3) {
+            out.push(' ');
+        }
+        out.push(c);
+    }
+    out
 }
 
 /// `2026-09-09 14:03:22` — the ISO form without the `T` and the `Z`, which is
@@ -68,9 +88,9 @@ mod tests {
         let mut e = Entry::new("daemon", "POST /repos/:repo/query", 1_757_426_602_000, 4820);
         e.note("client", "mfr_path ->* \"/2024\"");
         e.phases = vec![
-            Phase { name: "wait:conn".into(), ms: 3100, count: 1, depth: 0 },
-            Phase { name: "resolve.uuids".into(), ms: 1650, count: 1, depth: 0 },
-            Phase { name: "validate.schema".into(), ms: 900, count: 12, depth: 1 },
+            Phase { name: "wait:conn".into(), ms: 3100, count: 1, depth: 0, reads: 0 },
+            Phase { name: "resolve.uuids".into(), ms: 1650, count: 1, depth: 0, reads: 210_008 },
+            Phase { name: "validate.schema".into(), ms: 900, count: 12, depth: 1, reads: 0 },
         ];
         e
     }
@@ -106,6 +126,29 @@ mod tests {
         // 12 validations of 75 ms and one of 900 ms are different problems.
         let line = render(&entry()).into_iter().find(|l| l.contains("validate.schema")).unwrap();
         assert!(line.contains("×12"), "{line}");
+    }
+
+    #[test]
+    fn test_the_keys_read_are_printed_where_they_were_read() {
+        // What tells a phase that read a lot from one that waited.
+        let mut e = entry();
+        e.reads = 210_008;
+        let lines = render(&e);
+        let total = lines.iter().find(|l| l.trim_start().starts_with("keys")).unwrap();
+        assert!(total.contains("210 008"), "{total}");
+        let phase = lines.iter().find(|l| l.contains("resolve.uuids")).unwrap();
+        assert!(phase.ends_with("210 008 keys"), "{phase}");
+        let wait = lines.iter().find(|l| l.contains("wait:conn")).unwrap();
+        assert!(!wait.contains("keys"), "a phase that read nothing says nothing: {wait}");
+    }
+
+    #[test]
+    fn test_an_entry_without_reads_prints_no_keys_line() {
+        // The GUI's entries and the ones written before reads were counted.
+        let mut e = entry();
+        e.phases.iter_mut().for_each(|p| p.reads = 0);
+        let lines = render(&e);
+        assert!(!lines.iter().any(|l| l.contains("keys")), "{lines:#?}");
     }
 
     #[test]

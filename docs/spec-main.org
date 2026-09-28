@@ -156,7 +156,10 @@ metafolder = "/ssd/meta/music/.metafolder"
   [[file:spec-event-log.org][spec-event-log.org]] "Automatic retention"),
   =slow-operation-threshold-ms= (default 2000, =0= to disable: how long an
   operation must take before it is written to the repository's slow-operation
-  log — see [[file:spec-slow-log.org][spec-slow-log.org]]). A key
+  log — see [[file:spec-slow-log.org][spec-slow-log.org]]),
+  =slow-operation-reads-threshold= (default 100 000, =0= to leave it to time
+  alone: how many keys an operation must read before it is logged however
+  quick it was). A key
   the daemon no longer knows is *ignored*, not fatal: a
   setting can be retired without breaking every configuration that carries it
   (=tree-cache-max-nodes= was, see [[file:spec-file-tracking.org][spec-file-tracking.org]]

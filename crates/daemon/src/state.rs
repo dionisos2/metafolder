@@ -170,11 +170,14 @@ impl RepoState {
         let log_retention = opened.config.log_retention(settings.log_retention());
         let slow_dir =
             metafolder_core::slowlog::slow_dir(&opened.metafolder_dir.join(repo::INTERNAL_DIR));
-        let slowlog = Arc::new(metafolder_core::slowlog::Recorder::new(
-            Some(slow_dir),
-            "daemon",
-            settings.slow_operation_threshold_ms,
-        ));
+        let slowlog = Arc::new(
+            metafolder_core::slowlog::Recorder::new(
+                Some(slow_dir),
+                "daemon",
+                settings.slow_operation_threshold_ms,
+            )
+            .with_reads_threshold(settings.slow_operation_reads_threshold),
+        );
         Self {
             conn: Mutex::new(opened.conn),
             // No forest in memory: the store answers (spec-storage increment

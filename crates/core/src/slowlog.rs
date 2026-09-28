@@ -46,6 +46,15 @@ pub struct Phase {
     pub ms: u64,
     pub count: u32,
     pub depth: u16,
+    /// Keys the store read inside the phase (inclusive, like `ms`): what tells
+    /// an operation that read a lot from one that waited. Absent from the
+    /// entries written before it was counted, and from the GUI's.
+    #[serde(default, skip_serializing_if = "is_zero")]
+    pub reads: u64,
+}
+
+fn is_zero(n: &u64) -> bool {
+    *n == 0
 }
 
 /// One logged operation.
@@ -60,6 +69,9 @@ pub struct Entry {
     /// pattern (a shape one can group by), never the concrete URL.
     pub op: String,
     pub ms: u64,
+    /// Keys the store read during the whole operation.
+    #[serde(default, skip_serializing_if = "is_zero")]
+    pub reads: u64,
     /// Correlates a GUI entry with the daemon entry for the same request.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub op_id: Option<String>,
@@ -78,6 +90,7 @@ impl Entry {
             source: source.to_string(),
             op: op.into(),
             ms,
+            reads: 0,
             op_id: None,
             phases: Vec::new(),
             context: Vec::new(),
@@ -136,8 +149,8 @@ mod pairs_as_map {
 pub struct Timeline {
     phases: Vec<Phase>,
     /// The phases currently running, innermost last: `(index into `phases`,
-    /// when this occurrence started)`.
-    open: Vec<(usize, Instant)>,
+    /// when this occurrence started, the reads counted by then)`.
+    open: Vec<(usize, Instant, u64)>,
 }
 
 impl Timeline {
@@ -149,6 +162,11 @@ impl Timeline {
     /// phase's depth and its position in the report are those of its *first*
     /// occurrence: a name means one thing in an operation.
     pub fn begin(&mut self, name: &str, at: Instant) -> usize {
+        self.begin_counted(name, at, 0)
+    }
+
+    /// [`Self::begin`], with the reads counted so far on this operation.
+    pub fn begin_counted(&mut self, name: &str, at: Instant, reads: u64) -> usize {
         let depth = self.open.len() as u16;
         let index = match self.phases.iter().position(|p| p.name == name) {
             Some(index) => {
@@ -156,11 +174,17 @@ impl Timeline {
                 index
             }
             None => {
-                self.phases.push(Phase { name: name.to_string(), ms: 0, count: 1, depth });
+                self.phases.push(Phase {
+                    name: name.to_string(),
+                    ms: 0,
+                    count: 1,
+                    depth,
+                    reads: 0,
+                });
                 self.phases.len() - 1
             }
         };
-        self.open.push((index, at));
+        self.open.push((index, at, reads));
         self.open.len() - 1
     }
 
@@ -169,16 +193,28 @@ impl Timeline {
     /// return must still report what it ran, since the error path is exactly
     /// when the timing is wanted.
     pub fn end(&mut self, token: usize, at: Instant) {
+        self.end_counted(token, at, 0)
+    }
+
+    /// [`Self::end`], with the reads counted so far on this operation.
+    pub fn end_counted(&mut self, token: usize, at: Instant, reads: u64) {
         while self.open.len() > token {
-            let (index, started) = self.open.pop().expect("len > token ⇒ non-empty");
-            self.phases[index].ms += at.saturating_duration_since(started).as_millis() as u64;
+            let (index, started, read_before) = self.open.pop().expect("len > token ⇒ non-empty");
+            let phase = &mut self.phases[index];
+            phase.ms += at.saturating_duration_since(started).as_millis() as u64;
+            phase.reads += reads.saturating_sub(read_before);
         }
     }
 
     /// The report, in first-appearance order. Phases still open are closed at
     /// `at` — the operation is over, so nothing may be left running.
-    pub fn finish_at(mut self, at: Instant) -> Vec<Phase> {
-        self.end(0, at);
+    pub fn finish_at(self, at: Instant) -> Vec<Phase> {
+        self.finish_counted(at, 0)
+    }
+
+    /// [`Self::finish_at`], with the reads counted by the operation's end.
+    pub fn finish_counted(mut self, at: Instant, reads: u64) -> Vec<Phase> {
+        self.end_counted(0, at, reads);
         self.phases
     }
 
@@ -291,17 +327,33 @@ pub struct Recorder {
     sink: Option<Sink>,
     source: &'static str,
     threshold_ms: u64,
+    /// Keys read past which an operation is logged whatever its time; `0`
+    /// for no such threshold.
+    reads_threshold: u64,
 }
 
 impl Recorder {
     /// `dir` is the repository's `slow/` directory ([`slow_dir`]); `None`, like
     /// a `threshold_ms` of 0, turns logging off for this repository.
     pub fn new(dir: Option<PathBuf>, source: &'static str, threshold_ms: u64) -> Recorder {
-        Recorder { sink: dir.map(|d| Sink::new(&d, source)), source, threshold_ms }
+        Recorder {
+            sink: dir.map(|d| Sink::new(&d, source)),
+            source,
+            threshold_ms,
+            reads_threshold: 0,
+        }
+    }
+
+    /// Also logs an operation that read at least `reads` keys, however quick
+    /// it was (`0`: time alone decides). A count of keys does not depend on
+    /// the machine's load, where a duration does.
+    pub fn with_reads_threshold(mut self, reads: u64) -> Recorder {
+        self.reads_threshold = reads;
+        self
     }
 
     pub fn disabled(source: &'static str) -> Recorder {
-        Recorder { sink: None, source, threshold_ms: 0 }
+        Recorder { sink: None, source, threshold_ms: 0, reads_threshold: 0 }
     }
 
     pub fn enabled(&self) -> bool {
@@ -317,7 +369,9 @@ impl Recorder {
     /// filtered exactly like an instrumented one.
     pub fn record(&self, entry: &Entry) {
         if let Some(sink) = &self.sink {
-            if self.threshold_ms > 0 && entry.ms >= self.threshold_ms {
+            let slow = entry.ms >= self.threshold_ms;
+            let heavy = self.reads_threshold > 0 && entry.reads >= self.reads_threshold;
+            if self.threshold_ms > 0 && (slow || heavy) {
                 sink.append(entry);
             }
         }
@@ -340,10 +394,26 @@ struct Op {
     op_id: Option<String>,
     context: Vec<(String, String)>,
     timeline: Timeline,
+    /// This thread's read counter when the operation began.
+    reads_at_start: u64,
 }
 
 thread_local! {
     static CURRENT: std::cell::RefCell<Option<Op>> = const { std::cell::RefCell::new(None) };
+    /// Keys the store has read on this thread, ever: an operation and its
+    /// phases take differences of it. A counter of its own rather than a field
+    /// of [`Op`], so the store's hot path costs a cell add, not a borrow.
+    static READS: std::cell::Cell<u64> = const { std::cell::Cell::new(0) };
+}
+
+/// Counts `n` keys read by the store on this thread — the store calls it
+/// wherever it counts a read, and the running operation, if any, sees them.
+pub fn count_reads(n: u64) {
+    READS.with(|r| r.set(r.get().wrapping_add(n)));
+}
+
+fn reads_so_far() -> u64 {
+    READS.with(|r| r.get())
 }
 
 /// Ends the timed operation when dropped, recording it if it was slow. A guard
@@ -381,6 +451,7 @@ pub fn begin(recorder: std::sync::Arc<Recorder>, op: impl Into<String>) -> OpGua
             op_id: None,
             context: Vec::new(),
             timeline: Timeline::new(),
+            reads_at_start: reads_so_far(),
         });
         OpGuard { owner: true }
     })
@@ -405,7 +476,10 @@ pub fn set_op_id(id: impl Into<String>) {
 
 /// Opens a phase; it ends when the returned guard drops.
 pub fn phase(name: &'static str) -> PhaseGuard {
-    let token = with_op(|op| op.timeline.begin(name, Instant::now()));
+    let token = with_op(|op| {
+        let reads = reads_so_far().wrapping_sub(op.reads_at_start);
+        op.timeline.begin_counted(name, Instant::now(), reads)
+    });
     PhaseGuard { token }
 }
 
@@ -422,7 +496,10 @@ fn with_op<T>(f: impl FnOnce(&mut Op) -> T) -> Option<T> {
 impl Drop for PhaseGuard {
     fn drop(&mut self) {
         if let Some(token) = self.token {
-            with_op(|op| op.timeline.end(token, Instant::now()));
+            with_op(|op| {
+                let reads = reads_so_far().wrapping_sub(op.reads_at_start);
+                op.timeline.end_counted(token, Instant::now(), reads)
+            });
         }
     }
 }
@@ -440,9 +517,11 @@ impl Drop for OpGuard {
             op.at_ms,
             ended.saturating_duration_since(op.start).as_millis() as u64,
         );
+        let reads = reads_so_far().wrapping_sub(op.reads_at_start);
+        entry.reads = reads;
         entry.op_id = op.op_id;
         entry.context = op.context;
-        entry.phases = op.timeline.finish_at(ended);
+        entry.phases = op.timeline.finish_counted(ended, reads);
         op.recorder.record(&entry);
     }
 }
@@ -494,6 +573,63 @@ mod tests {
         let names: Vec<&str> = e.phases.iter().map(|p| p.name.as_str()).collect();
         assert_eq!(names, vec!["wait:conn", "sql.execute"]);
         assert!(e.ms >= 10, "the total covers both phases: {}", e.ms);
+    }
+
+    #[test]
+    fn test_a_phase_counts_the_keys_read_inside_it() {
+        // Time alone cannot tell "read a lot" from "waited" (a lock, a cold
+        // page cache, a loaded machine); the keys read can.
+        let dir = tmp();
+        {
+            let _op = begin(recorder(&dir, 1), "POST /repos/:repo/query");
+            count_reads(2);
+            {
+                let _p = phase("prepare");
+                count_reads(5);
+                let _inner = phase("resolve.uuids");
+                count_reads(3);
+            }
+            let _p = phase("index.evaluate");
+            count_reads(7);
+            std::thread::sleep(std::time::Duration::from_millis(5));
+        }
+        let (entries, _) = read(&dir, 10, None);
+        let e = &entries[0];
+        assert_eq!(e.reads, 17, "the entry's total: {e:?}");
+        let reads = |name: &str| e.phases.iter().find(|p| p.name == name).unwrap().reads;
+        assert_eq!(reads("prepare"), 8, "inclusive, like the time");
+        assert_eq!(reads("resolve.uuids"), 3);
+        assert_eq!(reads("index.evaluate"), 7);
+    }
+
+    #[test]
+    fn test_an_operation_that_read_past_the_reads_threshold_is_logged_however_quick() {
+        // A count of keys does not depend on the machine's load: an operation
+        // that reads a hundred thousand is worth a look even when it is fast.
+        let dir = tmp();
+        let recorder =
+            Arc::new(Recorder::new(Some(dir.clone()), "daemon", NEVER).with_reads_threshold(10));
+        {
+            let _op = begin(recorder.clone(), "light");
+            count_reads(9);
+        }
+        {
+            let _op = begin(recorder.clone(), "heavy");
+            count_reads(10);
+        }
+        let ops: Vec<String> = read(&dir, 10, None).0.into_iter().map(|e| e.op).collect();
+        assert_eq!(ops, vec!["heavy".to_string()]);
+    }
+
+    #[test]
+    fn test_reads_outside_an_operation_are_ignored() {
+        count_reads(1_000);
+        let dir = tmp();
+        {
+            let _op = begin(recorder(&dir, 1), "op");
+            std::thread::sleep(std::time::Duration::from_millis(2));
+        }
+        assert_eq!(read(&dir, 10, None).0[0].reads, 0);
     }
 
     #[test]
@@ -551,6 +687,7 @@ mod tests {
             source: source.into(),
             op: op.into(),
             ms,
+            reads: 0,
             op_id: None,
             phases: Vec::new(),
             context: Vec::new(),
@@ -628,7 +765,7 @@ mod tests {
         let sink = Sink::new(&dir, "daemon");
         let mut e = entry(1000, "daemon", "POST /repos/:repo/query", 4820);
         e.context.push(("engine".into(), "sql".into()));
-        e.phases.push(Phase { name: "wait:conn".into(), ms: 3100, count: 1, depth: 0 });
+        e.phases.push(Phase { name: "wait:conn".into(), ms: 3100, count: 1, depth: 0, reads: 0 });
         sink.append(&e);
         let (back, truncated) = read(&dir, 10, None);
         assert_eq!(back, vec![e]);

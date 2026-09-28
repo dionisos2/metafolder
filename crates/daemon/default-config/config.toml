@@ -78,13 +78,20 @@ log-retention-keep-labels = true
 
 # How long an operation must take, in milliseconds, before the daemon writes it
 # to the repository's slow-operation log (.metafolder/internal/slow/, read with
-# `mf slow`). An entry carries where the time went — the wait for the database
-# lock, the index refresh, the SQL fallback, the commit, the tree-cache settle —
-# not just the total, which is the part you already knew. Queries and field
-# writes are occasionally seconds slow for reasons that are over by the time you
-# notice, and this is what is left behind to explain them. 0 turns the log off;
-# set it to 1 to record everything. Default: 2000.
+# `mf slow`). An entry carries where the time went — the wait for the store
+# handle, the query's preparation and evaluation, the commit — and how many
+# keys each part read, not just the total, which is the part you already knew.
+# Queries and field writes are occasionally seconds slow for reasons that are
+# over by the time you notice, and this is what is left behind to explain
+# them. 0 turns the log off; set it to 1 to record everything. Default: 2000.
 slow-operation-threshold-ms = 2000
+
+# How many keys an operation must read before it is logged however quick it
+# was. A duration depends on the machine and its load; a count of keys does
+# not, so this catches an operation that reads a large part of the repository
+# on a machine fast enough to hide it. Every bounded read (a page, a folder, a
+# search) stays far below the default. 0: time alone decides. Default: 100000.
+slow-operation-reads-threshold = 100000
 
 # Every how many days each loaded repository's automatic backup is taken: a
 # consistent copy of its store, with its config, in
