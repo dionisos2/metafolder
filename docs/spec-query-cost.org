@@ -283,14 +283,8 @@ that does not compile. Explain runs the same pass, so it is a dry run of those
 The shape of a query is predictable. The moment is not, and the moment routinely
 dominates:
 
-- =index.refresh= runs on the read path before every query. It is incremental
-  (one or two operations) in steady state, but rebuilds fully when HEAD was
-  rewritten — which is what =log rollback= / =undo= do — when an operation type
-  is not replayable, when the delta exceeds =REBUILD_OVER=, or when tombstones
-  have piled up.
-- the =wait:conn= / =wait:cache= / =wait:index= waits: the repository connection
-  is =locking_mode = EXCLUSIVE=, so a watcher flush in progress is a wait of
-  unbounded length.
+- the =wait:conn= / =wait:cache= waits: one store handle serves the
+  repository, so a watcher flush in progress is a wait of unbounded length.
 - the page cache, which no model here can see.
 
 None of these belong in the estimate. They are reported next to it as *observed

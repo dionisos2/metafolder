@@ -13,8 +13,8 @@ covers repository load only, and it goes to stderr, which no GUI user ever sees.
 So every repository keeps a **slow-operation log**: one entry per operation that
 took longer than a threshold (2 s by default), carrying enough context to say
 *where* the time went — not that a query was slow, but that it waited three
-seconds for the database lock a watcher flush was holding, then rebuilt the
-bitmap index because a rollback had rewritten HEAD.
+seconds for the store handle a watcher flush was holding, then spent the rest
+evaluating.
 
 Two properties make it a diagnosis tool rather than a metric:
 
@@ -40,9 +40,9 @@ One JSON object per line (JSONL), written when the operation ends:
   "op_id": "9f3c1d0a4b7e4f2a",
   "phases": [
   {"name": "wait:conn", "ms": 3100, "count": 1, "depth": 0},
-  {"name": "prepare", "ms": 12, "count": 1, "depth": 0},
-  {"name": "index.refresh", "ms": 40, "count": 1, "depth": 0},
-  {"name": "index.refresh", "ms": 1650, "count": 1, "depth": 0}
+  {"name": "wait:cache", "ms": 0, "count": 1, "depth": 0},
+  {"name": "prepare", "ms": 1650, "count": 1, "depth": 0},
+  {"name": "index.evaluate", "ms": 40, "count": 1, "depth": 0}
   ],
   "context": {
   "client": "mfr_path ->* \"/2024\" and rating > 3",
@@ -87,22 +87,25 @@ inventing a synonym):
 
 | Phase              | What it covers                                             |
 |--------------------+------------------------------------------------------------|
-| =wait:conn=        | waiting for the repository's store handle lock              |
-| =wait:cache=       | waiting for the tree-cache lock                             |
-| =wait:index=       | waiting for the query index lock                            |
-| =prepare=          | resolving path targets/exact nodes and the forest's leaves  |
-| =index.refresh=    | bringing the bitmap index up to the current log HEAD        |
-| =index.evaluate=   | evaluating the page (and count) through the index           |
-| =assemble=         | assembling the selected fields of a result page             |
-| =resolve.uuids=    | resolving a write's query to its whole match set            |
-| =write.fields=     | the field writes inside the transaction                     |
-| =validate.schema=  | schema delta validation                                     |
-| =commit=           | committing the transaction (the WAL fsync lands here)       |
-| =settle.tree=      | settling or rebuilding the tree cache after a write         |
-| =settle.index=     | catching the query index up to the revision just committed  |
-| =settle.watches=   | recomputing the watched-directory set                       |
-| =watcher.compact=  | compacting a buffered event batch before applying it        |
-| =watcher.apply=    | applying one group of compacted events                      |
+| =wait:conn=          | waiting for the repository's store handle lock            |
+| =wait:cache=         | waiting for the tree-cache lock                           |
+| =prepare=            | resolving path targets/exact nodes and the forest's leaves |
+| =index.evaluate=     | evaluating the page (and count) over the store            |
+| =assemble=           | assembling the selected fields of a result page           |
+| =resolve.uuids=      | resolving a write's query to its whole match set          |
+| =write.fields=       | the field writes inside the transaction                   |
+| =write.bulk_create=  | creating a batch of metarecords                           |
+| =write.trash_delete= | deleting the metarecords of a trashed subtree             |
+| =validate.schema=    | schema delta validation                                   |
+| =commit=             | committing the transaction (the store's fsync lands here) |
+| =rules.load=         | re-reading the watch-rule index after HEAD moved          |
+| =settle.rules=       | re-reading it after a write that moved a rule             |
+| =settle.watches=     | recomputing the watched-directory set                     |
+| =watcher.compact=    | compacting a buffered event batch before applying it      |
+| =watcher.apply=      | applying one group of compacted events                    |
+
+There is no index to refresh or settle and no forest to rebuild: both went
+with SQLite (September 2026), and every query reads the store as committed.
 
 A =wait:*= phase is the load-bearing one: it is what distinguishes "this query
 is expensive" from "this query is fine and something else held the repository".
@@ -209,8 +212,8 @@ phases indented by depth:
     client    mfr_path ->* "/2024" and rating > 3
     results   1240
     wait:conn         3.10s
-    prepare             12ms
-    index.refresh     1.65s
+    wait:cache           0ms
+    prepare           1.65s
     index.evaluate      40ms
 #+END_SRC
 
