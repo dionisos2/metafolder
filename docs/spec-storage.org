@@ -410,9 +410,13 @@ writes). Readers never block.
   LMDB has no page checksums (SQLite has none by default either; =redb= may —
   to verify). The defence is backups: the store supports a consistent hot copy
   (=mdb_copy=), which a =mf repo backup= would expose.
-- *Network filesystems* (NFS, SMB) are not supported by LMDB. A repository whose
-  =.metafolder/internal/= lives on one keeps the SQLite backend; creating a
-  KV repository there is refused.
+- *Network filesystems* (NFS, SMB, SSHFS) are not supported by LMDB. A
+  =.metafolder/= on one is refused at =init= and at load, its filesystem type
+  read from =/proc/self/mountinfo= (=mount::network_filesystem=: NFS, CIFS/SMB,
+  9p, the cluster filesystems, and FUSE only for its remote kinds — a local
+  drive through =fuse.ntfs-3g= is not refused). The files may stay on the
+  share: only =.metafolder/= has to be local (an external one). Where the
+  mount table cannot be read, nothing is refused.
 - *Map size.* The map grows with the store ([[*Choosing the backend]]); a
   single revision too large for the room left fails whole (=MDB_MAP_FULL=),
   without corruption.
@@ -609,9 +613,8 @@ and =MDB_NOMETASYNC= saved almost nothing — one =fsync= dominates either way.
   (see [[*Text: trigrams]]).
 - *The oracle depends on =tree_cache=* for path shapes. On the KV backend it is
   fed the exported SQLite database, where the full forest is available.
-- *Network filesystems*: the SQLite backend falls back to =journal_mode =
-  DELETE= there; the KV backend refuses them. A user moving a repository onto a
-  network share must convert it first.
+- *Network filesystems*: refused (see "Safety"). A repository whose files are
+  on a share keeps its =.metafolder/= on a local disk.
 - *One persisted format more* to migrate for the lifetime of the project.
 
 * Open questions

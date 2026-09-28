@@ -91,6 +91,7 @@ pub fn init_repository(
         ))
         .into());
     }
+    refuse_network_filesystem(&std::path::absolute(&metafolder_dir)?)?;
     std::fs::create_dir_all(&metafolder_dir)
         .with_context(|| format!("Failed to create {metafolder_dir:?}"))?;
     // Canonical from here on: the watcher and reconcile exclude internal/
@@ -179,6 +180,22 @@ impl RepoLocator {
     }
 }
 
+/// Refuses a `.metafolder/` on a network filesystem: the key-value store's
+/// memory map and locks are not safe there (spec-storage "Safety"). The files
+/// may stay on the share — only `.metafolder/` has to be local.
+fn refuse_network_filesystem(metafolder_dir: &Path) -> Result<()> {
+    match crate::mount::network_filesystem(metafolder_dir) {
+        None => Ok(()),
+        Some(fstype) => Err(DomainError::BadRequest(format!(
+            "{} is on a network filesystem ({fstype}), where the repository's store cannot \
+             live: keep .metafolder on a local disk (an external one, `--metafolder`) — the \
+             files may stay on the share",
+            metafolder_dir.display()
+        ))
+        .into()),
+    }
+}
+
 /// Opens the store at `path`.
 pub(crate) fn open_store(path: &Path) -> Result<crate::store::Handle> {
     Ok(Box::new(crate::kvstore::KvStore::open(path)?))
@@ -186,6 +203,7 @@ pub(crate) fn open_store(path: &Path) -> Result<crate::store::Handle> {
 
 pub fn load_repository(locator: RepoLocator) -> Result<OpenedRepo> {
     let metafolder_dir = locator.metafolder_dir()?;
+    refuse_network_filesystem(&metafolder_dir)?;
     let config = RepoConfig::read(&metafolder_dir)?;
     let who = config.name.clone();
     let internal_dir = metafolder_dir.join(INTERNAL_DIR);

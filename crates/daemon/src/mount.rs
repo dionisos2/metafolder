@@ -238,6 +238,45 @@ pub fn offline(
     Ok(OfflineMounts { paths })
 }
 
+/// Whether a filesystem type is a network one: a key-value store refuses to
+/// live there (spec-storage "Safety": LMDB's memory map and locks are not
+/// safe over NFS, SMB or SSHFS). FUSE is judged by what it carries — a local
+/// drive through `fuse.ntfs-3g` is not remote.
+pub fn is_network_filesystem(fstype: &str) -> bool {
+    const NETWORK: &[&str] = &[
+        "nfs",
+        "nfs4",
+        "cifs",
+        "smb3",
+        "smbfs",
+        "ncpfs",
+        "9p",
+        "afs",
+        "ceph",
+        "glusterfs",
+        "lustre",
+        "gfs2",
+        "ocfs2",
+        "davfs",
+        "fuse.sshfs",
+        "fuse.rclone",
+        "fuse.s3fs",
+        "fuse.gcsfuse",
+        "fuse.glusterfs",
+        "fuse.cephfs",
+        "fuse.davfs2",
+    ];
+    NETWORK.contains(&fstype)
+}
+
+/// The network filesystem `abs` is on, if it is on one (see
+/// [`is_network_filesystem`]). Where the mount table cannot be read, nothing
+/// is known, and nothing is refused.
+pub fn network_filesystem(abs: &Path) -> Option<String> {
+    let table = table::current();
+    table.filesystem_of(abs).filter(|t| is_network_filesystem(t)).map(str::to_string)
+}
+
 /// A snapshot of the kernel's mount table: which paths are mount points, and
 /// what is mounted there.
 #[derive(Debug, Default)]
@@ -254,6 +293,12 @@ impl MountTable {
     /// Whether `abs` is itself a mount point (not merely below one).
     pub fn contains(&self, abs: &Path) -> bool {
         self.by_path.contains_key(abs)
+    }
+
+    /// The type of the filesystem `abs` is on: its nearest mount point's.
+    /// `None` when the table is empty (unreadable).
+    pub fn filesystem_of(&self, abs: &Path) -> Option<&str> {
+        abs.ancestors().find_map(|dir| self.by_path.get(dir)).map(|e| e.fstype.as_str())
     }
 
     fn entry(&self, abs: &Path) -> Option<&MountInfoEntry> {
@@ -370,6 +415,8 @@ fn by_dev(dir: &str, major: u64, minor: u64) -> Option<String> {
 struct MountInfoEntry {
     major: u64,
     minor: u64,
+    /// The filesystem type: `ext4`, `nfs4`, `fuse.sshfs`, …
+    fstype: String,
     /// The mount source: `/dev/sdb1`, `user@host:/export`, `tmpfs`, …
     source: String,
 }
@@ -395,12 +442,12 @@ fn parse_mountinfo(text: &str) -> HashMap<PathBuf, MountInfoEntry> {
         let Some(sep) = fields.iter().position(|f| *f == "-") else {
             continue;
         };
-        let Some(source) = fields.get(sep + 2) else {
+        let (Some(fstype), Some(source)) = (fields.get(sep + 1), fields.get(sep + 2)) else {
             continue;
         };
         out.insert(
             PathBuf::from(unescape(fields[4])),
-            MountInfoEntry { major, minor, source: unescape(source) },
+            MountInfoEntry { major, minor, fstype: fstype.to_string(), source: unescape(source) },
         );
     }
     out
@@ -448,6 +495,30 @@ mod tests {
 36 25 8:17 / /media/my\\040disk rw,relatime - ext4 /dev/sdb1 rw
 40 36 0:33 /sub /media/bind rw shared:9 master:2 - tmpfs tmpfs rw,size=1k
 ";
+
+    #[test]
+    fn a_path_is_on_the_filesystem_of_its_nearest_mount_point() {
+        let table = MountTable::from_text(
+            "1 0 8:1 / / rw - ext4 /dev/sda1 rw
+2 1 0:40 / /mnt/nas rw - nfs4 nas:/export rw
+3 1 0:41 / /mnt/remote rw - fuse.sshfs me@host:/ rw
+4 3 8:2 / /mnt/remote/local rw - ext4 /dev/sdb1 rw
+5 1 0:42 / /mnt/ntfs rw - fuse.ntfs-3g /dev/sdc1 rw
+",
+        );
+        let fs = |p: &str| table.filesystem_of(Path::new(p)).map(str::to_string);
+        assert_eq!(fs("/home/me/music").as_deref(), Some("ext4"));
+        assert_eq!(fs("/mnt/nas").as_deref(), Some("nfs4"));
+        assert_eq!(fs("/mnt/nas/music/.metafolder").as_deref(), Some("nfs4"));
+        assert_eq!(fs("/mnt/remote/x").as_deref(), Some("fuse.sshfs"));
+        assert_eq!(fs("/mnt/remote/local/x").as_deref(), Some("ext4"), "the nearest one");
+        assert_eq!(fs("/mnt/nasty").as_deref(), Some("ext4"), "a component, not a prefix");
+        assert!(is_network_filesystem("nfs4"));
+        assert!(is_network_filesystem("fuse.sshfs"));
+        assert!(is_network_filesystem("cifs"));
+        assert!(!is_network_filesystem("ext4"));
+        assert!(!is_network_filesystem("fuse.ntfs-3g"), "a local drive through FUSE");
+    }
 
     #[test]
     fn mountinfo_parses_devices_sources_and_escaped_paths() {
