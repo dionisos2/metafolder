@@ -19,7 +19,12 @@
 //!   *loses* events and is told so ([`proto::ServerMsg::Overflow`]) rather than
 //!   making the whole machine wait;
 //! - [`service`] — the two put together, as the `metafolder-watchd` binary runs
-//!   them.
+//!   them;
+//! - `sim` (feature `sim`) — a simulated kernel in place of [`fanotify`]'s
+//!   group: filesystem operations that also queue the records the kernel
+//!   would, resolved against a table instead of `open_by_handle_at`. It runs
+//!   the whole broker unprivileged, so the daemon's tests can drive the
+//!   fanotify source without a root process.
 //!
 //! Coverage: every production line runs under `cargo test`, the kernel-facing
 //! ones in a user namespace over a tmpfs (`unshare -rm`). Those that need a
@@ -32,5 +37,7 @@ pub mod filter;
 pub mod proto;
 pub mod server;
 pub mod service;
+#[cfg(any(test, feature = "sim"))]
+pub mod sim;
 #[cfg(test)]
 mod test_support;

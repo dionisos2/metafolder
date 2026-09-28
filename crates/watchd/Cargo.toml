@@ -15,6 +15,11 @@ name = "metafolder-watchd"
 [lib]
 name = "metafolder_watchd"
 
+[features]
+# The simulated kernel (`sim`): the broker, unprivileged, for other crates'
+# tests (the daemon's fanotify source).
+sim = []
+
 [dependencies]
 anyhow = "1"
 clap = { version = "4", features = ["derive"] }

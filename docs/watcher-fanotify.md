@@ -330,6 +330,20 @@ Done:
   socket.
 - The broker's filter for a directory the subscriber may not list (the `0700`
   case, as a `CredSource` table).
+- A **simulated kernel** (`watchd/src/sim.rs`, feature `sim`): the only
+  privileged pieces — the group's queue and `open_by_handle_at` — replaced by a
+  table of objects kept in step with the real filesystem, everything else the
+  production code (`Translator`, `Scope`, `Memo`, server, filter, protocol,
+  through `service::serve`). Its operations (`write`, `rename`,
+  `remove_dir_all`…) do the real change and queue the records the kernel
+  queues for it; `emit` queues a record by hand; `hold` lets operations pile up
+  before one read, handles then resolving where the objects are *by then*. It
+  is held to the kernel by a fidelity test run in a user namespace: the same
+  script against a real group and against the simulator, masks, records,
+  order and **merges** compared step by step — the kernel merges an unread
+  deletion and re-creation of one name into one `CREATE|DELETE` event, and an
+  unread `a→b, b→a, a→b` into two renames. It lets the daemon's fanotify
+  source run in any sandbox, unprivileged.
 
 To do:
 

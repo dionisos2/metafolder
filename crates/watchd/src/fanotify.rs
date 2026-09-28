@@ -43,38 +43,38 @@ use crate::proto::{Event, WirePath};
 // ── linux/fanotify.h ─────────────────────────────────────────────────────────
 // Copied, not guessed: these values are the uapi ABI.
 
-const FAN_MODIFY: u64 = 0x0000_0002;
-const FAN_ATTRIB: u64 = 0x0000_0004;
-const FAN_CLOSE_WRITE: u64 = 0x0000_0008;
-const FAN_MOVED_FROM: u64 = 0x0000_0040;
-const FAN_MOVED_TO: u64 = 0x0000_0080;
-const FAN_CREATE: u64 = 0x0000_0100;
-const FAN_DELETE: u64 = 0x0000_0200;
-const FAN_DELETE_SELF: u64 = 0x0000_0400;
-const FAN_Q_OVERFLOW: u64 = 0x0000_4000;
-const FAN_RENAME: u64 = 0x1000_0000;
-const FAN_ONDIR: u64 = 0x4000_0000;
+pub(crate) const FAN_MODIFY: u64 = 0x0000_0002;
+pub(crate) const FAN_ATTRIB: u64 = 0x0000_0004;
+pub(crate) const FAN_CLOSE_WRITE: u64 = 0x0000_0008;
+pub(crate) const FAN_MOVED_FROM: u64 = 0x0000_0040;
+pub(crate) const FAN_MOVED_TO: u64 = 0x0000_0080;
+pub(crate) const FAN_CREATE: u64 = 0x0000_0100;
+pub(crate) const FAN_DELETE: u64 = 0x0000_0200;
+pub(crate) const FAN_DELETE_SELF: u64 = 0x0000_0400;
+pub(crate) const FAN_Q_OVERFLOW: u64 = 0x0000_4000;
+pub(crate) const FAN_RENAME: u64 = 0x1000_0000;
+pub(crate) const FAN_ONDIR: u64 = 0x4000_0000;
 
-const FAN_CLASS_NOTIF: u32 = 0x0000_0000;
-const FAN_CLOEXEC: u32 = 0x0000_0001;
-const FAN_REPORT_FID: u32 = 0x0000_0200;
-const FAN_REPORT_DIR_FID: u32 = 0x0000_0400;
-const FAN_REPORT_NAME: u32 = 0x0000_0800;
-const FAN_REPORT_DFID_NAME: u32 = FAN_REPORT_DIR_FID | FAN_REPORT_NAME;
+pub(crate) const FAN_CLASS_NOTIF: u32 = 0x0000_0000;
+pub(crate) const FAN_CLOEXEC: u32 = 0x0000_0001;
+pub(crate) const FAN_REPORT_FID: u32 = 0x0000_0200;
+pub(crate) const FAN_REPORT_DIR_FID: u32 = 0x0000_0400;
+pub(crate) const FAN_REPORT_NAME: u32 = 0x0000_0800;
+pub(crate) const FAN_REPORT_DFID_NAME: u32 = FAN_REPORT_DIR_FID | FAN_REPORT_NAME;
 
-const FAN_MARK_ADD: u32 = 0x0000_0001;
-const FAN_MARK_REMOVE: u32 = 0x0000_0002;
-const FAN_MARK_FILESYSTEM: u32 = 0x0000_0100;
+pub(crate) const FAN_MARK_ADD: u32 = 0x0000_0001;
+pub(crate) const FAN_MARK_REMOVE: u32 = 0x0000_0002;
+pub(crate) const FAN_MARK_FILESYSTEM: u32 = 0x0000_0100;
 
-const INFO_TYPE_FID: u8 = 1;
-const INFO_TYPE_DFID_NAME: u8 = 2;
-const INFO_TYPE_DFID: u8 = 3;
-const INFO_TYPE_OLD_DFID_NAME: u8 = 10;
-const INFO_TYPE_NEW_DFID_NAME: u8 = 12;
+pub(crate) const INFO_TYPE_FID: u8 = 1;
+pub(crate) const INFO_TYPE_DFID_NAME: u8 = 2;
+pub(crate) const INFO_TYPE_DFID: u8 = 3;
+pub(crate) const INFO_TYPE_OLD_DFID_NAME: u8 = 10;
+pub(crate) const INFO_TYPE_NEW_DFID_NAME: u8 = 12;
 
 /// `sizeof(struct fanotify_event_metadata)`: u32 + u8 + u8 + u16 + u64 + i32
 /// + i32, with the mask 8-aligned at offset 8.
-const METADATA_LEN: usize = 24;
+pub(crate) const METADATA_LEN: usize = 24;
 
 /// Everything the broker asks of the kernel, checked up front so a
 /// mis-deployed broker fails at start with the remedy in hand rather than at
@@ -126,6 +126,8 @@ pub trait Resolve {
     fn resolve(&mut self, handle: &Handle) -> Option<PathBuf>;
     /// A directory moved: every remembered path may be wrong from here on.
     fn forget(&mut self) {}
+    /// One read's events are translated: release what was held for it.
+    fn end_batch(&mut self) {}
 }
 
 /// A resolver's answers, remembered. A handle is stable for the life of the
@@ -175,6 +177,10 @@ impl<R: Resolve> Resolve for Memo<R> {
         self.cache.clear();
         self.inner.forget();
     }
+
+    fn end_batch(&mut self) {
+        self.inner.end_batch();
+    }
 }
 
 /// The real resolver: `open_by_handle_at` plus `/proc/self/fd` — remembering
@@ -208,11 +214,6 @@ impl PathResolver {
         self.open.remove(&fsid);
     }
 
-    /// Closes the descriptors the batch opened.
-    pub fn end_batch(&mut self) {
-        self.open.clear();
-    }
-
     /// How many descriptors are open right now (tests).
     pub fn open_descriptors(&self) -> usize {
         self.open.len()
@@ -238,6 +239,11 @@ impl Resolve for PathResolver {
     fn resolve(&mut self, handle: &Handle) -> Option<PathBuf> {
         let fs_fd = self.fs_fd(handle.fsid)?;
         resolve_handle(fs_fd, handle)
+    }
+
+    /// Closes the descriptors the batch opened.
+    fn end_batch(&mut self) {
+        self.open.clear();
     }
 }
 
@@ -741,6 +747,39 @@ impl Scope {
     }
 }
 
+// ── Translator: bytes to wire events ─────────────────────────────────────────
+
+/// Everything between a `read(2)` of the group and the wire events — parsing,
+/// the [`Scope`] filter, handle resolution — with the resolver as its one
+/// seam. The real group runs it over `open_by_handle_at`; the simulated one
+/// (`crate::sim`) over a table of the objects it made, so what a test feeds in
+/// takes the very path the kernel's bytes do.
+pub struct Translator<R: Resolve> {
+    /// What is under a root, by directory handle ([`Scope`]).
+    pub scope: Scope,
+    pub resolver: Memo<R>,
+}
+
+impl<R: Resolve> Translator<R> {
+    pub fn new(resolver: R) -> Self {
+        Self { scope: Scope::default(), resolver: Memo::new(resolver) }
+    }
+
+    pub fn set_roots(&mut self, roots: Vec<PathBuf>) {
+        self.scope.set_roots(roots);
+    }
+
+    /// Turns one read's bytes into wire events — those under a subscribed
+    /// root: the rest is dropped by directory handle ([`Scope`]) before
+    /// anything is resolved for it.
+    pub fn translate(&mut self, buf: &[u8]) -> ReadOutcome {
+        let (raws, kernel_overflow) = parse(buf);
+        let events = translate_batch(&raws, &mut self.scope, &mut self.resolver);
+        self.resolver.end_batch();
+        ReadOutcome { events, kernel_overflow }
+    }
+}
+
 // ── The group, the marks, the reader ─────────────────────────────────────────
 
 /// One covered filesystem: one mark, placed as long as a subscribed root is on
@@ -769,9 +808,8 @@ pub struct Fanotify {
     /// What is asked of the kernel: [`mask`], less `FAN_RENAME` on a kernel
     /// that refuses it.
     mask: u64,
-    /// What is under a root, by directory handle ([`Scope`]).
-    scope: Scope,
-    resolver: Memo<PathResolver>,
+    /// Parsing, scope and resolution of what is read.
+    translator: Translator<PathResolver>,
 }
 
 impl Fanotify {
@@ -796,8 +834,7 @@ impl Fanotify {
             marks: HashMap::new(),
             roots: Vec::new(),
             mask: mask(),
-            scope: Scope::default(),
-            resolver: Memo::new(PathResolver::default()),
+            translator: Translator::new(PathResolver::default()),
         })
     }
 
@@ -805,7 +842,7 @@ impl Fanotify {
     /// subscriber watches).
     pub fn sync_roots(&mut self, roots: &[PathBuf]) -> Result<()> {
         self.roots = roots.to_vec();
-        self.scope.set_roots(roots.to_vec());
+        self.translator.set_roots(roots.to_vec());
         self.resync()
     }
 
@@ -837,7 +874,7 @@ impl Fanotify {
             if let Some(mark) = self.marks.remove(&fsid) {
                 let _ = self.mark_fs(&mark.at, FAN_MARK_REMOVE);
             }
-            self.resolver.inner.remove_fs(fsid);
+            self.translator.resolver.inner.remove_fs(fsid);
         }
         // The rest are placed — and every mark, old or new, resolves from the
         // paths its filesystem has *now*: the ones it was placed with may be
@@ -846,12 +883,12 @@ impl Fanotify {
             let reachable = paths.remove(&fsid).unwrap_or_default();
             if let Some(mark) = self.marks.get_mut(&fsid) {
                 mark.at = at;
-                self.resolver.inner.set_fs(fsid, reachable);
+                self.translator.resolver.inner.set_fs(fsid, reachable);
                 continue;
             }
             match self.mark_fs(&at, FAN_MARK_ADD) {
                 Ok(()) => {
-                    self.resolver.inner.set_fs(fsid, reachable);
+                    self.translator.resolver.inner.set_fs(fsid, reachable);
                     self.marks.insert(fsid, Mark { at });
                 }
                 Err(err) if is_root => failed.push(format!("{}: {err:#}", at.display())),
@@ -875,14 +912,26 @@ impl Fanotify {
         Reader { fd: Arc::clone(&self.fd) }
     }
 
-    /// Turns one read's bytes into wire events — those under a subscribed
-    /// root: the rest is dropped by directory handle ([`Scope`]) before
-    /// anything is resolved for it.
+    /// Turns one read's bytes into wire events ([`Translator::translate`]).
     pub fn translate(&mut self, buf: &[u8]) -> ReadOutcome {
-        let (raws, kernel_overflow) = parse(buf);
-        let events = translate_batch(&raws, &mut self.scope, &mut self.resolver);
-        self.resolver.inner.end_batch();
-        ReadOutcome { events, kernel_overflow }
+        self.translator.translate(buf)
+    }
+
+    /// Every event queued right now, parsed, without waiting — what the
+    /// simulator's fidelity test compares itself against.
+    #[cfg(test)]
+    pub(crate) fn drain_raw(&self) -> Vec<RawEvent> {
+        let fd = self.fd.as_raw_fd();
+        unsafe { libc::fcntl(fd, libc::F_SETFL, libc::O_NONBLOCK) };
+        let mut buf = vec![0u8; 64 * 1024];
+        let mut out = Vec::new();
+        loop {
+            let n = unsafe { libc::read(fd, buf.as_mut_ptr().cast(), buf.len()) };
+            if n <= 0 {
+                return out;
+            }
+            out.extend(parse(&buf[..n as usize]).0);
+        }
     }
 
     fn mark_fs(&mut self, at: &Path, op: u32) -> Result<()> {
@@ -2055,7 +2104,7 @@ mod tests {
         assert_eq!(fa.marks.len(), 1);
         fa.sync_roots(&[]).unwrap();
         assert!(fa.marks.is_empty());
-        assert!(fa.resolver.inner.fs_paths.is_empty(), "nor anything to resolve on");
+        assert!(fa.translator.resolver.inner.fs_paths.is_empty(), "nor anything to resolve on");
     }
 
     #[test]
@@ -2332,14 +2381,14 @@ mod tests {
 
         // Deleted while still subscribed: another root of the filesystem does.
         std::fs::remove_dir(&first).unwrap();
-        let _ = fa.resolver.inner.resolve(&h);
-        assert_eq!(fa.resolver.inner.open_descriptors(), 1, "a descriptor all the same");
-        fa.resolver.inner.end_batch();
+        let _ = fa.translator.resolver.inner.resolve(&h);
+        assert_eq!(fa.translator.resolver.inner.open_descriptors(), 1, "a descriptor all the same");
+        fa.translator.resolver.inner.end_batch();
 
         // Unsubscribed: what remains is what the resolver opens on.
         fa.sync_roots(std::slice::from_ref(&second)).unwrap();
-        assert_eq!(fa.resolver.inner.fs_paths[&fsid], vec![second.clone()]);
-        let _ = fa.resolver.inner.resolve(&h);
-        assert_eq!(fa.resolver.inner.open_descriptors(), 1);
+        assert_eq!(fa.translator.resolver.inner.fs_paths[&fsid], vec![second.clone()]);
+        let _ = fa.translator.resolver.inner.resolve(&h);
+        assert_eq!(fa.translator.resolver.inner.open_descriptors(), 1);
     }
 }

@@ -13,19 +13,40 @@ use std::time::Duration;
 use anyhow::{anyhow, Context, Result};
 
 use crate::fanotify::{self, Fanotify, MountWatch, ReadOutcome};
-use crate::filter::{AccessFilter, SystemCreds};
+use crate::filter::{AccessFilter, CredSource, SystemCreds};
 use crate::proto::Event;
 use crate::server::{Broker, RootSink};
 
-/// The bridge from subscriptions to filesystem marks: whatever the subscribers
-/// watch is what the kernel is asked to report on.
-pub struct MarkSink {
-    pub fanotify: Arc<Mutex<Fanotify>>,
+/// What the broker needs of the kernel side: marks that follow the
+/// subscriptions, and one read's bytes turned into wire events. [`Fanotify`]
+/// is the real one; `crate::sim` stands in for it where no capability is
+/// held — everything above this seam (server, filter, protocol) is the same.
+pub trait Group: Send + 'static {
+    /// Covers `roots` (the union of every subscriber's) and nothing else.
+    fn sync_roots(&mut self, roots: &[PathBuf]) -> Result<()>;
+    /// One read's bytes, as wire events.
+    fn translate(&mut self, buf: &[u8]) -> ReadOutcome;
 }
 
-impl RootSink for MarkSink {
+impl Group for Fanotify {
+    fn sync_roots(&mut self, roots: &[PathBuf]) -> Result<()> {
+        Fanotify::sync_roots(self, roots)
+    }
+
+    fn translate(&mut self, buf: &[u8]) -> ReadOutcome {
+        Fanotify::translate(self, buf)
+    }
+}
+
+/// The bridge from subscriptions to filesystem marks: whatever the subscribers
+/// watch is what the kernel is asked to report on.
+pub struct MarkSink<G: Group> {
+    pub group: Arc<Mutex<G>>,
+}
+
+impl<G: Group> RootSink for MarkSink<G> {
     fn set_roots(&self, roots: Vec<PathBuf>) -> Result<()> {
-        lock(&self.fanotify).sync_roots(&roots)
+        lock(&self.group).sync_roots(&roots)
     }
 }
 
@@ -43,16 +64,7 @@ pub fn run(socket: &Path) -> Result<()> {
     fanotify::preflight(probe).context("refusing to start")?;
 
     let fanotify = Arc::new(Mutex::new(Fanotify::open()?));
-    let sink = Arc::new(MarkSink { fanotify: Arc::clone(&fanotify) });
-    let broker = Arc::new(Broker::new(AccessFilter::new(SystemCreds), sink));
     let listener = bind(socket)?;
-
-    // Subscribers: accepted, and fed by the broadcast loop, on their own thread.
-    let (tx, rx) = std::sync::mpsc::channel::<Event>();
-    {
-        let broker = Arc::clone(&broker);
-        std::thread::spawn(move || broker.serve(listener, rx));
-    }
 
     // The mount table: a filesystem mounted under a subscribed root (a drive
     // plugged in) is one more filesystem to mark, one unmounted is a mark to
@@ -66,17 +78,35 @@ pub fn run(socket: &Path) -> Result<()> {
     }
 
     eprintln!("[watchd] listening on {}", socket.display());
-    // The kernel side, on this thread. The read happens *outside* the lock:
-    // it blocks until something happens, and a subscription must be able to
-    // place its marks meanwhile.
     let reader = lock(&fanotify).reader();
-    Err(pump(
-        |buf| reader.read(buf),
-        |bytes| lock(&fanotify).translate(bytes),
+    Err(serve(listener, fanotify, AccessFilter::new(SystemCreds), move |buf| reader.read(buf)))
+}
+
+/// The broker over any [`Group`]: subscribers accepted on `listener` and fed
+/// on their own thread, the kernel side pumped on this one — until nothing
+/// listens any more, which it returns. `read` happens *outside* the group's
+/// lock: it blocks until something happens, and a subscription must be able
+/// to place its marks meanwhile.
+pub fn serve<G: Group, C: CredSource + 'static>(
+    listener: UnixListener,
+    group: Arc<Mutex<G>>,
+    filter: AccessFilter<C>,
+    read: impl FnMut(&mut [u8]) -> Result<usize>,
+) -> anyhow::Error {
+    let sink = Arc::new(MarkSink { group: Arc::clone(&group) });
+    let broker = Arc::new(Broker::new(filter, sink));
+    let (tx, rx) = std::sync::mpsc::channel::<Event>();
+    {
+        let broker = Arc::clone(&broker);
+        std::thread::spawn(move || broker.serve(listener, rx));
+    }
+    pump(
+        read,
+        |bytes| lock(&group).translate(bytes),
         &tx,
         || broker.broadcast_overflow(),
         Duration::from_millis(100),
-    ))
+    )
 }
 
 /// Reads the group, translates what it read, and sends it on — until nothing
@@ -284,7 +314,7 @@ mod tests {
         std::fs::create_dir_all(&root).unwrap();
         let ok = std::process::Command::new("mount").args(["-t", "tmpfs", "t"]).arg(&root).status();
         assert!(ok.is_ok_and(|s| s.success()));
-        let sink = MarkSink { fanotify: Arc::new(Mutex::new(Fanotify::open().unwrap())) };
+        let sink = MarkSink { group: Arc::new(Mutex::new(Fanotify::open().unwrap())) };
         sink.set_roots(vec![root.clone()]).unwrap();
         assert!(sink.set_roots(vec![root.join("nope")]).is_err());
     }
