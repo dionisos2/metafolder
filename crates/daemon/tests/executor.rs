@@ -373,6 +373,45 @@ fn test_a_directory_removed_and_made_again_orphans_what_is_gone_under_it() {
 }
 
 #[test]
+fn test_a_file_moved_out_of_a_folder_just_moved_keeps_its_metarecord() {
+    // `mv d e && mv e/x.jpg x.jpg` read by the inotify source: the folder's
+    // watch still answers to its old path, and the file's departure from it
+    // is lost — only its arrival is delivered. The arrival is re-paired with
+    // the record the moved folder left behind rather than tracked anew.
+    let (repo, root, _) = setup("move_out_of_moved");
+    write_file(&root, "d/x.jpg", b"xx");
+    write_file(&root, "d/stay.jpg", b"s");
+    enqueue(
+        &repo,
+        &[
+            FsEvent::Create("/d".into()),
+            FsEvent::Create("/d/x.jpg".into()),
+            FsEvent::Create("/d/stay.jpg".into()),
+        ],
+    );
+    executor::flush_pending(&repo).unwrap();
+    let x = resolve(&repo, "/d/x.jpg").unwrap();
+    let stay = resolve(&repo, "/d/stay.jpg").unwrap();
+
+    std::fs::rename(root.join("d"), root.join("e")).unwrap();
+    std::fs::rename(root.join("e/x.jpg"), root.join("x.jpg")).unwrap();
+    enqueue(
+        &repo,
+        &[
+            FsEvent::Rename("/d".into(), "/e".into()),
+            FsEvent::RenameFrom("/d".into()),
+            FsEvent::RenameTo("/x.jpg".into()),
+        ],
+    );
+    executor::flush_pending(&repo).unwrap();
+
+    assert_eq!(resolve(&repo, "/x.jpg"), Some(x), "the same record, moved");
+    assert_eq!(resolve(&repo, "/e/x.jpg"), None, "and not left behind");
+    assert_eq!(resolve(&repo, "/e/stay.jpg"), Some(stay));
+    std::fs::remove_dir_all(root).unwrap();
+}
+
+#[test]
 fn test_remove_records_mfr_path_old_for_the_whole_subtree() {
     // Orphaning a subtree snapshots each metarecord's last real path into
     // `mfr_path_old` (a frozen String) so the origin of every orphan is legible

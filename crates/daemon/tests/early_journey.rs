@@ -427,15 +427,6 @@ async fn test_a_tree_removed_unread_leaves_one_orphan_per_entry(regime: Regime) 
 }
 
 async fn test_a_folder_moved_and_worked_in_unread_keeps_its_records(regime: Regime) {
-    if regime == Regime::Inotify {
-        // KNOWN BUG (inotify source, September 2026): the move of `x.jpg` out
-        // of the just-moved folder is queued under the folder's watch, and
-        // read back under its *old* path (`in/trip/x.jpg`) — an unknown
-        // source, so an arrival: `out/x.jpg` is tracked anew and the record
-        // stays at `out/trip/x.jpg`. Not fixed yet; the broker regimes pass.
-        eprintln!("SKIP inotify::test_a_folder_moved_and_worked_in_unread_keeps_its_records");
-        return;
-    }
     let (app, repo, root) = repo_with("movework", regime, &["in/trip/x.jpg", "out/k"]).await;
     let fs = regime.fs();
     {

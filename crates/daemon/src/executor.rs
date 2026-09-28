@@ -487,6 +487,18 @@ fn flush_pending_once(repo: &RepoState, report: FlushReport) -> Result<FlushStat
         })
         .collect();
 
+    // Both sides of the batch's whole moves: a directory among them may have
+    // lost an entry whose departure was never delivered (see
+    // `Apply::index_departures`).
+    let moved: Vec<RelPath> = events
+        .iter()
+        .filter_map(|ev| match ev {
+            FsEvent::Rename(from, to) => Some([from.clone(), to.clone()]),
+            _ => None,
+        })
+        .flatten()
+        .collect();
+
     // Group by kind, keeping groups ordered by first occurrence.
     let mut groups: Vec<(GroupKind, Vec<FsEvent>)> = Vec::new();
     for ev in events {
@@ -541,6 +553,7 @@ fn flush_pending_once(repo: &RepoState, report: FlushReport) -> Result<FlushStat
                 cache: &mut cache,
                 root: &repo.config.root,
                 departed: &departed,
+                moved: &moved,
                 arriving: &arriving,
                 offline: &offline,
                 orphan_limit: repo.orphan_cascade_limit,
@@ -726,6 +739,10 @@ struct Apply<'a, 'c> {
     /// Paths renamed *out of* a watched directory in this same batch, whose
     /// destination the watcher never saw. See [`Apply::find_departed_match`].
     departed: &'a [RelPath],
+    /// Both sides of this batch's whole moves: the tracked entries of a moved
+    /// directory that are gone from disk are departures too. See
+    /// [`Apply::index_departures`].
+    moved: &'a [RelPath],
     /// Where this batch's whole moves land: a new directory's scan leaves them
     /// (and what is under them) to the move. See [`Apply::scan_dir`].
     arriving: &'a std::collections::HashSet<RelPath>,
@@ -1175,7 +1192,7 @@ impl Apply<'_, '_> {
     /// its file has already left the old path, so there is nothing left to hash.
     fn find_departed_match(&mut self, rel: &RelPath) -> Result<Option<RelPath>> {
         self.step("re-pair a departed path");
-        if self.departed.is_empty() {
+        if self.departed.is_empty() && self.moved.is_empty() {
             return Ok(None);
         }
         let Ok(arriving) = fs_meta::stat_fields(&self.abs(rel)) else {
@@ -1225,6 +1242,51 @@ impl Apply<'_, '_> {
                 stat_key(record.get("mfr_type"), record.get("mfr_size"), record.get("mfr_mtime"));
             if let Some(key) = key {
                 index.entry(key).or_default().push(from.clone());
+            }
+        }
+        // The entries a directory moved in this batch still holds in the
+        // database but no longer on disk. The inotify source reads a move out
+        // of a directory it has just seen move as the arrival alone: the
+        // directory's watch still answers to its old path, and notify drops
+        // the departure it can no longer place. Direct entries only — what a
+        // hand moves out of a folder it just moved.
+        let moved = self.moved; // a plain `&[RelPath]`: not borrowed from `self`
+        for dir in moved {
+            // Where the directory is now, on disk and in the database: at a
+            // side it has left, every entry would look gone.
+            if !self.is_dir(dir) {
+                continue;
+            }
+            let Some(uuid) = self.resolve(dir)? else { continue };
+            for (_, child) in self.cache.children_of(self.writer.store(), "mfr_path", uuid)? {
+                // The exact name, from the record: the cache's is for display.
+                let Some(name) = Rows::rows_named(self.writer.store(), child, "mfr_path")?
+                    .into_iter()
+                    .find_map(|row| match row.value {
+                        Value::TreeRef { parent: Some(p), name } if p == uuid => Some(name),
+                        _ => None,
+                    })
+                else {
+                    continue;
+                };
+                let path = dir.child(name);
+                if std::fs::symlink_metadata(self.abs(&path)).is_ok() {
+                    continue;
+                }
+                let Some(record) = Rows::metarecord(self.writer.store(), child)? else {
+                    continue;
+                };
+                let key = stat_key(
+                    record.get("mfr_type"),
+                    record.get("mfr_size"),
+                    record.get("mfr_mtime"),
+                );
+                if let Some(key) = key {
+                    let paths = index.entry(key).or_default();
+                    if !paths.contains(&path) {
+                        paths.push(path);
+                    }
+                }
             }
         }
         self.departed_index = Some(index);

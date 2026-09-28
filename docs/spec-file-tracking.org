@@ -1177,6 +1177,15 @@ what is under it) to that move, which keeps its identity. Ingesting it first
 created a second metarecord at the destination, which the move then orphaned as
 a file it had overwritten.
 
+*Moves out of a directory that just moved.* The mirror case: =mv d e && mv
+e/x x= in one batch. The watch on the moved directory still answers to its old
+path when the file leaves it, and the departure — a name in a directory notify
+can no longer place — is never delivered: only the arrival at =x= is. The
+tracked entries of each directory a =Rename(Both)= of the batch lands on (or
+leaves, while it is still there on disk) that are gone from disk are therefore
+departures too, and the arrival is re-paired with one of them by the same key.
+Direct entries only: what a hand moves out of a folder it just moved.
+
 The batch's departures are indexed by that key once, not walked per arrival:
 a flush holds the repository connection for its whole duration, so a pairing
 that cost a =stat= and a database read per (arrival, departure) *pair* turned a
