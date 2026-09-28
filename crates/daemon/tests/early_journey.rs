@@ -211,17 +211,18 @@ async fn orphan_count(app: &Router, repo: &str) -> usize {
 }
 
 async fn test_first_minutes_of_a_repository(regime: Regime) {
+    let fs = regime.fs();
     // A folder that already holds content when the repository is created —
     // including the build junk and VCS metadata the default preset ignores.
     let app_root = {
         let (app, repo, root) = journey_repo("firstuse", regime).await;
-        std::fs::create_dir_all(root.join("photos/2024")).unwrap();
-        std::fs::write(root.join("photos/2024/a.jpg"), b"a").unwrap();
-        std::fs::write(root.join("notes.txt"), b"hello").unwrap();
-        std::fs::create_dir_all(root.join(".git/objects")).unwrap();
-        std::fs::write(root.join(".git/HEAD"), b"ref: refs/heads/main").unwrap();
-        std::fs::create_dir_all(root.join("node_modules/left-pad")).unwrap();
-        std::fs::write(root.join("node_modules/left-pad/index.js"), b"//").unwrap();
+        fs.create_dir_all(root.join("photos/2024")).unwrap();
+        fs.write(root.join("photos/2024/a.jpg"), b"a").unwrap();
+        fs.write(root.join("notes.txt"), b"hello").unwrap();
+        fs.create_dir_all(root.join(".git/objects")).unwrap();
+        fs.write(root.join(".git/HEAD"), b"ref: refs/heads/main").unwrap();
+        fs.create_dir_all(root.join("node_modules/left-pad")).unwrap();
+        fs.write(root.join("node_modules/left-pad/index.js"), b"//").unwrap();
 
         // Everything eligible is picked up; the ignored subtrees are not.
         settle_on(&app, &repo, &["", "photos", "photos/2024", "photos/2024/a.jpg", "notes.txt"])
@@ -233,7 +234,7 @@ async fn test_first_minutes_of_a_repository(regime: Regime) {
     let (app, repo, root) = app_root;
 
     // ── Add a file, the way the file-manager does ────────────────────────────
-    std::fs::write(root.join("photos/2024/b.jpg"), b"b").unwrap();
+    fs.write(root.join("photos/2024/b.jpg"), b"b").unwrap();
     settle_on(
         &app,
         &repo,
@@ -244,7 +245,7 @@ async fn test_first_minutes_of_a_repository(regime: Regime) {
     assert_eq!(orphan_count(&app, &repo).await, 0, "new file: no orphan expected");
 
     // ── Rename a file ────────────────────────────────────────────────────────
-    std::fs::rename(root.join("notes.txt"), root.join("notes-2024.txt")).unwrap();
+    fs.rename(root.join("notes.txt"), root.join("notes-2024.txt")).unwrap();
     settle_on(
         &app,
         &repo,
@@ -255,7 +256,7 @@ async fn test_first_minutes_of_a_repository(regime: Regime) {
     assert_eq!(orphan_count(&app, &repo).await, 0, "renamed file: no orphan expected");
 
     // ── Rename a directory (its children follow) ─────────────────────────────
-    std::fs::rename(root.join("photos/2024"), root.join("photos/holidays")).unwrap();
+    fs.rename(root.join("photos/2024"), root.join("photos/holidays")).unwrap();
     settle_on(
         &app,
         &repo,
@@ -273,8 +274,8 @@ async fn test_first_minutes_of_a_repository(regime: Regime) {
     assert_eq!(orphan_count(&app, &repo).await, 0, "renamed directory: no orphan expected");
 
     // ── Move a file into another directory ───────────────────────────────────
-    std::fs::create_dir(root.join("archive")).unwrap();
-    std::fs::rename(root.join("photos/holidays/a.jpg"), root.join("archive/a.jpg")).unwrap();
+    fs.create_dir(root.join("archive")).unwrap();
+    fs.rename(root.join("photos/holidays/a.jpg"), root.join("archive/a.jpg")).unwrap();
     settle_on(
         &app,
         &repo,
@@ -293,7 +294,7 @@ async fn test_first_minutes_of_a_repository(regime: Regime) {
     assert_eq!(orphan_count(&app, &repo).await, 0, "no deletion happened yet");
 
     // ── Delete a file: one orphan, and the reconcile leaves it alone ─────────
-    std::fs::remove_file(root.join("photos/holidays/b.jpg")).unwrap();
+    fs.remove_file(root.join("photos/holidays/b.jpg")).unwrap();
     settle_on(
         &app,
         &repo,
@@ -309,19 +310,20 @@ async fn test_first_minutes_of_a_repository(regime: Regime) {
 /// The same oracle for the operation a user reaches for constantly: moving a
 /// whole folder somewhere else, then working inside it at its new place.
 async fn test_moving_a_folder_keeps_the_watcher_and_reconcile_in_agreement(regime: Regime) {
+    let fs = regime.fs();
     let (app, repo, root) = journey_repo("foldermove", regime).await;
-    std::fs::create_dir_all(root.join("inbox/trip")).unwrap();
-    std::fs::write(root.join("inbox/trip/x.jpg"), b"x").unwrap();
-    std::fs::create_dir(root.join("sorted")).unwrap();
+    fs.create_dir_all(root.join("inbox/trip")).unwrap();
+    fs.write(root.join("inbox/trip/x.jpg"), b"x").unwrap();
+    fs.create_dir(root.join("sorted")).unwrap();
     settle_on(&app, &repo, &["", "inbox", "inbox/trip", "inbox/trip/x.jpg", "sorted"]).await;
     reconcile_agrees(&app, &repo, "before the move").await;
 
-    std::fs::rename(root.join("inbox/trip"), root.join("sorted/trip")).unwrap();
+    fs.rename(root.join("inbox/trip"), root.join("sorted/trip")).unwrap();
     settle_on(&app, &repo, &["", "inbox", "sorted", "sorted/trip", "sorted/trip/x.jpg"]).await;
     reconcile_agrees(&app, &repo, "after the move").await;
 
     // Working inside the folder at its new location.
-    std::fs::write(root.join("sorted/trip/y.jpg"), b"y").unwrap();
+    fs.write(root.join("sorted/trip/y.jpg"), b"y").unwrap();
     settle_on(
         &app,
         &repo,
@@ -335,7 +337,7 @@ async fn test_moving_a_folder_keeps_the_watcher_and_reconcile_in_agreement(regim
     std::fs::remove_dir_all(root).unwrap();
 }
 
-on_both_regimes!(
+on_every_regime!(
     test_first_minutes_of_a_repository,
     test_moving_a_folder_keeps_the_watcher_and_reconcile_in_agreement,
 );

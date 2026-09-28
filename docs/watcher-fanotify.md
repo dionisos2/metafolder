@@ -343,7 +343,9 @@ Done:
   order and **merges** compared step by step — the kernel merges an unread
   deletion and re-creation of one name into one `CREATE|DELETE` event, and an
   unread `a→b, b→a, a→b` into two renames. It lets the daemon's fanotify
-  source run in any sandbox, unprivileged.
+  source run in any sandbox, unprivileged: the daemon's watcher suites
+  (`early_journey`, `watcher_e2e`) run under `Regime::Simulated` too, a test
+  changing files through `regime.fs()`.
 
 To do:
 
@@ -361,7 +363,8 @@ To do:
   directory. `--self-test-inotify` runs the same scenario without a broker
   (the harness checking itself).
 - The conformance battery (create/remove/rename/modify semantics through the
-  pipeline) run against both sources.
+  pipeline) run against both sources — done for the simulated broker; the
+  real one still needs a privileged process.
 - `tests/watch_leak.rs` as a backend test — under fanotify there is no
   per-directory state to leak at all.
 - The `0700` other-uid directory case on a real filesystem, at both hops.

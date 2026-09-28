@@ -158,6 +158,7 @@ async fn assert_backend(app: &Router, repo: &str, regime: Regime) {
 }
 
 async fn test_watcher_tracks_create_rename_delete(regime: Regime) {
+    let fs = regime.fs();
     let app = routes::build(std::sync::Arc::new(common::watching_state_on(regime)));
     let root = TempDir::new("e2e");
 
@@ -186,19 +187,19 @@ async fn test_watcher_tracks_create_rename_delete(regime: Regime) {
     assert_eq!(status, StatusCode::OK);
 
     // Create.
-    std::fs::write(root.join("track_me.txt"), b"hello watcher").unwrap();
+    fs.write(root.join("track_me.txt"), b"hello watcher").unwrap();
     let by_name = json!({"type": "matches", "field": "mfr_path", "aspect": "value", "pattern": "^track_me\\.txt$"});
     let hits = wait_for_match(&app, &repo, by_name, 1).await;
     let metarecord_uuid = hits[0].clone();
 
     // Rename.
-    std::fs::rename(root.join("track_me.txt"), root.join("renamed.txt")).unwrap();
+    fs.rename(root.join("track_me.txt"), root.join("renamed.txt")).unwrap();
     let renamed = json!({"type": "matches", "field": "mfr_path", "aspect": "value", "pattern": "^renamed\\.txt$"});
     let hits = wait_for_match(&app, &repo, renamed, 1).await;
     assert_eq!(hits[0], metarecord_uuid, "the entry must survive the rename");
 
     // Delete: mfr_path becomes Nothing, the entry is preserved.
-    std::fs::remove_file(root.join("renamed.txt")).unwrap();
+    fs.remove_file(root.join("renamed.txt")).unwrap();
     let absent = json!({"type": "is_absent", "field": "mfr_path"});
     let hits = wait_for_match(&app, &repo, absent, 1).await;
     assert_eq!(hits[0], metarecord_uuid, "the entry must be preserved after deletion");
@@ -211,6 +212,7 @@ async fn test_watcher_tracks_create_rename_delete(regime: Regime) {
 /// still load. The watcher must not follow the symlink, and one unwatchable
 /// path must never abort the whole load.
 async fn test_load_succeeds_with_symlink_to_unreadable_dir(regime: Regime) {
+    let fs = regime.fs();
     use std::os::unix::fs::PermissionsExt;
 
     let app = routes::build(std::sync::Arc::new(common::watching_state_on(regime)));
@@ -223,11 +225,11 @@ async fn test_load_succeeds_with_symlink_to_unreadable_dir(regime: Regime) {
     // unreadable directory EACCESes.
     let secret = TempDir::new("secret");
     let locked = secret.join("locked");
-    std::fs::create_dir_all(&locked).unwrap();
-    std::os::unix::fs::symlink(&secret, root.join("z")).unwrap();
+    fs.create_dir_all(&locked).unwrap();
+    fs.symlink(&secret, root.join("z")).unwrap();
     let mut perm = std::fs::metadata(&locked).unwrap().permissions();
     perm.set_mode(0o000);
-    std::fs::set_permissions(&locked, perm).unwrap();
+    fs.set_permissions(&locked, perm).unwrap();
 
     // Init: must succeed (a fresh repo is mf_watch=false — nothing watched).
     let (status, body) =
@@ -257,15 +259,15 @@ async fn test_load_succeeds_with_symlink_to_unreadable_dir(regime: Regime) {
 
     // A real file created in the root is still detected: the refresh placed a
     // watch on the (eligible) root directory.
-    std::fs::write(root.join("real.txt"), b"hello").unwrap();
+    fs.write(root.join("real.txt"), b"hello").unwrap();
     let by_name = json!({"type": "matches", "field": "mfr_path", "aspect": "value", "pattern": "^real\\.txt$"});
     wait_for_match(&app, &repo, by_name, 1).await;
 
     // Cleanup: restore permissions so the trees can be removed.
     let mut perm = std::fs::metadata(&locked).unwrap().permissions();
     perm.set_mode(0o755);
-    std::fs::set_permissions(&locked, perm).unwrap();
-    std::fs::remove_dir_all(&secret).ok();
+    fs.set_permissions(&locked, perm).unwrap();
+    fs.remove_dir_all(&secret).ok();
     std::fs::remove_dir_all(&root).ok();
 }
 
@@ -276,6 +278,7 @@ async fn test_load_succeeds_with_symlink_to_unreadable_dir(regime: Regime) {
 /// running the callback. Doing so blocks the watcher thread forever while it
 /// holds the repository connection, and every request then hangs behind it.
 async fn test_new_directory_does_not_wedge_the_daemon(regime: Regime) {
+    let fs = regime.fs();
     let app = routes::build(std::sync::Arc::new(common::watching_state_on(regime)));
     let root = TempDir::new("newdir");
 
@@ -305,8 +308,8 @@ async fn test_new_directory_does_not_wedge_the_daemon(regime: Regime) {
     // A directory with a nested file: the watcher must ingest both and stay
     // responsive. The timeout turns the deadlock into a failure instead of a
     // test run that never ends.
-    std::fs::create_dir(root.join("A")).unwrap();
-    std::fs::write(root.join("A/B.txt"), b"bee").unwrap();
+    fs.create_dir(root.join("A")).unwrap();
+    fs.write(root.join("A/B.txt"), b"bee").unwrap();
     let nested =
         json!({"type": "matches", "field": "mfr_path", "aspect": "value", "pattern": "^B\\.txt$"});
     tokio::time::timeout(Duration::from_secs(20), wait_for_match(&app, &repo, nested, 1))
@@ -315,7 +318,7 @@ async fn test_new_directory_does_not_wedge_the_daemon(regime: Regime) {
 
     // The new directory got its own watch: a file created in it *after* the
     // arrival was processed is tracked too (nothing rescans it later).
-    std::fs::write(root.join("A/C.txt"), b"cee").unwrap();
+    fs.write(root.join("A/C.txt"), b"cee").unwrap();
     let later =
         json!({"type": "matches", "field": "mfr_path", "aspect": "value", "pattern": "^C\\.txt$"});
     tokio::time::timeout(Duration::from_secs(20), wait_for_match(&app, &repo, later, 1))
@@ -331,17 +334,18 @@ async fn test_new_directory_does_not_wedge_the_daemon(regime: Regime) {
 /// path (or nowhere at all). The executor tests cover the same semantics from
 /// synthetic events — what they cannot see is whether the events arrive.
 async fn test_renamed_directory_keeps_being_watched(regime: Regime) {
+    let fs = regime.fs();
     let (app, repo, root) = watched_repo("dirrename", regime).await;
 
-    std::fs::create_dir(root.join("A")).unwrap();
-    std::fs::write(root.join("A/one.txt"), b"1").unwrap();
+    fs.create_dir(root.join("A")).unwrap();
+    fs.write(root.join("A/one.txt"), b"1").unwrap();
     let one = json!({"type": "matches", "field": "mfr_path", "aspect": "value", "pattern": "^one\\.txt$"});
     tokio::time::timeout(Duration::from_secs(20), wait_for_match(&app, &repo, one, 1))
         .await
         .expect("the nested file is tracked");
 
     // Rename the directory, then create a file *inside it under its new name*.
-    std::fs::rename(root.join("A"), root.join("B")).unwrap();
+    fs.rename(root.join("A"), root.join("B")).unwrap();
     tokio::time::timeout(
         Duration::from_secs(20),
         wait_for_paths(&app, &repo, &["", "B", "B/one.txt"]),
@@ -349,7 +353,7 @@ async fn test_renamed_directory_keeps_being_watched(regime: Regime) {
     .await
     .expect("the rename is recorded for the directory and its child");
 
-    std::fs::write(root.join("B/two.txt"), b"2").unwrap();
+    fs.write(root.join("B/two.txt"), b"2").unwrap();
     let two = json!({"type": "matches", "field": "mfr_path", "aspect": "value", "pattern": "^two\\.txt$"});
     tokio::time::timeout(Duration::from_secs(20), wait_for_match(&app, &repo, two, 1))
         .await
@@ -373,10 +377,11 @@ async fn test_renamed_directory_keeps_being_watched(regime: Regime) {
 /// walk and the rename looks fine while everything below the second level has
 /// quietly stopped being watched.
 async fn test_renaming_a_directory_keeps_its_whole_subtree_watched(regime: Regime) {
+    let fs = regime.fs();
     let (app, repo, root) = watched_repo("deeprename", regime).await;
 
-    std::fs::create_dir_all(root.join("A/x/y")).unwrap();
-    std::fs::write(root.join("A/x/y/one.txt"), b"1").unwrap();
+    fs.create_dir_all(root.join("A/x/y")).unwrap();
+    fs.write(root.join("A/x/y/one.txt"), b"1").unwrap();
     tokio::time::timeout(
         Duration::from_secs(20),
         wait_for_paths(&app, &repo, &["", "A", "A/x", "A/x/y", "A/x/y/one.txt"]),
@@ -384,7 +389,7 @@ async fn test_renaming_a_directory_keeps_its_whole_subtree_watched(regime: Regim
     .await
     .expect("the nested subtree is tracked");
 
-    std::fs::rename(root.join("A"), root.join("B")).unwrap();
+    fs.rename(root.join("A"), root.join("B")).unwrap();
     tokio::time::timeout(
         Duration::from_secs(20),
         wait_for_paths(&app, &repo, &["", "B", "B/x", "B/x/y", "B/x/y/one.txt"]),
@@ -393,7 +398,7 @@ async fn test_renaming_a_directory_keeps_its_whole_subtree_watched(regime: Regim
     .expect("the whole subtree is recorded under the new name");
 
     // The deepest directory must still be watched under its new path.
-    std::fs::write(root.join("B/x/y/two.txt"), b"2").unwrap();
+    fs.write(root.join("B/x/y/two.txt"), b"2").unwrap();
     tokio::time::timeout(
         Duration::from_secs(20),
         wait_for_paths(&app, &repo, &["", "B", "B/x", "B/x/y", "B/x/y/one.txt", "B/x/y/two.txt"]),
@@ -407,11 +412,12 @@ async fn test_renaming_a_directory_keeps_its_whole_subtree_watched(regime: Regim
 /// A file moved between two watched directories keeps its metarecord and lands
 /// at the new path (one revision, not delete + create).
 async fn test_file_moved_between_directories_keeps_its_metarecord(regime: Regime) {
+    let fs = regime.fs();
     let (app, repo, root) = watched_repo("dirmove", regime).await;
 
-    std::fs::create_dir(root.join("src")).unwrap();
-    std::fs::create_dir(root.join("dst")).unwrap();
-    std::fs::write(root.join("src/x.txt"), b"x").unwrap();
+    fs.create_dir(root.join("src")).unwrap();
+    fs.create_dir(root.join("dst")).unwrap();
+    fs.write(root.join("src/x.txt"), b"x").unwrap();
     let by_name =
         json!({"type": "matches", "field": "mfr_path", "aspect": "value", "pattern": "^x\\.txt$"});
     let hits = tokio::time::timeout(
@@ -422,7 +428,7 @@ async fn test_file_moved_between_directories_keeps_its_metarecord(regime: Regime
     .expect("tracked in src");
     let uuid = hits[0].clone();
 
-    std::fs::rename(root.join("src/x.txt"), root.join("dst/x.txt")).unwrap();
+    fs.rename(root.join("src/x.txt"), root.join("dst/x.txt")).unwrap();
     tokio::time::timeout(
         Duration::from_secs(20),
         wait_for_paths(&app, &repo, &["", "src", "dst", "dst/x.txt"]),
@@ -443,11 +449,12 @@ async fn test_file_moved_between_directories_keeps_its_metarecord(regime: Regime
 /// the watch on each new directory has to be placed before its own children
 /// arrive, and whatever slipped through has to be caught by the arrival scan.
 async fn test_nested_subtree_created_at_once_is_ingested(regime: Regime) {
+    let fs = regime.fs();
     let (app, repo, root) = watched_repo("subtree", regime).await;
 
-    std::fs::create_dir_all(root.join("a/b/c")).unwrap();
-    std::fs::write(root.join("a/b/c/deep.txt"), b"deep").unwrap();
-    std::fs::write(root.join("a/top.txt"), b"top").unwrap();
+    fs.create_dir_all(root.join("a/b/c")).unwrap();
+    fs.write(root.join("a/b/c/deep.txt"), b"deep").unwrap();
+    fs.write(root.join("a/top.txt"), b"top").unwrap();
 
     tokio::time::timeout(
         Duration::from_secs(20),
@@ -457,7 +464,7 @@ async fn test_nested_subtree_created_at_once_is_ingested(regime: Regime) {
     .expect("every node of the new subtree is tracked");
 
     // The deepest directory is watched too: a file added later is picked up.
-    std::fs::write(root.join("a/b/c/later.txt"), b"later").unwrap();
+    fs.write(root.join("a/b/c/later.txt"), b"later").unwrap();
     let later = json!({"type": "matches", "field": "mfr_path", "aspect": "value", "pattern": "^later\\.txt$"});
     tokio::time::timeout(Duration::from_secs(20), wait_for_match(&app, &repo, later, 1))
         .await
@@ -470,10 +477,11 @@ async fn test_nested_subtree_created_at_once_is_ingested(regime: Regime) {
 /// starts tracking again (the watch was dropped with the directory and has to be
 /// placed anew).
 async fn test_removed_directory_can_be_recreated_and_tracked_again(regime: Regime) {
+    let fs = regime.fs();
     let (app, repo, root) = watched_repo("dirremove", regime).await;
 
-    std::fs::create_dir(root.join("d")).unwrap();
-    std::fs::write(root.join("d/f.txt"), b"f").unwrap();
+    fs.create_dir(root.join("d")).unwrap();
+    fs.write(root.join("d/f.txt"), b"f").unwrap();
     tokio::time::timeout(
         Duration::from_secs(20),
         wait_for_paths(&app, &repo, &["", "d", "d/f.txt"]),
@@ -481,13 +489,13 @@ async fn test_removed_directory_can_be_recreated_and_tracked_again(regime: Regim
     .await
     .expect("tracked before the removal");
 
-    std::fs::remove_dir_all(root.join("d")).unwrap();
+    fs.remove_dir_all(root.join("d")).unwrap();
     tokio::time::timeout(Duration::from_secs(20), wait_for_paths(&app, &repo, &[""]))
         .await
         .expect("the subtree is orphaned");
 
-    std::fs::create_dir(root.join("d")).unwrap();
-    std::fs::write(root.join("d/g.txt"), b"g").unwrap();
+    fs.create_dir(root.join("d")).unwrap();
+    fs.write(root.join("d/g.txt"), b"g").unwrap();
     tokio::time::timeout(
         Duration::from_secs(20),
         wait_for_paths(&app, &repo, &["", "d", "d/g.txt"]),
@@ -504,9 +512,10 @@ async fn test_removed_directory_can_be_recreated_and_tracked_again(regime: Regim
 /// ratings, notes) hangs off that identity, and a fresh metarecord at the new
 /// path silently leaves all of it behind on an orphan.
 async fn test_move_into_a_brand_new_directory_keeps_the_metarecord(regime: Regime) {
+    let fs = regime.fs();
     let (app, repo, root) = watched_repo("newdirmove", regime).await;
 
-    std::fs::write(root.join("x.txt"), b"x").unwrap();
+    fs.write(root.join("x.txt"), b"x").unwrap();
     let by_name =
         json!({"type": "matches", "field": "mfr_path", "aspect": "value", "pattern": "^x\\.txt$"});
     let hits = tokio::time::timeout(
@@ -518,8 +527,8 @@ async fn test_move_into_a_brand_new_directory_keeps_the_metarecord(regime: Regim
     let uuid = hits[0].clone();
 
     // The directory and the move land in the same watcher batch.
-    std::fs::create_dir(root.join("dest")).unwrap();
-    std::fs::rename(root.join("x.txt"), root.join("dest/x.txt")).unwrap();
+    fs.create_dir(root.join("dest")).unwrap();
+    fs.rename(root.join("x.txt"), root.join("dest/x.txt")).unwrap();
 
     tokio::time::timeout(
         Duration::from_secs(20),
@@ -552,10 +561,11 @@ async fn test_move_into_a_brand_new_directory_keeps_the_metarecord(regime: Regim
 /// by uuid, so re-homing the directory carries them along; duplicating it
 /// instead orphans the whole subtree at once.
 async fn test_move_a_directory_into_a_brand_new_directory_keeps_the_subtree(regime: Regime) {
+    let fs = regime.fs();
     let (app, repo, root) = watched_repo("newdirdirmove", regime).await;
 
-    std::fs::create_dir(root.join("trip")).unwrap();
-    std::fs::write(root.join("trip/x.jpg"), b"x").unwrap();
+    fs.create_dir(root.join("trip")).unwrap();
+    fs.write(root.join("trip/x.jpg"), b"x").unwrap();
     tokio::time::timeout(
         Duration::from_secs(20),
         wait_for_paths(&app, &repo, &["", "trip", "trip/x.jpg"]),
@@ -567,8 +577,8 @@ async fn test_move_a_directory_into_a_brand_new_directory_keeps_the_subtree(regi
     let hits = wait_for_match(&app, &repo, by_name.clone(), 1).await;
     let child = hits[0].clone();
 
-    std::fs::create_dir(root.join("albums")).unwrap();
-    std::fs::rename(root.join("trip"), root.join("albums/trip")).unwrap();
+    fs.create_dir(root.join("albums")).unwrap();
+    fs.rename(root.join("trip"), root.join("albums/trip")).unwrap();
 
     tokio::time::timeout(
         Duration::from_secs(20),
@@ -602,10 +612,11 @@ async fn test_move_a_directory_into_a_brand_new_directory_keeps_the_subtree(regi
 /// restart, since the pending buffer is replayed at load. The last assertion is
 /// that one: the watcher is still alive afterwards.
 async fn test_overwriting_a_tracked_file_keeps_the_watcher_alive(regime: Regime) {
+    let fs = regime.fs();
     let (app, repo, root) = watched_repo("overwrite", regime).await;
 
-    std::fs::write(root.join("a.txt"), b"AAA").unwrap();
-    std::fs::write(root.join("b.txt"), b"BBB").unwrap();
+    fs.write(root.join("a.txt"), b"AAA").unwrap();
+    fs.write(root.join("b.txt"), b"BBB").unwrap();
     tokio::time::timeout(
         Duration::from_secs(20),
         wait_for_paths(&app, &repo, &["", "a.txt", "b.txt"]),
@@ -622,7 +633,7 @@ async fn test_overwriting_a_tracked_file_keeps_the_watcher_alive(regime: Regime)
         .clone();
 
     // a.txt's bytes are now at b.txt; b.txt's own bytes are destroyed.
-    std::fs::rename(root.join("a.txt"), root.join("b.txt")).unwrap();
+    fs.rename(root.join("a.txt"), root.join("b.txt")).unwrap();
     tokio::time::timeout(Duration::from_secs(20), wait_for_paths(&app, &repo, &["", "b.txt"]))
         .await
         .expect("only b.txt is left on disk, and only it is tracked");
@@ -653,7 +664,7 @@ async fn test_overwriting_a_tracked_file_keeps_the_watcher_alive(regime: Regime)
     );
 
     // The watcher still works: the flush was not left stuck on a failing batch.
-    std::fs::write(root.join("later.txt"), b"later").unwrap();
+    fs.write(root.join("later.txt"), b"later").unwrap();
     tokio::time::timeout(
         Duration::from_secs(20),
         wait_for_paths(&app, &repo, &["", "b.txt", "later.txt"]),
@@ -669,10 +680,11 @@ async fn test_overwriting_a_tracked_file_keeps_the_watcher_alive(regime: Regime)
 /// records must survive and end up crossed over; evicting a destination too
 /// eagerly would orphan a record that the next rename was about to fill.
 async fn test_swapping_two_tracked_files_keeps_both_metarecords(regime: Regime) {
+    let fs = regime.fs();
     let (app, repo, root) = watched_repo("swap", regime).await;
 
-    std::fs::write(root.join("a.txt"), b"AAAA").unwrap();
-    std::fs::write(root.join("b.txt"), b"BB").unwrap();
+    fs.write(root.join("a.txt"), b"AAAA").unwrap();
+    fs.write(root.join("b.txt"), b"BB").unwrap();
     tokio::time::timeout(
         Duration::from_secs(20),
         wait_for_paths(&app, &repo, &["", "a.txt", "b.txt"]),
@@ -683,9 +695,9 @@ async fn test_swapping_two_tracked_files_keeps_both_metarecords(regime: Regime) 
     let a = wait_for_match(&app, &repo, at("a\\.txt"), 1).await[0].clone();
     let b = wait_for_match(&app, &repo, at("b\\.txt"), 1).await[0].clone();
 
-    std::fs::rename(root.join("a.txt"), root.join("swap.tmp")).unwrap();
-    std::fs::rename(root.join("b.txt"), root.join("a.txt")).unwrap();
-    std::fs::rename(root.join("swap.tmp"), root.join("b.txt")).unwrap();
+    fs.rename(root.join("a.txt"), root.join("swap.tmp")).unwrap();
+    fs.rename(root.join("b.txt"), root.join("a.txt")).unwrap();
+    fs.rename(root.join("swap.tmp"), root.join("b.txt")).unwrap();
 
     // Both names still exist, so "which paths are tracked" cannot tell the swap
     // apart from the state before it: wait for the records to have crossed over.
@@ -710,11 +722,12 @@ async fn test_swapping_two_tracked_files_keeps_both_metarecords(regime: Regime) 
 /// (spec-file-tracking "Watch activity"), so a client can walk down from the
 /// root to where the events come from.
 async fn test_delivered_events_are_counted_per_subtree(regime: Regime) {
+    let fs = regime.fs();
     let (app, repo, root) = watched_repo("e2e_activity", regime).await;
-    std::fs::create_dir(root.join("busy")).unwrap();
+    fs.create_dir(root.join("busy")).unwrap();
     wait_for_paths(&app, &repo, &["", "busy"]).await;
     for i in 0..5 {
-        std::fs::write(root.join("busy").join(format!("f{i}")), b"x").unwrap();
+        fs.write(root.join("busy").join(format!("f{i}")), b"x").unwrap();
     }
     let mut last = Value::Null;
     for _ in 0..100 {
@@ -761,8 +774,9 @@ async fn set_on(app: &Router, repo: &str, file_name: &str, name: &str, value: Va
 /// (spec-file-tracking "Filtering at ingestion"): with ingestion paused, what
 /// waits in the buffer is exactly what was delivered for the eligible file.
 async fn test_ignored_events_never_reach_the_buffer(regime: Regime) {
+    let fs = regime.fs();
     let (app, repo, root) = watched_repo("e2e_ingest_filter", regime).await;
-    std::fs::write(root.join("keep.txt"), b"x").unwrap();
+    fs.write(root.join("keep.txt"), b"x").unwrap();
     wait_for_paths(&app, &repo, &["", "keep.txt"]).await;
     let (_, roots) = request(
         &app,
@@ -783,9 +797,9 @@ async fn test_ignored_events_never_reach_the_buffer(regime: Regime) {
     assert_eq!(status, StatusCode::OK, "{body}");
 
     for i in 0..5 {
-        std::fs::write(root.join(format!("junk{i}.tmp")), b"x").unwrap();
+        fs.write(root.join(format!("junk{i}.tmp")), b"x").unwrap();
     }
-    std::fs::write(root.join("ok.txt"), b"x").unwrap();
+    fs.write(root.join("ok.txt"), b"x").unwrap();
 
     let mut last = Value::Null;
     for _ in 0..100 {
@@ -822,14 +836,15 @@ async fn test_ignored_events_never_reach_the_buffer(regime: Regime) {
 /// stops filtering until that flush (spec-file-tracking "Rules that are about
 /// to move").
 async fn test_a_rule_directory_renamed_and_recreated_keeps_the_new_one(regime: Regime) {
+    let fs = regime.fs();
     let (app, repo, root) = watched_repo("e2e_rule_move", regime).await;
-    std::fs::create_dir(root.join("cfg")).unwrap();
+    fs.create_dir(root.join("cfg")).unwrap();
     wait_for_paths(&app, &repo, &["", "cfg"]).await;
     set_on(&app, &repo, "cfg", "mf_watch", json!({"type": "bool", "value": false})).await;
 
-    std::fs::rename(root.join("cfg"), root.join("moved")).unwrap();
-    std::fs::create_dir(root.join("cfg")).unwrap();
-    std::fs::write(root.join("cfg/new.txt"), b"x").unwrap();
+    fs.rename(root.join("cfg"), root.join("moved")).unwrap();
+    fs.create_dir(root.join("cfg")).unwrap();
+    fs.write(root.join("cfg/new.txt"), b"x").unwrap();
 
     tokio::time::timeout(
         Duration::from_secs(20),
@@ -840,7 +855,7 @@ async fn test_a_rule_directory_renamed_and_recreated_keeps_the_new_one(regime: R
     std::fs::remove_dir_all(root).unwrap();
 }
 
-on_both_regimes!(
+on_every_regime!(
     test_delivered_events_are_counted_per_subtree,
     test_ignored_events_never_reach_the_buffer,
     test_a_rule_directory_renamed_and_recreated_keeps_the_new_one,

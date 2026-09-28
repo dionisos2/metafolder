@@ -19,11 +19,14 @@ pub mod sqlcost;
 
 /// The two watch sources a repository can run on (spec-file-tracking "Watch
 /// sources and regimes"): the inotify source, and the fanotify broker
-/// (`metafolder-watchd`) when one answers.
+/// (`metafolder-watchd`) when one answers — or the same broker over a
+/// simulated kernel ([`sim_broker`]), which needs no privilege and so runs
+/// everywhere.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Regime {
     Inotify,
     Fanotify,
+    Simulated,
 }
 
 impl Regime {
@@ -31,7 +34,117 @@ impl Regime {
     pub fn backend(self) -> &'static str {
         match self {
             Regime::Inotify => "inotify",
-            Regime::Fanotify => "fanotify",
+            Regime::Fanotify | Regime::Simulated => "fanotify",
+        }
+    }
+
+    /// How the test changes files under a watched root in this regime.
+    pub fn fs(self) -> Fs {
+        match self {
+            Regime::Inotify | Regime::Fanotify => Fs::Std,
+            Regime::Simulated => Fs::Sim(sim_broker().fs().clone()),
+        }
+    }
+}
+
+/// The process's one simulated broker: a fanotify broker whose kernel is
+/// `metafolder_watchd::sim` — its filesystem is [`tests_root`], so every test
+/// directory is on it, and every repository of the process subscribes to it,
+/// as they would to the machine's one broker.
+pub fn sim_broker() -> &'static metafolder_watchd::sim::SimBroker {
+    static SIM: std::sync::OnceLock<metafolder_watchd::sim::SimBroker> = std::sync::OnceLock::new();
+    SIM.get_or_init(|| {
+        std::fs::create_dir_all(tests_root()).expect("the tests' root");
+        let socket = tests_root().join(format!("sim-watchd-{}.sock", std::process::id()));
+        metafolder_watchd::sim::SimBroker::start(&socket, &tests_root())
+            .expect("the simulated broker starts")
+    })
+}
+
+/// How a test changes files under a watched root: straight through `std::fs`
+/// where a real source watches, through the simulated kernel otherwise — it
+/// sees only what goes through it, like a filesystem nobody else touches.
+#[derive(Clone)]
+pub enum Fs {
+    Std,
+    Sim(metafolder_watchd::sim::SimFs),
+}
+
+impl Fs {
+    pub fn write(&self, path: impl AsRef<Path>, data: impl AsRef<[u8]>) -> std::io::Result<()> {
+        match self {
+            Fs::Std => std::fs::write(path, data),
+            Fs::Sim(sim) => sim.write(path, data),
+        }
+    }
+
+    pub fn create_dir(&self, path: impl AsRef<Path>) -> std::io::Result<()> {
+        match self {
+            Fs::Std => std::fs::create_dir(path),
+            Fs::Sim(sim) => sim.create_dir(path),
+        }
+    }
+
+    pub fn create_dir_all(&self, path: impl AsRef<Path>) -> std::io::Result<()> {
+        match self {
+            Fs::Std => std::fs::create_dir_all(path),
+            Fs::Sim(sim) => sim.create_dir_all(path),
+        }
+    }
+
+    pub fn rename(&self, from: impl AsRef<Path>, to: impl AsRef<Path>) -> std::io::Result<()> {
+        match self {
+            Fs::Std => std::fs::rename(from, to),
+            Fs::Sim(sim) => sim.rename(from, to),
+        }
+    }
+
+    pub fn remove_file(&self, path: impl AsRef<Path>) -> std::io::Result<()> {
+        match self {
+            Fs::Std => std::fs::remove_file(path),
+            Fs::Sim(sim) => sim.remove_file(path),
+        }
+    }
+
+    pub fn remove_dir(&self, path: impl AsRef<Path>) -> std::io::Result<()> {
+        match self {
+            Fs::Std => std::fs::remove_dir(path),
+            Fs::Sim(sim) => sim.remove_dir(path),
+        }
+    }
+
+    pub fn remove_dir_all(&self, path: impl AsRef<Path>) -> std::io::Result<()> {
+        match self {
+            Fs::Std => std::fs::remove_dir_all(path),
+            Fs::Sim(sim) => sim.remove_dir_all(path),
+        }
+    }
+
+    pub fn set_permissions(
+        &self,
+        path: impl AsRef<Path>,
+        perm: std::fs::Permissions,
+    ) -> std::io::Result<()> {
+        match self {
+            Fs::Std => std::fs::set_permissions(path, perm),
+            Fs::Sim(sim) => sim.set_permissions(path, perm),
+        }
+    }
+
+    pub fn symlink(&self, target: impl AsRef<Path>, link: impl AsRef<Path>) -> std::io::Result<()> {
+        match self {
+            Fs::Std => std::os::unix::fs::symlink(target, link),
+            Fs::Sim(sim) => sim.symlink(target, link),
+        }
+    }
+
+    /// Lets what is done meanwhile pile up before the broker reads it, as a
+    /// broker that fell behind (the simulated kernel only; the real ones read
+    /// when they read).
+    pub fn hold(&self) -> Option<metafolder_watchd::sim::Hold<'_>> {
+        match self {
+            Fs::Std => None,
+            Fs::Sim(sim) => Some(sim.hold()),
         }
     }
 }
@@ -61,6 +174,7 @@ pub fn watching_state_on(regime: Regime) -> metafolder_daemon::state::AppState {
     let watchd_socket = match regime {
         Regime::Inotify => tests_root().join("no-broker-here.sock"),
         Regime::Fanotify => defaults.watchd_socket.clone(),
+        Regime::Simulated => sim_broker().socket().to_path_buf(),
     };
     let settings = metafolder_daemon::daemon_config::DaemonSettings {
         watch_quiet_period_ms: 500,
@@ -76,11 +190,12 @@ pub fn watching_state() -> metafolder_daemon::state::AppState {
     watching_state_on(Regime::Inotify)
 }
 
-/// Runs each listed `async fn name(regime: Regime)` under both watch sources:
-/// `inotify::name` always, `fanotify::name` when a broker answers — and a
-/// skip, announced on stderr (`--nocapture` shows it), when none does.
+/// Runs each listed `async fn name(regime: Regime)` under every watch source:
+/// `inotify::name` and `simulated::name` always, `fanotify::name` when a
+/// broker answers — and a skip, announced on stderr (`--nocapture` shows it),
+/// when none does. The test changes files through `regime.fs()`.
 #[macro_export]
-macro_rules! on_both_regimes {
+macro_rules! on_every_regime {
     ($($name:ident),* $(,)?) => {
         mod inotify {
             $(
@@ -103,6 +218,14 @@ macro_rules! on_both_regimes {
                         return;
                     }
                     super::$name(super::common::Regime::Fanotify).await
+                }
+            )*
+        }
+        mod simulated {
+            $(
+                #[tokio::test(flavor = "multi_thread")]
+                async fn $name() {
+                    super::$name(super::common::Regime::Simulated).await
                 }
             )*
         }
