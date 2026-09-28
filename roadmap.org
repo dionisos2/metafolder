@@ -5,29 +5,6 @@ the git history and the CHANGELOG. Deferred work inside a spec is tagged
 =:deferred:= and named there (spec-main "Version scope"); the ones worth
 keeping in view are listed at the end.
 
-* TODO actions on the user's machine
-Nothing to write, but nothing else can do them: they need the real
-repositories or root.
-
-** TODO =mf repo check= on every repository
-Since =4ffe261= a metarecord holds one position per forest (spec-data-model
-"One position per forest"), and =mf repo check= names the metarecords an older
-daemon let hold several. Run it on each repository; a hit is fixed by setting
-the field to the one position to keep. The resident cache still tolerates such
-a node, but nothing promises what a query says about it any more.
-
-** TODO rebuild and restart the fanotify broker
-=metafolder-watchd= runs privileged (=/run/metafolder/watchd.sock=), so it is
-rebuilt and restarted by hand. The running one predates =8dea90c= (moves the
-kernel merged away are put back) and =3a9c64a= (a root no mark can cover no
-longer fails the next subscriber's handshake).
-
-** TODO grow the benchmark history
-=scripts/bench.sh= compares each number against the median of the last five
-runs on the machine, and the history (=benchmarks/history/=) is still too thin:
-a single run flagged "regressions" that alternating old and new builds proved
-to be noise. A few runs on an idle machine, committed.
-
 * TODO performance
 The recurring defect of this project is a cost that grows with the repository
 where it should grow with the answer. Each item names where.
