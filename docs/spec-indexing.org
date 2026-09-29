@@ -9,8 +9,9 @@ large repositories (target: ~2 000 000 metarecords). Implemented today: the
 two SQL [[*Baseline indexes (implemented)][baseline indexes]] *and* the
 in-memory roaring-bitmap / BSI query accelerator described under
 [[*The proposed architecture][The proposed architecture]]
-(=crates/daemon/src/index/=, built at repo load, refreshed to HEAD per query,
-validated by =tests/index_oracle.rs=) — which is now the *only* thing that
+(=crates/daemon/src/index/=, evaluated over the key-value store's derived key
+spaces — nothing built at load, nothing resident — and validated by
+=tests/index_oracle.rs=) — which is now the *only* thing that
 serves a filter ([[*No operand runs in SQL]], done). Still forward-looking:
 on-disk index persistence and the larger-scale refinements. When in doubt, =crates/daemon/src/index/= is the authority on what
 exists.
@@ -306,13 +307,12 @@ pagination over the sort key is also deferred.
 *Tree sort keys are not stored.* A =tree_ref= sorts on its whole path
 (spec-data-model "Sorting a =TreeRef= field"), and a directory rename rewrites
 the path of its entire subtree while touching one field row — so a stored
-representative would go stale behind the incremental refresh. The index instead
-rebuilds each matched metarecord's key from the resident tree cache
-(=tree_cache::SortKeys=, memoising ancestors so a directory's path is assembled
-once per query). The forest is always resident on a repository that serves at
-all (spec-file-tracking "No node budget"), so a non-resident forest is an
-invariant violation, reported as such — a =State= gap — and not a reason to fall
-back. It costs nothing in
+representative would go stale behind every rename. The index instead rebuilds
+each matched metarecord's key from the store's forest (=tree_cache::SortKeys=,
+memoising ancestors so a directory's path is assembled once per query). The
+caller always hands that resolver in; a =tree_ref= sort without one is a daemon
+bug, reported as such — a =State= gap — and not a reason to fall back. It costs
+nothing in
 steady-state memory and is paid only by the queries that sort on a tree field.
 
 ** A page costs the page
@@ -343,7 +343,7 @@ cases.
 |-------------------------+---------------------------------------------|
 | none (uuid order)       | the registry's uuid → id map, which is ordered |
 | one numeric / date key  | the bit-slices: a top-k (below)             |
-| one tree key            | the resident forest, in key order (below)   |
+| one tree key            | the stored forest, in key order (below)     |
 
 A single numeric or date key needs no walk at all: the bit-slices answer "the
 k best representatives of this set" directly (=BsiIndex::top_k=). One pass over
@@ -381,7 +381,7 @@ for a count: the other operands give the candidates (within the holders of the
 leaf's field, and of the texts holding the pattern's literals, by the trigram
 index — without that, a walk budgeted on candidates the regex mostly rejects
 walks the repository), and the regex is run on the names of the ids a walk visits,
-which the resident forest holds per metarecord (=SortKeys::any_name=, the same
+which the stored forest holds per metarecord (=SortKeys::any_name=, the same
 display form the name partition is keyed by). A search as you type then costs
 its page instead of a scan of every distinct name. When the page is not walked
 — the fetch is cheaper, the walk runs over its budget, or the sort is a top-k,
@@ -404,13 +404,14 @@ interchangeable — two are daemon bugs and one is the client's own input:
   =uuid_in= set by the forest before the index sees them; a field seen only
   through =Nothing= values has no entry and reads as the empty answer. Nothing
   answers a coverage gap any more, so one is a daemon bug, reported =500=.
-- *State* — an accelerator is not in the state the engine requires (no index, a
-  non-resident forest). This cannot be reached through the API either: a
-  repository serves no data until both are built (spec-main "POST /repos/load").
+- *State* — the caller did not hand in what the evaluation needs (the sort-key
+  resolver of a =tree_ref= sort). The serving path always does, so this cannot
+  be reached through the API either.
 
   The two stay distinct variants (=Gap::Coverage= / =Gap::State=) because they
-  say different things to whoever reads the log — work never taught, against an
-  accelerator in the wrong state — not because they are answered differently.
+  say different things to whoever reads the log — work never taught, against a
+  caller that did not hand in its seeds — not because they are answered
+  differently.
 - *Cursor* — the third kind, and the only one that is *not* a daemon bug: a
   cursor from another (query, sort) is the client's own input, answered =400=.
 
@@ -649,19 +650,20 @@ membership test probes from the smaller of the two bitmaps: =is_disjoint= merges
 the containers, so its cost follows the *bigger* side, and this runs once per
 distinct value. An =Osm= =Path= needs no caller preparation any more: an empty =terms= list is
 =IsPresent= on the field, and a single separator-free term of *any length*
-resolves its term nodes from the in-memory name partition — the FTS trigram's
+resolves its term nodes from the name partition — the FTS trigram's
 three-character floor used to make the first two keystrokes of every search
 20-30× slower than the rest (808 ms for =s= on the bench repo, against 23 ms
 from =sam= onwards). The order-sensitive forms — several terms, or one term
-containing the separator — are resolved by a walk of the resident forest in the
-tree cache (see [[file:spec-file-tracking.org][spec-file-tracking.org]]), which
-carries the greedy match position down each branch and takes a whole subtree at
-once when a branch has consumed every term. Path mode is =tree_ref=-only, and
-the gate that enforces it (a 400 with the "use osmd" hint) asks the database
-*which types the field holds* rather than *whether a row of another type
-exists*: the first is answered from the covering =idx_field_name_type= alone,
-the second fetched every row of the field to read its =value_type= — 81 ms on a
-50 k-row field, which was the entire cost of a multi-term query.
+containing the separator — start from the anchors of the last term and take
+their verified subtrees, or, without an anchor, walk the stored forest (see
+[[file:spec-query.org][spec-query]] "Execution"), carrying the greedy match
+position down each branch and taking a whole subtree at once when a branch has
+consumed every term. Path mode is =tree_ref=-only, and the gate that enforces
+it (a 400 with the "use osmd" hint, =query_validate=) asks *which type the
+field holds*, from the index's field catalogue, rather than *whether a row of
+another type exists* — in the SQL era the second fetched every row of the field
+to read its =value_type=, 81 ms on a 50 k-row field, which was the entire cost
+of a multi-term query.
 
 =Path=-target =Follows=/=FollowsTransitive= are *supported*:
 =run_query_filter= resolves each path to its root metarecord through the

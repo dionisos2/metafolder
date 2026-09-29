@@ -75,28 +75,25 @@ D'où deux coûts linéaires en la taille du sous-arbre : **(a)** un texte SQL
 géant (~19 Mo pour 500k descendants, ≈38 Mo à 1M), et **(b)** N allers-retours
 `tree_children`.
 
-**Ce qui les a remplacés.** L'expansion se fait par **itération de bitmaps** sur
-l'index inverse (enfants directs) — `index::expand_subtrees` — entièrement en
-mémoire : pas de texte SQL, pas d'aller-retour par nœud, et le résultat *est*
-déjà un bitmap qui s'intersecte nativement avec les autres prédicats. Les pistes
+**Ce qui les a remplacés.** L'expansion lit le **bitmap de descendants** stocké
+de chaque nœud de départ — `index::expand_subtrees`, une lecture par nœud : pas
+de texte SQL, pas d'aller-retour par niveau, et le résultat *est* déjà un bitmap
+qui s'intersecte nativement avec les autres prédicats. Les pistes
 listées à l'époque (`carray`, table TEMP, CTE récursive) sont donc sans objet :
 elles corrigeaient une compilation SQL qui n'existe plus.
 
 **Le vrai problème de fond (inchangé).** On **matérialise tout le sous-arbre**
 alors qu'on ne veut en général que la **page** demandée (~100 résultats triés).
-C'est maintenant une union de bitmaps par niveau plutôt qu'une marche en base —
-la constante est petite — mais le coût dépend toujours du dossier et non de la
+C'est maintenant une union de bitmaps stockés plutôt qu'une marche en base — la
+constante est petite — mais le coût dépend toujours du dossier et non de la
 page. Limite inhérente à garder en tête : dès qu'on **trie par un champ**, il
 faut de toute façon l'ensemble complet des candidats pour choisir le top-N — la
 linéarité n'est évitable que pour les requêtes **sans tri**.
 
 **Périmé : « le cache ne peut pas servir tel quel ».** L'argument était que la
-map `children` d'un nœud était *partielle* (`resolve_path` n'insérait que les
-enfants rencontrés) et qu'aucun marqueur ne disait « tous les enfants chargés ».
-Les deux ont été levés : `TreeCache::populate` charge **toute** la forêt en un
-seul scan au chargement du dépôt, et `is_complete()` est ce marqueur. C'est ce
-qui rend l'énumération en mémoire autoritaire — et ce qui a permis à la forêt de
-répondre elle-même aux feuilles `:path` / `osm` ordonné (`forest_query.rs`).
+map `children` d'un nœud était *partielle*. Il n'y a plus de cache du tout : la
+forêt est dans le store, indexée par parent et nom, et c'est elle qui répond aux
+feuilles `:path` / `osm` ordonné (`forest_query.rs`).
 
 **Idée utilisateur : compteur d'enfants dénormalisé.** Stocker en DB le nombre
 d'enfants par `(field_name, parent_uuid)` avait deux bénéfices : éviter la
@@ -107,11 +104,11 @@ linéarité de fond, et coûtait une maintenance dans `log::Writer` restaurée
 exactement par le rollback : à ne pas ressortir sans un nouveau motif.
 
 **Pointeurs code :** `index/mod.rs` (`expand_subtrees`, nœud
-`FollowsTransitive`), `tree_cache.rs` (`populate`, `descendants`,
-`resolve_path`), `forest_query.rs`.
+`FollowsTransitive`), `kvstore/derived.rs` (bitmaps de descendants),
+`tree_cache.rs` (`descendants`, `resolve_path`), `forest_query.rs`.
 `docs/spec-query.org` pour la sémantique de `->*`.
 
-## 8. Limites de requête — ✅ les deux bornes / ⏳ leur valeur, et le timeout
+## 8. Limites de requête — ✅ les deux bornes, le timeout / ⏳ leur valeur
 
 **Fait.** Les deux bornes vivent maintenant dans `query_validate.rs` et sont
 vérifiées **avant toute évaluation**, donc identiquement pour toute requête :
@@ -139,14 +136,10 @@ pile s'exécute).
   O(1) nœud, et rendrait la borne indolore pour l'appartenance. *Le cas des
   uuids est déjà réglé* : `uuid_in` existe, et le DSL replie tout seul un `Or`
   d'atomes UUID nus en un unique nœud.
-- **Timeout d'exécution.** La borne de nœuds ne couvre que le coût de
-  *préparation* ; une requête petite mais lente (`matches` sur une forte
-  cardinalité, `->*` sur tout le repo — cf. §7) n'est pas bornée en *temps*. Le
-  `Connection::interrupt()` évoqué à l'époque ne suffit plus : il n'arrête
-  qu'une instruction SQLite, et l'évaluation est maintenant du Rust en mémoire.
-  Ce qui existe : l'annulation coopérative des tâches (`spec-tasks`), que
-  `run_query_filter` interroge entre les phases. Ce qui manque : une *deadline*
-  qui la déclenche toute seule.
+- ~~**Timeout d'exécution.**~~ ✅ Livré (209a06d, sept. 2026) : `timeout_ms`
+  sur une requête, l'annulation et le raccrochage du client arrêtent
+  l'évaluation *dans* ses boucles (`crate::interrupt`, spec-query « Timeout and
+  interruption », `tests/query_interrupt.rs`, `tests/query_hangup.rs`).
 
 ## 9. Link metarecords : le concept n'existe plus — ✅ SANS OBJET (sept. 2026)
 

@@ -33,9 +33,9 @@ A task is one observable unit of work on a single repository. It has:
   see [[file:spec-file-tracking.org][spec-file-tracking.org]] "Event
   batching"), =relink= (re-homing orphans onto the files that carry their
   content, see [[file:spec-file-tracking.org][spec-file-tracking.org]]
-  "Relinking orphans"), =load= (warming a freshly loaded repository — populating the
-  tree cache and building the query index; reported so the GUI shows a load
-  progress bar, phases =tree cache= then =index=), =prune= (log pruning,
+  "Relinking orphans"), =load= (the background half of loading a repository — its
+  declared mount points, the buffered filesystem events, the watcher; reported
+  so the GUI shows a load progress bar, phase =mounts=), =prune= (log pruning,
   =POST /log/prune=) or =rollback= (a one-shot atomic rollback,
   =POST /rollback=). Like =query=, =prune= and =rollback= are *synchronous*:
   their result travels with the request response, so they are registered only

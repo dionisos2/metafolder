@@ -1166,7 +1166,7 @@ finding nothing costs one full walk.
 The whole-log costs left are the two totals below and =mode=tree=, which is
 unbounded by construction (a graph needs every branch). Everything else a
 bounded read does is proportional to the window (spec-perf, pinned by
-=crates/daemon/tests/perf_cost.rs=).
+=crates/daemon/tests/log_cost.rs=).
 
 Response body:
 #+BEGIN_SRC json

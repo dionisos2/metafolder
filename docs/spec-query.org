@@ -352,21 +352,24 @@ Two modes, chosen by the caller (see the DSL functions =osm= / =osmd=):
   Applied to a field that demonstrably holds a non-=tree_ref= value it is
   *rejected with 400* (use =osmd=); a field with no data yields an empty result.
 
-*Execution.* Both modes are answered from resident structures; neither compiles
-to SQL (spec-indexing "No operand runs in SQL").
+*Execution.* Both modes are answered from the store's derived key spaces;
+neither compiles to SQL (spec-indexing "No operand runs in SQL").
 
 - =direct= is a text predicate like =Matches=: the unanchored =(?i)t1.*t2.*…=
   built from the regex-escaped terms, run over the field's *distinct values* in
-  memory, narrowed by the candidate set when it sits inside an =And=.
+  turn, narrowed by the candidate set when it sits inside an =And=.
 - =path= is answered by the *forest*. A single separator-free term of any
   length resolves its "term nodes" — the nodes whose own name contains it — from
-  the in-memory name partition, and the union of their subtrees *is* the match
+  the name partition, and the union of their subtrees *is* the match
   set, with no per-path verification: every descendant's path contains the term.
   The order-sensitive forms (several terms, or one term containing the
-  separator) are one walk of the resident forest
-  (=TreeCache::osm_path_matches=), carrying the greedy match position down each
-  branch and taking a whole subtree at once when a branch has consumed every
-  term; the result is handed to the bitmap index as a =uuid_in= set
+  separator) start from the *anchors* of the last term — the nodes whose own
+  name holds its end, found by the name scan — verify each anchor's assembled
+  path, and take its whole subtree; without an anchor (a last term ending with
+  the separator) they are one walk of the stored forest
+  (=TreeCache::osm_path_matches_with=), carrying the greedy match position down
+  each branch and taking a whole subtree at once when a branch has consumed
+  every term. Either way the result is handed to the bitmap index as a =uuid_in= set
   (=forest_query=). This adds *no persistent state* — no denormalised path text,
   and a rename/move costs nothing beyond the existing tree-cache upkeep.
 

@@ -489,25 +489,27 @@ repository written before the choice existed is one.
 The resident query index remains available on top of either store: on a
 repository that fits in memory it may still be the faster engine. Whether it is
 still worth keeping on the KV store, where a small repository is fully in the
-page cache anyway, is decided by measurement, not in advance.
+page cache anyway, is decided by measurement, not in advance. (It was not
+kept: the resident index and the resident forest went with SQLite in September
+2026, and the store's own key spaces are the only query engine.)
 
 * Testing
 
-- *Every integration test runs on both backends*, the way
-  =tests/common/engines.rs= already runs both query engines. A behaviour tested
-  on one backend only is where the two drift.
+- *One backend, one serving path.* Since SQLite went, every integration test
+  runs on the key-value store; =tests/store_contract.rs= asks every method
+  through the traits only — the file a second backend would run.
 - *The oracle reads rows.* =crates/query-oracle= (SQL until September 2026)
-  is a naive evaluator over the =Rows= trait: it reads the primary data of
-  either backend and nothing derived. Three engines, one answer.
-- *Scale is tested by counting, not timing* — the =perf_cost.rs= idea applied
-  to page and key reads: opening a folder reads the same number of keys on a
+  is a naive evaluator over the =Rows= trait: it reads the primary data and
+  nothing derived, and =tests/common/engines.rs= holds the store's evaluator
+  to it. Two engines, one answer.
+- *Scale is tested by counting, not timing* — =tests/kv_cost.rs= and
+  =tests/log_cost.rs= count the keys read: opening a folder reads the same number of keys on a
   5 k and an 80 k repository; a tag filter reads a number of containers
   proportional to the ids it spans; no bounded query reads a whole key space.
   This needs no large data set and cannot flake under load.
 - *Synthetic scale.* Millions of metarecords are generated directly into a
   store (no files on disk: a metarecord needs rows, not a file), from the
-  =regression/synth.rs= generator. At that size only the KV backend is
-  measured — the resident one would need the memory the machine does not have.
+  =regression/synth.rs= generator.
 - *Cold cache.* The page cache is dropped between runs
   (=sync; echo 3 > /proc/sys/vm/drop_caches=, root) to measure first access
   separately from everyday use.

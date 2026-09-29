@@ -1409,11 +1409,11 @@ which one — is read from the disk on every request, busy or not. So =state=,
 only a mount point *declared by the write currently running* is missing, and it
 appears as soon as that write commits.
 
-The same reasoning frees =GET /repos/:repo_uuid/fields= (see
-[[file:spec-data-model.org][spec-data-model.org]]). It does not generalise to the
-rest of the API: an endpoint that reads metarecord data has nothing resident to
-answer from, and for those the fix is to stop holding the repository for minutes
-at a time.
+It does not generalise to the rest of the API: an endpoint that reads
+metarecord data has nothing resident to answer from (=GET
+/repos/:repo_uuid/fields= had, while the query index was resident; it waits
+like every read now), and for those the fix is to stop holding the repository
+for minutes at a time.
 
 ** Watch status, pause and resume
 

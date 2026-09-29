@@ -383,9 +383,10 @@ The load is *rejected with =409=* if another loaded repository already has the
 same =name= (from its =config.json=). Names are therefore unique among loaded
 repositories, so the CLI's =-n <name>= selector resolves to exactly one UUID.
 
-The response returns the repository uuid *immediately*; the in-memory
-accelerators (tree cache + query index) are then warmed in the *background* as
-an observable =load= task (see [[file:spec-tasks.org][spec-tasks.org]]), so a
+The response returns the repository uuid *immediately*; the rest of the load
+— reading the declared mount points, applying the buffered filesystem events,
+starting the watcher — then runs in the *background* as an observable =load=
+task (see [[file:spec-tasks.org][spec-tasks.org]]), so a
 client can show a load progress bar. The response also carries the warmup's
 =task_id= (=null= when the repository is already warm, e.g. a redundant load;
 the id of the *running* warmup when one is already in flight), so a client can
@@ -395,9 +396,11 @@ While warming, the repository *reports its state and refuses its data*. It
 appears in =GET /repos=, describes itself through =GET /repos/:repo=, and its
 =load= task names the phase it is on — everything a client needs to know when to
 come back. Every endpoint that reads or writes repository data answers
-=503 Service Unavailable= instead. This is not a policy choice: the query engine
-and the watcher's executor both run against the accelerators, so a repository
-whose index is not built cannot answer slowly, it can only not answer. A warmup
+=503 Service Unavailable= instead, so no client reads the repository before
+its load has applied what the filesystem did meanwhile. (There is no
+accelerator left to build: queries and the forest are answered by the store
+itself, spec-storage increment 4 — the resident index and tree cache this used
+to wait for went with SQLite in September 2026.) A warmup
 that *fails* leaves the repository registered and never ready — its =load= task
 carries the error, and its data endpoints go on answering =503= until it is
 unloaded. An =unload= is refused with =409= until the warmup finishes.
