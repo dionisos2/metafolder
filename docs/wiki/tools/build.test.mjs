@@ -38,7 +38,7 @@ summary: How to restore.
 
 Use <<cmd "trash:restore">>.
 `,
-  'trash-restore.tid': `title: trash:restore
+  'trash_restore.tid': `title: trash:restore
 tags: [[GUI command]]
 kind: reference
 summary: Restore the selected entry.
@@ -98,8 +98,8 @@ test('one page per hand-written note, named by its slug, and nothing stale', () 
     'gui-command.html',
     'index.json',
     'restoring-from-the-trash.html',
-    'trash-restore.html',
     'trash.html',
+    'trash_restore.html',
   ]);
 });
 
@@ -123,17 +123,17 @@ test('lists are expanded at build time', () => {
   // would otherwise eat.
   assert.match(read('trash.html'), /<\/a> — How to restore\./);
   const catalog = read('gui-command.html');
-  assert.match(catalog, /data-help-page="trash-restore"/);
+  assert.match(catalog, /data-help-page="trash_restore"/);
   // An item the code has and the wiki does not is listed as such.
   assert.match(catalog, /trash:next/);
 });
 
 test('cmd links to the command note', () => {
-  assert.match(read('restoring-from-the-trash.html'), /<a data-help-page="trash-restore"><code>trash:restore<\/code><\/a>/);
+  assert.match(read('restoring-from-the-trash.html'), /<a data-help-page="trash_restore"><code>trash:restore<\/code><\/a>/);
 });
 
 test('a catalog note gets its generated part appended', () => {
-  const html = read('trash-restore.html');
+  const html = read('trash_restore.html');
   assert.match(html, /Hand-written part\.[\s\S]*Generated part\./);
 });
 

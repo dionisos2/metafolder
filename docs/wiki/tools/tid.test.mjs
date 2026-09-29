@@ -44,9 +44,15 @@ describe('parseTid / serializeTid', () => {
 describe('slugify', () => {
   test('lowercase, every run of other characters becomes one dash', () => {
     assert.equal(slugify('mf trash restore'), 'mf-trash-restore');
-    assert.equal(slugify('trash:restore'), 'trash-restore');
+    assert.equal(slugify('trash:restore'), 'trash_restore');
     assert.equal(slugify('POST /repos/:repo/query'), 'post-repos-repo-query');
     assert.equal(slugify('  Why -- this?  '), 'why-this');
+  });
+
+  test('a command name and a CLI command never share a slug', () => {
+    // `mf:duplicate` (GUI) and `mf duplicate` (CLI) are two notes.
+    assert.notEqual(slugify('mf:duplicate'), slugify('mf duplicate'));
+    assert.equal(slugify('mfr_path'), 'mfr_path');
   });
 
   test('diacritics are dropped, not dashed', () => {

@@ -25,14 +25,22 @@ pub fn tid(fields: &[(&str, &str)], text: &str) -> String {
     out
 }
 
-/// A file-name slug: lowercase ASCII letters and digits, every other run of
-/// characters one dash. The same function as the wiki tooling's `slugify` for
-/// the names the code has (ASCII).
+/// A file-name slug: lowercase ASCII letters, digits and `_`, a `:` inside a
+/// name as `_` (a GUI command and the CLI command it mirrors — `mf:duplicate`,
+/// `mf duplicate` — must not collide), every other run of characters one dash.
+/// The same function as the wiki tooling's `slugify` for the names the code has
+/// (ASCII).
 pub fn slug(name: &str) -> String {
+    let chars: Vec<char> = name.chars().flat_map(char::to_lowercase).collect();
     let mut out = String::new();
-    for c in name.chars().flat_map(char::to_lowercase) {
-        if c.is_ascii_alphanumeric() {
+    for (i, &c) in chars.iter().enumerate() {
+        let inside = |j: Option<usize>| {
+            j.and_then(|j| chars.get(j)).is_some_and(char::is_ascii_alphanumeric)
+        };
+        if c.is_ascii_alphanumeric() || c == '_' {
             out.push(c);
+        } else if c == ':' && inside(i.checked_sub(1)) && inside(Some(i + 1)) {
+            out.push('_');
         } else if !out.is_empty() && !out.ends_with('-') {
             out.push('-');
         }
@@ -130,7 +138,10 @@ mod tests {
 
     #[test]
     fn slug_matches_the_wiki_tooling() {
-        assert_eq!(slug("trash:restore"), "trash-restore");
+        assert_eq!(slug("trash:restore"), "trash_restore");
+        assert_ne!(slug("mf:duplicate"), slug("mf duplicate"));
+        assert_eq!(slug("mfr_path"), "mfr_path");
+        assert_eq!(slug("POST /repos/:repo/query"), "post-repos-repo-query");
         assert_eq!(slug("mf trash restore"), "mf-trash-restore");
         assert_eq!(slug("lib/mf-gui.sh"), "lib-mf-gui-sh");
         assert_eq!(slug("--odd--"), "odd");

@@ -37,7 +37,10 @@ export function serializeTid({ fields, text }) {
 
 /**
  * The one slug function: file names, help page ids and link targets in the
- * rendered pages all come from it.
+ * rendered pages all come from it. Lowercase letters, digits and `_`; a `:`
+ * inside a name becomes `_`, so that a GUI command (`mf:duplicate`) and the CLI command it
+ * mirrors (`mf duplicate`) are two notes; every other run of characters is one
+ * `-`.
  * @param {string} title
  */
 export function slugify(title) {
@@ -45,7 +48,8 @@ export function slugify(title) {
     .normalize('NFKD')
     .replace(/[̀-ͯ]/g, '')
     .toLowerCase()
-    .replace(/[^a-z0-9]+/g, '-')
+    .replace(/(?<=[a-z0-9]):(?=[a-z0-9])/g, '_')
+    .replace(/[^a-z0-9_]+/g, '-')
     .replace(/^-+|-+$/g, '');
 }
 
