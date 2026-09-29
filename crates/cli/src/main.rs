@@ -380,7 +380,7 @@ enum TaskCommand {
     /// Show a single background task by id (or stop it with --stop)
     Show {
         id: String,
-        /// Request cancellation of the task instead of showing it (doc "Tasks").
+        /// Request cancellation of the task instead of showing it (doc "Cancelling a task").
         #[arg(long, alias = "cancel")]
         stop: bool,
         /// Print the raw JSON object

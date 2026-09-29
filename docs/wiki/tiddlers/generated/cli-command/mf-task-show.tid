@@ -16,7 +16,7 @@ Arguments:
 
 Options:
       --stop
-          Request cancellation of the task instead of showing it (spec-tasks)
+          Request cancellation of the task instead of showing it (doc "Cancelling a task")
 
       --json
           Print the raw JSON object
