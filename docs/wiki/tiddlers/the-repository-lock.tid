@@ -1,0 +1,19 @@
+title: The repository lock
+tags: Daemon
+kind: reference
+audience: dev
+summary: A daemon holds each loaded store under an exclusive flock; a second daemon's load is refused at once.
+
+A repository's store is held under an exclusive lock — an `flock` on
+`internal/kv/daemon.lock` — for the whole lifetime of the daemon's handle on it.
+A second daemon instance therefore cannot load the same repository, which would
+make the two drift: one daemon's watcher updating paths and versions while the
+other commits a sync.
+
+A load that finds the lock held is refused ''immediately'' with `409`, naming the
+cause: another metafolder daemon is using the repository. Waiting would be
+pointless — the lock belongs to a live daemon. A transient holder, such as a child
+process that inherited the descriptor for an instant, is waited out for a second.
+
+The lock is released by an unload, or by the process ending. For the tasks not to
+keep it held past an unload, see [[Why background tasks hold a weak reference]].

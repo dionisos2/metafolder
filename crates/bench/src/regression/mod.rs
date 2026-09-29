@@ -608,7 +608,7 @@ fn ensure_repo(dir: &Path, shape: &synth::Shape) -> Result<bool> {
 ///
 /// A load returns immediately and finishes in the background as an observable
 /// task; every data endpoint
-/// answers `503` until that finishes (spec-main "POST /repos/load"). Measuring
+/// answers `503` until that finishes (doc "Creating and loading a repository"). Measuring
 /// through that window would measure the load, so the suite waits it out —
 /// by asking for what it is about to measure, which needs no assumption about
 /// the task listing's shape.
@@ -618,7 +618,7 @@ async fn load_repo(daemon: &Daemon, dir: &Path) -> Result<Uuid> {
 
 /// Loads a repository and waits until it answers a query — the load returns as
 /// soon as the uuid is known and finishes in the background
-/// (spec-main "POST /repos/load"), so "loaded" means "serving", not "accepted".
+/// (doc "Creating and loading a repository"), so "loaded" means "serving", not "accepted".
 async fn load_and_wait(url: &str, dir: &Path) -> Result<Uuid> {
     let v: serde_json::Value = client()
         .post(format!("{url}/repos/load"))

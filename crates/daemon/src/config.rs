@@ -23,7 +23,7 @@ const CONFIG_FILE: &str = "config.json";
 pub const CURRENT_VERSION: u32 = 1;
 
 /// Repository configuration, persisted as `.metafolder/config.json`
-/// (spec-data-model "Repository"). Lives outside the store so that the version
+/// (doc "Repository layout on disk"). Lives outside the store so that the version
 /// can be read before opening it (migrations bootstrap).
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct RepoConfig {

@@ -1,0 +1,20 @@
+title: Repository endpoints
+tags: Daemon
+kind: reference
+audience: dev
+summary: Listing, reading, renaming, creating, loading and unloading repositories, and checking, reindexing and backing them up.
+
+|!Endpoint |!Does |
+|`GET /repos` |the loaded repositories — `{repo_uuid, name, root, internal_dir, system, …}` each; the system ones only with `?all=true` |
+|`GET /repos/:repo` |one of them, the same shape; `404` when not loaded |
+|`PATCH /repos/:repo` |renames it: `{"name": "…"}`, `409` when the name is taken; written to `config.json` |
+|`POST /repos/init` |creates one: `{"root": …}`, optional `metafolder` (an external `.metafolder`) and `name`; answers `{"repo_uuid"}`, `409` when one exists there |
+|`POST /repos/load` |loads one: `{"root": …}` or `{"metafolder": …}`; answers `{"repo_uuid", "task_id"}` at once, the load going on in the background (`task_id` null when it was already loaded) |
+|`POST /repos/:repo/unload` |unloads it; answers `{"repo_uuid"}` |
+|`POST /repos/:repo/check` |what no longer holds together in its store (its derived data against a rebuild): `{"problems": [...]}`, empty when healthy |
+|`POST /repos/:repo/reindex` |derives again what the store derives; answers `{}` |
+|`POST /repos/:repo/backup` |a verified copy of its store, taken while it stays loaded, with its `config.json` and `schema.json`; optional `{"to": "<new dir>"}` (`400` when it exists), by default a new `internal/backups/manual-<time>/`; answers `{"path", "created_at_ms", "metarecords"}` |
+
+What loading and unloading do, and refuse: [[Creating and loading a repository]].
+`check`, `reindex` and `backup` hold the repository while they run
+(spec-storage).

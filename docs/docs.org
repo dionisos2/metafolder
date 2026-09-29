@@ -86,22 +86,31 @@ CLAUDE.md « Architecture », « Key invariants ».
 
 * Démon, CLI, configuration
 
-** TODO 2. Démon et dépôts
+** FAIT 2. Démon et dépôts
 
-- [ ] =Daemon= — overview
-- [ ] =Repository= — overview (une base par dépôt, propriété implicite, =.metafolder/=, dossier externe)
-- [ ] =Repository layout on disk= — reference (=config.json=, =schema.json=, =internal/=, =gui/history/=)
-- [ ] =Creating and loading a repository= — guide (init, load en tâche observable, 503 pendant le chargement, auto-load)
-- [ ] =Daemon configuration= — reference (=daemon/config.toml=, =[settings]=)
-- [ ] =Health and diagnostics feed= — reference
-- [ ] =Error responses= — reference (forme ={"error": …}=, codes)
-- [ ] =Repository endpoints= — reference, dev (=GET/PATCH /repos…=, init, load, unload)
-- [ ] =Why background tasks hold a weak reference= — rationale, dev (invariant)
-- [ ] =The repository lock= — reference, dev (flock, second daemon refusé)
+- [X] =Daemon= — overview
+- [X] =Repository= — overview
+- [X] =Repository layout on disk= — reference (=config.json= complet, =internal/=)
+- [X] =Creating and loading a repository= — guide
+- [X] =Daemon configuration= — reference
+- [X] =The daemon's startup report= — reference, dev (ajoutée)
+- [X] =Health and diagnostics= — reference, dev
+- [X] =Error responses= — reference, dev
+- [X] =Repository endpoints= — reference, dev (avec check, reindex, backup)
+- [X] =Why background tasks hold a weak reference= — rationale, dev
+- [X] =The repository lock= — reference, dev
 
-CLI : =mf repo {list,init,load,unload}= (le reste de =mf repo= est dans l'item 5).
-Sources : spec-main « Daemon » (sauf les invariants), « Repository management »,
-« Error handling », « Repository commands » ; spec-data-model « Repository ».
+Vérification contre le code : =watch-quiet-period-ms= vaut 2000 (la spec disait
+500) ; =auto-backup-days= manquait ; une clé inconnue *dans* =[settings]= est
+ignorée, mais une clé inconnue au premier niveau fait échouer le démarrage ;
+=config.json= a aussi =created_at=, =system= et =storage=, et =version= est un
+entier ; les phases du chargement ne comptent plus de migrations ni d'index ;
+=GET /health= porte =api_version= ; un =unload= est refusé aussi pendant un scan
+de doublons ou un relink. Sources retirées (pointeurs) : spec-main « General
+description », « Daemon configuration », « Health », « Diagnostics feed »,
+« Repository management », « Error handling », « Repository commands » ;
+spec-data-model « Repository ». Les notes =mf repo *= restent pour l'item 5
+(stockage) et l'item 3.
 
 ** TODO 3. Conventions de la CLI
 

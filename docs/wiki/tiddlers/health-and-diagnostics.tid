@@ -1,0 +1,47 @@
+title: Health and diagnostics
+tags: Daemon
+kind: reference
+audience: dev
+summary: GET /health says the daemon is up and which protocol it speaks; GET /diagnostics hands out what it warned about.
+
+!! Health
+
+```
+GET /health  →  {"status": "ok", "version": "<crate version>",
+                 "api_version": <n>, "repos": <loaded repositories>}
+```
+
+Enough to confirm the daemon, its build and its repositories in one call.
+`api_version` is the wire-protocol version, shared by every service and distinct
+from the crate version: the GUI compares it with its own and shows an
+"incompatible daemon" banner on a mismatch. Like every route, it needs the
+session token.
+
+!! The diagnostics feed
+
+```
+GET /diagnostics?since=<id>&limit=<n>
+→ {"entries": [...], "next_since": <id>, "dropped": <n>}
+```
+
+The warnings the daemon prints on stderr, also kept in memory so that a client can
+read them: the daemon is its own process, and a warning from the watcher — a
+directory it could not watch, events it had to drop, a file it skipped — would
+otherwise reach only whatever terminal started it. The GUI shows them in its
+`message` panel.
+
+Each entry is `{id, at_ms, level, scope, message, repo}`, oldest first. `level` is
+`info`, `warning` or `error`; `info` is what the daemon ''did'' — the one line each
+watcher flush leaves behind — rather than what went wrong. `scope` names the part
+that spoke (`watcher`, `reconcile`, `executor`, `prune`, `warmup`…); `repo` the
+repository, when there is one.
+
+* `since` is the last id the client saw, `0` for everything still held. Ids start at 1 and grow ''per daemon run'': a reconnecting client starts from 0 again.
+* `next_since` is where to resume; the client passes it back as it is.
+* `dropped` counts entries that fell out of memory before this read, so a client that fell behind can say so.
+
+It holds 500 entries, and a page is at most 500. It is an aid, not a control
+channel: recording never fails and never blocks a write; the oldest entries go.
+
+Not here: the load report's timings (stderr, [[The daemon's startup report]]) and
+slow operations ([[Slow log]]).

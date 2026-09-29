@@ -1,0 +1,23 @@
+title: Repository
+tags: Daemon
+kind: overview
+aliases: repo repositories
+summary: A directory tree and its metadata store in .metafolder/ — one store per repository, loaded by one daemon at a time.
+
+A ''repository'' is a directory tree — its ''root'' — together with the
+metadata metafolder keeps about it, in a `.metafolder/` directory. Every
+metarecord belongs to the repository whose store holds it: there is one store per
+repository, and a metarecord cannot belong to two. Links between repositories are
+the business of sync, outside the data model.
+
+`.metafolder/` usually sits inside the root, but can live anywhere — an
+''external'' `.metafolder`, for a read-only data disk or to keep the metadata on a
+faster device. Its `internal/` part (the store and the daemon's own files) is
+never tracked; the rest (`config.json`, `schema.json`, the GUI's input histories)
+is ordinary content you may track like any file
+([[Repository layout on disk]]).
+
+A daemon ''loads'' a repository to work on it, and holds its store under an
+exclusive lock while it does: a second daemon cannot load the same repository.
+Names are unique among the loaded repositories, so a name designates one
+([[Creating and loading a repository]]).

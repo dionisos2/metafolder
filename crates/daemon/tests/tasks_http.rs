@@ -389,7 +389,7 @@ async fn load_runs_an_observable_warmup_task() {
 async fn load_response_carries_the_warmup_task_id() {
     // `mf repo load` waits for the warmup by polling its task; the load
     // response hands the task id back directly so the client does not have to
-    // discover it through the task list (spec-main "POST /repos/load").
+    // discover it through the task list (doc "Creating and loading a repository").
     let state = Arc::new(AppState::new());
     let app = routes::build(state.clone());
     let root = temp_dir("loadtaskid");
@@ -464,7 +464,7 @@ async fn global_tasks_lists_across_repos() {
 ///
 /// Until its load has applied what the filesystem did meanwhile, a repository
 /// does not serve its data: a client is told so with `503`, and can watch the
-/// `load` task to know when to come back (spec-main "POST /repos/load").
+/// `load` task to know when to come back (doc "Creating and loading a repository").
 #[tokio::test]
 async fn a_warming_repository_refuses_data_and_reports_its_state() {
     let state = Arc::new(AppState::new());

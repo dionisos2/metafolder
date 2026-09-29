@@ -75,7 +75,7 @@ pub enum TaskKind {
     /// The background half of loading a repository (`RepoState::warm`): its
     /// declared mount points, the buffered filesystem events, the watcher.
     /// Observable so the GUI can show a load progress bar; not cancellable —
-    /// an unload is refused until it finishes (spec-main "POST /repos/load").
+    /// an unload is refused until it finishes (doc "Creating and loading a repository").
     Load,
     /// Re-homing orphaned metarecords onto files that carry their content
     /// (`POST /orphans/relink`, spec-file-tracking "Relinking orphans"). Hashes

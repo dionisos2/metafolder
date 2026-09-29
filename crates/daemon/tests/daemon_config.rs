@@ -1,5 +1,5 @@
 //! Integration tests for the daemon configuration file
-//! (`~/.config/metafolder/daemon/config.toml`, spec-main "Daemon configuration").
+//! (`~/.config/metafolder/daemon/config.toml`, doc "Daemon configuration").
 
 use std::path::{Path, PathBuf};
 

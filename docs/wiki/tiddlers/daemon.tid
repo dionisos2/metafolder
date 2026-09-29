@@ -1,0 +1,26 @@
+title: Daemon
+kind: overview
+aliases: daemon metafolder-daemon
+summary: The background server that holds your repositories, answers the CLI and the GUI, and watches the files.
+
+The daemon (`metafolder-daemon`) is a long-running HTTP server on
+`127.0.0.1:7523`. It holds the loaded repositories — each one's store, under an
+exclusive lock — watches their files, and answers the CLI and the GUI, which do
+nothing to a repository's data themselves. All bodies are JSON; an error is
+`{"error": "<message>"}` with a status code ([[Error responses]]).
+
+It is local-only and single-user: it makes no network call and has no user
+accounts; every request carries a session token only your own processes can read
+([[Session tokens]]).
+
+!! Use it
+
+<<list-kind guide>>
+
+!! Reference
+
+<<list-kind reference>>
+
+!! Why it works this way
+
+<<list-kind rationale>>

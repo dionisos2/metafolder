@@ -1,0 +1,40 @@
+title: Daemon configuration
+tags: Daemon Configuration
+kind: reference
+summary: daemon/config.toml — the repositories to load at startup, and the [settings] knobs with their defaults.
+
+`~/.config/metafolder/daemon/config.toml` (`--config <path>` overrides it). Not to
+be confused with each repository's `config.json` ([[Repository layout on disk]]).
+
+```
+[[load]]
+root = "/data/music"
+
+[[load]]
+metafolder = "/ssd/meta/music/.metafolder"
+
+[settings]
+watch-quiet-period-ms = 2000
+```
+
+''`[[load]]`'' — the repositories to load at startup, each with exactly one of
+`root` or `metafolder`, like a `POST /repos/load` body.
+
+''`[settings]`'' — every key optional:
+
+|!Key |!Default |!Meaning |
+|`watch-quiet-period-ms` |`2000` |how long the filesystem must stay quiet before the watcher applies its buffered events |
+|`watch-budget-share` |`50` |the percentage of the kernel's per-user inotify watch limit this daemon allows itself |
+|`watchd-socket` |`/run/metafolder/watchd.sock` |where the fanotify broker is looked for at load: reachable, the tree is covered through it; not, the daemon watches with inotify. A path where nothing listens keeps it on inotify |
+|`orphan-cascade-limit` |`10000` |the largest number of metarecords one watcher batch may orphan; beyond, the cascade is skipped with a warning (`0`: no limit) |
+|`log-retention-revisions` |`200` |revisions of history the event log keeps behind HEAD (`0`: everything); a repository can override it |
+|`log-retention-keep-labels` |`true` |whether a labelled revision stops the trim; a repository can override it |
+|`slow-operation-threshold-ms`, `slow-read-threshold-ms`, `slow-operation-reads-threshold` |`2000`, `100`, `100000` |[[Slow log configuration]] |
+|`auto-backup-days` |`1` |every how many days each loaded repository gets its automatic backup, into `internal/backups/auto/` — one slot, replaced only by a backup that checks clean (`0`: off) |
+
+A missing file is an empty one. A malformed one — invalid TOML, an unknown
+top-level key, a `[[load]]` entry with both or neither of `root`/`metafolder` —
+stops the daemon at startup. An unknown key ''inside `[settings]`'' is ignored, so
+that a retired setting does not break every configuration that still carries
+it. A repository that fails to load is a warning; the daemon starts anyway, with
+the others.

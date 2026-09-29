@@ -904,7 +904,7 @@ in place instead.
 
 ** Daemon diagnostics
 
-The GUI polls =GET /diagnostics= (see [[file:spec-main.org][spec-main.org]] "Diagnostics feed") on the
+The GUI polls =GET /diagnostics= (see doc "Health and diagnostics") on the
 same loop as the health probe, and appends what it finds to *every* workspace's
 message log — a daemon-wide warning concerns them all, not whichever one happens
 to be focused. This is the only way the daemon's warnings reach the user: the

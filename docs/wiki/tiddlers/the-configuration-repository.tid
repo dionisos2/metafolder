@@ -29,6 +29,6 @@ with one directory per program and two shared ones:
 The programs read `main`'s working tree, and only it; they never run git. Only
 `metafolder-sync-config` does ([[Updating the configuration]]).
 
-The per-program files: [[GUI configuration]], [[CLI configuration]],
+The per-program files: [[Daemon configuration]], [[GUI configuration]], [[CLI configuration]],
 [[Slow log configuration]] (daemon and GUI). `docs/` is the one directory that is
 a build product rather than a source file.

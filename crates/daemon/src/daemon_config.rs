@@ -1,4 +1,4 @@
-//! Daemon configuration file (spec-main "Daemon configuration"):
+//! Daemon configuration file (doc "Daemon configuration"):
 //! `$XDG_CONFIG_HOME/metafolder/daemon/config.toml`, read once at startup.
 //! Distinct from the per-repository `.metafolder/config.json` (machine-managed
 //! repo data, kept as JSON).

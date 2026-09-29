@@ -902,8 +902,7 @@ individually.
 *** What a flush reports
 
 Every flush that had something to apply records *one line* in the diagnostics
-feed (=info= level, scope =executor=; see [[file:spec-main.org][spec-main.org]]
-"Diagnostics feed"), which the GUI appends to its message panel:
+feed (=info= level, scope =executor=; see doc "Health and diagnostics"), which the GUI appends to its message panel:
 
 #+BEGIN_SRC
 flush on photos: 2 events in 3 ms -> nothing written (2 ignored); touched /x, modified /y

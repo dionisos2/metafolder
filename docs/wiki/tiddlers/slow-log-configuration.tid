@@ -3,7 +3,7 @@ tags: [[Slow log]] Configuration
 kind: reference
 summary: The thresholds: 2 s for what writes, 100 ms for what only reads, 100 000 keys whatever the time; 0 turns the log off.
 
-In the daemon's `~/.config/metafolder/daemon/config.toml`:
+In the daemon's `~/.config/metafolder/daemon/config.toml` ([[Daemon configuration]]):
 
 ```
 [settings]

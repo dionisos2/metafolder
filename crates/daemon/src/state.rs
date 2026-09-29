@@ -48,7 +48,7 @@ pub struct RepoState {
     tree: TreeCache,
     pub config: RepoConfig,
     /// The repository's display name. Starts at `config.name` but is mutable
-    /// (rename, spec-main "PATCH /repos/:repo") — persisted to `config.json` and
+    /// (rename, doc "Repository endpoints") — persisted to `config.json` and
     /// the single source of truth for uniqueness and the repo listing.
     pub name: Mutex<String>,
     pub metafolder_dir: PathBuf,
@@ -95,7 +95,7 @@ pub struct RepoState {
     /// started the watcher. The accelerators are not optional — the query
     /// engine and the executor both run against them — so a repository that is
     /// not warm cannot answer slowly, it cannot answer at all: data endpoints
-    /// return `503` while this is false (spec-main "POST /repos/load").
+    /// return `503` while this is false (doc "Creating and loading a repository").
     ready: std::sync::atomic::AtomicBool,
     /// Quiet period the executor waits out before flushing (`[settings]
     /// watch-quiet-period-ms`). Held here so warming a repository needs nothing
@@ -676,8 +676,7 @@ impl RepoState {
     fn activate(self: &Arc<Self>) -> Result<(), ApiError> {
         // Each step is announced: the replay below applies whatever the
         // filesystem did while the daemon was down, which on a repository that
-        // moved a lot is the longest part of a load (spec-main "Startup
-        // report").
+        // moved a lot is the longest part of a load (doc "The daemon's startup report").
         let who = self.name();
         {
             let mut p = Phase::begin(&who, "replay the buffered filesystem events");
@@ -1126,7 +1125,7 @@ impl AppState {
 
     /// Unloads a repository: removes it from the loaded set, stops its watcher
     /// and executor, and releases the store's exclusive lock — so it can be
-    /// re-loaded or opened by another daemon (spec-main "Repository management").
+    /// re-loaded or opened by another daemon (doc "Repository endpoints").
     ///
     /// An unknown repository is a 404 (no idempotency claimed). The unload is
     /// refused with 409 if:
@@ -1188,7 +1187,7 @@ impl AppState {
     /// entry in the listing, and the `load` task carrying the phase it is on —
     /// is readable while it warms. Its data is not: the query engine and the
     /// executor both run against accelerators that are not built yet, so there
-    /// is no slower answer to give, only none (spec-main "POST /repos/load").
+    /// is no slower answer to give, only none (doc "Creating and loading a repository").
     pub fn ready_repo(&self, repo_uuid: Uuid) -> Result<Arc<RepoState>, ApiError> {
         let repo = self.repo(repo_uuid)?;
         if !repo.is_ready() {

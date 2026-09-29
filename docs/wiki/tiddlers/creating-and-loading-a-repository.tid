@@ -1,0 +1,41 @@
+title: Creating and loading a repository
+tags: Daemon
+kind: guide
+summary: mf repo init, load and unload; what a load does in the background, and why the repository answers 503 meanwhile.
+
+```
+mf repo init <root>                         # create .metafolder/ inside <root>
+mf repo init <root> --metafolder <path>     # … or anywhere else
+mf repo load <root>                         # load it (--metafolder <path> for an external one)
+mf repo                                     # the loaded repositories (mf repo list)
+mf -n <name> repo unload                    # unload it
+```
+
+''Init'' creates `config.json` and the store; it fails if a repository is already
+there. The name defaults to the root directory's name. A new repository watches
+nothing: tracking is opt-in (spec-file-tracking "Watch and Ignore").
+
+''Load'' makes a daemon work on a repository. It is refused (`409`) when a loaded
+repository already has the same name, keeping `-n <name>` unambiguous, or when
+another daemon holds its lock. The daemon answers at once and does the rest in
+the background as a `load` task ([[Tasks]]): reading the declared mount points,
+applying the filesystem events buffered meanwhile, starting the watcher.
+`mf repo load` waits for it, drawing its progress (`--no-wait` returns at once).
+Until the load is done the repository describes itself (it is in `GET /repos`, its
+task names its phase) but answers every data request with `503`: no client reads
+it before it has caught up with what the filesystem did. A load that ''fails'' leaves
+the repository listed and never ready, its task carrying the error, until it is
+unloaded.
+
+A repository's user schema and embedded-metadata map are read before it is
+registered at all: an invalid one fails the load itself, with a `400` naming the
+offending constraint.
+
+The daemon also loads, at startup, the repositories its configuration lists
+([[Daemon configuration]]).
+
+''Unload'' stops the repository's watcher, drops it from the daemon and releases
+its lock; the data on disk is untouched. It is refused (`409`) while its load is
+still running, while a coordinated rollback is in progress (finish or abort it),
+or while a reconcile, a query, a duplicate scan or a relink runs — stop it first
+([[Cancelling a task]]). A watcher flush does not block it.

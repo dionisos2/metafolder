@@ -1,0 +1,18 @@
+title: Why background tasks hold a weak reference
+tags: Daemon
+kind: rationale
+audience: dev
+summary: The watcher and the executor must never keep their repository alive, or an unload would leak it with its store locked.
+
+A loaded repository (`RepoState`) owns its store, and its store holds the
+repository's exclusive lock. Its background tasks — the watcher's ingest thread,
+the executor that applies buffered events — hold only a `Weak<RepoState>`, and
+upgrade it for each piece of work.
+
+If they held an `Arc`, the repository would keep itself alive through its own
+threads: an unload would drop the daemon's reference and nothing else, the store
+would never close, and its lock would stay held — a repository nobody can load
+again, in this daemon or another, until the process exits.
+
+This is a project invariant, checked by semgrep (`.semgrep/invariants.yml`,
+"background tasks hold `Weak<RepoState>`").

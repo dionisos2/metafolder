@@ -44,7 +44,7 @@ impl ApiError {
     }
 
     /// `503 Service Unavailable`: the repository is registered but not yet
-    /// warm, so it cannot serve data (spec-main "POST /repos/load"). Distinct
+    /// warm, so it cannot serve data (doc "Creating and loading a repository"). Distinct
     /// from `409`: nothing conflicts, the answer is simply not available yet
     /// and the same request will succeed once the `load` task completes.
     pub fn unavailable(message: impl Into<String>) -> Self {

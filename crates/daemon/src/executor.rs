@@ -316,7 +316,7 @@ pub fn flush_pending(repo: &RepoState) -> Result<FlushStats> {
 /// hundred thousand files arriving at once, or a resume after a long pause —
 /// is a different animal: it can take minutes, and its size cannot be guessed
 /// from outside. It says how much it has to do and how far it has got
-/// (spec-main "Startup report").
+/// (doc "The daemon's startup report").
 pub fn flush_pending_reported(repo: &RepoState, report: FlushReport) -> Result<FlushStats> {
     flush_pending_once(repo, report)
 }

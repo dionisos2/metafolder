@@ -432,7 +432,7 @@ export async function mount(root, metafolder) {
     await pollWatch();
   }
 
-  // Unload a repository from the daemon (spec-main "Repository management"):
+  // Unload a repository from the daemon (doc "Repository endpoints"):
   // stops its watcher and releases its DB lock, then refreshes the list.
   /** @param {string} repoUuid */
   async function unloadRepo(repoUuid) {

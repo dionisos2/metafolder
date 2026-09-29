@@ -9,6 +9,7 @@ through the `mf` command line and a desktop GUI.
 !! Topics
 
 * [[Configuration]] — one git repository under `~/.config/metafolder/`, merged on update
+* [[Daemon]] — the server holding your repositories: loading, configuring, its reports
 * [[Duplicates]] — finding byte-identical files and deleting the copies you choose
 * [[Security]] — session tokens, sandboxed decoders, no network
 * [[Slow log]] — the operations that took too long, and where their time went

@@ -87,7 +87,7 @@ async fn test_health() {
 #[tokio::test]
 async fn test_diagnostics_feed_serves_what_the_daemon_warned_about() {
     // The GUI is a separate process and cannot read the daemon's stderr, so the
-    // warnings it prints are also served here (spec-main "Diagnostics feed").
+    // warnings it prints are also served here (doc "Health and diagnostics").
     let app = app();
     // Start from the current head: the feed is process-wide, and other tests in
     // this binary may have recorded into it.

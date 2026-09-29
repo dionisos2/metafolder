@@ -83,8 +83,8 @@ async fn setup_with_schema(prefix: &str, schema: Value) -> (Router, String, Temp
             .await;
     assert_eq!(status, StatusCode::OK, "load failed: {body}");
     // A load returns before the repository is warm, and a warming repository
-    // answers 503 to everything but its own state (spec-main "POST
-    // /repos/load"). Waiting for its `load` task is what a client does.
+    // answers 503 to everything but its own state (doc "Creating and loading a repository").
+    // Waiting for its `load` task is what a client does.
     wait_ready(&second, body["repo_uuid"].as_str().unwrap()).await;
     let repo = body["repo_uuid"].as_str().unwrap().to_string();
     (second, repo, root)

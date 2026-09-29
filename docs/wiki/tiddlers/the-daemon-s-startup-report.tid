@@ -1,0 +1,56 @@
+title: The daemon's startup report
+tags: Daemon
+kind: reference
+audience: dev
+summary: What the daemon prints on stderr while it loads its repositories — one repository, one phase, one event at a time.
+
+The daemon reports its startup on stderr ''as it goes'': each repository is named
+before its load starts, and its outcome — `[daemon] Loaded <name>`, or a
+warning — is written before the next one is attempted. On a terminal the
+announcement is a progress line. So a startup that takes long always says which
+repository it is waiting for.
+
+Within a repository, every ''phase'' announces itself before it runs, and gives its
+duration when it ends (only past 10 ms, so that the instant ones do not bury the
+one that costs):
+
+```
+[load music] open the key-value store…
+[load music] probe case sensitivity…
+[load music] load the schema…
+[load music] load the metadata map…
+[load music] replay the buffered filesystem events…
+[load music] place the filesystem watches…
+[load music] start the watcher…
+```
+
+The reading rule: ''the last line names the phase that is running''. Load work is
+proportional to the repository, not the code; a phase can run for minutes on a
+large one.
+
+The replay reports ''inside'' itself, being the least predictable phase: how many
+events it read, how many were left after compaction, then each event as it
+applies it — and, for a directory that arrived whole (one event hiding a whole
+subtree), the entries it has ingested so far:
+
+```
+[load photos]   1 event(s) buffered
+[load photos]   1 event(s) after compaction
+[load photos]   event 1/1: arrived /photos
+[load photos]     scanning /photos: 2326 entries ingested
+```
+
+These lines are limited to one per second, the first and the last always shown.
+One event is several steps of very different cost, and a step that ''stalls''
+cannot report itself — the code that would is the code stuck in it — so a
+''watchdog'' reports from outside, naming the current step once a second while it
+stays current, and nothing while the steps flow:
+
+```
+[load home]   still on: event 2/426: modified /target/…/acl-manifests.json — refresh the stat fields (4.12s)
+[load home]   event 2/426 took 5.14s
+```
+
+These timings stay on stderr: a client already watches a load as a task. What is
+slow outside a load goes to the [[Slow log]]; what the daemon warns about goes to
+the [[Health and diagnostics]] feed.

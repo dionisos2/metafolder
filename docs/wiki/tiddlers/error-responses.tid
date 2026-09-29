@@ -1,0 +1,19 @@
+title: Error responses
+tags: Daemon
+kind: reference
+audience: dev
+summary: Every daemon error is {"error": "<message>"} with a status code; the common statuses and what they mean.
+
+An error answers `{"error": "<message>"}` (sometimes with more fields: a schema
+violation carries a `violations` array) and a status:
+
+|!Status |!When |
+|`400` |a malformed body or query, an invalid pagination cursor, a `tree_ref` whose parent does not exist, that would make a cycle or pass depth 1000, a schema violation, an invalid schema file |
+|`401` |no session token, or the wrong one ([[Session tokens]]) |
+|`404` |no such repository (not loaded), metarecord, field row or task |
+|`409` |a conflict with the current state: a repository already initialised there, a name already loaded, a store locked by another daemon, a reconcile or duplicate scan already running, a revert blocked by later changes, an unload while work runs |
+|`423` |the repository is locked by a coordinated navigation (spec-event-log "Rollback lock") |
+|`503` |the repository is still loading: watch its `load` task |
+|`500` |an internal error — the store, the disk — the message saying which |
+
+The CLI prints a daemon error on stderr as `error: <message>`, exit code 1.

@@ -10,27 +10,8 @@ repositories, metadata metarecords, fields, and values.
 
 ** Repository
 
-Persisted as =config.json= inside the =.metafolder/= directory.
 
-By default, =.metafolder/= is a subdirectory of the watched root. It can also
-live at an arbitrary path (external database), useful when the data disk is
-read-only or when metadata should be kept on a separate, faster device.
-
-The database and other daemon-managed volatile files live in the
-=.metafolder/internal/= subdirectory, which is always excluded from tracking
-(see [[file:spec-file-tracking.org][spec-file-tracking.org]]). The rest of
-=.metafolder/= (=config.json=, =schema.json=) is ordinary content that the
-user may track like any other file.
-
-| Field       | Type   | Description                            |
-|-------------+--------+----------------------------------------|
-| =repo_uuid= | UUID   | Stable identifier for this repository  |
-| =name=      | string | Name of the repository                 |
-| =version=   | string | Config schema version                  |
-| =root=      | path   | Absolute path to the watched directory |
-| =schema=    | path   | Optional path to the user schema file, relative to =.metafolder/= (or absolute); default =.metafolder/schema.json= (see [[file:spec-schema.org][spec-schema.org]]) |
-| =log_retention_revisions= | u64 | Optional: revisions of history the event log keeps behind HEAD, overriding the daemon's =[settings]= (default 200); =0= keeps everything (see [[file:spec-event-log.org][spec-event-log.org]] "Automatic retention") |
-| =log_retention_keep_labels= | bool | Optional: whether a labelled revision stops the trim, overriding the daemon's =[settings]= |
+Moved to the wiki: doc "Repository", doc "Repository layout on disk".
 
 ** Metarecord
 
