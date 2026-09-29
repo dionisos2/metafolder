@@ -62,7 +62,7 @@ pub const DEFAULT_SLOW_READ_THRESHOLD_MS: u64 = 100;
 pub const DEFAULT_ORPHAN_CASCADE_LIMIT: usize = 10_000;
 
 /// Every how many days each repository's automatic backup is taken
-/// (spec-storage increment 5).
+/// (doc "Backups and restore").
 pub const DEFAULT_AUTO_BACKUP_DAYS: u32 = 1;
 
 /// Tunable daemon settings (the `[settings]` table of `config.toml`). These are

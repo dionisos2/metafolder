@@ -1,5 +1,5 @@
-//! The key-value store's derived key spaces (docs/spec-storage.org, increment
-//! 4 a): maintained row by row inside every write transaction, they must
+//! The key-value store's derived key spaces (doc "Store tables"):
+//! maintained row by row inside every write transaction, they must
 //! always equal what a rebuild from the primary data gives — after ordinary
 //! writes, deletions, retypes and renames, and after the log's navigation,
 //! which rewrites rows by the same primitives.
@@ -160,7 +160,7 @@ fn long_texts_are_derived_too() {
 
 /// `check` finds derived data that no longer matches the primary data — here
 /// a set chunk deleted behind the store's back — and `reindex` repairs it
-/// (spec-storage increment 5).
+/// (doc "Checking and reindexing a repository").
 #[test]
 fn check_finds_damaged_derived_data_and_reindex_repairs_it() {
     use metafolder_daemon::store::Begin;

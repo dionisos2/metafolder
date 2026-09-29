@@ -412,7 +412,7 @@ must absorb:
 
 The store's memory map and locks are not safe on network filesystems (SSHFS,
 NFS, SMB/UNC shares): a =.metafolder/= on one is refused at =init= and at load
-(spec-storage "Safety"). The repository's files may stay on the share; its
+(doc "Storage safety"). The repository's files may stay on the share; its
 =.metafolder/= goes on a local disk, as an external one. (The SQLite backend,
 which fell back to =journal_mode=DELETE= there, was dropped in September
 2026.)

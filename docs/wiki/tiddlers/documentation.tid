@@ -14,6 +14,7 @@ through the `mf` command line and a desktop GUI.
 * [[Duplicates]] — finding byte-identical files and deleting the copies you choose
 * [[Schema]] — types of metarecords and the constraints on their fields
 * [[Security]] — session tokens, sandboxed decoders, no network
+* [[Storage]] — the on-disk store behind each repository: checks, backups, how it answers queries
 * [[Slow log]] — the operations that took too long, and where their time went
 * [[Tasks]] — the daemon's long work, observable and often stoppable
 * [[Trash]] — the per-repository bin: trashing, restoring, undoing

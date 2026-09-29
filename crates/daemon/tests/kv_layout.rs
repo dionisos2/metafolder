@@ -1,5 +1,5 @@
-//! The key-value store's primary layout (docs/spec-storage.org "Key
-//! layout"): a record's rows keyed by field, and the migration of a store of
+//! The key-value store's primary layout (doc "Store tables"): a record's rows keyed by field, and
+//! the migration of a store of
 //! the first layout (rows keyed `uuid · row id`) when it opens.
 
 use metafolder_core::metarecord::{Field, Value};

@@ -1,0 +1,27 @@
+title: Writes and atomicity
+tags: Storage
+kind: reference
+audience: dev
+summary: One revision is one transaction — rows, log, HEAD and every derived key space — and the map grows at the start of each write.
+
+One `log::Writer` revision is one write transaction of the store: the field rows,
+the log's operations and snapshots, HEAD, ''and'' every derived key space. It commits
+entirely or not at all. There is no snapshot-plus-replay scheme and no "refresh to
+HEAD" on the read path: the derived data is consistent with HEAD by construction.
+Bulk writers (reconcile, a large watcher flush) accumulate their derived updates in
+memory, a chunk at a time, and write each chunk once. One writer at a time: the
+executor and the API already serialise writes.
+
+!! The map
+
+LMDB reserves its whole map in the address space up front, one per loaded
+repository, and grows it only between transactions — so the room a write transaction
+starts with is the most it can write. That room is the ''free space of the disk'',
+capped at 128 GiB per store: granted at the start of a write transaction (the one
+moment LMDB allows a resize), and renewed when it falls below what must be
+guaranteed. A revision of any size — a first reconcile of a large tree — therefore
+commits unless the disk is full (or past 64 GiB in one revision); some 900
+repositories fit in the address space. A revision that cannot fit fails whole
+(`MDB_MAP_FULL`), without corruption. (A fixed 1 TiB map ran out of address space at
+about 120 repositories; doubling the map when half full failed any revision larger
+than the store already was.)

@@ -409,7 +409,7 @@ would find its target "already undone" and refuse to take it back a second time.
 ** Storage
 
 The log lives in the repository's key-value store, beside the data it
-describes (spec-storage "Key layout"): one transaction writes both. A
+describes (doc "Store tables"): one transaction writes both. A
 *revision* holds its timestamp, optional label and origin; an *operation*
 holds the fields below; each operation keeps its before and after snapshot
 rows; HEAD is a record of its own; the restoration ops a skipped navigation
@@ -923,7 +923,7 @@ before X.
 so the database state at X cannot be reconstructed from the log alone. This
 does not affect navigation within the remaining tree (operations X→HEAD are
 intact), but a fresh replay from scratch is no longer possible. For disaster
-recovery, use a backup of the store (=mf repo backup=, spec-storage) rather than relying on
+recovery, use a backup of the store (=mf repo backup=, doc "Storage") rather than relying on
 log replay.
 
 *** Linearize(X)

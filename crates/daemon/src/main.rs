@@ -49,7 +49,7 @@ async fn main() {
     tokio::task::spawn_blocking(move || daemon_config::apply(&startup_state, config))
         .await
         .expect("startup repo loading panicked");
-    // Each repository's automatic backup, when due (spec-storage increment 5).
+    // Each repository's automatic backup, when due (doc "Backups and restore").
     state.start_auto_backups();
 
     let token = match metafolder_core::auth::ensure_token("daemon") {

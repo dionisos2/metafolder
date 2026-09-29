@@ -181,8 +181,7 @@ impl RepoState {
         );
         Self {
             conn: Mutex::new(opened.conn),
-            // No forest in memory: the store answers (spec-storage increment
-            // 4 e).
+            // No forest in memory: the store answers (doc "The forest in the store").
             tree: TreeCache::new(opened.case_insensitive),
             config: opened.config,
             name,
@@ -541,7 +540,7 @@ impl RepoState {
 
     /// Prepares a freshly loaded repository to serve: reads its declared mount
     /// points. There is nothing else to warm — the queries and the forest are
-    /// answered by the store itself (spec-storage increment 4) — but the load
+    /// answered by the store itself (doc "Storage") — but the load
     /// is still reported through `progress` `(phase, done, total)`, a no-op
     /// for the synchronous callers (startup auto-load, `init`).
     pub fn warmup(&self, progress: ProgressFn) -> Result<(), ApiError> {
@@ -587,7 +586,7 @@ impl RepoState {
         self.internal_dir().join("backups")
     }
 
-    /// Takes a verified backup (`mf repo backup`, spec-storage increment 5)
+    /// Takes a verified backup (`mf repo backup`, doc "Backups and restore")
     /// into `dest` — which must not exist — or, by default, into a new
     /// `internal/backups/manual-<time>/`.
     pub fn backup(&self, dest: Option<PathBuf>) -> Result<crate::backup::BackupInfo, ApiError> {
@@ -638,7 +637,7 @@ impl RepoState {
     }
 
     /// What no longer holds together in the store (`mf repo check`,
-    /// spec-storage increment 5); empty when healthy.
+    /// doc "Backups and restore"); empty when healthy.
     pub fn check_store(&self) -> Result<Vec<String>, ApiError> {
         let conn = self.conn.lock_recover();
         let mut problems = crate::store::Begin::check(&conn)
@@ -1067,8 +1066,8 @@ impl AppState {
         Ok(locator)
     }
 
-    /// Restores a repository from a backup (`mf repo restore`, spec-storage
-    /// increment 5): `from`, or its most recent one. A loaded repository is
+    /// Restores a repository from a backup (`mf repo restore`, doc "Backups and restore"): `from`,
+    /// or its most recent one. A loaded repository is
     /// released, restored and loaded back — on its old store when the
     /// restore failed, which then changed nothing; one that is not loaded
     /// (its store may be what no longer loads) is restored and then loaded.

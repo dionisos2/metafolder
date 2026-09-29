@@ -1,4 +1,4 @@
-//! The key-value storage backend (docs/spec-storage.org): the `store` traits
+//! The key-value storage backend (doc "Storage"): the `store` traits
 //! over LMDB (through `heed`). The tables below hold the primary data and the
 //! event log; the derived key spaces the query source reads are in
 //! [`derived`].
@@ -27,7 +27,7 @@
 //!
 //! A record's rows of one field are one prefix of `field_cells`: checking a
 //! candidate on the field searched reads those rows, not all of its record's
-//! (docs/spec-storage.org "Key layout"). `row_owner` holds that prefix, so a
+//! (doc "Store tables"). `row_owner` holds that prefix, so a
 //! row is still addressed by its id alone. The first layout kept the rows in
 //! `cells` keyed `uuid · row id`; [`KvStore::open`] migrates it
 //! ([`LAYOUT`]).
@@ -492,7 +492,7 @@ impl KvStore {
         }
         // SAFETY: the lock above makes this process the file's only opener;
         // the map is read-only (no WRITEMAP), so a stray write in the process
-        // cannot reach it (docs/spec-storage.org "Safety").
+        // cannot reach it (doc "Storage safety").
         let env = unsafe {
             let held = std::fs::metadata(dir.join("data.mdb")).map_or(0, |m| m.len() as usize);
             let map_size = page_multiple(map_size.max(held.saturating_mul(2)));

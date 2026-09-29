@@ -1,0 +1,41 @@
+title: Storage
+kind: overview
+aliases: store lmdb kv kvstore
+summary: Each repository's metadata and history live in a key-value store (LMDB) on disk; nothing proportional to the repository stays in memory.
+
+A repository's metarecords, their fields and the event log live in its own
+''key-value store'' — LMDB, through the `heed` crate — under
+`.metafolder/internal/kv/`. The store is memory-mapped: nothing is read at open,
+the operating system's page cache keeps the pages in use, and nothing whose size
+grows with the repository is held in the daemon's memory. A repository of any size
+works on an ordinary machine; one that fits in memory ends up entirely in the page
+cache on its own.
+
+The store holds two kinds of data: the ''primary'' data (metarecords, rows, the
+log, HEAD), the source of truth; and ''derived'' key spaces (ids, bitmaps,
+partitions, the forest's bitmaps, trigrams), which answer queries and can always
+be rebuilt from the primary data. A bug in derived data gives wrong answers, never
+lost data — and a check detects it.
+
+Queries are answered from the store directly: there is no resident index to build
+at load and no SQL engine (SQLite was dropped in September 2026).
+
+!! Use it
+
+<<list-kind guide>>
+
+!! Reference
+
+<<list-kind reference>>
+
+!! Why it works this way
+
+<<list-kind rationale>>
+
+!! Open questions
+
+<<list-kind question>>
+
+!! Commands
+
+<<tagged-with "CLI command">>

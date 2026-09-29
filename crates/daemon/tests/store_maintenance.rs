@@ -1,4 +1,4 @@
-//! Store maintenance over HTTP (spec-storage): `check`, `reindex`, backups by
+//! Store maintenance over HTTP (doc "Storage"): `check`, `reindex`, backups by
 //! request and when due, and `restore`.
 
 use axum::body::Body;

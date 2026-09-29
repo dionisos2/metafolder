@@ -1,0 +1,26 @@
+title: Text search in the store
+tags: Storage
+kind: reference
+audience: dev
+summary: Trigram bitmaps give a text search its candidates, and a page without a count checks the text only where the sort looks.
+
+A `matches` (regex) or `osm` leaf on a field with many distinct values — file names —
+cannot scan them all at each keystroke. Each field's texts (strings, `tree_ref`
+names) are indexed by the trigrams of their lower-cased form, one chunked bitmap per
+trigram. A search's ''required literals'' — the literal runs every match contains,
+extracted from the pattern's syntax tree (a case-insensitive letter counting as the
+letter), or an `osm` term — give trigrams; their intersection gives the candidates,
+and only the candidates' values are read and matched against the real predicate. A
+pattern with no literal of three characters falls back to a scan of the distinct
+values, restricted to the candidates of the enclosing `and`. A text over 512 bytes is
+not split: its id joins the field's long-text set, which every search checks.
+
+''A page without a count checks text lazily.'' A text leaf, or the text conjuncts of
+an `and`, are split off the filter: what is evaluated is the candidate bitmap, and the
+predicate is checked only on the ids the sort visits, stopping at the page's end. A
+search as you type then costs its page — 0.5 to 3 ms on 5 million files, measured —
+instead of its whole match set (170 to 530 ms); only a request asking for the total
+pays for the whole set.
+
+`tests/kv_cost.rs`: a literal search reads the same number of keys on a repository and
+on one eight times larger (it read the whole field before: 2 004 keys against 16 004).

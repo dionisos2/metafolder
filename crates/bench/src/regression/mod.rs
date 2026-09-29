@@ -85,7 +85,7 @@ const SCENARIOS: &[&str] = &[
     // a subtree, a range and a text; a negation; a page of a combination
     // sorted on a value of ten distinct values. The last one is a known gap —
     // a range over a high-cardinality number on a KV repository reads its
-    // matches one by one (spec-storage, deferred "KV bit-sliced index").
+    // matches one by one (doc "Storage", deferred "KV bit-sliced index").
     "query.finder",
     "query.wide_and_rare",
     "query.rare_and_wide",

@@ -1661,7 +1661,7 @@ fn a_path_leaf_on_a_non_tree_field_is_refused_before_any_engine() {
 }
 
 /// Texts too long to be keyed whole on the key-value store (keyed by their
-/// first 256 bytes and a hash; spec-storage "Keys have a size limit"): texts
+/// first 256 bytes and a hash; doc "Store tables"): texts
 /// sharing that prefix, one equal to it, shorter ones around it — every
 /// comparison, the text scans, `same_as` and the sorts must still agree.
 #[test]

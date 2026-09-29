@@ -1,5 +1,5 @@
-//! The storage boundary's contract (docs/spec-storage.org "Increment 2,
-//! concretely"): what any backend of `metafolder_daemon::store::Store` must
+//! The storage boundary's contract (doc "The storage boundary"): what any backend of
+//! `metafolder_daemon::store::Store` must
 //! answer, asked only through the traits. The key-value store is the one
 //! backend; a second one would run this same file.
 

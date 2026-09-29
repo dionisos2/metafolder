@@ -1,5 +1,5 @@
-//! Postings for frequent values on the key-value store (spec-storage "Key
-//! layout", `postings`): a value held by 64 records or more is answered from
+//! Postings for frequent values on the key-value store (doc "Store tables", `postings`): a value
+//! held by 64 records or more is answered from
 //! one chunked bitmap instead of a key per holder. The query suites run on
 //! repositories far too small to promote a value, so this file builds ones
 //! that do — and holds every answer to the oracle, and the postings

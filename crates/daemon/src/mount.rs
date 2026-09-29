@@ -238,7 +238,7 @@ pub fn offline(
 }
 
 /// Whether a filesystem type is a network one: a key-value store refuses to
-/// live there (spec-storage "Safety": LMDB's memory map and locks are not
+/// live there (doc "Storage safety": LMDB's memory map and locks are not
 /// safe over NFS, SMB or SSHFS). FUSE is judged by what it carries — a local
 /// drive through `fuse.ntfs-3g` is not remote.
 pub fn is_network_filesystem(fstype: &str) -> bool {

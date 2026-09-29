@@ -1,0 +1,13 @@
+title: Storage open questions
+tags: Storage
+kind: question
+audience: dev
+status: deferred
+summary: Page checksums, id locality over time, a cold cache, and readers that do not wait for writers.
+
+* ''LMDB or `redb`.'' `redb` has page checksums, which would turn a bad sector into a detected error rather than a silently wrong page; whether that is worth its slower reads.
+* ''Locality over time.'' Dense ids are allocated in discovery order; whether that stays local enough after years of moves and renames, or a compacting reindex must be scheduled.
+* ''A cold cache.'' Whether to warm the hot key spaces (the forest, `kids`, presence, postings) at load with `madvise(WILLNEED)`, and what that costs on a store larger than memory.
+* ''Space.'' A bulk load leaves freed pages in the file (438 → 274 MB used on one run); a compacting copy after a large import would reclaim them — a backup already is one.
+* ''Readers that do not wait'' for a long write ([[Storage safety]]) — deferred by decision.
+* ''Numeric ranges'' over a field with many distinct values are linear; a bit-sliced index would serve them ([[Sorting and postings]]).

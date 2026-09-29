@@ -30,7 +30,7 @@ watch-quiet-period-ms = 2000
 |`log-retention-revisions` |`200` |revisions of history the event log keeps behind HEAD (`0`: everything); a repository can override it |
 |`log-retention-keep-labels` |`true` |whether a labelled revision stops the trim; a repository can override it |
 |`slow-operation-threshold-ms`, `slow-read-threshold-ms`, `slow-operation-reads-threshold` |`2000`, `100`, `100000` |[[Slow log configuration]] |
-|`auto-backup-days` |`1` |every how many days each loaded repository gets its automatic backup, into `internal/backups/auto/` — one slot, replaced only by a backup that checks clean (`0`: off) |
+|`auto-backup-days` |`1` |every how many days each loaded repository gets its automatic backup, into `internal/backups/auto/` — one slot, replaced only by a backup that checks clean (`0`: off; [[Backups and restore]]) |
 
 A missing file is an empty one. A malformed one — invalid TOML, an unknown
 top-level key, a `[[load]]` entry with both or neither of `root`/`metafolder` —

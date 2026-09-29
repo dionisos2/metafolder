@@ -1,0 +1,9 @@
+title: mf repo restore
+tags: [[CLI command]] Storage
+kind: reference
+summary: Put a backup of a repository back (the most recent one by default)
+
+Puts back `--from` or the most recent backup, after checking it; the current store is
+set aside, never deleted. A repository that no longer loads is named by `--path` (or
+`--metafolder`). Everything written since the backup is lost: run `mf reconcile`
+afterwards ([[Backups and restore]]).

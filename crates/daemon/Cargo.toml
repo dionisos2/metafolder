@@ -21,14 +21,14 @@ serde_json = "1"
 toml = "1.0"
 regex = "1"
 # Companion to `regex`: parse a pattern to HIR to extract a required literal
-# substring for the store's trigram pre-filter (spec-storage "Text: trigrams").
+# substring for the store's trigram pre-filter (doc "Text search in the store").
 regex-syntax = "0.8"
 base64 = "0.22"
 xxhash-rust = { version = "0.8", features = ["xxh3"] }
 # Pure-Rust, magic-byte MIME detection for mfr_mime (no system libmagic).
 infer = "0.19"
 roaring = "0.10"
-# The key-value storage backend (docs/spec-storage.org): LMDB, a memory-mapped
+# The key-value storage backend (doc "Storage"): LMDB, a memory-mapped
 # copy-on-write B+tree — the page cache is its cache.
 heed = { version = "0.22", default-features = false }
 # flock(2), for the one-daemon-per-repository lock the store takes itself.

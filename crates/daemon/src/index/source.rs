@@ -1,5 +1,5 @@
 //! What the query evaluator asks of the data it evaluates against
-//! (docs/spec-storage.org, "Increment 4, concretely"): one evaluator —
+//! (doc "Storage"): one evaluator —
 //! [`super::Eval`], which holds the query semantics the oracle validates —
 //! and a source of the bitmaps: the key-value store's derived key spaces
 //! (`crate::kvstore::KvSource`). A resident index was the other, until the

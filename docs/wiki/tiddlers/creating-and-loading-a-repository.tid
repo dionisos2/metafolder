@@ -11,7 +11,7 @@ mf repo                                     # the loaded repositories (mf repo l
 mf -n <name> repo unload                    # unload it
 ```
 
-''Init'' creates `config.json` and the store; it fails if a repository is already
+''Init'' creates `config.json` and the store ([[Storage]]); it fails if a repository is already
 there. The name defaults to the root directory's name. A new repository watches
 nothing: tracking is opt-in (spec-file-tracking "Watch and Ignore").
 

@@ -526,9 +526,9 @@ field across all ancestors at once, keeping the closest result.
 
 Each repository keeps its data in its own key-value store,
 =.metafolder/internal/kv/= (LMDB); its keys are
-[[file:spec-storage.org][spec-storage.org]]'s "Key layout". The SQLite database
+doc "Store tables". The SQLite database
 that held them until September 2026 is gone, and a repository still on it is
-refused at load (spec-storage "Choosing the backend").
+refused at load (doc "How the storage backend was built").
 
 *** UUID encoding
 
@@ -862,7 +862,7 @@ the TreeRef-field and Ref-field selectors of the tree-explorer panel, see
 The catalog is read from the store's derived key spaces (the index's field
 catalogue). Like every read it takes the repository's store handle, so it waits
 behind a long write (a reconcile, a large watcher flush) until that write
-commits — until reads stop taking the handle (spec-storage increment 4).
+commits — until reads stop taking the handle (doc "Storage safety").
 
 *** =GET /repos/:repo_uuid/tree/roots=
 

@@ -1,0 +1,9 @@
+title: mf repo check
+tags: [[CLI command]] Storage
+kind: reference
+summary: Check that the selected repository's store holds together
+
+Lists what no longer holds together in the repository's store — the derived key
+spaces against a rebuild from the primary data, and the metarecords holding several
+positions in one forest — one line each, and exits 1 on a problem
+([[Checking and reindexing a repository]]).

@@ -1,0 +1,22 @@
+title: Storage pitfalls
+tags: Storage
+kind: reference
+audience: dev
+summary: Traps met building and running the store — a lock shared with forked children, a marker found in the wrong key, writes measured on the wrong filesystem — and how a stuck daemon was diagnosed.
+
+* ''A lock shared with a forked child.'' An `flock` belongs to the open file description, which a `fork` shares with the child until its `exec`: a daemon that spawns anything holds its own `daemon.lock` from another descriptor for that instant, and a store closed and reopened can find it taken. Opening retries for one second; a second daemon holds it for good and is refused after the wait.
+* ''The long-text marker is found only in text keys.'' A text cut at 256 bytes carries `00 01` before its hash ([[Store tables]]); a date's or a number's raw key bytes can contain `00 01` too. Looking for the marker in anything but a text key made a date look like a long text.
+* ''Each commit is an `fsync`.'' Durability is paid per transaction, so a loop writing one element per transaction pays one sync per element: on SQLite, 5 000 events queued one by one took 15.1 s against 56 ms in one transaction (×269) — the real cause of minute-long watcher flushes. Batch the writes; the durability that matters is the batch's.
+* ''Measure writes where repositories live.'' A synced commit cost about 2 ms on the home filesystem and 20 ms on a container's `fuse-overlayfs` root.
+* ''Cost tests go through the route.'' A multi-term `osm` path walked the whole stored forest in real use (20 s, and the held repository blocked `GET /log/since` for 14 s) while `kv_cost.rs` stayed green: the tests did not run the route's forest rewrite. A cost assertion runs the query as the route prepares it.
+* ''Deletions need an index too'' (SQLite era, still true of any store keeping references): proving that nothing points at a deleted row scans the referencing table when that column has no index — a load stuck two hours deleting 300 852 operations, 8 s with the index.
+
+!! Diagnosing a daemon that seems stuck
+
+Without a debugger (none in a container), `/proc` said what it was doing within
+minutes:
+
+* `/proc/<pid>/io`: `rchar` of 1.2 TB on a 183 MB database with a small `read_bytes` — the same pages re-read from the page cache in a loop, not a disk problem;
+* per-thread CPU ticks in `/proc/<pid>/task/*/stat`, almost no voluntary context switches — one thread, pure CPU, no I/O wait;
+* a flat `VmRSS` — nothing being built in memory;
+* ''an empty console is not an empty log'': `/proc/<pid>/fd/1` showed where its output went, and the startup report there named the phase at fault ([[The daemon's startup report]]).

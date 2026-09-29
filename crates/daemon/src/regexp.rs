@@ -23,7 +23,7 @@ pub fn compile(pattern: &str) -> Result<regex::Regex, regex::Error> {
 
 /// Substrings every text matching `pattern` contains, lower-cased — what a
 /// trigram index can look up to narrow a text search to its candidates
-/// (spec-storage "Text: trigrams"). Conservative: what it cannot prove
+/// (doc "Text search in the store"). Conservative: what it cannot prove
 /// required it leaves out, so an empty answer means "scan". A case-insensitive
 /// letter (a class of one letter's case variants) counts as that letter, the
 /// index being lower-cased too.
@@ -110,7 +110,7 @@ pub fn required_literals(pattern: &str) -> Vec<String> {
 
 /// The literal text every match of `pattern` starts with, when the pattern is
 /// anchored at the start of the text — what a walk of a sorted forest can seek
-/// instead of visiting every path (spec-storage "The forest"). `None` when
+/// instead of visiting every path (doc "The forest in the store"). `None` when
 /// there is no such text: not anchored, anchored under an alternation, or
 /// opening on anything but a literal.
 pub fn anchored_prefix(pattern: &str) -> Option<String> {

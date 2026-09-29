@@ -5,9 +5,10 @@ use anyhow::Context;
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
-/// The store a repository's `config.json` says it is on (docs/spec-storage.org
-/// "Choosing the backend"). Only the key-value store is read: SQLite is
-/// recognised to be refused with a clear message, never opened.
+/// The store a repository's `config.json` says it is on
+/// (doc "How the storage backend was built"). Only the key-value store is
+/// read: SQLite is recognised to be refused with a clear message, never
+/// opened.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
 pub enum Storage {
@@ -91,7 +92,7 @@ impl RepoConfig {
     /// Writes `config.json` atomically — a complete new file renamed over
     /// the old one — so a crash leaves the old config or the new, never half
     /// of one: a backend conversion switches stores by this very write
-    /// (spec-storage increment 5). The new file is written in `internal/`,
+    /// (doc "How the storage backend was built"). The new file is written in `internal/`,
     /// which the watcher never records.
     pub fn write(&self, metafolder_dir: &Path) -> anyhow::Result<()> {
         use std::io::Write as _;

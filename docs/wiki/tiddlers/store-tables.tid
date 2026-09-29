@@ -1,0 +1,77 @@
+title: Store tables
+tags: Storage
+kind: reference
+audience: dev
+summary: The key-value store's tables, primary and derived, and how their keys are built.
+
+Every table is an ordered map of byte strings. Integers are big-endian (so byte
+order is numeric order), uuids their 16 bytes, and a name inside a composite key is
+escaped (`00` → `00 FF`) and ended by `00 00`, so that no name is a prefix of
+another.
+
+!! Primary (`kvstore/mod.rs`)
+
+|!Table |!Key |!Value |
+|`meta` |name |the id counters, HEAD, the layout and derived-format versions |
+|`metarecords` |uuid |version |
+|`field_cells` |uuid · field name · row id |field name · value |
+|`row_owner` |row id |uuid · field name |
+|`by_field` |field name · row id |uuid |
+|`field_types` |field name · value type |how many rows of that type |
+|`forest` |field · parent · name bytes |uuid · row id |
+|`ops` |op id |the operation |
+|`snaps` |op id · after? · index |a snapshot row |
+|`op_children` |parent op · child op |— |
+|`ops_by_rev` |revision · seq · op id |— |
+|`ops_by_entity` |uuid · op id |— |
+|`revisions` |revision id |timestamp · label · origin |
+|`restorations` |position |a restoration queued by a skipped navigation step |
+
+A record's rows ''of one field'' are one prefix of `field_cells`, so checking a
+candidate on the field searched reads those rows, not all of its record's — a real
+file carries a dozen `mfr_*` and metadata fields besides. `row_owner` holds that
+prefix, so a row is still addressed by its id alone. Row, operation and revision ids
+come from counters in `meta` and are never reused; a row put back under its own id
+moves the counter past it.
+
+!! Derived (`kvstore/derived.rs`)
+
+|!Table |!Key |!Value |
+|`ids` |uuid |dense id (u32) |
+|`uuids` |dense id |uuid |
+|`sets` |kind · [field] · [key] · chunk |a roaring bitmap |
+|`parts` |field · partition · key · dense id |rows (count) |
+|`kids` |parent uuid · field · dense id |rows (count) |
+|`grams` |field · trigram · chunk |a roaring bitmap |
+
+A ''set'' is a bitmap of dense ids cut in chunks of 65 536 (the high 16 bits), so a
+write rewrites one chunk and a read unions a few: the universe; per field, the ids
+holding a value (`present`) or a `Nothing` (`absent`), and on a `tree_ref` field the
+ids with a child (`parents`); the descendants of each node and the children of each
+target ([[The forest in the store]]); the postings of frequent values
+([[Sorting and postings]]); the texts too long for trigrams ([[Text search in the store]]);
+the ids holding several rows of a field, whose sort representative a walk must read
+one by one. A ''partition'' orders a field's rows by a key whose bytes
+sort like the values — the value itself (equality, ranges, the distinct-value scans),
+a `tree_ref`'s name, the uuid a value points at. `kids` is the forest keyed by parent
+first, so a metarecord arriving or leaving finds the fields it is a parent in without
+a scan.
+
+Dense ids are allocated in discovery order and never renumbered: the files of one
+folder mostly get consecutive ids, which keeps a folder's bitmaps small (they
+compress to runs). Deleted ids are not reused.
+
+Every row change goes through one primitive (`derive_row`), every metarecord creation
+and removal through two others — navigation included — so the derived data is
+maintained in each revision's own transaction; `check` holds all of it to a rebuild.
+
+!! Key size
+
+LMDB refuses a key over 511 bytes, and a partition key (holding a value) or a forest
+key (holding a name) can hold any text. So a text over 256 escaped bytes is keyed by
+that prefix, a marker (`00 01`, sorting after the `00 00` ending a text equal to the
+prefix and before anything longer) and a 64-bit hash of the whole: order is kept
+except among long texts sharing the prefix, which a reader resolves from the values.
+A node name over 300 bytes is keyed by its first 300 bytes and a hash, and read back
+from its row. A field name is part of every key: one over about 200 bytes cannot be
+written.

@@ -1,0 +1,8 @@
+title: mf repo backup
+tags: [[CLI command]] Storage
+kind: reference
+summary: Take a backup of the selected repository and print where it went
+
+Writes a consistent copy of the store, with `config.json`, `schema.json` and a
+`backup.json`, under `internal/backups/` or into the new directory `--to` names;
+the copy is checked before it takes its place ([[Backups and restore]]).

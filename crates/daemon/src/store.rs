@@ -1,4 +1,4 @@
-//! The storage boundary (docs/spec-storage.org "Increment 2, concretely"):
+//! The storage boundary (doc "The storage boundary"):
 //! what the daemon asks of a repository's database, as the traits a storage
 //! backend implements. `Rows` is the data model's primary state — metarecords
 //! and their field rows, whose ids are part of the model (`Field.id`, restored
@@ -279,7 +279,7 @@ macro_rules! forward_to_store {
 /// Metarecords and their field rows.
 pub trait Rows {
     /// The key-value store behind this one, when it is one: a repository is
-    /// queried from the store itself (spec-storage increment 4 d).
+    /// queried from the store itself (doc "Storage").
     fn as_kv(&self) -> Option<&crate::kvstore::KvStore> {
         None
     }
@@ -318,7 +318,7 @@ pub trait Rows {
     /// their names — reversed when `descending` — strictly after `after` in
     /// that order: `(uuid, name bytes)`. The default reads every child; a
     /// store keeping its forest ordered reads the page alone (a sorted walk
-    /// of a folder then costs its page, spec-storage increment 4 e).
+    /// of a folder then costs its page, doc "The forest in the store").
     fn children_page(
         &self,
         field: &str,
@@ -876,7 +876,7 @@ pub trait WriteTxn: Store {
     fn drop_restorations(&self, up_to: i64) -> Result<()>;
 
     /// Puts a revision under its own id — a conversion copying a history
-    /// (spec-storage increment 5).
+    /// (doc "How the storage backend was built").
     fn import_revision(&self, id: i64, meta: &RevisionMeta) -> Result<()>;
     /// Puts an operation and its snapshots under their own ids (a
     /// conversion); its parent and its revision are already there.
@@ -902,14 +902,14 @@ pub trait Begin {
     fn begin_write(&mut self) -> Result<Box<dyn WriteTxn + '_>>;
     /// What in the store no longer holds together, one line each — derived
     /// data differing from what its primary data derives, a damaged page;
-    /// empty when healthy (`mf repo check`, spec-storage increment 5).
+    /// empty when healthy (`mf repo check`, doc "Checking and reindexing a repository").
     fn check(&self) -> Result<Vec<String>>;
     /// Derives again whatever the store derives from its primary data
     /// (`mf repo reindex`).
     fn reindex(&mut self) -> Result<()>;
     /// Writes a consistent copy of the store into the directory `dir`, as
     /// the store's own file layout (`kv/`) — taken while the
-    /// store stays open (`mf repo backup`, spec-storage increment 5).
+    /// store stays open (`mf repo backup`, doc "Backups and restore").
     fn backup_to(&self, dir: &std::path::Path) -> Result<()>;
 }
 

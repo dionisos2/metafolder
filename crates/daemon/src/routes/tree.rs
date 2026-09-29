@@ -162,7 +162,7 @@ pub(super) async fn list_fields(
         // The data-derived catalog is the store's own (the index's `present`/
         // `types` key spaces): every distinct field name and value type, no
         // scan. Like every read it waits for the connection, so behind a long
-        // write (until reads stop taking it, spec-storage increment 4).
+        // write (until reads stop taking it, doc "Storage safety").
         let conn = slowlog::timed("wait:conn", || repo_state.conn.lock_recover());
         let data = engine(&*conn)?.field_catalog(None);
         // Merge in the schema (schema-priority, schema-only fields added), then

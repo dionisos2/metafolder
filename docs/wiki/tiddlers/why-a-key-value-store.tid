@@ -1,0 +1,31 @@
+title: Why a key-value store
+tags: Storage
+kind: rationale
+audience: dev
+summary: The query engine needed many small reads without holding the repository in memory; SQL was the wrong layer for that, and LMDB the right one.
+
+Until September 2026 the query engine was fast because everything it needed was in
+memory — a bitmap index, the id registry, the whole forest — so a repository only
+worked while that fitted in RAM. The requirement was the opposite: ''any'' size on
+an ordinary PC (8–16 GB), with nothing proportional to the repository resident but a
+query's transient result bitmap, and the everyday gestures (opening a folder,
+filtering by a tag, searching a name, sorting by date) no more than twice slower
+than the resident engine. Safety not traded: atomic writes, nothing lost on a crash
+or a power cut, and a bug in derived data never losing user data.
+
+A disk-resident engine makes many small reads — a bitmap container, a key, a
+folder's children — and SQL was the wrong layer for that:
+
+* ''Per access.'' A SQLite statement step costs microseconds; a lookup in a memory-mapped B+tree on a warm cache, a few hundred nanoseconds with no copy. Over the hundreds of thousands of accesses of a heavy query, that alone was most of what the requirement forbade.
+* ''Memory.'' A memory-mapped store needs no cache of its own and no budget: the page cache holds the pages in use and drops the others, which are clean copies of the file. The database cannot exhaust memory; the worst case is being slower. The design effort moves to ''layout'': data used together must be stored together — ten neighbouring pages are fast, ten thousand scattered ones are not.
+* ''Locking.'' An MVCC store with one writer and non-blocking readers could remove the "read blocked by a long write" class of slowness — not yet taken advantage of ([[Storage safety]]).
+
+Of the candidates — LMDB (an mmap'd copy-on-write B+tree, the fastest reads, very
+mature, a C library), `redb` (the same model in pure Rust, slower reads, page
+checksums), `fjall` (an LSM tree, better writes, worse point reads) — the workload is
+read-dominated with writes in bursts that batch well: LMDB.
+
+The measurements that decided it are in [[How the storage backend was built]]: on the
+same records, the disk store beat the resident engine on every gesture — by one to
+three orders of magnitude on sorts and text, because a sort stopped at the page and
+text was checked only where the sort looked.

@@ -101,7 +101,7 @@ slow-operation-reads-threshold = 100000
 
 # Every how many days each loaded repository's automatic backup is taken: a
 # consistent copy of its store, with its config, in
-# .metafolder/internal/backups/auto/ (spec-storage). One slot, replaced by the
+# .metafolder/internal/backups/auto/ (doc "Backups and restore"). One slot, replaced by the
 # next backup — and only by one that checks clean, so a store damaged since
 # keeps the last good backup (a warning in the repository's diagnostics says
 # so). The daemon looks when it starts and then every hour; the copy holds the

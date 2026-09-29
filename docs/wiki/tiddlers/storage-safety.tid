@@ -1,0 +1,21 @@
+title: Storage safety
+tags: Storage
+kind: reference
+audience: dev
+summary: What survives a crash, a memory bug, a bad disk and a network filesystem — and why reads still wait for writes.
+
+* ''Crash and power loss.'' A copy-on-write B+tree never modifies a live page: a commit writes the new pages elsewhere, syncs them, then flips a small header to the new root (two alternating headers). A crash before the flip leaves the previous header: the store opens at the last committed transaction, with no recovery log to replay.
+* ''Our own memory bugs.'' The map is opened ''read-only'' (no `MDB_WRITEMAP`): writes go through the library's system calls, so a stray write in the process cannot reach the file.
+* ''A disk lying about `fsync`, bad sectors.'' A damaged page can make part of the store — all of it, for a page near the root — unreadable. LMDB has no page checksums. The defence is [[Backups and restore]], taken daily by default.
+* ''Network filesystems'' (NFS, SMB, SSHFS…) are not supported by LMDB. A `.metafolder/` on one is refused at `init` and at load, its filesystem type read from `/proc/self/mountinfo` (NFS, CIFS/SMB, 9p, the cluster filesystems, and FUSE only for its remote kinds — a local drive through `fuse.ntfs-3g` is not refused). The files may stay on the share: only `.metafolder/` must be local (an external one). Where the mount table cannot be read, nothing is refused.
+* ''Long read transactions'' pin old pages and make the file grow. A read snapshot borrows the store behind the repository's lock, so none outlives the request holding it; no static check enforces more than that.
+* ''Derived data'' can always be rebuilt ([[Checking and reindexing a repository]]).
+
+!! Reads wait for writes
+
+An MVCC store lets readers work past a writer, but here a query still takes the
+repository's lock, as every read did before: its snapshot borrows the store behind
+that lock. So a read waits for a long write. Letting reads open their snapshot without
+the lock needs the map's growth to exclude open readers (LMDB resizes only with no
+transaction open in the process) — ''deferred by decision'' (September 2026):
+operations stay sequential for now.

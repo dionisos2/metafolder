@@ -18,7 +18,7 @@ summary: What .metafolder/ holds — config.json and its fields, schema.json, an
 
 `internal/` is excluded from tracking by absolute path, in the watcher and in
 reconcile alike; everything else in `.metafolder/` is trackable content. The
-store is refused on a network filesystem. `internal/kv/daemon.lock` is held with
+store ([[Storage]]) is refused on a network filesystem ([[Storage safety]]). `internal/kv/daemon.lock` is held with
 `flock` for as long as a daemon has the repository loaded.
 
 !! config.json
@@ -33,7 +33,7 @@ store is refused on a network filesystem. `internal/kv/daemon.lock` is held with
 |`log_retention_revisions` |integer |optional: how many revisions of history the log keeps, overriding the daemon's setting (`0`: everything) |
 |`log_retention_keep_labels` |bool |optional: whether a labelled revision stops the trim, overriding the daemon's setting |
 |`system` |bool |a repository the daemon uses internally (a sync plan repository): hidden from `GET /repos` unless `?all=true` |
-|`storage` |string |the store holding the data: the key-value store. Absent means a SQLite repository from before September 2026, which is refused at load |
+|`storage` |string |the store holding the data: the key-value store. Absent means a SQLite repository from before September 2026, which is refused at load ([[How the storage backend was built]]) |
 
 It is JSON, not TOML, because it is written by the daemon, not by you: it is
 repository data, distinct from the daemon's own `config.toml`

@@ -12,7 +12,7 @@ use crate::error::DomainError;
 use crate::log::Writer;
 use crate::phase::Phase;
 
-/// The key-value store's directory inside `internal/` (spec-storage).
+/// The key-value store's directory inside `internal/` (doc "Storage").
 pub const KV_DIR: &str = "kv";
 
 /// Subdirectory of `.metafolder/` holding the live database (and its WAL /
@@ -181,7 +181,7 @@ impl RepoLocator {
 }
 
 /// Refuses a `.metafolder/` on a network filesystem: the key-value store's
-/// memory map and locks are not safe there (spec-storage "Safety"). The files
+/// memory map and locks are not safe there (doc "Storage safety"). The files
 /// may stay on the share — only `.metafolder/` has to be local.
 fn refuse_network_filesystem(metafolder_dir: &Path) -> Result<()> {
     match crate::mount::network_filesystem(metafolder_dir) {

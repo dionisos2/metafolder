@@ -1,0 +1,8 @@
+title: mf repo reindex
+tags: [[CLI command]] Storage
+kind: reference
+summary: Rebuild what the selected repository derives from its data (its indexes)
+
+Rebuilds every derived key space from the primary data — the repair for what
+`mf repo check` reports; nothing can be lost by it
+([[Checking and reindexing a repository]]).

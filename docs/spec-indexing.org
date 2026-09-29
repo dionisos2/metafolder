@@ -324,7 +324,7 @@ unsorted, 50 ms by size and 150 ms by path. *Walk*: read an ordered structure
 from the cursor's position and keep the matches until the page is full — its
 cost is the page, divided by the matches' density along that structure. The
 design came out of the disk-backend prototype
-([[file:spec-storage.org][spec-storage.org]] "Prototype results"), where it
+(doc "How the storage backend was built"), where it
 explained most of the measured gap; it does not depend on where the data lives.
 
 =RepoIndex::page_of= walks when a sort has a walk and =walk_budget= says so:
@@ -485,7 +485,7 @@ SQL. What reaches SQLite is a list of uuids and the rows to read or write for
 it. All five increments below have landed; what follows records why, and in what
 order. (Since September 2026 there is no SQLite at all: the resident index this
 document describes went with it, and the same evaluator runs over the key-value
-store's derived key spaces — spec-storage increment 4.)
+store's derived key spaces — doc "Storage".)
 
 The argument was that nothing was missing to do it. The bitmaps already held a
 complete value → ids partition for *every* field, strings included

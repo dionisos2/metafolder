@@ -2,7 +2,7 @@ title: Repository endpoints
 tags: Daemon
 kind: reference
 audience: dev
-summary: Listing, reading, renaming, creating, loading and unloading repositories, and checking, reindexing and backing them up.
+summary: Listing, reading, renaming, creating, loading and unloading repositories, and checking, reindexing, backing them up and restoring them.
 
 |!Endpoint |!Does |
 |`GET /repos` |the loaded repositories — `{repo_uuid, name, root, internal_dir, system, …}` each; the system ones only with `?all=true` |
@@ -14,7 +14,9 @@ summary: Listing, reading, renaming, creating, loading and unloading repositorie
 |`POST /repos/:repo/check` |what no longer holds together in its store (its derived data against a rebuild): `{"problems": [...]}`, empty when healthy |
 |`POST /repos/:repo/reindex` |derives again what the store derives; answers `{}` |
 |`POST /repos/:repo/backup` |a verified copy of its store, taken while it stays loaded, with its `config.json` and `schema.json`; optional `{"to": "<new dir>"}` (`400` when it exists), by default a new `internal/backups/manual-<time>/`; answers `{"path", "created_at_ms", "metarecords"}` |
+|`POST /repos/:repo/restore` |puts a backup back — `{"from": "<dir>"}`, optional, else the most recent — and loads the repository again; answers `{"repo_uuid", "backup": {"path", "created_at_ms", "metarecords"}, "old_store"}` |
+|`POST /repos/restore` |the same for a repository named by its path, loaded or not: `{"root": …}` or `{"metafolder": …}`, and `from` |
 
 What loading and unloading do, and refuse: [[Creating and loading a repository]].
 `check`, `reindex` and `backup` hold the repository while they run
-(spec-storage).
+([[Checking and reindexing a repository]], [[Backups and restore]]).

@@ -1,0 +1,68 @@
+title: How the storage backend was built
+tags: Storage
+kind: rationale
+audience: dev
+status: record
+summary: The prototype's measurements, the increments, the two-backend era and the drop of SQLite (September 2026).
+
+!! The prototype
+
+A prototype in separate crates (the store, an oracle, cost tests, a measuring tool —
+removed since, last at commit `d28fd5b`) measured the everyday gestures against the
+resident engine on the same 210 000 synthetic records (8-way tree, 20 files per
+folder), then on 5 250 000 (a 6.4 GB store on a 7.6 GB machine). Milliseconds,
+medians of seven warm runs, a page being 100 results with their records:
+
+|!Gesture |!Disk store, page |!Resident, page |!Disk, 5.25 M, warm |!Cold |
+|first page of everything |0.15 |5.7 |0.97 |147 |
+|sorted by size |0.20 |50 |1.5 |171 |
+|folder of 10 008 files (250 008 at scale), by name |0.20 |7.0 |0.42 |201 |
+|subtree, by path |0.18 |12 |1.4 |145 |
+|tag, by date |0.22 |7.9 |0.63 |210 |
+|all files by path |0.19 |152 |2.1 |240 |
+|name contains "concert" |0.70 |72 |2.8 |2440 |
+|regex with no literal |0.50 |66 |0.66 |156 |
+|resident memory |2 MB |476 MB | | |
+|load before the first query |— |4.7 s | | |
+
+The disk store won everywhere — not because of the storage, but because a sort
+stopped at the page and text was checked only where the sort looked; the resident
+engine adopted both techniques afterwards (first page 5.7 → 0.08 ms). At twenty-five
+times the data every page stayed under 3 ms warm, the heap at a few MB; a field write
+took 5.2 ms, the move of a 748 979-record subtree 6.1 ms.
+
+Where it fell short: a cold cache (70–240 ms for an everyday gesture, seconds for a
+text search with a large candidate set); the ''count'' of a text search (0.2–0.5 s on
+5 M — hence a page asks for its count separately); size, about 1.2 KB per record;
+bulk load, 16 000 records/s at 200 k but 6 300/s at 5 M. A synced commit cost about
+2 ms on the home filesystem against 20 ms on a container's `fuse-overlayfs` root:
+writes are measured where repositories live.
+
+!! The increments
+
+# ''Prototype'' (above).
+# ''Extract the storage boundary'', SQLite its only implementation, no behaviour change ([[The storage boundary]]).
+# ''The key-value store'' for primary data and the log; every integration test on both backends; the default for a new repository.
+# ''Derived key spaces'' and the disk query source: the evaluator made generic over where its bitmaps come from, so one evaluator — the one holding the query semantics — served two sources against one oracle; then cost assertions.
+# ''Conversion, check, reindex, backup, restore.''
+
+For a while the backend was a property of the repository (`storage` in
+`config.json`, chosen at `init`), and `mf repo convert` moved a repository between
+them: a faithful copy — every row, operation and revision under its own id, and the
+id counters — in one transaction, then both stores compared by digest before the
+switch (50 000 files in 9 s). Per the migration policy, the conversion was the
+migration script for the format.
+
+!! One backend
+
+SQLite was dropped in September 2026, once no real repository was on it; the
+resident index and forest went with it — measured, they no longer paid for their
+memory. `config.json` still says `storage: "kv"`: one without it, or with `"sqlite"`,
+is a SQLite repository, refused at load with what to do (convert it with an earlier
+version, `mf repo convert --to kv`); a SQLite backup is refused by `mf repo restore`
+the same way. The oracle, SQL until then, became a naive evaluator over `Rows`.
+
+What the design gave up to SQLite's era: the adaptive planner's premise that each
+operand had one way to be answered — the sort choice and the trigram/scan choice are
+alternatives again, though fixed rules on exact counts, not a planner; and one more
+persisted format to migrate for the project's lifetime.

@@ -823,7 +823,7 @@ be loaded (=404= otherwise).
 ** Cross-machine sync                                                :deferred:
 
 Both repositories of a pair must be loaded in one daemon, and a repository's
-store may not live on a network filesystem (spec-storage "Safety"): a
+store may not live on a network filesystem (doc "Storage safety"): a
 repository on another machine can no longer be mounted over SSHFS and loaded,
 which is how this document used to say cross-machine sync is done. Until it
 has a design of its own, the way proposed (September 2026) is to bring the

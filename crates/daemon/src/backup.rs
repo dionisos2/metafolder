@@ -1,4 +1,4 @@
-//! Backups of a repository (docs/spec-storage.org, increment 5): a
+//! Backups of a repository (doc "Backups and restore"): a
 //! consistent copy of its store, taken while the daemon runs, with the
 //! repository's `config.json` and `schema.json` beside it — everything a
 //! restore needs.
@@ -187,7 +187,7 @@ fn set_aside(internal: &Path, path: &Path) -> Result<Option<PathBuf>> {
 
 /// Restores the repository at `metafolder` — which must not be loaded (its
 /// store is held exclusively) — from the backup at `from`, or from the most
-/// recent one under `internal/backups/` (docs/spec-storage.org, increment 5).
+/// recent one under `internal/backups/` (doc "Backups and restore").
 ///
 /// The backup's store is copied beside the current one and checked; only
 /// then is the current store set aside (never deleted), the copy moved in,

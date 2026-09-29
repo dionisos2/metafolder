@@ -152,24 +152,31 @@ de tables que la spec n'en décrivait (=open-with=, =[settings]=, =[panels]=,
 qu'un =daemon/config.toml= absent est une erreur : corrigé. Source retirée :
 =spec-config.org=.
 
-** TODO 5. Stockage
+** FAIT 5. Stockage
 
-- [ ] =Storage= — overview, dev
-- [ ] =Why not SQL= — rationale, dev
-- [ ] =The storage boundary= — reference, dev (traits =Rows=/=Log=/=Questions=/=WriteTxn=)
-- [ ] =Key layout= — reference, dev (primaire et dérivé, ids et localité)
-- [ ] =Derived key spaces= — reference, dev (bitmaps de descendants, trigrammes, tri)
-- [ ] =Writes and atomicity= — reference, dev
-- [ ] =Storage safety= — reference, dev (verrou, système de fichiers réseau refusé)
-- [ ] =Checking and reindexing a repository= — guide (=mf repo check=, =mf repo reindex=)
-- [ ] =Backups and restore= — guide (=mf repo backup/restore=, =auto-backup-days=)
-- [ ] =Choosing the backend= — rationale, dev, record
-- [ ] =Storage prototype results= — rationale, dev, record
-- [ ] =Storage increments= — rationale, dev, record
+- [X] =Storage= — overview
+- [X] =Why a key-value store= — rationale, dev (renommée depuis « Why not SQL » ; avec les magasins candidats)
+- [X] =The storage boundary= — reference, dev (traits =Rows=/=Log=/=Questions=/=WriteTxn=)
+- [X] =Store tables= — reference, dev (primaire et dérivé, ids et localité, taille des clés)
+- [X] =The forest in the store=, =Text search in the store=, =Sorting and postings= — reference, dev (découpage de « Derived key spaces »)
+- [X] =Writes and atomicity= — reference, dev (avec la carte LMDB)
+- [X] =Storage safety= — reference, dev (système de fichiers réseau refusé, lectures qui attendent les écritures)
+- [X] =Storage pitfalls= — reference, dev (ajoutée : les pièges des mémoires)
+- [X] =Checking and reindexing a repository= — guide
+- [X] =Backups and restore= — guide
+- [X] =How the storage backend was built= — rationale, dev, record (fusion de « Choosing the backend », « Storage prototype results », « Storage increments »)
+- [X] =Storage open questions= — question, deferred
+- [X] =mf repo check=, =reindex=, =backup=, =restore= — notes de commande
 
-CLI : =mf repo {check,reindex,backup,restore}=. Sources : spec-storage entier ;
-mémoires =disk-storage-backend-prototype=, =wal-fsync-per-transaction=,
-=unindexed-foreign-key-quadratic-deletes=.
+Vérification contre le code : le coût d'un « fetch » est pondéré ×4
+(=FETCH_COST=), pas ×8 ; aucune règle semgrep ne borne la durée d'un instantané
+de lecture, contrairement à ce que disait la spec (c'est le verrou du dépôt qui la
+borne) ; un ensemble dérivé =MULTI= (ids à plusieurs lignes d'un champ) n'était
+pas décrit ; =Repository endpoints= ne listait pas les routes de restauration :
+ajoutées. La base de sync est aussi en LMDB : plus aucun =rusqlite= dans le code,
+d'où les mémoires SQLite (=wal-fsync-per-transaction=,
+=unindexed-foreign-key-quadratic-deletes=) réduites à leurs leçons dans « Storage
+pitfalls ». Source retirée : =spec-storage.org=.
 
 ** FAIT 6. Tâches
 

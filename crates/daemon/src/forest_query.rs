@@ -128,7 +128,7 @@ fn path_leaf_matches(
     }
     let Some((field, pred, narrow)) = path_predicate(q) else { return Ok(None) };
     // Seek in the store what can match, rather than walk every node of it
-    // (spec-storage "The forest").
+    // (doc "The forest in the store").
     let below = |operand: &str, op: Op| -> Box<dyn Fn(&str) -> bool + '_> {
         let operand = operand.to_string();
         Box::new(move |start: &str| match op {

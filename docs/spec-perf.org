@@ -118,7 +118,7 @@ narrowest operand, without the memory of its widest. They were added when a
 search that the single-operand scenarios never exercised took twenty seconds
 on a real repository. =query.size_range_in_folder= measures a known gap: on a
 key-value repository a range over a high-cardinality number reads its matches
-one by one (spec-storage, the deferred /KV bit-sliced index/). Their
+one by one (doc "Storage", the deferred /KV bit-sliced index/). Their
 counterparts without a clock are in =crates/daemon/tests/kv_cost.rs=.
 
 =tree.write= moves a position in a forest of its own, so what it measures is the

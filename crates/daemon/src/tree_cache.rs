@@ -1,6 +1,6 @@
 //! The forest's questions (spec-file-tracking "Tree Cache"): path strings to
 //! metarecords and back, children, descendants, path matches and path sort
-//! keys, answered from the store (spec-storage increment 4 e). One per
+//! keys, answered from the store (doc "The forest in the store"). One per
 //! repository, shared across all TreeRef field names (the field name is the
 //! first level).
 //!
@@ -218,8 +218,8 @@ impl TreeCache {
     }
 
     /// [`Self::path_matches_with`], seeking in the store what `seek` says can
-    /// match instead of walking the whole stored forest (spec-storage "The
-    /// forest"): an exact path costs its depth, a prefix the subtrees it
+    /// match instead of walking the whole stored forest (doc "The forest in the store"): an exact
+    /// path costs its depth, a prefix the subtrees it
     /// reaches. Visits and paths are the walk's, so the answer is too.
     pub fn path_matches_seeking(
         &self,
@@ -599,7 +599,7 @@ pub enum WalkEnd {
 }
 
 /// A level of a walk of the stored forest: `parent`'s children, read a page
-/// at a time in name order from the store (spec-storage increment 4 e).
+/// at a time in name order from the store (doc "The forest in the store").
 struct StoredFrame {
     parent: Uuid,
     /// The last name handed out: the next page starts after it.

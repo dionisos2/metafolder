@@ -121,7 +121,7 @@ pub(super) async fn profile_query(
 pub(super) type QueryPage = (Vec<Uuid>, Option<String>, Option<usize>);
 
 /// What a repository's queries are evaluated against: the store's own derived
-/// key spaces, read in one snapshot (spec-storage increment 4 d).
+/// key spaces, read in one snapshot (doc "Storage").
 pub(super) struct Engine<'a>(crate::kvstore::KvSource<'a>);
 
 impl Engine<'_> {
@@ -276,7 +276,7 @@ fn run_query_filter(
 
     let (mut roots, indexed_query) = prepare_indexed_query(conn, cache, &index, &body.query)?;
     // Full-path sort keys for a `tree_ref` sort key, rebuilt from the store's
-    // forest (spec-data-model "Sort specification", spec-storage increment 4 e).
+    // forest (spec-data-model "Sort specification", doc "The forest in the store").
     let sort_keys = crate::tree_cache::SortKeys::new(conn);
     roots.keys = Some(&sort_keys);
     // The preparation above (path seeds, forest leaves) can be the heavy phase

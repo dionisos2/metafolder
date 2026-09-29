@@ -78,7 +78,7 @@ progress reporting (doc "Tasks"), the trash-bin
   field rows restores it.
 - A repository's store must be held under an exclusive lock for the entire
   lifetime of the daemon's handle on it (an =flock= on =internal/kv/daemon.lock=,
-  spec-storage "Choosing the backend"). This prevents a second daemon instance from loading the same repo
+  doc "How the storage backend was built"). This prevents a second daemon instance from loading the same repo
   simultaneously, which would cause version drift and watcher conflicts (e.g.
   one daemon's watcher updating =mfr_path= and moving =version= while the other
   is committing a sync). A load that finds the lock already held is refused

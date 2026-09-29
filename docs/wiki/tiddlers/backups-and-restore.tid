@@ -1,0 +1,54 @@
+title: Backups and restore
+tags: Storage
+kind: guide
+summary: A verified copy of a repository's store, taken while it stays loaded — daily and on demand — and how to put one back.
+
+!! Taking a backup
+
+```
+mf -n music repo backup                  # under .metafolder/internal/backups/manual-<time>/
+mf -n music repo backup --to /mnt/usb/music-backup
+```
+
+A backup is a consistent copy of the store, taken while the daemon runs (LMDB's
+compacting hot copy), with the repository's `config.json` and `schema.json` and a
+`backup.json` (when, which store, how many metarecords). It is written under a
+temporary name, then opened and checked before it takes its place: a store damaged
+since the last backup fails its new one, which then never replaces a good one.
+`--to` must name a new directory.
+
+The daemon also backs up each loaded repository ''automatically'', every
+`auto-backup-days` days (default 1; `0` turns it off — [[Daemon configuration]]),
+into one slot, `internal/backups/auto/`, looking at startup and then every hour. A
+failure is a warning in the repository's diagnostics.
+
+!! Restoring
+
+```
+mf -n music repo restore                      # the most recent backup
+mf -n music repo restore --from <dir>
+mf repo restore --path /data/music            # a repository that no longer loads
+mf repo restore --metafolder <dir>            # … with an external .metafolder
+```
+
+The usual reason to restore is a store that no longer loads, hence the forms naming
+a repository by its path. A loaded repository is unloaded, restored and loaded back;
+an unloaded one is loaded once restored.
+
+The backup is `--from`, or the most recent under `internal/backups/` (by the time in
+its `backup.json`; a directory without one is not a backup). It must be the ''same''
+repository — its `config.json` names the same `repo_uuid` — or it is refused. It is
+copied beside the current store, opened and checked (a backup that no longer checks
+clean changes nothing); then the current store, if any, is set aside as
+`internal/pre-restore-<time>-<name>` — the daemon never deletes it — and the copy
+takes its place. An interruption leaves the old store set aside, and restoring again
+completes it. A lost `config.json` is replaced by the backup's; `schema.json` is not
+touched (it is ordinary content — the backup's copy is there to take by hand).
+
+''Everything written since the backup is lost'': your edits, and the file changes the
+watcher recorded. The command says when the backup was taken and advises
+`mf reconcile` to catch up with the files; it does not run it.
+
+A repository whose store is missing does not load at all — once, a load created an
+empty store in its place, a reconcile filled it, and the automatic backup then
+replaced the last good one. Restoring by path is how it comes back.

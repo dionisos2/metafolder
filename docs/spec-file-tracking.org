@@ -521,7 +521,7 @@ re-verifies every path against the disk before writing =Nothing=.
 The daemon answers the forest's questions — a path string to a metarecord and
 back, a node's children and descendants, path matches, path sort keys — from
 the repository's store, whose forest key space is keyed by parent and name
-(spec-storage "The forest"). The =TreeCache= that asks them holds nothing but
+(doc "The forest in the store"). The =TreeCache= that asks them holds nothing but
 the repository's case sensitivity — despite its name it caches nothing, so it
 needs no lock and readers never wait for one another on it; it serves all
 =TreeRef= field names, the field name forming the first level.
@@ -563,7 +563,7 @@ and went with it in September 2026.
 
 There is none: a lookup that keeps nothing has nothing to keep up. The store's
 forest key space and the descendant bitmaps are updated by the write itself, in
-its transaction (spec-storage "Primary and derived data"). The resident
+its transaction (doc "Storage"). The resident
 forest this section used to describe was reconciled cell by cell from what
 each revision said it did, never rebuilt by a write; a navigation step and a
 watcher event do not touch the cache either.

@@ -1,5 +1,5 @@
-//! Cost assertions for the key-value store's query source (spec-storage
-//! "Testing": scale is tested by counting, not timing). The same query runs
+//! Cost assertions for the key-value store's query source (doc "Storage":
+//! scale is tested by counting, not timing). The same query runs
 //! on a repository and on one eight times larger; a query whose answer does
 //! not grow must not read more keys. Counting keys cannot flake under load,
 //! and needs no large data set.
@@ -414,7 +414,7 @@ fn path_matches(pattern: &str) -> Query {
 }
 
 /// A `:path` comparison seeks its path down the stored forest instead of
-/// walking all of it (spec-storage "pruned `:path` walk"): an exact path
+/// walking all of it (doc "The forest in the store"): an exact path
 /// costs its depth, a difference the same plus the holders of the field.
 #[test]
 fn a_path_comparison_seeks_its_path_not_the_forest() {

@@ -227,7 +227,7 @@ fn test_unload_refused_during_rollback_navigation() {
     std::fs::remove_dir_all(root).unwrap();
 }
 
-// ── Storage backend (docs/spec-storage.org "Choosing the backend") ─────────────
+// ── Storage backend (doc "How the storage backend was built") ─────────────
 
 /// A repository initialised on the key-value backend says so in its config,
 /// keeps its data under `internal/kv/` (no SQLite file), and reads it back

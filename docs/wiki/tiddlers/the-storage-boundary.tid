@@ -1,0 +1,25 @@
+title: The storage boundary
+tags: Storage
+kind: reference
+audience: dev
+summary: The traits everything above the store speaks — Rows, Log, Questions, WriteTxn, Begin, Database — and the contract test a backend must pass.
+
+`crates/daemon/src/store.rs` holds the traits every module above the store speaks:
+the event log, navigation, the watcher, reconcile, the schema, duplicates, orphans,
+mounts, the query source. `kvstore/` is the one implementation.
+
+|!Trait |!What |
+|`Rows` |the data model's primary state: a metarecord's existence and version, its rows (all, or by name), a row by id; insert a row (the store allocates its id) or put one back ''with'' its id (navigation restores rows exactly); delete a row; create and delete a metarecord; the forest's positions |
+|`Log` |revisions, operations and their snapshots, one operation by id, the bounded ancestry walks, HEAD, labels, the range deletions of pruning and retention |
+|`Questions` |whole-repository questions — the tracked files with their sizes, the stored hashes, the owners of a string field, the duplicate groups… Each has a default derived from `Rows` alone, correct on any backend, which a backend may override with something faster |
+|`WriteTxn` |one write transaction: one `log::Writer` revision |
+|`Begin` |opens a transaction; also `check`, `reindex`, `backup_to`, and the interrupter a task's Stop uses |
+|`Database` |all of it: what a loaded repository holds (`store::Handle`) |
+
+''Row ids are part of the data model'': a field's `id` is in every API response,
+`…/fields/:id` addresses a row by it, and navigation restores the original ids. So a
+backend allocates monotonic row ids and can put a row back under its old one.
+
+`tests/store_contract.rs` asks every method through the traits only — the file a
+second backend would have to pass — and holds every `Questions` override to its
+default.

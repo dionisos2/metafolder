@@ -1,4 +1,4 @@
-//! Backups of a repository's store (spec-storage increment 5): a consistent
+//! Backups of a repository's store (doc "Backups and restore"): a consistent
 //! copy taken while the daemon runs, verified before it takes its place — so
 //! a damaged store never replaces the last good backup — and an automatic
 //! one, kept in a single slot, taken when it is due.

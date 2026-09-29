@@ -224,7 +224,7 @@ pub(super) async fn init_repo(
 }
 
 /// `POST /repos/:repo/check` — what no longer holds together in the store
-/// (spec-storage increment 5): `{"problems": [...]}`.
+/// (doc "Checking and reindexing a repository"): `{"problems": [...]}`.
 pub(super) async fn check_repo(
     State(state): State<Arc<AppState>>,
     Path(repo): Path<String>,
@@ -246,7 +246,7 @@ pub(super) struct BackupBody {
 }
 
 /// `POST /repos/:repo/backup` — a verified backup of the repository's store,
-/// with its config (spec-storage increment 5). The body is optional.
+/// with its config (doc "Backups and restore"). The body is optional.
 pub(super) async fn backup_repo(
     State(state): State<Arc<AppState>>,
     Path(repo): Path<String>,
@@ -317,7 +317,7 @@ fn restored_json(uuid: Uuid, restored: crate::backup::Restored) -> Json<serde_js
 }
 
 /// `POST /repos/:repo/restore` — restores a loaded repository from a backup
-/// (spec-storage increment 5) and loads it back. The body (`from`) is
+/// (doc "Backups and restore") and loads it back. The body (`from`) is
 /// optional.
 pub(super) async fn restore_loaded_repo(
     State(state): State<Arc<AppState>>,

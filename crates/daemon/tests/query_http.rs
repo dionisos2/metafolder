@@ -1081,8 +1081,8 @@ async fn test_batch_unset_removes_the_whole_field() {
     std::fs::remove_dir_all(root).unwrap();
 }
 
-/// Tree paths resolve, sort and filter from the store (spec-storage increment
-/// 4 e) — a rename included, seen by the very next query.
+/// Tree paths resolve, sort and filter from the store (doc "The forest in the store") — a rename
+/// included, seen by the very next query.
 #[tokio::test]
 async fn test_tree_paths_are_read_from_the_store_a_rename_included() {
     let (app, repo, _root) = setup("forest").await;

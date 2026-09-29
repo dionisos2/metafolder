@@ -1,5 +1,5 @@
-//! The key-value store as a query [`Source`] (docs/spec-storage.org,
-//! "Increment 4, concretely" c): every answer read from the derived key
+//! The key-value store as a query [`Source`] (doc "Storage"):
+//! every answer read from the derived key
 //! spaces inside one read transaction, so a query sees one snapshot of the
 //! repository, whatever is committed meanwhile.
 //!

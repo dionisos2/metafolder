@@ -1,0 +1,33 @@
+title: Sorting and postings
+tags: Storage
+kind: reference
+audience: dev
+summary: A sort either fetches every match's key or walks an index until the page is full, by estimated cost; frequent values get a posting.
+
+The filter yields a bitmap first, so the number of matches is known ''exactly and for
+free'' before sorting. The sort then either:
+
+* ''fetches'' the sort key of each match and sorts them — about one random read per match, weighted four walk steps each (`FETCH_COST`); or
+* ''walks'' the ordered partition — or the forest, for a path sort — testing each id against the match bitmap until the page is full: about page × holders / matches steps, if the matches are spread along the index.
+
+It takes the cheaper by that estimate. No statistics are kept: the match count is
+exact, and the holders are the field's presence count (or the walk's subtree). The
+count alone is not enough: a 2 500-file folder is "large", yet walking the date index
+of a 5-million-file repository for a hundred of its files reads some 200 000 keys. A
+path walk starts at the lowest node whose descendants hold every match, not at the
+forest's root. Keyset pagination is the same for both: the cursor carries the last
+sort key and uuid, and each strategy resumes strictly after it.
+
+!! Postings
+
+A value reaching 64 holders gets a ''posting'' — its holders as one set — in the same
+transaction, and keeps it, exact, until its last holder goes; a rarer value is
+answered from its partition, where its ids are adjacent. An equality reads the
+posting; a range or a `!=` takes each posted value's posting whole and jumps past its
+run in the partition, so `rating > 4` reads five postings, not half the repository. A
+sorted walk hands a posted value's holders over as one run, and a page sorted on a
+field of ten values costs about the page over the density of its ties, however large
+the repository.
+
+Still linear: a range over a numeric or date field with many distinct values
+(`mfr_size > 1 MB`), which a bit-sliced index would serve — deferred.

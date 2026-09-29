@@ -1,4 +1,4 @@
-//! The derived key spaces (docs/spec-storage.org, "Increment 4, concretely"
+//! The derived key spaces (doc "Storage"
 //! a): what the query source reads, written in each revision's own
 //! transaction and rebuilt from the primary data by [`KvStore::reindex`].
 //!
@@ -56,19 +56,19 @@ pub(super) const PARENTS: u8 = 3;
 pub(super) const LONG_TEXTS: u8 = 4;
 /// The ids pointing at a uuid in a field — a `ref`'s referrers, a folder's
 /// children — keyed by field *and* target: a folder filter is one bitmap,
-/// a read per 65 536 children (spec-storage "Key layout", `children`).
+/// a read per 65 536 children (doc "Store tables", `children`).
 pub(super) const REFERRERS: u8 = 5;
 
 /// Every id below a node of a forest, keyed by field and node — what makes a
-/// subtree one bitmap read (spec-storage "The forest: descendant bitmaps").
+/// subtree one bitmap read (doc "The forest in the store").
 /// Kept for every `tree_ref` field: a node holds one position per forest
 /// (spec-data-model "One position per forest"), so the tree is a tree and a
 /// move is set arithmetic.
 pub(super) const DESCENDANTS: u8 = 6;
 
 /// The holders of one value of a field (keyed by field and value key), for
-/// the values held by [`POSTING_MIN`] records or more (spec-storage "Key
-/// layout", `postings`). A rarer value is answered from its run in the value
+/// the values held by [`POSTING_MIN`] records or more (doc "Store tables", `postings`). A rarer
+/// value is answered from its run in the value
 /// partition, where its ids are adjacent. A posting is never demoted: it
 /// stays, exact, when its value grows rarer, and goes only with its last
 /// holder — so "a value has a posting" always means "all its ids are in it".
