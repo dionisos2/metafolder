@@ -5,8 +5,9 @@
 //! (`mf sync …`) and the GUI drive the exact same code, over the daemon's
 //! `/sync/:a/:b/…` primitives. Callers differ only in three injected seams:
 //!
-//! - [`DaemonClient`] — a synchronous HTTP client (the CLI's `ureq` client, the
-//!   GUI's blocking client). Core gains no HTTP dependency.
+//! - [`DaemonClient`] — the synchronous HTTP client every piece of core
+//!   orchestration shares ([`crate::daemon_client`]): the CLI's `ureq` client,
+//!   the GUI's blocking client. Core gains no HTTP dependency.
 //! - [`Prompter`] — interactivity (conflict `ask`, run confirmation): the CLI
 //!   prompts on stdin; the GUI answers non-interactively.
 //! - [`SyncCtx`] — bundles the client, the prompter and a little config
@@ -25,6 +26,9 @@ pub mod run;
 
 use serde_json::{json, Value as Json};
 use uuid::Uuid;
+
+pub use crate::daemon_client::DaemonClient;
+use crate::daemon_client::{with_query, DaemonError};
 
 /// An orchestration error, carrying the spec exit-code class: `Usage` (bad
 /// arguments — the CLI maps this to exit 2) or `Op` (operation failed — exit 1).
@@ -61,29 +65,10 @@ impl From<crate::trash::TrashError> for SyncError {
     }
 }
 
-/// A synchronous HTTP client over the daemon API. The orchestration is a long
-/// sequence of blocking calls; the GUI runs it under `spawn_blocking` with a
-/// blocking client rather than reusing its async proxy.
-///
-/// Implementors must map a daemon `{"error": …}` body to
-/// [`SyncError::Op`] with the daemon's message, and a transport failure to
-/// [`SyncError::Op`] as well. An empty body (e.g. 204) is [`Json::Null`].
-pub trait DaemonClient {
-    /// Sends a request and returns the parsed JSON body.
-    fn request(
-        &self,
-        method: &str,
-        path: &str,
-        query: &[(&str, String)],
-        body: Option<&Json>,
-    ) -> Result<Json, SyncError>;
-
-    fn get(&self, path: &str, query: &[(&str, String)]) -> Result<Json, SyncError> {
-        self.request("GET", path, query, None)
-    }
-
-    fn post(&self, path: &str, body: &Json) -> Result<Json, SyncError> {
-        self.request("POST", path, &[], Some(body))
+/// A daemon failure is an operation error, with the daemon's message.
+impl From<DaemonError> for SyncError {
+    fn from(e: DaemonError) -> Self {
+        SyncError::Op(e.message)
     }
 }
 
@@ -126,7 +111,7 @@ impl SyncCtx<'_> {
 
     /// Maps a unique repository name to its UUID via `GET /repos`.
     fn resolve_name(&self, name: &str) -> Result<Uuid, SyncError> {
-        let repos = self.client.get("/repos", &[])?;
+        let repos = self.client.get("/repos")?;
         crate::daemon_client::repo_uuid_by_name(&repos, name).map_err(SyncError::Op)
     }
 }
@@ -188,7 +173,7 @@ fn canonical_side(positional: &str, a: Uuid, b: Uuid) -> String {
 /// change/conflict state). Frontends format it (`links: [{uuid, state}, …]`).
 pub fn status(ctx: &SyncCtx, repo_a: &str, repo_b: &str) -> Result<Json, SyncError> {
     let (a, b) = resolve_pair(ctx, repo_a, repo_b)?;
-    ctx.client.get(&format!("{}/status", pair_prefix(a, b)), &[])
+    Ok(ctx.client.get(&format!("{}/status", pair_prefix(a, b)))?)
 }
 
 /// `mf sync link <repo_a> <repo_b> <uuid_a> <uuid_b> [--host <repo>]` — link a
@@ -242,7 +227,7 @@ pub fn unlink(
         query.push(("with_endpoint", canonical_side(side, a, b)));
     }
     let path = format!("{}/links/{}", pair_prefix(a, b), link_uuid.as_simple());
-    ctx.client.request("DELETE", &path, &query, None)?;
+    ctx.client.request("DELETE", &with_query(&path, &query), None)?;
     Ok(link_uuid)
 }
 
@@ -273,7 +258,7 @@ mod tests {
     }
 
     /// Answers a request from its `(method, path)` — the mock's response source.
-    type Responder = Box<dyn Fn(&str, &str) -> Result<Json, SyncError>>;
+    type Responder = Box<dyn Fn(&str, &str) -> Result<Json, DaemonError>>;
 
     /// A `DaemonClient` that records every request and answers from a closure.
     struct MockClient {
@@ -282,7 +267,7 @@ mod tests {
     }
 
     impl MockClient {
-        fn new(responder: impl Fn(&str, &str) -> Result<Json, SyncError> + 'static) -> Self {
+        fn new(responder: impl Fn(&str, &str) -> Result<Json, DaemonError> + 'static) -> Self {
             Self { calls: RefCell::new(Vec::new()), responder: Box::new(responder) }
         }
         fn calls(&self) -> Vec<RecordedCall> {
@@ -295,13 +280,23 @@ mod tests {
             &self,
             method: &str,
             path: &str,
-            query: &[(&str, String)],
             body: Option<&Json>,
-        ) -> Result<Json, SyncError> {
+        ) -> Result<Json, DaemonError> {
+            // The query string, back into pairs (the tests' values need no
+            // decoding).
+            let (path, query) = path.split_once('?').unwrap_or((path, ""));
+            let query = query
+                .split('&')
+                .filter(|p| !p.is_empty())
+                .map(|p| {
+                    let (k, v) = p.split_once('=').unwrap_or((p, ""));
+                    (k.to_string(), v.to_string())
+                })
+                .collect();
             self.calls.borrow_mut().push(RecordedCall {
                 method: method.to_string(),
                 path: path.to_string(),
-                query: query.iter().map(|(k, v)| (k.to_string(), v.clone())).collect(),
+                query,
                 body: body.cloned(),
             });
             (self.responder)(method, path)

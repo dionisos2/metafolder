@@ -15,8 +15,8 @@ use metafolder_core::daemon_client::DaemonClient;
 use metafolder_core::ignore::{self, IgnoreError, Mode};
 use metafolder_core::ignore_presets::Presets;
 
+use crate::blocking_client::BlockingClient;
 use crate::commands::App;
-use crate::trash::BlockingClient;
 
 /// One installed preset, fully expanded (group members included) so the caller
 /// can show what applying it would write without re-implementing expansion.

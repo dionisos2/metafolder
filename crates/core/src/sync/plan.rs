@@ -10,6 +10,7 @@ use std::path::{Path, PathBuf};
 use serde_json::{json, Value as Json};
 use uuid::Uuid;
 
+use crate::daemon_client::with_query;
 use crate::dsl;
 
 use super::intents::{self, Intents};
@@ -206,18 +207,28 @@ impl Reads {
         if let Some(m) = self.records.get(&(repo, uuid)) {
             return Ok(m.clone());
         }
-        ctx.client
-            .get(&format!("/repos/{}/metarecords/{}", repo.as_simple(), uuid.as_simple()), &[])
+        Ok(ctx.client.get(&format!(
+            "/repos/{}/metarecords/{}",
+            repo.as_simple(),
+            uuid.as_simple()
+        ))?)
     }
 
     /// [`Self::record`] where "no such metarecord" is an answer rather than an
     /// error: a link endpoint that was deleted has no version, which is how
     /// deletion propagation recognises it.
     fn record_opt(&self, ctx: &Ctx, repo: Uuid, uuid: Uuid) -> Result<Option<Json>, CliError> {
-        match self.record(ctx, repo, uuid) {
+        if let Some(m) = self.records.get(&(repo, uuid)) {
+            return Ok(Some(m.clone()));
+        }
+        match ctx.client.get(&format!(
+            "/repos/{}/metarecords/{}",
+            repo.as_simple(),
+            uuid.as_simple()
+        )) {
             Ok(m) => Ok(Some(m)),
-            Err(CliError::Op(_)) => Ok(None),
-            Err(e) => Err(e),
+            Err(e) if e.is_not_found() => Ok(None),
+            Err(e) => Err(e.into()),
         }
     }
 }
@@ -475,14 +486,11 @@ fn needs_move(ctx: &Ctx, side_a: &Side, side_b: &Side) -> Result<bool, CliError>
 
 /// A record's reconstructed `mfr_path` (its first position), or `None`.
 pub(crate) fn mfr_path_of(ctx: &Ctx, repo: Uuid, record: Uuid) -> Result<Option<String>, CliError> {
-    let resp = ctx.client.get(
-        &format!(
-            "/repos/{}/metarecords/{}/fields/mfr_path/resolve-tree",
-            repo.as_simple(),
-            record.as_simple()
-        ),
-        &[],
-    )?;
+    let resp = ctx.client.get(&format!(
+        "/repos/{}/metarecords/{}/fields/mfr_path/resolve-tree",
+        repo.as_simple(),
+        record.as_simple()
+    ))?;
     Ok(resp["paths"].as_array().and_then(|a| a.first()).and_then(|p| p.as_str()).map(String::from))
 }
 
@@ -495,10 +503,12 @@ struct Snapshot {
 /// Reads a link's snapshot (`GET …/links/:link`), building the A- and
 /// B-perspective value multisets of its syncable fields.
 fn fetch_snapshot(ctx: &Ctx, a: Uuid, b: Uuid, link: Uuid) -> Result<Snapshot, CliError> {
-    let body = ctx.client.get(
-        &format!("/sync/{}/{}/links/{}", a.as_simple(), b.as_simple(), link.as_simple()),
-        &[],
-    )?;
+    let body = ctx.client.get(&format!(
+        "/sync/{}/{}/links/{}",
+        a.as_simple(),
+        b.as_simple(),
+        link.as_simple()
+    ))?;
     let (mut sa, mut sb): (HashMap<String, Vec<Json>>, HashMap<String, Vec<Json>>) =
         Default::default();
     for e in body["snapshot"].as_array().cloned().unwrap_or_default() {
@@ -739,9 +749,11 @@ fn needs_copy(ctx: &Ctx, side_a: &Side, side_b: &Side) -> Result<Option<&'static
 
 /// Whether a record is a file (=mfr_type = "file"=) — i.e. has content to transfer.
 fn is_file(ctx: &Ctx, repo: Uuid, record: Uuid) -> Result<bool, CliError> {
-    let m = ctx
-        .client
-        .get(&format!("/repos/{}/metarecords/{}", repo.as_simple(), record.as_simple()), &[])?;
+    let m = ctx.client.get(&format!(
+        "/repos/{}/metarecords/{}",
+        repo.as_simple(),
+        record.as_simple()
+    ))?;
     Ok(m["fields"].as_array().is_some_and(|fs| {
         fs.iter().any(|f| f["name"] == "mfr_type" && f["value"]["value"] == "file")
     }))
@@ -756,9 +768,11 @@ pub(crate) fn syncable_fields(
     repo: Uuid,
     record: Uuid,
 ) -> Result<Vec<(String, Json)>, CliError> {
-    let m = ctx
-        .client
-        .get(&format!("/repos/{}/metarecords/{}", repo.as_simple(), record.as_simple()), &[])?;
+    let m = ctx.client.get(&format!(
+        "/repos/{}/metarecords/{}",
+        repo.as_simple(),
+        record.as_simple()
+    ))?;
     let mut out: Vec<(String, Json)> = Vec::new();
     for f in m["fields"].as_array().cloned().unwrap_or_default() {
         let Some(name) = f["name"].as_str() else { continue };
@@ -894,15 +908,12 @@ fn identity_paths_in(
     }
     let mut out = Vec::new();
     for field in fields {
-        let resp = ctx.client.get(
-            &format!(
-                "/repos/{}/metarecords/{}/fields/{}/resolve-tree",
-                repo.as_simple(),
-                record.as_simple(),
-                field
-            ),
-            &[],
-        )?;
+        let resp = ctx.client.get(&format!(
+            "/repos/{}/metarecords/{}/fields/{}/resolve-tree",
+            repo.as_simple(),
+            record.as_simple(),
+            field
+        ))?;
         for p in resp["paths"].as_array().cloned().unwrap_or_default() {
             if let Some(path) = p.as_str() {
                 out.push((field.clone(), path.to_string()));
@@ -924,10 +935,11 @@ fn match_by_fields(
     linked_target: &HashSet<Uuid>,
     planned_target: &HashSet<Uuid>,
 ) -> Result<Option<Uuid>, CliError> {
-    let m = ctx.client.get(
-        &format!("/repos/{}/metarecords/{}", source_repo.as_simple(), record.as_simple()),
-        &[],
-    )?;
+    let m = ctx.client.get(&format!(
+        "/repos/{}/metarecords/{}",
+        source_repo.as_simple(),
+        record.as_simple()
+    ))?;
     let sig = field_signature(&m);
     if sig.is_empty() {
         return Ok(None);
@@ -1050,10 +1062,10 @@ pub(crate) fn record_at_path(
 ) -> Result<Option<Uuid>, CliError> {
     let trimmed = path.trim_matches('/');
     if trimmed.is_empty() {
-        let roots = ctx.client.get(
+        let roots = ctx.client.get(&with_query(
             &format!("/repos/{}/tree/roots", repo.as_simple()),
             &[("field", field.to_string())],
-        )?;
+        ))?;
         return Ok(roots
             .as_array()
             .and_then(|a| a.iter().find(|r| r["name"] == ""))
@@ -1200,7 +1212,7 @@ struct LinkRow {
 }
 
 fn get_links(ctx: &Ctx, a: Uuid, b: Uuid) -> Result<Vec<LinkRow>, CliError> {
-    let body = ctx.client.get(&format!("/sync/{}/{}/links", a.as_simple(), b.as_simple()), &[])?;
+    let body = ctx.client.get(&format!("/sync/{}/{}/links", a.as_simple(), b.as_simple()))?;
     let mut out = Vec::new();
     for l in body["links"].as_array().cloned().unwrap_or_default() {
         if let (Some(u), Some(ra), Some(rb)) = (
@@ -1255,8 +1267,8 @@ fn baseline(ctx: &Ctx, reads: &Reads, repo: Uuid, uuid: Uuid) -> Result<Option<u
 
 /// Aborts unless both repos report the same schema.
 pub(crate) fn check_schemas_identical(ctx: &Ctx, a: Uuid, b: Uuid) -> Result<(), CliError> {
-    let sa = ctx.client.get(&format!("/repos/{}/schema", a.as_simple()), &[])?;
-    let sb = ctx.client.get(&format!("/repos/{}/schema", b.as_simple()), &[])?;
+    let sa = ctx.client.get(&format!("/repos/{}/schema", a.as_simple()))?;
+    let sb = ctx.client.get(&format!("/repos/{}/schema", b.as_simple()))?;
     if sa != sb {
         return Err(CliError::Op(
             "the two repositories have different schemas; sync requires identical schemas".into(),
@@ -1274,12 +1286,7 @@ pub fn recreate_plan_repo(ctx: &Ctx, a: Uuid, b: Uuid, host: Uuid) -> Result<Pla
 
     // Drop any previously loaded plan repo (it holds the DB's exclusive lock).
     if let Some(existing) = find_repo_by_name(ctx, &name)? {
-        ctx.client.request(
-            "POST",
-            &format!("/repos/{}/unload", existing.as_simple()),
-            &[],
-            None,
-        )?;
+        ctx.client.request("POST", &format!("/repos/{}/unload", existing.as_simple()), None)?;
     }
     // Remove the on-disk repo so init does not conflict.
     if plan_dir.exists() {
@@ -1309,7 +1316,7 @@ fn plan_repo_name(a: Uuid, b: Uuid) -> String {
 /// The plan repo's directory: `<host internal_dir>/plan-<a>-<b>` — under the
 /// host's `internal/`, which the host never tracks (spec-repo).
 fn plan_repo_dir(ctx: &Ctx, host: Uuid, name: &str) -> Result<PathBuf, CliError> {
-    let info = ctx.client.get(&format!("/repos/{}", host.as_simple()), &[])?;
+    let info = ctx.client.get(&format!("/repos/{}", host.as_simple()))?;
     let internal = info["internal_dir"]
         .as_str()
         .ok_or_else(|| CliError::Op("daemon did not report the host's internal_dir".into()))?;
@@ -1318,7 +1325,7 @@ fn plan_repo_dir(ctx: &Ctx, host: Uuid, name: &str) -> Result<PathBuf, CliError>
 
 /// The UUID of a loaded repo (system repos included) with the given name.
 pub(crate) fn find_repo_by_name(ctx: &Ctx, name: &str) -> Result<Option<Uuid>, CliError> {
-    let repos = ctx.client.get("/repos", &[("all", "true".to_string())])?;
+    let repos = ctx.client.get(&with_query("/repos", &[("all", "true".to_string())]))?;
     let found = repos
         .as_array()
         .and_then(|a| a.iter().find(|r| r["name"].as_str() == Some(name)))
@@ -1347,9 +1354,8 @@ mod tests {
             &self,
             _method: &str,
             path: &str,
-            _query: &[(&str, String)],
             _body: Option<&Json>,
-        ) -> Result<Json, SyncError> {
+        ) -> Result<Json, crate::daemon_client::DaemonError> {
             if path.ends_with("/query") {
                 *self.query_calls.borrow_mut() += 1;
                 let mut pages = self.pages.borrow_mut();
@@ -1411,16 +1417,15 @@ mod tests {
             &self,
             method: &str,
             path: &str,
-            _query: &[(&str, String)],
             body: Option<&Json>,
-        ) -> Result<Json, SyncError> {
+        ) -> Result<Json, crate::daemon_client::DaemonError> {
             self.calls.borrow_mut().push(format!("{method} {path}"));
             if path.ends_with("/links") {
                 return Ok(json!({"links": []}));
             }
             if path.ends_with("/query/fields/resolve-tree") {
                 if self.bulk_fails {
-                    return Err(SyncError::Op("no bulk form here".into()));
+                    return Err(crate::daemon_client::DaemonError::local("no bulk form here"));
                 }
                 // The bulk form answers a flat object keyed by uuid hex, as the
                 // daemon does — not a `{"paths": …}` envelope.

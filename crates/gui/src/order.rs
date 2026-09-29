@@ -11,8 +11,8 @@ use serde::Serialize;
 use metafolder_core::daemon_client::DaemonClient;
 use metafolder_core::order::{self, DEFAULT_MAX_GAP};
 
+use crate::blocking_client::BlockingClient;
 use crate::commands::App;
-use crate::trash::BlockingClient;
 
 /// The ordering metadata field the GUI command uses (the `mf order` default).
 pub const DEFAULT_META: &str = "mfr_meta_track";

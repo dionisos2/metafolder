@@ -27,6 +27,12 @@ impl DaemonError {
     pub fn local(message: impl Into<String>) -> Self {
         Self { status: None, message: message.into() }
     }
+
+    /// Whether the daemon answered `404`: the thing asked for does not exist —
+    /// an answer, unlike a transport failure, which says nothing about it.
+    pub fn is_not_found(&self) -> bool {
+        self.status == Some(404)
+    }
 }
 
 /// The daemon requests the shared orchestration makes. Implemented by the CLI
@@ -44,6 +50,26 @@ pub trait DaemonClient {
     fn put(&self, path: &str, body: &Json) -> Result<Json, DaemonError> {
         self.request("PUT", path, Some(body))
     }
+}
+
+/// `path` with `query` appended as a query string, each value
+/// percent-encoded (everything but the RFC 3986 unreserved characters). The
+/// keys are the caller's own identifiers and are taken as they are.
+pub fn with_query(path: &str, query: &[(&str, String)]) -> String {
+    let mut out = path.to_string();
+    for (i, (key, value)) in query.iter().enumerate() {
+        out.push(if i == 0 { '?' } else { '&' });
+        out.push_str(key);
+        out.push('=');
+        for byte in value.bytes() {
+            if byte.is_ascii_alphanumeric() || b"-._~".contains(&byte) {
+                out.push(byte as char);
+            } else {
+                out.push_str(&format!("%{byte:02X}"));
+            }
+        }
+    }
+    out
 }
 
 /// The uuid of the one loaded repository named `name`, read from a `GET /repos`
@@ -123,6 +149,23 @@ mod tests {
     fn a_malformed_uuid_is_reported_as_the_daemon_s() {
         let err = repo_uuid_by_name(&repos(), "broken").unwrap_err();
         assert!(err.contains("daemon returned an invalid uuid"), "{err}");
+    }
+
+    #[test]
+    fn only_a_404_says_the_thing_is_not_there() {
+        assert!(DaemonError { status: Some(404), message: "gone".into() }.is_not_found());
+        assert!(!DaemonError { status: Some(500), message: "boom".into() }.is_not_found());
+        assert!(!DaemonError::local("cannot reach the daemon").is_not_found());
+    }
+
+    #[test]
+    fn a_query_string_is_appended_and_its_values_encoded() {
+        assert_eq!(with_query("/p", &[]), "/p");
+        assert_eq!(with_query("/p", &[("all", "true".into())]), "/p?all=true");
+        assert_eq!(
+            with_query("/p", &[("a", "x y&z=1/é".into()), ("b", "2".into())]),
+            "/p?a=x%20y%26z%3D1%2F%C3%A9&b=2"
+        );
     }
 
     /// A body that is not an array at all (an error object, say) has no match.

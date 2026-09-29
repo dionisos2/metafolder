@@ -16,6 +16,7 @@ use super::plan::{
     check_schemas_identical, find_repo_by_name, mfr_path_of, record_at_path, syncable_fields,
 };
 use super::{canonical_pair, resolve_pair, SyncCtx as Ctx, SyncError as CliError};
+use crate::daemon_client::with_query;
 
 /// A record's (or snapshot's) fields as value multisets keyed by name.
 type ByName = std::collections::HashMap<String, Vec<Json>>;
@@ -329,8 +330,8 @@ fn exec_create_link(ctx: &Ctx, op: &Op) -> Result<Outcome, CliError> {
     // A link may already exist from a partial prior run — tolerate the conflict.
     match ctx.client.post(&format!("{prefix}/links"), &body) {
         Ok(_) => Ok(Outcome::Done),
-        Err(CliError::Op(msg)) if msg.contains("already linked") => Ok(Outcome::Done),
-        Err(e) => Err(e),
+        Err(e) if e.message.contains("already linked") => Ok(Outcome::Done),
+        Err(e) => Err(e.into()),
     }
 }
 
@@ -403,7 +404,7 @@ fn translate_ref_value(
     };
     // Link-first.
     let prefix = format!("/sync/{}/{}", a.as_simple(), b.as_simple());
-    let links = ctx.client.get(&format!("{prefix}/links"), &[])?;
+    let links = ctx.client.get(&format!("{prefix}/links"))?;
     let (src_key, tgt_key) =
         if src_repo == a { ("record_a", "record_b") } else { ("record_b", "record_a") };
     let linked = links["links"].as_array().and_then(|ls| {
@@ -475,7 +476,7 @@ fn link_snapshot(
     rec_b: Uuid,
 ) -> Result<(ByName, ByName), CliError> {
     let prefix = format!("/sync/{}/{}", a.as_simple(), b.as_simple());
-    let links = ctx.client.get(&format!("{prefix}/links"), &[])?;
+    let links = ctx.client.get(&format!("{prefix}/links"))?;
     let link = links["links"].as_array().and_then(|ls| {
         ls.iter().find(|l| {
             l["record_a"].as_str() == Some(&rec_a.as_simple().to_string())
@@ -484,7 +485,7 @@ fn link_snapshot(
     });
     let (mut sa, mut sb): (ByName, ByName) = Default::default();
     if let Some(uuid) = link.and_then(|l| l["uuid"].as_str()) {
-        let body = ctx.client.get(&format!("{prefix}/links/{uuid}"), &[])?;
+        let body = ctx.client.get(&format!("{prefix}/links/{uuid}"))?;
         for e in body["snapshot"].as_array().cloned().unwrap_or_default() {
             let Some(name) = e["name"].as_str() else { continue };
             if e["value"]["type"] == "ref" || name.starts_with("mfr_") {
@@ -534,7 +535,6 @@ fn set_field_multi(
                     record.as_simple(),
                     name
                 ),
-                &[],
                 None,
             )?;
         }
@@ -661,7 +661,7 @@ fn snapshot_mfr_path(
     rec_b: Uuid,
 ) -> Result<Option<String>, CliError> {
     let prefix = format!("/sync/{}/{}", a.as_simple(), b.as_simple());
-    let links = ctx.client.get(&format!("{prefix}/links"), &[])?;
+    let links = ctx.client.get(&format!("{prefix}/links"))?;
     let uuid = links["links"].as_array().and_then(|ls| {
         ls.iter()
             .find(|l| {
@@ -672,7 +672,7 @@ fn snapshot_mfr_path(
             .map(String::from)
     });
     let Some(uuid) = uuid else { return Ok(None) };
-    let body = ctx.client.get(&format!("{prefix}/links/{uuid}"), &[])?;
+    let body = ctx.client.get(&format!("{prefix}/links/{uuid}"))?;
     Ok(body["snapshot"]
         .as_array()
         .and_then(|s| s.iter().find(|e| e["name"] == "mfr_path"))
@@ -709,9 +709,11 @@ fn exec_chmod(ctx: &Ctx, op: &Op) -> Result<Outcome, CliError> {
 
 /// A file record's stored `mfr_permissions` (octal string), if any.
 fn mfr_permissions_of(ctx: &Ctx, repo: Uuid, record: Uuid) -> Result<Option<String>, CliError> {
-    let m = ctx
-        .client
-        .get(&format!("/repos/{}/metarecords/{}", repo.as_simple(), record.as_simple()), &[])?;
+    let m = ctx.client.get(&format!(
+        "/repos/{}/metarecords/{}",
+        repo.as_simple(),
+        record.as_simple()
+    ))?;
     Ok(m["fields"].as_array().and_then(|fs| {
         fs.iter()
             .find(|f| f["name"] == "mfr_permissions")
@@ -733,7 +735,7 @@ fn exec_delete(ctx: &Ctx, a: Uuid, b: Uuid, op: &Op) -> Result<Outcome, CliError
         return Ok(Outcome::Skipped(why));
     }
     let prefix = format!("/sync/{}/{}", a.as_simple(), b.as_simple());
-    let links = ctx.client.get(&format!("{prefix}/links"), &[])?;
+    let links = ctx.client.get(&format!("{prefix}/links"))?;
     let link_uuid = links["links"].as_array().and_then(|ls| {
         ls.iter()
             .find(|l| {
@@ -757,8 +759,7 @@ fn exec_delete(ctx: &Ctx, a: Uuid, b: Uuid, op: &Op) -> Result<Outcome, CliError
     // call (the daemon's normative-order helper).
     ctx.client.request(
         "DELETE",
-        &format!("{prefix}/links/{link_uuid}"),
-        &[("with_endpoint", side.to_string())],
+        &with_query(&format!("{prefix}/links/{link_uuid}"), &[("with_endpoint", side.to_string())]),
         None,
     )?;
     Ok(Outcome::Done)
@@ -775,7 +776,7 @@ fn commit_entry(
     rec_b: Uuid,
 ) -> Result<Option<Json>, CliError> {
     let prefix = format!("/sync/{}/{}", a.as_simple(), b.as_simple());
-    let links = ctx.client.get(&format!("{prefix}/links"), &[])?;
+    let links = ctx.client.get(&format!("{prefix}/links"))?;
     let link = links["links"].as_array().and_then(|ls| {
         ls.iter().find(|l| {
             l["record_a"].as_str() == Some(&rec_a.as_simple().to_string())
@@ -837,10 +838,10 @@ fn mfr_path_tree_for(ctx: &Ctx, target_repo: Uuid, path: &str) -> Result<Option<
 fn find_or_create_path(ctx: &Ctx, repo: Uuid, field: &str, path: &str) -> Result<Uuid, CliError> {
     let trimmed = path.trim_matches('/');
     if trimmed.is_empty() {
-        let roots = ctx.client.get(
+        let roots = ctx.client.get(&with_query(
             &format!("/repos/{}/tree/roots", repo.as_simple()),
             &[("field", field.to_string())],
-        )?;
+        ))?;
         return roots
             .as_array()
             .and_then(|a| a.iter().find(|r| r["name"] == ""))
@@ -888,8 +889,8 @@ fn create_bare(ctx: &Ctx, repo: Uuid, record: Uuid) -> Result<(), CliError> {
     let body = json!({"uuid": record.as_simple().to_string(), "fields": []});
     match ctx.client.post(&format!("/repos/{}/metarecords", repo.as_simple()), &body) {
         Ok(_) => Ok(()),
-        Err(CliError::Op(msg)) if msg.contains("already exists") => Ok(()),
-        Err(e) => Err(e),
+        Err(e) if e.message.contains("already exists") => Ok(()),
+        Err(e) => Err(e.into()),
     }
 }
 
@@ -909,28 +910,27 @@ fn put_field(
     let path =
         format!("/repos/{}/metarecords/{}/fields/{}", repo.as_simple(), record.as_simple(), name);
     let body = json!({"value": value, "force": true});
-    ctx.client.request("PUT", &path, &query, Some(&body))?;
+    ctx.client.request("PUT", &with_query(&path, &query), Some(&body))?;
     Ok(())
 }
 
 /// Whether a record's effective `mf_sync` mode is `external` (its content is
 /// owned by an outside tool — metafolder does no file operation for it).
 fn is_external(ctx: &Ctx, repo: Uuid, record: Uuid) -> Result<bool, CliError> {
-    let m = ctx.client.get(
-        &format!("/repos/{}/metarecords/{}/mf-sync", repo.as_simple(), record.as_simple()),
-        &[],
-    )?;
+    let m = ctx.client.get(&format!(
+        "/repos/{}/metarecords/{}/mf-sync",
+        repo.as_simple(),
+        record.as_simple()
+    ))?;
     Ok(m["mf_sync"] == "external")
 }
 
 fn version_of(ctx: &Ctx, repo: Uuid, record: Uuid) -> Result<Option<u64>, CliError> {
-    match ctx
-        .client
-        .get(&format!("/repos/{}/metarecords/{}", repo.as_simple(), record.as_simple()), &[])
+    match ctx.client.get(&format!("/repos/{}/metarecords/{}", repo.as_simple(), record.as_simple()))
     {
         Ok(m) => Ok(Some(m["version"].as_u64().unwrap_or(0))),
-        Err(CliError::Op(_)) => Ok(None),
-        Err(e) => Err(e),
+        Err(e) if e.is_not_found() => Ok(None),
+        Err(e) => Err(e.into()),
     }
 }
 
@@ -944,7 +944,7 @@ fn abs_path(ctx: &Ctx, repo: Uuid, record: Uuid) -> Result<Option<PathBuf>, CliE
 }
 
 fn repo_root(ctx: &Ctx, repo: Uuid) -> Result<PathBuf, CliError> {
-    let info = ctx.client.get(&format!("/repos/{}", repo.as_simple()), &[])?;
+    let info = ctx.client.get(&format!("/repos/{}", repo.as_simple()))?;
     info["root"]
         .as_str()
         .map(PathBuf::from)
@@ -952,7 +952,7 @@ fn repo_root(ctx: &Ctx, repo: Uuid) -> Result<PathBuf, CliError> {
 }
 
 fn target_trash(ctx: &Ctx, repo: Uuid) -> Result<TrashDir, CliError> {
-    let info = ctx.client.get(&format!("/repos/{}", repo.as_simple()), &[])?;
+    let info = ctx.client.get(&format!("/repos/{}", repo.as_simple()))?;
     let internal = info["internal_dir"]
         .as_str()
         .ok_or_else(|| CliError::Op("daemon did not report internal_dir".into()))?;
@@ -963,7 +963,6 @@ fn prune_op(ctx: &Ctx, plan_base: &str, plan_uuid: Uuid) -> Result<(), CliError>
     ctx.client.request(
         "DELETE",
         &format!("{plan_base}/metarecords/{}", plan_uuid.as_simple()),
-        &[],
         None,
     )?;
     Ok(())
@@ -992,7 +991,45 @@ fn extref(fields: &[Json], name: &str) -> Option<(Uuid, Uuid)> {
 
 #[cfg(test)]
 mod tests {
-    use super::aggregate_divergences;
+    use super::{aggregate_divergences, version_of};
+    use crate::daemon_client::{DaemonClient, DaemonError};
+    use crate::sync::{Prompter, SyncCtx, SyncError};
+    use serde_json::Value as Json;
+    use uuid::Uuid;
+
+    /// Answers every request with the same failure.
+    struct Failing(DaemonError);
+    impl DaemonClient for Failing {
+        fn request(&self, _: &str, _: &str, _: Option<&Json>) -> Result<Json, DaemonError> {
+            Err(self.0.clone())
+        }
+    }
+
+    struct Silent;
+    impl Prompter for Silent {
+        fn resolve_conflict(&self, _: &str, _: Uuid, _: Uuid) -> Result<String, SyncError> {
+            Ok("skip".into())
+        }
+        fn confirm(&self, _: &str) -> Result<bool, SyncError> {
+            Ok(true)
+        }
+        fn warn(&self, _: &str) {}
+    }
+
+    /// A record the daemon says is not there has no version — which deletion
+    /// propagation reads as "deleted". A daemon it cannot reach says nothing of
+    /// the kind, and must not be read that way.
+    #[test]
+    fn only_a_404_makes_a_record_absent() {
+        let version = |error: DaemonError| {
+            let client = Failing(error);
+            let ctx = SyncCtx { client: &client, prompter: &Silent, page_size: 10 };
+            version_of(&ctx, Uuid::nil(), Uuid::nil())
+        };
+        assert_eq!(version(DaemonError { status: Some(404), message: "gone".into() }), Ok(None));
+        assert!(version(DaemonError::local("cannot reach the daemon")).is_err());
+        assert!(version(DaemonError { status: Some(500), message: "boom".into() }).is_err());
+    }
 
     #[test]
     fn aggregate_divergences_is_empty_for_no_paths() {

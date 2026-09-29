@@ -6,6 +6,7 @@
 //! panel-type directories and the scripting API.
 
 pub mod bash_complete;
+mod blocking_client;
 pub mod command_registry;
 pub mod commands;
 pub mod config;

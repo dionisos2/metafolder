@@ -189,20 +189,20 @@ pub fn init(
     if let Some(dir) = metafolder {
         body["metafolder"] = json!(absolutize(dir)?);
     }
-    let client = TrashDaemon(&ctx.client);
+    let client = &ctx.client;
 
     // Applies the `default` preset unless --ignore names others or --no-ignore
     // is given. Loading the presets file is a hard error (spec-config); it is
     // only touched when we actually apply presets, so --no-ignore works without
     // a configured presets file.
     let outcome = if no_ignore {
-        init_repo(&client, &body, InitIgnore::None).map_err(ignore_err)?
+        init_repo(client, &body, InitIgnore::None).map_err(ignore_err)?
     } else {
         let names = split_presets(&ignore);
         let names: Vec<String> = if names.is_empty() { vec!["default".into()] } else { names };
         let presets = load_presets()?;
         let name_refs: Vec<&str> = names.iter().map(String::as_str).collect();
-        init_repo(&client, &body, InitIgnore::Presets { presets: &presets, names: &name_refs })
+        init_repo(client, &body, InitIgnore::Presets { presets: &presets, names: &name_refs })
             .map_err(ignore_err)?
     };
     println!("{}", outcome.repo_uuid);
@@ -1208,7 +1208,7 @@ pub fn order(
         .to_string();
 
     let outcome = metafolder_core::order::run(
-        &TrashDaemon(&ctx.client),
+        &ctx.client,
         &repo,
         &folder_uuid,
         meta_field,
@@ -2482,7 +2482,6 @@ pub fn schema_show(ctx: &Ctx) -> Result<i32, CliError> {
 // ── mf trash ────────────────────────────────────────────────────────────────
 
 use crate::trash::{PruneMode, Reason, TrashDir};
-use metafolder_core::daemon_client::DaemonClient as _;
 
 /// Builds the [`TrashDir`] from a `GET /repos/:repo` info body.
 fn trash_dir_of(info: &Json) -> Result<TrashDir, CliError> {
@@ -2495,19 +2494,6 @@ fn trash_dir_of(info: &Json) -> Result<TrashDir, CliError> {
 /// Adapts the CLI's HTTP client to core's `DaemonClient` for the shared trash
 /// re-link glue (`metafolder_core::trash`), preserving the HTTP status so the
 /// glue can classify a benign forest rejection by status.
-struct TrashDaemon<'a>(&'a Client);
-
-impl metafolder_core::daemon_client::DaemonClient for TrashDaemon<'_> {
-    fn request(
-        &self,
-        method: &str,
-        path: &str,
-        body: Option<&Json>,
-    ) -> Result<Json, metafolder_core::daemon_client::DaemonError> {
-        self.0.request_daemon(method, path, body)
-    }
-}
-
 fn trash_daemon_err(e: metafolder_core::daemon_client::DaemonError) -> CliError {
     CliError::Op(e.message)
 }
@@ -2565,7 +2551,7 @@ fn split_presets(raw: &[String]) -> Vec<String> {
 /// `dir` (via the exact-path idiom), or the repository root when `dir` is None.
 fn resolve_ignore_target(
     ctx: &Ctx,
-    client: &TrashDaemon,
+    client: &Client,
     repo: &str,
     dir: Option<&Path>,
 ) -> Result<Uuid, CliError> {
@@ -2607,10 +2593,10 @@ pub fn ignore_apply(
     }
     let presets = load_presets()?;
     let repo = repo_id(ctx)?;
-    let client = TrashDaemon(&ctx.client);
-    let target = resolve_ignore_target(ctx, &client, &repo, dir)?;
+    let client = &ctx.client;
+    let target = resolve_ignore_target(ctx, client, &repo, dir)?;
     let name_refs: Vec<&str> = names.iter().map(String::as_str).collect();
-    let result = metafolder_core::ignore::apply(&client, &repo, target, &presets, &name_refs, mode)
+    let result = metafolder_core::ignore::apply(client, &repo, target, &presets, &name_refs, mode)
         .map_err(ignore_err)?;
     if result.is_empty() {
         println!("mf_ignore is now empty");
@@ -2636,10 +2622,10 @@ pub fn ignore_list(ctx: &Ctx, dir: Option<&Path>) -> Result<i32, CliError> {
     }
     if dir.is_some() {
         let repo = repo_id(ctx)?;
-        let client = TrashDaemon(&ctx.client);
-        let target = resolve_ignore_target(ctx, &client, &repo, dir)?;
-        let active = metafolder_core::ignore::current_patterns(&client, &repo, target)
-            .map_err(ignore_err)?;
+        let client = &ctx.client;
+        let target = resolve_ignore_target(ctx, client, &repo, dir)?;
+        let active =
+            metafolder_core::ignore::current_patterns(client, &repo, target).map_err(ignore_err)?;
         println!("\nActive patterns on the target:");
         if active.is_empty() {
             println!("  (none)");
@@ -2665,8 +2651,8 @@ pub fn trash_add(ctx: &Ctx, path: &Path, force: bool) -> Result<i32, CliError> {
     let rel = repo_rel(Path::new(root), &abs)?;
 
     let repo = repo_id(ctx)?;
-    let client = TrashDaemon(&ctx.client);
-    let uuid = metafolder_core::trash::metarecord_at_path(&client, &repo, &rel)
+    let client = &ctx.client;
+    let uuid = metafolder_core::trash::metarecord_at_path(client, &repo, &rel)
         .map_err(trash_daemon_err)?
         .ok_or_else(|| {
             CliError::Op(format!("no metarecord is associated with {}", abs.display()))
@@ -2676,16 +2662,16 @@ pub fn trash_add(ctx: &Ctx, path: &Path, force: bool) -> Result<i32, CliError> {
     // read. This takes the target and everything under it — which the trashing
     // deletes — plus its ancestors, which it does not.
     let rec = client
-        .request("GET", &format!("/repos/{repo}/metarecords/{uuid}"), None)
+        .request_daemon("GET", &format!("/repos/{repo}/metarecords/{uuid}"), None)
         .map_err(trash_daemon_err)?;
     let version = rec["version"].as_u64();
-    let subtree = metafolder_core::trash::capture_nodes(&client, &repo, &rec, &rel)
+    let subtree = metafolder_core::trash::capture_nodes(client, &repo, &rec, &rel)
         .map_err(trash_daemon_err)?;
 
     // Then the metadata half, then the bytes (spec-trash "What trashing does,
     // in order"): deleting before moving is what leaves the watcher nothing to
     // orphan when the file disappears.
-    metafolder_core::trash::delete_trashed(&client, &repo, &subtree, force)
+    metafolder_core::trash::delete_trashed(client, &repo, &subtree, force)
         .map_err(trash_daemon_err)?;
 
     let entry = trash.trash_path(&abs, Reason::Manual, None, Some(uuid), version)?;
@@ -2851,7 +2837,7 @@ pub fn trash_restore(ctx: &Ctx, id: &str) -> Result<i32, CliError> {
         .map(|p| p.to_string_lossy().into_owned())
         .unwrap_or_else(|| entry.original_name.clone());
     let repo = repo_id(ctx)?;
-    metafolder_core::trash::restore_relink(&TrashDaemon(&ctx.client), &repo, &entry, &rel)
+    metafolder_core::trash::restore_relink(&ctx.client, &repo, &entry, &rel)
         .map_err(trash_daemon_err)?;
 
     let restored = dir.restore(id)?;

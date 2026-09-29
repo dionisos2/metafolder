@@ -19,66 +19,13 @@ use uuid::Uuid;
 
 use metafolder_core::sync::plan::PlanReport;
 use metafolder_core::sync::run::{RunReport, RunStatus, ShowOp, ShowReport};
-use metafolder_core::sync::{self as core_sync, DaemonClient, Prompter, SyncCtx, SyncError};
+use metafolder_core::sync::{self as core_sync, Prompter, SyncCtx, SyncError};
 
+use crate::blocking_client::BlockingClient;
 use crate::commands::App;
 
 /// Pagination size for the internal query loops (mirrors the CLI default).
 const PAGE_SIZE: usize = 500;
-
-/// A blocking daemon client for the sync orchestration. Mirrors the CLI client
-/// (auth token, `{"error": …}` bodies → `SyncError::Op`, transport → `Op`).
-struct BlockingClient {
-    base: String,
-    token: Option<String>,
-    agent: ureq::Agent,
-}
-
-impl BlockingClient {
-    fn new(base: String) -> Self {
-        Self {
-            base: base.trim_end_matches('/').to_string(),
-            token: metafolder_core::auth::read_token("daemon").ok(),
-            agent: ureq::Agent::new(),
-        }
-    }
-}
-
-impl DaemonClient for BlockingClient {
-    fn request(
-        &self,
-        method: &str,
-        path: &str,
-        query: &[(&str, String)],
-        body: Option<&Value>,
-    ) -> Result<Value, SyncError> {
-        let url = format!("{}{}", self.base, path);
-        let mut req = self.agent.request(method, &url);
-        if let Some(token) = &self.token {
-            req = req.set("Authorization", &format!("Bearer {token}"));
-        }
-        for (key, value) in query {
-            req = req.query(key, value);
-        }
-        let result = match body {
-            Some(json) => req.send_json(json),
-            None => req.call(),
-        };
-        match result {
-            Ok(response) => Ok(response.into_json().unwrap_or(Value::Null)),
-            Err(ureq::Error::Status(code, response)) => {
-                let body: Value = response.into_json().unwrap_or(Value::Null);
-                let message = crate::daemon_proxy::error_message(&body, || {
-                    format!("daemon returned HTTP {code}")
-                });
-                Err(SyncError::Op(message))
-            }
-            Err(ureq::Error::Transport(t)) => {
-                Err(SyncError::Op(format!("cannot reach the daemon at {}: {t}", self.base)))
-            }
-        }
-    }
-}
 
 /// The non-interactive prompter (spec-sync, GUI): skip conflicts (left for
 /// `plan_resolve` editing), confirm implicitly, collect warnings for the panel.

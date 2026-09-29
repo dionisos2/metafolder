@@ -37,6 +37,19 @@ pub struct Client {
     token: Option<String>,
 }
 
+/// The client every piece of core orchestration drives (trash, ignore, order,
+/// repository init, sync): `request_daemon`, which keeps the HTTP status.
+impl metafolder_core::daemon_client::DaemonClient for Client {
+    fn request(
+        &self,
+        method: &str,
+        path: &str,
+        body: Option<&Json>,
+    ) -> Result<Json, metafolder_core::daemon_client::DaemonError> {
+        self.request_daemon(method, path, body)
+    }
+}
+
 impl Client {
     pub fn new(base_url: &str) -> Self {
         Self::with_peer(base_url, "daemon")
@@ -67,8 +80,7 @@ impl Client {
     }
 
     /// Like [`Self::request`] but preserving the HTTP status, for callers that
-    /// classify an error by status rather than message (the shared trash
-    /// re-link glue's `DaemonClient`).
+    /// classify an error by status rather than message (core's `DaemonClient`).
     pub fn request_daemon(
         &self,
         method: &str,

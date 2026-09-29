@@ -9,8 +9,8 @@ use std::sync::Arc;
 
 use serde_json::json;
 
+use crate::blocking_client::BlockingClient;
 use crate::commands::App;
-use crate::trash::BlockingClient;
 
 /// `repo_init` Tauri command: initialises a repository and applies its ignore
 /// preset. Mirrors `mf repo init` — `default` unless `no_ignore` is set (or

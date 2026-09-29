@@ -8,12 +8,10 @@
 pub mod plan;
 pub mod run;
 
-use serde_json::Value as Json;
-
-use metafolder_core::sync::{self as core_sync, DaemonClient, Prompter, SyncCtx, SyncError};
+use metafolder_core::sync::{self as core_sync, Prompter, SyncCtx, SyncError};
 use uuid::Uuid;
 
-use crate::client::{CliError, Client};
+use crate::client::CliError;
 use crate::commands::Ctx;
 
 impl From<SyncError> for CliError {
@@ -22,23 +20,6 @@ impl From<SyncError> for CliError {
             SyncError::Usage(m) => CliError::Usage(m),
             SyncError::Op(m) => CliError::Op(m),
         }
-    }
-}
-
-/// The daemon HTTP client, exposed to core as a [`DaemonClient`]. Maps the CLI's
-/// error class onto core's (the message is preserved).
-impl DaemonClient for Client {
-    fn request(
-        &self,
-        method: &str,
-        path: &str,
-        query: &[(&str, String)],
-        body: Option<&Json>,
-    ) -> Result<Json, SyncError> {
-        Client::request(self, method, path, query, body).map_err(|e| match e {
-            CliError::Usage(m) => SyncError::Usage(m),
-            CliError::Op(m) => SyncError::Op(m),
-        })
     }
 }
 

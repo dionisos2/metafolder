@@ -5,9 +5,10 @@
 //! is never asked to touch files — only queried for locations and to re-link the
 //! metarecord after a restore.
 
+use crate::blocking_client::BlockingClient;
 use crate::commands::App;
 use crate::daemon_proxy::DaemonProxy;
-use metafolder_core::daemon_client::{DaemonClient, DaemonError};
+use metafolder_core::daemon_client::DaemonClient;
 use metafolder_core::trash::{PruneMode, Reason, TrashDir, TrashEntry};
 use serde_json::Value;
 use std::path::{Path, PathBuf};
@@ -51,61 +52,6 @@ fn parse_selected(value: &Value) -> Option<(String, String)> {
     let uuid = value.get("uuid")?.as_str()?.to_string();
     let repo = value.get("repo")?.as_str()?.to_string();
     Some((uuid, repo))
-}
-
-// ── Blocking daemon client for the shared re-link glue ───────────────────────
-//
-// Core's trash re-link orchestration ([`metafolder_core::trash`]) is
-// synchronous, so — like `core::sync` — it rides a blocking `ureq` client on a
-// `spawn_blocking` thread rather than the async [`DaemonProxy`]. Mirrors the
-// CLI's client (auth token, `{"error": …}` bodies → the message, transport too).
-pub(crate) struct BlockingClient {
-    base: String,
-    token: Option<String>,
-    agent: ureq::Agent,
-}
-
-impl BlockingClient {
-    pub(crate) fn new(base: String) -> Self {
-        Self {
-            base: base.trim_end_matches('/').to_string(),
-            token: metafolder_core::auth::read_token("daemon").ok(),
-            agent: ureq::Agent::new(),
-        }
-    }
-}
-
-impl DaemonClient for BlockingClient {
-    fn request(
-        &self,
-        method: &str,
-        path: &str,
-        body: Option<&Value>,
-    ) -> Result<Value, DaemonError> {
-        let url = format!("{}{}", self.base, path);
-        let mut req = self.agent.request(method, &url);
-        if let Some(token) = &self.token {
-            req = req.set("Authorization", &format!("Bearer {token}"));
-        }
-        let result = match body {
-            Some(json) => req.send_json(json),
-            None => req.call(),
-        };
-        match result {
-            Ok(response) => Ok(response.into_json().unwrap_or(Value::Null)),
-            Err(ureq::Error::Status(code, response)) => {
-                let body: Value = response.into_json().unwrap_or(Value::Null);
-                let message = crate::daemon_proxy::error_message(&body, || {
-                    format!("daemon returned HTTP {code}")
-                });
-                Err(DaemonError { status: Some(code), message })
-            }
-            Err(ureq::Error::Transport(t)) => Err(DaemonError {
-                status: None,
-                message: format!("cannot reach the daemon at {}: {t}", self.base),
-            }),
-        }
-    }
 }
 
 /// The selected metarecord's first `mfr_path` (root-relative), via `resolve-tree`.
