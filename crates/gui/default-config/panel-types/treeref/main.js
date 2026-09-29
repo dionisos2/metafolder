@@ -18,7 +18,7 @@ import { createPagedList } from '/__paged-list.js';
 import { createSelect } from '/__select.js';
 import { fileActionsProvider, metarecordMenuItems } from '/__file-actions.js';
 import { registerFind } from '/__find-entry.js';
-import { schemaTypes, templateFields } from '/__schema-template.js';
+import { loadSchema as loadSharedSchema, schemaTypes, templateFields } from '/__schema-template.js';
 import { childrenQuery, nodeFields, refQueryDsl, treeNameOf, treeRefPath } from './queries.js';
 
 /**
@@ -63,8 +63,6 @@ export async function mount(root, metafolder) {
   let picking = false; // true while this panel is open as a tree_ref value picker
   /** @type {string} the Ref field `treeref:list-refs` follows */
   let refField = defaultRefField;
-  /** @type {{repo: string|null, schema: Schema}} memoized GET /schema */
-  let schemaCache = { repo: null, schema: null };
   /** @type {string|null} a freshly created node to land the cursor on */
   let pendingSelectUuid = null;
   /** @type {'exact'|'subtree'} how much of the selected node the query covers */
@@ -219,15 +217,10 @@ export async function mount(root, metafolder) {
 
   // ── Adding an element ─────────────────────────────────────────────────────
 
-  /** GET /schema for `repo`, memoized (null on error: treated as no schema).
+  /** `repo`'s schema, from the cache every panel shares (null: no schema).
    *  @param {string} repo */
-  async function loadSchema(repo) {
-    if (schemaCache.repo === repo) return schemaCache.schema;
-    const schema = /** @type {Schema} */ (
-      await daemon.call('GET', `/repos/${repo}/schema`).catch(() => null)
-    );
-    schemaCache = { repo, schema };
-    return schema;
+  function loadSchema(repo) {
+    return loadSharedSchema(daemon, repo);
   }
 
   /** Creates a metarecord positioned at a new node of the explored forest

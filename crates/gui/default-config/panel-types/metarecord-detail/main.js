@@ -15,7 +15,7 @@ import {
   TYPES,
   MATCH_ALL,
 } from '/__value-widget.js';
-import { schemaTypes, templateFields } from '/__schema-template.js';
+import { loadSchema as loadSharedSchema, schemaTypes, templateFields } from '/__schema-template.js';
 import { fileMenuItems, metarecordMenuItems } from '/__file-actions.js';
 import { createAnnotator } from './annotations.js';
 import { completionSourceField, resolveRefValue } from './ref-completion.js';
@@ -70,8 +70,6 @@ export async function mount(root, metafolder) {
   /** @type {number|null} field id being edited, or null */
   let editingField = null;
   let cursorIndex = -1; // keyboard cursor over the field rows (-1 = none)
-  /** @type {{repo: string|null, schema: Schema}} memoized GET /schema */
-  let schemaCache = { repo: null, schema: null };
   // The records shown before this one, so `metarecord:back` can walk back out
   // of a chain of followed references.
   const navHistory = createNavHistory();
@@ -680,23 +678,18 @@ export async function mount(root, metafolder) {
     }
   }
 
-  /** GET /schema for `repo`, memoized (null on error: treated as no schema).
+  /** `repo`'s schema, from the cache every panel shares (null: no schema).
    *  @param {string} repo */
-  async function loadSchema(repo) {
-    if (schemaCache.repo === repo) return schemaCache.schema;
-    const schema = /** @type {Schema} */ (
-      await daemon.call('GET', `/repos/${repo}/schema`).catch(() => null)
-    );
-    schemaCache = { repo, schema };
-    return schema;
+  function loadSchema(repo) {
+    return loadSharedSchema(daemon, repo);
   }
 
   /** Creates a metarecord immediately (spec-gui "metarecord-detail panel type")
    *  and selects it, so every field-editing command applies to a live record
    *  from the start — there is no staged draft. A `type` seeds the schema's
    *  template fields; otherwise the record is created empty.
-   *  @param {string|null} [type] @param {Schema} [schema] */
-  async function createMetarecord(type = null, schema = schemaCache.schema) {
+   *  @param {string|null} type @param {Schema} schema */
+  async function createMetarecord(type, schema) {
     try {
       const repo = await repoForAdd();
       if (!repo) throw new Error('no active repository');

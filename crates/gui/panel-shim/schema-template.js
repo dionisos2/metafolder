@@ -1,9 +1,10 @@
-// Schema-driven templates for new metarecords (spec-schema). The user schema
-// (returned verbatim by GET /repos/:repo/schema) declares metarecord types
-// (the target names of its groups) and the fields each type constrains. The
-// metarecord-detail panel uses these helpers to offer a type picker on create
-// and to pre-stage the chosen type's fields. Pure functions over the raw schema
-// JSON, so they are unit-tested in isolation.
+// The user schema in the GUI (spec-schema): read once per repository and
+// shared by every panel (`loadSchema`), and the templates it gives new
+// metarecords. The schema (returned verbatim by GET /repos/:repo/schema)
+// declares metarecord types (the target names of its groups) and the fields
+// each type constrains; the metarecord-detail and treeref panels use these
+// helpers to offer a type picker on create and to pre-stage the chosen type's
+// fields. The template helpers are pure functions over the raw schema JSON.
 
 /**
  * The user schema, as `GET /repos/:repo/schema` returns it verbatim
@@ -83,4 +84,43 @@ export function templateFields(schema, type) {
     }
   }
   return fields;
+}
+
+// ── The shared schema cache ─────────────────────────────────────────────────
+//
+// A schema is configuration, not data: it changes when its file is edited and
+// reloaded, not with every write. So it is read once per repository and kept,
+// for every panel of the realm (spec-gui "Daemon data": the rule against
+// keeping daemon answers is about query results). A failed read is not kept:
+// it counts as "no schema" for the caller, and the next one asks again.
+
+/** @type {Map<string, Schema>} */
+const schemas = new Map();
+
+/**
+ * The schema of `repo`, read from the daemon the first time any panel asks.
+ * @param {{call(method: string, path: string): Promise<unknown>}} daemon
+ * @param {string} repo
+ * @returns {Promise<Schema>}
+ */
+export async function loadSchema(daemon, repo) {
+  if (schemas.has(repo)) return schemas.get(repo);
+  try {
+    const schema = /** @type {Schema} */ (await daemon.call('GET', `/repos/${repo}/schema`));
+    schemas.set(repo, schema);
+    return schema;
+  } catch {
+    return null;
+  }
+}
+
+/** The schema of `repo` if it has been read, else `undefined`.
+ *  @param {string} repo @returns {Schema|undefined} */
+export function cachedSchema(repo) {
+  return schemas.get(repo);
+}
+
+/** Forgets every schema read (tests; a schema reload would call it too). */
+export function forgetSchemas() {
+  schemas.clear();
 }

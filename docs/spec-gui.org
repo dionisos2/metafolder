@@ -4133,13 +4133,18 @@ daemon directly (CORS), and the daemon stays GUI-agnostic.
 
 ** Daemon data
 
-Nothing on the GUI side keeps daemon data. Every read is a daemon round-trip —
+Nothing on the GUI side keeps daemon *data* — metarecords, paths, query
+results. Every read of it is a daemon round-trip —
 =metafolder.daemon.query= / =metarecords= / =treePaths= / =fields=, or
-=daemon.call= — answered from the daemon's in-memory index and tree cache in
-about a millisecond (spec-perf: a page of a query ≈ 1 ms, the paths of a page
+=daemon.call= — answered from the daemon's store in about a millisecond (spec-perf: a page of a query ≈ 1 ms, the paths of a page
 ≈ 0.5 ms, one metarecord ≈ 0.15 ms on a 20 000-file repository). A panel keeps
 what it displays, for as long as it displays it, and reads it again when told
 it changed.
+
+Configuration is another matter, and is kept: it changes when a file is
+edited, not with every write. The user schema is read once per repository
+and shared by every panel (=loadSchema= in =panel-shim/schema-template.js=; a
+failed read is not kept, the next one asks again).
 
 It used to be otherwise: a shared in-realm cache (metarecords, TreeRef paths,
 query results) served those reads, invalidated from the change feed. It was
