@@ -1,12 +1,12 @@
 title: $:/mf/gen/CLI command/mf retype
 catalog: CLI command
 target: mf retype
-summary: Convert a field's value type repository-wide (string|int|float|bool|datetime)
+summary: Convert a field's value type repository-wide, to any value type
 
 !! Reference
 
 ```
-Convert a field's value type repository-wide (string|int|float|bool|datetime)
+Convert a field's value type repository-wide, to any value type
 
 Usage: mf retype <NAME> <TO>
 
@@ -15,7 +15,7 @@ Arguments:
           Field name
 
   <TO>
-          Target type: string, int, float, bool, or datetime
+          Target type: string, int, float, bool, datetime, ref, tree_ref, externalref or refbase
 
 Options:
   -h, --help

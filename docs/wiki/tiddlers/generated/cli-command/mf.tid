@@ -22,7 +22,7 @@ Commands:
   watch       Watcher ingestion: show, pause or resume the recording of filesystem events, and check whether a path is watched
   metarecord  Metarecord operations: `mf metarecord [selector] <verb>`
   field       Field operations: list the repo's field names, or access a row by id
-  retype      Convert a field's value type repository-wide (string|int|float|bool|datetime)
+  retype      Convert a field's value type repository-wide, to any value type
   reconcile   Reconcile the database with the filesystem
   track       Create the metarecord for a single path and print its UUID
   path        Print the filesystem path of a metarecord (walks the mfr_path chain)

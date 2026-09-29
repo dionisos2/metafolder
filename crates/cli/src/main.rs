@@ -148,11 +148,11 @@ enum Command {
         #[command(subcommand)]
         command: Option<FieldCommand>,
     },
-    /// Convert a field's value type repository-wide (string|int|float|bool|datetime)
+    /// Convert a field's value type repository-wide, to any value type
     Retype {
         /// Field name
         name: String,
-        /// Target type: string, int, float, bool, or datetime
+        /// Target type: string, int, float, bool, datetime, ref, tree_ref, externalref or refbase
         to: String,
     },
     /// Reconcile the database with the filesystem
