@@ -1,0 +1,6 @@
+title: mf duplicate
+tags: [[CLI command]] Duplicates
+kind: reference
+summary: Duplicates: list the groups of byte-identical files, or scan for them
+
+Duplicate detection ([[Duplicates]]). Alone, `mf duplicate` is `mf duplicate list`.

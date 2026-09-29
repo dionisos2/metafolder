@@ -491,7 +491,7 @@ section; this section defines the conventions shared by all commands.
 | doc "Trash"             | =mf trash {list,restore,prune}=                   |
 | [[file:spec-tasks.org][spec-tasks.org]]             | =mf task {list,show}=                              |
 | [[file:spec-sync.org][spec-sync.org]]               | =mf sync {plan,run,show,status,link,unlink}=      |
-| [[file:spec-duplicates.org][spec-duplicates.org]]   | =mf duplicate {list,scan,clear}=                  |
+| doc "Duplicates"   | =mf duplicate {list,scan,clear}=                  |
 
 ** Global options
 

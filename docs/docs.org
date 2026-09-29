@@ -482,21 +482,30 @@ la page help =trash.html=. Citations du code réécrites (=doc "…"=), ainsi qu
 liens des autres specs. Mémoires : =trash-bin-implemented= et
 =trash-owns-metarecord-redesign= supprimées, =trash-restore-race-fix= réduite.
 
-** TODO 28. Doublons
+** FAIT 28. Doublons
 
-- [ ] =Duplicates= — overview
-- [ ] =Finding duplicates= — guide (=mf duplicate scan/list=, panel)
-- [ ] =What counts as a duplicate= — reference (liens durs, cache de hash et estampille)
-- [ ] =Why duplicates are not compared byte by byte= — rationale
-- [ ] =Duplicate groups= — reference (invariant, sortie d'un groupe, =same()=)
-- [ ] =The duplicate scan= — reference, dev (phases, écritures, progression, route)
-- [ ] =Duplicates and sync= — reference
-- [ ] =duplicates panel= — reference
-- [ ] =Duplicate open questions= — question (dossiers, quasi-doublons, rétention de la décision)
+- [X] =Duplicates= — overview
+- [X] =Finding duplicates= — guide (scan, liste, requêtes, =same()=)
+- [X] =Deleting duplicate copies= — guide (ajoutée : garder celle-ci / jeter celle-ci)
+- [X] =What counts as a duplicate= — reference (candidats, liens durs, péremption connue)
+- [X] =The duplicate hash cache= — reference (renommée ; le tampon mtime + taille)
+- [X] =Duplicate groups= — reference (champs, invariant, sortie d'un groupe)
+- [X] =Why duplicates are not compared byte by byte= — rationale, dev
+- [X] =The duplicate scan= — reference, dev (phases, lectures, écritures, progression)
+- [X] =POST /repos/:repo/duplicates/scan= — reference, dev
+- [X] =Duplicates and sync= — reference, dev
+- [X] =duplicates panel= — reference
+- [X] =Duplicate open questions= — question, deferred
+- [X] les notes de commande : =mf duplicate= (+ =list=, =scan=, =clear=), les 9 =duplicates:*=, =mf:duplicate=
 
-CLI : =mf duplicate *= (4). GUI : =duplicates:*= (9), =mf:duplicate= ; panel
-=duplicates=. Sources : spec-duplicates entier ; spec-gui « Duplicates » ; help
-=duplicates.html= ; mémoire =duplicate-detection-design=.
+Vérification contre le code : la spec décrivait encore l'époque SQL (« why it
+is SQL », =db::…=, l'index en mémoire), désormais cinq questions au stockage ;
+=metarecord-list:duplicates= est devenu =metarecord-list:query duplicates= ;
+=mf duplicate clear= écrit *deux* révisions, pas une (documenté ; défaut mineur :
+il faut deux undo). Le slug du wiki confondait =mf:duplicate= et =mf duplicate= :
+corrigé (=:= → =_= à l'intérieur d'un nom). =metarecord-list:query= reste à
+l'item 38. Mémoire =duplicate-detection-design= réduite aux pièges JS des
+panels (pour l'item 37).
 
 ** TODO 29. Synchronisation
 

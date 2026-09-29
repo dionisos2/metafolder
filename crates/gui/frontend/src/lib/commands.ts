@@ -1504,7 +1504,7 @@ async function runCommand(name: string, args: string[], ws: string | null): Prom
         await status(`unknown operation: "${args[0] ?? ''}" (expected scan)`);
         return true;
       }
-      // The GUI half of `mf duplicate scan` (spec-duplicates "GUI"). Options
+      // The GUI half of `mf duplicate scan` (doc "duplicates panel"). Options
       // stay CLI-only, as `mf trash prune`'s do: this runs the ordinary
       // whole-repository scan, and the Rust side posts its own status.
       if (ws) await invoke('duplicate_scan', { wsId: ws });

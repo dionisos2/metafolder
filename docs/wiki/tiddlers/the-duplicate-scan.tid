@@ -1,0 +1,45 @@
+title: The duplicate scan
+tags: Duplicates
+kind: reference
+audience: dev
+summary: Four phases, each narrowing the candidates before the next, costlier one — size, partial hash, full hash, prune.
+
+The scan (`daemon/src/duplicates.rs`) is an observable background task
+(spec-tasks "The duplicate scan as a task"). Four phases, each narrowing the
+candidates before the next, more expensive one:
+
+# ''size'' — every candidate file ([[What counts as a duplicate]]) is partitioned by `mfr_size`, and size classes of one are dropped. This is by far the biggest cut, so it is made on `(uuid, size)` alone, before anything heavier is built; only the survivors get a path resolved (and with it the offline-volume guard).
+# ''partial'' — each survivor gets its `mfr_partial_hash`, reused when a stored one is still valid ([[The duplicate hash cache]]). Within a size class, a partial hash that occurs once eliminates its file.
+# ''full'' — the files still in play get `mfr_full_hash`; files sharing (size, full hash) form a group. Size classes are processed ''largest first'', and each class's groups are written as it completes: a cancelled scan leaves a correct partial result holding the most valuable groups.
+# ''prune'' — reached only when the others completed: removes the link from records no longer members, and deletes groups left with fewer than two. A cancelled scan skips it, so stale groups survive until the next complete run. A scan restricted to a subtree prunes only there.
+
+!! What it reads
+
+Five whole-repository questions to the store, all before it writes anything, and
+nothing per record after that: the candidates with their sizes, the stored hashes
+and their stamps, the `mfr_inode` owners, the existing groups with their counters,
+and the existing member links. The last two keep the write path read-free: "does
+this record already point at this group?" and "has this counter changed?" are
+answered against maps loaded up front.
+
+!! What it writes
+
+* ''The hash cache'' (`mfr_partial_hash`, `mfr_full_hash`, `mfr_hash_mtime`, `mfr_hash_size`) is committed in batches of 500 records, one revision each: one transaction per file would cost an `fsync` each, and one for the whole scan would throw every computed hash away on a cancel — and the hash cache is precisely the work worth keeping.
+* ''The groups'' are committed per size class; the prune is one final revision.
+
+A field is written only when it is absent or changed, so a re-scan of an
+unchanged repository writes nothing.
+
+!! Progress
+
+|!Phase |!Counts |
+|`size` |files partitioned / candidate files |
+|`partial` |files hashed / files to hash |
+|`full` |''bytes'' hashed / bytes to hash |
+|`prune` |groups checked / groups |
+
+The `full` phase counts bytes because file sizes span orders of magnitude and a
+file count would make the bar meaningless; its total is known exactly before it
+starts, so a remaining-time estimate is an honest extrapolation. The `partial`
+phase reads a bounded 8 KiB per file, near-constant, so files are the right unit
+there.

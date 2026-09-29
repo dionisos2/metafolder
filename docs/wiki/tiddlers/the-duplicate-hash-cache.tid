@@ -1,0 +1,36 @@
+title: The duplicate hash cache
+tags: Duplicates
+aliases: hash
+kind: reference
+summary: The scan keeps its hashes, stamped with the file's mtime and size, and trusts them only while both still match.
+
+Hashing is the expensive part of a scan, so the hashes are stored on the file's
+metarecord and reused: `mfr_partial_hash` (the first and last 4 KiB) and
+`mfr_full_hash` (the whole file), both xxHash3-64 — the fingerprints the watcher
+and reconcile use to follow files around.
+
+A stored hash is only usable if the file has not changed since, and the watcher
+does not see every change: a subtree whose watching is off is frozen on purpose,
+and a file modified there keeps a hash that no longer describes it. So the scan
+records, together with the hashes, the state they were computed from:
+
+* `mfr_hash_mtime` — the file's modification time at hash time;
+* `mfr_hash_size` — its size at hash time.
+
+A stored hash is trusted only when ''both'' still match the live `stat`;
+otherwise it is recomputed. Both are needed: the modification time alone misses a
+rewrite that preserves it, and `mfr_size` cannot serve because a reconcile
+updates it without touching the hashes. The watcher, when it sees a file's
+content change, clears the hashes, their stamp and the file's group link.
+
+This does not contradict the rule that the modification time never decides
+identity. Here it decides that a derived value is ''stale'', and it fails safe: a
+mismatch costs a recomputation, never a wrong match.
+
+The stamp is a strong heuristic, not a proof: modification times have one-second
+granularity on some filesystems and can be set backwards (`touch -t`,
+`rsync --times`, an archive extraction), so a same-second, same-size rewrite
+slips through. `mf duplicate scan --rehash` ignores every stored hash.
+
+`mf duplicate clear` leaves the cache alone: it is valid, expensive to rebuild,
+and useful to reconcile and sync on its own.

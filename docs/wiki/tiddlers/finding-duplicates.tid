@@ -1,0 +1,61 @@
+title: Finding duplicates
+tags: Duplicates
+aliases: duplicate-scan same
+kind: guide
+summary: Run a duplicate scan, then list the groups or ask what else is identical to a file.
+
+!! Scan
+
+```
+mf duplicate scan
+```
+
+<<cmd "mf duplicate scan">> starts the scan as a background task and follows it
+to the end, showing its phase and progress, then prints a summary:
+
+```
+groups: 128  files: 291  reclaimable: 4.5 GiB   (hashed 5540 partial, 412 full; 3 skipped)
+```
+
+The first scan of a repository hashes every candidate file and is the expensive
+one; the hashes are kept, so later scans only hash what changed, and a scan of an
+unchanged repository writes nothing. Options:
+
+* `--min-size <size>` — skip files smaller than this (a human size, as for `mf trash prune -s`: `100mb`, `1g`, `512k`); by default only empty files are skipped.
+* `--rehash` — ignore every stored hash and recompute ([[The duplicate hash cache]]).
+* `--metarecord <uuid>` — scan only that metarecord's subtree.
+* `--no-wait` — print the task id and return (follow it with `mf task`).
+
+In the GUI, `mf:duplicate scan` (<<cmd "mf:duplicate">>, or the ''Scan'' button of
+the [[duplicates panel]]) runs the whole-repository scan, with the task bar's
+progress; its options stay command-line only. Cancelling a scan keeps what it
+had already found: the largest files are compared first.
+
+!! Look at the result
+
+<<cmd "mf duplicate list">> prints one line per group, worst reclaimable space
+first; `-v` adds each group's member paths, a `+` marking a member that shares
+an inode with another (a hard link, which frees nothing when removed):
+
+```
+RECLAIMABLE  SIZE      COUNT  HASH
+    3.2 GiB   1.6 GiB      3  a41f0c9e…
+    806 MiB   403 MiB      3  77b2e510…
+```
+
+It is a formatting of an ordinary query. The same questions, asked directly:
+
+```
+mf_schema = "duplicate_group"                       # every group
+mfr_duplicate_group IS PRESENT                      # every file having a duplicate
+same(mfr_duplicate_group, 3f2a…9b)                  # the files identical to that one
+same(mfr_duplicate_group, mfr_path = "/a/b.txt")    # ... designated by path
+```
+
+sorted with the ordinary `--sort` (`mfr_duplicate_reclaimable:desc` on the groups
+is the worst-first listing). The `same` form reaches a file's twins without ever
+handling a hash. In the GUI, `metarecord-list:query duplicates` puts it, for the
+selected metarecord, in the list's query zone — visible and editable.
+
+Then: [[Deleting duplicate copies]]. `mf duplicate clear` (<<cmd "mf duplicate clear">>)
+removes every group and every link to one, and keeps the hashes.

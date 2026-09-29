@@ -1779,7 +1779,7 @@ pub fn orphan_clear(ctx: &Ctx, yes: bool) -> Result<i32, CliError> {
     Ok(0)
 }
 
-// ── Duplicate detection (spec-duplicates "CLI") ───────────────────────────────
+// ── Duplicate detection (doc "Finding duplicates") ───────────────────────────────
 
 /// The DSL selecting every duplicate group, and the field the listing sorts on.
 const GROUPS_QUERY: &str = r#"mf_schema = "duplicate_group""#;

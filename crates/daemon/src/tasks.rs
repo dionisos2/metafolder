@@ -66,7 +66,7 @@ pub const RETENTION: Duration = Duration::from_secs(10);
 #[serde(rename_all = "snake_case")]
 pub enum TaskKind {
     Reconcile,
-    /// The duplicate scan (spec-duplicates). Same 409 dedup rule as reconcile,
+    /// The duplicate scan (doc "Duplicates"). Same 409 dedup rule as reconcile,
     /// and cancellable: hashes are committed in batches, so stopping keeps the
     /// expensive work already done.
     Duplicates,

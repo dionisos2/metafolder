@@ -1,0 +1,9 @@
+title: mf:duplicate
+tags: [[GUI command]] Duplicates
+kind: reference
+summary: Scan the active repository for byte-identical files (mf duplicate scan)
+
+`mf:duplicate scan` is the GUI half of `mf duplicate scan`: the whole-repository
+scan, with the task bar's progress ([[Finding duplicates]]). Its options stay on
+the command line. A cancelled scan is an outcome, not an error: what it found is
+kept.

@@ -1,0 +1,30 @@
+title: Why duplicates are not compared byte by byte
+tags: Duplicates
+kind: rationale
+audience: dev
+summary: Within a size class an accidental xxHash3-64 collision is far less likely than a read error in the comparison meant to rule it out.
+
+The content hash is xxHash3-64, not a cryptographic hash, which raises the
+question of whether a group can hold two files that are not identical. For an
+''accidental'' collision, no, by a wide margin.
+
+Files are only compared within a size class, so the birthday bound is over the
+members of one class, not the repository: for `k` files of equal size and
+distinct content, the chance that any two collide is about `k² / 2·2⁶⁴` —
+3 × 10⁻¹⁶ at `k = 100`, 3 × 10⁻¹² at `k = 10 000`; even a million distinct files
+of one size stay at 3 × 10⁻⁸.
+
+That is orders of magnitude below the risk of the ''check itself'': at a typical
+unrecoverable read-error rate of 10⁻¹⁵ per bit, re-reading a terabyte to compare
+two files carries about a 10⁻³ chance of a read error. A byte-for-byte
+confirmation pass would be more dangerous than the risk it claims to remove, so
+the scan does not do one.
+
+What "not cryptographic" does mean is that a collision can be ''manufactured''
+cheaply: someone could plant a file crafted to collide with one of yours, so that
+a dedup action offers to remove the original. That is a documented limit, not a
+defended one. The usual mitigation, a secret per-repository hash seed, is
+excluded by design: sync compares `mfr_full_hash` across two repositories as a
+content signature, so the hash must not depend on the repository. Moving to a
+keyed or cryptographic hash (BLAKE3) would change a persisted format, hence need
+a migration.

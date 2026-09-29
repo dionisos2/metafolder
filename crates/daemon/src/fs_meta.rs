@@ -84,7 +84,7 @@ pub fn stat_fields(path: &Path) -> Result<Vec<Field>> {
         // `stat` above, so it costs no syscall — and nothing at all for the
         // overwhelming majority of files. The device is part of the value
         // because an inode number is unique only within one filesystem, and a
-        // repository may span several (spec-duplicates "Hard links").
+        // repository may span several (doc "What counts as a duplicate").
         if meta.nlink() > 1 {
             fields.push(Field::new(
                 "mfr_inode",

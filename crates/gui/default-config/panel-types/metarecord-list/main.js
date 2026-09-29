@@ -1000,7 +1000,7 @@ export async function mount(root, metafolder) {
     await showQuery('orphan = true');
   }
 
-  // ── Duplicates (spec-duplicates "GUI") ────────────────────────────────────
+  // ── Duplicates (doc "duplicates panel") ────────────────────────────────────
 
   /** Show what else is byte-identical to the selected metarecord. The point of
    *  the group model is reaching a file's twins without the caller ever

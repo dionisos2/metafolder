@@ -28,4 +28,4 @@ An inbound `external_ref` or `ref_base` value is not detected: those do not feed
 the reverse maps the check reads. The gap is accepted, and named here.
 
 Each deleted metarecord also leaves its duplicate group, as an orphaned one does
-(spec-duplicates "Leaving a group").
+([[Duplicate groups]]).

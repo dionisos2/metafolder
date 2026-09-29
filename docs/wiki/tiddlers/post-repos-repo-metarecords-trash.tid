@@ -11,7 +11,7 @@ POST /repos/:repo/metarecords/trash
 ```
 
 Deletes the given metarecords in a single revision stamped `origin = 'trash'`,
-each leaving its duplicate group first. The client calls it after capturing the
+each leaving its duplicate group first ([[Duplicate groups]]). The client calls it after capturing the
 metarecords and before moving the bytes ([[What trashing does]]).
 
 * `409` — a metarecord outside the set references one inside it; the message names up to ten referrers, and nothing is written. `force: true` deletes anyway.

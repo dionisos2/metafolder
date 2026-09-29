@@ -1,0 +1,7 @@
+title: mf duplicate list
+tags: [[CLI command]] Duplicates
+kind: reference
+summary: List the duplicate groups, worst reclaimable space first — the default
+
+A formatting of the ordinary query over the groups ([[Finding duplicates]]); it
+holds no logic of its own.

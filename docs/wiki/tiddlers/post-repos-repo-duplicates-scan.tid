@@ -1,0 +1,31 @@
+title: POST /repos/:repo/duplicates/scan
+tags: Duplicates
+kind: reference
+audience: dev
+summary: Starts a duplicate scan as a background task; the result is a summary, and reading the groups is an ordinary query.
+
+Asynchronous, like reconcile: `202 Accepted` with `{"task_id": "<32hex>"}`, or
+`409 Conflict` when a duplicate scan is already pending or running for this
+repository. Follow it through the task endpoints (spec-tasks).
+
+Body, all optional:
+
+|!Key |!Default |!Meaning |
+|`min_size` |`1` |files smaller than this are skipped (`1` excludes empty files) |
+|`rehash` |`false` |ignore every stored hash and recompute |
+|`metarecord` |— |32-hex: scan only that metarecord's subtree |
+
+The task's result is a summary, never a listing:
+
+```
+{"groups": 128, "files": 291, "reclaimable": 4823710720,
+ "hashed_partial": 5540, "hashed_full": 412, "skipped": 3}
+```
+
+There is no listing endpoint: the groups are read with `POST /query`
+([[Finding duplicates]]).
+
+Everything duplicate detection added to the wire was additive — this endpoint, a
+task kind, `mfr_*` fields, the `same` query — so it needed no `API_VERSION` bump.
+A newer client talking to an older daemon gets a `400`/`404`, which it should
+report as "this daemon does not support duplicate detection".

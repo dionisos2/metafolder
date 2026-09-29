@@ -161,15 +161,6 @@
     "aliases": ["recent", "recently-viewed", "recently viewed"]
   },
   {
-    "id": "duplicates",
-    "title": "Duplicates panel",
-    "file": "duplicates.html",
-    "aliases": [
-      "duplicates", "duplicate", "duplicate-scan", "mf:duplicate-scan",
-      "identical", "reclaimable", "hash", "same", "hard-link", "inode"
-    ]
-  },
-  {
     "id": "sync",
     "title": "Sync panel",
     "file": "sync.html",

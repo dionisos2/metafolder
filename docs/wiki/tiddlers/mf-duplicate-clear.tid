@@ -1,0 +1,9 @@
+title: mf duplicate clear
+tags: [[CLI command]] Duplicates
+kind: reference
+summary: Delete every duplicate group and every link to one (the hashes are kept)
+
+Removes duplicate detection's footprint — every link to a group, then every group
+metarecord — after a confirmation (`-y` skips it). The hash cache is kept
+([[The duplicate hash cache]]). It is written as ''two'' revisions (the links,
+then the groups), so undoing it takes two undos.

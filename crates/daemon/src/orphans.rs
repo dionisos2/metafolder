@@ -101,7 +101,7 @@ pub fn clear_orphans(repo: &RepoState, uuids: &[Uuid]) -> Result<usize, ApiError
             writer.set_field_as(OpType::FileDeleted, u, "mfr_path", Value::Nothing)?;
             // Same transition as the watcher's, so it carries the same consequence:
             // an orphan is no longer a live duplicate, and the group it leaves is
-            // re-counted (spec-duplicates "Leaving a group").
+            // re-counted (doc "Duplicate groups").
             crate::duplicates::leave_group(&mut writer, OpType::FileDeleted, u)?;
         }
         cleared += 1;

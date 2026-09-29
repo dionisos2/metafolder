@@ -1,0 +1,24 @@
+title: Deleting duplicate copies
+tags: Duplicates
+kind: guide
+summary: In the duplicates panel, keep the copy under the cursor and trash the others, or trash one copy — your choice, never a heuristic's.
+
+Which copy survives is always yours to choose. Nothing picks one for you, and no
+action spans several groups. In the [[duplicates panel]], both deletions act on
+the row under the cursor, and both are confirmed:
+
+* ''keep this one'' — <<key "duplicates:keep" Shift+k>>, and the first item of the context menu: trashes every ''other'' copy of the group. The confirmation names every path it will trash, and how much space pruning the trash will then reclaim.
+* ''trash this one'' — <<key "duplicates:trash" Delete>>: that copy alone, saying what the group is left with.
+
+The copies go to the [[Trash]], so a mistake is recoverable
+([[Restoring from the trash]]); the space is freed when the trash is pruned
+([[Trash retention]]).
+
+The panel updates the group at once — its count, its reclaimable space, and the
+group itself, gone once a single copy is left — with the same arithmetic the
+daemon applies. The daemon's own update lands a watcher quiet period later, and
+the panel reloads then to confirm it, keeping the expanded groups and the cursor
+where they were.
+
+A copy deleted any other way — `mf trash -f`, a file manager — leaves its group
+the same way: see [[Duplicate groups]].

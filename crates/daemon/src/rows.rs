@@ -28,7 +28,7 @@ pub fn bytes_to_uuid(bytes: Vec<u8>) -> Result<Uuid> {
 }
 
 /// The stored content hashes of one metarecord, with the `stat` stamp they were
-/// computed under (spec-duplicates "The hash cache and its validity stamp").
+/// computed under (doc "The duplicate hash cache").
 #[derive(Debug, Default, Clone, PartialEq, Eq)]
 pub struct StoredHashes {
     pub partial: Option<String>,

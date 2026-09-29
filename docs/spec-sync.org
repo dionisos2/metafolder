@@ -653,7 +653,7 @@ are never written because each repository re-derives them. Closing over a
 never synced — a bare, empty record per referent on the target side, for no
 purpose. No =mfr_*= field is =Ref=-valued today (=mfr_path= is a =TreeRef=,
 =mfr_mount= a =String=), so nothing exercised it;
-=mfr_duplicate_group= ([[file:spec-duplicates.org][spec-duplicates.org]]) is the
+=mfr_duplicate_group= (doc "Duplicates") is the
 first, and =ref_targets= applies the filter.
 
 =Ref= values have no foreign-key constraint on =value_uuid= (see schema). The

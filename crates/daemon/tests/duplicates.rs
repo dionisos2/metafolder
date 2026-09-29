@@ -1,4 +1,4 @@
-//! Tests for the duplicate scan (spec-duplicates.org): size classes, the
+//! Tests for the duplicate scan (doc "Duplicates"): size classes, the
 //! reusable hash cache, group metarecords, hard-link accounting and pruning.
 
 use std::path::Path;
@@ -412,7 +412,7 @@ fn a_cancelled_scan_keeps_the_hashes_it_computed() {
 fn orphaning_a_member_updates_the_group_counters() {
     // Deleting one copy makes the stored counters wrong the moment it happens;
     // they are recomputed there and then, not at the next scan
-    // (spec-duplicates "Leaving a group").
+    // (doc "Duplicate groups").
     let (repo, root) = setup("leave");
     for name in ["x", "y", "z"] {
         write_file(&root, &format!("{name}.bin"), b"triplicate");
@@ -463,7 +463,7 @@ fn a_group_left_with_one_member_is_dissolved_at_once() {
 fn losing_one_of_two_hard_linked_names_frees_nothing_more() {
     // The count drops with the name, but the bytes were already counted once
     // for the inode the two names share, so the reclaimable space does not move
-    // (spec-duplicates "Hard links").
+    // (doc "What counts as a duplicate").
     let (repo, root) = setup("leavelink");
     write_file(&root, "orig", b"linked content!!");
     std::fs::hard_link(root.join("orig"), root.join("link")).unwrap();

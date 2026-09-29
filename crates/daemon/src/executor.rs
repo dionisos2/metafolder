@@ -1075,7 +1075,7 @@ impl Apply<'_, '_> {
             self.writer.set_field_as(OpType::FileDeleted, u, "mfr_path", Value::Nothing)?;
             // No file, no duplicate — and the group it leaves is re-counted on
             // the spot. The *hashes* stay: re-homing this record when the file
-            // reappears is exactly what they are for (spec-duplicates
+            // reappears is exactly what they are for (doc "Duplicates"
             // "Invariant", "Leaving a group").
             crate::duplicates::leave_group(&mut self.writer, OpType::FileDeleted, u)?;
         }
@@ -1288,7 +1288,7 @@ impl Apply<'_, '_> {
         // The check deliberately looks at the *stat only*. It used to also
         // require the hashes to be absent, which made every such echo destroy a
         // valid hash cache — and, once duplicate detection existed, the
-        // `mfr_duplicate_group` that went with it (spec-duplicates "Invariant"):
+        // `mfr_duplicate_group` that went with it (doc "Duplicate groups"):
         // a scan's whole result could evaporate a second after it finished.
         // Size + mtime is the same evidence of "unchanged" the hash stamp
         // relies on, and it fails the same safe way: a same-second, same-size
@@ -1370,7 +1370,7 @@ impl Apply<'_, '_> {
 /// set equal to this", so a field that stops being produced would otherwise
 /// linger: a file that lost its second name would keep claiming to be
 /// hard-linked, and the duplicate scan would under-count the space a removal
-/// frees (spec-duplicates "Hard links"). Clearing an already-absent field is a
+/// frees (doc "What counts as a duplicate"). Clearing an already-absent field is a
 /// no-op, so this costs nothing in the common case.
 pub(crate) fn clear_absent_conditional_stat_fields(
     writer: &mut Writer,

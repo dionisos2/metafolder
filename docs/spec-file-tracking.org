@@ -27,7 +27,7 @@ when the previous one is insufficient:
 3. *Full hash* — xxHash3 of the entire file content.
    Computed only when size and partial hash both match and a definitive
    identity check is required — re-homing an orphan, or confirming a duplicate
-   group ([[file:spec-duplicates.org][spec-duplicates.org]]).
+   group (doc "Duplicates").
 
 A stored hash describes the file *as it was when the hash was computed*, so it
 is only reusable while the file has not changed since. The watcher's =Modify=
@@ -38,8 +38,7 @@ hash is trusted only while both still match the live =stat=. Using mtime this
 way does not contradict the rule above: that rule forbids mtime as a criterion
 of *identity*, whereas here it invalidates a *cache*, and it fails safe — a
 mismatch costs a recomputation, never a wrong match. See
-[[file:spec-duplicates.org][spec-duplicates.org]] "The hash cache and its
-validity stamp".
+doc "The duplicate hash cache".
 
 Hash functions are provided by the =xxhash-rust= crate. For content-based
 similarity between files that do not share an exact hash (e.g. slightly
@@ -979,7 +978,7 @@ setting — the durable way to stop tracking a subtree is =mf_watch=.
 | =Rename(Both)=     | Update =mfr_path= TreeRef: =value_name= (rename in place) or =value_uuid= (move to different parent) — O(1); children of a renamed directory are unaffected (they reference the parent by UUID). If the destination path is *itself tracked*, the rename destroyed the file that was there: that metarecord is orphaned first (as for =Remove=), then the moved one takes the position — one metarecord may hold a given tree position |
 | =Rename(From)=     | File left the watched scope: snapshot =mfr_path_old= then set =mfr_path= to =Nothing= (as for =Remove=); if a directory, cascade both to all descendants in the same transaction. *Not applied when the same batch finds the file again* inside a directory created in it (see "Moves into a new directory" below) — the two halves are re-paired into a move |
 | =Rename(To)=       | File arrived from outside: create a new metarecord with its =mfr_*= fields. The orphans are *not* searched for a fingerprint match — that is [[*Relinking orphans]], a command the user runs. The one identity recovered here is the other half of a move the watcher only half saw, matched on =(type, size, mtime)= among the paths this same batch renamed away — no file is read |
-| =Modify(Data)=     | Content changed: refresh =mfr_size=, =mfr_mtime= from =stat=; delete =mfr_partial_hash=, =mfr_full_hash=, their stamp (=mfr_hash_mtime=, =mfr_hash_size=) and =mfr_duplicate_group= — the content that made it a duplicate is gone (see [[file:spec-duplicates.org][spec-duplicates.org]]) |
+| =Modify(Data)=     | Content changed: refresh =mfr_size=, =mfr_mtime= from =stat=; delete =mfr_partial_hash=, =mfr_full_hash=, their stamp (=mfr_hash_mtime=, =mfr_hash_size=) and =mfr_duplicate_group= — the content that made it a duplicate is gone (see doc "Duplicates") |
 | =Modify(Metadata)= | Attributes changed: refresh =mfr_permissions=, =mfr_uid=, =mfr_gid=, =mfr_mtime= from =stat=; hashes remain valid |
 
 On platforms where the =Data= / =Metadata= distinction is unavailable (e.g.
@@ -991,13 +990,12 @@ stat fields (=Create=, both =Modify= forms, reconcile's create and refresh
 phases) and by none other. Unlike the rest it is *conditional*: the value
 ="<st_dev>:<st_ino>"= is written when =st_nlink > 1= and removed when the link
 count is back to one, so the field's presence alone means "this file has more
-than one name" (see [[file:spec-duplicates.org][spec-duplicates.org]] "Hard
-links"). =st_dev=, =st_ino= and =st_nlink= all come from the =stat= these paths
+than one name" (see doc "What counts as a duplicate"). =st_dev=, =st_ino= and =st_nlink= all come from the =stat= these paths
 already perform, so the field costs no extra syscall. Note that creating or
 removing a link produces an event for *that* path only: the paths already
 pointing at the inode see their link count change with no event of their own, so
 their =mfr_inode= is stale until a reconcile re-stats them (see
-[[file:spec-duplicates.org][spec-duplicates.org]] "Known staleness").
+doc "What counts as a duplicate").
 
 *Undone deletions.* A =Remove= / =Rename(From)= is applied only if its path is
 *still gone at flush time*: the check is deferred to application, not enqueue, so
@@ -1021,7 +1019,7 @@ normally.
 The check is on the *stat alone*, deliberately: what a redundant event must not
 do is *destroy* derived data. A =Modify(Data)= that is applied clears the
 content-derived fields — the hashes, their stamp, and =mfr_duplicate_group=
-([[file:spec-duplicates.org][spec-duplicates.org]] "Invariant") — so making the
+(doc "Duplicate groups") — so making the
 skip conditional on those being absent would invert it, and every echo would
 throw away a valid hash cache and a scan's whole result with it. Size and mtime
 are the same evidence of "unchanged" the hash stamp relies on, and they fail the

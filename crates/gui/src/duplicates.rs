@@ -1,4 +1,4 @@
-//! `mf:duplicate scan` (spec-duplicates "GUI"): scans the workspace's active
+//! `mf:duplicate scan` (doc "duplicates panel"): scans the workspace's active
 //! repo for byte-identical files, with a busy status while it runs, a summary
 //! in the status bar and the full result in the message log.
 //!
@@ -47,7 +47,7 @@ pub async fn run(
         })?;
     if started.status == 404 {
         // API_VERSION is deliberately not bumped for an additive endpoint
-        // (spec-duplicates "Wire compatibility"), so the clear message is ours
+        // (doc "POST /repos/:repo/duplicates/scan"), so the clear message is ours
         // to produce rather than the version banner's.
         let message = "this daemon does not support duplicate detection".to_string();
         gui.post_status(&ws_id, &message, "error", Some(timings.error_ms))?;
@@ -91,8 +91,8 @@ pub async fn run(
             }
             Some("cancelled") => {
                 // Cancellation is not a failure: the scan keeps the hashes it
-                // computed and the groups it wrote (spec-duplicates "Writes and
-                // revisions"), so say so rather than shout.
+                // computed and the groups it wrote (doc "The duplicate scan"), so say so rather
+                // than shout.
                 gui.post_status(
                     &ws_id,
                     "Duplicate scan cancelled; what it found is kept.",

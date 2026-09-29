@@ -8,6 +8,7 @@ through the `mf` command line and a desktop GUI.
 
 !! Topics
 
+* [[Duplicates]] — finding byte-identical files and deleting the copies you choose
 * [[Trash]] — the per-repository bin: trashing, restoring, undoing
 
 !! Catalogs

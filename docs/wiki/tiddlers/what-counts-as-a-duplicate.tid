@@ -1,0 +1,46 @@
+title: What counts as a duplicate
+tags: Duplicates
+aliases: hard-link inode
+kind: reference
+summary: Tracked files with identical content — no directories, symlinks, empty files or offline volumes — and how hard links are counted.
+
+Two metarecords are duplicates when their files have identical content. The
+candidates are deliberately narrow:
+
+* ''Files only'' (`mfr_type = "file"`). Not directories — their "content" is their subtree, not bytes — and not symlinks, since hashing one reads through to its target; a symlink's content is its `mfr_symlink_target`, which compares directly.
+* ''With a live `mfr_path`''. A metarecord whose file is gone has nothing to hash.
+* ''Never empty files.'' They are all identical, which is true and useless: removing them frees nothing. `--min-size` raises the bar further.
+* ''Not on an offline volume'', and not unreadable (permission denied, a disconnected mount): both are counted as `skipped` in the summary, neither is an error.
+
+The scan follows the ''tracked set'' — every metarecord of a file — not what is
+watched: `mf_watch` and `mf_ignore` are not consulted. A subtree whose watching
+was turned off still holds metarecords, and those files are still duplicates of
+each other.
+
+!! Hard links
+
+Several paths can name the same inode: identical by construction, so
+duplicates — but removing one frees nothing, and a tool that reports reclaimable
+space without accounting for them lies.
+
+The daemon records `mfr_inode` (`"<dev>:<ino>"`) on a file whose link count is
+greater than one; its ''presence'' marks a hard-linked file. It comes from the
+`stat` already done while walking, so it costs no extra system call, and it is
+written for hard-linked files only. The device is part of the value because an
+inode number is unique only within one filesystem, and a repository can span
+several.
+
+Within a group, members sharing one `mfr_inode` are one file under several
+names, so the space a group wastes is counted over distinct inodes, a member
+without `mfr_inode` counting as its own:
+
+```
+reclaimable = mfr_content_size × (distinct inodes − 1)
+```
+
+''Known staleness.'' Creating or removing a link fires a filesystem event for
+''that'' path only: after `ln A B`, `B` has its `mfr_inode` and `A` none until
+something re-stats it, so the group counts two distinct inodes and reclaimable
+space is ''over''-reported — the error is on the side of promising space that
+removing a name would not free, never of hiding a duplicate. A reconcile
+corrects it.

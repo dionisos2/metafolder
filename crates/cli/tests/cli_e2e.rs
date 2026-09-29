@@ -3478,7 +3478,7 @@ fn test_sync_run_translates_ref() {
     assert_ne!(person_b, person_a, "distinct local uuids");
 }
 
-// ── Duplicate detection (spec-duplicates "CLI") ──────────────────────────────
+// ── Duplicate detection (doc "Finding duplicates") ──────────────────────────────
 
 #[test]
 fn test_duplicate_scan_then_list() {
@@ -3621,7 +3621,7 @@ fn test_sync_does_not_materialise_a_duplicate_group() {
     // `mfr_duplicate_group` is content-derived, so the metadata diff never
     // writes it and each repository computes its own groups. The referential
     // closure must agree: closing over it would plant a bare, empty group
-    // record in B for no purpose (spec-duplicates "Cross-repo sync").
+    // record in B for no purpose (doc "Duplicates and sync").
     let (a, _adir) = tracked_repo("dupclosure_a", &[("doc.txt", b"x")]);
     let (b, _bdir) = tracked_repo("dupclosure_b", &[]);
     let xa = query_one(&a, "mfr_path:value = \"doc.txt\"");

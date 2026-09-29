@@ -1,0 +1,40 @@
+title: Duplicates
+kind: overview
+aliases: duplicate identical reclaimable
+summary: Find the files holding byte-identical content, recorded as duplicate groups you query like any other metadata.
+
+A ''duplicate scan'' finds the files of a repository whose contents are
+byte-identical, and records each set as a ''duplicate group'': a metarecord of
+its own, which every member file points at. It reports only a summary. Which
+files have a twin, which groups waste the most space, what else is identical to
+this file: those are ordinary queries over the fields the scan wrote — which is
+why it writes them.
+
+Nothing here deletes or moves a file. Disposing of a copy is your act, and goes
+through the [[Trash]].
+
+!! Use it
+
+<<list-kind guide>>
+
+!! Reference
+
+<<list-kind reference>>
+
+!! Why it works this way
+
+<<list-kind rationale>>
+
+!! Open questions
+
+<<list-kind question>>
+
+!! Commands
+
+<<tagged-with "CLI command">>
+
+<<tagged-with "GUI command">>
+
+!! In the GUI
+
+<<tagged-with "Panel">>

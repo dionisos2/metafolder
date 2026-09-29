@@ -13,8 +13,8 @@ const PARTIAL_CHUNK: u64 = 4096;
 
 /// The fields derived from a file's *content*, which therefore all die together
 /// the moment that content changes: the two hashes, the `stat` stamp recording
-/// what they were computed from (spec-duplicates "The hash cache and its
-/// validity stamp"), and the duplicate group the file was placed in.
+/// what they were computed from (doc "The duplicate hash cache"), and the duplicate group the file
+/// was placed in.
 ///
 /// One list, so a new derived field cannot be added to the scan and forgotten by
 /// the invalidation — which would leave a metarecord claiming a duplicate it no

@@ -1,5 +1,5 @@
 // duplicates panel: the repository's groups of byte-identical files, worst
-// reclaimable space first (spec-duplicates "GUI"). Groups are collapsed; Enter
+// reclaimable space first (doc "duplicates panel"). Groups are collapsed; Enter
 // expands one into its members' paths, `+` marking a member that shares an
 // inode with another — removing that name frees nothing.
 //
@@ -14,8 +14,8 @@
 // spec's "no remove all but one" was protecting; what it cost was making the
 // obvious next step (five copies, keep this one) five separate confirmations.
 // Both it and `duplicates:trash` re-count the group they emptied, and drop it
-// when a single copy is left, the way the daemon does (spec-duplicates "Leaving
-// a group") — a stale count is worst exactly here, where it is the number the
+// when a single copy is left, the way the daemon does (doc "Duplicate groups") — a stale count is
+// worst exactly here, where it is the number the
 // deletion decision is made on.
 
 import { byId, el, field, formatSize, formatValue } from '/__ui.js';
@@ -45,8 +45,8 @@ function text(rec, name) {
 
 /** Bytes freed by reducing a group to a single file: its size times the number
  *  of distinct inodes minus one. Names sharing an inode are one file under
- *  several names, and removing one frees nothing (spec-duplicates "Hard
- *  links"); a member with no `mfr_inode` has a single name, so it counts as its
+ * several names, and removing one frees nothing (doc "What counts as a duplicate"); a member with
+ * no `mfr_inode` has a single name, so it counts as its
  *  own inode. The daemon's `reclaimable_of`, in JS: the panel recomputes the
  *  number itself after a trash rather than waiting a watcher flush to read it
  *  back, so the two must agree.
@@ -311,7 +311,7 @@ export function mount(root, metafolder) {
   }
 
   /** The daemon re-counts the group the moment the watcher records the removal
-   *  (spec-duplicates "Leaving a group"); that lands ~500 ms later, so the same
+   *  (doc "Duplicate groups"); that lands ~500 ms later, so the same
    *  arithmetic runs here at once and the reload below confirms it.
    *  @param {Group} group @param {Member[]} gone */
   function applyDeparture(group, gone) {

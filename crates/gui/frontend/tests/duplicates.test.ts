@@ -1,4 +1,4 @@
-// duplicates panel: choosing which copy survives (spec-duplicates "GUI").
+// duplicates panel: choosing which copy survives (doc "duplicates panel").
 // Selecting a group row publishes the *group* metarecord, so the detail panel
 // can show what the row summarises; "keep this one" trashes the other copies of
 // the group under the cursor; and both trash actions re-count the group on the

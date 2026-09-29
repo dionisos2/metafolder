@@ -126,7 +126,7 @@ pub(super) async fn trash_delete_endpoint(
         let _phase = slowlog::phase("write.trash_delete");
         for uuid in &uuids {
             // Every way of ceasing to be a live duplicate goes through here, so
-            // a group never outlives its members (spec-duplicates).
+            // a group never outlives its members (doc "Duplicates").
             crate::duplicates::leave_group(&mut writer, crate::log::OpType::SetField, *uuid)?;
             writer.delete_metarecord(*uuid)?;
         }

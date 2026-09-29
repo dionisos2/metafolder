@@ -214,7 +214,7 @@ fn clear_skips_a_uuid_whose_file_still_exists() {
 fn clear_orphans_also_clears_the_duplicate_group_link() {
     // `mf orphan clear` performs the same transition as the watcher's delete,
     // so it carries the same consequence: the record is no longer a live
-    // duplicate (spec-duplicates "Invariant"). The hashes stay — they are what
+    // duplicate (doc "Duplicate groups"). The hashes stay — they are what
     // re-homes the file if it reappears.
     let (repo, root) = setup("clear-dupgroup");
     write_file(&root, "gone.txt", b"data");

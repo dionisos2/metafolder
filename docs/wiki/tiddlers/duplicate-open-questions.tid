@@ -1,0 +1,28 @@
+title: Duplicate open questions
+tags: Duplicates
+kind: question
+status: deferred
+summary: Duplicate directories, near-duplicates, and keeping a decision on a group across scans — deferred.
+
+!! Duplicate directories
+
+Two directories with identical contents are duplicates in the sense a user cares
+about, and are not detected: the scan compares file bytes. A directory hash (a
+Merkle fold over the children's `mfr_full_hash` and names) would fit the group
+model; its invalidation is the hard part — every ancestor's hash dies with any
+descendant's write.
+
+!! Near-duplicates
+
+Files that are ''nearly'' identical (a re-encoded video, a resized image) share
+no hash and are out of scope. The similarity machinery scores file names, not
+content, and the content-similarity hash (TLSH) is not implemented. Were it to
+be, near-duplicates want another model than an exact group: a score between two
+files, not an equivalence class.
+
+!! Keeping a decision
+
+A group is rebuilt by each scan and carries no user data. Once it does — "this
+is the copy I keep" — the scan's find-or-create must preserve it across runs
+(which the (size, hash) identity allows), and `mf duplicate clear` must stop
+being harmless.

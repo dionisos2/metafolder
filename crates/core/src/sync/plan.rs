@@ -1023,7 +1023,7 @@ fn field_signature(m: &Json) -> Vec<(String, Json)> {
 /// stat-derived and each repository re-derives its own (spec-sync "The metadata
 /// diff"), so closing over one would materialise a counterpart for something
 /// that is never synced — a bare, empty record per referent on the target side,
-/// for no purpose. `mfr_duplicate_group` (spec-duplicates) is the first
+/// for no purpose. `mfr_duplicate_group` (doc "Duplicates") is the first
 /// `Ref`-valued field this applies to.
 fn ref_targets(ctx: &Ctx, reads: &Reads, repo: Uuid, record: Uuid) -> Result<Vec<Uuid>, CliError> {
     let m = reads.record(ctx, repo, record)?;

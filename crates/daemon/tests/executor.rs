@@ -625,7 +625,7 @@ fn test_modify_data_refreshes_and_invalidates_hashes() {
 #[test]
 fn test_modify_data_invalidates_the_whole_content_derived_family() {
     // The hashes, the stamp they were computed under, and the duplicate group
-    // they justified all die with the content (spec-duplicates "Invariant").
+    // they justified all die with the content (doc "Duplicate groups").
     let (repo, root, _) = setup("modifyfamily");
     write_file(&root, "m.txt", b"v1");
     enqueue(&repo, &[FsEvent::Create("/m.txt".into())]);
@@ -668,7 +668,7 @@ fn test_modify_data_invalidates_the_whole_content_derived_family() {
         assert_eq!(field_value(&repo, uuid, name), None, "{name} should be invalidated");
     }
     // The group itself still has two members, so it survives — with its count
-    // brought down to what is left of it (spec-duplicates "Leaving a group").
+    // brought down to what is left of it (doc "Duplicate groups").
     assert!(field_value(&repo, group, "mf_schema").is_some());
     assert_eq!(field_value(&repo, group, "mfr_duplicate_count"), Some(Value::Int(2)));
 
@@ -771,7 +771,7 @@ fn test_remove_clears_the_duplicate_group_but_keeps_the_hashes() {
 fn test_removing_a_member_dissolves_a_pair_and_updates_a_bigger_group() {
     // The path the GUI's trash action takes: the file moves away, the watcher
     // orphans its metarecord, and the group it left must stop claiming it
-    // (spec-duplicates "Leaving a group").
+    // (doc "Duplicate groups").
     let (repo, root, _) = setup("removecounters");
     for name in ["a.txt", "b.txt", "c.txt"] {
         write_file(&root, name, b"same bytes");

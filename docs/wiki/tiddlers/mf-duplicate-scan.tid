@@ -1,0 +1,7 @@
+title: mf duplicate scan
+tags: [[CLI command]] Duplicates
+kind: reference
+summary: Scan for byte-identical files and record the groups
+
+Runs a scan and follows it to the end: [[Finding duplicates]]. The `full` phase's
+progress is shown in bytes. What the scan does: [[The duplicate scan]].

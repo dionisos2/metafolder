@@ -698,7 +698,7 @@ fn reconcile_records_and_then_removes_mfr_inode() {
     // `mfr_inode`'s presence marks a hard-linked file. A stat set is applied as
     // "set these fields", so its disappearance has to be written explicitly —
     // otherwise a file that lost its second name keeps claiming to be linked
-    // and the reclaimable space is over-reported (spec-duplicates "Hard links").
+    // and the reclaimable space is over-reported (doc "What counts as a duplicate").
     let (repo, root) = setup("inode");
     write_file(&root, "a.txt", b"shared");
     std::fs::hard_link(root.join("a.txt"), root.join("b.txt")).unwrap();

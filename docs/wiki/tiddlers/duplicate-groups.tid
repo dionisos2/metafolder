@@ -1,0 +1,56 @@
+title: Duplicate groups
+tags: Duplicates
+kind: reference
+summary: Each set of identical files is a metarecord its members point at; its counters stay true as copies leave.
+
+Each set of identical files is a ''metarecord of its own'', not a field repeated
+on the files: a group can be queried, sorted and counted, and could one day carry
+a decision of its own ("the copy I keep"). It is the same modelling as
+hierarchical tags. It has no `mfr_path`: an abstract record, like a tag.
+
+|!Field |!Type |!Meaning |
+|`mf_schema` |string |`"duplicate_group"`: the metarecord's type |
+|`mfr_content_hash` |string |the members' `mfr_full_hash` |
+|`mfr_content_size` |int |the members' size, in bytes |
+|`mfr_duplicate_count` |int |its members |
+|`mfr_duplicate_reclaimable` |int |bytes freed by reducing the group to one file ([[What counts as a duplicate]]) |
+
+Each member file carries `mfr_duplicate_group` (a `ref`) pointing at it.
+
+A group is identified by the pair (size, hash), not the hash alone: members are
+only ever compared within one size class, but two size classes could produce the
+same hash, and the scan's find-or-create has to stay well defined. The count and
+reclaimable space are redundant with the members and stored anyway, because
+sorting is done on stored values: "the groups wasting the most space, worst
+first" is one sorted query only if the number is a field.
+
+!! The invariant
+
+```
+mfr_duplicate_group present  ⟹  the file exists and had an identical twin at the last scan
+```
+
+which makes `mfr_duplicate_group IS PRESENT` the exact query for "files having a
+duplicate". Only the scan ever sets the link. It is cleared when the file's
+content changes (with the hashes) and when the file goes away (`mfr_path` becomes
+`Nothing` — the hashes are kept there, since relinking an orphan needs them).
+
+!! Leaving a group
+
+A member never leaves with a bare field clear: the group is ''recounted in the
+same transaction'' — count and reclaimable space recomputed over the members that
+remain, hard links included — and only what changed is written. A group left with
+fewer than two members is ''dissolved'' at once: the group metarecord is deleted
+and the survivor's link with it, since a file with no twin is not a duplicate.
+
+That matters because these numbers are ''displayed'' — by `mf duplicate list` and
+the [[duplicates panel]] — to someone deciding which copy to delete: "2 copies"
+against a group that holds one invites a deletion that frees nothing and loses the
+last copy.
+
+A member leaves through the watcher (the file removed, or its content changed),
+a trashing ([[What trashing does]]), `mf orphan clear`, and a rollback that
+clears a path.
+
+What still needs a scan is the other direction: a file that ''becomes'' a
+duplicate. A group never grows between scans.

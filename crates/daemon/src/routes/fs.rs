@@ -483,7 +483,7 @@ impl Default for DuplicatesBody {
 }
 
 /// `POST /repos/:repo/duplicates/scan`: starts a duplicate scan as a background
-/// task (spec-duplicates, spec-tasks "The duplicate scan as a task"). Returns
+/// task (doc "Duplicates", spec-tasks "The duplicate scan as a task"). Returns
 /// `202 Accepted` with the task id immediately; the summary is read from
 /// `GET …/tasks/:id`. A concurrent scan is rejected with `409`.
 ///

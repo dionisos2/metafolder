@@ -1,0 +1,19 @@
+title: Duplicates and sync
+tags: Duplicates
+kind: reference
+audience: dev
+summary: Duplicate data is never synchronised: each repository scans its own content.
+
+`mfr_duplicate_group`, `mfr_inode`, `mfr_hash_mtime` and `mfr_hash_size` are
+`mfr_*` fields other than `mfr_path`, which sync's field diff never writes:
+they are derived from each repository's own files, and each side re-derives its
+own. "Has a duplicate" is a property of one repository's content. Group
+metarecords have no `mfr_path`, so no placement, and nothing synced references
+them.
+
+One correction was needed for that to hold: sync's referential closure followed
+''every'' `ref`-valued field, so it materialised an empty group metarecord on the
+other side for each group, because member files point at it. The closure now
+skips the fields the diff does not write (`mfr_*` other than `mfr_path`), in
+`core/src/sync/plan.rs` (`ref_targets`). The gap predated duplicate detection —
+no `mfr_*` field had been a `ref` before `mfr_duplicate_group`.

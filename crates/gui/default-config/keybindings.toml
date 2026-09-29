@@ -312,7 +312,7 @@
   { command = "metarecord:remove", when = "treeref" },
   { command = "trash:delete", when = "trash" },
   # In the duplicates panel it is the copy under the cursor that goes, and the
-  # panel re-counts the group it left (spec-duplicates "GUI") — which
+  # panel re-counts the group it left (doc "duplicates panel") — which
   # `metarecord:trash` on the shared selection could not do.
   { command = "duplicates:trash", when = "duplicates" },
 ]

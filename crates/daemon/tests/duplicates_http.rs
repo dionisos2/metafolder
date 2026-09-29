@@ -1,5 +1,5 @@
-//! HTTP shape of the duplicate scan (spec-duplicates "POST
-//! /repos/:repo_uuid/duplicates/scan"): 202 + task id, then the summary on the
+//! HTTP shape of the duplicate scan (doc "POST /repos/:repo/duplicates/scan"): 202 + task id, then
+//! the summary on the
 //! task — never a listing, since the groups are read back with a query.
 
 use axum::body::Body;

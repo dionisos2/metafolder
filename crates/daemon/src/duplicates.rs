@@ -1,4 +1,4 @@
-//! Duplicate detection (spec-duplicates.org): the scan that finds
+//! Duplicate detection (doc "Duplicates"): the scan that finds
 //! byte-identical files and records each set as a `duplicate_group` metarecord
 //! its members reference through `mfr_duplicate_group`.
 //!
@@ -49,7 +49,7 @@ pub struct ScanOptions {
     /// nothing when removed.
     pub min_size: i64,
     /// Ignore every stored hash and recompute — the escape hatch when the
-    /// `stat` stamp cannot be trusted (spec-duplicates "The hash cache").
+    /// `stat` stamp cannot be trusted (doc "The duplicate hash cache").
     pub rehash: bool,
     /// Restrict the scan to this metarecord's subtree.
     pub scope: Option<Uuid>,
@@ -398,8 +398,8 @@ fn retain_shared(members: &mut Vec<Candidate>, key: impl Fn(&Candidate) -> Optio
 
 /// Bytes freed by reducing a group to a single file: its size times the number
 /// of *distinct inodes* minus one. Members sharing an inode are one file under
-/// several names, and removing a name frees nothing (spec-duplicates "Hard
-/// links"). A member with no `mfr_inode` has a single name, so it counts as its
+/// several names, and removing a name frees nothing (doc "What counts as a duplicate"). A member
+/// with no `mfr_inode` has a single name, so it counts as its
 /// own inode.
 fn reclaimable_of(size: i64, members: &[Candidate]) -> i64 {
     reclaimable_from_inodes(size, members.iter().map(|m| m.inode.as_deref()))
@@ -422,7 +422,7 @@ fn reclaimable_from_inodes<'a>(size: i64, inodes: impl Iterator<Item = Option<&'
 }
 
 /// Takes `uuid` out of the duplicate group it belongs to, if any, and leaves the
-/// group's stored counters true (spec-duplicates "Leaving a group").
+/// group's stored counters true (doc "Duplicate groups").
 ///
 /// Every way of ceasing to be a live duplicate goes through here — the watcher's
 /// removals and content changes, `mf orphan clear`, a rollback's path clearing —
@@ -447,7 +447,7 @@ pub fn leave_group(writer: &mut Writer, op: OpType, uuid: Uuid) -> anyhow::Resul
 /// Recomputes one group's counters from the members that still point at it, and
 /// dissolves it when fewer than two remain: a file with no twin is not a
 /// duplicate, so the survivor's own link goes with the group metarecord
-/// (spec-duplicates "Invariant").
+/// (doc "Duplicate groups").
 pub fn refresh_group(writer: &mut Writer, op: OpType, group: Uuid) -> anyhow::Result<()> {
     let members = crate::store::Questions::duplicate_group_members(writer.store(), group)?;
     if members.len() < 2 {

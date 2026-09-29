@@ -82,7 +82,7 @@ Built-in panel types:
 | =repos=          | Repository list, init, load, unload, per-repo running tasks, tracking notices |
 | =treeref=        | TreeRef forest explorer; pick a TreeRef field, navigate roots→leaves |
 | =trash=          | Repository trash-bin: list, restore, delete, empty (see doc "Sending files to the trash") |
-| =duplicates=     | Groups of byte-identical files, worst reclaimable space first (see [[file:spec-duplicates.org][spec-duplicates.org]] "GUI") |
+| =duplicates=     | Groups of byte-identical files, worst reclaimable space first (see doc "duplicates panel") |
 | =recent=         | The metarecords most recently viewed in this GUI, newest first; the =recent= picker's panel form |
 | =sync=           | Cross-repo sync: status, plan, show, run (see [[file:spec-sync.org][spec-sync.org]]) |
 | =help=           | In-app help: static pages with a grep search box (see [[*Help]]) |
@@ -3248,7 +3248,7 @@ completion:
 ** Duplicates
 
 =mf:duplicate scan= is the GUI half of =mf duplicate scan= (see
-[[file:spec-duplicates.org][spec-duplicates.org]]): it calls
+doc "Duplicates"): it calls
 =POST .../duplicates/scan= (202 + task id) and, like =reconcile:run=, polls the
 task only to know when it ends — live progress belongs to the [[*Task bar]].
 Its options (=--min-size=, =--rehash=, a subtree) stay *CLI-only*, the way
@@ -3273,7 +3273,7 @@ row — so =metarecord:trash= and the shared file actions apply as they do
 anywhere else, and the detail panel can show a group's own fields.
 
 Deleting duplicates is what one opens this panel for, so it owns two actions of
-its own, detailed in [[file:spec-duplicates.org][spec-duplicates.org]] "GUI":
+its own, detailed in doc "duplicates panel":
 =duplicates:keep= (=shift+k=) trashes every copy of the group *except* the row
 under the cursor, and =duplicates:trash= (=Delete=) trashes that row alone. Both
 confirm first, both name what they touch, and both re-count the group they
