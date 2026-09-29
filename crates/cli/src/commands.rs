@@ -630,7 +630,7 @@ fn match_all_query() -> Json {
 /// counts through the bitmap index (O(1)) and answers a `total`, so nothing
 /// proportional to the scope crosses the wire. The `limit: 1` is the envelope's
 /// price — the bare-array response has nowhere to carry a total, so the daemon
-/// rejects `count` without a `limit` (routes.rs, `run_query_inner`).
+/// rejects `count` without a `limit` (`routes/query.rs`, `run_query_inner`).
 fn query_total<Q: serde::Serialize>(ctx: &Ctx, query: &Q) -> Result<u64, CliError> {
     let base = ctx.repo_base()?;
     let resp = ctx
