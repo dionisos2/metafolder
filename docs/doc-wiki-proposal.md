@@ -31,12 +31,17 @@ actuelles ; ce document-ci est en français parce qu'il sert à en discuter.
 
 ```
 docs/wiki/
-  package.json            # tiddlywiki épinglé (devDependency), + lockfile
-  tiddlywiki.info         # aucun plugin requis au départ
+  package.json            # tiddlywiki épinglé, membre du workspace npm racine
+  tiddlywiki.info         # aucun plugin
+  tools/                  # tid.mjs (logique pure), doc.mjs (scripts/doc), build.mjs
   tiddlers/               # notes écrites à la main, un fichier par note, à plat
-  generated/              # notes produites depuis le code (commitées)
-  system/                 # $:/mf/… : macros, templates de rendu, config
+    generated/<catalogue>/  # notes produites depuis le code (commitées)
+    system/               # $:/mf/… : macros, templates de rendu, config
+  dist/                   # le rendu (ignoré par git)
 ```
+
+Tout est sous `tiddlers/`, parce que c'est le seul dossier que TiddlyWiki
+charge par défaut.
 
 - **À plat** dans `tiddlers/`. Pas de sous-dossiers par thème : ils
   recréeraient la question « où va ce point transversal ? ». Les tags jouent ce
@@ -47,8 +52,10 @@ docs/wiki/
   `mf-trash-restore.tid`. Le slug sert aussi d'identifiant de page dans le panel.
   `scripts/doc check` vérifie la correspondance et l'unicité.
 - **`generated/` est commité** : je peux le lire sans build, et un changement
-  de CLI se voit dans le diff de la doc. `check.sh` vérifie qu'il est à jour,
-  comme pour `fmt`.
+  de CLI se voit dans le diff de la doc. Les catalogues Rust sont des tests
+  « golden » (`metafolder_core::doc_gen`) : `cargo test` échoue sur une note
+  périmée, et `MF_DOC_UPDATE=1` la réécrit. Le catalogue des scripts est
+  vérifié par `scripts/doc check`. `scripts/doc gen` régénère le tout.
 - **Le rendu n'est pas commité** (décidé). C'est un artefact de build, comme
   `frontend/dist` : `scripts/doc build` l'écrit dans `docs/wiki/dist/`
   (gitignoré), et `complete-build.sh` le lance avant d'appliquer la config.
@@ -60,8 +67,9 @@ docs/wiki/
   docs/wiki/dist/<slug>.html     -> ~/.config/metafolder/docs/<slug>.html
   ```
 
-  Le serveur de la GUI le sert sous `/docs/…` (même jeton que le reste), et le
-  panel `help` y lit ses pages au lieu de `panel/help/pages/`. D'autres lecteurs
+  Le serveur de la GUI le sert sous `/docs/…`, **sans jeton**, comme les
+  fichiers des panels : c'est du contenu livré, rien de privé. Le panel `help`
+  y lit ses pages au lieu de `panel/help/pages/`. D'autres lecteurs
   pourront s'en servir au même endroit (un site, une commande CLI plus tard).
 
 ## 2. Format d'une note
@@ -180,16 +188,19 @@ vérifiée par `scripts/doc check`. Le fichier se lit donc presque comme du text
 
 Procédures du projet (`system/macros.tid`) :
 
-| Macro                          | Rendu HTML                                         |
+| Macro (dans `$:/mf/macros`)    | Rendu HTML                                         |
 |--------------------------------|----------------------------------------------------|
 | `<<key "trash:restore" Enter>>` | `<span data-mf-key="trash:restore">Enter</span>` (rempli en direct par le panel, spec-gui « Key hints ») |
 | `<<cmd "trash:restore">>`      | lien en `<code>` vers la note de la commande       |
 | `<<live grammar>>`             | `<div data-mf-live="grammar"></div>` (la grammaire actuelle, injectée par le panel) |
 | `<<list-kind K>>`, `<<topic-full>>`, `<<catalog "CLI command">>` | listes/transclusions **déjà développées** au rendu |
 
-Les liens sont rendus en `<a data-help-page="<slug>">` (variable
-`tv-wikilink-template`), ce qui correspond exactement à ce que les pages
-actuelles utilisent.
+Les liens sont rendus en `<a data-help-page="<slug>">` (le build réécrit les
+liens de TiddlyWiki), ce qui correspond exactement à ce que les pages
+actuelles utilisent. Pour que le HTML reste valide (pas de `<ul>` dans un
+`<p>`), les procédures écrivent leurs éléments en mode bloc : TiddlyWiki
+n'en fait des blocs que suivis d'une ligne vide, si bien qu'un `<li>` contient
+un `<p>` (le panel retire sa marge). `<<live …>>` s'écrit seul sur sa ligne.
 
 ## 7. Références générées depuis le code
 
@@ -210,7 +221,16 @@ la note écrite à la main n'a rien à transclure explicitement.
 
 `scripts/doc check` vérifie, dans les deux sens, qu'il existe exactement une note
 écrite à la main par élément généré et aucune note de catalogue sans élément
-correspondant. Il intègre ainsi l'actuelle règle « au moins une page par type de
+correspondant. Le premier sens est **progressif** : il ne s'applique qu'aux
+catalogues inscrits dans `$:/mf/config/enforced-catalogs`, qui est vide au
+départ ; un catalogue y entre quand toutes ses notes sont écrites. En
+attendant, la page du catalogue liste ce qui n'est « pas encore documenté ».
+Le second sens s'applique tout de suite.
+
+La note générée d'un panel a pour cible `<nom> panel` (le titre de la note
+écrite à la main), et liste les commandes du panel. Les routes HTTP et les
+champs réservés ne sont pas encore générés : ils le seront à la migration de
+leurs sujets (côté daemon). Il intègre ainsi l'actuelle règle « au moins une page par type de
 panel ». La comparaison porte sur deux ensembles de titres : celui des notes
 générées, et celui des notes taguées avec le catalogue (`[tag[GUI command]]`).
 Elle ne demande aucune analyse du texte des notes.
@@ -286,7 +306,9 @@ doc build                # rendu vers le panel help
 Les 821 citations `spec-x "Section"` deviennent `doc "Titre"`. Chaque
 migration de sujet produit sa table de correspondance, et un script réécrit
 les citations. Les deux formes coexistent pendant la migration ; `doc check` ne
-valide que la nouvelle.
+valide que la nouvelle. Toute suite `doc "…"` dans `crates/` ou `scripts/` compte comme une
+citation, y compris hors commentaire : le contrôle de `check.sh` s'appelle
+`wiki` et non `doc` pour cette raison (`skip doc "install node"` en était une).
 
 ## 11. Migration
 
