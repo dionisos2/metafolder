@@ -169,7 +169,7 @@ pub(super) struct BulkCreateBody {
 
 /// `POST /repos/:repo/metarecords/bulk`: creates many metarecords, each at its
 /// own (optional) caller-supplied UUID, in **one revision**
-/// (spec-data-model "Bulk creation").
+/// (doc "Metarecord endpoints").
 ///
 /// All-or-nothing, like every other batch writer here: one [`Writer`], one
 /// transaction, and the first refusal rolls the whole batch back. Records are
@@ -177,7 +177,7 @@ pub(super) struct BulkCreateBody {
 /// has no row yet, so a subtree must arrive parent-first.
 ///
 /// Nothing carries a version: a metarecord's version is a hash of its content
-/// (spec-data-model "Version"), so recreating one at its UUID with its fields
+/// (doc "Metarecord version"), so recreating one at its UUID with its fields
 /// gives it back exactly the version it had.
 pub(super) async fn bulk_create_endpoint(
     State(state): State<Arc<AppState>>,

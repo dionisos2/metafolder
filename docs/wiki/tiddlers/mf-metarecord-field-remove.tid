@@ -1,0 +1,6 @@
+title: mf metarecord field remove
+tags: [[CLI command]] [[Data model]]
+kind: reference
+summary: Remove the row(s) equal to the spec (inverse of add)
+
+Removes the rows equal to the value; other rows of the name stay ([[Editing metarecords from the command line]]).

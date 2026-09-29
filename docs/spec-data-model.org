@@ -3,8 +3,7 @@
 
 * Overview
 
-The data model defines the core structures shared across all components:
-repositories, metadata metarecords, fields, and values.
+Moved to the wiki: doc "Data model".
 
 * Concepts
 
@@ -15,136 +14,11 @@ Moved to the wiki: doc "Repository", doc "Repository layout on disk".
 
 ** Metarecord
 
-A metarecord is a coherent set of metadata about one subject — typically a file —
-or a value shared by such metadata (a tag, a collection, a cross-repo link).
-The fields of a metarecord are its metadata; "metarecord" names the unit, "metadata"
-names what the fields are.
-
-| Field     | Type       | Description                                              |
-|-----------+------------+----------------------------------------------------------|
-| =uuid=    | UUID       | Stable identifier for this metarecord                         |
-| =version= | u64        | Content hash of the metarecord's fields, daemon-computed |
-| =fields=  | list       | Ordered list of =Field= values                           |
-
-Fields form a *multi-map*: multiple fields with the same name are allowed.
-
-Ownership is implicit: every metarecord belongs to the repository whose
-database holds it (one database per repository). Cross-repo sync state (links
-between metarecords of two repositories) lives outside the data model, in a
-dedicated sync database — see [[file:spec-sync.org][spec-sync.org]].
-
-*** Version
-
-A metarecord's =version= is a *hash of its own content*: the multiset of its
-=(name, type, value)= field triples, plus its =uuid=. It is not a counter, and
-it carries no ordering — two versions are only ever compared for *equality*.
-
-That equality is the whole point, in both directions:
-
-- equal versions ⇒ identical field states (so a cached copy is still valid);
-- identical field states ⇒ equal versions (so a value changed and changed back
-  is correctly reported as unchanged).
-
-Both hold *by construction*, across the whole history of a metarecord and across
-every branch of the log, with nothing to maintain and nothing to restore. This
-is what cross-repo sync's change detection rests on
-([[file:spec-sync.org][spec-sync.org]]) and what makes the version a reliable
-cache key.
-
-**** What the hash covers
-
-The =(name, type, value)= triple is hashed *as one unit*, so moving a value from
-one field name to another, or retyping it, changes the version.
-
-- The multiset is hashed *order-independently*: field rows have no meaningful
-  order, and two metarecords carrying the same rows must hash alike.
-- =Value::Nothing= is content like any other value: a row holding it contributes
-  to the hash, while an absent field contributes nothing. The two states are
-  distinct in the data model and must stay distinct here.
-- =field.id= is *excluded*. A row id is storage identity, not content; including
-  it would re-couple the version to the physical rows and defeat the invariant
-  above (navigation restores ids exactly, so the version must not depend on
-  them).
-- The metarecord's =uuid= is *included*, as a base term, so that two metarecords
-  carrying identical fields still hash differently and each record's version
-  values live in their own domain. A metarecord with no fields therefore has a
-  version of its own rather than a shared zero.
-
-**** Incremental maintenance
-
-Recomputing the hash from every row on every write would make a bulk write
-(reconcile, a watcher flush) re-read each record it touches. The hash is
-therefore *additive*: the version is the sum, modulo 2⁶⁴, of the per-row hashes
-and the uuid term. A write subtracts the hash of each row it removes and adds
-the hash of each row it inserts — cost proportional to the rows actually
-touched, not to the size of the metarecord.
-
-Addition, not XOR. Two equal terms cancel under XOR, so a metarecord holding the
-same row twice would hash exactly like one holding it never — and
-[[*No duplicate rows]], which forbids that state, is held by the write path
-alone: there is deliberately no unique index over the value columns to enforce
-it. A hash whose correctness depends on an invariant nothing checks is a hash
-that fails silently, and it would fail in the worst possible direction: sync
-would read "unchanged". Summation degrades gracefully instead — a duplicated row
-simply makes the record hash differently.
-
-The 64-bit width is sized for the comparison that is actually made. Versions are
-only ever compared *within one metarecord's own history* (against a sync
-baseline, or an =expected_version= precondition), never across a repository, so
-a collision would require two states of the *same* record to hash alike.
-
-**** Migration
-
-An existing repository drops =next_version=, recomputes every metarecord's
-=version= from its own rows, and *empties the event log* — the =revision=,
-=operation= and =op_snapshot= rows, with =log_head.op_id= set back to =NULL=.
-Buffered watcher events (=pending_operation=) are not log rows and are kept.
-
-The log is discarded rather than converted because it cannot be converted
-cheaply *and* safely: its =entity_version_*= columns hold allocator counters, so
-a navigation step restoring one would leave the metarecord describing itself
-with a number that is not the hash of the state just restored — the first
-rollback would desynchronise every record it touched, and sync would read the
-result as a phantom change. The historical hashes could in principle be
-recomputed from =op_snapshot=, but that buys a rewind capability no repository
-needs at this stage of the project. The repository's *data* is untouched; only
-the ability to rewind it is. Trash entries recorded before the migration keep
-their blobs and restore normally, but lose their rollback auto-restore
-correlation, which is a recorded version.
-
-This bumps =API_VERSION=. The wire shape does not change — =version= is still an
-integer, and =expected_version= still takes one — but its meaning does: a client
-that ordered two versions would now be comparing hashes.
+Moved to the wiki: doc "Metarecord", doc "Metarecord version", doc "Why the version is a content hash".
 
 ** Field and Value
 
-A field is a =(name, value)= pair. Value is one of:
-
-| Variant    | Rust type       | Semantics                                    |
-|------------+-----------------+----------------------------------------------|
-| =Nothing=  | —               | Explicit absence ("this field does not apply") |
-| =String=   | =String=        | UTF-8 text                                   |
-| =Int=      | =i64=           | 64-bit signed integer                        |
-| =Float=    | =f64=           | 64-bit float                                 |
-| =Bool=     | =bool=          |                                              |
-| =DateTime= | =i64=           | Unix milliseconds (UTC); JSON wire form is an ISO-8601 string (=YYYY-MM-DDTHH:MM:SSZ=) |
-| =Ref=          | =UUID=         | Reference to another metarecord's UUID (same repo)              |
-| =TreeRef=      | =(UUID?, TreeName)= | Position in a named tree: =(parent_uuid, name)= (see [[*Tree names]]) |
-| =RefBase=      | =UUID=         | Reference to a repository UUID                             |
-| =ExternalRef=  | =(UUID, UUID)= | Cross-repo reference: (repo UUID, metarecord UUID)              |
-
-A =TreeRef= stores the position of a metarecord in a named tree as =(parent_uuid, name)=,
-kept in the =value_uuid= and =value_name= columns of its column form
-(see [[*Storage]]):
-
-- =value_uuid=: UUID of the parent metarecord (zero UUID =x'00...00'= for root nodes).
-- =value_name=: the name component as *displayed* (e.g. filename, tag name) — what
-  the string predicates of [[file:spec-query.org][spec-query.org]] compare against.
-- =value_name_bytes=: that name's *exact bytes*, which identify the node and
-  carry the forest's uniqueness (see [[*Tree names]]).
-
-Multiple independent trees can coexist within the same repository by using different
-field names (e.g. =mfr_path= for the filesystem tree, =parent= for a tag hierarchy).
+Moved to the wiki: doc "Fields and values", doc "Value types". The forest rules stay below.
 
 *** One position per forest
 
@@ -327,188 +201,15 @@ ISO-8601 UTC string; a non-parsable datetime string is rejected on deserializati
 
 ** One value type per field name
 
-A field name has a *single non-=Nothing= value type* across the whole
-repository. =Nothing= always coexists with it (it is absence, not a type): a
-field may be its type where it applies and =Nothing= where it does not. The
-multi-map is unaffected — several rows of the same name are still allowed, but
-they all share that one type (e.g. many =tag= rows, all =String=; many =author=
-rows, all =Ref=). Mixing value types under one field name is rejected.
-
-The reference variants are treated as *distinct* types, not a family: a field is
-=Ref=, or =RefBase=, or =ExternalRef=, or =TreeRef= — never a mix. A link that
-is sometimes local and sometimes cross-repo is modelled uniformly as
-=ExternalRef=.
-
-The type is established by the first non-=Nothing= write to that name; the user
-schema may also declare it explicitly (see
-doc "Schema"). A later write of a conflicting type
-is rejected with =400=. The current implementation realises the =field_type=
-registry as a *derived probe* with no separate registry table: the established
-type is read as one representative non-=Nothing= row of the name
-(=… WHERE field_name = ? AND value_type != 'nothing' LIMIT 1=, seeking the
-=field_name= range via the existing =idx_field_name=, stopping at the first such
-row), amortised by a per-revision cache in the =Writer= (one probe per field
-name per revision). The type therefore unlocks automatically when a name's last
-non-=Nothing= value is removed. A materialised registry (and its role as the
-per-field index-encoding selector) comes with the indexing work (see
-[[file:spec-indexing.org][spec-indexing.org]]).
-
-This uniformity simplifies the rest of the model: comparisons
-([[file:spec-query.org][spec-query.org]]) are same-type, and sorting needs no
-cross-type precedence (see [[*Sort specification (=POST /query=)]]).
-
-*** Changing a field's type (retype)
-
-Because the first write locks the type, an explicit *retype* operation changes a
-field name's type repository-wide, converting every existing non-=Nothing= row.
-The target may be *any* value type (=string|int|float|bool|datetime|ref|tree_ref|
-externalref|refbase=): a user who mis-typed a field must never be stuck — every
-type is reachable from every other.
-
-- HTTP: =POST /repos/:repo_uuid/retype= with body ={"name": "<field>", "to":
-  "<type>"}=; CLI: =mf retype <name> <type>=.
-- It is a logged write (one revision through =log::Writer=, so it is rollbackable
-  like any other change) and updates the =field_type= registry.
-- =String= is the *universal hub*: the conversion is lossless and reversible in
-  both directions for every type.
-  - *any type → =String=* uses its canonical display form: scalars as text,
-    =Ref=/=RefBase= as a 32-char hex uuid, =TreeRef= as =<parent_hex>/<name>= (or
-    =/<name>= for a root), =ExternalRef= as =<repo_hex>:<metarecord_hex>=.
-  - *=String= → any type* parses that same form: =Int/Float/Bool/DateTime= as
-    today, =Ref/RefBase= from a hex uuid, =TreeRef= from the =<parent>/<name>=
-    grammar, =ExternalRef= from =<repo>:<metarecord>=.
-- Other lossless scalar conversions are kept (=Int ↔ Float=, =Bool ↔ Int= as
-  =0/1=, =DateTime ↔ Int= as Unix-ms). Conversions between two *different*
-  reference types, or from a reference type to a non-=String= scalar (and vice
-  versa), have no meaningful coercion and fall back (route the value through
-  =String= explicitly if a reinterpretation is intended).
-- A value that cannot be converted is set to the target type's *default
-  sentinel*, chosen to be easily found afterwards: =Int= =0=, =Float= =0.0=,
-  =Bool= =false=, =String= ="="" (empty), =DateTime= the Unix epoch
-  (=1970-01-01T00:00:00Z=), the reference types =Nothing= (findable via
-  =IS ABSENT=). The operation returns a summary (counts, and the uuids whose
-  values fell back to the sentinel) so they can be located and fixed.
-- A =String → TreeRef= result is validated against the forest like any TreeRef
-  write (parent must exist, no cycle, depth ≤ 1000); a value that would violate
-  it falls back to =Nothing= (recorded in the summary) rather than aborting the
-  whole retype, so one bad path never blocks the rest.
-- A converted value that becomes equal to another row of the same name on the
-  same metarecord *drops* that row instead of duplicating it (see [[*No duplicate
-  rows]]): two values that the conversion made one are one row afterwards.
+Moved to the wiki: doc "One value type per field name", doc "Changing a field's type".
 
 ** No duplicate rows
 
-A metarecord never holds two field rows with the *same name and the same value*.
-The multi-map is a *set* of =(name, value)= pairs, not a bag: several =tag= rows
-are allowed because their values differ, but the same tag twice says nothing the
-first row does not already say.
-
-Every write enforces this by *collapsing*, never by failing:
-
-- *append* (=POST …/metarecords/:uuid/fields=, =POST /query/fields/add=) of a
-  value the metarecord already carries under that name is a *no-op*: no row, no
-  =version= bump, no logged operation. The metarecord is returned unchanged, and
-  the =updated= count of the set form counts only the metarecords that actually
-  gained a row.
-- *set* (=PUT …/fields/:name= with =values=, =POST /query/fields/set=) and the
-  *whole-record* writes (=POST /metarecords=, =PUT …/metarecords/:uuid=) keep the
-  first occurrence of each value and drop the later ones, in the order given.
-- a *retype* whose conversion makes a row equal to a sibling row of the same name
-  drops that row (the two values became one).
-
-The single exception is the *by-id* edit (=PATCH /repos/:repo_uuid/fields/:id=,
-=mf field set <id>=): it names one specific row, so turning it into the twin of a
-sibling is rejected with =400= instead of silently deleting the row the client
-just addressed.
-
-=Nothing= is a value like any other here: a field holds at most one =Nothing=
-row. The unknown/absent distinction is untouched.
-
-*Log navigation is exempt*: rollback and revert restore the exact rows a snapshot
-recorded, ids included, so a revision written before this rule is returned to
-faithfully (and a duplicate it recorded comes back with it).
-
-Repositories written before this rule were deduplicated *once*, at their first
-open under it, by the SQLite backend (the lowest row id of each
-=(metarecord, name, value)= group was kept, outside the event log).
+Moved to the wiki: doc "No duplicate rows".
 
 ** Reserved fields
 
-Two categories of reserved field names exist, distinguished by prefix:
-
-- =mfr_*= (*metafolder restricted*) — written by the daemon; require =force= to
-  override via the API (see [[*Reserved fields]]).
-- =mf_*= (*metafolder*) — read by the daemon to control its behaviour; written
-  freely by the user without =force=.
-
-The stored fields for a file/directory metarecord are:
-
-| Field              | Prefix | Value type | Description                                                                                                |
-|--------------------+--------+------------+------------------------------------------------------------------------------------------------------------|
-| =mfr_path=         | mfr    | TreeRef    | Position in filesystem tree; =Nothing= if explicitly deleted (IsAbsent); stale TreeRef if location unconfirmed; absent if never assigned (IsUnknown) |
-| =mfr_type=         | mfr    | String     | ="file"=, ="dir"= or ="symlink"= (symlinks are never dereferenced — see [[file:spec-platform.org][spec-platform.org]]) |
-| =mfr_size=         | mfr    | Int        | Size in bytes at last watcher/reconcile update; for a symlink, the length of its own target path (=lstat=) |
-| =mfr_mtime=        | mfr    | DateTime   | Last content modification time (from =lstat=; the link's own, for a symlink)                               |
-| =mfr_symlink_target= | mfr  | String     | Target **path** of a symlink (from =readlink=); present only when =mfr_type = "symlink"=                   |
-| =mfr_btime=        | mfr    | DateTime   | File creation time, when the platform/filesystem provides one; absent otherwise (see [[file:spec-platform.org][spec-platform.org]]) |
-| =mfr_permissions=  | mfr    | String     | Unix permission bits as octal string, e.g. ="0644"=; Unix only, never written on Windows (see [[file:spec-platform.org][spec-platform.org]]) |
-| =mfr_uid=          | mfr    | Int        | Owner user ID; Unix only, never written on Windows                                                         |
-| =mfr_gid=          | mfr    | Int        | Owner group ID; Unix only, never written on Windows                                                        |
-| =mfr_inode=        | mfr    | String     | ="<dev>:<ino>"=; present only on a file whose link count exceeds one — its presence is what marks a *hard-linked* file (see doc "Duplicates"). Unix only, never written on Windows |
-| =mfr_mime=         | mfr    | String     | MIME type from content analysis (see [[file:spec-platform.org][spec-platform.org]]); computed by reconcile (opt-out) for files that lack it; absent when undetectable or not yet computed |
-| =mfr_partial_hash= | mfr    | String     | Hex xxHash3 of first+last 4 KB; absent if not yet computed or invalidated by =Modify=                      |
-| =mfr_full_hash=    | mfr    | String     | Hex xxHash3 of full content; absent if not yet computed                                                    |
-| =mfr_hash_mtime=   | mfr    | DateTime   | The file's =mfr_mtime= when the stored hashes were computed; written and cleared with them (see doc "The duplicate hash cache") |
-| =mfr_hash_size=    | mfr    | Int        | The file's size when the stored hashes were computed; written and cleared with them |
-| =mfr_mount=        | mfr    | String     | Present on a *directory* metarecord that is a mount point: best-effort identity of the mounted volume (see [[file:spec-file-tracking.org][spec-file-tracking.org]] "Mount points"). Its presence, not its value, marks the mount point; never cleared by the daemon |
-| =mfr_duplicate_group= | mfr | Ref        | The =duplicate_group= metarecord this file belongs to; present ⟹ the file exists and had a byte-identical twin at the last scan (see doc "Duplicates") |
-| =mf_watch=         | mf     | Bool       | Opt-in watch flag; controls whether this metarecord and its descendants are tracked (see [[file:spec-file-tracking.org][spec-file-tracking.org]] "Watch and Ignore")  |
-| =mf_ignore=        | mf     | String     | Regex pattern (multi-map: one row per pattern); controls which paths are excluded (see [[file:spec-file-tracking.org][spec-file-tracking.org]] "Watch and Ignore") |
-| =mf_sync=          | mf     | String     | =internal= (default) / =external=: whether metafolder or an external tool owns this metarecord's content during cross-repo sync; inherited down the =mfr_path= tree (see [[file:spec-sync.org][spec-sync.org]]) |
-
-The user schema feature defines one additional reserved =mf_*= field:
-=mf_schema= (String, multi-map — metarecord type declaration). The constraints
-themselves live in an external schema file, not in the database; see
-doc "Schema".
-
-Duplicate detection adds one *daemon-created* metarecord type that is not a file:
-a =duplicate_group= (=mf_schema = "duplicate_group"=, no =mfr_path=), carrying
-=mfr_content_hash=, =mfr_content_size=, =mfr_duplicate_count= and
-=mfr_duplicate_reclaimable=. It is the only place where the daemon writes an
-=mf_*= field of its own accord; no =force= is involved, since =mf_*= fields need
-none. See doc "Duplicates".
-
-The =mfr_path= TreeRef stores =(value_uuid, value_name)= for each metarecord.
-
-The three states of the =mfr_path= field have distinct semantics:
-- =mfr_path= present (valid TreeRef) → the metarecord is at that location.
-- =mfr_path= stale (TreeRef whose path no longer exists on disk) → location
-  uncertain; reconcile will attempt to find a match via fingerprint or
-  similarity and return it as a candidate.
-- =mfr_path= =Nothing= (IsAbsent) → file was explicitly removed (watcher
-  =Remove= / =Rename(From)= event); no search needed. *Only the watcher sets
-  =mfr_path= to =Nothing=; reconcile never does.*
-- =mfr_path= absent (IsUnknown) → no path was ever assigned.
-
-*=mfr_*= fields* are written by the daemon (watcher and reconcile). Attempting
-to modify them without =force= returns =400 Bad Request=:
-
-#+BEGIN_SRC json
-{"name": "mfr_permissions", "value": {"type": "string", "value": "0755"}, "force": true}
-#+END_SRC
-
-*Warning*: daemon operations always overwrite =mfr_*= fields unconditionally,
-regardless of whether the value was previously set with =force=. =force= is an
-explicit acknowledgement that the value may be overwritten at any time.
-
-Typical legitimate use-cases: restoring permissions after an erroneous
-recursive permission change; correcting a misdetected MIME type; resolving an
-=mfr_path= conflict the watcher cannot handle automatically.
-
-*=mf_*= fields* are read by the daemon to control its behaviour and written
-freely by the user (no =force= required). They are still reserved: any unknown
-=mf_*= field name is rejected with =400= to prevent typos from silently having
-no effect.
+Moved to the wiki: doc "Reserved fields".
 
 Direct lookup by path uses the tree cache (see [[file:spec-file-tracking.org][spec-file-tracking.org]] "Tree Cache"); on cache
 miss, the daemon resolves each component iteratively via the
@@ -524,44 +225,7 @@ field across all ancestors at once, keeping the closest result.
 
 ** Storage
 
-Each repository keeps its data in its own key-value store,
-=.metafolder/internal/kv/= (LMDB); its keys are
-doc "Store tables". The SQLite database
-that held them until September 2026 is gone, and a repository still on it is
-refused at load (doc "How the storage backend was built").
-
-*** UUID encoding
-
-All UUIDs (metarecord UUIDs and repository UUIDs) are stored as 16 raw bytes.
-The HTTP API encodes UUIDs as 32-char lowercase hex strings (no hyphens) for
-readability and interoperability.
-
-The zero UUID (=00000000000000000000000000000000=) is reserved as a sentinel
-for =TreeRef= root nodes and must never be assigned to a real metarecord. UUID v4
-has 122 random bits (2¹²² ≈ 5×10³⁶ possible values); the probability of
-collision among 1 billion metarecords is ≈ 10⁻¹⁹ — negligible in practice.
-
-*** The column form of a value
-
-A row's value is stored in a *column form*: its =value_type= and the one or two
-columns that type uses (=crates/daemon/src/rows.rs=). It is the key-value
-store's persisted form of a row, and the form a log snapshot is shown in
-([[file:spec-event-log.org][spec-event-log.org]] "=GET /log="), so it changes
-only with a migration.
-
-| Column             | Holds                                                                  |
-|--------------------+------------------------------------------------------------------------|
-| =value_type=       | =nothing= · =string= · =int= · =float= · =bool= · =datetime= · =ref= · =tree_ref= · =refbase= · =externalref= |
-| =value_text=       | =string=                                                               |
-| =value_int=        | =int=, =bool= (0/1), =datetime= (Unix ms)                              |
-| =value_real=       | =float=                                                                |
-| =value_uuid=       | =ref=/=refbase=/=externalref=: the metarecord; =tree_ref=: the parent (the zero UUID for a root) |
-| =value_ref_repo=   | =externalref=: the repository                                          |
-| =value_name=       | =tree_ref=: the name as displayed                                      |
-| =value_name_bytes= | =tree_ref=: the name's exact bytes (its identity)                      |
-
-The version of a metarecord (see "Version") is stored beside its rows, so a read
-never recomputes it; it is maintained incrementally by every write.
+Moved to the wiki: doc "The column form of a value", doc "Store tables", doc "Value types".
 
 ** Pagination
 
@@ -671,198 +335,13 @@ sort)= pair. Clients must not parse it.
 
 ** HTTP API
 
-Two layers: *resources* (a single, directly-addressed thing — cheap, idempotent)
-and the *=/query/*= set layer* ([[file:spec-query.org][spec-query.org]]). They overlap only on the n=1 case
-(a resource path vs a =uuid_in= query), by design. Listing/reading *several*
-metarecords is a query (=POST /query=, empty query = all, =uuid_in= = a named
-set) — there is no =GET /metarecords= list nor a batch-read endpoint.
-
-#+BEGIN_SRC
-POST   /repos/:repo_uuid/metarecords                                   create
-GET    /repos/:repo_uuid/metarecords/:uuid                             read one
-PUT    /repos/:repo_uuid/metarecords/:uuid                             set whole record
-DELETE /repos/:repo_uuid/metarecords/:uuid                             delete one
-POST   /repos/:repo_uuid/metarecords/:uuid/fields                      append one row
-GET    /repos/:repo_uuid/metarecords/:uuid/fields/:name               read a field's value(s)
-PUT    /repos/:repo_uuid/metarecords/:uuid/fields/:name               set a field (replace rows)
-DELETE /repos/:repo_uuid/metarecords/:uuid/fields/:name               unset a field
-GET    /repos/:repo_uuid/metarecords/:uuid/fields/:name/resolve-tree  TreeRef → path(s)
-GET    /repos/:repo_uuid/fields/:id                                    read a field row by id
-PATCH  /repos/:repo_uuid/fields/:id                                    rename and/or revalue a row
-DELETE /repos/:repo_uuid/fields/:id                                    delete a row by id
-POST   /repos/:repo_uuid/retype                                        retype a field repo-wide
-GET    /repos/:repo_uuid/fields[?type=<value_type>]                    distinct field names + types
-GET    /repos/:repo_uuid/tree/roots[?field=<field>]                    TreeRef forest roots (uuid + name)
-POST   /repos/:repo_uuid/tree/resolve-path                            path → node uuid (inverse of resolve-tree)
-#+END_SRC
-
-*** =POST /repos/:repo_uuid/metarecords=
-
-Creates a metadata metarecord. Body ={"fields": [{"name", "value"}, ...], "force"?}=.
-For =TreeRef= fields the client supplies =(parent_uuid, name)= directly; the
-daemon validates the =parent_uuid= (null = a root, else an existing metarecord
-carrying that =TreeRef= name). The filesystem root (=value_uuid = x'00...00'=,
-=value_name = ""=) is created at =repo init= and is unique per field name. A
-metarecord holds at most one =TreeRef= row per field name ([[*One position per
-forest]]).
-Response: the full metadata object (=id= on each field).
-
-*** =POST /repos/:repo_uuid/metarecords/bulk=
-
-Creates *many* metarecords, each at its own optional caller-supplied UUID, in a
-*single revision*. The one-at-a-time form costs a revision — and an =fsync= —
-per metarecord, which is the difference between restoring a directory from the
-trash-bin and giving up on it.
-
-#+BEGIN_SRC json
-{"metarecords": [{"uuid": "<32hex>", "fields": [{"name", "value"}, ...]}, ...],
- "force": false,
- "skip_existing": false}
-#+END_SRC
-
-- =uuid= is optional per metarecord: omitted, the daemon draws one, exactly as
-  the single-record form does. The endpoint is a general bulk create.
-- =force= applies to the whole batch (reserved-field override, as on the
-  single-record form).
-- =skip_existing= makes a UUID that is already taken a *skip* instead of a
-  refusal. Without it, a caller that cannot know in advance whether a metarecord
-  survives — a subtree restore meeting a node the watcher has re-tracked — would
-  have to precede every batch with a filtering query.
-
-Response: ={"created": N, "skipped": M, "uuids": [...]}=, the UUIDs in the order
-given (which is how a caller learns the ones the daemon drew).
-
-*Nothing carries a version.* A version is a hash of the metarecord's content
-([[*Version]]), so recreating a metarecord at its UUID with its fields gives it
-back exactly the version it had. Field row =id=s are freshly allocated — they are
-storage identity, not content.
-
-*All-or-nothing*, like every other batch writer: one revision, one transaction,
-and the first refusal — a taken UUID (=409=), a reserved field without =force=,
-a schema violation (=400= with the =violations= array, each naming its
-=metarecord_uuid=) — rolls the whole batch back. A half-applied restore would be
-worse than none.
-
-*Order is significant, and it is the caller's to get right.* Metarecords are
-applied in the order given, and the forest refuses a =TreeRef= whose parent has
-no row yet ([[*Referential integrity of a forest]]), so a subtree must arrive
-parent-first.
-
-*Limits.* At most 1000 metarecords per call; beyond that the call is refused with
-=400= naming the limit, before any work. The request body is capped
-independently (2 MiB), so a batch of metarecords carrying many fields reaches
-that first — callers page, as the trash-bin's own subtree capture already does.
-
-*** =GET /repos/:repo_uuid/metarecords/:uuid=
-
-Returns one metarecord with all its fields. Each field carries its DB-row =id=
-(used by the by-id endpoints).
-#+BEGIN_SRC json
-{ "uuid": "...", "version": 3,
-  "fields": [ {"id": 42, "name": "rating", "value": {"type": "int", "value": 5}} ] }
-#+END_SRC
-
-*** =PUT /repos/:repo_uuid/metarecords/:uuid=
-
-*Whole-record set*: replaces the entire field set, keeping the UUID, as one
-=SetRecord= operation (=before= = all old fields, =after= = the given set).
-Literal overwrite — fields not listed are dropped, reserved =mfr_*=/=mf_*=
-included (so a careless set can untrack a file; round-trip =GET= to preserve).
-Body ={"fields": [...], "force"?}= → updated full object.
-
-*** =DELETE /repos/:repo_uuid/metarecords/:uuid=
-
-Deletes the metarecord and all its fields (one =DeleteRecord= op). =204=. The
-repository root metarecord is refused with =400= (see
-[[*Referential integrity of a forest]]).
-
-*** =POST /repos/:repo_uuid/metarecords/:uuid/fields=
-
-Appends one row without touching existing rows of that name (multi-map append).
-Body ={"name", "value", "force"?}= → updated full object. Protected name without
-=force= → =400=. Appending a value the metarecord already holds under that name
-is a no-op (see [[*No duplicate rows]]): the record comes back unchanged, same
-=version=, and nothing is logged.
-
-*** =GET|PUT|DELETE /repos/:repo_uuid/metarecords/:uuid/fields/:name=
-
-A field of one metarecord, addressed by name (the direct analog of the
-=/query/fields/{...}= set operations):
-- =GET= → the field's value(s): ={"name": "tag", "values": [<Value>, ...]}=
-  (empty list when the field is unknown).
-- =PUT= → *set*: replaces all rows of =name= (one =SetField= op). Body =value=
-  (one row) or =values= (a list, multi-map) — exactly one.
-- =DELETE= → *unset*: removes every row of =name= (the field becomes unknown).
-Protected names need =force= (in the body for PUT/DELETE). Updated full object
-(PUT) / =204= (DELETE).
-
-*** Conditional writes (=expected_version=)
-
-The single-record write endpoints (whole-record =PUT=, metarecord =DELETE=,
-field =POST=, field =PUT=/=DELETE= by name) accept an optional
-=expected_version= query parameter: the write is rejected with =409=
-(nothing written, no revision) when the metarecord's current =version=
-differs from the given value. This
-is the optimistic-concurrency primitive used by cross-repo sync propagation
-([[file:spec-sync.org][spec-sync.org]]) so a concurrent user write is never silently overwritten;
-ordinary clients may use it for the same purpose.
-
-Because the version is a content hash ([[*Version]]), this guard is
-*content-based*: a write conditioned on =H= succeeds even if the metarecord went
-from =H= to some other state and back to =H= in between. That is the intended
-reading — the precondition asks "is the state I read still the state I am
-writing against", and a byte-identical state is that state. Nothing is silently
-overwritten, which is what the guard exists to prevent.
+Moved to the wiki: doc "Metarecord endpoints", doc "Conditional writes". The tree routes stay below.
 
 *** =GET /repos/:repo_uuid/metarecords/:uuid/fields/:name/resolve-tree=
 
 Resolves a =TreeRef= field of this metarecord to its root-relative path(s).
 Response ={"paths": ["<path>", ...]}= (empty when the field is absent or not a
 =TreeRef=). The set form is =POST /query/fields/resolve-tree= ([[file:spec-query.org][spec-query.org]]).
-
-*** =GET|PATCH|DELETE /repos/:repo_uuid/fields/:id=
-
-A single field *row* by its repository-unique DB id (no metarecord UUID in the
-path — the id alone addresses it). =404= if the id is unknown.
-- =GET= → the row: ={"id", "name", "value"}=.
-- =PATCH= → change its *name and/or value* in place, keeping the id; the value
-  type is validated against the (target) field name. Body ={"name"?, "value"?, "force"?}=.
-  =400= if the result would duplicate another row of the same name on that
-  metarecord (see [[*No duplicate rows]]).
-- =DELETE= → remove the row. Body ={"force"?}=, =204=.
-
-*** =POST /repos/:repo_uuid/retype=
-
-Converts a field's value type repository-wide to any type
-(=string|int|float|bool|datetime|ref|tree_ref|externalref|refbase=)
-— see [[*Changing a field's type (retype)]]. Body ={"name": "<field>", "to": "<type>"}= →
-={"converted": <n>, "fallback_count": <n>, "fallback_uuids": [...]}=. Reserved
-=mfr_*=/=mf_*= names are rejected (the system owns their types).
-
-*** =GET /repos/:repo_uuid/fields=
-
-Lists the distinct field names present on the repository's metarecords, each
-with its value type, ordered by name:
-
-#+BEGIN_SRC json
-[{"name": "category", "type": "tree_ref"}, {"name": "tag", "type": "ref"}, ...]
-#+END_SRC
-
-Since a field name has a single non-=Nothing= value type repository-wide ([[*One value type per field name]]),
-each name appears at most once. =Nothing= rows are excluded (an explicit
-absence is not a usable value). An optional =?type=<value_type>= query
-parameter restricts the result to one value type (=tree_ref=, =ref=, =string=,
-…). The isolation matches a query's universe — every metarecord of this
-repository's database, ownership being implicit in which database file holds a
-metarecord. The GUI uses
-it to populate field pickers (e.g.
-the TreeRef-field and Ref-field selectors of the tree-explorer panel, see
-[[file:spec-gui.org][spec-gui.org]]).
-
-The catalog is read from the store's derived key spaces (the index's field
-catalogue). Like every read it takes the repository's store handle, so it waits
-behind a long write (a reconcile, a large watcher flush) until that write
-commits — until reads stop taking the handle (doc "Storage safety").
 
 *** =GET /repos/:repo_uuid/tree/roots=
 
@@ -954,116 +433,11 @@ log=; =rollback= and =prune= are unchanged.
 
 *** =mf retype <name> <type>=
 
-Converts a field's value type repository-wide (=string|int|float|bool|datetime=).
-Kept at the top level deliberately: it is a *name-scoped, whole-repository*
-migration, not a selection- or id-scoped edit, so it belongs to none of the
-get/set/add/delete groups.
+Moved to the wiki: doc "Changing a field's type", doc "mf retype".
 
 ** =mf metarecord [selector] <verb>=
 
-The verb follows the selector options above. =add= takes no selector; =set=
-needs =-i=; =delete= and =field= need a selector; =get= defaults to all.
-
-*** =mf metarecord [-i|-q] get=
-
-Reads metarecords; subsumes the former =list=, =query= and =get=:
-- with =-i <uuid>=, prints that metarecord's full JSON object (fields incl. ids);
-- with =-q= or no selector (match-all), prints the matching UUIDs, one per line
-  (internal pagination over =next_cursor=) — including =-q <uuid>=, a query like
-  any other (see the flag-decides rule under [[*Selector options]]).
-
-The selector may also be given as =--eq name[:type]=value= (repeatable, AND-ed):
-a *safe* exact-match query built without interpolating anything into the query
-DSL — the value is escaped, so a name with quotes cannot inject. Bare
-=name=value= defaults to a string; mutually exclusive with =-q=/=-i=. This is the
-selector the tagging scripts use instead of hand-quoting =title = "$X"=.
-
-=--select=, =--sort=, =--limit=, =--values= override the default output shape.
-=--count= replaces it: it prints *how many* metarecords the selector matches, on
-one line, and no UUID. It is one round-trip whatever the size of the scope — the
-daemon counts through the bitmap index (=count: true= on =POST /query=, O(1)) —
-so a walk that needs "how many are left" after every answer does not pay for the
-list it is not printing. Query selectors only: =-i= names a single metarecord,
-so =--count= with it is a usage error (exit 2), as it is with the flags that
-shape rows (=--select=, =--values=, =--tsv=, =--sort=, =--limit=).
-=--select a,b,c --tsv= prints *one tab-separated row per metarecord* — the first
-value of each selected field, in order, empty for an absent field — the compact
-dump the scripts consume (e.g. the tag vocabulary).
-
-=--resolve-tree <field>= is the *bulk* form of =mf path=: it resolves the given
-=TreeRef= field of every selected metarecord to its root-relative path(s), one
-per line (sorted, deduplicated), in a single =POST /query/fields/resolve-tree=
-round-trip (paths in the endpoint form — leading-=/=-rooted for the filesystem
-forest, so a line pastes straight into an =mfr_path -> "…"= query; the repo root
-resolves to an empty line). It needs a selector (=-q= or =-i=) and is exclusive
-with =--select=/=--values=/=--sort=. This is what lets a GUI script offer
-folder/file completions (=mfr_path=) without a per-record loop.
-
-With =--tsv= each line is =uuid<TAB>path= instead (one row per path, sorted by
-path, so both forms list in the same order). The endpoint answers with a
-uuid→paths map and the bare-path form throws the keys away, which is all a
-completion list needs; a script that has to *act* on the records — walk them,
-tag them — needs to know which record a path belongs to, and would otherwise
-fall back to one =mf path= call per record. This is the one place =--tsv= does
-not require =--select=; clap cannot express a conditional =requires=, so the
-rule is checked in the command and is still a usage error (exit 2).
-
-*** =mf metarecord add <spec> [<spec> ...]=
-
-Creates a metarecord with the given fields and prints its UUID (the former =mf
-create=). Takes *no selector* (it makes a new metarecord). The inverse of
-=mf metarecord -i <uuid> delete=.
-
-| Flag      | Description                                                |
-|-----------+------------------------------------------------------------|
-| =--force= | Required to write =mfr_*= fields (see [[*Reserved fields]]) |
-
-*** =mf metarecord -i <uuid> set <spec> [<spec> ...]=
-
-Replaces the *entire* field set of the selected metarecord, keeping its UUID —
-the inverse of =mf metarecord -i <uuid> get=, equivalent to a delete + create at
-fixed UUID. *Literal overwrite*: any field not listed is removed, including
-reserved =mfr_*=/=mf_*= ones, so a careless set can untrack a file (round-trip
-the output of =get= to preserve everything). Recorded as *one* =SetRecord=
-operation. *Needs =-i=* (a single metarecord) and *requires =-f=/=--force= to run
-at all* — a deliberate guard so this rare, scripting-oriented overwrite is not
-confused with =field set= (one field).
-
-| Flag          | Description                                                |
-|---------------+------------------------------------------------------------|
-| =-f=/=--force= | Mandatory: confirms the full-record overwrite             |
-
-*** =mf metarecord [-i|-q] delete=
-
-Deletes the selected metarecords (metadata and all fields); prints the count.
-Requires a selector. Confirms for a =-q= selector unless =--force= is passed. A
-query goes through the atomic =POST /repos/:repo/query/delete= (one revision); the
-confirmation count comes from a =count=+=limit= query.
-
-*** =mf metarecord [-i|-q] field <verb> ...=
-
-Field operations scoped to the selected metarecord(s) (the selector is required).
-=get=/=unset= take a bare field =name=; =set=/=add=/=delete= take field specs:
-
-- =get <name> [--resolve <field>]= — prints the field's value(s). With
-  =--resolve=, treats each value as a =Ref= and prints the referenced
-  metarecords' =<field>= instead — the ref→field join resolved in *one*
-  round-trip (a =uuid_in= query), e.g. a record's tag paths from its =tag= refs.
-  When =<field>= is a =TreeRef= its resolved path is printed (a second
-  round-trip), not the raw =(parent, name)=. =--resolve= requires =-i=;
-- =set <spec> [<spec> ...]= — replaces *all* rows of the field with the given
-  value set (one or several — multi-map; the specs must share one name), in *one*
-  log operation per metarecord;
-- =add <spec>= — appends one row (inverse of =remove=);
-- =remove <spec>= — removes the row(s) equal to the spec's =(name, value)=
-  (inverse of =add=); other rows of the same name, and non-matching metarecords,
-  are kept;
-- =unset <name>= — removes the field *entirely* (all rows → /unknown/), distinct
-  from =set name:nothing= (an explicit =Nothing= row).
-
-A UUID selector targets that one metarecord; a predicate applies the write across
-every match in one server-side transaction (one revision, one operation per
-affected metarecord). =-f=/=--force= is required for reserved =mfr_*= fields.
+Moved to the wiki: doc "Editing metarecords from the command line".
 
 ** =mf tag [-i|-q|--eq] <verb> <path>= (hierarchical tags)
 
@@ -1095,7 +469,7 @@ write is applied across the whole selector set through the batch field endpoints
 So a whole subtree is tagged with =mf tag -q 'mfr_path ->* "/dir"' add <path>=.
 
 Their idempotence is the daemon's: appending a ref a record already carries is a
-no-op (see [[*No duplicate rows]]), so the ref is appended once and the row that
+no-op (see doc "No duplicate rows"), so the ref is appended once and the row that
 already held it is left untouched, id included — no remove-then-append. The
 number printed is therefore how many records actually *gained* the ref: re-running
 the same =add= prints =0=, and the subsumption removals that follow are unaffected.
@@ -1126,40 +500,10 @@ fallback. Expansion and preset loading live in =core= (=core::ignore_presets= /
 
 ** =mf field <verb> <id>= (direct row access)
 
-Operates on a single field row by its DB id (as shown by =mf metarecord get=):
-
-- =list [--type <value_type>]= — lists the repository's *distinct field names*
-  with their value type (=GET …/fields=), one =name<TAB>type= per line, ordered
-  by name; =--type= restricts to one value type (=tree_ref=, =ref=, =string=,
-  …). This is the group's default verb (=mf field= ≡ =mf field list=). Unlike
-  the other field verbs it is repo-wide and takes no id;
-- =get <id>= — prints the row (JSON);
-- =set <id> <spec>= — sets the row to the field spec's name and value in place,
-  *keeping its id*; a differing name renames the row, and the value type is
-  validated against the (target) field name's established type. Refused (=400=)
-  when the result would duplicate another row of that name on the same
-  metarecord (see [[*No duplicate rows]]);
-- =delete <id>= — removes the row.
-
-There is no =mf field add=: new rows are born at the name level (=mf metarecord
-field … add=). =-f=/=--force= is required for reserved =mfr_*= fields.
+Moved to the wiki: doc "Editing metarecords from the command line".
 
 ** Log granularity
 
-Every command maps to *one log operation per metarecord it changes* — the unit
-the log shows and rollback reverses:
-
-| Command                       | Operation(s)                                  |
-|-------------------------------+-----------------------------------------------|
-| =metarecord add= / =delete=   | one =CreateRecord= / =DeleteRecord=           |
-| =metarecord set=              | one =SetRecord= (all fields before→after)     |
-| =field set <name>= (n values) | one =SetField= (all rows of the name)         |
-| =field add=                   | one =AppendField= (none if the value is already there) |
-| =field remove= (by value)     | one =DeleteField= (the removed rows)          |
-| =field unset=                 | one =DeleteField= (all rows of the name)      |
-| =field set <id>= / =delete=   | one row-scoped op (keeps the row id)          |
-
-A query-scoped write is still *one revision* containing one such operation per
-affected metarecord.
+Moved to the wiki: doc "Editing metarecords from the command line".
 
 * Open questions

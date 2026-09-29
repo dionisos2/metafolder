@@ -62,8 +62,7 @@ progress reporting (doc "Tasks"), the trash-bin
   multi-map is a set of pairs, not a bag. Appending a value a metarecord already
   has is a no-op (no row, no version bump, nothing logged), and a multi-valued or
   whole-record write keeps the first occurrence of each value. Log navigation is
-  exempt — it restores what a snapshot recorded (see spec-data-model "No
-  duplicate rows").
+  exempt — it restores what a snapshot recorded (see doc "No duplicate rows").
 - Cross-repo sync state (links and snapshots) lives outside the data model,
   in per-pair sync databases under =.metafolder/internal/=; it is never
   recorded in the event log and can only be modified when both repositories
@@ -71,7 +70,7 @@ progress reporting (doc "Tasks"), the trash-bin
   (see [[file:spec-sync.org][spec-sync.org]]).
 - The =version= of a metadata metarecord is managed exclusively by the daemon
   and cannot be set directly by users. It is a *hash of the metarecord's own
-  content* (see spec-data-model "Version"), carrying no ordering and compared
+  content* (see doc "Metarecord version"), carrying no ordering and compared
   only for equality: equal versions imply identical field states and identical
   field states imply equal versions, by construction, on every branch of the log
   and across rollback/redo cycles. Nothing restores a version — restoring the

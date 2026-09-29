@@ -878,8 +878,8 @@ fn test_query_bare_uuid_atom_selects_that_metarecord() {
     assert_ok(&out);
     assert_eq!(out.stdout.trim(), a);
 
-    // The typed flag decides the output shape (spec-data-model "mf metarecord
-    // [-i|-q] get"): the same UUID through -i is the full JSON object.
+    // The typed flag decides the output shape (doc "Editing metarecords from the command line"):
+    // the same UUID through -i is the full JSON object.
     let out = mf(&["-u", &repo, "metarecord", "-i", &a, "get"]);
     assert_ok(&out);
     let json: serde_json::Value =
@@ -4000,7 +4000,7 @@ fn test_mf_tag_subsumption_exclusivity_deny_list() {
     assert_eq!(names("tag"), vec!["musique/jazz/bebop"]);
 
     // Re-adding is idempotent, and writes nothing at all: the daemon refuses to
-    // duplicate the row (spec-data-model "No duplicate rows"), so the existing
+    // duplicate the row (doc "No duplicate rows"), so the existing
     // row keeps its id and no metarecord is counted as having gained one.
     let before = tag_row_id();
     let again = mf(&["-u", &repo, "tag", "-i", &rec, "add", "musique/jazz/bebop"]);

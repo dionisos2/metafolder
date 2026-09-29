@@ -327,8 +327,8 @@ fn remember(remap: &mut HashMap<i64, i64>, old: &[FieldRow], new: impl Iterator<
 
 /// The whole-record form of [`remember`]: pairs each snapshot row with the
 /// written field carrying the same `(name, value)` rather than by position,
-/// because a whole-record write collapses repeated pairs (spec-data-model "No
-/// duplicate rows") — two rows a pre-rule revision recorded as duplicates then
+/// because a whole-record write collapses repeated pairs (doc "No duplicate rows") — two rows a
+/// pre-rule revision recorded as duplicates then
 /// map onto the single row that stands for both.
 fn remember_fields(remap: &mut HashMap<i64, i64>, old: &[FieldRow], new: &[Field]) {
     for row in old {

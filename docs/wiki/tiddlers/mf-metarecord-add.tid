@@ -1,0 +1,6 @@
+title: mf metarecord add
+tags: [[CLI command]] [[Data model]]
+kind: reference
+summary: Create a metarecord with the given fields and print its UUID (no selector)
+
+Creates a metarecord from field specifications and prints its uuid; takes no selector ([[Editing metarecords from the command line]]).

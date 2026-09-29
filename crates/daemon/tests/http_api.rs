@@ -1339,7 +1339,7 @@ async fn test_create_metarecord_with_supplied_uuid() {
     std::fs::remove_dir_all(root).unwrap();
 }
 
-/// spec-data-model "No duplicate rows": the single-record append is idempotent,
+/// doc "No duplicate rows": the single-record append is idempotent,
 /// and the by-id edit refuses to make a row the twin of a sibling.
 #[tokio::test]
 async fn test_append_duplicate_is_a_no_op_and_by_id_duplicate_is_rejected() {
@@ -1410,7 +1410,7 @@ async fn test_append_duplicate_is_a_no_op_and_by_id_duplicate_is_rejected() {
     assert_eq!(values, vec!["a", "b"]);
 }
 
-// ── Bulk creation (spec-data-model "POST …/metarecords/bulk") ────────────────
+// ── Bulk creation (doc "Metarecord endpoints") ────────────────
 
 /// The number of revisions the repository's log holds.
 async fn revision_count(app: &Router, repo: &str) -> usize {

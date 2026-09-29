@@ -1,4 +1,4 @@
-//! Reserved field names (spec-data-model "Reserved fields"):
+//! Reserved field names (doc "Reserved fields"):
 //! - `mfr_*` are written by the daemon; user writes require `force`.
 //! - `mf_*` are read by the daemon; written freely, but unknown names are
 //!   rejected to prevent typos from silently having no effect.

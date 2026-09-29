@@ -1,0 +1,40 @@
+title: Why the version is a content hash
+tags: [[Data model]]
+kind: rationale
+audience: dev
+summary: A counter reached "one version, one state" through four hand-kept mechanisms, one of which broke; a hash gets it by construction — summed, not XOR-ed.
+
+Until September 2026 the version was a counter drawn from a per-repository
+allocator. The property wanted was already "a version denotes exactly one field
+state", but a counter only gave it through four mechanisms whose sole job that
+was: the allocator, a rule that navigation never restores a version, a recount of
+the allocator from the log, and the log recording each operation's version after.
+A property kept by hand ends up broken, and this one was: the recount read the
+operation table, so pruning the log could hand out a number already used. A hash of
+the content gives the property by construction.
+
+''Sum, not XOR.'' Two equal terms cancel under XOR, so a metarecord holding the same
+row twice would hash like one holding it never. [[No duplicate rows]] forbids that
+state, but only the write path enforces it — nothing in the store checks it — and a
+hash whose correctness hangs on an unchecked invariant fails silently, in the worst
+direction: sync would read "unchanged". A sum degrades gracefully: a duplicated row
+just makes the record hash differently.
+
+''53 bits are enough'' because versions are compared only within one metarecord's own
+history (a sync baseline, an `expected_version`), never across a repository: a
+collision needs two states of the same record to hash alike.
+
+''Conditional writes become content-based'' ([[Conditional writes]]): a write
+conditioned on a version succeeds even if the record went elsewhere and came back.
+That is the intended reading — "is the state I read still the state I write
+against?" — and a byte-identical state is that state.
+
+The switch recomputed every version and emptied the event log: the log's recorded
+versions were counters, so a rollback restoring one would have left records
+describing themselves with numbers that were not their hash — sync would have read
+the first rollback as a change everywhere. The data was untouched; only the ability
+to rewind past the switch was lost.
+
+A pitfall of the change: dependencies on the ''order'' of versions hide where a naive
+search misses them — a `MIN(…)` in SQL, a `>` in a test (which passes half the time
+on hashes). Look for `<` and `>` around anything called version, tests included.

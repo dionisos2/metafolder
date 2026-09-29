@@ -481,7 +481,7 @@ pub(super) async fn batch_add(
     let value = single_value(body.value, body.values)?;
     let field = body.name.clone();
     // A match that already holds the value gains nothing, so it is not counted
-    // (spec-data-model "No duplicate rows").
+    // (doc "No duplicate rows").
     write_matches(&state, repo_uuid, body.name, body.force, body.query, move |writer, uuid| {
         Ok(writer.append_field(uuid, &field, value.clone())?.created())
     })
@@ -540,9 +540,9 @@ pub(super) struct RetypeBody {
 }
 
 /// `POST /repos/:repo/retype`: converts every non-`Nothing` row of the field
-/// `name` to a new scalar type, repository-wide, in one revision (spec-data-model
-/// "Changing a field's type"). Reserved fields (`mfr_*`/`mf_*`) are rejected
-/// unconditionally — the system owns their types.
+/// `name` to any value type, repository-wide, in one revision
+/// (doc "Changing a field's type"). Reserved fields (`mfr_*`/`mf_*`) are
+/// rejected unconditionally — the system owns their types.
 pub(super) async fn retype_field(
     State(state): State<Arc<AppState>>,
     Path(repo): Path<String>,

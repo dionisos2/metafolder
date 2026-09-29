@@ -1,0 +1,6 @@
+title: mf metarecord set
+tags: [[CLI command]] [[Data model]]
+kind: reference
+summary: Replace the ENTIRE field set of the selected metarecord (needs -i, force)
+
+Overwrites the whole field set of the metarecord `-i` names — every field not given goes, reserved ones included. Needs `-f` ([[Editing metarecords from the command line]]).

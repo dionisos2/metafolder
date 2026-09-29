@@ -267,7 +267,7 @@ pub struct SnapshotField {
 }
 
 /// A snapshot field as stored: the value in its column form
-/// (spec-data-model "Storage"), byte strings in hex.
+/// (doc "The column form of a value"), byte strings in hex.
 #[derive(Serialize, Deserialize)]
 struct StoredField {
     name: String,

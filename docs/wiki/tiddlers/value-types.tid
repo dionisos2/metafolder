@@ -1,0 +1,31 @@
+title: Value types
+tags: [[Data model]]
+kind: reference
+summary: The ten value types, what each holds, and their JSON form.
+
+|!Type |!Holds |!JSON `value` |
+|`nothing` |an explicit absence: "this field does not apply" |none (`{"type": "nothing"}`) |
+|`string` |UTF-8 text |a string |
+|`int` |a 64-bit signed integer |a number |
+|`float` |a 64-bit float |a number |
+|`bool` |true or false |a boolean |
+|`datetime` |an instant, stored as Unix milliseconds (UTC) |an ISO-8601 string, `YYYY-MM-DDTHH:MM:SSZ` |
+|`ref` |another metarecord of the same repository |its uuid |
+|`tree_ref` |a position in a named tree: a parent and a name |`{"parent": <uuid or null>, "name": …}` |
+|`refbase` |a repository |its uuid |
+|`externalref` |a metarecord of another repository |`{"repo": <uuid>, "metarecord": <uuid>}` |
+
+Every value travels as `{"type": "<type>", "value": …}`, uuids as 32 lowercase hex
+characters without hyphens (the hyphenated form is accepted on input).
+
+A `tree_ref`'s parent is `null` for a root. Several independent trees coexist in one
+repository under different field names — `mfr_path` for the filesystem, `path` for
+the tag hierarchy — each a forest of its own. A name has a displayed form and its
+exact bytes, which identify the node (a file name need not be valid UTF-8).
+
+The four reference types are ''distinct'' types, not one family: a field is `ref`,
+or `refbase`, or `externalref`, or `tree_ref`, never a mix. A link that is sometimes
+local and sometimes cross-repository is modelled as `externalref` throughout.
+
+On the command line a value is written as a field specification, `name:type=value`
+([[Field specifications]]).

@@ -1,5 +1,5 @@
 //! The metarecord version: a hash of the metarecord's own content
-//! (spec-data-model "Version").
+//! (doc "Metarecord version").
 //!
 //! A version is not a counter. It is the sum, modulo 2^53, of a base term
 //! derived from the metarecord's uuid and one term per field row, each hashing

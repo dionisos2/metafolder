@@ -1,0 +1,23 @@
+title: The column form of a value
+tags: [[Data model]]
+kind: reference
+audience: dev
+summary: How a row's value is persisted — its value_type and the columns that type uses — which is also how a log snapshot shows it.
+
+A row's value is persisted in a ''column form'': its `value_type` and the one or two
+columns that type uses (`crates/daemon/src/rows.rs`, `encode_value`/`decode_value`).
+It is the key-value store's form of a row and the form a log snapshot shows, so it
+changes only with a migration.
+
+|!Column |!Holds |
+|`value_type` |`nothing` · `string` · `int` · `float` · `bool` · `datetime` · `ref` · `tree_ref` · `refbase` · `externalref` |
+|`value_text` |`string` |
+|`value_int` |`int`, `bool` (0/1), `datetime` (Unix ms) |
+|`value_real` |`float` |
+|`value_uuid` |`ref`/`refbase`/`externalref`: the uuid pointed at; `tree_ref`: the parent (the zero uuid for a root) |
+|`value_ref_repo` |`externalref`: the repository |
+|`value_name` |`tree_ref`: the name as displayed |
+|`value_name_bytes` |`tree_ref`: the name's exact bytes (its identity) |
+
+Uuids are stored as their 16 raw bytes. The metarecord's version is stored beside its
+rows ([[Metarecord version]]); where the rows sit in the store: [[Store tables]].

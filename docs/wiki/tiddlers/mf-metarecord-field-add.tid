@@ -1,0 +1,6 @@
+title: mf metarecord field add
+tags: [[CLI command]] [[Data model]]
+kind: reference
+summary: Append one row (inverse of delete)
+
+Appends one row; a value already there adds nothing ([[No duplicate rows]]). A query selector prints how many metarecords gained it.

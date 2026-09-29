@@ -1,0 +1,23 @@
+title: No duplicate rows
+tags: [[Data model]]
+kind: reference
+summary: A metarecord never holds the same (name, value) twice; writes collapse duplicates instead of failing, except an edit by row id.
+
+A metarecord's fields are a ''set'' of `(name, value)` pairs, not a bag: several
+`tag` rows are allowed because their values differ, but the same tag twice says
+nothing the first row does not.
+
+Every write enforces it by ''collapsing'', never by failing:
+
+* ''add'' of a value the metarecord already holds under that name is a no-op: no row, no new version, nothing logged. The set form's `updated` count counts only the metarecords that gained a row — re-running a tagging prints `0`.
+* ''set'' (one field, or a whole metarecord) keeps the first occurrence of each value and drops the later ones.
+* a ''retype'' that makes two rows equal keeps one ([[Changing a field's type]]).
+
+The one exception is the edit ''by row id'' (`PATCH /fields/:id`, `mf field set <id>`):
+it names one row, so turning it into the twin of a sibling is refused with `400`
+rather than silently deleting the row the client addressed.
+
+`nothing` is a value like any other here: a field holds at most one `nothing` row.
+
+Log navigation is exempt: a rollback or a revert restores the exact rows a snapshot
+recorded, ids included — a duplicate written before the rule comes back with it.

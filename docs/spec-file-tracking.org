@@ -1337,7 +1337,7 @@ a plain undo.
 on purpose: it is the answer to a question the user asked at a point in time,
 not a fact the daemon keeps up to date. It must be queryable (=orphan = true=),
 visible in the detail panel, editable and removable by hand — none of which the
-reserved namespace allows (spec-data-model "Reserved fields"). The consequences
+reserved namespace allows (doc "Reserved fields"). The consequences
 are the ones that come with any user field: a repository whose schema constrains
 =orphan= must accept a =bool= there, and a repository that already uses the name
 for something else gets the ordinary type-lock error rather than a silent

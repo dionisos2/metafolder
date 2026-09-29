@@ -1,0 +1,60 @@
+title: Metarecord endpoints
+tags: [[Data model]]
+kind: reference
+audience: dev
+summary: The resource routes — one metarecord, one field by name, one row by id — plus bulk create, retype and the field catalogue.
+
+The daemon's API has two layers: ''resources'' — one thing at its URL, cheap and
+idempotent — and the ''set layer'', `POST …/query/*`, where every body carries a
+query. They overlap only on one metarecord (its URL, or a `uuid_in` query). Reading
+''several'' metarecords is a query: there is no list or batch-read route.
+
+|!Route |!Does |
+|`POST /repos/:repo/metarecords` |creates one: `{"fields": […], "force"?}` → the full metarecord, `id` on each field |
+|`POST /repos/:repo/metarecords/bulk` |creates many in one revision (below) |
+|`GET /repos/:repo/metarecords/:uuid` |reads one, each field with its row `id` |
+|`PUT /repos/:repo/metarecords/:uuid` |replaces its whole field set, keeping the uuid: `{"fields": […], "force"?}` → the metarecord |
+|`DELETE /repos/:repo/metarecords/:uuid` |deletes it and its fields → `204`; the repository's root is refused (`400`) |
+|`POST /repos/:repo/metarecords/:uuid/fields` |appends one row: `{"name", "value", "force"?}` → the metarecord (unchanged when the value was there) |
+|`GET /repos/:repo/metarecords/:uuid/fields/:name` |`{"name", "values": […]}` — empty when the field is unknown |
+|`PUT /repos/:repo/metarecords/:uuid/fields/:name` |sets the field: `{"value"}` or `{"values": […]}`, exactly one, `"force"?` → the metarecord |
+|`DELETE /repos/:repo/metarecords/:uuid/fields/:name` |unsets it (every row goes; the field becomes unknown) → `204` |
+|`GET /repos/:repo/fields/:id` |one row by its id alone: `{"id", "name", "value"}`; `404` when unknown |
+|`PATCH /repos/:repo/fields/:id` |changes its name and/or value, keeping the id: `{"name"?, "value"?, "force"?}`; `400` if it would duplicate a sibling |
+|`DELETE /repos/:repo/fields/:id` |deletes the row: `{"force"?}` → `204` |
+|`POST /repos/:repo/retype` |`{"name", "to"}` → `{"converted", "fallback_count", "fallback_uuids"}` ([[Changing a field's type]]) |
+|`GET /repos/:repo/fields[?type=<t>]` |the distinct field names with their type, by name (below) |
+
+The whole-record `PUT` is a literal overwrite: fields not listed go, `mfr_*` and
+`mf_*` included — a careless one untracks a file. Read the metarecord first to keep
+what should stay. The single-record writes take `?expected_version=`
+([[Conditional writes]]). A reserved name needs `force` ([[Reserved fields]]); a
+schema violation is a `400` with a `violations` array ([[Delta validation]]).
+
+!! Bulk create
+
+```
+{"metarecords": [{"uuid"?: "<32hex>", "fields": […]}, …], "force": false, "skip_existing": false}
+→ {"created": N, "skipped": M, "uuids": […]}
+```
+
+Each metarecord may bring its uuid, or gets one drawn; `uuids` lists them in the
+order given. `force` covers the whole batch. `skip_existing` turns a uuid already
+taken into a skip instead of a `409` — a subtree restore meeting a node the watcher
+re-tracked meanwhile would otherwise have to query first.
+
+It is ''all or nothing'': one revision, one transaction; the first refusal (a taken
+uuid, a reserved field without `force`, a schema violation naming its
+`metarecord_uuid`) rolls the batch back. Metarecords are applied ''in the order
+given'', and a `tree_ref` whose parent has no row yet is refused, so a subtree comes
+parent first. At most 1000 metarecords per call (`400` naming the limit, before any
+work); the body is capped at 2 MiB on its own, so fat metarecords page sooner.
+Nothing carries a version: a metarecord recreated with its fields gets its old
+version back ([[Metarecord version]]); row ids are new.
+
+!! The field catalogue
+
+`GET /fields` answers `[{"name": "category", "type": "tree_ref"}, …]`: each name once
+([[One value type per field name]]), `nothing` rows left out, `?type=` keeping one
+type. It is read from the store's derived data. The GUI's field pickers use it;
+`mf field list` prints it.

@@ -445,7 +445,7 @@ async fn test_inverse_step_exposes_the_pre_revision_version() {
     // The last op of the revision is navigated first: it names a version
     // *inside* the revision, while the pre-revision version is the record's
     // state before any of it. Different, not greater — a version is a content
-    // hash and carries no order (spec-data-model "Version").
+    // hash and carries no order (doc "Metarecord version").
     assert_ne!(
         body["op"]["entity_version_before"].as_u64(),
         Some(before),

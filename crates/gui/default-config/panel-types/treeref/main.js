@@ -255,8 +255,8 @@ export async function mount(root, metafolder) {
       parent: currentUuid(),
       name: leaf,
     });
-    // A position on an `mfr_*` field is a reserved write (spec-data-model
-    // "Reserved fields"), as in metarecord-detail's create.
+    // A position on an `mfr_*` field is a reserved write (doc "Reserved fields"),
+    // as in metarecord-detail's create.
     const force = fields.some((f) => f.name.startsWith('mfr_')) ? { force: true } : {};
     const created = /** @type {{uuid: string}} */ (
       await daemon.call('POST', `/repos/${r}/metarecords`, { fields, ...force })

@@ -1,0 +1,30 @@
+title: Data model
+kind: overview
+summary: Repositories hold metarecords; a metarecord is a uuid and a multi-map of typed fields; that is the whole model.
+
+Everything metafolder stores fits in three notions:
+
+* a ''repository'' ([[Repository]]) — one directory tree and its own store;
+* ''metarecords'' ([[Metarecord]]) — each a set of metadata about one subject, usually a file, identified by a uuid;
+* ''fields'' ([[Fields and values]]) — the metadata itself: a name and a typed value, several fields of the same name allowed.
+
+A file is not special: it is a metarecord whose `mfr_path` field places it in the
+filesystem's tree ([[Reserved fields]]). A tag, a collection, a duplicate group are
+metarecords too, with no file behind them. Fields that point at other metarecords
+(`ref`, `tree_ref`) are what links them.
+
+!! Use it
+
+<<list-kind guide>>
+
+!! Reference
+
+<<list-kind reference>>
+
+!! Why it works this way
+
+<<list-kind rationale>>
+
+!! Commands
+
+<<tagged-with "CLI command">>

@@ -1054,8 +1054,7 @@ impl<'c> Writer<'c> {
     }
 
     /// The deferred check: every field name this revision wrote must carry a
-    /// single value type across the repository (spec-data-model "One value type
-    /// per field name").
+    /// single value type across the repository (doc "One value type per field name").
     fn check_deferred_types(&self) -> Result<()> {
         let Some(names) = &self.deferred_types else { return Ok(()) };
         for name in names {
@@ -1128,8 +1127,8 @@ impl<'c> Writer<'c> {
         uuid: Uuid,
         fields: Vec<Field>,
     ) -> Result<MetaRecord> {
-        // Repeated (name, value) pairs are written once (spec-data-model
-        // "No duplicate rows"); the record returned mirrors what is stored.
+        // Repeated (name, value) pairs are written once (doc "No duplicate rows");
+        // the record returned mirrors what is stored.
         let fields = collapse_duplicate_fields(fields);
         validate_one_position_each(uuid, fields.iter().map(|f| (f.name.as_str(), &f.value)))?;
         for f in &fields {
@@ -1137,7 +1136,7 @@ impl<'c> Writer<'c> {
         }
         // Seeded with the metarecord's own term; `log_op` then adds the terms
         // of the rows created below, so a fresh record's version describes its
-        // initial fields like any other (spec-data-model "Version").
+        // initial fields like any other (doc "Metarecord version").
         self.tx.create_metarecord(uuid, version::base(uuid))?;
 
         let mut after = Vec::with_capacity(fields.len());
@@ -1255,7 +1254,7 @@ impl<'c> Writer<'c> {
     /// per *given* value, in order. A revert needs both: the watcher types when
     /// it undoes a file event (spec-event-log "Revert content"), and the ids to
     /// remap the row-scoped inverses that follow it — so a repeated value, which
-    /// is collapsed to a single row (spec-data-model "No duplicate rows"),
+    /// is collapsed to a single row (doc "No duplicate rows"),
     /// reports the id of the row that swallowed it rather than shifting the
     /// caller's pairing.
     pub fn set_field_multi_as(
@@ -1293,7 +1292,7 @@ impl<'c> Writer<'c> {
 
     /// Appends one row without touching existing rows of that name.
     /// A value the metarecord already holds under that name is *not* appended
-    /// again (spec-data-model "No duplicate rows"): nothing is written, nothing
+    /// again (doc "No duplicate rows"): nothing is written, nothing
     /// is logged, the version does not move, and the row that already holds it
     /// is reported as [`Appended::AlreadyPresent`].
     pub fn append_field(&mut self, uuid: Uuid, name: &str, value: Value) -> Result<Appended> {
@@ -1327,7 +1326,7 @@ impl<'c> Writer<'c> {
 
     /// A by-id edit names one specific row, so turning it into the twin of a
     /// sibling is refused rather than silently dropping the row the caller just
-    /// addressed (spec-data-model "No duplicate rows"). The row being edited is
+    /// addressed (doc "No duplicate rows"). The row being edited is
     /// not its own twin.
     fn reject_duplicate(&self, uuid: Uuid, field_id: i64, name: &str, value: &Value) -> Result<()> {
         match self.twin_row(uuid, field_id, name, value)? {
@@ -1411,8 +1410,8 @@ impl<'c> Writer<'c> {
     }
 
     /// Converts every non-`Nothing` row of field `name` to the type `to`,
-    /// repository-wide, in this one revision (spec-data-model "Changing a field's
-    /// type"). The target may be any type, including the reference variants.
+    /// repository-wide, in this one revision (doc "Changing a field's type"). The target may be any
+    /// type, including the reference variants.
     /// Row-scoped (each row keeps its id, so rollback restores it exactly) and
     /// bypasses the per-write type check (it *is* the type change). `Nothing`
     /// rows are left untouched (explicit absence is preserved). A `String →
@@ -1456,7 +1455,7 @@ impl<'c> Writer<'c> {
                 }
                 let name = row.name.clone();
                 // Two values the conversion made equal are one row afterwards,
-                // not a duplicate (spec-data-model "No duplicate rows"). The
+                // not a duplicate (doc "No duplicate rows"). The
                 // probe reads the transaction's own state, so rows converted
                 // earlier in this pass count as siblings.
                 if self.twin_row(uuid, row.id, &name, &new_value)?.is_some() {
@@ -1571,8 +1570,8 @@ impl<'c> Writer<'c> {
         after: Vec<FieldRow>,
     ) -> Result<()> {
         // The version follows the rows this op moved: subtract the terms of
-        // what it removed, add the terms of what it inserted (spec-data-model
-        // "Version"). This is the single place a version is assigned. `None`
+        // what it removed, add the terms of what it inserted (doc "Metarecord version").
+        // This is the single place a version is assigned. `None`
         // when the op removed the metarecord itself — there is no row left to
         // carry a version, and nothing for a redo to restore.
         let version_after = match self.tx.version(entity)? {
@@ -1800,7 +1799,7 @@ fn second_position(uuid: Uuid, name: &str) -> anyhow::Error {
 
 /// The outcome of [`Writer::append_field`]: either the row it wrote, or the row
 /// that already held the value — in which case the append was a no-op
-/// (spec-data-model "No duplicate rows").
+/// (doc "No duplicate rows").
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Appended {
     Created(i64),
@@ -1821,7 +1820,7 @@ impl Appended {
     }
 }
 
-// ── Duplicate collapsing (spec-data-model "No duplicate rows") ───────────────
+// ── Duplicate collapsing (doc "No duplicate rows") ───────────────
 
 /// Splits `values` into the values actually to be written (first occurrence of
 /// each) and, for every given value, the index of the kept value that stands

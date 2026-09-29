@@ -1,0 +1,26 @@
+title: Fields and values
+tags: [[Data model]]
+kind: overview
+summary: A field is a name and a typed value; a metarecord may hold several fields of one name, never the same one twice.
+
+A field is a `(name, value)` pair, and a metarecord's fields form a ''multi-map'':
+several fields may share a name — many `tag` rows, many `author` rows — as long as
+their values differ ([[No duplicate rows]]). Each field is stored as a ''row'' with
+an id unique in the repository, shown in every response and used to address one
+row directly (`mf field get <id>`).
+
+A value has one of ten types ([[Value types]]), and a field name has one type across
+the whole repository ([[One value type per field name]]).
+
+Two states look alike and are not ([[Nothing versus unknown]]):
+
+* a field holding `nothing` says "this does not apply" — a deleted file's `mfr_path`;
+* a field that is not there says nothing at all — it is ''unknown''.
+
+Writing a field comes in three strengths:
+
+* ''set'' replaces every row of the name with the values given;
+* ''add'' appends one row, leaving the others (a no-op when the value is already there);
+* ''remove'' takes out the rows equal to a value, and ''unset'' all rows of the name — the field becomes unknown.
+
+Names starting with `mfr_` and `mf_` are reserved ([[Reserved fields]]).

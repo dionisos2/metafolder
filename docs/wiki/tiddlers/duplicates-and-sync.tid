@@ -5,7 +5,7 @@ audience: dev
 summary: Duplicate data is never synchronised: each repository scans its own content.
 
 `mfr_duplicate_group`, `mfr_inode`, `mfr_hash_mtime` and `mfr_hash_size` are
-`mfr_*` fields other than `mfr_path`, which sync's field diff never writes:
+`mfr_*` fields ([[Reserved fields]]) other than `mfr_path`, which sync's field diff never writes:
 they are derived from each repository's own files, and each side re-derives its
 own. "Has a duplicate" is a property of one repository's content. Group
 metarecords have no `mfr_path`, so no placement, and nothing synced references

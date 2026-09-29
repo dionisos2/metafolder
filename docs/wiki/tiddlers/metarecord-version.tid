@@ -1,0 +1,35 @@
+title: Metarecord version
+tags: [[Data model]]
+kind: reference
+summary: A hash of the metarecord's content, maintained by the daemon — compare two versions for equality only.
+
+A metarecord's `version` is a hash of its own content: the multiset of its fields'
+`(name, type, value)` triples, plus its uuid. It is not a counter and carries no
+order. Two versions are only ever compared for ''equality'', and equality holds in
+both directions:
+
+* equal versions ⇒ identical fields — a copy read earlier is still valid;
+* identical fields ⇒ equal versions — a value changed and changed back reads as unchanged.
+
+Both hold by construction, across the whole history and every branch of the log,
+with nothing to maintain and nothing to restore: navigation puts the rows back and
+the version follows. Sync's change detection and conditional writes
+([[Conditional writes]]) rest on it.
+
+What the hash covers:
+
+* each triple is hashed ''as one unit'': moving a value to another field name, or retyping it, changes the version;
+* the rows are combined ''order-independently'': rows have no meaningful order;
+* a `nothing` row counts like any value; a missing field counts for nothing ([[Nothing versus unknown]]);
+* a row's ''id is left out'': it is storage identity, not content;
+* the ''uuid is included'', as a base term: two metarecords with identical fields differ, and one without fields has a version of its own.
+
+The version is the sum of the row terms and the uuid term, modulo 2⁵³ — 53 bits so
+that it survives a JSON number in a JavaScript client and fits a `Value::Int` (the
+sync planner records baselines in one). A write subtracts the terms of the rows it
+removes and adds those of the rows it inserts: its cost follows the rows touched, not
+the size of the metarecord. It is stored beside the rows, so a read never recomputes
+it. The terms are xxHash3 over a length-prefixed encoding of the row; that encoding
+is persisted — changing it changes every stored version, and needs a migration.
+
+Why a hash, and why a sum rather than a XOR: [[Why the version is a content hash]].

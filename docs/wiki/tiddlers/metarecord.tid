@@ -1,0 +1,28 @@
+title: Metarecord
+tags: [[Data model]]
+kind: overview
+summary: A uuid, a version, and a multi-map of fields: the metadata about one subject — a file, a tag, a collection.
+
+A metarecord is a coherent set of metadata about one subject — typically a file —
+or a value such metadata shares (a tag, a collection, a duplicate group). Its
+fields are its metadata: "metarecord" names the unit, "metadata" what its fields
+say.
+
+|!Part |!What |
+|`uuid` |its stable identifier, 32 lowercase hex characters on the wire |
+|`version` |a hash of its content, computed by the daemon ([[Metarecord version]]) |
+|`fields` |its fields, each with the id of its row ([[Fields and values]]) |
+
+```
+{ "uuid": "3f2a…", "version": 8123456789,
+  "fields": [ {"id": 42, "name": "rating", "value": {"type": "int", "value": 5}} ] }
+```
+
+A metarecord belongs to the repository whose store holds it: there is no owner
+field, and a second owner cannot be expressed. Links between metarecords of two
+repositories live outside the data model, in the sync state of that pair.
+
+The zero uuid (`00000000000000000000000000000000`) is never a metarecord's: it
+stands for "no parent" in a forest's root positions. A uuid is random (v4, 122
+random bits): a collision among a billion metarecords has a probability of about
+10⁻¹⁹.

@@ -1,0 +1,6 @@
+title: mf metarecord delete
+tags: [[CLI command]] [[Data model]]
+kind: reference
+summary: Delete the selected metarecords (metadata and all fields)
+
+Deletes the selected metarecords and prints how many; a query selector asks for confirmation unless `--force` ([[Editing metarecords from the command line]]).

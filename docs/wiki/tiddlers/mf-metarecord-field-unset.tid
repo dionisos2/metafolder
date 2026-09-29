@@ -1,0 +1,6 @@
+title: mf metarecord field unset
+tags: [[CLI command]] [[Data model]]
+kind: reference
+summary: Remove the field entirely (every row → unknown)
+
+Removes every row of the name: the field becomes unknown, which is not setting it to `nothing` ([[Nothing versus unknown]]).

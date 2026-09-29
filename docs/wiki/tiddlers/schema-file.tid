@@ -28,7 +28,7 @@ A constraint:
 
 |!Key |!Type |!Default |!Meaning |
 |`field` |string |required |the constrained field |
-|`type` |string |any |its value type: `nothing`, `string`, `int`, `float`, `bool`, `datetime`, `ref`, `tree_ref`, `refbase`, `externalref` |
+|`type` |string |any |its value type ([[Value types]]): `nothing`, `string`, `int`, `float`, `bool`, `datetime`, `ref`, `tree_ref`, `refbase`, `externalref` |
 |`min` |int |`0` |the fewest rows it may have |
 |`max` |int |unlimited |the most rows it may have |
 |`description` |string |— |free text, for a GUI to show |

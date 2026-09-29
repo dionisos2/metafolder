@@ -1,4 +1,4 @@
-//! Stat-derived `mfr_*` field values (spec-data-model "Reserved fields",
+//! Stat-derived `mfr_*` field values (doc "Reserved fields",
 //! spec-platform "File metadata fields").
 
 use std::path::Path;

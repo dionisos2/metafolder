@@ -14,7 +14,7 @@ data is never rewritten, and a check lists what already violates it. The store
 holds no constraint: the schema is a file you edit.
 
 Independently of any schema, a field name holds one value type across the
-repository (spec-data-model "One value type per field name"): a schema `type`
+repository ([[One value type per field name]]): a schema `type`
 declares that type explicitly — before any write, and for documentation — and
 one that contradicts the type already established is a schema error.
 

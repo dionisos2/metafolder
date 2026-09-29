@@ -1,0 +1,6 @@
+title: mf metarecord field get
+tags: [[CLI command]] [[Data model]]
+kind: reference
+summary: Print the field's value(s)
+
+Prints a field's values; `--resolve <field>` follows each `ref` to the referenced metarecord's `<field>` ([[Editing metarecords from the command line]]).

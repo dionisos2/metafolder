@@ -340,7 +340,7 @@ fn confirm(abs: &Path, candidates: &[rows::OrphanCandidate]) -> Option<Uuid> {
 }
 
 /// Whether the metarecord carries anything the daemon did not put there. The
-/// `mfr_*` namespace is the daemon's (spec-data-model "Reserved fields"), so
+/// `mfr_*` namespace is the daemon's (doc "Reserved fields"), so
 /// anything outside it is the user's and must not be deleted.
 fn annotated(conn: &dyn crate::store::Store, uuid: Uuid) -> Result<bool, ApiError> {
     let record = crate::store::Rows::metarecord(conn, uuid)?;

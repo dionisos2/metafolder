@@ -859,7 +859,7 @@ fn test_op_type_string_roundtrip() {
     assert!(OpType::parse("bogus").is_none());
 }
 
-// ── The version is a content hash (spec-data-model "Version") ───────────────
+// ── The version is a content hash (doc "Metarecord version") ───────────────
 
 use metafolder_daemon::log;
 use metafolder_daemon::version;
@@ -1376,7 +1376,7 @@ fn test_the_watcher_still_cascades_a_vanished_directory() {
     w.commit().expect("the watcher's cascade is not restricted");
 }
 
-// ── No duplicate rows (spec-data-model "No duplicate rows") ───────────────────
+// ── No duplicate rows (doc "No duplicate rows") ───────────────────
 
 fn s(v: &str) -> Value {
     Value::String(v.to_string())

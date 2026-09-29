@@ -1,0 +1,6 @@
+title: mf field delete
+tags: [[CLI command]] [[Data model]]
+kind: reference
+summary: Delete a field row by its id
+
+Deletes one row by its id ([[Editing metarecords from the command line]]).

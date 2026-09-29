@@ -221,28 +221,40 @@ Mémoire =slow-operation-log= supprimée (noms de phases périmés) ;
 
 * Modèle de données et requêtes
 
-** TODO 8. Modèle de données
+** FAIT 8. Modèle de données
 
-- [ ] =Data model= — overview
-- [ ] =Metarecord= — overview
-- [ ] =Fields and values= — overview (multi-map, =set_field= remplace toutes les lignes)
-- [ ] =Value types= — reference (les dix variantes, forme JSON, UUID en hex)
-- [ ] =Nothing versus unknown= — rationale
-- [ ] =Metarecord version= — reference (hash de contenu, égalité seulement)
-- [ ] =Why the version is a content hash= — rationale
-- [ ] =One value type per field name= — reference
-- [ ] =Changing a field's type= — guide (=mf retype=)
-- [ ] =No duplicate rows= — reference
-- [ ] =Reserved fields= — reference (=mfr_*= avec =force=, =mf_*= connus ; le catalogue =Reserved field= est généré à la clôture)
-- [ ] =Conditional writes= — reference (=expected_version=)
-- [ ] =The column form of a value= — reference, dev
-- [ ] =Metarecord endpoints= — reference, dev (ressources, champs par nom et par id, retype, =GET /fields=)
-- [ ] =Editing metarecords from the command line= — guide (=mf metarecord=, =mf field=)
+- [X] =Data model= — overview
+- [X] =Metarecord= — overview
+- [X] =Fields and values= — overview
+- [X] =Value types= — reference
+- [X] =Nothing versus unknown= — rationale
+- [X] =Metarecord version= — reference
+- [X] =Why the version is a content hash= — rationale, dev
+- [X] =One value type per field name= — reference
+- [X] =Changing a field's type= — guide
+- [X] =No duplicate rows= — reference
+- [X] =Reserved fields= — reference (le catalogue =Reserved field= reste pour la clôture)
+- [X] =Conditional writes= — reference, dev
+- [X] =The column form of a value= — reference, dev
+- [X] =Metarecord endpoints= — reference, dev
+- [X] =Editing metarecords from the command line= — guide (avec « What each command logs », l'ancienne « Log granularity »)
+- [X] notes de commande : =mf metarecord *= (11), =mf field *= (5), =mf retype=
 
-CLI : =mf metarecord *= (11), =mf field *= (5), =mf retype=. Sources : spec-data-model
-« Overview », « Concepts » (sauf les arbres), « Storage », « HTTP API » (sauf
-les routes d'arbre), « mf metarecord », « mf field », « Log granularity » ;
-mémoires =metarecord-version-is-a-content-hash=, =no-value-index-quadratic-queries=.
+Vérification contre le code : la version est une somme modulo 2⁵³ (la spec disait
+2⁶⁴ ; 53 bits pour survivre à un nombre JSON en JavaScript) ; une édition par id
+(=PATCH …/fields/:id=, =mf field set <id>=) et chaque ligne d'un retype écrivent
+/deux/ opérations (=delete_field= + =append_field=, même id), pas une ; le retype
+convertit entre tous les scalaires (sauf =bool= → =datetime=), pas seulement les
+paires « sans perte » de la spec ; le type établi se lit dans la table
+=field_types= du KV (la spec décrivait la sonde SQL) ; le tableau des champs
+réservés omettait =mfr_path_old=, =mfr_watch_exceeded=, =mfr_meta_*= et
+=mfr_meta_extracted= ; l'aide de =mf retype= n'annonçait que cinq types : corrigée
+(=ebf9c70=). Mémoire =no-value-index-quadratic-queries= (SQLite) réduite à sa leçon
+dans « Storage pitfalls ». Sources retirées (pointeurs) : spec-data-model
+« Overview », « Metarecord », « Field and Value » (sauf les arbres), « One value
+type per field name », « No duplicate rows », « Reserved fields », « Storage »,
+« HTTP API » (sauf les routes d'arbre), =mf retype=, =mf metarecord=, =mf field=,
+« Log granularity ».
 
 ** TODO 9. Forêts TreeRef
 

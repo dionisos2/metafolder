@@ -1,0 +1,23 @@
+title: Nothing versus unknown
+tags: [[Data model]]
+kind: rationale
+summary: A field holding nothing says "does not apply"; a missing field says nothing — and queries tell them apart.
+
+A metarecord can lack a value in two ways, and they mean different things:
+
+* ''absent'' — the field is there and holds `nothing`: someone (or the daemon) said it does not apply. A file the watcher saw deleted has `mfr_path = nothing`: its location is known to be gone, and nothing needs searching for.
+* ''unknown'' — the field is not there at all: no one ever said anything. A metarecord created without a `rating` has no rating, which is not a rating of "none".
+
+Collapsing the two would lose exactly the information that decides what to do: a
+reconcile searches for the file of a metarecord whose location is unknown or stale,
+and leaves alone the one whose file is recorded as deleted.
+
+Queries keep the three states apart: `field IS PRESENT` (a value that is not
+`nothing`), `field IS ABSENT` (holds `nothing`), `field IS UNKNOWN` (no row). A field
+holds at most one `nothing` row, and `nothing` coexists with the field's type
+([[One value type per field name]]) — it is absence, not a type. In a metarecord's
+version, a `nothing` row counts like any value while a missing field counts for
+nothing ([[Metarecord version]]).
+
+Setting a field to `nothing` (`mf metarecord field set name:nothing`) and unsetting
+it (`mf metarecord field unset name`) are therefore two different writes.

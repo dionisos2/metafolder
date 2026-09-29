@@ -1,0 +1,61 @@
+title: Reserved fields
+tags: [[Data model]]
+kind: reference
+summary: mfr_* fields are the daemon's (writing one needs force); mf_* fields steer the daemon (free to write, but an unknown name is refused).
+
+Two prefixes are reserved:
+
+* `mfr_*` (''metafolder restricted'') — written by the daemon. A write of your own needs `force` (`--force`/`-f` on the command line), or is refused with `400`.
+* `mf_*` (''metafolder'') — read by the daemon to decide what it does; written freely, without `force`. An `mf_*` name the daemon does not know is refused with `400`, so that a typo cannot silently do nothing.
+
+A forced `mfr_*` value is not protected: the watcher and reconcile overwrite `mfr_*`
+fields whenever they update them. `force` acknowledges exactly that. Its legitimate
+uses: restoring permissions after a mistaken recursive change, correcting a
+misdetected MIME type, settling an `mfr_path` conflict the watcher cannot.
+
+```
+{"name": "mfr_permissions", "value": {"type": "string", "value": "0755"}, "force": true}
+```
+
+!! The fields of a file
+
+|!Field |!Type |!Holds |
+|`mfr_path` |`tree_ref` |the position in the filesystem's tree — see below |
+|`mfr_type` |`string` |`file`, `dir` or `symlink` (a symlink is never followed) |
+|`mfr_size` |`int` |the size in bytes at the last update; a symlink's is its target path's length |
+|`mfr_mtime` |`datetime` |the last content modification (a symlink's own) |
+|`mfr_btime` |`datetime` |the creation time, when the filesystem records one |
+|`mfr_symlink_target` |`string` |a symlink's target path; only on symlinks |
+|`mfr_permissions` |`string` |the Unix permission bits in octal, `"0644"`; Unix only |
+|`mfr_uid`, `mfr_gid` |`int` |the owner's user and group ids; Unix only |
+|`mfr_inode` |`string` |`<dev>:<ino>`, only on a file with more than one hard link — its presence marks a hard link ([[What counts as a duplicate]]); Unix only |
+|`mfr_mime` |`string` |the MIME type from the content, computed by reconcile; absent when undetectable or not yet computed |
+|`mfr_partial_hash` |`string` |xxHash3 of the first and last 4 KiB, hex; absent until computed, cleared by a modification |
+|`mfr_full_hash` |`string` |xxHash3 of the whole content, hex |
+|`mfr_hash_mtime`, `mfr_hash_size` |`datetime`, `int` |the file's mtime and size when its hashes were computed, written and cleared with them ([[The duplicate hash cache]]) |
+|`mfr_duplicate_group` |`ref` |the duplicate group the file belongs to ([[Duplicate groups]]) |
+|`mfr_mount` |`string` |on a directory that is a mount point: the mounted volume's identity, best effort; never cleared (spec-file-tracking "Mount points") |
+|`mfr_path_old` |`string` |where an orphaned metarecord last lived, frozen when its `mfr_path` became `nothing` (spec-file-tracking "Orphan origin") |
+|`mfr_watch_exceeded` |`bool` |on a directory the watch budget could not cover, inherited like `mf_watch` (spec-file-tracking "The watch budget") |
+|`mfr_meta_<name>` |any |a piece of embedded metadata (tags, EXIF…), by the repository's metadata map (spec-platform "Embedded metadata extraction") |
+|`mfr_meta_extracted` |`bool` |that the file's embedded metadata has been read |
+
+!! The fields that steer the daemon
+
+|!Field |!Type |!Holds |
+|`mf_watch` |`bool` |whether this metarecord and what lies under it are tracked — inherited down `mfr_path`, off by default (spec-file-tracking "Watch and Ignore") |
+|`mf_ignore` |`string` |an ignore pattern, one row per pattern (spec-file-tracking "Watch and Ignore") |
+|`mf_schema` |`string` |the metarecord's types, one row per type ([[Schema]]) |
+|`mf_sync` |`string` |`internal` (default) or `external`: whether metafolder or another tool owns this content during sync; inherited down `mfr_path` |
+
+A duplicate group is a metarecord the daemon creates with no file behind it
+(`mf_schema = duplicate_group`), carrying `mfr_content_hash`, `mfr_content_size`,
+`mfr_duplicate_count` and `mfr_duplicate_reclaimable` ([[Duplicate groups]]) — the one
+place the daemon writes an `mf_*` field of its own accord.
+
+!! The four states of mfr_path
+
+* ''a position'' — the file is there;
+* ''a stale position'' — a path that no longer exists on disk: the location is uncertain, and reconcile looks for the file (by fingerprint) and offers candidates;
+* ''`nothing`'' — the file was seen removed: no search needed. Only the watcher (and a forced write) sets `mfr_path` to `nothing`; reconcile never does;
+* ''no field'' — no path was ever assigned ([[Nothing versus unknown]]).

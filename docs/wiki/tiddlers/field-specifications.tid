@@ -4,7 +4,7 @@ kind: reference
 aliases: fieldspec field-spec
 summary: name:type=value — how a field is written on the command line, for each of the ten value types.
 
-A command that writes fields takes a ''field spec'', `name:type[=value]`:
+A command that writes fields takes a ''field spec'', `name:type[=value]` (the types: [[Value types]]):
 
 |!Type |!Syntax |!Example |
 |`nothing` |`name:nothing` (no value) |`rating:nothing` |

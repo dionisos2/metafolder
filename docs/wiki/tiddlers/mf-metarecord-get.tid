@@ -1,0 +1,6 @@
+title: mf metarecord get
+tags: [[CLI command]] [[Data model]]
+kind: reference
+summary: Read: -i <uuid> → full JSON; -q/none → UUIDs (--select for fields)
+
+With `-i`, the full JSON of one metarecord; with a query or no selector, the matching uuids. `--select`, `--tsv`, `--values`, `--sort`, `--limit`, `--count` and `--resolve-tree` shape the output ([[Editing metarecords from the command line]]).

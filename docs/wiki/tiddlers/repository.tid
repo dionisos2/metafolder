@@ -6,7 +6,7 @@ summary: A directory tree and its metadata store in .metafolder/ — one store p
 
 A ''repository'' is a directory tree — its ''root'' — together with the
 metadata metafolder keeps about it, in a `.metafolder/` directory. Every
-metarecord belongs to the repository whose store holds it: there is one store per
+metarecord ([[Metarecord]]) belongs to the repository whose store holds it: there is one store per
 repository, and a metarecord cannot belong to two. Links between repositories are
 the business of sync, outside the data model.
 

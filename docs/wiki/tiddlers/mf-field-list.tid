@@ -1,0 +1,6 @@
+title: mf field list
+tags: [[CLI command]] [[Data model]]
+kind: reference
+summary: List the distinct field names of the repository (with their value type)
+
+Every field name with its value type, `name<TAB>type`, by name; `--type` keeps one type ([[One value type per field name]]).

@@ -489,9 +489,8 @@ writes; single, directly-addressed things use the resource endpoints in
 =/query= = one call over a set), by design.
 
 The field writes are each *one log operation per affected metarecord* (see
-[[file:spec-data-model.org][spec-data-model.org]] "Log granularity"); a write to a protected field name
-without =force= returns =400= ([[file:spec-data-model.org][spec-data-model.org]]
-"Reserved fields").
+doc "Editing metarecords from the command line"); a write to a protected field name
+without =force= returns =400= (doc "Reserved fields").
 
 **** =POST /repos/:repo_uuid/query/delete=
 
@@ -513,14 +512,14 @@ metarecord. Body =value= sets one row, =values= (a list) sets several at once
   "values": [{"type": "string", "value": "a"}, {"type": "string", "value": "b"}] }
 #+END_SRC
 Response ={"updated": <count>}=. Repeated values in =values= are collapsed to
-their first occurrence (spec-data-model "No duplicate rows").
+their first occurrence (doc "No duplicate rows").
 
 **** =POST /repos/:repo_uuid/query/fields/add=
 
 Adds one row to every match (multi-map; appends, never replaces). Body
 ={"query", "name", "value", "force"?}= → ={"updated": <count>}=. A match that
 already holds that =(name, value)= is left untouched — appending a duplicate is a
-no-op (spec-data-model "No duplicate rows") — so =updated= counts the matches
+no-op (doc "No duplicate rows") — so =updated= counts the matches
 that actually gained a row, and re-running the same append yields =0=.
 
 **** =POST /repos/:repo_uuid/query/fields/remove=

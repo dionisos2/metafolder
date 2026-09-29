@@ -10,6 +10,7 @@ through the `mf` command line and a desktop GUI.
 
 * [[Command line]] — `mf`: its options, selectors, field specs and verbs
 * [[Configuration]] — one git repository under `~/.config/metafolder/`, merged on update
+* [[Data model]] — metarecords, fields and their typed values; reading and editing them
 * [[Daemon]] — the server holding your repositories: loading, configuring, its reports
 * [[Duplicates]] — finding byte-identical files and deleting the copies you choose
 * [[Schema]] — types of metarecords and the constraints on their fields

@@ -4,7 +4,7 @@ kind: reference
 audience: dev
 summary: The field catalogue lists what the schema declares as well as what the data has, and the schema's type wins a disagreement.
 
-`GET /repos/:repo/fields` — the distinct field names with their value types — merges
+`GET /repos/:repo/fields` — the distinct field names with their value types ([[Metarecord endpoints]]) — merges
 the fields the data actually has with the ones the schema ''declares'' (every
 constraint with a `type`). A field the schema declares and no metarecord carries yet
 is listed; and where old data disagrees with the schema, the ''schema's type wins''

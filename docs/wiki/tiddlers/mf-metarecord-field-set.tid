@@ -1,0 +1,6 @@
+title: mf metarecord field set
+tags: [[CLI command]] [[Data model]]
+kind: reference
+summary: Replace all rows of the field with the given value(s)
+
+Replaces every row of the field with the values given, one operation per metarecord ([[Editing metarecords from the command line]]).

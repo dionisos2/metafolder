@@ -1,0 +1,26 @@
+title: One value type per field name
+tags: [[Data model]]
+kind: reference
+summary: A field name has one value type in the whole repository, fixed by its first write; nothing coexists with it.
+
+A field name has a ''single value type'' across the whole repository: every `tag`
+row is a `string`, every `author` row a `ref`. `nothing` always coexists with it —
+it is absence, not a type: a field is its type where it applies and `nothing`
+where it does not. The multi-map is unaffected: many rows of one name, all of the
+one type.
+
+The type is fixed by the first write of a value that is not `nothing`; a schema may
+also declare it ([[Schema]]). A later write of another type is refused with `400`:
+
+```
+field 'rating' has value type 'int'; cannot write a 'string' value (use retype to change the field's type)
+```
+
+The store counts, per field name, the rows of each type, so the check reads one key
+(cached for the rest of the revision). When a name's last value is removed, its type
+is free again. To change the type of a field that has values, retype it
+([[Changing a field's type]]).
+
+The rule keeps the rest of the model simple: a comparison is always between two
+values of one type, and a sort needs no precedence between types. `GET /fields` and
+`mf field list` list each name once, with its type.

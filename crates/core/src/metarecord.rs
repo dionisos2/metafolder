@@ -314,8 +314,8 @@ pub enum Value {
     },
 }
 
-/// The value types a field can be retyped to (spec-data-model "Changing a
-/// field's type"). The target may be *any* type, including the reference
+/// The value types a field can be retyped to (doc "Changing a field's type").
+/// The target may be *any* type, including the reference
 /// variants: a mis-typed field must always be escapable. The string names match
 /// the JSON `type` tags of [`Value`] and the DB `value_type` column.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -549,8 +549,7 @@ impl Field {
 /// A metarecord belongs to the repository whose database holds it (one database
 /// per repository); ownership is implicit, not a field. `version` is a hash of
 /// the metarecord's own content, managed exclusively by the daemon: it carries
-/// no ordering, and clients compare it only for equality (spec-data-model
-/// "Version").
+/// no ordering, and clients compare it only for equality (doc "Metarecord version").
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct MetaRecord {
     #[serde(with = "hex_uuid")]
@@ -568,7 +567,7 @@ impl Default for MetaRecord {
 impl MetaRecord {
     /// A fresh metarecord with a new random UUID and no fields. `version` is
     /// left at 0: a client does not compute versions — the daemon assigns the
-    /// real one when the metarecord is written (spec-data-model "Version").
+    /// real one when the metarecord is written (doc "Metarecord version").
     pub fn new() -> Self {
         Self { uuid: Uuid::new_v4(), version: 0, fields: Vec::new() }
     }

@@ -614,7 +614,7 @@ async fn test_schema_reload() {
 
 /// A bulk create is one transaction: a schema violation anywhere in the batch
 /// rolls all of it back, and the `violations` array names the offending
-/// metarecord (spec-data-model "POST …/metarecords/bulk").
+/// metarecord (doc "Metarecord endpoints").
 #[tokio::test]
 async fn test_bulk_create_violation_rolls_the_whole_batch_back() {
     let (app, repo, root) = setup_with_schema("bulk_violation", film_schema()).await;

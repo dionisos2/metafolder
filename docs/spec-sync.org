@@ -104,7 +104,7 @@ if it is moved). =version_a= / =version_b= are absent before the first
 sync-commit.
 
 A snapshot field is the common field state at the last sync-commit: its name
-and its value in the column form of a field row (spec-data-model "Storage"),
+and its value in the column form of a field row (doc "The column form of a value"),
 from repo A's perspective; for =ref= and =tree_ref= values, =value_uuid_b=
 additionally holds the B-perspective UUID captured at commit time (dual
 perspective — see [[*Ref and TreeRef fields in the snapshot]]).
@@ -180,7 +180,7 @@ On the next sync, for each linked pair:
 | different                    | different                    | Both changed     | Conflict        |
 
 "Different" rather than "greater": a version is a *hash of the metarecord's
-content* and carries no order at all ([[file:spec-data-model.org][spec-data-model.org]] "Version"). Any
+content* and carries no order at all (doc "Metarecord version"). Any
 difference from the recorded value means the metarecord is in a different state
 than at the last sync point; equality proves it is in the same one. Both
 directions hold by construction, which is exactly what this table needs — and
@@ -737,7 +737,7 @@ be loaded (=404= otherwise).
 - Single-record write endpoints (field =POST=/=PUT=/=DELETE=, whole-record
   =PUT=, and metarecord =DELETE=) accept an optional =expected_version=
   query parameter: the write is rejected with =409= if the metarecord's
-  current =version= differs (see [[file:spec-data-model.org][spec-data-model.org]] "Conditional writes").
+  current =version= differs (see doc "Conditional writes").
   Sync propagation and deletion propagation always set it to the plan's
   baseline, so a metarecord that changed since the plan makes its operation
   skip (and be reported) instead of being run against stale state.

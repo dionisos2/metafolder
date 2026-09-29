@@ -1207,7 +1207,7 @@ async fn test_query_sort_on_tree_ref_uses_the_full_path() {
     std::fs::remove_dir_all(root).unwrap();
 }
 
-/// spec-data-model "No duplicate rows": appending a value a match already holds
+/// doc "No duplicate rows": appending a value a match already holds
 /// changes nothing and is not counted.
 #[tokio::test]
 async fn test_batch_add_of_an_existing_value_is_a_no_op() {

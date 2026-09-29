@@ -1,0 +1,6 @@
+title: mf retype
+tags: [[CLI command]] [[Data model]]
+kind: reference
+summary: Convert a field's value type repository-wide, to any value type
+
+Converts every value of a field to another type, in one revision; values that cannot convert take a findable default ([[Changing a field's type]]).

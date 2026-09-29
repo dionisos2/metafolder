@@ -1,0 +1,6 @@
+title: mf field set
+tags: [[CLI command]] [[Data model]]
+kind: reference
+summary: Change a row's name and/or value in place, keeping its id
+
+Sets one row's name and value in place, keeping its id; refused when it would duplicate a sibling ([[No duplicate rows]]).

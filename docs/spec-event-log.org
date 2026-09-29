@@ -446,7 +446,7 @@ points at, and neither goes back to clear it.
 *** Snapshot rows (=op_snapshot=)
 
 Each operation stores its before/after state as snapshot rows, in the column
-form of a field row (spec-data-model "Storage"). =is_new=0= = state before the op;
+form of a field row (doc "The column form of a value"). =is_new=0= = state before the op;
 =is_new=1= = state after. =field_id= is the original =field.id= and is
 restored exactly on inverse (see [[*Field ID and version stability]]).
 
@@ -476,7 +476,7 @@ after navigating across that operation's boundary.
 
 =metadata.version=, by contrast, is *not* restored from the log — it is
 *recomputed*. The version is a hash of the metarecord's content
-([[file:spec-data-model.org][spec-data-model.org]] "Version"), so restoring the
+(doc "Metarecord version"), so restoring the
 field rows restores the version with them: navigation recomputes it from the
 rows it has just put back, for each metarecord it touched, and what it obtains
 is necessarily the version that state carried when it was first written. This is
@@ -508,7 +508,7 @@ Every API call that modifies metadata:
       =metadata.version=, to be written as =op_snapshot= rows (=is_new=0=).
    b. Applies the change to the data tables (=metadata.version= is updated
       incrementally from the rows added and removed — see
-      [[file:spec-data-model.org][spec-data-model.org]] "Version").
+      doc "Metarecord version").
    c. Records the after state: reads the resulting =field= rows, written as
       =op_snapshot= rows (=is_new=1=).
    d. Inserts one =operation= row with:
@@ -653,7 +653,7 @@ Four op types require attention at rollback time:
 
   It is selected by =seq=, and not as the smallest of the revision's values,
   because versions are content hashes and carry no order
-  ([[file:spec-data-model.org][spec-data-model.org]] "Version"): "before the
+  (doc "Metarecord version"): "before the
   revision" is a position in the revision, not a minimum.
 
 When =skip: true= is used, the daemon *still applies the step's metadata change*
@@ -738,7 +738,7 @@ Two consequences worth stating outright:
   reverted operation's before-snapshot has no rows, the field did not exist
   before it and the revert removes the cell entirely — a =set_field= operation
   with no rows after — rather than setting the explicit-absence sentinel. The
-  distinction is the data model's (spec-data-model "Nothing"), and a revert must
+  distinction is the data model's (doc "Nothing versus unknown"), and a revert must
   not blur it.
 
 A revert of a whole revision writes one operation per reverted operation, in

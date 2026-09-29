@@ -1,0 +1,6 @@
+title: mf metarecord
+tags: [[CLI command]] [[Data model]]
+kind: reference
+summary: Metarecord operations: `mf metarecord [selector] <verb>`
+
+Reads and writes metarecords; the selector (`-i`, `-q`, `-s`, or none for all) precedes the verb ([[Editing metarecords from the command line]]).

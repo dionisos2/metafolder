@@ -308,8 +308,8 @@ fn validate_schema(
 /// answer 204 simply discard it). A validation failure or any closure error
 /// drops the Writer, rolling the whole write back.
 ///
-/// With an optional optimistic-concurrency precondition (spec-data-model
-/// "Conditional writes"): when `expected_version` is given and the metarecord's
+/// With an optional optimistic-concurrency precondition (doc "Conditional writes"):
+/// when `expected_version` is given and the metarecord's
 /// current version differs, the write is rejected with `409` (nothing written,
 /// no revision), fenced by the transaction's exclusive lock.
 async fn write_record_checked<F>(
@@ -349,7 +349,7 @@ where
 /// `write` answers whether that metarecord actually changed: a match it left
 /// alone is neither schema-validated nor counted, which is what makes the
 /// reported `updated` the number of metarecords the call really touched
-/// (spec-data-model "No duplicate rows"). Any closure error drops the Writer,
+/// (doc "No duplicate rows"). Any closure error drops the Writer,
 /// rolling the whole batch back — an all-or-nothing batch, like the
 /// single-record scaffold.
 async fn write_matches<F>(
@@ -402,7 +402,7 @@ struct ExpectedVersion {
 
 /// 409 (no revision written) when `expected` is given and the metarecord's
 /// current version differs — the optimistic-concurrency precondition used by
-/// cross-repo sync propagation (spec-data-model "Conditional writes").
+/// cross-repo sync propagation (doc "Conditional writes").
 fn ensure_version(
     conn: &dyn crate::store::Store,
     uuid: Uuid,

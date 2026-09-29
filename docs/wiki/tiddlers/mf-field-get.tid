@@ -1,0 +1,6 @@
+title: mf field get
+tags: [[CLI command]] [[Data model]]
+kind: reference
+summary: Print a field row by its id
+
+Prints one row as JSON; `--resolve` prints a `tree_ref`'s path ([[Editing metarecords from the command line]]).

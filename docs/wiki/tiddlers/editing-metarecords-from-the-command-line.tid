@@ -1,0 +1,72 @@
+title: Editing metarecords from the command line
+tags: [[Data model]] [[Command line]]
+kind: guide
+summary: mf metarecord reads, creates, overwrites and deletes metarecords and their fields; mf field works on one row by its id.
+
+The selector comes before the verb ([[Selectors]]): `-i <uuid>` for one metarecord,
+`-q '<query>'` for every match, nothing for all of them. Values are field
+specifications, `name:type=value` ([[Field specifications]]).
+
+!! Read
+
+```
+mf -n music metarecord -i 3f2a… get                       # the full JSON, field ids included
+mf -n music metarecord -q 'rating > 3' get                # the matching uuids, one per line
+mf -n music metarecord -q 'rating > 3' get --count        # how many — one round-trip
+mf -n music metarecord -q 'artist = "Nina"' get --select title,rating --tsv
+mf -n music metarecord -q 'mfr_type = "dir"' get --resolve-tree mfr_path
+mf -n music metarecord -i 3f2a… field get tag --resolve path
+```
+
+* `--select a,b` prints the selected fields; with `--tsv`, one tab-separated row per metarecord (each field's first value, empty when absent) — the compact form scripts read. `--values` prints raw values, one per line. `--sort field[:asc|desc]` and `--limit N` shape the list.
+* `--count` prints the number of matches alone; it is exact and costs one request whatever the size. Query selectors only.
+* `--resolve-tree <field>` prints each selected metarecord's path in that `tree_ref` field, sorted — in one request, the bulk form of `mf path`; with `--tsv`, `uuid<TAB>path`. The repository's root prints an empty line.
+* `--eq name[:type]=value` (repeatable, AND-ed) selects by exact value without writing a query: the value is escaped, so quotes in it cannot break anything. Scripts use it instead of quoting `title = "$X"` by hand.
+* `field get <name> --resolve <field>` treats each value as a `ref` and prints the referenced metarecords' `<field>` instead — a record's tag paths from its `tag` refs — in one request (a path when `<field>` is a `tree_ref`). Needs `-i`.
+
+!! Write
+
+```
+mf -n music metarecord add title:string=Blue rating:int=4       # prints the new uuid
+mf -n music metarecord -q 'artist = "Nina"' field add tag:string=jazz
+mf -n music metarecord -q 'artist = "Nina"' field remove tag:string=jazz
+mf -n music metarecord -i 3f2a… field set tag:string=jazz tag:string=live
+mf -n music metarecord -i 3f2a… field unset rating             # the field becomes unknown
+mf -n music metarecord -i 3f2a… field set rating:nothing       # "does not apply"
+mf -n music metarecord -i 3f2a… set -f title:string=Blue       # the WHOLE record
+mf -n music metarecord -q 'rating = 0' delete                  # asks first; --force does not
+```
+
+* `field set` replaces every row of the name with the values given (several specs, one name); `add` appends one; `remove` takes out the rows equal to the value, leaving the others; `unset` removes the name entirely — not the same as setting it to `nothing` ([[Nothing versus unknown]]).
+* A query selector writes every match in ''one'' revision, one operation per metarecord changed; `field add` prints how many metarecords gained a row.
+* `metarecord set` overwrites the whole record — any field not listed goes, `mfr_*` and `mf_*` included, so a careless one untracks a file. It needs `-i` and a mandatory `-f`, so that it is never confused with `field set`. Round-trip the output of `get` to keep everything.
+* `delete` of a query asks for confirmation with the number of matches, then deletes them in one atomic request.
+* Writing an `mfr_*` field needs `-f`/`--force` ([[Reserved fields]]).
+
+!! One row by its id
+
+```
+mf -n music field                      # every field name with its type (field list)
+mf -n music field list --type tree_ref
+mf -n music field get 42 [--resolve]   # the row, as JSON; --resolve prints a tree_ref's path
+mf -n music field set 42 tag:string=jazz   # rename and/or revalue, keeping the id
+mf -n music field delete 42
+```
+
+There is no `mf field add`: rows are born under a name (`metarecord … field add`).
+`field set <id>` is refused when it would make the row the twin of a sibling
+([[No duplicate rows]]). To change a field's type everywhere: [[Changing a field's type]].
+
+!! What each command logs
+
+|!Command |!Operations in the log |
+|`metarecord add` / `delete` |one `create_metarecord` / `delete_metarecord` |
+|`metarecord set` |one `set_metarecord` (all fields, before and after) |
+|`field set <name>` |one `set_field` (every row of the name) |
+|`field add` |one `append_field` — none when the value was already there |
+|`field remove` / `unset` |one `delete_field` (the rows removed) |
+|`field set <id>` |a `delete_field` then an `append_field`, the row keeping its id |
+|`field delete <id>` |one `delete_field` |
+|`retype` |per converted row, a `delete_field` then an `append_field` |
+
+A write to many metarecords is still one revision; `mf log undo` takes it back whole.

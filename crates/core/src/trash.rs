@@ -1016,7 +1016,7 @@ const BULK_CREATE_CHUNK: usize = 1000;
 ///
 /// Recreating carries no version: a version is a hash of the metarecord's
 /// content, so a metarecord recreated at its UUID with its fields *is* at the
-/// version it had (spec-data-model "Version").
+/// version it had (doc "Metarecord version").
 ///
 /// An entry captured before the fields were recorded has nothing to recreate and
 /// sends nothing; the restore falls back to re-linking alone.

@@ -1,0 +1,6 @@
+title: mf metarecord field
+tags: [[CLI command]] [[Data model]]
+kind: reference
+summary: Field operations scoped to the selected metarecord(s)
+
+The field verbs scoped to the selected metarecords: `get`, `set`, `add`, `remove`, `unset` ([[Editing metarecords from the command line]]).

@@ -97,7 +97,7 @@ impl Ctx {
     }
 }
 
-/// A `<query|uuid>` argument (spec-data-model "Query-or-UUID arguments").
+/// A `<query|uuid>` argument (doc "Selectors").
 enum Target {
     Entry(Uuid),
     Predicate(Query),
@@ -1377,8 +1377,8 @@ fn tag_batch_remove(
 /// `mf tag [sel] add <path>` — the record(s) *have* the tag: (idempotently) add
 /// the positive ref, drop the more general ancestor tags, and, when the tag is
 /// exclusive, drop its siblings. The idempotence is the daemon's: appending a
-/// ref a record already carries is a no-op (spec-data-model "No duplicate
-/// rows"), so the row that is already there is left alone, id included.
+/// ref a record already carries is a no-op (doc "No duplicate rows"), so the row that is already
+/// there is left alone, id included.
 pub fn tag_add(ctx: &Ctx, selector: &str, path: &str) -> Result<i32, CliError> {
     let base = ctx.repo_base()?;
     let cfg = ctx.tag.clone();
