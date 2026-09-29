@@ -129,6 +129,22 @@ fn test_osm_path_is_case_insensitive() {
 }
 
 #[test]
+fn test_osm_path_folds_case_like_the_oracle_whatever_the_route() {
+    // A capital sigma ending a word lowers to the final form `ς` when a whole
+    // string is lowered, and to `σ` one character at a time. Every route an
+    // `osm` path can take — the walk, the anchors of its last term — must fold
+    // the path the way the oracle does, or one answers what the other does not.
+    let mut f = Fixture::new();
+    let root = f.node(None, "", vec![]);
+    let street = f.node(Some(root), "ΟΔΟΣ", vec![]);
+    let map = f.node(Some(street), "map.txt", vec![]);
+    // Two terms, the last one anchoring: the anchored route.
+    assert_same_set(f.run(&osm("mfr_path", "οδος map")), vec![map]);
+    // The last term ending with the separator has no anchor: the walk.
+    assert_same_set(f.run(&osm("mfr_path", "οδος/")), vec![map]);
+}
+
+#[test]
 fn test_osm_path_empty_terms_matches_every_tree_ref() {
     let mut f = Fixture::new();
     let _ = forest(&mut f);

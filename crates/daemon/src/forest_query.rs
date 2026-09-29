@@ -297,10 +297,12 @@ fn anchors_within(
     Some(within)
 }
 
-/// Lower-cases like the resident walk: char by char, so a word-final sigma
-/// folds as every other one does.
+/// Lower-cases as the walk (`TreeCache::osm_path_matches_with`) and the oracle
+/// do: the whole string at once, so a word-final capital sigma becomes `ς`, not
+/// `σ`. Applied one component at a time, which folds the same as the whole
+/// path: `/` is neither a letter nor case-ignorable, so it ends a word.
 fn lower(s: &str) -> String {
-    s.chars().flat_map(char::to_lowercase).collect()
+    s.to_lowercase()
 }
 
 /// A node's `(parent, name)` in a forest — `None` for a root's parent.
