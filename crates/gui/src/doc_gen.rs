@@ -101,14 +101,21 @@ pub fn commands() -> Vec<Command> {
     }
 
     // User commands: `commands.js` maps each name to its definition, the name
-    // written as the entry's quoted key (`'name': {`, a name holds a colon).
+    // written as the entry's quoted key (`'name': {`, a name holds a colon),
+    // outside the comments.
     let source =
         std::fs::read_to_string(default_config().join("commands.js")).expect("commands.js");
     let mut rest = source.as_str();
     let mut keys = Vec::new();
     while let Some(at) = rest.find("': {") {
         if let Some(start) = rest[..at].rfind('\'') {
-            keys.push((source.len() - rest.len() + start + 1, rest[start + 1..at].to_string()));
+            let offset = source.len() - rest.len() + start + 1;
+            // A key on a comment line is an example (the file's header shows
+            // the shape of an entry), not a command.
+            let line_start = source[..offset].rfind('\n').map_or(0, |n| n + 1);
+            if !source[line_start..offset].trim_start().starts_with("//") {
+                keys.push((offset, rest[start + 1..at].to_string()));
+            }
         }
         rest = &rest[at + 4..];
     }
@@ -228,6 +235,8 @@ mod tests {
         assert_eq!(owner("help:key"), Some(Owner::Shell));
         assert_eq!(owner("trash:restore"), Some(Owner::Panel("trash".into())));
         assert_eq!(owner("metarecord:remove"), Some(Owner::UserCommands));
+        // The example in commands.js's header comment is not a command.
+        assert_eq!(owner("user:thing"), None);
         let restore = all.iter().find(|c| c.name == "trash:restore").unwrap();
         assert_eq!(restore.label, "Trash: restore the selected entry");
     }
