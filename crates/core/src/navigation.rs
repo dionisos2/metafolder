@@ -17,7 +17,7 @@ use crate::daemon_client::{with_query, DaemonClient, DaemonError};
 use crate::trash::{Reason, TrashDir, TrashEntry, TrashError};
 use serde_json::{json, Value as Json};
 use std::collections::HashSet;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 /// A navigation that failed, as the message to show.
 #[derive(Debug, Clone)]
@@ -77,6 +77,8 @@ pub struct Repo<'a> {
     pub client: &'a dyn DaemonClient,
     /// The repository uuid (hex).
     pub repo: String,
+    /// The repository root, where the log's paths are.
+    pub root: PathBuf,
     pub trash: TrashDir,
 }
 
@@ -87,9 +89,13 @@ impl<'a> Repo<'a> {
         let internal = info["internal_dir"]
             .as_str()
             .ok_or_else(|| NavError("daemon did not report the repo internal_dir".into()))?;
+        let root = info["root"]
+            .as_str()
+            .ok_or_else(|| NavError("daemon did not report the repo root".into()))?;
         Ok(Self {
             client,
             repo: repo.to_string(),
+            root: PathBuf::from(root),
             trash: TrashDir::new(Path::new(internal).join("trash")),
         })
     }
@@ -189,6 +195,8 @@ pub fn rollback(
     // Metarecords whose content a directory blob has already brought back this
     // navigation, so their own steps apply the inverse, not skip.
     let mut restored: HashSet<String> = HashSet::new();
+    // Metarecords a trashing redone has already sent back, with their subtree.
+    let mut retrashed: HashSet<String> = HashSet::new();
 
     let start = client.post(&format!("{base}/rollback/start"), &body)?;
     let mut op = start["op"].clone();
@@ -202,7 +210,7 @@ pub fn rollback(
                 // trashing took (matched by the metarecord alone — an undo
                 // consumes the entry and a redo makes a new one, so no id
                 // recorded at trash time would still name it).
-                Some("restore_content") | Some("trash_content") => decide_deleted(
+                Some("restore_content") => decide_deleted(
                     &op,
                     &repo.trash,
                     &mut entries,
@@ -210,6 +218,11 @@ pub fn rollback(
                     ui,
                     takes_a_whole_metarecord(&op),
                 )?,
+                // Before the step, while the metarecord is still there to read.
+                Some("trash_content") => {
+                    retrash(repo, &op, &mut retrashed, ui)?;
+                    false
+                }
                 _ => false,
             };
             let step_body = if skip { json!({"skip": true}) } else { json!({}) };
@@ -382,6 +395,69 @@ pub fn decide_deleted(
     Ok(true)
 }
 
+/// The repository-relative path of a metarecord's file (`mfr_path`), `None`
+/// when it has none or the metarecord is gone.
+fn path_of(repo: &Repo<'_>, uuid: &str) -> Result<Option<String>, NavError> {
+    let path = format!("{}/metarecords/{uuid}/fields/mfr_path/resolve-tree", repo.base());
+    match repo.client.get(&path) {
+        Ok(resp) => Ok(resp["paths"]
+            .as_array()
+            .and_then(|paths| paths.first())
+            .and_then(Json::as_str)
+            .map(str::to_string)),
+        Err(e) if e.is_not_found() => Ok(None),
+        Err(e) => Err(e.into()),
+    }
+}
+
+/// Performs a `trash_content` step: a metarecord a trashing took is going
+/// again, so its file goes back into the trash-bin, as a trashing does it —
+/// captured first (the metarecord, its subtree and its ancestors, with their
+/// fields, spec-trash "What trashing does, in order"), into a *new* entry, the
+/// undo having consumed the old one. Runs before the daemon deletes the
+/// metarecord, while there is still something to read; the watcher is held
+/// for the whole navigation, so the file's disappearance orphans nothing.
+///
+/// A metarecord already covered by an earlier step's capture (a file inside a
+/// directory sent back whole) needs nothing more. One whose file is not on disk
+/// has nothing to send: the metadata is deleted all the same, and the note says
+/// the bytes were not there.
+fn retrash(
+    repo: &Repo<'_>,
+    op: &Json,
+    covered: &mut HashSet<String>,
+    ui: &dyn NavigationUi,
+) -> Result<(), NavError> {
+    let entity = op["entity_uuid"].as_str().unwrap_or_default();
+    if covered.contains(entity) {
+        return Ok(());
+    }
+    let record = match repo.client.get(&format!("{}/metarecords/{entity}", repo.base())) {
+        Ok(record) => record,
+        Err(e) if e.is_not_found() => return Ok(()),
+        Err(e) => return Err(e.into()),
+    };
+    let Some(rel) = path_of(repo, entity)? else { return Ok(()) };
+    let abs = repo.root.join(rel.trim_start_matches('/'));
+    if !crate::fsentry::path_present(&abs) {
+        ui.note(&format!("{} is not on disk: nothing to send back to the trash", abs.display()));
+        return Ok(());
+    }
+    let subtree = crate::trash::capture_nodes(repo.client, &repo.repo, &record, &rel)?;
+    let entry = repo.trash.trash_path(
+        &abs,
+        Reason::Manual,
+        op["id"].as_i64(),
+        Some(entity.to_string()),
+        record["version"].as_u64(),
+    )?;
+    covered.insert(entity.to_string());
+    covered.extend(subtree.iter().filter(|n| n.trashed).map(|n| n.uuid.clone()));
+    repo.trash.attach_subtree(&entry.id, subtree)?;
+    ui.note(&format!("trashed {} again (id {})", abs.display(), entry.id));
+    Ok(())
+}
+
 /// If the trash holds content for `metarecord` (e.g. a prior `mf trash -f`),
 /// the hint to show when its step is skipped — bridging the log's "content
 /// gone" assumption with the bytes that actually survive in the trash
@@ -482,8 +558,25 @@ pub fn revert(
     let started = client.post(&format!("{base}/revert/start"), &start_body)?;
     let mut entries = repo.trash.entries().unwrap_or_default();
     let mut restored: HashSet<String> = HashSet::new();
+    let mut retrashed: HashSet<String> = HashSet::new();
 
     let outcome = (|| -> Result<Vec<i64>, NavError> {
+        // The trashings to redo, shallowest first: a revert's operations are
+        // not ordered parent first, and a directory has to be captured before
+        // its files, so that it goes to the trash whole, in one entry.
+        let mut to_retrash: Vec<(usize, &Json)> = Vec::new();
+        for op in started["operations"].as_array().into_iter().flatten() {
+            if op["filesystem"]["action"] == "trash_content" {
+                let entity = op["entity_uuid"].as_str().unwrap_or_default();
+                let depth = path_of(repo, entity)?.map_or(0, |p| p.matches('/').count());
+                to_retrash.push((depth, op));
+            }
+        }
+        to_retrash.sort_by_key(|(depth, _)| *depth);
+        for (_, op) in to_retrash {
+            retrash(repo, op, &mut retrashed, ui)?;
+        }
+
         let mut apply = Vec::new();
         for op in started["operations"].as_array().into_iter().flatten() {
             let Some(id) = op["id"].as_i64() else { continue };
@@ -496,7 +589,7 @@ pub fn revert(
                         json!({"from": op["filesystem"]["from"], "to": op["filesystem"]["to"]});
                     decide_move(&step, policies, &repo.trash, ui)?
                 }
-                Some("restore_content") | Some("trash_content") => decide_deleted(
+                Some("restore_content") => decide_deleted(
                     op,
                     &repo.trash,
                     &mut entries,
@@ -504,6 +597,7 @@ pub fn revert(
                     ui,
                     takes_a_whole_metarecord(op),
                 )?,
+                // Already sent back to the trash above.
                 _ => false,
             };
             if !leave_out {
@@ -766,6 +860,96 @@ mod tests {
         assert_eq!(std::fs::read_link(&to).unwrap(), Path::new("gone-target"));
         assert_eq!(trash.entries().unwrap().len(), 1, "the overwritten link went to the trash");
         std::fs::remove_dir_all(&tmp).ok();
+    }
+
+    /// A daemon answering by the first `"METHOD /path"` substring that matches.
+    struct Canned(Vec<(&'static str, Json)>);
+    impl DaemonClient for Canned {
+        fn request(&self, method: &str, path: &str, _: Option<&Json>) -> Result<Json, DaemonError> {
+            let key = format!("{method} {path}");
+            self.0
+                .iter()
+                .find(|(m, _)| key.contains(m))
+                .map(|(_, body)| body.clone())
+                .ok_or(DaemonError { status: Some(404), message: format!("no {key}") })
+        }
+    }
+
+    fn tracked(uuid: &str, parent: &str, name: &str) -> Json {
+        json!({"uuid": uuid, "version": 7, "fields": [{"name": "mfr_path", "value":
+            {"type": "tree_ref", "value": {"parent": parent, "name": name}}}]})
+    }
+
+    /// A directory `A` (with `A/b.txt`) under the root, tracked.
+    fn dir_repo<'a>(client: &'a Canned, root: &Path) -> Repo<'a> {
+        Repo {
+            client,
+            repo: "r".into(),
+            root: root.to_path_buf(),
+            trash: TrashDir::new(root.join(".trash")),
+        }
+    }
+
+    fn dir_daemon() -> Canned {
+        Canned(vec![
+            ("GET /repos/r/metarecords/dir/fields/mfr_path/resolve-tree", json!({"paths": ["/A"]})),
+            (
+                "GET /repos/r/metarecords/file/fields/mfr_path/resolve-tree",
+                json!({"paths": ["/A/b.txt"]}),
+            ),
+            ("GET /repos/r/metarecords/dir", tracked("dir", "root", "A")),
+            ("GET /repos/r/metarecords/file", tracked("file", "dir", "b.txt")),
+            (
+                "GET /repos/r/metarecords/root",
+                json!({"uuid": "root", "fields": [{"name": "mfr_path",
+                "value": {"type": "tree_ref", "value": {"parent": null, "name": ""}}}]}),
+            ),
+            (
+                "POST /repos/r/query",
+                json!({"results": [tracked("file", "dir", "b.txt")],
+                "next_cursor": null}),
+            ),
+        ])
+    }
+
+    // A trashing redone sends the file back as a trashing does: captured, into
+    // a new entry. A directory goes whole, and the steps for the files inside
+    // it find them already covered.
+    #[test]
+    fn a_redone_trashing_sends_the_directory_back_once() {
+        let root = scratch("retrash");
+        std::fs::create_dir_all(root.join("A")).unwrap();
+        std::fs::write(root.join("A/b.txt"), b"bee").unwrap();
+        let daemon = dir_daemon();
+        let repo = dir_repo(&daemon, &root);
+        let mut covered = HashSet::new();
+        let ui = Quiet::default();
+
+        retrash(&repo, &json!({"id": 9, "entity_uuid": "dir"}), &mut covered, &ui).unwrap();
+        retrash(&repo, &json!({"id": 10, "entity_uuid": "file"}), &mut covered, &ui).unwrap();
+
+        assert!(!root.join("A").exists(), "the directory is back in the trash");
+        let entries = repo.trash.entries().unwrap();
+        assert_eq!(entries.len(), 1, "one entry, the directory whole");
+        assert_eq!(entries[0].metarecord.as_deref(), Some("dir"));
+        assert_eq!(entries[0].version, Some(7));
+        let captured: Vec<&str> =
+            entries[0].subtree.iter().filter(|n| n.trashed).map(|n| n.uuid.as_str()).collect();
+        assert!(captured.contains(&"dir") && captured.contains(&"file"), "{captured:?}");
+        std::fs::remove_dir_all(&root).ok();
+    }
+
+    // No file on disk: nothing to send, and the user hears it.
+    #[test]
+    fn a_redone_trashing_without_its_file_only_says_so() {
+        let root = scratch("retrash_gone");
+        let daemon = dir_daemon();
+        let repo = dir_repo(&daemon, &root);
+        let ui = Quiet::default();
+        retrash(&repo, &json!({"id": 9, "entity_uuid": "dir"}), &mut HashSet::new(), &ui).unwrap();
+        assert!(repo.trash.entries().unwrap().is_empty());
+        assert!(ui.notes.borrow().iter().any(|n| n.contains("not on disk")), "{:?}", ui.notes);
+        std::fs::remove_dir_all(&root).ok();
     }
 
     fn manual_entry(id: &str, metarecord: Option<&str>) -> TrashEntry {

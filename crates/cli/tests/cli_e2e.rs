@@ -4677,3 +4677,113 @@ fn test_watch_activity_ranks_the_busy_subtree() {
     assert_ok(&reset);
     assert!(since(&reset) > before, "{}", reset.stdout);
 }
+
+// ── Undo and redo of a trashing (spec-trash "Undo, rollback and redo") ───────
+
+/// A repository whose root is watched.
+fn watched_repo(prefix: &str) -> (String, TempDir) {
+    let (repo, root) = init_repo(prefix);
+    let root_uuid = mf(&["-u", &repo, "metarecord", "-q", "mfr_type = \"dir\"", "get"])
+        .stdout
+        .trim()
+        .to_string();
+    assert_ok(&mf(&[
+        "-u",
+        &repo,
+        "metarecord",
+        "-i",
+        &root_uuid,
+        "field",
+        "set",
+        "mf_watch:bool=true",
+    ]));
+    (repo, root)
+}
+
+/// Redoing a trashing trashes the file again — into a *new* entry, since the
+/// undo consumed the first — rather than deleting its metarecord and leaving
+/// the file on disk, untracked (spec-trash "Redo"). And the pair composes.
+#[test]
+fn test_redo_of_a_trashing_trashes_the_file_again() {
+    let (repo, root) = watched_repo("redo_trash_file");
+    let file = root.join("doc.txt");
+    std::fs::write(&file, b"precious").unwrap();
+    assert!(poll(40, || uuids_at(&repo, "doc.txt").len() == 1), "watcher should track it");
+    let uuid = uuids_at(&repo, "doc.txt")[0].clone();
+    assert_ok(&mf(&["-u", &repo, "trash", "-f", file.to_str().unwrap()]));
+
+    assert_ok(&mf(&["-u", &repo, "log", "undo"]));
+    assert_eq!(std::fs::read(&file).unwrap(), b"precious", "undo brings the file back");
+    assert_eq!(uuids_at(&repo, "doc.txt"), vec![uuid.clone()]);
+
+    let redo = mf(&["-u", &repo, "log", "redo"]);
+    assert_ok(&redo);
+    assert!(!file.exists(), "redo sends it back to the trash: {}{}", redo.stdout, redo.stderr);
+    let entries = repo_trash(&root).entries().unwrap();
+    assert_eq!(entries.len(), 1, "one entry, a new one");
+    assert_eq!(entries[0].metarecord.as_deref(), Some(uuid.as_str()));
+    assert!(uuids_at(&repo, "doc.txt").is_empty(), "and its metarecord went with it");
+
+    assert_ok(&mf(&["-u", &repo, "log", "undo"]));
+    assert_eq!(std::fs::read(&file).unwrap(), b"precious", "undo again");
+    assert_eq!(uuids_at(&repo, "doc.txt"), vec![uuid]);
+    assert!(repo_trash(&root).entries().unwrap().is_empty());
+}
+
+/// A directory goes back whole: one entry, its files inside, their
+/// metarecords captured with it.
+#[test]
+fn test_redo_of_a_directory_trashing_trashes_the_whole_directory() {
+    let (repo, root) = watched_repo("redo_trash_dir");
+    let dir = root.join("A");
+    std::fs::create_dir_all(&dir).unwrap();
+    std::fs::write(dir.join("B.txt"), b"bee").unwrap();
+    assert!(poll(40, || uuids_at(&repo, "B.txt").len() == 1), "watcher should track it");
+    let b = uuids_at(&repo, "B.txt")[0].clone();
+    assert_ok(&mf(&["-u", &repo, "trash", "-f", dir.to_str().unwrap()]));
+
+    assert_ok(&mf(&["-u", &repo, "log", "undo"]));
+    assert_eq!(std::fs::read(dir.join("B.txt")).unwrap(), b"bee");
+
+    assert_ok(&mf(&["-u", &repo, "log", "redo"]));
+    assert!(!dir.exists(), "the directory is back in the trash");
+    let entries = repo_trash(&root).entries().unwrap();
+    assert_eq!(entries.len(), 1, "one entry for the directory and its file");
+    assert!(entries[0].is_dir);
+    assert!(entries[0].subtree.iter().any(|n| n.uuid == b), "the file's metarecord is captured");
+
+    assert_ok(&mf(&["-u", &repo, "log", "undo"]));
+    assert_eq!(std::fs::read(dir.join("B.txt")).unwrap(), b"bee", "undo again");
+    assert_eq!(uuids_at(&repo, "B.txt"), vec![b]);
+}
+
+/// When the watcher has written in between, undo is a revert and redo the
+/// revert of that revert: neither carries the trash origin, and the bytes must
+/// still follow the metarecord both ways.
+#[test]
+fn test_undo_and_redo_of_a_trashing_across_watcher_writes() {
+    let (repo, root) = watched_repo("redo_trash_revert");
+    let file = root.join("doc.txt");
+    std::fs::write(&file, b"precious").unwrap();
+    assert!(poll(40, || uuids_at(&repo, "doc.txt").len() == 1), "watcher should track it");
+    let uuid = uuids_at(&repo, "doc.txt")[0].clone();
+    assert_ok(&mf(&["-u", &repo, "trash", "-f", file.to_str().unwrap()]));
+
+    std::fs::write(root.join("between.txt"), b"x").unwrap();
+    assert!(poll(40, || uuids_at(&repo, "between.txt").len() == 1));
+    // `--force`: a revert that touches files asks first, and nobody is here.
+    let undo = mf(&["-u", &repo, "log", "undo", "--force"]);
+    assert_ok(&undo);
+    assert!(undo.stdout.contains("revert"), "the undo had to revert: {}", undo.stdout);
+    assert!(file.exists(), "the revert brings the file back: {}{}", undo.stdout, undo.stderr);
+    assert_eq!(std::fs::read(&file).unwrap(), b"precious");
+    assert_eq!(uuids_at(&repo, "doc.txt"), vec![uuid.clone()]);
+
+    std::fs::write(root.join("again.txt"), b"y").unwrap();
+    assert!(poll(40, || uuids_at(&repo, "again.txt").len() == 1));
+    let redo = mf(&["-u", &repo, "log", "redo", "--force"]);
+    assert_ok(&redo);
+    assert!(!file.exists(), "the redo trashes it again: {}{}", redo.stdout, redo.stderr);
+    assert!(uuids_at(&repo, "doc.txt").is_empty());
+    assert_eq!(repo_trash(&root).entries().unwrap().len(), 1);
+}

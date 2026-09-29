@@ -1962,7 +1962,17 @@ Target forms:
      =entity_version_before_revision=, as in a rollback), moves it back and adds
      the operation to =apply=; otherwise leaves it out, with a
      =mf trash restore= hint if some other content of that record is trashed.
+   - a =trash_content= action (a trashing redone — the revert of an undo that was
+     itself a revert): sends the file back into the trash-bin as a trashing does
+     it, capturing the metarecords first, into a new entry, and adds the
+     operation to =apply=. These are done first, shallowest path first, so that
+     a directory goes back whole, in one entry, before its own files' operations
+     are reached. No file on disk: nothing to send, the operation still applies.
    - every other operation is added to =apply= unconditionally.
+
+The same actions drive =mf rollback= step by step: =trash_content= is performed
+before the =step= (while the metarecord is still there to read), and the step
+then deletes it. The execution lives in =core::navigation=, shared with the GUI.
 5. Calls =POST /revert/commit= with the =apply= list, or =POST /revert/abort= on
    error or interrupt.
 
