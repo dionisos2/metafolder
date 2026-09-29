@@ -1,0 +1,41 @@
+title: Following a task
+tags: Tasks
+kind: guide
+summary: See what the daemon is doing — mf task, the GUI's task bar and the repos panel — and why your request is waiting.
+
+!! From the command line
+
+```
+mf task                 # the active repository's tasks (mf task list)
+mf task list --all      # every loaded repository's
+mf task show <id>       # one task
+```
+
+Each row gives the task's id, kind, status, phase and progress; `--json` prints
+the raw objects ([[Task endpoints]]). All kinds are listed, watcher flushes
+included.
+
+The commands that start long work follow their own task and draw its progress on
+the terminal (a bar or a spinner, only when stderr is a terminal): `mf reconcile`,
+`mf duplicate scan`, `mf repo load`. Their `--no-wait` prints the task id and
+returns; `mf task show <id>` then tells you how it went.
+
+!! In the GUI
+
+The ''task bar'', below the panels, lists every pending or running task of every
+loaded repository — a bar when the task knows its amount of work, a spinner
+labelled with its phase otherwise — and hides when there is none. A task appears
+only once it has run for a second: a watcher flush lasts milliseconds and fires
+whenever a watched file is touched, and showing it would make the panels jump
+for work nobody asked to see (what a flush did is reported in the `message`
+panel instead). Since it polls the daemon, it shows any task, not only the GUI's
+own, and reopening the GUI mid-reconcile resumes showing it.
+
+The `repos` panel lists each repository's active tasks under it, with a
+''Stop'' button for those that can be stopped ([[Cancelling a task]]).
+
+!! Why is my request waiting?
+
+A repository runs one task at a time ([[Task concurrency]]): a query that arrives
+during a reconcile shows as `pending` until the reconcile is done. Listing the
+tasks tells you what it is waiting for.

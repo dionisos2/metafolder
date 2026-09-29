@@ -1,0 +1,7 @@
+title: mf task list
+tags: [[CLI command]] Tasks
+kind: reference
+summary: List background tasks
+
+The active repository's tasks, or with `--all` every loaded repository's
+([[Following a task]]).

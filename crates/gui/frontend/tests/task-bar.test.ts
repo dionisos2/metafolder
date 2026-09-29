@@ -2,7 +2,7 @@
 // so it appearing takes height away from the panels — every panel re-lays out,
 // mid-scroll, mid-read. A watcher flush lasts milliseconds and happens whenever
 // anything at all touches a watched file, so without a grace the screen twitches
-// for work nobody asked to see (spec-tasks "GUI").
+// for work nobody asked to see (doc "Following a task").
 
 import { describe, expect, test } from 'vitest';
 import { settledTasks, TASK_GRACE_MS } from '../src/lib/working';

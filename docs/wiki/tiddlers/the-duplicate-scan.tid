@@ -5,7 +5,7 @@ audience: dev
 summary: Four phases, each narrowing the candidates before the next, costlier one — size, partial hash, full hash, prune.
 
 The scan (`daemon/src/duplicates.rs`) is an observable background task
-(spec-tasks "The duplicate scan as a task"). Four phases, each narrowing the
+([[Task kinds]]; stopping it keeps what it found, [[Cancelling a task]]). Four phases, each narrowing the
 candidates before the next, more expensive one:
 
 # ''size'' — every candidate file ([[What counts as a duplicate]]) is partitioned by `mfr_size`, and size classes of one are dropped. This is by far the biggest cut, so it is made on `(uuid, size)` alone, before anything heavier is built; only the survivors get a path resolved (and with it the offline-volume guard).

@@ -9,7 +9,7 @@ import { createSelect } from '/__select.js';
  * A loaded repository, as `GET /repos` lists it.
  * @typedef {{repo_uuid: string, name: string, root: string}} Repo
  *
- * An in-flight daemon task (spec-tasks).
+ * An in-flight daemon task (doc "Tasks").
  * @typedef {{id: string, repo_uuid: string, kind: string, status: string,
  *            cancellable: boolean, phase?: string|null, done: number|null,
  *            total: number|null}} Task
@@ -213,7 +213,7 @@ export async function mount(root, metafolder) {
   }
 
   // ── Running tasks ─────────────────────────────────────────────────────────
-  // Poll the daemon for in-flight tasks (spec-tasks) and surface the active
+  // Poll the daemon for in-flight tasks (doc "Tasks") and surface the active
   // ones under their repository, each with a Stop button when the daemon says
   // the task can be stopped (`cancellable`, doc "Cancelling a task") — stopping
   // a flush pauses the repository's tracking (spec-file-tracking "Pausing

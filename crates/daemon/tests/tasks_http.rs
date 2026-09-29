@@ -1,4 +1,4 @@
-//! Integration tests for the task read endpoints (spec-tasks): per-repo and
+//! Integration tests for the task read endpoints (doc "Tasks"): per-repo and
 //! global listing, single-task fetch, 404s. Tasks are seeded directly through
 //! the public registry so these tests don't depend on reconcile/query wiring.
 
@@ -261,7 +261,7 @@ async fn concurrent_reconcile_is_rejected_with_409() {
 #[tokio::test]
 async fn concurrent_duplicate_scan_is_rejected_with_409() {
     // Same rule as reconcile, and for the same reason: a second run would only
-    // redo work already in progress (spec-tasks "Concurrency").
+    // redo work already in progress (doc "Task concurrency").
     let (app, state, repo) = app_with_repo("dupdedup");
     let repo_uuid = Uuid::parse_str(&repo).unwrap();
     state.repo(repo_uuid).unwrap().tasks.start_unique(TaskKind::Duplicates).unwrap();

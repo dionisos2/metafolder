@@ -97,7 +97,7 @@ pub fn scan(repo: &RepoState, opts: &ScanOptions) -> Result<ScanResult, ApiError
 }
 
 /// The scan proper. Phases and their progress units are specified in
-/// spec-tasks "Duplicate scan progress phases"; the `full` phase counts
+/// doc "The duplicate scan"; the `full` phase counts
 /// *bytes*, because file sizes span orders of magnitude and a file count would
 /// make the bar meaningless.
 pub fn scan_reported(

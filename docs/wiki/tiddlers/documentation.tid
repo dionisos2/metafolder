@@ -10,6 +10,7 @@ through the `mf` command line and a desktop GUI.
 
 * [[Duplicates]] — finding byte-identical files and deleting the copies you choose
 * [[Slow log]] — the operations that took too long, and where their time went
+* [[Tasks]] — the daemon's long work, observable and often stoppable
 * [[Trash]] — the per-repository bin: trashing, restoring, undoing
 
 !! Catalogs

@@ -62,7 +62,7 @@ pub fn reconcile(repo: &RepoState) -> Result<ReconcileResult, ApiError> {
 /// to bound the cost of progress updates on large repositories.
 const PROGRESS_STEP: usize = 128;
 
-/// The task-progress plumbing every reported worker shares (spec-tasks
+/// The task-progress plumbing every reported worker shares (doc "Tasks"
 /// "Progress"). Re-exported here because reconcile was its first user; the
 /// duplicate scan reports the same way.
 pub use crate::tasks::{CancelProbe, ProgressFn, Reporter};
@@ -111,7 +111,7 @@ pub fn reconcile_full(
 
 /// Like [`reconcile_full`], reporting phase progress through `progress`
 /// (`phase`, `done`, `total`) so the caller can surface it on a task
-/// (spec-tasks). Counts are reported at phase boundaries and, for the heavy
+/// (doc "Tasks"). Counts are reported at phase boundaries and, for the heavy
 /// loops, throttled to every [`PROGRESS_STEP`] items.
 pub fn reconcile_full_reported(
     repo: &RepoState,
@@ -139,7 +139,7 @@ pub fn reconcile_full_reported(
     let paths = walk(&root, &internal_dir, &RelPath::root(), &rules, &offline, reporter)?;
 
     // Stat phase: the total is now known, so this (the heavy syscall pass) is a
-    // determinate phase (spec-tasks "Decompose walk").
+    // determinate phase (doc "Task status and progress").
     let fs_paths = stat_paths(&root, &paths, reporter);
     if reporter.is_cancelled() {
         return Err(cancelled());
@@ -458,7 +458,7 @@ pub fn reconcile_metarecord(
 }
 
 /// Like [`reconcile_metarecord`], reporting phase progress for a task
-/// (spec-tasks). Phases: `walk` (subtree), `create` (create/refresh over the
+/// (doc "Tasks"). Phases: `walk` (subtree), `create` (create/refresh over the
 /// subtree), `mime`, `metadata`.
 pub fn reconcile_metarecord_reported(
     repo: &RepoState,
@@ -496,7 +496,7 @@ pub fn reconcile_metarecord_reported(
     let mut result = ReconcileResult::default();
 
     // Pure walk of the subtree (BFS, no stat) then the determinate stat phase,
-    // same shape as the whole-repository reconcile (spec-tasks).
+    // same shape as the whole-repository reconcile (doc "Tasks").
     // The rule index (spec-file-tracking "The rule index"): the walk's
     // eligibility questions read nothing from the store.
     let rules = repo.watch_rules(writer.store())?;
@@ -588,7 +588,7 @@ pub fn reconcile_metarecord_reported(
 /// paths. Ineligible directories are pruned (cascading skip); the
 /// repository's `.metafolder/internal/` directory is always skipped,
 /// matched by absolute path (the metafolder may live anywhere).
-/// Pure filesystem traversal (spec-tasks "Decompose walk"): collects every
+/// Pure filesystem traversal (doc "Task status and progress"): collects every
 /// eligible repo-root-relative path under `base` *without* stat'ing it, BFS by
 /// depth so progress can be reported per level (the current depth and how far
 /// through the level we are). Stat'ing the paths happens afterwards in

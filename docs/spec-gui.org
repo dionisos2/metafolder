@@ -1201,7 +1201,7 @@ not here (see [[*Task bar]]).
 
 Live progress of daemon /tasks/ (reconcile, query, flush) is *not* shown here
 but in a dedicated *task bar* just above the status bar, to avoid saturating it
-(see [[*Task bar]] and [[file:spec-tasks.org][spec-tasks.org]] "GUI").
+(see [[*Task bar]] and doc "Following a task").
 
 Content is per-workspace. When both slots display the same workspace, one
 status bar is shown. When the two slots display different workspaces, two
@@ -1210,11 +1210,11 @@ status bars are shown (one per slot, each reflecting its own workspace).
 ** Task bar
 
 A dedicated bar directly above the status bar, showing in-flight daemon tasks
-(spec-tasks). It polls =GET /tasks= (all loaded repositories) and lists each
+(doc "Tasks"). It polls =GET /tasks= (all loaded repositories) and lists each
 =running= / =pending= task with a determinate progress bar when the task
 reports =done=/=total=, a spinner otherwise, labelled by =kind=/=phase=. It is
 hidden when there are no tasks, and a task only earns a place once it has been
-in flight for a grace period (spec-tasks "GUI") — showing the bar re-lays out
+in flight for a grace period (doc "Following a task") — showing the bar re-lays out
 every panel, which is not worth doing for the millisecond-long watcher flush
 that fires whenever anything touches a watched file. What that flush did is
 reported in the [[*Message view]] instead, like any other daemon diagnostic.
@@ -2392,7 +2392,7 @@ from the CLI shows up here too.
 
 The per-repo task block lists the repository's in-flight tasks with a *Stop*
 button for the cancellable kinds — =flush= among them (see
-[[file:spec-tasks.org][spec-tasks.org]] "Cancellation"). Stopping a flush is not
+doc "Cancelling a task"). Stopping a flush is not
 a plain cancel: it *pauses* the repository's tracking, so the panel says so
 rather than leaving a repository that silently records nothing.
 
@@ -3217,7 +3217,7 @@ current selection.
 ** Reconcile
 
 =reconcile:run= calls =POST .../reconcile= (asynchronous — 202 + task id, see
-[[file:spec-tasks.org][spec-tasks.org]]) and polls the task only to know when it
+doc "Tasks") and polls the task only to know when it
 finishes; live progress is shown by the [[*Task bar]], not the status bar. On
 completion:
 - Status bar: ="Reconcile: N created, M updated, P unchanged."=
@@ -3239,7 +3239,7 @@ to the =message= panel. A *cancelled* scan is reported as an outcome rather than
 an error — the hashes and groups it wrote are kept.
 
 The =full= phase reports *bytes* rather than files (see
-[[file:spec-tasks.org][spec-tasks.org]] "Duplicate scan progress phases"), so the
+doc "The duplicate scan"), so the
 task bar formats this phase's counts as a size.
 
 The *duplicates panel* (=panel:set type duplicates=, suggested default =t u=)

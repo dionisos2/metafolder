@@ -1,0 +1,29 @@
+title: Task kinds
+tags: Tasks
+kind: reference
+summary: The eight kinds of task, which ones run in the background, and which carry a result.
+
+|!Kind |!What |!Started by |
+|`reconcile` |a full or scoped reconcile |`POST …/reconcile` — asynchronous, `202` and a task id |
+|`duplicates` |a duplicate scan ([[The duplicate scan]]) |`POST …/duplicates/scan` — asynchronous |
+|`relink` |re-homing orphaned metarecords onto the files carrying their content |`POST …/orphans/relink` — asynchronous |
+|`load` |the background half of loading a repository: its mount points, the buffered filesystem events, the watcher |`POST /repos/load` |
+|`flush` |the watcher applying a batch of buffered events |the daemon itself |
+|`query` |a query being evaluated |`POST …/query` — synchronous |
+|`prune` |pruning the log |`POST …/log/prune` — synchronous |
+|`rollback` |a one-shot atomic rollback |`POST …/rollback` — synchronous |
+
+The asynchronous kinds deliver their outcome through the task: `result` holds
+the reconcile's or the scan's summary, and the client polls until the task is
+done. The synchronous kinds return their result with the request's own response;
+they are registered only so that other clients can see the repository is busy
+and why their own work waits. The coordinated, step-by-step navigation
+(`rollback/start`, `step`, `abort`) is not a task: its lock is observable on its
+own (spec-event-log "Coordinated navigation").
+
+`flush` is internal but shown like any other — a client may offer to hide it,
+since flushes are frequent (one per quiet period of filesystem activity).
+
+At most one `reconcile` and one `duplicates` task can be active per repository;
+a second request is refused (`409`) rather than queued, since it would only redo
+the work in progress ([[Task concurrency]]).

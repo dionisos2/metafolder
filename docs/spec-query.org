@@ -276,7 +276,7 @@ daemon sets no deadline of its own. The client that knows what it is waiting
 for does: =POST …/query= accepts =timeout_ms=, and a query still running when
 it passes is stopped and answers =409= with ={"error": "query timed out",
 "reason": "timeout"}= (its task ends =failed=). Absent, the query runs to the
-end. A cancel request on the query's task (spec-tasks "Cancellation") stops
+end. A cancel request on the query's task (doc "Cancelling a task") stops
 it the same way, with =reason: "cancelled"=, and so does the client hanging
 up: a connection closed before the answer — the GUI dropping a query the user
 has replaced, a Ctrl-C on =mf= — cancels the query's task, since nobody is

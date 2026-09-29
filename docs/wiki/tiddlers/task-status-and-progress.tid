@@ -1,0 +1,51 @@
+title: Task status and progress
+tags: Tasks
+kind: reference
+summary: pending, running, then done, failed or cancelled; a phase with optional counts, and the phases of a reconcile.
+
+```
+pending → running → done
+                  → failed
+                  → cancelled
+```
+
+* `pending` — registered, waiting for the repository (a query queued behind a reconcile). Already observable.
+* `running` — working; its progress is updated as it advances.
+* `done`, `failed`, `cancelled` — terminal, kept for a few seconds so a client polling just after still reads the outcome ([[Task registry and retention]]). `cancelled` is a stop you asked for, distinct from `failed` so that it does not read as an error.
+
+!! Progress
+
+The same shape for every kind:
+
+```
+{"phase": "fingerprint", "done": 1240, "total": 5000}
+```
+
+`phase` is a short, kind-specific label; `done` and `total` may each be `null` when
+the amount of work is unknown. A client shows a bar when both are known and
+`total > 0`, and a spinner labelled with the phase otherwise. A query usually
+reports no counts at all: its heavy part is one opaque evaluation.
+
+The duplicate scan's phases are in [[The duplicate scan]]; its `full` phase is the
+only one of any kind that counts ''bytes'', and a client formatting counts should
+pick the unit from the phase name.
+
+!! The phases of a reconcile
+
+|!Phase |!Counts |
+|`walk (depth N, …)` |directories processed at the current depth |
+|`stat` |the discovered paths, each stat'ed |
+|`index` |the discovered paths, each resolved |
+|`scan` |the tracked metarecords (orphan detection) |
+|`fingerprint` |the orphaned metarecords |
+|`similarity` |no counts; only with a similarity threshold |
+|`create` |the new files |
+|`refresh` |the discovered paths (when enabled) |
+|`mime` |the files on disk (when enabled) |
+|`metadata` |the files on disk: embedded metadata extraction (when enabled) |
+
+The walk is a pure traversal — reading directories and their entries' types, no
+`stat` — that collects every eligible path: cheap, with no knowable total, so it
+reports progress by depth. Once it is done the path list is known, so every later
+phase, starting with the expensive `stat` pass, has an exact total and a
+determinate bar.

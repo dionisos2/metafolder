@@ -11,7 +11,7 @@ fn default_true() -> bool {
 pub(super) struct ReconcileBody {
     /// Optional scope: when present, reconcile only the subtree rooted at this
     /// metarecord (32-char hex); absent reconciles the whole repository
-    /// (spec-tasks "Reconcile as a task"). The similarity `threshold` applies
+    /// (doc "Task kinds"). The similarity `threshold` applies
     /// to the whole-repository reconcile only.
     #[serde(default)]
     metarecord: Option<String>,
@@ -39,7 +39,7 @@ impl Default for ReconcileBody {
 }
 
 /// `POST /repos/:repo/reconcile`: starts a reconcile as a background task
-/// (spec-tasks). Returns `202 Accepted` with the task id immediately; progress
+/// (doc "Tasks"). Returns `202 Accepted` with the task id immediately; progress
 /// and the final `ReconcileResult` are observed via `GET …/tasks/:id`. A
 /// concurrent reconcile is rejected with `409`. With `metarecord` in the body
 /// the reconcile is scoped to that metarecord's subtree; absent, it covers the
@@ -421,7 +421,7 @@ pub(super) async fn full_reconcile(
         let progress = |phase: &str, done: Option<u64>, total: Option<u64>| {
             repo_state.tasks.set_progress(task_id, phase, done, total);
         };
-        // Cooperative cancellation (spec-tasks): the reconcile polls this at its
+        // Cooperative cancellation (doc "Tasks"): the reconcile polls this at its
         // progress checkpoints and bails (rolling its transaction back) when a
         // `POST …/tasks/:id/cancel` has flipped the flag.
         let cancel = || repo_state.tasks.is_cancel_requested(task_id);
@@ -483,7 +483,7 @@ impl Default for DuplicatesBody {
 }
 
 /// `POST /repos/:repo/duplicates/scan`: starts a duplicate scan as a background
-/// task (doc "Duplicates", spec-tasks "The duplicate scan as a task"). Returns
+/// task (doc "Duplicates", doc "Task kinds"). Returns
 /// `202 Accepted` with the task id immediately; the summary is read from
 /// `GET …/tasks/:id`. A concurrent scan is rejected with `409`.
 ///

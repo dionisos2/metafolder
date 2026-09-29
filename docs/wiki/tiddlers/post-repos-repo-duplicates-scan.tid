@@ -6,7 +6,7 @@ summary: Starts a duplicate scan as a background task; the result is a summary, 
 
 Asynchronous, like reconcile: `202 Accepted` with `{"task_id": "<32hex>"}`, or
 `409 Conflict` when a duplicate scan is already pending or running for this
-repository. Follow it through the task endpoints (spec-tasks).
+repository. Follow it through the [[Task endpoints]].
 
 Body, all optional:
 

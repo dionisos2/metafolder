@@ -1,0 +1,24 @@
+title: Cancelling a task
+tags: Tasks
+kind: guide
+summary: Stop a reconcile, a scan, a query or a flush; what stopping each one leaves behind.
+
+```
+mf task show <id> --stop     (or --cancel)
+```
+
+or the ''Stop'' button next to the task in the `repos` panel. A task says whether
+it can be stopped (`cancellable` in [[Task endpoints]]). Stopping is cooperative:
+the task stops at its next checkpoint, so the status reads `cancelled` a moment
+after the request.
+
+|!Kind |!Stopping it |
+|`reconcile` |stops at its next progress step and drops its transaction: the repository is exactly as before the reconcile started — there is no partial reconcile |
+|`duplicates` |keeps what it computed: the hashes already committed and the groups of the largest files, found first; only the pruning of stale groups is skipped |
+|`relink` |keeps the pairings it already committed |
+|`query` |stops within a few hundred keys read, whatever it was doing; the waiting client gets a `409` (`query cancelled`) instead of results |
+|`flush` |stops at the next event and drops the half-applied group (groups already committed stay). Nothing is lost — the events go back to the buffer — and the repository's tracking is left ''paused'', or the next event would restart the flush you just stopped: resume it with `mf watch resume` (spec-file-tracking "Pausing ingestion") |
+|`load`, `prune`, `rollback` |cannot be stopped: a load leaves the repository unusable until it ends, and the other two are single atomic transactions, with nothing to stop but a rollback of themselves |
+
+Stopping a flush is how a mistaken copy or a huge move is kept out of the
+database.

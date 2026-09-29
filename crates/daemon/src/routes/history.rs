@@ -257,7 +257,7 @@ pub(super) async fn rollback(
     let repo_uuid = parse_uuid(&repo)?;
     let target = body.target.into_target()?;
     with_repo(&state, repo_uuid, move |repo_state| {
-        // Observation-only task (spec-tasks), like prune: rollback rewrites
+        // Observation-only task (doc "Tasks"), like prune: rollback rewrites
         // arbitrary state under the connection lock.
         observed(repo_state, TaskKind::Rollback, "rolling back", |repo_state| {
             repo_state.ensure_writable()?;
@@ -275,7 +275,7 @@ pub(super) async fn rollback(
     .await
 }
 
-/// Runs `f` as an observation-only task (spec-tasks): registers a task of
+/// Runs `f` as an observation-only task (doc "Tasks"): registers a task of
 /// `kind`, marks it running with `phase`, and records its terminal state. Like
 /// `query`, the operation's result travels with the HTTP response, so the task
 /// carries no result payload and its counts stay unknown. Used for the
@@ -322,7 +322,7 @@ pub(super) async fn prune_log(
     };
     let target = body.target.into_target()?;
     with_repo(&state, repo_uuid, move |repo_state| {
-        // Observation-only task (spec-tasks): the result travels with this
+        // Observation-only task (doc "Tasks"): the result travels with this
         // response, so the task carries no result payload and its counts stay
         // unknown. Registered because prune holds the connection lock and can be
         // long on a large log, so other clients see why their work is queued.

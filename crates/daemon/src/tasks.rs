@@ -1,4 +1,4 @@
-//! Background tasks and progress reporting (spec-tasks.org).
+//! Background tasks and progress reporting (doc "Tasks").
 //!
 //! A [`TaskRegistry`] is an in-memory, per-repository set of observable units
 //! of work. It is deliberately *separate from the store*: a running reconcile
@@ -17,13 +17,13 @@ use serde::Serialize;
 use uuid::Uuid;
 
 /// Cooperative cancellation probe: returns `true` once the task has been asked
-/// to stop (spec-tasks "Cancellation"). A worker checks it alongside its
+/// to stop (doc "Cancelling a task"). A worker checks it alongside its
 /// progress checkpoints and bails, dropping its `Writer` so the in-progress
 /// transaction rolls back.
 pub type CancelProbe<'a> = &'a dyn Fn() -> bool;
 
 /// Phase progress sink: `(phase, done, total)`, with `done`/`total` absent when
-/// the phase cannot place a cursor (spec-tasks "Display" renders those as an
+/// the phase cannot place a cursor (doc "Task status and progress" renders those as an
 /// indeterminate spinner). Reported at phase boundaries and, inside the heavy
 /// loops, throttled so the cost of reporting stays bounded.
 pub type ProgressFn<'a> = &'a dyn Fn(&str, Option<u64>, Option<u64>);
@@ -94,7 +94,7 @@ pub enum TaskKind {
 }
 
 impl TaskKind {
-    /// Whether a task of this kind can be cancelled (spec-tasks "Cancellation").
+    /// Whether a task of this kind can be cancelled (doc "Cancelling a task").
     /// `flush` is internal, but its size is the user's doing — a single batch
     /// can carry a whole directory tree — so it *is* stoppable, and stopping it
     /// pauses ingestion (spec-file-tracking "Pausing ingestion"). `load` is a
@@ -113,7 +113,7 @@ pub enum TaskStatus {
     Running,
     Done,
     Failed,
-    /// Stopped at the user's request (spec-tasks "Cancellation"). Terminal,
+    /// Stopped at the user's request (doc "Cancelling a task"). Terminal,
     /// distinct from `failed` so a deliberate stop is not read as an error.
     Cancelled,
 }
@@ -170,7 +170,7 @@ struct Task {
     on_cancel: Option<Box<dyn Fn() + Send + Sync>>,
 }
 
-/// Public, serializable view of a task (the JSON shape in spec-tasks.org).
+/// Public, serializable view of a task (the JSON shape in doc "Tasks").
 #[derive(Debug, Clone, Serialize)]
 pub struct TaskView {
     #[serde(with = "metafolder_core::metarecord::hex_uuid")]

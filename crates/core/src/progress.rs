@@ -1,7 +1,7 @@
 //! Terminal progress rendering for long waits (`mf repo load`, `mf reconcile`,
 //! the daemon's startup auto-load). Std-only, like the rest of the crate.
 //!
-//! Mirrors the GUI's task display (spec-tasks "Display"): a determinate bar
+//! Mirrors the GUI's task display (doc "Task status and progress"): a determinate bar
 //! when both counts are known, an indeterminate spinner otherwise. The line is
 //! redrawn in place (`\r` + clear-to-end) on every update.
 
@@ -10,8 +10,7 @@ const SPINNER: [char; 4] = ['|', '/', '-', '\\'];
 
 /// What a phase's counts are counting. Most count items; a phase that reads
 /// file *content* counts bytes, because file sizes span orders of magnitude and
-/// an item count would make the bar meaningless (spec-tasks "Duplicate scan
-/// progress phases").
+/// an item count would make the bar meaningless (doc "The duplicate scan").
 #[derive(Clone, Copy, Default, PartialEq, Eq, Debug)]
 pub enum Unit {
     #[default]

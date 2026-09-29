@@ -463,7 +463,7 @@ A metarecord orphaned by a file that left keeps its fingerprints, so the file
 can be recognised if it comes back. Confirming that means *hashing the
 candidate*, and =mf orphan relink= is where it happens: a command the user runs,
 observable and cancellable like the duplicate scan (see
-[[file:spec-tasks.org][spec-tasks.org]]).
+doc "Tasks").
 
 It used to happen inline, on every arriving file. That could not be right. One
 filesystem event can carry a whole subtree — a directory pasted in arrives as a
@@ -928,7 +928,7 @@ is off (a rule-carrying directory about to move), or for a path whose rules
 changed between ingestion and the flush. The count stays, for those.
 
 A flush with an empty buffer reports nothing: it registers no task either
-(see [[file:spec-tasks.org][spec-tasks.org]]), and there is nothing to say.
+(see doc "Tasks"), and there is nothing to say.
 
 *** Pausing ingestion
 
@@ -1142,7 +1142,7 @@ Behaviour:
 - Creates missing parent directory metarecords along the path if needed.
 
 Like every reconcile it is asynchronous (202 + task id, see
-[[file:spec-tasks.org][spec-tasks.org]]). Scope errors surface as the task
+doc "Tasks"). Scope errors surface as the task
 becoming =failed=: an unknown metarecord, or one with no valid =mfr_path= (path
 is =Nothing= or unknown). The result has =moved= always =0= and =candidates=
 always empty.
@@ -1158,8 +1158,7 @@ Walks the repository root on the filesystem and synchronises the database.
 This endpoint is *asynchronous*: it returns =202= with a =task_id= immediately
 and runs the work (the steps below, unchanged) as a background /task/, rejecting
 a concurrent reconcile with =409=. Progress and the final =ReconcileResult= are
-observed via the task; see [[file:spec-tasks.org][spec-tasks.org]] "Reconcile as
-a task". An optional ={"metarecord": "<hex>"}= scopes it to a subtree (see
+observed via the task; see doc "Task kinds". An optional ={"metarecord": "<hex>"}= scopes it to a subtree (see
 [[*Scoped (single-metarecord) reconcile]]); absent, it covers the whole
 repository. The steps, the single transaction, the candidate semantics and the
 response body below describe the work the task performs.
@@ -1473,8 +1472,7 @@ per-directory state, nothing to run out of:
   notice under its own repetitions.
 
 =pause= also *cancels the flush in progress*, if any — it is the same operation
-as cancelling that flush's task (see [[file:spec-tasks.org][spec-tasks.org]]
-"Cancellation"), reachable without knowing a task id. =resume= clears the pause
+as cancelling that flush's task (see doc "Cancelling a task"), reachable without knowing a task id. =resume= clears the pause
 and pings the executor, so what accumulated is flushed after the usual quiet
 period. Both are idempotent: pausing a paused repository (or resuming a running
 one) is =200= and changes nothing.

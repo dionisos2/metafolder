@@ -66,7 +66,7 @@ pub struct RepoState {
     /// navigation is in progress, carrying its resolved target. Never
     /// persisted — a crash restarts unlocked.
     pub rollback_lock: Mutex<Option<RollbackLock>>,
-    /// Observable background tasks for this repository (spec-tasks). In memory,
+    /// Observable background tasks for this repository (doc "Tasks"). In memory,
     /// separate from `conn` so progress reads never block behind a running
     /// reconcile.
     pub tasks: crate::tasks::TaskRegistry,

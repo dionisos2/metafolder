@@ -1,5 +1,5 @@
 <script lang="ts">
-  // Dedicated bar for in-flight daemon tasks (spec-tasks "GUI"). It polls
+  // Dedicated bar for in-flight daemon tasks (doc "Following a task"). It polls
   // GET /tasks (all loaded repos) and shows running/pending tasks with a
   // determinate progress bar when counts are known, a spinner otherwise.
   // Kept separate from the status bar so progress never saturates it. These

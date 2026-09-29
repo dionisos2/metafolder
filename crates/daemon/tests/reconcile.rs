@@ -109,7 +109,7 @@ fn reconcile_reports_phase_progress() {
     let phases = phases.into_inner().unwrap();
     let names: Vec<&str> = phases.iter().map(|(p, _, _)| p.as_str()).collect();
     // Phases in execution order: the pure walk (labelled by depth) → stat →
-    // index → scan → create → refresh → mime (spec-tasks "Decompose walk").
+    // index → scan → create → refresh → mime (doc "Task status and progress").
     assert!(names.iter().any(|p| p.starts_with("walk")), "phases: {names:?}");
     assert!(names.contains(&"stat"), "phases: {names:?}");
     assert!(names.contains(&"index"), "phases: {names:?}");
@@ -584,7 +584,7 @@ fn test_reconcile_mismatched_partial_creates_new_metarecord() {
 #[test]
 fn cancelled_reconcile_bails_and_rolls_back() {
     // A cancellation probe that is already true makes the reconcile bail at its
-    // first checkpoint (spec-tasks "Cancellation"). The single transaction is
+    // first checkpoint (doc "Cancelling a task"). The single transaction is
     // dropped without committing, so nothing is created.
     let (repo, root) = setup("cancel");
     write_file(&root, "a.txt", b"hello");

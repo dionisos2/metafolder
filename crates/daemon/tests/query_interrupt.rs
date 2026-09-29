@@ -1,4 +1,4 @@
-//! Interrupting a query inside its loops (spec-tasks "Cancellation"): a cancel
+//! Interrupting a query inside its loops (doc "Cancelling a task"): a cancel
 //! request or an expired `timeout_ms` is polled where the store counts its key
 //! reads, so a query stops within a few hundred keys of the request — not at the
 //! end of a phase that may read the whole repository.

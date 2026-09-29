@@ -1523,7 +1523,7 @@ pub fn reconcile(
     poll_interval_ms: u64,
 ) -> Result<i32, CliError> {
     let base = ctx.repo_base()?;
-    // One reconcile endpoint (spec-tasks): an optional `metarecord` scopes it to
+    // One reconcile endpoint (doc "Tasks"): an optional `metarecord` scopes it to
     // a subtree; absent reconciles the whole repository. Always asynchronous —
     // start it (202 + task id), then poll the task, rendering progress to stderr.
     let mut body = json!({"mime": mime, "metadata": metadata, "refresh": refresh});
@@ -1591,7 +1591,7 @@ fn poll_task(
             }
             _ => {
                 let phase = task["phase"].as_str().unwrap_or("");
-                // Some phases count bytes rather than items (spec-tasks
+                // Some phases count bytes rather than items (doc "Tasks"
                 // "Duplicate scan progress phases"); the phase name is what
                 // says so, as the spec asks clients to read it.
                 let unit = if phase == "full" {
@@ -1612,7 +1612,7 @@ fn poll_task(
     }
 }
 
-/// `mf tasks [--all]`: lists background tasks (spec-tasks). `--all` queries
+/// `mf tasks [--all]`: lists background tasks (doc "Tasks"). `--all` queries
 /// every loaded repository (no `--repo` needed); otherwise the current repo.
 pub fn tasks(ctx: &Ctx, all: bool, raw_json: bool) -> Result<i32, CliError> {
     let path = if all { "/tasks".to_string() } else { format!("{}/tasks", ctx.repo_base()?) };
@@ -1626,7 +1626,7 @@ pub fn tasks(ctx: &Ctx, all: bool, raw_json: bool) -> Result<i32, CliError> {
 }
 
 /// `mf task <id>`: shows one task of the current repository. With `stop`, it
-/// requests cancellation (`POST …/tasks/:id/cancel`) instead (spec-tasks).
+/// requests cancellation (`POST …/tasks/:id/cancel`) instead (doc "Tasks").
 pub fn task(ctx: &Ctx, id: &str, stop: bool, raw_json: bool) -> Result<i32, CliError> {
     let base = ctx.repo_base()?;
     let uuid =

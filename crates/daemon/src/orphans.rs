@@ -260,7 +260,7 @@ pub fn relink(repo: &RepoState) -> Result<RelinkResult, ApiError> {
     relink_reported(repo, &crate::tasks::Reporter::silent())
 }
 
-/// [`relink`], reporting progress and observing cancellation (spec-tasks).
+/// [`relink`], reporting progress and observing cancellation (doc "Tasks").
 pub fn relink_reported(
     repo: &RepoState,
     reporter: &crate::tasks::Reporter,

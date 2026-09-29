@@ -221,7 +221,7 @@ async fn test_pre_versioning_daemon_is_incompatible() {
     assert_eq!(payloads[0]["daemon_api_version"], Value::Null);
 }
 
-/// Stub for the asynchronous reconcile contract (spec-tasks): POST reconcile
+/// Stub for the asynchronous reconcile contract (doc "Tasks"): POST reconcile
 /// answers 202 + task id; GET the task answers a finished task with a result.
 async fn spawn_reconcile_stub() -> String {
     let router = axum::Router::new()

@@ -1,0 +1,15 @@
+title: Task concurrency
+tags: Tasks
+kind: reference
+audience: dev
+summary: One task runs at a time per repository — they share its store handle — while repositories run in parallel.
+
+All of a repository's database work — a reconcile, a query, a flush — takes its
+single store handle, under one lock. So ''at most one task per repository is
+running'' at any instant; the others are `pending`. Tasks on different
+repositories run in parallel.
+
+* `reconcile` — at most one active (pending or running) per repository; a second request is refused with `409` rather than queued, since it would only redo the work in progress. Scoped and whole-repository reconciles count as one kind.
+* `duplicates` — the same rule, for the same reason. It does not exclude a reconcile — the two serialize on the lock like anything else — but running a scan during a reconcile is wasteful: the reconcile may invalidate hashes the scan just computed.
+* `query`, `prune`, `rollback` — never refused: they serialize on the lock. A query arriving during a reconcile waits, `pending`.
+* `flush` — its ordering against the rest was already guaranteed by the lock; recording it as a task adds observability ("a flush is running, that is why my query waits"). The executor coalesces pending events, so there is at most one flush per repository.

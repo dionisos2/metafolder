@@ -1,0 +1,28 @@
+title: Task registry and retention
+tags: Tasks
+kind: reference
+audience: dev
+summary: Tasks live in memory beside the store, never in it; a finished task stays 10 seconds, and reading it never removes it.
+
+Each loaded repository keeps its tasks in an in-memory registry, ''separate from
+its store handle'' — required, not incidental: a reconcile holds the handle for
+its whole run, so a progress reader that touched the store would block until the
+reconcile finished. The registry never touches the store, so listing tasks
+answers at once, even mid-reconcile.
+
+It is never persisted: a daemon restart starts with no tasks (the work in flight
+was on threads that died with the process).
+
+A task stays in the registry ''10 seconds'' after it finished, measured on a
+monotonic clock. Eviction is lazy — on any access — and since only requests
+create tasks, which access the registry, an expired task goes promptly in
+practice.
+
+''Reads are idempotent'': reading a task never removes it. Several observers — a
+GUI polling and a `mf reconcile` — must each be able to read the same outcome,
+and a client polling in a loop must not remove the result before its own next
+read. Memory is bounded by the retention time, not by consumption.
+
+The UUID is what keeps consecutive runs apart: a client keeps the id of the task
+it started and polls that one, so it can never take a later run's result for its
+own.

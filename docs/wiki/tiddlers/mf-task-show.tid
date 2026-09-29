@@ -1,0 +1,8 @@
+title: mf task show
+tags: [[CLI command]] Tasks
+kind: reference
+summary: Show a single background task by id (or stop it with --stop)
+
+One task; exit code 1 when the id is unknown. With `--stop` (`--cancel`), stops it
+instead ([[Cancelling a task]]): a task already finished, of a kind that cannot be
+stopped, or unknown is reported on stderr, exit code 1.

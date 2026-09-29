@@ -47,7 +47,7 @@ pub async fn run(
 
     gui.post_status(&ws_id, "Reconciling…", "busy", None)?;
 
-    // Reconcile is asynchronous (spec-tasks): start it (202 + task id), then
+    // Reconcile is asynchronous (doc "Tasks"): start it (202 + task id), then
     // poll the task, surfacing progress in the status bar.
     let started = daemon
         .request("POST", &format!("/repos/{repo}/reconcile"), None)

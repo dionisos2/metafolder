@@ -150,18 +150,26 @@ CLI : =mf repo {check,reindex,backup,restore}=. Sources : spec-storage entier ;
 mémoires =disk-storage-backend-prototype=, =wal-fsync-per-transaction=,
 =unindexed-foreign-key-quadratic-deletes=.
 
-** TODO 6. Tâches
+** FAIT 6. Tâches
 
-- [ ] =Tasks= — overview (tâche observable, cycle de vie, statuts)
-- [ ] =Task progress= — reference (phases de reconcile et du scan de doublons)
-- [ ] =Concurrency of tasks= — reference, dev
-- [ ] =Task retention= — reference, dev
-- [ ] =Cancelling a task= — guide
-- [ ] =Task endpoints= — reference, dev (forme JSON, =/tasks=, =cancel=)
-- [ ] =Future task extensions= — question, proposed
+- [X] =Tasks= — overview
+- [X] =Following a task= — guide (ajoutée : =mf task=, la barre de tâches, le panel repos)
+- [X] =Cancelling a task= — guide (ce que l'arrêt laisse, type par type)
+- [X] =Task kinds= — reference (ajoutée : les huit types, synchrones ou non)
+- [X] =Task status and progress= — reference (renommée ; avec les phases de reconcile, dont =metadata=)
+- [X] =Task concurrency= — reference, dev
+- [X] =Task registry and retention= — reference, dev (renommée)
+- [X] =Task endpoints= — reference, dev
+- [X] =Future task extensions= — question, proposed
+- [X] les notes de commande : =mf task= (+ =list=, =show=)
 
-CLI : =mf task *= (3). Sources : spec-tasks entier (sa partie « GUI », la barre
-de tâches, va à l'item 33).
+Vérification contre le code : la spec nommait =mf tasks= et =mf task <id>= (en
+réalité =mf task list [--all]= et =mf task show <id> [--stop]=), omettait la
+phase =metadata= du reconcile et le =result= de =relink=. Défaut trouvé et
+corrigé (=52ab82e=) : le panel repos n'offrait pas Stop pour un scan de doublons
+ou un relink ; une tâche dit maintenant si elle est annulable (=cancellable=).
+La section « Task bar » de spec-gui reste pour l'item 33 (elle couvre aussi les
+scripts et les appels en attente).
 
 ** FAIT 7. Journal des opérations lentes
 

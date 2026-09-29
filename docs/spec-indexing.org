@@ -702,7 +702,7 @@ ordered operator as equality, which no oracle caught because the index refused
 the aspect and the comparison was therefore never made. The index is built at repository load (best-effort) by
 the background warmup — an observable =load= task (phases =tree cache= then
 =index=) so the GUI shows a load progress bar (see
-[[file:spec-tasks.org][spec-tasks.org]]) — so the first query pays no build cost;
+doc "Tasks") — so the first query pays no build cost;
 queries arriving before it completes are refused with =503= meanwhile
 (spec-main "POST /repos/load"). The build is *not* best-effort: a repository
 that cannot build its index never becomes ready.

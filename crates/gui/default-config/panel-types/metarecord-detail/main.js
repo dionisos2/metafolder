@@ -724,7 +724,7 @@ export async function mount(root, metafolder) {
     if (!current) return;
     const { repo, uuid } = current;
     void statusBar.message('Reconciling…', null);
-    // One reconcile endpoint, scoped via `metarecord` (spec-tasks). It is
+    // One reconcile endpoint, scoped via `metarecord` (doc "Tasks"). It is
     // asynchronous: poll the task to completion (the task bar shows live
     // progress) before refreshing the view.
     const started = /** @type {{task_id: string}} */ (

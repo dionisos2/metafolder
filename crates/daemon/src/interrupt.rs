@@ -1,4 +1,4 @@
-//! Interrupting a read in the middle of its loops (spec-tasks "Cancellation",
+//! Interrupting a read in the middle of its loops (doc "Cancelling a task",
 //! spec-query "Timeout").
 //!
 //! A query's phases are few and each can read the whole repository — a regex

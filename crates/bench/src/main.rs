@@ -234,7 +234,7 @@ pub(crate) async fn api_enable_watch(url: &str, repo: Uuid) -> Result<()> {
 /// metarecords for the files on disk. Returns (created, moved). `mime` opens
 /// each file to sniff its type — disabled here to keep reconcile about indexing.
 pub(crate) async fn api_reconcile(url: &str, repo: Uuid, mime: bool) -> Result<(usize, usize)> {
-    // Reconcile is asynchronous (spec-tasks): start it, then poll the task.
+    // Reconcile is asynchronous (doc "Tasks"): start it, then poll the task.
     let started: serde_json::Value = daemon_client()
         .post(format!("{url}/repos/{repo}/reconcile"))
         .json(&json!({ "mime": mime }))

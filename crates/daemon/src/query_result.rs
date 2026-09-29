@@ -33,7 +33,7 @@ fn default_order() -> SortOrder {
 
 /// Assembles the `select`-projected JSON objects for a page of result UUIDs,
 /// polling `cancel` every few hundred rows so a long assembly (the dominant cost
-/// of a `select=*` query over many matches) can be stopped (spec-tasks
+/// of a `select=*` query over many matches) can be stopped (doc "Tasks"
 /// "Cancellation"). `fields_filter = None` keeps every field; `Some(list)` keeps
 /// only the named ones. Pass `&|| false` for uncancellable callers.
 pub fn assemble_selected(

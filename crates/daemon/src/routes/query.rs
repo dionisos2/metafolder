@@ -40,7 +40,7 @@ pub(super) async fn run_query(
 ) -> Result<Response, ApiError> {
     let Json(body) = payload?;
     let repo_uuid = parse_uuid(&repo)?;
-    // Register an observation-only task (spec-tasks): the result travels with
+    // Register an observation-only task (doc "Tasks"): the result travels with
     // this response, so the task carries no result payload and its counts stay
     // unknown (the heavy part is one opaque evaluation). Registered here, before
     // the blocking work, so that a client hanging up cancels it.
@@ -367,7 +367,7 @@ fn run_query_pass(
             return Err(ApiError::bad_request("'count' requires 'limit'"));
         }
         let conn = slowlog::timed("wait:conn", || repo_state.conn.lock_recover());
-        // Cooperative cancellation (spec-tasks): the evaluation and the result
+        // Cooperative cancellation (doc "Tasks"): the evaluation and the result
         // assembly poll this flag.
         let cancel = || repo_state.tasks.is_cancel_requested(task);
         let cache = repo_state.tree();

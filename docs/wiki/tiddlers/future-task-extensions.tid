@@ -1,0 +1,8 @@
+title: Future task extensions
+tags: Tasks
+kind: question
+status: proposed
+summary: An explicit acknowledgement freeing a result early, and query progress with real counts.
+
+* ''Freeing a result early'': a `DELETE` of a finished task, for a client that wants the memory back before the retention time. The retention makes it unnecessary for correctness.
+* ''Query progress'': a query reports no counts today. If the evaluator exposed checkpoints (per page, per operand), a query task could report a determinate progress.

@@ -514,7 +514,7 @@ fn flush_pending_once(repo: &RepoState, report: FlushReport) -> Result<FlushStat
     // where the repository declares none.
     let offline = crate::mount::offline(&conn, &cache, &repo.config.root)?;
 
-    // Observable while the events are applied (spec-tasks). Registered only
+    // Observable while the events are applied (doc "Tasks"). Registered only
     // now that there is real work (non-empty events), to avoid churning the
     // registry with no-op flushes.
     let task = repo.tasks.start(crate::tasks::TaskKind::Flush);

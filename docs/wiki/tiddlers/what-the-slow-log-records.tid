@@ -62,5 +62,5 @@ fine and something else held the repository".
 
 !! What is left out
 
-* Operations whose slowness is expected and already reported, as observable tasks: loading a repository, a full reconcile, the duplicate scan, the similarity phase.
+* Operations whose slowness is expected and already reported, as observable [[tasks|Tasks]]: loading a repository, a full reconcile, the duplicate scan, the similarity phase.
 * Operations that name no repository (`GET /health`, `POST /repos/load`): the log lives in a repository, and these have none.

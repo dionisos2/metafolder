@@ -1,0 +1,6 @@
+title: mf task
+tags: [[CLI command]] Tasks
+kind: reference
+summary: Background tasks (default: list)
+
+The daemon's background work ([[Tasks]]). Alone, `mf task` is `mf task list`.

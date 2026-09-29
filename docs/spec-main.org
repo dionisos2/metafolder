@@ -55,7 +55,7 @@ language, reserved fields (=mfr_*= / =mf_*=), the watch/ignore system, the user
 schema ([[file:spec-schema.org][spec-schema.org]]), cursor pagination, the
 daemon-side event log ([[file:spec-event-log.org][spec-event-log.org]]) with
 the coordinated navigation protocol and the =mf log= CLI, background tasks and
-progress reporting ([[file:spec-tasks.org][spec-tasks.org]]), the trash-bin
+progress reporting (doc "Tasks"), the trash-bin
 (doc "Trash") and cross-repo sync
 ([[file:spec-sync.org][spec-sync.org]]).
 
@@ -386,7 +386,7 @@ repositories, so the CLI's =-n <name>= selector resolves to exactly one UUID.
 The response returns the repository uuid *immediately*; the rest of the load
 — reading the declared mount points, applying the buffered filesystem events,
 starting the watcher — then runs in the *background* as an observable =load=
-task (see [[file:spec-tasks.org][spec-tasks.org]]), so a
+task (see doc "Tasks"), so a
 client can show a load progress bar. The response also carries the warmup's
 =task_id= (=null= when the repository is already warm, e.g. a redundant load;
 the id of the *running* warmup when one is already in flight), so a client can
@@ -448,7 +448,7 @@ Response body: ={"repo_uuid": "..."}=
   lock"). Its lock must not be silently dropped.
 - =409= if a cancellable task (reconcile/query) is in flight: the repository is
   never pulled out from under running work. Stop the task first
-  (see [[file:spec-tasks.org][spec-tasks.org]] "Cancellation"), then unload. A
+  (see doc "Cancelling a task"), then unload. A
   transient =flush= task does not block the unload.
 
 ** Error handling
@@ -457,9 +457,9 @@ Response body: ={"repo_uuid": "..."}=
 |----------------------------------------+-------------+--------------------------------|
 | Repository not found                   | 404         |                                |
 | Metarecord not found              | 404         |                                |
-| Task id unknown / evicted              | 404         | see [[file:spec-tasks.org][spec-tasks.org]]            |
+| Task id unknown / evicted              | 404         | see doc "Tasks"            |
 | Repository already initialised         | 409         |                                |
-| Reconcile requested while one in flight | 409        | see [[file:spec-tasks.org][spec-tasks.org]]            |
+| Reconcile requested while one in flight | 409        | see doc "Tasks"            |
 | Malformed JSON body                    | 400         |                                |
 | Invalid query                          | 400         |                                |
 | TreeRef parent metarecord not found         | 400         |                                |
@@ -489,7 +489,7 @@ section; this section defines the conventions shared by all commands.
 | [[file:spec-schema.org][spec-schema.org]]           | =mf schema {check,reload,show}=                    |
 | [[file:spec-event-log.org][spec-event-log.org]]     | =mf log {list,rollback,prune}=                     |
 | doc "Trash"             | =mf trash {list,restore,prune}=                   |
-| [[file:spec-tasks.org][spec-tasks.org]]             | =mf task {list,show}=                              |
+| doc "Tasks"             | =mf task {list,show}=                              |
 | [[file:spec-sync.org][spec-sync.org]]               | =mf sync {plan,run,show,status,link,unlink}=      |
 | doc "Duplicates"   | =mf duplicate {list,scan,clear}=                  |
 

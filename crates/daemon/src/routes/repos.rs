@@ -128,7 +128,7 @@ pub(super) async fn rename_repo(
     Ok(Json(serde_json::to_value(info).expect("repo info serialization")))
 }
 
-/// `GET /tasks`: every task across all loaded repositories (spec-tasks).
+/// `GET /tasks`: every task across all loaded repositories (doc "Tasks").
 pub(super) async fn list_all_tasks(State(state): State<Arc<AppState>>) -> Json<serde_json::Value> {
     Json(serde_json::to_value(state.all_tasks()).expect("tasks serialization"))
 }
@@ -156,7 +156,7 @@ pub(super) async fn get_task(
 }
 
 /// `POST /repos/:repo/tasks/:task/cancel`: requests cancellation of a task
-/// (spec-tasks "Cancellation"). A `reconcile` is stopped cooperatively (it rolls
+/// (doc "Cancelling a task"). A `reconcile` is stopped cooperatively (it rolls
 /// its transaction back); a running `query` stops inside its loops
 /// (`crate::interrupt`); a `flush` stops and pauses ingestion. The task
 /// transitions to `cancelled` once its worker unwinds; this returns the task's
@@ -382,7 +382,7 @@ pub(super) async fn load_repo(
         .await
         .map_err(|e| ApiError::internal(format!("blocking task failed: {e}")))??;
     // Finish the load in the background, as an observable `load` task so the
-    // GUI shows a progress bar (spec-tasks). The repository is registered and
+    // GUI shows a progress bar (doc "Tasks"). The repository is registered and
     // reports its state meanwhile, but answers its data routes with `503`
     // until the task is done; the response returns its uuid immediately, plus
     // the task's id (null when already warm) so the CLI can wait on it.

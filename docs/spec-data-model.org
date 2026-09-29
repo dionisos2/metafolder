@@ -1046,7 +1046,7 @@ fallback), unless =--no-ignore= is given.
 
 *** =mf task {list|show}=
 
-Background tasks (spec-tasks). =list= (default) lists tasks (=--all= across
+Background tasks (doc "Tasks"). =list= (default) lists tasks (=--all= across
 repos); =show <id>= shows one (=--stop= cancels it).
 
 *** =mf log {list|rollback|prune}=

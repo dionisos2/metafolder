@@ -1,0 +1,35 @@
+title: Task endpoints
+tags: Tasks
+kind: reference
+audience: dev
+summary: The task JSON, listing a repository's tasks or all of them, reading one, and cancelling it.
+
+```
+{"id": "0f1e2d3c…", "repo_uuid": "aaaa…", "kind": "reconcile", "status": "running",
+ "cancellable": true, "phase": "fingerprint", "done": 1240, "total": 5000,
+ "started_at": "2026-06-21T11:30:00.000Z", "finished_at": null,
+ "result": null, "error": null}
+```
+
+On completion, exactly one of `result` (`done`, only for the kinds whose request
+did not carry the result: reconcile, duplicate scan, relink) or `error`
+(`failed`). `cancellable` says whether the kind can be stopped, whatever its
+status. UUIDs are 32-character lowercase hex, like everywhere in the API.
+
+|!Endpoint |!Answers |
+|`GET /repos/:repo/tasks` |the repository's tasks: every active one, and the finished ones still retained |
+|`GET /repos/:repo/tasks/:task` |one task; `404` when unknown or evicted |
+|`GET /tasks` |every loaded repository's, each carrying its `repo_uuid`: what a status display polls |
+|`POST /repos/:repo/tasks/:task/cancel` |requests the stop ([[Cancelling a task]]) and answers the task as it stands (it may still read `running` for a moment) |
+
+The cancel request sets the flag at once; `cancelled` appears when the worker
+reaches its next checkpoint.
+
+|!Situation |!Status |
+|a cancel of an active task |`200` |
+|a cancel of a finished task — nothing to stop |`409` |
+|a cancel of a `load`, `prune` or `rollback` task |`400` |
+|an unknown or evicted task |`404` |
+|a reconcile or duplicate scan asked while one is active |`409` (the active one is in the list) |
+
+`GET /health` stays a bare liveness check; what runs is at `GET /tasks`.
