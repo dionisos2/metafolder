@@ -1,0 +1,56 @@
+title: Trash on-disk layout
+tags: Trash
+kind: reference
+audience: dev
+summary: Blobs and a small LMDB index under the repository's internal/trash/, and what an entry holds.
+
+```
+.metafolder/internal/trash/<id>    the trashed file, symlink or directory (the blob)
+.metafolder/internal/trash/index/  the entry index (LMDB)
+```
+
+`<id>` is a fresh 32-character lowercase hex uuid; the blob has no extension (the
+original name is in the index). One flat directory. `internal/` is excluded from
+tracking, like the repository's store. The clients find it through the
+`internal_dir` of `GET /repos/:repo`.
+
+The index is a small dedicated key-value store — not the daemon's store, which
+the daemon holds under an exclusive lock: the trash is client state, opened
+directly by `mf` and the GUI. LMDB gives locking between the two, atomic writes
+and corruption resistance; a process opens it once and shares it between its
+commands. Two tables:
+
+|!Table |!Key |!Value |
+|`entries` |`<id>` |the entry, as JSON |
+|`by_time` |`trashed_at` (big-endian) then `<id>` |nothing: the order of `list`, and the walk of `prune` |
+
+An entry holds:
+
+|!Field |!Meaning |
+|`id` |the blob's name |
+|`original_path` |the absolute path it was trashed from: the restore target |
+|`original_name` |its basename, for display |
+|`trashed_at` |unix milliseconds |
+|`size` |bytes; for a directory, the recursive total of its regular files |
+|`is_dir` |the blob is a whole subtree |
+|`reason` |`manual`, `rollback` (a file a move would have overwritten) or `sync` |
+|`revision` |the operation that trashed it, when there is one |
+|`metarecord` |the metarecord it belonged to — how an undo finds the entry |
+|`version` |that metarecord's version when trashed |
+|`subtree` |the captured metarecords: `uuid`, `parent`, `name` (its `mfr_path`), `fields` (as the daemon renders them), `trashed` (deleted with the entry, or an ancestor recorded for context) |
+
+The fields are kept as JSON, unlike field rows and log snapshots, which the
+daemon splits into typed columns because it queries them. Nothing queries these:
+they leave the daemon as JSON and go back to it as JSON.
+
+The blob is moved before the entry is written, so an entry always implies its
+blob; a failure in between leaks an unindexed blob, which `mf trash prune --all`
+sweeps.
+
+`reason`, `revision` and `version` are provenance. `metarecord` is what a
+rollback or revert looks an entry up by; `version` also matches an entry written
+before the metarecords were captured, whose deletion the log recorded as the
+watcher's `file_deleted`.
+
+The shared code is `metafolder_core::trash` (`TrashDir`, the capture, the
+restore); each client adds its own glue.

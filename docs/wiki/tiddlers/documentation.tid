@@ -6,6 +6,10 @@ metafolder keeps metadata about files — and about things that are not files �
 as ''metarecords'' in per-directory repositories, served by a daemon and used
 through the `mf` command line and a desktop GUI.
 
+!! Topics
+
+* [[Trash]] — the per-repository bin: trashing, restoring, undoing
+
 !! Catalogs
 
 Every item of these lists exists in the code; the lists are complete.

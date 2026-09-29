@@ -581,7 +581,7 @@ export function createPanelApi(deps: PanelApiDeps, ctx: PanelApiCtx): PanelApiIn
       remove: (path: string) => invoke('fs_delete', { path }) as Promise<void>,
     },
 
-    /** Repository trash-bin (spec-trash.org): filesystem operations shared with
+    /** Repository trash-bin (doc "Trash"): filesystem operations shared with
      *  the CLI, driven through the trash Tauri commands (no daemon endpoint). */
     trash: {
       list: (repo: string) => invoke('trash_list', { repo }) as Promise<Metafolder.TrashEntry[]>,

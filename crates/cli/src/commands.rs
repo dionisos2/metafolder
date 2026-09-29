@@ -84,7 +84,7 @@ impl Ctx {
     }
 
     /// The repository's trash-bin (`internal/trash/`), located via the
-    /// `internal_dir` the daemon reports in `GET /repos/:repo` (spec-trash.org).
+    /// `internal_dir` the daemon reports in `GET /repos/:repo` (doc "Trash").
     /// Pure filesystem — no daemon endpoint is involved.
     pub(crate) fn internal_dir(&self) -> Result<crate::trash::TrashDir, CliError> {
         trash_dir_of(&self.repo_info()?)
@@ -2668,9 +2668,9 @@ pub fn trash_add(ctx: &Ctx, path: &Path, force: bool) -> Result<i32, CliError> {
     let subtree = metafolder_core::trash::capture_nodes(client, &repo, &rec, &rel)
         .map_err(trash_daemon_err)?;
 
-    // Then the metadata half, then the bytes (spec-trash "What trashing does,
-    // in order"): deleting before moving is what leaves the watcher nothing to
-    // orphan when the file disappears.
+    // Then the metadata half, then the bytes (doc "What trashing does"):
+    // deleting before moving is what leaves the watcher nothing to orphan when
+    // the file disappears.
     metafolder_core::trash::delete_trashed(client, &repo, &subtree, force)
         .map_err(trash_daemon_err)?;
 
@@ -2830,7 +2830,7 @@ pub fn trash_restore(ctx: &Ctx, id: &str) -> Result<i32, CliError> {
     // *before* re-linking, so we don't re-link a metarecord to a path a refused
     // restore never fills. Re-linking happens before the move so the metarecord
     // already claims the path and the watcher sees a refresh rather than
-    // fingerprint-searching or creating a duplicate (spec-trash.org).
+    // fingerprint-searching or creating a duplicate (doc "Trash").
     dir.preflight_restore(id)?;
     let rel = root
         .and_then(|r| Path::new(&entry.original_path).strip_prefix(r).ok())

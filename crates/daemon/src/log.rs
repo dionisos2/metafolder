@@ -23,7 +23,7 @@ use crate::version;
 pub const ORIGIN_WATCHER: &str = "watcher";
 
 /// `revision.origin` for the metarecord deletion a trashing writes
-/// (spec-trash "Deleting the metarecords").
+/// (doc "POST /repos/:repo/metarecords/trash").
 ///
 /// Deliberately *not* `watcher`: a trashing is a write the user asked for and
 /// must stay undoable, and only `watcher` disqualifies a revision from being

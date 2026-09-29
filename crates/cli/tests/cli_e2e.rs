@@ -1726,7 +1726,7 @@ fn repo_trash(root: &std::path::Path) -> TrashDir {
 
 // `mf trash list/restore/prune` over the real daemon: the CLI discovers the
 // trash via `GET /repos/:repo` (internal_dir) and acts on it — no daemon
-// endpoint is involved (spec-trash.org).
+// endpoint is involved (doc "Trash").
 #[test]
 fn test_trash_list_restore_and_prune() {
     let (repo, root) = init_repo("trash");
@@ -1968,7 +1968,7 @@ fn test_trash_add_moves_a_directory() {
 }
 
 // Restoring a trashed *directory* re-links its whole subtree, not just the top
-// metarecord: every orphaned descendant is put back where it was (spec-trash),
+// metarecord: every orphaned descendant is put back where it was (doc "Trash"),
 // so no metarecord is left orphaned and no duplicate is created.
 #[test]
 fn test_trash_restore_relinks_a_directory_subtree() {
@@ -2085,7 +2085,7 @@ fn uuids_at(repo: &str, name: &str) -> Vec<String> {
     out.stdout.lines().map(str::trim).filter(|l| !l.is_empty()).map(str::to_string).collect()
 }
 
-// Regression (spec-trash "Restore"): trashing a file through the metarecord path
+// Regression (doc "What restoring does"): trashing a file through the metarecord path
 // (as the GUI's `metarecord:trash` and `mf trash -f` do) while the **live
 // watcher** is running, then restoring it, must re-link the *original*
 // metarecord — not orphan it and create a duplicate. The existing subtree tests
@@ -2221,7 +2221,7 @@ fn test_trash_restore_tolerates_an_unavailable_ancestor() {
 // Trashing a directory takes the whole subtree's metarecords with it, and
 // restoring brings every one of them back at its own uuid — the guarantee the
 // old design could not make, since it left the subtree orphaned for anything
-// sweeping orphans to destroy (spec-trash "Overview").
+// sweeping orphans to destroy (doc "Trash").
 #[test]
 fn test_trash_and_restore_a_directory_round_trips_the_whole_subtree() {
     let (repo, root) = init_repo("trashsubtree");
@@ -2266,7 +2266,7 @@ fn test_trash_and_restore_a_directory_round_trips_the_whole_subtree() {
 // A revert writes the inverse forward rather than rewinding HEAD, and nothing
 // in `delete_metarecord` says a file is involved — an ordinary one touches no
 // file at all. The revision's `origin` is what tells the client to go looking
-// in the trash-bin (spec-trash "Undo, rollback and redo").
+// in the trash-bin (doc "Trash, undo and redo").
 #[test]
 fn test_revert_of_a_trashing_brings_the_file_back() {
     let (repo, root) = init_repo("trashrevert");
@@ -2289,7 +2289,7 @@ fn test_revert_of_a_trashing_brings_the_file_back() {
 // Restoring a nested file whose parent directory was *also* trashed re-links
 // the original ancestor directory metarecords too (captured at trash time), so
 // the recreated parent directory is tracked by the original metarecord rather
-// than left orphaned for the watcher to duplicate (spec-trash "Restore").
+// than left orphaned for the watcher to duplicate (doc "What restoring does").
 #[test]
 fn test_trash_restore_relinks_ancestors_of_a_nested_file() {
     let (repo, root) = init_repo("trashancestor");
@@ -2330,7 +2330,7 @@ fn test_trash_restore_relinks_ancestors_of_a_nested_file() {
 
 // Restoring a directory whose target already exists merges the blob's contents
 // into it (a directory is a container, not data) instead of refusing — the
-// dead-end when part of a directory was restored first (spec-trash "Restore").
+// dead-end when part of a directory was restored first (doc "What restoring does").
 #[test]
 fn test_trash_restore_merges_a_directory_into_an_existing_one() {
     let (repo, root) = init_repo("trashmerge");
@@ -2462,9 +2462,9 @@ fn test_trash_add_records_the_metarecord_version() {
     assert_eq!(entry.version, Some(version), "the entry records the metarecord version");
 }
 
-// End to end: in a watched repo, `mf trash -f` produces a file_deleted; a
-// rollback then auto-restores the exact file from the trash (spec-trash
-// "rollback auto-restore").
+// End to end: in a watched repo, `mf trash -f` deletes the metarecord in a
+// revision stamped `trash`; a rollback then brings the file back from the trash
+// with it (doc "Trash, undo and redo").
 #[test]
 fn test_rollback_auto_restores_from_trash() {
     let (repo, root) = init_repo("rbrestore");
@@ -4678,7 +4678,7 @@ fn test_watch_activity_ranks_the_busy_subtree() {
     assert!(since(&reset) > before, "{}", reset.stdout);
 }
 
-// ── Undo and redo of a trashing (spec-trash "Undo, rollback and redo") ───────
+// ── Undo and redo of a trashing (doc "Trash, undo and redo") ───────
 
 /// A repository whose root is watched.
 fn watched_repo(prefix: &str) -> (String, TempDir) {
@@ -4702,7 +4702,7 @@ fn watched_repo(prefix: &str) -> (String, TempDir) {
 
 /// Redoing a trashing trashes the file again — into a *new* entry, since the
 /// undo consumed the first — rather than deleting its metarecord and leaving
-/// the file on disk, untracked (spec-trash "Redo"). And the pair composes.
+/// the file on disk, untracked (doc "Trash, undo and redo"). And the pair composes.
 #[test]
 fn test_redo_of_a_trashing_trashes_the_file_again() {
     let (repo, root) = watched_repo("redo_trash_file");

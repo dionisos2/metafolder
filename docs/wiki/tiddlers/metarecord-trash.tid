@@ -1,0 +1,9 @@
+title: metarecord:trash
+tags: [[GUI command]] Trash
+kind: reference
+summary: Send the selected metarecord's file to the trash
+
+Sends the file of the workspace's selected metarecord to the trash, its
+metarecords with it — what `mf trash -f` does — after a confirmation, since it
+hangs off a key. Nothing is forced: a reference from another metarecord is a
+refusal, shown on the status bar. See [[Sending files to the trash]].

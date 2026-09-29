@@ -1,0 +1,27 @@
+title: POST /repos/:repo/metarecords/trash
+tags: Trash
+kind: reference
+audience: dev
+summary: The trash-bin's only daemon endpoint: delete the metarecords a trashing takes, in one revision stamped trash.
+
+```
+POST /repos/:repo/metarecords/trash
+{"uuids": ["<hex>", ...], "force": false}
+→ {"deleted": N}
+```
+
+Deletes the given metarecords in a single revision stamped `origin = 'trash'`,
+each leaving its duplicate group first. The client calls it after capturing the
+metarecords and before moving the bytes ([[What trashing does]]).
+
+* `409` — a metarecord outside the set references one inside it; the message names up to ten referrers, and nothing is written. `force: true` deletes anyway.
+* `400` — the set holds the repository root, `force` or not.
+
+No cap on the number of uuids: the 2 MiB body limit already bounds a call at tens
+of thousands of them, and a trashing must be one revision — paging it would break
+the thing it is for.
+
+The reference check is served from the index's reverse maps, one bitmap lookup per
+reference-typed field name: proportional to the number of `ref`/`tree_ref`
+fields, never a scan of the values. `external_ref` and `ref_base` values are not
+in those maps and so not detected.

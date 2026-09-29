@@ -422,7 +422,7 @@ pub(super) fn action_op_json(
     // moves bytes out of the trash-bin when it is undone and back into it when
     // it is redone, an ordinary one touches no file, and the undo a revert
     // wrote of a trashing is an ordinary-looking `create_metarecord`
-    // (spec-trash "Undo, rollback and redo").
+    // (doc "Trash, undo and redo").
     value["filesystem"] = match crate::revert::nav_fs_action(conn, op, dir)? {
         None => serde_json::Value::Null,
         Some(crate::revert::FsAction::Move) => json!({"action": "move"}),

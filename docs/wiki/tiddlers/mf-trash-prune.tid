@@ -1,0 +1,6 @@
+title: mf trash prune
+tags: [[CLI command]] Trash
+kind: reference
+summary: Permanently delete trashed files (by size, age, or all)
+
+Deletes entries permanently, bytes and metarecords: [[Trash retention]].

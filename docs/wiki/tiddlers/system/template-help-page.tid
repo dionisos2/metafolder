@@ -8,11 +8,13 @@ title: $:/mf/templates/help-page
 <$list filter="[<currentTiddler>tags[]] :intersection[enlist{$:/mf/config/catalogs!!list}]" variable="catalog">
 
 <$let gen={{{ [[$:/mf/gen/]addsuffix<catalog>addsuffix[/]addsuffix<currentTiddler>] }}}>
+
 <$list filter="[<gen>is[tiddler]]" variable="_">
 
 <$transclude $tiddler=<<gen>> $mode="block"/>
 
 </$list>
+
 </$let>
 
 </$list>

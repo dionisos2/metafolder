@@ -1,4 +1,4 @@
-//! Trash-bin Tauri commands (spec-trash.org "GUI"). The filesystem layer is
+//! Trash-bin Tauri commands (doc "Trash"). The filesystem layer is
 //! shared with the CLI ([`metafolder_core::trash`]); this module is the GUI
 //! glue: it resolves the repo's `internal_dir`/`root` and a metarecord's path
 //! through the [`DaemonProxy`], then drives `TrashDir`. Like the CLI, the daemon
@@ -85,7 +85,7 @@ fn first_mfr_path(
 /// step. `uuid` is the record when the caller already knows it, otherwise the
 /// path is resolved.
 ///
-/// The order is the spec's (spec-trash "What trashing does, in order"): capture
+/// The order is the spec's (doc "What trashing does"): capture
 /// while everything is still linked, delete through the daemon, and only then
 /// move the bytes — deleting before moving is what leaves the watcher nothing
 /// to orphan when the file disappears. An untracked path has no metarecord and
@@ -160,7 +160,7 @@ fn restore_blocking(base: String, repo: String, id: String) -> Result<String, St
 
     // Validate the restore can proceed before re-linking (so we don't re-link a
     // metarecord to a path a refused restore never fills); re-link *before* the
-    // move so the metarecord already claims the path (spec-trash).
+    // move so the metarecord already claims the path (doc "Trash").
     dir.preflight_restore(&id).map_err(|e| e.0)?;
     let rel = Path::new(&entry.original_path)
         .strip_prefix(&root)
@@ -233,7 +233,7 @@ pub async fn trash_selected_metarecord(
 ///
 /// Operating on a path does not mean operating behind the repository's back: if
 /// a metarecord tracks that path it is trashed along with the bytes, exactly as
-/// deleting the record itself would (spec-trash). An untracked path has none and
+/// deleting the record itself would (doc "Trash"). An untracked path has none and
 /// only its bytes move. Returns the trashed basename.
 #[tauri::command]
 pub async fn trash_path(

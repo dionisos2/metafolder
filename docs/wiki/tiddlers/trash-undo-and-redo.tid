@@ -1,0 +1,59 @@
+title: Trash, undo and redo
+tags: Trash
+kind: reference
+summary: A trashing is an ordinary revision: undo brings the file back, redo sends it back, whichever way the log is walked.
+
+A trashing writes its own revision, stamped `origin = 'trash'`. It is not the
+watcher's (only `watcher` revisions are out of an undo's reach), so it can be
+undone like any change you made.
+
+!! Two ways back
+
+* ''Restore the entry'' (`mf trash restore`, the [[trash panel]]): the client recreates the metarecords from the capture and moves the bytes back ([[What restoring does]]).
+* ''Undo, rollback, revert'': the daemon recreates the metarecords, from the log's own inverse of the deletion; the client moves the bytes back from the trash and consumes the entry.
+
+Each side stays in its own domain — the daemon never touches a file, the client
+never recreates a metarecord behind the daemon's back — and both end the same
+way: the same metarecords at the same uuids, the bytes at the original path.
+
+The capture in the entry is not redundant with the log: the log can be pruned
+(`mf log prune`), and the trash promises durability. Once a trashing is pruned
+out of the log there is no inverse left to apply, and restoring the entry is the
+only way back.
+
+!! The daemon says what to do on disk
+
+An ordinary deletion of a metarecord touches no file, so the op type cannot tell
+the client that bytes are involved. The daemon does: every step of a navigation,
+and every operation of a revert plan, carries a `filesystem` action
+(spec-event-log "Coordinated navigation"):
+
+* `restore_content` — a metarecord a trashing took is coming back: the client finds the live entry holding it and moves its bytes back;
+* `trash_content` — it is going again (a redo): the client sends the file back to the trash as a trashing does, captured first, into a new entry.
+
+Both hold whichever way the redo goes: HEAD forward over the trashing, a rollback
+over the revert an undo wrote, or a revert of that revert (the watcher having
+written in between). Those last two are ordinary-looking creations and deletions;
+the daemon follows their `reverts_op_id` chain back to the trashing.
+
+The entry is found by the ''metarecord'' it holds, never by an id recorded on
+the operation: an undo consumes the entry and a redo makes a new one, so a
+recorded id would name an entry that no longer exists. There can never be two
+live entries for one metarecord. When none holds it — the trash was pruned — the
+metadata rewinds and the bytes stay gone, with a note saying so: a rollback is
+never blocked by content you chose to discard.
+
+A redo that sent only the metadata forward would delete the metarecords and leave
+the file on disk, where the watcher would never see it again: that was a bug
+until September 2026.
+
+The same code does this for `mf log undo`/`redo`/`rollback`/`revert` and for the
+GUI's `log:undo`, `log:redo`, `log:rollback` and `log:revert`
+(`metafolder_core::navigation`).
+
+!! A rollback that would overwrite a file
+
+When a rollback moves a file back onto a path something else now occupies, the
+occupant goes to the trash first (reason `rollback`, no metarecord captured: the
+step names the moved file, not the occupant). A ''directory'' in the way is not
+trashed: the step is skipped, the file stays where it is, and a note says so.

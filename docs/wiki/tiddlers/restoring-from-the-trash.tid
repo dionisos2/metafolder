@@ -1,0 +1,26 @@
+title: Restoring from the trash
+tags: Trash
+kind: guide
+summary: Put a trashed file back where it was, with its metarecords, from the trash panel, the command line, or an undo.
+
+There are two ways back.
+
+!! Restore the entry
+
+* In the [[trash panel]]: select the entry and press <<key "trash:restore" Enter>>.
+* From the command line: `mf trash list` to find the entry's id, then `mf trash restore <id>` (<<cmd "mf trash restore">>).
+
+The file goes back to the path it was trashed from, and its metarecords come
+back at their original uuids, with their fields ([[What restoring does]]). A
+restore never overwrites anything: if something now occupies the path, move it
+aside first. A directory is the exception — restored onto an existing directory,
+it is merged into it, as long as no file would be overwritten.
+
+!! Undo the trashing
+
+A trashing is an ordinary revision of the event log, so `mf log undo`, or
+`log:undo` in the GUI (<<key "log:undo" Ctrl+Z>>), takes it back — file included.
+A redo trashes it again. See [[Trash, undo and redo]].
+
+Restoring the entry works even after the log has been pruned; undo needs the
+trashing to still be in the log.

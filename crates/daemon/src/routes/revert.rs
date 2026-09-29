@@ -165,7 +165,7 @@ fn revert_plan_json(
         if matches!(action, Some(crate::revert::FsAction::RestoreContent)) {
             // The trash correlation key, as on a rollback step: the version the
             // record held before the whole revision, which is the only one
-            // anything outside it observed (spec-trash "rollback auto-restore").
+            // anything outside it observed (doc "Trash, undo and redo").
             if let Some(v) = op.entity_version_before {
                 entry["entity_version_before"] = json!(v);
             }

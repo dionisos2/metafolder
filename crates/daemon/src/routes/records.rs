@@ -31,8 +31,8 @@ pub(super) struct TrashDeleteBody {
 /// scan of the value columns (spec-main, the `INDEXED BY` invariant).
 ///
 /// `ExternalRef` and `RefBase` values do not populate those reverse maps, so an
-/// inbound reference of either kind is not seen. The gap is named in spec-trash
-/// "Refusing to break a reference" rather than left to be discovered.
+/// inbound reference of either kind is not seen. The gap is named in doc "What
+/// trashing does" rather than left to be discovered.
 fn inbound_referrers(
     conn: &dyn crate::store::Store,
     cache: &crate::tree_cache::TreeCache,
@@ -78,7 +78,7 @@ fn inbound_referrers(
 
 /// `POST /repos/:repo/metarecords/trash`: deletes metarecords on the
 /// trash-bin's behalf, in one revision stamped `origin = 'trash'`
-/// (spec-trash "Deleting the metarecords").
+/// (doc "POST /repos/:repo/metarecords/trash").
 ///
 /// The trash-bin's two halves have different owners: the bytes are the client's
 /// business, the data model is the daemon's, and neither reaches into the

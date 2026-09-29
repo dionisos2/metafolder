@@ -1,0 +1,9 @@
+title: mf trash restore
+tags: [[CLI command]] Trash
+kind: reference
+summary: Restore a trashed file to its original path
+
+Puts the entry back: its metarecords first, then the bytes, at the path they were
+trashed from ([[What restoring does]]). An occupied path is refused — move the
+occupant aside first — except a directory, which is merged into an existing one
+when no file would be overwritten.

@@ -1,4 +1,4 @@
-// The Delete key on a metarecord (spec-trash.org "GUI"), as the shipped
+// The Delete key on a metarecord (doc "Sending files to the trash"), as the shipped
 // `commands.js` defines it since the command left the shell builtins:
 // `metarecord:remove` deletes the metarecord either way and settles its file
 // on the way. Without a file it runs a plain `metarecord:delete`; with one,

@@ -147,7 +147,7 @@ pub fn analyse(log: &dyn Log, head: Option<i64>, requested: Vec<OpRow>) -> Resul
 
 /// The filesystem action crossing an operation requires, if any — what the
 /// client has to do on disk for the metadata to stay true (spec-event-log
-/// "Coordinated navigation", spec-trash "Undo, rollback and redo").
+/// "Coordinated navigation", doc "Trash, undo and redo").
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum FsAction {
     /// `mfr_path` moves: the file has to move with it.
@@ -365,7 +365,7 @@ mod tests {
     // the *bytes* back too — they are sitting in the trash-bin, and only the
     // client can move them — and redoing it has to send them back. Nothing in
     // the op type says so: an ordinary `delete_metarecord` touches no file at
-    // all (spec-trash "Undo, rollback and redo").
+    // all (doc "Trash, undo and redo").
     #[test]
     fn a_trashing_s_deletion_moves_the_bytes_with_the_metarecord() {
         let deletion = op("delete_metarecord", Some("trash"));

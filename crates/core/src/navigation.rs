@@ -74,7 +74,7 @@ pub trait NavigationUi {
 }
 
 /// A repository, as a navigation needs it: the daemon, and the trash-bin the
-/// daemon reports (`internal_dir`, spec-trash).
+/// daemon reports (`internal_dir`, doc "Trash").
 pub struct Repo<'a> {
     pub client: &'a dyn DaemonClient,
     /// The repository uuid (hex).
@@ -191,7 +191,7 @@ pub fn rollback(
     }
 
     // The trash-bin catches any file a `move` step would overwrite, so no byte
-    // is ever lost by rollback (spec-trash). Its entries also let us point out
+    // is ever lost by rollback (doc "Trash"). Its entries also let us point out
     // content that a deletion step "lost" but that is in fact recoverable.
     let mut entries = repo.trash.entries().unwrap_or_default();
     // Metarecords whose content a directory blob has already brought back this
@@ -290,7 +290,7 @@ pub fn decide_move(
                     return Ok(true);
                 }
                 // If `to` is occupied by a file, the mv would overwrite it —
-                // trash the occupant first so its content survives (spec-trash).
+                // trash the occupant first so its content survives (doc "Trash").
                 // The occupant's own metarecord is unknown here (the op's
                 // entity_uuid names the *moved* record, not this file), so the
                 // entry records only the causing revision, not a metarecord.
@@ -321,9 +321,8 @@ pub fn decide_move(
     }
 }
 
-/// Decides a step whose content lives in the trash-bin (spec-trash "Undo,
-/// rollback and redo"). When the trash holds it, the file is put back and
-/// `false` (no skip) is returned so the daemon applies the real inverse;
+/// Decides a step whose content lives in the trash-bin (doc "Trash, undo and
+/// redo"). When the trash holds it, the file is put back and `false` (no skip) is returned so the daemon applies the real inverse;
 /// otherwise the step is skipped (metadata rewinds) and, if some content for
 /// the record is trashed, a recovery hint is noted.
 ///
@@ -415,7 +414,7 @@ fn path_of(repo: &Repo<'_>, uuid: &str) -> Result<Option<String>, NavError> {
 /// Performs a `trash_content` step: a metarecord a trashing took is going
 /// again, so its file goes back into the trash-bin, as a trashing does it —
 /// captured first (the metarecord, its subtree and its ancestors, with their
-/// fields, spec-trash "What trashing does, in order"), into a *new* entry, the
+/// fields, doc "What trashing does"), into a *new* entry, the
 /// undo having consumed the old one. Runs before the daemon deletes the
 /// metarecord, while there is still something to read; the watcher is held
 /// for the whole navigation, so the file's disappearance orphans nothing.
@@ -463,7 +462,7 @@ fn retrash(
 /// If the trash holds content for `metarecord` (e.g. a prior `mf trash -f`),
 /// the hint to show when its step is skipped — bridging the log's "content
 /// gone" assumption with the bytes that actually survive in the trash
-/// (spec-trash). `None` when nothing matches.
+/// (doc "Trash"). `None` when nothing matches.
 pub fn trash_recovery_hint(entries: &[TrashEntry], metarecord: &str) -> Option<String> {
     if metarecord.is_empty() {
         return None;
@@ -784,7 +783,7 @@ mod tests {
     }
 
     // `apply` when the destination is occupied trashes the occupant first, so
-    // its content survives the overwrite (spec-trash).
+    // its content survives the overwrite (doc "Trash").
     #[test]
     fn apply_trashes_an_occupied_destination() {
         let tmp = scratch("occupied");

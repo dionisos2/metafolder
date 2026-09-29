@@ -1,4 +1,4 @@
-//! The repository trash-bin (spec-trash.org) — CLI surface.
+//! The repository trash-bin (doc "Trash") — CLI surface.
 //!
 //! The filesystem layer (`TrashDir` and friends) lives in
 //! [`metafolder_core::trash`], shared with the GUI. This module re-exports it

@@ -1,0 +1,33 @@
+title: Why the trash owns the metarecord
+tags: Trash
+kind: rationale
+audience: dev
+summary: A metarecord dies with its bytes, never before — why the trash captures and deletes it, and what that design got wrong at first.
+
+Until September 2026 a trashing left the metarecord behind, orphaned
+(`mfr_path = Nothing`), for the watcher to record. Two things were wrong with it:
+
+* the orphan polluted every query, count and listing for as long as the entry lived;
+* orphan cleanup (`mf orphan detect`, `orphan:delete`), presented as safe, destroyed it — while the bytes were still in the trash, recoverable.
+
+The metadata was the one part of the trash's promise it did not keep. So the
+invariant became: ''a metarecord dies with its bytes, never before.'' Pruning is
+the single point of destruction, and "orphan" recovers its strict meaning: a file
+that went away without being asked to.
+
+!! Who does what
+
+The bytes are the client's business, the data model is the daemon's, and neither
+reaches into the other's. Hence one daemon endpoint, and one only:
+[[POST /repos/:repo/metarecords/trash]], which deletes the metarecords. The
+revision's origin is fixed by ''which endpoint was called'', never by a
+parameter: a client that could name its own origin could pass its writes off as
+the daemon's and put them out of an undo's reach.
+
+!! What the implementation corrected
+
+Three decisions of the first design turned out wrong once implemented:
+
+# ''`trashed` governs deletion, not restoration.'' The design said captured ancestors are never recreated. But when the parent directory is trashed after the file, recreating that ancestor is what lets the file find its chain again: a restore recreates every captured node the repository no longer holds.
+# ''A forest refusal at recreation is not fatal.'' A parent no longer alive, a position taken: skip that node; the bytes come back regardless. (And skip that node only: the daemon refuses a whole batch for one node, so a refused batch is retried node by node.)
+# ''The revision's origin has to travel with each operation.'' Only the origin separates a trashing's deletion from an ordinary one, so the log rows carry it (`revision_origin` on the wire — `origin` was already taken, in the revert plan, for requested versus dependent).

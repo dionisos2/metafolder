@@ -170,12 +170,6 @@
     ]
   },
   {
-    "id": "trash",
-    "title": "Trash panel",
-    "file": "trash.html",
-    "aliases": ["trash", "trash-bin", "delete", "restore", "empty"]
-  },
-  {
     "id": "sync",
     "title": "Sync panel",
     "file": "sync.html",

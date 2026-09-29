@@ -18,7 +18,7 @@ is written rather than reported.
 
 Nothing here deletes or moves a file. The scan is purely a metadata operation;
 disposing of a duplicate is the user's act, through the ordinary file tools
-(=mf trash -f=, the GUI's trash action — [[file:spec-trash.org][spec-trash.org]]).
+(=mf trash -f=, the GUI's trash action — doc "Trash").
 
 * Concepts
 

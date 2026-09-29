@@ -1,0 +1,38 @@
+title: Trash
+kind: overview
+aliases: trash-bin delete
+summary: A per-repository bin: trashing a file sets its bytes aside and takes its metarecords with them, until you restore or prune it.
+
+Every metafolder operation that would delete or overwrite a file goes through the
+repository's trash-bin instead: deleting a tracked file by hand, a rollback that
+would overwrite a file, a sync (spec-sync). No byte is lost by accident: you
+decide later whether to bring it back or to discard it.
+
+A trashing takes the ''metarecord'' with the bytes — and for a directory, every
+metarecord under it. They leave the repository (queries, counts and listings no
+longer see them) and live in the trash entry until it is restored, which puts
+them back at their original uuids, or pruned, which is where both die. The trash
+is filesystem state managed by the clients (`mf` and the GUI); the daemon only
+deletes the metarecords, through one endpoint.
+
+!! Use it
+
+<<list-kind guide>>
+
+!! Reference
+
+<<list-kind reference>>
+
+!! Why it works this way
+
+<<list-kind rationale>>
+
+!! Commands
+
+<<tagged-with "CLI command">>
+
+<<tagged-with "GUI command">>
+
+!! In the GUI
+
+<<tagged-with "Panel">>

@@ -211,7 +211,7 @@ path, so a deletion taking it leaves a repository nothing resolves in
 metarecord gets a fresh uuid while the whole forest keeps naming the deleted
 one. Deleting it — =DELETE /repos/:repo_uuid/metarecords/:uuid=,
 =POST /repos/:repo_uuid/query/delete=, or the trashing endpoint
-([[file:spec-trash.org][spec-trash.org]] "Deleting the metarecords") — is therefore rejected with =400=,
+(doc "POST /repos/:repo/metarecords/trash") — is therefore rejected with =400=,
 children or not. Recovery for a root deleted before this check existed is a
 rollback or a revert of the deletion, which puts it back at its own uuid.
 

@@ -24,7 +24,7 @@
 // `metarecord-list:folder`, the orphan cleanup `orphan:delete` /
 // `orphan:detect-delete`, and the picks `repos:switch` / `recent` are defined
 // here rather than compiled into the shell exactly so their questions, and the
-// actions their answers run, stay editable (spec-trash.org "GUI", spec-gui.org
+// actions their answers run, stay editable (doc "Sending files to the trash", spec-gui.org
 // "Cross-panel selection" / "Orphans" / "Command names").
 //
 // A syntax error in this file stops the GUI from starting, with the error on
@@ -207,7 +207,7 @@ function recentLine(rec, relPath, uuid = rec?.uuid) {
 }
 
 export default {
-  // The Delete key on a metarecord (spec-trash.org "GUI"): the record goes
+  // The Delete key on a metarecord (doc "Sending files to the trash"): the record goes
   // either way, so what is asked about is its file. Without one this is a
   // plain `metarecord:delete`; with one the question names the two canonical
   // actions and runs the picked one — OK trashes the file, the metarecord

@@ -1,0 +1,10 @@
+title: metarecord:remove
+tags: [[GUI command]] Trash
+kind: reference
+summary: Remove the selected metarecord (its file: trash it, or keep it)
+
+The `Delete` key of the metarecord panels. A metarecord without a file is
+deleted (<<cmd "metarecord:delete">>). One with a file asks first: OK sends the
+file to the trash with its metarecord, Cancel keeps the file and deletes the
+metarecord alone. Defined in the shipped `commands.js`, so its question and its
+answers are yours to reshape. See [[Sending files to the trash]].

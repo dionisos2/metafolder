@@ -2105,7 +2105,7 @@ export async function mount(root, metafolder) {
 
   // Right-click menu: operations on the displayed metarecord (`current`). Copy
   // is side-effect-free; the mutating commands read `selected_metarecord`
-  // (which is `current`) and confirm before acting (spec-trash.org).
+  // (which is `current`) and confirm before acting (doc "Trash").
   metafolder.contextMenu.addDefaultItems(() => {
     const record = current;
     if (!record) return [];

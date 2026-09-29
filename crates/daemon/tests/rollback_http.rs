@@ -176,7 +176,7 @@ async fn finish_nav(app: &Router, repo: &str) {
 
 /// A trashing's bytes are in the trash-bin, so crossing it is a file action —
 /// and which one depends on the direction: undoing it brings the bytes back,
-/// redoing it sends them back (spec-trash "Undo, rollback and redo"). The
+/// redoing it sends them back (doc "Trash, undo and redo"). The
 /// daemon says so on the step; the op type alone cannot.
 #[tokio::test]
 async fn test_a_trashing_step_names_its_filesystem_action() {
@@ -249,7 +249,7 @@ async fn test_start_step_undoes_last_revision() {
     assert_eq!(body["op"]["op_type"], "set_field", "{body}");
     // Inverse steps carry the metarecord version this step restores to, so the
     // CLI can correlate a trashed file with the exact deletion it undoes
-    // (spec-trash "rollback auto-restore").
+    // (doc "Trash, undo and redo").
     assert!(body["op"]["entity_version_before"].is_u64(), "{body}");
 
     let (status, body) =
@@ -383,7 +383,7 @@ async fn test_navigation_restores_a_subtree_deleted_in_one_revision() {
 // `mfr_path_old`), so each operation restores to its own version.
 // `entity_version_before_revision` is the record's version before the *whole*
 // revision — the version an external side-effect recorded when it last observed
-// the record (a trash entry's version, spec-trash "rollback auto-restore") —
+// the record (a trash entry's version, doc "Trash, undo and redo") —
 // and is identical on every operation of the revision.
 #[tokio::test]
 async fn test_inverse_step_exposes_the_pre_revision_version() {

@@ -1,0 +1,8 @@
+title: mf trash list
+tags: [[CLI command]] Trash
+kind: reference
+summary: List the trashed files (id, size, age, reason, original path)
+
+One row per entry, newest first: the entry id (what `mf trash restore` takes),
+the size, the age, the reason (`manual`, `rollback`, `sync`) and the path it was
+trashed from — a trailing `/` marks a directory.

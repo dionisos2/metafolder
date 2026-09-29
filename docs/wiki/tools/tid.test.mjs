@@ -221,6 +221,17 @@ describe('checkWiki', () => {
     );
   });
 
+  test('a key hint names a command the GUI has', () => {
+    const out = errors([
+      hand('K', { tags: '[[GUI command]]' }, '<<key "trash:restore" Enter>> <<key "panel:set type trash">> <<key "no:such">>'),
+      gen('GUI command', 'K'),
+      gen('GUI command', 'trash:restore'),
+      gen('GUI command', 'panel:set'),
+    ]).join('\n');
+    assert.match(out, /K: key hint for unknown command "no:such"/);
+    assert.doesNotMatch(out, /trash:restore|panel:set/);
+  });
+
   test('code citations must name an existing note', () => {
     const out = errors([], [{ file: 'crates/x.rs', line: 3, title: 'Nope' }]).join('\n');
     assert.match(out, /crates\/x\.rs:3: doc "Nope"/);

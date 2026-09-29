@@ -81,7 +81,7 @@ Built-in panel types:
 | =log-detail=     | What the revision or operation selected in =log= changed, field by field; follows =selected_log_entry= |
 | =repos=          | Repository list, init, load, unload, per-repo running tasks, tracking notices |
 | =treeref=        | TreeRef forest explorer; pick a TreeRef field, navigate roots→leaves |
-| =trash=          | Repository trash-bin: list, restore, delete, empty (see [[file:spec-trash.org][spec-trash.org]] "GUI") |
+| =trash=          | Repository trash-bin: list, restore, delete, empty (see doc "Sending files to the trash") |
 | =duplicates=     | Groups of byte-identical files, worst reclaimable space first (see [[file:spec-duplicates.org][spec-duplicates.org]] "GUI") |
 | =recent=         | The metarecords most recently viewed in this GUI, newest first; the =recent= picker's panel form |
 | =sync=           | Cross-repo sync: status, plan, show, run (see [[file:spec-sync.org][spec-sync.org]]) |
@@ -1359,8 +1359,8 @@ Behaviours:
 | =orphan:detect-delete= | =orphan:detect= then =orphan:delete=, one confirmation between the two — the convenience form for "find the records whose file is gone and be rid of them" |
 | =mf:order= | Number the selected folder's direct children (=order_file= / =order_dir=) and mark the folder =order_numbered= — the GUI half of =mf order=; no prompt: the selected folder, or the selected file's folder (default =m o=) — see [[*Order a folder's children]] |
 | =script:run [name]=  | Run an installed helper script — completes over the scripts in =~/.config/metafolder/scripts/=, the description taken from each script's =# Summary:= header; the chosen script runs as a subprocess (output in the =message= panel) — see [[file:spec-config.org][spec-config.org]] "Shipped scripts" |
-| =metarecord:remove=   | Remove the selected metarecord (confirmed; default =delete=). Without a file this is a plain =metarecord:delete=; with one, the question settles the file: =OK= trashes it — and the metarecord with it, =metarecord:trash='s action, the question doubling as its confirmation — =Cancel= keeps it and deletes the metarecord alone (=metarecord:delete= confirms) — see [[file:spec-trash.org][spec-trash.org]] "GUI" |
-| =metarecord:trash=   | Send the selected metarecord's file to the trash (confirmed; default =ctrl+delete=) — see [[file:spec-trash.org][spec-trash.org]] "GUI" |
+| =metarecord:remove=   | Remove the selected metarecord (confirmed; default =delete=). Without a file this is a plain =metarecord:delete=; with one, the question settles the file: =OK= trashes it — and the metarecord with it, =metarecord:trash='s action, the question doubling as its confirmation — =Cancel= keeps it and deletes the metarecord alone (=metarecord:delete= confirms) — see doc "Sending files to the trash" |
+| =metarecord:trash=   | Send the selected metarecord's file to the trash (confirmed; default =ctrl+delete=) — see doc "Sending files to the trash" |
 | =file:open-with [program]= | Open the selected file or folder with an external program (default =g w=) — see [[*Opening a file with another program]] |
 | =ignore:list=        | Show the installed ignore presets and the target's active patterns in the =message= panel — see [[*Ignore patterns]] |
 | =ignore:add <preset>= | Append an ignore preset's patterns to the target directory (completes over the installed presets) |
@@ -1905,7 +1905,7 @@ but never silently replace part of it.
 
 That rule guards against *silent* replacement, not against shipped commands
 living here: =metarecord:remove= (the =Delete= key on a metarecord, see
-[[file:spec-trash.org][spec-trash.org]] "GUI"), =file-manager:reveal= and
+doc "Sending files to the trash"), =file-manager:reveal= and
 =metarecord-list:folder= (see [[*Cross-panel selection]]), =orphan:delete= /
 =orphan:detect-delete= (see [[*Orphans]]), and =repos:switch= / =recent= (the
 repository pick and the recently-viewed pick, =g o= / =g r=) are shipped
@@ -3003,7 +3003,7 @@ collide are de-duplicated with a " copy" suffix ("=foo copy.txt=",
 paste in another (even a different workspace); a cut is cleared once pasted.
 Pasting a directory into itself or a descendant is refused. *Delete* is
 restorable when a repository is active — the entry (tracked or not) is sent to
-the repo trash ([[file:spec-trash.org][spec-trash.org]]) as a manual entry, restorable from the trash
+the repo trash (doc "Trash") as a manual entry, restorable from the trash
 panel; browsing the raw disk with no active repo, it is a permanent removal.
 Both are confirmed.
 
@@ -3033,7 +3033,7 @@ space in the listing offers just =New folder…= / =New file…= / =Paste=.
 | =file-manager:copy=       | Copy the selected entry to the shared clipboard (=Ctrl+C=) |
 | =file-manager:cut=        | Cut the selected entry to the shared clipboard (=Ctrl+X=) |
 | =file-manager:paste=      | Paste the clipboard into the current directory (=Ctrl+V=; copy or move) |
-| =file-manager:delete=     | Delete the selected entry (=Delete=): to the repo trash when a repo is active, else permanently; confirmed. A *tracked* entry has its metarecords captured and deleted like any other trashing (spec-trash "What trashing does, in order") — the GUI is the path most deletions take, and must not be the one that still leaves orphans |
+| =file-manager:delete=     | Delete the selected entry (=Delete=): to the repo trash when a repo is active, else permanently; confirmed. A *tracked* entry has its metarecords captured and deleted like any other trashing (doc "What trashing does") — the GUI is the path most deletions take, and must not be the one that still leaves orphans |
 | =file-manager:find=       | Move the cursor onto an entry of the current directory (=f=), its name collected in the command input — the shared list-panel find, see [[*Find an entry]]. Only the displayed directory is searched (hidden entries only when they are shown), and a directory is selected, not entered. |
 | =file-manager:select=     | Change the checked multi-selection (=toggle= / =all= / =none=): check/uncheck the highlighted entry's metarecord (=toggle=; an untracked entry has none and says so), check every tracked entry of the directory on top of what is already checked (=all=), or empty the selection (=none=) — the workspace-wide set shared with =metarecord-list=, see [[*The checked selection]] |
 
@@ -3655,7 +3655,7 @@ may change). Commands: =log-detail:toggle whole|unchanged=,
   =POST /rollback= when no step has a =filesystem= action, otherwise
   =start=/=step= (or the coordinated revert), moving a file, bringing content
   back from the trash-bin, or sending it back there (a trashing redone,
-  spec-trash "Redo"). It runs on a blocking thread through the Tauri commands
+  doc "Trash, undo and redo"). It runs on a blocking thread through the Tauri commands
   =log_rollback=, =log_revert= (and =log_navigate= for undo/redo), and asks
   nothing while the repository is locked: every confirmation comes *before*
   the lock is taken, and a move applies whether or not the file is where the

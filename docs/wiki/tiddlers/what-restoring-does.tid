@@ -1,0 +1,31 @@
+title: What restoring does
+tags: Trash
+kind: reference
+summary: Recreate the metarecords, re-link what survived, then move the bytes back — the mirror of a trashing.
+
+Restoring an entry is the inverse of [[What trashing does]], in the mirror order:
+metadata first, bytes second.
+
+# ''Recreate'' every captured metarecord the repository no longer holds — ancestors included — at its original uuid, with its captured fields, parent before child (the forest refuses a `tree_ref` whose parent does not exist yet). Nothing carries a version: a version is a hash of the content, so a metarecord recreated with its fields ''is'' at the version it had. A recreation the forest refuses — its parent is gone, or its position has been taken since — is skipped: that node only, the others still come back, and the bytes come back regardless.
+# ''Re-link'' what survived: a captured metarecord still in the repository but orphaned gets its `mfr_path` back.
+# ''Move the blob back'' to the path it was trashed from, and drop the entry.
+
+The target is checked first: an occupied path is refused before anything is
+written, except a directory restored onto an existing directory, which is merged
+(what the target lacks is moved in, shared subdirectories merge in turn, and a
+file that would be overwritten refuses the whole restore up front).
+
+The order is what makes it reliable: the metarecords are in place before the file
+arrives, so the watcher sees a tracked path and refreshes it. Otherwise it would
+look for an orphan to re-home the file by fingerprint, fail (a freshly tracked
+file has no full hash yet), and create a duplicate.
+
+Why the ancestors are recreated too: when the parent directory was itself
+trashed after the file, recreating it is exactly what lets the file hang from its
+chain again. The capture's `trashed` flag says what a trashing deletes, not what
+a restore puts back.
+
+!! Edge cases
+
+* A buffered deletion of the same path, not yet flushed by the watcher when the file comes back, is recognised as an undone deletion and skipped: a fast delete-then-recreate at one path collapses to a refresh (spec-file-tracking "Event batching").
+* An entry captured before the metarecords were captured with their fields (September 2026) restores as it used to: it re-links what still exists and leaves the rest to the watcher.

@@ -246,6 +246,20 @@ export function checkWiki(tiddlers, codeRefs) {
     }
   }
 
+  // Key hints: the help panel fills `<<key "command">>` from the live table,
+  // so a command the GUI does not have would read "unbound" forever.
+  const guiCommands = new Set(
+    generated.filter((g) => g.fields.catalog === 'GUI command').map((g) => g.fields.target),
+  );
+  for (const t of hand) {
+    for (const m of stripCode(t.text).matchAll(/<<key\s+"([^"]+)"/g)) {
+      const name = m[1].split(/\s+/)[0];
+      if (!guiCommands.has(name)) {
+        errors.push(`${t.fields.title}: key hint for unknown command "${name}"`);
+      }
+    }
+  }
+
   for (const ref of codeRefs) {
     if (!byTitle.has(ref.title)) errors.push(`${ref.file}:${ref.line}: doc "${ref.title}" names no note`);
   }

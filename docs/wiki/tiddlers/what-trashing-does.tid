@@ -1,0 +1,31 @@
+title: What trashing does
+tags: Trash
+kind: reference
+summary: Capture the metarecords, delete them in one revision, then move the bytes — in that order, and why.
+
+Trashing is three steps, and their order is not free.
+
+# ''Capture.'' The client reads the target metarecord, walks ''up'' to record its ancestors, and ''down'' the `mfr_path` forest to record every descendant — each with all its fields — through the daemon's ordinary read endpoints, before anything is touched. Once the metarecords are gone there is nothing left to read.
+# ''Delete the metarecords'' — the target and its descendants, never the ancestors (the parent directories stay) — in one revision, through [[POST /repos/:repo/metarecords/trash]].
+# ''Move the bytes'' into the trash directory ([[Trash on-disk layout]]): a rename, or a copy then delete when the trash is on another filesystem than the file (an external `.metafolder`), which carries the modification time over. A file, a symlink (the link itself, not its target) or a whole directory can be trashed.
+
+Deleting before moving is what keeps the watcher out of it: when the file
+disappears, the watcher looks its path up, finds no metarecord there any more,
+and has nothing to orphan. The other order would orphan the metarecords in the
+gap between the two steps.
+
+A trashing is ''one revision'', so it is one thing to undo
+([[Trash, undo and redo]]). It holds whether or not the path is watched: an
+unwatched file loses its metarecord too, instead of keeping one that points at
+nothing.
+
+!! What refuses a trashing
+
+* ''A reference from outside.'' When a metarecord ''outside'' the trashed set points at one inside it (a `ref` or `tree_ref` value), deleting it would leave the reference dangling: the daemon refuses and names the referrers, and nothing is written. `mf trash -f --force` overrides it; the GUI does not. References ''inside'' the set do not count: they travel with it and come back together.
+* ''The repository root'', always, `--force` or not — and since the metadata goes first, before a single byte has moved.
+
+An inbound `external_ref` or `ref_base` value is not detected: those do not feed
+the reverse maps the check reads. The gap is accepted, and named here.
+
+Each deleted metarecord also leaves its duplicate group, as an orphaned one does
+(spec-duplicates "Leaving a group").

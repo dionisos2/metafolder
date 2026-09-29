@@ -1,4 +1,4 @@
-// trash panel: manage the repository trash-bin (spec-trash.org "GUI") —
+// trash panel: manage the repository trash-bin (doc "trash panel") —
 // list, restore, permanently delete one entry, or empty the whole trash.
 // Filesystem operations go through metafolder.trash (shared with the CLI,
 // no daemon endpoint).

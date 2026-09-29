@@ -1,0 +1,11 @@
+title: mf trash
+tags: [[CLI command]] Trash
+kind: reference
+summary: Trash-bin: safely trash a file, or restore/prune (default: list)
+
+The repository's trash-bin ([[Trash]]). Alone, `mf trash` is `mf trash list`.
+
+`mf trash -f <path>` (`--file`) trashes a tracked file or directory:
+[[Sending files to the trash]]. It cannot be combined with a subcommand.
+`--force` trashes even when another metarecord references one of those being
+trashed; without it the refusal names the referrers and nothing is touched.

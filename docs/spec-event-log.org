@@ -50,7 +50,7 @@ A revision records /who asked for it/. =revision.origin= is:
   watcher's flush and the restoration replay that follows a skipped navigation
   step;
 - =trash= for the metarecord deletion a trashing writes
-  ([[file:spec-trash.org][spec-trash.org]] "Deleting the metarecords");
+  (doc "POST /repos/:repo/metarecords/trash");
 - =NULL= for every other write a client requested.
 
 The origin is set by the daemon, from *which endpoint was called* — never from a
@@ -608,7 +608,7 @@ Four op types require attention at rollback time:
   the CLI calls =step= with =skip: true=. If the destination path is
   occupied, the =mv= would overwrite it — the CLI first moves that file to
   the trash-bin (file content is never destroyed by rollback, as by sync; see
-  [[file:spec-trash.org][spec-trash.org]] for the layout, the manifest, and
+  doc "Trash" for the layout, the manifest, and
   =mf trash restore=/=prune=).
 - =file_deleted=, =file_modified=: the content is gone *unless the change
   passed through the trash-bin*. On an inverse (rollback) step, the CLI looks
@@ -619,10 +619,10 @@ Four op types require attention at rollback time:
   exact deleted content. Otherwise the content is truly gone: the CLI calls
   =step {"skip": true}= (metadata rewinds) and, if some other content for the
   record is trashed, prints a =mf trash restore= hint. See
-  [[file:spec-trash.org][spec-trash.org]] "rollback auto-restore".
+  doc "Trash, undo and redo".
 - =delete_metarecord=, in a revision stamped =origin = 'trash'=: the metarecord
   was not merely deleted, it was *trashed*, and its bytes are in the trash-bin
-  (see [[file:spec-trash.org][spec-trash.org]] "Undo, rollback and redo"). The
+  (see doc "Trash, undo and redo"). The
   inverse recreates the metarecord from the operation's own snapshots — the
   daemon's half — while the CLI moves the file back out of the trash and consumes
   the entry. The entry is found by *the metarecord it holds*, not by an id
@@ -846,7 +846,7 @@ cannot be ingested as a genuine rename before the metadata explaining it is
 written. Without it, the watcher would resolve the moved file's old path to
 nothing, treat the arrival as a new file, and leave a duplicate metarecord at
 the destination — the same race a trash restore once lost a file to (see
-[[file:spec-trash.org][spec-trash.org]]). It also freezes HEAD, which is what
+doc "Trash"). It also freezes HEAD, which is what
 lets the dependency check taken at =start= still hold at =commit=.
 
 One shape deserves naming, because a revert makes it more common than it is
@@ -1460,7 +1460,7 @@ trashing's =delete_metarecord= is known by its revision's =origin = 'trash'=,
 but the undo of one that was a *revert* is an ordinary-looking
 =create_metarecord=, and the redo of that an ordinary =delete_metarecord=; the
 daemon follows their =reverts_op_id= chain back to the trashing
-(spec-trash "Undo, rollback and redo").
+(doc "Trash, undo and redo").
 
 When =op= is =null=, HEAD has reached the target. The lock is automatically
 released and the watcher buffer is replayed.
@@ -1535,7 +1535,7 @@ and =with_dependents=, with the semantics above.
   meaning the content has to come back from the trash-bin, or
   ={"action": "trash_content"}=, meaning a metarecord a trashing took is going
   again and its bytes have to go back to the trash-bin (the revert of an undo
-  that was itself a revert: spec-trash "Redo"). The daemon does not look:
+  that was itself a revert: doc "Trash, undo and redo"). The daemon does not look:
   whether the content is there is the client's question to answer.
   =requires_lock= is true when any operation has an action, and is the client's
   signal to use the coordinated form.
@@ -1895,7 +1895,7 @@ unusual but never forbidden):
   path rather than =Nothing= (a later reconcile corrects it). If =to= is
   occupied by a file, the =mv= would overwrite it — the CLI first moves that
   file to the trash-bin (=reason=rollback=), so no byte is ever lost (see
-  [[file:spec-trash.org][spec-trash.org]]; recover it with =mf trash restore=). If =to= is occupied by a
+  doc "Trash"; recover it with =mf trash restore=). If =to= is occupied by a
   *directory*, the CLI skips just this step (=step {"skip": true}=) with a
   warning rather than aborting: trashing a whole directory (and displacing all
   its tracked children) to make room for one file is too destructive to do

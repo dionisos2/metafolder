@@ -20,11 +20,27 @@ tags: $:/tags/Global
 \procedure list-kind(kind)
 <ul>
 
-<$list filter="[tag<currentTiddler>field:kind<kind>sort[]]">
+<$list filter="[tag<currentTiddler>field:kind<kind>sort[]] -[enlist{$:/mf/config/catalogs!!list}tagging[]]">
 
 <li>
 
-<$link/> — <$view field="summary"/>
+<$link/><$text text=" — "/><$view field="summary"/>
+
+</li>
+
+</$list>
+
+</ul>
+\end
+
+\procedure tagged-with(tag)
+<ul>
+
+<$list filter="[tag<currentTiddler>tag<tag>sort[]]">
+
+<li>
+
+<$link/><$text text=" — "/><$view field="summary"/>
 
 </li>
 
@@ -50,7 +66,7 @@ tags: $:/tags/Global
 
 <li>
 
-<$link/> — <$view field="summary"/>
+<$link/><$text text=" — "/><$view field="summary"/>
 
 </li>
 
@@ -91,7 +107,10 @@ The project's procedures, usable from every note (docs/doc-wiki-proposal.md,
 * `<<cmd "name">>` — a link to a command's note, in code form.
 * `<<live name>>` — a zone the help panel fills at display (`grammar`: the
   current simplified-query grammar). A block: put it on a line of its own.
-* `<<list-kind kind>>` — the notes tagged with this one, of one kind.
+* `<<list-kind kind>>` — the notes tagged with this one, of one kind (catalog
+  notes left out: list those with `tagged-with`).
+* `<<tagged-with "tag">>` — the notes tagged with this one *and* with `tag`
+  (a topic's commands: `<<tagged-with "CLI command">>`).
 * `<<topic-full>>` — every note tagged with this one, in full.
 * `<<catalog "tag">>` — a catalog's notes, then what the code has and the wiki
   does not document yet.

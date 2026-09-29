@@ -358,7 +358,7 @@ declare namespace Metafolder {
     remove(path: string): Promise<void>;
   }
 
-  /** One entry in a repository's trash-bin (spec-trash.org). */
+  /** One entry in a repository's trash-bin (doc "Trash"). */
   interface TrashEntry {
     id: string;
     original_path: string;
@@ -372,7 +372,7 @@ declare namespace Metafolder {
     version?: number | null;
   }
 
-  /** Repository trash-bin (spec-trash.org): filesystem operations shared with
+  /** Repository trash-bin (doc "Trash"): filesystem operations shared with
    *  the CLI, driven through the trash Tauri commands. No daemon endpoint. */
   interface Trash {
     list(repo: string): Promise<TrashEntry[]>;
@@ -384,7 +384,7 @@ declare namespace Metafolder {
     empty(repo: string): Promise<number>;
     /** Sends a raw filesystem path to the trash and returns the trashed
      *  basename. A *tracked* path loses its metarecords on the way (captured
-     *  and deleted before the bytes move, spec-trash.org) — the file-manager
+     *  and deleted before the bytes move, doc "Trash") — the file-manager
      *  panel's delete, and `metarecord:remove`'s OK. */
     trashPath(repo: string, path: string): Promise<string>;
   }

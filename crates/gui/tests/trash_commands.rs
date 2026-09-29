@@ -1,4 +1,4 @@
-//! The GUI's trashing (spec-trash "What trashing does, in order"): the
+//! The GUI's trashing (doc "What trashing does"): the
 //! file-manager's delete operates on a raw filesystem path, but a path the
 //! repository tracks still has to take its metarecords with it — otherwise the
 //! file vanishes, the watcher finds a metarecord pointing at nothing, and the

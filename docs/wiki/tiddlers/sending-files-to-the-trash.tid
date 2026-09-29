@@ -1,0 +1,42 @@
+title: Sending files to the trash
+tags: Trash
+kind: guide
+summary: Trash a tracked file or directory from the command line, a metarecord panel or the file manager.
+
+!! From the command line
+
+```
+mf trash -f <path>
+```
+
+<<cmd "mf trash">> `-f` trashes a ''tracked'' file or directory — a safe delete. It
+refuses, before touching anything, when the daemon is not running or when the
+path has no metarecord: an untracked file is not the trash's business. A
+directory goes whole, with every metarecord under it.
+
+When another metarecord still points at one of those being trashed (a `ref` or
+`tree_ref` field), the trashing is refused and the referrers are named; add
+`--force` to trash anyway and leave those references dangling.
+
+!! From a metarecord panel
+
+In the `metarecord-list`, `metarecord-detail` and `treeref` panels,
+on the selected metarecord:
+
+* <<key "metarecord:remove" Delete>> — <<cmd "metarecord:remove">>: if the metarecord has a file, asks whether to trash it (OK) or keep it and delete the metarecord alone (Cancel); without a file, deletes the metarecord.
+* <<key "metarecord:trash" Ctrl+Delete>> — <<cmd "metarecord:trash">>: trashes the file at once (confirmed).
+* <<key "metarecord:delete" Shift+Delete>> — <<cmd "metarecord:delete">>: deletes the metarecord and keeps the file.
+
+The metarecord panels also offer ''Move to trash'' in their context menu.
+
+!! From the file manager
+
+In the `file-manager` panel, deleting the highlighted entry sends it to the
+repository's trash when a repository is active (its metarecords go with it if it
+is tracked, the bytes alone if it is not); with no active repository the removal
+is permanent. Both are confirmed.
+
+The GUI never forces a trashing past a reference: the refusal is shown, and
+`mf trash -f --force` is the way through.
+
+Then: [[Restoring from the trash]], or [[Trash retention]].

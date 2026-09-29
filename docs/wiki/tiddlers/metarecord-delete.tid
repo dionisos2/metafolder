@@ -1,0 +1,7 @@
+title: metarecord:delete
+tags: [[GUI command]] Trash
+kind: reference
+summary: Delete the selected metarecord
+
+Deletes the selected metarecord and keeps its file (confirmed). The file, if
+watched, is then untracked until something tracks it again.

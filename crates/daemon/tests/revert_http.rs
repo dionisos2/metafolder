@@ -664,7 +664,7 @@ async fn coordinated_revert(app: &Router, repo: &str, rev_id: i64) {
 /// A revert that puts a trashed metarecord back has to put its bytes back
 /// (`restore_content`); a revert of *that* revert deletes the metarecord again,
 /// so its bytes go back to the trash (`trash_content`) — which is what a redo of
-/// an undo does once the watcher has written in between (spec-trash "Redo"). The
+/// an undo does once the watcher has written in between (doc "Trash, undo and redo"). The
 /// op type cannot say so: the second revert's operation is an ordinary
 /// `create_metarecord`, and only its `reverts_op_id` chain leads to the trashing.
 #[tokio::test]

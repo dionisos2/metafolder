@@ -1008,7 +1008,7 @@ moving the file back, but if the restore beats the buffered =file_deleted= from
 the trashing, that =file_deleted= would otherwise fire against the restored file
 and — since a freshly-tracked file has no stored =mfr_full_hash= for the arrival
 to re-home it — strand the original metarecord and create a duplicate. Skipping
-the stale removal closes that race (see [[file:spec-trash.org][spec-trash.org]] "Restore").
+the stale removal closes that race (see doc "What restoring does").
 
 The refresh is *idempotent*: when the stored =mfr_size= / =mfr_mtime= (and,
 for =Modify(Metadata)=, the attribute fields) already equal what =stat=
@@ -1283,7 +1283,7 @@ diagnostic for exactly this state, and *clear* is its cleanup.
 An orphan is therefore a file that went away **without being asked to**: removed
 with =rm=, by another tool, or while nothing was watching. A deletion that went
 through metafolder is not one of them — trashing captures the metarecords and
-deletes them outright (see [[file:spec-trash.org][spec-trash.org]] "Overview"),
+deletes them outright (see doc "Trash"),
 so it leaves nothing behind to scan for. That is what makes acting on the scan's
 answer safe: everything it reports is genuinely gone, with no copy of the bytes
 anywhere, rather than something the user put in the trash and could still want

@@ -1516,7 +1516,7 @@ async function runCommand(name: string, args: string[], ws: string | null): Prom
       if (ws) await invoke('orphan_detect', { wsId: ws }).catch(() => 0);
       return true;
     case 'metarecord:trash': {
-      // Send the selected metarecord's file to the trash (spec-trash.org).
+      // Send the selected metarecord's file to the trash (doc "Trash").
       // Reversible (restore from the trash panel), but confirmed anyway since
       // it is bound to a bare Delete key.
       if (!ws) return true;

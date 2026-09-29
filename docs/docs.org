@@ -23,6 +23,8 @@ On la complète item par item. La conception est dans
      des notes =rationale= =audience: dev= (la mémoire ne garde que les pièges
      d'environnement et les méthodes) ;
   7. =scripts/doc check= est vert.
+  8. les mentions du sujet déjà écrites ailleurs dans le wiki (en texte, faute
+     de note à l'époque) deviennent des liens : =scripts/doc find <nom>=.
 - Notation des notes : =Titre= — /kind/ (/dev/ si =audience: dev=, /deferred/ ou
   /proposed/ ou /record/ si ce n'est pas =implemented=).
 - Chaque sujet a sa note d'ensemble (/overview/) portant le titre du sujet, qui
@@ -30,6 +32,20 @@ On la complète item par item. La conception est dans
   parenthèses : « sous … »).
 - Pour les catalogues, « GUI : =trash:*= (9) » veut dire : les 9 commandes GUI
   dont le nom commence par =trash:= reçoivent leur note dans cet item.
+
+* Conventions apprises au pilote
+
+- On ne met un lien que vers une note qui existe (le contrôle refuse les
+  autres) ; une note pas encore écrite est nommée en texte (=`metarecord-list`=,
+  « the event log »), et le point 8 du mode d'emploi la relie plus tard.
+- Wikitext : un élément de liste tient sur *une* ligne (pas de continuation
+  indentée) ; =--= devient un tiret demi-cadratin hors code, donc une option de
+  CLI s'écrit toujours entre accents graves ; les liens CamelCase sont coupés
+  (=$:/config/WikiParserRules/Inline/wikilink=).
+- =<<key "commande" repli>>= : le repli est la touche par défaut, lue dans la
+  note générée de la commande ; =scripts/doc check= refuse une commande inconnue.
+- Une note de commande ne répète pas sa partie générée (usage, options,
+  touches) : elle dit ce que la commande fait et renvoie aux notes du sujet.
 
 * Ordre
 
@@ -443,22 +459,28 @@ spec-gui « Event log » ; help =log.html=, =log-detail.html=.
 
 * Fonctions
 
-** TODO 27. Corbeille (PILOTE)
+** FAIT 27. Corbeille (PILOTE)
 
-- [ ] =Trash= — overview
-- [ ] =Sending files to the trash= — guide (CLI, GUI : =Delete=, =Ctrl+Delete=, =Shift+Delete=)
-- [ ] =Restoring from the trash= — guide
-- [ ] =Trash on-disk layout= — reference, dev
-- [ ] =What trashing does= — reference (l'ordre, suppression des metarecords, refus de casser une référence)
-- [ ] =Why the trash owns the metarecord= — rationale
-- [ ] =Trash, undo and rollback= — reference
-- [ ] =Trash retention= — reference (=mf trash prune=)
-- [ ] =trash panel= — reference
+- [X] =Trash= — overview
+- [X] =Sending files to the trash= — guide (CLI, GUI : =Delete=, =Ctrl+Delete=, =Shift+Delete=)
+- [X] =Restoring from the trash= — guide
+- [X] =What trashing does= — reference (l'ordre, ce qui refuse une mise à la corbeille)
+- [X] =What restoring does= — reference (ajoutée : recréer, relier, déplacer ; fusion de dossier ; cas limites)
+- [X] =Trash on-disk layout= — reference, dev
+- [X] =Trash, undo and redo= — reference (renommée ; les deux voies de retour, =restore_content= / =trash_content=)
+- [X] =Trash retention= — reference (=mf trash prune=)
+- [X] =Why the trash owns the metarecord= — rationale, dev (avec les trois corrections de l'implémentation)
+- [X] =POST /repos/:repo/metarecords/trash= — reference, dev (ajoutée : la seule route du démon)
+- [X] =trash panel= — reference
+- [X] les notes de commande : =mf trash=, =mf trash list=, =mf trash restore=, =mf trash prune=, les 9 =trash:*=, =metarecord:trash=, =metarecord:remove=, =metarecord:delete=
 
-CLI : =mf trash *= (4). GUI : =trash:*= (9), =metarecord:trash=, =metarecord:remove=,
-=metarecord:delete= ; panel =trash=. Sources : spec-trash entier ; help
-=trash.html= ; mémoires =trash-bin-implemented=, =trash-owns-metarecord-redesign=,
-=trash-restore-race-fix=.
+Vérification contre le code : trois défauts trouvés et corrigés avant d'écrire
+(=4f7af34= restauration nœud par nœud, =84db3c3=..=9088be9= redo qui remet à la
+corbeille, =d76dbab= undo/redo de la GUI qui porte les fichiers), et des
+commentaires périmés dans =core/src/trash.rs=. Sources retirées : =spec-trash.org=,
+la page help =trash.html=. Citations du code réécrites (=doc "…"=), ainsi que les
+liens des autres specs. Mémoires : =trash-bin-implemented= et
+=trash-owns-metarecord-redesign= supprimées, =trash-restore-race-fix= réduite.
 
 ** TODO 28. Doublons
 

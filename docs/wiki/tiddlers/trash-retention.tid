@@ -1,0 +1,24 @@
+title: Trash retention
+tags: Trash
+kind: reference
+summary: The trash grows until you prune it: by age, by total size, or wholesale. Nothing expires on its own.
+
+There is no automatic expiry: a lost byte is worse than a full disk you can see
+and clear. Pruning is done with <<cmd "mf trash prune">>, and exactly one selector:
+
+|!Selector |!Deletes |
+|`-d <duration>` / `--older-than` |the entries trashed longer ago than the duration: `<n><unit>`, unit `y` (365 days), `w`, `d`, `h`, `m` (minutes), `s` — `30d`, `12h`, `1y` |
+|`-s <size>` / `--size` |the oldest entries, until the total is at or under the size: bytes, or a `k`/`m`/`g`/`t` suffix (base 1024, case-insensitive, an optional trailing `b`) — `512k`, `100mb`, `1g` |
+|`--all` |everything |
+
+`--dry-run` lists what would go and what it would reclaim, and deletes nothing.
+
+Pruning destroys the metadata too: the metarecords captured in an entry go with
+its bytes. That is the point — until then a metarecord that is not in the
+repository is not lost, it is in the trash.
+
+In the GUI, the [[trash panel]] deletes one entry, or empties the whole trash;
+pruning by age or size is command-line only.
+
+`--all` also removes whatever else lies in the trash directory: a blob no entry
+describes (left by an interrupted trashing), or the index of an older format.

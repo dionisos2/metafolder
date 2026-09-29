@@ -1,17 +1,20 @@
-//! The repository trash-bin (spec-trash.org): the shared filesystem layer.
+//! The repository trash-bin (doc "Trash"): the layer the CLI and the GUI share.
 //!
 //! A single per-repository trash, shared by every metafolder file operation
-//! that would overwrite or delete a file (rollback and manual deletes today,
-//! sync in v2). It guarantees no byte is ever lost: the displaced content is
-//! set aside under `internal/trash/` and the user decides later whether to
-//! restore or discard it.
+//! that would overwrite or delete a file (a manual trashing, a rollback's
+//! overwrite, sync). It guarantees no byte is ever lost: the displaced content
+//! is set aside under `internal/trash/` and the user decides later whether to
+//! restore or discard it. A trashing takes the metarecords with the bytes
+//! (doc "Why the trash owns the metarecord").
 //!
-//! This is pure filesystem state managed entirely by the *clients* (the CLI and
-//! the GUI) — the daemon never touches files; it only exposes the repo's
-//! `internal_dir` (in `GET /repos/:repo`) so a client can locate the trash.
-//! The client-specific glue (resolving a metarecord to a path, re-linking after
-//! a restore) lives in each client; this module is the shared, dependency-free
-//! core: locating, moving, listing, restoring and pruning the blobs.
+//! The bytes are the clients' business — the daemon never touches a file; it
+//! reports the repo's `internal_dir` (in `GET /repos/:repo`) so a client can
+//! locate the trash, and deletes the metarecords through its one trash endpoint
+//! (doc "POST /repos/:repo/metarecords/trash"). This module holds both halves
+//! of the client side: the filesystem layer (locating, moving, listing,
+//! restoring and pruning the blobs, over a small LMDB index) and the daemon
+//! glue (capturing the metarecords, deleting them, recreating and re-linking
+//! them on a restore) over [`DaemonClient`].
 
 use crate::date;
 use heed::types::Bytes;
@@ -57,8 +60,8 @@ impl Reason {
     }
 }
 
-/// One trashed path (file, symlink, or directory): the `<id>.json` manifest
-/// sitting next to its `<id>` blob.
+/// One trashed path (file, symlink, or directory): the index record of its
+/// `<id>` blob (doc "Trash on-disk layout").
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct TrashEntry {
     /// The blob file name (a fresh 32-char lowercase hex UUID).
@@ -82,10 +85,10 @@ pub struct TrashEntry {
     /// UUID of the metarecord it belonged to, if known.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub metarecord: Option<String>,
-    /// The metarecord's `version` when it was trashed — the state a rollback
-    /// restores to. Lets rollback correlate this entry with the exact
-    /// `file_deleted` it undoes (its `entity_version_before`), rather than by
-    /// timestamp (spec-trash "rollback auto-restore").
+    /// The metarecord's `version` when it was trashed. Provenance, and what
+    /// matches an entry written before the metarecords were captured — whose
+    /// deletion the log recorded as the watcher's `file_deleted` — to the exact
+    /// rollback step that undoes it (its `entity_version_before_revision`).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub version: Option<u64>,
     /// The metarecords this trashing displaced, each with its original
@@ -100,7 +103,7 @@ pub struct TrashEntry {
 
 /// One metarecord captured by a trashing, with its original `mfr_path` TreeRef
 /// and its content, so a restore can put the *whole* tree back exactly where it
-/// was (spec-trash "Restoring").
+/// was (doc "What restoring does").
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct TrashedNode {
     /// Metarecord uuid (32-char lowercase hex).
@@ -119,7 +122,7 @@ pub struct TrashedNode {
     /// descendants — as opposed to an *ancestor* recorded for context. The
     /// capture reaches past the trashed subtree so a restore can rebuild the
     /// chain; those ancestors are not being trashed, and deleting or recreating
-    /// them would take out the parent directories (spec-trash "Layout").
+    /// them would take out the parent directories (doc "Trash on-disk layout").
     pub trashed: bool,
 }
 
@@ -816,7 +819,7 @@ fn capture_ancestors(
 /// The ancestors are recorded so a restore can rebuild the chain if they were
 /// orphaned in the meantime; they are marked `trashed = false` so that nothing
 /// downstream deletes or recreates the parent directories
-/// (spec-trash "Layout").
+/// (doc "Trash on-disk layout").
 pub fn capture_nodes(
     client: &dyn DaemonClient,
     repo: &str,
@@ -968,12 +971,8 @@ fn relink_after_restore(
     }
 }
 
-/// Re-links a restored entry's metarecords: the whole subtree when recorded,
-/// else the single-`metarecord` fallback resolved from the restored repo-
-/// relative path `rel`. Called *before* the blob is moved into place, so the
-/// metarecords already claim their paths and the watcher sees a plain refresh.
 /// Deletes the metarecords a trashing takes with it, in one revision the daemon
-/// stamps `origin = 'trash'` (spec-trash "Deleting the metarecords").
+/// stamps `origin = 'trash'` (doc "POST /repos/:repo/metarecords/trash").
 ///
 /// Only the nodes marked `trashed` — never the captured ancestors, which are the
 /// parent directories and stay. `force` trashes anyway when something outside
@@ -982,7 +981,7 @@ fn relink_after_restore(
 ///
 /// Called *before* the bytes are moved: when the file then disappears the
 /// watcher looks its path up in the forest, finds nothing, and has nothing to
-/// orphan (spec-trash "What trashing does, in order").
+/// orphan (doc "What trashing does").
 pub fn delete_trashed(
     client: &dyn DaemonClient,
     repo: &str,
@@ -1002,7 +1001,7 @@ pub fn delete_trashed(
 const BULK_CREATE_CHUNK: usize = 1000;
 
 /// Recreates every captured metarecord the repository no longer holds, at its
-/// original UUID and with its captured fields (spec-trash "Restoring").
+/// original UUID and with its captured fields (doc "What restoring does").
 ///
 /// *Every* captured node, ancestors included — `trashed` governs what a trashing
 /// deletes, not what a restore puts back. An ancestor is normally still there
@@ -1066,6 +1065,11 @@ pub fn recreate_subtree(
     Ok(created)
 }
 
+/// Puts a restored entry's metarecords back: recreates the captured subtree and
+/// re-links what survived when it was captured, else the single-`metarecord`
+/// fallback resolved from the restored repo-relative path `rel`. Called *before*
+/// the blob is moved into place, so the metarecords already claim their paths
+/// and the watcher sees a plain refresh (doc "What restoring does").
 pub fn restore_relink(
     client: &dyn DaemonClient,
     repo: &str,
@@ -1281,7 +1285,7 @@ mod tests {
     #[test]
     fn recreate_subtree_skips_only_the_node_the_forest_refuses() {
         // The daemon refuses the whole batch for one node; the restore must not
-        // lose the metadata of every other node with it (spec-trash "Restoring":
+        // lose the metadata of every other node with it (doc "What restoring does":
         // a refused recreation is skipped, not fatal — that one, not its batch).
         let fields = Some(json!([]));
         let subtree = vec![

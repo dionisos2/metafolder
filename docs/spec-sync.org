@@ -25,7 +25,7 @@ absent from the event log, and are not subject to rollback.
   =internal/= — so a botched or unwanted sync is always recoverable. Rollback
   obeys the same rule for the =mv= it performs. Both route every
   overwrite/delete through the single shared trash-bin, whose layout,
-  restoration and pruning are specified in [[file:spec-trash.org][spec-trash.org]]; restoration is
+  restoration and pruning are specified in doc "Trash"; restoration is
   always an explicit act (=mf trash restore=), never automatic.
 - Sync intentions (which metarecords to link) are expressed as queries in the
   intents file, not stored in the database. Whether a record's content is

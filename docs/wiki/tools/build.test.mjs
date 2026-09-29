@@ -58,6 +58,8 @@ catalog: GUI command
 target: trash:restore
 summary: Trash: restore the selected entry
 
+!! Reference
+
 Generated part.
 `,
   'trash-next.tid': `title: $:/mf/gen/GUI command/trash:next
@@ -117,7 +119,9 @@ test('no block element ends up inside a paragraph', () => {
 
 test('lists are expanded at build time', () => {
   assert.match(read('trash.html'), /data-help-page="restoring-from-the-trash"/);
-  assert.match(read('trash.html'), /How to restore\./);
+  // The summary follows the link with its spaces, which \whitespace trim
+  // would otherwise eat.
+  assert.match(read('trash.html'), /<\/a> — How to restore\./);
   const catalog = read('gui-command.html');
   assert.match(catalog, /data-help-page="trash-restore"/);
   // An item the code has and the wiki does not is listed as such.

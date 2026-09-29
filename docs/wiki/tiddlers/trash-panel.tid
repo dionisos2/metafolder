@@ -1,0 +1,17 @@
+title: trash panel
+tags: Panel Trash
+kind: reference
+aliases: restore empty
+summary: Lists the repository's trash entries, newest first, to restore or delete them.
+
+Open it with `panel:set type trash` (<<key "panel:set type trash" "t b">>). One
+row per entry — name, size, age, reason, the path it was trashed from — newest
+first.
+
+* <<key "trash:restore" Enter>> — restore the selected entry to its original path, metarecords included ([[What restoring does]]).
+* <<key "trash:delete" Delete>> — delete the selected entry permanently (confirmed).
+* `trash:empty` — delete every entry permanently (confirmed).
+* <<key "trash:find" f>> — jump to an entry by name; each candidate shows the path it was trashed from, so two entries sharing a name are still told apart.
+* <<key "trash:next" "↓ or j">> / <<key "trash:prev" "↑ or k">>, <<key "trash:first" Home>> / <<key "trash:last" End>> — move the selection; <<key "trash:refresh" r>> — reload the entries.
+
+Pruning by age or size is command-line only ([[Trash retention]]).
