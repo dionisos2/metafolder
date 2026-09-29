@@ -1,0 +1,23 @@
+title: $:/mf/gen/CLI command/mf metarecord field remove
+catalog: CLI command
+target: mf metarecord field remove
+summary: Remove the row(s) equal to the spec (inverse of add)
+
+!! Reference
+
+```
+Remove the row(s) equal to the spec (inverse of add)
+
+Usage: mf metarecord field remove [OPTIONS] <SPEC>
+
+Arguments:
+  <SPEC>
+          Field spec name:type[=value]
+
+Options:
+  -f, --force
+          
+
+  -h, --help
+          Print help
+```

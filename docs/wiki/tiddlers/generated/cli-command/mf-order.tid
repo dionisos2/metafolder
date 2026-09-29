@@ -1,0 +1,33 @@
+title: $:/mf/gen/CLI command/mf order
+catalog: CLI command
+target: mf order
+summary: Number a folder's direct children for sorting: assigns `order_file` / `order_dir` (files and dirs are numbered independently; an existing position is never overwritten), then marks the folder itself `order_numbered = true`. Orders by an ordering metadata, then a shared name pattern, then creation date
+
+!! Reference
+
+```
+Number a folder's direct children for sorting: assigns `order_file` / `order_dir` (files and dirs are numbered independently; an existing position is never overwritten), then marks the folder itself `order_numbered = true`. Orders by an ordering metadata, then a shared name pattern, then creation date
+
+Usage: mf order [OPTIONS] <PATH>
+
+Arguments:
+  <PATH>
+          The folder whose direct children to number
+
+Options:
+      --meta <META>
+          Metadata field giving an explicit order
+          
+          [default: mfr_meta_track]
+
+      --max-gap <MAX_GAP>
+          Largest gap between shared-pattern name numbers still treated as an order (a larger gap ⇒ the number is an id/hash, ignored)
+          
+          [default: 1000]
+
+      --dry-run
+          Print the planned positions without writing them
+
+  -h, --help
+          Print help
+```

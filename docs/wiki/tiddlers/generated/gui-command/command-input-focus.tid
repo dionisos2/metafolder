@@ -1,0 +1,13 @@
+title: $:/mf/gen/GUI command/command-input:focus
+catalog: GUI command
+target: command-input:focus
+summary: Focus the command input (command / bash mode)
+
+!! Reference
+
+* Defined by the shell (a builtin)
+
+!! Default keys
+
+* ``!`` → ``command-input:focus bash``
+* ``:`` → ``command-input:focus command``

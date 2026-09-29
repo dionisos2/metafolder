@@ -1,0 +1,20 @@
+title: $:/mf/gen/CLI command/mf tag mixed
+catalog: CLI command
+target: mf tag mixed
+summary: Mark the folder(s) mixed w.r.t. the tag
+
+!! Reference
+
+```
+Mark the folder(s) mixed w.r.t. the tag
+
+Usage: mf tag mixed <PATH>
+
+Arguments:
+  <PATH>
+          
+
+Options:
+  -h, --help
+          Print help
+```

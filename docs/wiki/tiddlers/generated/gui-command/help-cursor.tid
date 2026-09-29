@@ -1,0 +1,13 @@
+title: $:/mf/gen/GUI command/help:cursor
+catalog: GUI command
+target: help:cursor
+summary: Click an element to open its help
+
+!! Reference
+
+* Defined by the shell (a builtin)
+
+!! Default keys
+
+* ``f1`` → ``help:cursor`` (also in a text input)
+* ``h c`` → ``help:cursor``

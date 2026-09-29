@@ -1,0 +1,35 @@
+title: $:/mf/gen/CLI command/mf log rollback
+catalog: CLI command
+target: mf log rollback
+summary: Navigate the history with coordinated filesystem moves
+
+!! Reference
+
+```
+Navigate the history with coordinated filesystem moves
+
+Usage: mf log rollback [OPTIONS] [ARGS]...
+
+Arguments:
+  [ARGS]...
+          "plan" to preview, optionally a target label; or a target label
+
+Options:
+      --id <ID>
+          Target operation by id
+
+      --timestamp <TIMESTAMP>
+          Target by revision timestamp (ISO-8601, or @<unix-ms>)
+
+      --on-move-available <ON_MOVE_AVAILABLE>
+          Policy when the file is present: apply|skip|abort|ask (default apply)
+
+      --on-move-unavailable <ON_MOVE_UNAVAILABLE>
+          Policy when the file is missing: apply|skip|abort|ask (default ask)
+
+      --silent
+          Suppress informational output (still prompts for ask)
+
+  -h, --help
+          Print help
+```

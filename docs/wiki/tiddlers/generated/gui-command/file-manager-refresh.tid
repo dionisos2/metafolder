@@ -1,0 +1,12 @@
+title: $:/mf/gen/GUI command/file-manager:refresh
+catalog: GUI command
+target: file-manager:refresh
+summary: File manager: reload the current directory
+
+!! Reference
+
+* Defined by the ``file-manager`` panel
+
+!! Default keys
+
+* ``r`` → ``file-manager:refresh`` (in the ``file-manager`` panel)

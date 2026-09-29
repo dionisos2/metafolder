@@ -1,0 +1,13 @@
+title: $:/mf/gen/GUI command/completion:cycle
+catalog: GUI command
+target: completion:cycle
+summary: Cycle the prompt's completion views (forward / back)
+
+!! Reference
+
+* Defined by the shell (a builtin)
+
+!! Default keys
+
+* ``ctrl+,`` → ``completion:cycle forward`` (also in a text input)
+* ``ctrl+.`` → ``completion:cycle back`` (also in a text input)

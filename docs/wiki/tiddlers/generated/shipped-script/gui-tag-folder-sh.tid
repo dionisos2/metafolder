@@ -1,0 +1,80 @@
+title: $:/mf/gen/Shipped script/gui-tag-folder.sh
+catalog: Shipped script
+target: gui-tag-folder.sh
+summary: Bulk-apply one tag over a query's metarecords (yes/no/mixed walk).
+
+!! Reference
+
+```
+Summary: Bulk-apply one tag over a query's metarecords (yes/no/mixed walk).
+Bulk-apply one tag over a set of metarecords, in the running metafolder GUI.
+Given a TAG (a "/"-separated tag path) and a QUERY, walks what the query
+matches and asks, per entry, whether it carries the tag:
+
+  y (oui)   -> `mf tag add` on the entry; for a folder, on its whole subtree
+               too — *intersected with the query*, which is the scope.
+  n (non)   -> `mf tag deny` on the same scope.
+  m (mixed) -> `mf tag mixed` on the folder only; the walk then descends into
+               it and asks its children in turn.
+  s (skip)  -> leave this entry alone: no tag op, and for a folder nothing
+               under it is asked either. The skip is RECORDED (a
+               `gui_tag_skipped` marker), so it survives the run and is
+               offered for cleanup at the end and at the next run's start.
+
+The arrow keys answer as well: → yes, ← no, ↑ mixed, ↓ skip. Backspace (or
+`u`, for undo) takes the previous answer back — including a skip.
+
+THE QUERY IS THE WALK STATE. An answer is already a write, so "what is left
+to ask" is a *query*, not bookkeeping: each step asks ONE question with
+`--limit 1` over
+
+    <scope> AND <not yet decided> AND <not skipped>
+
+and every answer removes its subject from that set — a y/n on a folder writes
+the tag over `(scope) AND mfr_path ->* "<path>"`, so the whole subtree leaves
+at once. Nothing is read up front, nothing is held in bash, and there is no
+scope cap: the cost is two or three small round-trips per question, each
+behind a human keypress. See docs/gui-tag-folder-rework.md.
+
+THE QUERY IS ALSO THE SCOPE. A "yes" on a folder never reaches a metarecord
+the query excludes: the subtree op is `(<query>) AND mfr_path ->* "<path>"`.
+So narrowing the list in the GUI narrows what this script can touch.
+
+Where the query comes from, in order: the QUERY argument; else ASKED — the
+checked selection, or the query the list shows (the GUI's bulk commands ask
+the same way, so a script and a bulk edit target the same set by the same
+decision); when the list has published nothing, a folder chosen from the
+completion, turned into `mfr_path =>* "<folder>"` (the folder and its whole
+subtree). An empty query means every metarecord, and is left as such rather
+than wrapped.
+
+ORDER. Depth first, a folder before what it holds. At the current folder P:
+  1. the first undecided direct child in scope — folders first, each kind by
+     `order_dir`/`order_file` then by path, so a folder `mf order` has
+     numbered is walked in its own order (an album by track number);
+  2. none? the first undecided in-scope *descendant* of P, by path: the walk
+     moves to its parent and descends there without asking. This is what
+     reaches a SCATTERED scope — the query may exclude /a and hold
+     /a/b/c.txt — and it skips every empty level in one step;
+  3. neither? up one component. Above the repository root, the walk is done.
+Coming back up finds the siblings left behind. The script never runs
+`mf order` itself: numbering is a deliberate act, and its date-based fallback
+would be a worse walking order than the alphabetical one.
+
+Resumable, and that too is the query: an entry already decided is not in it.
+The record carries the tag (`tag`, exactly or through a more specific one),
+carries its negation (`negative_tag`, exactly or through a more general one),
+or is a `mixed_tag` folder — the walk enters the last by descending into it,
+so it is never re-asked. `--redo` asks everything again, decided or not — the
+way to revise a wrong answer over a subtree — and ignores the skip markers.
+
+`mf tag` owns the tag model: it creates the entry if the vocabulary lacks it,
+adds the ref idempotently, and applies the subsumption/exclusivity rewrites
+(add drops the more general ancestor tags, deny drops the more specific
+descendant negatives). So this script is only the walk + the y/n/m questions.
+
+Operates on TRACKED metarecords only — reconcile first if you want everything
+covered.
+
+Usage: gui-tag-folder.sh [--redo] [<tag> [<query>]]
+```

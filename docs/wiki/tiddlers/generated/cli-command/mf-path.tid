@@ -1,0 +1,23 @@
+title: $:/mf/gen/CLI command/mf path
+catalog: CLI command
+target: mf path
+summary: Print the filesystem path of a metarecord (walks the mfr_path chain)
+
+!! Reference
+
+```
+Print the filesystem path of a metarecord (walks the mfr_path chain)
+
+Usage: mf path [OPTIONS] <UUID>
+
+Arguments:
+  <UUID>
+          
+
+Options:
+      --relative
+          Print the path relative to the repository root
+
+  -h, --help
+          Print help
+```

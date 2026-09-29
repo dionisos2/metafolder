@@ -4,6 +4,7 @@ pub mod config;
 pub mod config_sync;
 pub mod daemon_client;
 pub mod date;
+pub mod doc_gen;
 pub mod dsl;
 pub mod fsentry;
 pub mod hex;

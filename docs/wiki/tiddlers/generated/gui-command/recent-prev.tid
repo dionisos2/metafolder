@@ -1,0 +1,13 @@
+title: $:/mf/gen/GUI command/recent:prev
+catalog: GUI command
+target: recent:prev
+summary: Recent: move up
+
+!! Reference
+
+* Defined by the ``recent`` panel
+
+!! Default keys
+
+* ``k`` → ``recent:prev`` (in the ``recent`` panel)
+* ``up`` → ``recent:prev`` (in the ``recent`` panel)

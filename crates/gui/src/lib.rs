@@ -12,6 +12,8 @@ pub mod commands;
 pub mod config;
 pub mod daemon_proxy;
 pub mod diagnostics;
+#[cfg(test)]
+mod doc_gen;
 pub mod documents;
 pub mod duplicates;
 pub mod events;

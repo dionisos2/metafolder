@@ -1,0 +1,9 @@
+title: $:/mf/gen/Panel/log-detail panel
+catalog: Panel
+target: log-detail panel
+summary: The log-detail panel type
+
+!! Commands
+
+* ``log-detail:refresh`` — Log detail: refresh from the daemon
+* ``log-detail:toggle`` — Log detail: toggle a view flag (the whole revision / unchanged fields)

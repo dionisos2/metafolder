@@ -1,0 +1,21 @@
+title: $:/mf/gen/CLI command/mf repo backup
+catalog: CLI command
+target: mf repo backup
+summary: Take a backup of the selected repository and print where it went
+
+!! Reference
+
+```
+Take a backup of the selected repository and print where it went
+
+A consistent copy of its store (taken while the daemon runs) with its config.json and schema.json, verified before it is kept. By default under .metafolder/internal/backups/; `mf repo restore` puts it back.
+
+Usage: mf repo backup [OPTIONS]
+
+Options:
+      --to <TO>
+          A new directory to write the backup to (on another disk, say)
+
+  -h, --help
+          Print help (see a summary with '-h')
+```

@@ -1,0 +1,19 @@
+title: $:/mf/gen/CLI command/mf mount list
+catalog: CLI command
+target: mf mount list
+summary: List the declared mount points and their state — the default
+
+!! Reference
+
+```
+List the declared mount points and their state — the default
+
+Usage: mf mount list [OPTIONS]
+
+Options:
+      --json
+          Print the raw JSON response body
+
+  -h, --help
+          Print help
+```

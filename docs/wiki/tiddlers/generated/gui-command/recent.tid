@@ -1,0 +1,12 @@
+title: $:/mf/gen/GUI command/recent
+catalog: GUI command
+target: recent
+summary: Open a recently-viewed metarecord
+
+!! Reference
+
+* Defined by the shipped ``commands.js``
+
+!! Default keys
+
+* ``g r`` → ``recent``

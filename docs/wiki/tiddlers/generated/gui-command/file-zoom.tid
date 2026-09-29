@@ -1,0 +1,15 @@
+title: $:/mf/gen/GUI command/file:zoom
+catalog: GUI command
+target: file:zoom
+summary: File: zoom the previewed image/video
+
+!! Reference
+
+* Defined by the ``file`` panel
+
+!! Default keys
+
+* ``-`` → ``file:zoom out`` (in the ``file`` panel)
+* ``0`` → ``file:zoom reset`` (in the ``file`` panel)
+* ``=`` → ``file:zoom fit`` (in the ``file`` panel)
+* ``plus`` → ``file:zoom in`` (in the ``file`` panel)

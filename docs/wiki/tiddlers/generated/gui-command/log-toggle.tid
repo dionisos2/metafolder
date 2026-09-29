@@ -1,0 +1,14 @@
+title: $:/mf/gen/GUI command/log:toggle
+catalog: GUI command
+target: log:toggle
+summary: Log: toggle a view flag (branch graph / the watcher’s revisions / the selected revision’s operations)
+
+!! Reference
+
+* Defined by the ``log`` panel
+
+!! Default keys
+
+* ``enter`` → ``log:toggle ops`` (in the ``log`` panel)
+* ``shift+g`` → ``log:toggle graph`` (in the ``log`` panel)
+* ``shift+w`` → ``log:toggle watcher`` (in the ``log`` panel)

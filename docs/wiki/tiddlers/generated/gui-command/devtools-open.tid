@@ -1,0 +1,9 @@
+title: $:/mf/gen/GUI command/devtools:open
+catalog: GUI command
+target: devtools:open
+summary: Open the WebKit web inspector
+
+!! Reference
+
+* Defined by the shell (a builtin)
+* No default key

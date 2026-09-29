@@ -1,0 +1,12 @@
+title: $:/mf/gen/GUI command/file-manager:paste
+catalog: GUI command
+target: file-manager:paste
+summary: File manager: paste the clipboard into the current directory
+
+!! Reference
+
+* Defined by the ``file-manager`` panel
+
+!! Default keys
+
+* ``ctrl+v`` → ``file-manager:paste`` (in the ``file-manager`` panel)

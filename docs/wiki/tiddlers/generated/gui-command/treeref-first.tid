@@ -1,0 +1,12 @@
+title: $:/mf/gen/GUI command/treeref:first
+catalog: GUI command
+target: treeref:first
+summary: TreeRef explorer: move to the first child
+
+!! Reference
+
+* Defined by the ``treeref`` panel
+
+!! Default keys
+
+* ``home`` → ``treeref:first`` (in the ``treeref`` panel)

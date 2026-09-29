@@ -1,0 +1,27 @@
+title: $:/mf/gen/CLI command/mf repo restore
+catalog: CLI command
+target: mf repo restore
+summary: Put a backup of a repository back (the most recent one by default)
+
+!! Reference
+
+```
+Put a backup of a repository back (the most recent one by default)
+
+The backup is checked first; the current store is set aside under .metafolder/internal/pre-restore-*. Everything written since the backup is lost: run `mf reconcile` afterwards to catch up with the files. The repository is the selected one, or — when its store no longer loads — one named by --path/--metafolder; either way it is loaded afterwards.
+
+Usage: mf repo restore [OPTIONS]
+
+Options:
+      --from <FROM>
+          The backup directory (default: the most recent one under .metafolder/internal/backups/)
+
+      --path <PATH>
+          The repository's root, instead of a selected repository
+
+      --metafolder <METAFOLDER>
+          The repository's external .metafolder directory, instead of a selected repository
+
+  -h, --help
+          Print help (see a summary with '-h')
+```

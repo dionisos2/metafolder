@@ -1,0 +1,9 @@
+title: $:/mf/gen/GUI command/file-manager:reveal
+catalog: GUI command
+target: file-manager:reveal
+summary: Open the selected metarecord's folder in the file manager (focused panel)
+
+!! Reference
+
+* Defined by the shipped ``commands.js``
+* No default key

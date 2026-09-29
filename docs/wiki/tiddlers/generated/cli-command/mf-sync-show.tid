@@ -1,0 +1,32 @@
+title: $:/mf/gen/CLI command/mf sync show
+catalog: CLI command
+target: mf sync show
+summary: Render the current plan with live red/green status (default: summary + reds)
+
+!! Reference
+
+```
+Render the current plan with live red/green status (default: summary + reds)
+
+Usage: mf sync show [OPTIONS] <REPO_A> <REPO_B>
+
+Arguments:
+  <REPO_A>
+          
+
+  <REPO_B>
+          
+
+Options:
+      --conflicts
+          Only the conflict operations
+
+      --files
+          Only the file operations (copy/move/chmod/delete)
+
+      --summary
+          Only the per-kind counts
+
+  -h, --help
+          Print help
+```

@@ -1,0 +1,13 @@
+title: $:/mf/gen/GUI command/panel:toggle
+catalog: GUI command
+target: panel:toggle
+summary: Toggle a layout flag (split / fullscreen)
+
+!! Reference
+
+* Defined by the shell (a builtin)
+
+!! Default keys
+
+* ``v`` → ``panel:toggle split``
+* ``z`` → ``panel:toggle fullscreen``

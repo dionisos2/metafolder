@@ -1,0 +1,32 @@
+title: $:/mf/gen/CLI command/mf log prune before
+catalog: CLI command
+target: mf log prune before
+summary: Make <target> the new root, deleting all older operations
+
+!! Reference
+
+```
+Make <target> the new root, deleting all older operations
+
+Usage: mf log prune before [OPTIONS] [TARGET]
+
+Arguments:
+  [TARGET]
+          Revision label (most recent on the HEAD ancestry path)
+
+Options:
+      --id <ID>
+          Target operation by id
+
+      --timestamp <TIMESTAMP>
+          Most recent operation whose revision timestamp ≤ T (ISO-8601, or @<unix-ms>)
+
+      --force
+          Skip the confirmation prompt
+
+      --silent
+          Suppress informational output
+
+  -h, --help
+          Print help
+```

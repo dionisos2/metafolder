@@ -1,0 +1,14 @@
+title: $:/mf/gen/GUI command/file:speed
+catalog: GUI command
+target: file:speed
+summary: File: step the playback rate
+
+!! Reference
+
+* Defined by the ``file`` panel
+
+!! Default keys
+
+* ``[`` → ``file:speed down`` (in the ``file`` panel)
+* ``]`` → ``file:speed up`` (in the ``file`` panel)
+* ``shift+backspace`` → ``file:speed reset`` (in the ``file`` panel)

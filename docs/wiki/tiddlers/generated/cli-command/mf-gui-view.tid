@@ -1,0 +1,29 @@
+title: $:/mf/gen/CLI command/mf gui view
+catalog: CLI command
+target: mf gui view
+summary: Print or set the panel type shown in a slot
+
+!! Reference
+
+```
+Print or set the panel type shown in a slot
+
+Usage: mf gui view [OPTIONS] <SLOT> [PANEL_TYPE]
+
+Arguments:
+  <SLOT>
+          Slot name (left or right)
+
+  [PANEL_TYPE]
+          Panel type to set (omit to print the current one)
+
+Options:
+      --path <PATH>
+          File path (file panel type)
+
+      --state <STATE>
+          Initial panel state as a JSON object
+
+  -h, --help
+          Print help
+```

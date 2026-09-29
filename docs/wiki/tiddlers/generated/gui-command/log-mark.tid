@@ -1,0 +1,12 @@
+title: $:/mf/gen/GUI command/log:mark
+catalog: GUI command
+target: log:mark
+summary: Log: set or clear the selected revision label
+
+!! Reference
+
+* Defined by the ``log`` panel
+
+!! Default keys
+
+* ``shift+l`` → ``log:mark`` (in the ``log`` panel)

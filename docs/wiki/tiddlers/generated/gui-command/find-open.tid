@@ -1,0 +1,12 @@
+title: $:/mf/gen/GUI command/find:open
+catalog: GUI command
+target: find:open
+summary: Find text in the focused panel (optional text)
+
+!! Reference
+
+* Defined by the shell (a builtin)
+
+!! Default keys
+
+* ``ctrl+f`` → ``find:open`` (also in a text input)

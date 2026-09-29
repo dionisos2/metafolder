@@ -1,0 +1,12 @@
+title: $:/mf/gen/GUI command/pick:cancel
+catalog: GUI command
+target: pick:cancel
+summary: Cancel the value picker
+
+!! Reference
+
+* Defined by the shell (a builtin)
+
+!! Default keys
+
+* ``ctrl+escape`` → ``pick:cancel``

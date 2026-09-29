@@ -1,0 +1,12 @@
+title: $:/mf/gen/GUI command/sync:run
+catalog: GUI command
+target: sync:run
+summary: Sync: run the plan
+
+!! Reference
+
+* Defined by the ``sync`` panel
+
+!! Default keys
+
+* ``y r`` → ``sync:run`` (in the ``sync`` panel)

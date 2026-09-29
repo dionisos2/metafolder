@@ -1,0 +1,12 @@
+title: $:/mf/gen/GUI command/repos:refresh
+catalog: GUI command
+target: repos:refresh
+summary: Repos: refresh the repository list
+
+!! Reference
+
+* Defined by the ``repos`` panel
+
+!! Default keys
+
+* ``r`` → ``repos:refresh`` (in the ``repos`` panel)

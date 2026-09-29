@@ -1,0 +1,12 @@
+title: $:/mf/gen/GUI command/trash:first
+catalog: GUI command
+target: trash:first
+summary: Trash: move to the first entry
+
+!! Reference
+
+* Defined by the ``trash`` panel
+
+!! Default keys
+
+* ``home`` → ``trash:first`` (in the ``trash`` panel)

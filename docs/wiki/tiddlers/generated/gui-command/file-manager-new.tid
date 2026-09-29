@@ -1,0 +1,13 @@
+title: $:/mf/gen/GUI command/file-manager:new
+catalog: GUI command
+target: file-manager:new
+summary: File manager: create a new folder or empty file
+
+!! Reference
+
+* Defined by the ``file-manager`` panel
+
+!! Default keys
+
+* ``ctrl+n`` → ``file-manager:new file`` (in the ``file-manager`` panel)
+* ``ctrl+shift+n`` → ``file-manager:new folder`` (in the ``file-manager`` panel)

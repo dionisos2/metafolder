@@ -1,0 +1,14 @@
+title: $:/mf/gen/GUI command/file-manager:toggle
+catalog: GUI command
+target: file-manager:toggle
+summary: File manager: toggle a view flag (root constraint / hidden dot-entries /
+
+!! Reference
+
+* Defined by the ``file-manager`` panel
+
+!! Default keys
+
+* ``ctrl+h`` → ``file-manager:toggle hidden`` (in the ``file-manager`` panel)
+* ``ctrl+r`` → ``file-manager:toggle root`` (in the ``file-manager`` panel)
+* ``ctrl+shift+a`` → ``file-manager:toggle activity`` (in the ``file-manager`` panel)

@@ -1,0 +1,19 @@
+title: $:/mf/gen/Shipped script/lib/mf-gui.sh
+catalog: Shipped script
+target: lib/mf-gui.sh
+summary: (no Summary: header — a helper, not offered by script:run)
+
+!! Reference
+
+```
+shellcheck shell=bash
+Shared helpers for the gui-* scripts. Source it near the top of a script:
+
+    HERE=$(cd "$(dirname "$0")" && pwd)
+    source "$HERE/lib/mf-gui.sh"
+
+It centralises the boilerplate that every GUI script used to repeat — and,
+crucially, the layout takeover + guaranteed restore, so a script can never
+leave the GUI's layout wrecked or an orphan workspace behind. Requires the
+`mf` CLI on PATH and a running GUI with a repository in the focused workspace.
+```

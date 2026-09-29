@@ -1,0 +1,15 @@
+title: $:/mf/gen/GUI command/metarecord-list:next
+catalog: GUI command
+target: metarecord-list:next
+summary: Metarecord list: move the selection down
+
+!! Reference
+
+* Defined by the ``metarecord-list`` panel
+
+!! Default keys
+
+* ``down`` → ``metarecord-list:next`` (while ``finder`` is focused)
+* ``down`` → ``metarecord-list:next`` (in the ``file`` panel)
+* ``down`` → ``metarecord-list:next`` (in the ``metarecord-list`` panel)
+* ``j`` → ``metarecord-list:next`` (in the ``metarecord-list`` panel)

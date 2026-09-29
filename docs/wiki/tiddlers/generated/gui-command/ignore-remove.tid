@@ -1,0 +1,9 @@
+title: $:/mf/gen/GUI command/ignore:remove
+catalog: GUI command
+target: ignore:remove
+summary: Remove an ignore preset's patterns from the target directory
+
+!! Reference
+
+* Defined by the shell (a builtin)
+* No default key

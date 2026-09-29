@@ -1,0 +1,16 @@
+title: $:/mf/gen/Panel/trash panel
+catalog: Panel
+target: trash panel
+summary: The trash panel type
+
+!! Commands
+
+* ``trash:delete`` — Trash: permanently delete the selected entry
+* ``trash:empty`` — Trash: permanently delete every entry
+* ``trash:find`` — Trash: jump to an entry by name
+* ``trash:first`` — Trash: move to the first entry
+* ``trash:last`` — Trash: move to the last entry
+* ``trash:next`` — Trash: move down
+* ``trash:prev`` — Trash: move up
+* ``trash:refresh`` — Trash: reload the entries
+* ``trash:restore`` — Trash: restore the selected entry

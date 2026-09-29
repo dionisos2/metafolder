@@ -1,0 +1,13 @@
+title: $:/mf/gen/GUI command/trash:next
+catalog: GUI command
+target: trash:next
+summary: Trash: move down
+
+!! Reference
+
+* Defined by the ``trash`` panel
+
+!! Default keys
+
+* ``down`` → ``trash:next`` (in the ``trash`` panel)
+* ``j`` → ``trash:next`` (in the ``trash`` panel)

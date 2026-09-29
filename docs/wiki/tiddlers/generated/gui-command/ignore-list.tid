@@ -1,0 +1,9 @@
+title: $:/mf/gen/GUI command/ignore:list
+catalog: GUI command
+target: ignore:list
+summary: Show the ignore presets and the target directory's patterns
+
+!! Reference
+
+* Defined by the shell (a builtin)
+* No default key

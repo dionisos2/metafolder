@@ -1,0 +1,19 @@
+title: $:/mf/gen/CLI command/mf duplicate clear
+catalog: CLI command
+target: mf duplicate clear
+summary: Delete every duplicate group and every link to one (the hashes are kept)
+
+!! Reference
+
+```
+Delete every duplicate group and every link to one (the hashes are kept)
+
+Usage: mf duplicate clear [OPTIONS]
+
+Options:
+  -y, --yes
+          Skip the confirmation prompt
+
+  -h, --help
+          Print help
+```

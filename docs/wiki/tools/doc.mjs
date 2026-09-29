@@ -3,6 +3,7 @@
 // in tid.mjs; this file only reads and writes files.
 
 import fs from 'node:fs';
+import { spawnSync } from 'node:child_process';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import {
@@ -16,6 +17,7 @@ import {
   checkWiki,
   renameInTiddler,
   renameInCode,
+  scriptTiddler,
 } from './tid.mjs';
 
 /** @typedef {import('./tid.mjs').Tiddler} Tiddler */
@@ -42,7 +44,8 @@ const USAGE = `usage: scripts/doc <command> [args]
                           create a hand-written note at the right file name
   rename OLD NEW          rename a note and every mention of it (wiki and code)
   check                   every consistency check; exit 1 on any problem
-  build [OUT]             render the help pages (default docs/wiki/dist/)`;
+  build [OUT]             render the help pages (default docs/wiki/dist/)
+  gen                     rewrite tiddlers/generated/ from the code`;
 
 /** @param {string} dir @returns {string[]} */
 function walk(dir) {
@@ -75,6 +78,46 @@ function scanCode() {
       const file = path.relative(REPO, p);
       return extractCodeRefs(fs.readFileSync(p, 'utf8')).map((r) => ({ file, ...r }));
     });
+}
+
+/**
+ * The shipped-script catalog: generated/shipped-script/ made to match
+ * scripts/shipped/ (`update`), or the differences named (the Rust catalogs do
+ * the same from their golden tests, metafolder_core::doc_gen).
+ * @param {boolean} update @returns {string[]} problems
+ */
+function syncScripts(update) {
+  const shipped = path.join(REPO, 'scripts', 'shipped');
+  const dir = path.join(TIDDLERS, 'generated', 'shipped-script');
+  /** @type {Map<string, string>} */
+  const want = new Map(
+    walk(shipped)
+      .filter((p) => p.endsWith('.sh'))
+      .map((p) => {
+        const rel = path.relative(shipped, p);
+        return [`${slugify(rel)}.tid`, serializeTid(scriptTiddler(rel, fs.readFileSync(p, 'utf8')))];
+      }),
+  );
+  const have = new Map(
+    walk(dir)
+      .filter((p) => p.endsWith('.tid'))
+      .map((p) => [path.basename(p), fs.readFileSync(p, 'utf8')]),
+  );
+  if (update) {
+    fs.mkdirSync(dir, { recursive: true });
+    for (const name of have.keys()) if (!want.has(name)) fs.rmSync(path.join(dir, name));
+    for (const [name, src] of want) if (have.get(name) !== src) fs.writeFileSync(path.join(dir, name), src);
+    return [];
+  }
+  const problems = [];
+  for (const [name, src] of want) {
+    if (!have.has(name)) problems.push(`missing ${name}`);
+    else if (have.get(name) !== src) problems.push(`stale ${name}`);
+  }
+  for (const name of have.keys()) if (!want.has(name)) problems.push(`obsolete ${name}`);
+  return problems.length === 0
+    ? []
+    : [`generated/shipped-script is out of date with scripts/shipped (${problems.join(', ')}); run scripts/doc gen`];
 }
 
 /** A note by title, alias or id. @param {Tiddler[]} wiki @param {string} name */
@@ -242,11 +285,28 @@ export async function main(argv) {
       return 0;
     }
     case 'check': {
-      const errors = checkWiki(wiki, scanCode());
+      const errors = [...checkWiki(wiki, scanCode()), ...syncScripts(false)];
       for (const e of errors) console.log(e);
       const hand = wiki.filter((t) => t.area === 'hand').length;
       console.log(errors.length === 0 ? `ok — ${hand} notes` : `${errors.length} problem(s)`);
       return errors.length === 0 ? 0 : 1;
+    }
+    case 'gen': {
+      // The Rust catalogs rewrite themselves from their golden tests.
+      for (const args of [
+        ['test', '-q', '-p', 'metafolder-cli', '--bin', 'mf', 'doc_gen'],
+        ['test', '-q', '-p', 'metafolder-gui', '--lib', 'doc_gen'],
+      ]) {
+        const run = spawnSync('cargo', args, {
+          cwd: REPO,
+          stdio: 'inherit',
+          env: { ...process.env, MF_DOC_UPDATE: '1' },
+        });
+        if (run.status !== 0) return 1;
+      }
+      syncScripts(true);
+      console.log('generated/ is up to date');
+      return 0;
     }
     case 'build': {
       const { build } = await import('./build.mjs');

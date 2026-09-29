@@ -1,0 +1,22 @@
+title: $:/mf/gen/CLI command/mf schema
+catalog: CLI command
+target: mf schema
+summary: User schema commands
+
+!! Reference
+
+```
+User schema commands
+
+Usage: mf schema <COMMAND>
+
+Commands:
+  check   Check metarecords against the schema and list the violations
+  reload  Re-read the schema file
+  show    Print the loaded schema (pretty-printed JSON)
+  help    Print this message or the help of the given subcommand(s)
+
+Options:
+  -h, --help
+          Print help
+```

@@ -1,0 +1,40 @@
+title: $:/mf/gen/CLI command/mf log list
+catalog: CLI command
+target: mf log list
+summary: Display the revision/operation history
+
+!! Reference
+
+```
+Display the revision/operation history
+
+Usage: mf log list [OPTIONS]
+
+Options:
+      --tree
+          Show all branches as a flat list, not just the active line
+
+      --graph
+          Draw every branch as an ASCII graph
+
+      --ops
+          Expand each revision to show its individual operations
+
+      --metarecord <METARECORD>
+          Only revisions/ops that affected this metarecord
+
+      --limit <LIMIT>
+          Show at most N revisions (or operations with --ops); default 20
+
+      --since <SINCE>
+          Only revisions with timestamp ≥ T (ISO-8601, or @<unix-ms>)
+
+      --until <UNTIL>
+          Only revisions with timestamp ≤ T (ISO-8601, or @<unix-ms>)
+
+      --all
+          Remove the default limit of 20
+
+  -h, --help
+          Print help
+```

@@ -1,0 +1,15 @@
+title: $:/mf/gen/GUI command/log:revert
+catalog: GUI command
+target: log:revert
+summary: Log: revert what is selected, or a wider scope (${Object.keys(REVERTS).join(' / ')})
+
+!! Reference
+
+* Defined by the ``log`` panel
+
+!! Default keys
+
+* ``shift+d`` → ``log:revert with-dependents`` (in the ``log`` panel)
+* ``shift+o`` → ``log:revert op`` (in the ``log`` panel)
+* ``shift+r`` → ``log:revert`` (in the ``log`` panel)
+* ``shift+v`` → ``log:revert revision`` (in the ``log`` panel)

@@ -1,0 +1,9 @@
+title: $:/mf/gen/GUI command/log:prune
+catalog: GUI command
+target: log:prune
+summary: Log: prune history before the selected revision
+
+!! Reference
+
+* Defined by the ``log`` panel
+* No default key

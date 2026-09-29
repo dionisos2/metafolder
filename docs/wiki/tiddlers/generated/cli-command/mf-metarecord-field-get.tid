@@ -1,0 +1,23 @@
+title: $:/mf/gen/CLI command/mf metarecord field get
+catalog: CLI command
+target: mf metarecord field get
+summary: Print the field's value(s)
+
+!! Reference
+
+```
+Print the field's value(s)
+
+Usage: mf metarecord field get [OPTIONS] <NAME>
+
+Arguments:
+  <NAME>
+          
+
+Options:
+      --resolve <RESOLVE>
+          Treat each value as a Ref and print the referenced records' <field> instead (one round-trip). Requires -i
+
+  -h, --help
+          Print help
+```

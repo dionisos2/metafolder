@@ -1,0 +1,9 @@
+title: $:/mf/gen/GUI command/help
+catalog: GUI command
+target: help
+summary: Open the help panel (optional topic)
+
+!! Reference
+
+* Defined by the shell (a builtin)
+* No default key

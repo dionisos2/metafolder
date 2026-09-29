@@ -1,0 +1,9 @@
+title: $:/mf/gen/GUI command/log:rollback
+catalog: GUI command
+target: log:rollback
+summary: Log: rollback to the selected revision
+
+!! Reference
+
+* Defined by the ``log`` panel
+* No default key

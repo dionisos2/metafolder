@@ -1,0 +1,16 @@
+title: $:/mf/gen/CLI command/mf trash list
+catalog: CLI command
+target: mf trash list
+summary: List the trashed files (id, size, age, reason, original path)
+
+!! Reference
+
+```
+List the trashed files (id, size, age, reason, original path)
+
+Usage: mf trash list
+
+Options:
+  -h, --help
+          Print help
+```

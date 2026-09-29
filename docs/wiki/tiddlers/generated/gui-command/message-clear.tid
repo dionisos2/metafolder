@@ -1,0 +1,9 @@
+title: $:/mf/gen/GUI command/message:clear
+catalog: GUI command
+target: message:clear
+summary: Clear the workspace message log
+
+!! Reference
+
+* Defined by the shell (a builtin)
+* No default key

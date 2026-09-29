@@ -1,0 +1,15 @@
+title: $:/mf/gen/GUI command/metarecord-list:prev
+catalog: GUI command
+target: metarecord-list:prev
+summary: Metarecord list: move the selection up
+
+!! Reference
+
+* Defined by the ``metarecord-list`` panel
+
+!! Default keys
+
+* ``k`` → ``metarecord-list:prev`` (in the ``metarecord-list`` panel)
+* ``up`` → ``metarecord-list:prev`` (while ``finder`` is focused)
+* ``up`` → ``metarecord-list:prev`` (in the ``file`` panel)
+* ``up`` → ``metarecord-list:prev`` (in the ``metarecord-list`` panel)

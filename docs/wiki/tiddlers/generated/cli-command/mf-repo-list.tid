@@ -1,0 +1,19 @@
+title: $:/mf/gen/CLI command/mf repo list
+catalog: CLI command
+target: mf repo list
+summary: List the loaded repositories (pretty-printed JSON)
+
+!! Reference
+
+```
+List the loaded repositories (pretty-printed JSON)
+
+Usage: mf repo list [OPTIONS]
+
+Options:
+      --all
+          Also list daemon-internal system repos (e.g. sync plan repos)
+
+  -h, --help
+          Print help
+```

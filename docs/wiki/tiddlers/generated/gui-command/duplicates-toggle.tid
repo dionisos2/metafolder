@@ -1,0 +1,13 @@
+title: $:/mf/gen/GUI command/duplicates:toggle
+catalog: GUI command
+target: duplicates:toggle
+summary: Duplicates: expand or collapse the group under the cursor
+
+!! Reference
+
+* Defined by the ``duplicates`` panel
+
+!! Default keys
+
+* ``enter`` → ``duplicates:toggle`` (in the ``duplicates`` panel)
+* ``right`` → ``duplicates:toggle`` (in the ``duplicates`` panel)

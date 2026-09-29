@@ -1,0 +1,12 @@
+title: $:/mf/gen/GUI command/sync:open
+catalog: GUI command
+target: sync:open
+summary: Sync: show the plan overlay
+
+!! Reference
+
+* Defined by the ``sync`` panel
+
+!! Default keys
+
+* ``y w`` → ``sync:open`` (in the ``sync`` panel)

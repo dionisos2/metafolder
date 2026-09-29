@@ -1,0 +1,13 @@
+title: $:/mf/gen/GUI command/duplicates:next
+catalog: GUI command
+target: duplicates:next
+summary: Duplicates: move down
+
+!! Reference
+
+* Defined by the ``duplicates`` panel
+
+!! Default keys
+
+* ``down`` → ``duplicates:next`` (in the ``duplicates`` panel)
+* ``j`` → ``duplicates:next`` (in the ``duplicates`` panel)

@@ -1,0 +1,12 @@
+title: $:/mf/gen/GUI command/duplicates:first
+catalog: GUI command
+target: duplicates:first
+summary: Duplicates: move to the first row
+
+!! Reference
+
+* Defined by the ``duplicates`` panel
+
+!! Default keys
+
+* ``home`` → ``duplicates:first`` (in the ``duplicates`` panel)

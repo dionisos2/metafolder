@@ -1,0 +1,25 @@
+title: $:/mf/gen/GUI command/metarecord:field
+catalog: GUI command
+target: metarecord:field
+summary: Field operation on this metarecord (${FIELD_OPERATIONS.join(' / ')})
+
+!! Reference
+
+* Defined by the ``metarecord-detail`` panel
+
+!! Default keys
+
+* ``m a`` → ``metarecord:field add`` (in the ``metarecord-detail`` panel)
+* ``m a`` → ``metarecord:field add`` (in the ``metarecord-list`` panel)
+* ``m d`` → ``metarecord:field remove`` (in the ``metarecord-detail`` panel)
+* ``m d`` → ``metarecord:field remove`` (in the ``metarecord-list`` panel)
+* ``m n`` → ``metarecord:field rename`` (in the ``metarecord-detail`` panel)
+* ``m n`` → ``metarecord:field rename`` (in the ``metarecord-list`` panel)
+* ``m s`` → ``metarecord:field set`` (in the ``metarecord-detail`` panel)
+* ``m s`` → ``metarecord:field set`` (in the ``metarecord-list`` panel)
+* ``m t`` → ``metarecord:field retype`` (in the ``metarecord-detail`` panel)
+* ``m t`` → ``metarecord:field retype`` (in the ``metarecord-list`` panel)
+* ``m u`` → ``metarecord:field unset`` (in the ``metarecord-detail`` panel)
+* ``m u`` → ``metarecord:field unset`` (in the ``metarecord-list`` panel)
+* ``m v`` → ``metarecord:field edit`` (in the ``metarecord-detail`` panel)
+* ``m v`` → ``metarecord:field edit`` (in the ``metarecord-list`` panel)

@@ -1,0 +1,16 @@
+title: $:/mf/gen/CLI command/mf repo reindex
+catalog: CLI command
+target: mf repo reindex
+summary: Rebuild what the selected repository derives from its data (its indexes)
+
+!! Reference
+
+```
+Rebuild what the selected repository derives from its data (its indexes)
+
+Usage: mf repo reindex
+
+Options:
+  -h, --help
+          Print help
+```

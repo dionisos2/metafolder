@@ -1,0 +1,12 @@
+title: $:/mf/gen/GUI command/treeref:last
+catalog: GUI command
+target: treeref:last
+summary: TreeRef explorer: move to the last loaded child
+
+!! Reference
+
+* Defined by the ``treeref`` panel
+
+!! Default keys
+
+* ``end`` → ``treeref:last`` (in the ``treeref`` panel)

@@ -1,0 +1,12 @@
+title: $:/mf/gen/GUI command/metarecord:row-delete
+catalog: GUI command
+target: metarecord:row-delete
+summary: Delete the field under the cursor
+
+!! Reference
+
+* Defined by the ``metarecord-detail`` panel
+
+!! Default keys
+
+* ``d`` → ``metarecord:row-delete`` (in the ``metarecord-detail`` panel)

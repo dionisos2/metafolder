@@ -1,0 +1,23 @@
+title: $:/mf/gen/CLI command/mf metarecord set
+catalog: CLI command
+target: mf metarecord set
+summary: Replace the ENTIRE field set of the selected metarecord (needs -i, force)
+
+!! Reference
+
+```
+Replace the ENTIRE field set of the selected metarecord (needs -i, force)
+
+Usage: mf metarecord set [OPTIONS] <SPECS>...
+
+Arguments:
+  <SPECS>...
+          Field spec name:type[=value]; repeatable
+
+Options:
+  -f, --force
+          Mandatory: confirms the full-record overwrite
+
+  -h, --help
+          Print help
+```

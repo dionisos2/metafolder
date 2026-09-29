@@ -1,0 +1,19 @@
+title: $:/mf/gen/CLI command/mf slow clear
+catalog: CLI command
+target: mf slow clear
+summary: Empty the log (the clean slate a reproduction starts from)
+
+!! Reference
+
+```
+Empty the log (the clean slate a reproduction starts from)
+
+Usage: mf slow clear [OPTIONS]
+
+Options:
+  -y, --yes
+          Do not ask for confirmation
+
+  -h, --help
+          Print help
+```

@@ -1,0 +1,23 @@
+title: $:/mf/gen/CLI command/mf ignore remove
+catalog: CLI command
+target: mf ignore remove
+summary: Remove the presets' patterns from the target's mf_ignore set
+
+!! Reference
+
+```
+Remove the presets' patterns from the target's mf_ignore set
+
+Usage: mf ignore remove [OPTIONS] [PRESETS]...
+
+Arguments:
+  [PRESETS]...
+          Preset names (comma- or space-separated), e.g. `rust-build,node`. May be empty for `set` (which then clears the target's mf_ignore)
+
+Options:
+  -d, --dir <PATH>
+          Target directory (default: the repository root)
+
+  -h, --help
+          Print help
+```

@@ -1,0 +1,20 @@
+title: $:/mf/gen/CLI command/mf track
+catalog: CLI command
+target: mf track
+summary: Create the metarecord for a single path and print its UUID
+
+!! Reference
+
+```
+Create the metarecord for a single path and print its UUID
+
+Usage: mf track <PATH>
+
+Arguments:
+  <PATH>
+          
+
+Options:
+  -h, --help
+          Print help
+```

@@ -1,0 +1,12 @@
+title: $:/mf/gen/GUI command/file-manager:copy
+catalog: GUI command
+target: file-manager:copy
+summary: File manager: copy the selected entry to the clipboard
+
+!! Reference
+
+* Defined by the ``file-manager`` panel
+
+!! Default keys
+
+* ``ctrl+c`` → ``file-manager:copy`` (in the ``file-manager`` panel)

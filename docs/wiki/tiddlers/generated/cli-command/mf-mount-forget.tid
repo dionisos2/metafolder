@@ -1,0 +1,23 @@
+title: $:/mf/gen/CLI command/mf mount forget
+catalog: CLI command
+target: mf mount forget
+summary: Un-declare a mount point (force-unsets `mfr_mount` on that metarecord)
+
+!! Reference
+
+```
+Un-declare a mount point (force-unsets `mfr_mount` on that metarecord)
+
+Usage: mf mount forget [OPTIONS] <UUID>
+
+Arguments:
+  <UUID>
+          The mount point's metarecord uuid
+
+Options:
+  -y, --yes
+          Skip the confirmation prompt
+
+  -h, --help
+          Print help
+```

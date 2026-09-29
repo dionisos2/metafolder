@@ -1,0 +1,13 @@
+title: $:/mf/gen/GUI command/file:page
+catalog: GUI command
+target: file:page
+summary: File: go to a page of the document
+
+!! Reference
+
+* Defined by the ``file`` panel
+
+!! Default keys
+
+* ``pagedown`` → ``file:page next`` (in the ``file`` panel)
+* ``pageup`` → ``file:page prev`` (in the ``file`` panel)

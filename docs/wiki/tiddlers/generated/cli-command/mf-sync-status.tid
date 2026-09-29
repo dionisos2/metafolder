@@ -1,0 +1,26 @@
+title: $:/mf/gen/CLI command/mf sync status
+catalog: CLI command
+target: mf sync status
+summary: Print the per-link change/conflict states of a repo pair
+
+!! Reference
+
+```
+Print the per-link change/conflict states of a repo pair
+
+Usage: mf sync status [OPTIONS] <REPO_A> <REPO_B>
+
+Arguments:
+  <REPO_A>
+          The two repositories (name or UUID; order does not matter)
+
+  <REPO_B>
+          
+
+Options:
+      --json
+          Print the raw JSON response body
+
+  -h, --help
+          Print help
+```

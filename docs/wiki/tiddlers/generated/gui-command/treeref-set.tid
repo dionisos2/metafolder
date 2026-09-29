@@ -1,0 +1,13 @@
+title: $:/mf/gen/GUI command/treeref:set
+catalog: GUI command
+target: treeref:set
+summary: TreeRef explorer: change a view setting (${Object.keys(TREEREF_SETTINGS).join(' / ')})
+
+!! Reference
+
+* Defined by the ``treeref`` panel
+
+!! Default keys
+
+* ``e`` → ``treeref:set ref-field`` (in the ``treeref`` panel)
+* ``shift+f`` → ``treeref:set field`` (in the ``treeref`` panel)

@@ -1,0 +1,9 @@
+title: $:/mf/gen/GUI command/repos:unload
+catalog: GUI command
+target: repos:unload
+summary: Repos: unload a repository from the daemon
+
+!! Reference
+
+* Defined by the ``repos`` panel
+* No default key

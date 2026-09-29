@@ -1,0 +1,12 @@
+title: $:/mf/gen/GUI command/file-manager:last
+catalog: GUI command
+target: file-manager:last
+summary: File manager: move to the last entry
+
+!! Reference
+
+* Defined by the ``file-manager`` panel
+
+!! Default keys
+
+* ``end`` → ``file-manager:last`` (in the ``file-manager`` panel)

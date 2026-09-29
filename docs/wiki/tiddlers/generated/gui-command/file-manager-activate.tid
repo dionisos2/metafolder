@@ -1,0 +1,12 @@
+title: $:/mf/gen/GUI command/file-manager:activate
+catalog: GUI command
+target: file-manager:activate
+summary: File manager: open directory / confirm file
+
+!! Reference
+
+* Defined by the ``file-manager`` panel
+
+!! Default keys
+
+* ``enter`` → ``file-manager:activate`` (in the ``file-manager`` panel)

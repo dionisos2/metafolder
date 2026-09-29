@@ -1,0 +1,9 @@
+title: $:/mf/gen/GUI command/ignore:set
+catalog: GUI command
+target: ignore:set
+summary: Replace the target directory's ignore set with a preset
+
+!! Reference
+
+* Defined by the shell (a builtin)
+* No default key

@@ -1,0 +1,19 @@
+title: $:/mf/gen/CLI command/mf watch resume
+catalog: CLI command
+target: mf watch resume
+summary: Resume ingestion and apply what was buffered meanwhile
+
+!! Reference
+
+```
+Resume ingestion and apply what was buffered meanwhile
+
+Usage: mf watch resume [OPTIONS]
+
+Options:
+      --json
+          Print the raw JSON response body
+
+  -h, --help
+          Print help
+```

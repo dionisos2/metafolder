@@ -1,0 +1,12 @@
+title: $:/mf/gen/GUI command/panel:unsplit
+catalog: GUI command
+target: panel:unsplit
+summary: Hide the non-focused panel slot
+
+!! Reference
+
+* Defined by the shell (a builtin)
+
+!! Default keys
+
+* ``u`` → ``panel:unsplit``

@@ -1,0 +1,23 @@
+title: $:/mf/gen/CLI command/mf schema check
+catalog: CLI command
+target: mf schema check
+summary: Check metarecords against the schema and list the violations
+
+!! Reference
+
+```
+Check metarecords against the schema and list the violations
+
+Usage: mf schema check [OPTIONS] [PREDICATE]
+
+Arguments:
+  [PREDICATE]
+          Restrict the check to metarecords matching this predicate
+
+Options:
+      --json
+          Print the raw JSON response body
+
+  -h, --help
+          Print help
+```

@@ -1,0 +1,31 @@
+title: $:/mf/gen/CLI command/mf sync unlink
+catalog: CLI command
+target: mf sync unlink
+summary: Remove a link (optionally deleting one endpoint record first)
+
+!! Reference
+
+```
+Remove a link (optionally deleting one endpoint record first)
+
+Usage: mf sync unlink [OPTIONS] <REPO_A> <REPO_B> <LINK>
+
+Arguments:
+  <REPO_A>
+          
+
+  <REPO_B>
+          
+
+  <LINK>
+          The link UUID (from `mf sync status`)
+
+Options:
+      --with-endpoint <WITH_ENDPOINT>
+          Also delete the endpoint record in `a` (repo_a) or `b` (repo_b)
+          
+          [possible values: a, b]
+
+  -h, --help
+          Print help
+```

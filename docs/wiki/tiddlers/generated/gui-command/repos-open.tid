@@ -1,0 +1,9 @@
+title: $:/mf/gen/GUI command/repos:open
+catalog: GUI command
+target: repos:open
+summary: Open the repository panel in the focused slot
+
+!! Reference
+
+* Defined by the shell (a builtin)
+* No default key

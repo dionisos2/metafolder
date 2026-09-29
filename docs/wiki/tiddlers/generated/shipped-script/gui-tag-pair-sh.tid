@@ -1,0 +1,36 @@
+title: $:/mf/gen/Shipped script/gui-tag-pair.sh
+catalog: Shipped script
+target: gui-tag-pair.sh
+summary: Interactive yes/no tagging of one tag across all files.
+
+!! Reference
+
+```
+Summary: Interactive yes/no tagging of one tag across all files.
+Interactive y/n tagging for ONE tag over a set of files, in the running
+metafolder GUI. Takes a tag (autocompleting over the existing vocabulary) and
+a QUERY as the scope, then walks every file of that scope with no opinion on
+the tag yet, shows it, and waits for a key:
+
+  y / →  -> the file HAS the tag      (mf tag add)
+  n / ←  -> the file does NOT have it (mf tag deny)
+  s / ↓  -> skip this file
+  Escape -> stop
+
+The tag model (entries + tag/negative_tag refs, TreeRef `path` hierarchy,
+exclusivity) is owned by `mf tag`; this script is just the display + y/n loop.
+Files already referencing the tag either way are excluded, so it is resumable.
+Skipped files come back on the next run.
+
+THE QUERY IS THE SCOPE (spec-gui "A query is the scope"), as in
+gui-tag-folder.sh: given as the argument, else ASKED — the checked
+selection, or the query the list shows, like the GUI's bulk commands; when
+the list has published nothing, a folder chosen from the completion. An
+empty query is every file, which is what this script used to do
+unconditionally.
+
+Both arguments are optional: a missing tag is asked in the GUI with
+completion over the vocabulary, a missing query resolved as above.
+
+Usage: gui-tag-pair.sh [<tag> [<query>]]
+```

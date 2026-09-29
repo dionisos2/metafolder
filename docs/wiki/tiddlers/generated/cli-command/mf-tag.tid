@@ -1,0 +1,36 @@
+title: $:/mf/gen/CLI command/mf tag
+catalog: CLI command
+target: mf tag
+summary: Hierarchical tags: add/deny/mixed/remove a tag on the selected metarecord(s), or list the vocabulary. Encapsulates the subsumption and exclusivity rules (drop ancestors on add, descendants on deny). The field-name convention is configurable via the `[tag]` config table
+
+!! Reference
+
+```
+Hierarchical tags: add/deny/mixed/remove a tag on the selected metarecord(s), or list the vocabulary. Encapsulates the subsumption and exclusivity rules (drop ancestors on add, descendants on deny). The field-name convention is configurable via the `[tag]` config table
+
+Usage: mf tag [OPTIONS] <COMMAND>
+
+Commands:
+  add     The record(s) have the tag (drops more general ancestor tags)
+  deny    The record(s) do NOT have the tag (drops more specific descendants)
+  mixed   Mark the folder(s) mixed w.r.t. the tag
+  remove  Drop the tag from the record(s) (undo of add)
+  list    List the tag vocabulary as TSV: name<TAB>partition<TAB>exclusive
+  help    Print this message or the help of the given subcommand(s)
+
+Options:
+  -q, --query <QUERY>
+          DSL query selector (use -s for the simplified language)
+
+  -i, --id <ID>
+          Single-metarecord selector by UUID
+
+      --eq <EQ>
+          Exact-match selector: name[:type]=value (repeatable, AND-ed)
+
+  -s, --simplified
+          Treat -q as simplified-language text and expand it first
+
+  -h, --help
+          Print help
+```

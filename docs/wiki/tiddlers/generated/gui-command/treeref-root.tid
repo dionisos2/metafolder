@@ -1,0 +1,12 @@
+title: $:/mf/gen/GUI command/treeref:root
+catalog: GUI command
+target: treeref:root
+summary: TreeRef explorer: jump to the forest roots
+
+!! Reference
+
+* Defined by the ``treeref`` panel
+
+!! Default keys
+
+* ``/`` → ``treeref:root`` (in the ``treeref`` panel)

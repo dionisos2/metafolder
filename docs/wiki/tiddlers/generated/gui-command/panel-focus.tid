@@ -1,0 +1,12 @@
+title: $:/mf/gen/GUI command/panel:focus
+catalog: GUI command
+target: panel:focus
+summary: Focus a panel slot (next / left / right)
+
+!! Reference
+
+* Defined by the shell (a builtin)
+
+!! Default keys
+
+* ``o`` → ``panel:focus next``

@@ -1,0 +1,9 @@
+title: $:/mf/gen/GUI command/user:thing
+catalog: GUI command
+target: user:thing
+summary: What the command input shows beside the name
+
+!! Reference
+
+* Defined by the shipped ``commands.js``
+* No default key

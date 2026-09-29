@@ -1,0 +1,18 @@
+title: $:/mf/gen/Panel/log panel
+catalog: Panel
+target: log panel
+summary: The log panel type
+
+!! Commands
+
+* ``log:find`` — Log: jump to a revision by number or label
+* ``log:first`` — Log: move the selection to the newest revision
+* ``log:last`` — Log: move the selection to the oldest revision
+* ``log:mark`` — Log: set or clear the selected revision label
+* ``log:next`` — Log: move the selection down
+* ``log:prev`` — Log: move the selection up
+* ``log:prune`` — Log: prune history before the selected revision
+* ``log:refresh`` — Log: refresh from the daemon
+* ``log:revert`` — Log: revert what is selected, or a wider scope (${Object.keys(REVERTS).join(' / ')})
+* ``log:rollback`` — Log: rollback to the selected revision
+* ``log:toggle`` — Log: toggle a view flag (branch graph / the watcher’s revisions / the selected revision’s operations)

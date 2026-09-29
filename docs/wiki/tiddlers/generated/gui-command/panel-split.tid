@@ -1,0 +1,9 @@
+title: $:/mf/gen/GUI command/panel:split
+catalog: GUI command
+target: panel:split
+summary: Show the second panel slot
+
+!! Reference
+
+* Defined by the shell (a builtin)
+* No default key

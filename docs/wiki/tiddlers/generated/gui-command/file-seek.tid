@@ -1,0 +1,15 @@
+title: $:/mf/gen/GUI command/file:seek
+catalog: GUI command
+target: file:seek
+summary: File: seek the previewed media by a signed number of seconds (e.g. +${SEEK_STEP}, -${SEEK_STEP_LONG})
+
+!! Reference
+
+* Defined by the ``file`` panel
+
+!! Default keys
+
+* ``left`` → ``file:seek -10`` (in the ``file`` panel)
+* ``right`` → ``file:seek +10`` (in the ``file`` panel)
+* ``shift+left`` → ``file:seek -60`` (in the ``file`` panel)
+* ``shift+right`` → ``file:seek +60`` (in the ``file`` panel)

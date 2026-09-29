@@ -1,0 +1,20 @@
+title: $:/mf/gen/CLI command/mf tag add
+catalog: CLI command
+target: mf tag add
+summary: The record(s) have the tag (drops more general ancestor tags)
+
+!! Reference
+
+```
+The record(s) have the tag (drops more general ancestor tags)
+
+Usage: mf tag add <PATH>
+
+Arguments:
+  <PATH>
+          
+
+Options:
+  -h, --help
+          Print help
+```

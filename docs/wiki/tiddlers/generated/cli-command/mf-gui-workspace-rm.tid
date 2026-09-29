@@ -1,0 +1,20 @@
+title: $:/mf/gen/CLI command/mf gui workspace rm
+catalog: CLI command
+target: mf gui workspace rm
+summary: Close a workspace
+
+!! Reference
+
+```
+Close a workspace
+
+Usage: mf gui workspace rm <ID>
+
+Arguments:
+  <ID>
+          
+
+Options:
+  -h, --help
+          Print help
+```

@@ -1,0 +1,25 @@
+title: $:/mf/gen/CLI command/mf orphan
+catalog: CLI command
+target: mf orphan
+summary: Orphans: list metarecords whose file is gone, or clear them (default: list)
+
+!! Reference
+
+```
+Orphans: list metarecords whose file is gone, or clear them (default: list)
+
+An orphan is a tracked metarecord whose `mfr_path` still resolves to a path, but whose file no longer exists on disk (deleted while unwatched, or left stale by reconcile). Detection needs a disk scan, so this is a distinct command rather than a query. `clear` orphans them properly (freezing `mfr_path_old`, setting `mfr_path` to Nothing).
+
+Usage: mf orphan [COMMAND]
+
+Commands:
+  list    List orphaned metarecords (uuid, stale path) — the default
+  detect  Mark every orphaned metarecord with `orphan = true` (and unmark the rest)
+  clear   Orphan the scanned records: freeze mfr_path_old, set mfr_path = Nothing
+  relink  Re-home orphans onto files that carry their content (hashes candidates)
+  help    Print this message or the help of the given subcommand(s)
+
+Options:
+  -h, --help
+          Print help (see a summary with '-h')
+```

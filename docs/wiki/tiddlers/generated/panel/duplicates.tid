@@ -1,0 +1,16 @@
+title: $:/mf/gen/Panel/duplicates panel
+catalog: Panel
+target: duplicates panel
+summary: The duplicates panel type
+
+!! Commands
+
+* ``duplicates:find`` — Duplicates: jump to a group or a copy by name
+* ``duplicates:first`` — Duplicates: move to the first row
+* ``duplicates:keep`` — Duplicates: keep the copy under the cursor, trash the others
+* ``duplicates:last`` — Duplicates: move to the last row
+* ``duplicates:next`` — Duplicates: move down
+* ``duplicates:prev`` — Duplicates: move up
+* ``duplicates:refresh`` — Duplicates: reload the groups
+* ``duplicates:toggle`` — Duplicates: expand or collapse the group under the cursor
+* ``duplicates:trash`` — Duplicates: send the copy under the cursor to the trash

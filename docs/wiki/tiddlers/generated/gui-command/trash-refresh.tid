@@ -1,0 +1,12 @@
+title: $:/mf/gen/GUI command/trash:refresh
+catalog: GUI command
+target: trash:refresh
+summary: Trash: reload the entries
+
+!! Reference
+
+* Defined by the ``trash`` panel
+
+!! Default keys
+
+* ``r`` → ``trash:refresh`` (in the ``trash`` panel)

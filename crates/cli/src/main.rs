@@ -1745,3 +1745,68 @@ fn dispatch_gui(gui_url: Option<String>, command: GuiCommand) -> CmdResult {
         }
     }
 }
+
+#[cfg(test)]
+mod doc_gen {
+    //! The `CLI command` catalog of the documentation wiki: one generated note
+    //! per command of the clap tree (`metafolder_core::doc_gen`; rewritten by
+    //! `scripts/doc gen`, checked here otherwise).
+
+    use super::Cli;
+    use clap::CommandFactory;
+    use metafolder_core::doc_gen::{generated_dir, slug, sync_generated, tid};
+    use std::collections::BTreeMap;
+
+    /// Every command below `cmd` (itself included), with its full name and
+    /// its long help. clap's own `help` subcommands are not commands of `mf`.
+    fn walk(cmd: &mut clap::Command, name: &str, out: &mut Vec<(String, String, String)>) {
+        let about = cmd.get_about().map(|a| a.to_string()).unwrap_or_default();
+        let help = cmd.render_long_help().to_string();
+        out.push((name.to_string(), about, help));
+        for sub in cmd.get_subcommands_mut() {
+            if sub.get_name() == "help" {
+                continue;
+            }
+            let full = format!("{name} {}", sub.get_name());
+            walk(sub, &full, out);
+        }
+    }
+
+    fn commands() -> Vec<(String, String, String)> {
+        // The help must not depend on the machine: environment values of the
+        // `env` fallbacks hidden, no wrapping to a terminal width.
+        let mut root = Cli::command().bin_name("mf").mut_args(|a| a.hide_env_values(true));
+        root.build();
+        let mut out = Vec::new();
+        walk(&mut root, "mf", &mut out);
+        out
+    }
+
+    #[test]
+    fn commands_are_named_in_full() {
+        let names: Vec<String> = commands().into_iter().map(|c| c.0).collect();
+        assert!(names.contains(&"mf trash restore".to_string()), "{names:?}");
+        assert!(!names.iter().any(|n| n.ends_with(" help")), "{names:?}");
+    }
+
+    #[test]
+    fn the_wiki_catalog_matches_the_code() {
+        let all = commands();
+        let notes: BTreeMap<String, String> = all
+            .iter()
+            .map(|(name, about, help)| {
+                let title = format!("$:/mf/gen/CLI command/{name}");
+                let text = format!("!! Reference\n\n```\n{}\n```\n", help.trim_end());
+                let fields = [
+                    ("title", title.as_str()),
+                    ("catalog", "CLI command"),
+                    ("target", name.as_str()),
+                    ("summary", about.as_str()),
+                ];
+                (format!("{}.tid", slug(name)), tid(&fields, &text))
+            })
+            .collect();
+        assert_eq!(notes.len(), all.len(), "two commands share a file name");
+        sync_generated(&generated_dir(env!("CARGO_MANIFEST_DIR"), "CLI command"), &notes).unwrap();
+    }
+}

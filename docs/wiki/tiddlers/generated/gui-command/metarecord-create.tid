@@ -1,0 +1,12 @@
+title: $:/mf/gen/GUI command/metarecord:create
+catalog: GUI command
+target: metarecord:create
+summary: Create a new metarecord
+
+!! Reference
+
+* Defined by the ``metarecord-detail`` panel
+
+!! Default keys
+
+* ``ctrl+n`` → ``metarecord:create`` (in the ``metarecord-detail`` panel)

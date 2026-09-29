@@ -1,0 +1,12 @@
+title: $:/mf/gen/GUI command/trash:restore
+catalog: GUI command
+target: trash:restore
+summary: Trash: restore the selected entry
+
+!! Reference
+
+* Defined by the ``trash`` panel
+
+!! Default keys
+
+* ``enter`` → ``trash:restore`` (in the ``trash`` panel)

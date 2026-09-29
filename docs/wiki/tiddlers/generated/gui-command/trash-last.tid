@@ -1,0 +1,12 @@
+title: $:/mf/gen/GUI command/trash:last
+catalog: GUI command
+target: trash:last
+summary: Trash: move to the last entry
+
+!! Reference
+
+* Defined by the ``trash`` panel
+
+!! Default keys
+
+* ``end`` → ``trash:last`` (in the ``trash`` panel)

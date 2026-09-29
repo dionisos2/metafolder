@@ -1,0 +1,15 @@
+title: $:/mf/gen/Panel/repos panel
+catalog: Panel
+target: repos panel
+summary: The repos panel type
+
+!! Commands
+
+* ``repos:load`` — Repos: pick a folder and load the repository in it
+* ``repos:open-init`` — Repos: open the init form
+* ``repos:open-retype`` — Repos: open the field-type conversion form for the active repository
+* ``repos:refresh`` — Repos: refresh the repository list
+* ``repos:resume`` — Repos: resume tracking on the active repository
+* ``repos:stop`` — Repos: stop one of the active repository's running tasks
+* ``repos:unload`` — Repos: unload a repository from the daemon
+* ``repos:watch-exceeded`` — Repos: list the subtrees left unwatched for want of watch budget

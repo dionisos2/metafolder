@@ -1,0 +1,15 @@
+title: $:/mf/gen/GUI command/metarecord-list:clear
+catalog: GUI command
+target: metarecord-list:clear
+summary: Metarecord list: clear a zone (${ZONE_NAMES.join(' / ')} / all)
+
+!! Reference
+
+* Defined by the ``metarecord-list`` panel
+
+!! Default keys
+
+* ``c`` → ``metarecord-list:clear all`` (in the ``metarecord-list`` panel)
+* ``f`` → ``metarecord-list:clear finder`` (in the ``metarecord-list`` panel)
+* ``q`` → ``metarecord-list:clear normal`` (in the ``metarecord-list`` panel)
+* ``s`` → ``metarecord-list:clear simplified`` (in the ``metarecord-list`` panel)

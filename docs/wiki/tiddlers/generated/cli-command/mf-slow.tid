@@ -1,0 +1,22 @@
+title: $:/mf/gen/CLI command/mf slow
+catalog: CLI command
+target: mf slow
+summary: Slow-operation log: what took seconds, and where the time went
+
+!! Reference
+
+```
+Slow-operation log: what took seconds, and where the time went
+
+Usage: mf slow [COMMAND]
+
+Commands:
+  list    List the slow operations, newest first — the default
+  replay  Run a query again and show where its time goes, now: the newest logged query, the one logged at --at, or one typed with -q. Not itself logged
+  clear   Empty the log (the clean slate a reproduction starts from)
+  help    Print this message or the help of the given subcommand(s)
+
+Options:
+  -h, --help
+          Print help
+```

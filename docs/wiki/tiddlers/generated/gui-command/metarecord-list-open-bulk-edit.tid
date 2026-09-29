@@ -1,0 +1,9 @@
+title: $:/mf/gen/GUI command/metarecord-list:open-bulk-edit
+catalog: GUI command
+target: metarecord-list:open-bulk-edit
+summary: Metarecord list: open the bulk edit / delete form (set/add/remove/unset/delete)
+
+!! Reference
+
+* Defined by the ``metarecord-list`` panel
+* No default key

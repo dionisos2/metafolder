@@ -1,0 +1,14 @@
+title: $:/mf/gen/GUI command/metarecord:trash
+catalog: GUI command
+target: metarecord:trash
+summary: Send the selected metarecord's file to the trash
+
+!! Reference
+
+* Defined by the shell (a builtin)
+
+!! Default keys
+
+* ``ctrl+delete`` → ``metarecord:trash`` (in the ``metarecord-detail`` panel)
+* ``ctrl+delete`` → ``metarecord:trash`` (in the ``metarecord-list`` panel)
+* ``ctrl+delete`` → ``metarecord:trash`` (in the ``treeref`` panel)

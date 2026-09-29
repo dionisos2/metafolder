@@ -1,0 +1,13 @@
+title: $:/mf/gen/GUI command/log:next
+catalog: GUI command
+target: log:next
+summary: Log: move the selection down
+
+!! Reference
+
+* Defined by the ``log`` panel
+
+!! Default keys
+
+* ``down`` → ``log:next`` (in the ``log`` panel)
+* ``j`` → ``log:next`` (in the ``log`` panel)

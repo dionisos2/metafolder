@@ -1,0 +1,20 @@
+title: $:/mf/gen/CLI command/mf trash restore
+catalog: CLI command
+target: mf trash restore
+summary: Restore a trashed file to its original path
+
+!! Reference
+
+```
+Restore a trashed file to its original path
+
+Usage: mf trash restore <ID>
+
+Arguments:
+  <ID>
+          The trash entry id (from `mf trash list`)
+
+Options:
+  -h, --help
+          Print help
+```

@@ -1,0 +1,16 @@
+title: $:/mf/gen/CLI command/mf log head
+catalog: CLI command
+target: mf log head
+summary: Print the id of the operation the history is on (what --id targets)
+
+!! Reference
+
+```
+Print the id of the operation the history is on (what --id targets)
+
+Usage: mf log head
+
+Options:
+  -h, --help
+          Print help
+```

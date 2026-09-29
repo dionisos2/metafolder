@@ -1,0 +1,19 @@
+title: $:/mf/gen/CLI command/mf orphan clear
+catalog: CLI command
+target: mf orphan clear
+summary: Orphan the scanned records: freeze mfr_path_old, set mfr_path = Nothing
+
+!! Reference
+
+```
+Orphan the scanned records: freeze mfr_path_old, set mfr_path = Nothing
+
+Usage: mf orphan clear [OPTIONS]
+
+Options:
+  -y, --yes
+          Skip the confirmation prompt
+
+  -h, --help
+          Print help
+```

@@ -1,0 +1,13 @@
+title: $:/mf/gen/GUI command/metarecord-list:first
+catalog: GUI command
+target: metarecord-list:first
+summary: Metarecord list: move the selection to the first row
+
+!! Reference
+
+* Defined by the ``metarecord-list`` panel
+
+!! Default keys
+
+* ``home`` → ``metarecord-list:first`` (in the ``file`` panel)
+* ``home`` → ``metarecord-list:first`` (in the ``metarecord-list`` panel)

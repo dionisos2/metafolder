@@ -1,0 +1,13 @@
+title: $:/mf/gen/GUI command/treeref:descend
+catalog: GUI command
+target: treeref:descend
+summary: TreeRef explorer: descend into the selected node
+
+!! Reference
+
+* Defined by the ``treeref`` panel
+
+!! Default keys
+
+* ``enter`` → ``treeref:descend`` (in the ``treeref`` panel)
+* ``right`` → ``treeref:descend`` (in the ``treeref`` panel)

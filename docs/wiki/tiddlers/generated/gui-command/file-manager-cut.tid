@@ -1,0 +1,12 @@
+title: $:/mf/gen/GUI command/file-manager:cut
+catalog: GUI command
+target: file-manager:cut
+summary: File manager: cut the selected entry to the clipboard
+
+!! Reference
+
+* Defined by the ``file-manager`` panel
+
+!! Default keys
+
+* ``ctrl+x`` → ``file-manager:cut`` (in the ``file-manager`` panel)

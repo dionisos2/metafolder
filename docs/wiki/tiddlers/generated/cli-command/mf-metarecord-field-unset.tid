@@ -1,0 +1,23 @@
+title: $:/mf/gen/CLI command/mf metarecord field unset
+catalog: CLI command
+target: mf metarecord field unset
+summary: Remove the field entirely (every row → unknown)
+
+!! Reference
+
+```
+Remove the field entirely (every row → unknown)
+
+Usage: mf metarecord field unset [OPTIONS] <NAME>
+
+Arguments:
+  <NAME>
+          
+
+Options:
+  -f, --force
+          
+
+  -h, --help
+          Print help
+```

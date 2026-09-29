@@ -1,0 +1,12 @@
+title: $:/mf/gen/GUI command/mf:order
+catalog: GUI command
+target: mf:order
+summary: Number the selected folder's (or selected file's folder's) direct children
+
+!! Reference
+
+* Defined by the shell (a builtin)
+
+!! Default keys
+
+* ``m o`` → ``mf:order``

@@ -1,0 +1,9 @@
+title: $:/mf/gen/GUI command/log-detail:toggle
+catalog: GUI command
+target: log-detail:toggle
+summary: Log detail: toggle a view flag (the whole revision / unchanged fields)
+
+!! Reference
+
+* Defined by the ``log-detail`` panel
+* No default key

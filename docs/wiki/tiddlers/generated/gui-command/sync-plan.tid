@@ -1,0 +1,12 @@
+title: $:/mf/gen/GUI command/sync:plan
+catalog: GUI command
+target: sync:plan
+summary: Sync: compute the plan
+
+!! Reference
+
+* Defined by the ``sync`` panel
+
+!! Default keys
+
+* ``y p`` → ``sync:plan`` (in the ``sync`` panel)

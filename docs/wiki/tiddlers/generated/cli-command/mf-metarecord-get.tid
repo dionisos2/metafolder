@@ -1,0 +1,37 @@
+title: $:/mf/gen/CLI command/mf metarecord get
+catalog: CLI command
+target: mf metarecord get
+summary: Read: -i <uuid> → full JSON; -q/none → UUIDs (--select for fields)
+
+!! Reference
+
+```
+Read: -i <uuid> → full JSON; -q/none → UUIDs (--select for fields)
+
+Usage: mf metarecord get [OPTIONS]
+
+Options:
+      --select <SELECT>
+          Print full metadata restricted to these fields, or '*' for all
+
+      --sort <SORT>
+          Sort key field[:asc|desc]; repeatable (query selectors only)
+
+      --limit <LIMIT>
+          Stop after N metarecords
+
+      --count
+          Print how many metarecords the selector matches, instead of them. One round-trip, exact, and O(1) on the index — the count a walk needs per question. Query selectors only (-q, or none)
+
+      --values
+          Print the selected field's raw values, one per line
+
+      --tsv
+          Print one tab-separated row per metarecord (first value of each --select field). Requires --select with a field list — except with --resolve-tree, where it prints `uuid<TAB>path` instead of bare paths. The requirement is checked in the command (clap cannot make it conditional), so it is still a usage error
+
+      --resolve-tree <RESOLVE_TREE>
+          Resolve this tree_ref field of each selected metarecord to its root-relative path(s), one per line (the bulk form of `mf path`). Needs a selector (-q or -i)
+
+  -h, --help
+          Print help
+```

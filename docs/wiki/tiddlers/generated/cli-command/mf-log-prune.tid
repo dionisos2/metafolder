@@ -1,0 +1,21 @@
+title: $:/mf/gen/CLI command/mf log prune
+catalog: CLI command
+target: mf log prune
+summary: Permanently remove operations from the history (irreversible)
+
+!! Reference
+
+```
+Permanently remove operations from the history (irreversible)
+
+Usage: mf log prune <COMMAND>
+
+Commands:
+  before     Make <target> the new root, deleting all older operations
+  linearize  Delete branch operations diverging from the HEAD path up to <target>
+  help       Print this message or the help of the given subcommand(s)
+
+Options:
+  -h, --help
+          Print help
+```

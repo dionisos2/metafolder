@@ -1,0 +1,13 @@
+title: $:/mf/gen/GUI command/editing:goto
+catalog: GUI command
+target: editing:goto
+summary: Move the cursor to the line start / line end
+
+!! Reference
+
+* Defined by the shell (a builtin)
+
+!! Default keys
+
+* ``ctrl+a`` → ``editing:goto line-start`` (also in a text input)
+* ``ctrl+e`` → ``editing:goto line-end`` (also in a text input)

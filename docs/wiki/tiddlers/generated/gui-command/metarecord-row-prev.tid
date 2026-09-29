@@ -1,0 +1,13 @@
+title: $:/mf/gen/GUI command/metarecord:row-prev
+catalog: GUI command
+target: metarecord:row-prev
+summary: Move the field cursor up
+
+!! Reference
+
+* Defined by the ``metarecord-detail`` panel
+
+!! Default keys
+
+* ``k`` → ``metarecord:row-prev`` (in the ``metarecord-detail`` panel)
+* ``up`` → ``metarecord:row-prev`` (in the ``metarecord-detail`` panel)

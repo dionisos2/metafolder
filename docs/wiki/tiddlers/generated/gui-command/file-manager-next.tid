@@ -1,0 +1,13 @@
+title: $:/mf/gen/GUI command/file-manager:next
+catalog: GUI command
+target: file-manager:next
+summary: File manager: move down
+
+!! Reference
+
+* Defined by the ``file-manager`` panel
+
+!! Default keys
+
+* ``down`` → ``file-manager:next`` (in the ``file-manager`` panel)
+* ``j`` → ``file-manager:next`` (in the ``file-manager`` panel)

@@ -1,0 +1,12 @@
+title: $:/mf/gen/GUI command/repos:load
+catalog: GUI command
+target: repos:load
+summary: Repos: pick a folder and load the repository in it
+
+!! Reference
+
+* Defined by the ``repos`` panel
+
+!! Default keys
+
+* ``g l`` → ``repos:load``

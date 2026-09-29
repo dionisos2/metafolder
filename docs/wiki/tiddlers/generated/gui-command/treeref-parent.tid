@@ -1,0 +1,13 @@
+title: $:/mf/gen/GUI command/treeref:parent
+catalog: GUI command
+target: treeref:parent
+summary: TreeRef explorer: go up one level
+
+!! Reference
+
+* Defined by the ``treeref`` panel
+
+!! Default keys
+
+* ``backspace`` → ``treeref:parent`` (in the ``treeref`` panel)
+* ``left`` → ``treeref:parent`` (in the ``treeref`` panel)

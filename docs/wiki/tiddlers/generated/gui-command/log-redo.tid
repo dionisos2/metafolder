@@ -1,0 +1,12 @@
+title: $:/mf/gen/GUI command/log:redo
+catalog: GUI command
+target: log:redo
+summary: Re-apply the revision ahead of HEAD
+
+!! Reference
+
+* Defined by the shell (a builtin)
+
+!! Default keys
+
+* ``ctrl+shift+z`` → ``log:redo``

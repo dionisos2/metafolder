@@ -1,0 +1,19 @@
+title: $:/mf/gen/CLI command/mf gui query
+catalog: CLI command
+target: mf gui query
+summary: Print the query the metarecord list shows (finder included); an empty line = every metarecord; exit 1 when the list has not run
+
+!! Reference
+
+```
+Print the query the metarecord list shows (finder included); an empty line = every metarecord; exit 1 when the list has not run
+
+Usage: mf gui query [OPTIONS]
+
+Options:
+      --workspace <WORKSPACE>
+          Workspace id (default: the focused workspace)
+
+  -h, --help
+          Print help
+```

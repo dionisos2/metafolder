@@ -1,0 +1,13 @@
+title: $:/mf/gen/GUI command/file:volume
+catalog: GUI command
+target: file:volume
+summary: File: step the volume
+
+!! Reference
+
+* Defined by the ``file`` panel
+
+!! Default keys
+
+* ``shift+down`` → ``file:volume down`` (in the ``file`` panel)
+* ``shift+up`` → ``file:volume up`` (in the ``file`` panel)

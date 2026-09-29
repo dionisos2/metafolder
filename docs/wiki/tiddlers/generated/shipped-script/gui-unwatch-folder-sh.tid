@@ -1,0 +1,43 @@
+title: $:/mf/gen/Shipped script/gui-unwatch-folder.sh
+catalog: Shipped script
+target: gui-unwatch-folder.sh
+summary: Stop watching a folder and delete every metarecord inside it.
+
+!! Reference
+
+```
+Summary: Stop watching a folder and delete every metarecord inside it.
+Stop tracking a folder, in the running metafolder GUI: writes
+`mf_watch = false` on the folder's own metarecord, then deletes every
+metarecord *inside* it (the strict subtree, `mfr_path ->* <folder>`).
+
+The folder's own metarecord is KEPT — it is what carries the `mf_watch =
+false` that stops the watcher (and the reconcile walk) from descending there
+again. Only its contents go. Nothing on the filesystem is touched: this
+removes metadata, not files.
+
+Order matters and is not configurable: `mf_watch` is written first, so the
+watcher has already dropped its watches on the subtree when the deletion
+lands and cannot re-create what we remove. The script then waits
+$MF_UNWATCH_SETTLE seconds (default 1) for the watcher's pending-event buffer
+to drain before deleting.
+
+The metarecords of files that were already gone (`mfr_path = Nothing`) are not
+in the subtree any more, so they are not covered — clear those with
+`mf orphan`.
+
+The argument is optional: a missing one is asked in the GUI with completion
+over the repository's tracked directories. A given one is a FILESYSTEM path
+(tracked on the fly if the folder has no metarecord yet, so `mf_watch` has
+somewhere to live).
+
+WHY NOT A QUERY. The other shipped scripts take their scope as a query
+(spec-gui "A query is the scope"); this one deliberately does not. A query
+matches metarecords that already exist, and the folder to stop watching is
+very often one that has none yet — which is exactly why the argument is a
+filesystem path this script tracks on the fly. `mf_watch` is also a
+per-directory field inherited down the tree, so a folder, not a set, is the
+shape of the thing being said.
+
+Usage: gui-unwatch-folder.sh [<folder>]
+```

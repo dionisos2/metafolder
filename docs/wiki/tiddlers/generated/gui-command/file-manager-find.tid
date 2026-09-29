@@ -1,0 +1,12 @@
+title: $:/mf/gen/GUI command/file-manager:find
+catalog: GUI command
+target: file-manager:find
+summary: File manager: jump to an entry by name
+
+!! Reference
+
+* Defined by the ``file-manager`` panel
+
+!! Default keys
+
+* ``f`` → ``file-manager:find`` (in the ``file-manager`` panel)

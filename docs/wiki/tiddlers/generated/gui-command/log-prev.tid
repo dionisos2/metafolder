@@ -1,0 +1,13 @@
+title: $:/mf/gen/GUI command/log:prev
+catalog: GUI command
+target: log:prev
+summary: Log: move the selection up
+
+!! Reference
+
+* Defined by the ``log`` panel
+
+!! Default keys
+
+* ``k`` → ``log:prev`` (in the ``log`` panel)
+* ``up`` → ``log:prev`` (in the ``log`` panel)

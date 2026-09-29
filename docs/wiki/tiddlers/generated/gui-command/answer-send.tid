@@ -1,0 +1,9 @@
+title: $:/mf/gen/GUI command/answer:send
+catalog: GUI command
+target: answer:send
+summary: Resolve the pending script input wait
+
+!! Reference
+
+* Defined by the shell (a builtin)
+* No default key

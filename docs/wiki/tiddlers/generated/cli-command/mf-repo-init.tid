@@ -1,0 +1,31 @@
+title: $:/mf/gen/CLI command/mf repo init
+catalog: CLI command
+target: mf repo init
+summary: Initialise a new repository and print its UUID
+
+!! Reference
+
+```
+Initialise a new repository and print its UUID
+
+Applies the `default` ignore preset to the new root (spec-file-tracking "Ignore presets"); use --ignore to pick a different preset set, or --no-ignore to leave the root's mf_ignore empty.
+
+Usage: mf repo init [OPTIONS] <ROOT>
+
+Arguments:
+  <ROOT>
+          
+
+Options:
+      --metafolder <METAFOLDER>
+          External database location (instead of <root>/.metafolder)
+
+      --ignore <PRESETS>
+          Ignore presets to apply to the new root (comma/space separated; default: "default")
+
+      --no-ignore
+          Leave the new root's mf_ignore set empty
+
+  -h, --help
+          Print help (see a summary with '-h')
+```

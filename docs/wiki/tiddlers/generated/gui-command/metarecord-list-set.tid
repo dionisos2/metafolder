@@ -1,0 +1,9 @@
+title: $:/mf/gen/GUI command/metarecord-list:set
+catalog: GUI command
+target: metarecord-list:set
+summary: Metarecord list: change a view setting (${Object.keys(SETTINGS).join(' / ')})
+
+!! Reference
+
+* Defined by the ``metarecord-list`` panel
+* No default key

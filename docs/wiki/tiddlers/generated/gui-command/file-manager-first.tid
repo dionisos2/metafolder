@@ -1,0 +1,12 @@
+title: $:/mf/gen/GUI command/file-manager:first
+catalog: GUI command
+target: file-manager:first
+summary: File manager: move to the first entry
+
+!! Reference
+
+* Defined by the ``file-manager`` panel
+
+!! Default keys
+
+* ``home`` → ``file-manager:first`` (in the ``file-manager`` panel)

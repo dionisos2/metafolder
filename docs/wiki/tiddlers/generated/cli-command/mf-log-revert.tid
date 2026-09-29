@@ -1,0 +1,44 @@
+title: $:/mf/gen/CLI command/mf log revert
+catalog: CLI command
+target: mf log revert
+summary: Undo a revision (or an operation) by writing its inverse at HEAD
+
+!! Reference
+
+```
+Undo a revision (or an operation) by writing its inverse at HEAD
+
+Usage: mf log revert [OPTIONS] [ARGS]...
+
+Arguments:
+  [ARGS]...
+          "plan" to preview, optionally a revision id; or a revision id
+
+Options:
+      --op <OP>
+          Revert this operation only (repeatable)
+
+      --with-dependents
+          Also revert whatever blocks the target (its dependency closure)
+
+      --metadata-only
+          Leave out the operations needing a filesystem action
+
+      --label <LABEL>
+          Label the revision the revert creates
+
+      --on-move-available <ON_MOVE_AVAILABLE>
+          Policy when the file is present: apply|skip|abort|ask (default apply)
+
+      --on-move-unavailable <ON_MOVE_UNAVAILABLE>
+          Policy when the file is missing: apply|skip|abort|ask (default ask)
+
+      --force
+          Skip the confirmation prompt
+
+      --silent
+          Suppress informational output
+
+  -h, --help
+          Print help
+```

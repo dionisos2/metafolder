@@ -1,0 +1,12 @@
+title: $:/mf/gen/GUI command/find:prev
+catalog: GUI command
+target: find:prev
+summary: Go to the previous find match
+
+!! Reference
+
+* Defined by the shell (a builtin)
+
+!! Default keys
+
+* ``shift+enter`` → ``find:prev`` (while ``find`` is focused)

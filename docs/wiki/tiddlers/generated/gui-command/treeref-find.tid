@@ -1,0 +1,12 @@
+title: $:/mf/gen/GUI command/treeref:find
+catalog: GUI command
+target: treeref:find
+summary: TreeRef explorer: jump to a child by name
+
+!! Reference
+
+* Defined by the ``treeref`` panel
+
+!! Default keys
+
+* ``f`` → ``treeref:find`` (in the ``treeref`` panel)

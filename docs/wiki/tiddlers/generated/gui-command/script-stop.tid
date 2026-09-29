@@ -1,0 +1,9 @@
+title: $:/mf/gen/GUI command/script:stop
+catalog: GUI command
+target: script:stop
+summary: Stop the running script (the one asking, by default)
+
+!! Reference
+
+* Defined by the shell (a builtin)
+* No default key

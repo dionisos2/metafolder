@@ -1,0 +1,28 @@
+title: $:/mf/gen/CLI command/mf trash
+catalog: CLI command
+target: mf trash
+summary: Trash-bin: safely trash a file, or restore/prune (default: list)
+
+!! Reference
+
+```
+Trash-bin: safely trash a file, or restore/prune (default: list)
+
+Usage: mf trash [OPTIONS] [COMMAND]
+
+Commands:
+  list     List the trashed files (id, size, age, reason, original path)
+  restore  Restore a trashed file to its original path
+  prune    Permanently delete trashed files (by size, age, or all)
+  help     Print this message or the help of the given subcommand(s)
+
+Options:
+  -f, --file <PATH>
+          Move a tracked file into the trash (errors if it has no metarecord)
+
+      --force
+          Trash even when something outside still references its metarecords
+
+  -h, --help
+          Print help
+```

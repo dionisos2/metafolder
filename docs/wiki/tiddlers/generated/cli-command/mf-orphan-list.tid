@@ -1,0 +1,16 @@
+title: $:/mf/gen/CLI command/mf orphan list
+catalog: CLI command
+target: mf orphan list
+summary: List orphaned metarecords (uuid, stale path) — the default
+
+!! Reference
+
+```
+List orphaned metarecords (uuid, stale path) — the default
+
+Usage: mf orphan list
+
+Options:
+  -h, --help
+          Print help
+```

@@ -1,0 +1,22 @@
+title: $:/mf/gen/CLI command/mf task list
+catalog: CLI command
+target: mf task list
+summary: List background tasks
+
+!! Reference
+
+```
+List background tasks
+
+Usage: mf task list [OPTIONS]
+
+Options:
+      --all
+          List tasks across all loaded repositories (no repo selector needed)
+
+      --json
+          Print the raw JSON array
+
+  -h, --help
+          Print help
+```

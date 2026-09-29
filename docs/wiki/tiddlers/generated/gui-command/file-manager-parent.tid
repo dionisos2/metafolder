@@ -1,0 +1,12 @@
+title: $:/mf/gen/GUI command/file-manager:parent
+catalog: GUI command
+target: file-manager:parent
+summary: File manager: go up one level
+
+!! Reference
+
+* Defined by the ``file-manager`` panel
+
+!! Default keys
+
+* ``backspace`` → ``file-manager:parent`` (in the ``file-manager`` panel)

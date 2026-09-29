@@ -1,0 +1,9 @@
+title: $:/mf/gen/GUI command/metarecord:reconcile
+catalog: GUI command
+target: metarecord:reconcile
+summary: Reconcile the selected metarecord's subtree (`watch`: start tracking it first)
+
+!! Reference
+
+* Defined by the ``metarecord-detail`` panel
+* No default key

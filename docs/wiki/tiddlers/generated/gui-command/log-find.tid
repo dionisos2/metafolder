@@ -1,0 +1,12 @@
+title: $:/mf/gen/GUI command/log:find
+catalog: GUI command
+target: log:find
+summary: Log: jump to a revision by number or label
+
+!! Reference
+
+* Defined by the ``log`` panel
+
+!! Default keys
+
+* ``f`` → ``log:find`` (in the ``log`` panel)

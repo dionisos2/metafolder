@@ -1,0 +1,12 @@
+title: $:/mf/gen/GUI command/metarecord-list:folder
+catalog: GUI command
+target: metarecord-list:folder
+summary: List the selected metarecord's folder in the metarecord list (focused panel)
+
+!! Reference
+
+* Defined by the shipped ``commands.js``
+
+!! Default keys
+
+* ``g f`` → ``metarecord-list:folder``

@@ -1,0 +1,12 @@
+title: $:/mf/gen/GUI command/sync:status
+catalog: GUI command
+target: sync:status
+summary: Sync: show the pair status
+
+!! Reference
+
+* Defined by the ``sync`` panel
+
+!! Default keys
+
+* ``y s`` → ``sync:status`` (in the ``sync`` panel)

@@ -1,0 +1,25 @@
+title: $:/mf/gen/CLI command/mf duplicate list
+catalog: CLI command
+target: mf duplicate list
+summary: List the duplicate groups, worst reclaimable space first — the default
+
+!! Reference
+
+```
+List the duplicate groups, worst reclaimable space first — the default
+
+Usage: mf duplicate list [OPTIONS]
+
+Options:
+  -v, --verbose
+          Also print each group's members, `+` marking a hard link
+
+      --sort <SORT>
+          Sort key, `field[:asc|desc]` (default: mfr_duplicate_reclaimable:desc)
+
+      --limit <LIMIT>
+          Show at most this many groups
+
+  -h, --help
+          Print help
+```

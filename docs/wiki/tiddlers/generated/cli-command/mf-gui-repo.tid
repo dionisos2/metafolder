@@ -1,0 +1,16 @@
+title: $:/mf/gen/CLI command/mf gui repo
+catalog: CLI command
+target: mf gui repo
+summary: Print the active repository of the focused workspace
+
+!! Reference
+
+```
+Print the active repository of the focused workspace
+
+Usage: mf gui repo
+
+Options:
+  -h, --help
+          Print help
+```

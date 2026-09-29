@@ -1,0 +1,13 @@
+title: $:/mf/gen/GUI command/file-manager:prev
+catalog: GUI command
+target: file-manager:prev
+summary: File manager: move up
+
+!! Reference
+
+* Defined by the ``file-manager`` panel
+
+!! Default keys
+
+* ``k`` → ``file-manager:prev`` (in the ``file-manager`` panel)
+* ``up`` → ``file-manager:prev`` (in the ``file-manager`` panel)

@@ -1,0 +1,25 @@
+title: $:/mf/gen/CLI command/mf orphan relink
+catalog: CLI command
+target: mf orphan relink
+summary: Re-home orphans onto files that carry their content (hashes candidates)
+
+!! Reference
+
+```
+Re-home orphans onto files that carry their content (hashes candidates)
+
+Usage: mf orphan relink [OPTIONS]
+
+Options:
+      --json
+          Print raw JSON instead of the summary
+
+      --no-wait
+          Print the task id and return instead of waiting
+
+      --poll-interval <MS>
+          Milliseconds between task polls
+
+  -h, --help
+          Print help
+```

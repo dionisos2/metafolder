@@ -1,0 +1,20 @@
+title: $:/mf/gen/CLI command/mf watch exceeded set
+catalog: CLI command
+target: mf watch exceeded set
+summary: Stop watching a subtree, returning its watches to the budget
+
+!! Reference
+
+```
+Stop watching a subtree, returning its watches to the budget
+
+Usage: mf watch exceeded set <PATH>
+
+Arguments:
+  <PATH>
+          Repo-root-relative directory, leading slash
+
+Options:
+  -h, --help
+          Print help
+```

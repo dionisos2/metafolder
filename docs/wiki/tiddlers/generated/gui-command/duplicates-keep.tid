@@ -1,0 +1,12 @@
+title: $:/mf/gen/GUI command/duplicates:keep
+catalog: GUI command
+target: duplicates:keep
+summary: Duplicates: keep the copy under the cursor, trash the others
+
+!! Reference
+
+* Defined by the ``duplicates`` panel
+
+!! Default keys
+
+* ``shift+k`` → ``duplicates:keep`` (in the ``duplicates`` panel)

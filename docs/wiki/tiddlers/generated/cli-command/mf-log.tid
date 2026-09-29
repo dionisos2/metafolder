@@ -1,0 +1,27 @@
+title: $:/mf/gen/CLI command/mf log
+catalog: CLI command
+target: mf log
+summary: Revision/operation history (default: list)
+
+!! Reference
+
+```
+Revision/operation history (default: list)
+
+Usage: mf log [COMMAND]
+
+Commands:
+  list      Display the revision/operation history
+  head      Print the id of the operation the history is on (what --id targets)
+  show      Show full details of one revision (a revision id, or HEAD)
+  rollback  Navigate the history with coordinated filesystem moves
+  undo      Undo the newest change you made, whichever mechanism that takes
+  redo      Take the newest undo back, whichever mechanism that takes
+  revert    Undo a revision (or an operation) by writing its inverse at HEAD
+  prune     Permanently remove operations from the history (irreversible)
+  help      Print this message or the help of the given subcommand(s)
+
+Options:
+  -h, --help
+          Print help
+```

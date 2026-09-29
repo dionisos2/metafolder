@@ -1,0 +1,9 @@
+title: $:/mf/gen/GUI command/repos:open-init
+catalog: GUI command
+target: repos:open-init
+summary: Repos: open the init form
+
+!! Reference
+
+* Defined by the ``repos`` panel
+* No default key

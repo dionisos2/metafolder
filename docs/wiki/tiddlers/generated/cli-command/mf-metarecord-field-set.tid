@@ -1,0 +1,23 @@
+title: $:/mf/gen/CLI command/mf metarecord field set
+catalog: CLI command
+target: mf metarecord field set
+summary: Replace all rows of the field with the given value(s)
+
+!! Reference
+
+```
+Replace all rows of the field with the given value(s)
+
+Usage: mf metarecord field set [OPTIONS] <SPECS>...
+
+Arguments:
+  <SPECS>...
+          Field spec name:type[=value]; repeatable (multi-map set)
+
+Options:
+  -f, --force
+          
+
+  -h, --help
+          Print help
+```

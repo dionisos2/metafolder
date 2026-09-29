@@ -1,0 +1,12 @@
+title: $:/mf/gen/GUI command/trash:find
+catalog: GUI command
+target: trash:find
+summary: Trash: jump to an entry by name
+
+!! Reference
+
+* Defined by the ``trash`` panel
+
+!! Default keys
+
+* ``f`` → ``trash:find`` (in the ``trash`` panel)

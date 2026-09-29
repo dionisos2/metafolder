@@ -1,0 +1,12 @@
+title: $:/mf/gen/GUI command/find:next
+catalog: GUI command
+target: find:next
+summary: Go to the next find match
+
+!! Reference
+
+* Defined by the shell (a builtin)
+
+!! Default keys
+
+* ``enter`` → ``find:next`` (while ``find`` is focused)

@@ -1,0 +1,12 @@
+title: $:/mf/gen/GUI command/script:run
+catalog: GUI command
+target: script:run
+summary: Run an installed helper script
+
+!! Reference
+
+* Defined by the shell (a builtin)
+
+!! Default keys
+
+* ``g s`` → ``script:run``

@@ -1,0 +1,25 @@
+title: $:/mf/gen/CLI command/mf watch exceeded
+catalog: CLI command
+target: mf watch exceeded
+summary: Subtrees left unwatched for want of inotify watches (the budget)
+
+!! Reference
+
+```
+Subtrees left unwatched for want of inotify watches (the budget)
+
+Usage: mf watch exceeded [OPTIONS] [COMMAND]
+
+Commands:
+  list   List the subtrees left unwatched for want of budget — the default
+  set    Stop watching a subtree, returning its watches to the budget
+  clear  Watch a subtree again (fails if the budget has no room)
+  help   Print this message or the help of the given subcommand(s)
+
+Options:
+      --json
+          Print the raw JSON response body
+
+  -h, --help
+          Print help
+```

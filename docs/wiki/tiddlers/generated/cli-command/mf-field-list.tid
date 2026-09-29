@@ -1,0 +1,19 @@
+title: $:/mf/gen/CLI command/mf field list
+catalog: CLI command
+target: mf field list
+summary: List the distinct field names of the repository (with their value type)
+
+!! Reference
+
+```
+List the distinct field names of the repository (with their value type)
+
+Usage: mf field list [OPTIONS]
+
+Options:
+      --type <TYPE_FILTER>
+          Restrict to one value type (e.g. tree_ref, ref, string, int)
+
+  -h, --help
+          Print help
+```

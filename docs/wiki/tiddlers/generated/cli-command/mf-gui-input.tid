@@ -1,0 +1,26 @@
+title: $:/mf/gen/CLI command/mf gui input
+catalog: CLI command
+target: mf gui input
+summary: Wait for one of the given keys and print it
+
+!! Reference
+
+```
+Wait for one of the given keys and print it
+
+Usage: mf gui input [OPTIONS] <KEYS>...
+
+Arguments:
+  <KEYS>...
+          Keys to bind for the duration of the wait (e.g. y n q). The GUI keeps `escape`, `tab` and `:` for the user and refuses a wait asking for one of them
+
+Options:
+      --prompt <PROMPT>
+          Question shown in the GUI's dedicated input bar while waiting (kept separate from status/error messages)
+
+      --timeout-ms <TIMEOUT_MS>
+          
+
+  -h, --help
+          Print help
+```

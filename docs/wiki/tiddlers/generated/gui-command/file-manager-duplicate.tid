@@ -1,0 +1,12 @@
+title: $:/mf/gen/GUI command/file-manager:duplicate
+catalog: GUI command
+target: file-manager:duplicate
+summary: File manager: duplicate the selected entry
+
+!! Reference
+
+* Defined by the ``file-manager`` panel
+
+!! Default keys
+
+* ``ctrl+d`` → ``file-manager:duplicate`` (in the ``file-manager`` panel)

@@ -1,0 +1,23 @@
+title: $:/mf/gen/CLI command/mf ignore set
+catalog: CLI command
+target: mf ignore set
+summary: Replace the target's whole mf_ignore set with the presets' patterns (with no preset, clears the set)
+
+!! Reference
+
+```
+Replace the target's whole mf_ignore set with the presets' patterns (with no preset, clears the set)
+
+Usage: mf ignore set [OPTIONS] [PRESETS]...
+
+Arguments:
+  [PRESETS]...
+          Preset names (comma- or space-separated), e.g. `rust-build,node`. May be empty for `set` (which then clears the target's mf_ignore)
+
+Options:
+  -d, --dir <PATH>
+          Target directory (default: the repository root)
+
+  -h, --help
+          Print help
+```

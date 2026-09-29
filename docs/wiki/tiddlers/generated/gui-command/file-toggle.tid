@@ -1,0 +1,9 @@
+title: $:/mf/gen/GUI command/file:toggle
+catalog: GUI command
+target: file:toggle
+summary: File: toggle a view flag
+
+!! Reference
+
+* Defined by the ``file`` panel
+* No default key

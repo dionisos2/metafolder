@@ -1,0 +1,23 @@
+title: $:/mf/gen/CLI command/mf mount
+catalog: CLI command
+target: mf mount
+summary: Mount points: list the repository's removable volumes, or forget one
+
+!! Reference
+
+```
+Mount points: list the repository's removable volumes, or forget one
+
+A directory that is a mount point is marked with `mfr_mount` by the daemon. While nothing is mounted there its subtree is *frozen* — not walked, not orphaned, not watched — so the metadata of an unplugged drive survives untouched. `forget` un-declares a directory that is not a mount point any more.
+
+Usage: mf mount [COMMAND]
+
+Commands:
+  list    List the declared mount points and their state — the default
+  forget  Un-declare a mount point (force-unsets `mfr_mount` on that metarecord)
+  help    Print this message or the help of the given subcommand(s)
+
+Options:
+  -h, --help
+          Print help (see a summary with '-h')
+```

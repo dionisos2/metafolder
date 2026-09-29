@@ -1,0 +1,12 @@
+title: $:/mf/gen/GUI command/log:refresh
+catalog: GUI command
+target: log:refresh
+summary: Log: refresh from the daemon
+
+!! Reference
+
+* Defined by the ``log`` panel
+
+!! Default keys
+
+* ``r`` → ``log:refresh`` (in the ``log`` panel)

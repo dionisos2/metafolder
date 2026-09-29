@@ -1,0 +1,26 @@
+title: $:/mf/gen/GUI command/panel:set
+catalog: GUI command
+target: panel:set
+summary: Change a layout setting (type)
+
+!! Reference
+
+* Defined by the shell (a builtin)
+
+!! Default keys
+
+* ``t b`` → ``panel:set type trash``
+* ``t d`` → ``panel:set type metarecord-detail``
+* ``t e`` → ``panel:set type log-detail``
+* ``t f`` → ``panel:set type file``
+* ``t g`` → ``panel:set type message``
+* ``t h`` → ``panel:set type help``
+* ``t l`` → ``panel:set type metarecord-list``
+* ``t m`` → ``panel:set type file-manager``
+* ``t o`` → ``panel:set type log``
+* ``t r`` → ``panel:set type repos``
+* ``t t`` → ``panel:set type treeref``
+* ``t u`` → ``panel:set type duplicates``
+* ``t v`` → ``panel:set type recent``
+* ``t w`` → ``panel:set type workspace-info``
+* ``t y`` → ``panel:set type sync``

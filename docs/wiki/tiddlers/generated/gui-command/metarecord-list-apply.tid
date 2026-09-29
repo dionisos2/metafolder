@@ -1,0 +1,13 @@
+title: $:/mf/gen/GUI command/metarecord-list:apply
+catalog: GUI command
+target: metarecord-list:apply
+summary: Metarecord list: apply a zone's content (${ZONE_NAMES.join(' / ')})
+
+!! Reference
+
+* Defined by the ``metarecord-list`` panel
+
+!! Default keys
+
+* ``enter`` → ``metarecord-list:apply finder`` (while ``finder`` is focused)
+* ``shift+enter`` → ``metarecord-list:apply finder stay`` (while ``finder`` is focused)

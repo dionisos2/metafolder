@@ -1,0 +1,20 @@
+title: $:/mf/gen/Panel/treeref panel
+catalog: Panel
+target: treeref panel
+summary: The treeref panel type
+
+!! Commands
+
+* ``treeref:add`` — TreeRef explorer: add an element under the current node
+* ``treeref:descend`` — TreeRef explorer: descend into the selected node
+* ``treeref:find`` — TreeRef explorer: jump to a child by name
+* ``treeref:first`` — TreeRef explorer: move to the first child
+* ``treeref:last`` — TreeRef explorer: move to the last loaded child
+* ``treeref:list-refs`` — TreeRef explorer: list the metarecords pointing at the selected node
+* ``treeref:next`` — TreeRef explorer: move the cursor down
+* ``treeref:parent`` — TreeRef explorer: go up one level
+* ``treeref:prev`` — TreeRef explorer: move the cursor up
+* ``treeref:refresh`` — TreeRef explorer: reload from the daemon
+* ``treeref:root`` — TreeRef explorer: jump to the forest roots
+* ``treeref:set`` — TreeRef explorer: change a view setting (${Object.keys(TREEREF_SETTINGS).join(' / ')})
+* ``treeref:toggle`` — TreeRef explorer: toggle a view flag (scope: the exact node ⇄ its whole subtree)

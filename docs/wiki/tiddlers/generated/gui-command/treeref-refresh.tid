@@ -1,0 +1,12 @@
+title: $:/mf/gen/GUI command/treeref:refresh
+catalog: GUI command
+target: treeref:refresh
+summary: TreeRef explorer: reload from the daemon
+
+!! Reference
+
+* Defined by the ``treeref`` panel
+
+!! Default keys
+
+* ``r`` → ``treeref:refresh`` (in the ``treeref`` panel)

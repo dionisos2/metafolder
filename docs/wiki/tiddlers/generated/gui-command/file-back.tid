@@ -1,0 +1,12 @@
+title: $:/mf/gen/GUI command/file:back
+catalog: GUI command
+target: file:back
+summary: File: go up one level (out of a listing, or to the containing folder)
+
+!! Reference
+
+* Defined by the ``file`` panel
+
+!! Default keys
+
+* ``backspace`` → ``file:back`` (in the ``file`` panel)

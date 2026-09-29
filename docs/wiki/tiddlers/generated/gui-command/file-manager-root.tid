@@ -1,0 +1,12 @@
+title: $:/mf/gen/GUI command/file-manager:root
+catalog: GUI command
+target: file-manager:root
+summary: File manager: jump to the root (the repo root, or / with no repo)
+
+!! Reference
+
+* Defined by the ``file-manager`` panel
+
+!! Default keys
+
+* ``/`` → ``file-manager:root`` (in the ``file-manager`` panel)

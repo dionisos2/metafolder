@@ -1,0 +1,26 @@
+title: $:/mf/gen/CLI command/mf task show
+catalog: CLI command
+target: mf task show
+summary: Show a single background task by id (or stop it with --stop)
+
+!! Reference
+
+```
+Show a single background task by id (or stop it with --stop)
+
+Usage: mf task show [OPTIONS] <ID>
+
+Arguments:
+  <ID>
+          
+
+Options:
+      --stop
+          Request cancellation of the task instead of showing it (spec-tasks)
+
+      --json
+          Print the raw JSON object
+
+  -h, --help
+          Print help
+```

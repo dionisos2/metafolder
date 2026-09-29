@@ -1,0 +1,23 @@
+title: $:/mf/gen/CLI command/mf watch check
+catalog: CLI command
+target: mf watch check
+summary: Report whether the watcher records a change at each path
+
+!! Reference
+
+```
+Report whether the watcher records a change at each path
+
+Usage: mf watch check [OPTIONS] [PATHS]...
+
+Arguments:
+  [PATHS]...
+          Absolute filesystem paths (an existing path is canonicalised and made repo-root-relative; a leading-slash path that is gone from disk is taken as repo-root-relative — an orphan's stale path)
+
+Options:
+      --json
+          Print the raw JSON response body
+
+  -h, --help
+          Print help
+```

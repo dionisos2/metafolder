@@ -1,0 +1,24 @@
+title: $:/mf/gen/CLI command/mf metarecord field
+catalog: CLI command
+target: mf metarecord field
+summary: Field operations scoped to the selected metarecord(s)
+
+!! Reference
+
+```
+Field operations scoped to the selected metarecord(s)
+
+Usage: mf metarecord field <COMMAND>
+
+Commands:
+  get     Print the field's value(s)
+  set     Replace all rows of the field with the given value(s)
+  add     Append one row (inverse of delete)
+  remove  Remove the row(s) equal to the spec (inverse of add)
+  unset   Remove the field entirely (every row → unknown)
+  help    Print this message or the help of the given subcommand(s)
+
+Options:
+  -h, --help
+          Print help
+```

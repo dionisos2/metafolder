@@ -1,0 +1,12 @@
+title: $:/mf/gen/GUI command/recent:refresh
+catalog: GUI command
+target: recent:refresh
+summary: Recent: reload the list
+
+!! Reference
+
+* Defined by the ``recent`` panel
+
+!! Default keys
+
+* ``r`` → ``recent:refresh`` (in the ``recent`` panel)

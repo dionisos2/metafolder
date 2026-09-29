@@ -1,0 +1,18 @@
+title: $:/mf/gen/CLI command/mf repo check
+catalog: CLI command
+target: mf repo check
+summary: Check that the selected repository's store holds together
+
+!! Reference
+
+```
+Check that the selected repository's store holds together
+
+Its indexes against a rebuild from its data. Exits 1 when a problem is found — `mf repo reindex` repairs what is derived.
+
+Usage: mf repo check
+
+Options:
+  -h, --help
+          Print help (see a summary with '-h')
+```

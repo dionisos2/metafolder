@@ -1,0 +1,12 @@
+title: $:/mf/gen/GUI command/workspace:prev
+catalog: GUI command
+target: workspace:prev
+summary: Move to the previous workspace (`slot`: the focused slot only)
+
+!! Reference
+
+* Defined by the shell (a builtin)
+
+!! Default keys
+
+* ``p`` → ``workspace:prev``

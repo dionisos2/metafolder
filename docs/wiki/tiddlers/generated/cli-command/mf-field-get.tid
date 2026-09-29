@@ -1,0 +1,20 @@
+title: $:/mf/gen/CLI command/mf field get
+catalog: CLI command
+target: mf field get
+summary: Print a field row by its id
+
+!! Reference
+
+```
+Print a field row by its id
+
+Usage: mf field get <ID>
+
+Arguments:
+  <ID>
+          
+
+Options:
+  -h, --help
+          Print help
+```

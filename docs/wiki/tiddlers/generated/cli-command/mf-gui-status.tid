@@ -1,0 +1,16 @@
+title: $:/mf/gen/CLI command/mf gui status
+catalog: CLI command
+target: mf gui status
+summary: Print the GUI state (pretty-printed JSON)
+
+!! Reference
+
+```
+Print the GUI state (pretty-printed JSON)
+
+Usage: mf gui status
+
+Options:
+  -h, --help
+          Print help
+```

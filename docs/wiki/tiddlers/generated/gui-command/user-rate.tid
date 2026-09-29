@@ -1,0 +1,9 @@
+title: $:/mf/gen/GUI command/user:rate
+catalog: GUI command
+target: user:rate
+summary: Rate the selected metarecords
+
+!! Reference
+
+* Defined by the shipped ``commands.js``
+* No default key

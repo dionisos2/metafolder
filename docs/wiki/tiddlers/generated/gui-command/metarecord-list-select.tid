@@ -1,0 +1,13 @@
+title: $:/mf/gen/GUI command/metarecord-list:select
+catalog: GUI command
+target: metarecord-list:select
+summary: Metarecord list: change the multi-selection (toggle / all / none)
+
+!! Reference
+
+* Defined by the ``metarecord-list`` panel
+
+!! Default keys
+
+* ``ctrl+space`` → ``metarecord-list:select none`` (in the ``metarecord-list`` panel)
+* ``space`` → ``metarecord-list:select toggle`` (in the ``metarecord-list`` panel)

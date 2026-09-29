@@ -1,0 +1,12 @@
+title: $:/mf/gen/GUI command/file-manager:rename
+catalog: GUI command
+target: file-manager:rename
+summary: File manager: rename the selected entry
+
+!! Reference
+
+* Defined by the ``file-manager`` panel
+
+!! Default keys
+
+* ``f2`` → ``file-manager:rename`` (in the ``file-manager`` panel)

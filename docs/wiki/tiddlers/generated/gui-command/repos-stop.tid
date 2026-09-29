@@ -1,0 +1,9 @@
+title: $:/mf/gen/GUI command/repos:stop
+catalog: GUI command
+target: repos:stop
+summary: Repos: stop one of the active repository's running tasks
+
+!! Reference
+
+* Defined by the ``repos`` panel
+* No default key

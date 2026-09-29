@@ -1,0 +1,26 @@
+title: $:/mf/gen/Panel/file-manager panel
+catalog: Panel
+target: file-manager panel
+summary: The file-manager panel type
+
+!! Commands
+
+* ``file-manager:activate`` — File manager: open directory / confirm file
+* ``file-manager:copy`` — File manager: copy the selected entry to the clipboard
+* ``file-manager:cut`` — File manager: cut the selected entry to the clipboard
+* ``file-manager:delete`` — File manager: delete the selected entry (trash when a repo is active)
+* ``file-manager:duplicate`` — File manager: duplicate the selected entry
+* ``file-manager:find`` — File manager: jump to an entry by name
+* ``file-manager:first`` — File manager: move to the first entry
+* ``file-manager:last`` — File manager: move to the last entry
+* ``file-manager:new`` — File manager: create a new folder or empty file
+* ``file-manager:next`` — File manager: move down
+* ``file-manager:parent`` — File manager: go up one level
+* ``file-manager:paste`` — File manager: paste the clipboard into the current directory
+* ``file-manager:prev`` — File manager: move up
+* ``file-manager:refresh`` — File manager: reload the current directory
+* ``file-manager:rename`` — File manager: rename the selected entry
+* ``file-manager:root`` — File manager: jump to the root (the repo root, or / with no repo)
+* ``file-manager:select`` — File manager: change the checked multi-selection (toggle / all / none)
+* ``file-manager:toggle`` — File manager: toggle a view flag (root constraint / hidden dot-entries / 
+* ``file-manager:track`` — File manager: track the selected path (mf_watch = false)

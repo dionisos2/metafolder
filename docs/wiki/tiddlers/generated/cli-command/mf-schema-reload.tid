@@ -1,0 +1,16 @@
+title: $:/mf/gen/CLI command/mf schema reload
+catalog: CLI command
+target: mf schema reload
+summary: Re-read the schema file
+
+!! Reference
+
+```
+Re-read the schema file
+
+Usage: mf schema reload
+
+Options:
+  -h, --help
+          Print help
+```

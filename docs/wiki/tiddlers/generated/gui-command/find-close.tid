@@ -1,0 +1,12 @@
+title: $:/mf/gen/GUI command/find:close
+catalog: GUI command
+target: find:close
+summary: Close the find bar
+
+!! Reference
+
+* Defined by the shell (a builtin)
+
+!! Default keys
+
+* ``escape`` → ``find:close`` (while ``find`` is focused)

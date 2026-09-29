@@ -1,0 +1,9 @@
+title: $:/mf/gen/GUI command/config:open
+catalog: GUI command
+target: config:open
+summary: Open the settings view
+
+!! Reference
+
+* Defined by the shell (a builtin)
+* No default key

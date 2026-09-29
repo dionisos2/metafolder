@@ -1,0 +1,9 @@
+title: $:/mf/gen/GUI command/orphan:delete
+catalog: GUI command
+target: orphan:delete
+summary: Delete the metarecords marked orphan = true (confirmed)
+
+!! Reference
+
+* Defined by the shipped ``commands.js``
+* No default key

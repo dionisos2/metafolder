@@ -1,0 +1,32 @@
+title: $:/mf/gen/CLI command/mf sync link
+catalog: CLI command
+target: mf sync link
+summary: Manually link a record of repo_a to a record of repo_b
+
+!! Reference
+
+```
+Manually link a record of repo_a to a record of repo_b
+
+Usage: mf sync link [OPTIONS] <REPO_A> <REPO_B> <UUID_A> <UUID_B>
+
+Arguments:
+  <REPO_A>
+          
+
+  <REPO_B>
+          
+
+  <UUID_A>
+          Record UUID in repo_a
+
+  <UUID_B>
+          Record UUID in repo_b
+
+Options:
+      --host <HOST>
+          Repo (of the pair) to host the sync database when created first
+
+  -h, --help
+          Print help
+```

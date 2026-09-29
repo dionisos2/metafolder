@@ -1,0 +1,9 @@
+title: $:/mf/gen/GUI command/mf:duplicate
+catalog: GUI command
+target: mf:duplicate
+summary: Scan the active repository for byte-identical files (mf duplicate scan)
+
+!! Reference
+
+* Defined by the shell (a builtin)
+* No default key

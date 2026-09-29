@@ -1,0 +1,12 @@
+title: $:/mf/gen/GUI command/status:clear
+catalog: GUI command
+target: status:clear
+summary: Clear the status bar message
+
+!! Reference
+
+* Defined by the shell (a builtin)
+
+!! Default keys
+
+* ``ctrl+l`` → ``status:clear`` (also in a text input)

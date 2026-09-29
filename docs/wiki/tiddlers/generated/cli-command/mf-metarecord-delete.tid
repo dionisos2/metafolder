@@ -1,0 +1,19 @@
+title: $:/mf/gen/CLI command/mf metarecord delete
+catalog: CLI command
+target: mf metarecord delete
+summary: Delete the selected metarecords (metadata and all fields)
+
+!! Reference
+
+```
+Delete the selected metarecords (metadata and all fields)
+
+Usage: mf metarecord delete [OPTIONS]
+
+Options:
+  -f, --force
+          Skip the confirmation prompt for query selectors
+
+  -h, --help
+          Print help
+```

@@ -1,0 +1,23 @@
+title: $:/mf/gen/CLI command/mf field
+catalog: CLI command
+target: mf field
+summary: Field operations: list the repo's field names, or access a row by id
+
+!! Reference
+
+```
+Field operations: list the repo's field names, or access a row by id
+
+Usage: mf field [COMMAND]
+
+Commands:
+  list    List the distinct field names of the repository (with their value type)
+  get     Print a field row by its id
+  set     Change a row's name and/or value in place, keeping its id
+  delete  Delete a field row by its id
+  help    Print this message or the help of the given subcommand(s)
+
+Options:
+  -h, --help
+          Print help
+```

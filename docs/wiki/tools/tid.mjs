@@ -285,3 +285,29 @@ export function renameInTiddler(t, from, to) {
 export function renameInCode(src, from, to) {
   return src.replace(new RegExp(`\\bdoc "${escapeRegExp(from)}"`, 'g'), `doc "${to}"`);
 }
+
+/**
+ * The generated note of a shipped script (`scripts/shipped/<relPath>`): its
+ * `# Summary:` header (what the GUI's script:run launcher lists) and its
+ * leading comment block, which is where every shipped script documents itself.
+ * @param {string} relPath @param {string} src @returns {Tid}
+ */
+export function scriptTiddler(relPath, src) {
+  const lines = src.split('\n');
+  if (lines[0]?.startsWith('#!')) lines.shift();
+  const comment = [];
+  for (const line of lines) {
+    if (!line.startsWith('#')) break;
+    comment.push(line.replace(/^# ?/, ''));
+  }
+  const summary = /^Summary:\s*(.*)$/m.exec(comment.join('\n'))?.[1].trim();
+  return {
+    fields: {
+      title: `$:/mf/gen/Shipped script/${relPath}`,
+      catalog: 'Shipped script',
+      target: relPath,
+      summary: summary || '(no Summary: header — a helper, not offered by script:run)',
+    },
+    text: `!! Reference\n\n\`\`\`\n${comment.join('\n').trim()}\n\`\`\`\n`,
+  };
+}

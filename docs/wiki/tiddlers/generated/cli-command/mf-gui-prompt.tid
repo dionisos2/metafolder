@@ -1,0 +1,29 @@
+title: $:/mf/gen/CLI command/mf gui prompt
+catalog: CLI command
+target: mf gui prompt
+summary: Prompt the user in the command input and print the answer
+
+!! Reference
+
+```
+Prompt the user in the command input and print the answer
+
+Usage: mf gui prompt [OPTIONS] <TEXT>
+
+Arguments:
+  <TEXT>
+          
+
+Options:
+      --completion <COMPLETIONS>
+          Autocomplete value offered during the prompt; repeatable
+
+      --completions-stdin
+          Read more completions from stdin (one per line, empty line ends)
+
+      --timeout-ms <TIMEOUT_MS>
+          
+
+  -h, --help
+          Print help
+```

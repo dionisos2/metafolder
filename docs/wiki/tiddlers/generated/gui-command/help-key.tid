@@ -1,0 +1,12 @@
+title: $:/mf/gen/GUI command/help:key
+catalog: GUI command
+target: help:key
+summary: Describe the command a key runs (press the key)
+
+!! Reference
+
+* Defined by the shell (a builtin)
+
+!! Default keys
+
+* ``h k`` → ``help:key``

@@ -1,0 +1,23 @@
+title: $:/mf/gen/CLI command/mf metarecord add
+catalog: CLI command
+target: mf metarecord add
+summary: Create a metarecord with the given fields and print its UUID (no selector)
+
+!! Reference
+
+```
+Create a metarecord with the given fields and print its UUID (no selector)
+
+Usage: mf metarecord add [OPTIONS] <SPECS>...
+
+Arguments:
+  <SPECS>...
+          Field spec name:type[=value]; repeatable
+
+Options:
+  -f, --force
+          Required to write mfr_* fields
+
+  -h, --help
+          Print help
+```

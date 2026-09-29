@@ -623,52 +623,21 @@ mod tests {
     /// fails here instead of silently going dead in someone's GUI.
     #[test]
     fn test_every_shipped_binding_names_an_existing_command() {
-        let registry = crate::command_registry::CommandRegistry::default();
-        crate::register_builtins(&registry);
-        let mut known: std::collections::HashSet<String> =
-            registry.list().into_iter().map(|c| c.name).collect();
-
-        // Panel commands: `commands.register('<name>'` and the shared
-        // `registerFind(metafolder, '<name>'` helper (panel-shim/find-entry.js).
-        let panels = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
-            .join("default-config")
-            .join("panel-types");
-        let mut sources = 0;
-        for entry in std::fs::read_dir(&panels).expect("panel-types/ is readable") {
-            let main_js = entry.unwrap().path().join("main.js");
-            let Ok(source) = std::fs::read_to_string(&main_js) else { continue };
-            sources += 1;
-            for (marker, offset) in
-                [("commands.register('", 19), ("registerFind(metafolder, '", 26)]
-            {
-                let mut rest = source.as_str();
-                while let Some(at) = rest.find(marker) {
-                    rest = &rest[at + offset..];
-                    if let Some(end) = rest.find('\'') {
-                        known.insert(rest[..end].to_string());
-                    }
-                }
-            }
-        }
-        assert!(sources >= 12, "expected the shipped panel types, found {sources}");
-
-        // User commands: `commands.js` maps each name to its definition, the
-        // name written as the entry's key (`'name': {` — a name holds a colon,
-        // so the key is always quoted). The shipped file carries real commands
-        // (`metarecord:remove`, the Delete key's), so it counts as a source
-        // like the panels'. The scan is a superset at worst: an extra name
-        // only weakens this check, a missing one fails it.
-        let commands_js = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
-            .join("default-config")
-            .join("commands.js");
-        let source = std::fs::read_to_string(&commands_js).expect("commands.js is readable");
-        let mut rest = source.as_str();
-        while let Some(at) = rest.find("': {") {
-            if let Some(start) = rest[..at].rfind('\'') {
-                known.insert(rest[start + 1..at].to_string());
-            }
-            rest = &rest[at + 4..];
-        }
+        // The three sources, read the way the shell would (`crate::doc_gen`,
+        // which also feeds the documentation wiki). The scan is a superset at
+        // worst: an extra name only weakens this check, a missing one fails it.
+        let commands = crate::doc_gen::commands();
+        let panels = commands
+            .iter()
+            .filter_map(|c| match &c.owner {
+                crate::doc_gen::Owner::Panel(p) => Some(p.as_str()),
+                _ => None,
+            })
+            .collect::<std::collections::HashSet<_>>()
+            .len();
+        assert!(panels >= 12, "expected the shipped panel types, found {panels}");
+        let known: std::collections::HashSet<String> =
+            commands.into_iter().map(|c| c.name).collect();
 
         let defaults = include_str!("../default-config/keybindings.toml");
         let table = KeybindingSet::from_sources(defaults, "").unwrap().compiled();

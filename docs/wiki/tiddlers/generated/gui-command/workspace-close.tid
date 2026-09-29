@@ -1,0 +1,12 @@
+title: $:/mf/gen/GUI command/workspace:close
+catalog: GUI command
+target: workspace:close
+summary: Close the focused slot's workspace
+
+!! Reference
+
+* Defined by the shell (a builtin)
+
+!! Default keys
+
+* ``ctrl+w`` → ``workspace:close``

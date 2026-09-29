@@ -1,0 +1,12 @@
+title: $:/mf/gen/GUI command/treeref:add
+catalog: GUI command
+target: treeref:add
+summary: TreeRef explorer: add an element under the current node
+
+!! Reference
+
+* Defined by the ``treeref`` panel
+
+!! Default keys
+
+* ``ctrl+n`` → ``treeref:add`` (in the ``treeref`` panel)

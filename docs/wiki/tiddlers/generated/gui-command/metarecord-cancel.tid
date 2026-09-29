@@ -1,0 +1,9 @@
+title: $:/mf/gen/GUI command/metarecord:cancel
+catalog: GUI command
+target: metarecord:cancel
+summary: Cancel the current field edit or add form
+
+!! Reference
+
+* Defined by the ``metarecord-detail`` panel
+* No default key

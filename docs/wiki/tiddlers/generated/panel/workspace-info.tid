@@ -1,0 +1,8 @@
+title: $:/mf/gen/Panel/workspace-info panel
+catalog: Panel
+target: workspace-info panel
+summary: The workspace-info panel type
+
+!! Commands
+
+None of its own.

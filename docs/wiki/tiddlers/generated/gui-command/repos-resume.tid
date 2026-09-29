@@ -1,0 +1,9 @@
+title: $:/mf/gen/GUI command/repos:resume
+catalog: GUI command
+target: repos:resume
+summary: Repos: resume tracking on the active repository
+
+!! Reference
+
+* Defined by the ``repos`` panel
+* No default key

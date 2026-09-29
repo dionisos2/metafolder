@@ -1,0 +1,12 @@
+title: $:/mf/gen/GUI command/log:undo
+catalog: GUI command
+target: log:undo
+summary: Undo the last revision of the active repository
+
+!! Reference
+
+* Defined by the shell (a builtin)
+
+!! Default keys
+
+* ``ctrl+z`` → ``log:undo``

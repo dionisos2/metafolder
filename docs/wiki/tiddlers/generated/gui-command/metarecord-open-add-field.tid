@@ -1,0 +1,12 @@
+title: $:/mf/gen/GUI command/metarecord:open-add-field
+catalog: GUI command
+target: metarecord:open-add-field
+summary: Open the add-field form on the selected metarecord
+
+!! Reference
+
+* Defined by the ``metarecord-detail`` panel
+
+!! Default keys
+
+* ``a`` → ``metarecord:open-add-field`` (in the ``metarecord-detail`` panel)

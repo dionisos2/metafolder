@@ -1,0 +1,13 @@
+title: $:/mf/gen/GUI command/metarecord:row-next
+catalog: GUI command
+target: metarecord:row-next
+summary: Move the field cursor down
+
+!! Reference
+
+* Defined by the ``metarecord-detail`` panel
+
+!! Default keys
+
+* ``down`` → ``metarecord:row-next`` (in the ``metarecord-detail`` panel)
+* ``j`` → ``metarecord:row-next`` (in the ``metarecord-detail`` panel)

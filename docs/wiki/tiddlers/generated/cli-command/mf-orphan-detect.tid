@@ -1,0 +1,16 @@
+title: $:/mf/gen/CLI command/mf orphan detect
+catalog: CLI command
+target: mf orphan detect
+summary: Mark every orphaned metarecord with `orphan = true` (and unmark the rest)
+
+!! Reference
+
+```
+Mark every orphaned metarecord with `orphan = true` (and unmark the rest)
+
+Usage: mf orphan detect
+
+Options:
+  -h, --help
+          Print help
+```

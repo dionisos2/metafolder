@@ -1,0 +1,13 @@
+title: $:/mf/gen/GUI command/treeref:prev
+catalog: GUI command
+target: treeref:prev
+summary: TreeRef explorer: move the cursor up
+
+!! Reference
+
+* Defined by the ``treeref`` panel
+
+!! Default keys
+
+* ``k`` → ``treeref:prev`` (in the ``treeref`` panel)
+* ``up`` → ``treeref:prev`` (in the ``treeref`` panel)

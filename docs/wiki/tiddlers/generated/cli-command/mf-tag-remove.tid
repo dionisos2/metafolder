@@ -1,0 +1,20 @@
+title: $:/mf/gen/CLI command/mf tag remove
+catalog: CLI command
+target: mf tag remove
+summary: Drop the tag from the record(s) (undo of add)
+
+!! Reference
+
+```
+Drop the tag from the record(s) (undo of add)
+
+Usage: mf tag remove <PATH>
+
+Arguments:
+  <PATH>
+          
+
+Options:
+  -h, --help
+          Print help
+```

@@ -1,0 +1,26 @@
+title: $:/mf/gen/Shipped script/example-gui-sort-folder.sh
+catalog: Shipped script
+target: example-gui-sort-folder.sh
+summary: Example/template — classify then sort a folder's files by metadata.
+
+!! Reference
+
+```
+Summary: Example/template — classify then sort a folder's files by metadata.
+EXAMPLE — a *template* to copy and adapt, not a finished tool. It walks a
+folder, and for each entry: (1) fully classifies its tags with
+gui-tag-classify.sh, (2) asks a few extra field questions, then (3) moves the
+file to a destination computed from the resulting metadata.
+
+The end goal is your own one-shot sorter: point it at e.g. ~/a_trier, answer
+the questions per file, and each file lands where it belongs.
+
+Assumptions: the metafolder GUI is running with a repository in the focused
+workspace, and SORT_DIR is inside that repository's root (so files can be
+tracked). Moving a file OUT of the repo makes the watcher blank its mfr_path;
+the metarecord (and the tags you set) is kept — only the file becomes
+untracked at its new home. Adapt the paths/rules below to your own tree.
+
+Usage: example-gui-sort-folder.sh [SORT_DIR]      (default: ~/a_trier)
+  DEST_ROOT (env) — where sorted files go         (default: ~/divertissement)
+```

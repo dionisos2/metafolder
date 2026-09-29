@@ -1,0 +1,9 @@
+title: $:/mf/gen/GUI command/metarecord-list:toggle
+catalog: GUI command
+target: metarecord-list:toggle
+summary: Metarecord list: toggle a view flag (normal)
+
+!! Reference
+
+* Defined by the ``metarecord-list`` panel
+* No default key

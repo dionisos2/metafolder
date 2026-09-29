@@ -1,0 +1,9 @@
+title: $:/mf/gen/GUI command/metarecord-list:query
+catalog: GUI command
+target: metarecord-list:query
+summary: Metarecord list: run a canned query (duplicates / orphans)
+
+!! Reference
+
+* Defined by the ``metarecord-list`` panel
+* No default key

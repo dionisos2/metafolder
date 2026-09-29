@@ -14,6 +14,7 @@ import {
   checkWiki,
   renameInTiddler,
   renameInCode,
+  scriptTiddler,
 } from './tid.mjs';
 
 describe('parseTid / serializeTid', () => {
@@ -248,5 +249,30 @@ describe('rename', () => {
 
   test('code citations', () => {
     assert.equal(renameInCode('doc "Old" and doc "Older"', 'Old', 'New'), 'doc "New" and doc "Older"');
+  });
+});
+
+describe('scriptTiddler', () => {
+  test('the summary header and the leading comment block', () => {
+    const t = scriptTiddler(
+      'gui-tag-folder.sh',
+      '#!/usr/bin/env bash\n# Summary: Bulk-apply one tag.\n#\n# Usage: gui-tag-folder.sh <tag>\n\nset -e\n# not this\n',
+    );
+    assert.deepEqual(t.fields, {
+      title: '$:/mf/gen/Shipped script/gui-tag-folder.sh',
+      catalog: 'Shipped script',
+      target: 'gui-tag-folder.sh',
+      summary: 'Bulk-apply one tag.',
+    });
+    assert.equal(
+      t.text,
+      '!! Reference\n\n```\nSummary: Bulk-apply one tag.\n\nUsage: gui-tag-folder.sh <tag>\n```\n',
+    );
+  });
+
+  test('a script without a summary says it is not launchable', () => {
+    const t = scriptTiddler('lib/mf-gui.sh', '#!/bin/sh\n# Helpers.\nf() { :; }\n');
+    assert.match(t.fields.summary, /no Summary: header/);
+    assert.equal(t.fields.target, 'lib/mf-gui.sh');
   });
 });

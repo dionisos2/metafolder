@@ -1,0 +1,13 @@
+title: $:/mf/gen/GUI command/duplicates:prev
+catalog: GUI command
+target: duplicates:prev
+summary: Duplicates: move up
+
+!! Reference
+
+* Defined by the ``duplicates`` panel
+
+!! Default keys
+
+* ``k`` → ``duplicates:prev`` (in the ``duplicates`` panel)
+* ``up`` → ``duplicates:prev`` (in the ``duplicates`` panel)

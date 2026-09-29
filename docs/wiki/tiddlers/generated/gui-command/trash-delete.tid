@@ -1,0 +1,12 @@
+title: $:/mf/gen/GUI command/trash:delete
+catalog: GUI command
+target: trash:delete
+summary: Trash: permanently delete the selected entry
+
+!! Reference
+
+* Defined by the ``trash`` panel
+
+!! Default keys
+
+* ``delete`` → ``trash:delete`` (in the ``trash`` panel)

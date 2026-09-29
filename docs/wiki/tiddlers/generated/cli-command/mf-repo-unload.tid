@@ -1,0 +1,16 @@
+title: $:/mf/gen/CLI command/mf repo unload
+catalog: CLI command
+target: mf repo unload
+summary: Unload the selected repository (stops its watcher, releases its DB lock)
+
+!! Reference
+
+```
+Unload the selected repository (stops its watcher, releases its DB lock)
+
+Usage: mf repo unload
+
+Options:
+  -h, --help
+          Print help
+```

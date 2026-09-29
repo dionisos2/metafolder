@@ -1,0 +1,9 @@
+title: $:/mf/gen/GUI command/quit
+catalog: GUI command
+target: quit
+summary: Exit the GUI
+
+!! Reference
+
+* Defined by the shell (a builtin)
+* No default key

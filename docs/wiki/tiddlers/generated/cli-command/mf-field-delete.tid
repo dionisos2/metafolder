@@ -1,0 +1,23 @@
+title: $:/mf/gen/CLI command/mf field delete
+catalog: CLI command
+target: mf field delete
+summary: Delete a field row by its id
+
+!! Reference
+
+```
+Delete a field row by its id
+
+Usage: mf field delete [OPTIONS] <ID>
+
+Arguments:
+  <ID>
+          
+
+Options:
+  -f, --force
+          
+
+  -h, --help
+          Print help
+```

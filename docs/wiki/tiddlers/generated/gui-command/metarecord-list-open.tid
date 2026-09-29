@@ -1,0 +1,13 @@
+title: $:/mf/gen/GUI command/metarecord-list:open
+catalog: GUI command
+target: metarecord-list:open
+summary: Metarecord list: open the selection in the other panel
+
+!! Reference
+
+* Defined by the ``metarecord-list`` panel
+
+!! Default keys
+
+* ``enter`` → ``metarecord-list:open`` (in the ``metarecord-list`` panel)
+* ``right`` → ``metarecord-list:open`` (in the ``metarecord-list`` panel)

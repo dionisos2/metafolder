@@ -1,0 +1,9 @@
+title: $:/mf/gen/GUI command/orphan:detect
+catalog: GUI command
+target: orphan:detect
+summary: Mark the active repository's orphaned metarecords orphan = true (mf orphan detect)
+
+!! Reference
+
+* Defined by the shell (a builtin)
+* No default key

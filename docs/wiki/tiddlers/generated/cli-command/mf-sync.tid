@@ -1,0 +1,25 @@
+title: $:/mf/gen/CLI command/mf sync
+catalog: CLI command
+target: mf sync
+summary: Cross-repo synchronisation (spec-sync). Repos are named positionally; their order does not matter (roles are canonical)
+
+!! Reference
+
+```
+Cross-repo synchronisation (spec-sync). Repos are named positionally; their order does not matter (roles are canonical)
+
+Usage: mf sync <COMMAND>
+
+Commands:
+  plan    Compute a sync plan (into a freshly recreated plan repo)
+  run     Execute the current plan (mutating the two repos), then prune succeeded ops
+  show    Render the current plan with live red/green status (default: summary + reds)
+  status  Print the per-link change/conflict states of a repo pair
+  link    Manually link a record of repo_a to a record of repo_b
+  unlink  Remove a link (optionally deleting one endpoint record first)
+  help    Print this message or the help of the given subcommand(s)
+
+Options:
+  -h, --help
+          Print help
+```

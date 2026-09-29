@@ -1,0 +1,12 @@
+title: $:/mf/gen/GUI command/metarecord:row-edit
+catalog: GUI command
+target: metarecord:row-edit
+summary: Edit the field under the cursor
+
+!! Reference
+
+* Defined by the ``metarecord-detail`` panel
+
+!! Default keys
+
+* ``enter`` → ``metarecord:row-edit`` (in the ``metarecord-detail`` panel)

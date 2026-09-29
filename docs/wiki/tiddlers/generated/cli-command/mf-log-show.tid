@@ -1,0 +1,23 @@
+title: $:/mf/gen/CLI command/mf log show
+catalog: CLI command
+target: mf log show
+summary: Show full details of one revision (a revision id, or HEAD)
+
+!! Reference
+
+```
+Show full details of one revision (a revision id, or HEAD)
+
+Usage: mf log show [OPTIONS] <TARGET>
+
+Arguments:
+  <TARGET>
+          
+
+Options:
+      --raw
+          Print the raw JSON response body
+
+  -h, --help
+          Print help
+```

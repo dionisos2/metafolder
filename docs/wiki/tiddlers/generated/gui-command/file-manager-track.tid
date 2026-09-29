@@ -1,0 +1,9 @@
+title: $:/mf/gen/GUI command/file-manager:track
+catalog: GUI command
+target: file-manager:track
+summary: File manager: track the selected path (mf_watch = false)
+
+!! Reference
+
+* Defined by the ``file-manager`` panel
+* No default key

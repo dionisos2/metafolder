@@ -1,0 +1,28 @@
+title: $:/mf/gen/CLI command/mf slow replay
+catalog: CLI command
+target: mf slow replay
+summary: Run a query again and show where its time goes, now: the newest logged query, the one logged at --at, or one typed with -q. Not itself logged
+
+!! Reference
+
+```
+Run a query again and show where its time goes, now: the newest logged query, the one logged at --at, or one typed with -q. Not itself logged
+
+Usage: mf slow replay [OPTIONS]
+
+Options:
+      --at <AT>
+          The logged query to replay, by its start time in Unix ms (`--json` lists show it as `at_ms`); default the newest one
+
+  -q, --query <QUERY>
+          A query to profile instead of a logged one (DSL)
+
+  -s, --simplified
+          -q is simplified-language text
+
+      --json
+          Print the entry as one JSON object
+
+  -h, --help
+          Print help
+```

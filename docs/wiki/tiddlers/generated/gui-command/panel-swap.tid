@@ -1,0 +1,12 @@
+title: $:/mf/gen/GUI command/panel:swap
+catalog: GUI command
+target: panel:swap
+summary: Exchange the two slots' panel types
+
+!! Reference
+
+* Defined by the shell (a builtin)
+
+!! Default keys
+
+* ``x`` → ``panel:swap``

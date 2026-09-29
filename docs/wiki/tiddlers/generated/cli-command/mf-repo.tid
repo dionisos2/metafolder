@@ -1,0 +1,27 @@
+title: $:/mf/gen/CLI command/mf repo
+catalog: CLI command
+target: mf repo
+summary: Repository management (default: list)
+
+!! Reference
+
+```
+Repository management (default: list)
+
+Usage: mf repo [COMMAND]
+
+Commands:
+  list     List the loaded repositories (pretty-printed JSON)
+  init     Initialise a new repository and print its UUID
+  load     Load an existing repository, wait for its warmup and print its UUID
+  unload   Unload the selected repository (stops its watcher, releases its DB lock)
+  check    Check that the selected repository's store holds together
+  reindex  Rebuild what the selected repository derives from its data (its indexes)
+  backup   Take a backup of the selected repository and print where it went
+  restore  Put a backup of a repository back (the most recent one by default)
+  help     Print this message or the help of the given subcommand(s)
+
+Options:
+  -h, --help
+          Print help
+```

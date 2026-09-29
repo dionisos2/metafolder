@@ -1,0 +1,16 @@
+title: $:/mf/gen/CLI command/mf watch exceeded list
+catalog: CLI command
+target: mf watch exceeded list
+summary: List the subtrees left unwatched for want of budget — the default
+
+!! Reference
+
+```
+List the subtrees left unwatched for want of budget — the default
+
+Usage: mf watch exceeded list
+
+Options:
+  -h, --help
+          Print help
+```

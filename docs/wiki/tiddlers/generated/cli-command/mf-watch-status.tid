@@ -1,0 +1,19 @@
+title: $:/mf/gen/CLI command/mf watch status
+catalog: CLI command
+target: mf watch status
+summary: Show whether ingestion is running or paused — the default
+
+!! Reference
+
+```
+Show whether ingestion is running or paused — the default
+
+Usage: mf watch status [OPTIONS]
+
+Options:
+      --json
+          Print the raw JSON response body
+
+  -h, --help
+          Print help
+```

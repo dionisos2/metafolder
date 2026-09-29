@@ -1,0 +1,12 @@
+title: $:/mf/gen/GUI command/duplicates:refresh
+catalog: GUI command
+target: duplicates:refresh
+summary: Duplicates: reload the groups
+
+!! Reference
+
+* Defined by the ``duplicates`` panel
+
+!! Default keys
+
+* ``r`` → ``duplicates:refresh`` (in the ``duplicates`` panel)

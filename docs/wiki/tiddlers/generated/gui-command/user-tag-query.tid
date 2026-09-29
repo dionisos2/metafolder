@@ -1,0 +1,9 @@
+title: $:/mf/gen/GUI command/user:tag-query
+catalog: GUI command
+target: user:tag-query
+summary: Insert a tag filter in the simplified query and search
+
+!! Reference
+
+* Defined by the shipped ``commands.js``
+* No default key

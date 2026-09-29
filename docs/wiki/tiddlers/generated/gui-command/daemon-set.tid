@@ -1,0 +1,9 @@
+title: $:/mf/gen/GUI command/daemon:set
+catalog: GUI command
+target: daemon:set
+summary: Change a daemon setting (url)
+
+!! Reference
+
+* Defined by the shell (a builtin)
+* No default key

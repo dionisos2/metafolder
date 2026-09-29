@@ -1,0 +1,12 @@
+title: $:/mf/gen/GUI command/file:open-with
+catalog: GUI command
+target: file:open-with
+summary: Open the selected file or folder with an external program
+
+!! Reference
+
+* Defined by the shell (a builtin)
+
+!! Default keys
+
+* ``g w`` → ``file:open-with``

@@ -1,0 +1,23 @@
+title: $:/mf/gen/CLI command/mf gui layout
+catalog: CLI command
+target: mf gui layout
+summary: Print or assign the slot layout ('-' = hidden slot)
+
+!! Reference
+
+```
+Print or assign the slot layout ('-' = hidden slot)
+
+Usage: mf gui layout [SLOT] [VALUE]
+
+Arguments:
+  [SLOT]
+          Slot name (left or right)
+
+  [VALUE]
+          Workspace id to assign, or '-' to hide the slot
+
+Options:
+  -h, --help
+          Print help
+```

@@ -1,0 +1,12 @@
+title: $:/mf/gen/GUI command/workspace:new
+catalog: GUI command
+target: workspace:new
+summary: Create a workspace and show it in both slots
+
+!! Reference
+
+* Defined by the shell (a builtin)
+
+!! Default keys
+
+* ``ctrl+t`` → ``workspace:new``

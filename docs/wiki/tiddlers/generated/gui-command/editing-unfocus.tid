@@ -1,0 +1,12 @@
+title: $:/mf/gen/GUI command/editing:unfocus
+catalog: GUI command
+target: editing:unfocus
+summary: Leave the focused text input
+
+!! Reference
+
+* Defined by the shell (a builtin)
+
+!! Default keys
+
+* ``escape`` → ``editing:unfocus`` (also in a text input)

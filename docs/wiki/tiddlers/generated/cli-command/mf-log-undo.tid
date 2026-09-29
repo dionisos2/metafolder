@@ -1,0 +1,38 @@
+title: $:/mf/gen/CLI command/mf log undo
+catalog: CLI command
+target: mf log undo
+summary: Undo the newest change you made, whichever mechanism that takes
+
+!! Reference
+
+```
+Undo the newest change you made, whichever mechanism that takes
+
+Usage: mf log undo [OPTIONS] [ARGS]...
+
+Arguments:
+  [ARGS]...
+          "plan" to print what undo would do, without writing anything
+
+Options:
+      --with-dependents
+          Also revert whatever blocks the target (its dependency closure)
+
+      --metadata-only
+          Leave out the operations needing a filesystem action
+
+      --on-move-available <ON_MOVE_AVAILABLE>
+          Policy when the file is present: apply|skip|abort|ask (default apply)
+
+      --on-move-unavailable <ON_MOVE_UNAVAILABLE>
+          Policy when the file is missing: apply|skip|abort|ask (default ask)
+
+      --force
+          Skip the confirmation prompt
+
+      --silent
+          Suppress informational output
+
+  -h, --help
+          Print help
+```

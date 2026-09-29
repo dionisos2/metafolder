@@ -1,0 +1,19 @@
+title: $:/mf/gen/CLI command/mf gui selected
+catalog: CLI command
+target: mf gui selected
+summary: Print the checked metarecords' UUIDs, one per line (nothing checked = no output)
+
+!! Reference
+
+```
+Print the checked metarecords' UUIDs, one per line (nothing checked = no output)
+
+Usage: mf gui selected [OPTIONS]
+
+Options:
+      --workspace <WORKSPACE>
+          Workspace id (default: the focused workspace)
+
+  -h, --help
+          Print help
+```

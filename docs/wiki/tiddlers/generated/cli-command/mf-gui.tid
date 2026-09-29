@@ -1,0 +1,37 @@
+title: $:/mf/gen/CLI command/mf gui
+catalog: CLI command
+target: mf gui
+summary: Drive the GUI through its scripting HTTP API
+
+!! Reference
+
+```
+Drive the GUI through its scripting HTTP API
+
+Usage: mf gui [OPTIONS] <COMMAND>
+
+Commands:
+  status     Print the GUI state (pretty-printed JSON)
+  repo       Print the active repository of the focused workspace
+  query      Print the query the metarecord list shows (finder included); an empty line = every metarecord; exit 1 when the list has not run
+  selected   Print the checked metarecords' UUIDs, one per line (nothing checked = no output)
+  workspace  Workspace (tab) management
+  layout     Print or assign the slot layout ('-' = hidden slot)
+  view       Print or set the panel type shown in a slot
+  message    Post a message to a workspace's status bar
+  progress   Report progress for the running script (updates its task-bar entry)
+  bench      Print the recorded bench measures (JSON), or clear the buffer
+  command    Run a command invocation through the GUI (same as the command input)
+  input      Wait for one of the given keys and print it
+  prompt     Prompt the user in the command input and print the answer
+  help       Print this message or the help of the given subcommand(s)
+
+Options:
+      --gui-url <GUI_URL>
+          GUI base URL (default: gui-port from the GUI config.toml)
+          
+          [env: METAFOLDER_GUI_URL=]
+
+  -h, --help
+          Print help
+```

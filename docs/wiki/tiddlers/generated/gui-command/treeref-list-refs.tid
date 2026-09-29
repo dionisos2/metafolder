@@ -1,0 +1,12 @@
+title: $:/mf/gen/GUI command/treeref:list-refs
+catalog: GUI command
+target: treeref:list-refs
+summary: TreeRef explorer: list the metarecords pointing at the selected node
+
+!! Reference
+
+* Defined by the ``treeref`` panel
+
+!! Default keys
+
+* ``l`` → ``treeref:list-refs`` (in the ``treeref`` panel)

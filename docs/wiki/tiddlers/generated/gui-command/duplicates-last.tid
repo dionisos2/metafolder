@@ -1,0 +1,12 @@
+title: $:/mf/gen/GUI command/duplicates:last
+catalog: GUI command
+target: duplicates:last
+summary: Duplicates: move to the last row
+
+!! Reference
+
+* Defined by the ``duplicates`` panel
+
+!! Default keys
+
+* ``end`` → ``duplicates:last`` (in the ``duplicates`` panel)

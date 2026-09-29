@@ -1,0 +1,20 @@
+title: $:/mf/gen/GUI command/workspace:goto
+catalog: GUI command
+target: workspace:goto
+summary: Move both panels to workspace number N
+
+!! Reference
+
+* Defined by the shell (a builtin)
+
+!! Default keys
+
+* ``1`` → ``workspace:goto 1``
+* ``2`` → ``workspace:goto 2``
+* ``3`` → ``workspace:goto 3``
+* ``4`` → ``workspace:goto 4``
+* ``5`` → ``workspace:goto 5``
+* ``6`` → ``workspace:goto 6``
+* ``7`` → ``workspace:goto 7``
+* ``8`` → ``workspace:goto 8``
+* ``9`` → ``workspace:goto 9``

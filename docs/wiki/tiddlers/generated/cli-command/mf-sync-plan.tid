@@ -1,0 +1,32 @@
+title: $:/mf/gen/CLI command/mf sync plan
+catalog: CLI command
+target: mf sync plan
+summary: Compute a sync plan (into a freshly recreated plan repo)
+
+!! Reference
+
+```
+Compute a sync plan (into a freshly recreated plan repo)
+
+Usage: mf sync plan [OPTIONS] --intents <INTENTS> <REPO_A> <REPO_B>
+
+Arguments:
+  <REPO_A>
+          
+
+  <REPO_B>
+          
+
+Options:
+      --intents <INTENTS>
+          Path to the TOML intents file (scope + policies)
+
+      --host <HOST>
+          Repo (of the pair) to host the plan + sync database (default: canonical A)
+
+      --on-conflict <ON_CONFLICT>
+          Override every conflict rule: ask | skip | prefer:<repo>
+
+  -h, --help
+          Print help
+```

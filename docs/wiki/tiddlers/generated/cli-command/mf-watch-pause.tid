@@ -1,0 +1,19 @@
+title: $:/mf/gen/CLI command/mf watch pause
+catalog: CLI command
+target: mf watch pause
+summary: Stop the flush in progress and pause ingestion (nothing is lost)
+
+!! Reference
+
+```
+Stop the flush in progress and pause ingestion (nothing is lost)
+
+Usage: mf watch pause [OPTIONS]
+
+Options:
+      --json
+          Print the raw JSON response body
+
+  -h, --help
+          Print help
+```

@@ -1,0 +1,27 @@
+title: $:/mf/gen/CLI command/mf watch
+catalog: CLI command
+target: mf watch
+summary: Watcher ingestion: show, pause or resume the recording of filesystem events, and check whether a path is watched
+
+!! Reference
+
+```
+Watcher ingestion: show, pause or resume the recording of filesystem events, and check whether a path is watched
+
+A flush can be long — a directory of a hundred thousand files arrives as one batch — and while it runs the repository answers nothing else. `pause` stops the flush in progress and keeps the executor from starting another; the events stay buffered, and `resume` applies them. `check` answers a different question: would a change at this file be recorded?
+
+Usage: mf watch [COMMAND]
+
+Commands:
+  status    Show whether ingestion is running or paused — the default
+  check     Report whether the watcher records a change at each path
+  pause     Stop the flush in progress and pause ingestion (nothing is lost)
+  resume    Resume ingestion and apply what was buffered meanwhile
+  activity  How many watcher events arrived under a directory since the load, and under which of its children — walk down from / to find the noise
+  exceeded  Subtrees left unwatched for want of inotify watches (the budget)
+  help      Print this message or the help of the given subcommand(s)
+
+Options:
+  -h, --help
+          Print help (see a summary with '-h')
+```

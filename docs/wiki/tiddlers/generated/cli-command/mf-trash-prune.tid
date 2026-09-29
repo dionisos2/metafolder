@@ -1,0 +1,28 @@
+title: $:/mf/gen/CLI command/mf trash prune
+catalog: CLI command
+target: mf trash prune
+summary: Permanently delete trashed files (by size, age, or all)
+
+!! Reference
+
+```
+Permanently delete trashed files (by size, age, or all)
+
+Usage: mf trash prune [OPTIONS]
+
+Options:
+  -s, --size <SIZE>
+          Delete oldest-first until the total is under this size (e.g. 100mb, 1g)
+
+  -d, --older-than <OLDER_THAN>
+          Delete entries older than this duration (e.g. 1y, 30d, 12h)
+
+      --all
+          Empty the trash
+
+      --dry-run
+          Show what would be removed without deleting anything
+
+  -h, --help
+          Print help
+```

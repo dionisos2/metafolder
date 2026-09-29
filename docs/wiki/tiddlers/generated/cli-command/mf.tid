@@ -1,0 +1,58 @@
+title: $:/mf/gen/CLI command/mf
+catalog: CLI command
+target: mf
+summary: metafolder CLI — thin client over the daemon HTTP API
+
+!! Reference
+
+```
+metafolder CLI — thin client over the daemon HTTP API
+
+Usage: mf [OPTIONS] <COMMAND>
+
+Commands:
+  repo        Repository management (default: list)
+  task        Background tasks (default: list)
+  log         Revision/operation history (default: list)
+  slow        Slow-operation log: what took seconds, and where the time went
+  trash       Trash-bin: safely trash a file, or restore/prune (default: list)
+  orphan      Orphans: list metarecords whose file is gone, or clear them (default: list)
+  duplicate   Duplicates: list the groups of byte-identical files, or scan for them
+  mount       Mount points: list the repository's removable volumes, or forget one
+  watch       Watcher ingestion: show, pause or resume the recording of filesystem events, and check whether a path is watched
+  metarecord  Metarecord operations: `mf metarecord [selector] <verb>`
+  field       Field operations: list the repo's field names, or access a row by id
+  retype      Convert a field's value type repository-wide (string|int|float|bool|datetime)
+  reconcile   Reconcile the database with the filesystem
+  track       Create the metarecord for a single path and print its UUID
+  path        Print the filesystem path of a metarecord (walks the mfr_path chain)
+  order       Number a folder's direct children for sorting: assigns `order_file` / `order_dir` (files and dirs are numbered independently; an existing position is never overwritten), then marks the folder itself `order_numbered = true`. Orders by an ordering metadata, then a shared name pattern, then creation date
+  tag         Hierarchical tags: add/deny/mixed/remove a tag on the selected metarecord(s), or list the vocabulary. Encapsulates the subsumption and exclusivity rules (drop ancestors on add, descendants on deny). The field-name convention is configurable via the `[tag]` config table
+  ignore      Named mf_ignore presets: apply/replace/remove them on a directory (default: list). The target directory is chosen with -d <path> (default: the repository root)
+  schema      User schema commands
+  gui         Drive the GUI through its scripting HTTP API
+  sync        Cross-repo synchronisation (spec-sync). Repos are named positionally; their order does not matter (roles are canonical)
+  help        Print this message or the help of the given subcommand(s)
+
+Options:
+  -n, --name <REPO_NAME>
+          Target repository by (unique) name
+          
+          [env: METAFOLDER_REPO_NAME]
+
+  -u, --uuid <REPO_UUID>
+          Target repository by UUID
+          
+          [env: METAFOLDER_REPO]
+
+  -p, --port <PORT>
+          Daemon port on 127.0.0.1 (default: `daemon-port` from the config, else 7523)
+          
+          [env: METAFOLDER_DAEMON_PORT]
+
+      --no-config
+          Ignore the config file entirely (use built-in defaults) — for scripts
+
+  -h, --help
+          Print help
+```

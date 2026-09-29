@@ -1,0 +1,12 @@
+title: $:/mf/gen/GUI command/treeref:toggle
+catalog: GUI command
+target: treeref:toggle
+summary: TreeRef explorer: toggle a view flag (scope: the exact node ⇄ its whole subtree)
+
+!! Reference
+
+* Defined by the ``treeref`` panel
+
+!! Default keys
+
+* ``s`` → ``treeref:toggle scope`` (in the ``treeref`` panel)

@@ -1,0 +1,16 @@
+title: $:/mf/gen/CLI command/mf tag list
+catalog: CLI command
+target: mf tag list
+summary: List the tag vocabulary as TSV: name<TAB>partition<TAB>exclusive
+
+!! Reference
+
+```
+List the tag vocabulary as TSV: name<TAB>partition<TAB>exclusive
+
+Usage: mf tag list
+
+Options:
+  -h, --help
+          Print help
+```

@@ -1,0 +1,12 @@
+title: $:/mf/gen/GUI command/recent:find
+catalog: GUI command
+target: recent:find
+summary: Recent: jump to a metarecord by name
+
+!! Reference
+
+* Defined by the ``recent`` panel
+
+!! Default keys
+
+* ``f`` → ``recent:find`` (in the ``recent`` panel)

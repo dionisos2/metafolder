@@ -1,0 +1,13 @@
+title: $:/mf/gen/GUI command/trash:prev
+catalog: GUI command
+target: trash:prev
+summary: Trash: move up
+
+!! Reference
+
+* Defined by the ``trash`` panel
+
+!! Default keys
+
+* ``k`` → ``trash:prev`` (in the ``trash`` panel)
+* ``up`` → ``trash:prev`` (in the ``trash`` panel)

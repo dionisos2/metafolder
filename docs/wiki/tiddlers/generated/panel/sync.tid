@@ -1,0 +1,11 @@
+title: $:/mf/gen/Panel/sync panel
+catalog: Panel
+target: sync panel
+summary: The sync panel type
+
+!! Commands
+
+* ``sync:open`` — Sync: show the plan overlay
+* ``sync:plan`` — Sync: compute the plan
+* ``sync:run`` — Sync: run the plan
+* ``sync:status`` — Sync: show the pair status

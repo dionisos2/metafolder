@@ -1,0 +1,26 @@
+title: $:/mf/gen/CLI command/mf sync run
+catalog: CLI command
+target: mf sync run
+summary: Execute the current plan (mutating the two repos), then prune succeeded ops
+
+!! Reference
+
+```
+Execute the current plan (mutating the two repos), then prune succeeded ops
+
+Usage: mf sync run [OPTIONS] <REPO_A> <REPO_B>
+
+Arguments:
+  <REPO_A>
+          
+
+  <REPO_B>
+          
+
+Options:
+      --yes
+          Skip the confirmation prompt
+
+  -h, --help
+          Print help
+```

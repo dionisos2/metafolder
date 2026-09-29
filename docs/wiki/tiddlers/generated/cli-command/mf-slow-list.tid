@@ -1,0 +1,30 @@
+title: $:/mf/gen/CLI command/mf slow list
+catalog: CLI command
+target: mf slow list
+summary: List the slow operations, newest first — the default
+
+!! Reference
+
+```
+List the slow operations, newest first — the default
+
+Usage: mf slow list [OPTIONS]
+
+Options:
+      --limit <LIMIT>
+          How many entries to show (newest first)
+          
+          [default: 50]
+
+  -d, --since <SINCE>
+          Only entries from the last duration (e.g. 30m, 12h, 7d)
+
+      --op <OP>
+          Only entries whose operation contains this substring
+
+      --json
+          Print the raw entries, one JSON object per line
+
+  -h, --help
+          Print help
+```

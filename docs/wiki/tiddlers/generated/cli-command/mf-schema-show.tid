@@ -1,0 +1,16 @@
+title: $:/mf/gen/CLI command/mf schema show
+catalog: CLI command
+target: mf schema show
+summary: Print the loaded schema (pretty-printed JSON)
+
+!! Reference
+
+```
+Print the loaded schema (pretty-printed JSON)
+
+Usage: mf schema show
+
+Options:
+  -h, --help
+          Print help
+```

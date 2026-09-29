@@ -1,0 +1,13 @@
+title: $:/mf/gen/GUI command/pick:confirm
+catalog: GUI command
+target: pick:confirm
+summary: Confirm the value picker's selection
+
+!! Reference
+
+* Defined by the shell (a builtin)
+
+!! Default keys
+
+* ``ctrl+enter`` → ``pick:confirm``
+* ``ctrl+enter`` → ``pick:confirm`` (while ``finder`` is focused)

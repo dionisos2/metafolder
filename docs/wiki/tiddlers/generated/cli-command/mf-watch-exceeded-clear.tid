@@ -1,0 +1,20 @@
+title: $:/mf/gen/CLI command/mf watch exceeded clear
+catalog: CLI command
+target: mf watch exceeded clear
+summary: Watch a subtree again (fails if the budget has no room)
+
+!! Reference
+
+```
+Watch a subtree again (fails if the budget has no room)
+
+Usage: mf watch exceeded clear <PATH>
+
+Arguments:
+  <PATH>
+          Repo-root-relative directory, leading slash
+
+Options:
+  -h, --help
+          Print help
+```

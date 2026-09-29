@@ -1,0 +1,31 @@
+title: $:/mf/gen/CLI command/mf watch activity
+catalog: CLI command
+target: mf watch activity
+summary: How many watcher events arrived under a directory since the load, and under which of its children — walk down from / to find the noise
+
+!! Reference
+
+```
+How many watcher events arrived under a directory since the load, and under which of its children — walk down from / to find the noise
+
+Usage: mf watch activity [OPTIONS] [PATH]
+
+Arguments:
+  [PATH]
+          Directory (absolute filesystem path, or repo-root-relative with a leading slash); the repository root when omitted
+
+Options:
+      --limit <LIMIT>
+          How many children to list
+          
+          [default: 20]
+
+      --reset
+          Forget every count and start again
+
+      --json
+          Print the raw JSON response body
+
+  -h, --help
+          Print help
+```

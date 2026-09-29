@@ -1,0 +1,13 @@
+title: $:/mf/gen/GUI command/file-manager:select
+catalog: GUI command
+target: file-manager:select
+summary: File manager: change the checked multi-selection (toggle / all / none)
+
+!! Reference
+
+* Defined by the ``file-manager`` panel
+
+!! Default keys
+
+* ``ctrl+space`` → ``file-manager:select none`` (in the ``file-manager`` panel)
+* ``space`` → ``file-manager:select toggle`` (in the ``file-manager`` panel)

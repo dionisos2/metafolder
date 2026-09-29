@@ -1,0 +1,26 @@
+title: $:/mf/gen/CLI command/mf repo load
+catalog: CLI command
+target: mf repo load
+summary: Load an existing repository, wait for its warmup and print its UUID
+
+!! Reference
+
+```
+Load an existing repository, wait for its warmup and print its UUID
+
+Usage: mf repo load [OPTIONS] [ROOT]
+
+Arguments:
+  [ROOT]
+          
+
+Options:
+      --metafolder <METAFOLDER>
+          Load from an external .metafolder directory
+
+      --no-wait
+          Print the UUID immediately, without waiting for the warmup
+
+  -h, --help
+          Print help
+```

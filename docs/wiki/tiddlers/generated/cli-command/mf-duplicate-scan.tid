@@ -1,0 +1,34 @@
+title: $:/mf/gen/CLI command/mf duplicate scan
+catalog: CLI command
+target: mf duplicate scan
+summary: Scan for byte-identical files and record the groups
+
+!! Reference
+
+```
+Scan for byte-identical files and record the groups
+
+Usage: mf duplicate scan [OPTIONS]
+
+Options:
+      --min-size <MIN_SIZE>
+          Skip files smaller than this human size (default 1: excludes empty files)
+
+      --rehash
+          Ignore every stored hash and recompute
+
+      --metarecord <UUID>
+          Restrict the scan to this metarecord's subtree
+
+      --json
+          Print the raw JSON summary
+
+      --no-wait
+          Print the task id and return instead of waiting
+
+      --poll-interval <MS>
+          Milliseconds between task polls
+
+  -h, --help
+          Print help
+```

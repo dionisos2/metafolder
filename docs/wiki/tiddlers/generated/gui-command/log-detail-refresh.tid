@@ -1,0 +1,9 @@
+title: $:/mf/gen/GUI command/log-detail:refresh
+catalog: GUI command
+target: log-detail:refresh
+summary: Log detail: refresh from the daemon
+
+!! Reference
+
+* Defined by the ``log-detail`` panel
+* No default key

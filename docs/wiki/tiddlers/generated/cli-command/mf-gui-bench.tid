@@ -1,0 +1,19 @@
+title: $:/mf/gen/CLI command/mf gui bench
+catalog: CLI command
+target: mf gui bench
+summary: Print the recorded bench measures (JSON), or clear the buffer
+
+!! Reference
+
+```
+Print the recorded bench measures (JSON), or clear the buffer
+
+Usage: mf gui bench [OPTIONS]
+
+Options:
+      --clear
+          Empty the bench buffer instead of printing it
+
+  -h, --help
+          Print help
+```

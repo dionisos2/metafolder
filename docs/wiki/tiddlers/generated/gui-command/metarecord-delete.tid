@@ -1,0 +1,14 @@
+title: $:/mf/gen/GUI command/metarecord:delete
+catalog: GUI command
+target: metarecord:delete
+summary: Delete the selected metarecord
+
+!! Reference
+
+* Defined by the ``metarecord-detail`` panel
+
+!! Default keys
+
+* ``shift+delete`` → ``metarecord:delete`` (in the ``metarecord-detail`` panel)
+* ``shift+delete`` → ``metarecord:delete`` (in the ``metarecord-list`` panel)
+* ``shift+delete`` → ``metarecord:delete`` (in the ``treeref`` panel)

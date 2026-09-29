@@ -1,0 +1,28 @@
+title: $:/mf/gen/CLI command/mf gui progress
+catalog: CLI command
+target: mf gui progress
+summary: Report progress for the running script (updates its task-bar entry)
+
+!! Reference
+
+```
+Report progress for the running script (updates its task-bar entry)
+
+Usage: mf gui progress [OPTIONS]
+
+Options:
+      --done <DONE>
+          Items processed so far (drives a determinate bar with --total)
+
+      --total <TOTAL>
+          Total items to process
+
+      --phase <PHASE>
+          Short label for the current step (e.g. the file being processed)
+
+      --task <TASK>
+          Run id (default: the METAFOLDER_GUI_TASK the GUI injected)
+
+  -h, --help
+          Print help
+```

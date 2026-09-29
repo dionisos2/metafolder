@@ -1,0 +1,26 @@
+title: $:/mf/gen/CLI command/mf field set
+catalog: CLI command
+target: mf field set
+summary: Change a row's name and/or value in place, keeping its id
+
+!! Reference
+
+```
+Change a row's name and/or value in place, keeping its id
+
+Usage: mf field set [OPTIONS] <ID> <SPEC>
+
+Arguments:
+  <ID>
+          
+
+  <SPEC>
+          Field spec name:type[=value] — the new name and value
+
+Options:
+  -f, --force
+          
+
+  -h, --help
+          Print help
+```

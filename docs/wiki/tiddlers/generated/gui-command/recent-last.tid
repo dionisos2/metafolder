@@ -1,0 +1,12 @@
+title: $:/mf/gen/GUI command/recent:last
+catalog: GUI command
+target: recent:last
+summary: Recent: jump to the oldest
+
+!! Reference
+
+* Defined by the ``recent`` panel
+
+!! Default keys
+
+* ``end`` → ``recent:last`` (in the ``recent`` panel)

@@ -1,0 +1,9 @@
+title: $:/mf/gen/GUI command/panel:hide
+catalog: GUI command
+target: panel:hide
+summary: Hide the focused panel slot
+
+!! Reference
+
+* Defined by the shell (a builtin)
+* No default key

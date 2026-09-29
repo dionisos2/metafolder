@@ -1,0 +1,9 @@
+title: $:/mf/gen/GUI command/hello:greet
+catalog: GUI command
+target: hello:greet
+summary: Hello: greet in the status bar
+
+!! Reference
+
+* Defined by the ``hello`` panel
+* No default key

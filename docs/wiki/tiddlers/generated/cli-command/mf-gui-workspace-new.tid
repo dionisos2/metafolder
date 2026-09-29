@@ -1,0 +1,19 @@
+title: $:/mf/gen/CLI command/mf gui workspace new
+catalog: CLI command
+target: mf gui workspace new
+summary: Create a workspace and print its id
+
+!! Reference
+
+```
+Create a workspace and print its id
+
+Usage: mf gui workspace new [OPTIONS]
+
+Options:
+      --repo <REPO>
+          Active repository UUID (default: the daemon's first repo)
+
+  -h, --help
+          Print help
+```

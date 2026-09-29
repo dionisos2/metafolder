@@ -1,0 +1,23 @@
+title: $:/mf/gen/CLI command/mf gui command
+catalog: CLI command
+target: mf gui command
+summary: Run a command invocation through the GUI (same as the command input)
+
+!! Reference
+
+```
+Run a command invocation through the GUI (same as the command input)
+
+Usage: mf gui command [OPTIONS] <INVOCATION>...
+
+Arguments:
+  <INVOCATION>...
+          The command invocation, e.g. `panel:set type file`
+
+Options:
+      --timeout-ms <TIMEOUT_MS>
+          
+
+  -h, --help
+          Print help
+```

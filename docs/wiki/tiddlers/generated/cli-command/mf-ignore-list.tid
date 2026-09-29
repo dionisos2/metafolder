@@ -1,0 +1,19 @@
+title: $:/mf/gen/CLI command/mf ignore list
+catalog: CLI command
+target: mf ignore list
+summary: List the available presets (with -d, also the target's active patterns)
+
+!! Reference
+
+```
+List the available presets (with -d, also the target's active patterns)
+
+Usage: mf ignore list [OPTIONS]
+
+Options:
+  -d, --dir <PATH>
+          Target directory whose active patterns to also print
+
+  -h, --help
+          Print help
+```

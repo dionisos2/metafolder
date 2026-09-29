@@ -1,0 +1,12 @@
+title: $:/mf/gen/GUI command/duplicates:trash
+catalog: GUI command
+target: duplicates:trash
+summary: Duplicates: send the copy under the cursor to the trash
+
+!! Reference
+
+* Defined by the ``duplicates`` panel
+
+!! Default keys
+
+* ``delete`` → ``duplicates:trash`` (in the ``duplicates`` panel)

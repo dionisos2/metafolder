@@ -1,0 +1,12 @@
+title: $:/mf/gen/GUI command/repos:switch
+catalog: GUI command
+target: repos:switch
+summary: Open a loaded repository in the current or a new workspace
+
+!! Reference
+
+* Defined by the shipped ``commands.js``
+
+!! Default keys
+
+* ``g o`` → ``repos:switch``

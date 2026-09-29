@@ -1,0 +1,8 @@
+title: $:/mf/gen/Panel/hello panel
+catalog: Panel
+target: hello panel
+summary: The hello panel type
+
+!! Commands
+
+* ``hello:greet`` — Hello: greet in the status bar

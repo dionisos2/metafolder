@@ -1,0 +1,12 @@
+title: $:/mf/gen/GUI command/file:mute
+catalog: GUI command
+target: file:mute
+summary: File: mute / unmute
+
+!! Reference
+
+* Defined by the ``file`` panel
+
+!! Default keys
+
+* ``ctrl+m`` → ``file:mute`` (in the ``file`` panel)

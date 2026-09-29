@@ -1,0 +1,12 @@
+title: $:/mf/gen/GUI command/editing:discard
+catalog: GUI command
+target: editing:discard
+summary: Clear and leave the focused text input
+
+!! Reference
+
+* Defined by the shell (a builtin)
+
+!! Default keys
+
+* ``ctrl+q`` → ``editing:discard`` (also in a text input)

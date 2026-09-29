@@ -1,0 +1,12 @@
+title: $:/mf/gen/GUI command/log:last
+catalog: GUI command
+target: log:last
+summary: Log: move the selection to the oldest revision
+
+!! Reference
+
+* Defined by the ``log`` panel
+
+!! Default keys
+
+* ``end`` → ``log:last`` (in the ``log`` panel)

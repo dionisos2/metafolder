@@ -1,0 +1,12 @@
+title: $:/mf/gen/GUI command/editing:confirm
+catalog: GUI command
+target: editing:confirm
+summary: Confirm the focused text input
+
+!! Reference
+
+* Defined by the shell (a builtin)
+
+!! Default keys
+
+* ``enter`` → ``editing:confirm`` (also in a text input)

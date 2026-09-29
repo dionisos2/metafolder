@@ -1,0 +1,12 @@
+title: $:/mf/gen/GUI command/log:first
+catalog: GUI command
+target: log:first
+summary: Log: move the selection to the newest revision
+
+!! Reference
+
+* Defined by the ``log`` panel
+
+!! Default keys
+
+* ``home`` → ``log:first`` (in the ``log`` panel)

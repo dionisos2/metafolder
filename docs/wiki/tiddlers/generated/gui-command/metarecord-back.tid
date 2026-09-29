@@ -1,0 +1,13 @@
+title: $:/mf/gen/GUI command/metarecord:back
+catalog: GUI command
+target: metarecord:back
+summary: Metarecord: back to the previously shown metarecord
+
+!! Reference
+
+* Defined by the ``metarecord-detail`` panel
+
+!! Default keys
+
+* ``backspace`` → ``metarecord:back`` (in the ``metarecord-detail`` panel)
+* ``left`` → ``metarecord:back`` (in the ``metarecord-detail`` panel)

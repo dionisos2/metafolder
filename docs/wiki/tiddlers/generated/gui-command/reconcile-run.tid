@@ -1,0 +1,9 @@
+title: $:/mf/gen/GUI command/reconcile:run
+catalog: GUI command
+target: reconcile:run
+summary: Reconcile the active repository with the filesystem
+
+!! Reference
+
+* Defined by the shell (a builtin)
+* No default key

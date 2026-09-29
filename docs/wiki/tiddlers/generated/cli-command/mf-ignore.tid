@@ -1,0 +1,23 @@
+title: $:/mf/gen/CLI command/mf ignore
+catalog: CLI command
+target: mf ignore
+summary: Named mf_ignore presets: apply/replace/remove them on a directory (default: list). The target directory is chosen with -d <path> (default: the repository root)
+
+!! Reference
+
+```
+Named mf_ignore presets: apply/replace/remove them on a directory (default: list). The target directory is chosen with -d <path> (default: the repository root)
+
+Usage: mf ignore [COMMAND]
+
+Commands:
+  add     Append the presets' patterns to the target's mf_ignore set
+  remove  Remove the presets' patterns from the target's mf_ignore set
+  set     Replace the target's whole mf_ignore set with the presets' patterns (with no preset, clears the set)
+  list    List the available presets (with -d, also the target's active patterns)
+  help    Print this message or the help of the given subcommand(s)
+
+Options:
+  -h, --help
+          Print help
+```

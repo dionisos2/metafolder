@@ -1,0 +1,26 @@
+title: $:/mf/gen/CLI command/mf gui message
+catalog: CLI command
+target: mf gui message
+summary: Post a message to a workspace's status bar
+
+!! Reference
+
+```
+Post a message to a workspace's status bar
+
+Usage: mf gui message [OPTIONS] <TEXT>
+
+Arguments:
+  <TEXT>
+          
+
+Options:
+      --workspace <WORKSPACE>
+          Target workspace id (default: the focused workspace)
+
+      --timeout-ms <TIMEOUT_MS>
+          Auto-clear delay; persistent when omitted
+
+  -h, --help
+          Print help
+```

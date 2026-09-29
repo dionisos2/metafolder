@@ -1,0 +1,44 @@
+title: $:/mf/gen/CLI command/mf metarecord
+catalog: CLI command
+target: mf metarecord
+summary: Metarecord operations: `mf metarecord [selector] <verb>`
+
+!! Reference
+
+```
+Metarecord operations: `mf metarecord [selector] <verb>`
+
+The selector picks the target metarecord(s) and precedes the verb:
+`-q "<DSL query>"` (add `-s` for the simplified language), `-i <uuid>`
+for a single metarecord, or none to mean all. Examples:
+  mf metarecord get                         # every uuid
+  mf metarecord -i <uuid> get               # one metarecord, full JSON
+  mf metarecord -q 'rating > 3' get         # matching uuids
+  mf metarecord -q 'mfr_path ->* "/docs"' field set reviewed:bool=true
+
+Usage: mf metarecord [OPTIONS] [COMMAND]
+
+Commands:
+  get     Read: -i <uuid> → full JSON; -q/none → UUIDs (--select for fields)
+  add     Create a metarecord with the given fields and print its UUID (no selector)
+  set     Replace the ENTIRE field set of the selected metarecord (needs -i, force)
+  delete  Delete the selected metarecords (metadata and all fields)
+  field   Field operations scoped to the selected metarecord(s)
+  help    Print this message or the help of the given subcommand(s)
+
+Options:
+  -q, --query <QUERY>
+          DSL query selector (use -s to write it in the simplified language)
+
+  -i, --id <ID>
+          Single-metarecord selector by UUID
+
+      --eq <EQ>
+          Exact-match selector: name[:type]=value (repeatable, AND-ed; safe — no DSL interpolation). Mutually exclusive with -q/-i
+
+  -s, --simplified
+          Treat -q as simplified-language text and expand it first
+
+  -h, --help
+          Print help (see a summary with '-h')
+```

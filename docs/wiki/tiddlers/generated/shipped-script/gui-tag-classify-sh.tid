@@ -1,0 +1,44 @@
+title: $:/mf/gen/Shipped script/gui-tag-classify.sh
+catalog: Shipped script
+target: gui-tag-classify.sh
+summary: Interactively classify a query's files by hierarchical tags.
+
+!! Reference
+
+```
+Summary: Interactively classify a query's files by hierarchical tags.
+Interactive hierarchical-tag classification, in the running metafolder GUI.
+Walks the metarecords a QUERY matches and, for each, shows the file (left
+`file` panel) and its metadata (right `metarecord-detail` panel), then asks a
+descending series of questions "add tag <path> ?" chosen by
+scripts/gui-tag-next.sh:
+
+  y / →  -> the file HAS the tag       (mf tag add)
+  n / ←  -> the file does NOT have it  (mf tag deny)
+  Escape -> stop
+
+The question ORDER (descend into a tag's children only once it is accepted,
+skip subtrees under a generic negative, honour exclusivity) is the pure
+selector in gui-tag-next.sh. The tag MODEL — creating entries, adding the
+ref, and the subsumption/exclusivity rewrites (drop ancestors on add,
+descendants on deny, siblings when exclusive) — is `mf tag`, so this driver no
+longer re-implements any of it.
+
+The vocabulary and exclusivity flags come from `mf tag list`
+(path<TAB>partition<TAB>exclusive), the metarecord's current tags from
+`mf … field get <field> --resolve path` — one round-trip each, no per-entry
+loops. Resumable: answered questions are skipped, so re-run until nothing is
+left to ask.
+
+THE QUERY IS THE SCOPE (spec-gui "A query is the scope"), as in the other
+shipped scripts: given as the argument, else ASKED — the checked selection,
+or the query the list shows, like the GUI's bulk commands; when the list has
+published nothing, a folder chosen from the completion. `q` on any
+question stops the whole run, not just the record being classified.
+
+A bare UUID is a valid query (spec-query, the UUID-atom bullet), so the old
+single-metarecord invocation — `gui-tag-classify.sh <uuid>` — still works and
+means exactly what it did.
+
+Usage: gui-tag-classify.sh [<query>]
+```
