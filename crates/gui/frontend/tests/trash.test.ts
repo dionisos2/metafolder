@@ -5,26 +5,7 @@
 import { beforeEach, describe, expect, test, vi } from 'vitest';
 import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
-import { formatAge, formatSize, mount } from '../../default-config/panel-types/trash/main.js';
-
-describe('trash format helpers', () => {
-  test('formatSize scales by 1024', () => {
-    expect(formatSize(512)).toBe('512B');
-    expect(formatSize(2048)).toBe('2.0K');
-    expect(formatSize(5 * 1024 * 1024)).toBe('5.0M');
-    expect(formatSize(3 * 1024 ** 3)).toBe('3.0G');
-  });
-
-  test('formatAge picks the coarsest unit', () => {
-    const now = 1_000_000_000_000;
-    expect(formatAge(now - 5_000, now)).toBe('5s ago');
-    expect(formatAge(now - 120_000, now)).toBe('2m ago');
-    expect(formatAge(now - 3 * 3_600_000, now)).toBe('3h ago');
-    expect(formatAge(now - 2 * 86_400_000, now)).toBe('2d ago');
-    // A clock skew (future timestamp) never goes negative.
-    expect(formatAge(now + 10_000, now)).toBe('0s ago');
-  });
-});
+import { mount } from '../../default-config/panel-types/trash/main.js';
 
 /** The shell's mount path: index.html body (minus scripts/styles) into a Shadow root. */
 function shadowForTrash(): ShadowRoot {

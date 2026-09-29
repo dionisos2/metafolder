@@ -1,6 +1,6 @@
 // file-manager tracked-children lookup (spec-gui "file-manager panel
 // type"): a directory's tracked entries come from a single GET /tree/children
-// on its node (served from the daemon's in-memory tree cache), so a directory
+// on its node (one read of the daemon's forest), so a directory
 // with thousands of tracked files costs neither a query nor a per-record fetch.
 
 import { describe, expect, test, vi } from 'vitest';
@@ -98,10 +98,25 @@ describe('filterHidden', () => {
   });
 });
 
+describe('path helpers shared with file-actions', () => {
+  test('parentDir ignores a trailing slash and keeps the root its own parent', () => {
+    expect(parentDir('/a/b/')).toBe('/a');
+    expect(parentDir('/a/b')).toBe('/a');
+    expect(parentDir('/a')).toBe('/');
+    expect(parentDir('/')).toBe('/');
+  });
+
+  test('isWithin: everything is within the filesystem root, nothing within null', () => {
+    expect(isWithin('/x/y', '/')).toBe(true);
+    expect(isWithin('/x', '/x/')).toBe(true);
+    expect(isWithin('/x', null)).toBe(false);
+  });
+});
+
 describe('isWithin', () => {
   test('the directory itself and its descendants are within', () => {
     expect(isWithin('/repo/.metafolder/internal', '/repo/.metafolder/internal')).toBe(true);
-    expect(isWithin('/repo/.metafolder/internal/db.sqlite', '/repo/.metafolder/internal')).toBe(
+    expect(isWithin('/repo/.metafolder/internal/kv/data.mdb', '/repo/.metafolder/internal')).toBe(
       true,
     );
   });

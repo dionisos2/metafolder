@@ -407,3 +407,34 @@ export function valueEl(value, onOpen) {
       return el('span', {}, formatValue(value));
   }
 }
+
+/** An error's message, whatever was thrown.
+ *  @param {unknown} error @returns {string} */
+export function messageOf(error) {
+  return error instanceof Error ? error.message : String(error);
+}
+
+/** A byte count as a short human size, base 1024 with one decimal above bytes
+ *  — the spelling `mf duplicate` prints (`512B`, `2.0K`, `5.0M`).
+ *  @param {number} bytes @returns {string} */
+export function formatSize(bytes) {
+  const units = ['B', 'K', 'M', 'G', 'T'];
+  let v = bytes;
+  let i = 0;
+  while (v >= 1024 && i < units.length - 1) {
+    v /= 1024;
+    i += 1;
+  }
+  return i === 0 ? `${bytes}B` : `${v.toFixed(1)}${units[i]}`;
+}
+
+/** Coarse "how long ago" from a unix-ms timestamp (`5s ago` … `2d ago`); a
+ *  future timestamp (clock skew) reads `0s ago`.
+ *  @param {number} atMs @param {number} [now] @returns {string} */
+export function formatAge(atMs, now = Date.now()) {
+  const secs = Math.max(0, Math.floor((now - atMs) / 1000));
+  if (secs < 60) return `${secs}s ago`;
+  if (secs < 3600) return `${Math.floor(secs / 60)}m ago`;
+  if (secs < 86400) return `${Math.floor(secs / 3600)}h ago`;
+  return `${Math.floor(secs / 86400)}d ago`;
+}

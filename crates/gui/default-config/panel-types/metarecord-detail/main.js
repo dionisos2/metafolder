@@ -1,7 +1,7 @@
 // metarecord-detail panel: shows and edits all fields of selected_metarecord
 // (spec-gui "metarecord-detail panel type").
 
-import { byId, el, valueEl } from '/__ui.js';
+import { byId, el, messageOf, valueEl } from '/__ui.js';
 import { orphanState, orphanLabel } from '/__orphan.js';
 import { fetchMounts, offlineMountFor, relativeTo, unavailableLabel } from '/__mounts.js';
 import { fetchWatched, summarizeWatched } from '/__watched.js';
@@ -2198,6 +2198,3 @@ function valuePayload(value) {
 }
 
 /** The message of a thrown daemon error. */
-function messageOf(/** @type {unknown} */ error) {
-  return error instanceof Error ? error.message : String(error);
-}

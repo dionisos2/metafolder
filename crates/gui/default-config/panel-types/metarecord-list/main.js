@@ -1,7 +1,7 @@
 // metarecord-list panel: metarecords of the active repo filtered by an embedded
 // DSL query; primary selection source (spec-gui "metarecord-list panel type").
 
-import { byId, el, fields, qs, thumbnail } from '/__ui.js';
+import { byId, el, fields, messageOf, qs, thumbnail } from '/__ui.js';
 import { orphanState, orphanLabel } from '/__orphan.js';
 import { fetchMounts, offlineMountFor, relativeTo, unavailableLabel } from '/__mounts.js';
 import { createPagedList } from '/__paged-list.js';
@@ -1923,6 +1923,3 @@ function asText(value) {
 }
 
 /** The message of a thrown daemon/parser error. */
-function messageOf(/** @type {unknown} */ error) {
-  return error instanceof Error ? error.message : String(error);
-}

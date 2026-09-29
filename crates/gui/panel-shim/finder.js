@@ -104,7 +104,7 @@ export function composeQuery(baseIR, clause) {
  *  would change the term. This is what keeps a term like `x")OR(label` a term
  *  instead of a way out of the call.
  *  @param {string} text */
-function dslString(text) {
+export function dslString(text) {
   return `"${text.replace(/\\/g, '\\\\').replace(/"/g, '\\"')}"`;
 }
 

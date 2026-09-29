@@ -7,7 +7,7 @@
 // change, or on an explicit refresh — not on every view — so it never reorders
 // under the cursor while you navigate.
 
-import { byId, el, field, formatValue } from '/__ui.js';
+import { byId, el, field, formatAge, formatValue } from '/__ui.js';
 import { rowActionsProvider, baseName } from '/__file-actions.js';
 import { registerFind } from '/__find-entry.js';
 
@@ -22,12 +22,7 @@ function fieldText(rec, name) {
  *  @param {string} iso @param {number} [now] */
 export function formatViewedAge(iso, now = Date.now()) {
   const ms = Date.parse(iso);
-  if (Number.isNaN(ms)) return '';
-  const secs = Math.max(0, Math.floor((now - ms) / 1000));
-  if (secs < 60) return `${secs}s ago`;
-  if (secs < 3600) return `${Math.floor(secs / 60)}m ago`;
-  if (secs < 86400) return `${Math.floor(secs / 3600)}h ago`;
-  return `${Math.floor(secs / 86400)}d ago`;
+  return Number.isNaN(ms) ? '' : formatAge(ms, now);
 }
 
 /**

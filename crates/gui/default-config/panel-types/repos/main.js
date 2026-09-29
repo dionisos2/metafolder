@@ -1,7 +1,7 @@
 // repos panel: list loaded repositories, init/load new ones, open a
 // repository in a workspace (spec-gui "Repository management").
 
-import { byId, el, qsa } from '/__ui.js';
+import { byId, el, messageOf, qsa } from '/__ui.js';
 import { createPickRunner } from '/__value-widget.js';
 import { createSelect } from '/__select.js';
 
@@ -731,6 +731,3 @@ export async function mount(root, metafolder) {
 }
 
 /** The message of a thrown daemon error (`{"error": …}` bodies arrive as Error). */
-function messageOf(/** @type {unknown} */ error) {
-  return error instanceof Error ? error.message : String(error);
-}

@@ -1,6 +1,8 @@
 // Query builders for the treeref (tree-explorer) panel. Pure functions, no
 // daemon access — unit-tested in frontend/tests/treeref-queries.test.js.
 
+import { dslString } from '/__finder.js';
+
 // The Query IR matching the direct children of a node in `field`'s forest. The
 // node is addressed by a `uuid_in` sub-query (Follows matches metarecords whose
 // TreeRef direct parent is in the set), which avoids building path strings and
@@ -39,14 +41,6 @@ export function treeNameOf(metarecord, field) {
     if (f.name === field && f.value.type === 'tree_ref') return f.value.value.name;
   }
   return null;
-}
-
-// The DSL string literal for `text`: the parser decodes `\"` and `\\` inside a
-// quoted string and passes every other backslash escape through verbatim, so
-// those two are the only characters that need escaping.
-/** @param {string} text @returns {string} */
-function dslString(text) {
-  return `"${text.replace(/\\/g, '\\\\').replace(/"/g, '\\"')}"`;
 }
 
 // The DSL selecting the metarecords whose `refField` (a Ref field) points into

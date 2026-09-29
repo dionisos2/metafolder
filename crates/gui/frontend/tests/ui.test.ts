@@ -2,7 +2,7 @@
 // shared by the built-in panel types (spec-gui "The metafolder API").
 
 import { describe, expect, test, vi } from 'vitest';
-import { el, field, fields, formatValue, valueEl, thumbnail, isThumbnailable, isVideoThumbnailable, fileTypeGlyph, looksLikeText } from '../../panel-shim/ui.js';
+import { el, field, fields, formatAge, formatSize, formatValue, messageOf, valueEl, thumbnail, isThumbnailable, isVideoThumbnailable, fileTypeGlyph, looksLikeText } from '../../panel-shim/ui.js';
 
 describe('thumbnail', () => {
   test('isThumbnailable: only image extensions, case-insensitive', () => {
@@ -318,5 +318,30 @@ describe('looksLikeText', () => {
     const big = new Uint8Array(20000).fill(0x41); // 'A' repeated
     big[19000] = 0x00; // NUL only well past the 8 KiB sniff window
     expect(looksLikeText(big)).toBe(true);
+  });
+});
+
+describe('ui formatting helpers', () => {
+  test('messageOf reads an Error, and stringifies anything else', () => {
+    expect(messageOf(new Error('boom'))).toBe('boom');
+    expect(messageOf('plain')).toBe('plain');
+    expect(messageOf(42)).toBe('42');
+  });
+
+  test('formatSize scales by 1024', () => {
+    expect(formatSize(512)).toBe('512B');
+    expect(formatSize(2048)).toBe('2.0K');
+    expect(formatSize(5 * 1024 * 1024)).toBe('5.0M');
+    expect(formatSize(3 * 1024 ** 3)).toBe('3.0G');
+  });
+
+  test('formatAge picks the coarsest unit', () => {
+    const now = 1_000_000_000_000;
+    expect(formatAge(now - 5_000, now)).toBe('5s ago');
+    expect(formatAge(now - 120_000, now)).toBe('2m ago');
+    expect(formatAge(now - 3 * 3_600_000, now)).toBe('3h ago');
+    expect(formatAge(now - 2 * 86_400_000, now)).toBe('2d ago');
+    // A clock skew (future timestamp) never goes negative.
+    expect(formatAge(now + 10_000, now)).toBe('0s ago');
   });
 });

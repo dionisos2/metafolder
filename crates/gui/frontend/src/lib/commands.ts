@@ -23,7 +23,7 @@ import {
   type TargetDirOptions,
 } from './ignore';
 import { invoke } from './ipc';
-import { type ExpandDeps, expandShellPlaceholders } from './placeholders';
+import { type ExpandDeps, expandShellPlaceholders, shellQuote } from './placeholders';
 import { focusedWs, flashStatus, store, workspaceById } from './store.svelte';
 import { daemonWork } from './working';
 import type { CommandDef, LayoutView } from './types';
@@ -831,11 +831,6 @@ registerArgs('file:open-with', [
     complete: () => openWithPrograms(),
   },
 ]);
-
-/** Single-quote a path for `sh -c`, escaping embedded single quotes. */
-function shellQuote(path: string): string {
-  return `'${path.replace(/'/g, `'\\''`)}'`;
-}
 
 /** Runs an installed script, surfacing its output in the message panel exactly
  *  as a `!` command does. */

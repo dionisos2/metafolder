@@ -1,6 +1,11 @@
-// Tracked-children lookup for the file-manager panel: query only the
-// metarecords whose mfr_path parent is the displayed directory (Follows with
-// a path target), instead of paginating the whole repository.
+// Tracked-children lookup for the file-manager panel: the displayed
+// directory's tracked entries from one `tree/children` read of its node,
+// instead of paginating the whole repository.
+
+// Parent directory and containment of absolute paths: the file actions' own.
+import { isWithin, parentDir } from '/__file-actions.js';
+
+export { isWithin, parentDir };
 
 // File-manager footer summary (spec-gui "file-manager panel type"): how
 // many of the directory's entries are currently rendered. The listing is
@@ -51,13 +56,6 @@ export function syntheticRows(dir, repoRoot, constrainToRoot) {
   return [self, { name: '..', path: parentDir(dir), is_dir: true }];
 }
 
-// Parent directory of an absolute path; the filesystem root is its own
-// parent (as on Linux, where /.. is /).
-/** @param {string} path */
-export function parentDir(path) {
-  if (path === '/') return '/';
-  return path.slice(0, path.lastIndexOf('/')) || '/';
-}
 
 // Repo-relative path of `dir` ("" for the root itself, "/sub/dir" below
 // it, null outside the root) — the format Follows path targets expect.
@@ -70,12 +68,6 @@ export function relPath(dir, repoRoot) {
   if (dir === repoRoot) return '';
   if (!dir.startsWith(`${repoRoot}/`)) return null;
   return dir.slice(repoRoot.length);
-}
-
-// Whether `path` is `dir` or one of its descendants (absolute paths).
-/** @param {string} path @param {string|null} dir */
-export function isWithin(path, dir) {
-  return dir !== null && (path === dir || path.startsWith(`${dir}/`));
 }
 
 // Uuid of the metarecord of `dir` itself (the "." row), or null when untracked

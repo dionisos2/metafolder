@@ -3,31 +3,8 @@
 // Filesystem operations go through metafolder.trash (shared with the CLI,
 // no daemon endpoint).
 
-import { byId, el } from '/__ui.js';
+import { byId, el, formatAge, formatSize } from '/__ui.js';
 import { registerFind } from '/__find-entry.js';
-
-/** Human-readable byte count (base 1024, one decimal above KiB).
- *  @param {number} bytes */
-export function formatSize(bytes) {
-  const units = ['B', 'K', 'M', 'G', 'T'];
-  let v = bytes;
-  let i = 0;
-  while (v >= 1024 && i < units.length - 1) {
-    v /= 1024;
-    i += 1;
-  }
-  return i === 0 ? `${bytes}${units[0]}` : `${v.toFixed(1)}${units[i]}`;
-}
-
-/** Coarse "how long ago" from a unix-ms timestamp.
- *  @param {number} trashedAt @param {number} [now] */
-export function formatAge(trashedAt, now = Date.now()) {
-  const secs = Math.max(0, Math.floor((now - trashedAt) / 1000));
-  if (secs < 60) return `${secs}s ago`;
-  if (secs < 3600) return `${Math.floor(secs / 60)}m ago`;
-  if (secs < 86400) return `${Math.floor(secs / 3600)}h ago`;
-  return `${Math.floor(secs / 86400)}d ago`;
-}
 
 /**
  * @param {ShadowRoot} root @param {MetafolderApi} metafolder

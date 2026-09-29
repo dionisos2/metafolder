@@ -18,26 +18,13 @@
 // a group") — a stale count is worst exactly here, where it is the number the
 // deletion decision is made on.
 
-import { byId, el, field, formatValue } from '/__ui.js';
+import { byId, el, field, formatSize, formatValue } from '/__ui.js';
 import { registerFind } from '/__find-entry.js';
 import { createCatchup } from '/__watcher-settle.js';
 import { rowActionsProvider, baseName } from '/__file-actions.js';
 
 const GROUP_QUERY = { type: 'eq', field: 'mf_schema', value: { type: 'string', value: 'duplicate_group' } };
 const PAGE = 200;
-
-/** A byte count as a short human size — the spelling `mf duplicate` prints.
- *  @param {number} bytes */
-export function humanSize(bytes) {
-  const units = ['B', 'K', 'M', 'G', 'T'];
-  let v = bytes;
-  let i = 0;
-  while (v >= 1024 && i < units.length - 1) {
-    v /= 1024;
-    i += 1;
-  }
-  return i === 0 ? `${bytes}B` : `${v.toFixed(1)}${units[i]}`;
-}
 
 /** The first value of `name` on a selected-fields record, as a number.
  *  @param {Metafolder.Metarecord} rec @param {string} name */
@@ -132,8 +119,8 @@ export function mount(root, metafolder) {
         row.member === null
           ? el('li', { class: i === cursorIndex ? 'cursor' : '' }, [
               el('span', { class: 'twisty' }, row.group.expanded ? '▾' : '▸'),
-              el('span', { class: 'size reclaim' }, humanSize(row.group.reclaimable)),
-              el('span', { class: 'size' }, humanSize(row.group.size)),
+              el('span', { class: 'size reclaim' }, formatSize(row.group.reclaimable)),
+              el('span', { class: 'size' }, formatSize(row.group.size)),
               el('span', { class: 'count' }, String(row.group.count)),
               el('span', { class: 'hash' }, row.group.hash),
             ])
@@ -166,7 +153,7 @@ export function mount(root, metafolder) {
     statusLine.textContent =
       groups.length === 0
         ? ''
-        : `${groups.length} group(s), ${humanSize(total)} reclaimable`;
+        : `${groups.length} group(s), ${formatSize(total)} reclaimable`;
   }
 
   /** @param {number} index */
@@ -260,7 +247,7 @@ export function mount(root, metafolder) {
     const others = (row.group.members ?? []).filter((m) => m !== row.member);
     if (others.length === 0) return;
     const list = others.map((m) => `  ${m.path}`).join('\n');
-    const freed = humanSize(row.group.reclaimable);
+    const freed = formatSize(row.group.reclaimable);
     if (
       !confirm(
         `Keep ${row.member.path}\n\nand send its ${others.length} other ` +

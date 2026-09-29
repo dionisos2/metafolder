@@ -87,9 +87,12 @@ export function dedupeName(name, taken) {
 }
 
 /** Whether `path` is `dir` itself or lies below it (used to reject pasting a
- *  directory into itself). @param {string} path @param {string} dir */
+ *  directory into itself); nothing is within a `null` directory.
+ *  @param {string} path @param {string|null} dir */
 export function isWithin(path, dir) {
-  return path === dir || path.startsWith(dir.endsWith('/') ? dir : `${dir}/`);
+  if (dir === null) return false;
+  const trimmed = dir.replace(/\/+$/, '');
+  return path === dir || path === trimmed || path.startsWith(`${trimmed}/`);
 }
 
 /**

@@ -4,9 +4,9 @@
 // When the active path is a directory, its contents are shown as a
 // thumbnail grid the user can click into (drill-in, with a back button).
 
-import { byId, el, thumbnail, looksLikeText } from '/__ui.js';
+import { byId, el, looksLikeText, messageOf, thumbnail } from '/__ui.js';
 import { createPagedList } from '/__paged-list.js';
-import { fileMenuItems } from '/__file-actions.js';
+import { fileMenuItems, parentDir } from '/__file-actions.js';
 import {
   SAVE_INTERVAL_MS,
   MIN_DELTA,
@@ -80,13 +80,6 @@ function positiveNumber(configured, fallback) {
   return typeof configured === 'number' && Number.isFinite(configured) && configured > 0
     ? configured
     : fallback;
-}
-
-/** The directory holding `path` ("/" for a top-level entry, and for "/").
- *  @param {string} path */
-function parentDir(path) {
-  const index = path.lastIndexOf('/');
-  return index <= 0 ? '/' : path.slice(0, index);
 }
 
 /**
@@ -1208,6 +1201,3 @@ export async function mount(root, metafolder) {
 }
 
 /** The message of a thrown error (the fs/daemon seams throw Error). */
-function messageOf(/** @type {unknown} */ error) {
-  return error instanceof Error ? error.message : String(error);
-}

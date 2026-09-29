@@ -52,7 +52,7 @@ export function placeholderKey(ph: Placeholder): string {
 }
 
 /** POSIX single-quote: wrap in '…' and escape embedded quotes as '\''. */
-function shellQuote(value: string): string {
+export function shellQuote(value: string): string {
   return `'${value.replace(/'/g, "'\\''")}'`;
 }
 
