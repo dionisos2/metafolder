@@ -1,0 +1,6 @@
+title: mf slow
+tags: [[CLI command]] [[Slow log]]
+kind: reference
+summary: Slow-operation log: what took seconds, and where the time went
+
+The repository's slow-operation log ([[Slow log]]). Alone, `mf slow` is `mf slow list`.

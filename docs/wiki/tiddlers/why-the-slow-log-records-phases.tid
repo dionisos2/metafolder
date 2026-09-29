@@ -1,0 +1,28 @@
+title: Why the slow log records phases
+tags: [[Slow log]]
+kind: rationale
+audience: dev
+summary: A persistent log of phases rather than a metric: the intermittent slowdown is the one to catch, and the breakdown is the answer.
+
+The log was born of an observation: queries, and above all field writes,
+sometimes took a long time, and nothing showed when. The daemon's timing output
+did not answer it: the load report covers loading only, and goes to stderr,
+which no GUI user sees.
+
+* ''Persistent, per repository.'' A problem that shows up once a day is the one worth catching; a ring in memory loses it at the next restart. Hence a file inside the repository ([[Slow log files]]).
+* ''Both sides.'' The daemon records what it spent, the GUI what the user waited for; the pair is the diagnosis ([[Correlating the GUI and the daemon]]).
+* ''Phases, not a total.'' A total says an operation was slow, which the user knew. The breakdown — and in it the `wait:*` phases — is the answer.
+* ''Keys read, besides time.'' Time cannot tell "read a lot" from "waited"; the count can. The store counts every key it reads in a per-thread counter, and a phase takes the difference across itself; a repository operation runs on one thread, so what another operation reads meanwhile is not attributed to it.
+* ''No aggregates.'' No percentiles, no sampling of fast operations: only what crossed a threshold.
+
+!! How an operation is timed
+
+The instrumentation is a thread-local set up where the daemon runs a
+repository's blocking work (all of it runs on one thread), plus a task-local set
+by an HTTP middleware that names the operation after the matched route. A write
+transaction marks the operation as a write when it commits, which is what picks
+the read threshold or the main one.
+
+A trap met while building it: an axum middleware whose future holds a borrow of
+the request (a closure reading the headers) is not `Send`, and the error shown is
+an obscure `FromFn: Service<Request> is not satisfied`, not "future is not Send".

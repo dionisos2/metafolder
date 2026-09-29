@@ -2704,7 +2704,7 @@ pub fn trash_list(ctx: &Ctx) -> Result<i32, CliError> {
     Ok(0)
 }
 
-/// `mf slow [list]` — the repository's slow-operation log (spec-slow-log),
+/// `mf slow [list]` — the repository's slow-operation log (doc "Slow log"),
 /// newest first. Read over HTTP: the daemon owns the file, and the endpoint
 /// merges what the GUI wrote into it too.
 pub fn slow_list(
@@ -2759,7 +2759,7 @@ pub fn slow_list(
 
 /// `mf slow replay` — runs a query again through `POST /query/profile` and
 /// prints its breakdown as `mf slow` prints an entry: the newest logged query,
-/// the one logged at `at`, or the one typed with `-q` (spec-slow-log
+/// the one logged at `at`, or the one typed with `-q` (doc "Slow log"
 /// "Replaying a query").
 pub fn slow_replay(
     ctx: &Ctx,

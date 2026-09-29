@@ -1,0 +1,26 @@
+title: Slow log files
+tags: [[Slow log]]
+kind: reference
+audience: dev
+summary: One JSONL file per writing process under internal/slow/, rotated at 4 MiB, and never a reason for an operation to fail.
+
+```
+.metafolder/internal/slow/daemon.jsonl        what the daemon timed
+.metafolder/internal/slow/gui.jsonl           what the GUI timed
+.metafolder/internal/slow/<source>.jsonl.old  the previous file, after a rotation
+```
+
+One file per writing process, never a shared one: two processes appending to one
+file would interleave partial lines, and the split costs the reader nothing (it
+merges them by `at_ms`). Like the rest of `internal/`, the directory is excluded
+from tracking: the log describes the repository, it is not content of it.
+
+A file is rotated once it passes 4 MiB: renamed over `.old` (a single
+generation, so at most 8 MiB per source on disk) and a fresh one started. The
+rotation is checked before each append. A failure to rotate — like any failure
+to write the log — is silent for the caller: an operation never fails, or waits,
+because its diagnostics could not be recorded.
+
+A malformed line is skipped by the readers rather than failing them: a
+half-written last line, from a daemon killed mid-append, must not make the whole
+history unreadable.

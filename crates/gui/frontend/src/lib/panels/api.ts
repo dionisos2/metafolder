@@ -223,7 +223,7 @@ export function createPanelApi(deps: PanelApiDeps, ctx: PanelApiCtx): PanelApiIn
   // What the user last asked this panel for, in their own words (the DSL text
   // of a query). Sent with every call the panel makes and kept in the
   // slow-operation log when one turns out to be slow: the daemon receives the
-  // query IR and cannot reconstruct the text (spec-slow-log). It is a hint for
+  // query IR and cannot reconstruct the text (doc "Slow log"). It is a hint for
   // a human reading the log, not a precise attribution — a call made after the
   // query carries the query's text too.
   let clientContext: string | null = null;

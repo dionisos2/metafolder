@@ -1,0 +1,6 @@
+title: mf slow clear
+tags: [[CLI command]] [[Slow log]]
+kind: reference
+summary: Empty the log (the clean slate a reproduction starts from)
+
+Empties the log, both sources ([[GET /repos/:repo/slow]]), after a confirmation.

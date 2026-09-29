@@ -46,7 +46,7 @@ refuses to run, on its own terms.
 ** Non-goals
 
 - *Not a profiler and not a metrics system.* No aggregates, no percentiles.
-- *Unrelated to the slow-operation log* ([[file:spec-slow-log.org][spec-slow-log]]). That log is a debugging
+- *Unrelated to the slow-operation log* (doc "Slow log"). That log is a debugging
   artefact: threshold-based, persistent, and it also records GUI-side time. It
   is not an input to this feature and this feature does not write to it.
 - *No promise of a duration.* The estimate is a band derived from declared

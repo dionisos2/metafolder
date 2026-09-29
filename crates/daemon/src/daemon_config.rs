@@ -39,7 +39,7 @@ pub const DEFAULT_WATCHD_SOCKET: &str = "/run/metafolder/watchd.sock";
 /// (spec-event-log "Automatic retention").
 pub const DEFAULT_LOG_RETENTION_REVISIONS: u64 = 200;
 
-/// Default threshold for the slow-operation log (spec-slow-log): an operation
+/// Default threshold for the slow-operation log (doc "Slow log"): an operation
 /// past it is written to the repository's log with its phase breakdown. Two
 /// seconds is well above anything the daemon does routinely, so what lands in
 /// the log is what someone waited on.
@@ -101,7 +101,7 @@ pub struct DaemonSettings {
     /// deletion the user asked for. `0` disables the check.
     pub orphan_cascade_limit: usize,
     /// How long an operation must take before it is written to the
-    /// repository's slow-operation log (spec-slow-log). `0` turns the log off.
+    /// repository's slow-operation log (doc "Slow log"). `0` turns the log off.
     pub slow_operation_threshold_ms: u64,
     /// How many keys an operation must read before it is written to the
     /// slow-operation log whatever its duration. `0`: time alone decides.

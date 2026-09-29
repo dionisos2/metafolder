@@ -156,7 +156,7 @@ metafolder = "/ssd/meta/music/.metafolder"
   [[file:spec-event-log.org][spec-event-log.org]] "Automatic retention"),
   =slow-operation-threshold-ms= (default 2000, =0= to disable: how long an
   operation must take before it is written to the repository's slow-operation
-  log — see [[file:spec-slow-log.org][spec-slow-log.org]]),
+  log — see doc "Slow log"),
   =slow-read-threshold-ms= (default 100, =0= for the main one: the same for
   an operation that wrote nothing — a query, a listing),
   =slow-operation-reads-threshold= (default 100 000, =0= to leave it to time
@@ -285,7 +285,7 @@ already watches as a task. Timings that are *not* tied to a load — the query o
 the field write that took four seconds for no visible reason — are not
 diagnostics either: they go to the repository's slow-operation log, which
 persists across restarts and carries a phase breakdown a one-line message could
-not (see [[file:spec-slow-log.org][spec-slow-log.org]]).
+not (see doc "Slow log").
 
 ** Repository management
 

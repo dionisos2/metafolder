@@ -428,7 +428,7 @@ fn flush_pending_once(repo: &RepoState, report: FlushReport) -> Result<FlushStat
     let started = std::time::Instant::now();
     // A flush is not served over HTTP, so it names itself: it is the operation
     // most likely to be *holding* the repository when a query complains about
-    // waiting for it (spec-slow-log).
+    // waiting for it (doc "Slow log").
     let _timed = metafolder_core::slowlog::begin(repo.slowlog.clone(), "watcher.flush");
     let mut conn = metafolder_core::slowlog::timed("wait:conn", || repo.conn.lock_recover());
     let cache = repo.tree();

@@ -44,6 +44,9 @@ On la complète item par item. La conception est dans
   (=$:/config/WikiParserRules/Inline/wikilink=).
 - =<<key "commande" repli>>= : le repli est la touche par défaut, lue dans la
   note générée de la commande ; =scripts/doc check= refuse une commande inconnue.
+- Une section retirée d'une spec qui reste en place (spec-gui…) devient un
+  paragraphe-pointeur (« Moved to the wiki: doc "…" ») : d'autres passages de la
+  spec y renvoient encore.
 - Une note de commande ne répète pas sa partie générée (usage, options,
   touches) : elle dit ce que la commande fait et renvoie aux notes du sujet.
 
@@ -160,17 +163,25 @@ mémoires =disk-storage-backend-prototype=, =wal-fsync-per-transaction=,
 CLI : =mf task *= (3). Sources : spec-tasks entier (sa partie « GUI », la barre
 de tâches, va à l'item 33).
 
-** TODO 7. Journal des opérations lentes
+** FAIT 7. Journal des opérations lentes
 
-- [ ] =Slow log= — overview
-- [ ] =What the slow log records= — reference (seuils, phases, ce qui est laissé de côté)
-- [ ] =Slow log configuration= — reference
-- [ ] =Replaying a slow query= — guide (=mf slow replay=, =POST /query/profile=)
-- [ ] =Correlating the GUI and the daemon= — reference, dev
-- [ ] =Slow log endpoint= — reference, dev
+- [X] =Slow log= — overview
+- [X] =Diagnosing a slow operation= — guide (lire, où est passé le temps, rejouer)
+- [X] =What the slow log records= — reference (champs, phases, vocabulaire, ce qui est laissé de côté)
+- [X] =Slow log configuration= — reference
+- [X] =Slow log files= — reference, dev (ajoutée : disposition, rotation)
+- [X] =Correlating the GUI and the daemon= — reference, dev
+- [X] =GET /repos/:repo/slow= — reference, dev
+- [X] =POST /repos/:repo/query/profile= — reference, dev
+- [X] =Why the slow log records phases= — rationale, dev (avec la mémoire =slow-operation-log=)
+- [X] les notes de commande : =mf slow= (+ =list=, =replay=, =clear=)
 
-CLI : =mf slow *= (4). Sources : spec-slow-log entier ; spec-gui « Slow daemon
-calls » ; mémoires =slow-operation-log=, =read-blocked-by-write-conn-lock=.
+Vérification contre le code : conforme (seuils, rotation, limites, vocabulaire
+des phases identique au code), sauf la longueur de =X-Metafolder-Op-Id= : le démon
+garde jusqu'à 200 caractères de chaque en-tête, pas 32. Sources retirées :
+=spec-slow-log.org= et spec-gui « Slow daemon calls » (réduite à un pointeur).
+Mémoire =slow-operation-log= supprimée (noms de phases périmés) ;
+=read-blocked-by-write-conn-lock= gardée (leçon de méthode).
 
 * Modèle de données et requêtes
 

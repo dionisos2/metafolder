@@ -7,7 +7,7 @@ Metafolder has had the same failure mode several times: a change that is correct
 — and passes every test — makes an operation an order of magnitude slower, and
 nobody notices until the interface feels wrong weeks later. The log so far:
 one query per metarecord on the index build, a write per transaction in the
-watcher flush ([[file:spec-slow-log.org][spec-slow-log.org]] was born of that one), a full-forest rebuild on
+watcher flush (doc "Slow log" was born of that one), a full-forest rebuild on
 every =tree_ref= write, one HTTP request per metarecord in =mf sync plan=, a
 process fork per entry in the shipped scripts.
 
@@ -16,7 +16,7 @@ specified here is the other direction: the numbers are taken on purpose, kept,
 and compared against what they were.
 
 It is **not** a metrics system and not a profiler: the slow-operation log
-([[file:spec-slow-log.org][spec-slow-log.org]]) already answers "where did the time go in *this* run". This
+(doc "Slow log") already answers "where did the time go in *this* run". This
 answers a different question — "is this slower than it was last month, and by
 how much".
 
@@ -32,7 +32,7 @@ row instead of one query, a full table scan where an index lookup was enough, a
 walk over the whole log to serve a bounded window. That is visible without any
 clock at all, and a clock is the wrong instrument for it: a timing assertion
 tight enough to catch a 3× regression is loose enough to fail on a loaded
-machine ([[file:spec-slow-log.org][spec-slow-log.org]]'s own tests taught us that — see the test-suite notes
+machine (doc "Slow log"'s own tests taught us that — see the test-suite notes
 in =CLAUDE.md=).
 
 So the first layer measures a **counter, not a duration**: the number of keys

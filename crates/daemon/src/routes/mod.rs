@@ -153,7 +153,7 @@ pub fn build_authenticated(state: Arc<AppState>, token: Arc<str>) -> Router {
 }
 
 /// What the request layer knows about the operation being served, carried to
-/// the blocking thread that will time it (spec-slow-log).
+/// the blocking thread that will time it (doc "Slow log").
 ///
 /// A task-local rather than an argument: the name of the operation is a
 /// property of the *request*, known only here, while the timing happens deep in
@@ -250,7 +250,7 @@ where
 {
     let repo = state.ready_repo(repo_uuid)?;
     // The whole blocking closure is the operation, so the timing starts and
-    // ends on the one thread that runs it (spec-slow-log).
+    // ends on the one thread that runs it (doc "Slow log").
     let info = REQUEST.try_with(|info| info.clone()).ok();
     tokio::task::spawn_blocking(move || {
         let _timed = info.map(|info| {

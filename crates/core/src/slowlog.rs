@@ -1,4 +1,4 @@
-//! The repository's slow-operation log (spec-slow-log.org): one entry per
+//! The repository's slow-operation log (doc "Slow log"): one entry per
 //! operation that took longer than a threshold, with the breakdown of where the
 //! time went.
 //!
@@ -19,7 +19,7 @@ use std::time::Instant;
 
 use serde::{Deserialize, Serialize};
 
-/// How long an operation must take before it earns an entry (spec-slow-log
+/// How long an operation must take before it earns an entry (doc "Slow log"
 /// "Threshold and configuration"). Both the daemon and the GUI default to it.
 pub const DEFAULT_THRESHOLD_MS: u64 = 2000;
 
@@ -500,7 +500,7 @@ pub fn mark_write() {
 
 /// Leaves the running operation out of the log, whatever it costs — for an
 /// operation whose cost is the point of the call, like the replay of a slow
-/// query (spec-slow-log "Replaying a query").
+/// query (doc "POST /repos/:repo/query/profile").
 pub fn discard() {
     with_op(|op| op.discarded = true);
 }
@@ -590,7 +590,7 @@ impl Drop for OpGuard {
 
 /// Runs `f` as an operation of its own and hands back its entry — phases,
 /// reads, context — whatever its duration, writing nothing: what replaying a
-/// logged query wants (spec-slow-log "Replaying a query"). An operation
+/// logged query wants (doc "POST /repos/:repo/query/profile"). An operation
 /// already running on this thread is set aside for the while, and sees none
 /// of the captured phases.
 pub fn capture<T>(op: &str, f: impl FnOnce() -> T) -> (T, Entry) {

@@ -1,0 +1,9 @@
+title: mf slow replay
+tags: [[CLI command]] [[Slow log]]
+kind: reference
+summary: Run a query again and show where its time goes, now: the newest logged query, the one logged at --at, or one typed with -q. Not itself logged
+
+Runs a logged query again, now, and prints its breakdown:
+[[Diagnosing a slow operation]]. Without `--at`, the newest logged query; with
+`-q`, any query, asked as the first page of a list asks for it (100 results and
+its count).

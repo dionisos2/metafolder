@@ -1,4 +1,4 @@
-//! The slow-operation log (spec-slow-log.org): what the daemon records when an
+//! The slow-operation log (doc "Slow log"): what the daemon records when an
 //! operation crosses the threshold, and the endpoint that serves it back.
 //!
 //! Slowness is produced deliberately rather than waited for: a thread holds the

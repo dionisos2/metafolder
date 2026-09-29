@@ -1,0 +1,29 @@
+title: Correlating the GUI and the daemon
+tags: [[Slow log]]
+kind: reference
+audience: dev
+summary: The GUI times every daemon call and sends an id and what the user typed, so its entries line up with the daemon's.
+
+The GUI times every call it makes to the daemon, at its single chokepoint (the
+daemon proxy: the WebView cannot reach the daemon directly, so one place sees
+them all). A call slower than the GUI's own threshold
+([[Slow log configuration]]) is logged with `source: "gui"`, the operation it
+asked for, and one `http` phase.
+
+Two optional headers, which the daemon ignores when absent, tie the two sides
+together:
+
+* `X-Metafolder-Op-Id` — a short opaque id (the GUI sends 16 hex characters), stored as the entry's `op_id` on both sides. A GUI entry of 4.9 s against a daemon entry of 0.2 s for the same id is the diagnosis: the daemon was fine, the time went to the client.
+* `X-Metafolder-Context` — what the ''user'' asked for, in their words: the DSL text of a query, the command that ran. The daemon receives the query IR, not the text that produced it, so it cannot reconstruct this. It lands in `context.client`.
+
+The daemon keeps at most 200 characters of either header.
+
+A panel declares its context with `metafolder.daemon.setContext(text)` — a local
+assignment, no call — and it rides along with that panel's calls until replaced;
+the `metarecord-list` panel sets it to the DSL text whenever it compiles a query.
+It is a hint for whoever reads the log, not an exact attribution: a call made
+just after a query carries that query's text too.
+
+The GUI does not display the log; it is read with `mf slow`. A panel would be a
+reasonable addition, but the log's job is to survive until someone looks, not to
+be looked at continuously.

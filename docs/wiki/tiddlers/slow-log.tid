@@ -1,0 +1,34 @@
+title: Slow log
+kind: overview
+aliases: slow slow-log slow-operation-log
+summary: Every repository keeps a log of the operations that took too long, with where the time went.
+
+Some operations occasionally take seconds when they usually take milliseconds —
+a query, a field write, a flush of the watcher's buffered events — and by the time
+you notice, nothing recorded why. So every repository keeps a ''slow-operation
+log'': one entry per operation that took longer than a threshold (2 s, or 100 ms
+for one that only read), or that read an unusually large number of keys.
+
+An entry records ''phases, not just a total'': not that a query was slow, but that
+it waited three seconds for the repository a watcher flush was holding, then
+spent the rest evaluating. It is on by default and kept on disk, so that a
+slowdown that shows up once a day is still there when you look.
+
+It is not a profiler or a metrics system: no aggregates, no percentiles, no
+sampling of fast operations — only what crossed a threshold.
+
+!! Use it
+
+<<list-kind guide>>
+
+!! Reference
+
+<<list-kind reference>>
+
+!! Why it works this way
+
+<<list-kind rationale>>
+
+!! Commands
+
+<<tagged-with "CLI command">>

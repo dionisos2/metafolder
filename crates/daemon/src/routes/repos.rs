@@ -22,7 +22,7 @@ pub(super) struct SlowLogParams {
 }
 
 /// `GET /repos/:repo/slow?limit=&since_ms=` — the repository's slow-operation
-/// log (spec-slow-log), both sources merged, newest first.
+/// log (doc "Slow log"), both sources merged, newest first.
 pub(super) async fn slow_log(
     State(state): State<Arc<AppState>>,
     Path(repo): Path<String>,

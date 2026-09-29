@@ -4117,7 +4117,7 @@ fn test_mount_list_and_forget() {
     assert!(out.stdout.contains("No mount points"), "stdout: {}", out.stdout);
 }
 
-// ── mf slow (spec-slow-log) ───────────────────────────────────────────────────
+// ── mf slow (doc "Slow log") ───────────────────────────────────────────────────
 
 #[test]
 fn test_slow_lists_the_log_newest_first_and_clears_it() {

@@ -1,0 +1,23 @@
+title: POST /repos/:repo/query/profile
+tags: [[Slow log]]
+kind: reference
+audience: dev
+summary: Runs a query exactly as POST /query does and answers its slow-log entry — phases, time, reads — whatever it cost.
+
+```
+POST /repos/:repo/query/profile      (the body of POST /repos/:repo/query)
+→ {"entry": <entry>}
+```
+
+Runs the query exactly as `/query` does and answers, instead of its results, the
+entry the slow log would hold for it ([[What the slow log records]]) — its
+phases, their time and reads, its context — whatever it cost. The replay itself
+is not logged: a slow query replayed is as slow, and not news. It is what
+`mf slow replay` sends ([[Diagnosing a slow operation]]).
+
+An entry says where the time went ''then''; this answers whether it still goes
+there — after a fix, on a warm cache, on another machine — without copying the
+query into a tool that opens the store, which the daemon holds locked.
+
+An entry whose query was not kept whole (longer than 64 KiB, or logged before
+queries were kept whole) cannot be replayed, and `mf slow replay` says so.

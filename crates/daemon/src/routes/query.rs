@@ -89,7 +89,7 @@ impl Drop for CancelOnHangUp {
 
 /// `POST /repos/:repo/query/profile` — runs a query as `/query` does and
 /// answers with its slow-log entry instead of its results: the phases, their
-/// time and the keys each read, whatever the query cost (spec-slow-log
+/// time and the keys each read, whatever the query cost (doc "Slow log"
 /// "Replaying a query"). The replay itself is not logged.
 pub(super) async fn profile_query(
     State(state): State<Arc<AppState>>,
@@ -617,7 +617,7 @@ pub(super) async fn delete_by_query(
 
 /// Records what a slow query ran — the IR whole (the daemon receives it, not
 /// the text that produced it), with the sort, limit and count that decide how
-/// it was evaluated: enough to replay it (spec-slow-log "Replaying a query").
+/// it was evaluated: enough to replay it (doc "POST /repos/:repo/query/profile").
 fn note_query(body: &QueryBody) {
     if let Ok(json) = serde_json::to_string(&body.query) {
         slowlog::note("query", json.chars().take(slowlog::MAX_QUERY_CHARS).collect::<String>());

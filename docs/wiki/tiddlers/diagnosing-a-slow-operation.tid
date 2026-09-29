@@ -1,0 +1,53 @@
+title: Diagnosing a slow operation
+tags: [[Slow log]]
+kind: guide
+summary: Read the slow log with mf slow, find where the time went, and replay a query to see whether it still goes there.
+
+!! Read the log
+
+```
+mf slow                    # the newest entries, both processes merged
+mf slow list --since 2h    # only the last two hours (-d; 30m, 7d…)
+mf slow list --op query    # only operations whose name contains "query"
+```
+
+Each entry is a header line — when it started, how long it took, which process
+timed it (`daemon` or `gui`), the operation — then its context and its phases,
+indented by nesting:
+
+```
+2026-09-09 14:03:22  4.82s  daemon  POST /repos/:repo/query
+    client    mfr_path ->* "/2024" and rating > 3
+    results   1240
+    keys      210 314
+    wait:conn         3.10s
+    prepare           1.65s       210 008 keys
+    index.evaluate      40ms           306 keys
+```
+
+`--json` prints the raw entries, one per line, for a script
+([[What the slow log records]]).
+
+!! Where the time went
+
+* ''Read the phases, not the total.'' The total says it was slow, which you knew.
+* A `wait:conn` phase is time spent waiting for the repository, which something else was holding — a reconcile, a watcher flush. The operation itself was fine.
+* A phase that took long and read few keys ''waited'' — for a lock, a cold disk cache, a loaded machine. One that read many keys did the work.
+* Time not covered by any phase is code that is not instrumented: that is where to look.
+* A GUI entry and a daemon entry with the same id are one request seen from both sides: 4.9 s in the GUI against 0.2 s in the daemon means the time went to the client ([[Correlating the GUI and the daemon]]).
+
+!! Replay a query
+
+```
+mf slow replay                  # the newest logged query, run again now
+mf slow replay --at <at_ms>     # the one logged at that time
+mf slow replay -q '<query>'     # any query (-s for simplified text)
+```
+
+prints the same breakdown for the query run ''now''
+([[POST /repos/:repo/query/profile]]). A `wait:conn` that dominated the entry and
+is gone from the replay was the diagnosis: something else held the repository.
+A phase whose reads stayed the same while its time did not waited on the disk
+or the machine, not on the query.
+
+To reproduce a slowdown on purpose, start from an empty log: `mf slow clear`.

@@ -1,4 +1,4 @@
-//! Timing the GUI's calls to the daemon (spec-gui "Slow daemon calls").
+//! Timing the GUI's calls to the daemon (doc "Correlating the GUI and the daemon").
 //!
 //! The GUI records what the *user* waited for; the daemon records what it
 //! spent. Neither number is the diagnosis on its own — a 4.9 s wait against a
@@ -14,7 +14,7 @@ use metafolder_core::slowlog::{self, Entry, Phase, Recorder};
 use metafolder_core::sync::MutexExt;
 
 /// Header carrying the correlation id, and the one carrying what the user asked
-/// for in their own words (spec-slow-log "Correlating the GUI and the daemon").
+/// for in their own words (doc "Correlating the GUI and the daemon").
 pub const OP_ID_HEADER: &str = "x-metafolder-op-id";
 pub const CONTEXT_HEADER: &str = "x-metafolder-context";
 

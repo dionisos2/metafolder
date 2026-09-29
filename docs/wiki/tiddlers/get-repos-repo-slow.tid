@@ -1,0 +1,20 @@
+title: GET /repos/:repo/slow
+tags: [[Slow log]]
+kind: reference
+audience: dev
+summary: Reads the repository's slow log, both sources merged, newest first; DELETE empties it.
+
+```
+GET    /repos/:repo/slow?limit=<n>&since_ms=<ms>
+DELETE /repos/:repo/slow
+```
+
+`GET` reads both sources merged, ''newest first'', at most `limit` entries
+(default 50, capped at 500), keeping only those at or after `since_ms` when
+given. The daemon reads the GUI's file too; it never writes it. Answers
+`{"entries": [...], "truncated": <bool>}`, `truncated` saying the limit cut the
+result short.
+
+`DELETE` empties the log — both sources and their `.old` files — and answers
+`{"cleared": <n>}`. Starting from an empty log is the normal way to reproduce a
+slowdown on purpose.

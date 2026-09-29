@@ -48,7 +48,7 @@ pub struct Settings {
     /// `GET /repos` once per tile).
     pub repo_list_cache_ttl_secs: u64,
     /// How long (milliseconds) a daemon call must take before the GUI writes it
-    /// to the repository's slow-operation log (spec-gui "Slow daemon calls").
+    /// to the repository's slow-operation log (doc "Correlating the GUI and the daemon").
     /// `0` turns the GUI's side of the log off. The daemon has its own,
     /// separate threshold.
     pub slow_operation_threshold_ms: u64,

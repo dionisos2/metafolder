@@ -442,7 +442,7 @@ pub async fn daemon_request(
     // `context`: what the user asked for, in their own words (the DSL text of a
     // query, say). Carried to the daemon and into the slow-operation log when
     // the call turns out to be slow; the daemon receives the query IR and
-    // cannot reconstruct it (spec-slow-log).
+    // cannot reconstruct it (doc "Slow log").
     context: Option<String>,
     // `abortId`: makes the call abortable by `daemon_abort` while in flight.
     abort_id: Option<String>,

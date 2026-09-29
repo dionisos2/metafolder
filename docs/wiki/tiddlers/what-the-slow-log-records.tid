@@ -1,0 +1,66 @@
+title: What the slow log records
+tags: [[Slow log]]
+kind: reference
+summary: One JSON line per slow operation — when, how long, how many keys, its context and its phases — and what is left out.
+
+One JSON object per line, written when the operation ends:
+
+```
+{"at_ms": 1757426602000, "source": "daemon", "op": "POST /repos/:repo/query",
+ "ms": 4820, "reads": 210314, "op_id": "9f3c1d0a4b7e4f2a",
+ "phases": [{"name": "wait:conn", "ms": 3100, "count": 1, "depth": 0},
+            {"name": "prepare", "ms": 1650, "count": 1, "depth": 0, "reads": 210008},
+            {"name": "index.evaluate", "ms": 40, "count": 1, "depth": 0, "reads": 306}],
+ "context": {"client": "mfr_path ->* \"/2024\" and rating > 3",
+             "query": "{\"type\":\"and\",…}", "results": "1240"}}
+```
+
+|!Field |!Meaning |
+|`at_ms` |when the operation ''started'' (Unix ms): sorting by it puts an operation next to the ones it waited for |
+|`source` |`daemon` or `gui`: which process timed it |
+|`op` |for an HTTP request, the method and the ''route pattern'' (`POST /repos/:repo/query`), never the concrete URL: a shape to group by |
+|`ms` |the total, end to end, as the recording process measured it |
+|`reads` |the keys the store read during the operation (absent when none, as on the GUI's entries) |
+|`op_id` |the id correlating a GUI entry with the daemon's for the same request, when the client sent one |
+|`phases` |the breakdown, below |
+|`context` |free-form pairs, in order: the query, the number of results, the field written, the events of a flush. A query is kept whole (up to 64 KiB) with its `sort`, `limit` and `count`, so the entry can be replayed |
+
+!! Phases
+
+A phase is a named span declared by the code that runs it. Durations are
+''inclusive'' — a phase containing another counts its time too — and `depth` says
+how deeply it is nested. Occurrences of one name are summed, `count` saying how
+many: a write validating the schema once per metarecord reports one
+`validate.schema` of 2.4 s with `count: 900`. Phases keep the order they first
+appeared in, so they retell the operation. Time outside every top-level phase is
+not padded with an "other": a gap that matters is a missing instrumentation site,
+and naming it would hide that. Each phase also carries its `reads`, inclusive
+like its time.
+
+The daemon's vocabulary is stable — a new site adds to it rather than inventing a
+synonym:
+
+|!Phase |!Covers |
+|`wait:conn` |waiting for the repository's store handle |
+|`prepare` |resolving path targets, exact nodes and the forest's leaves of a query |
+|`index.evaluate` |evaluating the page (and count) over the store |
+|`assemble` |assembling the selected fields of a result page |
+|`resolve.uuids` |resolving a write's query to its whole match set |
+|`write.fields` |the field writes inside a transaction |
+|`write.bulk_create` |creating a batch of metarecords |
+|`write.trash_delete` |deleting the metarecords of a trashing |
+|`validate.schema` |schema validation of a write |
+|`commit` |committing the transaction (the store's `fsync`) |
+|`rules.load` |re-reading the watch-rule index after HEAD moved |
+|`settle.rules` |re-reading it after a write that moved a rule |
+|`settle.watches` |recomputing the watched directories |
+|`watcher.compact` |compacting a batch of buffered events |
+|`watcher.apply` |applying one group of compacted events |
+
+A `wait:*` phase is the one that distinguishes "this is expensive" from "this was
+fine and something else held the repository".
+
+!! What is left out
+
+* Operations whose slowness is expected and already reported, as observable tasks: loading a repository, a full reconcile, the duplicate scan, the similarity phase.
+* Operations that name no repository (`GET /health`, `POST /repos/load`): the log lives in a repository, and these have none.

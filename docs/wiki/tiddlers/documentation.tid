@@ -9,6 +9,7 @@ through the `mf` command line and a desktop GUI.
 !! Topics
 
 * [[Duplicates]] — finding byte-identical files and deleting the copies you choose
+* [[Slow log]] — the operations that took too long, and where their time went
 * [[Trash]] — the per-repository bin: trashing, restoring, undoing
 
 !! Catalogs

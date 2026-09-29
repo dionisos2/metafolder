@@ -130,7 +130,7 @@ pub struct RepoState {
     /// stopping a flush, and by `POST /watch/pause`. In memory like the task
     /// registry: a reload or a restart starts ingesting again.
     pub ingestion_paused: std::sync::atomic::AtomicBool,
-    /// Where this repository's slow operations are written (spec-slow-log).
+    /// Where this repository's slow operations are written (doc "Slow log").
     /// Held per repository because the log lives inside it, and shared as an
     /// `Arc` because every instrumented path takes a clone.
     pub slowlog: Arc<metafolder_core::slowlog::Recorder>,

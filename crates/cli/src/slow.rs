@@ -1,4 +1,4 @@
-//! `mf slow`: reading the repository's slow-operation log (spec-slow-log.org).
+//! `mf slow`: reading the repository's slow-operation log (doc "Slow log").
 //!
 //! The rendering lives here, apart from the command plumbing, because it is the
 //! whole point of the command: an entry is a total *and* a breakdown, and a
@@ -74,7 +74,7 @@ fn format_count(n: u64) -> String {
 
 /// The `/query/profile` body that runs a logged query again: its query, and
 /// the sort, limit and count it was evaluated with — the ones that decide how
-/// (spec-slow-log "Replaying a query"). An error names why an entry cannot be
+/// (doc "POST /repos/:repo/query/profile"). An error names why an entry cannot be
 /// replayed: not a query, or a query cut short.
 pub fn replay_body(entry: &Entry) -> Result<serde_json::Value, String> {
     let context = |key: &str| entry.context.iter().find(|(k, _)| k == key).map(|(_, v)| v);

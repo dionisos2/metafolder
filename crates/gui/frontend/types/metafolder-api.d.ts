@@ -117,7 +117,7 @@ declare namespace Metafolder {
     /** Declares what the user asked this panel for, in their own words (a
      *  query's DSL text). Kept with the panel's daemon calls and written to the
      *  slow-operation log when one is slow — the daemon receives the query IR
-     *  and cannot reconstruct the text (spec-slow-log). Local and free: it sets
+     *  and cannot reconstruct the text (doc "Slow log"). Local and free: it sets
      *  a string. Capped at 200 characters; `null` clears it. */
     setContext(text: string | null): void;
     /** The raw round-trip: never throws on a 4xx/5xx, returns `{status, body}`.

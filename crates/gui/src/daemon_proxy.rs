@@ -55,8 +55,8 @@ pub struct DaemonProxy {
     /// the daemon already warned about — including why a repository failed to
     /// load, which happens before the GUI is up.
     diagnostics_since: Mutex<u64>,
-    /// Timing of the calls made through this proxy (spec-gui "Slow daemon
-    /// calls"): what the *user* waited for, next to what the daemon spent.
+    /// Timing of the calls made through this proxy (doc "Correlating the GUI and the daemon"): what
+    /// the *user* waited for, next to what the daemon spent.
     slow: crate::slow::SlowLog,
     /// Repository uuid → its `internal_dir`, as the daemon reported it. Only
     /// filled when a call was slow, so an ordinary session never asks.
@@ -166,7 +166,7 @@ impl DaemonProxy {
     /// The same, plus what the user asked for in their own words — the DSL text
     /// of a query, the command that ran. The daemon receives the query IR and
     /// cannot reconstruct it, so the client is the only side that can say it
-    /// (spec-slow-log "Correlating the GUI and the daemon").
+    /// (doc "Correlating the GUI and the daemon").
     ///
     /// With an `abort_id`, the call can be dropped while in flight by
     /// [`Self::abort`] — a query the user has already replaced — and then
