@@ -10,17 +10,13 @@ The recurring defect of this project is a cost that grows with the repository
 where it should grow with the answer. Each item names where.
 
 ** TODO =FollowsTransitive= materialises the whole subtree
-The expansion is in memory (resident index: bitmap union per level; KV: one
-descendant bitmap per root, on every forest) — but the whole subtree is still
-built where only the page is wanted. Only an unsorted query could stop early:
-a sort needs the full candidate set. =docs/review-followups.md= §7 is the
-longer account, and its first half (the SQL costs) no longer applies.
+One descendant bitmap per root, read whole where only the page is wanted.
+Only an unsorted query could stop early: a sort needs the full candidate set.
 Measured 28 September 2026 (=query.folder=, a page of 100 under a folder
-holding the whole repository, L = 105 000 nodes): +0.4 ms over =query.page= on
-KV (one descendant bitmap read), +2.5 ms on the resident index (level-by-level
-union) — about 4 ms and 25 ms extrapolated to a million. Real, small: not a
-reason for a planner on its own; it becomes one of the planner's choices
-(per-candidate ancestry check with early stop, unsorted pages only).
+holding the whole repository, L = 105 000 nodes): +0.4 ms over =query.page=,
+about 4 ms extrapolated to a million. Small; one of the planner's choices
+(below) rather than an item of its own: a per-candidate ancestry check with an
+early stop, for an unsorted page under a large subtree.
 
 ** TODO unanchored =:path= patterns walk the whole stored forest
 =aff0be6= made a =:path= comparison and a pattern anchored on a literal prefix
@@ -31,47 +27,19 @@ in its last literal can only match on the last name, so the trigrams of that
 literal give the candidates, verified on their assembled paths. Low priority:
 the GUI's finder builds =osm= queries, not these.
 
-** TODO a minimal query planner for KV
-The adaptive planner of spec-indexing was dropped in the SQL era, when every
-operand had one resident way to be answered. On KV an operand can again be
-answered several ways (posting / partition scan / per-candidate check /
-uuid-order walk), and small cost-based choices already exist (the
-read-or-walk choice for a run of ties, =876d4cc=). Reconsidered, not decided:
-if built, from a minimal KV-oriented design, not from the old document.
-Decided 28 September 2026: built, now that SQLite is dropped (KV only). Cases
-the same run showed (L, KV unless said; the resident numbers are the
-reference that goes away with SQLite):
-- =query.rare_and_wide= 4.17 ms vs =query.wide_and_rare= 0.81 ms: the order
-  of the operands matters on KV (0.91 ms either way on the resident index);
-- =query.finder= 22 ms on both backends, the costliest query, sent by the
-  GUI's finder at every keystroke;
-- =query.subtree_range_text= 1.5 ms on KV, 7.9 ms resident.
-Profile these first: they, not the old design, say what the planner chooses.
-Profiled 28 September 2026 (=examples/profile_query.rs=, L, warm pages):
-- =rare_and_wide= is gone: 6 keys and a few µs in either order. The 4.17 ms
-  was a store read cold, just after its generation.
-- =subtree_range_text= measured an *empty* subtree on the generated sizes
-  until =5225eb1= (="/dir1"= is ="/dir0/dir1"=). On the real folder: the
-  page with its count reads 3 036 keys; the page *without* the count reads
-  20 931 — the deferred text leaf makes it walk the uuid order, with a budget
-  sized on the candidates (≈ 9 500) as though every one passed, where the
-  regex keeps one in ten, and each check reads a name. The walk budget knows
-  neither the residual's selectivity nor its per-id cost. A real planner
-  choice (walk with a residual vs evaluate the leaf over the candidates), and
-  the one the GUI's second pages take. Fixed without a cost model: the
-  candidates are first narrowed by the trigram index (what spec-storage
-  already said they were) — 20 931 → 3 045 keys.
-- =finder= ≈ 5-8 ms, not 22 (load): nearly all of it the rewrite of the
-  two-term =osm= path — the names holding the last term (1 111 candidates,
-  1.7 ms), then each one's ancestry (≈ 1 280 point reads at ≈ 2 µs, a random
-  B-tree seek). Computing it term by term as bitmaps (names ∩ descendants of
-  the previous term's matches) is exact for separator-free terms but costs as
-  much here (one term alone, =dir1=, reads 5 565 keys). Only the last term
-  can anchor (the match set is the subtrees of its nodes); the lever is a
-  prefilter of those anchors — the descendants of the nodes naming an earlier
-  term — worth its reads when that term is rare (its trigram posting is
-  small) and the anchors many: a real cost choice, unlike the above. Built:
-  =dir4321 file= 214 ms → 0.85 ms, the bench's own finder unchanged.
+** TODO the query planner: the next choices
+Built September 2026 from the cases profiling found, not from the old design
+(spec-indexing's adaptive planner stays a record): a deferred text leaf's
+candidates narrowed by trigrams (=495ea1b=), and the first choice made on a
+cost — an =osm= path's anchors cut by a rare earlier term (=1140e07=). What
+is left, each to measure before building:
+- the page under a large subtree (above);
+- a two-term =osm= path whose earlier term is common: the bench's finder,
+  still ≈ 5 ms on L, nearly all of it each anchor's ancestry (≈ 2 µs a random
+  read). No bitmap formulation found cheaper on that shape;
+- whatever the slow log shows next on a real repository: reads are logged per
+  phase, a read is logged from 100 ms or 100 000 keys, and =mf slow replay=
+  runs a logged query again for its phases now (spec-slow-log).
 
 ** TODO =mf order= writes one revision per child
 N children cost N =PUT=s: N transactions, N fsyncs and N revisions, so undoing
@@ -167,6 +135,12 @@ exists: check, and write the conversion if it does.
 space left on device" (15 GB came back with =scripts/prune-target.sh=). Prune
 at the end of =check.sh= too, or at least warn when the disk is nearly full.
 
+** TODO the bench prints absurd memory deltas
+A =mem.*= baseline of 0.00 MiB gives deltas like =+7·10³⁰⁰ %= (a ratio over a
+value near zero, printed unbounded). The verdicts are right — the memory
+floor keeps them =ok= — only the column is unreadable. Print =—= under the
+floor, as for a new scenario.
+
 ** TODO test coverage has not been measured outside the broker
 =cargo llvm-cov= is wired into =scripts/check.sh= behind =--coverage=; it has
 only been used on =metafolder-watchd= (100 % of its production lines, the
@@ -175,7 +149,7 @@ crate to find what is untested.
 
 * TODO structure
 Not problems of behaviour; worth doing for navigability, each a large diff.
-- =routes.rs=: 4 719 lines, 97 handlers. Splitting it into =routes/=
+- =routes.rs=: 4 647 lines, 97 handlers. Splitting it into =routes/=
   submodules is filing, not simplification.
 - The big panels are one =mount()= each (=metarecord-list= 1 895 lines,
   =metarecord-detail= 2 203): they share the instance's state, so extracting
@@ -198,5 +172,5 @@ Named where they are, kept here so they are not forgotten:
 - spec-sync: "Performance concerns"; "Cross-machine sync" (the remote
   =.metafolder/= brought local for the sync and sent back, the remote locked
   meanwhile — a network filesystem is refused since SQLite was dropped).
-- spec-query-cost: =POST /query/explain=, entirely unimplemented.
-- spec-indexing: on-disk persistence of the resident index.
+- spec-query-cost: =POST /query/explain=, entirely unimplemented (=POST
+  /query/profile= answers the measured half: the phases of a query run now).
