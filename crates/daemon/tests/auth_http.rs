@@ -1,4 +1,4 @@
-//! Integration tests for the session-token authentication layer (spec-auth):
+//! Integration tests for the session-token authentication layer (doc "Session tokens"):
 //! `build_authenticated` rejects requests without a valid bearer token.
 
 use std::sync::Arc;

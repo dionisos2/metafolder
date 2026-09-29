@@ -403,7 +403,7 @@ pub fn run(options: Options) {
         settings.slow_operation_threshold_ms,
     ));
 
-    // Session token (spec-auth): gates the GUI server's sensitive routes and
+    // Session token (doc "Session tokens"): gates the GUI server's sensitive routes and
     // is handed to the WebView through the initial state.
     let gui_token: Arc<str> = or_exit(
         metafolder_core::auth::ensure_token("gui")

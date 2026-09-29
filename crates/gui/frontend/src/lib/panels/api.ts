@@ -79,7 +79,7 @@ export interface PanelApiCtx {
   wsId: string;
   panelType: string;
   guiServer: string;
-  /** Session token (spec-auth) for the GUI server's protected routes. */
+  /** Session token (doc "Session tokens") for the GUI server's protected routes. */
   sessionToken: string;
   /** Progressive-loading page size configured for this panel type, if any. */
   pageSize?: number;
@@ -356,7 +356,7 @@ export function createPanelApi(deps: PanelApiDeps, ctx: PanelApiCtx): PanelApiIn
     },
     // Session token for the GUI server's protected routes (`/fsraw`,
     // `/thumbnail`, `/__media-probe`); appended as `?token=` to URLs loaded
-    // as `<img>/<video>` src or fetched directly (spec-auth).
+    // as `<img>/<video>` src or fetched directly (doc "Session tokens").
     get sessionToken() {
       return ctx.sessionToken;
     },

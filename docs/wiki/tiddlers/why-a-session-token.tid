@@ -1,0 +1,35 @@
+title: Why a session token
+tags: Security
+kind: rationale
+audience: dev
+summary: Loopback keeps other machines out, not the web pages in your browser; a token web content cannot read closes that path.
+
+Binding `127.0.0.1` keeps other ''machines'' out, not the ''browser on the same
+machine'': any web page you visit can send cross-origin requests to
+`127.0.0.1:<port>`. With the GUI server's permissive CORS — needed by the shell,
+which loads panel files across origins — a malicious page could read any local
+file through `/fsraw` and drive the scripting API. The daemon, with no permissive
+CORS, was still open to blind writes, and to DNS rebinding (after the rebind the
+request is same-origin and CORS no longer applies).
+
+The defence is a secret web content cannot obtain: a random token in a file the
+operating system lets only you read. Every legitimate client — `mf`, the GUI
+backend, the WebView through Rust, `mf gui` — is a native process running as you,
+so it can read the file; sandboxed web content cannot. The token raises the bar
+to "must be able to read a user-only file". Malware already running as you can,
+and is out of scope: it can do everything you can.
+
+The daemon and the GUI have separate tokens: least privilege.
+
+!! The shell commands
+
+`POST /gui/command` runs any invocation, including a `!` shell command. It is
+gated like the rest of `/gui/*`, and that is enough: a process holding the token
+already runs as you and could start a shell itself, so going through the GUI
+grants it nothing new, while the web path — which could not otherwise run a shell
+— is closed.
+
+!! Out of scope
+
+Authenticating one user to another, protecting against same-user malware,
+encrypting loopback traffic, rotating the token mid-session.

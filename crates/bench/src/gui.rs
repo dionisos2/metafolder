@@ -263,7 +263,7 @@ fn gui_config_path() -> Option<PathBuf> {
 // ─── GUI client ────────────────────────────────────────────────────────────────
 
 /// The GUI session token, read from the token file and cached after the first
-/// success (spec-auth). Mirrors `crate::daemon_token`.
+/// success (doc "Session tokens"). Mirrors `crate::daemon_token`.
 fn gui_token() -> String {
     static TOKEN: std::sync::OnceLock<String> = std::sync::OnceLock::new();
     if let Some(token) = TOKEN.get() {

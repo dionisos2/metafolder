@@ -261,7 +261,7 @@ export function fileTypeGlyph(pathOrName, fallback = '📄') {
  * Options: `isDir`, `dirGlyph` (default 📁), `fileGlyph` (fallback for an
  * unknown type, default 📄), `glyphClass` (CSS class for the glyph span),
  * `token` (the session token appended as `?token=`, required for the protected
- * `/fsraw` and `/thumbnail` routes — spec-auth).
+ * `/fsraw` and `/thumbnail` routes — doc "Session tokens").
  *
  * @param {string} guiServer
  * @param {string|null} path

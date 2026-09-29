@@ -68,7 +68,7 @@ export interface InitialState {
   /** Per-panel-type defaults, keyed by panel-type name (config.toml
    *  `[panel-defaults.<type>]`); each table's keys are kebab-cased. */
   panel_defaults: Record<string, Record<string, unknown>>;
-  /** Session token (spec-auth) for the GUI server's protected routes. */
+  /** Session token (doc "Session tokens") for the GUI server's protected routes. */
   session_token: string;
 }
 

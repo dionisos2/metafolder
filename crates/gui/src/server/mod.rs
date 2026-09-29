@@ -142,13 +142,13 @@ pub fn build_router(state: ServerState) -> Router {
         // HTML and `import()` their modules from this server's origin, so the
         // panel assets and helper modules must be CORS-readable. Permissive
         // CORS is safe because the *sensitive* routes (file contents, the
-        // scripting API) are gated by the session token (spec-auth); the open
+        // scripting API) are gated by the session token (doc "Session tokens"); the open
         // routes only serve shipped panel code and styling.
         .layer(tower_http::cors::CorsLayer::permissive())
         .with_state(state)
 }
 
-/// The router with the session-token authentication layer (spec-auth). Only
+/// The router with the session-token authentication layer (doc "Session tokens"). Only
 /// the sensitive routes are gated; the static panel assets and helper modules
 /// stay open because they are loaded via `import()`/`<link>` which cannot
 /// carry an `Authorization` header (and they serve no private data).

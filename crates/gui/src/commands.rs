@@ -60,7 +60,7 @@ pub struct App {
     pub bench: Arc<crate::server::bench::BenchBuffer>,
     /// Keeps the style.css auto-reload watcher alive.
     pub style_watcher: Mutex<Option<crate::style_watcher::StyleWatcher>>,
-    /// Session token for this GUI server (spec-auth), handed to the WebView.
+    /// Session token for this GUI server (doc "Session tokens"), handed to the WebView.
     pub gui_token: Arc<str>,
 }
 
@@ -108,7 +108,7 @@ pub struct InitialState {
     /// Per-panel-type defaults, exposed to each panel as `metafolder.defaults`
     /// (keyed by panel-type name).
     pub panel_defaults: crate::config::PanelDefaults,
-    /// Session token (spec-auth): the shell attaches it to requests to the GUI
+    /// Session token (doc "Session tokens"): the shell attaches it to requests to the GUI
     /// server's protected routes (`/fsraw`, `/thumbnail`, `/__media-probe`).
     pub session_token: String,
 }

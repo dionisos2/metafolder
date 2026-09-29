@@ -31,7 +31,7 @@ pub struct Client {
     /// Peer name used in transport error messages ("daemon" or "GUI").
     peer: &'static str,
     agent: ureq::Agent,
-    /// Session token (spec-auth), read best-effort from the peer's runtime
+    /// Session token (doc "Session tokens"), read best-effort from the peer's runtime
     /// token file. `None` when the file is missing — typically because the
     /// peer is not running, in which case the request fails at transport.
     token: Option<String>,
@@ -56,7 +56,7 @@ impl Client {
     }
 
     pub fn with_peer(base_url: &str, peer: &'static str) -> Self {
-        // "daemon" -> "daemon", "GUI" -> "gui": the spec-auth service name.
+        // "daemon" -> "daemon", "GUI" -> "gui": the doc "Session tokens" service name.
         let service = peer.to_ascii_lowercase();
         Self {
             base: base_url.trim_end_matches('/').to_string(),

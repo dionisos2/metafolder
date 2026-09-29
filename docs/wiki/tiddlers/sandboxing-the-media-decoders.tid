@@ -1,0 +1,63 @@
+title: Sandboxing the media decoders
+tags: Security
+kind: reference
+audience: dev
+aliases: bwrap bubblewrap sandbox untrusted-media
+summary: Every decoder of an image, a video or a PDF runs confined — bwrap, a syscall filter, resource limits — and the GUI checks it at startup.
+
+Panels are trusted code; the files they show are not. Images and video are
+decoded by large C libraries with a long history of memory-safety bugs, and here
+the decoding is ''passive'': a thumbnail is generated and a codec probed for any
+file that merely appears in a panel. A PDF is parsed by poppler as soon as its
+tile or preview is shown. A crafted file is a plausible way in, reached just by
+browsing a directory. So every decoder is confined.
+
+!! The helpers
+
+`ffmpeg` (video posters, `GET /thumbnail`), `pdftoppm` and `pdfinfo` (document
+tiles and previews, `GET /document*`) and `gst-discoverer-1.0` (the codec probe,
+`GET /__media-probe`) run under `bwrap` (`crates/gui/src/sandbox.rs`):
+
+* no network, no shared IPC, PID or user namespace, an empty environment, a read-only system;
+* ''only the examined file'' bound, read-only — plus, for the two renderers, a fresh empty scratch directory, the one thing they may write. Not the thumbnail cache: a compromised decoder could otherwise rewrite every other file's poster (which the WebView then decodes) or fill the disk. The caller takes the one PNG it expects out of the scratch directory (a non-empty regular file; a symlink is refused) and deletes the rest;
+* the GStreamer plugin registry bound read-only (without it the sandbox rebuilds one per probe: ~1 s instead of ~80 ms).
+
+They ''fail closed'': no sandbox, no helper, and the panel falls back to a glyph.
+
+A ''syscall filter'' (seccomp, `crates/gui/src/seccomp.rs`, given to
+`bwrap --add-seccomp-fd`) bounds what a decoder asks of the kernel, which `bwrap`
+does not: namespace creation is refused (`unshare`, `setns`, `clone` with a
+`CLONE_NEW*` flag, the mount calls) — a user namespace hands a process every
+capability inside it, the first move of most kernel escalations — and so are the
+large interfaces no decoder needs (`io_uring`, `bpf`, `keyctl`, `userfaultfd`,
+`perf_event_open`, `ptrace`, module loading…). `clone3` answers `ENOSYS`, since
+its flags sit behind a pointer a filter cannot read, so the C library falls back
+to `clone`, whose flags it can. A foreign syscall ABI (i386, x32) kills the
+process. The filter exists for x86-64 and aarch64; elsewhere the rest of the
+sandbox stands alone.
+
+''Resource limits'', set between fork and exec so everything the sandbox spawns
+inherits them: 2 GiB of address space, 30 s of CPU, 64 MiB per file written, no
+core dump. `bwrap` bounds what a decoder reaches, these what it consumes — a
+wall-clock timeout kills a process still running, but does nothing about a machine
+already thrashing on a huge allocation or a disk filling up.
+
+!! The WebView
+
+The WebView's own web process decodes the `<img>`, `<video>` and `<audio>` of the
+panels. It is confined by WebKit's sandbox, forced on with `WEBKIT_FORCE_SANDBOX=1`
+before the WebView is created: the toolkit under Tauri never enables it, and it
+cannot be enabled later (asking once a web process exists aborts the
+application).
+
+!! Checked, not assumed
+
+At startup the GUI creates a real `bwrap` sandbox as a probe, and a few seconds
+in it checks that WebKit's web process runs in a user namespace of its own.
+Either failing is ''fatal'': rendering a crafted file unconfined is a hole, not a
+degraded feature. `WEBKIT_DISABLE_SANDBOX_THIS_IS_DANGEROUS` in the environment is
+fatal too. Bubblewrap is therefore a hard runtime dependency of the GUI; the one
+escape hatch is [[Running inside a container]].
+
+Deliberately not sandboxed: `!` shell commands (you typed them) and
+`gst-inspect-1.0` (it reads the plugin registry, never one of your files).

@@ -54,7 +54,7 @@ pub(crate) fn ms(d: Duration) -> f64 {
 }
 
 /// A reqwest client carrying the session token as a default `Authorization`
-/// header (spec-auth). Empty token ⇒ no header (peer not running yet).
+/// header (doc "Session tokens"). Empty token ⇒ no header (peer not running yet).
 pub(crate) fn authed_client(token: &str) -> Client {
     let mut headers = reqwest::header::HeaderMap::new();
     if !token.is_empty() {

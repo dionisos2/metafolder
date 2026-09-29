@@ -1,4 +1,4 @@
-//! GUI HTTP server authentication layer (spec-auth): `build_router_authenticated`
+//! GUI HTTP server authentication layer (doc "Session tokens"): `build_router_authenticated`
 //! gates the sensitive routes (`/fsraw`, `/thumbnail`, `/document*`, `/__media-probe`,
 //! `/gui/*`) while leaving panel assets open. Header on every protected route;
 //! `?token=` query parameter additionally accepted on the media/raw routes.

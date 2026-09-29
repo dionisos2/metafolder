@@ -30,7 +30,7 @@ impl ApiError {
         Self::new(StatusCode::NOT_FOUND, message)
     }
 
-    /// `401 Unauthorized`: missing or invalid session token (spec-auth).
+    /// `401 Unauthorized`: missing or invalid session token (doc "Session tokens").
     pub fn unauthorized(message: impl Into<String>) -> Self {
         Self::new(StatusCode::UNAUTHORIZED, message)
     }

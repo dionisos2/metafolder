@@ -46,7 +46,7 @@ pub struct DaemonProxy {
     base_url: Mutex<String>,
     /// Last known health; `None` until the first check.
     health: Mutex<Option<HealthOutcome>>,
-    /// Cached daemon session token (spec-auth), read lazily from the token
+    /// Cached daemon session token (doc "Session tokens"), read lazily from the token
     /// file. Stable across daemon restarts, so caching is safe; cleared and
     /// re-read once on a 401 (covers the daemon having regenerated it).
     token: Mutex<Option<String>>,

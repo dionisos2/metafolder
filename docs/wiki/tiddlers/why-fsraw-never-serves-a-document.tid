@@ -1,0 +1,28 @@
+title: Why /fsraw never serves a document
+tags: Security
+kind: rationale
+audience: dev
+summary: /fsraw carries the session token in its URL, so a file loaded as a document could steal it: media only, and inert if anything slips.
+
+`/fsraw` serves any local file, and carries the session token in its URL
+(`?token=…`), because an `<img>` source cannot send a header. That is safe only
+while the file is loaded as ''data'' — an `<img>`, `<video>` or `<audio>` source —
+where even an SVG carrying a `<script>` does not run.
+
+Loaded as a ''document'' (`<iframe>`, `<object>`, `<embed>`, a navigation), the
+same file becomes ''code'' in the GUI server's origin: it could read its own URL,
+lift the token, and drive the whole scripting API — `POST /gui/command` and the
+`!` shell commands included. Previewing a file would be a full compromise.
+
+So no panel may load an `/fsraw` URL as a document; the shipped panels are checked
+by `crates/gui/tests/panel_invariants.rs`. A panel that truly needed a document
+view would first have to stop passing the token in the URL. That is why a PDF is
+rendered to images out of process rather than shown by the WebView.
+
+The rule is also enforced where the browser can: every `/fsraw`, `/thumbnail` and
+`/document` response carries `Content-Security-Policy: sandbox; default-src 'none'; …`
+and `X-Content-Type-Options: nosniff`. As media that changes nothing; rendered as a
+document, the file gets an opaque origin with scripts off and can load nothing —
+so breaking the rule (a user panel, a loopback navigation the gate lets through)
+is no longer a compromise. The two generated endpoints get it too: they serve what
+a decoder wrote, and the decoder is the party that may be compromised.

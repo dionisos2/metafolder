@@ -566,7 +566,7 @@ declare namespace Metafolder {
     readonly panelType: string;
     readonly guiServer: string;
     /** For the GUI server's protected routes (`/fsraw`, `/thumbnail`,
-     *  `/__media-probe`): append as `?token=` (spec-auth). */
+     *  `/__media-probe`): append as `?token=` (doc "Session tokens"). */
     readonly sessionToken: string;
     /** The configured progressive-loading page size for this panel type
      *  (config.toml `[page-size]`); undefined for panels without an entry. */

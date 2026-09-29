@@ -1,4 +1,4 @@
-//! Loopback session-token authentication (spec-auth).
+//! Loopback session-token authentication (doc "Session tokens").
 //!
 //! The daemon and the GUI HTTP servers bind `127.0.0.1`, which is reachable
 //! from the user's own browser. To keep web content out, every request must

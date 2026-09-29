@@ -145,7 +145,7 @@ pub fn build(state: Arc<AppState>) -> Router {
         .layer(axum::middleware::from_fn(name_operation))
 }
 
-/// The router with the session-token authentication layer (spec-auth): every
+/// The router with the session-token authentication layer (doc "Session tokens"): every
 /// request must carry `Authorization: Bearer <token>`. Used by the daemon
 /// binary; tests drive [`build`] directly (no network, no token).
 pub fn build_authenticated(state: Arc<AppState>, token: Arc<str>) -> Router {

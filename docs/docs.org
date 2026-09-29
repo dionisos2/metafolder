@@ -572,18 +572,25 @@ Sources : spec-platform « Overview », « Path representation », « Case
 sensitivity », « Network and special filesystems », « Daemon », « CLI »,
 « Open questions ».
 
-** TODO 32. Sécurité
+** FAIT 32. Sécurité
 
-- [ ] =Security= — overview, dev (modèle de menace)
-- [ ] =Session tokens= — reference (emplacement, format, cycle de vie, application, clients)
-- [ ] =Untrusted media= — rationale, dev (tout décodeur sandboxé : bwrap + rlimits, WebKit)
-- [ ] =Loopback only= — rationale, dev (pas de réseau, pas de proxy)
-- [ ] =Why /fsraw never serves a document= — rationale, dev (vol du jeton)
-- [ ] =Running inside a container= — guide, dev (=--allow-unsandboxed-webview=)
+- [X] =Security= — overview, dev (ce qui est défendu, ce qui ne l'est pas)
+- [X] =Session tokens= — reference, dev
+- [X] =Why a session token= — rationale, dev (ajoutée : modèle de menace, les commandes =!=, hors périmètre)
+- [X] =Sandboxing the media decoders= — reference, dev (renommée depuis « Untrusted media »)
+- [X] =No network access= — reference, dev (renommée depuis « Loopback only »)
+- [X] =Why /fsraw never serves a document= — rationale, dev
+- [X] =Running inside a container= — guide, dev
 
-Sources : spec-auth entier ; spec-platform « GUI WebView », « Session-token
-runtime directory » ; spec-gui « Untrusted media », « No network access »,
-« /fsraw » ; mémoire =security-audit-sept-2026=.
+Vérification contre le code : spec-auth disait *toutes* les routes des deux
+serveurs protégées ; côté GUI, les fichiers des panels, les =/__*.js=, le style,
+=commands.js= et =/docs= sont ouverts exprès (=import()= ne peut pas envoyer
+d'en-tête), et la liste des routes à jeton en requête compte aussi =/document*=
+et =/__media-probe=. Le repli Windows =%LOCALAPPDATA%= n'existe pas (hors Unix :
+=XDG_RUNTIME_DIR= obligatoire, sans durcissement). L'invariant de CLAUDE.md est
+corrigé. Sources retirées : =spec-auth.org=, spec-gui « Untrusted media », « No
+network access », « =/fsraw= », spec-platform « Session-token runtime directory »
+(pointeurs). Mémoire =security-audit-sept-2026= réduite à watchd et nom-exif.
 
 * GUI
 

@@ -1,0 +1,48 @@
+title: Session tokens
+tags: Security
+kind: reference
+audience: dev
+summary: A per-service random token in a user-only runtime directory; every daemon request, and every sensitive GUI request, must carry it.
+
+!! Where
+
+Each service has its own token: `daemon.token` and `gui.token`, in a per-user
+runtime directory:
+
+# `$XDG_RUNTIME_DIR/metafolder/` when `XDG_RUNTIME_DIR` is an absolute path (typically `/run/user/<uid>/`, already per-user and `0700`);
+# otherwise `/tmp/metafolder-<uid>/`, the uid being the owner of `$HOME`.
+
+`/tmp` is shared, so the directory is hardened: created `0700`, and if it already
+exists it must be a real directory — not a symlink — owned by you and `0700`, or
+the server refuses to start rather than write a secret where someone else put
+it. The same checks apply under `$XDG_RUNTIME_DIR`, where they practically always
+pass. With neither `$HOME` nor `XDG_RUNTIME_DIR`, the server asks for
+`XDG_RUNTIME_DIR` to be set.
+
+The token is never kept under `~/.config/metafolder/`: that is a git repository
+(the configuration repository), and a session secret must not be committed.
+
+Outside Unix there is no uid and no `0600`/`0700` model: the tokens work only with
+`XDG_RUNTIME_DIR` set, and without hardening. (An earlier design put them in
+`%LOCALAPPDATA%\metafolder\`; that is not implemented.)
+
+!! What
+
+32 bytes from `/dev/urandom`, hex-encoded: 64 lowercase characters, no external
+crate. At startup a server reuses its token file if present, or writes a new one
+`0600`. So the token is ''stable across restarts'' within a session, and a
+long-running client (the GUI backend) can keep it. Token files are not deleted on
+shutdown: the runtime directory is cleared at logout, and a stale token in a
+private directory is harmless.
+
+!! Where it is checked
+
+* ''The daemon'': every route, `/health` included. `Authorization: Bearer <token>`, compared in constant time; otherwise `401` with the usual `{"error": …}`.
+* ''The GUI server'': the scripting API (`/gui/*`) and every route that serves file contents (`/fsraw`, `/thumbnail`, `/document`, `/document/info`, `/__media-probe`). Those last five also accept the token as a `?token=` query parameter: an `<img>` or `<video>` source cannot send a header, and that form is honoured nowhere else.
+* ''Open on the GUI server'': the panel files, the shell's helper modules (`/__*.js`), the style sheet, the user's `commands.js` and the rendered documentation (`/docs/…`). They are loaded by `import()` or `<link>`, which cannot send a header, and they are shipped or user-written code, no private data.
+
+!! The clients
+
+* `mf` reads the daemon's token once per run, `mf gui` the GUI's. A missing token file reads as a server that is not running (or not as you).
+* The GUI backend reads the daemon's token and attaches it to every call; on a `401` it re-reads the file once and retries (the daemon regenerated it after the GUI started).
+* The WebView gets the GUI's token from Rust through a Tauri command, never over the network; the panel API appends it to the media URLs it builds.

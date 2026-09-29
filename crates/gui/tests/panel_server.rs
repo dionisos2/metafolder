@@ -373,8 +373,8 @@ async fn test_fsraw_missing_file_and_missing_param() {
 
 /// What a response serving untrusted bytes must carry, whatever loads it.
 ///
-/// `/fsraw` is safe as media and fatal as a document (spec-gui "=/fsraw=:
-/// media, never a document"), and the shipped panels keep to media. These
+/// `/fsraw` is safe as media and fatal as a document (doc "Why /fsraw never serves a document"),
+/// and the shipped panels keep to media. These
 /// headers make the rule hold for any loader: rendered as a document, the
 /// response gets an opaque origin with scripts off (`sandbox`), loads nothing
 /// (`default-src 'none'`), and is never re-sniffed into HTML. `/thumbnail` and

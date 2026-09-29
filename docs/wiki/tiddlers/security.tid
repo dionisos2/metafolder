@@ -1,0 +1,23 @@
+title: Security
+kind: overview
+audience: dev
+aliases: auth authentication
+summary: A single-user tool on loopback: what it defends against — web pages, crafted media, the network — and what it does not.
+
+metafolder is single-user and local: the daemon and the GUI server listen on
+`127.0.0.1` only, and neither talks to the internet. What it defends against:
+
+* ''Web pages in your browser.'' Any page can send requests to `127.0.0.1:<port>`. Every request to the daemon, and every sensitive request to the GUI server, must carry a session token only your own processes can read ([[Session tokens]], [[Why a session token]]).
+* ''Crafted files.'' Images, videos and PDFs are decoded just by appearing in a panel; every decoder runs sandboxed, and the GUI refuses to start without the sandbox ([[Sandboxing the media decoders]]).
+* ''The network.'' Nothing in metafolder can reach a remote host, the WebView included ([[No network access]]).
+
+What it does not defend against: another user of the machine is kept out of the
+token files, but malware already running as ''you'' can read them, and can do
+anything you can anyway. There is no multi-user model, and no encryption of
+loopback traffic.
+
+<<list-kind reference>>
+
+<<list-kind rationale>>
+
+<<list-kind guide>>
