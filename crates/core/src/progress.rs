@@ -161,41 +161,41 @@ mod tests {
     #[test]
     fn determinate_bar_half_filled() {
         assert_eq!(
-            render_progress("load", "index", Some(5), Some(10), 0, Unit::Count),
-            "load: index [##########----------] 5/10"
+            render_progress("load", "replay", Some(5), Some(10), 0, Unit::Count),
+            "load: replay [##########----------] 5/10"
         );
     }
 
     #[test]
     fn determinate_bar_empty_and_full() {
         assert_eq!(
-            render_progress("load", "tree cache", Some(0), Some(4), 0, Unit::Count),
-            "load: tree cache [--------------------] 0/4"
+            render_progress("load", "mounts", Some(0), Some(4), 0, Unit::Count),
+            "load: mounts [--------------------] 0/4"
         );
         assert_eq!(
-            render_progress("load", "tree cache", Some(4), Some(4), 0, Unit::Count),
-            "load: tree cache [####################] 4/4"
+            render_progress("load", "mounts", Some(4), Some(4), 0, Unit::Count),
+            "load: mounts [####################] 4/4"
         );
     }
 
     #[test]
     fn done_beyond_total_is_clamped() {
         assert_eq!(
-            render_progress("load", "index", Some(7), Some(4), 0, Unit::Count),
-            "load: index [####################] 4/4"
+            render_progress("load", "replay", Some(7), Some(4), 0, Unit::Count),
+            "load: replay [####################] 4/4"
         );
     }
 
     #[test]
     fn missing_or_zero_counts_render_a_spinner() {
-        assert_eq!(render_progress("load", "index", None, None, 0, Unit::Count), "load: index |");
+        assert_eq!(render_progress("load", "replay", None, None, 0, Unit::Count), "load: replay |");
         assert_eq!(
-            render_progress("load", "index", Some(3), None, 1, Unit::Count),
-            "load: index /"
+            render_progress("load", "replay", Some(3), None, 1, Unit::Count),
+            "load: replay /"
         );
         assert_eq!(
-            render_progress("load", "index", Some(0), Some(0), 2, Unit::Count),
-            "load: index -"
+            render_progress("load", "replay", Some(0), Some(0), 2, Unit::Count),
+            "load: replay -"
         );
     }
 
@@ -218,12 +218,12 @@ mod tests {
     fn progress_line_redraws_in_place_and_advances_the_spinner() {
         let mut buf = Vec::new();
         let mut line = ProgressLine::new(&mut buf, true);
-        line.update("load", "tree cache", None, None);
-        line.update("load", "tree cache", None, None);
+        line.update("load", "mounts", None, None);
+        line.update("load", "mounts", None, None);
         line.clear();
         assert_eq!(
             String::from_utf8(buf).unwrap(),
-            "\rload: tree cache |\x1b[K\rload: tree cache /\x1b[K\r\x1b[K"
+            "\rload: mounts |\x1b[K\rload: mounts /\x1b[K\r\x1b[K"
         );
     }
 
@@ -231,7 +231,7 @@ mod tests {
     fn disabled_progress_line_writes_nothing() {
         let mut buf = Vec::new();
         let mut line = ProgressLine::new(&mut buf, false);
-        line.update("load", "index", Some(1), Some(2));
+        line.update("load", "replay", Some(1), Some(2));
         line.clear();
         assert!(buf.is_empty(), "disabled: no bytes, got {:?}", String::from_utf8_lossy(&buf));
     }

@@ -302,7 +302,7 @@ export async function mount(root, metafolder) {
   const pathsIn = (field, uuid) => treePaths.get(`${field}|${uuid}`);
 
   /** Field name → its value type, for the finder's per-field mode. Re-read on
-   *  every fresh query (one in-memory daemon call). */
+   *  every fresh query (one cheap daemon call). */
   /** @type {Map<string, string>} */
   let fieldTypes = new Map();
   async function readFieldTypes() {

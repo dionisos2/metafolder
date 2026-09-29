@@ -1,6 +1,5 @@
 // The panel API's daemon reads. Nothing is kept: every read is a daemon
-// round-trip, answered from the daemon's in-memory index and tree in a
-// millisecond or so, so an answer never outlives the change that made it
+// round-trip, answered from the daemon's store in a millisecond or so, so an answer never outlives the change that made it
 // wrong. A panel keeps what it displays, and re-reads when the change feed
 // (changes.ts) says something moved.
 //

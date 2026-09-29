@@ -87,7 +87,6 @@ async function mountPanel(firstUuid: string) {
       expandQuery: async () => '',
       resolvePath: async () => '',
       resolveTreeRef: async () => '',
-      invalidatePath: () => true,
       repoRoot: async () => '/tmp/repo',
       repoInternalDir: async () => '/tmp/repo/.metafolder/internal',
       metarecordPaths: async (_repo: string, metarecord: { uuid: string }) => [

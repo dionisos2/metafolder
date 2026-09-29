@@ -102,7 +102,6 @@ async function mountPanel(watchResults: Record<string, unknown>[] | null) {
       expandQuery: async () => '',
       resolvePath: async () => '',
       resolveTreeRef: async () => '',
-      invalidatePath: () => true,
       repoRoot: async () => '/tmp/repo',
       repoInternalDir: async () => '/tmp/repo/.metafolder/internal',
       metarecordPaths: async () => [],

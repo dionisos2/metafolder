@@ -71,7 +71,6 @@ function stubApi(vars: Record<string, unknown>, calls: Call[]) {
         expandQuery: async () => '',
         resolvePath: async () => '',
         resolveTreeRef: async () => '',
-        invalidatePath: () => true,
         repoRoot: async () => '/repo',
         repoInternalDir: async () => '/repo/.metafolder/internal',
         metarecordPaths: async () => [],

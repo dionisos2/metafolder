@@ -10,8 +10,8 @@
  * refs — the shape of `metafolder.daemon.metarecordPaths` — and
  * `exists(path)` checks the disk (e.g. `metafolder.fs.stat`).
  *
- * Returns null when the metarecord is not orphaned (no mfr_path at all, or at
- * least one path still exists), 'deleted' when every mfr_path is nothing
+ * Returns null when the metarecord is not orphaned (no mfr_path at all, or its
+ * path still exists), 'deleted' when its mfr_path is nothing
  * (the watcher saw the deletion), 'missing' when the tree_refs are stale
  * (the path vanished while untracked; reconcile leaves it in place).
  *

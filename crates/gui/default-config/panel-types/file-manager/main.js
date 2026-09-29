@@ -1282,7 +1282,7 @@ export async function mount(root, metafolder) {
   );
   // Re-query the current directory's tracked status and repaint — the response
   // to a change we did not learn through our own query round-trip (the change
-  // feed, or a mutation nudge). Cheap: one tree-cache-served children query.
+  // feed, or a mutation nudge). Cheap: one `tree/children` read.
   async function refreshTracked() {
     if (currentDir === null) return; // not started yet (still hidden)
     await reenrichVisible();

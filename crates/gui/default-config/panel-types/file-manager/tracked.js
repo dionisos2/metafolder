@@ -80,8 +80,8 @@ export function isWithin(path, dir) {
 
 // Uuid of the metarecord of `dir` itself (the "." row), or null when untracked
 // or outside the repo. A repo-root-relative path resolves to its node uuid
-// straight from the daemon's in-memory tree cache (`tree/resolve-path`) — one
-// in-memory round-trip, no query. The root maps to the empty path.
+// straight from the daemon's forest (`tree/resolve-path`) — one round-trip, no
+// query. The root maps to the empty path.
 /**
  * @param {Daemon} daemon @param {string|null} repo
  * @param {string|null} repoRoot @param {string} dir
@@ -98,7 +98,7 @@ export async function loadDirMetarecord(daemon, repo, repoRoot, dir) {
 
 // Map of absolute child path -> metarecord uuid for every direct tracked child
 // of `dir`. A single `GET /tree/children` on the directory node: the daemon
-// answers it from the in-memory tree cache (names + metarecord uuids), so this
+// answers it with one read of its forest (names + metarecord uuids), so this
 // costs neither a query nor a per-record fetch of every child — the whole
 // directory's tracked entries come back in one call, whatever its size.
 // `dirUuid` is the directory node's metarecord uuid (from `loadDirMetarecord`);

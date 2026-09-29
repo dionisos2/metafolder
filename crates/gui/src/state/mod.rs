@@ -573,19 +573,6 @@ impl GuiState {
         Ok(ws.vars.get(key).cloned().unwrap_or(Value::Null))
     }
 
-    pub fn vars(&self, ws_id: &str) -> Result<Vec<(String, Value)>, String> {
-        let inner = self.lock();
-        let ws = inner.workspace(ws_id)?;
-        let mut vars: Vec<(String, Value)> =
-            ws.vars.iter().map(|(k, v)| (k.clone(), v.clone())).collect();
-        vars.push((
-            "active_repo".to_string(),
-            ws.active_repo.as_deref().map(Value::from).unwrap_or(Value::Null),
-        ));
-        vars.sort_by(|a, b| a.0.cmp(&b.0));
-        Ok(vars)
-    }
-
     // ── Workspace commands ───────────────────────────────────────────────
 
     /// Creates a workspace without assigning it to a slot (GUI HTTP API).
@@ -1824,11 +1811,6 @@ mod tests {
         // Readable through the variable store (spec-gui standard vars)...
         assert_eq!(state.get_var(&id, "active_repo").unwrap(), json!("repo-7"));
         assert_eq!(state.get_var("ws-1", "active_repo").unwrap(), Value::Null);
-        assert!(state
-            .vars(&id)
-            .unwrap()
-            .iter()
-            .any(|(k, v)| k == "active_repo" && *v == json!("repo-7")));
         // ...but immutable: set at creation, never changed.
         assert!(state.set_var(&id, "active_repo", json!("other")).is_err());
     }

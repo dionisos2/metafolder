@@ -252,11 +252,6 @@ pub fn ws_set_var(app: AppHandle, ws_id: String, key: String, value: Value) -> R
 }
 
 #[tauri::command]
-pub fn ws_vars(app: AppHandle, ws_id: String) -> Result<Vec<(String, Value)>, String> {
-    app.gui.vars(&ws_id)
-}
-
-#[tauri::command]
 pub async fn adopt_repo(app: AppHandle<'_>, ws_id: String, repo: String) -> Result<(), String> {
     let repo_name = app.daemon.repo_name(&repo).await;
     app.gui.adopt_repo_named(&ws_id, &repo, repo_name)
@@ -380,11 +375,6 @@ pub fn remove_user_keybinding(
     Ok(compiled)
 }
 
-#[tauri::command]
-pub fn list_panel_types(app: AppHandle) -> Result<Vec<String>, String> {
-    app.config.list_panel_types()
-}
-
 /// Current stylesheet, for manual reloads. An unreadable file yields empty CSS
 /// at this runtime path; startup already fails when configuration is missing.
 #[tauri::command]
@@ -483,11 +473,6 @@ pub fn daemon_abort(app: AppHandle, id: String) -> bool {
 #[tauri::command]
 pub async fn daemon_set_url(app: AppHandle<'_>, url: String) -> Result<bool, String> {
     app.daemon.set_url(url);
-    Ok(app.daemon.check_health(&app.gui).await)
-}
-
-#[tauri::command]
-pub async fn daemon_health(app: AppHandle<'_>) -> Result<bool, String> {
     Ok(app.daemon.check_health(&app.gui).await)
 }
 

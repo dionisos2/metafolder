@@ -236,10 +236,10 @@ pub fn load(
     };
     let resp = ctx.client.post("/repos/load", &body)?;
     let uuid = resp["repo_uuid"].as_str().unwrap_or_default().to_string();
-    // The repository answers queries as soon as the POST returns, but stays on
-    // the slow DB fallback until the warmup task finishes: wait on it (with a
-    // progress bar, like the GUI) so the prompt returns on a warm repo.
-    // `--no-wait` skips the wait; a null task_id means already warm.
+    // The POST returns as soon as the repository is registered, but it answers
+    // its data routes with `503` until the load task finishes: wait on it (with
+    // a progress bar, like the GUI) so the prompt returns on a usable repo.
+    // `--no-wait` skips the wait; a null task_id means already loaded.
     if !no_wait {
         if let Some(task_id) = resp["task_id"].as_str() {
             poll_task(ctx, &format!("/repos/{uuid}"), task_id, "load", LOAD_POLL_INTERVAL_MS)?;
@@ -775,7 +775,8 @@ fn parse_sort(specs: &[String]) -> Result<Json, CliError> {
 /// a uuid→paths map and the bare-path form throws the keys away, which is all a
 /// completion list needs; a script that has to *act* on the records needs to
 /// know which record a path belongs to, and without this would fall back to one
-/// `mf path` call per record. A metarecord with several paths gets one row per
+/// `mf path` call per record. A metarecord holding several positions (an older
+/// repository, spec-data-model "One position per forest") gets one row per
 /// path; rows are sorted by path, so both forms list in the same order.
 fn resolve_tree_paths(ctx: &Ctx, selector: &str, field: &str, tsv: bool) -> Result<i32, CliError> {
     let base = ctx.repo_base()?;
@@ -1474,9 +1475,10 @@ pub fn tag_list(ctx: &Ctx) -> Result<i32, CliError> {
 }
 
 /// Resolves a metarecord to its filesystem path via the daemon's tree-resolve
-/// endpoint (one round-trip; the daemon walks the chain through its tree cache).
+/// endpoint (one round-trip; the daemon walks the chain in its store).
 /// Relative paths are repo-root-relative and start with `/` (the root metarecord
-/// itself is `/`). A multi-positioned metarecord resolves to its first path.
+/// itself is `/`). A metarecord of an older repository holding several
+/// positions resolves to its first path.
 pub fn path(ctx: &Ctx, uuid: &str, relative: bool) -> Result<i32, CliError> {
     let base = ctx.repo_base()?;
     let key = Uuid::parse_str(uuid)

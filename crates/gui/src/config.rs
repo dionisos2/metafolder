@@ -25,24 +25,17 @@ pub struct PageSizes {
     pub file: u32,
     pub file_manager: u32,
     pub treeref: u32,
-    pub ref_list: u32,
 }
 
 impl Default for PageSizes {
     fn default() -> Self {
-        PageSizes {
-            metarecord_list: 100,
-            file: 150,
-            file_manager: 200,
-            treeref: 200,
-            ref_list: 100,
-        }
+        PageSizes { metarecord_list: 100, file: 150, file_manager: 200, treeref: 200 }
     }
 }
 
 /// Miscellaneous GUI runtime settings (the `[settings]` table of `config.toml`).
 /// These stay Rust-side (they drive background loops and the GUI HTTP server),
-/// unlike `[page-size]`/`[panels]`/`[cache]` which are handed to the panels.
+/// unlike `[page-size]`/`[panels]` which are handed to the panels.
 #[derive(Debug, Clone, PartialEq, Deserialize)]
 #[serde(rename_all = "kebab-case", default)]
 pub struct Settings {

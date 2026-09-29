@@ -27,12 +27,6 @@ pub fn load_grammar_with_source(path: &Path) -> Result<(Grammar, String), String
     Ok((grammar, src))
 }
 
-/// Reads, parses and validates the grammar at `path`. A missing or malformed
-/// file is an error; there is no fall back to a shipped default (spec-config).
-pub fn load_grammar(path: &Path) -> Result<Grammar, String> {
-    load_grammar_with_source(path).map(|(grammar, _)| grammar)
-}
-
 /// Resolves the configured path and loads the grammar.
 pub fn load() -> Result<Grammar, String> {
     load_source().map(|(grammar, _)| grammar)
@@ -274,7 +268,7 @@ mod tests {
         // The source is the file content verbatim, as loaded.
         assert_eq!(source, DEFAULT_GRAMMAR);
         assert!(source.contains("predicate"), "raw grammar source is returned");
-        // The grammar is the same one `load_grammar` parses and validates.
+        // The returned grammar is parsed and validated.
         validate(&grammar).expect("returned grammar validates");
 
         let _ = std::fs::remove_dir_all(&dir);
@@ -287,7 +281,7 @@ mod tests {
             .join(format!("mf-core-grammar-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&dir);
         let path = dir.join("query-grammar");
-        let err = load_grammar(&path).unwrap_err();
+        let err = load_grammar_with_source(&path).unwrap_err();
         assert!(err.contains("missing"), "got: {err}");
         assert!(!path.exists(), "no default is installed");
     }

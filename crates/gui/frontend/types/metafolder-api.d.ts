@@ -139,7 +139,8 @@ declare namespace Metafolder {
     resolveTreeRef(repo: string, value: TreeRef, field?: string): Promise<string>;
     repoRoot(repo: string): Promise<string>;
     repoInternalDir(repo: string): Promise<string>;
-    /** Absolute paths (multi-map: a file may sit at several tree positions). */
+    /** Absolute paths — one, since `mfr_path` is single-valued; a list for the
+     *  shape of the endpoint. */
     metarecordPaths(repo: string, metarecord: { uuid: string }): Promise<string[]>;
     /** Creates a repository *and* applies its ignore preset (spec-file-tracking
      *  "Ignore presets"), the same orchestration `mf repo init` uses; returns the

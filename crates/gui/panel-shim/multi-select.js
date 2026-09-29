@@ -152,7 +152,7 @@ export function createMultiSelect({ workspace, daemon, render = () => {} }) {
      *  ever dropped: a checked row that merely left the current query is what
      *  "selecting in several lists" is made of. A vanished metarecord, though,
      *  could never be shown or unchecked again — one `uuid_in` query (a single
-     *  node, served by the in-memory index) says which of them are still
+     *  node, one bitmap) says which of them are still
      *  there. No answer (the daemon down) keeps the selection as it is. */
     async pruneVanished() {
       const list = [...uuids];

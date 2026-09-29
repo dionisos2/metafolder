@@ -122,9 +122,9 @@ export function watchedLabel(r) {
 }
 
 /**
- * One metarecord's watched state from the results of its paths. A metarecord
- * may sit at several paths (its `mfr_path` is a multi-valued tree ref), so it
- * is watched when any of them is — a change arriving at any one is recorded.
+ * One metarecord's watched state from the results of its paths — one, since
+ * `mfr_path` is single-valued; the list is the shape the paths come back in,
+ * and the metarecord is watched when any of them is.
  *
  * Returns null when the verdict cannot be taken (no paths, or the daemon
  * answer is missing for any of them): callers must read that as "unknown",

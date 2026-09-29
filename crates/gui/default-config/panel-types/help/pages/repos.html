@@ -8,10 +8,10 @@
 <h2>Loading</h2>
 <p>
   Loading a repository takes an exclusive lock on its database (one daemon per
-  repo) and warms its caches in the background — a
-  <a data-help-page="tracking">load task</a> shows a progress bar, and the repo
-  answers queries from the slower fallback engine meanwhile. Unloading releases
-  the lock.
+  repo) and finishes in the background — applying what the filesystem did
+  meanwhile, starting the watcher. A <a data-help-page="tracking">load task</a>
+  shows a progress bar; the repo answers queries once it is done. Unloading
+  releases the lock.
 </p>
 <p>
   <strong>Init repo…</strong> and <strong>Load repo…</strong> open a form where

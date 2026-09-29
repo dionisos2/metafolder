@@ -125,7 +125,6 @@ async function mountPanel(
       expandQuery: async () => '',
       resolvePath: async () => '',
       resolveTreeRef: async () => '',
-      invalidatePath: () => true,
       repoRoot: async () => '/tmp/repo',
       repoInternalDir: async () => '/tmp/repo/.metafolder/internal',
       metarecordPaths: async () => ['/tmp/repo/notes.txt'],

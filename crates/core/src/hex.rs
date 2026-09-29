@@ -1,6 +1,6 @@
 //! Lowercase hex encoding of byte slices — the single implementation shared by
-//! the session-token code ([`crate::auth`]) and the daemon's SQL literal
-//! builder. Std-only, no external crate (in the spirit of the project's other
+//! the session-token code ([`crate::auth`]), the byte form of tree names
+//! ([`crate::metarecord`]) and the daemon's sync store. Std-only, no external crate (in the spirit of the project's other
 //! dependency-free helpers, e.g. [`crate::date`]).
 
 /// Encode `bytes` as a lowercase hex string (two ASCII chars per byte).

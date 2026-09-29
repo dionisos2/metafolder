@@ -1,7 +1,6 @@
 // The `metafolder` API object handed to each panel's `mount(root, metafolder)`.
-// Same surface as the former panel shim (panel-shim/shim.js) but, since panels
-// now run in the shell's JS realm, every call goes straight to a Tauri command
-// instead of a postMessage round-trip. One instance per mounted panel; the
+// Panels run in the shell's JS realm, so every call goes straight to a Tauri
+// command. One instance per mounted panel; the
 // shell pushes workspace/message/visibility changes through the returned
 // `push*` methods.
 
@@ -605,9 +604,6 @@ export function createPanelApi(deps: PanelApiDeps, ctx: PanelApiCtx): PanelApiIn
       delete: () => invoke('orphan_delete', { wsId: ctx.wsId }) as Promise<number>,
     },
 
-    /** Cross-repo synchronisation (spec-sync): the shared `core::sync`
-     *  orchestration, driven through the sync Tauri commands. `plan`/`run` run
-     *  non-interactively (conflicts are left for `plan_resolve` editing). */
     /** Ignore presets (spec-gui "Ignore patterns"): preset expansion reads a
      *  config file, so it goes through the backend; the eligibility/effective
      *  introspection endpoints are plain `daemon.call`s. */
@@ -624,6 +620,9 @@ export function createPanelApi(deps: PanelApiDeps, ctx: PanelApiCtx): PanelApiIn
         invoke('ignore_write', { repo, target, patterns }) as Promise<void>,
     },
 
+    /** Cross-repo synchronisation (spec-sync): the shared `core::sync`
+     *  orchestration, driven through the sync Tauri commands. `plan`/`run` run
+     *  non-interactively (conflicts are left for `plan_resolve` editing). */
     sync: {
       status: (repoA: string, repoB: string) =>
         invoke('sync_status', { repoA, repoB }) as Promise<Record<string, unknown>>,

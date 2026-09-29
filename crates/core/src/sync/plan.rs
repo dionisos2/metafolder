@@ -857,7 +857,8 @@ fn resolve_link(
 }
 
 /// A record's identity: `(field_name, reconstructed_path)` for each of its
-/// `tree_ref` fields (a field with several positions contributes several).
+/// `tree_ref` fields (a field with several positions — an older repository's —
+/// contributes several).
 pub(crate) fn identity_paths(
     ctx: &Ctx,
     repo: Uuid,

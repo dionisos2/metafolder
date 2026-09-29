@@ -190,7 +190,7 @@ export async function mount(root, metafolder) {
    *  leads to one of them reads it first, so it is never older than the
    *  gesture; nothing else keeps it. @type {{repo: string|null, types: Map<string, string>}} */
   let catalog = { repo: null, types: new Map() };
-  /** Reads `repo`'s field catalogue from the daemon (an in-memory answer). A
+  /** Reads `repo`'s field catalogue from the daemon (one cheap read). A
    *  daemon that does not answer leaves the last one read.
    *  @param {string} repo @returns {Promise<Map<string, string>>} */
   async function readCatalog(repo) {
@@ -564,9 +564,8 @@ export async function mount(root, metafolder) {
     if (!metarecord || !selection) return;
     const shown = metarecord;
     if (watchMemo.shown === shown) return; // already answered for this record
-    // The record's own repo-root-relative positions (the same resolution the
-    // list panel marks with): `mfr_path` is a multi-map, so a record may sit at
-    // several paths. An unanswered read says nothing about the watch — leave
+    // The record's own repo-root-relative path (the same resolution the list
+    // panel marks with), as the list the endpoint answers. An unanswered read says nothing about the watch — leave
     // the note hidden and decide on a later load, like the orphan note does.
     const byUuid = await daemon.treePaths(selection.repo, 'mfr_path', [shown.uuid]).catch(() => null);
     const rels = byUuid?.[shown.uuid];
@@ -603,8 +602,9 @@ export async function mount(root, metafolder) {
 
   /** The watch activity note (spec-gui "Watch activity"): how many watcher
    *  events arrived at the record's file (under it, for a directory) since the
-   *  load. A record at several paths shows its busiest one — the counts of
-   *  nested paths overlap, so a sum would count events twice. Nothing is shown
+   *  load. Were there several paths (an older repository's multi-position
+   *  record), the busiest one is shown — the counts of nested paths overlap,
+   *  so a sum would count events twice. Nothing is shown
    *  for a quiet record or an unanswered call.
    *  @param {import('/__activity.js').Activity|null} activity @param {string[]} rels */
   function applyActivityNote(activity, rels) {

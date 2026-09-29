@@ -91,7 +91,6 @@ function stub(vars: Record<string, unknown>, existing: Set<string>) {
       expandQuery: async () => '',
       resolvePath: async () => '',
       resolveTreeRef: async () => '',
-      invalidatePath: async () => true,
       repoRoot: async () => '/repo',
       repoInternalDir: async () => '/repo/.metafolder/internal',
       metarecordPaths: async () => [],

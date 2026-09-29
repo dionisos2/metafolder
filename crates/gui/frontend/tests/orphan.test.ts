@@ -55,16 +55,6 @@ describe('orphanState', () => {
     expect(await orphanState(metarecord(treeRef('gone', 'take5.mp3')), c)).toBe('missing');
     expect(c.exists).not.toHaveBeenCalled();
   });
-
-  test('multi-map: one surviving path keeps the metarecord active', async () => {
-    const c = ctx(['/repo/a', '/repo/b'], ['/repo/b']);
-    expect(await orphanState(metarecord(treeRef('p1', 'a'), treeRef('p1', 'b')), c)).toBe(null);
-  });
-
-  test('multi-map: nothing mixed with a stale tree_ref is missing, not deleted', async () => {
-    const c = ctx(['/repo/a'], []);
-    expect(await orphanState(metarecord(nothing, treeRef('p1', 'a')), c)).toBe('missing');
-  });
 });
 
 describe('orphanLabel', () => {
