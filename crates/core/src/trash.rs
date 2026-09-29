@@ -1030,17 +1030,36 @@ pub fn recreate_subtree(
         .iter()
         .filter_map(|n| n.fields.as_ref().map(|f| json!({"uuid": n.uuid, "fields": f})))
         .collect();
+    let bulk = |records: &[Json]| {
+        let body = json!({"metarecords": records, "force": true, "skip_existing": true});
+        client
+            .post(&format!("/repos/{repo}/metarecords/bulk"), &body)
+            .map(|resp| resp["created"].as_u64().unwrap_or(0) as usize)
+    };
     let mut created = 0usize;
     for chunk in records.chunks(BULK_CREATE_CHUNK) {
-        let body = json!({"metarecords": chunk, "force": true, "skip_existing": true});
-        match client.post(&format!("/repos/{repo}/metarecords/bulk"), &body) {
-            Ok(resp) => created += resp["created"].as_u64().unwrap_or(0) as usize,
+        match bulk(chunk) {
+            Ok(n) => created += n,
             // A forest rejection: the recorded parent is no longer a live node
             // (its directory's metarecord was deleted meanwhile), or the
             // position is taken. The same classification the re-link pass uses
             // — and the same conclusion: the bytes come back regardless, and a
             // restore is never blocked by metadata it could not put back.
-            Err(e) if is_benign_relink_error(&e) => continue,
+            //
+            // But the daemon refuses the *batch* for one node (a bulk create is
+            // all-or-nothing), so the chunk is sent again one node at a time and
+            // only the refused ones are skipped. Parent first still holds: a
+            // child whose parent was refused is refused in turn, and skipped.
+            // The rare path, so its one revision per node is acceptable.
+            Err(e) if is_benign_relink_error(&e) => {
+                for record in chunk {
+                    match bulk(std::slice::from_ref(record)) {
+                        Ok(n) => created += n,
+                        Err(e) if is_benign_relink_error(&e) => {}
+                        Err(e) => return Err(e),
+                    }
+                }
+            }
             Err(e) => return Err(e),
         }
     }
@@ -1228,6 +1247,54 @@ mod tests {
             fields.as_array().unwrap().iter().any(|f| f["name"] == "tag"),
             "every field, not just mfr_path: {fields}"
         );
+    }
+
+    /// A daemon whose bulk create is all-or-nothing, like the real one: a batch
+    /// holding `taken` (a position someone else holds now) is refused whole.
+    struct AllOrNothing {
+        calls: std::cell::RefCell<Vec<Vec<String>>>,
+    }
+    impl DaemonClient for AllOrNothing {
+        fn request(
+            &self,
+            _method: &str,
+            _path: &str,
+            body: Option<&Json>,
+        ) -> Result<Json, DaemonError> {
+            let uuids: Vec<String> = body.unwrap()["metarecords"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .map(|m| m["uuid"].as_str().unwrap().to_string())
+                .collect();
+            self.calls.borrow_mut().push(uuids.clone());
+            if uuids.iter().any(|u| u == "taken") {
+                return Err(DaemonError {
+                    status: Some(400),
+                    message: "tree position already occupied".into(),
+                });
+            }
+            Ok(json!({"created": uuids.len()}))
+        }
+    }
+
+    #[test]
+    fn recreate_subtree_skips_only_the_node_the_forest_refuses() {
+        // The daemon refuses the whole batch for one node; the restore must not
+        // lose the metadata of every other node with it (spec-trash "Restoring":
+        // a refused recreation is skipped, not fatal — that one, not its batch).
+        let fields = Some(json!([]));
+        let subtree = vec![
+            node_with("a", None, true, fields.clone()),
+            node_with("taken", None, true, fields.clone()),
+            node_with("b", None, true, fields.clone()),
+        ];
+        let daemon = AllOrNothing { calls: Default::default() };
+        let created = recreate_subtree(&daemon, "r", &subtree).unwrap();
+        assert_eq!(created, 2, "a and b come back, only `taken` is skipped");
+        let calls = daemon.calls.borrow();
+        assert_eq!(calls[0].len(), 3, "one batch first");
+        assert!(calls.len() > 1, "then the refused batch again, node by node");
     }
 
     #[test]
