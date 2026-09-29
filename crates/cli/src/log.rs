@@ -269,6 +269,9 @@ impl NavigationUi for CliUi {
             eprintln!("{message}");
         }
     }
+    fn navigating(&self, total: usize) {
+        self.note(&format!("Navigating {total} operations."));
+    }
 }
 
 fn nav_err(e: NavError) -> CliError {

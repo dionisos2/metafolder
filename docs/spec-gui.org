@@ -3642,11 +3642,29 @@ may change). Commands: =log-detail:toggle whole|unchanged=,
 
 *** Revision commands
 
-- =log:rollback= → confirmation → =POST .../rollback= targeting the last
-  operation of the selected revision. The target may be an ancestor
+- =log:rollback= → confirmation → a navigation to the last operation of the
+  selected revision (=metafolder.log.rollback=). The target may be an ancestor
   (rollback) or a descendant / another branch (redo): the same command
   navigates in both directions, which is also how a rollback is undone.
   Refreshes =metarecord-list= and =metarecord-detail= afterwards (=metarecords:dirty=).
+
+  *Files are carried with the metadata.* Every navigation and revert the GUI
+  writes — this one, =log:revert=, =log:undo=, =log:redo= — goes through the
+  shared coordinated navigation (=core::navigation=, the same code as =mf log
+  rollback= / =revert=; spec-event-log "Coordinated navigation"): one atomic
+  =POST /rollback= when no step has a =filesystem= action, otherwise
+  =start=/=step= (or the coordinated revert), moving a file, bringing content
+  back from the trash-bin, or sending it back there (a trashing redone,
+  spec-trash "Redo"). It runs on a blocking thread through the Tauri commands
+  =log_rollback=, =log_revert= (and =log_navigate= for undo/redo), and asks
+  nothing while the repository is locked: every confirmation comes *before*
+  the lock is taken, and a move applies whether or not the file is where the
+  log says (=GUI_POLICIES=: apply/apply — when it is not, the metadata keeps the
+  recorded path, spec-event-log "Policies for move_file"). What the file
+  actions had to say (a file moved, one not found in the trash) follows the
+  summary on the status bar. This replaces an earlier rule that sent every
+  plan needing a file action to =mf log revert=, for fear of a lock held
+  across a dialog: no dialog is open while the lock is held.
 - =log:undo= / =log:redo= — shell builtins (they work without the log
   panel, defaults =ctrl+z= / =ctrl+shift+z=; the log panel also has Undo /
   Redo toolbar buttons).
@@ -3655,10 +3673,11 @@ may change). Commands: =log-detail:toggle whole|unchanged=,
   it: the [[file:spec-event-log.org][spec-event-log.org]] "Undo" selection,
   shared with =mf log undo= through =core::undo=. A rollback when the user's
   change is the last thing in the log (={"prev_revision": true}=), a revert
-  when the watcher has written since. A revert that is blocked, or that needs
-  a filesystem action, is *reported* rather than forced: the message names
-  =log:revert with-dependents= or =mf log undo=, because neither is something
-  to do behind the user's back.
+  when the watcher has written since. A revert that is *blocked* is reported
+  rather than forced: the message names =log:revert with-dependents=, because
+  pulling someone else's changes in is not something to do behind the user's
+  back. One that needs a file action is carried out, files included (see
+  =log:rollback=).
 
   Redo is its mirror — the [[file:spec-event-log.org][spec-event-log.org]]
   "Redo" selection, also from =core::undo=: HEAD forward onto what an undo's
@@ -3673,14 +3692,10 @@ may change). Commands: =log-detail:toggle whole|unchanged=,
   Refreshes the panels through =metarecords:dirty=.
 - =log:revert= → =GET .../revert/plan= for what is selected — the revision, or
   the single operation when the cursor is on one — then a confirmation naming
-  how many operations it would undo (and warning when the target has already
-  been undone), then =POST .../revert=. Refreshes the panels through
-  =metarecords:dirty=.
-
-  A plan needing filesystem actions is *not* driven from the panel: it says so
-  and names =mf log revert <rev>=, which holds the lock while it moves the
-  files. Driving that from the GUI would mean holding a lock across a dialog,
-  and a window left open would freeze the repository's writes.
+  how many operations it would undo (saying so when files will move, and
+  warning when the target has already been undone), then the revert
+  (=metafolder.log.revert=, files included as for =log:rollback=). Refreshes the
+  panels through =metarecords:dirty=.
 
 - =log:revert with-dependents= → the same, on the dependency closure
   (=with_dependents=true=): the target plus everything blocking it. It always

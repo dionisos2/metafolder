@@ -405,15 +405,15 @@ export async function mount(root, metafolder) {
   async function rollback() {
     const rev = selectedRev();
     if (rev === null) return;
+    if (repo === null) return;
     if (!confirm(`Go to revision #${rev} (rollback or redo)?`)) return;
     try {
-      const result = /** @type {{operations_unapplied: number, operations_applied: number}} */ (
-        await daemon.call('POST', `/repos/${repo}/rollback`, {
-          target: { id: lastOpOf(rev) },
-        })
-      );
+      // Files included: a step that moves a file, or brings one back from the
+      // trash-bin, does it (spec-gui "Revision commands"). Confirmed above, so
+      // no dialog is open while the repository is locked.
+      const result = await metafolder.log.rollback(repo, { id: lastOpOf(rev) });
       void statusBar.message(
-        `Navigation done: ${result.operations_unapplied} unapplied, ${result.operations_applied} applied.`,
+        [`Navigation done: ${result.processed} operation(s).`, ...result.notes].join(' · '),
         statusErrorMs,
       );
       await workspace.set('metarecords:dirty', Date.now()); // refresh metarecord-list
@@ -455,9 +455,6 @@ export async function mount(root, metafolder) {
    *  @typedef {{revertable?: boolean, blocked?: {rev_id: number, op_id: number}[],
    *             dependents?: {rev_id: number}[], operations?: unknown[]}} RevertPlan */
 
-  /** What `POST /revert` answers: the new revision, or null when it reverted
-   *  nothing.
-   *  @typedef {{revision: number|null, reverted_operations?: unknown[]}} RevertResult */
 
   /** The query string for a revert plan of `target`.
    *  @param {{rev_id: number}|{op_ids: number[]}} target @param {boolean} deps */
@@ -570,6 +567,7 @@ export async function mount(root, metafolder) {
    * @param {boolean} withDependents
    */
   async function runRevert(target, plan, withDependents) {
+    if (repo === null) return;
     const ops = plan.operations ?? [];
     if (ops.length === 0) {
       void statusBar.message('Nothing to revert.', statusMessageMs);
@@ -579,18 +577,9 @@ export async function mount(root, metafolder) {
     // predict from the target, so it is named before the confirmation.
     const pulled = withDependents ? plan.dependents?.length ?? 0 : 0;
     const also = pulled > 0 ? `, ${pulled} of them pulled in as dependents` : '';
-    if (plan.requires_lock) {
-      const command =
-        'op_ids' in target
-          ? `mf log revert --op ${target.op_ids.join(' --op ')}`
-          : `mf log revert ${target.rev_id}`;
-      void statusBar.message(
-        `${describeTarget(target)} moves files on disk; run \`${command}\` ` +
-          'so the moves are coordinated with the metadata.',
-        statusErrorMs,
-      );
-      return;
-    }
+    // A plan with file actions is carried out here too: the files move with
+    // the metadata once the user has confirmed, never behind an open dialog.
+    const files = plan.requires_lock ? ', moving files on disk' : '';
     // Reverting something already undone writes a second inverse — almost never
     // what is meant, so it is said out loud rather than silently done.
     const undone =
@@ -598,24 +587,20 @@ export async function mount(root, metafolder) {
         ? `\n\nNote: it was already undone by revision #${marks.get(target.rev_id).undoneBy}.`
         : '';
     if (
-      !confirm(`Revert ${describeTarget(target)} — ${ops.length} operation(s)${also}?${undone}`)
+      !confirm(
+        `Revert ${describeTarget(target)} — ${ops.length} operation(s)${also}${files}?${undone}`,
+      )
     ) {
       return;
     }
     try {
-      const result = /** @type {RevertResult} */ (
-        await daemon.call('POST', `/repos/${repo}/revert`, {
-          target,
-          with_dependents: withDependents,
-        })
-      );
+      const result = await metafolder.log.revert(repo, target, withDependents);
       const count = result.reverted_operations?.length ?? 0;
-      void statusBar.message(
+      const summary =
         result.revision === null
           ? 'Nothing was reverted.'
-          : `Reverted ${describeTarget(target)} as revision #${result.revision} (${count} operation(s)).`,
-        statusMessageMs,
-      );
+          : `Reverted ${describeTarget(target)} as revision #${result.revision} (${count} operation(s)).`;
+      void statusBar.message([summary, ...result.notes].join(' · '), statusMessageMs);
       await refresh();
       void commands.invoke('metarecords:dirty');
     } catch (error) {

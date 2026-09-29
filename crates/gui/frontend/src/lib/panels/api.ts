@@ -593,6 +593,15 @@ export function createPanelApi(deps: PanelApiDeps, ctx: PanelApiCtx): PanelApiIn
         invoke('trash_path', { repo, path }) as Promise<string>,
     },
 
+    /** Coordinated navigation of the event log, files included — the shared
+     *  `core::navigation` behind `mf log`, through the log Tauri commands. */
+    log: {
+      rollback: (repo: string, target: Record<string, unknown>) =>
+        invoke('log_rollback', { repo, target }) as Promise<Metafolder.Navigated>,
+      revert: (repo: string, target: Record<string, unknown>, withDependents: boolean) =>
+        invoke('log_revert', { repo, target, withDependents }) as Promise<Metafolder.Reverted>,
+    },
+
     /** Orphaned metarecords (spec-gui "Orphans"): the shared layer behind
      *  `mf orphan`, driven through the orphan Tauri commands. Each reports its
      *  own outcome to the status bar (`delete` also to the message log) and

@@ -1,6 +1,8 @@
 //! `log:undo` / `log:redo` (spec-gui "Event log"): shell builtins
 //! navigating the active repo's event log through the daemon rollback
-//! API. Tests run a stub daemon on an ephemeral port.
+//! API — in one atomic call when no step touches a file, through the
+//! coordinated protocol otherwise (`core::navigation`). Tests run a stub
+//! daemon on an ephemeral port.
 
 use axum::extract::State;
 use axum::routing::{get, post};
@@ -20,15 +22,49 @@ struct Stub {
     rollbacks: Arc<Mutex<Vec<Value>>>,
     /// Bodies of the received POST /repos/:repo/revert calls.
     reverts: Arc<Mutex<Vec<Value>>>,
+    /// What the plan summary says about the steps with a file action.
+    filesystem_steps: u64,
+    /// Bodies of the received POST /repos/:repo/rollback/start calls.
+    starts: Arc<Mutex<Vec<Value>>>,
 }
 
 async fn spawn_stub(log: Value) -> (String, Stub) {
+    spawn_stub_with(log, 0).await
+}
+
+async fn spawn_stub_with(log: Value, filesystem_steps: u64) -> (String, Stub) {
     let stub = Stub {
         log,
         rollbacks: Arc::new(Mutex::new(Vec::new())),
         reverts: Arc::new(Mutex::new(Vec::new())),
+        filesystem_steps,
+        starts: Arc::new(Mutex::new(Vec::new())),
     };
     let router = axum::Router::new()
+        // Where the repository is: the navigation locates the trash-bin.
+        .route(
+            "/repos/:repo",
+            get(|| async {
+                Json(json!({"root": "/nowhere", "internal_dir": "/nowhere/.metafolder/internal"}))
+            }),
+        )
+        .route(
+            "/repos/:repo/rollback/plan/summary",
+            get(|State(stub): State<Stub>| async move {
+                Json(json!({"total_operations": 2, "by_type": {"set_field": 2},
+                            "revisions_affected": 1,
+                            "filesystem_steps": stub.filesystem_steps}))
+            }),
+        )
+        .route(
+            "/repos/:repo/rollback/start",
+            post(|State(stub): State<Stub>, Json(body): Json<Value>| async move {
+                stub.starts.lock().unwrap().push(body);
+                Json(json!({"op": {"id": 4, "op_type": "set_field", "entity_uuid": "00",
+                                   "filesystem": null}, "remaining": 1}))
+            }),
+        )
+        .route("/repos/:repo/rollback/step", post(|| async { Json(json!({"op": null})) }))
         .route(
             "/repos/:repo/log",
             get(|State(stub): State<Stub>| async move { Json(stub.log.clone()) }),
@@ -111,6 +147,24 @@ async fn test_undo_posts_prev_revision_and_marks_dirty() {
     let rollbacks = stub.rollbacks.lock().unwrap();
     assert_eq!(rollbacks.as_slice(), [json!({"target": {"prev_revision": true}})]);
     // Panels refresh through the metarecords:dirty workspace variable.
+    assert_ne!(gui.get_var(&ws, "metarecords:dirty").unwrap(), Value::Null);
+}
+
+/// A navigation with something to do on disk — a file to move, one to bring
+/// back from the trash-bin or send back there — goes through the coordinated
+/// protocol, step by step, instead of the metadata-only shortcut.
+#[tokio::test]
+async fn test_undo_touching_files_navigates_step_by_step() {
+    let (url, stub) = spawn_stub_with(linear_log(json!(4)), 1).await;
+    let (gui, daemon, ws) = setup(&url);
+
+    undo::navigate(gui.clone(), daemon, ws.clone(), false, Default::default()).await.unwrap();
+
+    assert!(stub.rollbacks.lock().unwrap().is_empty(), "not the metadata-only shortcut");
+    assert_eq!(
+        stub.starts.lock().unwrap().as_slice(),
+        [json!({"target": {"prev_revision": true}})]
+    );
     assert_ne!(gui.get_var(&ws, "metarecords:dirty").unwrap(), Value::Null);
 }
 
@@ -200,7 +254,10 @@ async fn test_redo_reverts_the_undo_when_the_watcher_has_written_since() {
     undo::navigate(gui.clone(), daemon, ws.clone(), true, Default::default()).await.unwrap();
 
     assert!(stub.rollbacks.lock().unwrap().is_empty(), "HEAD must not move");
-    assert_eq!(stub.reverts.lock().unwrap().as_slice(), [json!({"target": {"rev_id": 3}})]);
+    assert_eq!(
+        stub.reverts.lock().unwrap().as_slice(),
+        [json!({"target": {"rev_id": 3}, "with_dependents": false})]
+    );
     assert_ne!(gui.get_var(&ws, "metarecords:dirty").unwrap(), Value::Null);
 }
 

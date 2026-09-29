@@ -69,6 +69,8 @@ pub trait NavigationUi {
     /// Something the user should hear about: a file moved or left, content
     /// brought back or not.
     fn note(&self, message: &str);
+    /// A navigation of `total` operations is starting (the CLI announces it).
+    fn navigating(&self, _total: usize) {}
 }
 
 /// A repository, as a navigation needs it: the daemon, and the trash-bin the
@@ -178,7 +180,7 @@ pub fn rollback(
     if total == 0 {
         return Ok(Navigated { total: 0, processed: 0 });
     }
-    ui.note(&format!("Navigating {total} operations."));
+    ui.navigating(total);
     let body = json!({"target": target});
 
     if rewinds_in_the_database_alone(&summary) {

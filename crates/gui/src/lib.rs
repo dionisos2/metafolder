@@ -569,6 +569,8 @@ pub fn run(options: Options) {
             trash::trash_remove,
             trash::trash_empty,
             undo::log_navigate,
+            undo::log_rollback,
+            undo::log_revert,
             commands::answer_send,
             commands::pick_start,
             commands::pick_confirm,

@@ -429,6 +429,18 @@ describe('panel api — misc surface', () => {
     expect(invoke).toHaveBeenCalledWith('trash_path', { repo: 'r1', path: '/tmp/r1/song.mp3' });
   });
 
+  test('log navigation routes to the coordinated navigation commands', async () => {
+    const { api, invoke } = setup();
+    await api.log.rollback('r1', { id: 4 });
+    expect(invoke).toHaveBeenCalledWith('log_rollback', { repo: 'r1', target: { id: 4 } });
+    await api.log.revert('r1', { rev_id: 3 }, true);
+    expect(invoke).toHaveBeenCalledWith('log_revert', {
+      repo: 'r1',
+      target: { rev_id: 3 },
+      withDependents: true,
+    });
+  });
+
   test('recent routes to the recent commands', async () => {
     const { api, invoke } = setup();
     invoke.mockResolvedValueOnce([{ uuid: 'u1', viewed_at: '2026-08-15T10:00:00Z' }]);

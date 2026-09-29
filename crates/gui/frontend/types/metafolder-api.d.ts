@@ -389,6 +389,40 @@ declare namespace Metafolder {
     trashPath(repo: string, path: string): Promise<string>;
   }
 
+  /** What `log.rollback` did. */
+  interface Navigated {
+    total: number;
+    processed: number;
+    /** What the file actions had to say (a file moved, one brought back…). */
+    notes: string[];
+  }
+
+  /** What `log.revert` wrote: the daemon's revert answer, with the notes. */
+  interface Reverted {
+    revision: number | null;
+    reverted_operations?: number[];
+    skipped_operations?: { op_id: number; reason: string }[];
+    notes: string[];
+  }
+
+  /** Coordinated navigation of the event log (spec-event-log "Coordinated
+   *  navigation"), files included: a navigation that moves a file, brings one
+   *  back from the trash-bin or sends one back there does it, with no question
+   *  asked while the repository is locked. Shared with `mf log` through
+   *  `core::navigation`. Confirm *before* calling. */
+  interface Log {
+    /** Moves HEAD to `target` (`{id}`, `{timestamp}`, `{label}` or
+     *  `{prev_revision: true}`). */
+    rollback(repo: string, target: Record<string, unknown>): Promise<Navigated>;
+    /** Writes the inverse of `target` (`{rev_id}` or `{op_ids}`) at HEAD;
+     *  refused when the plan is blocked and `withDependents` is false. */
+    revert(
+      repo: string,
+      target: Record<string, unknown>,
+      withDependents: boolean,
+    ): Promise<Reverted>;
+  }
+
   /** Orphaned metarecords (spec-gui "Orphans"): the shared `mf orphan` layer,
    *  driven through the orphan Tauri commands. `detect` writes the
    *  `orphan = true` marker and reports its counts itself; `count` reads the
@@ -567,6 +601,7 @@ declare namespace Metafolder {
     ): Promise<unknown>;
     readonly fs: Fs;
     readonly trash: Trash;
+    readonly log: Log;
     readonly orphans: Orphans;
     readonly sync: Sync;
     readonly ignore: Ignore;
