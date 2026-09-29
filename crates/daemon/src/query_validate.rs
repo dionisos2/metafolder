@@ -168,15 +168,12 @@ pub const MAX_QUERY_NODES: usize = 2000;
 
 /// Maximum number of operands in a single `And`/`Or`.
 ///
-/// The number is SQLite's: an operand used to become one term of a compound
-/// `SELECT` (`UNION`/`INTERSECT`), and past `SQLITE_MAX_COMPOUND_SELECT`
-/// (default 500) the statement failed with an opaque "too many terms in
-/// compound SELECT". Nothing on the serving path compiles to SQL any more
-/// (spec-indexing "No operand runs in SQL") — a wide `Or` is N bitmap unions —
-/// so the cap now stands only as a safety valve, at a value inherited from a
-/// constraint that no longer binds. Whether it should stay, and at what value,
-/// is open (roadmap, "query API limits"). Nest or decompose past it.
-pub const MAX_COMBINATOR_OPERANDS: usize = 500;
+/// Nothing on the serving path needs a cap — a wide `Or` is N bitmap unions —
+/// but a query wider than this is almost certainly a mistake in whatever built
+/// it (a loop that should have been a `uuid_in`, a bug), and is refused as one.
+/// Two hundred is far above any query a person or the GUI writes. (It was 500,
+/// SQLite's `SQLITE_MAX_COMPOUND_SELECT`, until nothing compiled to SQL.)
+pub const MAX_COMBINATOR_OPERANDS: usize = 200;
 
 /// Total number of nodes in a query tree, counting boolean operands and follow
 /// sub-conditions. Recursion is bounded: the JSON deserializer caps query
@@ -337,13 +334,19 @@ mod tests {
         // At the node limit passes; one over is rejected. Nested, because the
         // two limits are independent: a flat `Or` of 1999 operands is under the
         // node limit but far over the per-combinator one, so it could not
-        // exercise the node limit at all.
+        // exercise the node limit at all. Ten chunks under the width limit:
+        // 1 root + 10 chunks + 1989 leaves.
         let chunk = |n: usize| Query::Or { operands: (0..n).map(|_| leaf()).collect() };
-        let at_limit = Query::Or { operands: vec![chunk(499), chunk(499), chunk(499), chunk(498)] };
+        let chunks = |last: usize| {
+            let mut operands: Vec<Query> = (0..9).map(|_| chunk(199)).collect();
+            operands.push(chunk(last));
+            Query::Or { operands }
+        };
+        let at_limit = chunks(198);
         assert_eq!(node_count(&at_limit), MAX_QUERY_NODES);
         assert!(check_query_size(&at_limit).is_ok());
 
-        let over = Query::Or { operands: vec![chunk(499), chunk(499), chunk(499), chunk(499)] };
+        let over = chunks(199);
         assert_eq!(node_count(&over), MAX_QUERY_NODES + 1);
         let err = check_query_size(&over).unwrap_err();
         assert_eq!(err.status, axum::http::StatusCode::BAD_REQUEST);
@@ -358,6 +361,8 @@ mod tests {
         let leaf = || Query::IsPresent { field: "x".into(), aspect: Aspect::Raw };
         let wide = |n: usize| Query::Or { operands: (0..n).map(|_| leaf()).collect() };
 
+        // Two hundred: a query wider than that is a mistake in whatever built it.
+        assert_eq!(MAX_COMBINATOR_OPERANDS, 200);
         assert!(check_query_size(&wide(MAX_COMBINATOR_OPERANDS)).is_ok());
         let err = check_query_size(&wide(MAX_COMBINATOR_OPERANDS + 1)).unwrap_err();
         assert_eq!(err.status, axum::http::StatusCode::BAD_REQUEST);

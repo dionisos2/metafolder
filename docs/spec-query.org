@@ -248,15 +248,14 @@ value seen (=query_validate::check_query_size=).
 - =MAX_QUERY_NODES= (2000) — the total number of nodes in the query tree,
   counting boolean operands and follow/same sub-conditions. A safety valve
   against a query that costs more to prepare than to send.
-- =MAX_COMBINATOR_OPERANDS= (500) — the operands of any *single* =And=/=Or=,
+- =MAX_COMBINATOR_OPERANDS= (200) — the operands of any *single* =And=/=Or=,
   wherever it sits in the tree.
 
-The second number is SQLite's, and it no longer stands for anything on the
-serving path: an operand used to become one term of a compound =SELECT=,
-bounded by =SQLITE_MAX_COMPOUND_SELECT= (default 500), where a wide =Or= is now
-N bitmap unions. Both caps therefore remain as safety valves at values inherited
-from a constraint that has gone; whether they should stay, and at what value, is
-open (roadmap, "query API limits").
+Neither is a limit of the evaluator — a wide =Or= is N bitmap unions. They are
+there because a query past them is almost certainly a mistake in whatever
+built it (a loop that should have been a =uuid_in=, a bug), and is better
+refused than served. (The second was 500, SQLite's
+=SQLITE_MAX_COMPOUND_SELECT=, until nothing compiled to SQL.)
 
 Both are generous: a hand-written or UI-built query is far below them. What runs
 into them is membership — "this field is one of these N values" — spelled as an

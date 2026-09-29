@@ -108,29 +108,28 @@ exactement par le rollback : à ne pas ressortir sans un nouveau motif.
 `tree_cache.rs` (`descendants`, `resolve_path`), `forest_query.rs`.
 `docs/spec-query.org` pour la sémantique de `->*`.
 
-## 8. Limites de requête — ✅ les deux bornes, le timeout / ⏳ leur valeur
+## 8. Limites de requête — ✅ les deux bornes, leur valeur, le timeout
 
 **Fait.** Les deux bornes vivent maintenant dans `query_validate.rs` et sont
 vérifiées **avant toute évaluation**, donc identiquement pour toute requête :
 
 - `MAX_QUERY_NODES = 2000` — nombre total de nœuds → rejet 400 (« query too
   large … decompose it »).
-- `MAX_COMBINATOR_OPERANDS = 500` — opérandes d'un même `And`/`Or` → rejet 400
-  (« a single 'and'/'or' may have at most 500 operands… nest or decompose it »).
+- `MAX_COMBINATOR_OPERANDS = 200` — opérandes d'un même `And`/`Or` → rejet 400
+  (« a single 'and'/'or' may have at most 200 operands… nest or decompose it »).
 
 Tests : unités `node_count` / `check_query_size` / `query_size_check_also_bounds_combinator_width`
 dans `query_validate.rs`, plus `tests/query.rs` (`test_oversized_query_is_rejected`,
-`test_wide_combinator_is_rejected_with_clear_message`, qui vérifie aussi que 500
+`test_wide_combinator_is_rejected_with_clear_message`, qui vérifie aussi que 200
 pile s'exécute).
 
 **⏳ Reste à faire (différé) :**
 
-- **La valeur des deux plafonds est à redécider.** 500 était
-  `SQLITE_MAX_COMPOUND_SELECT` : chaque opérande devenait un terme d'un compound
-  `SELECT`. Plus rien ne compile en SQL sur le chemin de service (spec-indexing
-  « No operand runs in SQL ») — un `Or` large est N unions de bitmaps — donc la
-  borne subsiste comme garde-fou à une valeur héritée d'une contrainte qui n'a
-  plus cours. Le chunking du compound, lui, est **sans objet**.
+- ~~**La valeur des deux plafonds est à redécider.**~~ ✅ Décidé (sept. 2026) :
+  les plafonds restent, comme garde-fous contre une requête mal construite
+  (tout ce qui les dépasse est très probablement une erreur de conception de
+  l'appelant ou un bug) ; `MAX_COMBINATOR_OPERANDS` passe de 500 (hérité de
+  SQLite) à 200.
 - **Opérateur `In { field, values }` natif.** « Ce champ vaut l'une de ces N
   valeurs » s'écrit encore `Or` de N `Eq` = ~2N nœuds. Un `In` natif serait
   O(1) nœud, et rendrait la borne indolore pour l'appartenance. *Le cas des
