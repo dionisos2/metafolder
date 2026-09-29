@@ -41,7 +41,7 @@ pub fn sync(source_root: &Path, config_dir: &Path) -> Result<SyncOutcome, String
 /// GUI port now lives in `gui/config.toml` (committed configuration), so the
 /// former `gui.port` discovery file is gone.
 pub const GITIGNORE: &str = "\
-# Ephemeral runtime state (doc "Configuration") — never configuration.
+# Ephemeral runtime state (spec-config) — never configuration.
 ";
 
 fn gerr(e: git2::Error) -> String {
