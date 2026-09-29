@@ -8,7 +8,9 @@ actuelles ; ce document-ci est en français parce qu'il sert à en discuter.
 ## 0. Principes retenus
 
 1. **Une source, plusieurs sorties.** Le wiki (`docs/wiki/`) est la seule
-   source. Le panel `help` et un éventuel site web en sont *générés*.
+   source. Son rendu est installé dans `~/.config/metafolder/docs/`, hors de tout
+   panel, où le panel `help` le lit ; un site web ou un autre lecteur pourra le
+   lire au même endroit.
 2. **Tout est embarqué.** Le panel et le site contiennent aussi la
    documentation développeur. Elle est seulement masquée par défaut dans la
    recherche (une case « inclure la documentation développeur »).
@@ -47,9 +49,20 @@ docs/wiki/
 - **`generated/` est commité** : je peux le lire sans build, et un changement
   de CLI se voit dans le diff de la doc. `check.sh` vérifie qu'il est à jour,
   comme pour `fmt`.
-- **Le rendu (HTML du panel) n'est pas commité.** C'est un artefact de build,
-  comme `frontend/dist`. `complete-build.sh` le produit avant d'appliquer la
-  config.
+- **Le rendu n'est pas commité** (décidé). C'est un artefact de build, comme
+  `frontend/dist` : `scripts/doc build` l'écrit dans `docs/wiki/dist/`
+  (gitignoré), et `complete-build.sh` le lance avant d'appliquer la config.
+- **Il n'appartient à aucun panel** (décidé). `metafolder-sync-config` le
+  transfère, comme il transfère déjà `scripts/shipped/` → `scripts/` :
+
+  ```
+  docs/wiki/dist/index.json      -> ~/.config/metafolder/docs/index.json
+  docs/wiki/dist/<slug>.html     -> ~/.config/metafolder/docs/<slug>.html
+  ```
+
+  Le serveur de la GUI le sert sous `/docs/…` (même jeton que le reste), et le
+  panel `help` y lit ses pages au lieu de `panel/help/pages/`. D'autres lecteurs
+  pourront s'en servir au même endroit (un site, une commande CLI plus tard).
 
 ## 2. Format d'une note
 
@@ -189,8 +202,8 @@ la note écrite à la main n'a rien à transclure explicitement.
 | Catalogue        | Source                                             | Extraction |
 |------------------|----------------------------------------------------|------------|
 | `CLI command`    | l'arbre clap (`CommandFactory`)                    | un test/binaire du crate cli écrit usage, arguments, doc-comments |
-| `GUI command`    | registre Rust (builtins) + `commands.register('x', {label})` des panels | Rust pour les builtins, extraction statique du JS pour les panels |
-| raccourcis       | `gui/default-config/keybindings.toml`              | tableau par panel |
+| `GUI command`    | registre Rust (builtins) + `commands.register('x', {label})` des panels | Rust pour les builtins ; pour les panels, une regex sur `commands.register('…'` |
+| raccourcis       | `gui/default-config/keybindings.toml`              | rattachés à la note générée de chaque commande |
 | `Shipped script` | en-tête `# Summary:` + bloc d'usage                | shell |
 | `HTTP endpoint`  | les chemins du routeur (`routes/mod.rs`)           | extraction statique ou test |
 | `Reserved field` | `reserved.rs`                                      | test |
@@ -198,11 +211,21 @@ la note écrite à la main n'a rien à transclure explicitement.
 `scripts/doc check` vérifie, dans les deux sens, qu'il existe exactement une note
 écrite à la main par élément généré et aucune note de catalogue sans élément
 correspondant. Il intègre ainsi l'actuelle règle « au moins une page par type de
-panel ». Les commandes GUI pourraient faire exception (question ouverte 4).
+panel ». La comparaison porte sur deux ensembles de titres : celui des notes
+générées, et celui des notes taguées avec le catalogue (`[tag[GUI command]]`).
+Elle ne demande aucune analyse du texte des notes.
 
-`mf --help` garde ses doc-comments clap, qui sont la source des options.
-Point à décider plus tard : ajouter une commande `mf doc <titre>` qui affiche le
-rendu texte d'une note, ce qui ferait de la CLI une troisième sortie du wiki.
+**Une note par commande GUI** (décidé), même triviale. Certaines méritent une
+vraie page, les listes deviennent de simples filtres par tag, et la complétude
+se vérifie par la comparaison ci-dessus. La partie générée d'une commande
+contient son libellé, ses arguments et son raccourci par défaut (rendu par
+`<<key>>`, donc la touche réelle apparaît dans le panel). La note d'une commande
+triviale se réduit à ses champs et à son `summary`. `doc new --from-gen` crée ces
+notes minimales à la demande. `doc gen` ne les crée jamais tout seul, sinon le
+contrôle de complétude ne vérifierait plus rien.
+
+`mf --help` garde ses doc-comments clap, qui sont la source des options. Pas de
+`mf doc` pour l'instant (décidé).
 
 ## 8. Le panel `help`
 
@@ -210,8 +233,8 @@ rendu texte d'une note, ce qui ferait de la CLI une troisième sortie du wiki.
 
 ```
 tiddlywiki docs/wiki --render '[!is[system]]' '[slugify[]addsuffix[.html]]' \
-    text/plain '$:/mf/templates/help-page'  # → panel-types/help/pages/
-# + un template qui produit pages/index.json
+    text/plain '$:/mf/templates/help-page'  # → docs/wiki/dist/
+# + un template qui produit dist/index.json
 ```
 
 `index.json` étend la forme actuelle `{id, title, file, aliases[]}` (changement
@@ -269,14 +292,18 @@ valide que la nouvelle.
 
 0. **Infrastructure** : squelette du wiki, macros, templates, `scripts/doc`,
    build vers le panel, panel adapté (case audience, pastilles de tags),
-   générateurs du §7. Les 27 pages HTML actuelles restent servies tant que leur
-   sujet n'est pas migré. Le build fusionne les deux manifestes pendant la
-   transition.
+   générateurs du §7, route `/docs/…` et transfert par `sync-config`. Les 27
+   pages HTML actuelles restent servies tant que leur sujet n'est pas migré. Le
+   panel fusionne les deux manifestes pendant la transition.
 1. **Pilote : la corbeille.** Sources : `spec-trash.org`, `help/pages/trash.html`
    et `mf trash --help`. On vérifie le contenu contre le code au passage. C'est
    là qu'on juge la granularité et les conventions, avant de les figer.
 2. **Un sujet par commit.** Chaque commit supprime le fichier spec et la page
-   help d'origine une fois tout repris, et réécrit les citations du code.
+   help d'origine une fois tout repris, et réécrit les citations du code. Les
+   décisions de conception du sujet qui ne vivent que dans mes fichiers de
+   mémoire deviennent des notes `rationale` `audience: dev` (décidé). Le
+   fichier de mémoire est alors réduit à ce qui ne relève pas de la doc (pièges
+   d'environnement, méthode de débogage), ou supprimé s'il ne reste rien.
    On commence par les petits sujets autonomes (duplicates, slow log, auth,
    config, tasks, trash, sync), et on finit par les gros sujets transversaux
    (data model, query, file tracking, event log, puis spec-gui, qui se découpe
@@ -296,20 +323,27 @@ valide que la nouvelle.
 - **spec-gui « Help »** : la forme de `index.json` s'étend (changement additif,
   sans bump d'`API_VERSION` : ce n'est pas le protocole daemon), et les pages
   deviennent un artefact de build au lieu de sources.
-- **`metafolder-sync-config`** applique `default-config/` tel quel. Il faut donc
-  que `doc build` ait tourné avant, ce que `complete-build.sh` assure. Un
-  `sync-config` lancé seul sur un checkout neuf sans build : il faut qu'il échoue
-  bruyamment si `pages/` est absent, plutôt que d'installer un panel vide.
+- **spec-config « On-disk layout »** : le dépôt de config est « un
+  sous-dossier par crate », plus une catégorie transverse, `scripts/`. `docs/`
+  en devient une deuxième, et c'est la première dont la source est un produit
+  de build. Contrairement à `scripts/shipped/` (optionnel, « a checkout may
+  lack it »), `docs/wiki/dist/` absent doit faire **échouer** `sync-config`.
+  Sinon, un `sync-config` lancé seul sur un checkout neuf retirerait `docs/` de
+  la branche `default` et laisserait un panel `help` vide.
+- **La GUI ne lit que `panel-types/`, les styles et les keybindings** dans la
+  config. Elle gagne une route `/docs/…` sur le répertoire de config : fichier
+  manquant = 404, sans solution de repli, comme partout (spec-config « No
+  runtime fallback »).
 
-## 13. Questions ouvertes
+## 13. Décisions prises
 
-1. Faut-il commiter le rendu HTML, pour que `sync-config` n'ait pas besoin de
-   node ? Ma recommandation : non, et `sync-config` échoue si le rendu manque.
-2. Faut-il ajouter `mf doc <titre>` (§7) ?
-3. Certains choix de conception ne vivent aujourd'hui que dans mes fichiers de
-   mémoire (pièges, leçons). Doivent-ils devenir des notes `rationale`
-   `audience: dev` ? C'est tentant pour les décisions de design, pas pour les
-   anecdotes de débogage.
-4. Faut-il une note de catalogue par commande GUI, ou seulement un tableau
-   généré par panel, la note du panel portant la prose ? Beaucoup de commandes
-   (`trash:next`, `trash:prev`) ne méritent pas une note.
+1. Le rendu HTML n'est pas commité ; `sync-config` échoue s'il manque.
+2. Pas de `mf doc` pour l'instant. Le rendu vit hors du panel, dans
+   `~/.config/metafolder/docs/`, pour pouvoir être lu depuis plusieurs endroits.
+3. Les décisions de conception conservées dans la mémoire migrent en notes
+   `rationale` `audience: dev`, sujet par sujet.
+4. Une note par commande GUI.
+
+## 14. Questions ouvertes
+
+Aucune pour l'instant ; le pilote (§11, étape 1) en fera sans doute apparaître.
