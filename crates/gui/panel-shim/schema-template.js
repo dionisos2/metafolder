@@ -1,4 +1,4 @@
-// The user schema in the GUI (spec-schema): read once per repository and
+// The user schema in the GUI (doc "Schema"): read once per repository and
 // shared by every panel (`loadSchema`), and the templates it gives new
 // metarecords. The schema (returned verbatim by GET /repos/:repo/schema)
 // declares metarecord types (the target names of its groups) and the fields
@@ -8,7 +8,7 @@
 
 /**
  * The user schema, as `GET /repos/:repo/schema` returns it verbatim
- * (spec-schema). Mirrors `RawSchema`/`RawGroup`/`RawConstraint` in the daemon's
+ * (doc "Schema"). Mirrors `RawSchema`/`RawGroup`/`RawConstraint` in the daemon's
  * schema.rs, which are `deny_unknown_fields` — so this is the complete shape,
  * not a convenient subset.
  *

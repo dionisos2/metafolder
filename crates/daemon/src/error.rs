@@ -10,7 +10,7 @@ use serde_json::json;
 pub struct ApiError {
     pub status: StatusCode,
     pub message: String,
-    /// Schema violations, rendered as a `violations` array (spec-schema).
+    /// Schema violations, rendered as a `violations` array (doc "Schema").
     pub violations: Option<Vec<serde_json::Value>>,
     /// Extra top-level fields merged into the body — a blocked revert names
     /// what stands in its way (spec-event-log "POST /revert").

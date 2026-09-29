@@ -14,6 +14,7 @@ with one directory per program and two shared ones:
     ignore-presets.toml      the named mf_ignore presets (read by the clients)
   daemon/
     config.toml              the repositories to load at startup, [settings]
+    schema.default.json      the schema a new repository starts with
   gui/
     config.toml              ports, page sizes, panel defaults, …
     keybindings.toml         every keybinding

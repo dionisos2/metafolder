@@ -533,7 +533,7 @@ The union of the entries is the scope. It drives the link set:
 
 A metarecord's cross-repo identity is its *TreeRef fields*: the =tree_ref=
 -valued fields it carries, each occupying a unique position in its forest
-(the =(field_name, parent, name)= UNIQUE index, spec-schema). A file has one
+(the =(field_name, parent, name)= UNIQUE index, doc "Schema"). A file has one
 such field, =mfr_path=; a tag/collection node has its forest field
 (e.g. =tag=); an abstract record may have none. **Content hashes are not used
 for matching** — a moved file is recognised by its path, not its bytes. This
@@ -670,7 +670,7 @@ sync plan= and =mf sync run= therefore start by fetching both repos' schemas
 "Identical" is structural equality of the parsed schema documents (JSON
 value equality — formatting and key order do not matter); two repos with no
 schema at all are identical. The schema file itself is never propagated by
-sync (see [[file:spec-schema.org][spec-schema.org]]): resolving a mismatch is a manual step.
+sync (see doc "Schema"): resolving a mismatch is a manual step.
 
 Field propagation still goes through the ordinary field endpoints of the
 target repo, so the target's schema validates it like any user write — even

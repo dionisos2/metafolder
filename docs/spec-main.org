@@ -43,7 +43,7 @@ and most of what carried the tag with them — so it is gone.)
 
 Implemented: CRUD, =TreeRef= / tree cache, file watcher, reconcile, query
 language, reserved fields (=mfr_*= / =mf_*=), the watch/ignore system, the user
-schema ([[file:spec-schema.org][spec-schema.org]]), cursor pagination, the
+schema (doc "Schema"), cursor pagination, the
 daemon-side event log ([[file:spec-event-log.org][spec-event-log.org]]) with
 the coordinated navigation protocol and the =mf log= CLI, background tasks and
 progress reporting (doc "Tasks"), the trash-bin

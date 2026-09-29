@@ -13,6 +13,7 @@ built-in default — the canonical one may have been deleted on purpose.
 |`gui/config.toml`, `gui/keybindings.toml`, `gui/style.css`, `gui/commands.js` |the GUI |error at startup |error at startup (a syntax error in `commands.js` shows on screen) |
 |`daemon/config.toml` |the daemon |valid: no repository to load, every setting at its default |error at startup |
 |`cli/config.toml` |`mf` |valid: every setting at its default |error, exit 2, before any daemon call |
+|`daemon/schema.default.json` |the daemon, once, to seed a new repository's schema |skipped: the repository starts without a schema |copied as it is; the repository's load then reports it ([[Schema file]]) |
 
 `mf --no-config` skips the CLI's file entirely, for scripts that must not depend
 on your personal settings.

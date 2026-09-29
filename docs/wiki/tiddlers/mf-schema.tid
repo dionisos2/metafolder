@@ -1,0 +1,6 @@
+title: mf schema
+tags: [[CLI command]] Schema
+kind: reference
+summary: User schema commands
+
+The repository's user schema ([[Schema]], [[Writing a schema]]).

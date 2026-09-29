@@ -1,0 +1,40 @@
+title: Writing a schema
+tags: Schema
+kind: guide
+summary: Edit .metafolder/schema.json, give metarecords their types with mf_schema, reload, and check what the data already violates.
+
+A new repository starts with a copy of the shipped default schema,
+`.metafolder/schema.json`, so that the GUI's type picker works at once. Edit it, or
+write your own ([[Schema file]]):
+
+```
+{"version": 1,
+ "groups": [
+   {"targets": "*",        "constraints": [{"field": "rating", "type": "int"}]},
+   {"targets": ["film"],   "constraints": [{"field": "rating", "type": "int", "min": 0, "max": 1},
+                                           {"field": "director", "type": "ref"}]},
+   {"targets": ["person", "film"],
+                           "constraints": [{"field": "name", "type": "string", "min": 1, "max": 1}]}]}
+```
+
+That reads: wherever `rating` appears it is an int; a film has at most one; a
+person and a film each have exactly one `name`, a string.
+
+Give a metarecord its type with `mf_schema`, a multi-valued field — a metarecord
+can have several types, whose constraints add up:
+
+```
+mf -n films metarecord -i <uuid> field add mf_schema:string=film
+mf -n films metarecord -q 'mf_schema = "film"' get          # every film
+```
+
+Then apply the edited file and see what the existing data violates:
+
+```
+mf -n films schema reload      # an invalid file is refused, the old schema stays
+mf -n films schema check       # every violation (exit code 1 if any)
+mf -n films schema check 'mf_schema = "film"'
+```
+
+Editing the schema never rewrites or blocks existing data: a violation only
+blocks a later write that touches the violating field ([[Delta validation]]).

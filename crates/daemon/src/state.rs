@@ -55,7 +55,7 @@ pub struct RepoState {
     pub case_insensitive: bool,
     /// Watcher + executor; None until started (or in unit tests).
     pub handles: Mutex<Option<RepoHandles>>,
-    /// Loaded user schema; replaced atomically on reload (spec-schema).
+    /// Loaded user schema; replaced atomically on reload (doc "Schema").
     pub schema: Mutex<Option<crate::schema::CompiledSchema>>,
     /// The per-repo embedded-metadata extraction map (spec-platform). Loaded
     /// (seeding/self-healing the on-disk file) in `activate`; initialised here to
@@ -557,7 +557,7 @@ impl RepoState {
     }
 
     /// Reads the repository's configuration files: the user schema and the
-    /// embedded-metadata map (spec-schema, spec-platform "Configuration").
+    /// embedded-metadata map (doc "Schema", spec-platform "Configuration").
     ///
     /// Deliberately *not* part of [`Self::warm`]. These are small files that
     /// need no accelerator, and an invalid one makes the repository bad rather
@@ -892,7 +892,7 @@ pub struct RepoHandles {
 #[derive(Default)]
 pub struct AppState {
     repos: Mutex<HashMap<Uuid, Arc<RepoState>>>,
-    /// Shipped default schema copied into each new repo at init (spec-schema).
+    /// Shipped default schema copied into each new repo at init (doc "Schema").
     /// `None` (the default, used by tests) disables seeding.
     seed_schema_path: Option<PathBuf>,
     /// Tunable UX/performance settings from `config.toml`'s `[settings]`, applied

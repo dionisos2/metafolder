@@ -1,0 +1,57 @@
+title: Schema file
+tags: Schema
+kind: reference
+summary: The JSON format — groups of targets and constraints — where it is found, and what makes it invalid.
+
+`.metafolder/schema.json`, unless the repository's `config.json` names another
+file in its `schema` key (relative to `.metafolder/`, or absolute). With neither,
+the repository has no schema and nothing is validated.
+
+At `init`, the daemon seeds `.metafolder/schema.json` with a copy of the shipped
+`~/.config/metafolder/daemon/schema.default.json`. That copy is a convenience: a
+missing default is silently skipped and never fails `init` (an exception to
+[[No runtime fallback]], since nothing is being read for the daemon's own use).
+
+!! Format
+
+|!Key |!Type |!Meaning |
+|`version` |int |the format version, currently `1` |
+|`groups` |list |constraint groups |
+
+A group:
+
+|!Key |!Type |!Meaning |
+|`targets` |`"*"` or a list of type names |the types it applies to; `"*"` for every metarecord |
+|`constraints` |list |the constraints each target gets |
+
+A constraint:
+
+|!Key |!Type |!Default |!Meaning |
+|`field` |string |required |the constrained field |
+|`type` |string |any |its value type: `nothing`, `string`, `int`, `float`, `bool`, `datetime`, `ref`, `tree_ref`, `refbase`, `externalref` |
+|`min` |int |`0` |the fewest rows it may have |
+|`max` |int |unlimited |the most rows it may have |
+|`description` |string |— |free text, for a GUI to show |
+|`default` |bare value |— |the value a client pre-fills a new metarecord of this type with |
+
+`default` is a ''bare'' JSON value, read through the constraint's `type` — a
+number for `int`, a string for `string`, `{"parent": …, "name": …}` for `tree_ref`
+— so a constraint with a `default` must declare a `type`, and the value's kind must
+match it. Leaving `default` out templates the field as `Nothing`. Like
+`description`, it is informational: the daemon never writes it or validates with
+it; it is returned as it is by `GET /schema`, which is where the GUI's type-aware
+"new metarecord" reads its templates.
+
+A type may be the target of several groups, and several constraints may bear on one
+field of one type (global ones stack with per-type ones): all of them apply.
+
+!! Loading
+
+The file is read when the repository is loaded, and by `mf schema reload`. An
+unreadable or invalid file — malformed JSON, an unknown value type, `min > max`,
+`min < 0`, `targets` neither `"*"` nor a non-empty list of strings, a constrained
+field with a reserved name (`mfr_*`, `mf_*`), a `default` without `type` or of
+the wrong kind — makes the load fail with `400`, naming the offending constraint.
+Loading the repository without validation instead would let violating writes
+through: a broken schema is a configuration error to fix. A failed reload keeps
+the previous schema.

@@ -1,0 +1,7 @@
+title: mf schema reload
+tags: [[CLI command]] Schema
+kind: reference
+summary: Re-read the schema file
+
+Applies the schema file after you edited it. An invalid file is refused with the
+daemon's message (exit code 1), and the previous schema stays in effect.

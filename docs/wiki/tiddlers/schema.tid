@@ -1,0 +1,39 @@
+title: Schema
+kind: overview
+aliases: schema.json mf_schema
+summary: Declare types of metarecords and the fields they may carry — value type and how many rows — and the daemon refuses writes that break them.
+
+A repository may have a ''user schema'': a JSON file declaring ''types'' of
+metarecords and ''constraints'' on their fields — which value type a field holds,
+how many rows of it a metarecord may have. Constraints can also apply to every
+metarecord, typically to fix the type of a field name across the repository.
+
+A metarecord says its type with the reserved field `mf_schema`. The daemon checks
+each ''write'' against the schema and refuses a violating one with `400`; existing
+data is never rewritten, and a check lists what already violates it. The store
+holds no constraint: the schema is a file you edit.
+
+Independently of any schema, a field name holds one value type across the
+repository (spec-data-model "One value type per field name"): a schema `type`
+declares that type explicitly — before any write, and for documentation — and
+one that contradicts the type already established is a schema error.
+
+!! Use it
+
+<<list-kind guide>>
+
+!! Reference
+
+<<list-kind reference>>
+
+!! Why it works this way
+
+<<list-kind rationale>>
+
+!! Open questions
+
+<<list-kind question>>
+
+!! Commands
+
+<<tagged-with "CLI command">>

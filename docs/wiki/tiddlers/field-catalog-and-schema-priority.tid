@@ -1,0 +1,17 @@
+title: Field catalog and schema priority
+tags: Schema
+kind: reference
+audience: dev
+summary: The field catalogue lists what the schema declares as well as what the data has, and the schema's type wins a disagreement.
+
+`GET /repos/:repo/fields` — the distinct field names with their value types — merges
+the fields the data actually has with the ones the schema ''declares'' (every
+constraint with a `type`). A field the schema declares and no metarecord carries yet
+is listed; and where old data disagrees with the schema, the ''schema's type wins''
+— consistent with delta validation: the data is never rewritten, the mismatch is a
+violation `mf schema check` reports (`kind: type`).
+
+That priority is silent in the catalogue itself. Clients surface the disagreements
+separately and without blocking: the GUI runs a ''capped'' check once, when a
+repository is opened, rather than listing every inconsistency — unusable on a large
+repository.

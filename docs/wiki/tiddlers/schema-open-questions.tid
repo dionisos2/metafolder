@@ -1,0 +1,9 @@
+title: Schema open questions
+tags: Schema
+kind: question
+status: deferred
+summary: Sharing a schema between synced repositories, full validation at creation, and range constraints.
+
+* ''Sharing the schema between linked repositories.'' The file is per repository and outside the store: not in the event log, not propagated by sync. Sync requires both schemas to be identical and refuses otherwise; bringing them in line is by hand.
+* ''Full validation at creation.'' With delta validation, creating a metarecord checks only the fields supplied: one created as a `film` without a field a `min ≥ 1` constraint requires is accepted. Whether creation should check its types' whole constraint set — stricter, but out of line with the delta model — is to be revisited with experience.
+* ''Value constraints.'' Constraints cover the type and the number of rows only. Ranges (`0 ≤ rating ≤ 10`), enumerations or patterns on strings could come as new constraint keys.

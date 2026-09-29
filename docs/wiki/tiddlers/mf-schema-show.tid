@@ -1,0 +1,6 @@
+title: mf schema show
+tags: [[CLI command]] Schema
+kind: reference
+summary: Print the loaded schema (pretty-printed JSON)
+
+The loaded schema, as pretty-printed JSON.

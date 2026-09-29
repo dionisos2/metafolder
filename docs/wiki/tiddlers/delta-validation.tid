@@ -1,0 +1,21 @@
+title: Delta validation
+tags: Schema
+kind: rationale
+summary: A write is checked only on the fields it touches, against the result of the write — so old violations never block unrelated work.
+
+Only ''your writes'' are validated — creating a metarecord, writing, adding or
+deleting a field row, a set write — never the daemon's own (the watcher,
+reconcile). And a write checks only the ''field names it touches'', against the
+metarecord as the write leaves it. By design:
+
+* violations already on other fields of the metarecord do not block an unrelated write;
+* editing or reloading the schema never scans the existing data: its violations surface through `mf schema check`, and only block a later write touching the violating field;
+* writing `mf_schema` — giving or removing a type — validates only `mf_schema`, which no constraint can target, so changing a metarecord's type never fails, even if it then violates its new type's constraints: check afterwards;
+* deleting a row is a write on its field: removing the last row of a field with `min ≥ 1` is refused. To remove it anyway, remove the type from the metarecord first, or relax the constraint and reload;
+* deleting a ''whole metarecord'' is always allowed: cardinality does not apply to it.
+
+On a violation the transaction is rolled back and the answer is `400` with a
+`violations` array; a set write is rolled back whole.
+
+The validation reads nothing more from the store: the parsed schema is kept in
+memory, indexed by field name, and replaced at once on a reload.

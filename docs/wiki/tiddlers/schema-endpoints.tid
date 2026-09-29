@@ -1,0 +1,29 @@
+title: Schema endpoints
+tags: Schema
+kind: reference
+audience: dev
+summary: GET the loaded schema, reload it from disk, and check the data against it.
+
+|!Endpoint |!Does |
+|`GET /repos/:repo/schema` |the schema as loaded (the file's structure), or `{"version": 1, "groups": []}` without one — what a client reads to build forms and templates |
+|`POST /repos/:repo/schema/reload` |re-reads the file and replaces the schema at once; answers the new schema, or `400` naming the offending constraint, the old schema staying in effect |
+|`POST /repos/:repo/schema/check` |lists every violation, optionally among the metarecords a query matches |
+
+`check` takes an optional `{"query": <Query>, "limit": 20}`. `limit` caps the
+violations returned: the scan stops once it is passed — a repository with hundreds
+of thousands of violations never builds an unusable answer — and the answer then
+says `truncated: true`, `checked` counting the metarecords actually examined.
+
+```
+{"checked": 1542, "truncated": false,
+ "violations": [
+   {"metarecord_uuid": "abc…", "type": "film", "field": "rating", "kind": "type",
+    "message": "value of type string not allowed (expected: int)"},
+   {"metarecord_uuid": "abc…", "type": null, "field": "rating", "kind": "max_cardinality",
+    "message": "3 rows, maximum is 1"}]}
+```
+
+`type` is the constraint's origin — a type name, or `null` for a global constraint;
+`kind` is `type`, `min_cardinality` or `max_cardinality`. The same items are what a
+refused write carries. `check` writes nothing, but holds the repository while it
+scans: writes wait for it.

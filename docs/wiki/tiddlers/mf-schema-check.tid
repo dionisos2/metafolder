@@ -1,0 +1,14 @@
+title: mf schema check
+tags: [[CLI command]] Schema
+kind: reference
+summary: Check metarecords against the schema and list the violations
+
+One line per violation, then a count; `--json` the raw answer
+([[Schema endpoints]]). Exit code 0 with no violation, 1 with at least one, 2 on
+an error.
+
+```
+abc…  film  rating  type             value of type string not allowed (expected: int)
+abc…  -     rating  max_cardinality  3 rows, maximum is 1
+Checked 1542 metarecords, 2 violations.
+```

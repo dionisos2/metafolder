@@ -1,4 +1,4 @@
-//! The user schema (spec-schema): read, reload, check.
+//! The user schema (doc "Schema"): read, reload, check.
 
 use super::*;
 

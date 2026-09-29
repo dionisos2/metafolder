@@ -341,7 +341,7 @@ is sometimes local and sometimes cross-repo is modelled uniformly as
 
 The type is established by the first non-=Nothing= write to that name; the user
 schema may also declare it explicitly (see
-[[file:spec-schema.org][spec-schema.org]]). A later write of a conflicting type
+doc "Schema"). A later write of a conflicting type
 is rejected with =400=. The current implementation realises the =field_type=
 registry as a *derived probe* with no separate registry table: the established
 type is read as one representative non-=Nothing= row of the name
@@ -469,7 +469,7 @@ The stored fields for a file/directory metarecord are:
 The user schema feature defines one additional reserved =mf_*= field:
 =mf_schema= (String, multi-map — metarecord type declaration). The constraints
 themselves live in an external schema file, not in the database; see
-[[file:spec-schema.org][spec-schema.org]].
+doc "Schema".
 
 Duplicate detection adds one *daemon-created* metarecord type that is not a file:
 a =duplicate_group= (=mf_schema = "duplicate_group"=, no =mfr_path=), carrying

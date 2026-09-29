@@ -123,7 +123,7 @@ pub fn init_repository(
 }
 
 /// Copies the shipped default schema `source` into `<metafolder_dir>/schema.json`
-/// when it exists. Best-effort convenience seeding (spec-schema): a missing
+/// when it exists. Best-effort convenience seeding (doc "Schema"): a missing
 /// source is silently ignored (schemas are optional) and a copy failure is
 /// logged but never fails repo init.
 pub fn seed_schema_file(metafolder_dir: &Path, source: &Path) {

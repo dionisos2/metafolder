@@ -1,0 +1,25 @@
+title: Schema constraints
+tags: Schema
+kind: reference
+summary: Which constraints apply to a field, what a type and a cardinality demand, and why Nothing is always allowed.
+
+For a metarecord `E` and a field name `F`, the ''applicable constraints'' are those
+on `F` of every group targeting `"*"`, and of every group whose targets include
+one of `E`'s `mf_schema` values. A metarecord with no `mf_schema` is untyped: only
+the global constraints apply. An `mf_schema` value that no group names is a plain
+label, with no constraint.
+
+`E` satisfies a constraint on `F` when:
+
+* ''type'' — every row of `F` whose value is not `Nothing` has the declared type. `Nothing` is always allowed: saying "this field does not apply" must stay possible whatever the declared type.
+* ''cardinality'' — the number of rows of `F`, `Nothing` rows included, is within `[min, max]`. `Nothing` rows count because they are explicit statements: `min = 1` means "the field must be stated", even if the statement is "does not apply".
+
+All applicable constraints apply together, so two that declare different types for
+one field make every non-`Nothing` value invalid there. That is not detected when
+the schema loads — it depends on which types a metarecord combines — and shows as
+violations on write.
+
+!! What a schema cannot touch
+
+* A reserved field (`mfr_*`, `mf_*`): the schema is refused otherwise. So a schema can never block the daemon's own writes (the watcher, reconcile), nor `mf_schema` itself.
+* Sync's state (links, snapshots), which is outside the data model. Values ''brought'' by sync arrive through the ordinary write endpoints and are validated like yours — and sync requires both repositories' schemas to be identical.

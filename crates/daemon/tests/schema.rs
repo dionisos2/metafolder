@@ -1,4 +1,4 @@
-//! Tests for the user schema system (spec-schema): file loading and
+//! Tests for the user schema system (doc "Schema"): file loading and
 //! validation, delta validation on writes, check/reload endpoints.
 
 use std::sync::Arc;

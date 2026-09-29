@@ -3051,7 +3051,7 @@ displayed list, so the element joins it; at the forest roots it becomes a root).
 It creates a metarecord positioned there, and asks for its two inputs in the
 command input, in order (spec-gui "Interactive command arguments"): the *schema
 type* the record is created with (completing over the schema's declared
-metarecord types, [[file:spec-schema.org][spec-schema.org]]; its template fields seed the record — =mf_schema=,
+metarecord types, doc "Schema"; its template fields seed the record — =mf_schema=,
 then the type's constrained fields; a blank answer creates a record carrying
 only its position, as =metarecord:create= does), then the *value*, the new
 node's single name component (=/= inside it is rejected, as in any =tree_ref=

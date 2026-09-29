@@ -1,4 +1,4 @@
-//! User schema system (spec-schema): metarecord types declared via `mf_schema`,
+//! User schema system (doc "Schema"): metarecord types declared via `mf_schema`,
 //! constraints loaded from an external JSON file, delta validation of user
 //! writes, and the check endpoint.
 
@@ -125,7 +125,7 @@ impl CompiledSchema {
 /// Merges the data-derived field catalog (the index's `field_catalog`) with the
 /// schema's declared field types. The schema takes priority on a type conflict
 /// (a field whose existing data type differs from its declared type — possible
-/// for data predating the constraint, which the daemon never blocks; spec-schema
+/// for data predating the constraint, which the daemon never blocks; doc "Schema"
 /// "delta validation"), and schema-only fields (declared but not yet present in
 /// data) are added. The `type_filter` is applied *after* the merge, so a
 /// schema-only field of that type is included. Result ordered by name.
@@ -142,7 +142,7 @@ pub fn merge_field_catalog(
 }
 
 /// Parses and validates a schema document. Error messages identify the
-/// offending constraint (spec-schema "Schema file location and loading").
+/// offending constraint (doc "Schema file").
 pub fn parse(content: &str) -> Result<CompiledSchema, String> {
     let raw_value: serde_json::Value =
         serde_json::from_str(content).map_err(|e| format!("invalid schema file: {e}"))?;

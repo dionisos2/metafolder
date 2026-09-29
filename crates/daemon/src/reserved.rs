@@ -4,7 +4,7 @@
 //!   rejected to prevent typos from silently having no effect.
 
 /// `mf_*` fields the daemon knows about. `mf_schema` is defined by the user
-/// schema feature (spec-schema).
+/// schema feature (doc "Schema").
 const KNOWN_MF_FIELDS: &[&str] = &["mf_watch", "mf_ignore", "mf_schema", "mf_sync"];
 
 /// Checks whether a user write to `field_name` is allowed.

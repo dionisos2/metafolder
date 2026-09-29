@@ -2416,7 +2416,7 @@ pub fn watch_resume(ctx: &Ctx, raw_json: bool) -> Result<i32, CliError> {
     print_watch(&resp, raw_json)
 }
 
-// ── Schema (spec-schema) ──────────────────────────────────────────────────────
+// ── Schema (doc "Schema") ──────────────────────────────────────────────────────
 
 pub fn schema_check(ctx: &Ctx, predicate: Option<&str>, raw_json: bool) -> Result<i32, CliError> {
     let base = ctx.repo_base()?;
@@ -2994,7 +2994,7 @@ mod tests {
         assert!(text.contains("\n      → /backup/unknown.mp3   (size)"));
     }
 
-    // ── format_violation (spec-schema sample output) ─────────────────────────
+    // ── format_violation (doc "Schema" sample output) ─────────────────────────
 
     #[test]
     fn test_format_violation_with_type() {

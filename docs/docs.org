@@ -307,18 +307,23 @@ Sources : spec-indexing entier ; spec-query-cost entier ; spec-query « Indexing
 scaling », « MATCHES is answered in memory » ; mémoires =query-planner-reconsidered=,
 =duplicated-predicate-audit=.
 
-** TODO 13. Schéma
+** FAIT 13. Schéma
 
-- [ ] =Schema= — overview (types de metarecord, fichier de schéma)
-- [ ] =Writing a schema= — guide
-- [ ] =Schema file= — reference (forme, emplacement, chargement)
-- [ ] =Schema constraints= — reference (sémantique, restrictions)
-- [ ] =Delta validation= — rationale
-- [ ] =Schema endpoints= — reference, dev
-- [ ] =Field catalog and schema priority= — reference, dev
-- [ ] =Schema open questions= — question (distribution entre dépôts liés, validation complète, plages de valeurs)
+- [X] =Schema= — overview
+- [X] =Writing a schema= — guide (avec les commandes actuelles)
+- [X] =Schema file= — reference (format, emplacement, graine =schema.default.json=, chargement)
+- [X] =Schema constraints= — reference (sémantique, restrictions)
+- [X] =Delta validation= — rationale
+- [X] =Schema endpoints= — reference, dev
+- [X] =Field catalog and schema priority= — reference, dev
+- [X] =Schema open questions= — question, deferred
+- [X] les notes de commande : =mf schema= (+ =check=, =reload=, =show=)
 
-CLI : =mf schema *= (4). Sources : spec-schema entier.
+Vérification contre le code : les exemples de la spec utilisaient d'anciennes
+commandes (=mf set=, =mf query=) ; =schema/check= tient le dépôt pendant son
+parcours (les écritures attendent), alors que la spec disait qu'il ne bloque pas
+les écritures. =schema.default.json= ajouté aux notes de configuration (et comme
+exception à « pas de repli »). Source retirée : =spec-schema.org=.
 
 * Suivi des fichiers
 
