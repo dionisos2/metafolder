@@ -24,7 +24,7 @@ mkdir -p "$fake/scripts" "$fake/target" "$bin"
 cp "$repo/scripts/check.sh" "$fake/scripts/"
 
 # The repo-local suites check.sh runs: succeed, silently.
-for s in run-tests.sh test-shipped-scripts.sh test-tooling.sh; do
+for s in run-tests.sh test-shipped-scripts.sh test-tooling.sh doc; do
     printf '#!/usr/bin/env bash\nexit 0\n' >"$fake/scripts/$s"
 done
 

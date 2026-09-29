@@ -1,0 +1,16 @@
+title: Documentation
+kind: overview
+summary: The entry point of the metafolder documentation.
+
+metafolder keeps metadata about files — and about things that are not files —
+as ''metarecords'' in per-directory repositories, served by a daemon and used
+through the `mf` command line and a desktop GUI.
+
+!! Catalogs
+
+Every item of these lists exists in the code; the lists are complete.
+
+* [[CLI command]] — every `mf` command
+* [[GUI command]] — every command of the GUI's command input
+* [[Panel]] — every panel type of the GUI
+* [[Shipped script]] — the helper scripts installed with the configuration

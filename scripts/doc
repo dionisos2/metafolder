@@ -1,0 +1,4 @@
+#!/usr/bin/env bash
+# Read, search, edit and check the documentation wiki (docs/wiki/). The work is
+# done by docs/wiki/tools/doc.mjs; run with no argument for the command list.
+exec node "$(dirname "$0")/../docs/wiki/tools/doc.mjs" "$@"

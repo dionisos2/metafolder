@@ -111,6 +111,13 @@ export default [
     rules: js.configs.recommended.rules,
   },
 
+  // The documentation wiki's tooling (scripts/doc): plain Node modules.
+  {
+    files: ['docs/wiki/tools/**/*.mjs'],
+    languageOptions: { ecmaVersion: 2023, sourceType: 'module', globals: globals.node },
+    rules: js.configs.recommended.rules,
+  },
+
   // `require-await` cannot tell an accidental `async` from one that is there to
   // satisfy an async interface — which is most of them here: every stub in the
   // tests (`read: async () => []`) and every panel handler that must return a

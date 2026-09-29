@@ -1,0 +1,8 @@
+title: $:/mf/config/fields
+kind: overview guide reference rationale question
+audience: user dev
+status: implemented deferred proposed record
+
+The allowed values of the fields every hand-written note carries (scripts/doc
+check). `kind` is required; `audience` defaults to `user`, `status` to
+`implemented`.

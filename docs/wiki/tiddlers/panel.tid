@@ -1,0 +1,5 @@
+title: Panel
+kind: overview
+summary: Every panel type of the GUI, one note each.
+
+<<list-links filter:"[tag[Panel]sort[]]">>

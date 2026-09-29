@@ -1,0 +1,5 @@
+title: CLI command
+kind: overview
+summary: Every `mf` command, one note each.
+
+<<list-links filter:"[tag[CLI command]sort[]]">>
