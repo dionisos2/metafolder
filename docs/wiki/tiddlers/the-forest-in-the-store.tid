@@ -16,7 +16,7 @@ arithmetic:
 
 What it buys:
 
-* `field ->* "/dir"` — a subtree — is one bitmap read, as a tag subtree is (`tag ->* (path =>* "music")`).
+* `field ->* "/dir"` — a subtree ([[Following references]]) — is one bitmap read, as a tag subtree is (`tag ->* (path =>* "music")`).
 * A folder filter is the children bitmap: a key per 65 536 children.
 * ''Sorting by path'' below a bound (a folder, a subtree) walks the forest in key order — each folder's children read a page at a time, ordered by name bytes — and stops at the page's end, resuming a cursor by descending its key's components. It declines, and the page is fetched and sorted instead, on a name that is not plain UTF-8 above the separator or is keyed by hash, or without a bound.
 * An order-sensitive `osm` path ([[Text search in the store]]) finds its candidate ''anchors'' by trigrams, verifies each on its assembled path (its ancestors read once, shared between candidates), and takes the union of the verified anchors' subtrees. When an earlier term's rarest trigram names fewer folders than half the anchors, the anchors are first cut to those folders' subtrees (`dir4321 file` on 100 000 records: 210 008 keys read → 75).

@@ -192,7 +192,7 @@ fn test_eq_with_the_value_aspect_on_tree_ref_compares_the_name() {
     // Exact name equality, not a substring match.
     assert!(f.run(&eq_aspect("mfr_path", s("202"), Aspect::Value)).is_empty());
     // Bare equality is the exact node instead: mfr_path is "/"-rooted, so a
-    // bare "2021" resolves to no node at all (spec-query "Field aspects").
+    // bare "2021" resolves to no node at all (doc "Field aspects").
     assert!(f
         .run(&Query::Eq { field: "mfr_path".into(), value: s("2021"), aspect: Aspect::Raw })
         .is_empty());
@@ -800,7 +800,7 @@ fn test_follows_transitive_inclusive_condition_roots() {
 fn test_exact_node_path_equality() {
     // A string operand containing '/' is an exact-node match, not a value_name
     // compare — even when two nodes share the same leaf name in different
-    // subtrees (spec-query "Field aspects").
+    // subtrees (doc "Field aspects").
     let mut f = Fixture::new();
     let root =
         f.create(vec![Field::new("mfr_path", Value::TreeRef { parent: None, name: "".into() })]);
@@ -887,7 +887,7 @@ fn test_equality_pins_a_forest_root() {
 fn test_parent_aspect_gives_the_forest_roots() {
     // `field:parent IS ABSENT` is the only predicate form for the roots:
     // Follows cannot address the root sentinel, which is why they have their
-    // own endpoint (spec-query "Field aspects").
+    // own endpoint (doc "Field aspects").
     let mut f = Fixture::new();
     let (music, jazz, art_music) = tag_forest(&mut f);
     let art = f.run(&eq_aspect("path", s("art"), Aspect::Raw))[0];

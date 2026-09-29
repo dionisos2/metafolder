@@ -9,7 +9,7 @@
 //                         :path (full path from the root) · :raw (the
 //                         parent/name couple, the default)
 //                       The same four aspect names the query DSL and the finder
-//                       use (spec-query "Field aspects").
+//                       use (doc "Field aspects").
 //   field>sub           follow a Ref/RefBase to the target metarecord's `sub`
 //   field>sub:aspect    ...then project (e.g. tag>path:value)
 //   a | b               fallback: the first alternative that yields a value

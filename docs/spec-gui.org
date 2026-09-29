@@ -2047,7 +2047,7 @@ commands are separate invocations, so the abort can reach the proxy before its
 call does: it is then kept (30 s) and the call is dropped on arrival, never
 sent. The dropped
 connection is the daemon's cue: it cancels the query it was running instead of
-finishing it for nobody (spec-query "Timeout and interruption"), which matters
+finishing it for nobody (doc "Query limits"), which matters
 because a repository answers one operation at a time — a count of a query the
 user already replaced held the next page behind it. =metarecord-list= aborts
 its page and its count when the query changes (a finder keystroke, a new
@@ -2454,7 +2454,7 @@ and a /follow/ (=>=) — plus a fallback (=|=):
   name), =:raw= (the parent/name couple, the default). An aspect that does not
   apply to the value's type falls back to the raw display. These are the *same
   four aspect names the query DSL uses* (=field:aspect=, see
-  [[file:spec-query.org][spec-query.org]] "Field aspects"), so reading a value
+  doc "Field aspects"), so reading a value
   is spelled the same way in a column, in the finder and in a predicate.
 - =name>sub= — follows a =ref=/=refbase= value to the target metarecord and
   shows its =sub= field rows (comma-joined; e.g. =tag>label=). =sub= may
@@ -3081,8 +3081,7 @@ node under the cursor — so the bar says what the command will *do*, not merely
 which field it reads:
 
 - =exact= — =\<ref\> -> (\<tree\> = "<path>")=: the node itself. On a TreeRef
-  field =\=​= is the exact node at that path ([[file:spec-query.org][spec-query.org]]
-  "Field aspects"), so this pins one node at every depth, a forest root included.
+  field =\=​= is the exact node at that path (doc "Field aspects"), so this pins one node at every depth, a forest root included.
 - =+ descendants= — =\<ref\> -> (\<tree\> =>* "<path>")=: the node *and* every
   descendant — classic tag inheritance, where selecting =music= also surfaces
   things tagged =music/rock=.
@@ -3260,7 +3259,7 @@ always the row the cursor is on.
 
 =metarecord-list:query duplicates= works from the other direction: it sets the
 panel's DSL query to =same(mfr_duplicate_group, <selected uuid>)=
-([[file:spec-query.org][spec-query.org]] "Same-value matching"), which is how a
+(doc "Same-value matching"), which is how a
 file's twins are reached without the caller ever handling a hash. It writes the
 query into the *visible* DSL zone rather than overriding it invisibly, so the
 result composes with everything else the box can express — =AND NOT <uuid>= for "the

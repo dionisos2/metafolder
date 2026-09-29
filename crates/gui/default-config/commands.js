@@ -119,7 +119,7 @@ function parentDir(path) {
 
 /**
  * `value` as a DSL string literal. Only `"` and `\` are escaped — every other
- * backslash escape is passed through verbatim by the DSL (spec-query "DSL"),
+ * backslash escape is passed through verbatim by the DSL (doc "Query DSL grammar"),
  * so touching them would change the string.
  * @param {string} value
  */

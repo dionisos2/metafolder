@@ -1,5 +1,5 @@
 //! Interrupting a read in the middle of its loops (doc "Cancelling a task",
-//! spec-query "Timeout").
+//! doc "Query limits").
 //!
 //! A query's phases are few and each can read the whole repository — a regex
 //! over every distinct value, a sort over every match, a walk of the forest —

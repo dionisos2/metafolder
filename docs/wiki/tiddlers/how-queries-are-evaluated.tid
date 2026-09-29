@@ -1,0 +1,41 @@
+title: How queries are evaluated
+tags: Query
+kind: reference
+audience: dev
+summary: One evaluator over the store's bitmaps, no SQL and no fallback; two leaves are rewritten against the forest first, deterministically; a naive oracle checks it.
+
+A query is ''not'' compiled to SQL. Every operand is answered from the store's derived
+key spaces — bitmaps of dense ids, value partitions, the forest's positions — and rows
+are read only for the metarecords that come out ([[Store tables]]). There is one
+engine (`index::Eval`, generic over a `Source`; `KvSource` is the one source) and
+''no fallback'': a shape it cannot serve is a daemon bug, answered `500`, not a slow
+answer; a cursor it did not issue is a `400`.
+
+The steps of one request (`routes::run_query_filter`), each a phase of the slow log
+([[What the slow log records]]):
+
+# ''Validate'' — the refusals of [[Comparisons]] and [[Query limits]], then those that need the field's stored type, read from the field catalogue (`query_validate.rs`).
+# ''Prepare'' — resolve what goes through the forest: path targets of `->`/`->*`/`=>*` and exact-node operands of `=`/`!=` become node uuids handed to the evaluator (`QueryRoots`); the two leaves no bitmap can hold — a `:path` predicate and an order-sensitive `osm` path — are resolved against the forest and ''rewritten'' into the `uuid_in` set they match (`forest_query.rs`).
+# ''Evaluate'' — the filter as bitmap operations; text predicates (`MATCHES`, `osmd`) run last inside an `AND`, on the running intersection; a subtree is a descendant bitmap; `count` is the bitmap's cardinality.
+# ''Page'' — fetch or walk, by estimated cost ([[Sorting and postings]]); a page without a count checks text predicates lazily, only where the sort looks ([[Text search in the store]]).
+
+Each request reads one snapshot of the store; nothing is resident between requests.
+
+!! The rewrite must be deterministic
+
+The cursor is bound to a hash of the query ''as rewritten'', and the rewrite runs
+again for every page. A rewrite that returns the same set in a different order makes
+page 2's cursor look like another query's: `400 invalid cursor`. It happened — three
+of the four exits of the `osm` path resolution built their answer in a `HashSet`, and
+a two-word finder search died on its second page. Any new rewrite must return a
+stably ordered result, and be tested by "two calls, same output"
+(`tests/index_oracle.rs::resolving_index_leaves_is_deterministic`) rather than by one
+pagination test, which exercised only one of the four exits.
+
+!! The oracle
+
+`crates/query-oracle` is a second evaluator, for tests only: a naive scan of every
+row through the `Rows` trait, rebuilding the forest and the sort keys from the rows,
+nothing derived. `tests/index_oracle.rs` and the semantics batteries run both and
+demand one answer. It is a dev-dependency of the daemon and of nothing else, so no
+shipped binary links it. (It was an SQL engine until September 2026.)

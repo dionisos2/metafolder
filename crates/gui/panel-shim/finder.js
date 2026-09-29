@@ -12,7 +12,7 @@ export function splitTerms(text) {
 
 /** Resolves finder field entries to `{field, mode}` targets. An entry may carry
  *  an *explicit* aspect as `field:path` / `field:value` — the same names the
- *  columns and the query DSL use (spec-query "Field aspects"). It is the robust
+ *  columns and the query DSL use (doc "Field aspects"). It is the robust
  *  form: it never depends on the async field catalog, so `mfr_path:path` is path
  *  mode even before the catalog loads. Without one the type is auto-detected
  *  from the catalog: a `tree_ref` field searches its assembled path (`osm`, mode
@@ -100,7 +100,7 @@ export function composeQuery(baseIR, clause) {
 
 /** Quotes a term as a DSL string literal. Only `"` and `\` are escaped — the
  *  DSL decodes `\"` and `\\` to the bare character and passes every other
- *  backslash escape through verbatim (spec-query "Query DSL"), so escaping more
+ *  backslash escape through verbatim (doc "Query DSL grammar"), so escaping more
  *  would change the term. This is what keeps a term like `x")OR(label` a term
  *  instead of a way out of the call.
  *  @param {string} text */

@@ -305,7 +305,7 @@ instead of a standalone store is the pending compaction before 2 M. Cursor
 pagination over the sort key is also deferred.
 
 *Tree sort keys are not stored.* A =tree_ref= sorts on its whole path
-(spec-data-model "Sorting a =TreeRef= field"), and a directory rename rewrites
+(doc "Pagination and sorting"), and a directory rename rewrites
 the path of its entire subtree while touching one field row — so a stored
 representative would go stale behind every rename. The index instead rebuilds
 each matched metarecord's key from the store's forest (=tree_cache::SortKeys=,
@@ -655,7 +655,7 @@ three-character floor used to make the first two keystrokes of every search
 from =sam= onwards). The order-sensitive forms — several terms, or one term
 containing the separator — start from the anchors of the last term and take
 their verified subtrees, or, without an anchor, walk the stored forest (see
-[[file:spec-query.org][spec-query]] "Execution"), carrying the greedy match
+doc "Ordered substring matching"), carrying the greedy match
 position down each branch and taking a whole subtree at once when a branch has
 consumed every term. Path mode is =tree_ref=-only, and the gate that enforces
 it (a 400 with the "use osmd" hint, =query_validate=) asks *which type the
@@ -681,7 +681,7 @@ differing row" amounts to on a =tree_ref= field). Without this the whole query
 fell back to the SQL engine of the time, whose
 =_repo= universe CTE scans every row of the field: "find this one file" was the
 *slowest* query in the repository, not the fastest. *The =parent= aspect* (=field:parent IS ABSENT= / =IS PRESENT= /
-== "<path>"=, spec-query "Forest roots") is supported as well, and needed no new
+== "<path>"=, doc "Field aspects") is supported as well, and needed no new
 structure: the reverse index already partitions a =tree_ref= field by
 =value_uuid=, and the root sentinel is an ordinary key of that partition. So the
 forest roots are one hash lookup where SQL scans every row of the field, and
@@ -694,7 +694,7 @@ resolved node excluded instead of the sentinel (and nothing excluded when the
 path is no node, which is a =NOT (0)= predicate). The shapes the index does not
 serve under =parent= are the ones that are *rejected*, upfront by
 =query_validate=: an ordered operator or =Matches= there reads a
-uuid and is a =400= (spec-query "Field aspects") — until that rule existed both
+uuid and is a =400= (doc "Field aspects") — until that rule existed both
 were answered silently and wrongly, the regex against =value_name= and the
 ordered operator as equality, which no oracle caught because the index refused
 the aspect and the comparison was therefore never made. The index is built at repository load (best-effort) by

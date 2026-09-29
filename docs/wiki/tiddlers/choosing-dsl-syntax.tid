@@ -1,0 +1,22 @@
+title: Choosing DSL syntax
+tags: Query
+kind: rationale
+audience: dev
+summary: Free punctuation is scarce and reserved; new syntax first looks for a free grammatical position, then a named operator, and a sigil last.
+
+The punctuation still free in the DSL ''and'' the simplified language is a scarce,
+deliberately reserved resource. `#` (and `#=`, `##=`) belong to tags in the
+simplified language, `~` to its `MATCHES`, `+` to its `OR` — and `&` is kept free on
+purpose, as `+`'s natural companion for a future explicit `AND` there. The other
+candidates already mean something: `$` is the grammar file's metasyntax, `:` separates
+a field from its aspect (and a field spec's type), `*` belongs to the arrows,
+`|` `^` `%` read as or, anchor and wildcard.
+
+So new syntax goes, in order of preference:
+
+# to a ''free position in the grammar'' — the bare uuid atom costs no sigil at all: a predicate always began with a field name, so a lone 32-hex token where a predicate is expected was free;
+# to a ''named operator'', recognised only when immediately followed by `(` so that a field of that name stays usable — `osm(…)`, `same(…)`, and `uuid_in(…)` rather than the `uuid_in [...]` once proposed, which would have spent `[` and `]`;
+# to a sigil only last — and then preferably in the ''simplified'' grammar, which the user can edit, so the choice is one line of configuration away from being undone, rather than in the core DSL.
+
+The inverse arrow `<-` is an example of a spelling lost to an earlier one: `size<-5`
+already means `size < -5` ([[Same-value matching]]).

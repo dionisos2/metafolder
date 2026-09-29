@@ -1,5 +1,5 @@
-//! A client that stops waiting for a query cancels it (spec-query "Timeout and
-//! interruption"): the GUI dropping a query a newer one replaced, a Ctrl-C on
+//! A client that stops waiting for a query cancels it (doc "Query limits"): the GUI dropping a
+//! query a newer one replaced, a Ctrl-C on
 //! `mf`. Over a real socket, since what is tested is the connection closing.
 //!
 //! Deterministic by holding the repository: the query waits for the store

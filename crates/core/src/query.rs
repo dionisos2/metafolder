@@ -219,8 +219,8 @@ pub fn split_terms(input: &str) -> Vec<String> {
     input.split_whitespace().map(str::to_string).collect()
 }
 
-/// Which component of a field's value a predicate reads (spec-query "Field
-/// aspects"). The DSL spells it `field:aspect`; JSON omits the key for the
+/// Which component of a field's value a predicate reads (doc "Field aspects"). The DSL spells it
+/// `field:aspect`; JSON omits the key for the
 /// default `Raw`, so bodies written before aspects existed parse unchanged.
 ///
 /// `Parent` and `Path` are `TreeRef`-only — the daemon rejects them on any

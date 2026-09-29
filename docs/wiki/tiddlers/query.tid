@@ -1,0 +1,35 @@
+title: Query
+kind: overview
+aliases: queries dsl normal-dsl focus-query
+summary: A query selects metarecords by their fields — values, presence, references and trees — written in the DSL or the simplified language.
+
+Most things that list metarecords are driven by a ''query'': a filter selecting
+which ones appear — the GUI's lists, `mf metarecord -q`, the writes over a set. An
+empty query matches everything.
+
+There are two languages. The ''DSL'' is precise:
+
+```
+rating > 3 AND genre = "jazz"
+mfr_path ->* "/music/jazz" AND title MATCHES "[Ll]ive"
+tag -> (path =>* "music/jazz")
+```
+
+The ''simplified'' language is shorter, forgiving and configurable; it expands into
+the DSL on the client, and is what the GUI's query box takes by default (`mf … -s`
+on the command line). The notes here describe the DSL.
+
+Both compile to one JSON form ([[Query IR]]), which is what the daemon evaluates —
+from its store's bitmaps, never in SQL.
+
+!! Use it
+
+<<list-kind guide>>
+
+!! Reference
+
+<<list-kind reference>>
+
+!! Why it works this way
+
+<<list-kind rationale>>

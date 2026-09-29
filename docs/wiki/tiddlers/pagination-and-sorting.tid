@@ -1,0 +1,57 @@
+title: Pagination and sorting
+tags: Query
+kind: reference
+summary: sort, limit, cursor and count on POST /query — keyset pages, unknown values last, a tree_ref sorted by its whole path.
+
+Pagination is opt-in: without `limit`, `POST /query` answers the whole result at
+once, unwrapped.
+
+|!Key |!Type |!Does |
+|`limit` |int |the page size; turns pagination on |
+|`cursor` |string |the previous page's `next_cursor`; absent for the first page |
+|`sort` |list |the order (below); allowed without `limit` |
+|`count` |bool |adds `total`, the full number of matches (needs `limit`) — exact, and cheap: the match set is a bitmap |
+
+With `limit` the answer is wrapped:
+
+```
+{"results": [...], "next_cursor": "<token>" | null, "total": 5000}
+```
+
+`results` has the unpaginated items' shape; `next_cursor` is `null` after the last
+page. `total` is the count at the time of this page — live data may move it — so
+clients usually ask for it once.
+
+!! Sort
+
+```
+"sort": [{"field": "rating", "order": "desc"}, {"field": "title"}]
+```
+
+* `order` is `asc` (the default) or `desc`. Reserved and user fields sort alike.
+* The uuid is always appended as a last key, so the order is total and a page resumes exactly after its last item even among ties.
+* A metarecord where the field is unknown, or holds only `nothing`, sorts ''after'' every metarecord with a value, whatever the order.
+* A multi-valued field sorts on the metarecord's ''smallest'' value ascending, its ''largest'' descending.
+* Values compare in their type's natural order — numbers and dates numerically, strings lexicographically, references by uuid bytes; one field has one type, so no cross-type order is needed.
+
+A `tree_ref` sorts on the ''whole path'', compared component by component, a prefix
+first: `/photos/2021/a.jpg` < `/photos/z.jpg` < `/photos-old/a.jpg` — a folder and
+everything under it stay together, which comparing the path strings would not give
+(`-` sorts before `/`). Internally a path is reduced to its components joined by
+U+0001, below every character a name holds, so a byte comparison is the
+component-wise one; the key is rebuilt from the forest, never stored — a rename would
+make a stored one stale for the whole subtree. How a page is found without sorting
+every match: [[Sorting and postings]].
+
+!! Cursor
+
+The cursor is opaque: the sort key and uuid of the last item, plus a hash of the
+query and sort that produced it. Do not parse it. It is valid only for the same
+query and sort — otherwise `400` `invalid cursor: it was issued for a different query
+or sort` — and does not expire. Resuming is "strictly after the last item", so pages
+are stable against metarecords added or removed in the part already read; a
+metarecord whose sort value changes between two pages may come twice or be skipped,
+which keyset pagination over live data accepts.
+
+The hash covers the query ''as the daemon rewrote it'', so that rewrite must be
+deterministic ([[How queries are evaluated]]).

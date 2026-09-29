@@ -8,7 +8,7 @@ verb'', so one selector serves every verb, `field` included:
 
 |!Option |!Selects |
 |`-i <uuid>` |one metarecord, by uuid (no query) |
-|`-q "<query>"` |the metarecords matching a query (the query DSL) |
+|`-q "<query>"` |the metarecords matching a query ([[Writing queries]]) |
 |`-s` |with `-q`: the text is the simplified language, expanded first — in the client, never by the daemon |
 |(none) |every metarecord |
 

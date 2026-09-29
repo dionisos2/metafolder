@@ -51,10 +51,9 @@ pub struct SortBy {
 pub type PathRoots = HashMap<(String, String), Uuid>;
 
 /// Pre-resolved `(field, path)` → the metarecord at exactly that TreeRef path,
-/// for the *exact-node* `Eq` operands of a query (spec-query "Exact-node
-/// equality": a `/`-bearing string operand on a `tree_ref` field). Resolution
-/// lives in the tree cache, so — as with [`PathRoots`] — the caller does it and
-/// hands the node in. Unlike the other two maps the value is an `Option`: an
+/// for the *exact-node* `Eq` operands of a query (doc "Field aspects": a string
+/// operand on a `tree_ref` field). Resolution lives in the tree cache, so — as
+/// with [`PathRoots`] — the caller does it and hands the node in. Unlike the other two maps the value is an `Option`: an
 /// entry mapping to `None` says "the caller resolved this path and it is not a
 /// node" (an empty result), while a *missing* entry says "nobody resolved it",
 /// which keeps the operand `Unsupported` — a daemon bug on the serving path,
@@ -108,8 +107,8 @@ pub fn collect_path_targets(q: &Query, out: &mut Vec<(String, String)>) {
 
 /// Collects the `(field, path)` of every *exact-node* `Eq`/`Neq` operand in `q`
 /// — a string operand containing the path separator, which on a `tree_ref` field
-/// is a node match rather than a `value_name` compare (spec-query "Exact-node
-/// equality"). The caller resolves each through the tree cache into
+/// is a node match rather than a `value_name` compare (doc "Field aspects"). The caller resolves
+/// each through the tree cache into
 /// [`NodeRoots`]; the index then answers `mfr_path = "/a/b.txt"` from a single
 /// interned id, where the oracle scans every row of the field.
 ///
@@ -346,8 +345,8 @@ impl Eval<'_> {
 
     /// Evaluates a query into one sorted, paginated page and the cursor for the
     /// next one (present only when `limit` is set and more rows remain).
-    /// Reproduces the specified sort semantics (spec-data-model "Sort
-    /// specification"): per key the multi-map representative (min ascending /
+    /// Reproduces the specified sort semantics (doc "Pagination and sorting"): per key the
+    /// multi-map representative (min ascending /
     /// max descending), the fixed type-group precedence, metarecords lacking
     /// the field last, uuid tiebreak. The cursor is an opaque offset bound to a
     /// hash of (query, sort) — reused against a different query/sort it is
@@ -1104,7 +1103,7 @@ impl Eval<'_> {
             Query::Matches { field, pattern, aspect } => {
                 Self::index_servable_aspect(*aspect)?;
                 // `raw` on a tree_ref is an error, not a name match — rejected
-                // upstream by `query_validate` (spec-query "Field aspects"), so
+                // upstream by `query_validate` (doc "Field aspects"), so
                 // this is a backstop. Under `value` the scan is the ordinary
                 // name scan.
                 if *aspect == Aspect::Raw && self.src.value_type(field) == Some("tree_ref") {
@@ -1172,7 +1171,7 @@ impl Eval<'_> {
         }
     }
 
-    /// `field:parent IS ABSENT` / `IS PRESENT` (spec-query "Forest roots"):
+    /// `field:parent IS ABSENT` / `IS PRESENT` (doc "Field aspects"):
     /// answered from the reverse index's parent partition, where the roots are
     /// the sentinel's own bucket — one hash lookup for the question the oracle
     /// answers by scanning every row of the field.
@@ -1426,7 +1425,7 @@ impl Eval<'_> {
     /// leaf into a `uuid_in` set. So is `parent` *here* — its two servable
     /// shapes (presence and equality) have their own paths
     /// ([`Self::parent_presence`], [`Self::parent_compare`]), and every other
-    /// one (a regex over a uuid) is a `400` (spec-query "Field aspects").
+    /// one (a regex over a uuid) is a `400` (doc "Field aspects").
     fn index_servable_aspect(aspect: Aspect) -> Result<(), Unsupported> {
         match aspect {
             Aspect::Raw | Aspect::Value => Ok(()),
@@ -1459,7 +1458,7 @@ impl Eval<'_> {
         {
             return Err(unsupported("ordered comparison on a tree_ref field needs an aspect"));
         }
-        // Exact-node path (spec-query "Field aspects"): under the default `raw`
+        // Exact-node path (doc "Field aspects"): under the default `raw`
         // aspect, an Eq/Neq string operand on a tree_ref field is a path-resolved
         // node match. The resolution lives in the tree cache, not
         // the index, so both `Eq` and `Neq` are served only from a caller-supplied

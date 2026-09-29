@@ -1872,8 +1872,8 @@ pub fn duplicate_list(
 fn print_group_members(ctx: &Ctx, base: &str, group: &str) -> Result<(), CliError> {
     let member_query = json!({"type": "eq", "field": "mfr_duplicate_group",
                               "value": {"type": "ref", "value": group}});
-    // The envelope only exists when `limit` is sent (spec-data-model "Response
-    // envelope"), so page through like every other listing.
+    // The envelope only exists when `limit` is sent (doc "Pagination and sorting"), so page through
+    // like every other listing.
     let mut members = Vec::new();
     let mut cursor: Option<String> = None;
     loop {

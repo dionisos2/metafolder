@@ -870,7 +870,7 @@ pub fn metarecord_at_path(
         return Ok(None);
     }
     // Exact-node equality: on a TreeRef field an `Eq` string operand is the path
-    // of the one node sitting there (spec-query "Field aspects"), resolved
+    // of the one node sitting there (doc "Field aspects"), resolved
     // through the daemon's tree cache. `mfr_path` is "/"-rooted. This replaces
     // the "direct child of the parent *and* named like the leaf" intersection
     // the separator-gated equality used to force.

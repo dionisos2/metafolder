@@ -1,5 +1,5 @@
 //! Integration tests for the OSM (Ordered Substring Matching) query operator
-//! (spec-query "Ordered substring matching"): `osmd` (Direct, over a field's own
+//! (doc "Ordered substring matching"): `osmd` (Direct, over a field's own
 //! text) and `osm` (Path, over the assembled TreeRef path).
 
 use metafolder_core::metarecord::{Field, Value};

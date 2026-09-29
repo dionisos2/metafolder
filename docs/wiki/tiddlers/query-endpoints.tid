@@ -1,0 +1,46 @@
+title: Query endpoints
+tags: Query
+kind: reference
+audience: dev
+summary: POST /query and the /query/* family — every operation over a set of metarecords takes a query.
+
+|!Route |!Body |!Answers |
+|`POST /repos/:repo/query` |`{"query", "select"?, "sort"?, "limit"?, "cursor"?, "count"?, "timeout_ms"?}` |the matches (below) |
+|`POST /repos/:repo/query/delete` |`{"query"}` |`{"deleted": N}` |
+|`POST /repos/:repo/query/fields/set` |`{"query", "name", "value" or "values", "force"?}` |`{"updated": N}` |
+|`POST /repos/:repo/query/fields/add` |`{"query", "name", "value", "force"?}` |`{"updated": N}` |
+|`POST /repos/:repo/query/fields/remove` |`{"query", "name", "value", "force"?}` |`{"updated": N}` |
+|`POST /repos/:repo/query/fields/unset` |`{"query", "name", "force"?}` |`{"updated": N}` |
+|`POST /repos/:repo/query/fields/resolve-tree` |`{"query", "field"?}` |`{"<uuid>": ["<path>"], …}` ([[Tree endpoints]]) |
+|`POST /repos/:repo/query/profile` |a query |its phases ([[POST /repos/:repo/query/profile]]) |
+
+!! POST /query
+
+`select` shapes the items: absent, a list of uuids; a list of field names, metarecord
+objects holding only those fields; `"*"`, whole metarecords. A field the metarecord
+does not have is left out, not given as `nothing`:
+
+```
+[{"uuid": "…", "version": 8123456789,
+  "fields": [{"id": 42, "name": "rating", "value": {"type": "int", "value": 5}}]}]
+```
+
+`sort`, `limit`, `cursor` and `count`: [[Pagination and sorting]]. `timeout_ms`:
+[[Query limits]]. A query runs as an observable task; its errors are `400` for a
+refused query, `409` for one stopped, `500` for a shape the evaluator cannot serve —
+a daemon bug, never a slow answer ([[How queries are evaluated]]).
+
+!! The set layer
+
+Every operation over a ''set'' lives under `/query`, with a `query` in the body; a
+`uuid_in` targets an explicit set (a multi-selection). Directly addressed things use
+the resource routes ([[Metarecord endpoints]]); the two overlap only on one
+metarecord, by design. A write over a set is ''one revision'', one operation per
+metarecord changed ([[Editing metarecords from the command line]]); a reserved field
+without `force` is a `400` ([[Reserved fields]]).
+
+* ''delete'' removes every match, metadata and fields, atomically — no select-then-delete race. A set holding the repository root is refused whole ([[Referential integrity of a forest]]).
+* ''set'' replaces every row of the name on each match; `values` sets several at once, repeated values collapsing to their first ([[No duplicate rows]]).
+* ''add'' appends a row to each match; a match already holding the value is untouched, so `updated` counts the metarecords that gained a row and re-running it gives `0`.
+* ''remove'' takes out the row equal to the value — at most one per match — leaving other rows and non-matches alone.
+* ''unset'' removes every row of the name: the field becomes unknown, not `nothing`.

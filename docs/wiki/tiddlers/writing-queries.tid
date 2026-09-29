@@ -1,0 +1,109 @@
+title: Writing queries
+tags: Query
+kind: guide
+summary: The DSL by example — combining predicates, comparing values, presence, regexes, following references and trees, tags, uuids, finder-style matching.
+
+!! Combining
+
+Predicates combine with `AND`, `OR` and `NOT`, grouped with parentheses. `NOT`
+binds tighter than `AND`, which binds tighter than `OR`. Keywords are uppercase;
+the boolean literals `true`/`false` are lowercase.
+
+```
+rating > 3 AND genre = "jazz"
+NOT (seen = true OR rating IS UNKNOWN)
+```
+
+!! Comparing values
+
+`field op literal`, with `=` `!=` `<` `<=` `>` `>=`. A literal is an integer, a
+float, a `"quoted string"`, `true`/`false`, or a date — `@` then a quoted ISO-8601
+string or bare Unix milliseconds ([[Comparisons]]):
+
+```
+mfr_size > 1000000
+mfr_mtime > @"2024-01-01"
+title = "Blue in Green"
+```
+
+!! Present, absent, unknown
+
+A field can hold a value, hold `nothing` ("does not apply"), or not be there at all
+([[Presence and absence]]):
+
+```
+rating IS PRESENT
+mfr_path IS ABSENT          # a file seen deleted
+rating IS UNKNOWN           # never rated
+```
+
+!! Regular expressions
+
+`MATCHES` is case-sensitive; `(?i)` at the front ignores case. Regex escapes survive
+in the string (`\.`, `\d`); only `\"` and `\\` are the string's own
+([[Regular expressions in queries]]):
+
+```
+title MATCHES "[Ll]ive"
+title MATCHES "(?i)live"
+name MATCHES "\.config"
+```
+
+!! Following references and trees
+
+```
+author -> (name = "Coltrane")        # the ref points at a metarecord matching the condition
+mfr_path -> "/music"                 # directly in /music
+mfr_path ->* "/music/jazz"           # anywhere below it
+mfr_path =>* "/music/jazz"           # it, and anything below it
+mfr_type = "file" AND mfr_path -> (mfr_path:value = "2021")   # in any folder named 2021
+```
+
+See [[Following references]]. On a `tree_ref`, `=` is the one node at a path, and an
+''aspect'' picks what part of the value a predicate reads ([[Field aspects]]):
+
+```
+mfr_path = "/music/jazz"          # the one node at that path
+mfr_path:value = "jazz"           # every node named jazz, anywhere
+mfr_path:path MATCHES "^/mu"      # a regex over the whole path
+path:parent IS ABSENT             # the roots of the tag hierarchy
+```
+
+!! Tags
+
+A tag is a metarecord with `mf_schema = "tag"`, placed in the tag hierarchy by its
+`tree_ref` field `path`; a record carries it through a `ref` field, `tag`. So a tag
+query follows the ref into the tag tree — the same traversal as `mfr_path`, no name
+matching. Tag paths have no leading `/` ([[TreeRef path conventions]]).
+
+```
+tag -> (path = "music/jazz")       # records carrying exactly this tag (a root too: path = "music")
+tag -> (path =>* "music/jazz")     # this tag or any tag below it
+```
+
+The inclusive form matters because tagging a record with a narrower tag drops the
+broader one: a jazz record may carry only `music/jazz/bebop`.
+
+!! By uuid
+
+A bare uuid — 32 hex characters, unquoted, no hyphens, the form every panel shows
+and copies — selects that one metarecord and composes with everything else;
+`uuid_in(…)` takes a list (a trailing comma is fine, `uuid_in()` matches nothing):
+
+```
+8f3a2b1c4d5e6f708192a3b4c5d6e7f8 AND rating > 3
+uuid_in(8f3a2b1c4d5e6f708192a3b4c5d6e7f8, 47ab0000000000000000000000000001)
+tag -> (8f3a2b1c4d5e6f708192a3b4c5d6e7f8)     # the records pointing at that tag
+```
+
+!! Finder-style and same-value
+
+```
+osm(mfr_path, "scien fic")        # terms in order along the path: …/science-fiction/…
+osmd(title, "blue green")         # the same over the field's own text
+same(mfr_duplicate_group, 8f3a2b1c4d5e6f708192a3b4c5d6e7f8)   # files identical to that one
+same(mfr_meta_artist, mfr_path = "/music/a.flac") AND NOT mfr_path = "/music/a.flac"
+```
+
+See [[Ordered substring matching]] and [[Same-value matching]]. The whole grammar:
+[[Query DSL grammar]].

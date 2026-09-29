@@ -23,7 +23,7 @@ use crate::log::MAX_TREE_DEPTH;
 use crate::store::Rows;
 
 /// Separator joining the components of a *sort key* — the form a `tree_ref`
-/// value takes when a query sorts on it (spec-data-model "Sort specification").
+/// value takes when a query sorts on it (doc "Pagination and sorting").
 ///
 /// It is deliberately not `/`: a path separator that sorts *below* every
 /// character a name can contain turns a plain byte comparison of two keys into a

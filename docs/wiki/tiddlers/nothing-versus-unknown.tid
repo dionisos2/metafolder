@@ -12,7 +12,7 @@ Collapsing the two would lose exactly the information that decides what to do: a
 reconcile searches for the file of a metarecord whose location is unknown or stale,
 and leaves alone the one whose file is recorded as deleted.
 
-Queries keep the three states apart: `field IS PRESENT` (a value that is not
+Queries keep the three states apart ([[Presence and absence]]): `field IS PRESENT` (a value that is not
 `nothing`), `field IS ABSENT` (holds `nothing`), `field IS UNKNOWN` (no row). A field
 holds at most one `nothing` row, and `nothing` coexists with the field's type
 ([[One value type per field name]]) — it is absence, not a type. In a metarecord's

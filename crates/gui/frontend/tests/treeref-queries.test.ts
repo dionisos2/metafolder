@@ -68,7 +68,7 @@ describe('refQueryDsl', () => {
 
   test('exact scope pins the node itself', () => {
     // On a TreeRef field `=` is the exact node at that path, at every depth —
-    // a forest root included (spec-query "Field aspects").
+    // a forest root included (doc "Field aspects").
     expect(refQueryDsl({ ...spec, scope: 'exact' })).toBe('tag -> (path = "music/jazz")');
     expect(refQueryDsl({ ...spec, path: 'music', scope: 'exact' })).toBe(
       'tag -> (path = "music")',

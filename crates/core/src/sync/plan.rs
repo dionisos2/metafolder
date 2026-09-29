@@ -1048,8 +1048,8 @@ fn ref_targets(ctx: &Ctx, reads: &Reads, repo: Uuid, record: Uuid) -> Result<Vec
 /// parent-and-name idiom (=field -> "/parent" AND field:value = "name"=). The
 /// root (empty path) is resolved through the forest-roots endpoint.
 ///
-/// The leaf comparison names the `value` aspect explicitly (spec-query "Field
-/// aspects"): a bare `=` on a TreeRef is the *exact node* at a path, which is
+/// The leaf comparison names the `value` aspect explicitly (doc "Field aspects"): a bare `=` on a
+/// TreeRef is the *exact node* at a path, which is
 /// not what this half of the intersection asks. The idiom is kept rather than
 /// replaced by that single exact-node lookup because the function serves any
 /// forest, whatever its root convention, while a path operand must follow the

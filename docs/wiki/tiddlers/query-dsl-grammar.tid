@@ -1,0 +1,45 @@
+title: Query DSL grammar
+tags: Query
+kind: reference
+aliases: uuid uuid_in
+summary: The whole DSL grammar, and the rules its lexer and parser follow — keywords, strings, dates, uuid atoms, nesting.
+
+```
+query     := or_expr
+or_expr   := and_expr ( "OR" and_expr )*
+and_expr  := unary ( "AND" unary )*
+unary     := "NOT" unary | atom
+atom      := "(" query ")" | uuid | uuid_list | osm_call | same_call | predicate
+
+predicate := field "IS" ( "PRESENT" | "ABSENT" | "UNKNOWN" )
+           | field cmp_op literal
+           | field "MATCHES" string
+           | field "->"  ( string | "(" query ")" )
+           | field "->*" ( string | "(" query ")" )
+           | field "=>*" ( string | "(" query ")" )
+
+osm_call  := ( "osm" | "osmd" ) "(" field "," string ")"
+same_call := "same" "(" fieldname "," query ")"
+uuid_list := "uuid_in" "(" [ uuid ( "," uuid )* [ "," ] ] ")"
+
+cmp_op    := "=" | "!=" | "<" | "<=" | ">" | ">="
+literal   := int | float | string | "true" | "false" | datetime
+datetime  := "@" string | "@" int        # ISO-8601 string, or Unix milliseconds
+field     := fieldname [ ":" aspect ]
+aspect    := "raw" | "value" | "parent" | "path"
+string    := '"' … '"'
+uuid      := 32 ASCII hexadecimal characters
+```
+
+The parser is shared code (`metafolder_core::dsl::parse_query`), used by the CLI and
+the GUI.
+
+* ''Keywords'' (`AND`, `OR`, `NOT`, `IS`, `PRESENT`, `ABSENT`, `UNKNOWN`, `MATCHES`) are case-sensitive uppercase; `true`/`false` lowercase.
+* ''Precedence'': `NOT` over `AND` over `OR`; parentheses override.
+* ''Nesting'' is bounded at 128 levels — the parser is recursive, so nesting is stack depth, and the input comes straight from a user. Past it: "query too deeply nested".
+* ''Strings'': `\"` and `\\` decode to the bare character; any other backslash escape is kept verbatim, so a `MATCHES` pattern carries regex escapes (`"\.config"`). A literal backslash in a regex is `\\\\`.
+* ''Arrows'' `->`, `->*` and `=>*` are single tokens, lexed by maximal munch — `=>*` is never `=` followed by `>`. (`~` is the simplified language's `MATCHES`; the DSL refuses it.)
+* ''Function-call operators'' — `osm`, `osmd`, `same`, `uuid_in` — are recognised only when immediately followed by `(`, so a field named `osm` or `same` stays usable (`osm = "x"`).
+* ''A bare uuid'' standing where a predicate is expected is a predicate on the metarecord's identity (`uuid_in` with one element). One spelling only: the 32-hex form every service emits, case-insensitive. Hyphenated, braced or URN forms are not DSL (the JSON accepts them), and a quoted `"<32hex>"` is a string, not a uuid. Since a field name may itself be 32 hex characters, a one-token lookahead decides: followed by an operator it is a field (`abcdef…ab = 3`), otherwise a uuid. A hex run of 8 or more characters that is not exactly 32 is reported as a truncated uuid. Several bare uuids joined by `OR` fold into one `uuid_in`.
+* ''Aspects'' are accepted on any predicate that reads a value; the daemon, which alone knows a field's type, enforces which aspects apply ([[Field aspects]]). In `osm`/`osmd`, `field:path` and `field:value` are accepted spellings of the two modes; a contradicting one (`osmd(f:path, …)`) is a parse error.
+* ''Reference values have no literal'': a `refbase` or `externalref` field cannot be compared in the DSL — only through a JSON `eq`. Writing `origin -> (<uuid>)` against a `refbase` field returns no rows and no error, a known gap. A `ref` is compared by following it: `tag -> (<uuid>)`.

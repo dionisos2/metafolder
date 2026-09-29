@@ -24,7 +24,7 @@ one position, whatever the size of the subtree below it
 A node's path is the names from its root down, joined by `/`
 ([[TreeRef path conventions]]); names are byte strings, shown as text
 ([[Tree names]]). Queries follow a forest with `->` and `->*`, and read a position's
-parts with the `:parent`, `:path` aspects (spec-query "Field aspects").
+parts with the `:parent`, `:path` aspects ([[Following references]], [[Field aspects]]).
 
 !! Reference
 

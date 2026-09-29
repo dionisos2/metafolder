@@ -219,7 +219,7 @@ fn s(v: &str) -> Value {
 fn dt(iso: &str) -> Value {
     Value::DateTime(metafolder_core::date::iso_to_ms(iso).unwrap())
 }
-/// A comparison reading an explicit aspect (spec-query "Field aspects").
+/// A comparison reading an explicit aspect (doc "Field aspects").
 fn eq_as(field: &str, value: Value, aspect: Aspect) -> Query {
     Query::Eq { field: field.into(), value, aspect }
 }
@@ -1498,7 +1498,7 @@ fn resolving_forest_leaves_is_deterministic() {
 #[test]
 fn parent_aspect_presence_matches_the_oracle() {
     // `field:parent IS ABSENT` is the forest roots, `IS PRESENT` every node
-    // under a real parent (spec-query "Forest roots"). Both are partitions the
+    // under a real parent (doc "Field aspects"). Both are partitions the
     // reverse index already holds, so neither may be declined.
     let (mut o, [_root, _b, _c, _d]) = forest();
     let _second_root = o.create(vec![tref("loc", None, "other")]);

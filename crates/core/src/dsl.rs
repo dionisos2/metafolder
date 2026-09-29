@@ -249,7 +249,7 @@ fn lex_string(chars: &[char], i: &mut usize) -> Result<Tok, String> {
 }
 
 /// Lexes a maximal run of ASCII hex characters as a UUID atom
-/// (spec-query "Query DSL", the UUID-atom bullet).
+/// (doc "Query DSL grammar", the UUID-atom bullet).
 ///
 /// Returns `Some` for a run of exactly 32 (a UUID, or a 32-hex field name —
 /// the parser decides by what follows); `None` when the run is *not*
@@ -397,7 +397,7 @@ fn is_operator(tok: &Tok) -> bool {
     )
 }
 
-/// The four aspect names, as the DSL spells them (spec-query "Field aspects").
+/// The four aspect names, as the DSL spells them (doc "Field aspects").
 fn aspect_from_name(name: &str) -> Option<Aspect> {
     match name {
         "raw" => Some(Aspect::Raw),
@@ -554,7 +554,7 @@ impl Parser {
 
     /// `"uuid_in" "(" [ uuid { "," uuid } [","] ] ")"` — an explicit set of
     /// metarecords, the same `UuidIn` node a chain of bare atoms folds into
-    /// (spec-query "Query DSL"). It buys spelling, not evaluation: N uuids cost
+    /// (doc "Query DSL grammar"). It buys spelling, not evaluation: N uuids cost
     /// one keyword and a comma each instead of N `OR`s, which is what a client
     /// building the list out of a multi-selection writes. A trailing comma is
     /// accepted (a loop emits one) and an empty list is the empty set — an
@@ -625,7 +625,7 @@ impl Parser {
     /// `("osm" | "osmd") "(" field "," string ")"` — the term string is split
     /// on whitespace into the OSM terms.
     /// Consumes the optional `":" aspect` that may follow a field name
-    /// (spec-query "Field aspects"). Absent, the aspect is `Raw`.
+    /// (doc "Field aspects"). Absent, the aspect is `Raw`.
     fn aspect(&mut self) -> Result<Aspect, String> {
         if self.peek() != Some(&Tok::Colon) {
             return Ok(Aspect::Raw);
@@ -661,7 +661,7 @@ impl Parser {
         // `osm(field:path, …)` / `osmd(field:value, …)` are accepted spellings
         // of the same call: the aspect fills `mode`, which the IR keeps. An
         // aspect that contradicts the operator is an error rather than a silent
-        // override (spec-query "Query DSL").
+        // override (doc "Query DSL grammar").
         let wanted = if mode == OsmMode::Path { Aspect::Path } else { Aspect::Value };
         match self.aspect()? {
             Aspect::Raw => {}
@@ -721,8 +721,7 @@ impl Parser {
                 Some(Tok::Present) => Ok(Query::IsPresent { field, aspect }),
                 Some(Tok::Absent) => Ok(Query::IsAbsent { field, aspect }),
                 // `IS UNKNOWN` asks whether the field row exists at all, so
-                // there is no component for an aspect to read (spec-query
-                // "Field aspects").
+                // there is no component for an aspect to read (doc "Field aspects").
                 Some(Tok::Unknown) if aspect != Aspect::Raw => {
                     Err("IS UNKNOWN takes no aspect: it asks whether the field exists at all"
                         .into())
@@ -749,7 +748,7 @@ impl Parser {
             },
             // The traversal arrows read the reference itself, not a component
             // of the value, so an aspect has nothing to qualify there
-            // (spec-query "Field aspects").
+            // (doc "Field aspects").
             Some(tok @ (Tok::Arrow | Tok::ArrowStar | Tok::FatArrowStar))
                 if aspect != Aspect::Raw =>
             {
@@ -1473,7 +1472,7 @@ mod tests {
         err("(a = 1");
     }
 
-    // ── bare UUID atoms (spec-query "Query DSL", the UUID-atom bullet) ───────
+    // ── bare UUID atoms (doc "Query DSL grammar", the UUID-atom bullet) ───────
 
     const U1: &str = "8f3a2b1c4d5e6f708192a3b4c5d6e7f8";
     const U2: &str = "47ab0000000000000000000000000001";
@@ -1799,7 +1798,7 @@ mod tests {
         err(&format!("{U1}f"));
     }
 
-    // The two tag-query examples shipped in the GUI help (queries.html "Tags"):
+    // The two tag-query examples shipped in the documentation (doc "Writing queries", "Tags"):
     // selecting records by a TreeRef `path` tag with the exact-node `=` and the
     // subtree `=>*` forms. These keep the docs honest — if the grammar changes,
     // they fail here.

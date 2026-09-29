@@ -43,7 +43,8 @@ RECLAIMABLE  SIZE      COUNT  HASH
     806 MiB   403 MiB      3  77b2e510…
 ```
 
-It is a formatting of an ordinary query. The same questions, asked directly:
+It is a formatting of an ordinary query. The same questions, asked directly
+([[Same-value matching]]):
 
 ```
 mf_schema = "duplicate_group"                       # every group

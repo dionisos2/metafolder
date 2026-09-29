@@ -274,7 +274,7 @@ The one gap that is *not* a bug is a cursor from another (query, sort): that is
 the client's own input, answered =400=.
 
 The type-dependent and IR-level =400=\s are raised before any of this, by
-=query_validate= (spec-query "Comparison validity", "Field aspects"): an ordered
+=query_validate= (doc "Comparisons", "Field aspects"): an ordered
 comparison on a =bool=, on a reference, or on a bare =tree_ref=; =matches= on a
 bare =tree_ref=; an ordered operator or =matches= under =:parent=, which reads a
 uuid; an =osm= path on a non-=tree_ref= field; an empty =and= / =or=; a pattern

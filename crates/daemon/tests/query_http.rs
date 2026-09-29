@@ -282,7 +282,7 @@ async fn test_exact_node_path_query_is_served_by_the_index() {
     assert_eq!(ask("/music/rock").await, json!([]));
     // A separator-free operand is a path too — here it resolves to nothing,
     // `mfr_path` being "/"-rooted. The name convention is the `value` aspect,
-    // which still reaches both "jazz" nodes (spec-query "Field aspects").
+    // which still reaches both "jazz" nodes (doc "Field aspects").
     assert_eq!(ask("jazz").await, json!([]));
     let (status, body) = request(
         &app,
@@ -1160,7 +1160,7 @@ async fn test_a_query_sees_the_writes_committed_before_it() {
 #[tokio::test]
 async fn test_query_sort_on_tree_ref_uses_the_full_path() {
     // End to end: a sort on a `tree_ref` field orders by the whole path,
-    // component by component (spec-data-model "Sorting a `TreeRef` field") —
+    // component by component (doc "Pagination and sorting") —
     // not by the last name component, which would interleave the directories.
     let (app, repo, root) = setup("treesort").await;
     let node = |parent: Option<&str>, name: &str| {

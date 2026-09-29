@@ -6,7 +6,7 @@ summary: The resource routes — one metarecord, one field by name, one row by i
 
 The daemon's API has two layers: ''resources'' — one thing at its URL, cheap and
 idempotent — and the ''set layer'', `POST …/query/*`, where every body carries a
-query. They overlap only on one metarecord (its URL, or a `uuid_in` query). Reading
+query ([[Query endpoints]]). They overlap only on one metarecord (its URL, or a `uuid_in` query). Reading
 ''several'' metarecords is a query: there is no list or batch-read route.
 
 |!Route |!Does |

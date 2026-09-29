@@ -1,0 +1,32 @@
+title: Same-value matching
+tags: Query
+kind: reference
+aliases: same_as same-value
+summary: same(field, query) matches the metarecords sharing a value of field with one the sub-query matches — without naming the value.
+
+`same(field, query)` answers "the metarecords that share a value of `field` with
+''this'' one" without the caller knowing the value:
+
+```
+same(mfr_duplicate_group, 3f2a…9b)                 # the files byte-identical to that one
+same(mfr_meta_artist, mfr_path = "/music/a.flac")  # the other tracks by its artist
+```
+
+A metarecord matches when one of its `field` values that is not `nothing` equals one
+held in `field` by a metarecord matching `query`. `nothing` never takes part — "the
+same absence" is no resemblance. It is ''reflexive'': the target's own metarecords
+match, since this is the equivalence class, not the neighbourhood; "the others" is
+`same(f, X) AND NOT X`. A target without a value contributes nothing; an empty
+target matches nothing. It compares values, not references, so it applies to every
+type: `ref` values for duplicate groups, strings for an artist, integers for a size.
+
+In the IR: `{"type": "same_as", "field": …, "target": <query>}`. The daemon evaluates
+the target, then walks the field's values keeping those whose holders meet it: its
+cost is the field's number of distinct values, not its rows.
+
+''Why not a reverse arrow.'' The traversal it replaces would be an inverse `->` —
+"the records referenced ''by'' a match" — spelled `field <- (query)`. That spelling
+is taken: the lexer reads `<` then `-` then a digit as a negative literal, so
+`size<-5` already means `size < -5`. And `same` is the better primitive: an inverse
+arrow would say the duplicate case only as the double traversal `f -> (f <- (…))`,
+where `same` says it once and extends to fields that are not references.

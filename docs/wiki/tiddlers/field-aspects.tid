@@ -1,0 +1,54 @@
+title: Field aspects
+tags: Query
+kind: reference
+aliases: aspect aspects
+summary: field:value, field:parent and field:path say which part of a value a predicate reads; on a tree_ref, = is the exact node.
+
+A field reference may name an ''aspect'': which component of the value the predicate
+reads. The DSL spells it `field:aspect`; the IR carries an `aspect` key, omitted for
+`raw`. The same four names serve the GUI's columns and finder, so one vocabulary
+describes reading a value everywhere.
+
+|!Aspect |!Reads |!Applies to |
+|`raw` |the value itself — on a `tree_ref`, the node |every type (the default) |
+|`value` |the row's own text — on a `tree_ref`, the node's own name |every type |
+|`parent` |a `tree_ref`'s parent node |`tree_ref` only |
+|`path` |the whole path from the root, `a/b/c` |`tree_ref` only |
+
+`parent` or `path` on a field that is not a `tree_ref` is refused with `400`, and so
+is an aspect on `IS UNKNOWN`.
+
+''Equality is the exact node.'' On a `tree_ref`, `=`/`!=` with a string is resolved
+to the one node at that path ([[TreeRef path conventions]]): `mfr_path =
+"/music/jazz"`, `path = "music/jazz"`, and a forest root by its bare name,
+`path = "music"`. A path that is no node matches nothing. It costs one lookup, and so
+does `!=` — which is not the complement of `=`: a metarecord without the field
+satisfies neither. By leaf name wherever it sits, it is `mfr_path:value = "2021"`. On
+any other type `raw` and `value` coincide: `title = "x"` is `title:value = "x"`.
+
+''An aspect is required where `raw` means nothing.'' Ordering or regex-matching a
+`(parent, name)` couple has no meaning, so on a `tree_ref` the ordered operators and
+`MATCHES` are refused with `400` unless `:value` or `:path` is given — `path:value <
+"m"`, `path:path MATCHES "^music/"`. Silently reading the name instead would be the
+kind of implicit rule aspects exist to remove.
+
+''Forest roots.'' `field:parent IS ABSENT` matches the nodes whose parent is absent:
+the roots of the forest — the only predicate form for them, since `->` cannot name
+"no parent" ([[Tree endpoints]] has `tree/roots`). `field:parent IS PRESENT` is every
+other node. `field:parent = "<path>"` is the same set as `field -> "<path>"`, spelled
+as a comparison; `field:parent != "<path>"` is every node under another parent, roots
+included, and every node when the path is no node. All four are bitmap lookups, not
+scans.
+
+''`parent` reads a node'', so only the equality-shaped predicates apply to it:
+`IS PRESENT`, `IS ABSENT`, `=`, `!=`. An ordered operator or `MATCHES` under `parent`
+is refused, naming `:value` and `:path` as the candidates.
+
+''Sorting is not aspect-aware'': a `tree_ref` sort always orders by the whole path
+([[Pagination and sorting]]) — selecting by name is useful, ordering by name alone
+just interleaves every folder.
+
+Why the vocabulary exists: `path = "…"` once meant both "this node" and "this name",
+depending on a `/` in the operand, and a forest root could not be addressed at all.
+The idiom "parent plus name" (`f -> "/parent" AND f = "name"`) broke silently when
+`=` changed meaning; search for it before touching the semantics of `=`.

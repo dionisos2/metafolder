@@ -84,17 +84,6 @@
     ]
   },
   {
-    "id": "queries",
-    "title": "Queries",
-    "file": "queries.html",
-    "aliases": [
-      "query", "focus-query", "dsl", "normal-dsl", "matches", "match",
-      "follows", "traversal", "present", "absent", "unknown", "osm", "osmd",
-      "same", "same_as",
-      "uuid", "uuid_in"
-    ]
-  },
-  {
     "id": "simplified-query",
     "title": "Simplified queries",
     "file": "simplified-query.html",

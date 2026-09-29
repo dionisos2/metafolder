@@ -780,7 +780,6 @@ pub(super) async fn track(
         })?;
         // Each component keeps its exact bytes: a POSIX name need not be UTF-8,
         // and such a file is tracked like any other (doc "Tree names").
-        //
         let mut rel = crate::relpath::RelPath::root();
         for comp in rel_path.components() {
             let std::path::Component::Normal(name) = comp else {

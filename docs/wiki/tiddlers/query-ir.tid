@@ -1,0 +1,40 @@
+title: Query IR
+tags: Query
+kind: reference
+audience: dev
+summary: The JSON form every query compiles to — what the daemon receives — one node per predicate or combinator.
+
+A query travels as a recursive JSON object, internally tagged by `type`
+(`metafolder_core::query::Query`):
+
+|!Node |!`type` |!Matches |
+|IsPresent |`is_present` |the field exists and is not `nothing` |
+|IsAbsent |`is_absent` |the field exists and is `nothing` |
+|IsUnknown |`is_unknown` |the field does not exist |
+|Eq / Neq |`eq` / `neq` |equality, inequality |
+|Lt / Lte / Gt / Gte |`lt` / `lte` / `gt` / `gte` |ordered comparison |
+|And / Or |`and` / `or` |all / at least one of `operands` |
+|Not |`not` |`operand` does not match |
+|Follows |`follows` |a `ref` or `tree_ref` whose direct referent matches `target` |
+|FollowsTransitive |`follows_transitive` |`tree_ref` only: a descendant of `target` (a path, or a sub-query); `inclusive: true` adds the target itself |
+|Matches |`matches` |a string field matches a regex `pattern` |
+|Osm |`osm` |ordered substrings, `terms` and `mode` (`direct` or `path`) |
+|SameAs |`same_as` |shares a value of `field` with a metarecord matching `target` |
+|UuidIn |`uuid_in` |the metarecord's uuid is in `uuids` (32 hex; empty matches nothing) |
+
+Every predicate that reads a value — `is_present`, `is_absent`, the comparisons
+and `matches` — takes an optional `aspect` (`value`, `parent`, `path`; omitted for the
+default `raw`). `osm` has its own `mode` instead; `is_unknown` reads no component and has none. A
+`follows` target is a bare path string or a query object.
+
+```
+{"type": "and", "operands": [
+  {"type": "gt", "field": "rating", "value": {"type": "int", "value": 3}},
+  {"type": "follows_transitive", "field": "mfr_path", "target": "/music/jazz", "inclusive": false}]}
+{"type": "osm", "field": "mfr_path", "terms": ["scien", "fic"], "mode": "path"}
+{"type": "same_as", "field": "mfr_duplicate_group", "target": {"type": "uuid_in", "uuids": ["3f2a…"]}}
+```
+
+`uuid_in` is the bridge between the resource layer and the set layer: it lets every
+`/query/*` operation target an explicit set — a GUI multi-selection — in one request
+rather than one per uuid. The DSL spells it as a bare uuid or `uuid_in(…)`.

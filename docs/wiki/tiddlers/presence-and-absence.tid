@@ -1,0 +1,22 @@
+title: Presence and absence
+tags: Query
+kind: reference
+aliases: present absent unknown
+summary: IS PRESENT, IS ABSENT and IS UNKNOWN tell a value, an explicit nothing and a missing field apart.
+
+|!Predicate |!Matches |
+|`field IS PRESENT` |the field has a value that is not `nothing` |
+|`field IS ABSENT` |the field is set to `nothing` — an explicit "does not apply" |
+|`field IS UNKNOWN` |the field was never set on this metarecord |
+
+A deleted file's metarecord has `mfr_path IS ABSENT` (the path was set to `nothing`),
+not `UNKNOWN`. Why the two absences are kept apart: [[Nothing versus unknown]].
+
+A `nothing` row never matches a value comparison: `rating != 3` does not match a
+metarecord whose `rating` is `nothing` or unknown — `!=` is not the complement of
+`=`. "Not 3, or no rating" is `NOT rating = 3`. A comparison ''with'' `nothing` is
+refused ([[Comparisons]]): absence is asked with these three.
+
+Under an aspect the same words read one level down: `path:parent IS ABSENT` matches
+the nodes whose parent is absent — the roots of a forest ([[Field aspects]]). An aspect
+on `IS UNKNOWN` is refused: there is no row, so no component to read.

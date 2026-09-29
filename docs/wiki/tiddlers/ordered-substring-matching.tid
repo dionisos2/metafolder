@@ -1,0 +1,27 @@
+title: Ordered substring matching
+tags: Query
+kind: reference
+aliases: osm osmd finder
+summary: osm and osmd — the finder's predicate — match whitespace-separated terms as substrings, in order, case-insensitively; osm follows the tree path.
+
+`osm(field, "con def")` matches when each whitespace-separated term appears as a
+''substring'', the terms ''in order'' and ''not overlapping'' — about `field MATCHES
+"(?i).*con.*def.*"` — always case-insensitively. It is the finder's predicate.
+
+* `osmd(field, "…")` — ''direct'': the field's own text (a string's value, a `tree_ref` node's own name). Any field; a non-text type never matches. On a multi-valued field, any row may match.
+* `osm(field, "…")` — ''path'': a `tree_ref`'s whole path, `seg1/…/segN`, the node's own name last. `/` is a barrier no single term crosses, but consecutive terms may fall in the same segment: `osm(mfr_path, "scien fic")` matches `…/science-fiction/…`. On a field that holds something other than `tree_ref` it is refused with `400` (use `osmd`).
+
+`field:path` and `field:value` are accepted spellings of the two modes. The term
+string is split on whitespace (`core::query::split_terms`, the one shared rule);
+no term at all matches every metarecord with a value in the field. In the IR:
+`{"type": "osm", "field": …, "terms": […], "mode": "direct" | "path"}`.
+
+''How it is answered.'' The direct mode is a text predicate like `MATCHES`, over the
+field's distinct values. The path mode is answered by the forest: a single term with
+no separator resolves the nodes whose own name holds it, and the union of their
+subtrees ''is'' the result — every descendant's path contains the term. Several
+terms, or one holding a `/`, start from the ''anchors'' of the last term (nodes whose
+name holds its end), verify each anchor's path, and take its subtree
+([[The forest in the store]]). Either way the result becomes a `uuid_in` set the rest
+of the query combines with; nothing is stored for it, so a rename or a move costs
+nothing more.

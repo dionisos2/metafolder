@@ -1,4 +1,4 @@
-//! The `:path` aspect (spec-query "Field aspects"): a predicate on the path
+//! The `:path` aspect (doc "Field aspects"): a predicate on the path
 //! assembled from the forest root, sought down the stored forest
 //! (doc "The forest in the store") — every comparison here runs through the
 //! oracle and the serving path, which must agree.

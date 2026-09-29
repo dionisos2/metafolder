@@ -463,8 +463,8 @@ pub async fn daemon_request(
 }
 
 /// Drops the `daemon_request` call made with this `abortId`, if it is still in
-/// flight; the daemon cancels the query it was running (spec-query "Timeout
-/// and interruption"). Whether there was one to drop.
+/// flight; the daemon cancels the query it was running (doc "Query limits"). Whether there was one
+/// to drop.
 #[tauri::command]
 pub fn daemon_abort(app: AppHandle, id: String) -> bool {
     app.daemon.abort(&id)

@@ -485,7 +485,7 @@ fn test_get_with_predicate() {
 #[test]
 fn test_get_with_a_uuid_in_list() {
     // The DSL list form reaches the daemon as the `uuid_in` IR node: the shell
-    // spelling of a multi-selection (spec-query "Query DSL").
+    // spelling of a multi-selection (doc "Query DSL grammar").
     let (repo, _root) = init_repo("get_uuid_in");
     let a = create_metarecord(&repo, &["x:int=1"]);
     let b = create_metarecord(&repo, &["x:int=2"]);
@@ -840,7 +840,7 @@ fn test_query_prints_matching_uuids() {
     assert_eq!(out.stdout.trim(), high);
 }
 
-// A bare UUID atom in the DSL (spec-query "Query DSL"): the whole point is
+// A bare UUID atom in the DSL (doc "Query DSL grammar"): the whole point is
 // that a UUID copied out of the GUI runs as a query and composes with the rest.
 #[test]
 fn test_query_bare_uuid_atom_selects_that_metarecord() {

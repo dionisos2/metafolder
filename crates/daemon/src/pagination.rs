@@ -1,4 +1,4 @@
-//! Keyset (cursor-based) pagination (spec-data-model "Pagination"). The
+//! Keyset (cursor-based) pagination (doc "Pagination and sorting"). The
 //! cursor is an opaque base64(JSON) token carrying the sort-key values and
 //! UUID of the last returned item, plus a hash of the query/sort context so
 //! that a cursor is only accepted by the request shape that produced it.

@@ -1,0 +1,26 @@
+title: Regular expressions in queries
+tags: Query
+kind: reference
+aliases: matches match
+summary: MATCHES runs a case-sensitive, bounded regex over a field's distinct values; a tree_ref needs :value or :path.
+
+`field MATCHES "pattern"` tests a regular expression (the `regex` crate) against the
+field's text. It is ''case-sensitive''; `(?i)` at the front of the pattern ignores
+case (`osm`/`osmd` are always case-insensitive). It is unanchored: `"jazz"` matches
+anywhere, `"^jazz$"` the whole text.
+
+On a `tree_ref` it needs an aspect ([[Field aspects]]): `field:value MATCHES …` tests
+the node's own name, `field:path MATCHES …` its whole path.
+
+Matching takes linear time — the engine never backtracks — and a pattern's compiled
+form is capped at 1 MiB (`regexp.rs`, shared with `mf_ignore` and the test oracle, so
+the forms cannot diverge). A pattern that does not compile, or is too large, is
+refused with `400` before evaluation.
+
+The pattern runs over the field's ''distinct values'', not its rows: a field whose
+values repeat — a tag, an extension, a folder name — costs its number of distinct
+values. Inside an `AND` the text operand runs last, on the running intersection, so
+"this folder, name matching X" costs the folder rather than the repository. Its
+literal parts first narrow the candidates by trigrams ([[Text search in the store]]).
+A search with no literal and no narrowing reads every value of the field — cheap on
+a small repository, not on five million files ([[Query limits]]).

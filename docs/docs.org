@@ -279,27 +279,36 @@ spec-data-model « One position per forest », « Referential integrity », « T
 names », les deux paragraphes de recherche par chemin, les routes d'arbre ;
 spec-file-tracking « Tree Cache ».
 
-** TODO 10. Requêtes
+** FAIT 10. Requêtes
 
-- [ ] =Query= — overview
-- [ ] =Writing queries= — guide
-- [ ] =Query DSL grammar= — reference
-- [ ] =Query IR= — reference, dev (le JSON =Query=)
-- [ ] =Presence and absence= — reference (logique à trois valeurs)
-- [ ] =Comparisons= — reference (typage, validité)
-- [ ] =Field aspects= — reference (=:value=, =:parent=, =:path=)
-- [ ] =Regular expressions in queries= — reference (=matches=, borné)
-- [ ] =Ordered substring matching= — reference (=osm=)
-- [ ] =Same-value matching= — reference (=same()=, pourquoi pas de flèche inverse)
-- [ ] =Following references= — reference (=follows=, transitif)
-- [ ] =Query limits= — reference (tailles, 200 opérandes, délai, interruption)
-- [ ] =Pagination and sorting= — reference (paramètres, spécification de tri, enveloppe, curseur)
-- [ ] =Query endpoints= — reference, dev (=POST /query=, la famille =/query/*=)
-- [ ] =Editing a set of metarecords= — guide (=/query/fields/*=, =mf metarecord -q … field=)
+- [X] =Query= — overview (alias =queries=, =dsl=… de l'ancienne page)
+- [X] =Writing queries= — guide (la page =queries.html=, exemples)
+- [X] =Query DSL grammar= — reference
+- [X] =Query IR= — reference, dev
+- [X] =Presence and absence= — reference
+- [X] =Comparisons= — reference (typage, validité, dates)
+- [X] =Field aspects= — reference
+- [X] =Regular expressions in queries= — reference
+- [X] =Ordered substring matching= — reference
+- [X] =Same-value matching= — reference
+- [X] =Following references= — reference
+- [X] =Query limits= — reference
+- [X] =Pagination and sorting= — reference
+- [X] =Query endpoints= — reference, dev
+- [X] =Editing a set of metarecords= — guide
+- [X] =How queries are evaluated= — reference, dev (ajoutée : étapes, réécriture déterministe, oracle)
+- [X] =Choosing DSL syntax= — rationale, dev (ajoutée : la mémoire =dsl-sigil-budget=)
 
-Sources : spec-query sauf « Simplified query language » ; spec-data-model
-« Pagination » ; help =queries.html= (hors grammaire simplifiée) ;
-mémoires =field-aspects=, =query-rewrite-must-be-deterministic=, =dsl-sigil-budget=.
+Vérification contre le code : un =->*= se sert d'un bitmap de descendants (la
+spec décrivait l'expansion itérative par le cache d'arbre) ; =GET /metarecords=
+n'existe plus (la spec « Pagination » le citait) ; =count= est la cardinalité du
+bitmap, pas un =COUNT(*)= ; le curseur de l'index est binaire (base64), pas du
+JSON — le curseur JSON de =pagination.rs= ne sert plus qu'à l'oracle ; =mf query=
+a disparu (=mf metarecord -q … get= a repris ses options) ; la GUI ne mémorise
+plus =resolve-tree= ; un commentaire de =index/mod.rs= parlait encore de l'ancien
+critère =/= du nœud exact. L'alias =same= reste à « Finding duplicates » (conflit).
+Sources retirées : spec-query sauf « Simplified query language » (pointeurs),
+spec-data-model « Pagination », la page =queries.html= et son entrée d'index.
 
 ** TODO 11. Langage de requête simplifié
 

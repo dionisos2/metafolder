@@ -1,0 +1,35 @@
+title: Query limits
+tags: Query
+kind: reference
+summary: A query is refused past 2000 nodes or 200 operands in one AND/OR; no deadline by default, but timeout_ms, a cancel or a hang-up stops it within a few hundred keys.
+
+!! Size
+
+Two bounds are checked before evaluation — whether a query is too large is a
+property of the query — and refused with `400` naming the limit and the value seen:
+
+* ''2000 nodes'' in the whole query tree, operands and sub-conditions included (`MAX_QUERY_NODES`);
+* ''200 operands'' in any single `AND` or `OR` (`MAX_COMBINATOR_OPERANDS`).
+
+Neither is a limit of the evaluator — a wide `OR` is N bitmap unions. A query past
+them is almost always a mistake in whatever built it, and is better refused than
+served. What reaches them is membership — "this field is one of these N values" —
+written as an `OR` of N `=`: when the values are uuids, use `uuid_in(…)` (the DSL
+folds an `OR` of bare uuids into one on its own). The DSL also caps nesting at 128
+levels ([[Query DSL grammar]]).
+
+!! Time
+
+Neither bound limits execution: a small query can still be slow — a regex with no
+literal over a huge field, a subtree walk sorted by a field with many distinct
+values. A slow query is not necessarily wrong, so the daemon sets no deadline of its
+own; the client that knows what it waits for does:
+
+* `"timeout_ms"` on `POST /query`: past it, the query stops and answers `409` with `{"error": "query timed out", "reason": "timeout"}`, its task ending `failed`;
+* a cancel on the query's task ([[Cancelling a task]]) stops it the same way, `reason: "cancelled"`;
+* so does the client hanging up — the GUI dropping a query the user has replaced, a Ctrl-C on `mf`: nobody is left to read the answer.
+
+Both are checked ''inside'' the evaluation: the store polls them every 256 keys it
+reads, so a query stops within a few hundred keys whatever it is doing. The time
+counts from the request, the wait for the repository included — but that wait itself
+is not interrupted. Pinned by counting keys, not by timing (`tests/query_interrupt.rs`).

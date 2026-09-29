@@ -1,0 +1,32 @@
+title: Comparisons
+tags: Query
+kind: reference
+summary: Comparisons are same-type, numbers form one domain, dates compare by instant; comparing with nothing or ordering a type with no order is refused up front.
+
+A field name has one value type in the repository ([[One value type per field name]]),
+so a comparison is always ''same-type'': the operand is compared with rows of the
+field's type, with no cross-type rules. `int` and `float` form one numeric domain;
+`datetime` compares by its instant (Unix milliseconds). A `nothing` row never matches
+a value comparison ([[Presence and absence]]).
+
+A date operand needs the date literal — `mfr_mtime > @"2024-01-01"` or
+`@1704067200000`; a plain string would compare against nothing, the field being a
+`datetime`. The ISO-8601 forms are those `core::date::iso_to_ms` accepts
+(`@"2024-01-01"`, `@"2024-01-01 12:30:00"`), read as UTC; an unparsable one is
+refused.
+
+On a `tree_ref` field a string operand names a node: `mfr_path = "/music/jazz"` is
+the one node at that path ([[Field aspects]]).
+
+!! Refused before evaluation
+
+Two shapes have no useful meaning and are refused with `400` before anything
+evaluates the query — a property of the query, not of what serves it:
+
+* a comparison whose operand is `nothing` — absence is asked with `IS ABSENT` / `IS UNKNOWN`;
+* an ''ordered'' comparison (`<`, `<=`, `>`, `>=`) on a type with no meaningful order: `bool` and the reference types. Equality on them is fine; strings order lexicographically, numbers and dates numerically.
+
+Other refusals need the field's stored type — a tree-only aspect on another type,
+`osm` in path mode on a non-`tree_ref`, a `:path` operand that is not a string —
+and are made one step later from the daemon's field catalogue, still before
+evaluation. Size limits are checked at the same point ([[Query limits]]).

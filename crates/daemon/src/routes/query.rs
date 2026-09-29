@@ -27,8 +27,7 @@ pub(super) struct QueryBody {
     #[serde(default)]
     count: bool,
     /// Stops the query with a `409` (`reason: "timeout"`) once this many
-    /// milliseconds have passed; absent, it runs to the end (spec-query
-    /// "Timeout").
+    /// milliseconds have passed; absent, it runs to the end (doc "Query limits").
     #[serde(default)]
     timeout_ms: Option<u64>,
 }
@@ -72,7 +71,7 @@ pub(super) async fn run_query(
 /// Cancels a query's task when dropped. The handler holding it is dropped
 /// before it completes only when the client hangs up — the GUI dropping a query
 /// a newer one replaced, a Ctrl-C on `mf` — and nobody is left to read the
-/// answer (spec-query "Timeout and interruption"). Dropped after the task
+/// answer (doc "Query limits"). Dropped after the task
 /// ended, it does nothing. `Weak`: it must not keep the repository alive.
 pub(super) struct CancelOnHangUp {
     repo: std::sync::Weak<RepoState>,
@@ -246,7 +245,7 @@ fn run_query_filter(
 ) -> Result<QueryPage, ApiError> {
     // Reject ill-defined comparisons and over-large queries upfront, before
     // anything is evaluated, so neither rejection depends on how the query
-    // happens to be served (spec-query "Limits", "Comparison validity").
+    // happens to be served (doc "Query limits", doc "Comparisons").
     crate::query_validate::validate_query(&body.query)?;
     crate::query_validate::check_query_size(&body.query)?;
     // The rejections that need the field's type follow, as soon as the index is
@@ -276,7 +275,7 @@ fn run_query_filter(
 
     let (mut roots, indexed_query) = prepare_indexed_query(conn, cache, &index, &body.query)?;
     // Full-path sort keys for a `tree_ref` sort key, rebuilt from the store's
-    // forest (spec-data-model "Sort specification", doc "The forest in the store").
+    // forest (doc "Pagination and sorting", doc "The forest in the store").
     let sort_keys = crate::tree_cache::SortKeys::new(conn);
     roots.keys = Some(&sort_keys);
     // The preparation above (path seeds, forest leaves) can be the heavy phase

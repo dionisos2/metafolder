@@ -1,5 +1,5 @@
-// metarecord-list drops what a newer query replaced (spec-query "Timeout and
-// interruption"): a page or a count still on its way when the query changes
+// metarecord-list drops what a newer query replaced (doc "Query limits"): a page or a count still
+// on its way when the query changes
 // is aborted — the daemon cancels it rather than finishing it for nobody,
 // which kept the repository busy while the new query waited — and the new
 // query runs once the old one has unwound.

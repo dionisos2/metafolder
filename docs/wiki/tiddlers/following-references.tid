@@ -1,0 +1,33 @@
+title: Following references
+tags: Query
+kind: reference
+aliases: follows traversal arrow
+summary: -> follows a ref or a tree_ref to its referent; ->* and =>* reach every descendant in a tree, strictly or with the target.
+
+|!Form |!Matches |
+|`field -> (query)` |metarecords whose `field` points at a metarecord matching `query` — a `ref`'s target, a `tree_ref`'s parent |
+|`field -> "path"` |`tree_ref`: metarecords whose parent is the node at `path` |
+|`field ->* "path"` / `field ->* (query)` |`tree_ref`: every descendant of the node at `path`, or of any node matching `query` — the nodes themselves excluded |
+|`field =>* "path"` / `field =>* (query)` |the same with the nodes themselves: the whole subtree |
+
+```
+author -> (name = "Coltrane")
+mfr_path -> (mfr_path:value = "2021")     # the direct children of every folder named 2021
+mfr_path ->* (mfr_path:value = "2021")    # everything inside them
+tag -> (path =>* "music/jazz")            # a tag and all its narrower tags
+tag -> (3f2a…9b)                           # the records pointing at that metarecord
+```
+
+`->*` and `=>*` are `tree_ref`-only: on a `ref` field they are refused with `400`.
+A path operand follows [[TreeRef path conventions]]; one that is no node matches
+nothing. A sub-query target is evaluated on its own, and overlapping subtrees count
+once. In the IR the arrows are `follows` and `follows_transitive` (`inclusive: true`
+for `=>*`).
+
+A subtree is one read of the node's descendant bitmap, so `mfr_path ->* "/music"`
+costs the same on a folder of ten files and on one of a million
+([[The forest in the store]]).
+
+The strict default of `->*` is the opposite of `same`'s reflexive one
+([[Same-value matching]]): there, including the target is a special case of a
+traversal; here, excluding it would break the class.

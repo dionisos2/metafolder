@@ -63,8 +63,7 @@ pub struct DaemonProxy {
     internal_dirs: Mutex<std::collections::HashMap<String, std::path::PathBuf>>,
     /// The calls in flight that the frontend may abort, by the id it gave
     /// them: firing one drops its request, and with it the connection — which
-    /// the daemon takes as a cancel of the query it was running (spec-query
-    /// "Timeout and interruption").
+    /// the daemon takes as a cancel of the query it was running (doc "Query limits").
     aborts: Mutex<Aborts>,
 }
 

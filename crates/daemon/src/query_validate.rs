@@ -5,8 +5,8 @@
 //! it is a `tree_ref` forest — which is why they used to be made by the SQL
 //! compiler, the only place that asked the database. The bitmap index carries
 //! the same map, so the rejection is made once, before the index runs, and it
-//! no longer depends on what would have served the query (spec-query "Field
-//! aspects", spec-indexing "No operand runs in SQL").
+//! no longer depends on what would have served the query (doc "Field aspects", spec-indexing "No
+//! operand runs in SQL").
 //!
 //! `type_of` answers "what does this field hold", as one of the `value_type`
 //! spellings (`"tree_ref"`, `"string"`, …), or `None` for a field with no data —
@@ -218,7 +218,7 @@ pub fn too_wide_message(got: usize) -> String {
     )
 }
 
-/// Rejects an over-large query before compiling it (spec-query "Limits").
+/// Rejects an over-large query before compiling it (doc "Query limits").
 ///
 /// Both limits are checked here, and this must run *before evaluation*:
 /// whether a query is too large is a property of the query, not of what serves
@@ -242,8 +242,7 @@ pub fn check_query_size(q: &Query) -> Result<(), ApiError> {
 }
 
 /// Validates a query's comparison nodes *upfront*, before anything evaluates
-/// them, and rejects the ones with no well-defined, useful meaning (spec-query
-/// "Comparison validity"):
+/// them, and rejects the ones with no well-defined, useful meaning (doc "Comparisons"):
 ///
 /// - a comparison against `Nothing` (use `is_absent` / `is_unknown` instead);
 /// - an *ordered* comparison (`<` `<=` `>` `>=`) on a value type that has no

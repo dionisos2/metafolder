@@ -1,5 +1,5 @@
-//! Integration tests for the `SameAs` query operator (spec-query "Same-value
-//! matching"): the metarecords sharing a value of a field with a metarecord
+//! Integration tests for the `SameAs` query operator (doc "Same-value matching"): the metarecords
+//! sharing a value of a field with a metarecord
 //! matching the sub-query, without the caller naming the value.
 
 use metafolder_core::metarecord::{Field, Value};

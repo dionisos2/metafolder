@@ -1,0 +1,26 @@
+title: Editing a set of metarecords
+tags: Query
+kind: guide
+summary: Every match of a query written in one revision — from mf metarecord -q … field, or the /query/fields/* endpoints — and undone in one step.
+
+A query selector turns a write into a write over ''every match'', in one revision
+that `mf log undo` takes back whole:
+
+```
+mf -n music metarecord -q 'mfr_path ->* "/music/jazz"' field add genre:string=jazz
+mf -n music metarecord -q 'genre = "jaz"' field set genre:string=jazz
+mf -n music metarecord -q 'tag -> (path = "old")' field remove tag:ref=8f3a…
+mf -n music metarecord -q 'rating = 0' field unset rating
+mf -n music metarecord -q 'mfr_path IS ABSENT' delete
+```
+
+Each prints how many metarecords changed: `add` counts only those that gained a row,
+so running it twice prints `0` the second time. `delete` asks for confirmation with
+the number of matches (`--force` skips it) and is atomic. `mfr_*` fields need `-f`.
+
+Check the selection first — `mf -n music metarecord -q '…' get --count` — then
+write. To target a hand-picked set, list the uuids: `-q 'uuid_in(3f2a…, 7c11…)'`.
+
+The GUI's `metarecord:bulk` does the same over a list's selection, and the daemon's
+`/query/fields/{set,add,remove,unset}` and `/query/delete` are the endpoints behind
+both ([[Query endpoints]]).

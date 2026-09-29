@@ -48,8 +48,8 @@ export function treeNameOf(metarecord, field) {
 // panel hands to `metarecord-list` (spec-gui "treeref panel type").
 //
 //   - scope 'exact'   : `tag -> (path = "music/jazz")`, the node itself. On a
-//     TreeRef field `=` is the exact node at that path (spec-query "Field
-//     aspects"), so this pins one node at every depth — a forest root included.
+// TreeRef field `=` is the exact node at that path (doc "Field aspects"), so this pins one node at
+// every depth — a forest root included.
 //   - scope 'subtree' : `tag -> (path =>* "music/jazz")`, the node *and* its
 //     descendants — classic tag inheritance, where selecting "music" also
 //     surfaces things tagged "music/rock".
