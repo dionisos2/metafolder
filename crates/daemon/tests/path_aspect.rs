@@ -1,8 +1,7 @@
 //! The `:path` aspect (spec-query "Field aspects"): a predicate on the path
-//! assembled from the forest root. The resident forest walks it; a key-value
-//! repository seeks it down its stored forest instead (spec-storage "pruned
-//! `:path` walk") — so every comparison here runs through the oracle, the
-//! resident forest and the key-value store, which must all agree.
+//! assembled from the forest root, sought down the stored forest (spec-storage
+//! "pruned `:path` walk") — every comparison here runs through the oracle and
+//! the serving path, which must agree.
 
 use metafolder_core::metarecord::{Field, Value};
 use metafolder_core::query::{Aspect, Query};

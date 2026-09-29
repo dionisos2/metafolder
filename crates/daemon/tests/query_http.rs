@@ -148,9 +148,9 @@ async fn test_same_as_over_the_wire() {
 #[tokio::test]
 async fn test_osm_path_on_a_string_field_is_rejected() {
     // `osm` path mode is tree_ref-only: on a string field the daemon answers 400
-    // with the "use osmd" hint (spec-query). The rejection lives in the SQL
-    // engine, so it must survive whatever the index decides to accelerate — an
-    // index that quietly answers "no rows" would turn a user error into a silent
+    // with the "use osmd" hint (spec-query). The rejection is made before
+    // evaluation (`query_validate`), from the field's stored type — an index
+    // that quietly answered "no rows" would turn a user error into a silent
     // empty result.
     let (app, repo, root) = setup("osmtype").await;
     create(&app, &repo, json!([{"name": "label", "value": {"type": "string", "value": "jazz"}}]))
@@ -174,7 +174,7 @@ async fn test_osm_path_on_a_string_field_is_rejected() {
 }
 
 #[tokio::test]
-async fn test_type_dependent_rejections_do_not_need_the_sql_engine() {
+async fn test_type_dependent_rejections_are_made_before_evaluation() {
     // The rejections that depend on what a field *holds* used to be made by the
     // SQL compiler, so a query only ever met them by falling back to it. They
     // are made upfront now, from the index's own type map (spec-indexing "No
@@ -1081,12 +1081,58 @@ async fn test_batch_unset_removes_the_whole_field() {
     std::fs::remove_dir_all(root).unwrap();
 }
 
-// ── In-memory index wiring (spec-indexing increment 5) ──────────────────────
-
-/// After a write advances the log HEAD, the index is rebuilt before the next
-/// query, so results reflect the write (it is never served stale).
+/// Tree paths resolve, sort and filter from the store (spec-storage increment
+/// 4 e) — a rename included, seen by the very next query.
 #[tokio::test]
-async fn test_index_reflects_writes_after_rebuild() {
+async fn test_tree_paths_are_read_from_the_store_a_rename_included() {
+    let (app, repo, _root) = setup("forest").await;
+    let tref = |parent: Option<&str>, name: &str| {
+        json!([{"name": "loc", "value": {"type": "tree_ref",
+                 "value": {"parent": parent, "name": name}}}])
+    };
+    let top = create(&app, &repo, tref(None, "top")).await;
+    let b = create(&app, &repo, tref(Some(&top), "b")).await;
+    let a = create(&app, &repo, tref(Some(&top), "a")).await;
+
+    let query = |q: Value| {
+        let app = app.clone();
+        let repo = repo.clone();
+        async move {
+            let (status, body) =
+                request(&app, "POST", &format!("/repos/{repo}/query"), Some(q)).await;
+            assert_eq!(status, StatusCode::OK, "{body}");
+            body
+        }
+    };
+    let under_top = json!({"type": "follows", "field": "loc", "target": "top"});
+    let by_path = json!([{"field": "loc", "order": "asc"}]);
+    assert_eq!(query(json!({"query": under_top, "sort": by_path})).await, json!([a, b]));
+    let on_path = json!({"type": "eq", "field": "loc", "aspect": "path",
+                         "value": {"type": "string", "value": "top/b"}});
+    assert_eq!(query(json!({"query": on_path})).await, json!([b]));
+
+    // Rename `b` to `c`: served at once, from the store.
+    let (status, body) = request(
+        &app,
+        "PUT",
+        &format!("/repos/{repo}/metarecords/{b}/fields/loc"),
+        Some(json!({"value": {"type": "tree_ref", "value": {"parent": top, "name": "c"}}})),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    let desc = json!([{"field": "loc", "order": "desc"}]);
+    assert_eq!(query(json!({"query": under_top, "sort": desc})).await, json!([b, a]));
+    let on_c = json!({"type": "eq", "field": "loc", "aspect": "path",
+                      "value": {"type": "string", "value": "top/c"}});
+    assert_eq!(query(json!({"query": on_c})).await, json!([b]));
+}
+
+// ── Read after write ─────────────────────────────────────────────────────────
+
+/// A query reads a snapshot of the store taken when it starts, so it sees every
+/// write committed before it.
+#[tokio::test]
+async fn test_a_query_sees_the_writes_committed_before_it() {
     let (app, repo, root) = setup("freshness").await;
     create(&app, &repo, json!([{"name": "rate", "value": {"type": "int", "value": 5}}])).await;
 
@@ -1098,37 +1144,15 @@ async fn test_index_reflects_writes_after_rebuild() {
         })
     };
 
-    // First query builds the index from the current state.
     let (_, p) = request(&app, "POST", &format!("/repos/{repo}/query"), Some(q(5))).await;
     assert_eq!(p["total"], json!(1));
 
-    // A second create advances HEAD; the next query must rebuild and see it.
+    // A second create; the next query must see it.
     create(&app, &repo, json!([{"name": "rate", "value": {"type": "int", "value": 10}}])).await;
     let (_, p) = request(&app, "POST", &format!("/repos/{repo}/query"), Some(q(8))).await;
     assert_eq!(p["total"], json!(1), "the new rate=10 record");
     let (_, p) = request(&app, "POST", &format!("/repos/{repo}/query"), Some(q(5))).await;
     assert_eq!(p["total"], json!(2), "both records");
-
-    std::fs::remove_dir_all(root).unwrap();
-}
-
-/// A query the index does not accelerate (`matches`) falls back to the SQL
-/// engine transparently and returns the correct result.
-#[tokio::test]
-async fn test_unsupported_query_falls_back_to_sql() {
-    let (app, repo, root) = setup("fallback").await;
-    create(&app, &repo, json!([{"name": "name", "value": {"type": "string", "value": "hello"}}]))
-        .await;
-    create(&app, &repo, json!([{"name": "name", "value": {"type": "string", "value": "world"}}]))
-        .await;
-
-    let body = json!({
-        "query": {"type": "matches", "field": "name", "pattern": "^h"},
-        "limit": 100
-    });
-    let (status, page) = request(&app, "POST", &format!("/repos/{repo}/query"), Some(body)).await;
-    assert_eq!(status, StatusCode::OK, "matches query failed: {page}");
-    assert_eq!(page["results"].as_array().unwrap().len(), 1);
 
     std::fs::remove_dir_all(root).unwrap();
 }
@@ -1289,12 +1313,12 @@ async fn test_multi_term_osm_path_paginates() {
 }
 
 #[tokio::test]
-async fn test_query_limits_hold_on_both_engines() {
+async fn test_query_limits_hold_on_every_route() {
     // The node and operand limits are a property of the *query*, not of the
-    // engine that happens to serve it. A wide `or` of indexable leaves used to
-    // be accepted (the index path never checked), while the same query with one
-    // `matches` leaf in it fell through to SQL and was rejected — so whether a
-    // client saw 400 depended on an internal routing decision it cannot see.
+    // route that happens to serve it (a page, or the set layer resolving it for
+    // a write). A wide `or` of indexable leaves was once accepted by one route
+    // and rejected by another — so whether a client saw 400 depended on an
+    // internal routing decision it cannot see.
     let (app, repo, root) = setup("limits").await;
     create(&app, &repo, json!([{"name": "rating", "value": {"type": "int", "value": 1}}])).await;
 

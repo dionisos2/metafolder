@@ -1,11 +1,10 @@
-//! The page strategies of the bitmap index against the SQL oracle
+//! The page strategies of the bitmap index against the oracle
 //! (spec-indexing "A page costs the page"). A sorted page can be produced two
 //! ways: *fetch* — every match's sort key, then a partial sort — or *walk* —
 //! an ordered structure (the uuid order, the bit-slices, the forest) read until
 //! the page is full. Both must give exactly the oracle's pages, cursor after
 //! cursor, on a repository built to hit their edge cases: multi-valued keys,
-//! `Nothing` rows, metarecords lacking the key, a directory at two positions,
-//! ties.
+//! `Nothing` rows, metarecords lacking the key, a detached subtree, ties.
 
 use metafolder_core::metarecord::{Field, Value};
 use metafolder_core::query::{Aspect, FollowTarget, OsmMode, Query};
@@ -35,8 +34,7 @@ impl Rng {
     }
 }
 
-/// Not `mfr_path`, which allows one position per metarecord: this forest has a
-/// directory at two.
+/// A forest of its own, apart from `mfr_path`.
 const P: &str = "loc";
 
 fn tref(parent: Option<Uuid>, name: &str) -> Field {
@@ -113,7 +111,7 @@ fn fixture() -> (KvStore, common::TempDir) {
         let _ = w.create_metarecord(fields);
     }
     // A directory that will lose its own position, leaving its children
-    // detached: the cache keeps them apart as roots of their own, and the
+    // detached: the store keeps them apart as roots of their own, and the
     // oracle sorts them by their bare names (see index_oracle's
     // `tree_ref_sort_with_a_detached_node`). Made with a name sorting mid-way.
     let gone = w.create_metarecord(vec![tref(Some(dirs[3]), "gone")]).unwrap().uuid;
@@ -184,7 +182,7 @@ fn sorts() -> Vec<Vec<(&'static str, bool)>> {
 
 /// The oracle's pages, cursor by cursor.
 fn oracle_pages(conn: &KvStore, q: &Query, by: &[(&str, bool)], limit: usize) -> Vec<Vec<Uuid>> {
-    let sql_keys: Vec<SortKey> = by
+    let oracle_keys: Vec<SortKey> = by
         .iter()
         .map(|(f, asc)| SortKey {
             field: f.to_string(),
@@ -195,7 +193,7 @@ fn oracle_pages(conn: &KvStore, q: &Query, by: &[(&str, bool)], limit: usize) ->
     let mut cursor: Option<String> = None;
     loop {
         let (page, next) =
-            query_exec::execute(conn, q, &sql_keys, Some(limit), cursor.as_deref()).unwrap();
+            query_exec::execute(conn, q, &oracle_keys, Some(limit), cursor.as_deref()).unwrap();
         pages.push(page);
         match next {
             Some(c) => cursor = Some(c),

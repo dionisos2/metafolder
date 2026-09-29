@@ -1,12 +1,12 @@
-//! Integration tests for the query engine: predicate compilation, graph
-//! traversal, sorting and keyset pagination (spec-query, spec-data-model).
+//! Integration tests for the query semantics — predicates, graph traversal,
+//! sorting — each query run through the serving path and the oracle, which must
+//! agree (spec-query, spec-data-model).
 
 use metafolder_core::metarecord::{Field, Value};
 use metafolder_core::query::{Aspect, FollowTarget, Query};
 use metafolder_daemon::log::Writer;
 use metafolder_daemon::query_result::{SortKey, SortOrder};
 use metafolder_daemon::query_validate;
-use metafolder_query_oracle as query_exec;
 use uuid::Uuid;
 
 use metafolder_daemon::kvstore::KvStore;
@@ -328,15 +328,12 @@ fn test_ordered_comparisons_datetime_and_string() {
 fn test_comparison_with_nothing_is_rejected() {
     let mut f = Fixture::new();
     f.create(vec![Field::new("rating", Value::Int(1))]);
-    let err = query_exec::execute(
-        &f.conn,
-        &Query::Eq { field: "rating".into(), value: Value::Nothing, aspect: Aspect::Raw },
-        &[],
-        None,
-        None,
-    )
-    .unwrap_err();
-    assert!(err.message.contains("nothing"), "unexpected error: {}", err.message);
+    let err = f.run_err(&Query::Eq {
+        field: "rating".into(),
+        value: Value::Nothing,
+        aspect: Aspect::Raw,
+    });
+    assert!(err.contains("nothing"), "unexpected error: {err}");
 }
 
 #[test]
@@ -427,15 +424,15 @@ fn test_validate_query_rejects_meaningless_comparisons() {
 fn test_oversized_query_is_rejected() {
     let mut f = Fixture::new();
     f.create(vec![Field::new("rating", Value::Int(1))]);
-    // A wide Or beyond the node limit: cheap to send, rejected before compiling
-    // (our check runs before any SQL is built).
+    // A wide Or beyond the node limit: cheap to send, rejected before any
+    // evaluation.
     let huge = Query::Or {
         operands: (0..=query_validate::MAX_QUERY_NODES)
             .map(|_| Query::IsPresent { field: "rating".into(), aspect: Aspect::Raw })
             .collect(),
     };
-    let err = query_exec::execute(&f.conn, &huge, &[], None, None).unwrap_err();
-    assert!(err.message.contains("too large"), "unexpected error: {}", err.message);
+    let err = f.run_err(&huge);
+    assert!(err.contains("too large"), "unexpected error: {err}");
     // A normal small query is unaffected.
     let ok = Query::Or {
         operands: vec![
@@ -443,7 +440,7 @@ fn test_oversized_query_is_rejected() {
             Query::IsAbsent { field: "rating".into(), aspect: Aspect::Raw },
         ],
     };
-    assert!(query_exec::execute(&f.conn, &ok, &[], None, None).is_ok());
+    f.run(&ok);
 }
 
 #[test]
@@ -452,20 +449,19 @@ fn test_wide_combinator_is_rejected_with_clear_message() {
     f.create(vec![Field::new("rating", Value::Int(1))]);
     let leaf = || Query::IsPresent { field: "rating".into(), aspect: Aspect::Raw };
 
-    // One past SQLite's compound-select limit: our clear message, not SQLite's
-    // opaque "too many terms in compound SELECT". (Node count stays well under
+    // One past the operand limit: a clear message. (Node count stays well under
     // MAX_QUERY_NODES, so this is the combinator check firing, not the size one.)
     let over = Query::Or {
         operands: (0..=query_validate::MAX_COMBINATOR_OPERANDS).map(|_| leaf()).collect(),
     };
-    let err = query_exec::execute(&f.conn, &over, &[], None, None).unwrap_err();
-    assert!(err.message.contains("operands"), "unexpected error: {}", err.message);
+    let err = f.run_err(&over);
+    assert!(err.contains("operands"), "unexpected error: {err}");
 
-    // Exactly the limit compiles and runs in SQLite.
+    // Exactly the limit runs.
     let at_limit = Query::Or {
         operands: (0..query_validate::MAX_COMBINATOR_OPERANDS).map(|_| leaf()).collect(),
     };
-    assert!(query_exec::execute(&f.conn, &at_limit, &[], None, None).is_ok());
+    f.run(&at_limit);
 }
 
 // ── Combinators ───────────────────────────────────────────────────────────────
@@ -533,14 +529,11 @@ fn test_matches_on_string_and_tree_ref() {
 fn test_matches_invalid_regex_is_rejected() {
     let mut f = Fixture::new();
     f.create(vec![Field::new("title", s("x"))]);
-    let res = query_exec::execute(
-        &f.conn,
-        &Query::Matches { field: "title".into(), pattern: "[unclosed".into(), aspect: Aspect::Raw },
-        &[],
-        None,
-        None,
-    );
-    assert!(res.is_err());
+    f.run_err(&Query::Matches {
+        field: "title".into(),
+        pattern: "[unclosed".into(),
+        aspect: Aspect::Raw,
+    });
 }
 
 // ── Graph traversal ───────────────────────────────────────────────────────────
@@ -1218,7 +1211,7 @@ fn test_sort_multimap_uses_min_for_asc_and_max_for_desc() {
 // cross-type sort precedence (bool < int/float < string < datetime) for a field
 // holding several value types at once. That state is no longer reachable through
 // the Writer: a field name carries a single value type repository-wide (the
-// "one value type per field name" invariant, spec-data-model). The query_exec
+// "one value type per field name" invariant, spec-data-model). The oracle's
 // cross-type precedence code is kept as a defensive fallback for any pre-invariant
 // data, but it has no supported way to be produced, so the test was removed.
 
@@ -1245,48 +1238,6 @@ fn test_sort_secondary_key_and_uuid_tiebreak() {
     let mut expected = vec![t1, t2];
     expected.sort_by(|a, b| a.as_bytes().cmp(b.as_bytes()));
     assert_eq!(got, expected);
-}
-
-// ── Pagination ────────────────────────────────────────────────────────────────
-
-#[test]
-fn test_pagination_with_sort_covers_all_without_duplicates() {
-    let mut f = Fixture::new();
-    for i in 0..23 {
-        f.create(vec![Field::new("n", Value::Int((i * 7) % 23)), Field::new("k", s("x"))]);
-    }
-    let all = Query::Eq { field: "k".into(), value: s("x"), aspect: Aspect::Raw };
-    let sort = vec![sort_desc("n")];
-    let reference = f.run_sorted(&all, &sort);
-
-    let mut paged = Vec::new();
-    let mut cursor: Option<String> = None;
-    loop {
-        let (page, next) =
-            query_exec::execute(&f.conn, &all, &sort, Some(5), cursor.as_deref()).unwrap();
-        paged.extend(page);
-        match next {
-            Some(c) => cursor = Some(c),
-            None => break,
-        }
-    }
-    assert_eq!(paged, reference);
-}
-
-#[test]
-fn test_cursor_is_rejected_for_different_query_or_sort() {
-    let mut f = Fixture::new();
-    for i in 0..3 {
-        f.create(vec![Field::new("n", Value::Int(i)), Field::new("k", s("x"))]);
-    }
-    let all = Query::Eq { field: "k".into(), value: s("x"), aspect: Aspect::Raw };
-    let (_, cursor) = query_exec::execute(&f.conn, &all, &[sort_asc("n")], Some(2), None).unwrap();
-    let cursor = cursor.unwrap();
-
-    // Same cursor with a different sort → 400.
-    let err =
-        query_exec::execute(&f.conn, &all, &[sort_desc("n")], Some(2), Some(&cursor)).unwrap_err();
-    assert!(err.message.contains("cursor"), "unexpected error: {}", err.message);
 }
 
 /// Builds a small `mfr_path` forest and returns the metarecords in the order a

@@ -7,11 +7,10 @@
 //! otherwise). Fixtures are crafted to exercise the correctness pitfalls:
 //! present/absent overlap, multi-map min/max, ZERO_UUID tree roots.
 //!
-//! "the SQL engine" in a test's comment means that oracle, which was a SQL
-//! engine until September 2026: a *reference implementation*, never something
-//! a request falls back to (spec-indexing "No operand runs in SQL"). Where a
-//! test asserts the evaluator declines a shape, what follows the decline is a
-//! `500`, not a second engine.
+//! The oracle (a SQL engine until September 2026) is a *reference
+//! implementation*, never something a request falls back to (spec-indexing
+//! "No operand runs in SQL"). Where a test asserts the evaluator declines a
+//! shape, what follows the decline is a `500`, not a second engine.
 
 use metafolder_core::metarecord::{Field, Value};
 use metafolder_core::query::{Aspect, FollowTarget, OsmMode, Query};
@@ -159,8 +158,7 @@ impl Oracle {
     /// Like [`Self::check_paginated`] but supplying the evaluator every seed
     /// `run_query_filter` resolves through the tree cache: the roots of a
     /// `Path`-target follow, and the full-path sort keys of a `tree_ref` sort
-    /// key — the forest read from the store, as a repository keeps none
-    /// resident. This is the GUI's real scenario (browse a subtree, paginate
+    /// key — the forest read from the store. This is the GUI's real scenario (browse a subtree, paginate
     /// by a sort key). The oracle resolves both itself, so it takes the query
     /// unchanged.
     fn check_paginated_with_roots(&mut self, q: &Query, by: &[(&str, bool)], limit: usize) {
@@ -318,7 +316,7 @@ fn three_valued_present_absent_overlap() {
 // ── Field catalog (GET /repos/:repo/fields) ─────────────────────────────────
 
 #[test]
-fn field_catalog_matches_sql() {
+fn field_catalog_matches_the_oracle() {
     let mut o = Oracle::new();
     // One field of every value type, plus a multi-map name and a name that only
     // ever holds Nothing (must be excluded — it has no usable value type).
@@ -375,11 +373,11 @@ fn subtrees_stay_right_through_writes() {
         let index = Index(&o.conn);
         for &n in nodes {
             let q = under(n);
-            let (mut sql, _) = query_exec::execute(&o.conn, &q, &[], None, None).unwrap();
+            let (mut want, _) = query_exec::execute(&o.conn, &q, &[], None, None).unwrap();
             let mut got = index.evaluate(&q).unwrap();
-            sql.sort();
+            want.sort();
             got.sort();
-            assert_eq!(got, sql, "below {n}");
+            assert_eq!(got, want, "below {n}");
         }
     };
     let mut all = vec![root, a, b, c];
@@ -676,7 +674,7 @@ fn reverse_tree_follows_transitive() {
                                                       // FollowsTransitive on a ref field has no descendants → empty.
     o.check(&follows_t("author", eq("tag", s("root"))));
     // Inclusive (`=>*`): the matching roots plus their descendants — parity with
-    // the SQL engine, which adds the roots to the result.
+    // the oracle, which adds the roots to the result.
     o.check(&follows_ti("loc", eq("tag", s("root")))); // root, b, c, d
     o.check(&follows_ti("loc", eq("kind", s("file")))); // matching leaves + their (no) descendants
     o.check(&follows_ti("author", eq("tag", s("root")))); // ref field → empty
@@ -705,10 +703,10 @@ fn exact_node_path_equality_declines_without_roots() {
 }
 
 #[test]
-fn exact_node_path_equality_matches_sql_with_node_roots() {
+fn exact_node_path_equality_matches_the_oracle_with_node_roots() {
     // The shape a "find this one file" query takes (`mfr_path = "/a/b.txt"`).
     // Once the caller resolves the node through the tree cache and hands it in
-    // as a node root, the index serves it — and must agree with the SQL engine,
+    // as a node root, the index serves it — and must agree with the oracle,
     // including on a path that resolves to nothing and inside a boolean.
     let (o, [_root, _b, _c, _d]) = forest();
     for path in ["root/b", "root/b/c", "root/d", "root/nope", "nope/at/all"] {
@@ -728,11 +726,11 @@ fn exact_node_path_equality_matches_sql_with_node_roots() {
             }
             let index = Index(&o.conn);
 
-            let (mut sql, _) = query_exec::execute(&o.conn, &q, &[], None, None).unwrap();
+            let (mut want, _) = query_exec::execute(&o.conn, &q, &[], None, None).unwrap();
             let (mut got, _) = index.evaluate_page_with_roots(&q, &[], None, None, &roots).unwrap();
-            sql.sort();
+            want.sort();
             got.sort();
-            assert_eq!(got, sql, "exact-node divergence on {q:?}");
+            assert_eq!(got, want, "exact-node divergence on {q:?}");
 
             assert_eq!(
                 index.count_with_roots(&q, &roots).unwrap() as usize,
@@ -744,9 +742,9 @@ fn exact_node_path_equality_matches_sql_with_node_roots() {
 }
 
 #[test]
-fn exact_node_path_inequality_matches_sql_with_node_roots() {
-    // `Neq` on an exact-node path is *not* the complement of `Eq`: the SQL
-    // engine compiles it as "at least one non-Nothing row that is not the Eq
+fn exact_node_path_inequality_matches_the_oracle_with_node_roots() {
+    // `Neq` on an exact-node path is *not* the complement of `Eq`: the oracle
+    // reads it as "at least one non-Nothing row that is not the Eq
     // match", so on a tree_ref field it is every path-bearing metarecord except
     // the node — a metarecord with no value for the field is in neither.
     let (mut o, [_root, _b, _c, _d]) = forest();
@@ -776,11 +774,11 @@ fn exact_node_path_inequality_matches_sql_with_node_roots() {
             }
             let index = Index(&o.conn);
 
-            let (mut sql, _) = query_exec::execute(&o.conn, &q, &[], None, None).unwrap();
+            let (mut want, _) = query_exec::execute(&o.conn, &q, &[], None, None).unwrap();
             let (mut got, _) = index.evaluate_page_with_roots(&q, &[], None, None, &roots).unwrap();
-            sql.sort();
+            want.sort();
             got.sort();
-            assert_eq!(got, sql, "exact-node Neq divergence on {q:?}");
+            assert_eq!(got, want, "exact-node Neq divergence on {q:?}");
 
             assert_eq!(
                 index.count_with_roots(&q, &roots).unwrap() as usize,
@@ -789,7 +787,7 @@ fn exact_node_path_inequality_matches_sql_with_node_roots() {
             );
         }
     }
-    // Without a resolved node it still defers to SQL.
+    // Without a resolved node it declines (the serving path always resolves it).
     let index = Index(&o.conn);
     assert!(index
         .evaluate(&Query::Neq { field: "loc".into(), value: s("root/b"), aspect: Aspect::Raw })
@@ -797,7 +795,7 @@ fn exact_node_path_inequality_matches_sql_with_node_roots() {
 }
 
 #[test]
-fn reverse_tree_follows_path_target_matches_sql() {
+fn reverse_tree_follows_path_target_matches_the_oracle() {
     // The path-target shape the GUI uses (`mfr_path ->* "/dir"`): the index
     // serves it once the caller resolves the path to its root through the tree
     // cache. Each path must agree with the oracle, and an unresolved path
@@ -820,20 +818,20 @@ fn reverse_tree_follows_path_target_matches_sql() {
             }
             let index = Index(&o.conn);
 
-            let (mut sql, _) = query_exec::execute(&o.conn, &q, &[], None, None).unwrap();
+            let (mut want, _) = query_exec::execute(&o.conn, &q, &[], None, None).unwrap();
             let (mut got, _) = index.evaluate_page_with_roots(&q, &[], None, None, &roots).unwrap();
-            sql.sort();
+            want.sort();
             got.sort();
-            assert_eq!(got, sql, "path divergence on {q:?}");
+            assert_eq!(got, want, "path divergence on {q:?}");
 
-            let sql_count = query_exec::count(&o.conn, &q).unwrap();
+            let want_count = query_exec::count(&o.conn, &q).unwrap();
             assert_eq!(
                 index.count_with_roots(&q, &roots).unwrap() as usize,
-                sql_count,
+                want_count,
                 "count divergence on {q:?}"
             );
 
-            // Without resolved roots the bitmap path defers to SQL.
+            // Without resolved roots the bitmap path declines.
             assert!(index.evaluate(&q).is_err(), "path target needs roots: {q:?}");
         }
     }
@@ -843,7 +841,7 @@ fn reverse_tree_follows_path_target_matches_sql() {
 fn keyset_pagination_over_path_target_with_sort() {
     // The GUI's real scenario: browse a subtree and paginate by a sort key, with
     // some descendants lacking the key (sort last). The index (path resolved via
-    // the tree cache → PathRoots) must page identically to the SQL engine.
+    // the tree cache → PathRoots) must page identically to the oracle.
     let mut o = Oracle::new();
     let root = o.create(vec![tref("loc", None, "root")]);
     // Children of root with varied rate; `c` lacks rate (must sort last).
@@ -873,8 +871,8 @@ fn keyset_pagination_over_path_target_with_sort() {
 fn matches_and_osm_direct_are_served_by_the_index() {
     // The two text predicates the index used to refuse, which sent the whole
     // query — however selective its other operands — to a full SQL scan. They
-    // are a scan of the field's *distinct* values, so they must agree with SQL
-    // on a string field (value_text), on a tree_ref field (value_name), on a
+    // are a scan of the field's *distinct* values, so they must agree with the
+    // oracle on a string field (value_text), on a tree_ref field (value_name), on a
     // field with no text at all, and on a field that does not exist.
     let mut o = Oracle::new();
     let root = o.create(vec![tref("loc", None, "root"), Field::new("label", s("Root Label"))]);
@@ -963,11 +961,11 @@ fn osm_path_q(field: &str, terms: &[&str]) -> Query {
 }
 
 #[test]
-fn osm_path_empty_terms_matches_sql() {
+fn osm_path_empty_terms_matches_the_oracle() {
     // A blank OSM path query (the search box emptied) matches every metarecord
     // with a path in the forest — the same set as `is_present`. The index must
     // serve it on its own, with no caller-resolved nodes: it used to defer to
-    // SQL, which made "everything" the slowest query in the repository.
+    // SQL, which made "everything" the slowest query in the repository (history).
     let mut o = Oracle::new();
     let root = o.create(vec![tref("loc", None, "root")]);
     let sci = o.create(vec![tref("loc", Some(root), "science")]);
@@ -979,11 +977,11 @@ fn osm_path_empty_terms_matches_sql() {
 
     let q = osm_path_q("loc", &[]);
     let index = Index(&o.conn);
-    let (mut sql, _) = query_exec::execute(&o.conn, &q, &[], None, None).unwrap();
+    let (mut want, _) = query_exec::execute(&o.conn, &q, &[], None, None).unwrap();
     let mut got = index.evaluate(&q).unwrap();
-    sql.sort();
+    want.sort();
     got.sort();
-    assert_eq!(got, sql, "empty-terms osm path divergence");
+    assert_eq!(got, want, "empty-terms osm path divergence");
     assert_eq!(
         index.count(&q).unwrap() as usize,
         query_exec::count(&o.conn, &q).unwrap(),
@@ -999,7 +997,7 @@ fn osm_path_empty_terms_matches_sql() {
 }
 
 #[test]
-fn osm_path_single_term_matches_sql() {
+fn osm_path_single_term_matches_the_oracle() {
     // A single-term OSM path ("every metarecord whose path contains the term")
     // is a union of subtrees, which the index expands from the nodes whose name
     // contains the term. It resolves those itself from the in-memory name map —
@@ -1013,23 +1011,23 @@ fn osm_path_single_term_matches_sql() {
     let _file = o.create(vec![tref("loc", Some(sub), "ep.mkv")]);
     let _music = o.create(vec![tref("loc", Some(root), "music")]);
     // Case folding and a regex metacharacter in the term must behave like the
-    // SQL `(?i)` + `regex::escape` convention.
+    // oracle's `(?i)` + `regex::escape` convention.
     let _caps = o.create(vec![tref("loc", Some(root), "SCIENCE.and.Co")]);
 
     for term in ["s", "sc", "sci", "science", "SCI", "root", "fic", "nope", "mus", ".", "e.a"] {
         let q = osm_path_q("loc", &[term]);
         let index = Index(&o.conn);
 
-        let (mut sql, _) = query_exec::execute(&o.conn, &q, &[], None, None).unwrap();
+        let (mut want, _) = query_exec::execute(&o.conn, &q, &[], None, None).unwrap();
         let mut got = index.evaluate(&q).unwrap();
-        sql.sort();
+        want.sort();
         got.sort();
-        assert_eq!(got, sql, "osm path divergence on term {term:?}");
+        assert_eq!(got, want, "osm path divergence on term {term:?}");
 
-        let sql_count = query_exec::count(&o.conn, &q).unwrap();
+        let want_count = query_exec::count(&o.conn, &q).unwrap();
         assert_eq!(
             index.count(&q).unwrap() as usize,
-            sql_count,
+            want_count,
             "osm path count divergence on term {term:?}"
         );
     }
@@ -1039,17 +1037,17 @@ fn osm_path_single_term_matches_sql() {
     let multi = osm_path_q("loc", &["science", "fiction"]);
     assert!(
         index.evaluate_page_with_roots(&multi, &[], None, None, &QueryRoots::new()).is_err(),
-        "multi-term osm path defers to SQL"
+        "a multi-term osm path is declined by the bitmaps alone"
     );
 }
 
 #[test]
-fn osm_path_separator_term_defers_and_matches_sql() {
+fn osm_path_separator_term_defers_and_matches_the_oracle() {
     // `path = "music/jazz"` is *one* term containing the separator (the tag
     // syntax's anchored form). It can only match across segments, so no single
     // node name contains it: seeding the subtree expansion from name matches
     // would answer "nothing". The index must defer, and the leaf rewrite must
-    // then produce the same set as the SQL engine.
+    // then produce the same set as the oracle.
     let mut o = Oracle::new();
     let root = o.create(vec![tref("loc", None, "root")]);
     let music = o.create(vec![tref("loc", Some(root), "music")]);
@@ -1063,22 +1061,22 @@ fn osm_path_separator_term_defers_and_matches_sql() {
         assert!(index.evaluate(&q).is_err(), "a separator-bearing term must defer: {term:?}");
 
         let rewritten = forest_query::resolve_path_leaves(&o.cache, &o.conn, None, &q).unwrap();
-        let (mut sql, _) = query_exec::execute(&o.conn, &q, &[], None, None).unwrap();
+        let (mut want, _) = query_exec::execute(&o.conn, &q, &[], None, None).unwrap();
         let (mut got, _) = index
             .evaluate_page_with_roots(&rewritten, &[], None, None, &QueryRoots::new())
             .unwrap();
-        sql.sort();
+        want.sort();
         got.sort();
-        assert_eq!(got, sql, "separator-term divergence on {term:?}");
-        assert!(!sql.is_empty(), "term {term:?} should match something");
+        assert_eq!(got, want, "separator-term divergence on {term:?}");
+        assert!(!want.is_empty(), "term {term:?} should match something");
     }
 }
 
 #[test]
-fn osm_path_multi_term_via_leaf_rewrite_matches_sql() {
+fn osm_path_multi_term_via_leaf_rewrite_matches_the_oracle() {
     // A multi-term OSM path is order-sensitive, so the index can't do it alone;
     // the forest walk resolves it to a UuidIn and the index composes. The set
-    // and count must match SQL, and the ordered semantics must hold (a reversed
+    // and count must match the oracle, and the ordered semantics must hold (a reversed
     // term order matches nothing here).
     let mut o = Oracle::new();
     let root = o.create(vec![tref("loc", None, "root")]);
@@ -1091,24 +1089,24 @@ fn osm_path_multi_term_via_leaf_rewrite_matches_sql() {
         let q = osm_path_q("loc", &terms);
         let rewritten = forest_query::resolve_path_leaves(&o.cache, &o.conn, None, &q).unwrap();
         let index = Index(&o.conn);
-        let (mut sql, _) = query_exec::execute(&o.conn, &q, &[], None, None).unwrap();
+        let (mut want, _) = query_exec::execute(&o.conn, &q, &[], None, None).unwrap();
         // A rewritten multi-term OSM path is a bare UuidIn — the index serves it
         // with no roots needed.
         let (mut got, _) = index
             .evaluate_page_with_roots(&rewritten, &[], None, None, &QueryRoots::new())
             .unwrap();
-        sql.sort();
+        want.sort();
         got.sort();
-        assert_eq!(got, sql, "multi-term osm path divergence on {terms:?}");
+        assert_eq!(got, want, "multi-term osm path divergence on {terms:?}");
     }
 }
 
 #[test]
-fn finder_shaped_query_via_leaf_rewrite_matches_sql() {
+fn finder_shaped_query_via_leaf_rewrite_matches_the_oracle() {
     // The GUI finder runs `or(osm_path(mfr_path), osmd(label), osmd(name))`. The
     // index serves the whole thing: the single-term osm_path from its term
     // nodes, the `osmd` (Direct) leaf by running the regex over the field's
-    // distinct values in memory. It must agree with the SQL engine.
+    // distinct values. It must agree with the oracle.
     let mut o = Oracle::new();
     let root = o.create(vec![tref("loc", None, "root")]);
     let sci = o.create(vec![tref("loc", Some(root), "science")]);
@@ -1129,11 +1127,11 @@ fn finder_shaped_query_via_leaf_rewrite_matches_sql() {
     let roots = QueryRoots::new();
 
     let index = Index(&o.conn);
-    let (mut sql, _) = query_exec::execute(&o.conn, &q, &[], None, None).unwrap();
+    let (mut want, _) = query_exec::execute(&o.conn, &q, &[], None, None).unwrap();
     let (mut got, _) = index.evaluate_page_with_roots(&rewritten, &[], None, None, &roots).unwrap();
-    sql.sort();
+    want.sort();
     got.sort();
-    assert_eq!(got, sql, "finder-shaped query divergence");
+    assert_eq!(got, want, "finder-shaped query divergence");
     assert_eq!(
         index.count_with_roots(&rewritten, &roots).unwrap() as usize,
         query_exec::count(&o.conn, &q).unwrap(),
@@ -1226,7 +1224,7 @@ fn sort_datetime_latest_first() {
 // ── COUNT ───────────────────────────────────────────────────────────────────
 
 #[test]
-fn count_matches_sql() {
+fn count_matches_the_oracle() {
     let mut o = sortable();
     o.check_count(&present("all"));
     o.check_count(&present("rate"));
@@ -1239,7 +1237,7 @@ fn count_matches_sql() {
 // ── Pagination ──────────────────────────────────────────────────────────────
 
 #[test]
-fn pagination_matches_sql_pages() {
+fn pagination_matches_the_oracle_pages() {
     let mut o = sortable();
     // limits that do and do not divide the total
     for limit in [1usize, 2, 3, 100] {
@@ -1253,28 +1251,29 @@ fn pagination_matches_sql_pages() {
 fn keyset_pagination_is_stable_under_insertion() {
     // Page through ascending rate; between pages insert a row that sorts BEFORE
     // the cursor. With keyset (not offset) the next page is unaffected — and it
-    // matches the SQL engine, which is also keyset.
+    // matches the oracle, which is also keyset.
     let mut o = Oracle::new();
     for n in [10, 20, 30, 40, 50] {
         o.create(vec![Field::new("all", Value::Bool(true)), Field::new("rate", i(n))]);
     }
     let q = present("all");
     let idx_keys = [SortBy { field: "rate".into(), ascending: true }];
-    let sql_keys = [SortKey { field: "rate".into(), order: SortOrder::Asc }];
+    let oracle_keys = [SortKey { field: "rate".into(), order: SortOrder::Asc }];
 
     let index = Index(&o.conn);
     let (_p1, icur) = index.evaluate_page(&q, &idx_keys, Some(2), None).unwrap();
-    let (_s1, scur) = query_exec::execute(&o.conn, &q, &sql_keys, Some(2), None).unwrap();
+    let (_s1, scur) = query_exec::execute(&o.conn, &q, &oracle_keys, Some(2), None).unwrap();
 
     // Insert a row (rate 15) that sorts within the already-returned region.
     o.create(vec![Field::new("all", Value::Bool(true)), Field::new("rate", i(15))]);
 
     let index2 = Index(&o.conn);
     let (ip2, _) = index2.evaluate_page(&q, &idx_keys, Some(2), icur.as_deref()).unwrap();
-    let (sp2, _) = query_exec::execute(&o.conn, &q, &sql_keys, Some(2), scur.as_deref()).unwrap();
+    let (sp2, _) =
+        query_exec::execute(&o.conn, &q, &oracle_keys, Some(2), scur.as_deref()).unwrap();
 
     // Both resume strictly after rate=20 → rates 30, 40 (never re-showing 15).
-    assert_eq!(ip2, sp2, "index keyset page must match the SQL keyset page");
+    assert_eq!(ip2, sp2, "index keyset page must match the oracle's keyset page");
 }
 
 #[test]
@@ -1318,7 +1317,7 @@ fn tree_sorted() -> Oracle {
 }
 
 #[test]
-fn tree_ref_sort_matches_sql_engine() {
+fn tree_ref_sort_matches_the_oracle() {
     let mut o = tree_sorted();
     let all =
         Query::Eq { field: "k".into(), value: Value::String("x".into()), aspect: Aspect::Raw };
@@ -1353,14 +1352,14 @@ fn tree_ref_sort_with_a_detached_node() {
     // rollback restores field rows straight into the table without going through
     // that check, and a repository written before it exists may hold one — so
     // the state is still reachable, and the two engines must still agree about
-    // it. Built here the way those do: by touching the rows directly. The cache
-    // leaves such a node detached — treated as a root — and the SQL path walk
-    // must stop there too.
+    // it. Built here the way those do: by touching the rows directly. The store
+    // leaves such a node detached — treated as a root — and the oracle's path
+    // walk must stop there too.
     let mut o = Oracle::new();
     let root = o.create(vec![tref("loc", None, "root")]);
     let gone = o.create(vec![tref("loc", Some(root), "gone")]);
     // Named so that a detached node read as a root ("zzz") and one read as an
-    // unresolvable path (a NULL key, which SQL would sort first) land at
+    // unresolvable path (a missing key, which would sort first) land at
     // opposite ends of the order.
     o.create(vec![tref("loc", Some(gone), "zzz"), Field::new("k", s("x"))]);
     o.create(vec![tref("loc", Some(root), "other"), Field::new("k", s("x"))]);
@@ -1373,7 +1372,7 @@ fn tree_ref_sort_with_a_detached_node() {
 #[test]
 fn same_as_is_served_by_the_index() {
     // `SameAs` walks each encoding's value → ids partition, so it must agree
-    // with the SQL self-join on every encoding: categorical (string, bool),
+    // with the oracle on every encoding: categorical (string, bool),
     // BSI (int, datetime) and reverse (ref, tree_ref) — plus the shapes where
     // it composes with the rest of the IR.
     let mut o = Oracle::new();
@@ -1497,7 +1496,7 @@ fn resolving_forest_leaves_is_deterministic() {
 }
 
 #[test]
-fn parent_aspect_presence_matches_sql() {
+fn parent_aspect_presence_matches_the_oracle() {
     // `field:parent IS ABSENT` is the forest roots, `IS PRESENT` every node
     // under a real parent (spec-query "Forest roots"). Both are partitions the
     // reverse index already holds, so neither may be declined.
@@ -1515,8 +1514,9 @@ fn parent_aspect_presence_matches_sql() {
         o.check(&Query::And { operands: vec![q.clone(), eq("kind", s("dir"))] });
     }
 
-    // On a field that is not a tree_ref the aspect is a 400, which only the SQL
-    // engine raises: the index must hand the query over, not answer empty.
+    // On a field that is not a tree_ref the aspect is a 400, which
+    // `query_validate` raises before evaluation: the index itself must decline
+    // it, not answer empty.
     let index = Index(&o.conn);
     assert!(index
         .evaluate(&Query::IsAbsent { field: "kind".into(), aspect: Aspect::Parent })
@@ -1524,7 +1524,7 @@ fn parent_aspect_presence_matches_sql() {
 }
 
 #[test]
-fn parent_aspect_equality_matches_sql_with_node_roots() {
+fn parent_aspect_equality_matches_the_oracle_with_node_roots() {
     // `field:parent = "<path>"` is the direct children of the node at that path
     // — the same set as `field -> "<path>"`, spelled as a comparison. The index
     // serves it from the node the caller resolved through the tree cache.
@@ -1548,11 +1548,11 @@ fn parent_aspect_equality_matches_sql_with_node_roots() {
             }
             let index = Index(&o.conn);
 
-            let (mut sql, _) = query_exec::execute(&o.conn, &q, &[], None, None).unwrap();
+            let (mut want, _) = query_exec::execute(&o.conn, &q, &[], None, None).unwrap();
             let (mut got, _) = index.evaluate_page_with_roots(&q, &[], None, None, &roots).unwrap();
-            sql.sort();
+            want.sort();
             got.sort();
-            assert_eq!(got, sql, "':parent' equality divergence on {q:?}");
+            assert_eq!(got, want, "':parent' equality divergence on {q:?}");
             assert_eq!(
                 index.count_with_roots(&q, &roots).unwrap() as usize,
                 query_exec::count(&o.conn, &q).unwrap(),
@@ -1589,8 +1589,8 @@ fn parent_aspect_equality_matches_sql_with_node_roots() {
 
 #[test]
 fn path_aspect_leaves_are_resolved_by_the_forest() {
-    // The `:path` aspect is the last shape that sent a whole query to SQL. It
-    // needs no SQL at all: the assembled paths come from the resident forest,
+    // The `:path` aspect was the last shape that sent a whole query to SQL. It
+    // needs no SQL at all: the assembled paths come from the store's forest,
     // and the leaf is rewritten to the uuid set it matches, which the bitmaps
     // then combine with everything else (spec-indexing "No operand runs in
     // SQL").
@@ -1625,10 +1625,10 @@ fn path_aspect_leaves_are_resolved_by_the_forest() {
         let rewritten = forest_query::resolve_path_leaves(&o.cache, &o.conn, None, &q).unwrap();
         let index = Index(&o.conn);
         let mut got = index.evaluate(&rewritten).unwrap();
-        let (mut sql, _) = query_exec::execute(&o.conn, &q, &[], None, None).unwrap();
+        let (mut want, _) = query_exec::execute(&o.conn, &q, &[], None, None).unwrap();
         got.sort();
-        sql.sort();
-        assert_eq!(got, sql, "':path' divergence on {q:?}");
+        want.sort();
+        assert_eq!(got, want, "':path' divergence on {q:?}");
     }
 }
 
@@ -1650,14 +1650,14 @@ fn a_path_leaf_on_a_non_tree_field_is_refused_before_any_engine() {
 
     // A field with no data at all is the other half of the same question, and
     // it is *not* an error: it matches nothing, in both engines. The resolver
-    // must answer that rather than decline — with no SQL engine left to defer
+    // must answer that rather than decline — with no second engine to defer
     // to, declining is a 500.
     let q = Query::Eq { field: "nowhere".into(), value: s("x"), aspect: Aspect::Path };
     assert!(query_validate::validate_query_types(&q, &|f| index.value_type(f)).is_ok());
     let rewritten = forest_query::resolve_path_leaves(&o.cache, &o.conn, None, &q).unwrap();
     assert!(index.evaluate(&rewritten).unwrap().is_empty());
-    let (sql, _) = query_exec::execute(&o.conn, &q, &[], None, None).unwrap();
-    assert!(sql.is_empty());
+    let (want, _) = query_exec::execute(&o.conn, &q, &[], None, None).unwrap();
+    assert!(want.is_empty());
 }
 
 /// Texts too long to be keyed whole on the key-value store (keyed by their

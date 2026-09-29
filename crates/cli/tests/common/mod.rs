@@ -8,9 +8,9 @@
 //! repositories directly in `$TMPDIR` and remove them with an explicit
 //! `remove_dir_all` at the end of each test — which never runs when the test
 //! panics or is interrupted. Thousands of runs later, 31 000 stale
-//! repositories filled the disk, and a full disk is not a quiet failure: SQLite
-//! answers "database or disk is full", the watcher's flush fails, and (before
-//! its failure budget) retried that batch for ever.
+//! repositories filled the disk, and a full disk is not a quiet failure:
+//! SQLite (the store then) answered "database or disk is full", the watcher's
+//! flush failed, and (before its failure budget) retried that batch for ever.
 //!
 //! So: every test directory lives under one parent, and each one removes itself
 //! when its guard goes out of scope — panic included.

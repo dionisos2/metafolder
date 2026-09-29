@@ -462,11 +462,9 @@ async fn global_tasks_lists_across_repos() {
 /// While a repository is warming, its *state* is readable and its *data* is
 /// not.
 ///
-/// The accelerators are no longer optional: the executor runs against the query
-/// index and the resident forest, so a repository whose index is not built yet
-/// is not a repository that answers slowly — it is one that cannot answer at
-/// all. A client is told so with `503`, and can watch the `load` task to know
-/// when to come back.
+/// Until its load has applied what the filesystem did meanwhile, a repository
+/// does not serve its data: a client is told so with `503`, and can watch the
+/// `load` task to know when to come back (spec-main "POST /repos/load").
 #[tokio::test]
 async fn a_warming_repository_refuses_data_and_reports_its_state() {
     let state = Arc::new(AppState::new());

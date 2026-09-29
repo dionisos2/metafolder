@@ -909,7 +909,7 @@ async fn unload_removes_repo_and_releases_the_lock() {
     let (status, _) = request(&app, "POST", &format!("/repos/{repo}/unload"), None).await;
     assert_eq!(status, StatusCode::NOT_FOUND);
 
-    // The exclusive SQLite lock was released: the same root loads again.
+    // The store's exclusive lock was released: the same root loads again.
     let (status, body) =
         request(&app, "POST", "/repos/load", Some(json!({"root": root.to_str().unwrap()}))).await;
     assert_eq!(status, StatusCode::OK, "reload failed: {body}");
@@ -1166,35 +1166,18 @@ async fn test_list_fields_distinct_names_and_types() {
 }
 
 #[tokio::test]
-async fn test_list_fields_cold_warm_and_stale_agree() {
-    // The catalog must be identical whether it is served from the DB (index
-    // cold, or stale after a write) or from a warm in-memory index — and a field
-    // added after the index was built must appear without a full rebuild.
-    let (app, repo, root) = app_with_repo("fieldscoldwarm").await;
+async fn test_list_fields_sees_a_field_added_by_a_write() {
+    let (app, repo, root) = app_with_repo("fieldsafterwrite").await;
     create_metarecord(
         &app,
         &repo,
         json!([{"name": "genre", "value": {"type": "string", "value": "jazz"}}]),
     )
     .await;
+    let (_, before) = request(&app, "GET", &format!("/repos/{repo}/fields"), None).await;
+    assert!(field_pairs(&before).contains("genre:string"), "{before}");
 
-    // Cold: no query has warmed the index yet — served from the DISTINCT scan.
-    let (_, cold) = request(&app, "GET", &format!("/repos/{repo}/fields"), None).await;
-
-    // Warm the index with a query, then read again — served from the index.
-    let (status, _) = request(
-        &app,
-        "POST",
-        &format!("/repos/{repo}/query"),
-        Some(json!({"query": {"type": "is_present", "field": "mfr_path"}, "limit": 1})),
-    )
-    .await;
-    assert_eq!(status, StatusCode::OK);
-    let (_, warm) = request(&app, "GET", &format!("/repos/{repo}/fields"), None).await;
-    assert_eq!(field_pairs(&cold), field_pairs(&warm), "cold and warm catalogs must agree");
-
-    // Add a new field after the index was built: the now-stale index must not
-    // hide it — the catalog reflects the current data.
+    // A field added by a later write is in the next catalog.
     create_metarecord(
         &app,
         &repo,
@@ -1204,7 +1187,7 @@ async fn test_list_fields_cold_warm_and_stale_agree() {
     let (_, after) = request(&app, "GET", &format!("/repos/{repo}/fields"), None).await;
     assert!(
         field_pairs(&after).contains("brandnew:string"),
-        "a field added after the index was built must appear: {after}"
+        "a field added by a write must appear: {after}"
     );
 
     std::fs::remove_dir_all(root).unwrap();

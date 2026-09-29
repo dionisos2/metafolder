@@ -4,8 +4,8 @@
 //! This is the case that mattered. Every suite used to end with an explicit
 //! `remove_dir_all`, which is exactly the line a panic skips — so a failing run
 //! left its repository behind, and enough runs filled the disk. A full disk is
-//! not a quiet failure: SQLite answers "database or disk is full" and the
-//! watcher's flush fails on it.
+//! not a quiet failure: SQLite (the store then) answered "database or disk is
+//! full" and the watcher's flush failed on it.
 
 mod common;
 use common::{tests_root, TempDir, TempFile};

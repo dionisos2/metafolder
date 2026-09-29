@@ -1136,24 +1136,23 @@ fn test_departures_do_not_make_a_flush_superlinear() {
     );
 }
 
-// Every file arriving in a watched directory is checked against the orphaned
-// metarecords, so a file that comes back keeps its metadata. Asked of the
-// database per file ("the orphans whose `mfr_size` is N"), that question has no
-// index to answer it — `field` is indexed by name and type, never by value — so
-// SQLite reads every `mfr_size` row of the repository, once per arriving file.
-// The flush is then quadratic in the repository, not in the batch: the same
-// directory that lands in a second in a fresh repo takes minutes in a real one.
+// Every file arriving in a watched directory used to be checked against the
+// orphaned metarecords by asking the store, per file, for "the orphans whose
+// `mfr_size` is N" — a question no key answers, so every `mfr_size` row of the
+// repository was read once per arriving file. The flush was then quadratic in
+// the repository, not in the batch: the same directory that landed in a second
+// in a fresh repo took minutes in a real one.
 //
-// The bound is again a *ratio*: the same arrivals, flushed into a small
-// repository and into one already holding eight times as many files. The
-// matchable orphans are read once per group, so the two must cost about the
-// same.
+// Counted, not timed (spec-perf): the same arrivals, flushed into a small
+// repository and into one already holding eight times as many files, must read
+// about the same number of keys.
 #[test]
 fn test_arrival_cost_does_not_grow_with_the_repository() {
     const N: usize = 300;
 
-    /// Flushes `N` arrivals into a repository already holding `existing` files.
-    fn timed_flush(prefix: &str, existing: usize) -> std::time::Duration {
+    /// Flushes `N` arrivals into a repository already holding `existing` files,
+    /// and returns the keys the flush read.
+    fn flush_reads(prefix: &str, existing: usize) -> u64 {
         let (repo, root, _) = setup(prefix);
 
         if existing > 0 {
@@ -1170,24 +1169,26 @@ fn test_arrival_cost_does_not_grow_with_the_repository() {
         }
         enqueue(&repo, &[FsEvent::Create("/new".into())]);
 
-        let start = std::time::Instant::now();
+        let reads = || {
+            let conn = repo.conn.lock().unwrap();
+            metafolder_daemon::store::Rows::as_kv(&**conn).expect("a key-value store").reads()
+        };
+        let before = reads();
         executor::flush_pending(&repo).unwrap();
-        let elapsed = start.elapsed();
+        let read = reads() - before;
 
         assert!(resolve(&repo, "/new/g0.txt").is_some(), "the arriving files are tracked");
-        elapsed
+        read
     }
 
-    let small = timed_flush("scale_small", 0);
-    let big = timed_flush("scale_big", 8 * N);
+    let small = flush_reads("scale_small", 0);
+    let big = flush_reads("scale_big", 8 * N);
 
-    // A wide margin on purpose: the defect this pins multiplied the flush by
-    // *fifty* at this size, while a timed ratio on a machine running the rest
-    // of the suite in parallel wobbles by a factor of a few. Five separates the
-    // two without turning a busy machine into a red build.
+    // A deeper forest costs a few keys per lookup, never a key per file of the
+    // repository: the defect this pins read `8 * N` more keys per arrival.
     assert!(
-        big < small * 5,
-        "{N} arrivals took {small:?} in an empty repository but {big:?} in one holding \
+        big < small * 2,
+        "{N} arrivals read {small} keys in an empty repository but {big} in one holding \
          {} files — the arrival path scales with the repository, not with the batch",
         8 * N,
     );

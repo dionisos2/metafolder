@@ -1,6 +1,6 @@
-//! Integration tests for the in-memory tree cache (spec-file-tracking
-//! "Tree Cache"): path resolution with DB fallback, mutations, descendant
-//! collection, LRU eviction, case sensitivity.
+//! Integration tests for the forest lookups (spec-file-tracking "Tree Cache"):
+//! path resolution from the store, mutations, descendant collection, case
+//! sensitivity, look-alike names.
 
 use metafolder_core::metarecord::{Field, TreeName, Value};
 use metafolder_daemon::log::Writer;
