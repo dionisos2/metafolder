@@ -333,9 +333,9 @@ mod tests {
 
     #[test]
     fn test_a_retired_setting_is_ignored_rather_than_fatal() {
-        // `tree-cache-max-nodes` was the TreeRef cache's node budget. The forest
-        // is now always resident — one memory policy with the query index,
-        // which never had a budget — so the key is gone. A malformed daemon
+        // `tree-cache-max-nodes` was the TreeRef cache's node budget. Nothing is
+        // resident any more — the forest is read from the store — so the key
+        // is gone. A malformed daemon
         // config aborts startup, so an existing config still carrying it must
         // not be malformed: the key is simply ignored.
         let path = write_config("[settings]\ntree-cache-max-nodes = 42\n");

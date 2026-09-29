@@ -61,10 +61,8 @@ pub struct OrphanCandidate {
 /// One TreeRef position: the metarecord, the field name whose forest it belongs
 /// to, its parent (`None` = a forest root) and the name component it contributes.
 pub struct TreeRow {
-    /// The `field` row that holds this position. A metarecord's positions are
-    /// ordered by it, and a load reads them in that order, so the cache keeps
-    /// it: an incremental settle has to land the cell in the same order a
-    /// rebuild would.
+    /// The `field` row that holds this position; a metarecord's positions are
+    /// listed in its order.
     pub id: i64,
     pub field_name: String,
     pub uuid: Uuid,

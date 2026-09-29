@@ -30,8 +30,8 @@ use crate::store::Rows;
 /// component-by-component comparison of the two paths, so a directory and its
 /// contents stay together (`photos/2021` before `photos-old`, which a literal
 /// `/` would interleave since `-` < `/`). Keys are internal — they are never
-/// displayed, only compared and carried inside opaque cursors — and the SQL
-/// oracle builds the identical key (`metafolder-query-oracle`'s `path_key_cte`).
+/// displayed, only compared and carried inside opaque cursors — and the oracle
+/// builds the identical key (`metafolder-query-oracle`, from this constant).
 pub const PATH_KEY_SEP: char = '\u{1}';
 
 /// What resolving one path component yielded.
@@ -489,13 +489,13 @@ impl<'a> SortKeys<'a> {
         Self { store, firsts: RefCell::new(HashMap::new()), error: RefCell::new(None) }
     }
 
-    /// The first read error of the store mode, if any (and forgets it): the
+    /// The first read error, if any (and forgets it): the
     /// keys it left missing must not be served.
     pub fn take_error(&self) -> Option<anyhow::Error> {
         self.error.borrow_mut().take()
     }
 
-    /// A read of the store mode, its error kept.
+    /// A store read, its error kept.
     fn read<T>(&self, r: Result<T>) -> Option<T> {
         match r {
             Ok(v) => Some(v),
@@ -506,7 +506,7 @@ impl<'a> SortKeys<'a> {
         }
     }
 
-    /// Store mode: the key of `uuid` at its first position (memoised).
+    /// The key of `uuid` at its first position (memoised).
     fn first_key(&self, store: &dyn Rows, field: &str, uuid: Uuid) -> Option<Arc<str>> {
         if let Some(k) = self.firsts.borrow().get(&uuid) {
             return k.clone();
@@ -768,8 +768,8 @@ impl<'a> SortKeys<'a> {
     }
 }
 
-/// Walks `field`'s forest in the store from its roots, depth first, as the
-/// resident walks do: a node is visited once per position, with the path of
+/// Walks `field`'s forest in the store from its roots, depth first: a node is
+/// visited once per position, with the path of
 /// that position (a root's is its bare name, every other joins its parent's
 /// with `/`). A node whose parent holds no position is in no path, so it is
 /// never reached. `visit` gets the state its parent passed

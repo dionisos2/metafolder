@@ -1,10 +1,10 @@
 //! Background tasks and progress reporting (spec-tasks.org).
 //!
 //! A [`TaskRegistry`] is an in-memory, per-repository set of observable units
-//! of work. It is deliberately *separate from the SQLite connection*: a
-//! running reconcile holds the connection lock for its whole duration, so a
-//! progress reader that touched the database would block behind it. Reading
-//! the registry never touches the database.
+//! of work. It is deliberately *separate from the store*: a running reconcile
+//! holds the connection lock for its whole duration, so a progress reader that
+//! touched the store would block behind it. Reading the registry never touches
+//! the store.
 //!
 //! Tasks are never persisted; a daemon restart starts with an empty registry.
 
@@ -72,10 +72,10 @@ pub enum TaskKind {
     Duplicates,
     Query,
     Flush,
-    /// Warming a freshly loaded repository: populating the tree cache and
-    /// building the in-memory query index. Observable so the GUI can show a
-    /// load progress bar; not cancellable (a partial warmup just falls back to
-    /// the DB, so there is nothing to roll back or refuse an unload for).
+    /// The background half of loading a repository (`RepoState::warm`): its
+    /// declared mount points, the buffered filesystem events, the watcher.
+    /// Observable so the GUI can show a load progress bar; not cancellable —
+    /// an unload is refused until it finishes (spec-main "POST /repos/load").
     Load,
     /// Re-homing orphaned metarecords onto files that carry their content
     /// (`POST /orphans/relink`, spec-file-tracking "Relinking orphans"). Hashes
@@ -89,7 +89,7 @@ pub enum TaskKind {
     Prune,
     /// A one-shot atomic rollback (`POST /rollback`). Observation-only for the
     /// same reason as `prune`: it rewrites arbitrary state under the connection
-    /// lock and rebuilds the tree cache.
+    /// lock.
     Rollback,
 }
 
@@ -562,7 +562,7 @@ mod tests {
         let flag = fired.clone();
         r.set_canceller(id, Box::new(move || flag.store(true, Ordering::SeqCst)));
         assert_eq!(r.request_cancel(id), CancelOutcome::Requested);
-        assert!(fired.load(Ordering::SeqCst), "the canceller (e.g. sqlite interrupt) ran");
+        assert!(fired.load(Ordering::SeqCst), "the canceller (e.g. a query's interrupt flag) ran");
     }
 
     #[test]

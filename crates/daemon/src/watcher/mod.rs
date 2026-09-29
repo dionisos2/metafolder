@@ -731,7 +731,7 @@ mod tests {
 
     /// An in-memory repository whose root metarecord carries `mf_watch = true`,
     /// backed by a real temporary directory — the shape `explain_watched` and
-    /// `drop_excluded` need (eligibility from the tree cache, names on disk).
+    /// `drop_excluded` need (eligibility from the store, names on disk).
     struct Fixture {
         conn: crate::kvstore::KvStore,
         _store_dir: crate::kvstore::TestDir,

@@ -33,8 +33,8 @@
 //! ([`LAYOUT`]).
 //!
 //! Row ids, operation ids and revision ids are allocated from counters in
-//! `meta` and never reused, as SQLite's AUTOINCREMENT guarantees; a row put
-//! back under its own id moves the counter past it.
+//! `meta` and never reused; a row put back under its own id moves the counter
+//! past it.
 
 use std::borrow::Cow;
 use std::cell::RefCell;
@@ -62,7 +62,7 @@ pub use source::KvSource;
 
 type Db = Database<Bytes, Bytes>;
 
-/// The parent key of a forest root (the SQLite schema's zero-uuid sentinel).
+/// The parent key of a forest root: the zero uuid, which no metarecord has.
 const ROOT: [u8; 16] = [0; 16];
 
 #[derive(Clone, Copy)]
@@ -258,8 +258,8 @@ impl<'a> In<'a> {
     }
 }
 
-/// A value, column by column as SQLite stores it (the same `encode_value` /
-/// `decode_value` pair), so a name's exact bytes survive.
+/// A value in its column form (`rows::encode_value` / `decode_value`), so a
+/// name's exact bytes survive.
 fn put_value(out: &mut Out, v: &Value) {
     let e = rows::encode_value(v);
     out.bytes(e.value_type.as_bytes())
@@ -445,8 +445,7 @@ fn page_multiple(n: usize) -> usize {
 
 impl KvStore {
     /// Opens (creating it if needed) the store in `dir`, and takes the
-    /// repository's lock: a second daemon opening it fails, as a second
-    /// daemon opening a SQLite repository does.
+    /// repository's lock: a second daemon opening it fails.
     pub fn open(dir: &Path) -> Result<KvStore> {
         KvStore::open_with_map_size(dir, INITIAL_MAP)
     }
@@ -1054,8 +1053,8 @@ macro_rules! kv_reads {
                     return Ok(Delta::Found(Vec::new()));
                 }
                 let $me = self;
-                // As SQLite's walk: up to `max + 1` operations, the anchor
-                // closing it when met.
+                // Up to `max + 1` operations, the anchor closing the walk when
+                // met.
                 $with(&mut |$read: &Read| {
                     let mut rows = Vec::new();
                     let mut cur = Some(from);
@@ -1510,7 +1509,8 @@ impl WriteTxn for KvTxn<'_> {
         if Rows::version(self, uuid)?.is_none() {
             bail!("a row for metarecord {uuid}, which does not exist");
         }
-        // The two uniqueness rules SQLite's indexes enforce, with its messages.
+        // The two uniqueness rules of the data model, with the messages
+        // clients already know.
         if name == "mfr_path" && !Rows::rows_named(self, uuid, name)?.is_empty() {
             return Err(DomainError::BadRequest(
                 "mfr_path is single-valued: a metarecord tracks at most one path".into(),
@@ -1595,7 +1595,7 @@ impl WriteTxn for KvTxn<'_> {
     }
 
     fn set_revision_origin(&self, rev: i64, origin: &str) -> Result<()> {
-        // Like SQLite's UPDATE: nothing to do for a revision that is not there.
+        // Nothing to do for a revision that is not there.
         let Some(mut meta) = Log::revisions(self, &[rev])?.remove(&rev) else { return Ok(()) };
         meta.origin = Some(origin.to_string());
         self.t.revisions.put(&mut self.txn.borrow_mut(), &be(rev), &enc_revision(&meta))?;
@@ -1666,7 +1666,7 @@ impl WriteTxn for KvTxn<'_> {
         Ok(())
     }
 
-    /// SQLite's `log::trim`, over these tables: keep the `revisions` newest
+    /// The log trim (`log::trim`), over these tables: keep the `revisions` newest
     /// (and, when asked, everything from the oldest labelled one), cutting at
     /// the first operation of the oldest kept revision — only when that cut is
     /// on HEAD's line of history.

@@ -1,19 +1,16 @@
 //! The forest as a query provider (spec-indexing "No operand runs in SQL").
 //!
 //! The `:path` aspect reads a component no bitmap holds — the path assembled
-//! from the forest root — so the bitmap index declines it. It did not follow
-//! that SQL had to run the query: the paths live in the resident tree cache,
-//! and SQLite only ever received the *result* of walking it, as a `VALUES`
-//! list.
+//! from the forest root — so the bitmap index declines it.
 //!
-//! This module cuts out that detour. Each such leaf — a `:path` predicate, and
-//! an order-sensitive `osm` path — is resolved against the forest and rewritten
-//! into the `uuid_in` set it matches, which the index then combines with every
-//! other operand like any other bitmap. Where no forest is resident (a
-//! key-value repository), an `osm` path is instead rewritten into the subtrees
-//! of its verified anchors (see [`osm_path_seeded`]), which the index expands
-//! from its descendant bitmaps, and a `:path` comparison seeks the paths it
-//! can match (`PathSeek`): walking the stored forest read every node.
+//! Each such leaf — a `:path` predicate, and an order-sensitive `osm` path — is
+//! resolved against the store's forest and rewritten into the `uuid_in` set it
+//! matches, which the index then combines with every other operand like any
+//! other bitmap. Walking the whole stored forest reads every node, so each is
+//! narrowed first: an `osm` path is rewritten into the subtrees of its verified
+//! anchors (see [`osm_path_seeded`]), which the index expands from its
+//! descendant bitmaps, and a `:path` comparison seeks the paths it can match
+//! (`PathSeek`). The walk is what is left when nothing narrows.
 
 use roaring::RoaringBitmap;
 use std::collections::HashMap;
@@ -30,17 +27,15 @@ use crate::tree_cache::{PathSeek, TreeCache};
 
 /// Rewrites every forest-served leaf of `q` into the `uuid_in` set it matches.
 ///
-/// A leaf is left untouched whenever the forest cannot answer authoritatively:
-/// an incomplete cache, an operand of the wrong type, or a pattern that does
-/// not compile. Those last two are `400`s raised upstream by
-/// `query_validate`, before this runs; an incomplete cache cannot happen on the
-/// serving path (a repository serves nothing until it is warm), and the index
-/// declining the untouched leaf then reports the daemon bug it is. A field
-/// with no forest at all is the one benign case: the leaf matches nothing and
-/// the walk says so.
+/// A leaf is left untouched whenever the forest cannot answer it: an operand
+/// of the wrong type, or a pattern that does not compile. Both are `400`s
+/// raised upstream by `query_validate`, before this runs, so the index
+/// declining an untouched leaf reports the daemon bug it is. A field with no
+/// forest at all is the benign case: the leaf matches nothing and the walk
+/// says so.
 ///
-/// `names` is the index the query will run on: without a resident forest, it
-/// supplies the name candidates an `osm` path is narrowed to. `None` walks.
+/// `names` is the index the query will run on: it supplies the name
+/// candidates an `osm` path is narrowed to. `None` walks.
 pub fn resolve_path_leaves(
     cache: &TreeCache,
     store: &dyn Rows,
@@ -176,8 +171,7 @@ fn path_leaf_matches(
 }
 
 /// An order-sensitive `osm` path answered from the store without walking the
-/// forest (a key-value repository keeps none resident, and the walk reads
-/// every node of it).
+/// forest (the walk reads every node of it).
 ///
 /// Along any path that matches, the shortest matching prefix ends at a node
 /// whose own *name* holds the end of the last term: a term free of the
@@ -372,8 +366,7 @@ enum Narrow {
 }
 
 /// The `(field, predicate on the assembled path, narrowing)` a `:path` leaf
-/// reads, mirror for mirror of what the oracle's SQL compiler builds for the
-/// same node.
+/// reads, mirror for mirror of what the oracle evaluates for the same node.
 fn path_predicate(q: &Query) -> Option<PathPredicate<'_>> {
     use metafolder_core::query::Query as Q;
     let (field, value, op): (&String, &Value, Op) = match q {

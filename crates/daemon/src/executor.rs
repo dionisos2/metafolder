@@ -1467,7 +1467,7 @@ impl Drop for ExecutorHandle {
 pub fn spawn(repo: &Arc<RepoState>, quiet: Duration) -> ExecutorHandle {
     // A Weak reference: the executor is owned (indirectly) by the RepoState;
     // holding an Arc here would create a cycle keeping the repository — and
-    // its exclusive SQLite lock — alive forever.
+    // its store's exclusive lock — alive forever.
     let repo = Arc::downgrade(repo);
     let (tx, rx) = mpsc::channel::<ExecMsg>();
     let join = std::thread::spawn(move || loop {

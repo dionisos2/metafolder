@@ -345,8 +345,8 @@ pub trait Rows {
         name: &[u8],
     ) -> Result<Option<Uuid>>;
     /// The child of `parent` whose name, as text, is `name` — ignoring ASCII
-    /// case when `nocase` (SQLite's `NOCASE`, which another backend must
-    /// reproduce exactly: ASCII letters only).
+    /// case when `nocase` (ASCII letters only — the case folding SQLite's
+    /// `NOCASE` did, which repositories were written against).
     fn child_by_text(
         &self,
         field: &str,
@@ -355,8 +355,9 @@ pub trait Rows {
         nocase: bool,
     ) -> Result<Option<Uuid>>;
     /// Every `tree_ref` position, grouped by field name and metarecord, a
-    /// metarecord's positions in row-id order (the order a load places them
-    /// in; the groups themselves come in no promised order).
+    /// metarecord's positions in row-id order (the groups themselves come in
+    /// no promised order). A whole scan, for whole-repository questions only
+    /// (`mf repo check`, the default answers of [`Questions`]).
     fn forest(&self) -> Result<Vec<TreeRow>>;
 
     // ── Derived: every backend has these from the above ──────────────────
@@ -515,7 +516,7 @@ impl<T: Rows + Log + Questions + ?Sized> Store for T {}
 /// Whole-repository questions (the schema check, the duplicate and orphan
 /// scans, the watch flags). Each has a default derived from `Rows` alone —
 /// correct on any backend — which a backend may override with a faster
-/// native answer, as SQLite does with its indexed queries.
+/// native answer (the key-value store overrides none today).
 /// `tests/store_contract.rs` holds every override to its default.
 pub trait Questions: Rows {
     /// The metarecords holding a row of `name` equal to `value` (`Nothing`

@@ -1,25 +1,24 @@
-//! In-memory bitmap/BSI query index (spec-indexing.org).
+//! The query evaluator (spec-indexing.org): bitmap/BSI evaluation of a
+//! [`Query`] over a [`Source`] — the key-value store's derived key spaces
+//! (`crate::kvstore::KvSource`), read in one snapshot per query.
 //!
-//! A *derived, read-only* accelerator built from the `field` table. It answers
-//! a [`Query`] as a `RoaringBitmap` of dense metarecord ids and is validated
-//! against the SQL oracle (the `metafolder-query-oracle` dev crate) by an
-//! equivalence battery (`tests/index_oracle.rs`). The oracle is a *test
+//! It answers a query as a `RoaringBitmap` of dense metarecord ids and is
+//! validated against the naive oracle (the `metafolder-query-oracle` dev crate)
+//! by an equivalence battery (`tests/index_oracle.rs`). The oracle is a *test
 //! fixture*, not a second engine: nothing falls back to it, and a shape that
 //! comes back `Unsupported` is a daemon bug, not a slow answer (see [`Gap`],
 //! spec-indexing "No operand runs in SQL").
 //!
-//! It is built at repo load and refreshed to HEAD per query
-//! (`run_query_filter`). Shapes it cannot resolve on its own are handled with
-//! caller-supplied seeds ([`QueryRoots`]): `Path`-target follows resolve to a
-//! root metarecord through the tree cache, and a single-term `Osm` `Path`
-//! resolves to its "term nodes" (the nodes whose *name* contains the term) by
-//! scanning the in-memory name partition, which the index then expands into a
-//! subtree union — the exact match set, no per-path check. Text predicates
-//! (`Matches`, `Osm` `Direct`) run their regex over the field's *distinct
-//! values* in memory; the leaves no bitmap can answer — the `:path` aspect, an
+//! Nothing is built at load or kept between queries. Shapes it cannot resolve
+//! on its own are handled with caller-supplied seeds ([`QueryRoots`]):
+//! `Path`-target follows resolve to a root metarecord through the tree cache,
+//! and a single-term `Osm` `Path` resolves to its "term nodes" (the nodes whose
+//! *name* contains the term) by scanning the name partition, which the index
+//! then expands into a subtree union — the exact match set, no per-path check.
+//! Text predicates (`Matches`, `Osm` `Direct`) run their regex over the field's
+//! *distinct values*; the leaves no bitmap can answer — the `:path` aspect, an
 //! order-sensitive `Osm` `Path` — are resolved against the forest and rewritten
-//! into `UuidIn` sets before the index sees them (`crate::forest_query`). Not
-//! persisted — rebuilt each session.
+//! into `UuidIn` sets before the index sees them (`crate::forest_query`).
 
 pub mod keys;
 pub mod source;
@@ -46,8 +45,8 @@ pub struct SortBy {
 
 /// Pre-resolved `(field, path)` → root metarecord uuid for the `Path`-target
 /// `Follows`/`FollowsTransitive` nodes of a query. The index has no tree
-/// structure of its own, so the caller resolves path targets through the (now
-/// eagerly populated) tree cache and hands the roots in; a path absent from the
+/// structure of its own, so the caller resolves path targets through the tree
+/// cache and hands the roots in; a path absent from the
 /// map resolved to nothing and yields an empty result, matching the oracle.
 pub type PathRoots = HashMap<(String, String), Uuid>;
 
@@ -71,13 +70,11 @@ pub struct QueryRoots<'a> {
     pub path: PathRoots,
     pub node: NodeRoots,
     /// Resolver for the full-path sort keys of a `tree_ref` sort key. Like the
-    /// two maps above it is a tree-cache lookup the index cannot do itself, but
-    /// it is a *resolver* rather than a map: which metarecords need a key is
-    /// only known once the query has been evaluated. `None` — or a resolver
-    /// whose forest is not fully resident — makes a `tree_ref` sort
-    /// [`Unsupported`] with a [`Gap::State`]: a daemon bug, reported as one,
-    /// *not* a fall back to SQL — a repository that serves at all has a
-    /// resident forest (`RepoState::warmup`).
+    /// two maps above it is a forest lookup the index cannot do itself, but it
+    /// is a *resolver* rather than a map: which metarecords need a key is only
+    /// known once the query has been evaluated. `None` makes a `tree_ref` sort
+    /// [`Unsupported`] with a [`Gap::State`]: a daemon bug (the serving path
+    /// always hands one in), reported as one.
     pub keys: Option<&'a crate::tree_cache::SortKeys<'a>>,
 }
 
@@ -144,7 +141,7 @@ pub fn collect_node_paths(q: &Query, out: &mut Vec<(String, String)>) {
 /// Whether a `terms` list is the single term the index serves natively for
 /// `Osm` `Path`: the union of the subtrees rooted at the nodes whose name
 /// contains it *is* the match set, no ordered verification needed. Any length —
-/// the name scan runs in memory over the distinct names, so no minimum term
+/// the name scan runs over the distinct names, so no minimum term
 /// length applies (the FTS trigram index that once imposed a three-character
 /// floor is gone).
 ///
@@ -201,7 +198,7 @@ fn walk_bound(q: &Query, field: &str, roots: &QueryRoots<'_>) -> Option<Uuid> {
 
 /// Text leaves a page without a count defers to the ids a walk visits
 /// (spec-indexing "A page costs the page"): each is a regex over the names of
-/// a `tree_ref` field, which the resident forest holds per metarecord.
+/// a `tree_ref` field, which the store's forest holds per metarecord.
 struct Residual<'q, 'k> {
     leaves: Vec<&'q Query>,
     checks: Vec<(&'q str, regex::Regex)>,
@@ -247,18 +244,16 @@ pub enum Gap {
     /// the SQL engine is off the serving path (spec-indexing "No operand runs
     /// in SQL") — so this is a daemon bug reported as a `500`, like `State`.
     /// It survives as its own variant because the two say different things to
-    /// whoever reads the log: work never taught, against an accelerator in the
-    /// wrong state.
+    /// whoever reads the log: work never taught, against a caller that did not
+    /// hand in what it had to.
     Coverage,
     /// The cursor does not belong to this (query, sort). The one gap that is
-    /// the *client's* mistake, so the route answers `400` — as the SQL engine
-    /// used to, from its own cursor encoding, when it inherited these.
+    /// the *client's* mistake, so the route answers `400`.
     Cursor,
-    /// The index or the forest is not in the state the engine requires. Through
-    /// the API this cannot happen: a repository serves no data until it is warm
-    /// (spec-main "POST /repos/load"), so reaching this is a bug in the daemon,
-    /// not a query the user asked wrong — and it is reported as one instead of
-    /// being absorbed by a silent fall back to SQL.
+    /// The caller did not hand in what the evaluation needs (the sort-key
+    /// resolver of a `tree_ref` sort). The serving path always does, so
+    /// reaching this is a bug in the daemon, not a query the user asked wrong —
+    /// and it is reported as one.
     State,
 }
 
@@ -288,7 +283,7 @@ pub(crate) fn unsupported(what: impl Into<String>) -> Unsupported {
     Unsupported { what: what.into(), gap: Gap::Coverage }
 }
 
-/// An accelerator that is not in the state the engine requires.
+/// A seed the caller should have handed in and did not ([`Gap::State`]).
 fn not_ready(what: impl Into<String>) -> Unsupported {
     Unsupported { what: what.into(), gap: Gap::State }
 }
@@ -428,7 +423,7 @@ impl Eval<'_> {
 
     /// Splits `q` into the operands evaluated as bitmaps and the text leaves
     /// that can wait: a `Matches` on the `value` aspect or an `osm direct` on a
-    /// `tree_ref` field (their text is the names the resident forest holds),
+    /// `tree_ref` field (their text is the names the store's forest holds),
     /// alone or among the operands of an `and`. `None` when there is none.
     fn deferrable_text<'q>(&self, q: &'q Query) -> Option<(Vec<&'q Query>, Vec<&'q Query>)> {
         let deferrable = |q: &Query| match q {
@@ -661,7 +656,7 @@ impl Eval<'_> {
                     return Ok(walked);
                 }
             }
-            // A path sort walks the resident forest in key order.
+            // A path sort walks the store's forest in key order.
             let tree = self.src.value_type(key.field.as_str()) == Some("tree_ref");
             let keys = roots.and_then(|r| r.keys);
             if let (true, Some(keys)) = (tree, keys) {
@@ -952,12 +947,12 @@ impl Eval<'_> {
         sort.iter()
             .map(|k| {
                 let tree = if self.src.value_type(k.field.as_str()) == Some("tree_ref") {
-                    // A tree sort rebuilds the paths from the resident forest.
-                    // The forest is always resident on a repository that
+                    // A tree sort rebuilds the paths from the store's forest.
+                    // The caller always hands the resolver in on a repository that
                     // serves at all, so this is an invariant, not a fallback.
                     let keys = roots
                         .and_then(|r| r.keys)
-                        .ok_or_else(|| not_ready("tree_ref sort without a resident forest"))?;
+                        .ok_or_else(|| not_ready("tree_ref sort without a sort-key resolver"))?;
                     Some((k.field.as_str(), keys))
                 } else {
                     None
@@ -1118,7 +1113,7 @@ impl Eval<'_> {
                 self.text_scan(field, pattern, restrict)
             }
             // OSM `Direct` matches the row's own text with the very regex the
-            // oracle hands its `REGEXP` UDF, so the two cannot drift — in
+            // oracle compiles, so the two cannot drift — in
             // particular over `.`, which does not cross a newline.
             Query::Osm { field, terms, mode: metafolder_core::query::OsmMode::Direct } => {
                 self.text_scan(field, &crate::query_result::osm_regex(terms), restrict)
@@ -1136,7 +1131,7 @@ impl Eval<'_> {
     }
 
     /// A regex text predicate (`Matches`, OSM `Direct`) answered by scanning the
-    /// field's *distinct* values in memory — its cardinality, not its row count,
+    /// field's *distinct* values — its cardinality, not its row count,
     /// and no SQL at all. An invalid or oversized pattern is a `400` raised
     /// upstream by `query_validate`, so the `Unsupported` here is a backstop. A
     /// field with no indexed value matches nothing, which is what the oracle
@@ -1377,9 +1372,9 @@ impl Eval<'_> {
             return Ok(RoaringBitmap::new());
         }
         // The "term nodes" — those whose *name* contains the term — resolved
-        // from the in-memory name partition. The oracle finds them with
-        // `value_name REGEXP '(?i)<escaped term>'`, so use that very regex on
-        // each distinct name: same case folding, same escaping, no divergence.
+        // from the name partition. The oracle finds them with the regex
+        // `(?i)<escaped term>`, so use that very regex on each distinct name:
+        // same case folding, same escaping, no divergence.
         // It also works below the three-character floor of the old FTS trigram
         // index, where the first keystrokes of a search used to fall off a
         // cliff.

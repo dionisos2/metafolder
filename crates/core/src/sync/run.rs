@@ -249,7 +249,6 @@ enum Outcome {
 }
 
 /// One parsed op-metarecord from the plan repo.
-#[allow(dead_code)] // side/field/resolve used by the coming delete/conflict exec
 struct Op {
     plan_uuid: Uuid,
     kind: String,

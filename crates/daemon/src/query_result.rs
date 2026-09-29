@@ -70,7 +70,8 @@ pub fn assemble_selected(
 /// The case-insensitive ordered-substring regex for OSM `Direct` mode:
 /// `["con", "def"]` → `(?i)con.*def`. Terms are regex-escaped; empty `terms`
 /// yields `(?i)`, which matches any string ("present" semantics). Unanchored
-/// (`REGEXP` searches), so this is exactly "con then def, non-overlapping".
+/// (a search, not a whole match), so this is exactly "con then def,
+/// non-overlapping".
 pub fn osm_regex(terms: &[String]) -> String {
     let body = terms.iter().map(|t| regex::escape(t)).collect::<Vec<_>>().join(".*");
     format!("(?i){body}")

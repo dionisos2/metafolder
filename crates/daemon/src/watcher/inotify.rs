@@ -217,17 +217,6 @@ fn budget_report(unwatched: usize, watched: usize) -> Option<String> {
     })
 }
 
-/// The set of directories that should be watched: every eligible directory,
-/// reached by descending only through eligible directories (matching
-/// [`crate::reconcile`]'s walk). Symlinked directories are not followed
-/// (`file_type().is_dir()` is false for a symlink), unreadable directories are
-/// skipped, and `.metafolder/internal/` is always excluded. Read-only.
-/// Computes the set of directories that should be watched, returning the wall
-/// time spent in eligibility checks (the DB / tree-cache part) alongside the
-/// total, so the filesystem-walk part (`total − eligibility`) can be told apart
-/// — a persistent diagnostic (see [`WatcherHandle::refresh`]) and the basis for
-/// deferring the initial walk until the tree cache is warm (eligibility served
-/// from memory rather than a per-directory DB walk).
 /// What a placement decided: the directories to watch, and the subtree roots the
 /// budget could not afford (spec-file-tracking "The watch budget").
 pub struct WatchPlan {
@@ -241,6 +230,16 @@ pub struct WatchPlan {
     pub eligibility: std::time::Duration,
 }
 
+/// The set of directories that should be watched: every eligible directory,
+/// reached by descending only through eligible directories (matching
+/// [`crate::reconcile`]'s walk). Symlinked directories are not followed
+/// (`file_type().is_dir()` is false for a symlink), unreadable directories are
+/// skipped, and `.metafolder/internal/` is always excluded. Read-only.
+///
+/// Also returns the wall time spent in eligibility checks (the rule index)
+/// alongside the total, so the filesystem-walk part (`total − eligibility`)
+/// can be told apart — a persistent diagnostic (see
+/// [`WatcherHandle::refresh`]).
 pub fn compute_watched_dirs_timed(
     conn: &dyn crate::store::Store,
     cache: &TreeCache,
@@ -519,8 +518,8 @@ fn maintain_watches(
 impl Source {
     /// Creates the notify watcher and hands its translated events to `tx` —
     /// the shared ingest thread ([`crate::watcher::start`]). The initial
-    /// placement is *not* done here: it needs the tree cache, so it is deferred
-    /// to `RepoState::refresh_watches` at the end of the load warmup.
+    /// placement is *not* done here: it is the last step of the load
+    /// (`RepoState::activate` → `refresh_watches`), once the replay is applied.
     pub(crate) fn start(
         repo: &Arc<RepoState>,
         tx: std::sync::mpsc::Sender<Vec<(FsEvent, Option<i64>)>>,
@@ -575,7 +574,7 @@ impl crate::watcher::Source for Source {
         let plan = compute_watched_dirs_timed(conn, cache, root, internal_dir, cap);
         // A persistent diagnostic for the initial (load-time) walk and any large
         // watch reconfiguration: the filesystem read_dir cost vs the per-directory
-        // eligibility cost (served from the tree cache once warm).
+        // eligibility cost (a lookup in the rule index).
         if plan.total.as_millis() >= 100 {
             eprintln!(
                 "[watcher] walk: {} dirs in {:?} (fs {:?} + eligibility {:?})",

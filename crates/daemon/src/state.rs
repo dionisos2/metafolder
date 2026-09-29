@@ -162,8 +162,8 @@ impl RepoState {
         Self::from_opened_with(opened, &DaemonSettings::default())
     }
 
-    /// Builds a `RepoState`, applying the tunable daemon settings (here, the
-    /// tree-cache node budget).
+    /// Builds a `RepoState`, applying the tunable daemon settings (log
+    /// retention, watcher quiet period).
     pub fn from_opened_with(opened: OpenedRepo, settings: &DaemonSettings) -> Self {
         let repo_uuid = opened.config.repo_uuid;
         let name = Mutex::new(opened.config.name.clone());
@@ -581,17 +581,6 @@ impl RepoState {
         Ok(())
     }
 
-    /// Makes the repository usable: builds the accelerators, then activates it,
-    /// then declares it ready.
-    ///
-    /// This is the *whole* load, in the one order that is not a special case.
-    /// The executor works against the query index and the resident forest at
-    /// runtime; it must do so from its very first flush too, rather than
-    /// replaying a backlog through cold database walks while the index it will
-    /// need is built behind it.
-    ///
-    /// `progress` reports `(phase, done, total)` for the load progress bar; it
-    /// is a no-op for the synchronous callers (startup auto-load, `init`).
     /// Where this repository's backups go by default: `internal/backups/`,
     /// which is never tracked.
     fn backups_dir(&self) -> PathBuf {
@@ -668,6 +657,13 @@ impl RepoState {
             .map_err(|e| ApiError::internal(format!("reindex failed: {e:#}")))
     }
 
+    /// Makes the repository usable: [`Self::warmup`], then [`Self::activate`],
+    /// then declares it ready — the *whole* load, in the one order that is not
+    /// a special case. Until it is ready the repository refuses its data
+    /// ([`AppState::ready_repo`]).
+    ///
+    /// `progress` reports `(phase, done, total)` for the load progress bar; it
+    /// is a no-op for the synchronous callers (startup auto-load, `init`).
     pub fn warm(self: &Arc<Self>, progress: ProgressFn) -> Result<(), ApiError> {
         self.warmup(progress)?;
         self.activate()?;
@@ -676,9 +672,7 @@ impl RepoState {
     }
 
     /// Applies whatever the watcher buffered, then starts the watcher and its
-    /// executor and places the watches. Runs *after* [`Self::warmup`], so every
-    /// step of it — the replay's path resolutions above all — is served from
-    /// the accelerators rather than from cold database walks.
+    /// executor and places the watches. Runs *after* [`Self::warmup`].
     fn activate(self: &Arc<Self>) -> Result<(), ApiError> {
         // Each step is announced: the replay below applies whatever the
         // filesystem did while the daemon was down, which on a repository that
@@ -769,8 +763,8 @@ impl RepoState {
         *self.handles.lock_recover() = Some(RepoHandles { watcher, executor });
 
         // The watches go last: placing them walks every eligible directory, and
-        // that walk reads each directory's eligibility from the tree cache the
-        // warmup has just filled instead of asking the database per directory.
+        // that walk reads each directory's eligibility from the rule index
+        // (`WatchRules`) instead of asking the store per directory.
         {
             let mut p = Phase::begin(&who, "place the filesystem watches");
             let conn = self.conn.lock_recover();
@@ -903,8 +897,8 @@ pub struct AppState {
     /// `None` (the default, used by tests) disables seeding.
     seed_schema_path: Option<PathBuf>,
     /// Tunable UX/performance settings from `config.toml`'s `[settings]`, applied
-    /// to every repository this state opens (tree-cache budget, watcher quiet
-    /// period). Defaults when unset (tests, no config file).
+    /// to every repository this state opens (log retention, watcher quiet
+    /// period, watch budget share). Defaults when unset (tests, no config file).
     settings: DaemonSettings,
 }
 
@@ -969,7 +963,7 @@ impl AppState {
     }
 
     /// Loads an existing repository. Loading an already-loaded repository is
-    /// idempotent and returns its UUID (the exclusive SQLite lock would make
+    /// idempotent and returns its UUID (the store's exclusive lock would make
     /// a second real open fail anyway).
     pub fn load_repo(&self, locator: RepoLocator) -> Result<Uuid, ApiError> {
         let metafolder_dir = match &locator {
@@ -1131,7 +1125,7 @@ impl AppState {
     }
 
     /// Unloads a repository: removes it from the loaded set, stops its watcher
-    /// and executor, and releases the exclusive SQLite lock — so it can be
+    /// and executor, and releases the store's exclusive lock — so it can be
     /// re-loaded or opened by another daemon (spec-main "Repository management").
     ///
     /// An unknown repository is a 404 (no idempotency claimed). The unload is

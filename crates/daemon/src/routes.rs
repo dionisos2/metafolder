@@ -1,4 +1,4 @@
-//! Axum route handlers. Blocking SQLite work is dispatched through
+//! Axum route handlers. Blocking store work is dispatched through
 //! `tokio::task::spawn_blocking`; every error is rendered as the JSON
 //! `{"error": ...}` shape via [`ApiError`].
 
@@ -288,9 +288,9 @@ fn default_tree_field() -> String {
 
 /// `POST /repos/:repo/query/fields/resolve-tree`: resolves the TreeRef `field`
 /// (default `mfr_path`) of every metarecord matching `query` to repo-root-
-/// relative paths. A field is a multi-map, so each metarecord maps to an array
-/// of paths (stale positions skipped). Resolution uses the in-memory tree cache
-/// — one round-trip whatever the depth. (Target an explicit set with a
+/// relative paths. Each metarecord maps to an array of paths — one, a node
+/// holding one position per forest; empty when it has none or its chain is
+/// stale. Resolved from the store's forest — one round-trip whatever the depth. (Target an explicit set with a
 /// `uuid_in` query.)
 async fn query_resolve_tree(
     State(state): State<Arc<AppState>>,
@@ -377,8 +377,8 @@ struct ResolvePathBody {
 /// the TreeRef `field` (default `mfr_path`) to the uuid of the node at that
 /// path, or `null` when no such node exists. The inverse of `resolve-tree`
 /// (uuid → paths). Used to set a TreeRef value from a path: resolve the parent
-/// path to a uuid, then post `{parent, name}`. One in-memory round-trip through
-/// the tree cache.
+/// path to a uuid, then post `{parent, name}`. One round-trip; one keyed read
+/// of the store's forest per component.
 ///
 /// Sibling names are unique, so at most one node matches — *per reading*. A
 /// component that spells the escaped form of an undecodable byte can name two
@@ -424,35 +424,17 @@ async fn list_fields(
     let repo_uuid = parse_uuid(&repo)?;
     with_repo(&state, repo_uuid, move |repo_state| {
         // Extract the schema's declared types into an owned Vec, releasing the
-        // schema lock before taking the index lock (never hold both).
+        // schema lock before taking the connection (never hold both).
         let schema_decls = repo_state
             .schema
             .lock_recover()
             .as_ref()
             .map(|s| s.declared_types())
             .unwrap_or_default();
-        // The data-derived catalog comes from the in-memory index (built at
-        // load, refreshed to HEAD) — its `present`/`types` maps already hold
-        // every distinct field name and value type, no DB scan. There is no cold
-        // case left to fall back for: the index is built before the repository
-        // serves anything (spec-main "POST /repos/load").
-        //
-        // The connection is *tried*, never waited for, and in the same order as
-        // `run_query_filter` takes it (conn, then the index). It is needed only
-        // to bring the index up to HEAD — a forward delta after a write, which
-        // is incremental and cheap, and which matters because the GUI re-warms
-        // the catalog on every change it sees through the log feed. But a long
-        // write holds the connection for its whole transaction (a reconcile:
-        // minutes on a large repository), and while it does there is nothing to
-        // bring the index up to: what that writer has done is not committed, so
-        // the resident catalog *is* the committed state. Waiting for the lock
-        // therefore buys no freshness at all and costs the whole write — a 1 ms
-        // read measured at 255 s behind a reconcile, which is the stall seen on
-        // opening a repository in the GUI.
-        //
-        // A key-value repository has no resident catalog to read past a
-        // writer: it waits for the store (until reads stop taking the
-        // connection, spec-storage increment 4).
+        // The data-derived catalog is the store's own (the index's `present`/
+        // `types` key spaces): every distinct field name and value type, no
+        // scan. Like every read it waits for the connection, so behind a long
+        // write (until reads stop taking it, spec-storage increment 4).
         let conn = slowlog::timed("wait:conn", || repo_state.conn.lock_recover());
         let data = engine(&*conn)?.field_catalog(None);
         // Merge in the schema (schema-priority, schema-only fields added), then
@@ -509,8 +491,7 @@ async fn tree_roots(
 
 /// `GET /repos/:repo/tree/children?field=<field>&uuid=<hex>`: the direct
 /// children of one TreeRef node as `[{"uuid": "<hex>", "name": "<name>"}, ...]`,
-/// ordered by name. Served from the (eager) tree cache in memory, falling back
-/// to one DB query. Lets a client list a directory's tracked entries — names +
+/// ordered by name. One prefix read of the store's forest. Lets a client list a directory's tracked entries — names +
 /// their metarecords — in one call, without a query and a per-record fetch of
 /// every child.
 async fn tree_children(
@@ -850,10 +831,11 @@ async fn get_task(
 
 /// `POST /repos/:repo/tasks/:task/cancel`: requests cancellation of a task
 /// (spec-tasks "Cancellation"). A `reconcile` is stopped cooperatively (it rolls
-/// its transaction back); a running `query` is interrupted via SQLite. The task
+/// its transaction back); a running `query` stops inside its loops
+/// (`crate::interrupt`); a `flush` stops and pauses ingestion. The task
 /// transitions to `cancelled` once its worker unwinds; this returns the task's
-/// current view. `flush` is not cancellable (400); a terminal task is a 409;
-/// an unknown id a 404.
+/// current view. `load`, `prune` and `rollback` are not cancellable (400); a
+/// terminal task is a 409; an unknown id a 404.
 async fn cancel_task(
     State(state): State<Arc<AppState>>,
     Path((repo, task)): Path<(String, String)>,
@@ -962,8 +944,8 @@ async fn backup_repo(
     .await
 }
 
-/// `POST /repos/:repo/reindex` — derives again what the store derives, and
-/// rebuilds what the repository keeps resident.
+/// `POST /repos/:repo/reindex` — derives again what the store derives
+/// (`mf repo reindex`).
 async fn reindex_repo(
     State(state): State<Arc<AppState>>,
     Path(repo): Path<String>,
@@ -1073,11 +1055,11 @@ async fn load_repo(
     let uuid = tokio::task::spawn_blocking(move || state.load_repo(locator))
         .await
         .map_err(|e| ApiError::internal(format!("blocking task failed: {e}")))??;
-    // Warm the repository (tree cache + query index) in the background, as an
-    // observable `load` task so the GUI shows a progress bar (spec-tasks). The
-    // repository is already loaded and answers queries meanwhile (via the DB
-    // fallback); the response returns its uuid immediately, plus the warmup's
-    // task id (null when already warm) so the CLI can wait on it.
+    // Finish the load in the background, as an observable `load` task so the
+    // GUI shows a progress bar (spec-tasks). The repository is registered and
+    // reports its state meanwhile, but answers its data routes with `503`
+    // until the task is done; the response returns its uuid immediately, plus
+    // the task's id (null when already warm) so the CLI can wait on it.
     let task_id = spawn_load_warmup(state_for_warmup, uuid);
     Ok(Json(json!({
         "repo_uuid": hex(uuid),
@@ -1388,7 +1370,7 @@ async fn rollback(
     let target = body.target.into_target()?;
     with_repo(&state, repo_uuid, move |repo_state| {
         // Observation-only task (spec-tasks), like prune: rollback rewrites
-        // arbitrary state under the connection lock and rebuilds the tree cache.
+        // arbitrary state under the connection lock.
         observed(repo_state, TaskKind::Rollback, "rolling back", |repo_state| {
             repo_state.ensure_writable()?;
             let mut conn = slowlog::timed("wait:conn", || repo_state.conn.lock_recover());
@@ -1771,7 +1753,7 @@ fn op_brief(op: &crate::log::OpRow) -> serde_json::Value {
 }
 
 /// Builds the plan body. `fs` is given by the coordinated form only: it
-/// resolves the paths a `move` action needs, which costs a tree-cache walk per
+/// resolves the paths a `move` action needs, which costs a forest walk per
 /// operation and is useless to a caller that will not touch the filesystem.
 fn revert_plan_json(
     conn: &dyn crate::store::Store,
@@ -3320,15 +3302,15 @@ type QueryPage = (Vec<Uuid>, Option<String>, Option<usize>);
 
 /// What a repository's queries are evaluated against: the store's own derived
 /// key spaces, read in one snapshot (spec-storage increment 4 d).
-struct Engine<'a>(Box<crate::kvstore::KvSource<'a>>);
+struct Engine<'a>(crate::kvstore::KvSource<'a>);
 
 impl Engine<'_> {
     fn eval(&self) -> crate::index::Eval<'_> {
-        crate::index::Eval { src: &*self.0, strategy: crate::index::PageStrategy::Auto }
+        crate::index::Eval { src: &self.0, strategy: crate::index::PageStrategy::Auto }
     }
 
     fn value_type(&self, field: &str) -> Option<String> {
-        crate::index::Source::value_type(&*self.0, field).map(str::to_string)
+        crate::index::Source::value_type(&self.0, field).map(str::to_string)
     }
 
     fn field_catalog(&self, type_filter: Option<&str>) -> Vec<(String, String)> {
@@ -3349,7 +3331,7 @@ impl Engine<'_> {
 fn engine(conn: &dyn crate::store::Store) -> Result<Engine<'_>, ApiError> {
     let kv = conn.as_kv().ok_or_else(|| ApiError::internal("a repository not on its store"))?;
     let src = kv.source().map_err(|e| ApiError::internal(format!("{e:#}")))?;
-    Ok(Engine(Box::new(src)))
+    Ok(Engine(src))
 }
 
 /// Resolves a query's index seeds and rewrites its index-unsupported text leaves
@@ -3431,11 +3413,10 @@ fn index_gap(gap: crate::index::Unsupported) -> ApiError {
     ApiError::internal(format!("the query index cannot serve this query: {gap}"))
 }
 
-/// The index is consulted only while it reflects the current log HEAD; after any
-/// write the HEAD advances and the index is rebuilt before use, so it can never
-/// serve stale results. Every operand is served from a resident structure — the
-/// bitmaps, or the forest through [`prepare_indexed_query`] — so there is no
-/// second engine to defer to: a shape that comes back `Unsupported` is a daemon
+/// The evaluation reads one snapshot of the store, so it sees exactly the
+/// committed state. Every operand is served from the store's derived key
+/// spaces — the bitmaps, or the forest through [`prepare_indexed_query`] — so
+/// there is no second engine to defer to: a shape that comes back `Unsupported` is a daemon
 /// bug (see [`index_gap`]).
 fn run_query_filter(
     conn: &dyn crate::store::Store,
@@ -3474,13 +3455,12 @@ fn run_query_filter(
     let index = engine.eval();
 
     let (mut roots, indexed_query) = prepare_indexed_query(conn, cache, &index, &body.query)?;
-    // Full-path sort keys for a `tree_ref` sort key, rebuilt from the resident
-    // forest — or from the store, where none is resident (spec-data-model
-    // "Sort specification", spec-storage increment 4 e).
+    // Full-path sort keys for a `tree_ref` sort key, rebuilt from the store's
+    // forest (spec-data-model "Sort specification", spec-storage increment 4 e).
     let sort_keys = crate::tree_cache::SortKeys::new(conn);
     roots.keys = Some(&sort_keys);
-    // The index build/refresh above is the heavy phase on a large repo; if a
-    // Stop landed during it, don't start the (also non-trivial) evaluation.
+    // The preparation above (path seeds, forest leaves) can be the heavy phase
+    // on a large repo; if a Stop landed during it, don't start the evaluation.
     if cancel() {
         return Err(ApiError::conflict("query cancelled"));
     }

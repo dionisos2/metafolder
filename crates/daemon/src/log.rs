@@ -1,7 +1,7 @@
 //! The logged write flow (spec-event-log "Normal write flow"). Every write to
 //! the data tables goes through a [`Writer`], which records a revision, one
 //! operation per atomic change with before/after snapshots, and keeps the
-//! `log_head` pointer consistent with the data tables — all in one SQLite
+//! `log_head` pointer consistent with the data tables — all in one store
 //! transaction.
 
 use std::collections::{HashMap, HashSet};
@@ -779,8 +779,9 @@ pub struct TreePos {
 pub const UNKNOWN_ROW: i64 = i64::MAX;
 
 /// What one operation does to one `(field name, metarecord)` cell of the
-/// forest — all the tree cache needs to follow a write, taken from the rows the
-/// operation moved rather than read back from the database afterwards.
+/// forest, taken from the rows the operation moved rather than read back from
+/// the store afterwards. The watch rule index reads it to tell whether a write
+/// moved a metarecord a rule depends on (`RepoState::settle`).
 ///
 /// There is one variant per *shape* of operation, not per op type: a field set,
 /// a record created, replaced or deleted all say "the cell now holds exactly
@@ -903,9 +904,8 @@ pub fn inverse_tree_ops(
 #[derive(Debug, Default, Clone)]
 pub struct WriteEffects {
     /// What the revision did to the forest, one entry per operation that moved
-    /// a position, in write order. Never truncated: the cache settles a batch
-    /// of any size, and a revision that changed the whole forest is exactly the
-    /// one whose cache upkeep must not be guessed at.
+    /// a position, in write order. Never truncated: a revision that changed the
+    /// whole forest is exactly the one whose upkeep must not be guessed at.
     ///
     /// Not deduplicated either, unlike the cells this replaced: an `Add` and a
     /// `Remove` say what they move, so two operations on one cell are two
@@ -921,9 +921,7 @@ pub struct WriteEffects {
 }
 
 impl WriteEffects {
-    /// True if any `tree_ref` field row was created or removed. Manual API
-    /// writes do not go through the watcher's incremental tree-cache upkeep, so
-    /// a caller holding a complete cache must settle it after such a write.
+    /// True if any `tree_ref` field row was created or removed.
     pub fn touches_tree(&self) -> bool {
         !self.tree.is_empty()
     }
@@ -1101,8 +1099,8 @@ impl<'c> Writer<'c> {
         self.flushed + self.pending.len() as i64
     }
 
-    /// What this revision obliges its caller to bring back in step (tree cache,
-    /// watch set). Read it before [`Self::commit`], which consumes the writer.
+    /// What this revision obliges its caller to bring back in step (watch
+    /// rules, watch set). Read it before [`Self::commit`], which consumes the writer.
     pub fn effects(&self) -> WriteEffects {
         self.effects.clone()
     }
@@ -1731,10 +1729,8 @@ impl<'c> Writer<'c> {
     /// Bulk-inserts the buffered `operation` and `op_snapshot` rows,
     /// advancing the running chain head.
     ///
-    /// Operation ids are assigned up front from `sqlite_sequence` so the
-    /// parent chain can be computed before inserting; explicit-id inserts
-    /// into an AUTOINCREMENT table keep the sequence in step, preserving the
-    /// never-reused-id guarantee.
+    /// The store assigns the operation ids (from its sequence, never reused)
+    /// and returns the last one, which becomes the chain head.
     fn flush_pending(&mut self) -> Result<()> {
         if self.pending.is_empty() {
             return Ok(());

@@ -3,13 +3,12 @@
 //! spaces inside one read transaction, so a query sees one snapshot of the
 //! repository, whatever is committed meanwhile.
 //!
-//! Each field index the resident engine holds is, at bottom, a partition
-//! "key → ids", and each comparison a union of the buckets whose key
-//! satisfies it — one key, all but one, a range. Here the partitions are
-//! ordered key spaces ([`super::derived`]) and a comparison is a range read.
-//! The type tag leading every value key keeps the resident engine's handling
-//! of an operand of another type without a special case: it matches no key,
-//! so `=` finds nothing and `!=` every row.
+//! A field's values are, at bottom, a partition "key → ids", and each
+//! comparison a union of the buckets whose key satisfies it — one key, all but
+//! one, a range. The partitions are ordered key spaces ([`super::derived`]) and
+//! a comparison is a range read. The type tag leading every value key handles
+//! an operand of another type without a special case: it matches no key, so
+//! `=` finds nothing and `!=` every row.
 //!
 //! A read error cannot surface through the trait, whose answers are bitmaps:
 //! the first one is kept, answers go empty from there, and
@@ -59,7 +58,7 @@ impl KvStore {
     }
 }
 
-/// How a field's values compare (the resident `FieldIndex` encodings).
+/// How a field's values compare, by value type.
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum Kind {
     /// `bool` / `string`.
