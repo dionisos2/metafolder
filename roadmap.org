@@ -135,12 +135,6 @@ exists: check, and write the conversion if it does.
 space left on device" (15 GB came back with =scripts/prune-target.sh=). Prune
 at the end of =check.sh= too, or at least warn when the disk is nearly full.
 
-** TODO the bench prints absurd memory deltas
-A =mem.*= baseline of 0.00 MiB gives deltas like =+7·10³⁰⁰ %= (a ratio over a
-value near zero, printed unbounded). The verdicts are right — the memory
-floor keeps them =ok= — only the column is unreadable. Print =—= under the
-floor, as for a new scenario.
-
 ** TODO test coverage has not been measured outside the broker
 =cargo llvm-cov= is wired into =scripts/check.sh= behind =--coverage=; it has
 only been used on =metafolder-watchd= (100 % of its production lines, the

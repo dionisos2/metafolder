@@ -189,6 +189,11 @@ pub fn compare(
     } else {
         Verdict::Same
     };
+    // What a scenario allocates is often next to nothing, and a percentage of
+    // nothing is unbounded: under the floor, the verdict alone is shown.
+    if unit == "MiB" && baseline < noise_floor(unit) {
+        return (verdict, None);
+    }
     (verdict, Some((ratio - 1.0) * 100.0))
 }
 
@@ -308,6 +313,16 @@ mod tests {
         assert_eq!(compare(6.0, Some(2.0), 0.3, "MiB").0, Verdict::Same);
         assert_eq!(compare(40.0, Some(2.0), 0.3, "MiB").0, Verdict::Regressed);
         assert_eq!(compare(2.0, Some(40.0), 0.3, "MiB").0, Verdict::Improved);
+    }
+
+    #[test]
+    fn a_memory_baseline_under_the_floor_has_no_percentage() {
+        // A ratio over a baseline near zero is unbounded (+7·10³⁰⁰ %): the
+        // verdict stands, the column shows no number.
+        assert_eq!(compare(3.0, Some(0.0), 0.3, "MiB"), (Verdict::Same, None));
+        assert_eq!(compare(40.0, Some(0.001), 0.3, "MiB"), (Verdict::Regressed, None));
+        // Above the floor, the percentage is kept.
+        assert!(compare(20.0, Some(10.0), 0.3, "MiB").1.is_some());
     }
 
     #[test]

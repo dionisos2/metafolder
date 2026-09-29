@@ -223,6 +223,8 @@ Two rules keep that verdict honest:
   binary (0.6 ms → 0.85 ms is +40 % and means nothing). A regression has to
   clear both the threshold *and* a millisecond of absolute difference. A suite
   that cries regression every run is a suite nobody runs.
+  A memory baseline under its floor gets no percentage (=—=): a ratio over
+  next to nothing is unbounded, and only the verdict means anything there.
 - **A dirty baseline is better than none.** A clean run always outranks a dirty
   one, but a change is worked on with a dirty tree — which is exactly when the
   comparison is wanted. So where a scenario has no clean measurement recorded,
