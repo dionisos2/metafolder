@@ -1,0 +1,709 @@
+#+TITLE: Documentation wiki — plan général des pages
+#+TODO: TODO EN-COURS | FAIT
+
+La liste de toutes les pages du wiki (=docs/wiki/=) et d'où vient leur contenu.
+On la complète item par item. La conception est dans
+[[file:doc-wiki-proposal.md][doc-wiki-proposal.md]] ; l'outil est =scripts/doc=.
+
+* Mode d'emploi
+
+- *Un item = un sujet = un commit.* Un item est =FAIT= quand :
+  1. ses notes sont écrites (les cases ci-dessous, cochées au fur et à mesure) ;
+     la liste est une proposition, que l'item précise ou corrige ;
+  2. chaque affirmation a été *vérifiée dans le code*, pas recopiée de la spec
+     (un écart se corrige dans le code ou dans la doc, et se signale) ;
+  3. les commandes, panels et scripts qu'il couvre ont leur note (=scripts/doc
+     new --from-gen …=), à la place de la liste « Not documented yet » ;
+  4. les citations =spec-x "Section"= du code vers les sections couvertes
+     deviennent =doc "Titre"= ;
+  5. les sections reprises sont supprimées de leur spec (un fichier vide est
+     supprimé), la page help d'origine aussi, avec son entrée dans
+     =pages/index.json= ; ses alias passent sur la nouvelle note ;
+  6. les décisions de conception de la mémoire qui relèvent du sujet deviennent
+     des notes =rationale= =audience: dev= (la mémoire ne garde que les pièges
+     d'environnement et les méthodes) ;
+  7. =scripts/doc check= est vert.
+- Notation des notes : =Titre= — /kind/ (/dev/ si =audience: dev=, /deferred/ ou
+  /proposed/ ou /record/ si ce n'est pas =implemented=).
+- Chaque sujet a sa note d'ensemble (/overview/) portant le titre du sujet, qui
+  sert de tag à ses notes. Les sujets s'emboîtent par tags (indiqué entre
+  parenthèses : « sous … »).
+- Pour les catalogues, « GUI : =trash:*= (9) » veut dire : les 9 commandes GUI
+  dont le nom commence par =trash:= reçoivent leur note dans cet item.
+
+* Ordre
+
+Le pilote d'abord, puis les petits sujets autonomes, puis les gros sujets
+transversaux, la GUI en dernier (elle cite tous les autres) :
+
+1. Corbeille (pilote : on y fige la granularité et les conventions)
+2. Doublons, journal des opérations lentes, tâches, authentification, configuration
+3. Démon et dépôts, conventions de la CLI, schéma, stockage
+4. Modèle de données, requêtes, langage simplifié
+5. Suivi des fichiers (6 items), journal des événements (6 items)
+6. Synchronisation, tags hiérarchiques, plateforme, sécurité
+7. GUI (shell, commandes, panels, scripts)
+8. Développement, puis la clôture
+
+* FAIT 0. Infrastructure
+
+Commits =8b811ef= à =f592c68= : le wiki, =scripts/doc=, le rendu, l'installation,
+le panel help, les catalogues générés.
+
+* Entrée
+
+** TODO 1. Accueil et vue d'ensemble
+
+- [ ] =Documentation= — overview (à réécrire : présentation, liste des sujets, catalogues)
+- [ ] =Getting started= — guide (premier dépôt, premier suivi, première requête ; la GUI en bref)
+- [ ] =Glossary= — reference (une ligne par concept, liens vers les notes)
+- [ ] =Architecture= — overview, dev (daemon, CLI, GUI, watchd, les crates et leurs rôles)
+- [ ] =Version scope and non-goals= — rationale
+- [ ] =Key invariants= — overview, dev (hub du catalogue manuel =Invariant= : une note par invariant, écrites dans les items de leur sujet)
+
+Sources : spec-main « Project Overview », « General description », « Non-goals »,
+« Version scope », « Key invariants » ; help =getting-started.html= ;
+CLAUDE.md « Architecture », « Key invariants ».
+
+* Démon, CLI, configuration
+
+** TODO 2. Démon et dépôts
+
+- [ ] =Daemon= — overview
+- [ ] =Repository= — overview (une base par dépôt, propriété implicite, =.metafolder/=, dossier externe)
+- [ ] =Repository layout on disk= — reference (=config.json=, =schema.json=, =internal/=, =gui/history/=)
+- [ ] =Creating and loading a repository= — guide (init, load en tâche observable, 503 pendant le chargement, auto-load)
+- [ ] =Daemon configuration= — reference (=daemon/config.toml=, =[settings]=)
+- [ ] =Health and diagnostics feed= — reference
+- [ ] =Error responses= — reference (forme ={"error": …}=, codes)
+- [ ] =Repository endpoints= — reference, dev (=GET/PATCH /repos…=, init, load, unload)
+- [ ] =Why background tasks hold a weak reference= — rationale, dev (invariant)
+- [ ] =The repository lock= — reference, dev (flock, second daemon refusé)
+
+CLI : =mf repo {list,init,load,unload}= (le reste de =mf repo= est dans l'item 5).
+Sources : spec-main « Daemon » (sauf les invariants), « Repository management »,
+« Error handling », « Repository commands » ; spec-data-model « Repository ».
+
+** TODO 3. Conventions de la CLI
+
+- [ ] =Command line= — overview (client mince, un démon, un dépôt)
+- [ ] =Global options= — reference (=-n/-u/-p=, =--no-config=, variables d'environnement, précédence)
+- [ ] =Output conventions and exit codes= — reference
+- [ ] =CLI configuration= — reference (=cli/config.toml=)
+- [ ] =Selectors= — reference (=-q=, =-s=, =-i=, sans sélecteur ; =--eq= de =mf tag=)
+- [ ] =Field specifications= — reference (=name:type=value=)
+- [ ] =The verb pattern= — rationale (=get/set=, =add/remove=, =add/delete=, le même vocabulaire dans le démon, la CLI et la GUI)
+- [ ] =mf= — reference (la racine du catalogue)
+
+CLI : =mf=. Sources : spec-main « CLI » ; spec-data-model « CLI » (« Global
+selection flags », « Field specification syntax », « Selector options », « Verb
+pattern ») ; mémoire =gui-command-vocabulary=.
+
+** TODO 4. Configuration
+
+- [ ] =Configuration= — overview
+- [ ] =The configuration repository= — reference (disposition, catégories transverses =scripts/= et =docs/=)
+- [ ] =Updating the configuration= — guide (=metafolder-sync-config=, fusion, conflit, revenir à un défaut)
+- [ ] =Branch model= — rationale, dev (=default= / =main=, pourquoi git)
+- [ ] =No runtime fallback= — rationale
+- [ ] =Shipped defaults in the source tree= — reference, dev (=default-config/=, =scripts/shipped/=, =docs/wiki/dist/=)
+- [ ] =The core configuration API= — reference, dev
+- [ ] =Configuration open questions= — question (s'il en reste)
+
+Sources : spec-config entier ; mémoire =scripts-accessibility=.
+
+** TODO 5. Stockage
+
+- [ ] =Storage= — overview, dev
+- [ ] =Why not SQL= — rationale, dev
+- [ ] =The storage boundary= — reference, dev (traits =Rows=/=Log=/=Questions=/=WriteTxn=)
+- [ ] =Key layout= — reference, dev (primaire et dérivé, ids et localité)
+- [ ] =Derived key spaces= — reference, dev (bitmaps de descendants, trigrammes, tri)
+- [ ] =Writes and atomicity= — reference, dev
+- [ ] =Storage safety= — reference, dev (verrou, système de fichiers réseau refusé)
+- [ ] =Checking and reindexing a repository= — guide (=mf repo check=, =mf repo reindex=)
+- [ ] =Backups and restore= — guide (=mf repo backup/restore=, =auto-backup-days=)
+- [ ] =Choosing the backend= — rationale, dev, record
+- [ ] =Storage prototype results= — rationale, dev, record
+- [ ] =Storage increments= — rationale, dev, record
+
+CLI : =mf repo {check,reindex,backup,restore}=. Sources : spec-storage entier ;
+mémoires =disk-storage-backend-prototype=, =wal-fsync-per-transaction=,
+=unindexed-foreign-key-quadratic-deletes=.
+
+** TODO 6. Tâches
+
+- [ ] =Tasks= — overview (tâche observable, cycle de vie, statuts)
+- [ ] =Task progress= — reference (phases de reconcile et du scan de doublons)
+- [ ] =Concurrency of tasks= — reference, dev
+- [ ] =Task retention= — reference, dev
+- [ ] =Cancelling a task= — guide
+- [ ] =Task endpoints= — reference, dev (forme JSON, =/tasks=, =cancel=)
+- [ ] =Future task extensions= — question, proposed
+
+CLI : =mf task *= (3). Sources : spec-tasks entier (sa partie « GUI », la barre
+de tâches, va à l'item 33).
+
+** TODO 7. Journal des opérations lentes
+
+- [ ] =Slow log= — overview
+- [ ] =What the slow log records= — reference (seuils, phases, ce qui est laissé de côté)
+- [ ] =Slow log configuration= — reference
+- [ ] =Replaying a slow query= — guide (=mf slow replay=, =POST /query/profile=)
+- [ ] =Correlating the GUI and the daemon= — reference, dev
+- [ ] =Slow log endpoint= — reference, dev
+
+CLI : =mf slow *= (4). Sources : spec-slow-log entier ; spec-gui « Slow daemon
+calls » ; mémoires =slow-operation-log=, =read-blocked-by-write-conn-lock=.
+
+* Modèle de données et requêtes
+
+** TODO 8. Modèle de données
+
+- [ ] =Data model= — overview
+- [ ] =Metarecord= — overview
+- [ ] =Fields and values= — overview (multi-map, =set_field= remplace toutes les lignes)
+- [ ] =Value types= — reference (les dix variantes, forme JSON, UUID en hex)
+- [ ] =Nothing versus unknown= — rationale
+- [ ] =Metarecord version= — reference (hash de contenu, égalité seulement)
+- [ ] =Why the version is a content hash= — rationale
+- [ ] =One value type per field name= — reference
+- [ ] =Changing a field's type= — guide (=mf retype=)
+- [ ] =No duplicate rows= — reference
+- [ ] =Reserved fields= — reference (=mfr_*= avec =force=, =mf_*= connus ; le catalogue =Reserved field= est généré à la clôture)
+- [ ] =Conditional writes= — reference (=expected_version=)
+- [ ] =The column form of a value= — reference, dev
+- [ ] =Metarecord endpoints= — reference, dev (ressources, champs par nom et par id, retype, =GET /fields=)
+- [ ] =Editing metarecords from the command line= — guide (=mf metarecord=, =mf field=)
+
+CLI : =mf metarecord *= (11), =mf field *= (5), =mf retype=. Sources : spec-data-model
+« Overview », « Concepts » (sauf les arbres), « Storage », « HTTP API » (sauf
+les routes d'arbre), « mf metarecord », « mf field », « Log granularity » ;
+mémoires =metarecord-version-is-a-content-hash=, =no-value-index-quadratic-queries=.
+
+** TODO 9. Forêts TreeRef
+
+(sous Data model)
+- [ ] =TreeRef forest= — overview (une forêt par nom de champ, pas de cycle, profondeur ≤ 1000)
+- [ ] =Tree names= — reference
+- [ ] =One position per forest= — reference
+- [ ] =Referential integrity of a forest= — reference
+- [ ] =TreeRef path conventions= — reference (racine =""= et descendants =/x= ; racine nommée des tags)
+- [ ] =Tree endpoints= — reference, dev (=tree/roots=, =tree/children=, =tree/resolve-path=, =resolve-tree=)
+- [ ] =The tree cache= — reference, dev (répond depuis le stockage, ne cache rien)
+
+Sources : spec-data-model « One position per forest », « Referential integrity »,
+« Tree names », routes d'arbre ; spec-file-tracking « Tree Cache » ; mémoires
+=treeref-path-conventions=, =one-position-per-forest=, =tree-cache-follows-operations=,
+=tree-cache-rebuild-per-write=.
+
+** TODO 10. Requêtes
+
+- [ ] =Query= — overview
+- [ ] =Writing queries= — guide
+- [ ] =Query DSL grammar= — reference
+- [ ] =Query IR= — reference, dev (le JSON =Query=)
+- [ ] =Presence and absence= — reference (logique à trois valeurs)
+- [ ] =Comparisons= — reference (typage, validité)
+- [ ] =Field aspects= — reference (=:value=, =:parent=, =:path=)
+- [ ] =Regular expressions in queries= — reference (=matches=, borné)
+- [ ] =Ordered substring matching= — reference (=osm=)
+- [ ] =Same-value matching= — reference (=same()=, pourquoi pas de flèche inverse)
+- [ ] =Following references= — reference (=follows=, transitif)
+- [ ] =Query limits= — reference (tailles, 200 opérandes, délai, interruption)
+- [ ] =Pagination and sorting= — reference (paramètres, spécification de tri, enveloppe, curseur)
+- [ ] =Query endpoints= — reference, dev (=POST /query=, la famille =/query/*=)
+- [ ] =Editing a set of metarecords= — guide (=/query/fields/*=, =mf metarecord -q … field=)
+
+Sources : spec-query sauf « Simplified query language » ; spec-data-model
+« Pagination » ; help =queries.html= (hors grammaire simplifiée) ;
+mémoires =field-aspects=, =query-rewrite-must-be-deterministic=, =dsl-sigil-budget=.
+
+** TODO 11. Langage de requête simplifié
+
+(sous Query)
+- [ ] =Simplified query language= — overview
+- [ ] =Using simplified queries= — guide (=-s= dans la CLI, la zone de requête de la GUI)
+- [ ] =The default grammar= — reference (avec =<<live grammar>>=)
+- [ ] =Simplified grammar notation= — reference (lexer, notation, gabarits)
+- [ ] =Editing the grammar= — guide (=core/query-grammar=, validation)
+- [ ] =Dates in simplified queries= — reference
+- [ ] =Tag syntax in simplified queries= — reference (=#X=, =#==, =##==)
+- [ ] =Why expansion runs in the client= — rationale
+
+Sources : spec-query « Simplified query language » ; help =simplified-query.html=,
+partie grammaire de =queries.html= ; mémoires =parametrable-query-design=,
+=simplified-tag-osm-syntax=.
+
+** TODO 12. Moteur de requêtes
+
+(sous Query, tout /dev/)
+- [ ] =Query engine= — overview, dev (l'évaluateur, seule source : le stockage)
+- [ ] =Query validation= — reference, dev (tous les 400 avant évaluation)
+- [ ] =The forest as a query provider= — reference, dev
+- [ ] =The query oracle= — reference, dev (=query-oracle=, tests)
+- [ ] =Indexing architecture= — rationale, dev, record (spec-indexing : le problème, le mur de complexité, bitmaps/BSI, ce qu'on ne construit pas)
+- [ ] =No operand runs in SQL= — rationale, dev
+- [ ] =Query cost model= — rationale, dev, proposed (spec-query-cost, =POST /query/explain=)
+- [ ] =Query planner= — question, dev, proposed
+
+Sources : spec-indexing entier ; spec-query-cost entier ; spec-query « Indexing &
+scaling », « MATCHES is answered in memory » ; mémoires =query-planner-reconsidered=,
+=duplicated-predicate-audit=.
+
+** TODO 13. Schéma
+
+- [ ] =Schema= — overview (types de metarecord, fichier de schéma)
+- [ ] =Writing a schema= — guide
+- [ ] =Schema file= — reference (forme, emplacement, chargement)
+- [ ] =Schema constraints= — reference (sémantique, restrictions)
+- [ ] =Delta validation= — rationale
+- [ ] =Schema endpoints= — reference, dev
+- [ ] =Field catalog and schema priority= — reference, dev
+- [ ] =Schema open questions= — question (distribution entre dépôts liés, validation complète, plages de valeurs)
+
+CLI : =mf schema *= (4). Sources : spec-schema entier.
+
+* Suivi des fichiers
+
+** TODO 14. Suivre des dossiers
+
+- [ ] =File tracking= — overview (opt-in, =mfr_path=, ce que « suivi » veut dire)
+- [ ] =Tracking a folder= — guide (=mf_watch=, =mf track=)
+- [ ] =Watch and ignore fields= — reference (=mf_watch= hérité, =mf_ignore=)
+- [ ] =Ignore presets= — reference (+ guide =mf ignore=, commandes GUI =ignore:*=)
+- [ ] =Eligibility= — reference (l'algorithme, le saut en cascade)
+- [ ] =When watch or ignore changes= — reference
+- [ ] =The watch rule index= — reference, dev
+- [ ] =Freezing metadata by not watching= — rationale
+
+CLI : =mf ignore *= (5), =mf track=. GUI : =ignore:*= (4). Sources : spec-file-tracking
+« Watch and Ignore » ; spec-data-model « mf ignore » ; spec-gui « Ignore patterns », « Tracking notices » ; help
+=tracking.html=, =ignore.html= ; mémoires =watch-rule-index=, =gui-ignore-patterns=,
+=watch-off-freezes-metadata=.
+
+** TODO 15. Le watcher
+
+(sous File tracking)
+- [ ] =Watcher= — overview
+- [ ] =Watch sources and regimes= — reference (inotify / budget, fanotify / couverture)
+- [ ] =The watch budget= — reference
+- [ ] =The fanotify broker= — reference, dev (=watchd=, docs/watcher-fanotify.md)
+- [ ] =Event batching= — reference (période de calme, compaction, groupes)
+- [ ] =Event semantics= — reference, dev
+- [ ] =What a flush reports= — reference
+- [ ] =Pausing the watcher= — guide
+- [ ] =Checking whether a path is watched= — guide (=mf watch check=, =POST /watch/check=, explain)
+- [ ] =Watch activity= — guide (=mf watch activity=, panel GUI)
+- [ ] =Watcher endpoints= — reference, dev
+
+CLI : =mf watch *= (10). Sources : spec-file-tracking « File Watcher », « Watch
+status, pause and resume », « Eligibility explain », « Watch check », « Watch
+activity », « Effective ignore set », « Configuring the watch scope »,
+« Watcher reliability » ; spec-gui « Watch activity » ; spec-platform « File
+watcher backends » ; docs/watcher-fanotify.md ; mémoires
+=watcher-callback-must-not-block=, =watcher-move-identity-bugs=,
+=watcher-echo-destroyed-derived-data=, =watcher-quiet-period-coupling=,
+=watchd-testing=, =watch-activity-counter=.
+
+** TODO 16. Reconcile et empreintes
+
+(sous File tracking)
+- [ ] =Reconcile= — overview (ce qu'il crée, ce qu'il ne fait jamais : =mfr_path = Nothing=)
+- [ ] =Running a reconcile= — guide (=mf reconcile=, commande GUI, tâche observable)
+- [ ] =Scoped reconcile= — reference
+- [ ] =File fingerprint= — reference (xxHash3 partiel et complet)
+- [ ] =Moves and candidates= — reference (déplacements définitifs, candidats forts/faibles)
+- [ ] =File similarity= — reference (=--threshold=)
+- [ ] =Resolving paths= — guide (=mf path=)
+
+CLI : =mf reconcile=, =mf path=. GUI : =reconcile:run=, =metarecord:reconcile=.
+Sources : spec-file-tracking « File fingerprint », « File Similarity »,
+« Single-metarecord track », « Scoped reconcile », « Reconcile » ; spec-gui
+« Reconcile ».
+
+** TODO 17. Points de montage
+
+(sous File tracking)
+- [ ] =Mount points= — overview (volumes amovibles, sous-arbre hors ligne figé)
+- [ ] =mfr_mount= — reference (identité du volume)
+- [ ] =Mount point detection= — reference, dev (=mountinfo=, repli =st_dev=)
+- [ ] =Forgetting a volume= — guide (=mf mount=)
+- [ ] =Unmounted volumes in the GUI= — reference
+
+CLI : =mf mount *= (3). Sources : spec-file-tracking « Mount points », « Mount
+status » ; spec-platform « Mount point detection » ; spec-gui « Unmounted volumes ».
+
+** TODO 18. Orphelins
+
+(sous File tracking)
+- [ ] =Orphans= — overview
+- [ ] =Finding and clearing orphans= — guide (=mf orphan detect/clear=, champ =orphan=)
+- [ ] =Relinking orphans= — guide
+- [ ] =Orphan scan= — reference, dev (coût, disjoncteur de masse)
+- [ ] =Orphans in the GUI= — reference
+
+CLI : =mf orphan *= (5). GUI : =orphan:*= (3). Sources : spec-file-tracking
+« Relinking orphans », « Cost of the orphan search », « Mass-orphan circuit
+breaker », « Orphan scan », « Marking orphans » ; spec-gui « Orphans » ;
+mémoire =orphan-scan-clear=.
+
+** TODO 19. Métadonnées des fichiers
+
+(sous File tracking)
+- [ ] =File metadata fields= — reference (les =mfr_*= de =stat=, MIME)
+- [ ] =Embedded metadata= — overview (=mfr_meta_*=, lofty/nom-exif, pas de sandbox)
+- [ ] =The metadata map= — reference (configuration par dépôt)
+- [ ] =When metadata is extracted= — reference (déclenchement, idempotence)
+
+Sources : spec-platform « File metadata fields », « MIME detection », « Embedded
+metadata extraction » ; mémoire =embedded-metadata-extraction=.
+
+** TODO 20. Ordonner un dossier
+
+- [ ] =Ordering a folder= — guide (=mf order=, commande GUI)
+- [ ] =Migrating from order_position fields= — reference, record
+
+CLI : =mf order=. GUI : =mf:order=. Sources : spec-file-tracking « mf order » ;
+spec-gui « Order a folder's children ».
+
+* Journal des événements
+
+** TODO 21. Révisions et historique
+
+- [ ] =Event log= — overview (chaque écriture est une révision)
+- [ ] =Revisions and operations= — reference (origine, labels, types d'opération)
+- [ ] =History tree and HEAD= — reference
+- [ ] =Reading the log= — guide (=mf log list/show/head=)
+- [ ] =Log storage= — reference, dev (=op_snapshot=, stabilité des ids et des versions, flux d'écriture)
+- [ ] =Reading the log costs the window= — rationale, dev (=log_view=, =tests/log_cost.rs=)
+- [ ] =Log endpoints= — reference, dev (=GET /log=, révisions, =PATCH= label)
+
+CLI : =mf log=, =mf log {list,show,head}=. Sources : spec-event-log « Overview »,
+« Revision and operation », « Revision origin », « History tree », « HEAD
+pointer », « Label », « Operation types », « Storage », « Normal write flow »,
+« GET /log » et révisions, « mf log » ; mémoire =log-read-was-linear-in-the-log=.
+
+** TODO 22. Annuler et rétablir
+
+(sous Event log)
+- [ ] =Undo and redo= — guide (=mf log undo/redo=, =log:undo/redo= dans la GUI)
+- [ ] =The undo selection= — reference (ce qu'un undo reprend, et comment)
+- [ ] =Why undo does not step HEAD back= — rationale
+- [ ] =Why undo and redo do not oscillate= — rationale
+
+CLI : =mf log {undo,redo}=. Sources : spec-event-log « Undo », « Redo », « mf log
+undo », « mf log redo » ;
+mémoire =undo-cost-per-operation=.
+
+** TODO 23. Revert
+
+(sous Event log)
+- [ ] =Revert= — overview
+- [ ] =Reverting a revision= — guide (=mf log revert=, plan, options)
+- [ ] =Operation dependencies= — reference (revert des dépendants, d'un ensemble)
+- [ ] =What a revert writes= — reference, dev (contenu, héritage, ids et versions, actions fichiers)
+- [ ] =Revert endpoints= — reference, dev
+- [ ] =Collapsing a revert to one operation per cell= — question
+
+CLI : =mf log revert=. Sources : spec-event-log « Revert », « Operation dependencies », « Writing a
+revert », routes =revert=, « mf revert », « Open questions ».
+
+** TODO 24. Rollback et navigation
+
+(sous Event log)
+- [ ] =Rollback= — overview
+- [ ] =Rolling back= — guide (=mf log rollback=, plan, politiques =move_file=)
+- [ ] =Navigation= — reference, dev (algorithme, LCA, opérations inverses, remise en état)
+- [ ] =Filesystem coordination= — reference (navigation coordonnée, verrou, reprise après crash)
+- [ ] =Rollback endpoints= — reference, dev
+
+CLI : =mf log rollback=. Sources : spec-event-log « Navigation », « Coordinated navigation », routes
+=rollback=, « mf rollback ».
+
+** TODO 25. Élagage et rétention
+
+(sous Event log)
+- [ ] =Pruning the log= — guide (=mf log prune before/linearize=)
+- [ ] =Automatic retention= — reference
+- [ ] =Prune endpoint= — reference, dev
+
+CLI : =mf log prune *= (3). Sources : spec-event-log « Log pruning », « Automatic retention », =POST
+/log/prune=, « mf prune ».
+
+** TODO 26. L'historique dans la GUI
+
+(sous Event log ; les notes des panels sont ici plutôt que dans la partie GUI)
+- [ ] =log panel= — reference
+- [ ] =log-detail panel= — reference
+- [ ] =Revision commands in the GUI= — guide
+
+GUI : =log:*= (13), =log-detail:*= (2) ; panels =log=, =log-detail=. Sources :
+spec-gui « Event log » ; help =log.html=, =log-detail.html=.
+
+* Fonctions
+
+** TODO 27. Corbeille (PILOTE)
+
+- [ ] =Trash= — overview
+- [ ] =Sending files to the trash= — guide (CLI, GUI : =Delete=, =Ctrl+Delete=, =Shift+Delete=)
+- [ ] =Restoring from the trash= — guide
+- [ ] =Trash on-disk layout= — reference, dev
+- [ ] =What trashing does= — reference (l'ordre, suppression des metarecords, refus de casser une référence)
+- [ ] =Why the trash owns the metarecord= — rationale
+- [ ] =Trash, undo and rollback= — reference
+- [ ] =Trash retention= — reference (=mf trash prune=)
+- [ ] =trash panel= — reference
+
+CLI : =mf trash *= (4). GUI : =trash:*= (9), =metarecord:trash=, =metarecord:remove=,
+=metarecord:delete= ; panel =trash=. Sources : spec-trash entier ; help
+=trash.html= ; mémoires =trash-bin-implemented=, =trash-owns-metarecord-redesign=,
+=trash-restore-race-fix=.
+
+** TODO 28. Doublons
+
+- [ ] =Duplicates= — overview
+- [ ] =Finding duplicates= — guide (=mf duplicate scan/list=, panel)
+- [ ] =What counts as a duplicate= — reference (liens durs, cache de hash et estampille)
+- [ ] =Why duplicates are not compared byte by byte= — rationale
+- [ ] =Duplicate groups= — reference (invariant, sortie d'un groupe, =same()=)
+- [ ] =The duplicate scan= — reference, dev (phases, écritures, progression, route)
+- [ ] =Duplicates and sync= — reference
+- [ ] =duplicates panel= — reference
+- [ ] =Duplicate open questions= — question (dossiers, quasi-doublons, rétention de la décision)
+
+CLI : =mf duplicate *= (4). GUI : =duplicates:*= (9), =mf:duplicate= ; panel
+=duplicates=. Sources : spec-duplicates entier ; spec-gui « Duplicates » ; help
+=duplicates.html= ; mémoire =duplicate-detection-design=.
+
+** TODO 29. Synchronisation
+
+- [ ] =Sync= — overview (principes)
+- [ ] =Syncing two repositories= — guide (=mf sync plan/show/run=)
+- [ ] =The sync database= — reference, dev (ordre canonique, schéma, emplacement, cohérence)
+- [ ] =Change detection in sync= — reference (versions, Ref/TreeRef dans l'instantané)
+- [ ] =What sync copies= — reference (=mf_sync=, diff des métadonnées, contenu =internal=)
+- [ ] =Deletion propagation= — reference
+- [ ] =The sync plan= — reference (deux phases, dépôt de plan, opérations comme metarecords)
+- [ ] =Sync intentions= — reference (fichier d'intentions, phase de liaison)
+- [ ] =Ref translation during sync= — reference
+- [ ] =Sync conflicts= — guide
+- [ ] =Why schemas must be identical= — rationale
+- [ ] =Sync endpoints= — reference, dev (primitives, échos du watcher)
+- [ ] =Cross-machine sync= — reference, deferred
+- [ ] =sync panel= — reference
+
+CLI : =mf sync *= (7). GUI : =sync:*= (4) ; panel =sync=. Sources : spec-sync entier ;
+help =sync.html= ; mémoires =sync-design=, =http-n-plus-one=.
+
+** TODO 30. Tags hiérarchiques
+
+- [ ] =Hierarchical tags= — overview (entrées =type=tag=, refs, subsomption, exclusivité)
+- [ ] =Tagging from the command line= — guide (=mf tag=)
+- [ ] =Classifying with tags= — guide (scripts =gui-tag-*=)
+- [ ] =Tag exclusivity= — reference (=partition=, =exclusive=)
+
+CLI : =mf tag *= (6). Scripts : =gui-tag-classify.sh=, =gui-tag-folder.sh=,
+=gui-tag-next.sh=, =gui-tag-pair.sh=. Sources : spec-data-model « mf tag » ;
+docs/gui-tag-folder-rework.md ; mémoires =hierarchical-tag-classification=,
+=treeref-syntax-and-tag-unification=.
+
+* Plateforme et sécurité
+
+** TODO 31. Plateforme
+
+- [ ] =Platform= — overview
+- [ ] =Path representation= — reference
+- [ ] =Case sensitivity= — reference
+- [ ] =Network and special filesystems= — reference
+- [ ] =Platform open questions= — question (normalisation Unicode, chemins longs Windows, liens symboliques)
+
+Sources : spec-platform « Overview », « Path representation », « Case
+sensitivity », « Network and special filesystems », « Daemon », « CLI »,
+« Open questions ».
+
+** TODO 32. Sécurité
+
+- [ ] =Security= — overview, dev (modèle de menace)
+- [ ] =Session tokens= — reference (emplacement, format, cycle de vie, application, clients)
+- [ ] =Untrusted media= — rationale, dev (tout décodeur sandboxé : bwrap + rlimits, WebKit)
+- [ ] =Loopback only= — rationale, dev (pas de réseau, pas de proxy)
+- [ ] =Why /fsraw never serves a document= — rationale, dev (vol du jeton)
+- [ ] =Running inside a container= — guide, dev (=--allow-unsandboxed-webview=)
+
+Sources : spec-auth entier ; spec-platform « GUI WebView », « Session-token
+runtime directory » ; spec-gui « Untrusted media », « No network access »,
+« /fsraw » ; mémoire =security-audit-sept-2026=.
+
+* GUI
+
+** TODO 33. Le shell
+
+- [ ] =GUI= — overview
+- [ ] =Workspaces= — reference (onglets, barre d'onglets)
+- [ ] =Panel slots and layout= — reference (deux slots, split, plein écran)
+- [ ] =Panel types= — overview (le catalogue =Panel=)
+- [ ] =Display modes= — reference
+- [ ] =Workspace variables= — reference, dev (la sélection est une paire, sélection cochée)
+- [ ] =Status bar and task bar= — reference (dont les tâches du démon, spec-tasks « GUI »)
+- [ ] =Connection to the daemon= — reference (indicateur de dépôt, diagnostics, version d'API incompatible)
+- [ ] =Context menus= — reference (menu par défaut, actions sur fichiers)
+- [ ] =Cross-panel selection= — reference
+- [ ] =Opening a file with another program= — guide
+
+GUI : =workspace:*= (6), =panel:*= (8), =status:clear=, =message:clear=, =quit=,
+=devtools:open=, =daemon:set=. Sources : spec-gui « Overview », « Workspace »,
+« Panel slot », « Panel type », « Display mode », « Workspace variables »,
+« Repo indicator », « Daemon diagnostics », « Connection to the daemon », « Tab
+bar », « Layout and panels », « Status bar », « Task bar », « Context menus »,
+« Cross-panel selection », « Opening a file with another program » ; help
+=getting-started.html= (partie interface) ; mémoire =diagnostics-are-repo-scoped=.
+
+** TODO 34. Commandes et saisie
+
+- [ ] =Commands= — overview (noms, registre, dispatch)
+- [ ] =The command input= — guide (modes commande et bash)
+- [ ] =Interactive command arguments= — reference
+- [ ] =Bash mode= — reference (complétion, espaces réservés des commandes =!=)
+- [ ] =Input history= — guide (=ctrl-p/n/r=, stockage par dépôt)
+- [ ] =Value picker= — reference
+- [ ] =Field editor= — reference
+
+GUI : =command-input:focus=, =editing:*= (4), =completion:cycle=, =pick:*= (2).
+Sources : spec-gui « Command », « Command input » (concept et GUI),
+« Command names », « Input history », « Value picker », « Field editor » ;
+help =command-input.html=, =input-history.html=, =value-picker.html= ;
+mémoires =interactive-command-args=, =input-history-feature=, =gui-command-vocabulary=.
+
+** TODO 35. Raccourcis, recherche, aide
+
+- [ ] =Keybindings= — overview (combos, séquences, =when=, portée de focus)
+- [ ] =Changing keybindings= — guide (=gui/keybindings.toml=, l'éditeur)
+- [ ] =Keyboard navigation= — reference
+- [ ] =Find in a panel= — guide (=ctrl-f=)
+- [ ] =Jumping to an entry= — guide (les commandes =*:find=)
+- [ ] =Help= — overview (le panel, =help:cursor=, =help:key=, et ce wiki)
+- [ ] =help panel= — reference
+
+GUI : =find:*= (4), =help=, =help:*= (4) ; panel =help=. Sources : spec-gui
+« Keybinding », « Keyboard navigation », « Find in panel », « Find an entry »,
+« Help » ; help =keybindings.html=, =find.html=.
+
+** TODO 36. Personnalisation
+
+- [ ] =Customising the GUI= — overview
+- [ ] =Style and theming= — guide (=style.css=)
+- [ ] =User commands= — guide (=commands.js=, =mf.invoke=)
+- [ ] =Reloading the configuration= — reference (ce qui est rechargeable, et pourquoi pas le reste)
+- [ ] =GUI configuration= — reference (=gui/config.toml= : ports, =[page-size]=, =[panel-defaults]=)
+- [ ] =Ref value seeds= — reference
+
+GUI : =config:*= (2), =user:*= (2 : =user:rate=, =user:tag-query=). Sources :
+spec-gui « Style and theming », « User commands », « Reloading configuration »,
+« Panel defaults », « Ref value seeds » ; mémoires =gui-user-commands-js=,
+=gui-config-reload=.
+
+** TODO 37. Écrire un panel
+
+(tout /dev/)
+- [ ] =Writing a panel type= — guide, dev (dossier, =mount(root, metafolder)=, Shadow DOM)
+- [ ] =The metafolder API= — reference, dev
+- [ ] =Daemon data in panels= — rationale, dev (pas de cache, le flux de changements)
+- [ ] =Panel pitfalls= — reference, dev (=hidden= contre =display=, rechargement des sous-modules, CSS de =body=)
+- [ ] =hello panel= — reference
+- [ ] =GUI design decisions= — rationale, dev (framework, livraison de l'API, accès au démon, affichage des chemins, port, sessions concurrentes, mises à jour des panels, confiance)
+
+GUI : =hello:*= ; panel =hello=. Sources : spec-gui « Panel type system »,
+« Resolved design decisions » (sauf sécurité), « Custom panel type trust
+model », « Panel type selector UX » ; CLAUDE.md « GUI dev gotchas » ; mémoires
+=gui-cache-removed=, =gui-cache-read-post-regression=, =gui-hidden-attribute-vs-display=,
+=gui-per-workspace-panel-instances=, =gui-owns-gui-concerns=.
+
+** TODO 38. Panels de navigation
+
+- [ ] =repos panel= — reference (liste, init, chargement avec progression)
+- [ ] =metarecord-list panel= — reference (colonnes, modes, zones, finder)
+- [ ] =metarecord-detail panel= — reference
+- [ ] =Editing metarecords in the GUI= — guide (=metarecord:field=, =metarecord:bulk=, lignes)
+- [ ] =treeref panel= — reference (la barre de refs : « qu'est-ce qui pointe ici ? »)
+- [ ] =recent panel= — reference (et le sélecteur =recent=)
+- [ ] =workspace-info panel= — reference
+- [ ] =message panel= — reference
+
+GUI : =repos:*= (10), =metarecord-list:*= (17), =metarecord:*= (hors corbeille, 11),
+=treeref:*= (13), =recent:*= (8) ; panels =repos=,
+=metarecord-list=, =metarecord-detail=, =treeref=, =recent=, =workspace-info=,
+=message=. Sources : spec-gui « Repository management », « metarecord-list »,
+« metarecord-detail », « treeref », « workspace-info », « Message view » ; help
+=repos.html=, =metarecord-list.html=, =metarecord-detail.html=, =treeref.html=,
+=recent.html=, =workspace-info.html=, =message.html= ; mémoires
+=recently-viewed-metarecords=, =ref-list-replaced-by-treeref=.
+
+** TODO 39. Panels de fichiers
+
+- [ ] =file-manager panel= — reference
+- [ ] =file panel= — reference (aperçu image/vidéo/audio/PDF, grille)
+- [ ] =Media preview= — reference (codecs, sondage, décodeurs lents, =gst-plugin-dav1d=)
+- [ ] =Document preview= — reference (poppler, hors processus)
+- [ ] =GUI runtime dependencies= — reference (bwrap, police emoji, ffmpeg, poppler, GStreamer)
+
+GUI : =file-manager:*= (20), =file:*= (11) ; panels =file-manager=, =file=.
+Sources : spec-gui « file », « file-manager », « Media codec support », « Slow
+decoders » ; help =file.html=, =file-manager.html= ; CLAUDE.md « Runtime
+dependencies (GUI) » ; mémoires =gui-media-preview-crash=, =gui-slow-decoder-av1=,
+=pdf-document-preview=, =gui-runtime-deps=.
+
+** TODO 40. Scripts
+
+- [ ] =Scripting the GUI= — overview (sessions de script, =mf gui=)
+- [ ] =Writing a GUI script= — guide (=lib/mf-gui.sh=, questions, touches, échec jamais silencieux, retour arrière)
+- [ ] =Script sessions= — reference (propriété des workspaces, attente d'une réponse, touches de réponse, touches de script, touches réservées)
+- [ ] =GUI scripting endpoints= — reference, dev (=/gui/*=)
+- [ ] =Running shipped scripts= — guide (=script:run=, =# Summary:=)
+- [ ] =Example: comparing images= — guide
+- [ ] une note par script livré qui n'est pas déjà dans l'item 30 : =example-gui-sort-folder.sh=, =gui-unwatch-folder.sh=, =lib/mf-gui.sh=
+
+CLI : =mf gui *= (16). GUI : =script:*= (2), =script-keys:toggle=, =answer:send=.
+Sources : spec-gui « Script session », « Scripting / GUI API » ; help
+=scripting.html= ; mémoires =script-answer-back=, =shipped-scripts-test-harness=,
+=bash-set-e-disabled-in-tested-context=, =bash-fork-per-entry=.
+
+* Développement
+
+** TODO 41. Développer metafolder
+
+(tout /dev/)
+- [ ] =Development= — overview
+- [ ] =Building= — guide (=complete-build.sh=, taille de =target/=, =prune-target.sh=, toolchain épinglée)
+- [ ] =Testing conventions= — reference (TDD, répertoires jetables, oracles, tests e2e)
+- [ ] =Static checks= — reference (=check.sh=, semgrep, =cargo deny=)
+- [ ] =Performance testing= — reference (assertions de coût, suite chronométrée, historique)
+- [ ] =Benchmarks= — guide (=metafolder-bench= : modes, dossiers persistants)
+- [ ] =The wire protocol version= — reference (=API_VERSION=, quand l'incrémenter)
+- [ ] =Persisted format changes= — reference (script de conversion obligatoire)
+- [ ] =Writing documentation= — guide (ce wiki, =scripts/doc=, les conventions)
+
+Sources : spec-perf entier ; spec-gui « Bench harness » ; CLAUDE.md « Commands »,
+« Testing conventions » ; mémoires =rust-target-size=, =test-temp-dirs-fill-the-disk=,
+=load-sensitive-timing-tests=, =perf-regression-suite=, =migrations-required-from-v03=,
+=rustfmt-adopted=, =background-builds-killed-low-memory=.
+
+* Clôture
+
+** TODO 42. Catalogues complets
+
+- [ ] ajouter =CLI command=, =GUI command=, =Panel= et =Shipped script= à
+  =$:/mf/config/enforced-catalogs= (ils doivent déjà être complets à ce stade)
+- [ ] générer le catalogue =HTTP endpoint= (depuis le routeur) et le rendre
+  obligatoire ; les notes =… endpoints= des items deviennent les hubs
+- [ ] générer le catalogue =Reserved field= (depuis =reserved.rs=) et le rendre obligatoire
+
+** TODO 43. Retrait de l'ancienne documentation
+
+- [ ] plus aucun =docs/spec-*.org= (tout est repris ou délibérément abandonné, et c'est dit)
+- [ ] plus de =pages/= dans le panel help ; retirer =mergeManifests= et l'ancien manifeste
+- [ ] plus aucune citation =spec-x "…"= dans le code
+- [ ] CLAUDE.md : « Specs and roadmap » renvoie au wiki, règle « when deviating, update the doc »
+- [ ] =docs/doc-wiki-proposal.md= devient une note =rationale= (=Why a wiki=) ou est supprimé
+- [ ] =docs/review-followups.md= : ce qui reste ouvert va dans =roadmap.org=
+- [ ] la mémoire ne contient plus de décisions de conception déjà dans le wiki
