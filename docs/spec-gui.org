@@ -1717,13 +1717,36 @@ has ever been mounted.
   cancels the wait. Arming =help:key= and =help:cursor= dismisses the other —
   one help gesture at a time.
 
-The =help= panel renders a set of static HTML pages (=panel-types/help/pages/=,
-described by =pages/index.json= as ={id, title, file, aliases[]}=) with a grep
-search box on top. There is at least one page per panel type. The queries page
-embeds the *current* simplified-query grammar (read at startup via the
-=grammar_source= command, =metafolder.query.grammarSource()=). The exact-name
-resolution and the grep filter are the pure functions in =/__help.js=
-(=resolvePage=, =filterPages=, =resolveClickTopic=), unit-tested in the frontend.
+The =help= panel renders static HTML pages with a grep search box on top. They
+come from two sets, during the migration of the documentation to the wiki
+([[file:doc-wiki-proposal.md][design]]):
+
+- the *documentation wiki*'s, rendered from =docs/wiki/= by =scripts/doc build=
+  and installed in =~/.config/metafolder/docs/= ([[file:spec-config.org][spec-config]]
+  "Shipped documentation"), fetched from the GUI server's =/docs/=. Its
+  =index.json= describes each page as ={id, title, file, aliases[], tags[],
+  kind, audience, status, summary}= — the note's fields;
+- the panel's own older pages (=panel-types/help/pages/=, described by
+  =pages/index.json= as ={id, title, file, aliases[]}=), each replaced by the
+  wiki page of the same id once migrated, and removed with it.
+
+There is at least one page per panel type, in one set or the other. The wiki's
+pages come first, so they win name resolution. A wiki that is not
+installed (=/docs/index.json= missing) raises a warning bar naming the build
+step; the older pages still work. Everything is shipped, developer documentation
+included (=audience: dev=): the search leaves it out unless the /include
+developer documentation/ box is ticked, and an exact name opens it regardless.
+Above a wiki page, its tags are shown as buttons opening each tag's own note,
+with a badge for a developer page or a status other than =implemented=
+(=deferred=, =proposed=, =record=). The pages are plain HTML — the renderer
+expands every list at build time — so the panel knows nothing of TiddlyWiki;
+the only things it fills in at display are the key hints below and the
+=data-mf-live= zones (=grammar=: the *current* simplified-query grammar, read
+via the =grammar_source= command, =metafolder.query.grammarSource()=; the older
+queries page's =#grammar-source= is still honoured). The exact-name resolution,
+the grep filter and the merge of the two sets are the pure functions in
+=/__help.js= (=resolvePage=, =filterPages=, =mergeManifests=,
+=resolveClickTopic=), unit-tested in the frontend.
 
 *Key hints*: a help page never writes a key. It writes the *command*
 (=<span data-mf-key="treeref:find">f</span>=) and the panel fills the element in

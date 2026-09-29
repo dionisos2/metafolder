@@ -1,12 +1,16 @@
 <!doctype html>
-<!-- Help panel (spec-gui "Help"): a set of static HTML pages with a grep search
-     box on top. Logic in main.js; pages under pages/ (manifest pages/index.json).
+<!-- Help panel (spec-gui "Help"): static HTML pages with a grep search box on
+     top — the documentation wiki's (/docs/index.json) and, until migrated, the
+     older pages under pages/ (manifest pages/index.json). Logic in main.js.
      Markup only — styles below, behaviour in main.js (export mount). -->
 <html lang="en">
   <head>
     <meta charset="UTF-8" />
     <title>help</title>
     <style>
+      [hidden] {
+        display: none !important;
+      }
       .mf-panel-body {
         display: flex;
         flex-direction: column;
@@ -28,6 +32,45 @@
         background: var(--mf-bg, #1e1e24);
         border: 1px solid var(--mf-border, #34343e);
         border-radius: 3px;
+      }
+      #help-options {
+        margin-top: 4px;
+        font-size: 0.8em;
+        color: var(--mf-fg-dim, #8a8a96);
+      }
+      #help-warning {
+        flex: none;
+        padding: 5px 8px;
+        font-size: 0.85em;
+        color: var(--mf-warn-fg, #1e1e24);
+        background: var(--mf-warn, #e0b050);
+      }
+      #help-page-info {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 4px;
+        margin-bottom: 8px;
+      }
+      #help-page-info .page-tag,
+      #help-page-info .page-badge {
+        font: inherit;
+        font-size: 0.8em;
+        padding: 1px 8px;
+        border-radius: 10px;
+        border: 1px solid var(--mf-border, #34343e);
+        background: var(--mf-bg-raised, #26262e);
+        color: var(--mf-fg, #d8d8e0);
+      }
+      #help-page-info button.page-tag {
+        cursor: pointer;
+      }
+      #help-page-info .page-badge {
+        color: var(--mf-fg-dim, #8a8a96);
+        font-style: italic;
+      }
+      /* The wiki renders every list item as a block, its text in a paragraph. */
+      #help-content li > p {
+        margin: 0;
       }
       #help-hint {
         margin-top: 4px;
@@ -124,9 +167,12 @@
     <div id="help-search-row">
       <input id="help-search" type="text" placeholder="search help (or a topic name; #text forces search)" />
       <div id="help-hint"></div>
+      <label id="help-options"><input id="help-dev" type="checkbox" /> include developer documentation in the search</label>
     </div>
+    <div id="help-warning" hidden></div>
     <div id="help-scroll">
       <ul id="help-results" hidden></ul>
+      <div id="help-page-info" hidden></div>
       <div id="help-content"></div>
     </div>
   </body>

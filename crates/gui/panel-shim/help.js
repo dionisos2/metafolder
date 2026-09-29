@@ -8,17 +8,24 @@
 //    hits), used when no exact name matches or `#` forced grep.
 //  - resolveClickTopic: the help-cursor click resolution — the nearest tagged
 //    element's topic, else the clicked slot's panel type.
+//  - mergeManifests: the documentation wiki's pages (`/docs/index.json`)
+//    together with the panel's own older pages, during the migration.
 
 /**
- * One entry of the help manifest (`pages/index.json`).
+ * One entry of a help manifest: the panel's own `pages/index.json`, or the
+ * wiki's `/docs/index.json`, which adds the note's fields (`audience` = `user`
+ * or `dev`, `tags`, `kind`, `status`, `summary`). `base` is the URL directory
+ * the page's `file` is fetched from, set by mergeManifests.
  *
- * @typedef {{id: string, title: string, file: string, aliases?: string[]}} Page
+ * @typedef {{id: string, title: string, file: string, aliases?: string[],
+ *   base?: string, audience?: string, tags?: string[], kind?: string,
+ *   status?: string, summary?: string}} Page
  */
 
 /**
  * A page as indexed for grep: its rendered text alongside the manifest entry.
  *
- * @typedef {{id: string, title: string, text?: string}} IndexedPage
+ * @typedef {{id: string, title: string, text?: string, audience?: string}} IndexedPage
  */
 
 /**
@@ -71,15 +78,18 @@ export function resolvePage(manifest, name) {
  *  title matches rank above those that only match in the body. Returns
  *  `{id, title, snippet}` (the snippet is a short window around the first body
  *  hit, or the title for title-only hits). An empty term returns every page,
- *  ordered by title.
+ *  ordered by title. Developer pages (`audience: dev`) are left out unless
+ *  `includeDev` — they are shipped, only kept out of the way.
  *
- * @param {IndexedPage[]} index
+ * @param {IndexedPage[]} pages
  * @param {string|null|undefined} term
+ * @param {{includeDev?: boolean}} [options]
  * @returns {{id: string, title: string, snippet: string}[]}
  */
-export function filterPages(index, term) {
+export function filterPages(pages, term, { includeDev = false } = {}) {
   /** @param {{title: string}} a @param {{title: string}} b */
   const byTitle = (a, b) => a.title.localeCompare(b.title);
+  const index = includeDev ? pages : pages.filter((p) => p.audience !== 'dev');
   const t = (term ?? '').trim().toLowerCase();
   if (t === '') {
     return [...index].sort(byTitle).map((p) => ({ id: p.id, title: p.title, snippet: '' }));
@@ -112,6 +122,23 @@ function snippetFor(text, term) {
   const start = Math.max(0, at - 30);
   const end = Math.min(body.length, at + term.length + 50);
   return (start > 0 ? '…' : '') + body.slice(start, end) + (end < body.length ? '…' : '');
+}
+
+/** The wiki's pages and the panel's own, each tagged with the `base` it is
+ *  fetched from. A page the wiki has (same id) replaces the old one, and the
+ *  wiki's pages come first so that they win name resolution (resolvePage takes
+ *  the first match). An empty `wiki` — not installed — leaves the old pages.
+ *
+ * @param {Page[]} legacy @param {string} legacyBase
+ * @param {Page[]} wiki @param {string} wikiBase
+ * @returns {Page[]}
+ */
+export function mergeManifests(legacy, legacyBase, wiki, wikiBase) {
+  const ids = new Set(wiki.map((p) => p.id));
+  return [
+    ...wiki.map((p) => ({ ...p, base: wikiBase })),
+    ...legacy.filter((p) => !ids.has(p.id)).map((p) => ({ ...p, base: legacyBase })),
+  ];
 }
 
 /** The help topic for a clicked element, given `descriptors` in composedPath

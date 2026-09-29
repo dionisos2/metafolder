@@ -1,11 +1,13 @@
-// Help panel (spec-gui "Help"). Loads the page set described by
-// pages/index.json, offers a grep search box on top, and resolves an exact
-// name (a page id, an alias, or a `panel:command`) straight to its page. The
+// Help panel (spec-gui "Help"). Loads two page sets — the documentation wiki's,
+// rendered and installed in ~/.config/metafolder/docs/ (served at /docs/), and
+// the panel's own older pages/index.json, which the wiki replaces page by page
+// — offers a grep search box on top, and resolves an exact name (a page id, an
+// alias, or a `panel:command`) straight to its page. The
 // shell hands a requested topic in via the `help.request` workspace var (set by
 // the `help` / `help:open` builtins and the help-cursor click resolution).
 
 import { byId, el } from '/__ui.js';
-import { resolvePage, filterPages } from '/__help.js';
+import { resolvePage, filterPages, mergeManifests } from '/__help.js';
 import { applyKeyHints } from '/__keyhints.js';
 
 /**
@@ -20,8 +22,12 @@ export async function mount(root, metafolder) {
   const hint = byId(root, 'help-hint');
   const results = byId(root, 'help-results');
   const content = byId(root, 'help-content');
+  const warning = byId(root, 'help-warning');
+  const pageInfo = byId(root, 'help-page-info');
+  const includeDev = byId(root, 'help-dev', HTMLInputElement);
 
-  const base = `${metafolder.guiServer}/panel/help/pages`;
+  const legacyBase = `${metafolder.guiServer}/panel/help/pages`;
+  const wikiBase = `${metafolder.guiServer}/docs`;
 
   // The key hints of the pages (`<kbd data-mf-key="command">`) are filled in
   // from the live keybinding table, never written into the HTML: a page states
@@ -41,8 +47,9 @@ export async function mount(root, metafolder) {
   }
   await readKeytable();
 
-  // Load the manifest and every page (raw HTML kept for display; textContent
-  // built into a grep index).
+  // Load the manifests and every page (raw HTML kept for display; textContent
+  // built into a grep index). A wiki that is not installed is a warning, not a
+  // failure: the older pages still work.
   /** @type {Page[]} */
   let manifest = [];
   /** @type {Map<string, string>} id -> raw HTML */
@@ -50,14 +57,31 @@ export async function mount(root, metafolder) {
   /** @type {IndexedPage[]} */
   const index = [];
   try {
-    manifest = await (await fetch(`${base}/index.json`)).json();
+    const legacy = await (await fetch(`${legacyBase}/index.json`)).json();
+    /** @type {Page[]} */
+    let wiki = [];
+    const response = await fetch(`${wikiBase}/index.json`);
+    if (response.ok) {
+      wiki = await response.json();
+    } else {
+      warning.textContent =
+        'The documentation is not installed (run scripts/complete-build.sh, or ' +
+        'scripts/doc build then metafolder-sync-config): only the older help pages are shown.';
+      warning.hidden = false;
+    }
+    manifest = mergeManifests(legacy, legacyBase, wiki, wikiBase);
     await Promise.all(
       manifest.map(async (page) => {
-        const raw = await (await fetch(`${base}/${page.file}`)).text();
+        const raw = await (await fetch(`${page.base}/${page.file}`)).text();
         html.set(page.id, raw);
         const probe = document.createElement('div');
         probe.innerHTML = raw;
-        index.push({ id: page.id, title: page.title, text: probe.textContent ?? '' });
+        index.push({
+          id: page.id,
+          title: page.title,
+          text: probe.textContent ?? '',
+          audience: page.audience,
+        });
       }),
     );
   } catch (error) {
@@ -76,13 +100,15 @@ export async function mount(root, metafolder) {
     results.replaceChildren();
     content.hidden = false;
     content.innerHTML = raw;
+    showPageInfo(manifest.find((p) => p.id === id));
     applyKeyHints(content, keytable);
     // …and again with a fresh table, so a rebinding made since the panel was
     // mounted is reflected without a restart.
     void readKeytable().then(() => applyKeyHints(content, keytable));
 
-    // Live grammar: the queries page carries a placeholder we fill at display.
-    const grammar = content.querySelector('#grammar-source');
+    // Live grammar: the queries page carries a placeholder we fill at display
+    // (`<<live grammar>>` in the wiki, `#grammar-source` in the older pages).
+    const grammar = content.querySelector('[data-mf-live="grammar"], #grammar-source');
     if (grammar) {
       void metafolder.query
         .grammarSource()
@@ -102,12 +128,36 @@ export async function mount(root, metafolder) {
     }
   }
 
+  // Above a wiki page: its tags, each opening the tag's own note, and what
+  // kind of page it is when that is worth saying (developer documentation, a
+  // feature not implemented yet).
+  /** @param {Page | undefined} page */
+  function showPageInfo(page) {
+    /** @type {(HTMLElement|string)[]} */
+    const items = [];
+    if (page?.audience === 'dev') items.push(el('span', { class: 'page-badge' }, 'developer documentation'));
+    if (page?.status && page.status !== 'implemented') {
+      items.push(el('span', { class: 'page-badge' }, page.status));
+    }
+    for (const tag of page?.tags ?? []) {
+      const target = manifest.find((p) => p.title === tag);
+      items.push(
+        target
+          ? el('button', { class: 'page-tag', onclick: () => open(target.id) }, tag)
+          : el('span', { class: 'page-tag' }, tag),
+      );
+    }
+    pageInfo.replaceChildren(...items);
+    pageInfo.hidden = items.length === 0;
+  }
+
   /** @param {string} term */
   function showGrep(term) {
     content.hidden = true;
     content.replaceChildren();
+    pageInfo.hidden = true;
     results.hidden = false;
-    const hits = filterPages(index, term);
+    const hits = filterPages(index, term, { includeDev: includeDev.checked });
     if (hits.length === 0) {
       results.replaceChildren(el('li', { class: 'result-empty' }, `No help page matches "${term}".`));
       return;
@@ -148,6 +198,9 @@ export async function mount(root, metafolder) {
   }
 
   searchInput.addEventListener('input', () => runSearch(searchInput.value));
+  includeDev.addEventListener('change', () => {
+    if (!results.hidden) runSearch(searchInput.value);
+  });
   searchInput.addEventListener('keydown', (event) => {
     if (event.key === 'Enter') runSearch(searchInput.value);
   });
