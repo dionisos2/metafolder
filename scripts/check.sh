@@ -39,6 +39,9 @@
 #               panels query their Shadow root, reconcile never writes
 #               mfr_path = Nothing.
 #
+# target/ is not pruned here (see disk_warning below); a disk with less than
+# METAFOLDER_CHECK_MIN_FREE_GIB (default 10) GiB free is announced instead.
+#
 # A missing optional tool (cargo-deny, semgrep, cargo-llvm-cov) is reported as
 # SKIP with its install line, not as a failure — but a skipped check has
 # verified nothing, so the summary says so out loud.
@@ -94,7 +97,23 @@ skip() {
     skipped+=("$name")
 }
 
+# target/ is never pruned here: clippy and the tests are not every universe
+# complete-build.sh builds, so a prune now would evict the others and they
+# would be rebuilt every run. A target/ left to grow ends with a test dying on
+# "No space left on device" (38 GB on 28 Sept. 2026), so say it out loud —
+# before the tests, where it would fail, and again in the summary.
+min_free_gib=${METAFOLDER_CHECK_MIN_FREE_GIB:-10}
+disk_warning() {
+    mkdir -p target
+    local free_gib
+    free_gib=$(df -Pk target | awk 'NR == 2 { print int($4 / 1048576) }')
+    [ -n "$free_gib" ] && [ "$free_gib" -lt "$min_free_gib" ] || return 0
+    echo "${yellow}${free_gib} GiB free on the disk holding target/${off} — reclaim with" \
+        "scripts/prune-target.sh (after scripts/complete-build.sh), or cargo clean"
+}
+
 echo "${bold}metafolder — static checks${off}"
+disk_warning
 echo
 
 # ── formatting ───────────────────────────────────────────────────────────────
@@ -172,6 +191,7 @@ fi
 
 # ── summary ──────────────────────────────────────────────────────────────────
 echo
+disk_warning
 if [ ${#failed[@]} -gt 0 ]; then
     echo "${red}${bold}${#failed[@]} check(s) failed: ${failed[*]}${off}"
     for name in "${failed[@]}"; do

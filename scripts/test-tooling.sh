@@ -16,6 +16,7 @@ suites=(
     test-prune-target.sh    # target/ pruning (never deletes a live artifact)
     test-run-tests.sh       # the test-runner wrapper's totals/reporting
     test-complete-build.sh  # the full build's order and the paths it runs
+    test-check.sh           # the static checks' disk-space warning
 )
 
 if [ -t 1 ]; then

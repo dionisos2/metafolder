@@ -129,12 +129,6 @@ No conversion was shipped, because it is not known whether any such data
 exists: check, and write the conversion if it does.
 
 * TODO tooling
-** TODO =scripts/check.sh= lets =target/= fill the disk
-=scripts/complete-build.sh= prunes =target/= every time, =check.sh= never: on
-28 September 2026 =target/debug= had reached 38 GB and a test failed on "No
-space left on device" (15 GB came back with =scripts/prune-target.sh=). Prune
-at the end of =check.sh= too, or at least warn when the disk is nearly full.
-
 ** TODO test coverage has not been measured outside the broker
 =cargo llvm-cov= is wired into =scripts/check.sh= behind =--coverage=; it has
 only been used on =metafolder-watchd= (100 % of its production lines, the
