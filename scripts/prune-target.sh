@@ -64,23 +64,29 @@ target_dir=$(realpath "$target_dir")
 state_file="$target_dir/.prune-target-state"
 lock_file="$(dirname "$target_dir")/Cargo.lock"
 
-# ---- scan: emit "profile|stem|hash" for every hash-named artifact ----------
-# Stems are kept literal (libfoo and foo are tracked as separate stems); the
-# deletion step bridges the lib prefix so one stale hash removes all kinds.
+# ---- scan: every hash-named artifact, as "profile|stem|hash|kind|name" ------
+# One find, parsed by awk: a bash loop matching a regex per entry took half a
+# minute on a real target/ (10k entries). kind is deps, .fingerprint or build;
+# stem is the name up to its first dot minus the -<hash> suffix. Only
+# profiles holding a deps/ directory count. Stems are kept literal (libfoo and
+# foo are tracked as separate stems); the deletion step bridges the lib prefix
+# so one stale hash removes all kinds.
+list_artifacts() {
+    find "$target_dir" -mindepth 2 -maxdepth 3 -printf '%P\n' | awk -F/ '
+        NF == 2 && $2 == "deps" { has_deps[$1] = 1; next }
+        NF != 3 || ($2 != "deps" && $2 != ".fingerprint" && $2 != "build") { next }
+        {
+            base = $3; sub(/\..*/, "", base)
+            if (!match(base, /-[0-9a-f]{16}$/) || RSTART == 1) next
+            rows[++n] = $1 "|" substr(base, 1, RSTART - 1) "|" substr(base, RSTART + 1) "|" $2 "|" $3
+            prof[n] = $1
+        }
+        END { for (i = 1; i <= n; i++) if (prof[i] in has_deps) print rows[i] }'
+}
+
+# "profile|stem|hash" for every hash-named artifact (the state file's form).
 scan() {
-    local p profile entry base
-    for p in "$target_dir"/*/; do
-        [ -d "$p/deps" ] || continue
-        profile=$(basename "$p")
-        for entry in "$p"deps/* "$p".fingerprint/* "$p"build/*; do
-            [ -e "$entry" ] || continue
-            base=$(basename "$entry")
-            base=${base%%.*}
-            if [[ $base =~ ^(.+)-([0-9a-f]{16})$ ]]; then
-                echo "$profile|${BASH_REMATCH[1]}|${BASH_REMATCH[2]}"
-            fi
-        done
-    done | sort -u
+    cut -d'|' -f1-3 <<<"$artifacts" | sort -u
 }
 
 # ---- deps-only scan (pass 3) ------------------------------------------------
@@ -88,19 +94,7 @@ scan() {
 # a leftover .fingerprint or build/ dir whose rlib is gone cannot use an
 # incremental cache, so it must not keep one alive either.
 deps_scan() {
-    local p profile entry base
-    for p in "$target_dir"/*/; do
-        [ -d "$p/deps" ] || continue
-        profile=$(basename "$p")
-        for entry in "$p"deps/*; do
-            [ -e "$entry" ] || continue
-            base=$(basename "$entry")
-            base=${base%%.*}
-            if [[ $base =~ ^(.+)-([0-9a-f]{16})$ ]]; then
-                echo "$profile|${BASH_REMATCH[1]}|${BASH_REMATCH[2]}"
-            fi
-        done
-    done | sort -u
+    awk -F'|' '$4 == "deps" { print $1 "|" $2 "|" $3 }' <<<"$artifacts" | sort -u
 }
 
 # ---- deletion helper --------------------------------------------------------
@@ -113,23 +107,21 @@ declare -A doomed_gen=()    # "profile|name|hash" triples some pass doomed
 # land on one name. (A lib crate and a bin crate can then collide — e.g. a
 # lib "rarian" and a bin "librarian" — which only ever over-counts the
 # surviving generations: a few extra cache dirs survive. Never destructive.)
+# Sets $norm rather than printing: it runs once per artifact, and a $(...)
+# around it forked a subshell each time — thousands of forks per run.
 norm_name() {
-    local n=$1
-    n=${n#lib}
-    n=${n//_/-}
-    printf '%s' "$n"
+    norm=${1#lib}
+    norm=${norm//_/-}
 }
 mark() {
     local profile=$1 stem=$2 hash=$3 alt s path
     if [[ $stem == lib?* ]]; then alt=${stem#lib}; else alt=lib$stem; fi
-    doomed_gen["$profile|$(norm_name "$stem")|$hash"]=1
+    norm_name "$stem"
+    doomed_gen["$profile|$norm|$hash"]=1
     for s in "$stem" "$alt"; do
-        for path in "$target_dir/$profile/deps/$s-$hash" \
-                    "$target_dir/$profile/deps/$s-$hash".* \
-                    "$target_dir/$profile/.fingerprint/$s-$hash" \
-                    "$target_dir/$profile/build/$s-$hash"; do
-            [ -e "$path" ] && doomed+=("$path")
-        done
+        while IFS= read -r path; do
+            [ -n "$path" ] && doomed+=("$path")
+        done <<<"${gen_paths[$profile|$s|$hash]:-}"
     done
     return 0
 }
@@ -141,49 +133,80 @@ mark_path() {
     return 0
 }
 
+artifacts=$(list_artifacts)
+# The paths behind each "profile|stem|hash", for mark(): deps/ entries named
+# <stem>-<hash> or <stem>-<hash>.<ext>, .fingerprint/ and build/ entries named
+# exactly <stem>-<hash>. Looked up here rather than globbed per mark, which
+# listed the whole deps/ directory each time.
+declare -A gen_paths=()
+while IFS='|' read -r profile stem hash kind name; do
+    [ -n "$stem" ] || continue
+    [ "$kind" = deps ] || [ "$name" = "$stem-$hash" ] || continue
+    gen_paths["$profile|$stem|$hash"]+="$target_dir/$profile/$kind/$name"$'\n'
+done <<<"$artifacts"
 current=$(scan)
 
 # ---- pass 1: diff against the previous run's state --------------------------
 declare -A gained=()    # "profile|name": the name gained a hash absent from state
+# One awk over both lists: a grep of the state file per artifact was one fork
+# per artifact, and on a real target/ (10k artifacts) most of the run time.
+# Emits "G|profile|name" for each name that gained a hash absent from the
+# previous state, and "M|profile|stem|hash" for each previously-seen hash of
+# that stem still present, to be pruned.
 if [ -f "$state_file" ]; then
-    # Names that gained a hash absent from the previous state...
-    while IFS='|' read -r profile stem hash; do
-        [ -n "$stem" ] || continue
-        if ! grep -qxF "$profile|$stem|$hash" "$state_file"; then
-            gained["$profile|$(norm_name "$stem")"]=1
-            # ...get their previously-seen, still-present hashes pruned.
-            while IFS='|' read -r _ _ old_hash; do
-                [ "$old_hash" != "$hash" ] || continue
-                grep -qxF "$profile|$stem|$old_hash" <<<"$current" &&
-                    mark "$profile" "$stem" "$old_hash"
-            done < <(grep -F "$profile|$stem|" "$state_file" |
-                     awk -F'|' -v s="$stem" -v p="$profile" '$1==p && $2==s')
-        fi
-    done <<<"$current"
+    while IFS='|' read -r kind profile a b; do
+        case $kind in
+            G) gained["$profile|$a"]=1 ;;
+            M) mark "$profile" "$a" "$b" ;;
+        esac
+    done < <(printf '%s\n' "$current" | awk -F'|' '
+        FNR == NR { if ($2 != "") { old[$0] = 1; hashes[$1 "|" $2] = hashes[$1 "|" $2] " " $3 }; next }
+        $2 == "" { next }
+        { cur[$0] = 1; lines[++n] = $0 }
+        END {
+            for (i = 1; i <= n; i++) {
+                if (lines[i] in old) continue
+                split(lines[i], f, "|")
+                name = f[2]; sub(/^lib/, "", name); gsub(/_/, "-", name)
+                print "G|" f[1] "|" name
+                k = f[1] "|" f[2]
+                m = split(hashes[k], hs, " ")
+                for (j = 1; j <= m; j++) {
+                    if (hs[j] == f[3]) continue
+                    if ((k "|" hs[j]) in cur && !((k "|" hs[j]) in done)) {
+                        done[k "|" hs[j]] = 1
+                        print "M|" k "|" hs[j]
+                    }
+                }
+            }
+        }' "$state_file" -)
 fi
 
 # ---- pass 2: registry versions no longer in Cargo.lock ----------------------
+# One awk over every .d file (it stops reading each at its first registry
+# path): a grep|head|awk per file was four forks per artifact.
 if [ -f "$lock_file" ]; then
-    lock_versions=$(awk '
-        /^name = /    { n=$3; gsub(/"/,"",n) }
-        /^version = / { v=$3; gsub(/"/,"",v); sub(/\+.*/,"",v); print n "-" v }
-    ' "$lock_file")
-    for p in "$target_dir"/*/; do
-        [ -d "$p/deps" ] || continue
-        profile=$(basename "$p")
-        for dfile in "$p"deps/*.d; do
-            [ -e "$dfile" ] || continue
-            pkgdir=$(grep -oE '/registry/src/[^/ ]+/[^/ ]+' "$dfile" |
-                     head -1 | awk -F/ '{print $NF}' || true)
-            [ -n "$pkgdir" ] || continue        # local sources: never pruned
-            pkg=${pkgdir%%+*}                   # drop semver build metadata
-            grep -qxF "$pkg" <<<"$lock_versions" && continue
-            base=$(basename "$dfile" .d)
-            if [[ $base =~ ^(.+)-([0-9a-f]{16})$ ]]; then
-                mark "$profile" "${BASH_REMATCH[1]}" "${BASH_REMATCH[2]}"
-            fi
-        done
-    done
+    # shellcheck disable=SC2016  # an awk program, not a shell string
+    while IFS='|' read -r profile stem hash; do
+        mark "$profile" "$stem" "$hash"
+    done < <(find "$target_dir" -mindepth 3 -maxdepth 3 -path '*/deps/*.d' -print0 |
+             xargs -0 -r awk -v lock="$lock_file" '
+        FILENAME == lock {
+            if ($1 == "name" && $2 == "=")    { n = $3; gsub(/"/, "", n) }
+            if ($1 == "version" && $2 == "=") { v = $3; gsub(/"/, "", v); sub(/\+.*/, "", v); inlock[n "-" v] = 1 }
+            next
+        }
+        match($0, /\/registry\/src\/[^\/ ]+\/[^\/ ]+/) {
+            m = split(substr($0, RSTART, RLENGTH), parts, "/")
+            pkg = parts[m]; sub(/\+.*/, "", pkg)     # drop semver build metadata
+            if (!(pkg in inlock)) {
+                c = split(FILENAME, fp, "/")
+                base = fp[c]; sub(/\.d$/, "", base)
+                if (match(base, /-[0-9a-f]{16}$/) && RSTART > 1)
+                    print fp[c - 2] "|" substr(base, 1, RSTART - 1) "|" substr(base, RSTART + 1)
+            }
+            nextfile                                # local sources: never pruned
+        }' "$lock_file")
 else
     echo "note: $lock_file not found, skipping the Cargo.lock pass" >&2
 fi
@@ -207,8 +230,8 @@ declare -A ngen=()      # "profile|name" -> surviving generations in deps/
 declare -A seen_gen=()  # "profile|name|hash" dedup across artifact kinds
 while IFS='|' read -r profile stem hash; do
     [ -n "$stem" ] || continue
-    name=$(norm_name "$stem")
-    key="$profile|$name|$hash"
+    norm_name "$stem"
+    key="$profile|$norm|$hash"
     [ -n "${doomed_gen[$key]+x}" ] && continue
     [ -n "${seen_gen[$key]+x}" ] && continue
     seen_gen[$key]=1
@@ -224,8 +247,8 @@ for p in "$target_dir"/*/; do
     profile=$(basename "$p")
     while IFS=$'\t' read -r mtime base; do
         [[ $base == *-* ]] || continue          # no hash suffix: leave it alone
-        name=$(norm_name "${base%-*}")
-        inc_dirs["$profile|$name"]+="${mtime}"$'\t'"${base}"$'\n'
+        norm_name "${base%-*}"
+        inc_dirs["$profile|$norm"]+="${mtime}"$'\t'"${base}"$'\n'
     done < <(find "${p}incremental" -mindepth 1 -maxdepth 1 -type d -printf '%T@\t%f\n')
 done
 
@@ -258,25 +281,25 @@ fi
 # Session names sort by their time field (fixed-width base 36), so the newest
 # finalized session is the last non-working one in name order; everything
 # before it is dead. Its lock is named by the session's first two fields.
-for p in "$target_dir"/*/; do
-    [ -d "${p}incremental" ] || continue
-    for cache in "${p}"incremental/*/; do
-        cache=${cache%/}
-        # An empty incremental/ leaves the glob unexpanded.
-        [ -d "$cache" ] || continue
-        [ -z "${doomed_path[$cache]+x}" ] || continue
-        newest=$(find "$cache" -mindepth 1 -maxdepth 1 -type d -name 's-*' \
-                     ! -name '*-working' -printf '%f\n' | sort | tail -1)
-        [ -n "$newest" ] || continue
-        newest_key=$(cut -d- -f1-3 <<<"$newest")
-        while IFS= read -r session; do
-            key=$(cut -d- -f1-3 <<<"$session")
-            [[ $key < $newest_key ]] || continue
-            mark_path "$cache/$session"
-            mark_path "$cache/$key.lock"
-        done < <(find "$cache" -mindepth 1 -maxdepth 1 -type d -name 's-*' -printf '%f\n')
-    done
-done
+# One find over every cache dir, grouped by awk: a find|sort|tail per cache
+# dir and a cut per session were several forks each. Emits "cache<TAB>session".
+while IFS=$'\t' read -r cache session; do
+    [ -z "${doomed_path[$cache]+x}" ] || continue
+    [[ $session =~ ^(s-[^-]*-[^-]*) ]] || continue
+    mark_path "$cache/$session"
+    mark_path "$cache/${BASH_REMATCH[1]}.lock"
+done < <(find "$target_dir" -mindepth 4 -maxdepth 4 -type d -path '*/incremental/*/s-*' \
+             -printf '%h\t%f\n' | awk -F'\t' '
+    function key(s,   f) { split(s, f, "-"); return f[1] "-" f[2] "-" f[3] }
+    { cache[NR] = $1; sess[NR] = $2 }
+    $2 !~ /-working$/ && (!($1 in newest) || $2 > newest[$1]) { newest[$1] = $2 }
+    END {
+        for (i = 1; i <= NR; i++) {
+            c = cache[i]
+            if (!(c in newest)) continue
+            if (key(sess[i]) < key(newest[c])) print c "\t" sess[i]
+        }
+    }')
 
 # ---- execute and report ------------------------------------------------------
 # The doomed list routinely runs to tens of thousands of paths, well past
@@ -309,5 +332,6 @@ fi
 # Record the post-prune generation as the new baseline (not on dry runs, so
 # the next real run still prunes what the dry run reported).
 if [ "$dry_run" -eq 0 ]; then
+    artifacts=$(list_artifacts)
     scan > "$state_file"
 fi
