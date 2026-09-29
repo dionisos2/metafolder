@@ -172,7 +172,7 @@ export async function mount(root, metafolder) {
     if (value.type === 'tree_ref' && entry) {
       const tree = value.value;
       daemon
-        .resolveTreeRef(entry.repo, tree)
+        .resolveTreeRef(entry.repo, tree, field)
         .then((path) => {
           span.textContent = path === '' ? '/' : path;
           span.title = `${field}: parent ${tree.parent ?? '(root)'}, name "${tree.name}"`;

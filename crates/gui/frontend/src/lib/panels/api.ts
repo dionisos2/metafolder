@@ -287,8 +287,11 @@ export function createPanelApi(deps: PanelApiDeps, ctx: PanelApiCtx): PanelApiIn
     if (!resolvers.has(repo)) {
       resolvers.set(
         repo,
-        createPathResolver(async (uuids: string[]) => {
-          const response = await daemonRequest('POST', `/repos/${repo}/tree/resolve`, { uuids });
+        createPathResolver(async (uuids: string[], field: string) => {
+          const response = await daemonRequest('POST', `/repos/${repo}/tree/resolve`, {
+            field,
+            uuids,
+          });
           if (response.status !== 200) {
             const err = (response.body as { error?: string })?.error;
             throw new Error(err ?? `tree/resolve failed (HTTP ${response.status})`);
@@ -426,8 +429,11 @@ export function createPanelApi(deps: PanelApiDeps, ctx: PanelApiCtx): PanelApiIn
       parseQuery: (dsl: string) => api.query.parse(dsl),
       expandQuery: (s: string) => api.query.expand(s),
       resolvePath: (repo: string, uuid: string) => resolverFor(repo).resolveUuid(uuid),
-      resolveTreeRef: (repo: string, value: { parent: string | null; name: string }) =>
-        resolverFor(repo).resolveTreeRef(value),
+      resolveTreeRef: (
+        repo: string,
+        value: { parent: string | null; name: string },
+        field = 'mfr_path',
+      ) => resolverFor(repo).resolveTreeRef(value, field),
       repoRoot: async (repo: string) => (await repoInfo(repo)).root as string,
       repoInternalDir: async (repo: string) => (await repoInfo(repo)).internal_dir as string,
       metarecordPaths: async (repo: string, metarecord: { uuid: string }) => {

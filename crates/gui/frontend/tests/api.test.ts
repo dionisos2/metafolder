@@ -272,6 +272,16 @@ describe('panel api — daemon', () => {
     expect(resolves).toHaveLength(2);
   });
 
+  test("resolveTreeRef resolves the parent in the value's own field", async () => {
+    const { api, invoke } = setup();
+    answering(invoke, { status: 200, body: { results: [{ uuid: 'p', paths: ['genre'] }] } });
+    await api.daemon.resolveTreeRef('r2', { parent: 'p', name: 'jazz' }, 'tag').catch(() => {});
+    const bodies = invoke.mock.calls
+      .filter((c) => (c[1] as { path?: string })?.path === '/repos/r2/query/fields/resolve-tree')
+      .map((c) => (c[1] as { body: { field: string } }).body.field);
+    expect(bodies).toEqual(['tag']);
+  });
+
   test('repoRoot caches GET /repos across calls', async () => {
     const { api, invoke } = setup();
     invoke.mockResolvedValue({ status: 200, body: [{ repo_uuid: 'r', root: '/tmp/r' }] });

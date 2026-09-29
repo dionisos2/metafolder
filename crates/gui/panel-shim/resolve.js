@@ -1,7 +1,7 @@
 // TreeRef path resolution (spec-gui "Path display"). Paths are
 // repo-root-relative ('/'-joined names). Resolution is delegated to the
 // daemon's tree-resolve endpoint (one round-trip, no client-side chain walk);
-// `resolvePaths(uuids)` returns `{ uuid: [paths] }`. Nothing is kept: a path
+// `resolvePaths(uuids, field)` returns `{ uuid: [paths] }` in `field`'s forest. Nothing is kept: a path
 // depends on every ancestor's name, so a kept one goes stale the moment any
 // directory above it is renamed. The shim exposes this per repo as
 // metafolder.daemon.resolvePath / resolveTreeRef.
@@ -14,22 +14,25 @@
  */
 
 /**
- * @param {(uuids: string[]) => Promise<Record<string, string[]>>} resolvePaths
- *   one daemon round-trip resolving uuids to their (multi-map) paths
+ * @param {(uuids: string[], field: string) => Promise<Record<string, string[]>>} resolvePaths
+ *   one daemon round-trip resolving uuids to their paths in `field`'s forest
  */
 export function createPathResolver(resolvePaths) {
-  /** @param {string} uuid */
-  async function resolveUuid(uuid) {
-    const byUuid = await resolvePaths([uuid]);
+  /** A metarecord's path in `field`'s forest (one position per forest).
+   *  @param {string} uuid @param {string} [field] */
+  async function resolveUuid(uuid, field = 'mfr_path') {
+    const byUuid = await resolvePaths([uuid], field);
     const paths = byUuid[uuid] ?? [];
-    if (paths.length === 0) throw new Error(`metarecord ${uuid} has no resolvable mfr_path`);
-    return paths[0]; // first position (multi-map: hardlinks etc.)
+    if (paths.length === 0) throw new Error(`metarecord ${uuid} has no resolvable ${field}`);
+    return paths[0];
   }
 
-  /** @param {TreeRefValue} value */
-  async function resolveTreeRef({ parent, name }) {
+  /** The path a `tree_ref` value names. Its parent sits in the same forest as
+   *  the value: `field` is the field the value was read from.
+   *  @param {TreeRefValue} value @param {string} [field] */
+  async function resolveTreeRef({ parent, name }, field = 'mfr_path') {
     if (!parent) return name; // tree root (empty name for the repo root)
-    const parentPath = await resolveUuid(parent);
+    const parentPath = await resolveUuid(parent, field);
     // An empty parent path is the filesystem repo root (name ""), so a top-level
     // node is leading-"/"-rooted (`/name`) — matching the daemon's `paths_of` and
     // the DSL. A named-root forest (parentPath non-empty, e.g. tags) has no "/".

@@ -134,7 +134,9 @@ declare namespace Metafolder {
     expandQuery(simplified: string): Promise<unknown>;
     /** The repo-root-relative path of a metarecord's `mfr_path`. */
     resolvePath(repo: string, uuid: string): Promise<string>;
-    resolveTreeRef(repo: string, value: TreeRef): Promise<string>;
+    /** The path a `tree_ref` value names, in the forest of `field` — the field
+     *  the value was read from (default `mfr_path`). */
+    resolveTreeRef(repo: string, value: TreeRef, field?: string): Promise<string>;
     repoRoot(repo: string): Promise<string>;
     repoInternalDir(repo: string): Promise<string>;
     /** Absolute paths (multi-map: a file may sit at several tree positions). */

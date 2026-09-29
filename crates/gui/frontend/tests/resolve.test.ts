@@ -34,13 +34,31 @@ describe('createPathResolver', () => {
     await resolver.resolveUuid('take5');
     await resolver.resolveUuid('take5');
     expect(resolvePaths).toHaveBeenCalledTimes(2);
-    expect(resolvePaths).toHaveBeenCalledWith(['take5']);
+    expect(resolvePaths).toHaveBeenCalledWith(['take5'], 'mfr_path');
   });
 
   test('resolveTreeRef resolves a raw value via its parent (named-root forest)', async () => {
     const { resolver } = setup();
     const path = await resolver.resolveTreeRef({ parent: 'jazz', name: 'so-what.mp3' });
     expect(path).toBe('music/jazz/so-what.mp3');
+  });
+
+  test('resolveTreeRef resolves the parent in the value\'s own forest', async () => {
+    // A tag's parent is a tag: it has no `mfr_path`, only a position in `tag`.
+    const resolvePaths = vi.fn(async (uuids: string[], field: string) =>
+      Object.fromEntries(uuids.map((u) => [u, field === 'tag' ? ['genre/jazz'] : []])),
+    );
+    const resolver = createPathResolver(resolvePaths);
+    expect(await resolver.resolveTreeRef({ parent: 'jazz', name: 'bebop' }, 'tag')).toBe(
+      'genre/jazz/bebop',
+    );
+    expect(resolvePaths).toHaveBeenCalledWith(['jazz'], 'tag');
+  });
+
+  test('the field defaults to mfr_path', async () => {
+    const { resolver, resolvePaths } = setup();
+    await resolver.resolveUuid('take5');
+    expect(resolvePaths).toHaveBeenCalledWith(['take5'], 'mfr_path');
   });
 
   test('resolveTreeRef leading-"/"-roots a top-level filesystem node', async () => {
