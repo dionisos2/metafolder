@@ -1,0 +1,16 @@
+title: The keybindings file
+tags: Configuration
+kind: reference
+summary: gui/keybindings.toml is the whole set — shipped and yours, merged by git; resetting a binding is a git operation.
+
+`~/.config/metafolder/gui/keybindings.toml` is the ''complete'' set of
+keybindings: the shipped ones (from `default`) merged with your edits (by git,
+[[Updating the configuration]]). The GUI reads that one file; there is no
+load-time merge with a built-in set.
+
+* The keybinding editor of the GUI writes into this file, an ordinary edit on `main`.
+* Resetting a binding to its default is a git operation: `git checkout default -- gui/keybindings.toml` for the whole file, or the per-key equivalent by hand.
+* A panel's suggested bindings (`addKeybinding`) apply only where they do not conflict with the file's.
+
+This replaced a model of built-in defaults plus a table of user overrides, merged
+at load, where "reset" meant deleting an override entry.

@@ -33,7 +33,7 @@ fn gui_port_from_config(content: &str) -> Option<u16> {
     table.get("gui-port")?.as_integer()?.try_into().ok()
 }
 
-/// The GUI config file location (spec-config):
+/// The GUI config file location (doc "Configuration"):
 /// `~/.config/metafolder/gui/config.toml`. The GUI no longer writes a
 /// `gui.port` discovery file — its port lives in this config.
 pub fn config_path_candidates() -> Vec<PathBuf> {

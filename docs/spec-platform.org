@@ -186,7 +186,7 @@ map belongs with the repository it describes.
 - At repo *load* the daemon reads the file. If it is **absent** (a repo created
   before this feature, or a deleted file) the daemon self-heals: it writes the
   baked-in default, then reads it (this is repository-owned data, not user
-  config, so writing a default does not conflict with spec-config's "No runtime
+  config, so writing a default does not conflict with doc "Configuration"'s "No runtime
   fallback"). If it is **malformed**, only *that* repository fails to load
   (a targeted error/warning), never the whole daemon — exactly like an invalid
   =schema.json=.

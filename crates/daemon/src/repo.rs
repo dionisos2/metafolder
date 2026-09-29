@@ -141,7 +141,7 @@ pub fn seed_schema_file(metafolder_dir: &Path, source: &Path) {
 
 /// Creates the filesystem root metarecord: `mfr_path` root TreeRef, directory
 /// type, tracking disabled (opt-in). No `mf_ignore` is written: the daemon
-/// carries no built-in ignore policy (spec-config "No runtime fallback"); the
+/// carries no built-in ignore policy (doc "No runtime fallback"); the
 /// default patterns are applied client-side as the `default` ignore preset by
 /// `mf repo init` / the GUI (spec-file-tracking "Ignore presets").
 fn create_root_entry(conn: &mut crate::store::Handle) -> Result<()> {

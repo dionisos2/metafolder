@@ -1,4 +1,4 @@
-# Metafolder daemon settings (spec-config; spec-main "Daemon configuration").
+# Metafolder daemon settings (doc "Configuration"; spec-main "Daemon configuration").
 # Installed into ~/.config/metafolder/daemon/ by metafolder-sync-config.
 # The --config CLI flag overrides this path; a malformed file aborts startup.
 

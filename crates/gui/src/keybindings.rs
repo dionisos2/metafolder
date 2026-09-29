@@ -191,7 +191,7 @@ impl KeybindingSet {
     }
 
     /// The complete set from a single source. In the git-backed config model
-    /// (spec-config) the user's `keybindings.toml` already is the shipped
+    /// (doc "Configuration") the user's `keybindings.toml` already is the shipped
     /// defaults merged with their edits, so there is no separate defaults layer.
     pub fn from_source(source: &str) -> Result<Self, String> {
         Self::from_sources(source, "")

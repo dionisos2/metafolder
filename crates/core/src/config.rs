@@ -1,4 +1,4 @@
-//! User configuration paths (spec-config "core configuration API").
+//! User configuration paths (doc "Shipped defaults in the source tree").
 //!
 //! The user configuration lives in a single git repository at
 //! `$XDG_CONFIG_HOME/metafolder/` (or `$HOME/.config/metafolder/`), one
@@ -42,14 +42,14 @@ fn crate_dir(root: &Path, crate_name: &str) -> PathBuf {
 }
 
 /// The installed shipped-scripts directory: `<config_root>/scripts` (a
-/// crate-agnostic top-level category, spec-config "Shipped scripts").
+/// crate-agnostic top-level category, doc "Shipped defaults in the source tree").
 pub fn scripts_dir() -> Option<PathBuf> {
     config_root().map(|root| root.join("scripts"))
 }
 
 /// Reads a required configuration file. A missing file is an explicit error
 /// pointing at the install command; there is no fall back to a shipped
-/// default (spec-config "No runtime fallback").
+/// default (doc "No runtime fallback").
 pub fn read_required(path: &Path) -> Result<String, String> {
     match std::fs::read_to_string(path) {
         Ok(content) => Ok(content),

@@ -1,0 +1,9 @@
+title: Configuration open questions
+tags: Configuration
+kind: question
+status: deferred
+summary: Installing without a source checkout, a sync racing an editor, and leaving a conflicted merge for your own git tools.
+
+* ''Binary-only install.'' Installing from a pre-built binary or a package, with no checkout to read the defaults from, needs them embedded in `metafolder-sync-config` instead of read from `--source`. The checkout install is the target for now.
+* ''Editing during a sync.'' The sync assumes nothing is changing the working tree at the same time (it is an explicit install step). If that needs hardening, a lock file in the configuration directory is the obvious means.
+* ''Resolving a conflict yourself.'' A conflict restores `main` and warns. An option could leave the conflicted merge in place, for whoever prefers their own git tools.

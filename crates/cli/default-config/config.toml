@@ -1,4 +1,4 @@
-# Metafolder CLI (`mf`) settings (spec-config; spec-main "* CLI").
+# Metafolder CLI (`mf`) settings (doc "Configuration"; spec-main "* CLI").
 # Installed into ~/.config/metafolder/cli/ by metafolder-sync-config.
 #
 # Every key is optional: omit a whole table (or any key) to keep the default

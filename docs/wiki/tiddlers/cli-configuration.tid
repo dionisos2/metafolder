@@ -1,0 +1,19 @@
+title: CLI configuration
+tags: Configuration
+kind: reference
+summary: cli/config.toml — the daemon port, the page size, a default repository and the tag field names; flags and variables win.
+
+`~/.config/metafolder/cli/config.toml`. A missing file, table or key keeps the
+built-in default; a malformed file stops `mf` with exit code 2, before any daemon
+call. `mf --no-config` ignores the file entirely, so a script is immune to your
+personal settings.
+
+|!Table |!Key |!Default |!For |
+|`[settings]` |`daemon-port` |`7523` |used when neither `-p`/`--port` nor `METAFOLDER_DAEMON_PORT` is given |
+| |`page-size` |`500` |the page size `mf` asks for while streaming a listing |
+| |`reconcile-poll-interval-ms` |`200` |how often `mf reconcile` polls its task, when `--poll-interval` is not given |
+|`[repo]` |`name` or `uuid` |— |a default repository, used when no `-n`/`-u` (nor their variables) is given; without one, a command needing a repository and given none is a usage error |
+|`[tag]` |`type-field`, `entry-type`, `path-field`, `positive`, `negative`, `mixed` |`mf_schema`, `tag`, `path`, `tag`, `negative_tag`, `mixed_tag` |the field names of the tag model `mf tag` works with (the GUI's tagging scripts use the same) |
+
+Precedence, for every setting: an explicit flag or environment variable, then the
+file, then the built-in default.

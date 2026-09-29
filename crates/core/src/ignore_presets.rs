@@ -5,7 +5,7 @@
 //! client-side transformation shared by the CLI (`mf ignore`, `mf repo init`)
 //! and the GUI; the daemon never reads this file and carries no built-in ignore
 //! policy. A missing or malformed file is an error — there is no embedded
-//! runtime fallback (spec-config "No runtime fallback").
+//! runtime fallback (doc "No runtime fallback").
 
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
@@ -104,7 +104,7 @@ pub fn presets_path() -> Option<PathBuf> {
 }
 
 /// Reads and parses the presets file at `path`. A missing or malformed file is
-/// an error; there is no fall back to a shipped default (spec-config).
+/// an error; there is no fall back to a shipped default (doc "Configuration").
 pub fn load_from(path: &Path) -> Result<Presets, String> {
     let src = config::read_required(path)?;
     Presets::parse(&src)

@@ -555,7 +555,7 @@ async function repoRoot(repo: string): Promise<string> {
 
 // ── Installed helper scripts (the `script:run` builtin) ─────────────────────
 // The shipped scripts live in ~/.config/metafolder/scripts/; a launchable one
-// carries a `# Summary:` header (spec-config "Shipped scripts"), enumerated by
+// carries a `# Summary:` header (doc "Shipped defaults in the source tree"), enumerated by
 // the `list_scripts` command. The argument completes to "<name> — <summary>"
 // lines; picking one runs the script as a subprocess whose output streams to
 // the message panel (like a `!` command), and the script drives the GUI back

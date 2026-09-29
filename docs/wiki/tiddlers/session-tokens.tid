@@ -20,7 +20,7 @@ pass. With neither `$HOME` nor `XDG_RUNTIME_DIR`, the server asks for
 `XDG_RUNTIME_DIR` to be set.
 
 The token is never kept under `~/.config/metafolder/`: that is a git repository
-(the configuration repository), and a session secret must not be committed.
+([[The configuration repository]]), and a session secret must not be committed.
 
 Outside Unix there is no uid and no `0600`/`0700` model: the tokens work only with
 `XDG_RUNTIME_DIR` set, and without hardening. (An earlier design put them in

@@ -295,7 +295,7 @@ fn test_unreachable_daemon_is_operation_error() {
     assert!(out.stderr.starts_with("error:"), "stderr: {}", out.stderr);
 }
 
-// ── CLI config file (spec-config "cli/config.toml") ───────────────────────────
+// ── CLI config file (doc "CLI configuration") ───────────────────────────
 
 /// A fresh `XDG_CONFIG_HOME` holding `metafolder/cli/config.toml` = `contents`.
 /// The guard comes back with the path: dropping it would take the config dir

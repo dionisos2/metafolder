@@ -65,7 +65,7 @@ fn test_init_creates_structure_and_root_metarecord() {
     assert_eq!(entry.get("mfr_type"), Some(&Value::String("dir".into())));
     assert_eq!(entry.get("mf_watch"), Some(&Value::Bool(false)));
     // The daemon writes no mf_ignore at init: it carries no built-in ignore
-    // policy (spec-config "No runtime fallback"); the default patterns are
+    // policy (doc "No runtime fallback"); the default patterns are
     // applied client-side as the `default` ignore preset by `mf repo init` /
     // the GUI (spec-file-tracking "Ignore presets").
     assert!(entry.get_all("mf_ignore").is_empty(), "no ignore patterns are written at init");

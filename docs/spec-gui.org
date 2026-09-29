@@ -1337,7 +1337,7 @@ Behaviours:
 | =orphan:delete=      | Delete the metarecords carrying the marker (=POST /query/delete= over =orphan = true=), after a confirmation naming the count. Detection is *not* re-run: what is marked is what goes |
 | =orphan:detect-delete= | =orphan:detect= then =orphan:delete=, one confirmation between the two — the convenience form for "find the records whose file is gone and be rid of them" |
 | =mf:order= | Number the selected folder's direct children (=order_file= / =order_dir=) and mark the folder =order_numbered= — the GUI half of =mf order=; no prompt: the selected folder, or the selected file's folder (default =m o=) — see [[*Order a folder's children]] |
-| =script:run [name]=  | Run an installed helper script — completes over the scripts in =~/.config/metafolder/scripts/=, the description taken from each script's =# Summary:= header; the chosen script runs as a subprocess (output in the =message= panel) — see [[file:spec-config.org][spec-config.org]] "Shipped scripts" |
+| =script:run [name]=  | Run an installed helper script — completes over the scripts in =~/.config/metafolder/scripts/=, the description taken from each script's =# Summary:= header; the chosen script runs as a subprocess (output in the =message= panel) — see doc "Shipped defaults in the source tree" |
 | =metarecord:remove=   | Remove the selected metarecord (confirmed; default =delete=). Without a file this is a plain =metarecord:delete=; with one, the question settles the file: =OK= trashes it — and the metarecord with it, =metarecord:trash='s action, the question doubling as its confirmation — =Cancel= keeps it and deletes the metarecord alone (=metarecord:delete= confirms) — see doc "Sending files to the trash" |
 | =metarecord:trash=   | Send the selected metarecord's file to the trash (confirmed; default =ctrl+delete=) — see doc "Sending files to the trash" |
 | =file:open-with [program]= | Open the selected file or folder with an external program (default =g w=) — see [[*Opening a file with another program]] |
@@ -1701,8 +1701,7 @@ come from two sets, during the migration of the documentation to the wiki
 ([[file:doc-wiki-proposal.md][design]]):
 
 - the *documentation wiki*'s, rendered from =docs/wiki/= by =scripts/doc build=
-  and installed in =~/.config/metafolder/docs/= ([[file:spec-config.org][spec-config]]
-  "Shipped documentation"), fetched from the GUI server's =/docs/=. Its
+  and installed in =~/.config/metafolder/docs/= (doc "Shipped defaults in the source tree"), fetched from the GUI server's =/docs/=. Its
   =index.json= describes each page as ={id, title, file, aliases[], tags[],
   kind, audience, status, summary}= — the note's fields;
 - the panel's own older pages (=panel-types/help/pages/=, described by
@@ -1834,7 +1833,7 @@ that the user stylesheet overrides.
 
 The GUI loads =~/.config/metafolder/gui/style.css= at startup and applies it
 globally to the WebView. The stylesheet is shipped and installed by
-=metafolder-sync-config= (see [[file:spec-config.org][spec-config]]); a missing
+=metafolder-sync-config= (see doc "Configuration"); a missing
 or unreadable file is a startup error, not a fall back to an embedded default.
 The =config:open= settings view shows the active CSS path and offers a reload
 button (=config:reload style=); the GUI also auto-reloads on file change via
@@ -1971,7 +1970,7 @@ Panel types live under =~/.config/metafolder/gui/panel-types/=:
 #+END_SRC
 
 Built-in types ship as pre-populated examples installed by
-=metafolder-sync-config= (see [[file:spec-config.org][spec-config]]). The user
+=metafolder-sync-config= (see doc "Configuration"). The user
 edits them freely on the config repository's =main= branch; upgrades are a git
 merge of the shipped =default= branch, not a copy-if-unmodified pass. There is
 no =panel-types-defaults/= mirror.
@@ -3447,7 +3446,7 @@ makes through =metafolder.daemon=, and a *target* is resolved from a path with
 uses. Only the presets file justifies a backend command.
 
 A missing or malformed =ignore-presets.toml= is an error naming
-=metafolder-sync-config=, never a silent fallback (spec-config).
+=metafolder-sync-config=, never a silent fallback (doc "Configuration").
 
 *** Commands
 
@@ -4241,7 +4240,7 @@ calls fail immediately with =409= (no queueing).
 
 Resolved by the git-backed config repository: =metafolder-sync-config= merges
 the shipped =default= branch into the user's =main= branch (see
-[[file:spec-config.org][spec-config]]).
+doc "Configuration").
 
 ** Bench harness
 

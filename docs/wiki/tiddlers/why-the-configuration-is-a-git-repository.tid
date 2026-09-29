@@ -1,0 +1,26 @@
+title: Why the configuration is a git repository
+tags: Configuration
+kind: rationale
+audience: dev
+summary: Upgrading edited defaults is a three-way merge; git does it right, and the old copy-if-untouched model froze every edited file.
+
+The earlier model copied the shipped defaults into the configuration directory
+only when a file was unmodified, kept a parallel `panel-types-defaults/` mirror so
+the user could diff after an upgrade, and embedded every default in the binaries
+as a fallback. That is a hand-rolled, incomplete three-way merge: it only ever
+upgraded files the user never touched, and once a file was edited, the user was
+frozen on its old version and had to merge by hand against the mirror.
+
+A three-way merge is exactly what git does. So the configuration is a git
+repository: `default` holds the shipped defaults and is the merge base, `main`
+holds yours, an update is `merge default → main`. The `default` branch ''is'' the
+old mirror, done right and extended to every file.
+
+`default` is never checked out; each update adds one commit to it, whose tree is
+every shipped default in place. `main` is checked out for the repository's whole
+life, and is the only branch the programs read. Your edits — by hand, or through
+the GUI's keybinding editor — are ordinary working-tree changes on it.
+
+The same reasoning removed the embedded fallbacks ([[No runtime fallback]]):
+a program that silently used its own copy would ignore a deliberate deletion, and
+keep two versions of the truth.

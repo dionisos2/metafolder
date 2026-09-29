@@ -192,7 +192,7 @@ pub fn init(
     let client = &ctx.client;
 
     // Applies the `default` preset unless --ignore names others or --no-ignore
-    // is given. Loading the presets file is a hard error (spec-config); it is
+    // is given. Loading the presets file is a hard error (doc "Configuration"); it is
     // only touched when we actually apply presets, so --no-ignore works without
     // a configured presets file.
     let outcome = if no_ignore {
@@ -2523,7 +2523,7 @@ fn repo_rel(root: &Path, abs: &Path) -> Result<String, CliError> {
 // ── Ignore presets (spec-file-tracking "Ignore presets") ─────────────────────
 
 /// Loads the ignore presets from the user configuration (a missing/malformed
-/// file is a usage error pointing at metafolder-sync-config; spec-config).
+/// file is a usage error pointing at metafolder-sync-config; doc "Configuration").
 fn load_presets() -> Result<metafolder_core::ignore_presets::Presets, CliError> {
     metafolder_core::ignore_presets::load().map_err(CliError::Usage)
 }

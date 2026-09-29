@@ -1,0 +1,20 @@
+title: No runtime fallback
+tags: Configuration
+kind: reference
+summary: A missing or malformed configuration file stops the program with a message naming it; no program carries built-in copies.
+
+No program holds a copy of its defaults: a missing or malformed file is reported,
+naming the file and the problem, and the program stops. It never falls back to a
+built-in default — the canonical one may have been deleted on purpose.
+
+|!File |!Read by |!Missing |!Malformed |
+|`core/query-grammar` |the GUI at startup, `mf` with `-s` — never the daemon |error when loaded; an ''empty'' file is valid (the simplified language then accepts nothing) |error |
+|`core/ignore-presets.toml` |`mf ignore`, `mf repo init`, the GUI's repository creation — never the daemon |error when loaded (`mf repo init --no-ignore` skips it) |error |
+|`gui/config.toml`, `gui/keybindings.toml`, `gui/style.css`, `gui/commands.js` |the GUI |error at startup |error at startup (a syntax error in `commands.js` shows on screen) |
+|`daemon/config.toml` |the daemon |valid: no repository to load, every setting at its default |error at startup |
+|`cli/config.toml` |`mf` |valid: every setting at its default |error, exit 2, before any daemon call |
+
+`mf --no-config` skips the CLI's file entirely, for scripts that must not depend
+on your personal settings.
+
+The normal query language needs no grammar, and works without `core/query-grammar`.

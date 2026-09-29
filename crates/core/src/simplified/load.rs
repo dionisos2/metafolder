@@ -1,5 +1,5 @@
 //! Loading the global simplified-query grammar from the user configuration
-//! (spec-config; spec-query "Configuration"):
+//! (doc "Configuration"; spec-query "Configuration"):
 //! `$XDG_CONFIG_HOME/metafolder/core/query-grammar`, installed by
 //! `metafolder-sync-config`. A missing or malformed grammar is an error; there
 //! is no embedded fallback. Expansion is a pure, client-side transformation
@@ -19,7 +19,7 @@ pub fn grammar_path() -> Option<PathBuf> {
 /// Reads, parses and validates the grammar at `path`, returning both the
 /// parsed grammar and its raw source text (for display, e.g. the GUI help
 /// page). A missing or malformed file is an error; there is no fall back to a
-/// shipped default (spec-config).
+/// shipped default (doc "Configuration").
 pub fn load_grammar_with_source(path: &Path) -> Result<(Grammar, String), String> {
     let src = config::read_required(path)?;
     let grammar = parse_grammar(&src)?;

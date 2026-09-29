@@ -774,7 +774,7 @@ input behind =mf query --simplified=.
 
 The grammar is a single file in the shared (core) config directory,
 =~/.config/metafolder/core/query-grammar=, installed by
-=metafolder-sync-config= (see [[file:spec-config.org][spec-config]]). It is
+=metafolder-sync-config= (see doc "Configuration"). It is
 **global** (not per-repo) and read by each client (GUI/CLI) for client-side
 expansion — the daemon never reads it. An empty file = no rules = the
 simplified language accepts nothing. A *missing* or *malformed* grammar is an

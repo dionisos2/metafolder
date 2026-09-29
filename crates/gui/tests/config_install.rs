@@ -1,4 +1,4 @@
-//! Config directory access in the git-backed model (spec-config): reading the
+//! Config directory access in the git-backed model (doc "Configuration"): reading the
 //! config.toml/keybindings/stylesheet/panel types installed by
 //! `metafolder-sync-config` and the single-file keybinding semantics. There is
 //! no runtime install or embedded fallback any more.

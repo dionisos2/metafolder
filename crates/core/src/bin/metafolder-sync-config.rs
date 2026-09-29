@@ -1,4 +1,4 @@
-//! Installs/updates the user configuration repository (spec-config).
+//! Installs/updates the user configuration repository (doc "Configuration").
 //!
 //! Usage: `metafolder-sync-config [--source <dir>] [--config-dir <dir>]`
 //! `--source` defaults to the current directory (a source checkout whose

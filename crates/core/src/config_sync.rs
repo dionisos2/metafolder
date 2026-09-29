@@ -1,4 +1,4 @@
-//! Git-backed installation of user configuration (spec-config
+//! Git-backed installation of user configuration (doc "Configuration"
 //! "metafolder-sync-config"). This module is the *only* git actor: it gathers
 //! every crate's `default-config/` from a source checkout and applies it to the
 //! user configuration repository through a `default` (shipped) / `main` (user)
@@ -37,11 +37,11 @@ pub fn sync(source_root: &Path, config_dir: &Path) -> Result<SyncOutcome, String
 }
 
 /// The repo-root `.gitignore` shipped on the `default` branch: reserved for
-/// ephemeral runtime state (spec-config). Nothing is currently excluded — the
+/// ephemeral runtime state (doc "Configuration"). Nothing is currently excluded — the
 /// GUI port now lives in `gui/config.toml` (committed configuration), so the
 /// former `gui.port` discovery file is gone.
 pub const GITIGNORE: &str = "\
-# Ephemeral runtime state (spec-config) — never configuration.
+# Ephemeral runtime state (doc "Configuration") — never configuration.
 ";
 
 fn gerr(e: git2::Error) -> String {
@@ -286,7 +286,7 @@ fn gather_defaults(source_root: &Path) -> Result<BTreeMap<PathBuf, Vec<u8>>, Str
 
     // Crate-agnostic category: the shipped user scripts under
     // `<source_root>/scripts/shipped/` install to the config repo's top-level
-    // `scripts/` (spec-config "Shipped scripts"). Optional — a checkout may
+    // `scripts/` (doc "Shipped defaults in the source tree"). Optional — a checkout may
     // lack it.
     let shipped = source_root.join("scripts").join("shipped");
     if shipped.is_dir() {
@@ -295,7 +295,7 @@ fn gather_defaults(source_root: &Path) -> Result<BTreeMap<PathBuf, Vec<u8>>, Str
 
     // Crate-agnostic, and the one category that is a build product: the
     // documentation rendered from docs/wiki/ installs to `docs/`, outside any
-    // panel (spec-config "Shipped documentation"). Required, unlike the
+    // panel (doc "Shipped defaults in the source tree"). Required, unlike the
     // scripts: applying a source without it would drop `docs/` from the
     // `default` branch and leave the help panel empty.
     let docs = source_root.join("docs").join("wiki").join("dist");

@@ -1,4 +1,4 @@
-//! CLI configuration file (spec-config): `~/.config/metafolder/cli/config.toml`,
+//! CLI configuration file (doc "Configuration"): `~/.config/metafolder/cli/config.toml`,
 //! read once at startup. Mirrors the daemon's optional `[settings]` model: a
 //! missing file (or key) keeps the built-in default, a malformed file is an
 //! error. `--no-config` skips the file entirely (built-in defaults only), which

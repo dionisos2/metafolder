@@ -108,7 +108,7 @@ Sources : spec-main « Daemon » (sauf les invariants), « Repository management
 - [ ] =Command line= — overview (client mince, un démon, un dépôt)
 - [ ] =Global options= — reference (=-n/-u/-p=, =--no-config=, variables d'environnement, précédence)
 - [ ] =Output conventions and exit codes= — reference
-- [ ] =CLI configuration= — reference (=cli/config.toml=)
+- [X] =CLI configuration= — reference (=cli/config.toml=) — écrite à l'item 4
 - [ ] =Selectors= — reference (=-q=, =-s=, =-i=, sans sélecteur ; =--eq= de =mf tag=)
 - [ ] =Field specifications= — reference (=name:type=value=)
 - [ ] =The verb pattern= — rationale (=get/set=, =add/remove=, =add/delete=, le même vocabulaire dans le démon, la CLI et la GUI)
@@ -118,18 +118,25 @@ CLI : =mf=. Sources : spec-main « CLI » ; spec-data-model « CLI » (« Global
 selection flags », « Field specification syntax », « Selector options », « Verb
 pattern ») ; mémoire =gui-command-vocabulary=.
 
-** TODO 4. Configuration
+** FAIT 4. Configuration
 
-- [ ] =Configuration= — overview
-- [ ] =The configuration repository= — reference (disposition, catégories transverses =scripts/= et =docs/=)
-- [ ] =Updating the configuration= — guide (=metafolder-sync-config=, fusion, conflit, revenir à un défaut)
-- [ ] =Branch model= — rationale, dev (=default= / =main=, pourquoi git)
-- [ ] =No runtime fallback= — rationale
-- [ ] =Shipped defaults in the source tree= — reference, dev (=default-config/=, =scripts/shipped/=, =docs/wiki/dist/=)
-- [ ] =The core configuration API= — reference, dev
-- [ ] =Configuration open questions= — question (s'il en reste)
+- [X] =Configuration= — overview
+- [X] =The configuration repository= — reference (la disposition)
+- [X] =Updating the configuration= — guide (=metafolder-sync-config=, fusion, conflit, revenir à un défaut)
+- [X] =Why the configuration is a git repository= — rationale, dev (renommée depuis « Branch model » ; avec « What is removed »)
+- [X] =No runtime fallback= — reference (tableau par fichier)
+- [X] =Shipped defaults in the source tree= — reference, dev (avec l'API de =core=)
+- [X] =The keybindings file= — reference (ajoutée : le modèle à fichier unique)
+- [X] =Configuration open questions= — question, deferred
+- [X] en avance : =GUI configuration= (item 36) et =CLI configuration= (item 3), pour pouvoir retirer spec-config
 
-Sources : spec-config entier ; mémoire =scripts-accessibility=.
+Vérification contre le code : le déroulé de la synchro diffère de la spec (« rien à
+faire » = =main= contient déjà =default=, donc un conflit précédent est retenté ;
+en cas de conflit, le commit « user edits » reste) ; =gui/config.toml= a bien plus
+de tables que la spec n'en décrivait (=open-with=, =[settings]=, =[panels]=,
+=[ref-seeds]=, =[completion]=) et la CLI une table =[tag]=. CLAUDE.md disait à tort
+qu'un =daemon/config.toml= absent est une erreur : corrigé. Source retirée :
+=spec-config.org=.
 
 ** TODO 5. Stockage
 
@@ -652,7 +659,7 @@ GUI : =find:*= (4), =help=, =help:*= (4) ; panel =help=. Sources : spec-gui
 - [ ] =Style and theming= — guide (=style.css=)
 - [ ] =User commands= — guide (=commands.js=, =mf.invoke=)
 - [ ] =Reloading the configuration= — reference (ce qui est rechargeable, et pourquoi pas le reste)
-- [ ] =GUI configuration= — reference (=gui/config.toml= : ports, =[page-size]=, =[panel-defaults]=)
+- [X] =GUI configuration= — reference (=gui/config.toml=) — écrite à l'item 4
 - [ ] =Ref value seeds= — reference
 
 GUI : =config:*= (2), =user:*= (2 : =user:rate=, =user:tag-query=). Sources :

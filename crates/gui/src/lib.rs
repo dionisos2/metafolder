@@ -330,7 +330,7 @@ fn spawn_http_server(state: server::ServerState, token: Arc<str>, port: u16) {
 ///
 /// Every start-up step below takes this shape: the configuration is installed by
 /// `metafolder-sync-config`, and a missing or invalid piece of it has no usable
-/// fallback (spec-config "No runtime fallback"). Refusing to start says so once,
+/// fallback (doc "No runtime fallback"). Refusing to start says so once,
 /// where a default would hide it until something behaved oddly hours later.
 fn or_exit<T, E: std::fmt::Display>(result: Result<T, E>) -> T {
     match result {
@@ -368,7 +368,7 @@ pub fn run(options: Options) {
     let registry = Arc::new(CommandRegistry::new());
     register_builtins(&registry);
     // The configuration is installed by `metafolder-sync-config`; a missing or
-    // invalid file is fatal (spec-config "No runtime fallback").
+    // invalid file is fatal (doc "No runtime fallback").
     let keybindings = or_exit(config.load_keybindings());
     // The simplified-query grammar (shared, in core): expansion is done locally
     // by the GUI backend, never proxied to the daemon (spec-query).
@@ -381,7 +381,7 @@ pub fn run(options: Options) {
     or_exit(config.load_commands_js());
 
     // GUI settings (config.toml), with the CLI flags as optional overrides.
-    // A missing config file is fatal (spec-config "No runtime fallback").
+    // A missing config file is fatal (doc "No runtime fallback").
     let gui_config = or_exit(config.load_config());
     let gui_port = options.gui_port.unwrap_or(gui_config.gui_port);
     let page_sizes = gui_config.page_size.clone();

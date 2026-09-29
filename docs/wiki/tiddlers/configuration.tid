@@ -1,0 +1,31 @@
+title: Configuration
+kind: overview
+aliases: config
+summary: All user configuration is one git repository under ~/.config/metafolder/, updated by merging the shipped defaults into your edits.
+
+Everything you can configure — the daemon's and the CLI's settings, the GUI's
+settings, keybindings, style, panel types and user commands, the query grammar,
+the ignore presets, the shipped scripts, even this documentation — lives in one
+place, `~/.config/metafolder/`, and that place is a ''git repository''. The
+shipped defaults sit on a `default` branch, your configuration on `main`, and an
+update is a git merge of one into the other: your edits survive upgrades, even of
+a file you changed, and a file you never touched follows the shipped one.
+
+A missing or malformed file is an error, never a silent fallback to a built-in
+default ([[No runtime fallback]]).
+
+!! Use it
+
+<<list-kind guide>>
+
+!! Reference
+
+<<list-kind reference>>
+
+!! Why it works this way
+
+<<list-kind rationale>>
+
+!! Open questions
+
+<<list-kind question>>

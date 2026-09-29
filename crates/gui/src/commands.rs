@@ -717,7 +717,7 @@ pub async fn recent_touch(app: AppHandle<'_>, repo: String, uuid: String) -> Res
         .map_err(|e| format!("blocking task failed: {e}"))?
 }
 
-/// The installed shipped helper scripts (spec-config "Shipped scripts") that
+/// The installed shipped helper scripts (doc "Shipped defaults in the source tree") that
 /// carry a `# Summary:` header, sorted by name — the candidates for the
 /// `script:run` launcher. Empty when none are installed.
 #[tauri::command]

@@ -1,0 +1,34 @@
+title: The configuration repository
+tags: Configuration
+kind: reference
+summary: What lives where under ~/.config/metafolder/ — one directory per program, plus scripts and docs.
+
+`~/.config/metafolder/` (or `$XDG_CONFIG_HOME/metafolder/`) is a git repository,
+with one directory per program and two shared ones:
+
+```
+~/.config/metafolder/        a git repository (branches: default, main)
+  .gitignore
+  core/
+    query-grammar            the simplified-query grammar (read by the clients)
+    ignore-presets.toml      the named mf_ignore presets (read by the clients)
+  daemon/
+    config.toml              the repositories to load at startup, [settings]
+  gui/
+    config.toml              ports, page sizes, panel defaults, …
+    keybindings.toml         every keybinding
+    style.css                the style sheet
+    commands.js              your own GUI commands
+    panel-types/<name>/      the panel types, shipped and yours
+  cli/
+    config.toml              [settings], a default [repo], [tag]
+  scripts/                   the shipped helper scripts (script:run)
+  docs/                      this documentation, rendered (the help panel reads it)
+```
+
+The programs read `main`'s working tree, and only it; they never run git. Only
+`metafolder-sync-config` does ([[Updating the configuration]]).
+
+The per-program files: [[GUI configuration]], [[CLI configuration]],
+[[Slow log configuration]] (daemon and GUI). `docs/` is the one directory that is
+a build product rather than a source file.

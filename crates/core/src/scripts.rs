@@ -1,4 +1,4 @@
-//! Discovery of the installed shipped scripts (spec-config "Shipped scripts").
+//! Discovery of the installed shipped scripts (doc "Shipped defaults in the source tree").
 //!
 //! The user-facing helper scripts live in `~/.config/metafolder/scripts/`
 //! (installed there by `metafolder-sync-config`). A *launchable* script carries

@@ -80,7 +80,7 @@ impl MetadataMap {
     /// Reads the map from `<metafolder_dir>/metadata-map.toml`, seeding the file
     /// with [`DEFAULT`] when it is absent (self-heal — the file is
     /// repository-owned data, not user config, so writing a default does not
-    /// break spec-config's "No runtime fallback"). A malformed file is an error.
+    /// break doc "Configuration"'s "No runtime fallback"). A malformed file is an error.
     pub fn load_or_seed(metafolder_dir: &Path) -> Result<Self> {
         let path = metafolder_dir.join(FILE_NAME);
         let text = match std::fs::read_to_string(&path) {

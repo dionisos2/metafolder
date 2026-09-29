@@ -1,0 +1,47 @@
+title: Updating the configuration
+tags: Configuration
+kind: guide
+summary: metafolder-sync-config installs the shipped defaults, then merges each new version into your edits; a conflict changes nothing.
+
+After pulling a new version of metafolder, apply its defaults:
+
+```
+scripts/complete-build.sh                 # builds everything, then syncs
+target/debug/metafolder-sync-config       # the sync alone, from the checkout root
+```
+
+`metafolder-sync-config` is the only program that touches the configuration's git
+history; it is an install step, never run by a long-lived process. `--source <dir>`
+is the checkout to read the defaults from (default: the current directory),
+`--config-dir <dir>` the configuration to update (default: `~/.config/metafolder/`).
+It refuses a checkout whose documentation has not been rendered
+(`scripts/doc build`, which `complete-build.sh` runs first).
+
+!! What it does
+
+The first time, it creates the repository: every shipped default committed on
+`default`, and `main` created at the same commit and checked out.
+
+Afterwards:
+
+# It builds the shipped tree and commits it on `default`, if it changed.
+# If `main` already contains `default`, there is nothing to do: your working tree is left alone, uncommitted edits included.
+# Otherwise it commits your uncommitted edits on `main` first, as a "user edits" commit — one conflict point, and an exact restore.
+# It merges `default` into `main`: a fast-forward when you have no edits, a merge commit otherwise, then checks the result out.
+# On a conflict, it resets `main` to where it stood before the merge (your edits kept, in their commit), reports the conflicting files, and changes nothing else.
+
+A conflict left that way is reported again on the next run: "nothing to do" means
+`main` contains `default`, not "the defaults did not change". Since it is a plain
+git repository, you can also resolve it yourself: `git merge default` in
+`~/.config/metafolder/`.
+
+!! Going back to a default
+
+Reverting a file to its shipped version is a git operation:
+
+```
+cd ~/.config/metafolder && git checkout default -- gui/style.css
+```
+
+The same holds for a single keybinding: `gui/keybindings.toml` is the whole set,
+yours and the shipped ones merged ([[The keybindings file]]).

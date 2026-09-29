@@ -138,7 +138,7 @@ below) — it is applied by the client tooling from named presets.
 At =repo init= the daemon writes =mf_watch = false= on the root and *no*
 =mf_ignore= rows: the daemon carries no built-in ignore policy (it stays
 consistent with the config system's "no embedded defaults / no runtime
-fallback" rule — spec-config). A bare =POST /repos/init= therefore yields a
+fallback" rule — doc "Configuration"). A bare =POST /repos/init= therefore yields a
 root with an empty ignore set; this is harmless because =mf_watch= is =false=,
 so nothing is tracked until the user opts in, at which point they also choose an
 ignore set. The familiar default patterns are applied by the client tooling as
@@ -161,7 +161,7 @@ A preset is either a *leaf* (a =patterns= list) or a *group* (a =pattern-set=
 list of other preset names), or both (their expansions are unioned). Groups are
 expanded recursively; a reference cycle is a hard error. The file is *required*:
 a missing or malformed =ignore-presets.toml= is a startup/usage error pointing
-at =metafolder-sync-config= (never a silent fallback — spec-config).
+at =metafolder-sync-config= (never a silent fallback — doc "Configuration").
 
 #+BEGIN_SRC toml
 [rust-build]

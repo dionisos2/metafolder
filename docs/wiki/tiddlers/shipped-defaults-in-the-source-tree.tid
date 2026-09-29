@@ -1,0 +1,45 @@
+title: Shipped defaults in the source tree
+tags: Configuration
+kind: reference
+audience: dev
+summary: Every default is a file under crates/<name>/default-config/, scripts/shipped/ or the rendered docs; no binary embeds one.
+
+Every default is a ''file'', never an inline string, under the directory it will
+land in:
+
+|!In the checkout |!In the configuration |
+|`crates/core/default-config/…` |`core/…` |
+|`crates/daemon/default-config/…` |`daemon/…` |
+|`crates/gui/default-config/…` (config, keybindings, style, `commands.js`, `panel-types/`) |`gui/…` |
+|`crates/cli/default-config/…` |`cli/…` |
+|`scripts/shipped/…` |`scripts/…` |
+|`docs/wiki/dist/…` (rendered by `scripts/doc build`, not committed) |`docs/…` |
+
+No binary embeds these files ([[No runtime fallback]]).
+
+''Scripts.'' The user-facing helper scripts are shared by no single program — a
+script may drive the GUI, the CLI or both — hence their own top-level directory.
+The build and check scripts stay in `scripts/` and are not shipped. Living under
+`main`, a shipped script can be edited or joined by your own, and a new shipped
+version merges in. A launchable script carries a one-line `# Summary:` comment
+right after its shebang: the GUI's `script:run` lists exactly those. Libraries
+that are only sourced carry none: installed, but not offered.
+
+''Documentation.'' The rendered wiki is the one category that is a build product,
+and so the one that is required: `metafolder-sync-config` refuses a checkout
+without `docs/wiki/dist/`, since applying it would drop `docs/` from `default`
+and leave the help panel empty.
+
+''User commands.'' `gui/commands.js` ships a few worked examples and the utility
+commands defined there rather than compiled in, so that their questions and
+answers stay yours to change. It is a JavaScript module the GUI imports: code in
+the configuration, as the panel types and the scripts are.
+
+!! The code
+
+`core` resolves the configuration paths (`~/.config/metafolder/<program>/` from
+`$XDG_CONFIG_HOME` or `$HOME`, standard library only, no `dirs` crate) and offers
+the reading helpers with the diagnostics above (`core::config`). The git machinery
+is in `core` too, but apart: only the sync command (`core::config_sync`, behind
+the `sync-config` feature) links `git2`; reading the configuration never touches
+git.
