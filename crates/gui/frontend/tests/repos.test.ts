@@ -321,6 +321,7 @@ describe('repos panel — running tasks', () => {
       id: 't1',
       repo_uuid: 'r1',
       kind: 'reconcile',
+      cancellable: true,
       status: 'running',
       phase: 'scanning',
       done: 12,
@@ -345,6 +346,29 @@ describe('repos panel — running tasks', () => {
     expect(shadow.querySelectorAll('.repo-tasks .repo-task')).toHaveLength(0);
   });
 
+  // The daemon says which tasks can be stopped; the panel's own list of kinds
+  // had missed the duplicate scan.
+  test('a duplicate scan in flight can be stopped too', async () => {
+    const { api, daemon } = setup({ activeRepo: 'r1' });
+    daemon.repos.push({ repo_uuid: 'r1', name: 'photos', root: '/tmp/photos' });
+    daemon.tasks.push({
+      id: 't3',
+      repo_uuid: 'r1',
+      kind: 'duplicates',
+      cancellable: true,
+      status: 'running',
+      phase: 'full',
+      done: 1,
+      total: 9,
+    });
+    const shadow = shadowForRepos();
+    await mount(shadow, api);
+    await settle();
+    (shadow.querySelector('.repo-task .task-stop') as HTMLElement).click();
+    await settle();
+    expect(daemon.cancelled).toEqual(['t3']);
+  });
+
   test('a task that cannot be cancelled gets no Stop button', async () => {
     const { api, daemon } = setup({ activeRepo: 'r1' });
     daemon.repos.push({ repo_uuid: 'r1', name: 'photos', root: '/tmp/photos' });
@@ -352,6 +376,7 @@ describe('repos panel — running tasks', () => {
       id: 't2',
       repo_uuid: 'r1',
       kind: 'load',
+      cancellable: false,
       status: 'running',
       phase: null,
       done: null,
@@ -373,6 +398,7 @@ describe('repos panel — running tasks', () => {
       id: 't3',
       repo_uuid: 'r1',
       kind: 'flush',
+      cancellable: true,
       status: 'running',
       phase: 'flush',
       done: null,

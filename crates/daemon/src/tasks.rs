@@ -179,6 +179,9 @@ pub struct TaskView {
     pub repo_uuid: Uuid,
     pub kind: TaskKind,
     pub status: TaskStatus,
+    /// Whether a task of this kind can be stopped (`POST …/cancel`): the rule
+    /// said on the task, so a client does not keep its own copy of it.
+    pub cancellable: bool,
     pub phase: String,
     pub done: Option<u64>,
     pub total: Option<u64>,
@@ -195,6 +198,7 @@ impl Task {
             repo_uuid: self.repo_uuid,
             kind: self.kind,
             status: self.status,
+            cancellable: self.kind.is_cancellable(),
             phase: self.phase.clone(),
             done: self.done,
             total: self.total,
@@ -440,6 +444,25 @@ mod tests {
         // ISO-8601 UTC, e.g. 2026-06-21T11:30:00.000Z
         assert!(t.started_at.ends_with('Z'), "started_at = {}", t.started_at);
         assert!(t.started_at.contains('T'));
+    }
+
+    /// Whether a task can be stopped is the daemon's rule, said on the task,
+    /// so a client offering a Stop button does not keep its own copy of it —
+    /// the repos panel's copy had missed the duplicate scan and relink.
+    #[test]
+    fn view_says_whether_the_kind_can_be_cancelled() {
+        let r = reg();
+        for (kind, cancellable) in [
+            (TaskKind::Reconcile, true),
+            (TaskKind::Duplicates, true),
+            (TaskKind::Relink, true),
+            (TaskKind::Flush, true),
+            (TaskKind::Load, false),
+            (TaskKind::Prune, false),
+        ] {
+            let id = r.start(kind);
+            assert_eq!(r.get(id).unwrap().cancellable, cancellable, "{kind:?}");
+        }
     }
 
     #[test]

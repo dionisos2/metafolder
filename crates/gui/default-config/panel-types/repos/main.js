@@ -11,7 +11,8 @@ import { createSelect } from '/__select.js';
  *
  * An in-flight daemon task (spec-tasks).
  * @typedef {{id: string, repo_uuid: string, kind: string, status: string,
- *            phase?: string|null, done: number|null, total: number|null}} Task
+ *            cancellable: boolean, phase?: string|null, done: number|null,
+ *            total: number|null}} Task
  *
  * @param {ShadowRoot} root @param {MetafolderApi} metafolder
  */
@@ -213,11 +214,10 @@ export async function mount(root, metafolder) {
 
   // ── Running tasks ─────────────────────────────────────────────────────────
   // Poll the daemon for in-flight tasks (spec-tasks) and surface the active
-  // ones under their repository, each with a Stop button. Reconcile, query and
-  // flush are cancellable — stopping a flush pauses the repository's tracking
-  // (spec-file-tracking "Pausing ingestion"), which the row below then offers
-  // to resume.
-  const CANCELLABLE = new Set(['reconcile', 'query', 'flush']);
+  // ones under their repository, each with a Stop button when the daemon says
+  // the task can be stopped (`cancellable`, doc "Cancelling a task") — stopping
+  // a flush pauses the repository's tracking (spec-file-tracking "Pausing
+  // ingestion"), which the row below then offers to resume.
 
   async function pollTasks() {
     /** @type {Task[]} */
@@ -250,7 +250,7 @@ export async function mount(root, metafolder) {
           task.done !== null && task.total !== null ? ` ${task.done}/${task.total}` : '';
         const label = `${task.kind}: ${task.phase || task.status}${progress}`;
         const children = [el('span', { class: 'task-label' }, label)];
-        if (CANCELLABLE.has(task.kind)) {
+        if (task.cancellable) {
           children.push(
             el(
               'button',
@@ -710,7 +710,7 @@ export async function mount(root, metafolder) {
       (t) =>
         t.repo_uuid === uuid &&
         (t.status === 'running' || t.status === 'pending') &&
-        CANCELLABLE.has(t.kind),
+        t.cancellable,
     );
   }
 
