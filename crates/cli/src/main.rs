@@ -1476,12 +1476,12 @@ fn move_policies(
     Ok(log::RollbackPolicies {
         on_available: on_available
             .as_deref()
-            .map(log::Policy::parse)
+            .map(log::parse_policy)
             .transpose()?
             .unwrap_or(log::Policy::Apply),
         on_unavailable: on_unavailable
             .as_deref()
-            .map(log::Policy::parse)
+            .map(log::parse_policy)
             .transpose()?
             .unwrap_or(log::Policy::Ask),
     })
@@ -1516,12 +1516,12 @@ fn dispatch_log(ctx: &Ctx, command: Option<LogCommand>) -> CmdResult {
                     Ok::<_, metafolder_cli::client::CliError>(log::RollbackPolicies {
                         on_available: on_move_available
                             .as_deref()
-                            .map(log::Policy::parse)
+                            .map(log::parse_policy)
                             .transpose()?
                             .unwrap_or(log::Policy::Apply),
                         on_unavailable: on_move_unavailable
                             .as_deref()
-                            .map(log::Policy::parse)
+                            .map(log::parse_policy)
                             .transpose()?
                             .unwrap_or(log::Policy::Ask),
                     })
@@ -1601,12 +1601,12 @@ fn dispatch_log(ctx: &Ctx, command: Option<LogCommand>) -> CmdResult {
             let policies = log::RollbackPolicies {
                 on_available: on_move_available
                     .as_deref()
-                    .map(log::Policy::parse)
+                    .map(log::parse_policy)
                     .transpose()?
                     .unwrap_or(log::Policy::Apply),
                 on_unavailable: on_move_unavailable
                     .as_deref()
-                    .map(log::Policy::parse)
+                    .map(log::parse_policy)
                     .transpose()?
                     .unwrap_or(log::Policy::Ask),
             };

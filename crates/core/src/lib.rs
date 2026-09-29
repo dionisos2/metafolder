@@ -11,6 +11,7 @@ pub mod hex;
 pub mod ignore;
 pub mod ignore_presets;
 pub mod metarecord;
+pub mod navigation;
 pub mod order;
 pub mod progress;
 pub mod query;

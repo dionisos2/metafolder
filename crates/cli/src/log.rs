@@ -4,16 +4,19 @@
 //! endpoints. Target resolution (`--id`, `--timestamp`, `<label>`, or the
 //! implicit previous revision) is shared by rollback and prune.
 
-use std::collections::HashSet;
 use std::io::Write as _;
 
 use serde_json::{json, Value as Json};
 
+use metafolder_core::navigation::{self, NavError, NavigationUi, Repo, RevertRequest};
 use metafolder_core::{date, undo};
 
 use crate::client::CliError;
 use crate::commands::Ctx;
-use crate::trash::{Reason, TrashDir, TrashEntry};
+
+/// The coordinated navigation itself is shared with the GUI
+/// (`metafolder_core::navigation`); these are its move policies.
+pub use metafolder_core::navigation::{MovePolicies as RollbackPolicies, Policy};
 
 // ── Target resolution ─────────────────────────────────────────────────────────
 
@@ -237,32 +240,45 @@ pub struct UndoOpts {
 
 // ── mf rollback (coordinated navigation) ────────────────────────────────────────
 
-/// What to do with a `move_file` step (spec-event-log "Policies for move_file").
-#[derive(Clone, Copy, PartialEq, Eq)]
-pub enum Policy {
-    Apply,
-    Skip,
-    Abort,
-    Ask,
+/// Parses a `--on-move-available`/`--on-move-unavailable` value
+/// (spec-event-log "Policies for move_file").
+pub fn parse_policy(s: &str) -> Result<Policy, CliError> {
+    match s {
+        "apply" => Ok(Policy::Apply),
+        "skip" => Ok(Policy::Skip),
+        "abort" => Ok(Policy::Abort),
+        "ask" => Ok(Policy::Ask),
+        other => Err(CliError::Usage(format!(
+            "invalid move policy '{other}' (expected apply, skip, abort, or ask)"
+        ))),
+    }
 }
 
-impl Policy {
-    pub fn parse(s: &str) -> Result<Self, CliError> {
-        match s {
-            "apply" => Ok(Policy::Apply),
-            "skip" => Ok(Policy::Skip),
-            "abort" => Ok(Policy::Abort),
-            "ask" => Ok(Policy::Ask),
-            other => Err(CliError::Usage(format!(
-                "invalid move policy '{other}' (expected apply, skip, abort, or ask)"
-            ))),
+/// The CLI's side of a navigation: the `ask` policy on the terminal, and the
+/// notes on stderr unless `--silent` (the questions are asked regardless).
+struct CliUi {
+    silent: bool,
+}
+
+impl NavigationUi for CliUi {
+    fn ask_move(&self, from: &str, to: &str, available: bool) -> Result<Policy, NavError> {
+        ask_move(from, to, available).map_err(|e| NavError(e.message().to_string()))
+    }
+    fn note(&self, message: &str) {
+        if !self.silent {
+            eprintln!("{message}");
         }
     }
 }
 
-pub struct RollbackPolicies {
-    pub on_available: Policy,
-    pub on_unavailable: Policy,
+fn nav_err(e: NavError) -> CliError {
+    CliError::Op(e.0)
+}
+
+/// The repository as the shared navigation needs it (its trash-bin located).
+fn open_repo(ctx: &Ctx) -> Result<Repo<'_>, CliError> {
+    let base = ctx.repo_base()?;
+    Repo::open(&ctx.client, base.trim_start_matches("/repos/")).map_err(nav_err)
 }
 
 /// `mf rollback plan [<target>]`: previews the operations without executing.
@@ -287,305 +303,28 @@ pub fn rollback_plan(ctx: &Ctx, target: TargetArgs) -> Result<i32, CliError> {
     Ok(0)
 }
 
-/// The stored op types whose navigation needs a decision about the
-/// *filesystem* — a file to move, a file to bring back from the trash — and so
-/// the coordinated protocol, where the daemon hands the client one operation at
-/// a time (spec-event-log "Coordinated navigation").
-///
-/// `delete_metarecord` is in the list although only the ones a *trashing* wrote
-/// carry a file: the plan summary counts stored op types and cannot say which
-/// revision wrote them, so the whole type takes the careful road.
-const FILESYSTEM_OPS: &[&str] =
-    &["file_moved", "file_deleted", "file_modified", "delete_metarecord"];
-
-/// Whether a plan summary's operations all rewind inside the database, with
-/// nothing on disk to decide. Those can be navigated in one atomic call
-/// (`POST /rollback`) instead of one round-trip — and one transaction — per
-/// operation.
-///
-/// This is what "back" costs in a classification walk (spec-gui "Reserved
-/// keys"): a "yes" on a folder writes one operation per file under it, so
-/// taking it back stepped a thousand times over the network to undo a single
-/// keypress. An unreadable summary is *not* metadata-only: the careful road is
-/// the one that is always correct.
-fn rewinds_in_the_database_alone(summary: &Json) -> bool {
-    summary["by_type"]
-        .as_object()
-        .is_some_and(|by_type| !by_type.keys().any(|t| FILESYSTEM_OPS.contains(&t.as_str())))
-}
-
 /// `mf rollback [<target>]`: drives the coordinated navigation, executing the
-/// `mv` for each `move_file` step per the configured policies.
+/// `mv` for each `move_file` step per the configured policies — in one atomic
+/// call when nothing on the way touches a file (`core::navigation`).
 pub fn rollback_run(
     ctx: &Ctx,
     target: TargetArgs,
     policies: RollbackPolicies,
     silent: bool,
 ) -> Result<i32, CliError> {
-    let base = ctx.repo_base()?;
-    let body = target.clone().into_body()?;
-
-    // The summary is read whatever the verbosity: it is what says whether this
-    // navigation touches the filesystem at all.
-    let summary =
-        ctx.client.get(&format!("{base}/rollback/plan/summary"), &target.into_query()?)?;
-    let total = summary["total_operations"].as_i64().unwrap_or(0);
-    if total == 0 {
-        if !silent {
-            println!("Nothing to do — already at the target.");
-        }
+    let body = target.into_body()?;
+    let repo = open_repo(ctx)?;
+    let done = navigation::rollback(&repo, &body["target"], &policies, &CliUi { silent })
+        .map_err(nav_err)?;
+    if silent {
         return Ok(0);
     }
-    if !silent {
-        eprintln!("Navigating {total} operations.");
+    if done.total == 0 {
+        println!("Nothing to do — already at the target.");
+    } else {
+        println!("Rollback complete: {} operations processed.", done.processed);
     }
-
-    if rewinds_in_the_database_alone(&summary) {
-        let result = ctx.client.post(&format!("{base}/rollback"), &body)?;
-        if !silent {
-            let processed = result["operations_unapplied"].as_i64().unwrap_or(0)
-                + result["operations_applied"].as_i64().unwrap_or(0);
-            println!("Rollback complete: {processed} operations processed.");
-        }
-        return Ok(0);
-    }
-
-    // The trash-bin catches any file a `move_file` step would overwrite, so no
-    // byte is ever lost by rollback (spec-trash.org). Its entries also let us
-    // point out content that a file_deleted/file_modified step "lost" but that
-    // is in fact recoverable (e.g. from a prior `mf trash -f`).
-    let trash = ctx.internal_dir()?;
-    let mut trash_entries = trash.entries().unwrap_or_default();
-    // Metarecords whose content a directory blob has already brought back this
-    // rollback, so their own file_deleted steps apply the inverse, not skip.
-    let mut restored: HashSet<String> = HashSet::new();
-
-    let start = ctx.client.post(&format!("{base}/rollback/start"), &body)?;
-    let mut op = start["op"].clone();
-    let mut processed = 0usize;
-
-    // Run the loop, always releasing the lock (abort) on any error.
-    let outcome = (|| -> Result<(), CliError> {
-        while !op.is_null() {
-            let op_type = op["op_type"].as_str().unwrap_or("");
-            let skip = match op_type {
-                "move_file" => decide_move(&op, &policies, &trash, silent)?,
-                // The file's content is only truly gone if the deletion did not
-                // pass through the trash. If a trash entry matches this record
-                // and the version this step restores to, put the file back and
-                // let the daemon apply the real inverse; otherwise skip (the
-                // metadata rewinds) and hint at any recoverable content.
-                "file_deleted" | "file_modified" => {
-                    decide_deleted(&op, &trash, &mut trash_entries, &mut restored, silent, false)?
-                }
-                // A metarecord deleted *by a trashing*: the entry that holds it
-                // is the one to bring back. Correlated by the metarecord alone —
-                // an undo consumes the entry and a redo makes a new one, so no
-                // id recorded at trash time would still name it.
-                "delete_metarecord" if op["revision_origin"] == "trash" => {
-                    decide_deleted(&op, &trash, &mut trash_entries, &mut restored, silent, true)?
-                }
-                _ => false,
-            };
-            let step_body = if skip { json!({"skip": true}) } else { json!({}) };
-            let resp = ctx.client.post(&format!("{base}/rollback/step"), &step_body)?;
-            processed += 1;
-            op = resp["op"].clone();
-        }
-        Ok(())
-    })();
-
-    match outcome {
-        Ok(()) => {
-            if !silent {
-                println!("Rollback complete: {processed} operations processed.");
-            }
-            Ok(0)
-        }
-        Err(err) => {
-            // Release the lock; the caller is responsible for any executed mv.
-            let _ = ctx.client.post(&format!("{base}/rollback/abort"), &json!({}));
-            Err(err)
-        }
-    }
-}
-
-/// Decides a `move_file` step, executing the `mv` for the apply policy.
-/// Returns whether to `skip` (no filesystem move) when calling `step`.
-fn decide_move(
-    op: &Json,
-    policies: &RollbackPolicies,
-    trash: &TrashDir,
-    silent: bool,
-) -> Result<bool, CliError> {
-    let from = op["from"].as_str().unwrap_or_default();
-    let to = op["to"].as_str().unwrap_or_default();
-    // `path_present`, not `exists()`: a broken symlink is a file that is
-    // there, and one this step can move (see `core::trash::path_present`).
-    let available = metafolder_core::fsentry::path_present(std::path::Path::new(from));
-    let mut policy = if available { policies.on_available } else { policies.on_unavailable };
-    if policy == Policy::Ask {
-        policy = ask_move(from, to, available)?;
-    }
-    match policy {
-        // Apply: the metadata follows the navigation to `to` (via `step {}`).
-        // Move the file there when it is present; when it is gone there is
-        // nothing to move — the metadata still follows the rollback, keeping
-        // the recorded path rather than rewinding to a location the file is
-        // not at (spec-event-log "Policies for move_file"; review #6).
-        Policy::Apply => {
-            if available {
-                let dest = std::path::Path::new(to);
-                // A directory at `to` can be neither trashed (the trash holds
-                // files) nor overwritten by an `mv` (rename would fail). Rather
-                // than abort the whole navigation, skip just this step (the
-                // metadata rewinds, the file stays put) and warn.
-                if metafolder_core::fsentry::is_real_dir(dest) {
-                    if !silent {
-                        eprintln!(
-                            "skipped move {from} -> {to}: a directory occupies the destination"
-                        );
-                    }
-                    return Ok(true);
-                }
-                // If `to` is occupied by a file, the mv would overwrite it —
-                // trash the occupant first so its content survives (spec-trash.org).
-                // The occupant's own metarecord is unknown here (the op's
-                // entity_uuid names the *moved* record, not this file), so the
-                // entry records only the causing revision, not a metarecord.
-                //
-                // Note: trash-then-rename is not atomic. If the rename fails
-                // after trashing (e.g. `from` vanished, or a cross-device
-                // from→to), `to` is left empty with its content recoverable in
-                // the trash, and the navigation aborts mid-way.
-                if metafolder_core::fsentry::path_present(dest) {
-                    let entry =
-                        trash.trash_path(dest, Reason::Rollback, op["id"].as_i64(), None, None)?;
-                    if !silent {
-                        eprintln!("trashed {to} (id {}) before overwrite", entry.id);
-                    }
-                }
-                std::fs::rename(from, to)
-                    .map_err(|e| CliError::Op(format!("mv {from} -> {to} failed: {e}")))?;
-                if !silent {
-                    eprintln!("moved {from} -> {to}");
-                }
-            } else if !silent {
-                eprintln!("kept rolled-back path for {to} (source {from} is gone)");
-            }
-            Ok(false)
-        }
-        Policy::Skip => {
-            if !silent {
-                eprintln!("skipped move {from} -> {to}");
-            }
-            Ok(true)
-        }
-        Policy::Abort => Err(CliError::Op("rollback aborted by move policy".into())),
-        Policy::Ask => unreachable!("ask is resolved above"),
-    }
-}
-
-/// Decides a `file_deleted`/`file_modified` rollback step (spec-trash "rollback
-/// auto-restore"). When the trash holds the content this step's deletion
-/// displaced — matched by the metarecord *and* the version the record held
-/// before the revision being undone (`entity_version_before_revision`, present
-/// only on inverse steps) — the file is put back and `false` (no skip) is
-/// returned so the daemon applies the real inverse (mfr_path + version).
-/// Otherwise the step is skipped (metadata rewinds) and, if some content for the
-/// record is trashed, a recovery hint is printed.
-fn decide_deleted(
-    op: &Json,
-    trash: &TrashDir,
-    entries: &mut Vec<TrashEntry>,
-    restored: &mut HashSet<String>,
-    silent: bool,
-    by_metarecord_only: bool,
-) -> Result<bool, CliError> {
-    let entity = op["entity_uuid"].as_str().unwrap_or_default();
-
-    // Content already brought back by a directory blob restored earlier in this
-    // rollback: the file is on disk, so apply the real inverse — don't skip.
-    if restored.contains(entity) {
-        return Ok(false);
-    }
-
-    // A trash entry covers this entity when it *is* the entry's metarecord (at
-    // the version this step restores to — the precise per-file correlation), or
-    // the entity is a *descendant* recorded in the entry's subtree (a trashed
-    // directory). Restoring the directory blob brings back the whole subtree's
-    // content at once, whichever order the cascade's ops are navigated in.
-    // The version the record held before the *whole* revision: one event can
-    // write several fields (orphaning writes `mfr_path` and `mfr_path_old`), so
-    // each op restores to its own intermediate version, while the trash entry
-    // recorded the version at the moment the file was trashed — the
-    // pre-revision one. Every op of the revision therefore reaches the same
-    // decision. Older daemons expose only the per-op version.
-    let version = op["entity_version_before_revision"]
-        .as_u64()
-        .or_else(|| op["entity_version_before"].as_u64());
-    let pos = entries.iter().position(|e| {
-        // A trashing's own deletion needs no version: it deleted the metarecord
-        // outright, so the live entry holding it is unambiguous — nothing can
-        // trash it again until it comes back.
-        let is_top = e.metarecord.as_deref() == Some(entity)
-            && (by_metarecord_only || version.is_some_and(|v| e.version == Some(v)));
-        let is_descendant =
-            e.metarecord.as_deref() != Some(entity) && e.subtree.iter().any(|n| n.uuid == entity);
-        is_top || is_descendant
-    });
-    if let Some(pos) = pos {
-        let id = entries[pos].id.clone();
-        let covered: Vec<String> = entries[pos].subtree.iter().map(|n| n.uuid.clone()).collect();
-        match trash.restore(&id) {
-            Ok(path) => {
-                entries.remove(pos);
-                // Every metarecord the blob restored is now recoverable, so
-                // their file_deleted steps apply the real inverse too.
-                restored.extend(covered);
-                restored.insert(entity.to_string());
-                if !silent {
-                    eprintln!("restored {} from the trash", path.display());
-                }
-                // Apply the real inverse (`step {}`): the daemon restores
-                // mfr_path and the version to match the file now in place.
-                return Ok(false);
-            }
-            // The file is not restorable (e.g. the path is occupied); fall back
-            // to skipping, so the metadata stays truthful.
-            Err(e) if !silent => {
-                eprintln!("note: could not auto-restore from the trash ({e}); skipping");
-            }
-            Err(_) => {}
-        }
-    }
-    if !silent {
-        if let Some(hint) = trash_recovery_hint(entries, entity) {
-            eprintln!("note: {hint}");
-        }
-    }
-    Ok(true)
-}
-
-/// If the trash holds content for `metarecord` (e.g. a prior `mf trash -f`),
-/// returns the hint to show when its `file_deleted`/`file_modified` step is
-/// skipped — bridging the log's "content gone" assumption with the bytes that
-/// actually survive in the trash (spec-trash.org). `None` when nothing matches.
-fn trash_recovery_hint(entries: &[TrashEntry], metarecord: &str) -> Option<String> {
-    if metarecord.is_empty() {
-        return None;
-    }
-    let ids: Vec<&str> = entries
-        .iter()
-        .filter(|e| e.metarecord.as_deref() == Some(metarecord))
-        .map(|e| e.id.as_str())
-        .collect();
-    (!ids.is_empty()).then(|| {
-        format!(
-            "content for this record is in the trash — recover with: mf trash restore {}",
-            ids.join(" | ")
-        )
-    })
+    Ok(0)
 }
 
 /// Interactive `ask` policy for a `move_file` step.
@@ -1171,29 +910,6 @@ fn fmt_second(ms: i64) -> String {
 mod tests {
     use super::*;
 
-    /// "Back" in a classification walk (spec-gui "Reserved keys") undoes a
-    /// whole subtree of tag writes. Nothing in that touches a file, so the
-    /// navigation goes in one atomic call — one round-trip per record is what
-    /// made going back take minutes.
-    #[test]
-    fn a_plan_with_no_file_operation_is_navigated_in_one_call() {
-        let plan = |by_type| json!({"total_operations": 3, "by_type": by_type});
-        assert!(rewinds_in_the_database_alone(&plan(json!({"set_field": 2, "append_field": 1}))));
-        assert!(rewinds_in_the_database_alone(&plan(json!({"create_metarecord": 3}))));
-
-        // A moved, deleted or modified file needs the client to decide about
-        // the filesystem, one operation at a time.
-        for op_type in ["file_moved", "file_deleted", "file_modified"] {
-            let by_type = json!({"set_field": 1, op_type: 1});
-            assert!(!rewinds_in_the_database_alone(&plan(by_type)), "{op_type}");
-        }
-        // A deleted metarecord may be a trashing whose file has to come back.
-        assert!(!rewinds_in_the_database_alone(&plan(json!({"delete_metarecord": 1}))));
-
-        // Nothing to read: the careful road, never the fast one.
-        assert!(!rewinds_in_the_database_alone(&json!({})));
-    }
-
     /// `mf log list` shows the last twenty revisions; it must ask the daemon
     /// for those, not for the whole log. Fetching everything and trimming it
     /// here made the listing cost grow with the log — seven seconds of daemon
@@ -1245,312 +961,6 @@ mod tests {
         assert!(parse_timestamp("@notanumber").is_err());
         assert!(parse_timestamp("not-a-date").is_err());
     }
-
-    fn move_op(from: &str, to: &str) -> Json {
-        json!({"op_type": "move_file", "from": from, "to": to})
-    }
-
-    fn policies(on_available: Policy, on_unavailable: Policy) -> RollbackPolicies {
-        RollbackPolicies { on_available, on_unavailable }
-    }
-
-    fn test_trash() -> TrashDir {
-        TrashDir::new(
-            std::env::temp_dir()
-                .join("metafolder-tests")
-                .join(format!("mf_trash_{}", uuid::Uuid::new_v4())),
-        )
-    }
-
-    // `apply` on a gone file: no `mv` is attempted (nothing to move) and the
-    // step is a plain `step {}` — the metadata follows the rollback instead of
-    // erroring or rewinding to a location the file is not at (review #6).
-    #[test]
-    fn apply_on_a_gone_file_keeps_the_rolled_back_path_without_moving() {
-        let tmp = std::env::temp_dir()
-            .join("metafolder-tests")
-            .join(format!("mf_decide_{}", uuid::Uuid::new_v4()));
-        let from = tmp.join("gone.txt");
-        let to = tmp.join("target.txt");
-        let op = move_op(from.to_str().unwrap(), to.to_str().unwrap());
-
-        let skip =
-            decide_move(&op, &policies(Policy::Apply, Policy::Apply), &test_trash(), true).unwrap();
-        assert!(!skip, "apply must produce a plain step {{}} (no skip)");
-        assert!(!to.exists(), "no file should have been created at the target");
-    }
-
-    // `skip` is available for a gone file too ("on ne sait jamais"): it yields
-    // a `step {skip:true}` (rewind), never touching the filesystem.
-    #[test]
-    fn skip_is_available_for_a_gone_file() {
-        let from = std::env::temp_dir()
-            .join("metafolder-tests")
-            .join(format!("mf_gone_{}", uuid::Uuid::new_v4()));
-        let op = move_op(from.to_str().unwrap(), "/whatever");
-        let skip =
-            decide_move(&op, &policies(Policy::Skip, Policy::Skip), &test_trash(), true).unwrap();
-        assert!(skip, "skip must request the rewind even when the file is gone");
-    }
-
-    // `apply` on a present file performs the `mv` and produces `step {}`.
-    #[test]
-    fn apply_on_a_present_file_moves_it() {
-        let tmp = std::env::temp_dir()
-            .join("metafolder-tests")
-            .join(format!("mf_present_{}", uuid::Uuid::new_v4()));
-        std::fs::create_dir_all(&tmp).unwrap();
-        let from = tmp.join("here.txt");
-        let to = tmp.join("moved.txt");
-        std::fs::write(&from, b"x").unwrap();
-        let op = move_op(from.to_str().unwrap(), to.to_str().unwrap());
-
-        let skip =
-            decide_move(&op, &policies(Policy::Apply, Policy::Apply), &test_trash(), true).unwrap();
-        assert!(!skip);
-        assert!(!from.exists() && to.exists(), "the file should have been moved");
-        std::fs::remove_dir_all(&tmp).ok();
-    }
-
-    // `apply` when the destination is occupied trashes the occupant first, so
-    // its content survives the overwrite (spec-trash.org).
-    #[test]
-    fn apply_trashes_an_occupied_destination() {
-        let tmp = std::env::temp_dir()
-            .join("metafolder-tests")
-            .join(format!("mf_occupied_{}", uuid::Uuid::new_v4()));
-        std::fs::create_dir_all(&tmp).unwrap();
-        let from = tmp.join("here.txt");
-        let to = tmp.join("victim.txt");
-        std::fs::write(&from, b"source").unwrap();
-        std::fs::write(&to, b"victim-content").unwrap();
-        let trash = test_trash();
-        let op = move_op(from.to_str().unwrap(), to.to_str().unwrap());
-
-        let skip = decide_move(&op, &policies(Policy::Apply, Policy::Apply), &trash, true).unwrap();
-        assert!(!skip);
-        assert_eq!(std::fs::read(&to).unwrap(), b"source", "the mv happened");
-        // The victim's bytes are preserved in the trash, not destroyed.
-        let entries = trash.entries().unwrap();
-        assert_eq!(entries.len(), 1);
-        assert_eq!(entries[0].reason, Reason::Rollback);
-        // The entry records the causing revision, but no metarecord — the op's
-        // entity_uuid names the moved record, not this displaced occupant.
-        assert_eq!(entries[0].metarecord, None);
-        // The moved source now occupies `to`; move it aside so the victim can
-        // return to its original path, then confirm the preserved bytes.
-        std::fs::remove_file(&to).unwrap();
-        let blob = trash.restore(&entries[0].id).unwrap();
-        assert_eq!(std::fs::read(blob).unwrap(), b"victim-content");
-        std::fs::remove_dir_all(&tmp).ok();
-    }
-
-    fn manual_entry(id: &str, metarecord: Option<&str>) -> TrashEntry {
-        TrashEntry {
-            id: id.into(),
-            original_path: "/x".into(),
-            original_name: "x".into(),
-            trashed_at: 0,
-            size: 0,
-            is_dir: false,
-            reason: Reason::Manual,
-            revision: None,
-            metarecord: metarecord.map(str::to_owned),
-            version: None,
-            subtree: Vec::new(),
-        }
-    }
-
-    #[test]
-    fn trash_recovery_hint_matches_by_metarecord() {
-        let entries = vec![
-            manual_entry("aaa", Some("rec-1")),
-            manual_entry("bbb", None),
-            manual_entry("ccc", Some("rec-1")),
-            manual_entry("ddd", Some("rec-2")),
-        ];
-        // Two entries for rec-1 → both surfaced.
-        let hint = trash_recovery_hint(&entries, "rec-1").unwrap();
-        assert!(hint.contains("aaa") && hint.contains("ccc") && hint.contains("mf trash restore"));
-        // A record with no trashed content, and the empty uuid, yield nothing.
-        assert!(trash_recovery_hint(&entries, "rec-3").is_none());
-        assert!(trash_recovery_hint(&entries, "").is_none());
-    }
-
-    fn deleted_op(entity: &str, version_before: Option<u64>) -> Json {
-        let mut op = json!({"op_type": "file_deleted", "entity_uuid": entity});
-        if let Some(v) = version_before {
-            op["entity_version_before"] = json!(v);
-        }
-        op
-    }
-
-    // A file_deleted step whose content is in the trash at the matching version
-    // is auto-restored (no skip); the daemon then applies the real inverse.
-    #[test]
-    fn deleted_step_auto_restores_the_matching_version() {
-        let base = std::env::temp_dir()
-            .join("metafolder-tests")
-            .join(format!("mf_del_{}", uuid::Uuid::new_v4()));
-        std::fs::create_dir_all(&base).unwrap();
-        let trash = TrashDir::new(base.join("trash"));
-        let file = base.join("doc.txt");
-        std::fs::write(&file, b"content").unwrap();
-        let e =
-            trash.trash_path(&file, Reason::Manual, None, Some("rec-1".into()), Some(4)).unwrap();
-        assert!(!file.exists());
-        let mut entries = trash.entries().unwrap();
-
-        // Matching entity + version → restore, no skip, entry consumed.
-        let op = deleted_op("rec-1", Some(4));
-        let skip =
-            decide_deleted(&op, &trash, &mut entries, &mut HashSet::new(), true, false).unwrap();
-        assert!(!skip, "a matching trash entry must be auto-restored (step {{}})");
-        assert_eq!(std::fs::read(&file).unwrap(), b"content", "the file is back");
-        assert!(entries.is_empty(), "the consumed entry is removed");
-        assert!(trash.entry(&e.id).is_err(), "the manifest is gone");
-        std::fs::remove_dir_all(&base).ok();
-    }
-
-    // A revision that orphans a record writes several fields (mfr_path and
-    // mfr_path_old), so its operations restore to different versions while the
-    // trash entry records only the version the record had *before* the whole
-    // revision. Every op of the revision must reach the same decision, whichever
-    // is navigated first — otherwise the file comes back while the record it
-    // belongs to stays orphaned.
-    #[test]
-    fn deleted_steps_of_one_revision_share_the_pre_revision_version() {
-        let base = std::env::temp_dir()
-            .join("metafolder-tests")
-            .join(format!("mf_del3_{}", uuid::Uuid::new_v4()));
-        std::fs::create_dir_all(&base).unwrap();
-        let trash = TrashDir::new(base.join("trash"));
-        let file = base.join("doc.txt");
-        std::fs::write(&file, b"content").unwrap();
-        trash.trash_path(&file, Reason::Manual, None, Some("rec-1".into()), Some(0)).unwrap();
-        let mut entries = trash.entries().unwrap();
-        let mut restored = HashSet::new();
-
-        // Navigated first: the revision's *last* op, restoring to version 1.
-        let mut op = deleted_op("rec-1", Some(1));
-        op["entity_version_before_revision"] = json!(0);
-        let skip = decide_deleted(&op, &trash, &mut entries, &mut restored, true, false).unwrap();
-        assert!(!skip, "the pre-revision version matches the trash entry: restore, don't skip");
-        assert_eq!(std::fs::read(&file).unwrap(), b"content", "the file is back");
-        assert!(entries.is_empty(), "the entry is consumed once");
-
-        // The revision's first op, restoring to version 0: the content is
-        // already back, so it applies the real inverse too.
-        let mut op = deleted_op("rec-1", Some(0));
-        op["entity_version_before_revision"] = json!(0);
-        let skip = decide_deleted(&op, &trash, &mut entries, &mut restored, true, false).unwrap();
-        assert!(!skip, "the record's content is restored: apply the inverse");
-        std::fs::remove_dir_all(&base).ok();
-    }
-
-    // A version mismatch (or a forward step with no entity_version_before) does
-    // not restore: the step is skipped and the file stays trashed.
-    #[test]
-    fn deleted_step_skips_on_version_mismatch() {
-        let base = std::env::temp_dir()
-            .join("metafolder-tests")
-            .join(format!("mf_del2_{}", uuid::Uuid::new_v4()));
-        std::fs::create_dir_all(&base).unwrap();
-        let trash = TrashDir::new(base.join("trash"));
-        let file = base.join("doc.txt");
-        std::fs::write(&file, b"content").unwrap();
-        trash.trash_path(&file, Reason::Manual, None, Some("rec-1".into()), Some(4)).unwrap();
-        let mut entries = trash.entries().unwrap();
-
-        // Wrong version → skip, entry untouched.
-        let skip = decide_deleted(
-            &deleted_op("rec-1", Some(9)),
-            &trash,
-            &mut entries,
-            &mut HashSet::new(),
-            true,
-            false,
-        )
-        .unwrap();
-        assert!(skip);
-        assert!(!file.exists(), "the file stays in the trash");
-        assert_eq!(entries.len(), 1);
-        // No entity_version_before (forward step) → skip too.
-        let skip = decide_deleted(
-            &deleted_op("rec-1", None),
-            &trash,
-            &mut entries,
-            &mut HashSet::new(),
-            true,
-            false,
-        )
-        .unwrap();
-        assert!(skip);
-        assert_eq!(entries.len(), 1);
-        std::fs::remove_dir_all(&base).ok();
-    }
-
-    // A directory at the destination cannot be trashed or overwritten: the step
-    // is skipped (metadata rewinds, file stays) rather than aborting the whole
-    // rollback.
-    #[test]
-    fn apply_skips_when_a_directory_occupies_the_destination() {
-        let tmp = std::env::temp_dir()
-            .join("metafolder-tests")
-            .join(format!("mf_dirdest_{}", uuid::Uuid::new_v4()));
-        std::fs::create_dir_all(&tmp).unwrap();
-        let from = tmp.join("here.txt");
-        let to = tmp.join("blocking_dir");
-        std::fs::write(&from, b"x").unwrap();
-        std::fs::create_dir_all(&to).unwrap();
-        let trash = test_trash();
-        let op = move_op(from.to_str().unwrap(), to.to_str().unwrap());
-
-        let skip = decide_move(&op, &policies(Policy::Apply, Policy::Apply), &trash, true).unwrap();
-        assert!(skip, "a directory destination must skip, not abort");
-        assert!(from.exists() && to.is_dir(), "nothing was moved or trashed");
-        assert!(trash.entries().unwrap().is_empty());
-        std::fs::remove_dir_all(&tmp).ok();
-    }
-
-    // A *broken* symlink is a file like any other: it can be moved, and it can
-    // be overwritten. `Path::exists()` follows the link, so it read the source
-    // as gone (no `mv` — the link stayed behind) and the destination as free
-    // (no trashing — the `mv` destroyed the link, against the trash's promise
-    // that a rollback loses no byte).
-    #[cfg(unix)]
-    #[test]
-    fn apply_moves_a_broken_symlink_and_trashes_a_broken_symlink_it_overwrites() {
-        let tmp = std::env::temp_dir()
-            .join("metafolder-tests")
-            .join(format!("mf_brokenlink_{}", uuid::Uuid::new_v4()));
-        std::fs::create_dir_all(&tmp).unwrap();
-        let from = tmp.join("moved_link");
-        let to = tmp.join("occupied_link");
-        std::os::unix::fs::symlink("gone-target", &from).unwrap();
-        std::os::unix::fs::symlink("other-gone-target", &to).unwrap();
-        let trash = test_trash();
-        let op = move_op(from.to_str().unwrap(), to.to_str().unwrap());
-
-        let skip = decide_move(&op, &policies(Policy::Apply, Policy::Apply), &trash, true).unwrap();
-
-        assert!(!skip, "the source is present, so the move applies");
-        assert!(
-            std::fs::symlink_metadata(&from).is_err(),
-            "the source link was moved, not left behind"
-        );
-        assert_eq!(
-            std::fs::read_link(&to).unwrap(),
-            std::path::Path::new("gone-target"),
-            "the destination now holds the moved link"
-        );
-        assert_eq!(
-            trash.entries().unwrap().len(),
-            1,
-            "the link that occupied the destination went to the trash"
-        );
-        std::fs::remove_dir_all(&tmp).ok();
-    }
 }
 
 // ── `mf log revert` (spec-event-log "mf revert") ──────────────────────────────
@@ -1565,20 +975,7 @@ pub struct RevertTarget {
 
 impl RevertTarget {
     fn query(&self, with_dependents: bool) -> Vec<(&'static str, String)> {
-        let mut q = vec![];
-        if !self.op_ids.is_empty() {
-            let ids: Vec<String> = self.op_ids.iter().map(|i| i.to_string()).collect();
-            q.push(("target_op_ids", ids.join(",")));
-        } else {
-            q.push((
-                "target_rev_id",
-                self.rev_id.map(|r| r.to_string()).unwrap_or_else(|| "head".into()),
-            ));
-        }
-        if with_dependents {
-            q.push(("with_dependents", "true".into()));
-        }
-        q
+        navigation::revert_query(&self.body(), with_dependents)
     }
 
     fn body(&self) -> Json {
@@ -1707,132 +1104,31 @@ pub fn revert_run(ctx: &Ctx, target: RevertTarget, opts: &RevertOpts) -> Result<
         }
     }
 
-    if needs_fs {
-        return coordinated_revert(ctx, &base, &target, opts, &plan);
-    }
-
-    let mut body = json!({"target": target.body(), "with_dependents": opts.with_dependents});
-    if opts.metadata_only {
-        body["skip_filesystem"] = json!(true);
-    }
-    if let Some(label) = &opts.label {
-        body["label"] = json!(label);
-    }
-    let resp = ctx.client.post(&format!("{base}/revert"), &body)?;
-
-    let reverted = resp["reverted_operations"].as_array().cloned().unwrap_or_default();
-    let skipped = resp["skipped_operations"].as_array().cloned().unwrap_or_default();
-    if opts.silent {
-        return Ok(0);
-    }
-    match resp["revision"].as_i64() {
-        None => println!("Nothing was reverted."),
-        Some(rev) => println!(
-            "Reverted {} as revision {rev} ({} operation(s)).",
-            target.describe(),
-            reverted.len()
-        ),
-    }
-    let by_id: std::collections::HashMap<i64, &Json> =
-        ops.iter().filter_map(|o| o["id"].as_i64().map(|id| (id, o))).collect();
-    for id in reverted.iter().filter_map(|v| v.as_i64()) {
-        if let Some(op) = by_id.get(&id) {
-            println!("  {}", op_line(op));
-        }
-    }
-    // A revert reports what it did not undo as plainly as what it did.
-    for s in &skipped {
-        let id = s["op_id"].as_i64().unwrap_or(0);
-        let reason = s["reason"].as_str().unwrap_or("?");
-        println!("  left out: op {id} ({reason})");
-    }
-    Ok(0)
-}
-
-/// Drives a revert whose plan needs filesystem work: `start` takes the lock,
-/// the client does the moves and the trash restores, `commit` writes what it
-/// managed to do — or `abort` on any error, leaving the log untouched.
-fn coordinated_revert(
-    ctx: &Ctx,
-    base: &str,
-    target: &RevertTarget,
-    opts: &RevertOpts,
-    preview: &Json,
-) -> Result<i32, CliError> {
-    if !opts.force {
-        for op in preview["operations"].as_array().into_iter().flatten() {
+    // A revert that moves files says how many before it takes the lock.
+    if needs_fs && !opts.force {
+        for op in &ops {
             eprintln!("  {}", op_line(op));
         }
-        let moves = preview["operations"]
-            .as_array()
-            .map(|ops| ops.iter().filter(|o| o["filesystem"]["action"] == "move").count())
-            .unwrap_or(0);
+        let moves = ops.iter().filter(|o| o["filesystem"]["action"] == "move").count();
         if !confirm(&format!("Revert {} — {moves} file(s) will be moved?", target.describe()))? {
             println!("Aborted.");
             return Ok(0);
         }
     }
 
-    let start_body = json!({"target": target.body(), "with_dependents": opts.with_dependents});
-    let plan = ctx.client.post(&format!("{base}/revert/start"), &start_body)?;
-
-    // The trash-bin is what makes destroyed content recoverable at all, and it
-    // also catches anything a `move` would overwrite (spec-trash.org).
-    let trash = ctx.internal_dir()?;
-    let mut trash_entries = trash.entries().unwrap_or_default();
-    let mut restored: HashSet<String> = HashSet::new();
-
-    let outcome = (|| -> Result<Vec<i64>, CliError> {
-        let mut apply = Vec::new();
-        for op in plan["operations"].as_array().into_iter().flatten() {
-            let Some(id) = op["id"].as_i64() else { continue };
-            // `decide_move`/`decide_deleted` answer "skip?" — which for a revert
-            // means "leave this operation out", the whole thing a rollback needs
-            // a restoration operation for.
-            let leave_out = match op["filesystem"]["action"].as_str() {
-                Some("move") => {
-                    let step =
-                        json!({"from": op["filesystem"]["from"], "to": op["filesystem"]["to"]});
-                    decide_move(&step, &opts.policies, &trash, opts.silent)?
-                }
-                Some("restore_content") => decide_deleted(
-                    op,
-                    &trash,
-                    &mut trash_entries,
-                    &mut restored,
-                    opts.silent,
-                    op["op_type"] == "delete_metarecord",
-                )?,
-                _ => false,
-            };
-            if !leave_out {
-                apply.push(id);
-            }
-        }
-        Ok(apply)
-    })();
-
-    let apply = match outcome {
-        Ok(apply) => apply,
-        Err(err) => {
-            let _ = ctx.client.post(&format!("{base}/revert/abort"), &json!({}));
-            return Err(err);
-        }
+    let repo = open_repo(ctx)?;
+    let body = target.body();
+    let request = RevertRequest {
+        target: &body,
+        with_dependents: opts.with_dependents,
+        metadata_only: opts.metadata_only,
+        label: opts.label.as_deref(),
     };
-
-    let mut body = json!({"apply": apply});
-    if let Some(label) = &opts.label {
-        body["label"] = json!(label);
-    }
-    let resp = match ctx.client.post(&format!("{base}/revert/commit"), &body) {
-        Ok(resp) => resp,
-        Err(err) => {
-            let _ = ctx.client.post(&format!("{base}/revert/abort"), &json!({}));
-            return Err(err);
-        }
-    };
+    let resp =
+        navigation::revert(&repo, &request, &plan, &opts.policies, &CliUi { silent: opts.silent })
+            .map_err(nav_err)?;
     if !opts.silent {
-        report_revert(target, &plan, &resp);
+        report_revert(&target, &plan, &resp);
     }
     Ok(0)
 }
