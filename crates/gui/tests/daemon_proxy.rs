@@ -377,3 +377,39 @@ async fn test_an_aborted_request_hangs_up_on_the_daemon() {
     wait(dropped, "the daemon to see the hang-up").await;
     assert!(!proxy.abort("q1"), "a finished request is forgotten");
 }
+
+#[tokio::test]
+async fn test_an_abort_that_arrives_before_its_request_still_drops_it() {
+    // The frontend fires `daemon_abort` and `daemon_request` as two separate
+    // invocations: the abort can reach the proxy first. The request must then
+    // not run at all — the daemon would otherwise carry on with a query the
+    // user has already replaced.
+    use std::sync::atomic::{AtomicBool, Ordering};
+    let arrived = Arc::new(AtomicBool::new(false));
+    let a = arrived.clone();
+    let router = axum::Router::new().route(
+        "/query",
+        any(move || {
+            let a = a.clone();
+            async move {
+                a.store(true, Ordering::SeqCst);
+                "{}"
+            }
+        }),
+    );
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let port = listener.local_addr().unwrap().port();
+    tokio::spawn(async move { axum::serve(listener, router).await.unwrap() });
+
+    let proxy = DaemonProxy::new(format!("http://127.0.0.1:{port}"));
+    proxy.abort("early");
+    let result =
+        proxy.request_with_context("POST", "/query", Some(json!({})), None, Some("early")).await;
+    assert!(result.as_ref().is_err_and(|e| e.contains("aborted")), "{result:?}");
+    assert!(!arrived.load(Ordering::SeqCst), "an aborted request is never sent");
+
+    // The early abort is spent: a later request under another id runs.
+    let result =
+        proxy.request_with_context("POST", "/query", Some(json!({})), None, Some("next")).await;
+    assert!(result.is_ok(), "{result:?}");
+}

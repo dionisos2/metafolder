@@ -2041,7 +2041,10 @@ const catalog = await metafolder.daemon.fields(repo)                       // [{
 *Aborting a read.* =request=, =call= and =query= take a last =opts= argument,
 ={signal}= (an =AbortSignal=). Aborting it drops the call in flight — the shell
 names it (=abortId=) and the =daemon_abort= Tauri command drops its request —
-and the promise rejects with an =AbortError=, as =fetch= does. The dropped
+and the promise rejects with an =AbortError=, as =fetch= does. The two
+commands are separate invocations, so the abort can reach the proxy before its
+call does: it is then kept (30 s) and the call is dropped on arrival, never
+sent. The dropped
 connection is the daemon's cue: it cancels the query it was running instead of
 finishing it for nobody (spec-query "Timeout and interruption"), which matters
 because a repository answers one operation at a time — a count of a query the

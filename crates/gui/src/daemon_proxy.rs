@@ -60,7 +60,21 @@ pub struct DaemonProxy {
     /// them: firing one drops its request, and with it the connection — which
     /// the daemon takes as a cancel of the query it was running (spec-query
     /// "Timeout and interruption").
-    aborts: Mutex<std::collections::HashMap<String, tokio::sync::oneshot::Sender<()>>>,
+    aborts: Mutex<Aborts>,
+}
+
+/// How long an abort that found no call in flight is kept for the call it may
+/// have overtaken. The frontend invokes `daemon_abort` and `daemon_request`
+/// separately, so the abort can arrive first; a call that really did finish
+/// leaves an entry that only has to outlive the race, not the session.
+const EARLY_ABORT_TTL: std::time::Duration = std::time::Duration::from_secs(30);
+
+#[derive(Default)]
+struct Aborts {
+    /// The calls in flight, by id.
+    in_flight: std::collections::HashMap<String, tokio::sync::oneshot::Sender<()>>,
+    /// Aborts that arrived before their call, by id, with when they did.
+    early: std::collections::HashMap<String, std::time::Instant>,
 }
 
 impl DaemonProxy {
@@ -90,7 +104,7 @@ impl DaemonProxy {
             diagnostics_since: Mutex::new(0),
             slow: crate::slow::SlowLog::new(slow_threshold_ms),
             internal_dirs: Mutex::new(std::collections::HashMap::new()),
-            aborts: Mutex::new(std::collections::HashMap::new()),
+            aborts: Mutex::new(Aborts::default()),
         }
     }
 
@@ -129,11 +143,18 @@ impl DaemonProxy {
     }
 
     /// Aborts the call in flight registered as `id`; `false` when there is
-    /// none (it finished, or was never made).
+    /// none (it finished, or has not reached the proxy yet — in which case it
+    /// is dropped on arrival).
     pub fn abort(&self, id: &str) -> bool {
-        match self.aborts.lock_recover().remove(id) {
+        let mut aborts = self.aborts.lock_recover();
+        match aborts.in_flight.remove(id) {
             Some(fire) => fire.send(()).is_ok(),
-            None => false,
+            None => {
+                let now = std::time::Instant::now();
+                aborts.early.retain(|_, at| now.duration_since(*at) < EARLY_ABORT_TTL);
+                aborts.early.insert(id.to_string(), now);
+                false
+            }
         }
     }
 
@@ -160,12 +181,18 @@ impl DaemonProxy {
             None => request.await,
             Some(id) => {
                 let (fire, fired) = tokio::sync::oneshot::channel();
-                self.aborts.lock_recover().insert(id.to_string(), fire);
+                {
+                    let mut aborts = self.aborts.lock_recover();
+                    if aborts.early.remove(id).is_some() {
+                        return Err("aborted".to_string());
+                    }
+                    aborts.in_flight.insert(id.to_string(), fire);
+                }
                 let out = tokio::select! {
                     out = request => out,
                     Ok(()) = fired => Err("aborted".to_string()),
                 };
-                self.aborts.lock_recover().remove(id);
+                self.aborts.lock_recover().in_flight.remove(id);
                 out
             }
         };

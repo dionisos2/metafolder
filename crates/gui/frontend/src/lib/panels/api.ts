@@ -37,7 +37,11 @@ export function startChangePolling(intervalMs = 7000) {
   }, intervalMs);
 }
 
-/** Names each abortable daemon call, across every panel of the realm. */
+/** Names each abortable daemon call, across every panel of the realm. The
+ *  session prefix keeps the names apart across a reload of the WebView, which
+ *  restarts the count while the proxy may still hold an abort that overtook
+ *  its call (`daemon_proxy.rs`, `EARLY_ABORT_TTL`). */
+const abortSession = Math.random().toString(36).slice(2, 10);
 let abortSeq = 0;
 
 /** What an aborted read rejects with — what `fetch` rejects with. */
@@ -230,7 +234,7 @@ export function createPanelApi(deps: PanelApiDeps, ctx: PanelApiCtx): PanelApiIn
     if (signal?.aborted) return Promise.reject(abortError());
     // An abortable call is named, so `daemon_abort` can drop it in flight;
     // the daemon sees the connection go and cancels the query.
-    const abortId = signal ? `abort-${++abortSeq}` : undefined;
+    const abortId = signal ? `abort-${abortSession}-${++abortSeq}` : undefined;
     const onAbort = () => void invoke('daemon_abort', { id: abortId });
     signal?.addEventListener('abort', onAbort, { once: true });
     return daemonWork
