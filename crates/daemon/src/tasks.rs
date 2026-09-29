@@ -144,7 +144,7 @@ pub enum CancelOutcome {
 /// a monotonic `finished_instant` for retention/eviction.
 ///
 /// Not `Clone`/`Debug`: it may own an `on_cancel` side-effect closure (e.g. the
-/// SQLite interrupt handle for a query), which is neither.
+/// flag a running query's reads poll), which is neither.
 struct Task {
     id: Uuid,
     repo_uuid: Uuid,
@@ -164,8 +164,9 @@ struct Task {
     /// mutex like every other field, so a plain `bool` suffices.
     cancel_requested: bool,
     /// Optional side effect run *immediately* when cancellation is requested,
-    /// for work that cannot poll a flag (a running query: the closure calls the
-    /// connection's SQLite interrupt handle). `None` for cooperative kinds.
+    /// for work that cannot take the registry's lock where it polls (a running
+    /// query: the closure sets the atomic flag its key reads poll,
+    /// `crate::interrupt`). `None` for the other kinds.
     on_cancel: Option<Box<dyn Fn() + Send + Sync>>,
 }
 
@@ -348,8 +349,8 @@ impl TaskRegistry {
         tasks.values().find(|t| t.status.is_active() && t.kind == kind).map(|t| t.id)
     }
 
-    /// Registers an `on_cancel` side effect for a task (e.g. a closure capturing
-    /// a query's SQLite interrupt handle). No-op if unknown.
+    /// Registers an `on_cancel` side effect for a task (e.g. setting the flag a
+    /// query's reads poll, `crate::interrupt`). No-op if unknown.
     pub fn set_canceller(&self, id: Uuid, on_cancel: Box<dyn Fn() + Send + Sync>) {
         if let Some(t) = self.tasks.lock_recover().get_mut(&id) {
             t.on_cancel = Some(on_cancel);

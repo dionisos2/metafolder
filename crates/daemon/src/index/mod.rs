@@ -319,6 +319,14 @@ pub struct Eval<'s> {
 }
 
 impl Eval<'_> {
+    /// The metarecord of an id the source handed out. `None` from the source
+    /// means its read failed — an error, or the query interrupted
+    /// (`crate::interrupt`) — and the source kept the reason, which the
+    /// caller reports instead of this answer: a placeholder does.
+    fn uuid_of(&self, id: u32) -> Uuid {
+        self.src.uuid(id).unwrap_or(ZERO_UUID)
+    }
+
     /// Number of metarecords matching `q` — `O(1)` from the result bitmap,
     /// where a SQL `COUNT` is `O(n)` (the irreducible count wall).
     pub fn count(&self, q: &Query) -> Result<u64, Unsupported> {
@@ -562,7 +570,7 @@ impl Eval<'_> {
         let mut reps: Vec<Option<SortRep>> = Vec::with_capacity(matched.len() as usize * width);
         let mut uuids: Vec<Uuid> = Vec::with_capacity(matched.len() as usize);
         for id in &matched {
-            let uuid = self.src.uuid(id).expect("interned id");
+            let uuid = self.uuid_of(id);
             reps.extend(keys.iter().map(|k| k.rep(id, uuid)));
             uuids.push(uuid);
         }
@@ -831,7 +839,7 @@ impl Eval<'_> {
     ) -> Vec<u32> {
         let mut rest: Vec<(Uuid, u32)> = set
             .iter()
-            .map(|id| (self.src.uuid(id).expect("interned id"), id))
+            .map(|id| (self.uuid_of(id), id))
             .filter(|(u, _)| after.is_none_or(|a| *u > a))
             .filter(|&(u, id)| accepts(id, u))
             .collect();
@@ -869,7 +877,7 @@ impl Eval<'_> {
         }
         self.by_uuid_after(set, after, n, accepts)
             .into_iter()
-            .map(|id| (self.src.uuid(id).expect("interned id"), id))
+            .map(|id| (self.uuid_of(id), id))
             .collect()
     }
 
@@ -920,11 +928,10 @@ impl Eval<'_> {
     ) -> Result<(Vec<Uuid>, Option<String>), Unsupported> {
         let more = ids.len() > limit;
         ids.truncate(limit);
-        let uuids: Vec<Uuid> =
-            ids.iter().map(|&id| self.src.uuid(id).expect("interned id")).collect();
+        let uuids: Vec<Uuid> = ids.iter().map(|&id| self.uuid_of(id)).collect();
         let next = match (more, ids.last()) {
             (true, Some(&last)) => {
-                let uuid = self.src.uuid(last).expect("interned id");
+                let uuid = self.uuid_of(last);
                 let keys = self.key_lookups(sort, roots)?;
                 let reps = keys.iter().map(|k| k.rep(last, uuid)).collect();
                 Some(encode_cursor(guard, &(reps, uuid)))

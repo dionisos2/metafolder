@@ -3229,6 +3229,11 @@ struct QueryBody {
     /// Adds the full result count to the pagination envelope.
     #[serde(default)]
     count: bool,
+    /// Stops the query with a `409` (`reason: "timeout"`) once this many
+    /// milliseconds have passed; absent, it runs to the end (spec-query
+    /// "Timeout").
+    #[serde(default)]
+    timeout_ms: Option<u64>,
 }
 
 async fn run_query(
@@ -3238,20 +3243,25 @@ async fn run_query(
 ) -> Result<Response, ApiError> {
     let Json(body) = payload?;
     let repo_uuid = parse_uuid(&repo)?;
+    // Register an observation-only task (spec-tasks): the result travels with
+    // this response, so the task carries no result payload and its counts stay
+    // unknown (the heavy part is one opaque evaluation). Registered here, before
+    // the blocking work, so that a client hanging up cancels it.
+    let repo = state.ready_repo(repo_uuid)?;
+    let task = repo.tasks.start(TaskKind::Query);
+    let _hang_up = CancelOnHangUp { repo: Arc::downgrade(&repo), task };
+    drop(repo);
     with_repo(&state, repo_uuid, move |repo_state| {
-        // Register an observation-only task (spec-tasks): the result travels
-        // with this response, so the task carries no result payload and its
-        // counts stay unknown (the heavy part is one opaque evaluation).
-        let task = repo_state.tasks.start(TaskKind::Query);
         repo_state.tasks.mark_running(task);
         repo_state.tasks.set_progress(task, "querying", None, None);
         let outcome = run_query_inner(repo_state, &body, task);
-        // A cancel request interrupts the SQLite statement, surfacing here as an
-        // error: record the task as `cancelled` (not `failed`) and report it as
-        // a 409 to the waiting client.
+        // A cancel request stops the query (in its loops, or between its
+        // phases), surfacing here as an error: record the task as `cancelled`
+        // (not `failed`) and report it as a 409 to the waiting client.
         if outcome.is_err() && repo_state.tasks.is_cancel_requested(task) {
             repo_state.tasks.mark_cancelled(task);
-            return Err(ApiError::conflict("query cancelled"));
+            return Err(ApiError::conflict("query cancelled")
+                .with_field("reason", json!(crate::interrupt::Reason::Cancelled.as_str())));
         }
         match &outcome {
             Ok(_) => repo_state.tasks.finish(task, None),
@@ -3260,6 +3270,24 @@ async fn run_query(
         outcome
     })
     .await
+}
+
+/// Cancels a query's task when dropped. The handler holding it is dropped
+/// before it completes only when the client hangs up — the GUI dropping a query
+/// a newer one replaced, a Ctrl-C on `mf` — and nobody is left to read the
+/// answer (spec-query "Timeout and interruption"). Dropped after the task
+/// ended, it does nothing. `Weak`: it must not keep the repository alive.
+struct CancelOnHangUp {
+    repo: std::sync::Weak<RepoState>,
+    task: Uuid,
+}
+
+impl Drop for CancelOnHangUp {
+    fn drop(&mut self) {
+        if let Some(repo) = self.repo.upgrade() {
+            repo.tasks.request_cancel(self.task);
+        }
+    }
 }
 
 /// `POST /repos/:repo/query/profile` — runs a query as `/query` does and
@@ -3494,7 +3522,46 @@ fn run_query_filter(
     paged.map_err(index_gap)
 }
 
+/// [`run_query_pass`] interruptible inside its loops (`crate::interrupt`): by
+/// a cancel request on its task, and by the body's `timeout_ms`. A query
+/// stopped either way answers `409` with the `reason`, whatever its failing
+/// reads made of its answer.
 fn run_query_inner(
+    repo_state: &RepoState,
+    body: &QueryBody,
+    task: Uuid,
+) -> Result<Response, ApiError> {
+    use crate::interrupt::{self, Reason};
+    use std::sync::atomic::{AtomicBool, Ordering};
+    let cancelled = Arc::new(AtomicBool::new(false));
+    let flag = cancelled.clone();
+    repo_state.tasks.set_canceller(task, Box::new(move || flag.store(true, Ordering::Relaxed)));
+    // A request made before the canceller was in place (a client that hung up
+    // while the query waited for the repository) set only the task's flag.
+    if repo_state.tasks.is_cancel_requested(task) {
+        cancelled.store(true, Ordering::Relaxed);
+    }
+    let deadline =
+        body.timeout_ms.map(|ms| std::time::Instant::now() + std::time::Duration::from_millis(ms));
+    let probe = Box::new(move || {
+        if cancelled.load(Ordering::Relaxed) {
+            Some(Reason::Cancelled)
+        } else if deadline.is_some_and(|d| std::time::Instant::now() >= d) {
+            Some(Reason::TimedOut)
+        } else {
+            None
+        }
+    });
+    match interrupt::run(probe, || run_query_pass(repo_state, body, task)) {
+        (_, Some(reason)) => {
+            let message = interrupt::Interrupted(reason).to_string();
+            Err(ApiError::conflict(message).with_field("reason", json!(reason.as_str())))
+        }
+        (outcome, None) => outcome,
+    }
+}
+
+fn run_query_pass(
     repo_state: &RepoState,
     body: &QueryBody,
     task: Uuid,

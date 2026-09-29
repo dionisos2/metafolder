@@ -1328,3 +1328,49 @@ async fn test_query_limits_hold_on_both_engines() {
 
     std::fs::remove_dir_all(root).unwrap();
 }
+
+#[tokio::test]
+async fn test_query_past_its_timeout_is_a_409_saying_so() {
+    // A timeout of zero has passed by the first key read: deterministic.
+    let (app, repo, _root) = setup("timeout").await;
+    create(&app, &repo, json!([{"name": "tag", "value": {"type": "string", "value": "jazz"}}]))
+        .await;
+    let (status, body) = request(
+        &app,
+        "POST",
+        &format!("/repos/{repo}/query"),
+        Some(json!({"query": {"type": "is_present", "field": "tag"}, "timeout_ms": 0})),
+    )
+    .await;
+    assert_eq!(status, StatusCode::CONFLICT, "{body}");
+    assert_eq!(body["reason"], "timeout", "{body}");
+    assert_eq!(body["error"], "query timed out", "{body}");
+
+    // The task says what happened to it.
+    let (_, tasks) = request(&app, "GET", &format!("/repos/{repo}/tasks"), None).await;
+    let task = tasks
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|t| t["kind"] == "query")
+        .unwrap_or_else(|| panic!("no query task in {tasks}"));
+    assert_eq!(task["status"], "failed", "{task}");
+    assert_eq!(task["error"], "query timed out", "{task}");
+}
+
+#[tokio::test]
+async fn test_query_within_its_timeout_answers() {
+    let (app, repo, _root) = setup("in_time").await;
+    let a =
+        create(&app, &repo, json!([{"name": "tag", "value": {"type": "string", "value": "jazz"}}]))
+            .await;
+    let (status, body) = request(
+        &app,
+        "POST",
+        &format!("/repos/{repo}/query"),
+        Some(json!({"query": {"type": "is_present", "field": "tag"}, "timeout_ms": 60_000})),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    assert_eq!(body, json!([a]));
+}

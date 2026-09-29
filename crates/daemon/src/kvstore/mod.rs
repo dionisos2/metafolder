@@ -573,7 +573,7 @@ impl Read<'_> {
             let (_, v) = e?;
             out.push(dec_row(v)?);
         }
-        self.count(out.len() as u64 + 1);
+        self.count(out.len() as u64 + 1)?;
         out.sort_unstable_by_key(|r| r.id);
         Ok(out)
     }
@@ -585,15 +585,20 @@ impl Read<'_> {
             let (_, v) = e?;
             out.push(dec_row(v)?);
         }
-        self.count(out.len() as u64 + 1);
+        self.count(out.len() as u64 + 1)?;
         Ok(out)
     }
 
-    fn count(&self, n: u64) {
+    /// Counts `n` keys read; fails once the running query was asked to stop
+    /// (`crate::interrupt`) — a read outside a query never is.
+    fn count(&self, n: u64) -> Result<()> {
+        // Before counting: a read refused is not a read.
+        crate::interrupt::check(n)?;
         if let Some(reads) = self.reads {
             reads.fetch_add(n, std::sync::atomic::Ordering::Relaxed);
             metafolder_core::slowlog::count_reads(n);
         }
+        Ok(())
     }
 
     fn row(&self, id: i64) -> Result<Option<(Uuid, FieldRow)>> {
@@ -621,13 +626,16 @@ impl Read<'_> {
         let mut out = Vec::new();
         for e in self.t.forest.prefix_iter(self.r, &prefix)? {
             let (k, v) = e?;
+            // Counted as read, not after: a folder can hold the repository,
+            // and a query stopped meanwhile stops here (`crate::interrupt`).
+            self.count(1)?;
             out.push((
                 uuid_of(v),
                 self.node_name(field, &k[prefix.len()..], v)?,
                 from_be(&v[16..]),
             ));
         }
-        self.count(out.len() as u64 + 1);
+        self.count(1)?;
         Ok(out)
     }
 
@@ -670,7 +678,7 @@ impl Read<'_> {
                 break;
             }
         }
-        self.count(out.len() as u64 + 1);
+        self.count(out.len() as u64 + 1)?;
         Ok(out)
     }
 
@@ -692,7 +700,7 @@ impl Read<'_> {
         if let Some(o) = cache.get(&rev) {
             return Ok(o.clone());
         }
-        self.count(1);
+        self.count(1)?;
         let o = match self.t.revisions.get(self.r, &be(rev))? {
             Some(b) => dec_revision(b)?.origin,
             None => None,
@@ -702,7 +710,7 @@ impl Read<'_> {
     }
 
     fn op(&self, id: i64) -> Result<Option<OpRow>> {
-        self.count(1);
+        self.count(1)?;
         let Some(b) = self.t.ops.get(self.r, &be(id))? else { return Ok(None) };
         let mut op = dec_op(id, b)?;
         op.origin = self.origin(op.rev_id, &mut HashMap::new())?;
@@ -713,7 +721,7 @@ impl Read<'_> {
         let mut cache = HashMap::new();
         let mut out = Vec::new();
         for id in ids {
-            self.count(1);
+            self.count(1)?;
             let b = self
                 .t
                 .ops
@@ -745,7 +753,7 @@ impl Read<'_> {
             if out.len() >= max {
                 break;
             }
-            self.count(1);
+            self.count(1)?;
             let Some(b) = self.t.ops.get(self.r, &be(id))? else { break };
             let mut op = dec_op(id, b)?;
             op.origin = self.origin(op.rev_id, &mut cache)?;
@@ -760,7 +768,7 @@ impl Read<'_> {
         for e in self.t.ops.iter(self.r)? {
             out.push(from_be(e?.0));
         }
-        self.count(out.len() as u64 + 1);
+        self.count(out.len() as u64 + 1)?;
         Ok(out)
     }
 
@@ -770,7 +778,7 @@ impl Read<'_> {
             let (k, _) = e?;
             out.push(from_be(&k[16..]));
         }
-        self.count(out.len() as u64 + 1);
+        self.count(out.len() as u64 + 1)?;
         Ok(out)
     }
 
@@ -782,13 +790,13 @@ impl Read<'_> {
         let mut seen: HashMap<i64, bool> = HashMap::new();
         let mut cur = Some(head);
         while let Some(id) = cur {
-            self.count(1);
+            self.count(1)?;
             let Some(b) = self.t.ops.get(self.r, &be(id))? else { return Ok(None) };
             let op = dec_op(id, b)?;
             let ok = match seen.get(&op.rev_id) {
                 Some(ok) => *ok,
                 None => {
-                    self.count(1);
+                    self.count(1)?;
                     let ok = match self.t.revisions.get(self.r, &be(op.rev_id))? {
                         Some(b) => keep(&dec_revision(b)?),
                         None => false,
@@ -955,7 +963,7 @@ macro_rules! kv_reads {
                 $with(&mut |$read: &Read| {
                     let p = parent.map_or(ROOT, |p| *p.as_bytes());
                     let k = key(&[&name_key(field), &p, &node_key(name)]);
-                    $read.count(1);
+                    $read.count(1)?;
                     let Some(v) = $read.t.forest.get($read.r, &k)? else { return Ok(None) };
                     // A hashed key names the right position only if the name
                     // read back is the one asked for.
@@ -1021,7 +1029,7 @@ macro_rules! kv_reads {
             fn head(&self) -> Result<Option<i64>> {
                 let $me = self;
                 $with(&mut |$read: &Read| {
-                    $read.count(1);
+                    $read.count(1)?;
                     $read.meta("head")
                 })
             }
@@ -1037,7 +1045,7 @@ macro_rules! kv_reads {
                     for e in $read.t.snaps.prefix_iter($read.r, &prefix)? {
                         out.push(dec_row(e?.1)?);
                     }
-                    $read.count(out.len() as u64 + 1);
+                    $read.count(out.len() as u64 + 1)?;
                     Ok(out)
                 })
             }
@@ -1056,7 +1064,7 @@ macro_rules! kv_reads {
                         if rows.len() == max + 1 {
                             break;
                         }
-                        $read.count(1);
+                        $read.count(1)?;
                         let Some(b) = $read.t.ops.get($read.r, &be(id))? else { break };
                         let mut op = dec_op(id, b)?;
                         op.origin = $read.origin(op.rev_id, &mut cache)?;
@@ -1084,7 +1092,7 @@ macro_rules! kv_reads {
                         let (k, v) = e?;
                         out.push((from_be(k), dec_restoration(v)?));
                     }
-                    $read.count(out.len() as u64 + 1);
+                    $read.count(out.len() as u64 + 1)?;
                     Ok(out)
                 })
             }
@@ -1105,7 +1113,7 @@ macro_rules! kv_reads {
             fn has_children(&self, op: i64) -> Result<bool> {
                 let $me = self;
                 $with(&mut |$read: &Read| {
-                    $read.count(1);
+                    $read.count(1)?;
                     Ok($read.t.op_children.prefix_iter($read.r, &be(op))?.next().is_some())
                 })
             }
@@ -1113,7 +1121,7 @@ macro_rules! kv_reads {
                 let $me = self;
                 $with(&mut |$read: &Read| {
                     let mut out = HashMap::new();
-                    $read.count(ids.len() as u64);
+                    $read.count(ids.len() as u64)?;
                     for &id in ids {
                         if let Some(b) = $read.t.revisions.get($read.r, &be(id))? {
                             out.insert(id, dec_revision(b)?);
@@ -1126,7 +1134,7 @@ macro_rules! kv_reads {
                 let $me = self;
                 $with(&mut |$read: &Read| {
                     // Two B-tree statistics, not a walk.
-                    $read.count(2);
+                    $read.count(2)?;
                     Ok(($read.t.ops.len($read.r)? as i64, $read.t.revisions.len($read.r)? as i64))
                 })
             }
@@ -1152,7 +1160,7 @@ macro_rules! kv_reads {
                 $with(&mut |$read: &Read| {
                     let mut ids = Vec::new();
                     for e in $read.t.ops_by_entity.prefix_iter($read.r, entity.as_bytes())? {
-                        $read.count(1);
+                        $read.count(1)?;
                         let id = from_be(&e?.0[16..]);
                         if id > after {
                             ids.push(id);
@@ -1177,7 +1185,7 @@ macro_rules! kv_reads {
                     for e in $read.t.ops.range($read.r, &range)? {
                         ids.push(from_be(e?.0));
                     }
-                    $read.count(ids.len() as u64 + 1);
+                    $read.count(ids.len() as u64 + 1)?;
                     $read.ops_with_origins(ids.into_iter())
                 })
             }
@@ -1187,7 +1195,7 @@ macro_rules! kv_reads {
                     let from = be(op.saturating_add(1));
                     let range = (std::ops::Bound::Included(&from[..]), std::ops::Bound::Unbounded);
                     let n = $read.t.ops.range($read.r, &range)?.count();
-                    $read.count(n as u64 + 1);
+                    $read.count(n as u64 + 1)?;
                     Ok(n as i64)
                 })
             }

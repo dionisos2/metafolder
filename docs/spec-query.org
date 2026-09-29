@@ -266,8 +266,31 @@ single node on its own); a native =In= over field values would do the same for t
 (docs/review-followups.md §8).
 
 Neither bounds *execution* time: a small query can still be slow (a =Matches=
-regex over a huge cardinality, a =->*= over the whole repository). That is a
-separate concern, tracked with the same note.
+regex over a huge cardinality, a =->*= over the whole repository). That is the
+next section's concern.
+
+*** Timeout and interruption
+
+A slow query is not necessarily a wrong one — a regex over every value of a
+large repository, run on purpose from a script, may take its time — so the
+daemon sets no deadline of its own. The client that knows what it is waiting
+for does: =POST …/query= accepts =timeout_ms=, and a query still running when
+it passes is stopped and answers =409= with ={"error": "query timed out",
+"reason": "timeout"}= (its task ends =failed=). Absent, the query runs to the
+end. A cancel request on the query's task (spec-tasks "Cancellation") stops
+it the same way, with =reason: "cancelled"=, and so does the client hanging
+up: a connection closed before the answer — the GUI dropping a query the user
+has replaced, a Ctrl-C on =mf= — cancels the query's task, since nobody is
+left to read what it would find (=routes::CancelOnHangUp=,
+=tests/query_hangup.rs=).
+
+Both are polled *inside* the evaluation, not between its phases: every loop
+of a query — a regex scan, a sort over every match, a walk of the forest —
+reads keys, and the store polls both each =interrupt::POLL_EVERY= (256) keys
+it reads (=crate::interrupt=). A query therefore stops within a few hundred
+keys of the request, whatever phase it is in; the time counts from the
+request, waiting for the repository included, but that wait itself is not
+interrupted. Pinned by counting, not timing: =tests/query_interrupt.rs=.
 
 ** Indexing & scaling
 
@@ -417,11 +440,13 @@ Request body:
   "select": ["mfr_path", "rating"],
   "sort": [{"field": "rating", "order": "desc"}],
   "limit": 500,
-  "cursor": "..."
+  "cursor": "...",
+  "timeout_ms": 2000
 }
 #+END_SRC
 
-=query= is a =Query= JSON object (see [[*Concepts]]).
+=query= is a =Query= JSON object (see [[*Concepts]]). =timeout_ms= is optional:
+see [[*Timeout and interruption]].
 
 =sort=, =limit= and =cursor= are optional and enable sorted/paginated
 results; their semantics (including the response envelope used when =limit=

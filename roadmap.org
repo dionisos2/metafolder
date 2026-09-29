@@ -58,13 +58,6 @@ seek, not a walk), and =query/fields/resolve-tree= maps the answers back to
 their paths. What is left is rewriting the caller.
 
 * TODO query API
-** TODO execution timeout
-The node cap bounds a query's size, never its time. A small, slow query (a
-regex over millions of values, a =->*= across the repository) is unbounded.
-Cancellation exists — a query task polls =cancel()= between phases — but
-nothing sets a deadline on its own. The place to poll is the index evaluation
-loop.
-
 ** TODO the CLI cannot read a scope by batches: no =--cursor=
 The daemon pages (=POST /query=: =limit=, an opaque keyset =cursor=,
 =next_cursor=), and =mf metarecord get --count= exists, but =--limit N= caps the

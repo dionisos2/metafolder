@@ -169,7 +169,7 @@ impl KvSource<'_> {
             };
             for entry in entries {
                 let (k, _) = entry?;
-                self.read_keys(1);
+                self.read_keys(1)?;
                 if !k.starts_with(&prefix) {
                     break;
                 }
@@ -244,7 +244,7 @@ impl KvSource<'_> {
             let mut out = RoaringBitmap::new();
             for entry in self.t.grams.prefix_iter(&self.r, &prefix)? {
                 let (k, v) = entry?;
-                self.read_keys(1);
+                self.read_keys(1)?;
                 if k.len() == prefix.len() + 2 {
                     out |= derived::decode_set(v)?;
                 }
@@ -262,7 +262,7 @@ impl KvSource<'_> {
             let mut out = RoaringBitmap::new();
             for entry in self.t.sets.prefix_iter(&self.r, &prefix)? {
                 let (k, v) = entry?;
-                self.read_keys(1);
+                self.read_keys(1)?;
                 if k.len() == prefix.len() + 2 {
                     out |= derived::decode_set(v)?;
                 }
@@ -275,14 +275,27 @@ impl KvSource<'_> {
     /// A whole set; a read per chunk of 65 536 ids it spans.
     fn set(&self, kind: u8, field: Option<&str>) -> RoaringBitmap {
         let bm = self.ok(read_set(&self.t, &self.r, kind, field), RoaringBitmap::new());
-        self.read_keys(1 + bm.max().map_or(0, |m| u64::from(m >> 16)));
+        if !self.counted(1 + bm.max().map_or(0, |m| u64::from(m >> 16))) {
+            return RoaringBitmap::new();
+        }
         bm
     }
 
-    fn read_keys(&self, n: u64) {
+    /// Counts `n` keys read; fails once the running query was asked to stop
+    /// (`crate::interrupt`), which is what stops each loop of the source.
+    fn read_keys(&self, n: u64) -> Result<()> {
+        // Before counting: a read refused is not a read.
+        crate::interrupt::check(n)?;
         self.reads.set(self.reads.get() + n);
         metafolder_core::slowlog::count_reads(n);
         self.store_reads.fetch_add(n, std::sync::atomic::Ordering::Relaxed);
+        Ok(())
+    }
+
+    /// [`Self::read_keys`] where no `Result` can carry its error: keeps it,
+    /// and says whether the read may go on.
+    fn counted(&self, n: u64) -> bool {
+        self.ok(self.read_keys(n).map(|()| true), false)
     }
 
     /// The first read error met, if any (and forgets it).
@@ -357,7 +370,7 @@ impl KvSource<'_> {
                 let range = (lo.as_ref().map(|k| k.as_slice()), hi.as_ref().map(|k| k.as_slice()));
                 for entry in self.t.parts.range(&self.r, &range)? {
                     let (k, _) = entry?;
-                    self.read_keys(1);
+                    self.read_keys(1)?;
                     if !k.starts_with(&prefix) {
                         break;
                     }
@@ -389,7 +402,7 @@ impl KvSource<'_> {
             let mut out = std::collections::BTreeSet::new();
             for entry in self.t.sets.prefix_iter(&self.r, &prefix)? {
                 let (k, _) = entry?;
-                self.read_keys(1);
+                self.read_keys(1)?;
                 out.insert(k[prefix.len()..k.len() - 2].to_vec());
             }
             Ok(out)
@@ -404,7 +417,7 @@ impl KvSource<'_> {
             let mut out = None;
             for entry in self.t.sets.prefix_iter(&self.r, &prefix)? {
                 let (k, v) = entry?;
-                self.read_keys(1);
+                self.read_keys(1)?;
                 if k.len() == prefix.len() + 2 {
                     *out.get_or_insert_with(RoaringBitmap::new) |= derived::decode_set(v)?;
                 }
@@ -521,13 +534,13 @@ impl KvSource<'_> {
     /// A metarecord's rows of `field`.
     fn values(&self, id: u32, field: &str) -> Vec<Value> {
         let read = || -> Result<Vec<Value>> {
-            self.read_keys(1);
+            self.read_keys(1)?;
             let Some(uuid) = self.t.uuids.get(&self.r, &id.to_be_bytes())? else {
                 return Ok(Vec::new());
             };
             let mut out = Vec::new();
             for entry in self.t.cells.prefix_iter(&self.r, &super::cell_prefix(uuid, field))? {
-                self.read_keys(1);
+                self.read_keys(1)?;
                 out.push(dec_row(entry?.1)?.value);
             }
             Ok(out)
@@ -721,7 +734,7 @@ impl Source for KvSource<'_> {
             let prefix = name_key(field);
             for entry in self.t.field_types.prefix_iter(&self.r, &prefix)? {
                 let (k, _) = entry?;
-                self.read_keys(1);
+                self.read_keys(1)?;
                 let ty = &k[prefix.len()..];
                 if let Some(t) = TYPES.iter().find(|t| t.as_bytes() == ty) {
                     return Ok(Some(t));
@@ -733,13 +746,17 @@ impl Source for KvSource<'_> {
     }
 
     fn id(&self, uuid: Uuid) -> Option<u32> {
-        self.read_keys(1);
+        if !self.counted(1) {
+            return None;
+        }
         let r = id_of(&self.t, &self.r, uuid.as_bytes());
         self.ok(r, None)
     }
 
     fn uuid(&self, id: u32) -> Option<Uuid> {
-        self.read_keys(1);
+        if !self.counted(1) {
+            return None;
+        }
         let r = self.t.uuids.get(&self.r, &id.to_be_bytes()).map(|u| u.map(uuid_of));
         self.ok(r.map_err(Into::into), None)
     }
@@ -758,10 +775,7 @@ impl Source for KvSource<'_> {
         let range = (lo, Bound::Unbounded);
         match self.t.ids.range(&self.r, &range) {
             Ok(iter) => Box::new(iter.map_while(move |entry| match entry {
-                Ok((k, v)) => {
-                    self.read_keys(1);
-                    Some((uuid_of(k), dense(v)))
-                }
+                Ok((k, v)) => self.counted(1).then(|| (uuid_of(k), dense(v))),
                 Err(e) => {
                     self.error.borrow_mut().get_or_insert(e.into());
                     None
@@ -928,12 +942,12 @@ impl Source for KvSource<'_> {
         let read = || -> Result<Vec<NamedNode>> {
             let mut out = Vec::new();
             for id in &candidates {
-                self.read_keys(1);
+                self.read_keys(1)?;
                 let Some(uuid) = self.t.uuids.get(&self.r, &id.to_be_bytes())? else { continue };
                 // A record's rows of one field are one prefix, in row-id order.
                 let mut positions = Vec::new();
                 for entry in self.t.cells.prefix_iter(&self.r, &super::cell_prefix(uuid, field))? {
-                    self.read_keys(1);
+                    self.read_keys(1)?;
                     if let Value::TreeRef { parent, name } = dec_row(entry?.1)?.value {
                         positions.push((parent, name.display().into_owned()));
                     }
@@ -985,12 +999,12 @@ impl Source for KvSource<'_> {
         let read = || -> Result<RoaringBitmap> {
             let mut out = RoaringBitmap::new();
             for id in of {
-                self.read_keys(1);
+                self.read_keys(1)?;
                 let Some(node) = self.t.uuids.get(&self.r, &id.to_be_bytes())? else { continue };
                 let prefix = derived::descendants_prefix(field, &uuid_of(node).into_bytes());
                 for entry in self.t.sets.prefix_iter(&self.r, &prefix)? {
                     let (k, v) = entry?;
-                    self.read_keys(1);
+                    self.read_keys(1)?;
                     if k.len() == prefix.len() + 2 {
                         out |= derived::decode_set(v)?;
                     }

@@ -338,7 +338,7 @@ running.
 
 The query task carries *no* =result= payload (the results are delivered on the
 query response itself), and typically reports =done = null= / =total = null=
-for its whole life (the heavy part is opaque SQL). When the response is sent the
+for its whole life (the heavy part is one opaque evaluation). When the response is sent the
 task becomes terminal (=done=, or =failed= on error) and is subject to the same
 retention/eviction.
 
@@ -376,12 +376,12 @@ Requests cancellation of the task. The mechanism depends on the kind:
   started (the single-transaction guarantee makes the rollback automatic — there
   is no partial reconcile). Cancellation therefore takes effect within one
   progress step of the request, not instantly mid-syscall.
-- *query* — *cooperative*. The query polls the cancellation flag at the
-  checkpoints of its phases (the evaluation, the =select= result assembly),
-  and bails when it is set; the waiting =POST …/query= client receives a
-  =409= (=query cancelled=) instead of results. (It was also interrupted
-  mid-statement through SQLite's interrupt handle while that backend
-  existed.)
+- *query* — *cooperative, inside its loops*. The cancel request sets a flag
+  the store polls as it reads keys (every 256), so the query stops within a
+  few hundred keys of it, whatever phase it is in — not at the end of a phase
+  that may read the whole repository (spec-query "Timeout and interruption").
+  The waiting =POST …/query= client receives a =409= (={"error": "query
+  cancelled", "reason": "cancelled"}=) instead of results.
 - *flush* — *cooperative, and it pauses ingestion*. A flush is internal, but it
   is not always short: one batch can carry a whole directory tree, and while it
   runs the repository answers nothing else. It polls the cancellation flag

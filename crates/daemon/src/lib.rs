@@ -10,6 +10,7 @@ pub mod fingerprint;
 pub mod forest_query;
 pub mod fs_meta;
 pub mod index;
+pub mod interrupt;
 pub mod kvstore;
 pub mod log;
 pub mod log_view;
