@@ -411,19 +411,29 @@ pub(super) fn action_op_json(
         "op_type": action,
         "entity_uuid": hex(op.entity_uuid),
     });
-    // For an inverse (rollback) step, expose the metarecord version this step
-    // restores to (`entity_version_before`). The CLI matches it against a trash
-    // entry's recorded version to auto-restore the exact file the deletion
-    // displaced (spec-trash "rollback auto-restore"). Omitted on forward (redo)
-    // steps, so auto-restore never fires while re-applying a deletion.
-    // Who wrote the revision this operation belongs to. A `delete_metarecord`
-    // a *trashing* wrote is not an ordinary deletion: its bytes are in the
-    // trash-bin, and the client brings them back (spec-trash "Undo, rollback
-    // and redo"). Spelled out in full: the revert plan already uses `origin`
-    // for whether an operation was requested or dragged in as a dependent.
+    // Who wrote the revision this operation belongs to. Spelled out in full:
+    // the revert plan already uses `origin` for whether an operation was
+    // requested or dragged in as a dependent.
     if let Some(origin) = &op.origin {
         value["revision_origin"] = json!(origin);
     }
+    // What the client has to do on disk for this step, in the revert plan's
+    // shape. The op type alone cannot say: a trashing's `delete_metarecord`
+    // moves bytes out of the trash-bin when it is undone and back into it when
+    // it is redone, an ordinary one touches no file, and the undo a revert
+    // wrote of a trashing is an ordinary-looking `create_metarecord`
+    // (spec-trash "Undo, rollback and redo").
+    value["filesystem"] = match crate::revert::nav_fs_action(conn, op, dir)? {
+        None => serde_json::Value::Null,
+        Some(crate::revert::FsAction::Move) => json!({"action": "move"}),
+        Some(crate::revert::FsAction::RestoreContent) => json!({"action": "restore_content"}),
+        Some(crate::revert::FsAction::TrashContent) => json!({"action": "trash_content"}),
+    };
+    // For an inverse (rollback) step, expose the metarecord version this step
+    // restores to (`entity_version_before`). The CLI matches it against a trash
+    // entry's recorded version to auto-restore the exact file the deletion
+    // displaced. Omitted on forward (redo) steps, so auto-restore never fires
+    // while re-applying a deletion.
     if matches!(dir, crate::log::NavDir::Inverse) {
         if let Some(v) = op.entity_version_before {
             value["entity_version_before"] = json!(v);
@@ -492,14 +502,21 @@ pub(super) async fn rollback_plan_summary(
         let mut by_type: std::collections::BTreeMap<String, usize> =
             std::collections::BTreeMap::new();
         let mut revs = std::collections::HashSet::new();
-        for (op, _) in &path {
+        // The steps with something to do on disk: none, and the navigation can
+        // rewind in the database alone, in one call (`POST /rollback`).
+        let mut filesystem_steps = 0usize;
+        for (op, dir) in &path {
             *by_type.entry(op.op_type.clone()).or_insert(0) += 1;
             revs.insert(op.rev_id);
+            if crate::revert::nav_fs_action(&*conn, op, *dir)?.is_some() {
+                filesystem_steps += 1;
+            }
         }
         Ok(Json(json!({
             "total_operations": path.len(),
             "by_type": by_type,
             "revisions_affected": revs.len(),
+            "filesystem_steps": filesystem_steps,
         })))
     })
     .await

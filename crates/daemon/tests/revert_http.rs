@@ -629,3 +629,71 @@ async fn test_a_revert_names_the_operations_it_undid() {
         }
     }
 }
+
+// ── Trashings: the bytes live in the trash-bin ───────────────────────────────
+
+/// Deletes `uuid` the way the trash-bin does: one revision stamped `trash`.
+async fn trash(app: &Router, repo: &str, uuid: &str) {
+    let (status, body) = request(
+        app,
+        "POST",
+        &format!("/repos/{repo}/metarecords/trash"),
+        Some(json!({"uuids": [uuid]})),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "trash failed: {body}");
+}
+
+/// Reverts revision `rev_id` through the coordinated protocol, applying every
+/// operation (as a client would once it has done the file actions).
+async fn coordinated_revert(app: &Router, repo: &str, rev_id: i64) {
+    let (status, plan) = start(app, repo, json!({"target": {"rev_id": rev_id}})).await;
+    assert_eq!(status, StatusCode::OK, "{plan}");
+    let apply: Vec<i64> =
+        plan["operations"].as_array().unwrap().iter().filter_map(|o| o["id"].as_i64()).collect();
+    let (status, body) = request(
+        app,
+        "POST",
+        &format!("/repos/{repo}/revert/commit"),
+        Some(json!({"apply": apply})),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+}
+
+/// A revert that puts a trashed metarecord back has to put its bytes back
+/// (`restore_content`); a revert of *that* revert deletes the metarecord again,
+/// so its bytes go back to the trash (`trash_content`) — which is what a redo of
+/// an undo does once the watcher has written in between (spec-trash "Redo"). The
+/// op type cannot say so: the second revert's operation is an ordinary
+/// `create_metarecord`, and only its `reverts_op_id` chain leads to the trashing.
+#[tokio::test]
+async fn test_a_revert_of_a_trashing_revert_trashes_the_bytes_again() {
+    let (app, repo, _root) = setup("retrash").await;
+    let uuid = create(&app, &repo, json!([])).await;
+    trash(&app, &repo, &uuid).await;
+    let trashing = last_revision(&app, &repo).await;
+
+    let (_, first) = plan(&app, &repo, &format!("target_rev_id={trashing}")).await;
+    assert_eq!(first["requires_lock"], true, "{first}");
+    assert_eq!(first["operations"][0]["filesystem"]["action"], "restore_content", "{first}");
+
+    coordinated_revert(&app, &repo, trashing).await;
+    let undo = last_revision(&app, &repo).await;
+    assert!(field_of(&app, &repo, &uuid, "mfr_path").await.is_none(), "no file field here");
+
+    let (_, second) = plan(&app, &repo, &format!("target_rev_id={undo}")).await;
+    assert_eq!(second["requires_lock"], true, "{second}");
+    assert_eq!(second["operations"][0]["filesystem"]["action"], "trash_content", "{second}");
+
+    // Rolling back over that revert deletes the metarecord just the same.
+    let (status, nav) = request(
+        &app,
+        "GET",
+        &format!("/repos/{repo}/rollback/plan?target_prev_revision=true"),
+        None,
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{nav}");
+    assert_eq!(nav["operations"][0]["filesystem"]["action"], "trash_content", "{nav}");
+}

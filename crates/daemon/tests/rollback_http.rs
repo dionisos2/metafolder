@@ -131,6 +131,90 @@ async fn test_plan_summary_counts_by_type() {
     assert_eq!(status, StatusCode::OK, "{body}");
     assert_eq!(body["total_operations"], 2, "{body}");
     assert_eq!(body["by_type"]["set_field"], 2, "{body}");
+    // Nothing here touches a file: the whole navigation can rewind in the
+    // database alone.
+    assert_eq!(body["filesystem_steps"], 0, "{body}");
+}
+
+/// Deletes `uuid` the way the trash-bin does (a revision stamped `trash`) and
+/// returns the id of the `delete_metarecord` it wrote.
+async fn trash(app: &Router, repo: &str, uuid: &str) -> i64 {
+    let (status, body) = request(
+        app,
+        "POST",
+        &format!("/repos/{repo}/metarecords/trash"),
+        Some(json!({"uuids": [uuid]})),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "trash failed: {body}");
+    head(app, repo).await.expect("the trashing is HEAD")
+}
+
+/// Starts a navigation to `target`, returning the first step.
+async fn start_nav(app: &Router, repo: &str, target: Value) -> Value {
+    let (status, body) = request(
+        app,
+        "POST",
+        &format!("/repos/{repo}/rollback/start"),
+        Some(json!({"target": target})),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    body["op"].clone()
+}
+
+async fn finish_nav(app: &Router, repo: &str) {
+    loop {
+        let (status, step) =
+            request(app, "POST", &format!("/repos/{repo}/rollback/step"), Some(json!({}))).await;
+        assert_eq!(status, StatusCode::OK, "{step}");
+        if step["op"].is_null() {
+            break;
+        }
+    }
+}
+
+/// A trashing's bytes are in the trash-bin, so crossing it is a file action —
+/// and which one depends on the direction: undoing it brings the bytes back,
+/// redoing it sends them back (spec-trash "Undo, rollback and redo"). The
+/// daemon says so on the step; the op type alone cannot.
+#[tokio::test]
+async fn test_a_trashing_step_names_its_filesystem_action() {
+    let (app, repo, _root) = setup("trashstep").await;
+    let uuid =
+        create(&app, &repo, json!([{"name": "rating", "value": {"type": "int", "value": 3}}]))
+            .await;
+    let trashing = trash(&app, &repo, &uuid).await;
+
+    let (_, summary) = request(
+        &app,
+        "GET",
+        &format!("/repos/{repo}/rollback/plan/summary?target_prev_revision=true"),
+        None,
+    )
+    .await;
+    assert_eq!(summary["filesystem_steps"], 1, "{summary}");
+
+    let undo = start_nav(&app, &repo, json!({"prev_revision": true})).await;
+    assert_eq!(undo["filesystem"]["action"], "restore_content", "{undo}");
+    finish_nav(&app, &repo).await;
+
+    let redo = start_nav(&app, &repo, json!({"id": trashing})).await;
+    assert_eq!(redo["filesystem"]["action"], "trash_content", "{redo}");
+    finish_nav(&app, &repo).await;
+}
+
+/// An ordinary step carries no file action at all.
+#[tokio::test]
+async fn test_a_metadata_step_has_no_filesystem_action() {
+    let (app, repo, _root) = setup("metastep").await;
+    let uuid =
+        create(&app, &repo, json!([{"name": "rating", "value": {"type": "int", "value": 3}}]))
+            .await;
+    set(&app, &repo, &uuid, "rating", json!({"type": "int", "value": 5})).await;
+    let step = start_nav(&app, &repo, json!({"prev_revision": true})).await;
+    assert!(step["filesystem"].is_null(), "{step}");
+    finish_nav(&app, &repo).await;
 }
 
 /// The id of the create_metarecord operation for `uuid`.

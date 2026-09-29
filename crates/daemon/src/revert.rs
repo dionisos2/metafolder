@@ -145,28 +145,81 @@ pub fn analyse(log: &dyn Log, head: Option<i64>, requested: Vec<OpRow>) -> Resul
     Ok(Analysis { requested, dependents, blocked })
 }
 
-/// The filesystem action undoing an operation requires, if any.
-#[derive(Debug, Clone, PartialEq, Eq)]
+/// The filesystem action crossing an operation requires, if any — what the
+/// client has to do on disk for the metadata to stay true (spec-event-log
+/// "Coordinated navigation", spec-trash "Undo, rollback and redo").
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum FsAction {
-    /// `mfr_path` moves back: the file has to move with it.
+    /// `mfr_path` moves: the file has to move with it.
     Move,
     /// Content the operation destroyed has to come back from the trash-bin.
     RestoreContent,
+    /// A trashed metarecord goes again: its bytes have to go back to the
+    /// trash-bin with it — a trashing redone.
+    TrashContent,
 }
 
-pub fn fs_action(op: &OpRow) -> Option<FsAction> {
+/// How far a `reverts_op_id` chain is followed before giving up. A revert of a
+/// revert of a … trashing is a redo of an undo of a redo: a handful deep in
+/// practice, and the bound only stops a corrupted, cyclic chain.
+const MAX_REVERT_CHAIN: usize = 64;
+
+/// Whether `op` creates or deletes a metarecord whose bytes a *trashing* took:
+/// the `delete_metarecord` of a revision stamped `trash`, or a create/delete a
+/// revert wrote whose `reverts_op_id` chain leads back to one. Only the first
+/// says so in its own row — the undo of a trashing, when it is a revert, writes
+/// an ordinary `create_metarecord`, and the redo of that a `delete_metarecord`
+/// of no particular origin. A link pruned out of the log ends the chain: the
+/// operation is then an ordinary one, which is all that is left to know of it.
+pub fn trash_coupled<L: Log + ?Sized>(log: &L, op: &OpRow) -> Result<bool> {
+    let mut current = op.clone();
+    for _ in 0..MAX_REVERT_CHAIN {
+        if !matches!(current.op_type.as_str(), "delete_metarecord" | "create_metarecord") {
+            return Ok(false);
+        }
+        if current.op_type == "delete_metarecord" && current.origin.as_deref() == Some("trash") {
+            return Ok(true);
+        }
+        let Some(next) = current.reverts_op_id.map(|id| log.op(id)).transpose()?.flatten() else {
+            return Ok(false);
+        };
+        current = next;
+    }
+    Ok(false)
+}
+
+/// The file action crossing `op` in direction `dir` requires, `coupled` being
+/// [`trash_coupled`]'s answer. Pure, so the table is tested on its own.
+fn action_for(op: &OpRow, coupled: bool, dir: crate::log::NavDir) -> Option<FsAction> {
     match op.op_type.as_str() {
         "file_moved" => Some(FsAction::Move),
         "file_deleted" | "file_modified" => Some(FsAction::RestoreContent),
-        // A trashing deletes the metarecord outright, and its bytes are in the
-        // trash-bin: putting the record back means putting the file back with
-        // it. The op type cannot say so — an ordinary `delete_metarecord`
-        // touches no file — so the revision's origin does.
-        "delete_metarecord" if op.origin.as_deref() == Some("trash") => {
-            Some(FsAction::RestoreContent)
+        // The bytes follow the metarecord: they come back when it does, and go
+        // back to the trash when it goes. A deletion re-applied, or a creation
+        // undone, is the metarecord going.
+        "delete_metarecord" | "create_metarecord" if coupled => {
+            let goes =
+                (op.op_type == "delete_metarecord") == matches!(dir, crate::log::NavDir::Forward);
+            Some(if goes { FsAction::TrashContent } else { FsAction::RestoreContent })
         }
         _ => None,
     }
+}
+
+/// The file action a navigation step over `op` in direction `dir` requires.
+pub fn nav_fs_action<L: Log + ?Sized>(
+    log: &L,
+    op: &OpRow,
+    dir: crate::log::NavDir,
+) -> Result<Option<FsAction>> {
+    let coupled = matches!(op.op_type.as_str(), "delete_metarecord" | "create_metarecord")
+        && trash_coupled(log, op)?;
+    Ok(action_for(op, coupled, dir))
+}
+
+/// The file action *reverting* `op` requires: a revert applies its inverse.
+pub fn fs_action<L: Log + ?Sized>(log: &L, op: &OpRow) -> Result<Option<FsAction>> {
+    nav_fs_action(log, op, crate::log::NavDir::Inverse)
 }
 
 /// The op type a revert of `op` writes: the type of the change it actually
@@ -306,22 +359,29 @@ mod tests {
         }
     }
 
-    // A trashing deletes the metarecord outright, so reverting it has to bring
+    use crate::log::NavDir::{Forward, Inverse};
+
+    // A trashing deletes the metarecord outright, so undoing it has to bring
     // the *bytes* back too — they are sitting in the trash-bin, and only the
-    // client can move them. Nothing in the op type says so: an ordinary
-    // `delete_metarecord` touches no file at all. The revision's origin is what
-    // separates the two (spec-trash "Undo, rollback and redo").
+    // client can move them — and redoing it has to send them back. Nothing in
+    // the op type says so: an ordinary `delete_metarecord` touches no file at
+    // all (spec-trash "Undo, rollback and redo").
     #[test]
-    fn a_trashing_s_metarecord_deletion_asks_for_the_content_back() {
-        assert!(matches!(
-            fs_action(&op("delete_metarecord", Some("trash"))),
-            Some(FsAction::RestoreContent)
-        ));
+    fn a_trashing_s_deletion_moves_the_bytes_with_the_metarecord() {
+        let deletion = op("delete_metarecord", Some("trash"));
+        assert_eq!(action_for(&deletion, true, Inverse), Some(FsAction::RestoreContent));
+        assert_eq!(action_for(&deletion, true, Forward), Some(FsAction::TrashContent));
+        // The undo a revert wrote is a creation: undoing *it* is the redo.
+        let recreation = op("create_metarecord", None);
+        assert_eq!(action_for(&recreation, true, Inverse), Some(FsAction::TrashContent));
+        assert_eq!(action_for(&recreation, true, Forward), Some(FsAction::RestoreContent));
     }
 
     #[test]
     fn an_ordinary_metarecord_deletion_touches_no_file() {
-        assert!(fs_action(&op("delete_metarecord", None)).is_none());
-        assert!(fs_action(&op("delete_metarecord", Some("watcher"))).is_none());
+        for dir in [Inverse, Forward] {
+            assert!(action_for(&op("delete_metarecord", None), false, dir).is_none());
+            assert!(action_for(&op("create_metarecord", None), false, dir).is_none());
+        }
     }
 }

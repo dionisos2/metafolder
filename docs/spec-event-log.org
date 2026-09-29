@@ -1356,9 +1356,15 @@ Example response:
     "create_metarecord": 89,
     "set_field": 20
   },
-  "revisions_affected": 12
+  "revisions_affected": 12,
+  "filesystem_steps": 48
 }
 #+END_SRC
+
+=filesystem_steps= counts the steps whose =filesystem= action is not =null=
+(see =POST /rollback/step=): zero means the navigation rewinds in the database
+alone, and a client may take it in one atomic =POST /rollback= instead of one
+round-trip per operation.
 
 *** =POST /repos/:repo_uuid/rollback/start=
 Enters rollback lock, suspends pending operation execution, stores the target
@@ -1437,6 +1443,25 @@ Response body (navigation complete — =op= is =null=):
 {"op": null, "remaining": 0}
 #+END_SRC
 
+Each operation handed out (here, by =POST /rollback/start= and in =GET
+/rollback/plan=) carries =filesystem=: =null= when crossing it touches no file,
+otherwise the action the client performs, as in the revert plan ([[*=GET
+/repos/:repo_uuid/revert/plan=]]):
+
+- ={"action": "move"}= — a =file_moved= (=from=/=to= beside it, as always);
+- ={"action": "restore_content"}= — the content comes back from the trash-bin:
+  the inverse of a =file_deleted=/=file_modified=, or a metarecord a trashing
+  took coming back;
+- ={"action": "trash_content"}= — a metarecord a trashing took going again, so
+  its bytes go back into the trash-bin (a redo of a trashing).
+
+The last two are why the field exists: the op type cannot tell them apart. A
+trashing's =delete_metarecord= is known by its revision's =origin = 'trash'=,
+but the undo of one that was a *revert* is an ordinary-looking
+=create_metarecord=, and the redo of that an ordinary =delete_metarecord=; the
+daemon follows their =reverts_op_id= chain back to the trashing
+(spec-trash "Undo, rollback and redo").
+
 When =op= is =null=, HEAD has reached the target. The lock is automatically
 released and the watcher buffer is replayed.
 
@@ -1506,9 +1531,12 @@ and =with_dependents=, with the semantics above.
   would be removed.
 - =filesystem= is =null= when no file action is needed, and otherwise one of
   ={"action": "move", "from": …, "to": …}= — the paths to pass to =mv=, already
-  computed, as in =POST /rollback/start= — or ={"action": "restore_content"}=,
-  meaning the content has to come back from the trash-bin. The daemon does not
-  look: whether it is there is the client's question to answer.
+  computed, as in =POST /rollback/start= — ={"action": "restore_content"}=,
+  meaning the content has to come back from the trash-bin, or
+  ={"action": "trash_content"}=, meaning a metarecord a trashing took is going
+  again and its bytes have to go back to the trash-bin (the revert of an undo
+  that was itself a revert: spec-trash "Redo"). The daemon does not look:
+  whether the content is there is the client's question to answer.
   =requires_lock= is true when any operation has an action, and is the client's
   signal to use the coordinated form.
 - =blocked_by= names the operation standing in the way, or =null=. =blocked= is

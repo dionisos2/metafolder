@@ -2,6 +2,7 @@
 //! coordinated one.
 
 use super::*;
+use std::collections::HashSet;
 
 /// The set of operations to revert: a revision's, or an explicit list.
 #[derive(Deserialize)]
@@ -118,7 +119,7 @@ fn revert_plan_json(
     let mut operations = Vec::with_capacity(effective.len());
     let mut requires_lock = false;
     for op in &effective {
-        let action = crate::revert::fs_action(op);
+        let action = crate::revert::fs_action(conn, op)?;
         requires_lock |= action.is_some();
         let restores = snapshots_json(conn, op.id, 0)?;
         let blocked_by = analysis
@@ -148,6 +149,7 @@ fn revert_plan_json(
                 v
             }
             Some(crate::revert::FsAction::RestoreContent) => json!({"action": "restore_content"}),
+            Some(crate::revert::FsAction::TrashContent) => json!({"action": "trash_content"}),
         };
         let mut entry = json!({
             "id": op.id,
@@ -251,16 +253,24 @@ pub(super) async fn revert(
 
         let mut effective = analysis.effective(body.with_dependents);
         let mut skipped = Vec::new();
+        // Which operations need a file action: asked of the log once, since a
+        // trashing's is read through its `reverts_op_id` chain.
+        let mut needs_fs = HashSet::new();
+        for op in &effective {
+            if crate::revert::fs_action(&*conn, op)?.is_some() {
+                needs_fs.insert(op.id);
+            }
+        }
         if body.skip_filesystem {
             effective.retain(|op| {
-                if crate::revert::fs_action(op).is_some() {
+                if needs_fs.contains(&op.id) {
                     skipped.push(json!({"op_id": op.id, "reason": "requires_filesystem"}));
                     false
                 } else {
                     true
                 }
             });
-        } else if let Some(op) = effective.iter().find(|o| crate::revert::fs_action(o).is_some()) {
+        } else if let Some(op) = effective.iter().find(|o| needs_fs.contains(&o.id)) {
             return Err(ApiError::conflict(format!(
                 "operation {} needs a filesystem action; use the coordinated revert, or pass \
                  skip_filesystem to leave it out",
