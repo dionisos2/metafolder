@@ -119,6 +119,10 @@ export async function mount(root, metafolder) {
   let total = null;
   /** Bumped per count asked for: a count answers only if it is still the last. */
   let countSeq = 0;
+  /** Aborts the count in flight: nobody reads it once the query changed, and
+   *  the daemon cancels it rather than finishing it for nobody. */
+  /** @type {AbortController|null} */
+  let countAbort = null;
 
   /**
    * The number of metarecords `query` matches, into the footer's "/total" —
@@ -129,9 +133,17 @@ export async function mount(root, metafolder) {
    */
   async function fetchCount(r, query) {
     const seq = ++countSeq;
+    countAbort?.abort();
+    const controller = new AbortController();
+    countAbort = controller;
     try {
       const result = /** @type {{total?: number|null}} */ (
-        await daemon.call('POST', `/repos/${r}/query`, { query, select: '*', limit: 1, count: true })
+        await daemon.call(
+          'POST',
+          `/repos/${r}/query`,
+          { query, select: '*', limit: 1, count: true },
+          { signal: controller.signal },
+        )
       );
       if (seq !== countSeq) return;
       total = result.total ?? null;
@@ -481,14 +493,31 @@ export async function mount(root, metafolder) {
     return composeQueryText(queryText, finderClauseText(splitTerms(finderText), targets));
   }
 
-  // Returns false when the call is dropped (no repo, or another fetch is in
-  // flight — fetches are serialized on `loading`), so the finder can re-run the
-  // latest query instead of leaving the list stale.
+  /** Aborts the page read in flight. @type {AbortController|null} */
+  let pageAbort = null;
+  /** A reset asked for while a fetch was in flight: run once it unwinds. */
+  let resetPending = false;
+
+  // Fetches are serialized on `loading`. A reset asked for meanwhile means the
+  // query changed: what is in flight is aborted — the page and the count, which
+  // the daemon then cancels instead of finishing for nobody — and the reset
+  // runs once it has unwound, on the query as it is then. Returns false when
+  // the call did not run now (no repo, or another fetch in flight).
   /** @param {boolean} reset @returns {Promise<boolean|undefined>} */
   async function fetchPage(reset) {
     const r = repo;
-    if (!r || loading) return false;
+    if (!r) return false;
+    if (loading) {
+      if (reset) {
+        resetPending = true;
+        pageAbort?.abort();
+        countAbort?.abort();
+      }
+      return false;
+    }
     loading = true;
+    const controller = new AbortController();
+    pageAbort = controller;
     try {
       if (reset) {
         // The finder picks each field's match mode from its type: read the
@@ -513,6 +542,7 @@ export async function mount(root, metafolder) {
         nextCursor = null;
         total = null;
         countSeq += 1; // a count still on its way belongs to the old query
+        countAbort?.abort();
         orphanCache = new Map();
         watchByUuid = new Map();
         treePaths.clear();
@@ -538,8 +568,10 @@ export async function mount(root, metafolder) {
           limit: pageSize,
           ...(sort.length > 0 && { sort }),
           ...(nextCursor && { cursor: nextCursor }),
-        });
+        }, { signal: controller.signal });
       } catch (error) {
+        // Replaced by a newer query: not a failure, and not this call's to show.
+        if (controller.signal.aborted) return false;
         // A failed fetch must not read as "0 results": record it and render a
         // persistent error state (the status-bar flash alone vanishes).
         fetchError = error instanceof Error ? error.message : String(error);
@@ -573,6 +605,11 @@ export async function mount(root, metafolder) {
       render();
     } finally {
       loading = false;
+      if (pageAbort === controller) pageAbort = null;
+      if (resetPending) {
+        resetPending = false;
+        void fetchPage(true);
+      }
     }
   }
 
@@ -1302,10 +1339,9 @@ export async function mount(root, metafolder) {
   }
 
   /** Re-runs the query for the current finder text (debounced on input).
-   *  Fetches are serialized (the `loading` guard drops concurrent calls), so a
-   *  fast typist can outrun an in-flight fetch and leave the list showing an
-   *  earlier term. Re-run when our fetch was dropped, or the input moved on
-   *  while we were fetching, until the shown list matches the current input. */
+   *  A fetch still in flight for an earlier term is aborted and the query
+   *  re-run once it unwinds (`fetchPage`), so the list ends on the current
+   *  input without polling for it. */
   /** @param {{record?: boolean}} [options] */
   async function applyFinder({ record = false } = {}) {
     clearTimeout(finderTimer);
@@ -1313,10 +1349,7 @@ export async function mount(root, metafolder) {
     if (record) finderHistory.push(finderInput.value.trim());
     finderText = finderInput.value;
     await workspace.set('metarecord-list:finder', finderText);
-    const ran = await fetchPage(true);
-    if (repo && (ran === false || finderInput.value !== finderText)) {
-      finderTimer = setTimeout(() => void applyFinder(), 80);
-    }
+    await fetchPage(true);
   }
 
   function scheduleFinder() {

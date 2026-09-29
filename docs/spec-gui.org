@@ -2038,6 +2038,17 @@ const catalog = await metafolder.daemon.fields(repo)                       // [{
 =uuid_in= query) and =POST /repos/:repo/tree/resolve {field?, uuids}= (→
 ={uuid: [path]}=, one =query/fields/resolve-tree=).
 
+*Aborting a read.* =request=, =call= and =query= take a last =opts= argument,
+={signal}= (an =AbortSignal=). Aborting it drops the call in flight — the shell
+names it (=abortId=) and the =daemon_abort= Tauri command drops its request —
+and the promise rejects with an =AbortError=, as =fetch= does. The dropped
+connection is the daemon's cue: it cancels the query it was running instead of
+finishing it for nobody (spec-query "Timeout and interruption"), which matters
+because a repository answers one operation at a time — a count of a query the
+user already replaced held the next page behind it. =metarecord-list= aborts
+its page and its count when the query changes (a finder keystroke, a new
+query), and runs the new one once the old has unwound.
+
 **** =metafolder.changes=
 
 The daemon change feed (see "Daemon data"): what changed that the panel did

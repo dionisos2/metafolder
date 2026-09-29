@@ -11,7 +11,13 @@ import { type ArgSpec, withTopLevelInvoke } from '../commands';
 import { invoke as ipcInvoke } from '../ipc';
 import { daemonWork } from '../working';
 import { createChangeFeed, type ChangeEvent } from './changes';
-import { createReads, translate, type DaemonResponse, type RawFetcher } from './reads';
+import {
+  createReads,
+  translate,
+  type DaemonResponse,
+  type RawFetcher,
+  type ReadOptions,
+} from './reads';
 
 /** The daemon change feed — one per realm, heard by every panel. */
 export const changeFeed = createChangeFeed();
@@ -29,6 +35,14 @@ export function startChangePolling(intervalMs = 7000) {
   pollTimer = setInterval(() => {
     for (const repo of changeFeed.trackedRepos()) void changeFeed.sync(repo, raw);
   }, intervalMs);
+}
+
+/** Names each abortable daemon call, across every panel of the realm. */
+let abortSeq = 0;
+
+/** What an aborted read rejects with — what `fetch` rejects with. */
+function abortError(): DOMException {
+  return new DOMException('the read was aborted', 'AbortError');
 }
 
 // The repository a daemon path reads inside (`/repos/:repo/…`), for the poll.
@@ -211,18 +225,32 @@ export function createPanelApi(deps: PanelApiDeps, ctx: PanelApiCtx): PanelApiIn
   // query carries the query's text too.
   let clientContext: string | null = null;
 
-  const rawFetch: RawFetcher = (m, p, b) =>
-    daemonWork.track(
-      benchMeasure(daemonLabel(m, p), () =>
-        invoke('daemon_request', {
-          method: m,
-          path: p,
-          body: b,
-          ...(clientContext !== null && { context: clientContext }),
-        }),
-      ) as Promise<DaemonResponse>,
-      `${m} ${p.split('?')[0]}`,
-    );
+  const rawFetch: RawFetcher = (m, p, b, opts) => {
+    const signal = opts?.signal;
+    if (signal?.aborted) return Promise.reject(abortError());
+    // An abortable call is named, so `daemon_abort` can drop it in flight;
+    // the daemon sees the connection go and cancels the query.
+    const abortId = signal ? `abort-${++abortSeq}` : undefined;
+    const onAbort = () => void invoke('daemon_abort', { id: abortId });
+    signal?.addEventListener('abort', onAbort, { once: true });
+    return daemonWork
+      .track(
+        benchMeasure(daemonLabel(m, p), () =>
+          invoke('daemon_request', {
+            method: m,
+            path: p,
+            body: b,
+            ...(clientContext !== null && { context: clientContext }),
+            ...(abortId !== undefined && { abortId }),
+          }),
+        ) as Promise<DaemonResponse>,
+        `${m} ${p.split('?')[0]}`,
+      )
+      .catch((error: unknown) => {
+        throw signal?.aborted ? abortError() : error;
+      })
+      .finally(() => signal?.removeEventListener('abort', onAbort));
+  };
 
   // Every call goes to the daemon. A repository it addresses joins the change
   // feed's poll first — its baseline taken before this call — so the panel
@@ -231,12 +259,13 @@ export function createPanelApi(deps: PanelApiDeps, ctx: PanelApiCtx): PanelApiIn
     method: string,
     path: string,
     body: unknown = null,
+    opts?: ReadOptions,
   ): Promise<DaemonResponse> {
     const repo = path.match(REPO_PATH)?.[1];
     if (repo !== undefined) await changeFeed.baseline(repo, rawFetch);
-    return translate(method, path, body, rawFetch);
+    return translate(method, path, body, rawFetch, opts);
   }
-  const reads = createReads((m, p, b) => daemonRequest(m, p, b));
+  const reads = createReads((m, p, b, opts) => daemonRequest(m, p, b, opts));
 
   // Cached GET /repos lookup (root, internal_dir, ...). UUIDs are normalized
   // (dashes stripped) so a dashed active_repo matches GET /repos' hex form.
@@ -365,10 +394,10 @@ export function createPanelApi(deps: PanelApiDeps, ctx: PanelApiCtx): PanelApiIn
       setContext: (text: string | null) => {
         clientContext = text === null ? null : text.slice(0, 200);
       },
-      request: (method: string, path: string, body: unknown = null) =>
-        daemonRequest(method, path, body),
-      call: async (method: string, path: string, body: unknown = null) => {
-        const response = await daemonRequest(method, path, body);
+      request: (method: string, path: string, body: unknown = null, opts?: ReadOptions) =>
+        daemonRequest(method, path, body, opts),
+      call: async (method: string, path: string, body: unknown = null, opts?: ReadOptions) => {
+        const response = await daemonRequest(method, path, body, opts);
         if (response.status >= 400) {
           const err = (response.body as { error?: string })?.error;
           throw new Error(err ?? `${method} ${path}: HTTP ${response.status}`);
@@ -407,7 +436,8 @@ export function createPanelApi(deps: PanelApiDeps, ctx: PanelApiCtx): PanelApiIn
         return relatives.map((rel) => (rel === '' ? root : `${root}/${rel}`));
       },
       // Reads that return what they read (nothing is kept — lib/panels/reads.ts).
-      query: (repo: string, body: Record<string, unknown>) => reads.query(repo, body),
+      query: (repo: string, body: Record<string, unknown>, opts?: ReadOptions) =>
+        reads.query(repo, body, opts),
       metarecords: (repo: string, uuids: string[]) => reads.metarecords(repo, uuids),
       treePaths: (repo: string, field: string, uuids: string[]) => reads.treePaths(repo, field, uuids),
       fields: (repo: string) => reads.fields(repo),

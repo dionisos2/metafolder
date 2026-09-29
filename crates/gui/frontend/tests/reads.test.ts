@@ -96,6 +96,10 @@ describe('reads — the daemon.call shorthands', () => {
   test('anything else goes straight to the daemon', async () => {
     const raw = answering(ok('x'));
     await translate('PUT', '/repos/r/metarecords/a1/fields/tag', { v: 1 }, raw);
-    expect(raw).toHaveBeenCalledWith('PUT', '/repos/r/metarecords/a1/fields/tag', { v: 1 });
+    expect(raw).toHaveBeenCalledWith('PUT', '/repos/r/metarecords/a1/fields/tag', { v: 1 }, undefined);
+    // …with what the caller passed along (an abort signal).
+    const signal = new AbortController().signal;
+    await translate('GET', '/repos/r/fields', null, raw, { signal });
+    expect(raw).toHaveBeenLastCalledWith('GET', '/repos/r/fields', null, { signal });
   });
 });

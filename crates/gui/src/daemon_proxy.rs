@@ -56,6 +56,11 @@ pub struct DaemonProxy {
     /// Repository uuid → its `internal_dir`, as the daemon reported it. Only
     /// filled when a call was slow, so an ordinary session never asks.
     internal_dirs: Mutex<std::collections::HashMap<String, std::path::PathBuf>>,
+    /// The calls in flight that the frontend may abort, by the id it gave
+    /// them: firing one drops its request, and with it the connection — which
+    /// the daemon takes as a cancel of the query it was running (spec-query
+    /// "Timeout and interruption").
+    aborts: Mutex<std::collections::HashMap<String, tokio::sync::oneshot::Sender<()>>>,
 }
 
 impl DaemonProxy {
@@ -85,6 +90,7 @@ impl DaemonProxy {
             diagnostics_since: Mutex::new(0),
             slow: crate::slow::SlowLog::new(slow_threshold_ms),
             internal_dirs: Mutex::new(std::collections::HashMap::new()),
+            aborts: Mutex::new(std::collections::HashMap::new()),
         }
     }
 
@@ -119,23 +125,50 @@ impl DaemonProxy {
         path: &str,
         body: Option<Value>,
     ) -> Result<ProxyResponse, String> {
-        self.request_with_context(method, path, body, None).await
+        self.request_with_context(method, path, body, None, None).await
+    }
+
+    /// Aborts the call in flight registered as `id`; `false` when there is
+    /// none (it finished, or was never made).
+    pub fn abort(&self, id: &str) -> bool {
+        match self.aborts.lock_recover().remove(id) {
+            Some(fire) => fire.send(()).is_ok(),
+            None => false,
+        }
     }
 
     /// The same, plus what the user asked for in their own words — the DSL text
     /// of a query, the command that ran. The daemon receives the query IR and
     /// cannot reconstruct it, so the client is the only side that can say it
     /// (spec-slow-log "Correlating the GUI and the daemon").
+    ///
+    /// With an `abort_id`, the call can be dropped while in flight by
+    /// [`Self::abort`] — a query the user has already replaced — and then
+    /// answers `Err("aborted")`.
     pub async fn request_with_context(
         &self,
         method: &str,
         path: &str,
         body: Option<Value>,
         client_context: Option<&str>,
+        abort_id: Option<&str>,
     ) -> Result<ProxyResponse, String> {
         let started = std::time::Instant::now();
         let op_id = crate::slow::new_op_id();
-        let out = self.request_inner(method, path, body, Some((&op_id, client_context))).await;
+        let request = self.request_inner(method, path, body, Some((&op_id, client_context)));
+        let out = match abort_id {
+            None => request.await,
+            Some(id) => {
+                let (fire, fired) = tokio::sync::oneshot::channel();
+                self.aborts.lock_recover().insert(id.to_string(), fire);
+                let out = tokio::select! {
+                    out = request => out,
+                    Ok(()) = fired => Err("aborted".to_string()),
+                };
+                self.aborts.lock_recover().remove(id);
+                out
+            }
+        };
         self.observe(method, path, started.elapsed(), &op_id, client_context).await;
         out
     }

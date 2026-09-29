@@ -454,9 +454,14 @@ pub async fn daemon_request(
     // the call turns out to be slow; the daemon receives the query IR and
     // cannot reconstruct it (spec-slow-log).
     context: Option<String>,
+    // `abortId`: makes the call abortable by `daemon_abort` while in flight.
+    abort_id: Option<String>,
 ) -> Result<ProxyResponse, String> {
-    let result = app.daemon.request_with_context(&method, &path, body, context.as_deref()).await;
-    if result.is_err() {
+    let result = app
+        .daemon
+        .request_with_context(&method, &path, body, context.as_deref(), abort_id.as_deref())
+        .await;
+    if result.as_ref().is_err_and(|e| e != "aborted") {
         // Likely a daemon outage: refresh the health state right away.
         let daemon = app.daemon.clone();
         let gui = app.gui.clone();
@@ -465,6 +470,14 @@ pub async fn daemon_request(
         });
     }
     result
+}
+
+/// Drops the `daemon_request` call made with this `abortId`, if it is still in
+/// flight; the daemon cancels the query it was running (spec-query "Timeout
+/// and interruption"). Whether there was one to drop.
+#[tauri::command]
+pub fn daemon_abort(app: AppHandle, id: String) -> bool {
+    app.daemon.abort(&id)
 }
 
 #[tauri::command]

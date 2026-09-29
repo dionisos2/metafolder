@@ -324,3 +324,56 @@ async fn test_an_unreachable_daemon_leaves_the_diagnostics_cursor_alone() {
     proxy.drain_diagnostics(&gui).await;
     assert!(gui.messages(&ws).unwrap().is_empty());
 }
+
+/// Sets its flag when dropped: a handler future the server gave up on.
+struct DroppedFlag(Arc<std::sync::atomic::AtomicBool>);
+
+impl Drop for DroppedFlag {
+    fn drop(&mut self) {
+        self.0.store(true, std::sync::atomic::Ordering::SeqCst);
+    }
+}
+
+#[tokio::test]
+async fn test_an_aborted_request_hangs_up_on_the_daemon() {
+    // A daemon that never answers `/hang`, and says when it stops waiting.
+    use std::sync::atomic::{AtomicBool, Ordering};
+    let arrived = Arc::new(AtomicBool::new(false));
+    let dropped = Arc::new(AtomicBool::new(false));
+    let (a, d) = (arrived.clone(), dropped.clone());
+    let router = axum::Router::new().route(
+        "/hang",
+        any(move || {
+            let (a, d) = (a.clone(), d.clone());
+            async move {
+                let _flag = DroppedFlag(d);
+                a.store(true, Ordering::SeqCst);
+                std::future::pending::<()>().await;
+            }
+        }),
+    );
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let port = listener.local_addr().unwrap().port();
+    tokio::spawn(async move { axum::serve(listener, router).await.unwrap() });
+
+    let proxy = Arc::new(DaemonProxy::new(format!("http://127.0.0.1:{port}")));
+    let p = proxy.clone();
+    let call = tokio::spawn(async move {
+        p.request_with_context("POST", "/hang", Some(json!({})), None, Some("q1")).await
+    });
+    let wait = |flag: Arc<AtomicBool>, what: &'static str| async move {
+        let start = std::time::Instant::now();
+        while !flag.load(Ordering::SeqCst) {
+            assert!(start.elapsed().as_secs() < 10, "timed out waiting for {what}");
+            tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+        }
+    };
+    wait(arrived, "the request to arrive").await;
+
+    assert!(proxy.abort("q1"), "a request in flight can be aborted");
+    let result = call.await.unwrap();
+    assert!(result.as_ref().is_err_and(|e| e.contains("aborted")), "{result:?}");
+    // The connection went with it: the daemon stops waiting too.
+    wait(dropped, "the daemon to see the hang-up").await;
+    assert!(!proxy.abort("q1"), "a finished request is forgotten");
+}

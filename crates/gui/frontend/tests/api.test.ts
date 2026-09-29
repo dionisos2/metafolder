@@ -181,6 +181,63 @@ describe('panel api — daemon', () => {
     );
   }
 
+  /** A daemon whose query calls hang until `daemon_abort` names them, and then
+   *  fail as the proxy fails them ("aborted"). */
+  function hangingUntilAborted(invoke: ReturnType<typeof setup>['invoke']) {
+    const pending = new Map<string, (e: unknown) => void>();
+    invoke.mockImplementation(async (cmd: string, args?: unknown) => {
+      const a = args as { path?: string; abortId?: string; id?: string };
+      if (cmd === 'daemon_abort') {
+        pending.get(a.id!)?.('aborted');
+        return pending.delete(a.id!);
+      }
+      if (a.path?.includes('/log/since')) return { status: 200, body: { head: 1, operations: [] } };
+      if (a.abortId === undefined) return { status: 200, body: { results: [] } };
+      return new Promise((_resolve, reject) => pending.set(a.abortId!, reject));
+    });
+  }
+
+  test('an aborted query is dropped by the daemon proxy and rejects as an AbortError', async () => {
+    const { api, invoke } = setup();
+    hangingUntilAborted(invoke);
+    const controller = new AbortController();
+    const reading = api.daemon.query('r', { query: null }, { signal: controller.signal });
+    await vi.waitFor(() =>
+      expect(invoke).toHaveBeenCalledWith('daemon_request', expect.objectContaining({ path: '/repos/r/query' })),
+    );
+    const sent = invoke.mock.calls.find(([, a]) => (a as { path?: string })?.path === '/repos/r/query');
+    const abortId = (sent![1] as { abortId?: string }).abortId;
+    expect(abortId).toBeTypeOf('string');
+
+    controller.abort();
+    await expect(reading).rejects.toMatchObject({ name: 'AbortError' });
+    expect(invoke).toHaveBeenCalledWith('daemon_abort', { id: abortId });
+  });
+
+  test('a signal already aborted sends nothing', async () => {
+    const { api, invoke } = setup();
+    hangingUntilAborted(invoke);
+    const controller = new AbortController();
+    controller.abort();
+    await expect(
+      api.daemon.call('POST', '/repos/r/query', { query: null }, { signal: controller.signal }),
+    ).rejects.toMatchObject({ name: 'AbortError' });
+    expect(invoke).not.toHaveBeenCalledWith('daemon_request', expect.objectContaining({ path: '/repos/r/query' }));
+  });
+
+  test('two abortable calls get two ids', async () => {
+    const { api, invoke } = setup();
+    answering(invoke, { status: 200, body: { results: [] } });
+    const signal = new AbortController().signal;
+    await api.daemon.query('r', { query: null }, { signal });
+    await api.daemon.query('r', { query: null }, { signal });
+    const ids = invoke.mock.calls
+      .filter(([, a]) => (a as { path?: string })?.path === '/repos/r/query')
+      .map(([, a]) => (a as { abortId?: string }).abortId);
+    expect(ids).toHaveLength(2);
+    expect(ids[0]).not.toEqual(ids[1]);
+  });
+
   test('call returns the body on success', async () => {
     const { api, invoke } = setup();
     answering(invoke, { status: 200, body: { uuid: 'x' } });

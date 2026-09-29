@@ -15,8 +15,19 @@ export interface DaemonResponse {
   body: unknown;
 }
 
+/** What a caller may pass along with a read: a `signal` to drop it while in
+ *  flight — a query the user has replaced. The daemon then cancels it too. */
+export interface ReadOptions {
+  signal?: AbortSignal;
+}
+
 /** Performs one daemon round-trip. */
-export type RawFetcher = (method: string, path: string, body: unknown) => Promise<DaemonResponse>;
+export type RawFetcher = (
+  method: string,
+  path: string,
+  body: unknown,
+  opts?: ReadOptions,
+) => Promise<DaemonResponse>;
 
 type Metarecord = Metafolder.Metarecord;
 
@@ -67,6 +78,7 @@ export function translate(
   path: string,
   body: unknown,
   raw: RawFetcher,
+  opts?: ReadOptions,
 ): Promise<DaemonResponse> {
   const clean = path.split('?')[0];
   const b = (body ?? {}) as { uuids?: string[]; field?: string };
@@ -74,7 +86,7 @@ export function translate(
   if (m) return batch(m[1], b.uuids ?? [], raw);
   m = method === 'POST' ? clean.match(TREE_RESOLVE) : null;
   if (m) return treeResolve(m[1], b.field ?? 'mfr_path', b.uuids ?? [], raw);
-  return raw(method, path, body);
+  return raw(method, path, body, opts);
 }
 
 function check(res: DaemonResponse): unknown {
@@ -86,8 +98,8 @@ function check(res: DaemonResponse): unknown {
 export function createReads(raw: RawFetcher) {
   return {
     /** One page of a query: its uuids, the records, and the pagination meta. */
-    async query(repo: string, body: Record<string, unknown>) {
-      const b = check(await raw('POST', `/repos/${repo}/query`, body)) as {
+    async query(repo: string, body: Record<string, unknown>, opts?: ReadOptions) {
+      const b = check(await raw('POST', `/repos/${repo}/query`, body, opts)) as {
         results?: Metarecord[];
         next_cursor?: string | null;
         total?: number;

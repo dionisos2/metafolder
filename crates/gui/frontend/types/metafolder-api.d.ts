@@ -55,6 +55,11 @@ declare namespace Metafolder {
     fields?: Field[];
   }
 
+  /** What a daemon read may be given: a `signal` to abort it while in flight. */
+  interface ReadOptions {
+    signal?: AbortSignal;
+  }
+
   /** A daemon proxy response, as `daemon.request` returns it. */
   type DaemonResponse = import('../src/lib/panels/reads.js').DaemonResponse;
 
@@ -115,13 +120,16 @@ declare namespace Metafolder {
      *  and cannot reconstruct the text (spec-slow-log). Local and free: it sets
      *  a string. Capped at 200 characters; `null` clears it. */
     setContext(text: string | null): void;
-    /** The raw round-trip: never throws on a 4xx/5xx, returns `{status, body}`. */
-    request(method: string, path: string, body?: unknown): Promise<DaemonResponse>;
+    /** The raw round-trip: never throws on a 4xx/5xx, returns `{status, body}`.
+     *  With `signal`, aborting drops the call in flight — the daemon cancels
+     *  the query it was running — and the promise rejects with an
+     *  `AbortError`, as `fetch` does. So do `call` and `query`. */
+    request(method: string, path: string, body?: unknown, opts?: ReadOptions): Promise<DaemonResponse>;
     /** As `request`, but throws the daemon's `{"error": …}` message on >= 400.
      *  Also answers two shorthands the daemon does not serve: `POST
      *  …/metarecords/batch {uuids}` → `{uuid: metarecord}` and `POST
      *  …/tree/resolve {field?, uuids}` → `{uuid: [paths]}`. */
-    call(method: string, path: string, body?: unknown): Promise<unknown>;
+    call(method: string, path: string, body?: unknown, opts?: ReadOptions): Promise<unknown>;
     parseQuery(dsl: string): Promise<unknown>;
     expandQuery(simplified: string): Promise<unknown>;
     /** The repo-root-relative path of a metarecord's `mfr_path`. */
@@ -149,6 +157,7 @@ declare namespace Metafolder {
     query(
       repo: string,
       body: Record<string, unknown>,
+      opts?: ReadOptions,
     ): Promise<{
       uuids: string[];
       records: Metarecord[];
