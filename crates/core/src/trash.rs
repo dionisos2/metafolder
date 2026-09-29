@@ -879,19 +879,6 @@ pub fn metarecord_at_path(
     Ok(resp["results"].as_array().and_then(|a| a.first()).and_then(Json::as_str).map(str::to_owned))
 }
 
-/// The filesystem root metarecord's uuid: the `mfr_path` forest root named `""`.
-/// Every top-level file hangs off it (reconcile starts there), so a top-level
-/// restore must re-link under it, not under the root sentinel.
-fn repo_root_metarecord(client: &dyn DaemonClient, repo: &str) -> Result<Uuid, DaemonError> {
-    let roots = client.get(&format!("/repos/{repo}/tree/roots?field=mfr_path"))?;
-    let hex = roots
-        .as_array()
-        .and_then(|rs| rs.iter().find(|r| r["name"].as_str() == Some("")))
-        .and_then(|r| r["uuid"].as_str())
-        .ok_or_else(|| DaemonError::local("repository has no filesystem root metarecord"))?;
-    Uuid::parse_str(hex).map_err(|_| DaemonError::local("daemon returned an invalid root uuid"))
-}
-
 /// Whether a re-link error is a benign "this link cannot be made right now" case
 /// to skip (leaving the node orphaned for the watcher to re-track). During a
 /// faithful re-link (writing back a previously-valid TreeRef with `force`) the
@@ -961,7 +948,9 @@ fn relink_after_restore(
     let comps = path_components(rel);
     let Some(name) = comps.last().copied() else { return Ok(()) };
     let parent = if comps.len() == 1 {
-        Some(repo_root_metarecord(client, repo)?)
+        // A top-level restore re-links under the filesystem root, not under
+        // the root sentinel.
+        Some(crate::daemon_client::repo_root_metarecord(client, repo)?)
     } else {
         match metarecord_at_path(client, repo, &comps[..comps.len() - 1].join("/"))? {
             Some(hex) => Some(

@@ -62,8 +62,7 @@ fn repo_init_blocking(
         init_repo(&client, &body, InitIgnore::None)
     } else {
         let names: Vec<String> = if ignore.is_empty() { vec!["default".into()] } else { ignore };
-        let presets = metafolder_core::ignore_presets::load()
-            .map_err(|e| format!("{e}; run metafolder-sync-config to install it"))?;
+        let presets = metafolder_core::ignore_presets::load()?;
         let name_refs: Vec<&str> = names.iter().map(String::as_str).collect();
         init_repo(&client, &body, InitIgnore::Presets { presets: &presets, names: &name_refs })
     }

@@ -131,15 +131,9 @@ impl SyncCtx<'_> {
     }
 }
 
-/// Expands simplified-language text to the normal DSL (pure, client-side via
-/// the shared grammar in core — never a daemon round-trip; spec-query).
+/// [`crate::simplified::expand_configured`], as a sync error.
 pub fn expand_simplified(text: &str) -> Result<String, SyncError> {
-    let grammar = crate::simplified::load::load().map_err(SyncError::Op)?;
-    let now_ms = std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .map(|d| d.as_millis() as i64)
-        .unwrap_or(0);
-    crate::simplified::engine::expand_at(&grammar, text, now_ms).map_err(SyncError::Op)
+    crate::simplified::expand_configured(text).map_err(SyncError::Op)
 }
 
 // ── Pair helpers ────────────────────────────────────────────────────────────

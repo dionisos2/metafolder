@@ -975,6 +975,22 @@ impl GuiState {
 
     // ── Workspace variables ──────────────────────────────────────────────
 
+    /// The workspace's active repository, or the error a command that needs
+    /// one reports.
+    pub fn active_repo(&self, ws_id: &str) -> Result<String, String> {
+        match self.get_var(ws_id, "active_repo")? {
+            Value::String(repo) => Ok(repo),
+            _ => Err("no active repository in this workspace".into()),
+        }
+    }
+
+    /// Tells the panels showing metarecords (list, detail, file manager, log)
+    /// that something they display may have changed: `metarecords:dirty` set to
+    /// a fresh nonce, the current time in milliseconds.
+    pub fn mark_metarecords_dirty(&self, ws_id: &str) -> Result<(), String> {
+        self.set_var(ws_id, "metarecords:dirty", Value::from(now_ms()))
+    }
+
     pub fn set_var(&self, ws_id: &str, key: &str, value: Value) -> Result<(), String> {
         if key == "active_repo" {
             return Err("active_repo is set at workspace creation and cannot change".into());
@@ -1802,6 +1818,25 @@ mod tests {
                 "value": ["/tmp/a"],
             })]
         );
+    }
+
+    #[test]
+    fn test_active_repo_is_the_workspace_repo_or_an_error() {
+        let (_, state) = state();
+        let id = state.workspace_new(Some("repo-7".into()));
+        assert_eq!(state.active_repo(&id).unwrap(), "repo-7");
+        assert_eq!(
+            state.active_repo("ws-1").unwrap_err(),
+            "no active repository in this workspace"
+        );
+    }
+
+    #[test]
+    fn test_marking_metarecords_dirty_sets_a_fresh_nonce() {
+        let (_, state) = state();
+        state.mark_metarecords_dirty("ws-1").unwrap();
+        let first = state.get_var("ws-1", "metarecords:dirty").unwrap();
+        assert!(first.as_u64().is_some_and(|ms| ms > 0), "a timestamp nonce: {first}");
     }
 
     #[test]

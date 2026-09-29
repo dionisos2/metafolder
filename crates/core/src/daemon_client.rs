@@ -67,6 +67,24 @@ pub fn repo_uuid_by_name(repos: &Json, name: &str) -> Result<Uuid, String> {
     }
 }
 
+/// The `{"type", "value"}` of the first field named `name` in a metarecord's
+/// wire `fields` array (`None` when it has none, or `fields` is no array).
+pub fn field_value<'a>(fields: &'a Json, name: &str) -> Option<&'a Json> {
+    fields.as_array()?.iter().find(|f| f["name"].as_str() == Some(name)).map(|f| &f["value"])
+}
+
+/// The filesystem root metarecord's uuid: the `mfr_path` forest root named `""`.
+/// Every top-level file hangs off it (reconcile starts there).
+pub fn repo_root_metarecord(client: &dyn DaemonClient, repo: &str) -> Result<Uuid, DaemonError> {
+    let roots = client.get(&format!("/repos/{repo}/tree/roots?field=mfr_path"))?;
+    let hex = roots
+        .as_array()
+        .and_then(|rs| rs.iter().find(|r| r["name"].as_str() == Some("")))
+        .and_then(|r| r["uuid"].as_str())
+        .ok_or_else(|| DaemonError::local("repository has no filesystem root metarecord"))?;
+    Uuid::parse_str(hex).map_err(|_| DaemonError::local("daemon returned an invalid root uuid"))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

@@ -31,10 +31,7 @@ pub async fn run(
     rehash: bool,
     timings: Timings,
 ) -> Result<(), String> {
-    let repo = match gui.get_var(&ws_id, "active_repo")? {
-        Value::String(repo) => repo,
-        _ => return Err("no active repository in this workspace".into()),
-    };
+    let repo = gui.active_repo(&ws_id)?;
 
     gui.post_status(&ws_id, "Scanning for duplicates…", "busy", None)?;
 
@@ -57,10 +54,9 @@ pub async fn run(
         return Err(message);
     }
     if started.status != 202 {
-        let message = started.body["error"]
-            .as_str()
-            .map(str::to_string)
-            .unwrap_or_else(|| format!("duplicate scan failed ({})", started.status));
+        let message = crate::daemon_proxy::error_message(&started.body, || {
+            format!("duplicate scan failed ({})", started.status)
+        });
         gui.post_status(&ws_id, &message, "error", Some(timings.error_ms))?;
         return Err(message);
     }
@@ -87,10 +83,9 @@ pub async fn run(
                 return Ok(());
             }
             Some("failed") => {
-                let message = task["error"]
-                    .as_str()
-                    .map(str::to_string)
-                    .unwrap_or_else(|| "duplicate scan failed".to_string());
+                let message = crate::daemon_proxy::error_message(task, || {
+                    "duplicate scan failed".to_string()
+                });
                 gui.post_status(&ws_id, &message, "error", Some(timings.error_ms))?;
                 return Err(message);
             }

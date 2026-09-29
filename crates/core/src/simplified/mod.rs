@@ -9,3 +9,10 @@ pub mod grammar;
 pub mod lexer;
 pub mod load;
 pub mod template;
+
+/// Expands simplified-language text to the normal DSL with the configured
+/// grammar (`load::load`), relative dates against the local clock — pure and
+/// client-side, never a daemon round-trip (spec-query).
+pub fn expand_configured(text: &str) -> Result<String, String> {
+    engine::expand(&load::load()?, text)
+}

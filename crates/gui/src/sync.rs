@@ -68,10 +68,9 @@ impl DaemonClient for BlockingClient {
             Ok(response) => Ok(response.into_json().unwrap_or(Value::Null)),
             Err(ureq::Error::Status(code, response)) => {
                 let body: Value = response.into_json().unwrap_or(Value::Null);
-                let message = body["error"]
-                    .as_str()
-                    .map(str::to_string)
-                    .unwrap_or_else(|| format!("daemon returned HTTP {code}"));
+                let message = crate::daemon_proxy::error_message(&body, || {
+                    format!("daemon returned HTTP {code}")
+                });
                 Err(SyncError::Op(message))
             }
             Err(ureq::Error::Transport(t)) => {

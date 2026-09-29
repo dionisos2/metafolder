@@ -118,15 +118,9 @@ fn parse_spec(spec: &str) -> Result<(String, Json), CliError> {
     Ok((name, serde_json::to_value(value).expect("Value serialization")))
 }
 
-/// Expands simplified-language text to the normal DSL (pure, client-side via
-/// the shared grammar in core — never a daemon round-trip; spec-query).
+/// [`metafolder_core::simplified::expand_configured`], as a CLI error.
 pub(crate) fn expand_simplified(text: &str) -> Result<String, CliError> {
-    let grammar = metafolder_core::simplified::load::load().map_err(CliError::Op)?;
-    let now_ms = std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .map(|d| d.as_millis() as i64)
-        .unwrap_or(0);
-    metafolder_core::simplified::engine::expand_at(&grammar, text, now_ms).map_err(CliError::Op)
+    metafolder_core::simplified::expand_configured(text).map_err(CliError::Op)
 }
 
 /// Resolves the `mf metarecord` selector flags into a target string: a UUID for
@@ -1183,13 +1177,9 @@ pub fn track(ctx: &Ctx, path: &Path) -> Result<i32, CliError> {
 
 // ── Field extraction from a metarecord's `fields` JSON array ─────────────────
 
-/// The `value` object of the first field named `name`, or `None`.
-fn field_value<'a>(fields: &'a Json, name: &str) -> Option<&'a Json> {
-    fields.as_array()?.iter().find(|f| f["name"].as_str() == Some(name)).map(|f| &f["value"])
-}
 /// A bool field's value.
 fn field_bool(fields: &Json, name: &str) -> Option<bool> {
-    field_value(fields, name)?["value"].as_bool()
+    metafolder_core::daemon_client::field_value(fields, name)?["value"].as_bool()
 }
 
 /// `mf order <folder>` — assigns `order_file` / `order_dir` to
@@ -2549,8 +2539,7 @@ fn repo_rel(root: &Path, abs: &Path) -> Result<String, CliError> {
 /// Loads the ignore presets from the user configuration (a missing/malformed
 /// file is a usage error pointing at metafolder-sync-config; spec-config).
 fn load_presets() -> Result<metafolder_core::ignore_presets::Presets, CliError> {
-    metafolder_core::ignore_presets::load()
-        .map_err(|e| CliError::Usage(format!("{e}; run metafolder-sync-config to install it")))
+    metafolder_core::ignore_presets::load().map_err(CliError::Usage)
 }
 
 /// Maps a core ignore error to a CLI error (usage → exit 2, daemon → exit 1).
@@ -2581,7 +2570,8 @@ fn resolve_ignore_target(
     dir: Option<&Path>,
 ) -> Result<Uuid, CliError> {
     let Some(path) = dir else {
-        return metafolder_core::ignore::repo_root_metarecord(client, repo).map_err(ignore_err);
+        return metafolder_core::daemon_client::repo_root_metarecord(client, repo)
+            .map_err(trash_daemon_err);
     };
     let info = ctx.repo_info()?;
     let root = info["root"]
@@ -2592,7 +2582,8 @@ fn resolve_ignore_target(
     // The repository root has no parent directory, so the exact-path lookup
     // cannot find it: `-d <root>` must resolve like an omitted `-d`.
     if rel.is_empty() {
-        return metafolder_core::ignore::repo_root_metarecord(client, repo).map_err(ignore_err);
+        return metafolder_core::daemon_client::repo_root_metarecord(client, repo)
+            .map_err(trash_daemon_err);
     }
     let hex = metafolder_core::trash::metarecord_at_path(client, repo, &rel)
         .map_err(trash_daemon_err)?

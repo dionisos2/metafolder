@@ -9,7 +9,7 @@ use crate::commands::App;
 use crate::daemon_proxy::DaemonProxy;
 use metafolder_core::daemon_client::{DaemonClient, DaemonError};
 use metafolder_core::trash::{PruneMode, Reason, TrashDir, TrashEntry};
-use serde_json::{json, Value};
+use serde_json::Value;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
@@ -17,7 +17,7 @@ use std::sync::Arc;
 async fn repo_info(daemon: &DaemonProxy, repo: &str) -> Result<Value, String> {
     let response = daemon.request("GET", &format!("/repos/{repo}"), None).await?;
     if response.status != 200 {
-        return Err(response.body["error"].as_str().map(str::to_string).unwrap_or_else(|| {
+        return Err(crate::daemon_proxy::error_message(&response.body, || {
             format!("cannot read repository {repo} (HTTP {})", response.status)
         }));
     }
@@ -95,10 +95,9 @@ impl DaemonClient for BlockingClient {
             Ok(response) => Ok(response.into_json().unwrap_or(Value::Null)),
             Err(ureq::Error::Status(code, response)) => {
                 let body: Value = response.into_json().unwrap_or(Value::Null);
-                let message = body["error"]
-                    .as_str()
-                    .map(str::to_string)
-                    .unwrap_or_else(|| format!("daemon returned HTTP {code}"));
+                let message = crate::daemon_proxy::error_message(&body, || {
+                    format!("daemon returned HTTP {code}")
+                });
                 Err(DaemonError { status: Some(code), message })
             }
             Err(ureq::Error::Transport(t)) => Err(DaemonError {
@@ -273,8 +272,7 @@ pub async fn trash_selected_metarecord(
                 "info",
                 Some(timeouts.message_ms),
             )?;
-            // Refresh any metarecord/file listing showing this repo.
-            app.gui.set_var(&ws_id, "metarecords:dirty", json!(now_ms()))?;
+            app.gui.mark_metarecords_dirty(&ws_id)?;
         }
         Err(error) => {
             app.gui.post_status(&ws_id, error, "error", Some(timeouts.error_ms))?;
@@ -340,14 +338,6 @@ pub async fn trash_empty(app: tauri::State<'_, Arc<App>>, repo: String) -> Resul
     let (_root, internal) = root_and_internal(&info)?;
     let removed = trash_dir(&internal).prune(PruneMode::All, false).map_err(|e| e.0)?;
     Ok(removed.len())
-}
-
-/// Milliseconds since the Unix epoch (the `metarecords:dirty` nonce).
-fn now_ms() -> u64 {
-    std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .map(|d| d.as_millis() as u64)
-        .unwrap_or(0)
 }
 
 #[cfg(test)]

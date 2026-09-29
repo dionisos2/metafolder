@@ -125,18 +125,6 @@ pub fn write_patterns(
     Ok(())
 }
 
-/// The filesystem root metarecord's uuid: the `mfr_path` forest root named `""`.
-pub fn repo_root_metarecord(client: &dyn DaemonClient, repo: &str) -> Result<Uuid, IgnoreError> {
-    let roots = client.get(&format!("/repos/{repo}/tree/roots?field=mfr_path"))?;
-    let hex = roots
-        .as_array()
-        .and_then(|rs| rs.iter().find(|r| r["name"].as_str() == Some("")))
-        .and_then(|r| r["uuid"].as_str())
-        .ok_or_else(|| IgnoreError::Usage("repository has no filesystem root metarecord".into()))?;
-    Uuid::parse_str(hex)
-        .map_err(|_| IgnoreError::Usage("daemon returned an invalid root uuid".into()))
-}
-
 /// 32-char lowercase hex of a uuid (the daemon's wire form).
 fn hex(uuid: Uuid) -> String {
     uuid.simple().to_string()

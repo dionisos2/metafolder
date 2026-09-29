@@ -497,12 +497,7 @@ pub fn grammar_source(app: AppHandle) -> String {
 /// resolve against the local clock.
 #[tauri::command]
 pub fn expand_query(app: AppHandle, text: String) -> Result<String, String> {
-    let now_ms = std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .map(|d| d.as_millis() as i64)
-        .unwrap_or(0);
-    let grammar = app.grammar.lock_recover();
-    metafolder_core::simplified::engine::expand_at(&grammar.0, &text, now_ms)
+    metafolder_core::simplified::engine::expand(&app.grammar.lock_recover().0, &text)
 }
 
 // ── Value picker (spec-gui "Value picker") ─────────────────────────────────

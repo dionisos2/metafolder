@@ -46,7 +46,7 @@ pub fn init_repo(
     let applied = match ignore {
         InitIgnore::None => Vec::new(),
         InitIgnore::Presets { presets, names } => {
-            let root = ignore::repo_root_metarecord(client, &repo_uuid)?;
+            let root = crate::daemon_client::repo_root_metarecord(client, &repo_uuid)?;
             ignore::apply(client, &repo_uuid, root, presets, names, Mode::Set)?
         }
     };

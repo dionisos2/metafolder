@@ -202,7 +202,7 @@ pub fn assign_positions(items: &[Item], threshold: i64) -> Vec<Assignment> {
 // lives here behind the synchronous `DaemonClient` trait; the CLI and the GUI
 // bring their own HTTP client.
 
-use crate::daemon_client::{DaemonClient, DaemonError};
+use crate::daemon_client::{field_value, DaemonClient, DaemonError};
 use serde_json::{json, Value};
 
 /// The boolean field written on the *folder* once its children are numbered, so
@@ -237,10 +237,6 @@ pub struct Outcome {
 }
 
 /// The `value` object of the first field named `name` in a `fields` array.
-fn field_value<'a>(fields: &'a Value, name: &str) -> Option<&'a Value> {
-    fields.as_array()?.iter().find(|f| f["name"].as_str() == Some(name)).map(|f| &f["value"])
-}
-
 fn field_str<'a>(fields: &'a Value, name: &str) -> Option<&'a str> {
     field_value(fields, name)?["value"].as_str()
 }

@@ -18,6 +18,11 @@ pub struct ProxyResponse {
     pub body: Value,
 }
 
+/// The message of a daemon (or task) `{"error": …}` body, else `fallback()`.
+pub fn error_message(body: &Value, fallback: impl FnOnce() -> String) -> String {
+    body["error"].as_str().map_or_else(fallback, str::to_string)
+}
+
 /// The outcome of one `/health` probe (spec-gui "Connection to the daemon").
 ///
 /// `reachable` alone drives the "daemon unreachable" banner; `compatible`
@@ -412,6 +417,17 @@ fn validate_path(path: &str) -> Result<(), String> {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn an_error_message_is_the_body_s_or_the_fallback() {
+        let fallback = || "HTTP 500".to_string();
+        assert_eq!(
+            super::error_message(&json!({"error": "no such repo"}), fallback),
+            "no such repo"
+        );
+        assert_eq!(super::error_message(&json!({}), fallback), "HTTP 500");
+        assert_eq!(super::error_message(&Value::Null, fallback), "HTTP 500");
+    }
+
     use super::*;
 
     #[test]

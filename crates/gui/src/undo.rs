@@ -62,10 +62,7 @@ pub async fn navigate(
     redo: bool,
     timeouts: crate::commands::StatusTimeouts,
 ) -> Result<(), String> {
-    let repo = match gui.get_var(&ws_id, "active_repo")? {
-        Value::String(repo) => repo,
-        _ => return Err("no active repository in this workspace".into()),
-    };
+    let repo = gui.active_repo(&ws_id)?;
 
     if !redo {
         return undo(gui, daemon, ws_id, repo, timeouts).await;
@@ -164,7 +161,14 @@ async fn revert(
     };
     let plan = daemon.request("GET", &format!("/repos/{repo}/revert/plan?{query}"), None).await?;
     if plan.status != 200 {
-        return report(gui, ws_id, &error_of(&plan.body, "the revert plan failed"), timeouts);
+        return report(
+            gui,
+            ws_id,
+            &crate::daemon_proxy::error_message(&plan.body, || {
+                "the revert plan failed".to_string()
+            }),
+            timeouts,
+        );
     }
     if plan.body["revertable"] == json!(false) {
         let blocker = plan.body["blocked"].as_array().and_then(|b| b.first()).cloned();
@@ -199,7 +203,12 @@ async fn revert(
         .request("POST", &format!("/repos/{repo}/revert"), Some(json!({ "target": target })))
         .await?;
     if response.status != 200 {
-        return report(gui, ws_id, &error_of(&response.body, "the revert failed"), timeouts);
+        return report(
+            gui,
+            ws_id,
+            &crate::daemon_proxy::error_message(&response.body, || "the revert failed".to_string()),
+            timeouts,
+        );
     }
     let count = response.body["reverted_operations"].as_array().map(|a| a.len()).unwrap_or(0);
     let summary = match response.body["revision"].as_i64() {
@@ -225,15 +234,13 @@ async fn rollback(
         .request("POST", &format!("/repos/{repo}/rollback"), Some(json!({ "target": target })))
         .await?;
     if response.status != 200 {
-        let message = error_of(&response.body, &format!("rollback failed ({})", response.status));
+        let message = crate::daemon_proxy::error_message(&response.body, || {
+            format!("rollback failed ({})", response.status)
+        });
         gui.post_status(ws_id, &message, "error", Some(timeouts.error_ms))?;
         return Err(message);
     }
     Ok(response.body)
-}
-
-fn error_of(body: &Value, fallback: &str) -> String {
-    body["error"].as_str().map(str::to_string).unwrap_or_else(|| fallback.to_string())
 }
 
 /// Says why nothing happened, without failing the command: the user is being
@@ -255,16 +262,8 @@ fn finish(
     timeouts: &crate::commands::StatusTimeouts,
 ) -> Result<(), String> {
     gui.post_status(ws_id, summary, "info", Some(timeouts.message_ms))?;
-    // Refresh metarecord-list / metarecord-detail / log panels.
-    gui.set_var(ws_id, "metarecords:dirty", json!(now_ms()))?;
+    gui.mark_metarecords_dirty(ws_id)?;
     Ok(())
-}
-
-fn now_ms() -> u128 {
-    std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .map(|d| d.as_millis())
-        .unwrap_or(0)
 }
 
 #[tauri::command]

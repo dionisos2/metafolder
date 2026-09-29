@@ -27,13 +27,6 @@ pub struct PresetInfo {
     pub patterns: Vec<String>,
 }
 
-/// Loads the presets file, pointing at `metafolder-sync-config` when it is
-/// missing or malformed — never a silent fallback (spec-config).
-fn load_presets() -> Result<Presets, String> {
-    metafolder_core::ignore_presets::load()
-        .map_err(|e| format!("{e}; run metafolder-sync-config to install it"))
-}
-
 /// Expands every installed preset into a [`PresetInfo`], sorted by name.
 fn preset_infos(presets: &Presets) -> Result<Vec<PresetInfo>, String> {
     presets
@@ -82,7 +75,7 @@ fn parse_target(target: &str) -> Result<Uuid, String> {
 /// `ignore_presets`: the installed presets, each fully expanded.
 #[tauri::command]
 pub async fn ignore_presets() -> Result<Vec<PresetInfo>, String> {
-    tokio::task::spawn_blocking(|| preset_infos(&load_presets()?))
+    tokio::task::spawn_blocking(|| preset_infos(&metafolder_core::ignore_presets::load()?))
         .await
         .map_err(|e| format!("ignore presets task panicked: {e}"))?
 }
@@ -117,7 +110,7 @@ pub async fn ignore_apply(
     let target = parse_target(&target)?;
     let mode = parse_mode(&mode)?;
     tokio::task::spawn_blocking(move || {
-        let loaded = load_presets()?;
+        let loaded = metafolder_core::ignore_presets::load()?;
         apply_with(&BlockingClient::new(base), &repo, target, &loaded, &presets, mode)
     })
     .await

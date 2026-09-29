@@ -108,6 +108,7 @@ pub fn presets_path() -> Option<PathBuf> {
 pub fn load_from(path: &Path) -> Result<Presets, String> {
     let src = config::read_required(path)?;
     Presets::parse(&src)
+        .map_err(|e| format!("{}: {e}; run metafolder-sync-config to reinstall it", path.display()))
 }
 
 /// Resolves the configured path and loads the presets.
@@ -123,6 +124,33 @@ mod tests {
     /// The shipped presets file, embedded for tests only (never a runtime
     /// fallback).
     const DEFAULT_PRESETS: &str = include_str!("../default-config/ignore-presets.toml");
+
+    /// A throwaway file under the shared test parent.
+    fn written(name: &str, content: &str) -> std::path::PathBuf {
+        let dir = std::env::temp_dir()
+            .join("metafolder-tests")
+            .join(format!("presets-{name}-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("ignore-presets.toml");
+        std::fs::write(&path, content).unwrap();
+        path
+    }
+
+    #[test]
+    fn a_malformed_file_points_at_sync_config_once() {
+        let path = written("malformed", "[a]\npatterns = 3\n");
+        let err = load_from(&path).unwrap_err();
+        assert_eq!(err.matches("metafolder-sync-config").count(), 1, "{err}");
+        let _ = std::fs::remove_dir_all(path.parent().unwrap());
+    }
+
+    #[test]
+    fn a_missing_file_points_at_sync_config_once() {
+        let path = written("missing", "").with_file_name("absent.toml");
+        let err = load_from(&path).unwrap_err();
+        assert_eq!(err.matches("metafolder-sync-config").count(), 1, "{err}");
+        let _ = std::fs::remove_dir_all(path.parent().unwrap());
+    }
 
     fn sample() -> Presets {
         Presets::parse(
