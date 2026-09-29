@@ -42,9 +42,8 @@ fn noise_floor(unit: &str) -> f64 {
 }
 
 /// What makes two measurements comparable: the same work, measured the same
-/// way, on the same machine, by the same storage engine — `(machine, profile,
-/// scenario, size, storage)`.
-pub type Key = (String, String, String, String, String);
+/// way, on the same machine — `(machine, profile, scenario, size)`.
+pub type Key = (String, String, String, String);
 
 /// One measurement: one scenario, at one size, on one machine, at one commit.
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -64,10 +63,6 @@ pub struct Record {
     pub rustc: String,
     pub scenario: String,
     pub size: String,
-    /// The repository's storage backend (`kv` or `sqlite`). The measurements
-    /// taken before the field existed were all on SQLite.
-    #[serde(default = "sqlite")]
-    pub storage: String,
     pub unit: String,
     pub median: f64,
     pub min: f64,
@@ -77,18 +72,8 @@ pub struct Record {
 impl Record {
     /// This measurement's [`Key`].
     pub fn key(&self) -> Key {
-        (
-            self.machine.clone(),
-            self.profile.clone(),
-            self.scenario.clone(),
-            self.size.clone(),
-            self.storage.clone(),
-        )
+        (self.machine.clone(), self.profile.clone(), self.scenario.clone(), self.size.clone())
     }
-}
-
-fn sqlite() -> String {
-    "sqlite".into()
 }
 
 /// The history file for `machine`, under `benchmarks/history/`.
@@ -229,7 +214,6 @@ mod tests {
             rustc: "1.83.0".into(),
             scenario: scenario.into(),
             size: "S".into(),
-            storage: "kv".into(),
             unit: "ms".into(),
             median,
             min: median,
@@ -284,26 +268,6 @@ mod tests {
         assert_eq!(compare(0.85, Some(0.61), 0.3, "ms").0, Verdict::Same);
         // The same relative change, where it is worth a word.
         assert_eq!(compare(85.0, Some(61.0), 0.3, "ms").0, Verdict::Regressed);
-    }
-
-    #[test]
-    fn two_storage_backends_are_two_series() {
-        // The same scenario on SQLite and on the key-value store measures two
-        // different engines: neither is the other's baseline.
-        let mut sqlite = record("query.page", 1.0, false);
-        sqlite.storage = "sqlite".into();
-        let base = baselines(&[sqlite, record("query.page", 5.0, false)]);
-        assert_eq!(base.len(), 2);
-        assert_eq!(base[&record("query.page", 0.0, false).key()], 5.0);
-    }
-
-    #[test]
-    fn a_record_from_before_the_storage_field_was_measured_on_sqlite() {
-        let old = r#"{"at":"t","commit":"c","dirty":false,"machine":"m","cpu":"c","cores":4,
-            "profile":"release","rustc":"r","scenario":"query.page","size":"S","unit":"ms",
-            "median":1.0,"min":1.0,"runs":5}"#;
-        let record: Record = serde_json::from_str(old).unwrap();
-        assert_eq!(record.storage, "sqlite");
     }
 
     #[test]

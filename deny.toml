@@ -34,8 +34,7 @@ unmaintained = "workspace"
 
 [licenses]
 # Every dependency is permissive today. MPL-2.0 (cssparser, selectors, ...) is
-# file-level copyleft and does not affect our sources; CDLA-Permissive-2.0
-# (webpki-roots) covers a certificate data set, not code.
+# file-level copyleft and does not affect our sources.
 allow = [
     "MIT",
     "MIT-0",
@@ -51,7 +50,6 @@ allow = [
     "Unlicense",
     "Unicode-3.0",
     "MPL-2.0",
-    "CDLA-Permissive-2.0",
 ]
 
 [licenses.private]

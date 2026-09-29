@@ -51,7 +51,6 @@ deps=(
     "pkg-config|build|cmd|pkg-config|base-devel|locate system libraries"
     "node|build|cmd|node|nodejs|build the GUI frontend bundle"
     "npm|build|cmd|npm|npm|build the GUI frontend bundle"
-    "openssl|build|pc|openssl|openssl|linked by reqwest (gui/bench)"
     "webkit2gtk|build|pc|webkit2gtk-4.1|webkit2gtk-4.1|Tauri WebView (gui crate)"
     "gtk3|build|pc|gtk+-3.0|gtk3|Tauri windowing (gui crate)"
     "librsvg|build|pc|librsvg-2.0|librsvg|Tauri icon rendering (gui crate)"

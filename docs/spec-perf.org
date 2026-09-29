@@ -98,10 +98,10 @@ a change of shape and not only of value.
 | =query.combined_sorted=  | a page of three combined operands, sorted on a field of ten values  |
 | =query.size_range_in_folder= | a subtree and =mfr_size > 900 000= — a known gap on KV (below) |
 | =metarecord.get=         | one metarecord by uuid: the point read everything else is built on  |
-| =metarecord.write=       | one field write, index settle included                              |
+| =metarecord.write=       | one field write, derived key spaces included                        |
 | =tree.resolve_page=      | the paths of a hundred metarecords — what a listing resolves per page |
-| =tree.write=             | one write that *moves a position*, tree-cache upkeep included       |
-| =repo.load=              | closing the repository and opening it again, warmup included        |
+| =tree.write=             | one write that *moves a position*, forest upkeep included           |
+| =repo.load=              | closing the repository and opening it again, until it serves        |
 
 Sizes are =S= (2 100 metarecords, 500 revisions), =M= (21 000 / 5 000) and,
 behind =--big=, =L= (105 000 / 50 000). The revision count is as much the point
@@ -123,15 +123,16 @@ counterparts without a clock are in =crates/daemon/tests/kv_cost.rs=.
 
 =tree.write= moves a position in a forest of its own, so what it measures is the
 *upkeep* and not the size of the tree the write happens in. That is the point:
-settling one cell costs the cell, rebuilding the forest costs the repository,
-and the day a write starts paying for a rebuild again the two are different
-numbers on =M= and =L= while looking identical on =S=.
+updating the moved position's keys (and its ancestors' descendant bitmaps) costs
+the position, anything whole-forest costs the repository, and the day a write
+starts paying for the forest the two are different numbers on =M= and =L= while
+looking identical on =S=.
 
 =repo.load= is the only scenario that measures something other than one request:
 it unloads the repository and loads it again, waiting until it answers a query —
 the load returns as soon as the uuid is known and warms in the background, so
-"loaded" means "serving". It covers what nothing else does — the tree cache
-built, the index built, the schema read, the migrations checked — and it is the
+"loaded" means "serving". It covers what nothing else does — the store opened,
+the schema read, the mount points read, the watcher started — and it is the
 only place those show up at all. The database's pages stay in the operating
 system's cache across the unload, so it measures the work and not the disk,
 which is the repeatable half.
@@ -207,12 +208,10 @@ desktop's is worse than having no baseline at all.
 ** The comparison
 
 A run is compared against the **median of the last =k= (default 5) recorded
-values** for the same =(machine, profile, scenario, size, storage)=. The storage
-backend is part of the key since the key-value store became the default: until
-then every run had been SQLite, and the first KV runs were compared against
-SQLite baselines — two engines, one series. A record from before the field
-existed reads as =sqlite=; every record since SQLite was dropped (September
-2026) reads =kv=, so the older series stay apart. A scenario is
+values** for the same =(machine, profile, scenario, size)=. (The history held
+SQLite runs too, under a =storage= field that kept them apart; they were
+dropped from it with the field once SQLite was gone, September 2026.) A
+scenario is
 reported as a regression when it is slower than that baseline by more than a
 threshold (default 30 %), and as an improvement when it is faster by as much.
 

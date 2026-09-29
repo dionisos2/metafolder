@@ -4,8 +4,8 @@ version = "0.3.0"
 edition = "2021"
 publish = false
 
-# The naive query oracle the bitmap index and the key-value store are
-# validated against (spec-indexing "It stays as the oracle"). A dev-dependency
+# The naive query oracle the daemon's evaluator is validated against
+# (spec-indexing "It stays as the oracle"). A dev-dependency
 # of the daemon and of nothing else, so it is never linked into a shipped
 # binary.
 
@@ -13,4 +13,4 @@ publish = false
 metafolder-core = { path = "../core" }
 metafolder-daemon = { path = "../daemon" }
 serde_json = "1"
-uuid = { version = "1", features = ["v4", "serde"] }
+uuid = "1"

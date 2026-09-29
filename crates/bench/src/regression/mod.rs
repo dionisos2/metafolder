@@ -93,13 +93,12 @@ const SCENARIOS: &[&str] = &[
     "query.negation",
     "query.combined_sorted",
     "query.size_range_in_folder",
-    // One metarecord, and one write (which pays for the index settle).
+    // One metarecord, and one write (which pays for its derived key spaces).
     "metarecord.get",
     "metarecord.write",
     // The forest: the paths a listing resolves for the page it shows, a write
-    // that moves a position (which pays for the tree-cache upkeep), and opening
-    // the repository at all — the one operation that touches everything the
-    // daemon keeps in memory.
+    // that moves a position (which pays for the forest's upkeep), and opening
+    // the repository at all.
     "tree.resolve_page",
     "tree.write",
     "repo.load",
@@ -296,9 +295,9 @@ async fn run_scenario(id: &str, ctx: &Ctx) -> Result<()> {
         }
         // A position moved in a forest of its own, so what is measured is the
         // *upkeep*, not the size of the tree it happens in. It is the scenario
-        // that says whether a write is paying for a rebuild: settling one cell
-        // costs the cell, rebuilding costs the repository, and on M and L those
-        // are not the same number.
+        // that says whether a write is paying for the whole forest: updating
+        // one position costs the position, anything whole-forest costs the
+        // repository, and on M and L those are not the same number.
         "tree.write" => {
             post(
                 &format!("{url}/repos/{repo}/query/fields/set"),
@@ -313,8 +312,8 @@ async fn run_scenario(id: &str, ctx: &Ctx) -> Result<()> {
             )
             .await?;
         }
-        // Closing the repository and opening it again: the tree cache built,
-        // the index built, the schema read, the migrations checked. The pages
+        // Closing the repository and opening it again: the store opened, the
+        // schema read, the mount points read, the watcher started. The pages
         // stay in the operating system's cache, so this measures the work and
         // not the disk — which is the repeatable half, and the half a change
         // can regress.
@@ -463,9 +462,6 @@ pub async fn run(opts: &Options) -> Result<i32> {
     for (size, dir) in &repos {
         let repo = load_repo(&daemon, dir).await?;
         let ctx = context_for(&daemon, repo, dir, size.starts_with("real")).await?;
-        // Every record since SQLite was dropped is the key-value store's; the
-        // history keeps the field, so the older series stay apart.
-        let storage = "kv".to_string();
         println!("── size {size} ({})", dir.display());
         for id in SCENARIOS {
             if let Some(filter) = &opts.filter {
@@ -485,7 +481,6 @@ pub async fn run(opts: &Options) -> Result<i32> {
                 rustc: rustc.clone(),
                 scenario,
                 size: size.clone(),
-                storage: storage.clone(),
                 unit: unit.to_string(),
                 median,
                 min,
@@ -541,7 +536,7 @@ fn print_table(
         println!(
             "{:<30} {:<9} {:>11} {:>11} {:>9}  {}",
             record.scenario,
-            format!("{}/{}", record.size, record.storage),
+            record.size,
             format!("{:.2}{unit}", record.median),
             baseline.map(|b| format!("{b:.2}{unit}")).unwrap_or_else(|| "—".into()),
             delta.map(|d| format!("{d:+.1}%")).unwrap_or_else(|| "—".into()),
@@ -559,15 +554,12 @@ fn report(path: &Path) -> Result<i32> {
         return Ok(0);
     }
     println!("{} measurement(s) in {}\n", history.len(), path.display());
-    let mut keys: Vec<_> =
-        history.iter().map(|r| (r.scenario.clone(), r.size.clone(), r.storage.clone())).collect();
+    let mut keys: Vec<_> = history.iter().map(|r| (r.scenario.clone(), r.size.clone())).collect();
     keys.sort();
     keys.dedup();
-    for (scenario, size, storage) in keys {
-        let series: Vec<&Record> = history
-            .iter()
-            .filter(|r| r.scenario == scenario && r.size == size && r.storage == storage)
-            .collect();
+    for (scenario, size) in keys {
+        let series: Vec<&Record> =
+            history.iter().filter(|r| r.scenario == scenario && r.size == size).collect();
         let values: Vec<String> = series
             .iter()
             .rev()
@@ -575,7 +567,6 @@ fn report(path: &Path) -> Result<i32> {
             .rev()
             .map(|r| format!("{:.1}{}", r.median, if r.dirty { "*" } else { "" }))
             .collect();
-        let size = format!("{size}/{storage}");
         println!("{scenario:<30} {size:<9} {}", values.join("  "));
     }
     println!("\n(* measured on a dirty tree — never used as a baseline)");
@@ -615,10 +606,10 @@ fn ensure_repo(dir: &Path, shape: &synth::Shape) -> Result<bool> {
 
 /// Loads a repository and waits until it can serve data.
 ///
-/// A load returns immediately and warms the repository (the bitmap index, the
-/// tree cache) in the background as an observable task; every data endpoint
+/// A load returns immediately and finishes in the background as an observable
+/// task; every data endpoint
 /// answers `503` until that finishes (spec-main "POST /repos/load"). Measuring
-/// through that window would measure the warm-up, so the suite waits it out —
+/// through that window would measure the load, so the suite waits it out —
 /// by asking for what it is about to measure, which needs no assumption about
 /// the task listing's shape.
 async fn load_repo(daemon: &Daemon, dir: &Path) -> Result<Uuid> {
@@ -626,7 +617,7 @@ async fn load_repo(daemon: &Daemon, dir: &Path) -> Result<Uuid> {
 }
 
 /// Loads a repository and waits until it answers a query — the load returns as
-/// soon as the uuid is known and warms the repository in the background
+/// soon as the uuid is known and finishes in the background
 /// (spec-main "POST /repos/load"), so "loaded" means "serving", not "accepted".
 async fn load_and_wait(url: &str, dir: &Path) -> Result<Uuid> {
     let v: serde_json::Value = client()
