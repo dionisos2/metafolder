@@ -1,0 +1,8 @@
+{
+  "name": "metafolder-docs",
+  "private": true,
+  "description": "The documentation wiki's renderer (scripts/doc build). An npm workspace member of the repo root, so its TiddlyWiki installs with the frontend's dependencies.",
+  "devDependencies": {
+    "tiddlywiki": "5.4.1"
+  }
+}

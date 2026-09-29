@@ -2,4 +2,4 @@ title: Shipped script
 kind: overview
 summary: The helper scripts installed with the configuration, one note each.
 
-<<list-links filter:"[tag[Shipped script]sort[]]">>
+<<catalog "Shipped script">>

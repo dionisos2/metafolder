@@ -153,9 +153,9 @@ run tooling bash "$repo/scripts/test-tooling.sh"
 
 # ── documentation wiki (docs/wiki/): links, fields, catalogs, code citations ──
 if command -v node >/dev/null 2>&1; then
-    run doc bash "$repo/scripts/doc" check
+    run wiki bash "$repo/scripts/doc" check
 else
-    skip doc "install node"
+    skip wiki "install node"
 fi
 
 # node_modules lives at the repo root: the frontend is an npm workspace member.

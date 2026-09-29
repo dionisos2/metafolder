@@ -1,0 +1,97 @@
+title: $:/mf/macros
+tags: $:/tags/Global
+
+\whitespace trim
+
+\procedure key(command, fallback)
+<span data-mf-key=<<command>>><$text text={{{ [<fallback>!is[blank]else<command>] }}}/></span>
+\end
+
+\procedure cmd(name)
+<$link to=<<name>>><code><$text text=<<name>>/></code></$link>
+\end
+
+\procedure live(name)
+<div data-mf-live=<<name>>>
+
+</div>
+\end
+
+\procedure list-kind(kind)
+<ul>
+
+<$list filter="[tag<currentTiddler>field:kind<kind>sort[]]">
+
+<li>
+
+<$link/> — <$view field="summary"/>
+
+</li>
+
+</$list>
+
+</ul>
+\end
+
+\procedure topic-full()
+<$list filter="[tag<currentTiddler>]">
+
+!! <$link/>
+
+<$transclude $mode="block"/>
+
+</$list>
+\end
+
+\procedure catalog(tag)
+<ul>
+
+<$list filter="[tag<tag>sort[]]">
+
+<li>
+
+<$link/> — <$view field="summary"/>
+
+</li>
+
+</$list>
+
+</ul>
+
+<$let prefix={{{ [[$:/mf/gen/]addsuffix<tag>addsuffix[/]] }}}>
+
+<$list filter="[prefix<prefix>get[target]!is[tiddler]sort[]first[]]" variable="_">
+
+Not documented yet:
+
+<ul>
+
+<$list filter="[prefix<prefix>get[target]!is[tiddler]sort[]]" variable="target">
+
+<li>
+
+<code><$text text=<<target>>/></code>
+
+</li>
+
+</$list>
+
+</ul>
+
+</$list>
+
+</$let>
+\end
+
+The project's procedures, usable from every note (docs/doc-wiki-proposal.md,
+"Sous-ensemble de wikitext autorisé"):
+
+* `<<key "command" [fallback]>>` — the key bound to a GUI command, filled in
+  from the live keybinding table by the help panel.
+* `<<cmd "name">>` — a link to a command's note, in code form.
+* `<<live name>>` — a zone the help panel fills at display (`grammar`: the
+  current simplified-query grammar). A block: put it on a line of its own.
+* `<<list-kind kind>>` — the notes tagged with this one, of one kind.
+* `<<topic-full>>` — every note tagged with this one, in full.
+* `<<catalog "tag">>` — a catalog's notes, then what the code has and the wiki
+  does not document yet.

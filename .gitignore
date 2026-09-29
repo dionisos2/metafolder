@@ -17,3 +17,4 @@ corrections.txt
 crates/gui/frontend/coverage/
 crates/gui/frontend/package-lock.json
 .mypy_cache/
+docs/wiki/dist/

@@ -41,7 +41,8 @@ const USAGE = `usage: scripts/doc <command> [args]
   new TITLE [--tags L] [--kind K] [--summary S] [--audience A] [--from-gen]
                           create a hand-written note at the right file name
   rename OLD NEW          rename a note and every mention of it (wiki and code)
-  check                   every consistency check; exit 1 on any problem`;
+  check                   every consistency check; exit 1 on any problem
+  build [OUT]             render the help pages (default docs/wiki/dist/)`;
 
 /** @param {string} dir @returns {string[]} */
 function walk(dir) {
@@ -114,8 +115,8 @@ function options(args) {
 /** @param {Tiddler} t */
 const line = (t) => `${t.fields.title}${t.fields.summary ? ` — ${t.fields.summary}` : ''}`;
 
-/** @param {string[]} argv @returns {number} exit status */
-export function main(argv) {
+/** @param {string[]} argv @returns {Promise<number>} exit status */
+export async function main(argv) {
   const [command, ...args] = argv;
   const { opts, rest } = options(args);
   const wiki = loadWiki();
@@ -247,6 +248,12 @@ export function main(argv) {
       console.log(errors.length === 0 ? `ok — ${hand} notes` : `${errors.length} problem(s)`);
       return errors.length === 0 ? 0 : 1;
     }
+    case 'build': {
+      const { build } = await import('./build.mjs');
+      const out = path.resolve(rest[0] ?? path.join(WIKI, 'dist'));
+      console.log(`${await build(WIKI, out)} pages → ${path.relative(REPO, out) || out}`);
+      return 0;
+    }
     case undefined:
     case 'help':
     case '--help':
@@ -258,7 +265,7 @@ export function main(argv) {
 }
 
 try {
-  process.exitCode = main(process.argv.slice(2));
+  process.exitCode = await main(process.argv.slice(2));
 } catch (error) {
   if (!(error instanceof UsageError)) throw error;
   console.error(`error: ${error.message}\n\n${USAGE}`);

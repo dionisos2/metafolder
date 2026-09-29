@@ -2,4 +2,4 @@ title: GUI command
 kind: overview
 summary: Every command of the GUI's command input, one note each.
 
-<<list-links filter:"[tag[GUI command]sort[]]">>
+<<catalog "GUI command">>
