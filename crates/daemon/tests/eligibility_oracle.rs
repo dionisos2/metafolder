@@ -54,7 +54,7 @@ fn prefixes(path: &str) -> Vec<String> {
 
 /// The chain walk (spec-file-tracking "Eligibility algorithm"), reading the
 /// store at every step.
-fn oracle(conn: &KvStore, cache: &mut TreeCache, path: &str) -> Verdict {
+fn oracle(conn: &KvStore, cache: &TreeCache, path: &str) -> Verdict {
     let comps: Vec<&str> = path.split('/').collect();
     let full_idx = comps.len() - 1;
     let mut chain = Vec::new();
@@ -137,7 +137,7 @@ fn oracle(conn: &KvStore, cache: &mut TreeCache, path: &str) -> Verdict {
 
 /// The nearest `mfr_watch_exceeded` on the path's own prefixes, the path
 /// included: `Some(prefix)` when it is `true` there.
-fn oracle_exceeded(conn: &KvStore, cache: &mut TreeCache, path: &str) -> Option<String> {
+fn oracle_exceeded(conn: &KvStore, cache: &TreeCache, path: &str) -> Option<String> {
     for prefix in prefixes(path).iter().rev() {
         if let Some(u) = cache.resolve_path(conn, "mfr_path", prefix).unwrap() {
             if let Some(v) = Rows::bool_field(conn, u, "mfr_watch_exceeded").unwrap() {
@@ -149,7 +149,7 @@ fn oracle_exceeded(conn: &KvStore, cache: &mut TreeCache, path: &str) -> Option<
 }
 
 /// The nearest set of patterns on the path's prefixes, the path included.
-fn oracle_effective(conn: &KvStore, cache: &mut TreeCache, path: &str) -> Option<String> {
+fn oracle_effective(conn: &KvStore, cache: &TreeCache, path: &str) -> Option<String> {
     for prefix in prefixes(path).iter().rev() {
         if let Some(u) = cache.resolve_path(conn, "mfr_path", prefix).unwrap() {
             if !Rows::string_fields(conn, u, "mf_ignore").unwrap().is_empty() {
@@ -217,7 +217,7 @@ fn the_rule_index_answers_like_the_chain_walk() {
     let mut probes_checked = 0;
     for _ in 0..60 {
         let (conn, _dir, tracked) = generate(&mut rng);
-        let mut cache = TreeCache::new(false);
+        let cache = TreeCache::new(false);
         let rules = WatchRules::load(&conn, false).unwrap();
         // Every tracked path, an untracked child of each, and one deeper.
         let mut probes: Vec<String> = Vec::new();
@@ -227,7 +227,7 @@ fn the_rule_index_answers_like_the_chain_walk() {
             probes.push(format!("{p}/fresh/node_modules/x"));
         }
         for probe in &probes {
-            let want = oracle(&conn, &mut cache, probe);
+            let want = oracle(&conn, &cache, probe);
             let got = rules.explain(&RelPath::from_display(probe)).unwrap();
             let got = Verdict {
                 eligible: got.eligible,
@@ -239,12 +239,12 @@ fn the_rule_index_answers_like_the_chain_walk() {
             assert_eq!(got, want, "explain({probe:?})");
             assert_eq!(
                 rules.exceeded_by(&RelPath::from_display(probe)),
-                oracle_exceeded(&conn, &mut cache, probe),
+                oracle_exceeded(&conn, &cache, probe),
                 "exceeded_by({probe:?})"
             );
             assert_eq!(
                 rules.effective_ignore(&RelPath::from_display(probe)).source,
-                oracle_effective(&conn, &mut cache, probe),
+                oracle_effective(&conn, &cache, probe),
                 "effective_ignore({probe:?})"
             );
             probes_checked += 1;
@@ -345,9 +345,9 @@ fn a_path_given_as_text_is_read_both_ways_like_the_tree_cache_reads_it() {
     assert!(eligible("/other%E9/f").eligible, "no rule down either reading");
 
     // The text-taking entry points read it the same way.
-    let mut cache = TreeCache::new(false);
-    assert!(!metafolder_daemon::eligibility::is_eligible(&conn, &mut cache, "/d%E9/f").unwrap());
-    let oracle_verdict = oracle(&conn, &mut cache, "/d%E9/f");
+    let cache = TreeCache::new(false);
+    assert!(!metafolder_daemon::eligibility::is_eligible(&conn, &cache, "/d%E9/f").unwrap());
+    let oracle_verdict = oracle(&conn, &cache, "/d%E9/f");
     assert_eq!(
         oracle_verdict.reason,
         Reason::WatchFalse,

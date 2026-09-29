@@ -89,7 +89,7 @@ pub struct EffectiveIgnore {
 /// `/`-separated, leading slash; `""` is the root.
 fn ancestor_chain(
     conn: &dyn Store,
-    cache: &mut TreeCache,
+    cache: &TreeCache,
     rel_path: &str,
 ) -> Result<Vec<(usize, Uuid)>> {
     let comps: Vec<&str> = rel_path.split('/').collect();
@@ -109,7 +109,7 @@ fn ancestor_chain(
 /// value of the nearest ancestor (including the record itself) that defines
 /// `mf_sync`, defaulting to `internal` when none does. `external` means an
 /// external tool owns the content; anything else (incl. absent) is `internal`.
-pub fn resolve_mf_sync(conn: &dyn Store, cache: &mut TreeCache, rel_path: &str) -> Result<String> {
+pub fn resolve_mf_sync(conn: &dyn Store, cache: &TreeCache, rel_path: &str) -> Result<String> {
     let chain = ancestor_chain(conn, cache, rel_path)?;
     for (_, uuid) in chain.iter().rev() {
         if let Some(v) = Rows::string_fields(conn, *uuid, "mf_sync")?.into_iter().next() {
@@ -122,12 +122,12 @@ pub fn resolve_mf_sync(conn: &dyn Store, cache: &mut TreeCache, rel_path: &str) 
 /// Evaluates eligibility for `rel_path` (repo-root-relative, `/`-separated,
 /// leading slash; `""` is the root itself), reading the rules afresh. A caller
 /// with more than one path to ask loads a [`WatchRules`] once instead.
-pub fn is_eligible(conn: &dyn Store, cache: &mut TreeCache, rel_path: &str) -> Result<bool> {
+pub fn is_eligible(conn: &dyn Store, cache: &TreeCache, rel_path: &str) -> Result<bool> {
     Ok(explain(conn, cache, rel_path)?.eligible)
 }
 
 /// [`WatchRules::explain`] on rules read afresh.
-pub fn explain(conn: &dyn Store, cache: &mut TreeCache, rel_path: &str) -> Result<Explanation> {
+pub fn explain(conn: &dyn Store, cache: &TreeCache, rel_path: &str) -> Result<Explanation> {
     let rules = WatchRules::load(conn, cache.is_case_insensitive())?;
     rules.explain(&rules.rel_of_text(rel_path))
 }
@@ -135,7 +135,7 @@ pub fn explain(conn: &dyn Store, cache: &mut TreeCache, rel_path: &str) -> Resul
 /// [`WatchRules::effective_ignore`] on rules read afresh.
 pub fn effective_ignore(
     conn: &dyn Store,
-    cache: &mut TreeCache,
+    cache: &TreeCache,
     rel_path: &str,
 ) -> Result<EffectiveIgnore> {
     let rules = WatchRules::load(conn, cache.is_case_insensitive())?;

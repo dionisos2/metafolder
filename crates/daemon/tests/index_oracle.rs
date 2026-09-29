@@ -165,7 +165,7 @@ impl Oracle {
     /// unchanged.
     fn check_paginated_with_roots(&mut self, q: &Query, by: &[(&str, bool)], limit: usize) {
         let want = self.oracle_pages(q, by, limit);
-        let mut no_forest = TreeCache::new(false);
+        let no_forest = TreeCache::new(false);
         let mut roots = QueryRoots::new();
         let mut targets = Vec::new();
         collect_path_targets(q, &mut targets);
@@ -710,7 +710,7 @@ fn exact_node_path_equality_matches_sql_with_node_roots() {
     // Once the caller resolves the node through the tree cache and hands it in
     // as a node root, the index serves it — and must agree with the SQL engine,
     // including on a path that resolves to nothing and inside a boolean.
-    let (mut o, [_root, _b, _c, _d]) = forest();
+    let (o, [_root, _b, _c, _d]) = forest();
     for path in ["root/b", "root/b/c", "root/d", "root/nope", "nope/at/all"] {
         for q in [
             eq("loc", s(path)),
@@ -802,7 +802,7 @@ fn reverse_tree_follows_path_target_matches_sql() {
     // serves it once the caller resolves the path to its root through the tree
     // cache. Each path must agree with the oracle, and an unresolved path
     // (no roots supplied) must stay `Unsupported` rather than answer wrongly.
-    let (mut o, [_root, _b, _c, _d]) = forest();
+    let (o, [_root, _b, _c, _d]) = forest();
     // shape: 0 = Follows, 1 = FollowsTransitive strict, 2 = FollowsTransitive
     // inclusive (`=>*`, the subtree including its root).
     for path in ["root", "root/b", "root/d", "root/nope"] {

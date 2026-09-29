@@ -63,7 +63,7 @@ fn repository_with(n: usize, per_folder: usize, extra: usize) -> (KvStore, TempD
 /// resolution and the path sort keys), prepared as the route prepares it.
 fn reads(kv: &KvStore, q: &Query, sort: &[(&str, bool)], count: bool) -> (usize, u64) {
     let before = kv.reads();
-    let mut cache = TreeCache::new(false);
+    let cache = TreeCache::new(false);
     let mut roots = QueryRoots::new();
     let mut targets = Vec::new();
     collect_path_targets(q, &mut targets);

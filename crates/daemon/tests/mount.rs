@@ -60,7 +60,7 @@ fn write_file(root: &Path, rel: &str, content: &[u8]) {
 
 fn resolve(repo: &RepoState, path: &str) -> Option<Uuid> {
     let conn = repo.conn.lock().unwrap();
-    let mut cache = repo.cache.lock().unwrap();
+    let cache = repo.tree();
     cache.resolve_path(&conn, "mfr_path", path).unwrap()
 }
 
@@ -164,8 +164,8 @@ fn the_watcher_places_no_watch_inside_an_offline_mount() {
     let internal = repo.internal_dir();
     let dirs = {
         let conn = repo.conn.lock().unwrap();
-        let mut cache = repo.cache.lock().unwrap();
-        watcher::inotify::compute_watched_dirs_timed(&conn, &mut cache, &root, &internal, None).dirs
+        let cache = repo.tree();
+        watcher::inotify::compute_watched_dirs_timed(&conn, &cache, &root, &internal, None).dirs
     };
 
     assert!(dirs.contains(&root.path().to_path_buf()));
@@ -185,8 +185,8 @@ fn declared_mount_points_report_their_state_and_expected_volume() {
 
     let mounts = {
         let conn = repo.conn.lock().unwrap();
-        let mut cache = repo.cache.lock().unwrap();
-        mount::declared(&conn, &mut cache, &root).unwrap()
+        let cache = repo.tree();
+        mount::declared(&conn, &cache, &root).unwrap()
     };
     assert_eq!(mounts.len(), 1);
     let m = &mounts[0];
@@ -286,8 +286,8 @@ async fn get_mounts(app: &Router, repo: &str) -> Option<serde_json::Value> {
     Some(serde_json::from_slice(&bytes).unwrap())
 }
 
-/// Holds the connection and the tree cache from another thread, exactly as a
-/// running reconcile does. Dropping the returned handle releases them.
+/// Holds the connection from another thread, exactly as a
+/// running reconcile does. Dropping the returned handle releases it.
 struct Busy {
     release: std::sync::mpsc::Sender<()>,
     thread: Option<std::thread::JoinHandle<()>>,
@@ -299,7 +299,6 @@ impl Busy {
         let (release, release_rx) = std::sync::mpsc::channel::<()>();
         let thread = std::thread::spawn(move || {
             let _conn = repo.conn.lock().unwrap();
-            let _cache = repo.cache.lock().unwrap();
             locked_tx.send(()).unwrap();
             let _ = release_rx.recv();
         });

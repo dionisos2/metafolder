@@ -2,7 +2,7 @@
 
 use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
-use std::sync::{Arc, Mutex, MutexGuard};
+use std::sync::{Arc, Mutex};
 
 use metafolder_core::sync::MutexExt;
 use serde::Serialize;
@@ -41,11 +41,11 @@ struct RulesSlot {
     covered: u64,
 }
 
-/// One loaded repository. The SQLite connection and the tree cache each sit
-/// behind their own mutex; blocking work runs in `spawn_blocking`.
+/// One loaded repository. The store sits behind its own mutex; blocking work
+/// runs in `spawn_blocking`.
 pub struct RepoState {
     pub conn: Mutex<crate::store::Handle>,
-    pub cache: Mutex<TreeCache>,
+    tree: TreeCache,
     pub config: RepoConfig,
     /// The repository's display name. Starts at `config.name` but is mutable
     /// (rename, spec-main "PATCH /repos/:repo") — persisted to `config.json` and
@@ -73,8 +73,8 @@ pub struct RepoState {
     /// The repository's declared mount points as of the last read that could
     /// take the repository (spec-file-tracking "Mount status"). Filled by the
     /// load and refreshed by every unblocked `GET …/mounts`; served as it stands
-    /// while a long write holds the connection and the tree cache, where waiting
-    /// for them would buy no freshness — a writer in flight has committed
+    /// while a long write holds the connection, where waiting for it would buy
+    /// no freshness — a writer in flight has committed
     /// nothing, so this *is* the committed set.
     declared_mounts: Mutex<Arc<Vec<crate::mount::DeclaredMount>>>,
     /// Percentage of the kernel's watch limit this repository may spend
@@ -183,7 +183,7 @@ impl RepoState {
             conn: Mutex::new(opened.conn),
             // No forest in memory: the store answers (spec-storage increment
             // 4 e).
-            cache: Mutex::new(TreeCache::new(opened.case_insensitive)),
+            tree: TreeCache::new(opened.case_insensitive),
             config: opened.config,
             name,
             metafolder_dir: opened.metafolder_dir,
@@ -366,39 +366,11 @@ impl RepoState {
         slot.covered = slot.covered.max(mark);
     }
 
-    /// Locks the tree cache, recovering from a poisoned mutex. Unlike the
-    /// connection (whose writes are transactional, so a panic mid-write is
-    /// already rolled back), the in-memory cache can be left half-updated by a
-    /// panic — and out of step with the rolled-back write — so its contents
-    /// are discarded on recovery; it repopulates lazily from the DB. The
-    /// poison flag is cleared so later locks take the normal fast path.
-    /// See `docs/review-followups.md` (#5).
-    pub fn lock_cache(&self) -> MutexGuard<'_, TreeCache> {
-        match self.cache.lock() {
-            Ok(guard) => guard,
-            Err(poison) => {
-                self.cache.clear_poison();
-                let mut guard = poison.into_inner();
-                guard.clear();
-                guard
-            }
-        }
-    }
-
-    /// [`Self::lock_cache`] if the tree cache is free right now, `None` if a
-    /// write holds it — for the reader that has a resident answer and only
-    /// loses freshness by not waiting.
-    pub fn try_lock_cache(&self) -> Option<MutexGuard<'_, TreeCache>> {
-        match self.cache.try_lock() {
-            Ok(guard) => Some(guard),
-            Err(std::sync::TryLockError::Poisoned(poison)) => {
-                self.cache.clear_poison();
-                let mut guard = poison.into_inner();
-                guard.clear();
-                Some(guard)
-            }
-            Err(std::sync::TryLockError::WouldBlock) => None,
-        }
+    /// The repository's forest lookups. A copy: they hold nothing but the
+    /// case sensitivity and read the store on every call, so there is nothing
+    /// to share or to lock.
+    pub fn tree(&self) -> TreeCache {
+        self.tree
     }
 
     /// The resident declared mount points (see the field): the answer
@@ -447,21 +419,10 @@ impl RepoState {
     }
 
     /// Brings this repository's in-memory state back in step with a revision
-    /// that has just been committed on `conn` — the tree cache and, when the
-    /// write changed the watched scope, the inotify watch set.
-    ///
-    /// The tree cache is reconciled *cell by cell*
-    /// ([`TreeCache::apply_cells`]). It used to be rebuilt outright after any
-    /// write that touched a `tree_ref` row, which meant one full scan of the
-    /// `field` table — seconds on a large repository, with the connection held
-    /// throughout, so nothing else could be read while a single field was
-    /// being set. Nothing rebuilds it here any more, whatever the write: the
-    /// only rebuilds left are the initial load, an explicit one, and the paths
-    /// that rewrite history wholesale *in one transaction* (the atomic
-    /// rollback, the restore replay, the resync after an abandoned flush). A
-    /// coordinated navigation *step* is not one of them — it applies a single
-    /// operation, which names its own cells, and a rebuild per operation is
-    /// what made going back over a large write cost minutes.
+    /// that has just been committed on `conn`: the watch rules and, when the
+    /// write changed the watched scope, the watch set. The forest and the query
+    /// index need nothing — they are the store's own, derived in the write's
+    /// transaction.
     pub fn settle(
         &self,
         conn: &dyn crate::store::Store,
@@ -480,7 +441,7 @@ impl RepoState {
     /// so a subtree just made eligible starts being watched immediately (and one
     /// just excluded stops). No-op when the watcher is not running (unit tests,
     /// or a repository being torn down). `conn` is the already-locked
-    /// connection; the tree cache is locked here.
+    /// connection.
     pub fn refresh_watches(&self, conn: &dyn crate::store::Store) -> usize {
         // The ingest filter reads the published rules: a navigation that
         // restored or took away a rule without settling must not leave it
@@ -498,8 +459,8 @@ impl RepoState {
             let Some(handles) = handles.as_ref() else {
                 return 0;
             };
-            let mut cache = self.lock_cache();
-            handles.watcher.refresh(conn, &mut cache, &self.config.root, &self.internal_dir(), cap)
+            let cache = self.tree();
+            handles.watcher.refresh(conn, &cache, &self.config.root, &self.internal_dir(), cap)
         };
         if !placement.frontier.is_empty() {
             self.record_watch_frontier(&placement.frontier);
@@ -523,9 +484,8 @@ impl RepoState {
     /// per directory to say so.
     pub fn record_watch_frontier(&self, frontier: &[String]) {
         let mut conn = self.conn.lock_recover();
-        let mut cache = self.lock_cache();
-        if let Err(err) =
-            write_watch_frontier(self, &mut conn, &mut cache, &self.config.root, frontier)
+        let cache = self.tree();
+        if let Err(err) = write_watch_frontier(self, &mut conn, &cache, &self.config.root, frontier)
         {
             crate::diagnostics::warn(
                 "watcher",
@@ -592,10 +552,7 @@ impl RepoState {
         // to it (the load's own event replay, an auto-reconcile), and the first
         // listing must not be the one that loses the unavailable-volume marking.
         // A handful of rows off an indexed field — no phase of its own.
-        self.set_declared_mounts(Arc::new(crate::mount::declared_set(
-            &conn,
-            &mut self.lock_cache(),
-        )?));
+        self.set_declared_mounts(Arc::new(crate::mount::declared_set(&conn, &self.tree())?));
         Ok(())
     }
 
@@ -887,7 +844,7 @@ impl RepoState {
 fn write_watch_frontier(
     repo: &RepoState,
     conn: &mut dyn crate::store::Database,
-    cache: &mut TreeCache,
+    cache: &TreeCache,
     root: &Path,
     frontier: &[String],
 ) -> anyhow::Result<()> {

@@ -48,7 +48,7 @@ fn write_file(root: &Path, rel: &str, content: &[u8]) {
 
 fn resolve(repo: &RepoState, path: &str) -> Uuid {
     let conn = repo.conn.lock().unwrap();
-    let mut cache = repo.cache.lock().unwrap();
+    let cache = repo.tree();
     cache.resolve_path(&conn, "mfr_path", path).unwrap().unwrap()
 }
 

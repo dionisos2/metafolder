@@ -243,7 +243,7 @@ pub struct WatchPlan {
 
 pub fn compute_watched_dirs_timed(
     conn: &dyn crate::store::Store,
-    cache: &mut TreeCache,
+    cache: &TreeCache,
     root: &Path,
     internal_dir: &Path,
     cap: Option<usize>,
@@ -312,10 +312,7 @@ pub fn compute_watched_dirs_timed(
 
 /// The paths carrying `mfr_watch_exceeded = false` — the deliberate overrides
 /// inside an excluded subtree.
-fn watch_exceeded_overrides(
-    conn: &dyn crate::store::Store,
-    cache: &mut TreeCache,
-) -> HashSet<String> {
+fn watch_exceeded_overrides(conn: &dyn crate::store::Store, cache: &TreeCache) -> HashSet<String> {
     let mut out = HashSet::new();
     let uuids = match crate::store::Questions::holding(
         conn,
@@ -467,7 +464,7 @@ fn maintain_watches(
     let cap = budget_cap_for(repo.watch_budget_share());
     {
         let conn = repo.conn.lock_recover();
-        let mut cache = repo.lock_cache();
+        let cache = repo.tree();
         let rules = match repo.watch_rules(&conn) {
             Ok(rules) => rules,
             Err(err) => {
@@ -478,8 +475,8 @@ fn maintain_watches(
                 return;
             }
         };
-        let offline = crate::mount::offline(&conn, &mut cache, root).unwrap_or_default();
-        let overrides = watch_exceeded_overrides(&conn, &mut cache);
+        let offline = crate::mount::offline(&conn, &cache, root).unwrap_or_default();
+        let overrides = watch_exceeded_overrides(&conn, &cache);
         for rel in arrivals {
             let abs = rel.to_abs(root);
             // Only a real directory (not a symlink) that is eligible is watched.
@@ -570,7 +567,7 @@ impl crate::watcher::Source for Source {
     fn refresh(
         &self,
         conn: &dyn crate::store::Store,
-        cache: &mut TreeCache,
+        cache: &TreeCache,
         root: &Path,
         internal_dir: &Path,
         cap: Option<usize>,
@@ -666,7 +663,7 @@ mod tests {
         fn plan(&mut self, cap: Option<usize>) -> super::WatchPlan {
             let internal = self.internal_dir();
             let root = self.root.clone();
-            compute_watched_dirs_timed(&self.conn, &mut self.cache, &root, &internal, cap)
+            compute_watched_dirs_timed(&self.conn, &self.cache, &root, &internal, cap)
         }
 
         /// Gives `rel` (repo-root-relative, leading `/`) a metarecord carrying
@@ -692,7 +689,6 @@ mod tests {
             w.set_field(created.uuid, super::eligibility::WATCH_EXCEEDED, Value::Bool(value))
                 .unwrap();
             w.commit().unwrap();
-            self.cache.clear();
         }
     }
 

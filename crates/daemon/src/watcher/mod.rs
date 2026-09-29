@@ -78,7 +78,7 @@ pub(crate) trait Source: Send + Sync {
     fn refresh(
         &self,
         conn: &dyn crate::store::Store,
-        cache: &mut TreeCache,
+        cache: &TreeCache,
         root: &Path,
         internal_dir: &Path,
         cap: Option<usize>,
@@ -159,12 +159,12 @@ impl WatcherHandle {
 
     /// Brings the watch set in line with the repository's eligibility, within
     /// the budget `cap` (`None` = uncapped). Called after a manual write
-    /// changes `mf_watch`/`mf_ignore`. Takes the already-locked connection and
-    /// tree cache to avoid re-locking them.
+    /// changes `mf_watch`/`mf_ignore`. Takes the already-locked connection to
+    /// avoid re-locking it.
     pub fn refresh(
         &self,
         conn: &dyn crate::store::Store,
-        cache: &mut TreeCache,
+        cache: &TreeCache,
         root: &Path,
         internal_dir: &Path,
         cap: Option<usize>,
@@ -324,7 +324,7 @@ pub struct WatchedStatus {
 /// snapshot serve the whole batch.
 pub fn explain_watched(
     conn: &dyn crate::store::Store,
-    cache: &mut TreeCache,
+    cache: &TreeCache,
     rules: &WatchRules,
     root: &Path,
     internal_dir: &Path,
@@ -348,7 +348,7 @@ pub fn explain_watched(
 #[allow(clippy::too_many_arguments)]
 fn explain_watched_one(
     conn: &dyn crate::store::Store,
-    cache: &mut TreeCache,
+    cache: &TreeCache,
     rules: &WatchRules,
     root: &Path,
     internal_dir: &Path,
@@ -405,7 +405,7 @@ fn explain_watched_one(
 /// not-yet-existing path is treated as the file that would appear there.
 fn dir_like(
     conn: &dyn crate::store::Store,
-    cache: &mut TreeCache,
+    cache: &TreeCache,
     root: &Path,
     rel: &str,
 ) -> Result<bool> {
@@ -453,7 +453,7 @@ fn covers(m: &str, rel: &str) -> bool {
 /// (spec-file-tracking "Watch sources and regimes").
 fn covered_by_tree(
     conn: &dyn crate::store::Store,
-    cache: &mut TreeCache,
+    cache: &TreeCache,
     rules: &WatchRules,
     root: &Path,
     internal_dir: &Path,
@@ -767,7 +767,7 @@ mod tests {
             let rules = self.rules();
             explain_watched(
                 &self.conn,
-                &mut self.cache,
+                &self.cache,
                 &rules,
                 &self.root,
                 &internal,
@@ -803,7 +803,6 @@ mod tests {
             w.set_field(created.uuid, crate::eligibility::WATCH_EXCEEDED, Value::Bool(value))
                 .unwrap();
             w.commit().unwrap();
-            self.cache.clear();
         }
 
         /// The internal form of an absolute-under-root path, as the sources
@@ -900,7 +899,6 @@ mod tests {
         let mut w = Writer::begin(&mut fx.conn, None).unwrap();
         w.create_metarecord(all).unwrap();
         w.commit().unwrap();
-        fx.cache.clear();
     }
 
     #[test]

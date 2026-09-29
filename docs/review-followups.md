@@ -16,20 +16,19 @@ rendant le repo (ou le GUI) inutilisable jusqu'au redémarrage.
   guard même empoisonné (`PoisonError::into_inner`) **et** efface le drapeau
   (`Mutex::clear_poison`, Rust ≥ 1.77) pour que les accès suivants reprennent
   le chemin rapide. Couvert par un test unitaire dans `core/src/sync.rs`.
-- Daemon : tous les `.lock().unwrap()` migrés vers `lock_recover()`. Cas
-  spécial du **cache d'arbre** → `RepoState::lock_cache()`, qui **vide** le
-  cache en cas de poison (son état mémoire peut être incohérent et désynchro
-  d'un write annulé ; il se repeuple paresseusement depuis la DB).
+- Daemon : tous les `.lock().unwrap()` migrés vers `lock_recover()`. (Le cas
+  spécial du **cache d'arbre**, `RepoState::lock_cache()`, qui vidait le cache
+  en cas de poison, a disparu avec le cache lui-même : les recherches dans la
+  forêt lisent le store à chaque appel et ne gardent rien — sept. 2026.)
 - GUI : état central `GuiState::lock()`, `CommandRegistry`, `InputWait`,
   `DaemonProxy`, keybindings, etc. migrés vers `lock_recover()`. L'état GUI
   étant sa propre source de vérité, on récupère le guard sans le vider.
 - `RecordingNotifier` (helper de test) laissé tel quel : cascade non
   pertinente.
 
-Justification du « pas de panic » côté données : tout write SQLite passe par
-une transaction atomique, donc un panic en cours de write est déjà *rollback*
-par le `Drop` de `Transaction` de rusqlite (mode `unwind`, vérifié : pas de
-`panic = "abort"`).
+Justification du « pas de panic » côté données : tout write passe par une
+transaction atomique du store (LMDB), donc un panic en cours de write l'abandonne
+sans rien commettre (mode `unwind`, vérifié : pas de `panic = "abort"`).
 
 ## 6. `enqueue_restoration` ignorait la direction — ✅ RÉSOLU
 
@@ -59,8 +58,8 @@ disponibles dans les deux situations. Implémenté dans `cli/src/log.rs`
 
 **Mise à jour (septembre 2026).** Les deux coûts décrits ci-dessous ont disparu
 avec l'unification du moteur (spec-indexing « No operand runs in SQL ») : il n'y
-a plus de compilation SQL du tout, et la forêt est **résidente en entier**
-depuis le chargement du dépôt.
+a plus de compilation SQL du tout, et le store garde, pour chaque champ
+`tree_ref`, le bitmap des descendants de chaque nœud (6516367).
 
 **Constat (historique).** `Query::FollowsTransitive` (l'opérateur DSL `->*`,
 « tous les descendants de ce nœud dans la forêt TreeRef ») était compilé de

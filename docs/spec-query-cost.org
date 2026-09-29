@@ -283,7 +283,7 @@ that does not compile. Explain runs the same pass, so it is a dry run of those
 The shape of a query is predictable. The moment is not, and the moment routinely
 dominates:
 
-- the =wait:conn= / =wait:cache= waits: one store handle serves the
+- the =wait:conn= wait: one store handle serves the
   repository, so a watcher flush in progress is a wait of unbounded length.
 - the page cache, which no model here can see.
 

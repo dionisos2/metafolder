@@ -62,7 +62,7 @@ impl Fixture {
     }
 
     fn eligible(&mut self, path: &str) -> bool {
-        is_eligible(&self.conn, &mut self.cache, path).unwrap()
+        is_eligible(&self.conn, &self.cache, path).unwrap()
     }
 }
 
@@ -106,8 +106,8 @@ fn test_default_patterns_ignore_metafolder_and_hidden() {
     w.create_metarecord(fields).unwrap();
     w.commit().unwrap();
 
-    let mut cache = TreeCache::new(false);
-    let mut elig = |path: &str| is_eligible(&conn, &mut cache, path).unwrap();
+    let cache = TreeCache::new(false);
+    let elig = |path: &str| is_eligible(&conn, &cache, path).unwrap();
     assert!(!elig("/.metafolder"));
     assert!(!elig("/.metafolder/config.json"));
     assert!(!elig("/.config"), "hidden file at the root");
@@ -137,8 +137,8 @@ fn test_default_patterns_ignore_cargo_build_intermediates() {
     w.create_metarecord(fields).unwrap();
     w.commit().unwrap();
 
-    let mut cache = TreeCache::new(false);
-    let mut elig = |path: &str| is_eligible(&conn, &mut cache, path).unwrap();
+    let cache = TreeCache::new(false);
+    let elig = |path: &str| is_eligible(&conn, &cache, path).unwrap();
 
     // Intermediates: ignored.
     assert!(!elig("/target/debug/deps/libmetafolder_core-abc.rlib"));
@@ -254,8 +254,8 @@ fn test_direct_watch_reanchors_ignore_to_its_scope() {
     .unwrap();
     w.commit().unwrap();
 
-    let mut cache = TreeCache::new(false);
-    let mut elig = |path: &str| is_eligible(&conn, &mut cache, path).unwrap();
+    let cache = TreeCache::new(false);
+    let elig = |path: &str| is_eligible(&conn, &cache, path).unwrap();
 
     assert!(elig("/.config"), "directly watched → tracked unconditionally");
     assert!(
@@ -302,8 +302,8 @@ fn test_watch_default_is_false_when_no_ancestor_defines_it() {
     )])
     .unwrap();
     w.commit().unwrap();
-    let mut cache = TreeCache::new(false);
-    assert!(!is_eligible(&conn, &mut cache, "/file.txt").unwrap());
+    let cache = TreeCache::new(false);
+    assert!(!is_eligible(&conn, &cache, "/file.txt").unwrap());
 }
 
 // ── mf_sync inheritance (spec-sync) ─────────────────────────────────────────
@@ -322,7 +322,7 @@ fn test_mf_sync_inherits_with_nearest_ancestor_override() {
     let _other = f.entry(f.root, "other", vec![]);
     let _ = build;
 
-    let of = |f: &mut Fixture, p: &str| resolve_mf_sync(&f.conn, &mut f.cache, p).unwrap();
+    let of = |f: &mut Fixture, p: &str| resolve_mf_sync(&f.conn, &f.cache, p).unwrap();
     assert_eq!(of(&mut f, "/projects"), "external");
     assert_eq!(of(&mut f, "/projects/src/main.rs"), "external", "inherited from /projects");
     assert_eq!(of(&mut f, "/projects/build/out.o"), "internal", "nearest ancestor wins");
@@ -343,14 +343,14 @@ fn test_explain_reports_the_deciding_step() {
         vec![Field::new("mf_ignore", Value::String(r"target(/.*)?$".into()))],
     );
 
-    let e = explain(&f.conn, &mut f.cache, "/notes.txt").unwrap();
+    let e = explain(&f.conn, &f.cache, "/notes.txt").unwrap();
     assert!(e.eligible);
     assert_eq!(e.reason, Reason::Tracked);
     assert_eq!(e.watch_scope.as_deref(), Some(""));
     assert_eq!(e.ignore_source.as_deref(), Some(""), "the root provides the set");
     assert_eq!(e.pattern, None);
 
-    let e = explain(&f.conn, &mut f.cache, "/.git/config").unwrap();
+    let e = explain(&f.conn, &f.cache, "/.git/config").unwrap();
     assert!(!e.eligible);
     assert_eq!(e.reason, Reason::Ignored);
     assert_eq!(e.pattern.as_deref(), Some(r"\.git(/.*)?$"));
@@ -358,13 +358,13 @@ fn test_explain_reports_the_deciding_step() {
 
     // Below /work the nearest ignore ancestor is /work, and its set replaces
     // the root's (no merging) — the explanation must name /work, not the root.
-    let e = explain(&f.conn, &mut f.cache, "/work/target/debug").unwrap();
+    let e = explain(&f.conn, &f.cache, "/work/target/debug").unwrap();
     assert!(!e.eligible);
     assert_eq!(e.reason, Reason::Ignored);
     assert_eq!(e.ignore_source.as_deref(), Some("/work"));
     assert_eq!(e.pattern.as_deref(), Some(r"target(/.*)?$"));
 
-    let e = explain(&f.conn, &mut f.cache, "/work/.git/config").unwrap();
+    let e = explain(&f.conn, &f.cache, "/work/.git/config").unwrap();
     assert!(e.eligible, "the root's pattern does not reach below /work");
     assert_eq!(e.reason, Reason::Tracked);
 }
@@ -372,8 +372,8 @@ fn test_explain_reports_the_deciding_step() {
 #[test]
 fn test_explain_reports_watch_reasons() {
     use metafolder_daemon::eligibility::{explain, Reason};
-    let mut f = Fixture::new(false);
-    let e = explain(&f.conn, &mut f.cache, "/file.txt").unwrap();
+    let f = Fixture::new(false);
+    let e = explain(&f.conn, &f.cache, "/file.txt").unwrap();
     assert!(!e.eligible);
     assert_eq!(e.reason, Reason::WatchFalse);
     assert_eq!(e.watch_scope.as_deref(), Some(""));
@@ -384,12 +384,12 @@ fn test_explain_reports_watch_reasons() {
     let root = f.root;
     let config = f.entry(root, ".config", vec![Field::new("mf_watch", Value::Bool(true))]);
     let _ = config;
-    let e = explain(&f.conn, &mut f.cache, "/.config").unwrap();
+    let e = explain(&f.conn, &f.cache, "/.config").unwrap();
     assert!(e.eligible);
     assert_eq!(e.reason, Reason::DirectWatch);
     assert_eq!(e.watch_scope.as_deref(), Some("/.config"));
 
-    let e = explain(&f.conn, &mut f.cache, "/.config/init.lua").unwrap();
+    let e = explain(&f.conn, &f.cache, "/.config/init.lua").unwrap();
     assert!(e.eligible, "matched relative to the watched dir, so the leading dot is stripped");
     assert_eq!(e.watch_scope.as_deref(), Some("/.config"));
 }
@@ -405,8 +405,8 @@ fn test_explain_no_watch_anywhere() {
     )])
     .unwrap();
     w.commit().unwrap();
-    let mut cache = TreeCache::new(false);
-    let e = explain(&conn, &mut cache, "/file.txt").unwrap();
+    let cache = TreeCache::new(false);
+    let e = explain(&conn, &cache, "/file.txt").unwrap();
     assert!(!e.eligible);
     assert_eq!(e.reason, Reason::NoWatch);
     assert_eq!(e.watch_scope, None);
@@ -427,19 +427,19 @@ fn test_effective_ignore_set_and_its_source() {
     let _live = f.entry(work, "live", vec![]);
 
     // The repository root: its own set.
-    let e = effective_ignore(&f.conn, &mut f.cache, "").unwrap();
+    let e = effective_ignore(&f.conn, &f.cache, "").unwrap();
     assert!(e.direct);
     assert_eq!(e.source.as_deref(), Some(""));
     assert_eq!(e.patterns, vec![r"\.git(/.*)?$".to_string()]);
 
     // A directory with its own set: direct, so editing it changes nothing else.
-    let e = effective_ignore(&f.conn, &mut f.cache, "/work").unwrap();
+    let e = effective_ignore(&f.conn, &f.cache, "/work").unwrap();
     assert!(e.direct);
     assert_eq!(e.source.as_deref(), Some("/work"));
     assert_eq!(e.patterns, vec![r"target(/.*)?$".to_string()]);
 
     // A directory with none of its own: the inherited set, named.
-    let e = effective_ignore(&f.conn, &mut f.cache, "/work/live").unwrap();
+    let e = effective_ignore(&f.conn, &f.cache, "/work/live").unwrap();
     assert!(!e.direct, "inherited: a write here would drop the whole set");
     assert_eq!(e.source.as_deref(), Some("/work"));
     assert_eq!(e.patterns, vec![r"target(/.*)?$".to_string()]);
@@ -456,8 +456,8 @@ fn test_effective_ignore_set_when_nothing_is_defined() {
     )])
     .unwrap();
     w.commit().unwrap();
-    let mut cache = TreeCache::new(false);
-    let e = effective_ignore(&conn, &mut cache, "/anywhere").unwrap();
+    let cache = TreeCache::new(false);
+    let e = effective_ignore(&conn, &cache, "/anywhere").unwrap();
     assert_eq!(e.source, None);
     assert!(!e.direct);
     assert!(e.patterns.is_empty());

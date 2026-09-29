@@ -43,7 +43,6 @@ One JSON object per line (JSONL), written when the operation ends:
   "op_id": "9f3c1d0a4b7e4f2a",
   "phases": [
   {"name": "wait:conn", "ms": 3100, "count": 1, "depth": 0},
-  {"name": "wait:cache", "ms": 0, "count": 1, "depth": 0},
   {"name": "prepare", "ms": 1650, "count": 1, "depth": 0, "reads": 210008},
   {"name": "index.evaluate", "ms": 40, "count": 1, "depth": 0, "reads": 306}
   ],
@@ -96,7 +95,6 @@ inventing a synonym):
 | Phase              | What it covers                                             |
 |--------------------+------------------------------------------------------------|
 | =wait:conn=          | waiting for the repository's store handle lock            |
-| =wait:cache=         | waiting for the tree-cache lock                           |
 | =prepare=            | resolving path targets/exact nodes and the forest's leaves |
 | =index.evaluate=     | evaluating the page (and count) over the store            |
 | =assemble=           | assembling the selected fields of a result page           |
@@ -247,7 +245,6 @@ phases indented by depth:
     results   1240
     keys      210 314
     wait:conn         3.10s
-    wait:cache           0ms
     prepare           1.65s       210 008 keys
     index.evaluate      40ms           306 keys
 #+END_SRC

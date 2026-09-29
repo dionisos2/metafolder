@@ -124,8 +124,7 @@ pub struct MountPoint {
 /// Split out because this is the half a reader can hold on to. It changes only
 /// when a write declares or removes a mount point, whereas the state is probed
 /// afresh on every request — so a reader that cannot take the repository right
-/// now (a long write holds the connection and the tree cache for its whole
-/// transaction) still has the committed set in hand, and answers from it
+/// now (a long write holds the connection for its whole transaction) still has the committed set in hand, and answers from it
 /// (see [`crate::state::RepoState::declared_mounts`]).
 #[derive(Debug, Clone)]
 pub struct DeclaredMount {
@@ -140,7 +139,7 @@ pub struct DeclaredMount {
 /// metarecord carrying [`FIELD`], with the path it sits at.
 pub fn declared_set(
     conn: &dyn crate::store::Store,
-    cache: &mut TreeCache,
+    cache: &TreeCache,
 ) -> Result<Vec<DeclaredMount>> {
     let mut out = Vec::new();
     for (uuid, expected) in crate::store::Questions::string_owners(conn, FIELD)? {
@@ -179,7 +178,7 @@ pub fn states(declared: &[DeclaredMount], root: &Path) -> Vec<MountPoint> {
 /// two halves in one step, for a caller that already holds the repository.
 pub fn declared(
     conn: &dyn crate::store::Store,
-    cache: &mut TreeCache,
+    cache: &TreeCache,
     root: &Path,
 ) -> Result<Vec<MountPoint>> {
     Ok(states(&declared_set(conn, cache)?, root))
@@ -221,7 +220,7 @@ impl OfflineMounts {
 /// declared mount point, no walk).
 pub fn offline(
     conn: &dyn crate::store::Store,
-    cache: &mut TreeCache,
+    cache: &TreeCache,
     root: &Path,
 ) -> Result<OfflineMounts> {
     let mut paths = Vec::new();

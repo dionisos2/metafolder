@@ -104,8 +104,7 @@ async fn a_kv_repository_serves_queries_without_the_resident_index() {
 /// at most the nodes of the last path looked up — a rename included.
 #[tokio::test]
 async fn a_kv_repository_keeps_no_forest_in_memory() {
-    let (app, repo, _root, state) = setup("forest").await;
-    let repo_state = state.repo(repo.parse().unwrap()).unwrap();
+    let (app, repo, _root, _state) = setup("forest").await;
     let tref = |parent: Option<&str>, name: &str| {
         json!([{"name": "loc", "value": {"type": "tree_ref",
                  "value": {"parent": parent, "name": name}}}])
@@ -130,7 +129,6 @@ async fn a_kv_repository_keeps_no_forest_in_memory() {
     let on_path = json!({"type": "eq", "field": "loc", "aspect": "path",
                          "value": {"type": "string", "value": "top/b"}});
     assert_eq!(query(json!({"query": on_path})).await, json!([b]));
-    assert!(repo_state.lock_cache().len() <= 2, "at most the last lookup's path is held");
 
     // Rename `b` to `c`: served at once, from the store.
     let (status, body) = request(
@@ -146,7 +144,6 @@ async fn a_kv_repository_keeps_no_forest_in_memory() {
     let on_c = json!({"type": "eq", "field": "loc", "aspect": "path",
                       "value": {"type": "string", "value": "top/c"}});
     assert_eq!(query(json!({"query": on_c})).await, json!([b]));
-    assert!(repo_state.lock_cache().len() <= 2, "at most the last lookup's path is held");
 }
 
 /// `POST /repos/:repo/check` reports what no longer holds together (nothing,

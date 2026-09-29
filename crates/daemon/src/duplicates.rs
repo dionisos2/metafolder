@@ -106,12 +106,12 @@ pub fn scan_reported(
     reporter: &Reporter,
 ) -> Result<ScanResult, ApiError> {
     let mut conn = repo.conn.lock_recover();
-    let mut cache = repo.lock_cache();
+    let cache = repo.tree();
     let root = repo.config.root.clone();
     let mut result = ScanResult::default();
 
     // ── Phase 1: partition by size ──────────────────────────────────────────
-    let offline = crate::mount::offline(&conn, &mut cache, &root)?;
+    let offline = crate::mount::offline(&conn, &cache, &root)?;
     let scope = match opts.scope {
         None => None,
         Some(uuid) => {

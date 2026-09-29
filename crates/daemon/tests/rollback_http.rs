@@ -336,7 +336,7 @@ async fn test_inverse_step_exposes_the_pre_revision_version() {
     executor::flush_pending(&repo_state).unwrap();
     let file_uuid = {
         let conn = repo_state.conn.lock().unwrap();
-        let mut cache = repo_state.cache.lock().unwrap();
+        let cache = repo_state.tree();
         cache.resolve_path(&conn, "mfr_path", "/doc.txt").unwrap().expect("the tracked file")
     };
     let uuid = file_uuid.as_simple().to_string();

@@ -122,7 +122,7 @@ pub fn reconcile_full_reported(
     reporter: &Reporter,
 ) -> Result<ReconcileResult, ApiError> {
     let mut conn = repo.conn.lock_recover();
-    let mut cache = repo.lock_cache();
+    let cache = repo.tree();
     let root = repo.config.root.clone();
     let mut writer = repo.writer(&mut conn, None)?;
     let mut result = ReconcileResult::default();
@@ -135,7 +135,7 @@ pub fn reconcile_full_reported(
     // Declared mount points with nothing mounted on them: their subtrees are
     // frozen — not walked, not orphaned, not offered as candidates
     // (spec-file-tracking "Offline subtrees").
-    let offline = crate::mount::offline(writer.store(), &mut cache, &root)?;
+    let offline = crate::mount::offline(writer.store(), &cache, &root)?;
     let paths = walk(&root, &internal_dir, &RelPath::root(), &rules, &offline, reporter)?;
 
     // Stat phase: the total is now known, so this (the heavy syscall pass) is a
@@ -302,7 +302,7 @@ pub fn reconcile_full_reported(
 
         if let Some(rel) = definitive {
             claimed.insert(rel.clone());
-            apply_move(&mut writer, &mut cache, &root, orphan, &rel)?;
+            apply_move(&mut writer, &cache, &root, orphan, &rel)?;
             state.moved = true;
             result.moved += 1;
         } else {
@@ -369,7 +369,7 @@ pub fn reconcile_full_reported(
         if cache.resolve_rel(writer.store(), "mfr_path", rel)?.is_some() {
             continue; // Already created as a parent of an earlier path.
         }
-        create_record_for(&mut writer, &mut cache, &root, rel, &[], compute_mime)?;
+        create_record_for(&mut writer, &cache, &root, rel, &[], compute_mime)?;
         result.created += 1;
     }
 
@@ -469,7 +469,7 @@ pub fn reconcile_metarecord_reported(
     reporter: &Reporter,
 ) -> Result<ReconcileResult, ApiError> {
     let mut conn = repo.conn.lock_recover();
-    let mut cache = repo.lock_cache();
+    let cache = repo.tree();
     let root = repo.config.root.clone();
 
     if Rows::version(&*conn, uuid)?.is_none() {
@@ -481,7 +481,7 @@ pub fn reconcile_metarecord_reported(
         )));
     };
 
-    let offline = crate::mount::offline(&conn, &mut cache, &root)?;
+    let offline = crate::mount::offline(&conn, &cache, &root)?;
     if offline.contains(&base) {
         // Aimed at (or into) a volume that is not plugged in. Doing nothing
         // silently would look like "reconcile found no change"; say so instead
@@ -533,7 +533,7 @@ pub fn reconcile_metarecord_reported(
                 }
             }
             None => {
-                create_record_for(&mut writer, &mut cache, &root, rel, &[], compute_mime)?;
+                create_record_for(&mut writer, &cache, &root, rel, &[], compute_mime)?;
                 result.created += 1;
             }
         }
@@ -704,7 +704,7 @@ fn stat_paths(root: &Path, paths: &[RelPath], reporter: &Reporter) -> Vec<(RelPa
 /// directories and undetectable files get none (spec-platform "MIME detection").
 pub(crate) fn create_record_for(
     writer: &mut Writer,
-    cache: &mut TreeCache,
+    cache: &TreeCache,
     root: &Path,
     rel: &RelPath,
     extra_fields: &[Field],
@@ -730,7 +730,7 @@ pub(crate) fn create_record_for(
 /// stat fields.
 fn apply_move(
     writer: &mut Writer,
-    cache: &mut TreeCache,
+    cache: &TreeCache,
     root: &Path,
     uuid: Uuid,
     rel: &RelPath,

@@ -431,7 +431,7 @@ fn flush_pending_once(repo: &RepoState, report: FlushReport) -> Result<FlushStat
     // waiting for it (spec-slow-log).
     let _timed = metafolder_core::slowlog::begin(repo.slowlog.clone(), "watcher.flush");
     let mut conn = metafolder_core::slowlog::timed("wait:conn", || repo.conn.lock_recover());
-    let mut cache = metafolder_core::slowlog::timed("wait:cache", || repo.lock_cache());
+    let cache = repo.tree();
 
     // Restoration ops from skipped rollback steps are replayed first, as their
     // own revision, before the watcher events recorded during the lock.
@@ -512,7 +512,7 @@ fn flush_pending_once(repo: &RepoState, report: FlushReport) -> Result<FlushStat
     // The declared-but-unmounted mount points, resolved once for the whole
     // flush: one stat pair per mount point, and none at all in the usual case
     // where the repository declares none.
-    let offline = crate::mount::offline(&conn, &mut cache, &repo.config.root)?;
+    let offline = crate::mount::offline(&conn, &cache, &repo.config.root)?;
 
     // Observable while the events are applied (spec-tasks). Registered only
     // now that there is real work (non-empty events), to avoid churning the
@@ -550,7 +550,7 @@ fn flush_pending_once(repo: &RepoState, report: FlushReport) -> Result<FlushStat
             let mut apply = Apply {
                 report,
                 writer,
-                cache: &mut cache,
+                cache: &cache,
                 root: &repo.config.root,
                 departed: &departed,
                 moved: &moved,
@@ -705,7 +705,7 @@ struct Apply<'a, 'c> {
     /// arbitrarily large tree, and the per-event counter cannot show it.
     report: FlushReport<'a>,
     writer: Writer<'c>,
-    cache: &'a mut TreeCache,
+    cache: &'a TreeCache,
     root: &'a Path,
     /// Paths renamed *out of* a watched directory in this same batch, whose
     /// destination the watcher never saw. See [`Apply::find_departed_match`].
@@ -1054,9 +1054,8 @@ impl Apply<'_, '_> {
             );
             return Ok(());
         }
-        // Snapshot every path *before* any write: with an incomplete tree cache
-        // `path_of` walks the DB, and clearing a parent's `mfr_path` would break
-        // its descendants' walk. `mfr_path_old` is a frozen String recording
+        // Snapshot every path *before* any write: `path_of` walks the store, and
+        // clearing a parent's `mfr_path` would break its descendants' walk. `mfr_path_old` is a frozen String recording
         // where the orphan last lived (spec-file-tracking "Orphan origin").
         let mut olds = Vec::with_capacity(descendants.len() + 1);
         for &u in std::iter::once(&uuid).chain(descendants.iter()) {
@@ -1390,7 +1389,7 @@ pub(crate) fn clear_absent_conditional_stat_fields(
 /// executor, reconcile, and the track endpoint.
 pub(crate) fn ensure_parent_metarecords(
     writer: &mut Writer,
-    cache: &mut TreeCache,
+    cache: &TreeCache,
     root: &Path,
     rel: &RelPath,
     extra_fields: &[Field],

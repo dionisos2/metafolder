@@ -319,7 +319,7 @@ impl crate::watcher::Source for Source {
     fn refresh(
         &self,
         _conn: &dyn crate::store::Store,
-        _cache: &mut TreeCache,
+        _cache: &TreeCache,
         _root: &Path,
         _internal_dir: &Path,
         _cap: Option<usize>,

@@ -302,8 +302,8 @@ async fn query_resolve_tree(
     let field = body.field;
     with_repo(&state, repo_uuid, move |repo_state| {
         let conn = slowlog::timed("wait:conn", || repo_state.conn.lock_recover());
-        let mut cache = slowlog::timed("wait:cache", || repo_state.lock_cache());
-        let uuids = resolve_query_uuids(&conn, &mut cache, &body.query)?;
+        let cache = repo_state.tree();
+        let uuids = resolve_query_uuids(&conn, &cache, &body.query)?;
         let mut out = serde_json::Map::new();
         for uuid in uuids {
             let paths = cache.paths_of(&conn, &field, uuid)?;
@@ -324,7 +324,7 @@ async fn resolve_record_field_tree(
     let uuid = parse_uuid(&uuid)?;
     with_repo(&state, repo_uuid, move |repo_state| {
         let conn = slowlog::timed("wait:conn", || repo_state.conn.lock_recover());
-        let mut cache = slowlog::timed("wait:cache", || repo_state.lock_cache());
+        let cache = repo_state.tree();
         let paths = cache.paths_of(&conn, &name, uuid)?;
         Ok(Json(json!({ "paths": paths })))
     })
@@ -343,12 +343,12 @@ async fn get_record_mf_sync(
     let uuid = parse_uuid(&uuid)?;
     with_repo(&state, repo_uuid, move |repo_state| {
         let conn = slowlog::timed("wait:conn", || repo_state.conn.lock_recover());
-        let mut cache = slowlog::timed("wait:cache", || repo_state.lock_cache());
+        let cache = repo_state.tree();
         let paths = cache.paths_of(&conn, "mfr_path", uuid)?;
         let mode = match paths.first() {
             // `paths_of` and `resolve_mf_sync` (eligibility) share the same
             // leading-"/"-rooted form (`""` = root, `/a/b` = nested).
-            Some(p) => crate::eligibility::resolve_mf_sync(&conn, &mut cache, p)?,
+            Some(p) => crate::eligibility::resolve_mf_sync(&conn, &cache, p)?,
             None => "internal".to_string(),
         };
         Ok(Json(json!({ "mf_sync": mode })))
@@ -394,7 +394,7 @@ async fn resolve_tree_path(
     let Json(body) = payload?;
     with_repo(&state, repo_uuid, move |repo_state| {
         let conn = slowlog::timed("wait:conn", || repo_state.conn.lock_recover());
-        let mut cache = slowlog::timed("wait:cache", || repo_state.lock_cache());
+        let cache = repo_state.tree();
         let uuid = cache.resolve_path_as(&conn, &body.field, &body.path, body.form)?;
         Ok(Json(json!({ "uuid": uuid.map(hex) })))
     })
@@ -522,7 +522,7 @@ async fn tree_children(
     let parent = parse_uuid(&params.uuid)?;
     with_repo(&state, repo_uuid, move |repo_state| {
         let conn = slowlog::timed("wait:conn", || repo_state.conn.lock_recover());
-        let mut cache = slowlog::timed("wait:cache", || repo_state.lock_cache());
+        let cache = repo_state.tree();
         let mut children = cache.children_of(&conn, &params.field, parent)?;
         children.sort_by(|a, b| a.0.cmp(&b.0));
         let out: Vec<serde_json::Value> = children
@@ -633,9 +633,8 @@ where
         check_writable(&name, force)?;
         slowlog::note("field", name.as_str());
         let mut conn = slowlog::timed("wait:conn", || repo_state.conn.lock_recover());
-        let mut cache = slowlog::timed("wait:cache", || repo_state.lock_cache());
-        let uuids = resolve_query_uuids(&conn, &mut cache, &query)?;
-        drop(cache);
+        let cache = repo_state.tree();
+        let uuids = resolve_query_uuids(&conn, &cache, &query)?;
 
         let mut writer = repo_state.writer(&mut conn, None)?;
         let writing = slowlog::phase("write.fields");
@@ -1504,7 +1503,7 @@ impl PlanParams {
 /// path, for the `from`/`to` of a `move_file` action.
 fn snapshot_abs_path(
     conn: &dyn crate::store::Store,
-    cache: &mut crate::tree_cache::TreeCache,
+    cache: &crate::tree_cache::TreeCache,
     root: &std::path::Path,
     op_id: i64,
     is_new: i64,
@@ -1530,7 +1529,7 @@ fn snapshot_abs_path(
 /// becomes `move_file` with `from`/`to`; everything else is unchanged).
 fn action_op_json(
     conn: &dyn crate::store::Store,
-    cache: &mut crate::tree_cache::TreeCache,
+    cache: &crate::tree_cache::TreeCache,
     root: &std::path::Path,
     op: &crate::log::OpRow,
     dir: crate::log::NavDir,
@@ -1597,10 +1596,10 @@ async fn rollback_plan(
         let head = crate::store::Log::head(&*conn)?;
         let resolved = crate::log::resolve_target(&*conn, &target)?;
         let path = crate::log::nav_path(&*conn, head, resolved)?;
-        let mut cache = slowlog::timed("wait:cache", || repo_state.lock_cache());
+        let cache = repo_state.tree();
         let mut ops = Vec::with_capacity(path.len());
         for (op, dir) in &path {
-            ops.push(action_op_json(&conn, &mut cache, &repo_state.config.root, op, *dir)?);
+            ops.push(action_op_json(&conn, &cache, &repo_state.config.root, op, *dir)?);
         }
         let total = ops.len();
         Ok(Json(json!({"operations": ops, "total": total})))
@@ -1659,10 +1658,9 @@ async fn rollback_start(
         let (id, dir) = plan.next().expect("a non-empty plan when head != target");
         let op = crate::store::Log::op(&*conn, id)?
             .ok_or_else(|| ApiError::internal("operation vanished during navigation"))?;
-        let mut cache = slowlog::timed("wait:cache", || repo_state.lock_cache());
-        let first = action_op_json(&conn, &mut cache, &repo_state.config.root, &op, dir)?;
+        let cache = repo_state.tree();
+        let first = action_op_json(&conn, &cache, &repo_state.config.root, &op, dir)?;
         let remaining = plan.len() - 1;
-        drop(cache);
         drop(conn);
         *repo_state.rollback_lock.lock_recover() = Some(RollbackLock::Navigate { plan });
         Ok(Json(json!({"op": first, "remaining": remaining})))
@@ -1779,7 +1777,7 @@ fn revert_plan_json(
     conn: &dyn crate::store::Store,
     analysis: &crate::revert::Analysis,
     with_dependents: bool,
-    mut fs: Option<(&mut crate::tree_cache::TreeCache, &std::path::Path)>,
+    mut fs: Option<(&crate::tree_cache::TreeCache, &std::path::Path)>,
 ) -> Result<serde_json::Value, ApiError> {
     let effective = analysis.effective(with_dependents);
     let requested: std::collections::HashSet<i64> =
@@ -2029,12 +2027,12 @@ async fn revert_start(
         }
         let effective = analysis.effective(body.with_dependents);
         let plan = {
-            let mut cache = slowlog::timed("wait:cache", || repo_state.lock_cache());
+            let cache = repo_state.tree();
             revert_plan_json(
                 &conn,
                 &analysis,
                 body.with_dependents,
-                Some((&mut cache, &repo_state.config.root)),
+                Some((&cache, &repo_state.config.root)),
             )?
         };
         drop(conn);
@@ -2218,8 +2216,8 @@ async fn rollback_step(
                         op.ok_or_else(|| ApiError::internal("operation vanished during navigation"))
                     })
                     .and_then(|op| {
-                        let mut cache = slowlog::timed("wait:cache", || repo_state.lock_cache());
-                        action_op_json(&conn, &mut cache, &repo_state.config.root, &op, dir)
+                        let cache = repo_state.tree();
+                        action_op_json(&conn, &cache, &repo_state.config.root, &op, dir)
                     });
                 let remaining = plan.len() - 1;
                 put_back(plan);
@@ -2337,8 +2335,8 @@ async fn check_schema(
             // so the once-per-open heads-up stays cheap even at 400k records.
             let uuids = match &body.query {
                 Some(query) => {
-                    let mut cache = slowlog::timed("wait:cache", || repo_state.lock_cache());
-                    resolve_query_uuids(&conn, &mut cache, query)?
+                    let cache = repo_state.tree();
+                    resolve_query_uuids(&conn, &cache, query)?
                 }
                 None => crate::schema::violation_candidates(
                     schema,
@@ -2431,8 +2429,8 @@ impl Default for ReconcileBody {
 /// mount point, no walk. It is how a client explains a subtree that looks empty
 /// or stale ("volume not mounted") instead of showing it as deleted.
 ///
-/// Neither the connection nor the tree cache is waited for. A long write holds
-/// both for its whole transaction — a reconcile: minutes on a large repository
+/// The connection is not waited for. A long write holds it for its whole
+/// transaction — a reconcile: minutes on a large repository
 /// — and the GUI asks for the mount points on *every* directory listing, so
 /// queueing turned a 2 ms answer into a measured 151 s one. The wait would buy
 /// no freshness: the database half of the answer is the declared set, and a
@@ -2446,17 +2444,14 @@ async fn mounts(
 ) -> Result<Json<serde_json::Value>, ApiError> {
     let repo_uuid = parse_uuid(&repo)?;
     with_repo(&state, repo_uuid, move |repo_state| {
-        // Tried in the order every writer takes them (connection, then tree
-        // cache); nothing blocks, so no order could deadlock either.
         let conn = slowlog::timed("wait:conn", || repo_state.conn.try_lock_recover());
-        let cache = slowlog::timed("wait:cache", || repo_state.try_lock_cache());
-        let declared = match (conn, cache) {
-            (Some(conn), Some(mut cache)) => {
-                let set = Arc::new(crate::mount::declared_set(&conn, &mut cache)?);
+        let declared = match conn {
+            Some(conn) => {
+                let set = Arc::new(crate::mount::declared_set(&conn, &repo_state.tree())?);
                 repo_state.set_declared_mounts(Arc::clone(&set));
                 set
             }
-            _ => repo_state.declared_mounts(),
+            None => repo_state.declared_mounts(),
         };
         let mounts = crate::mount::states(&declared, &repo_state.config.root);
         Ok(Json(json!({ "mounts": mounts })))
@@ -2678,10 +2673,10 @@ async fn watch_check(
         };
         let conn = slowlog::timed("wait:conn", || repo_state.conn.lock_recover());
         let rules = repo_state.watch_rules(&conn)?;
-        let mut cache = slowlog::timed("wait:cache", || repo_state.lock_cache());
+        let cache = repo_state.tree();
         let statuses = crate::watcher::explain_watched(
             &conn,
-            &mut cache,
+            &cache,
             &rules,
             &repo_state.config.root,
             repo_state.internal_dir().as_path(),
@@ -2933,7 +2928,7 @@ async fn watch_exceeded_list(
     let repo_uuid = parse_uuid(&repo)?;
     with_repo(&state, repo_uuid, move |repo_state| {
         let conn = slowlog::timed("wait:conn", || repo_state.conn.lock_recover());
-        let mut cache = slowlog::timed("wait:cache", || repo_state.lock_cache());
+        let cache = repo_state.tree();
         let uuids = crate::store::Questions::holding(
             &conn,
             crate::eligibility::WATCH_EXCEEDED,
@@ -2980,7 +2975,7 @@ async fn watch_exceeded_set(
         }
         let uuid = {
             let conn = slowlog::timed("wait:conn", || repo_state.conn.lock_recover());
-            let mut cache = slowlog::timed("wait:cache", || repo_state.lock_cache());
+            let cache = repo_state.tree();
             cache
                 .resolve_path(&conn, "mfr_path", &body.path)?
                 .ok_or_else(|| ApiError::not_found(format!("No metarecord at {}", body.path)))?
@@ -3181,7 +3176,7 @@ async fn track(
         }
 
         let mut conn = slowlog::timed("wait:conn", || repo_state.conn.lock_recover());
-        let mut cache = slowlog::timed("wait:cache", || repo_state.lock_cache());
+        let cache = repo_state.tree();
         // Idempotent: a path already tracked returns its existing metarecord
         // uuid rather than an error, so callers can `track` without first
         // checking (spec-file-tracking "Single-metarecord track").
@@ -3192,7 +3187,7 @@ async fn track(
         let mut writer = repo_state.writer(&mut conn, None)?;
         let uuid = crate::reconcile::create_record_for(
             &mut writer,
-            &mut cache,
+            &cache,
             &repo_state.config.root,
             &rel,
             &untracked,
@@ -3367,7 +3362,7 @@ fn engine(conn: &dyn crate::store::Store) -> Result<Engine<'_>, ApiError> {
 /// SQL").
 fn prepare_indexed_query<'a>(
     conn: &dyn crate::store::Store,
-    cache: &mut crate::tree_cache::TreeCache,
+    cache: &crate::tree_cache::TreeCache,
     index: &crate::index::Eval<'_>,
     query: &MetaQuery,
 ) -> Result<(crate::index::QueryRoots<'a>, MetaQuery), ApiError> {
@@ -3405,7 +3400,7 @@ fn prepare_indexed_query<'a>(
 /// there being nothing else to ask.
 fn resolve_query_uuids(
     conn: &dyn crate::store::Store,
-    cache: &mut crate::tree_cache::TreeCache,
+    cache: &crate::tree_cache::TreeCache,
     query: &MetaQuery,
 ) -> Result<Vec<Uuid>, ApiError> {
     let _phase = slowlog::phase("resolve.uuids");
@@ -3444,7 +3439,7 @@ fn index_gap(gap: crate::index::Unsupported) -> ApiError {
 /// bug (see [`index_gap`]).
 fn run_query_filter(
     conn: &dyn crate::store::Store,
-    cache: &mut crate::tree_cache::TreeCache,
+    cache: &crate::tree_cache::TreeCache,
     body: &QueryBody,
     cancel: &dyn Fn() -> bool,
 ) -> Result<QueryPage, ApiError> {
@@ -3575,10 +3570,9 @@ fn run_query_pass(
         // Cooperative cancellation (spec-tasks): the evaluation and the result
         // assembly poll this flag.
         let cancel = || repo_state.tasks.is_cancel_requested(task);
-        let mut cache = slowlog::timed("wait:cache", || repo_state.lock_cache());
+        let cache = repo_state.tree();
         note_query(body);
-        let (uuids, next_cursor, total) = run_query_filter(&conn, &mut cache, body, &cancel)?;
-        drop(cache);
+        let (uuids, next_cursor, total) = run_query_filter(&conn, &cache, body, &cancel)?;
         slowlog::note("results", uuids.len().to_string());
 
         let results: Vec<serde_json::Value> = match &body.select {
@@ -3801,9 +3795,8 @@ async fn delete_by_query(
     with_repo(&state, repo_uuid, move |repo_state| {
         repo_state.ensure_writable()?;
         let mut conn = slowlog::timed("wait:conn", || repo_state.conn.lock_recover());
-        let mut cache = slowlog::timed("wait:cache", || repo_state.lock_cache());
-        let uuids = resolve_query_uuids(&conn, &mut cache, &body.query)?;
-        drop(cache);
+        let cache = repo_state.tree();
+        let uuids = resolve_query_uuids(&conn, &cache, &body.query)?;
 
         let mut writer = repo_state.writer(&mut conn, None)?;
         let writing = slowlog::phase("write.fields");
@@ -3851,7 +3844,7 @@ struct TrashDeleteBody {
 /// "Refusing to break a reference" rather than left to be discovered.
 fn inbound_referrers(
     conn: &dyn crate::store::Store,
-    cache: &mut crate::tree_cache::TreeCache,
+    cache: &crate::tree_cache::TreeCache,
     targets: &[Uuid],
 ) -> Result<Vec<Uuid>, ApiError> {
     let fields: Vec<String> = {
@@ -3923,9 +3916,8 @@ async fn trash_delete_endpoint(
         let mut conn = slowlog::timed("wait:conn", || repo_state.conn.lock_recover());
 
         if !body.force {
-            let mut cache = slowlog::timed("wait:cache", || repo_state.lock_cache());
-            let referrers = inbound_referrers(&conn, &mut cache, &uuids)?;
-            drop(cache);
+            let cache = repo_state.tree();
+            let referrers = inbound_referrers(&conn, &cache, &uuids)?;
             if !referrers.is_empty() {
                 let named: Vec<String> =
                     referrers.iter().take(10).map(|u| u.as_simple().to_string()).collect();

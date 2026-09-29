@@ -36,13 +36,13 @@ pub struct OrphanEntry {
 /// Scan the repository for orphaned metarecords (see the module docs). Read-only.
 pub fn scan_orphans(repo: &RepoState) -> Result<Vec<OrphanEntry>, ApiError> {
     let conn = repo.conn.lock_recover();
-    let mut cache = repo.lock_cache();
+    let cache = repo.tree();
     let root = &repo.config.root;
 
     // Memoise per-directory readability so a subtree costs one `read_dir` per
     // directory, not one per record.
     let mut dirs: HashMap<PathBuf, DirState> = HashMap::new();
-    let offline = crate::mount::offline(&conn, &mut cache, root)?;
+    let offline = crate::mount::offline(&conn, &cache, root)?;
     let mut orphans = Vec::new();
     for uuid in crate::store::Rows::placed(&conn, "mfr_path")? {
         let Some(path) = cache.path_of(&conn, "mfr_path", uuid)? else {
@@ -66,10 +66,10 @@ pub fn scan_orphans(repo: &RepoState) -> Result<Vec<OrphanEntry>, ApiError> {
 /// in one revision. Returns how many top-level records were orphaned.
 pub fn clear_orphans(repo: &RepoState, uuids: &[Uuid]) -> Result<usize, ApiError> {
     let mut conn = repo.conn.lock_recover();
-    let mut cache = repo.lock_cache();
+    let cache = repo.tree();
     let root = repo.config.root.clone();
     let mut dirs: HashMap<PathBuf, DirState> = HashMap::new();
-    let offline = crate::mount::offline(&conn, &mut cache, &root)?;
+    let offline = crate::mount::offline(&conn, &cache, &root)?;
     let mut writer = repo.writer(&mut conn, None)?;
     let mut cleared = 0;
 
@@ -192,7 +192,7 @@ pub struct MarkResult {
 /// carries it and is no longer an orphan (its file came back) is unmarked by
 /// the same pass. That is what makes deleting the marked set safe.
 pub fn mark_orphans(repo: &RepoState) -> Result<MarkResult, ApiError> {
-    // The disk half first — it takes the connection and the cache of its own.
+    // The disk half first — it takes the connection of its own.
     let stale: Vec<Uuid> = scan_orphans(repo)?.into_iter().map(|o| o.uuid).collect();
 
     let mut conn = repo.conn.lock_recover();
@@ -289,7 +289,7 @@ pub fn relink_reported(
 
     let total = tracked.len() as u64;
     reporter.progress("relink", Some(0), Some(total));
-    let mut cache = repo.lock_cache();
+    let cache = repo.tree();
     for (done, (uuid, size)) in tracked.into_iter().enumerate() {
         if reporter.is_cancelled() {
             return Err(ApiError::conflict("relink cancelled"));
@@ -306,7 +306,7 @@ pub fn relink_reported(
             result.conflicts += 1;
             continue;
         }
-        adopt(&mut conn, &mut cache, &root, orphan, uuid, &rel, repo.log_retention())?;
+        adopt(&mut conn, &cache, &root, orphan, uuid, &rel, repo.log_retention())?;
         // Each orphan re-homes once.
         if let Some(list) = by_size.get_mut(&size) {
             list.retain(|c| c.uuid != orphan);
@@ -350,7 +350,7 @@ fn annotated(conn: &dyn crate::store::Store, uuid: Uuid) -> Result<bool, ApiErro
 /// Moves `orphan` onto the position `holder` occupies, then deletes `holder`.
 fn adopt(
     conn: &mut dyn crate::store::Database,
-    cache: &mut crate::tree_cache::TreeCache,
+    cache: &crate::tree_cache::TreeCache,
     root: &Path,
     orphan: Uuid,
     holder: Uuid,

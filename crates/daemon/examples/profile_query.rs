@@ -45,7 +45,7 @@ fn main() {
     let mut targets = Vec::new();
     collect_path_targets(&q, &mut targets);
     let resolved = phase(&kv, "resolve path targets", runs, || {
-        let mut cache = TreeCache::new(false);
+        let cache = TreeCache::new(false);
         targets
             .iter()
             .filter_map(|(f, p)| {

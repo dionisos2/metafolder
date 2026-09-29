@@ -2,10 +2,13 @@
 //! metarecords and back, children, descendants, path matches and path sort
 //! keys, answered from the store (spec-storage increment 4 e). One per
 //! repository, shared across all TreeRef field names (the field name is the
-//! first level). It keeps nothing between lookups: the nodes one lookup brings
-//! in are dropped by the next, so nothing grows and nothing goes stale. A
-//! resident forest, kept in step with every write, was the SQLite backend's
-//! and went with it (September 2026).
+//! first level).
+//!
+//! Despite the name, nothing is cached: every lookup reads the store, so there
+//! is nothing to keep in step with a write, nothing to go stale and nothing to
+//! lock. A [`TreeCache`] is only the repository's case sensitivity. (A resident
+//! forest, kept in step with every write, was the SQLite backend's and went
+//! with it in September 2026; the name stayed.)
 
 use std::cell::RefCell;
 use std::collections::{HashMap, HashSet};
@@ -31,66 +34,11 @@ use crate::store::Rows;
 /// oracle builds the identical key (`metafolder-query-oracle`'s `path_key_cte`).
 pub const PATH_KEY_SEP: char = '\u{1}';
 
-/// Where a node hangs, which is the whole of what linking and unlinking change.
-/// Kept as one value rather than as a parent index *and* a flag: the states are
-/// exclusive, and a node that is momentarily in none of the maps has to be
-/// distinguishable from a root, or unlinking it a second time evicts whichever
-/// root happens to share its name.
-#[derive(Clone, Copy, PartialEq, Eq)]
-enum Placement {
-    /// In the field's roots map: the position names no parent.
-    Root,
-    /// In this node's children map.
-    Under(usize),
-    /// In the field's waiting index, under the metarecord the position names as
-    /// its parent: that metarecord holds no position of its own. The node is
-    /// resident and findable by uuid, and in no path — which is where a fresh
-    /// load leaves it too.
-    Waiting(Uuid),
-    /// In no map at all, briefly and on purpose: a settle unlinks every cell it
-    /// is about to move before it moves any, so two siblings that swap names
-    /// have no order to get wrong.
-    Unlinked,
-}
-
-struct Node {
-    /// The name's exact bytes — what identifies the node (spec-data-model
-    /// "Tree names"). The children/roots maps are keyed by its *normalized*
-    /// bytes, which fold case when the filesystem does but never merge two
-    /// names that differ in an undecodable byte.
-    name: TreeName,
-    uuid: Uuid,
-    place: Placement,
-    children: HashMap<Vec<u8>, usize>,
-}
-
-#[derive(Default)]
-struct FieldTree {
-    /// Root nodes by normalized name bytes.
-    roots: HashMap<Vec<u8>, usize>,
-    /// Cached nodes by metarecord UUID: one each (spec-data-model "One
-    /// position per forest"), save in a repository an older daemon let hold
-    /// more, which `mf repo check` names.
-    by_uuid: HashMap<Uuid, Vec<usize>>,
-    /// Nodes waiting for a parent, by the metarecord uuid they wait for. What
-    /// makes the upkeep independent of the order positions arrive in: a child
-    /// settled before its parent is linked when the parent shows up, so no
-    /// producer has to sort its work — and none of them can
-    /// (see [`TreeCache::adopt`]).
-    waiting: HashMap<Uuid, Vec<usize>>,
-}
-
-impl FieldTree {
-    fn push_node(&mut self, uuid: Uuid, idx: usize) {
-        self.by_uuid.entry(uuid).or_default().push(idx);
-    }
-}
-
 /// What resolving one path component yielded.
 enum Resolved<T> {
     /// The node it names.
     Found(T),
-    /// Not here — another source (the database) may still know.
+    /// Nothing by that name.
     Missing,
     /// The readings name different files: the path designates neither, and no
     /// further lookup may override that.
@@ -117,7 +65,7 @@ pub enum PathForm {
 /// The map key for a name: its exact bytes, with the *decodable* runs
 /// lowercased when the filesystem is case-insensitive. Shared with the rule
 /// index ([`crate::eligibility::WatchRules`]), which must find a path exactly
-/// where this cache does.
+/// where the store does.
 ///
 /// Folding only what decodes is what keeps two names differing in an
 /// undecodable byte apart: lowercasing the lossy text would map both onto
@@ -151,58 +99,22 @@ pub fn normalize_name(name: &TreeName, case_insensitive: bool) -> Vec<u8> {
     }
 }
 
+/// The forest lookups of one repository: its case sensitivity, which decides
+/// how a typed name is matched. Holds nothing else (see the module doc).
+#[derive(Debug, Clone, Copy)]
 pub struct TreeCache {
-    arena: Vec<Option<Node>>,
-    free: Vec<usize>,
-    fields: HashMap<String, FieldTree>,
-    live: usize,
     case_insensitive: bool,
-    misses: u64,
 }
 
 impl TreeCache {
     pub fn new(case_insensitive: bool) -> Self {
-        Self {
-            arena: Vec::new(),
-            free: Vec::new(),
-            fields: HashMap::new(),
-            live: 0,
-            case_insensitive,
-            misses: 0,
-        }
-    }
-
-    /// Forgets what the last lookup brought in: nothing is kept between
-    /// lookups, so nothing grows and nothing goes stale.
-    fn scratch(&mut self) {
-        if self.live > 0 {
-            self.clear();
-        }
-    }
-
-    /// Number of cached nodes.
-    pub fn len(&self) -> usize {
-        self.live
-    }
-
-    pub fn is_empty(&self) -> bool {
-        self.len() == 0
-    }
-
-    /// Cumulative number of DB fallback lookups (for tests/diagnostics).
-    pub fn misses(&self) -> u64 {
-        self.misses
+        Self { case_insensitive }
     }
 
     /// Resolves a path string to a metarecord UUID. Path format: components
     /// joined by `/`; the first component is the root's own name (so
     /// filesystem paths start with `/` because the root is named `""`).
-    pub fn resolve_path(
-        &mut self,
-        store: &dyn Rows,
-        field: &str,
-        path: &str,
-    ) -> Result<Option<Uuid>> {
+    pub fn resolve_path(&self, store: &dyn Rows, field: &str, path: &str) -> Result<Option<Uuid>> {
         self.resolve_path_as(store, field, path, PathForm::Any)
     }
 
@@ -210,13 +122,12 @@ impl TreeCache {
     /// (spec-data-model "Tree names"). Naming a reading is what makes the
     /// lookup unambiguous when a path could designate two different files.
     pub fn resolve_path_as(
-        &mut self,
+        &self,
         store: &dyn Rows,
         field: &str,
         path: &str,
         form: PathForm,
     ) -> Result<Option<Uuid>> {
-        self.scratch();
         // A node's name is never empty — only the filesystem forest's root has
         // one, and it is always the first component. So an empty component
         // *after* the first can only come from a redundant slash, and dropping
@@ -229,50 +140,19 @@ impl TreeCache {
         comps.push(split[0]); // `split` always yields at least one component.
         comps.extend(split[1..].iter().copied().filter(|c| !c.is_empty()));
 
-        let roots: Vec<usize> = Self::readings(comps[0], form)
-            .iter()
-            .filter_map(|name| {
-                let norm = self.normalize(name);
-                self.fields.get(field).and_then(|ft| ft.roots.get(&norm)).copied()
-            })
-            .collect();
-        let mut cur = match Self::arbitrate(&roots, comps[0]) {
-            Resolved::Ambiguous => return Ok(None),
-            Resolved::Found(idx) => idx,
-            Resolved::Missing => {
-                self.misses += 1;
-                let Some((uuid, name)) = self.db_child(store, field, None, comps[0], form)? else {
-                    return Ok(None);
-                };
-                self.insert_node(field, None, &name, uuid)
+        let mut cur = None;
+        for comp in comps {
+            match self.child(store, field, cur, comp, form)? {
+                Some(uuid) => cur = Some(uuid),
+                None => return Ok(None),
             }
-        };
-
-        for comp in &comps[1..] {
-            cur = match self.pick(cur, comp, form) {
-                Resolved::Ambiguous => return Ok(None),
-                Resolved::Found(idx) => idx,
-                Resolved::Missing => {
-                    self.misses += 1;
-                    let parent_uuid = self.node(cur).uuid;
-                    let Some((uuid, name)) =
-                        self.db_child(store, field, Some(parent_uuid), comp, form)?
-                    else {
-                        return Ok(None);
-                    };
-                    self.insert_node_at(field, Some(cur), &name, uuid)
-                }
-            };
         }
-
-        let uuid = self.node(cur).uuid;
-        Ok(Some(uuid))
+        Ok(cur)
     }
 
     /// Reconstructs the path string of a metarecord by walking up its parents
     /// in the database.
-    pub fn path_of(&mut self, store: &dyn Rows, field: &str, uuid: Uuid) -> Result<Option<String>> {
-        self.misses += 1;
+    pub fn path_of(&self, store: &dyn Rows, field: &str, uuid: Uuid) -> Result<Option<String>> {
         let mut components = Vec::new();
         let mut cur = uuid;
         for _ in 0..MAX_TREE_DEPTH {
@@ -296,8 +176,7 @@ impl TreeCache {
     /// (spec-data-model "One position per forest"). Positions whose parent is
     /// not in the forest (stale) are skipped. The reverse of
     /// [`Self::resolve_path`].
-    pub fn paths_of(&mut self, store: &dyn Rows, field: &str, uuid: Uuid) -> Result<Vec<String>> {
-        self.misses += 1;
+    pub fn paths_of(&self, store: &dyn Rows, field: &str, uuid: Uuid) -> Result<Vec<String>> {
         let mut paths = Vec::new();
         for (parent, name) in store.positions(field, uuid)? {
             match parent {
@@ -434,8 +313,7 @@ impl TreeCache {
 
     /// Collects all descendants of a metarecord (excluding itself), walking the
     /// tree breadth-first from the database.
-    pub fn descendants(&mut self, store: &dyn Rows, field: &str, uuid: Uuid) -> Result<Vec<Uuid>> {
-        self.misses += 1;
+    pub fn descendants(&self, store: &dyn Rows, field: &str, uuid: Uuid) -> Result<Vec<Uuid>> {
         let mut result = Vec::new();
         let mut visited = HashSet::new();
         let mut frontier = vec![uuid];
@@ -457,38 +335,29 @@ impl TreeCache {
     /// a directory's tracked entries (names + metarecords) without a query and a
     /// per-record fetch of each child.
     pub fn children_of(
-        &mut self,
+        &self,
         store: &dyn Rows,
         field: &str,
         uuid: Uuid,
     ) -> Result<Vec<(String, Uuid)>> {
-        self.misses += 1;
         // `tree_children` yields `(child_uuid, name)`; expose `(name, child_uuid)`.
         Ok(store.children(field, uuid)?.into_iter().map(|(u, n)| (n, u)).collect())
     }
 
-    /// Drops every cached node.
-    pub fn clear(&mut self) {
-        self.arena.clear();
-        self.free.clear();
-        self.fields.clear();
-        self.live = 0;
-    }
-
     // ── Internals ────────────────────────────────────────────────────────────
 
-    /// Resolves one path component against the database, trying the same byte
-    /// readings [`Self::readings`] gives. Returns the name that matched, so the
-    /// node is cached under the name it really has rather than under what was
-    /// typed.
-    fn db_child(
+    /// The child of `parent` (a root when `None`) a typed component names,
+    /// trying the byte readings [`Self::readings`] gives. `None` when there is
+    /// none — or when the readings name two different children, which makes
+    /// the component designate neither.
+    fn child(
         &self,
         store: &dyn Rows,
         field: &str,
         parent: Option<Uuid>,
         comp: &str,
         form: PathForm,
-    ) -> Result<Option<(Uuid, TreeName)>> {
+    ) -> Result<Option<Uuid>> {
         let mut hits = Vec::new();
         for name in Self::readings(comp, form) {
             // By bytes, always: the text column now holds the *escaped* display,
@@ -498,41 +367,23 @@ impl TreeCache {
             let mut found = store.child_by_bytes(field, parent, name.as_bytes())?;
             if found.is_none() && self.case_insensitive {
                 // Only a case-insensitive filesystem needs the text compare, for
-                // its COLLATE NOCASE; it cannot distinguish the two readings,
+                // its case folding; it cannot distinguish the two readings,
                 // which is why it is the fallback rather than the rule.
                 found =
                     store.child_by_text(field, parent, &name.display(), self.case_insensitive)?;
             }
-            if let Some(uuid) = found {
-                hits.push((uuid, name));
-            }
+            hits.extend(found);
         }
         // Arbitrated on the uuid: one file reached by both readings is one
         // answer; two different files are none.
-        let uuids: Vec<Uuid> = hits.iter().map(|(uuid, _)| *uuid).collect();
-        let Resolved::Found(uuid) = Self::arbitrate(&uuids, comp) else {
-            return Ok(None);
-        };
-        Ok(hits.into_iter().find(|(candidate, _)| *candidate == uuid))
-    }
-
-    /// The cached child of `parent` a typed component names, or why there is
-    /// none — the two readings naming *different* children means the path
-    /// designates neither, and picking one would be a silent coin toss.
-    fn pick(&self, parent: usize, comp: &str, form: PathForm) -> Resolved<usize> {
-        let found: Vec<usize> = Self::readings(comp, form)
-            .iter()
-            .filter_map(|name| self.node(parent).children.get(&self.normalize(name)).copied())
-            .collect();
-        Self::arbitrate(&found, comp)
+        Ok(match Self::arbitrate(&hits, comp) {
+            Resolved::Found(uuid) => Some(uuid),
+            Resolved::Missing | Resolved::Ambiguous => None,
+        })
     }
 
     /// The one match, or why there is none. Both readings landing on the *same*
     /// node is not an ambiguity.
-    ///
-    /// Telling `Ambiguous` from `Missing` is the whole point: they were one
-    /// value once, and the database fallback then re-introduced the very guess
-    /// the in-memory side had just refused.
     fn arbitrate<T: Copy + PartialEq>(found: &[T], comp: &str) -> Resolved<T> {
         match found {
             [] => Resolved::Missing,
@@ -559,57 +410,28 @@ impl TreeCache {
     /// a file really named `caf%E9.mp4` answer for one named with the byte
     /// `0xE9`, and reconcile would then reuse the wrong metarecord.
     pub fn resolve_rel(
-        &mut self,
+        &self,
         store: &dyn Rows,
         field: &str,
         rel: &crate::relpath::RelPath,
     ) -> Result<Option<Uuid>> {
-        self.scratch();
-        let mut cur = match self.root_node(store, field)? {
-            Some(idx) => idx,
-            None => return Ok(None),
-        };
-        for name in rel.components() {
-            let norm = self.normalize(name);
-            cur = match self.node(cur).children.get(&norm).copied() {
-                Some(idx) => idx,
-                None => {
-                    self.misses += 1;
-                    let parent_uuid = self.node(cur).uuid;
-                    let found = if name.is_exact() {
-                        store.child_by_text(
-                            field,
-                            Some(parent_uuid),
-                            &name.display(),
-                            self.case_insensitive,
-                        )?
-                    } else {
-                        store.child_by_bytes(field, Some(parent_uuid), name.as_bytes())?
-                    };
-                    let Some(uuid) = found else {
-                        return Ok(None);
-                    };
-                    self.insert_node_at(field, Some(cur), name, uuid)
-                }
-            };
-        }
-        let uuid = self.node(cur).uuid;
-        Ok(Some(uuid))
-    }
-
-    /// The forest root of `field` (the empty-named node), cached or fetched.
-    fn root_node(&mut self, store: &dyn Rows, field: &str) -> Result<Option<usize>> {
-        let empty = TreeName::default();
-        let norm = self.normalize(&empty);
-        if let Some(idx) = self.fields.get(field).and_then(|ft| ft.roots.get(&norm)).copied() {
-            return Ok(Some(idx));
-        }
-        self.misses += 1;
-        let Some(uuid) = store.child_by_bytes(field, None, empty.as_bytes())? else {
+        // The forest root: the empty-named node.
+        let Some(mut cur) = store.child_by_bytes(field, None, TreeName::default().as_bytes())?
+        else {
             return Ok(None);
         };
-        let idx = self.insert_node(field, None, &empty, uuid);
-        Ok(Some(idx))
+        for name in rel.components() {
+            let found = if name.is_exact() {
+                store.child_by_text(field, Some(cur), &name.display(), self.case_insensitive)?
+            } else {
+                store.child_by_bytes(field, Some(cur), name.as_bytes())?
+            };
+            match found {
+                Some(uuid) => cur = uuid,
+                None => return Ok(None),
+            }
+        }
+        Ok(Some(cur))
     }
 
     /// The byte readings a typed path component can have: what the user typed,
@@ -636,155 +458,10 @@ impl TreeCache {
         }
     }
 
-    /// The map key for a name (see [`normalize_name`]).
-    fn normalize(&self, name: &TreeName) -> Vec<u8> {
-        normalize_name(name, self.case_insensitive)
-    }
-
     /// Whether names are compared case-insensitively (the filesystem's own
     /// behaviour, probed at load).
     pub fn is_case_insensitive(&self) -> bool {
         self.case_insensitive
-    }
-
-    fn node(&self, idx: usize) -> &Node {
-        self.arena[idx].as_ref().expect("dangling tree cache index")
-    }
-
-    fn node_mut(&mut self, idx: usize) -> &mut Node {
-        self.arena[idx].as_mut().expect("dangling tree cache index")
-    }
-
-    fn first_node_of(&self, field: &str, uuid: Uuid) -> Option<usize> {
-        self.fields.get(field)?.by_uuid.get(&uuid)?.first().copied()
-    }
-
-    /// Creates a node for one position, registered by uuid and linked nowhere.
-    /// Every way of putting a position into the forest goes through this and
-    /// then [`Self::link`] — the load included — so there is one description of
-    /// what a position becomes.
-    fn insert_bare(&mut self, field: &str, name: &TreeName, uuid: Uuid) -> usize {
-        let node =
-            Node { name: name.clone(), uuid, place: Placement::Unlinked, children: HashMap::new() };
-        let idx = match self.free.pop() {
-            Some(slot) => {
-                self.arena[slot] = Some(node);
-                slot
-            }
-            None => {
-                self.arena.push(Some(node));
-                self.arena.len() - 1
-            }
-        };
-        self.live += 1;
-        self.fields.entry(field.to_string()).or_default().push_node(uuid, idx);
-        idx
-    }
-
-    /// Links `idx` where its position says: under `parent`'s first node, or in
-    /// the roots map when it has no parent. When the parent metarecord holds no
-    /// position yet there is nothing to link to, and the node *waits* for it —
-    /// resident, findable by uuid, in no path, which is exactly where a fresh
-    /// load leaves it.
-    ///
-    /// The node must be unlinked (fresh, or [`Self::detach`]ed) when this is
-    /// called.
-    fn link(&mut self, field: &str, idx: usize, parent: Option<Uuid>) {
-        match parent {
-            None => self.link_at(field, idx, None),
-            Some(p) => match self.first_node_of(field, p) {
-                Some(pi) => self.link_at(field, idx, Some(pi)),
-                None => {
-                    self.node_mut(idx).place = Placement::Waiting(p);
-                    self.fields
-                        .entry(field.to_string())
-                        .or_default()
-                        .waiting
-                        .entry(p)
-                        .or_default()
-                        .push(idx);
-                }
-            },
-        }
-    }
-
-    /// [`Self::link`] to a node already in hand — the lazy DB fallback walks
-    /// down from a *node*, and a multi-position parent would not resolve back
-    /// to the one it descended through.
-    fn link_at(&mut self, field: &str, idx: usize, parent_idx: Option<usize>) {
-        let norm = self.normalize(&self.node(idx).name.clone());
-        self.node_mut(idx).place = match parent_idx {
-            Some(pi) => Placement::Under(pi),
-            None => Placement::Root,
-        };
-        match parent_idx {
-            Some(pi) => {
-                let prev = self.node_mut(pi).children.insert(norm, idx);
-                debug_assert!(
-                    prev.is_none_or(|p| p == idx),
-                    "two distinct children share a normalized name under one parent"
-                );
-            }
-            None => {
-                let prev =
-                    self.fields.entry(field.to_string()).or_default().roots.insert(norm, idx);
-                debug_assert!(
-                    prev.is_none_or(|p| p == idx),
-                    "two distinct roots share a normalized name"
-                );
-            }
-        }
-    }
-
-    /// Links everything that was waiting for `uuid`, now that it has a node.
-    ///
-    /// No recursion: a node that waits is still the root of its own resident
-    /// subtree — its children found *it* and hung from it — so linking it
-    /// brings the whole subtree along.
-    fn adopt(&mut self, field: &str, uuid: Uuid) {
-        let Some(waiting) = self.fields.get_mut(field).and_then(|ft| ft.waiting.remove(&uuid))
-        else {
-            return;
-        };
-        for idx in waiting {
-            // The node may have been freed, or re-placed elsewhere, since it
-            // was listed: only one that is still waiting for *this* uuid moves.
-            if self.arena.get(idx).is_none_or(Option::is_none) {
-                continue;
-            }
-            if self.node(idx).place != Placement::Waiting(uuid) {
-                continue;
-            }
-            self.link(field, idx, Some(uuid));
-        }
-    }
-
-    /// Creates a position and links it in one go.
-    fn insert_node(
-        &mut self,
-        field: &str,
-        parent: Option<Uuid>,
-        name: &TreeName,
-        uuid: Uuid,
-    ) -> usize {
-        let idx = self.insert_bare(field, name, uuid);
-        self.link(field, idx, parent);
-        self.adopt(field, uuid);
-        idx
-    }
-
-    /// [`Self::insert_node`] under a node already in hand.
-    fn insert_node_at(
-        &mut self,
-        field: &str,
-        parent_idx: Option<usize>,
-        name: &TreeName,
-        uuid: Uuid,
-    ) -> usize {
-        let idx = self.insert_bare(field, name, uuid);
-        self.link_at(field, idx, parent_idx);
-        self.adopt(field, uuid);
-        idx
     }
 }
 

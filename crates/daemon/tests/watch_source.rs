@@ -110,7 +110,7 @@ fn write_file(root: &Path, rel: &str, content: &[u8]) {
 /// for one.
 fn resolve(repo: &RepoState, path: &str) -> Option<Uuid> {
     let conn = repo.conn.lock().unwrap();
-    let mut cache = repo.cache.lock().unwrap();
+    let cache = repo.tree();
     cache.resolve_path(&conn, "mfr_path", path).unwrap()
 }
 
@@ -135,7 +135,7 @@ fn settle() {
 /// one bit of watch vocabulary both regimes honour.
 fn mark_exceeded(repo: &RepoState, rel: &str) {
     let mut conn = repo.conn.lock().unwrap();
-    let mut cache = repo.cache.lock().unwrap();
+    let cache = repo.tree();
     let parent_rel = rel.rsplit_once('/').map(|(p, _)| p).unwrap_or("");
     let parent =
         cache.resolve_path(&conn, "mfr_path", parent_rel).unwrap().expect("parent tracked");
@@ -152,7 +152,6 @@ fn mark_exceeded(repo: &RepoState, rel: &str) {
         .unwrap();
     w.set_field(created.uuid, "mfr_watch_exceeded", Value::Bool(true)).unwrap();
     w.commit().unwrap();
-    cache.clear();
 }
 
 /// A wire path under the repository root, as the broker would send it.
