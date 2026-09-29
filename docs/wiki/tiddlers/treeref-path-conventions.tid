@@ -1,0 +1,31 @@
+title: TreeRef path conventions
+tags: [[TreeRef forest]]
+kind: reference
+summary: The filesystem forest's root is named "" so its paths start with /; a named root's paths do not. Never prepend a / to a resolved path.
+
+A path is the names from a root down to a node, joined by `/`, with no trailing `/`.
+Whether it starts with `/` depends on the root's own name:
+
+|!Forest |!Node |!Path |
+|filesystem (`mfr_path`; root named `""`, no parent) |the root |`""` |
+|filesystem |`projects` under the root |`/projects` |
+|filesystem |`rust` under that |`/projects/rust` |
+|tags (`path`; root named `music`) |the root |`music` |
+|tags |`jazz` under it |`music/jazz` |
+
+The filesystem root's name is empty, so every filesystem path naturally starts with
+`/`; a forest whose roots have names (tags) has no leading `/`. Several roots may
+share a forest. Siblings are unique, so the filesystem root — the node named `""`
+with no parent — is unique too.
+
+When a path is ''resolved to a node'' (a query's `->` / `->*` / `=` target,
+`tree/resolve-path`), an empty component after the first can only come from a
+redundant slash and is dropped: `"/"` names the filesystem root (whose canonical path
+is `""`), and `/music/` or `/music//jazz` name the same nodes as their canonical
+spellings. So a UI may show and send the root as `/`.
+
+Pitfalls, each met more than once:
+
+* ''Never prepend a `/` to a path the daemon resolved.'' It doubles the slash on `mfr_path` (`//projects`) and wrongly slashes a named root (`/music`). The GUI's `treeRefPath()` (`panel-types/treeref/queries.js`) and the scripts' `mf_gui_query_path()` (`lib/mf-gui.sh`) are the helpers.
+* ''Test the root and a named forest.'' Code that handles `/projects` right is where the root (`""`) and a tag root (`music`) break.
+* `mf path --relative` prints the root as `/`.

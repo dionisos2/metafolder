@@ -7,7 +7,7 @@ summary: Each tree_ref node keeps the bitmap of its descendants and of its child
 For every `tree_ref` field, each node with children keeps the bitmap of ''all'' its
 descendants, and each target the bitmap of the ids pointing at it (a folder's
 children, a `ref`'s referrers). A node holds one position per forest
-(spec-data-model "One position per forest"), which is what makes this set
+([[One position per forest]]), which is what makes this set
 arithmetic:
 
 * ''a node is created'' under a parent: its id joins each ancestor's bitmap — about depth chunk writes;

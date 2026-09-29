@@ -262,7 +262,7 @@ async fn test_start_step_undoes_last_revision() {
 }
 
 /// A navigation step settles the tree cache against the cells it rewrote
-/// (spec-file-tracking "Upkeep after a write"), instead of rebuilding the whole
+/// (doc "The tree cache"), instead of rebuilding the whole
 /// forest once per operation. The forest it leaves must be the one a rebuild
 /// would have left: undoing a rename puts the node back under its old name,
 /// undoing a move puts it back under its old parent.
@@ -327,8 +327,8 @@ async fn test_navigation_step_settles_the_tree_cache() {
 /// produce: one revision deletes a whole subtree, so undoing it restores a
 /// child before the step that restores its parent. The cache cannot settle that
 /// in place — the child would stay detached and the subtree would read as
-/// untracked — so the step rebuilds instead (spec-file-tracking "Upkeep after a
-/// write"). What must hold, either way, is that the forest is whole at the end.
+/// untracked — so the step rebuilds instead (doc "The tree cache"). What must hold, either way, is
+/// that the forest is whole at the end.
 #[tokio::test]
 async fn test_navigation_restores_a_subtree_deleted_in_one_revision() {
     let (app, repo, _root) = setup("treesubtree").await;

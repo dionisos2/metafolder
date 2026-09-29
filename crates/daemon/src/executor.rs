@@ -877,7 +877,7 @@ impl Apply<'_, '_> {
                 ingested += 1;
                 (self.report)(FlushProgress::Scanning { dir: rel, ingested });
                 // A POSIX name is a byte string; such a file is ingested like
-                // any other (spec-data-model "Tree names").
+                // any other (doc "Tree names").
                 let child = dir.child(TreeName::from_bytes(crate::relpath::file_name_bytes(
                     &entry.file_name(),
                 )));

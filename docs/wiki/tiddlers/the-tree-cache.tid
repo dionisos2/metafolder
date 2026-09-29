@@ -1,0 +1,20 @@
+title: The tree cache
+tags: [[TreeRef forest]]
+kind: reference
+audience: dev
+summary: TreeCache answers the forest's questions from the store; despite its name it caches nothing — only the repository's case sensitivity.
+
+`crates/daemon/src/tree_cache.rs` answers the forest's questions — a path to a node
+and back (`resolve_path`, `path_of`, `paths_of`), a node's children and descendants,
+path matches, path sort keys (`SortKeys`) — from the store, whose forest key space is
+keyed by parent and name ([[The forest in the store]]). A `TreeCache` holds nothing
+but the repository's case sensitivity: it is `Copy`, handed out by
+`RepoState::tree()`, needs no lock, and has no upkeep — a write updates the store's
+forest and descendant bitmaps in its own transaction, and there is nothing else to
+keep in step.
+
+What a question costs: a path of depth `d`, `d` keyed reads; a folder's children, one
+prefix read; a subtree, one read of its descendant bitmap. Nothing is resident, so
+nothing needs a budget.
+
+The name is historical: [[Why the tree cache holds nothing]].

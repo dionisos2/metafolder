@@ -1,0 +1,33 @@
+title: One position per forest
+tags: [[TreeRef forest]]
+kind: reference
+summary: A metarecord holds at most one tree_ref row per field name, so every node has one path and a subtree hangs from one place.
+
+A metarecord holds ''at most one position'' in a forest: at most one `tree_ref` row
+per field name (`nothing` rows beside it are not positions). Every node therefore
+has exactly one path, and a subtree hangs from one place. Any write that would give
+a metarecord two is refused with `400` — a creation or whole-record overwrite
+listing two, a multi-valued set, an append of a second one, a by-id edit or rename
+turning another row into one:
+
+```
+metarecord 3f2a… would hold two positions in the 'path' forest: a metarecord has one position per forest (set the field to move it)
+```
+
+Moving a node is a `set` of its one position. A retype to `tree_ref` keeps the first
+row of a metarecord that converts to a position and demotes the others to `nothing`,
+reporting the metarecord like any value that fell back ([[Changing a field's type]]).
+`mfr_path` is stricter still: a metarecord holds at most one `mfr_path` row of any
+kind, `nothing` included — a file tracks one path.
+
+The multi-map stays the rule for every other type. A file under several names (hard
+links) is several metarecords, one per path, related by `mfr_inode`
+([[What counts as a duplicate]]); a tag at several places of a hierarchy is a `ref`
+from each place, not one node at several positions.
+
+''Why'': a node at several positions has several paths but one set of children,
+which then hang under one of them — an order no one sees, and one that moves the
+whole subtree, unlogged, when that position goes. It was allowed until September
+2026 and never used; with it went all the machinery that picked a "first position".
+`mf repo check` names the metarecords an older daemon let hold several
+([[Checking and reindexing a repository]]).

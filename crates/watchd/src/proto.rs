@@ -9,7 +9,7 @@
 //!
 //! Paths are also **byte strings** ([`WirePath`]): a POSIX name need not be
 //! UTF-8, and a file with a Latin-1 name is watched like any other
-//! (spec-data-model "Tree names").
+//! (doc "Tree names").
 
 use std::ffi::OsStr;
 use std::os::unix::ffi::OsStrExt;
@@ -20,7 +20,7 @@ use serde::{de::DeserializeOwned, Deserialize, Deserializer, Serialize, Serializ
 /// An absolute path on the wire, exact to the byte. A path that is valid UTF-8
 /// (the overwhelmingly common case) is a plain JSON string; only one that no
 /// text can represent takes the object form `{"text", "bytes"}` — the wire form
-/// of a tree name on the daemon's own API (spec-data-model "Tree names"):
+/// of a tree name on the daemon's own API (doc "Tree names"):
 /// `bytes` (lowercase hex) is authoritative, `text` is for readers that only
 /// display.
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
@@ -288,7 +288,7 @@ mod tests {
 
     #[test]
     fn test_a_non_utf8_path_crosses_the_wire_byte_for_byte() {
-        // Paths are byte strings (spec-data-model "Tree names"): a file with a
+        // Paths are byte strings (doc "Tree names"): a file with a
         // Latin-1 name is watched like any other, not dropped.
         round_trip(&ServerMsg::Event { event: Event::Create { path: latin1() } });
         round_trip(&ServerMsg::Event {

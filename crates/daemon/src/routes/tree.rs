@@ -93,7 +93,7 @@ pub(super) struct ResolvePathBody {
     /// whose first component is the empty root name), no leading `/` for a
     /// named-root forest such as tags (e.g. `tag1/tag2`).
     path: String,
-    /// Which reading of the path to resolve (spec-data-model "Tree names"):
+    /// Which reading of the path to resolve (doc "Tree names"):
     /// `verbatim` for the characters as written, `escaped` for the bytes a
     /// `%XX` stands for. Absent = both, which resolves to nothing when they
     /// name different files rather than picking one.

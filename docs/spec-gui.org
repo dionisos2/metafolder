@@ -2192,8 +2192,7 @@ Direct filesystem access via the GUI backend (Tauri/Rust). Available to all
 panel types; not routed through the daemon.
 
 *Paths are handles.* The frontend speaks JSON, so every path it holds is text —
-but a POSIX path is a byte string that need not be UTF-8 (see [[file:spec-data-model.org][spec-data-model]]
-"Tree names"). Every path crossing this boundary is therefore in the same
+but a POSIX path is a byte string that need not be UTF-8 (see doc "Tree names"). Every path crossing this boundary is therefore in the same
 =%XX= escaped form the rest of metafolder shows: itself when the path is text,
 =/dir/caf%E9.mp4= when it holds a byte no text can represent. A panel slices and
 joins it like the plain path it usually is, and hands it back unchanged — to an

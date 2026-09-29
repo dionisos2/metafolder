@@ -170,8 +170,7 @@ Note the deliberate reuse of =IS ABSENT=: on a bare field it means "the field
 exists with the value =Nothing=", and under the =parent= aspect it means "the
 component read by the aspect is absent" — the same reading applied one level
 down. =field:parent IS PRESENT= is its complement among the nodes (every node
-under a real parent: a node has one position, spec-data-model "One position
-per forest"). And =field:parent = <path>= is the same set as
+under a real parent: a node has one position, doc "One position per forest"). And =field:parent = <path>= is the same set as
 =field -> "<path>"=, spelled as a comparison rather than as an arrow.
 =field:parent != <path>= is its mirror among the nodes — every node under
 *another* parent, a root included, and every node when the path resolves to
@@ -499,8 +498,7 @@ Deletes every matching metarecord (metadata and all fields) in one transaction
 select-then-delete TOCTOU. =mfr_*= fields are never written.
 Body ={"query": <Query>}= → ={"deleted": <count>}=. A match set holding the
 repository root metarecord is refused with =400= and deletes nothing at all
-([[file:spec-data-model.org][spec-data-model.org]] "Referential integrity of a
-forest").
+(doc "Referential integrity of a forest").
 
 **** =POST /repos/:repo_uuid/query/fields/set=
 
@@ -542,7 +540,7 @@ Resolves a =TreeRef= field to its root-relative path(s) for every match — the
 set form of the direct =GET …/fields/:name/resolve-tree= ([[file:spec-data-model.org][spec-data-model.org]]).
 A read/projection (not a write), but set-scoped, so it lives here. Body
 ={"query": <Query>, "field": "mfr_path"}= (=field= defaults to =mfr_path=) →
-={"<uuid>": ["<path>", ...], ...}= (paths follow the [[file:spec-file-tracking.org][Path string format]]:
+={"<uuid>": ["<path>", ...], ...}= (paths follow doc "TreeRef path conventions":
 leading-=/=-rooted for the filesystem forest, no leading =/= for a named-root
 forest such as tags — so a path round-trips straight into =resolve-path= and the
 DSL =->= / =->*= / =-= path operators; a metarecord absent from the result

@@ -770,7 +770,7 @@ fn parse_sort(specs: &[String]) -> Result<Json, CliError> {
 /// completion list needs; a script that has to *act* on the records needs to
 /// know which record a path belongs to, and without this would fall back to one
 /// `mf path` call per record. A metarecord holding several positions (an older
-/// repository, spec-data-model "One position per forest") gets one row per
+/// repository, doc "One position per forest") gets one row per
 /// path; rows are sorted by path, so both forms list in the same order.
 fn resolve_tree_paths(ctx: &Ctx, selector: &str, field: &str, tsv: bool) -> Result<i32, CliError> {
     let base = ctx.repo_base()?;

@@ -371,8 +371,7 @@ it stays O(n log n). The cursor resumes at the node of its uuid whose key it
 carries. When the query bounds its matches to a subtree — a path-target
 =follows= or strict =follows_transitive= on the sorted field, alone or under an
 =and= — the walk starts below that node instead of at the roots: every match
-has its one position, so its one sort key, below it (spec-data-model "One
-position per forest").
+has its one position, so its one sort key, below it (doc "One position per forest").
 
 *A page without a count checks text where the walk looks.* A =Matches= on the
 =value= aspect or an =osm direct= on a =tree_ref= field — alone, or among the
@@ -690,8 +689,7 @@ forest roots are one hash lookup where SQL scans every row of the field, and
 (the caller resolves the path into =NodeRoots=, as above). =IS PRESENT= is the
 union of the other buckets — O(rows), but so is its answer, which is "every
 non-root node". SQL reads =value_uuid != x'00…'= row by row, and the index
-the same way: with one position per node (spec-data-model "One position per
-forest") that is the complement of the roots among the nodes. =Neq= is the same union with the
+the same way: with one position per node (doc "One position per forest") that is the complement of the roots among the nodes. =Neq= is the same union with the
 resolved node excluded instead of the sentinel (and nothing excluded when the
 path is no node, which is a =NOT (0)= predicate). The shapes the index does not
 serve under =parent= are the ones that are *rejected*, upfront by

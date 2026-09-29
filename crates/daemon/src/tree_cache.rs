@@ -1,4 +1,4 @@
-//! The forest's questions (spec-file-tracking "Tree Cache"): path strings to
+//! The forest's questions (doc "The tree cache"): path strings to
 //! metarecords and back, children, descendants, path matches and path sort
 //! keys, answered from the store (doc "The forest in the store"). One per
 //! repository, shared across all TreeRef field names (the field name is the
@@ -45,7 +45,7 @@ enum Resolved<T> {
     Ambiguous,
 }
 
-/// Which reading of a typed path to resolve (spec-data-model "Tree names").
+/// Which reading of a typed path to resolve (doc "Tree names").
 ///
 /// A component can name two different files at once — one whose name really is
 /// `%E9.txt`, one whose name is the byte `0xE9` — so a lookup that must yield a
@@ -119,7 +119,7 @@ impl TreeCache {
     }
 
     /// [`Self::resolve_path`] restricted to one reading of the typed text
-    /// (spec-data-model "Tree names"). Naming a reading is what makes the
+    /// (doc "Tree names"). Naming a reading is what makes the
     /// lookup unambiguous when a path could designate two different files.
     pub fn resolve_path_as(
         &self,
@@ -173,7 +173,7 @@ impl TreeCache {
 
     /// All filesystem-style paths of a metarecord in `field`'s forest, one per
     /// position — one, save in a repository an older daemon let hold more
-    /// (spec-data-model "One position per forest"). Positions whose parent is
+    /// (doc "One position per forest"). Positions whose parent is
     /// not in the forest (stale) are skipped. The reverse of
     /// [`Self::resolve_path`].
     pub fn paths_of(&self, store: &dyn Rows, field: &str, uuid: Uuid) -> Result<Vec<String>> {
@@ -436,7 +436,7 @@ impl TreeCache {
 
     /// The byte readings a typed path component can have: what the user typed,
     /// verbatim, and — when it spells the escaped form — the bytes that form
-    /// decodes to (spec-data-model "Tree names").
+    /// decodes to (doc "Tree names").
     ///
     /// Both are searched and the results added, because neither reading is
     /// wrong: `%E9.txt` is how an undecodable byte is shown *and* a perfectly

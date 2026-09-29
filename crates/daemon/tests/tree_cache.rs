@@ -1,4 +1,4 @@
-//! Integration tests for the forest lookups (spec-file-tracking "Tree Cache"):
+//! Integration tests for the forest lookups (doc "The tree cache"):
 //! path resolution from the store, mutations, descendant collection, case
 //! sensitivity, look-alike names.
 
@@ -206,7 +206,7 @@ fn test_case_insensitive_resolution() {
     assert_eq!(insensitive.resolve_path(&conn, "mfr_path", "/MUSIC").unwrap(), Some(music));
 }
 
-// ── Undecodable names (spec-data-model "Tree names") ─────────────────────────
+// ── Undecodable names (doc "Tree names") ─────────────────────────
 
 /// Creates a tree entry whose name is given as exact bytes.
 fn tree_entry_bytes(conn: &mut KvStore, field: &str, parent: Option<Uuid>, name: &[u8]) -> Uuid {
@@ -313,7 +313,7 @@ fn test_a_path_with_no_escape_is_untouched_by_any_of_this() {
     assert_eq!(cache.resolve_path(&conn, "mfr_path", "/100%.txt").unwrap(), Some(plain));
 }
 
-// ── Choosing a reading (spec-data-model "Tree names") ────────────────────────
+// ── Choosing a reading (doc "Tree names") ────────────────────────
 
 /// A directory holding both a file *really* named "caf%E9.mp4" and one whose
 /// name is the byte 0xE9 — the only pair that still displays alike.

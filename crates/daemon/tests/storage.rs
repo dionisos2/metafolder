@@ -271,8 +271,8 @@ fn test_mfr_path_is_single_valued() {
     );
 
     // Appending a second mfr_path is rejected — a metarecord tracks one path
-    // (the Writer's rule for every forest, spec-data-model "One position per
-    // forest"; the storage layer holds `mfr_path` to it on its own too).
+    // (the Writer's rule for every forest, doc "One position per forest"; the storage layer holds
+    // `mfr_path` to it on its own too).
     let mut w = Writer::begin(&mut conn, None).unwrap();
     let err = w
         .append_field(
@@ -651,7 +651,7 @@ fn test_tree_ref_parent_must_have_same_tree_field() {
     assert!(err.to_string().contains("parent"), "unexpected error: {err}");
 }
 
-// ── Undecodable names (spec-data-model "Tree names") ─────────────────────────
+// ── Undecodable names (doc "Tree names") ─────────────────────────
 
 /// Reads back the tree name stored for `uuid`'s `mfr_path`.
 fn tree_name(conn: &KvStore, uuid: Uuid) -> TreeName {

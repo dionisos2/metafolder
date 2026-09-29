@@ -40,7 +40,7 @@ const DEFAULT_DPI: u32 = 150;
 
 pub async fn page(State(state): State<ServerState>, Query(params): Query<PageParams>) -> Response {
     // The panels hand back the escaped handle they were given, so the exact
-    // bytes come back here (spec-data-model "Tree names").
+    // bytes come back here (doc "Tree names").
     let path = crate::fs_path::from_handle(&params.path);
     if !documents::is_document(&path) {
         return StatusCode::UNSUPPORTED_MEDIA_TYPE.into_response();

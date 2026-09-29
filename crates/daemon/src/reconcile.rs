@@ -634,7 +634,7 @@ fn walk(
             for entry in entries {
                 let entry = entry?;
                 // A POSIX name is a byte string, and the daemon tracks such a
-                // file like any other (spec-data-model "Tree names").
+                // file like any other (doc "Tree names").
                 let name = TreeName::from_bytes(file_name_bytes(&entry.file_name()));
                 if entry.path() == internal_dir {
                     continue;

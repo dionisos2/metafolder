@@ -89,16 +89,15 @@ pub mod iso_ms {
 /// names, and the software must track them like any other file, so the name
 /// cannot simply be a `String`.
 ///
-/// The split is deliberate (spec-data-model "Tree names"):
+/// The split is deliberate (doc "Tree names"):
 /// - the **bytes are the identity**: equality, ordering, hashing and the
 ///   database's forest uniqueness all go through them, so two files whose names
 ///   differ only in undecodable bytes are two different nodes;
-/// - the **text is presentation only**: `display()` is the name as every file
-///   manager shows it, undecodable bytes replaced by U+FFFD. No escape syntax
-///   is ever shown or typed — the user sees the file's name, not an encoding
-///   of it. The cost of that choice is that a lookup by displayed path is no
-///   longer guaranteed unique; callers resolving one must handle ambiguity
-///   rather than pick a winner.
+/// - the **text is presentation only**: `display()` shows a name that is text
+///   exactly as it is and each undecodable byte as `%XX`. The cost of that
+///   choice is that a lookup by displayed path is no longer guaranteed unique
+///   (a file really named `caf%E9.mp4` shows like `caf\xE9.mp4`); callers
+///   resolving one must handle ambiguity rather than pick a winner.
 ///
 /// It is impossible to have both "every valid UTF-8 name is stored unchanged"
 /// and "the text form is injective": if all valid text maps to itself, the text
@@ -129,7 +128,7 @@ impl TreeName {
     ///
     /// [`escaped_to_bytes`] is the inverse. The pair is not a bijection (a file
     /// really named `caf%E9.mp4` shows the same thing), which is why a lookup
-    /// searches both readings; see spec-data-model "Tree names".
+    /// searches both readings; see doc "Tree names".
     ///
     /// Borrowed when the name is text already, so the common case allocates
     /// nothing.

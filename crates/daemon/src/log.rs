@@ -1189,7 +1189,7 @@ impl<'c> Writer<'c> {
     /// new set) — the whole-record analogue of create/delete. Literal overwrite:
     /// every old row is dropped, including reserved ones not in `fields`.
     pub fn set_record(&mut self, uuid: Uuid, fields: Vec<Field>) -> Result<MetaRecord> {
-        let fields = collapse_duplicate_fields(fields); // spec-data-model "No duplicate rows"
+        let fields = collapse_duplicate_fields(fields); // doc "No duplicate rows"
         validate_one_position_each(uuid, fields.iter().map(|f| (f.name.as_str(), &f.value)))?;
         let version_before = self.current_version(uuid)?; // errors NotFound if absent
         let before = self.tx.rows(uuid)?;
@@ -1677,8 +1677,8 @@ impl<'c> Writer<'c> {
         .into()
     }
 
-    /// A metarecord holds at most one position in a forest (spec-data-model
-    /// "One position per forest"): a `tree_ref` value joins `uuid`'s rows of
+    /// A metarecord holds at most one position in a forest (doc "One position per forest"):
+    /// a `tree_ref` value joins `uuid`'s rows of
     /// `name` only if no row staying beside it — every one but `replaced` — is
     /// a position already, other than this very value (an append of it is a
     /// no-op).

@@ -1,7 +1,7 @@
 //! Carrying a filesystem path across the Tauri boundary.
 //!
 //! The frontend speaks JSON, so every path it holds is a *string* — but a POSIX
-//! path is a byte string that need not be UTF-8 (spec-data-model "Tree names").
+//! path is a byte string that need not be UTF-8 (doc "Tree names").
 //! Converting it lossily, as this used to, produced a path that names nothing:
 //! the row appeared in the file manager and every action on it failed, because
 //! `caf<?>.mp4` is three bytes where the disk has one.

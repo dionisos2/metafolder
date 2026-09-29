@@ -27,7 +27,7 @@ pub struct Params {
 
 pub async fn serve(State(state): State<ServerState>, Query(params): Query<Params>) -> Response {
     // The panels hand back the escaped handle they were given, so the exact
-    // bytes come back here (spec-data-model "Tree names").
+    // bytes come back here (doc "Tree names").
     let path = crate::fs_path::from_handle(&params.path);
 
     // Resolve the file's repository (its cache directory). A file outside any

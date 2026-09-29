@@ -1,0 +1,31 @@
+title: Tree endpoints
+tags: [[TreeRef forest]]
+kind: reference
+audience: dev
+summary: Walking a forest top-down (roots, children), and turning paths into nodes and back.
+
+|!Route |!Does |
+|`GET /repos/:repo/tree/roots[?field=<f>]` |the roots of a forest (default `mfr_path`): `[{"uuid", "name"}, …]` by name |
+|`GET /repos/:repo/tree/children?field=<f>&uuid=<hex>` |the direct children of one node, same shape, by name |
+|`POST /repos/:repo/tree/resolve-path` |`{"field"?, "path", "form"?}` → `{"uuid": <hex> or null}` |
+|`GET /repos/:repo/metarecords/:uuid/fields/:name/resolve-tree` |one metarecord's path in that forest: `{"paths": […]}` |
+|`POST /repos/:repo/query/fields/resolve-tree` |`{"query", "field"?}` → `{"<uuid>": ["<path>"], …}` for every match |
+
+''Roots'' are the entry point a query cannot express: the tag hierarchy's top-level
+nodes are reachable only from here. A tree walker then descends with ''children'':
+one prefix read of the store's forest per node — a query could say the same
+(`field:parent = "<path>"`), but it resolves a path and returns uuids to assemble,
+where a walker already holds the parent's uuid and wants the names it descends by.
+The file-manager's tracked listing is one call per directory opened.
+
+''resolve-path'' is the inverse of ''resolve-tree'': a path
+([[TreeRef path conventions]]) to the uuid of its node, or `null` for none. It is how
+a client ''sets'' a `tree_ref` from a path: resolve the parent path, then write
+`(parent, name)`. Siblings are unique, so at most one node matches — per reading of an
+escaped name; `form` (`verbatim` or `escaped`) says which is meant, and without it an
+ambiguous path answers `null` ([[Tree names]]).
+
+''resolve-tree'' answers an empty list for a metarecord without a position, or whose
+chain is broken. Its set form resolves every match of a query in one request —
+`mf path` and `mf metarecord get --resolve-tree` use it, so no client re-walks a chain
+itself.

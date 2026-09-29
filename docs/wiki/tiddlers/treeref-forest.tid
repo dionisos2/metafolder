@@ -1,0 +1,35 @@
+title: TreeRef forest
+tags: [[Data model]]
+kind: overview
+aliases: tree forest treeref
+summary: tree_ref fields place metarecords in trees — one forest per field name, no cycle, at most 1000 deep, one position per metarecord.
+
+A `tree_ref` value places its metarecord in a tree: it names a ''parent'' (or none,
+for a root) and the metarecord's ''name'' under it ([[Value types]]). All the
+`tree_ref` rows of one field name form a ''forest'' — several roots allowed — and
+different field names are independent forests: `mfr_path` is the filesystem, the
+tag hierarchy is `path` on the tag entries, a collection could be another.
+
+A forest is held to four rules on every write, each refused with `400`:
+
+* ''no cycle'' — a node is never its own ancestor (`TreeRef write would create a cycle on 'path'`);
+* ''at most 1000 levels'' (`TreeRef depth exceeds 1000`);
+* ''unique siblings'' — one node per (parent, name) (`tree position already occupied for field 'path'`), so a path names one node;
+* ''one position per metarecord'' ([[One position per forest]]), and a parent that exists in ''this'' forest, never taken away from under its children ([[Referential integrity of a forest]]).
+
+Renaming a node changes its name; moving it changes its parent — both a `set` of its
+one position, whatever the size of the subtree below it
+([[The forest in the store]]).
+
+A node's path is the names from its root down, joined by `/`
+([[TreeRef path conventions]]); names are byte strings, shown as text
+([[Tree names]]). Queries follow a forest with `->` and `->*`, and read a position's
+parts with the `:parent`, `:path` aspects (spec-query "Field aspects").
+
+!! Reference
+
+<<list-kind reference>>
+
+!! Why it works this way
+
+<<list-kind rationale>>

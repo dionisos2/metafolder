@@ -196,8 +196,8 @@ fn test_create_event_creates_record_with_stat_fields() {
 #[test]
 fn test_a_created_file_whose_name_is_not_utf8_is_tracked_live() {
     // The watcher used to skip such an event, leaving the file untracked until
-    // the next reconcile. It is ingested like any other (spec-data-model
-    // "Tree names"), and the metarecord carries the exact bytes.
+    // the next reconcile. It is ingested like any other (doc "Tree names"),
+    // and the metarecord carries the exact bytes.
     use metafolder_core::metarecord::TreeName;
     use metafolder_daemon::relpath::RelPath;
     use std::os::unix::ffi::OsStrExt;

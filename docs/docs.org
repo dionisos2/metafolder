@@ -256,21 +256,28 @@ type per field name », « No duplicate rows », « Reserved fields », « Stora
 « HTTP API » (sauf les routes d'arbre), =mf retype=, =mf metarecord=, =mf field=,
 « Log granularity ».
 
-** TODO 9. Forêts TreeRef
+** FAIT 9. Forêts TreeRef
 
 (sous Data model)
-- [ ] =TreeRef forest= — overview (une forêt par nom de champ, pas de cycle, profondeur ≤ 1000)
-- [ ] =Tree names= — reference
-- [ ] =One position per forest= — reference
-- [ ] =Referential integrity of a forest= — reference
-- [ ] =TreeRef path conventions= — reference (racine =""= et descendants =/x= ; racine nommée des tags)
-- [ ] =Tree endpoints= — reference, dev (=tree/roots=, =tree/children=, =tree/resolve-path=, =resolve-tree=)
-- [ ] =The tree cache= — reference, dev (répond depuis le stockage, ne cache rien)
+- [X] =TreeRef forest= — overview (les quatre règles, avec leurs messages)
+- [X] =Tree names= — reference
+- [X] =One position per forest= — reference
+- [X] =Referential integrity of a forest= — reference
+- [X] =TreeRef path conventions= — reference (avec les pièges de la mémoire)
+- [X] =Tree endpoints= — reference, dev
+- [X] =The tree cache= — reference, dev
+- [X] =Why the tree cache holds nothing= — rationale, dev, record (ajoutée : l'histoire des deux mémoires du cache)
 
-Sources : spec-data-model « One position per forest », « Referential integrity »,
-« Tree names », routes d'arbre ; spec-file-tracking « Tree Cache » ; mémoires
-=treeref-path-conventions=, =one-position-per-forest=, =tree-cache-follows-operations=,
-=tree-cache-rebuild-per-write=.
+Vérification contre le code : la forme objet d'un nom non UTF-8 porte
+=text: "caf%E9.mp4"= (l'exemple de la spec montrait U+FFFD) et le commentaire de
+=TreeName= parlait encore de U+FFFD : corrigé ; =mfr_path= n'admet qu'une seule
+ligne, =nothing= compris ; ="/"= désigne bien la racine dans une requête aussi
+(la mémoire =treeref-path-conventions= disait que =-> "/"= ne renvoyait rien —
+périmé depuis la normalisation des barres obliques) ; la requête SQL qui listait
+les nœuds détachés n'a plus d'équivalent. Sources retirées (pointeurs) :
+spec-data-model « One position per forest », « Referential integrity », « Tree
+names », les deux paragraphes de recherche par chemin, les routes d'arbre ;
+spec-file-tracking « Tree Cache ».
 
 ** TODO 10. Requêtes
 

@@ -221,7 +221,7 @@ fn test_reconcile_creates_records_for_new_files() {
 fn test_reconcile_tracks_a_file_whose_name_is_not_utf8() {
     // A POSIX file name is a byte string. Legacy collections are full of
     // latin-1 names, and such a file must be tracked like any other
-    // (spec-data-model "Tree names"): the metarecord carries the exact bytes,
+    // (doc "Tree names"): the metarecord carries the exact bytes,
     // so the file can still be opened, and shows the name a file manager shows.
     use std::os::unix::ffi::OsStrExt;
     let (repo, root) = setup("non-utf8");

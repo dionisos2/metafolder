@@ -2,7 +2,7 @@
 //! source's events into [`crate::executor::FsEvent`]s, enqueues them in the
 //! persistent buffer and pings the executor. Events under
 //! `.metafolder/internal/` (the daemon's own database writes) are skipped;
-//! names travel as their exact bytes (spec-data-model "Tree names").
+//! names travel as their exact bytes (doc "Tree names").
 //!
 //! One pipeline, two *sources* behind it ([`Source`]; spec-file-tracking "Watch
 //! sources and regimes"): [`inotify`] — the notify backend, one non-recursive
@@ -473,7 +473,7 @@ fn covered_by_tree(
 
 /// Converts an absolute path to the internal repo-root-relative form, keeping
 /// each component's exact bytes — a POSIX name need not be UTF-8, and such a
-/// file is watched like any other (spec-data-model "Tree names"). None for
+/// file is watched like any other (doc "Tree names"). None for
 /// paths outside the root, under `.metafolder/internal/`, or for the root.
 fn relative(root: &Path, internal_dir: &Path, abs: &Path) -> Option<RelPath> {
     if abs.starts_with(internal_dir) {

@@ -611,7 +611,7 @@ fn parse_fid_record(rec: &[u8], info_type: u8) -> Option<(Handle, OsString)> {
 }
 
 /// Turns parsed events into wire events. Names travel as their exact bytes —
-/// a non-UTF-8 name is an event like any other (spec-data-model "Tree names").
+/// a non-UTF-8 name is an event like any other (doc "Tree names").
 pub fn translate(raw: &RawEvent, resolver: &mut dyn Resolve) -> Vec<Event> {
     fn path_of(resolver: &mut dyn Resolve, h: &Handle, name: &OsStr) -> Option<PathBuf> {
         let base = resolver.resolve(h)?;

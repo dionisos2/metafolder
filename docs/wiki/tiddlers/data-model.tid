@@ -11,7 +11,8 @@ Everything metafolder stores fits in three notions:
 A file is not special: it is a metarecord whose `mfr_path` field places it in the
 filesystem's tree ([[Reserved fields]]). A tag, a collection, a duplicate group are
 metarecords too, with no file behind them. Fields that point at other metarecords
-(`ref`, `tree_ref`) are what links them.
+(`ref`, `tree_ref`) are what links them; `tree_ref` fields arrange them in trees
+([[TreeRef forest]]).
 
 !! Use it
 

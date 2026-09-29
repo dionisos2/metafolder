@@ -15,8 +15,8 @@ pub struct DirEntry {
     pub path: String,
     pub is_dir: bool,
     /// The name holds bytes no text can represent, so what is shown is its
-    /// escaped form and not literally what the disk says (spec-data-model
-    /// "Tree names"). The panel marks such a row.
+    /// escaped form and not literally what the disk says (doc "Tree names").
+    /// The panel marks such a row.
     pub escaped: bool,
 }
 

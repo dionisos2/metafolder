@@ -1,0 +1,50 @@
+title: Tree names
+tags: [[TreeRef forest]]
+kind: reference
+summary: A node's name is its exact bytes; its text shows valid UTF-8 as is and each undecodable byte as %XX — so a lookup searches both readings.
+
+A POSIX file name is a ''byte string'' — anything but `/` and NUL — and need not be
+UTF-8; old collections are full of latin-1 names, and such a file must be tracked
+like any other. So a node's name carries its ''exact bytes'', and its text is derived
+from them:
+
+* the ''bytes are the identity'': equality, order and sibling uniqueness go through them, so two files whose names differ only in undecodable bytes are two nodes;
+* the ''text is presentation'', and what a query spells. A name that is text shows exactly as it is — `100%.txt` stays `100%.txt` — so the common case pays nothing. Only a byte no text can represent becomes `%XX`, its value in hex: `caf\xE9.mp4` shows as `caf%E9.mp4`, one escape per faulty byte.
+
+The split is forced: an encoding that leaves every valid UTF-8 name unchanged
+''and'' is injective cannot exist — valid text uses up the whole text form, leaving
+nowhere free for an undecodable name. So identity lives in the bytes, and the text is
+not a bijection: a file really named `caf%E9.mp4` shows the same text.
+
+Every path the daemon handles carries the bytes end to end: the reconcile walk, the
+watcher and its buffered events, the executor, `POST /track`. Where text is meant,
+text is used: `mf_ignore` patterns are regexes over displayed paths, and responses
+report the displayed form.
+
+!! Looking a name up
+
+A typed component has up to two byte readings, and ''both are searched, the results
+added'':
+
+* ''verbatim'' — the bytes of what was typed: what finds a file whose name really holds those characters. It is the only reading for text that is not the escaped form: no escape, a malformed one (`100%.txt`, `%zz`, `%E`), an escape below `0x80` (such a byte is always valid UTF-8, so never escaped — which keeps `50%2E.txt` from also being searched as `50..txt`), or U+FFFD (a lossy rendering pasted from another tool: the byte it stood for is gone);
+* ''escaped'' — the bytes the `%XX` form decodes to, when it is one.
+
+A query returns a set, so returning both is honest. A ''resolution'' that must yield
+one node — `tree/resolve-path`, `mf path`, the GUI's navigation — cannot add them: it
+takes a `form` (`verbatim` or `escaped`) choosing one reading, and without it two
+matches are an ambiguity, answered as no match rather than a guess. Lookups also
+follow the repository's case sensitivity (spec-platform "Case sensitivity").
+
+!! On the wire
+
+A name that is valid UTF-8 is a plain JSON string. Only a name no text can represent
+takes the object form, with what to show and what identifies it — `bytes` (lowercase
+hex) is authoritative:
+
+```
+{"type": "tree_ref", "value": {"parent": null, "name": "vidéo.mp4"}}
+{"type": "tree_ref", "value": {"parent": null, "name": {"text": "caf%E9.mp4", "bytes": "636166e92e6d7034"}}}
+```
+
+A client that assumed a string meets a different shape rather than a silently wrong
+name.

@@ -20,7 +20,7 @@ misdetected MIME type, settling an `mfr_path` conflict the watcher cannot.
 !! The fields of a file
 
 |!Field |!Type |!Holds |
-|`mfr_path` |`tree_ref` |the position in the filesystem's tree — see below |
+|`mfr_path` |`tree_ref` |the position in the filesystem's tree ([[TreeRef path conventions]]) — see below |
 |`mfr_type` |`string` |`file`, `dir` or `symlink` (a symlink is never followed) |
 |`mfr_size` |`int` |the size in bytes at the last update; a symlink's is its target path's length |
 |`mfr_mtime` |`datetime` |the last content modification (a symlink's own) |

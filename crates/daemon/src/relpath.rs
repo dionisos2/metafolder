@@ -1,6 +1,6 @@
 //! A repository-relative path held as **exact bytes**.
 //!
-//! A POSIX name is a byte string (spec-data-model "Tree names"), so a relative
+//! A POSIX name is a byte string (doc "Tree names"), so a relative
 //! path cannot be a `String` without losing the files the daemon exists to
 //! track. It cannot simply be a `PathBuf` either: the repository's display
 //! convention — the root is `""`, everything else is `/`-prefixed — is what the

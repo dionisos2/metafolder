@@ -12,8 +12,7 @@ mf -n music repo reindex     # derive again what the store derives
 forest, trigrams, postings — with a rebuild from the primary data, and lists every
 difference, one line each (nothing when the store is healthy). It also names the
 metarecords an older daemon let hold several positions in one forest: the data is
-not damaged, but the daemon no longer means anything by it (spec-data-model "One
-position per forest").
+not damaged, but the daemon no longer means anything by it ([[One position per forest]]).
 
 `reindex` rebuilds all the derived data from the primary data. Derived data is a
 function of the primary data, so reindexing never loses anything; it is the repair

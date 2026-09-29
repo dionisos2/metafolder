@@ -518,55 +518,7 @@ re-verifies every path against the disk before writing =Nothing=.
 
 ** Tree Cache
 
-The daemon answers the forest's questions — a path string to a metarecord and
-back, a node's children and descendants, path matches, path sort keys — from
-the repository's store, whose forest key space is keyed by parent and name
-(doc "The forest in the store"). The =TreeCache= that asks them holds nothing but
-the repository's case sensitivity — despite its name it caches nothing, so it
-needs no lock and readers never wait for one another on it; it serves all
-=TreeRef= field names, the field name forming the first level.
-
-*** Path string format
-
-A path string is the ordered list of =value_name= components from the root down
-to a metarecord, joined by =/=. There is no trailing =/=.
-
-The root's own =value_name= determines whether paths in the tree have a leading
-=/=:
-
-| Tree type                    | Metarecord                     | Path string        |
-|------------------------------+---------------------------+--------------------|
-| filesystem (root: name=""=, parent=NULL)   | root           | =""=               |
-| filesystem                   | child ="projects"= of root | ="/projects"=      |
-| filesystem                   | child ="rust"= of above   | ="/projects/rust"= |
-| tags (root: name="tag1", parent=NULL)     | root ="tag1"= | ="tag1"=           |
-| tags                         | child ="tag2"= of ="tag1"=| ="tag1/tag2"=      |
-
-For the filesystem tree the root has =value_name = ""=, so all paths naturally
-start with =/=. For other trees (e.g. tags) the roots have non-empty names and
-there is no leading =/=. Multiple roots are allowed within the same field name.
-A position (field, parent, name) is held once — the store refuses a second
-node there — so the filesystem root, the node named =""= with no parent, is
-unique.
-
-*** No node budget
-
-Nothing is resident, so nothing needs a budget: every question reads the
-store — a path of depth
-=d= costs =d= keyed reads, a folder's children one prefix read, a subtree one
-read of its descendant bitmap. It used to hold the whole forest in memory,
-populated at load and kept in step with every write (with, earlier still, a
-node budget and LRU eviction); that resident forest served the SQLite backend
-and went with it in September 2026.
-
-*** Upkeep after a write
-
-There is none: a lookup that keeps nothing has nothing to keep up. The store's
-forest key space and the descendant bitmaps are updated by the write itself, in
-its transaction (doc "Storage"). The resident
-forest this section used to describe was reconciled cell by cell from what
-each revision said it did, never rebuilt by a write; a navigation step and a
-watcher event do not touch the cache either.
+Moved to the wiki: doc "The tree cache", doc "TreeRef path conventions", doc "Why the tree cache holds nothing".
 
 ** File Watcher
 
@@ -1083,9 +1035,8 @@ reconcile never populates it; a file deleted while its subtree is unwatched
 keeps its stale =mfr_path= and gets no =mfr_path_old=. Like every daemon write
 it is snapshotted in the event log and restored exactly by rollback.
 
-Parent directory lookup on =Create= or =Rename(To)= uses the tree cache
-(see [[*Tree Cache]]); on cache miss, falls back to iterative indexed queries
-on =(field_name, value_uuid, value_name)=.
+Parent directory lookup on =Create= or =Rename(To)= reads the store's forest
+(see doc "The tree cache").
 
 ** Single-metarecord track
 

@@ -46,7 +46,7 @@ re-tracked meanwhile would otherwise have to query first.
 It is ''all or nothing'': one revision, one transaction; the first refusal (a taken
 uuid, a reserved field without `force`, a schema violation naming its
 `metarecord_uuid`) rolls the batch back. Metarecords are applied ''in the order
-given'', and a `tree_ref` whose parent has no row yet is refused, so a subtree comes
+given'', and a `tree_ref` whose parent has no row yet is refused ([[Referential integrity of a forest]]), so a subtree comes
 parent first. At most 1000 metarecords per call (`400` naming the limit, before any
 work); the body is capped at 2 MiB on its own, so fat metarecords page sooner.
 Nothing carries a version: a metarecord recreated with its fields gets its old

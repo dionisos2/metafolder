@@ -346,7 +346,7 @@ async fn test_create_get_delete_metarecord() {
 // it no lookup resolves ("filesystem root entry missing"), and unlike any other
 // metarecord it cannot simply be re-created — a fresh one gets a fresh uuid,
 // and every child names the old one. So no deletion may take it, by any path
-// (spec-data-model "Referential integrity of a forest").
+// (doc "Referential integrity of a forest").
 #[tokio::test]
 async fn test_the_repository_root_metarecord_cannot_be_deleted() {
     let (app, repo, root) = app_with_repo("root_kept").await;
@@ -608,7 +608,7 @@ async fn test_tree_ref_validation_is_bad_request() {
 
 #[tokio::test]
 async fn test_a_second_tree_position_is_bad_request() {
-    // spec-data-model "One position per forest".
+    // doc "One position per forest".
     let (app, repo, _root) = app_with_repo("second_position").await;
     let tree = |parent: Option<&str>, name: &str| json!({"name": "tag", "value": {"type": "tree_ref", "value": {"parent": parent, "name": name}}});
     let uuid = |v: &Value| v["uuid"].as_str().unwrap().to_string();

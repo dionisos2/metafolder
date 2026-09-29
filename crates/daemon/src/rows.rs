@@ -70,7 +70,7 @@ pub struct TreeRow {
     /// The name's exact bytes — what identifies the node. Reading back the
     /// *displayed* name here would give a node named with an undecodable byte
     /// the bytes of its own escape (`caf%E9.mp4`), and it would then answer to
-    /// neither reading (spec-data-model "Tree names").
+    /// neither reading (doc "Tree names").
     pub name: TreeName,
 }
 
@@ -134,7 +134,7 @@ pub(crate) fn encode_value(value: &Value) -> EncodedValue {
             e = EncodedValue::new("tree_ref");
             e.uuid = Some(uuid_to_bytes(parent.unwrap_or(ZERO_UUID)));
             // Both: the text is what queries and displays read, the bytes are
-            // what identifies the node (spec-data-model "Tree names").
+            // what identifies the node (doc "Tree names").
             e.name = Some(name.display().into_owned());
             e.name_bytes = Some(name.as_bytes().to_vec());
         }

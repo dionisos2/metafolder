@@ -98,8 +98,7 @@ progress reporting (doc "Tasks"), the trash-bin
   metarecord others are placed under (=400= either way). The watcher, which
   cascades on the filesystem's authority, and log navigation, which restores
   rows directly, are exempt. See
-  [[file:spec-data-model.org][spec-data-model.org]] "Referential integrity of a
-  forest".
+  doc "Referential integrity of a forest".
 
 The daemon listens on =127.0.0.1:7523= by default (configurable via =--port=).
 All request and response bodies are JSON. Errors return a JSON object

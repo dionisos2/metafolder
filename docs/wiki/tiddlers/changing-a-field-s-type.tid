@@ -26,7 +26,7 @@ retype is one logged revision, so `mf log undo` takes it back. Reserved names
 A value that does not convert takes the target's ''default'', chosen to be easy to
 find afterwards: `0`, `0.0`, `false`, `""`, the Unix epoch, or `nothing` for the
 reference types (`field IS ABSENT`). The command counts them; `POST /retype` also
-lists their metarecords (`fallback_uuids`). A `tree_ref` that would break its forest
+lists their metarecords (`fallback_uuids`). A `tree_ref` that would break its forest ([[TreeRef forest]])
 — a missing parent, a cycle, a second position — falls back to `nothing` too, so one
 bad path never blocks the rest. Two values of one metarecord that the conversion
 makes equal become one row ([[No duplicate rows]]).

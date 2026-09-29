@@ -62,7 +62,7 @@ pub(super) const REFERRERS: u8 = 5;
 /// Every id below a node of a forest, keyed by field and node — what makes a
 /// subtree one bitmap read (doc "The forest in the store").
 /// Kept for every `tree_ref` field: a node holds one position per forest
-/// (spec-data-model "One position per forest"), so the tree is a tree and a
+/// (doc "One position per forest"), so the tree is a tree and a
 /// move is set arithmetic.
 pub(super) const DESCENDANTS: u8 = 6;
 

@@ -1,5 +1,5 @@
-//! A metarecord holds at most one position in a forest (spec-data-model "One
-//! position per forest"): every write shape that could give it a second
+//! A metarecord holds at most one position in a forest (doc "One position per forest"): every write
+//! shape that could give it a second
 //! `tree_ref` row of the same name is refused, and a retype demotes the extra
 //! rows to `Nothing` as it demotes any other forest violation.
 

@@ -1,0 +1,35 @@
+title: Referential integrity of a forest
+tags: [[TreeRef forest]]
+kind: reference
+summary: A position's parent must exist in the same forest, a position with children cannot be taken away, and the repository root cannot be deleted.
+
+A `tree_ref` names its parent by uuid, and the daemon holds both ends of that
+reference on every manual write:
+
+* ''Creating'' a position: the parent must be a metarecord that itself has a position ''in the same forest''. One that does not exist, or exists in another forest only, is refused with `400` (`invalid TreeRef parent …: no such metarecord carrying a 'path' TreeRef field`).
+* ''Removing'' one: a position may not be taken away while metarecords are placed under it — refused with `400` naming the first children (`cannot remove the last 'path' position of …: 2 metarecord(s) are placed under it ("jazz", "rock"); move or delete them first`). This covers every shape that takes a position away: `unset`, deleting the row, setting the field to `nothing` or to another value, a whole-record overwrite, deleting the metarecord.
+
+That second check runs ''once, against the state the revision is about to commit'',
+not per operation: deleting a whole subtree in one revision is fine even though the
+parent goes first; only the committed state must be a forest.
+
+One position can never be removed: the ''filesystem root'', the `mfr_path` node with
+no parent and an empty name. It anchors every path; a repository without it resolves
+nothing, and recreating it is no repair — a new metarecord has a new uuid, while the
+whole forest names the old one. Deleting it — `DELETE …/metarecords/:uuid`,
+`POST …/query/delete`, or trashing it ([[POST /repos/:repo/metarecords/trash]]) — is
+refused, children or not. A root deleted before the check existed comes back by a
+rollback or a revert of its deletion, which restores it at its own uuid.
+
+''Neither cascade nor silence.'' Removing everything under a vanished directory is
+what the ''watcher'' does for `mfr_path`, where the filesystem is authoritative and
+the directory really is gone (guarded by the `orphan-cascade-limit` circuit breaker,
+[[Daemon configuration]]). A manual write has no such authority: it is refused rather
+than allowed to erase a subtree the caller did not name. So the watcher's operations
+(`file_deleted`, `file_moved`, `file_modified`) are exempt, and so is log navigation,
+which restores rows directly and passes through intermediate states on its way to one
+that was valid when written.
+
+Before the check existed (September 2026), taking a parent's position away left its
+children ''detached'': reachable by uuid, but under no parent and in no list of roots.
+A repository written before then may still hold some; nothing lists them today.

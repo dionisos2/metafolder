@@ -18,5 +18,5 @@ A command that writes fields takes a ''field spec'', `name:type[=value]` (the ty
 |`refbase` |`name:refbase=<repository uuid>` |`origin:refbase=47ab…` |
 |`externalref` |`name:externalref=<repository uuid>:<metarecord uuid>` |`link:externalref=47ab…:8f3a…` |
 
-A `tree_ref` name is a single path component: no `/`, not empty. Every type but
+A `tree_ref` name is a single path component: no `/`, not empty ([[TreeRef forest]]). Every type but
 `nothing` needs its `=value`.

@@ -1,0 +1,19 @@
+title: Why the tree cache holds nothing
+tags: [[TreeRef forest]]
+kind: rationale
+audience: dev
+status: record
+summary: The resident forest cost a full rebuild per write, then an incremental upkeep fed by operations; the key-value store made it unnecessary.
+
+Until September 2026 the tree cache was a resident copy of every forest, populated
+at load (with, earlier still, a node budget and LRU eviction) and kept in step with
+every write. Its history is a chain of the same lesson.
+
+* ''A rebuild per write.'' Writing one `tree_ref` field (a tag's `path`) took 2.9–4.5 s on a 50 000-node repository and blocked every read meanwhile: each such write re-populated the whole cache by scanning every field row, under the repository's lock. The fix reconciled only the cells the revision said it changed (10 ms), and set a rule: the cache is never rebuilt by a write — only at load, on explicit request, or where history is rewritten in bulk.
+* ''Following operations.'' The upkeep then consumed the revision's operations — what each did to the forest, set, add or remove — instead of re-reading the store, and undoing became applying with both sides swapped. Two pitfalls came with it: a position whose parent had no position yet had to ''wait'' for it rather than be dropped or pretend to be a root; and a position had to carry its row's id, since the first position carried the children and a row rewritten under its own id had to stay first.
+* ''Nothing resident.'' The key-value store keys its forest by parent and name and keeps descendant bitmaps updated by the write itself, so every question reads the store directly. The resident forest served the SQLite backend and went with it; the type kept its name.
+
+The general lesson, which the storage pitfalls repeat ([[Storage pitfalls]]): a cost
+proportional to the repository, paid per unit write, is invisible on a small
+repository. Compare the write of an ordinary field with that of the suspect one on a
+large repository — the difference isolates the phase.
