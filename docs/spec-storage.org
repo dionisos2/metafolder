@@ -3,21 +3,25 @@
 
 * Status
 
-*Design document; the prototype of increment 1 is built and measured*
-(September 2026): =prototypes/kvstore= (the store, an oracle, cost tests, the
-=kvproto= measuring tool) and =prototypes/resident-compare= (the resident engine
-timed on the same records). Nothing in the daemon changes yet. The measured
-numbers are in [[*Prototype results]]; they replace the estimates this document
-started from. Like
-[[file:spec-indexing.org][spec-indexing.org]], this describes a direction, not
-the code. It is the answer to the limit that document leaves open: the query
-engine is fast because *everything* it needs is resident — the bitmap/BSI index,
-the id registry, the whole TreeRef forest — so a repository only works while its
-index fits in RAM.
+*Built* (September 2026): increments 1–4 are done ([[*Increments]]) and the
+key-value store is the daemon's only backend — SQLite and the resident engine
+are gone ([[*Choosing the backend]]). The rest of this document is the design
+as it was argued, amended where the code forced a change (the "concretely"
+sections say how).
 
-The goal is a *second* storage-and-query backend that keeps the full generality
-of the query language without loading the repository in memory, *next to* the
-current one, which stays as it is.
+It started as the answer to the limit [[file:spec-indexing.org][spec-indexing.org]]
+left open: the query engine was fast because *everything* it needed was
+resident — the bitmap/BSI index, the id registry, the whole TreeRef forest — so
+a repository only worked while its index fit in RAM. The goal was a *second*
+storage-and-query backend that keeps the full generality of the query language
+without loading the repository in memory, next to the resident one; the
+second one ended up replacing the first.
+
+The prototype of increment 1 — =prototypes/kvstore= (the store, an oracle, cost
+tests, the =kvproto= measuring tool) and =prototypes/resident-compare= (the
+resident engine timed on the same records) — has been removed from the tree,
+superseded by =crates/daemon/src/kvstore/= and its cost tests; its code is in
+the history (last at commit =d28fd5b=), its numbers in [[*Prototype results]].
 
 * Requirements
 
@@ -656,6 +660,7 @@ and =MDB_NOMETASYNC= saved almost nothing — one =fsync= dominates either way.
    store ([[*Prototype results]]). Not built: BSI (ranges and sorts go through
    =ordered=), cursors beyond the first page, zero-copy containers, the log's
    navigation.
+   Removed once the daemon's store superseded it (history: =d28fd5b=).
 2. *(done)* *Extract the =Store= boundary* with SQLite as its only
    implementation, no behaviour change (see "Increment 2, concretely").
 3. *(done)* *=KvStore=* for primary data and the log; every integration test
