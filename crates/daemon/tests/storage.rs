@@ -1127,7 +1127,7 @@ fn test_a_revision_reports_what_it_did_to_the_forest_in_write_order() {
     assert!(effects.touches_tree());
     assert!(!effects.touches_watch());
     let moved: Vec<(&str, Uuid)> =
-        effects.tree_ops().iter().map(|op| (op.field(), op.uuid())).collect();
+        effects.moved_cells().iter().map(|c| (c.field.as_str(), c.uuid)).collect();
     assert_eq!(
         moved,
         [("p", a), ("p", b)],
@@ -1135,68 +1135,56 @@ fn test_a_revision_reports_what_it_did_to_the_forest_in_write_order() {
     );
 }
 
-/// One description per *shape* of operation, and it has to be the right one:
-/// a set replaces the cell, an append and a row deletion name only what they
-/// move.
+/// Every shape of operation that moves a position names the cell it moved —
+/// a set, an append, a row deletion, a record deletion — and one that moves
+/// none names nothing.
 #[test]
-fn test_each_shape_of_operation_says_what_it_did_to_the_forest() {
-    use metafolder_daemon::log::TreeOp;
-
+fn test_each_shape_of_operation_names_the_cell_it_moved() {
     let (mut conn, _dir) = test_conn();
     let root = create(&mut conn, vec![Field::new("p", tree_ref(None, "r"))]).uuid;
     let a = create(&mut conn, vec![Field::new("p", tree_ref(Some(root), "a"))]).uuid;
+    let cells = |effects: &metafolder_daemon::log::WriteEffects| -> Vec<(String, Uuid)> {
+        effects.moved_cells().iter().map(|c| (c.field.clone(), c.uuid)).collect()
+    };
 
-    // A set replaces the cell.
     let mut w = Writer::begin(&mut conn, None).unwrap();
     w.set_field(a, "p", tree_ref(Some(root), "a2")).unwrap();
     let effects = w.effects();
     w.commit().unwrap();
-    assert!(matches!(effects.tree_ops(), [TreeOp::Set { positions, .. }] if positions.len() == 1));
+    assert_eq!(cells(&effects), [("p".to_string(), a)], "a set");
 
-    // An append adds to it — to a record with no position yet (a second one
-    // is refused).
     let c = create(&mut conn, vec![Field::new("note", Value::String("c".into()))]).uuid;
     let mut w = Writer::begin(&mut conn, None).unwrap();
     w.append_field(c, "p", tree_ref(Some(root), "c")).unwrap();
     let effects = w.effects();
     w.commit().unwrap();
-    assert!(matches!(effects.tree_ops(), [TreeOp::Add { positions, .. }] if positions.len() == 1));
+    assert_eq!(cells(&effects), [("p".to_string(), c)], "an append");
 
-    // Deleting one row takes that position out, and names it.
-    let rows = conn.rows_named(c, "p").unwrap();
-    let second = rows.last().unwrap().id;
+    let row = conn.rows_named(c, "p").unwrap().last().unwrap().id;
     let mut w = Writer::begin(&mut conn, None).unwrap();
-    w.delete_field(c, second).unwrap();
+    w.delete_field(c, row).unwrap();
     let effects = w.effects();
     w.commit().unwrap();
-    match effects.tree_ops() {
-        [TreeOp::Remove { positions, .. }] => {
-            assert_eq!(positions.len(), 1);
-            assert_eq!(positions[0].row, second, "the row it moved, by id");
-        }
-        other => panic!("expected one Remove, got {other:?}"),
-    }
+    assert_eq!(cells(&effects), [("p".to_string(), c)], "a row deletion");
 
-    // Deleting the metarecord empties every cell it held.
     let mut w = Writer::begin(&mut conn, None).unwrap();
     w.delete_metarecord(a).unwrap();
     let effects = w.effects();
     w.commit().unwrap();
-    assert!(matches!(effects.tree_ops(), [TreeOp::Set { positions, .. }] if positions.is_empty()));
+    assert_eq!(cells(&effects), [("p".to_string(), a)], "a record deletion");
 
-    // A write that moves no position says nothing at all.
     let mut w = Writer::begin(&mut conn, None).unwrap();
     w.set_field(root, "note", Value::String("x".into())).unwrap();
     let effects = w.effects();
     w.commit().unwrap();
-    assert!(effects.tree_ops().is_empty());
+    assert!(effects.moved_cells().is_empty(), "a write that moves no position");
 }
 
 #[test]
 fn test_a_tree_cell_survives_a_flush_of_the_operation_buffer() {
     // The buffered operations are written out in batches, and the effects used
     // to be read off that buffer: a revision long enough to flush forgot every
-    // tree write that preceded the flush, and left the cache stale.
+    // tree write that preceded the flush.
     let (mut conn, _dir) = test_conn();
     let root = create(&mut conn, vec![Field::new("p", tree_ref(None, "r"))]).uuid;
     let a = create(&mut conn, vec![]).uuid;
@@ -1207,8 +1195,9 @@ fn test_a_tree_cell_survives_a_flush_of_the_operation_buffer() {
     let effects = w.effects();
     w.commit().unwrap();
 
-    assert_eq!(effects.tree_ops().len(), 1);
-    assert_eq!((effects.tree_ops()[0].field(), effects.tree_ops()[0].uuid()), ("p", a));
+    let cells = effects.moved_cells();
+    assert_eq!(cells.len(), 1);
+    assert_eq!((cells[0].field.as_str(), cells[0].uuid), ("p", a));
 }
 
 #[test]
@@ -1237,15 +1226,14 @@ fn test_a_revision_touching_neither_asks_for_no_refresh() {
 
     assert!(!effects.touches_tree());
     assert!(!effects.touches_watch());
-    assert!(effects.tree_ops().is_empty());
+    assert!(effects.moved_cells().is_empty());
 }
 
 #[test]
 fn test_a_large_revision_lists_every_cell_it_changed() {
-    // The list used to be dropped past a cap, and the caller rebuilt the whole
-    // forest instead. A revision that changes thousands of positions is exactly
-    // the one whose cache upkeep must not be guessed at, so it is never
-    // truncated — the cache settles a batch of any size.
+    // The list used to be dropped past a cap. A revision that changes thousands
+    // of positions is exactly the one whose upkeep must not be guessed at, so
+    // it is never truncated.
     let (mut conn, _dir) = test_conn();
     let root = create(&mut conn, vec![Field::new("p", tree_ref(None, "r"))]).uuid;
 
@@ -1259,7 +1247,7 @@ fn test_a_large_revision_lists_every_cell_it_changed() {
     w.commit().unwrap();
 
     assert!(effects.touches_tree());
-    assert_eq!(effects.tree_ops().len(), N, "every position moved, none dropped");
+    assert_eq!(effects.moved_cells().len(), N, "every position moved, none dropped");
 }
 
 /// A `tree_ref` value, spelled once for the tests above.

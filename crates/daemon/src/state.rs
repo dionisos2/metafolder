@@ -305,9 +305,9 @@ impl RepoState {
                 Some(rules) => {
                     effects.touches_watch()
                         || effects
-                            .tree_ops()
+                            .moved_cells()
                             .iter()
-                            .any(|op| op.field() == "mfr_path" && rules.affects(op.uuid()))
+                            .any(|c| c.field == "mfr_path" && rules.affects(c.uuid))
                 }
             }
         };
