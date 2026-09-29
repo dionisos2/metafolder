@@ -11,8 +11,9 @@
 #      skipping it leaves the app on a stale bundle with confusing runtime
 #      errors (e.g. "unknown metafolder API method: query.expand" after a
 #      bridge.ts change);
-#   4. metafolder-sync-config, which applies crates/*/default-config/ to the
-#      user's config repo at ~/.config/metafolder/.
+#   4. the documentation (scripts/doc build → docs/wiki/dist/);
+#   5. metafolder-sync-config, which applies crates/*/default-config/ (and the
+#      rendered documentation) to the user's config repo at ~/.config/metafolder/.
 #
 # Takes no arguments.
 
@@ -36,16 +37,24 @@ cargo build -p metafolder-core --features sync-config
 # evict the other, forcing perpetual recompilation.
 scripts/prune-target.sh
 
-# First run on a fresh checkout: install the frontend deps once. node_modules
-# lives at the repo root — the frontend is an npm workspace member — so that is
-# where its presence is read (same test as scripts/check.sh).
-if [ ! -d node_modules ]; then
-    echo "==> Installing frontend dependencies (first run)…"
-    npm --prefix crates/gui/frontend install
+# First run on a fresh checkout: install the npm deps once. node_modules lives
+# at the repo root — the frontend and the documentation wiki are npm workspace
+# members — so that is where their presence is read. TiddlyWiki is tested on its
+# own: a checkout installed before the wiki joined the workspace has
+# node_modules without it.
+if [ ! -d node_modules ] || [ ! -d node_modules/tiddlywiki ]; then
+    echo "==> Installing npm dependencies…"
+    npm install
 fi
 
 echo "==> Building the GUI frontend bundle…"
 npm --prefix crates/gui/frontend run build
+
+# Render the documentation wiki (docs/wiki/) into docs/wiki/dist/, which the
+# config sync installs to ~/.config/metafolder/docs/ — and refuses to run
+# without.
+echo "==> Rendering the documentation…"
+scripts/doc build
 
 # Apply the shipped defaults to ~/.config/metafolder/. The path is relative to
 # the repo root, which is where this script has been since the `cd` above — it

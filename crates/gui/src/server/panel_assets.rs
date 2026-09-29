@@ -17,13 +17,19 @@ pub async fn serve(
         return StatusCode::NOT_FOUND.into_response();
     };
 
-    // Only plain file-name components: no '..', no absolute segments.
-    let relative = std::path::Path::new(&path);
+    serve_file(&panel_dir, &path)
+}
+
+/// A file under `dir`, served verbatim with its type. `path` is taken only as
+/// plain file-name components: no `..`, no absolute segment, so nothing
+/// outside `dir` can be reached. Anything unreadable is a 404.
+pub(super) fn serve_file(dir: &std::path::Path, path: &str) -> Response {
+    let relative = std::path::Path::new(path);
     if !relative.components().all(|c| matches!(c, Component::Normal(_))) {
         return StatusCode::NOT_FOUND.into_response();
     }
 
-    let file = panel_dir.join(relative);
+    let file = dir.join(relative);
     let Ok(content) = std::fs::read(&file) else {
         return StatusCode::NOT_FOUND.into_response();
     };

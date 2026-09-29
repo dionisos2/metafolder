@@ -23,7 +23,8 @@ pub struct SyncOutcome {
 }
 
 /// Gathers `<source_root>/crates/*/default-config/` (plus the crate-agnostic
-/// `<source_root>/scripts/shipped/` → `scripts/`) into the user configuration
+/// `<source_root>/scripts/shipped/` → `scripts/` and the rendered
+/// `<source_root>/docs/wiki/dist/` → `docs/`) into the user configuration
 /// repository at `config_dir`, creating it on first run and otherwise merging
 /// the refreshed defaults into the user's `main` branch.
 pub fn sync(source_root: &Path, config_dir: &Path) -> Result<SyncOutcome, String> {
@@ -261,8 +262,8 @@ fn build_tree(
 
 /// Gathers the shipped defaults into a map of repo-relative path -> bytes.
 /// Each `crates/<name>/default-config/<sub>` maps to `<name>/<sub>`, and
-/// `scripts/shipped/<sub>` maps to the crate-agnostic `scripts/<sub>`; the
-/// root `.gitignore` is included.
+/// `scripts/shipped/<sub>` maps to the crate-agnostic `scripts/<sub>` and
+/// `docs/wiki/dist/<sub>` to `docs/<sub>`; the root `.gitignore` is included.
 fn gather_defaults(source_root: &Path) -> Result<BTreeMap<PathBuf, Vec<u8>>, String> {
     let mut out = BTreeMap::new();
     out.insert(PathBuf::from(".gitignore"), GITIGNORE.as_bytes().to_vec());
@@ -291,6 +292,21 @@ fn gather_defaults(source_root: &Path) -> Result<BTreeMap<PathBuf, Vec<u8>>, Str
     if shipped.is_dir() {
         collect_files(&shipped, &PathBuf::from("scripts"), &mut out)?;
     }
+
+    // Crate-agnostic, and the one category that is a build product: the
+    // documentation rendered from docs/wiki/ installs to `docs/`, outside any
+    // panel (spec-config "Shipped documentation"). Required, unlike the
+    // scripts: applying a source without it would drop `docs/` from the
+    // `default` branch and leave the help panel empty.
+    let docs = source_root.join("docs").join("wiki").join("dist");
+    if !docs.is_dir() {
+        return Err(format!(
+            "{} is missing: render the documentation first (scripts/doc build, \
+             which scripts/complete-build.sh runs)",
+            docs.display()
+        ));
+    }
+    collect_files(&docs, &PathBuf::from("docs"), &mut out)?;
     Ok(out)
 }
 
@@ -338,8 +354,16 @@ mod tests {
     }
 
     /// Writes shipped defaults: each entry `"<crate>/<sub>"` lands in
-    /// `<root>/crates/<crate>/default-config/<sub>`.
+    /// `<root>/crates/<crate>/default-config/<sub>`. Also writes a minimal
+    /// rendered documentation (`docs/wiki/dist/`), which a source must have.
     fn make_source(root: &Path, files: &[(&str, &str)]) {
+        make_source_without_docs(root, files);
+        let dist = root.join("docs").join("wiki").join("dist");
+        fs::create_dir_all(&dist).unwrap();
+        fs::write(dist.join("index.json"), "[]\n").unwrap();
+    }
+
+    fn make_source_without_docs(root: &Path, files: &[(&str, &str)]) {
         for (rel, content) in files {
             let (crate_name, sub) = rel.split_once('/').unwrap();
             let path = root.join("crates").join(crate_name).join("default-config").join(sub);
@@ -382,6 +406,33 @@ mod tests {
         sync(&source, &config).unwrap();
         assert_eq!(read(&config, "scripts/gui-tag-classify.sh").as_deref(), Some("#!/bin/sh\n"));
         assert_eq!(read(&config, "scripts/lib/mf-gui.sh").as_deref(), Some("helpers\n"));
+    }
+
+    #[test]
+    fn gathers_the_rendered_docs_into_a_top_level_docs_dir() {
+        let area = scratch();
+        let (source, config) = (area.join("src"), area.join("cfg"));
+        make_source(&source, &[("gui/style.css", "body{}")]);
+        // The documentation is rendered from docs/wiki/ by `scripts/doc build`
+        // and installs, outside any panel, to the config repo's docs/.
+        let dist = source.join("docs").join("wiki").join("dist");
+        fs::write(dist.join("trash.html"), "<p>bin</p>").unwrap();
+
+        sync(&source, &config).unwrap();
+        assert_eq!(read(&config, "docs/index.json").as_deref(), Some("[]\n"));
+        assert_eq!(read(&config, "docs/trash.html").as_deref(), Some("<p>bin</p>"));
+    }
+
+    #[test]
+    fn refuses_a_source_whose_docs_are_not_rendered() {
+        let area = scratch();
+        let (source, config) = (area.join("src"), area.join("cfg"));
+        make_source_without_docs(&source, &[("gui/style.css", "body{}")]);
+        // Applying it anyway would drop docs/ from the `default` branch and
+        // leave the help panel empty: an error naming the cure instead.
+        let err = sync(&source, &config).unwrap_err();
+        assert!(err.contains("scripts/doc build"), "{err}");
+        assert!(!config.join("gui").exists(), "nothing applied");
     }
 
     #[test]

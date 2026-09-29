@@ -143,6 +143,44 @@ async fn test_path_traversal_is_rejected() {
 }
 
 #[tokio::test]
+async fn test_docs_are_served_from_the_config_docs_dir() {
+    let (_guard, config, router) = setup();
+    // The rendered documentation lives beside the crates' config dirs
+    // (`~/.config/metafolder/docs/`), not inside a panel.
+    let docs = config.docs_dir();
+    assert_eq!(docs, config.root().parent().unwrap().join("docs"));
+    std::fs::create_dir_all(&docs).unwrap();
+    std::fs::write(docs.join("index.json"), "[]").unwrap();
+    std::fs::write(docs.join("trash.html"), "<p>bin</p>").unwrap();
+
+    let (status, content_type, body) = get(&router, "/docs/index.json").await;
+    assert_eq!(status, StatusCode::OK);
+    assert!(content_type.starts_with("application/json"));
+    assert_eq!(body, b"[]");
+    let (status, content_type, body) = get(&router, "/docs/trash.html").await;
+    assert_eq!(status, StatusCode::OK);
+    assert!(content_type.starts_with("text/html"));
+    assert_eq!(body, b"<p>bin</p>");
+}
+
+#[tokio::test]
+async fn test_a_missing_doc_page_is_a_404() {
+    let (_guard, _config, router) = setup();
+    assert_eq!(get(&router, "/docs/index.json").await.0, StatusCode::NOT_FOUND);
+}
+
+#[tokio::test]
+async fn test_docs_path_traversal_is_rejected() {
+    let (_guard, config, router) = setup();
+    std::fs::create_dir_all(config.docs_dir()).unwrap();
+    assert!(config.root().join("keybindings.toml").exists());
+    let (status, _, _) = get(&router, "/docs/..%2Fgui%2Fkeybindings.toml").await;
+    assert_ne!(status, StatusCode::OK);
+    let (status, _, _) = get(&router, "/docs/%2Fetc%2Fhostname").await;
+    assert_ne!(status, StatusCode::OK);
+}
+
+#[tokio::test]
 async fn test_panel_helper_modules_are_served() {
     let (_guard, _config, router) = setup();
     // Helpers panels import; the shim's own modules are no longer served.

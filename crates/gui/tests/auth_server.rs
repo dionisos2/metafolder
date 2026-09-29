@@ -50,6 +50,16 @@ async fn open_panel_asset_needs_no_token() {
 }
 
 #[tokio::test]
+async fn docs_need_no_token() {
+    // Shipped, public content fetched like the panel assets.
+    let (guard, router) = setup();
+    let docs = guard.path().join("docs");
+    std::fs::create_dir_all(&docs).unwrap();
+    std::fs::write(docs.join("index.json"), "[]").unwrap();
+    assert_eq!(status(&router, "/docs/index.json", None).await, StatusCode::OK);
+}
+
+#[tokio::test]
 async fn gui_api_requires_token() {
     let (_guard, router) = setup();
     assert_eq!(status(&router, "/gui/status", None).await, StatusCode::UNAUTHORIZED);

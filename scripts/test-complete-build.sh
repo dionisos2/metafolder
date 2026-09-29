@@ -42,13 +42,19 @@ STUB
     chmod +x "$bin/$tool"
 done
 
-# prune-target.sh and the sync-config binary are the two repo-local programs it
-# runs; both are stubbed where the real script expects to find them.
+# prune-target.sh, scripts/doc and the sync-config binary are the repo-local
+# programs it runs; all are stubbed where the real script expects to find them.
 cat >"$fake/scripts/prune-target.sh" <<STUB
 #!/usr/bin/env bash
 printf 'prune-target\n' >>"$log"
 STUB
 chmod +x "$fake/scripts/prune-target.sh"
+
+cat >"$fake/scripts/doc" <<STUB
+#!/usr/bin/env bash
+printf 'doc %s\n' "\$*" >>"$log"
+STUB
+chmod +x "$fake/scripts/doc"
 
 cat >"$fake/target/debug/metafolder-sync-config" <<STUB
 #!/usr/bin/env bash
@@ -62,7 +68,7 @@ run() {
 }
 
 # ── 1. it runs to the end, and the end is the config sync ───────────────────
-mkdir -p "$fake/node_modules"          # deps already installed
+mkdir -p "$fake/node_modules/tiddlywiki"   # deps already installed
 run; rc=$?
 assert_eq "exits 0" 0 "$rc"
 assert_contains "applies the user configuration" "$(cat "$log")" "sync-config"
@@ -87,14 +93,26 @@ assert "bundles the frontend before applying the config" \
     [ "$(printf '%s\n' "$order" | grep -n 'run build' | cut -d: -f1)" \
       -lt "$(printf '%s\n' "$order" | grep -n '^sync-config$' | cut -d: -f1)" ]
 
-# ── 3. node_modules is read at the repo root (the npm workspace member) ─────
+# The documentation is rendered before the config is applied: sync-config
+# installs docs/wiki/dist/ and refuses a checkout without it.
+assert "renders the documentation before applying the config" \
+    [ "$(printf '%s\n' "$order" | grep -n '^doc build$' | cut -d: -f1)" \
+      -lt "$(printf '%s\n' "$order" | grep -n '^sync-config$' | cut -d: -f1)" ]
+
+# ── 3. node_modules is read at the repo root (the npm workspace root) ───────
 rm -rf "$fake/node_modules"
 run
-assert_contains "a fresh checkout installs the frontend deps" "$(cat "$log")" "npm --prefix crates/gui/frontend install"
+assert_contains "a fresh checkout installs the npm deps" "$(cat "$log")" "npm install"
 
+# A checkout installed before the wiki joined the workspace has node_modules
+# but no TiddlyWiki: that is a missing dependency too.
 mkdir -p "$fake/node_modules"
 run
-assert "with node_modules present it does not reinstall" \
-    [ "$(grep -c 'frontend install' "$log")" -eq 0 ]
+assert_contains "a checkout without TiddlyWiki installs it" "$(cat "$log")" "npm install"
+
+mkdir -p "$fake/node_modules/tiddlywiki"
+run
+assert "with the deps present it does not reinstall" \
+    [ "$(grep -c 'install' "$log")" -eq 0 ]
 
 assert_summary

@@ -406,6 +406,16 @@ impl ConfigDir {
         metafolder_core::config::read_required(&self.commands_js_path())
     }
 
+    // ── Documentation ────────────────────────────────────────────────────
+
+    /// The rendered documentation, a crate-agnostic category beside the
+    /// crates' config dirs (`~/.config/metafolder/docs/`, spec-config "Shipped
+    /// documentation"): `metafolder-sync-config` installs it from the
+    /// checkout's `docs/wiki/`.
+    pub fn docs_dir(&self) -> PathBuf {
+        self.root.parent().unwrap_or(&self.root).join("docs")
+    }
+
     // ── Panel types ──────────────────────────────────────────────────────
 
     pub fn panel_types_dir(&self) -> PathBuf {

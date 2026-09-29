@@ -6,6 +6,7 @@
 
 pub mod bench;
 pub mod command_wait;
+mod docs;
 mod document;
 mod fsraw;
 pub mod gui_api;
@@ -119,6 +120,7 @@ pub fn build_router(state: ServerState) -> Router {
         )
         .route("/__media-probe", get(media_probe))
         .route("/panel/:name/*path", get(panel_assets::serve))
+        .route("/docs/*path", get(docs::serve))
         .route("/fsraw", get(fsraw::serve).layer(map_response(fsraw::inert)))
         .route("/thumbnail", get(thumbnail::serve).layer(map_response(fsraw::inert)))
         .route("/document", get(document::page).layer(map_response(fsraw::inert)))
