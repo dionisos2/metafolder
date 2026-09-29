@@ -1,0 +1,9 @@
+title: mf repo load
+tags: [[CLI command]] Daemon
+kind: reference
+summary: Load an existing repository, wait for its warmup and print its UUID
+
+Loads a repository, waits for its load to finish (drawing its progress on a
+terminal) and prints its uuid; `--no-wait` prints the uuid at once and lets the load
+go on (follow it with `mf task`). Refused when a loaded repository has the same name
+([[Creating and loading a repository]]).

@@ -1,0 +1,25 @@
+title: Command line
+kind: overview
+aliases: cli
+summary: mf, a thin client over the daemon — one daemon, one repository per call, the same verbs at every level.
+
+`mf` is the command-line client. It does no database or watching work itself:
+every command is a call to the [[Daemon]], which must be running. The daemon and
+the repository are chosen once per call, by options that come before the command
+([[Global options]]); the commands form a tree of nouns and verbs whose verbs mean
+the same thing at every level ([[The verb pattern]]).
+
+```
+mf -n music metarecord -q 'rating > 3' field set reviewed:bool=true
+```
+
+`mf --help` lists the commands, and every command has its `--help`; each one also
+has its note here, under [[CLI command]].
+
+!! Reference
+
+<<list-kind reference>>
+
+!! Why it works this way
+
+<<list-kind rationale>>

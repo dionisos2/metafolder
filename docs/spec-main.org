@@ -130,59 +130,19 @@ Moved to the wiki: doc "Error responses".
 
 ** General description
 
-The CLI is a thin client over the daemon's HTTP API: it performs no direct
-database or filesystem-watching work itself. The binary is named =mf=. Each
-spec file documents the CLI commands for its own feature area in its =* CLI=
-section; this section defines the conventions shared by all commands.
-
-| Spec file                                          | Commands                                          |
-|----------------------------------------------------+---------------------------------------------------|
-| this file                                          | =mf repo {list,init,load,unload}=                 |
-| [[file:spec-data-model.org][spec-data-model.org]]   | =mf metarecord [-q/-i] {get,set,add,delete,field …}=, =mf field {get,set,delete} <id>=, =mf retype= |
-| [[file:spec-query.org][spec-query.org]]             | query DSL grammar (consumed by =mf metarecord get=) |
-| [[file:spec-file-tracking.org][spec-file-tracking.org]] | =mf reconcile=, =mf track=, watch-scope workflow |
-| [[file:spec-schema.org][spec-schema.org]]           | =mf schema {check,reload,show}=                    |
-| [[file:spec-event-log.org][spec-event-log.org]]     | =mf log {list,rollback,prune}=                     |
-| doc "Trash"             | =mf trash {list,restore,prune}=                   |
-| doc "Tasks"             | =mf task {list,show}=                              |
-| [[file:spec-sync.org][spec-sync.org]]               | =mf sync {plan,run,show,status,link,unlink}=      |
-| doc "Duplicates"   | =mf duplicate {list,scan,clear}=                  |
+Moved to the wiki: doc "Command line" (and each command's note, under doc "CLI command").
 
 ** Global options
 
-The repository and daemon are selected once, by flags preceding the command:
-
-| Option        | Env variable             | Description                                              |
-|---------------+--------------------------+---------------------------------------------------------|
-| =-n <name>=   | =METAFOLDER_REPO_NAME=   | Target repository by (unique) name                      |
-| =-u <uuid>=   | =METAFOLDER_REPO=        | Target repository by UUID                               |
-| =-p <port>=   | =METAFOLDER_DAEMON_PORT= | Daemon port on =127.0.0.1=; default =7523=              |
-
-=-n= and =-u= are mutually exclusive (a usage error if both are given). The
-daemon listens only on loopback, so a port fully addresses it — there is no
-base-URL option. =-n= resolves to a UUID through the daemon's repository list,
-relying on name uniqueness among loaded repos (this file, =mf repo load=).
-
-A repo-scoped command invoked with no repository selector (neither flag nor env)
-fails immediately with a usage error (exit code 2), without contacting the
-daemon. Daemon-wide commands (=mf repo=, =mf task=) ignore =-n=/=-u=.
+Moved to the wiki: doc "Global options".
 
 ** Output conventions
 
-- Normal results go to stdout; errors and warnings to stderr.
-- Machine-friendly by default: UUID lists are printed one per line; structured
-  results are JSON. Commands with a human-oriented default format provide a
-  =--json= flag that prints the raw response body instead.
-- Daemon error responses (={"error": "..."}=) are printed to stderr as
-  =error: <message>=.
+Moved to the wiki: doc "Output and exit codes".
 
 ** Exit codes
 
-| Code | Meaning                                                          |
-|------+------------------------------------------------------------------|
-| 0    | Success                                                          |
-| 1    | Operation failed (daemon error, violations found, no match, ...) |
-| 2    | Usage error (bad arguments, unparsable DSL/field spec, missing repo selector) |
+Moved to the wiki: doc "Output and exit codes".
 
 ** Repository commands
 

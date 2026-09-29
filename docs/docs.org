@@ -47,6 +47,9 @@ On la complète item par item. La conception est dans
 - Une section retirée d'une spec qui reste en place (spec-gui…) devient un
   paragraphe-pointeur (« Moved to the wiki: doc "…" ») : d'autres passages de la
   spec y renvoient encore.
+- Après une réécriture de citations, relancer les tests « golden » du catalogue
+  (=cargo test -p metafolder-cli --bin mf doc_gen=, idem =-p metafolder-gui --lib=) :
+  un commentaire =///= de =crates/cli/src/main.rs= est un texte d'aide de clap.
 - Une note de commande ne répète pas sa partie générée (usage, options,
   touches) : elle dit ce que la commande fait et renvoie aux notes du sujet.
 
@@ -112,20 +115,22 @@ description », « Daemon configuration », « Health », « Diagnostics feed »
 spec-data-model « Repository ». Les notes =mf repo *= restent pour l'item 5
 (stockage) et l'item 3.
 
-** TODO 3. Conventions de la CLI
+** FAIT 3. Conventions de la CLI
 
-- [ ] =Command line= — overview (client mince, un démon, un dépôt)
-- [ ] =Global options= — reference (=-n/-u/-p=, =--no-config=, variables d'environnement, précédence)
-- [ ] =Output conventions and exit codes= — reference
-- [X] =CLI configuration= — reference (=cli/config.toml=) — écrite à l'item 4
-- [ ] =Selectors= — reference (=-q=, =-s=, =-i=, sans sélecteur ; =--eq= de =mf tag=)
-- [ ] =Field specifications= — reference (=name:type=value=)
-- [ ] =The verb pattern= — rationale (=get/set=, =add/remove=, =add/delete=, le même vocabulaire dans le démon, la CLI et la GUI)
-- [ ] =mf= — reference (la racine du catalogue)
+- [X] =Command line= — overview
+- [X] =Global options= — reference
+- [X] =Output and exit codes= — reference (renommée)
+- [X] =CLI configuration= — reference (écrite à l'item 4)
+- [X] =Selectors= — reference
+- [X] =Field specifications= — reference
+- [X] =The verb pattern= — rationale
+- [X] =mf= — reference (la racine du catalogue), et les =mf repo= reportées de l'item 2 (=list=, =init=, =load=, =unload=)
 
-CLI : =mf=. Sources : spec-main « CLI » ; spec-data-model « CLI » (« Global
-selection flags », « Field specification syntax », « Selector options », « Verb
-pattern ») ; mémoire =gui-command-vocabulary=.
+Vérification contre le code : conforme (syntaxe des field specs identique au
+parseur). CLAUDE.md nommait =query/fields/append= ; c'est =add=. Sources retirées
+(pointeurs) : spec-main « CLI » (description, options globales, sortie, codes de
+sortie) ; spec-data-model « Global selection flags », « Field specification
+syntax », « Selector options », « Verb pattern », =mf repo=, =mf task=.
 
 ** FAIT 4. Configuration
 

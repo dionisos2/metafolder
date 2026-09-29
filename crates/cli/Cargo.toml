@@ -4,7 +4,7 @@ version = "0.3.0"
 edition = "2021"
 publish = false
 
-# The CLI binary is named `mf` (spec-main "* CLI").
+# The CLI binary is named `mf` (doc "Command line").
 [[bin]]
 name = "mf"
 path = "src/main.rs"

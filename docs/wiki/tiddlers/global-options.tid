@@ -1,0 +1,28 @@
+title: Global options
+tags: [[Command line]]
+kind: reference
+summary: -n / -u pick the repository, -p the daemon's port, --no-config ignores your settings — before the command, with environment fallbacks.
+
+The repository and the daemon are chosen ''once'', by options that precede the
+command, never per command:
+
+|!Option |!Environment |!Selects |
+|`-n <name>` |`METAFOLDER_REPO_NAME` |the loaded repository of that name |
+|`-u <uuid>` |`METAFOLDER_REPO` |the loaded repository of that uuid |
+|`-p <port>` |`METAFOLDER_DAEMON_PORT` |the daemon's port on `127.0.0.1` (default 7523) |
+|`--no-config` | |ignore `cli/config.toml` entirely ([[CLI configuration]]) |
+
+`-n` and `-u` are mutually exclusive. Names are unique among loaded repositories
+— the daemon refuses to load a second one with the same name — so `-n` always
+names one. The daemon listens on loopback only, so a port fully addresses it:
+there is no URL option.
+
+For every setting: an explicit option or environment variable, then the
+configuration file (its default `[repo]`, its `daemon-port`), then the built-in
+default. A command that needs a repository and gets none fails at once with a
+usage error (exit code 2), without calling the daemon. The daemon-wide commands
+(`mf repo`, `mf task`) ignore `-n`/`-u`, except `mf repo unload`, whose target they
+name.
+
+Because they are not options of the subcommands, they appear in `mf --help` only,
+not in every command's help.

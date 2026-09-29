@@ -923,112 +923,29 @@ are defined in [[file:spec-main.org][spec-main.org]].
 
 *** Global selection flags
 
-The repository and daemon are chosen *once*, by flags that precede the command —
-never per-command:
-
-| Flag           | Selects                                                     |
-|----------------+------------------------------------------------------------|
-| =-n <name>=    | the loaded repository by its (unique) name                 |
-| =-u <uuid>=    | the loaded repository by UUID                              |
-| =-p <port>=    | the daemon TCP port on =127.0.0.1= (default =7523=)        |
-
-=-n= and =-u= are mutually exclusive. The daemon only listens on loopback, so a
-port is all that is needed to address it (no full URL). Environment fallbacks:
-=METAFOLDER_REPO= (UUID), =METAFOLDER_REPO_NAME= (name), =METAFOLDER_DAEMON_PORT=.
-Daemon-wide commands (=mf repo=, =mf task=) ignore =-n=/=-u=.
-
-Repository *names are unique among loaded repositories*: the daemon rejects
-loading a repo whose name collides with one already loaded, so =-n= always
-resolves to a single UUID.
+Moved to the wiki: doc "Global options".
 
 ** Field specification syntax
 
-Commands that write fields take a /field spec/ argument of the form
-=name:type[=value]=:
-
-| Type          | Syntax                                  | Example                                           |
-|---------------+-----------------------------------------+---------------------------------------------------|
-| =nothing=     | =name:nothing= (no value)               | =rating:nothing=                                  |
-| =string=      | =name:string=text= (quotes optional)    | =genre:string=jazz=, =genre:string="hard bop"=    |
-| =int=         | =name:int=N=                            | =rating:int=5=                                    |
-| =float=       | =name:float=X=                          | =score:float=3.14=                                |
-| =bool=        | =name:bool=true|false=                  | =seen:bool=true=                                  |
-| =datetime=    | =name:datetime=ISO-8601=                | =added:datetime=2024-01-01T12:00:00Z=             |
-| =ref=         | =name:ref=<metarecord_uuid>=                 | =author:ref=8f3a...=                              |
-| =tree_ref=    | =name:tree_ref=<parent_uuid>/<name>=; empty parent for a root: =name:tree_ref=/<name>= | =parent:tree_ref=8f3a.../félins= |
-| =refbase=     | =name:refbase=<repo_uuid>=              | =origin:refbase=47ab...=                          |
-| =externalref= | =name:externalref=<repo_uuid>:<metarecord_uuid>= | =link_a:externalref=47ab...:8f3a...=          |
+Moved to the wiki: doc "Field specifications".
 
 ** Selector options
 
-=mf metarecord= picks its target metarecord(s) with a *selector option that
-precedes the verb* (so the selector and verb don't compete for the same
-positional, and one selector serves every verb including =field=):
-
-| Option        | Selects                                                       |
-|---------------+--------------------------------------------------------------|
-| =-i <uuid>=   | one metarecord by UUID (no daemon query round-trip)          |
-| =-q "<DSL>"=  | the metarecords matching a DSL predicate ([[file:spec-query.org][spec-query.org]])         |
-| =-s=          | with =-q=: treat it as simplified-language text, expand first |
-| (none)        | all metarecords                                              |
-
-=-q= and =-i= are mutually exclusive; =-s= requires =-q=. =-s= expansion is a
-pure client-side transformation (the shared grammar in =core=), never a daemon
-round-trip.
-
-*The typed flag decides, never the shape of its text.* A bare 32-hex UUID is
-valid DSL (a =UuidIn= atom — see [[file:spec-query.org][spec-query.org]]), so
-=-q <uuid>= is an ordinary query and behaves like every other =-q=, while
-=-i <uuid>= keeps the resource-layer behaviour. The two differ only in output
-shape (=get=) and in what =field get --resolve= accepts; every other verb
-compiles both to the same =uuid_in= request. Where a target is instead a
-*positional* =<query|uuid>= argument (=mf path=, =mf tag= targets…), no flag was
-typed and the shape decides, as before. Example: =mf -n music metarecord -q 'mfr_path ->* "/docs"' field set reviewed:bool=true=.
+Moved to the wiki: doc "Selectors".
 
 ** Verb pattern
 
-The repo-scoped data commands form a tree (=metarecord=, =field=) whose verbs
-follow one pattern at every level:
-
-- =get= reads; =set= replaces *everything at that level*; =add= creates a new
-  element (with a fresh id/UUID); =remove= takes one back out *by value*;
-  =delete= destroys one addressed *by its id* (or UUID).
-
-So =get= is the inverse of =set=, and =add= the inverse of =remove= (by value)
-and of =delete= (by id). The two removal verbs are not synonyms: =remove= names
-a value inside a multi-map and leaves the other rows of that name alone, while
-=delete= destroys a thing that has an id — a metarecord (=mf metarecord
-delete=), a field row (=mf field delete <id>=). Keeping them apart is what stops
-"take this tag off the record" from reading like "destroy the record"; the same
-four verbs name the daemon's set layer (=POST
-/query/fields/{set,add,remove,unset}=) and the GUI's =metarecord:field= /
-=metarecord:bulk= operations, so one word means one thing in all three.
-
-=set= at the metarecord level replaces all of its fields; at the field-name
-level, all rows of that name; at the row level, the one row. =add= lives only
-where new ids are born (a metarecord, or a row under a field name), so the by-id
-=field= group has no =add=.
+Moved to the wiki: doc "The verb pattern".
 
 ** Daemon- and repo-management groups
 
 *** =mf repo {list|init|load|unload}=
 
-Daemon-wide; take no =-n=/=-u= selector. =list= (the default for =mf repo=)
-pretty-prints the loaded repositories; =init <path>= / =load <path>= print the
-repo UUID; =unload= releases the repo selected by =-n=/=-u=.
-
-=init= additionally applies the =default= ignore preset to the new root (see
-=mf ignore= and spec-file-tracking "Ignore presets"): the daemon creates a root
-with an empty =mf_ignore= set, then the shared =core::repo_init= orchestration
-writes the =default= preset's patterns. =--ignore <names>= selects a different
-preset set (comma/space separated); =--no-ignore= leaves the root's ignore set
-empty. A missing =ignore-presets.toml= makes =init= fail (never a silent
-fallback), unless =--no-ignore= is given.
+Moved to the wiki: doc "Creating and loading a repository", doc "mf repo init".
 
 *** =mf task {list|show}=
 
-Background tasks (doc "Tasks"). =list= (default) lists tasks (=--all= across
-repos); =show <id>= shows one (=--stop= cancels it).
+Moved to the wiki: doc "Following a task", doc "Cancelling a task".
 
 *** =mf log {list|rollback|prune}=
 

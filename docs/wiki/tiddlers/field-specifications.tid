@@ -1,0 +1,22 @@
+title: Field specifications
+tags: [[Command line]]
+kind: reference
+aliases: fieldspec field-spec
+summary: name:type=value — how a field is written on the command line, for each of the ten value types.
+
+A command that writes fields takes a ''field spec'', `name:type[=value]`:
+
+|!Type |!Syntax |!Example |
+|`nothing` |`name:nothing` (no value) |`rating:nothing` |
+|`string` |`name:string=text` (surrounding double quotes optional) |`genre:string=jazz`, `genre:string="hard bop"` |
+|`int` |`name:int=N` |`rating:int=5` |
+|`float` |`name:float=X` |`score:float=3.14` |
+|`bool` |`name:bool=true` or `false` |`seen:bool=true` |
+|`datetime` |`name:datetime=<ISO-8601 UTC>` |`added:datetime=2024-01-01T12:00:00Z` |
+|`ref` |`name:ref=<metarecord uuid>` |`author:ref=8f3a…` |
+|`tree_ref` |`name:tree_ref=<parent uuid>/<name>`, or `/<name>` for a root |`parent:tree_ref=8f3a…/félins` |
+|`refbase` |`name:refbase=<repository uuid>` |`origin:refbase=47ab…` |
+|`externalref` |`name:externalref=<repository uuid>:<metarecord uuid>` |`link:externalref=47ab…:8f3a…` |
+
+A `tree_ref` name is a single path component: no `/`, not empty. Every type but
+`nothing` needs its `=value`.

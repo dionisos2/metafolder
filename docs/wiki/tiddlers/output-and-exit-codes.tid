@@ -1,0 +1,14 @@
+title: Output and exit codes
+tags: [[Command line]]
+kind: reference
+summary: Results on stdout, errors on stderr; uuids one per line, JSON for structures, --json for the raw body; exit 0, 1 or 2.
+
+* Results go to stdout; errors and warnings to stderr.
+* Machine-friendly by default: a list of uuids is one per line, a structured result is JSON. A command with a human-oriented format has a `--json` option printing the daemon's raw answer instead.
+* A daemon error (`{"error": "…"}`) is printed on stderr as `error: <message>`.
+* Progress (a reconcile, a load, a scan) is drawn on stderr, and only when stderr is a terminal: pipes and scripts see nothing of it.
+
+|!Exit code |!Meaning |
+|`0` |success |
+|`1` |the operation failed: a daemon error, violations found, no match… |
+|`2` |a usage error: bad arguments, an unparsable query or field spec, a missing repository selector |

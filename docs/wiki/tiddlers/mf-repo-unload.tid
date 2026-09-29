@@ -1,0 +1,7 @@
+title: mf repo unload
+tags: [[CLI command]] Daemon
+kind: reference
+summary: Unload the selected repository (stops its watcher, releases its DB lock)
+
+Unloads the repository `-n`/`-u` names; its data on disk is untouched. Refused
+while work runs on it ([[Creating and loading a repository]]).

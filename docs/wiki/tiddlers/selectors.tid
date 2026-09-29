@@ -1,0 +1,28 @@
+title: Selectors
+tags: [[Command line]]
+kind: reference
+summary: -i one metarecord, -q a query (-s for simplified text), nothing for all — an option before the verb, so every verb can use it.
+
+`mf metarecord` picks its target with a ''selector option placed before the
+verb'', so one selector serves every verb, `field` included:
+
+|!Option |!Selects |
+|`-i <uuid>` |one metarecord, by uuid (no query) |
+|`-q "<query>"` |the metarecords matching a query (the query DSL) |
+|`-s` |with `-q`: the text is the simplified language, expanded first — in the client, never by the daemon |
+|(none) |every metarecord |
+
+`-q` and `-i` are mutually exclusive; `-s` needs `-q`. `mf tag` adds `--eq
+name[:type]=value` (repeatable, AND-ed: an exact match).
+
+''The option decides, never the shape of its text.'' A bare 32-hex uuid is a valid
+query, so `-q <uuid>` is an ordinary query and behaves like every other `-q`, while
+`-i <uuid>` keeps the single-resource behaviour. The two differ only in the output
+of `get` (full JSON for `-i`, uuids for `-q`) and in what `field get --resolve`
+accepts; every other verb sends both as the same set request. Where a target is a
+''positional'' argument instead (`mf path`, the targets of `mf tag`), no option was
+typed, and the shape of the text decides.
+
+```
+mf -n music metarecord -q 'mfr_path ->* "/docs"' field set reviewed:bool=true
+```

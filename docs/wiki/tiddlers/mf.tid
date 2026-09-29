@@ -1,0 +1,9 @@
+title: mf
+tags: [[CLI command]] [[Command line]]
+kind: reference
+summary: metafolder CLI — thin client over the daemon HTTP API
+
+The command-line client ([[Command line]]): [[Global options]] before the command,
+then one of the commands below.
+
+<<catalog "CLI command">>

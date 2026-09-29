@@ -1,0 +1,27 @@
+title: The verb pattern
+tags: [[Command line]]
+kind: rationale
+summary: get and set, add and remove, add and delete: the same verbs, the same meaning, at every level — and in the daemon and the GUI too.
+
+The data commands form a tree (`metarecord`, `field`) whose verbs follow one
+pattern at every level:
+
+* `get` reads; `set` replaces ''everything at that level'';
+* `add` creates a new element, with a new id or uuid;
+* `remove` takes one out ''by its value'';
+* `delete` destroys one ''addressed by its id'' (or uuid).
+
+So `get` is the inverse of `set`, and `add` the inverse of `remove` (by value) and
+of `delete` (by id). The two removals are not synonyms: `remove` names a value
+inside a multi-valued field and leaves its other rows alone, `delete` destroys a
+thing that has an id — a metarecord (`mf metarecord delete`), a field row
+(`mf field delete <id>`). Keeping them apart is what stops "take this tag off the
+record" from reading like "destroy the record".
+
+`set` on a metarecord replaces all its fields; on a field name, all the rows of
+that name; on a row, the one row. `add` exists only where new ids are born — a
+metarecord, a row under a field name — so the by-id `field` group has none.
+
+The same four verbs name the daemon's set layer (`POST /query/fields/{set,add,
+remove,unset}`) and the GUI's `metarecord:field` and `metarecord:bulk` operations:
+one word means one thing in all three.

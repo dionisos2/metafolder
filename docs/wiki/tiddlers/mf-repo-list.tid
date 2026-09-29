@@ -1,0 +1,6 @@
+title: mf repo list
+tags: [[CLI command]] Daemon
+kind: reference
+summary: List the loaded repositories (pretty-printed JSON)
+
+The loaded repositories, as pretty-printed JSON (`GET /repos`).

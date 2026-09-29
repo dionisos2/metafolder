@@ -1,0 +1,10 @@
+title: mf repo init
+tags: [[CLI command]] Daemon
+kind: reference
+summary: Initialise a new repository and print its UUID
+
+Creates a repository and prints its uuid ([[Creating and loading a repository]]).
+The new root then gets the `default` ignore preset's patterns (`--ignore <names>`
+picks other presets, comma- or space-separated; `--no-ignore` leaves its ignore set
+empty). A missing `core/ignore-presets.toml` makes `init` fail rather than skip the
+presets, unless `--no-ignore` is given ([[No runtime fallback]]).
