@@ -151,6 +151,64 @@ async fn test_reverting_a_create_deletes_the_record() {
     assert_eq!(status, StatusCode::NOT_FOUND, "the record should be gone");
 }
 
+#[tokio::test]
+async fn test_reverting_an_unset_of_several_rows_restores_them_all() {
+    // Unsetting a multi-valued field removes every row of it in ONE
+    // `delete_field` operation; its revert must bring every row back.
+    let (app, repo, _root) = setup("unset_rows").await;
+    let uuid = create(
+        &app,
+        &repo,
+        json!([
+            {"name": "tag", "value": {"type": "string", "value": "a"}},
+            {"name": "tag", "value": {"type": "string", "value": "b"}},
+            {"name": "tag", "value": {"type": "string", "value": "c"}}
+        ]),
+    )
+    .await;
+    let (status, body) = request(
+        &app,
+        "DELETE",
+        &format!("/repos/{repo}/metarecords/{uuid}/fields/tag"),
+        Some(json!({})),
+    )
+    .await;
+    assert!(status.is_success(), "unset failed: {body}");
+    let rev = last_revision(&app, &repo).await;
+
+    let (status, body) = revert(&app, &repo, json!({"target": {"rev_id": rev}})).await;
+    assert_eq!(status, StatusCode::OK, "revert failed: {body}");
+
+    let (_, record) =
+        request(&app, "GET", &format!("/repos/{repo}/metarecords/{uuid}"), None).await;
+    let mut tags: Vec<String> = record["fields"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter(|f| f["name"] == "tag")
+        .map(|f| f["value"]["value"].as_str().unwrap().to_string())
+        .collect();
+    tags.sort();
+    assert_eq!(tags, ["a", "b", "c"], "every unset row comes back");
+}
+
+#[tokio::test]
+async fn test_the_plan_names_what_a_revert_writes() {
+    let (app, repo, _root) = setup("plan_writes").await;
+    create(&app, &repo, json!([{"name": "a", "value": {"type": "int", "value": 1}}])).await;
+    let rev = last_revision(&app, &repo).await;
+
+    let (status, body) = plan(&app, &repo, &format!("target_rev_id={rev}")).await;
+    assert_eq!(status, StatusCode::OK, "plan failed: {body}");
+    let writes: Vec<&str> = body["operations"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|o| o["writes"].as_str().unwrap())
+        .collect();
+    assert_eq!(writes, ["delete_metarecord"], "a creation is undone by a deletion");
+}
+
 // ── The dependency check ──────────────────────────────────────────────────────
 
 #[tokio::test]

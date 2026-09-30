@@ -228,6 +228,11 @@ pub fn fs_action<L: Log + ?Sized>(log: &L, op: &OpRow) -> Result<Option<FsAction
 /// so a revert that moved a file must record `file_moved` and not `set_field`.
 pub fn written_as(op: &OpRow) -> OpType {
     match op.op_type.as_str() {
+        "create_metarecord" => OpType::DeleteRecord,
+        "delete_metarecord" => OpType::CreateRecord,
+        "set_metarecord" => OpType::SetRecord,
+        "append_field" => OpType::DeleteField,
+        "delete_field" => OpType::AppendField,
         // `file_moved` carries both directions — it is already what `reconcile`
         // writes when it relinks an orphan whose `mfr_path` was `Nothing`.
         "file_deleted" | "file_moved" => OpType::FileMoved,
@@ -276,10 +281,13 @@ pub fn apply(writer: &mut Writer, ops: &[OpRow]) -> Result<usize> {
                 writer.delete_field(op.entity_uuid, id)?;
             }
             "delete_field" => {
-                let Some(row) = before.first() else { continue };
-                let new_id =
-                    writer.append_field(op.entity_uuid, &row.name, row.value.clone())?.id();
-                remap.insert(row.id, new_id);
+                // One `delete_field` may carry every row of a name (an unset, a
+                // removal by value): each comes back.
+                for row in &before {
+                    let new_id =
+                        writer.append_field(op.entity_uuid, &row.name, row.value.clone())?.id();
+                    remap.insert(row.id, new_id);
+                }
             }
             "unknown" => {
                 anyhow::bail!("operation {} is an unlogged write and cannot be reverted", op.id)
