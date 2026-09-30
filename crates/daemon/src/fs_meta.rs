@@ -1,5 +1,5 @@
 //! Stat-derived `mfr_*` field values (doc "Reserved fields",
-//! spec-platform "File metadata fields").
+//! doc "File metadata fields").
 
 use std::path::Path;
 
@@ -65,7 +65,7 @@ pub fn stat_fields(path: &Path) -> Result<Vec<Field>> {
     }
     // `created()` abstracts the per-OS source (statx/st_birthtime/ftCreationTime);
     // it errors when the filesystem does not record a birth time, in which case
-    // `mfr_btime` is simply absent (spec-platform "File metadata fields").
+    // `mfr_btime` is simply absent (doc "File metadata fields").
     if let Ok(btime) = meta.created() {
         fields.push(Field::new("mfr_btime", Value::DateTime(ms_from_systemtime(btime))));
     }

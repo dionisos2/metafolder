@@ -1,5 +1,4 @@
-//! The per-repository embedded-metadata extraction map (spec-platform
-//! "Embedded metadata extraction" → "Configuration").
+//! The per-repository embedded-metadata extraction map (doc "The metadata map").
 //!
 //! Each [`FieldMapping`] maps an ordered list of native source keys onto one
 //! reserved `mfr_meta_<name>` field of a given [`FieldType`]. The map lives at

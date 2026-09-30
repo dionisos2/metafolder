@@ -1,0 +1,52 @@
+title: The metadata map
+tags: [[Embedded metadata]]
+kind: reference
+summary: .metafolder/metadata-map.toml maps native tag names to mfr_meta_* fields with a type — per repository, seeded at init, repaired if deleted.
+
+The same meaning is spelled differently across formats (a performer is ID3 `TPE1`,
+Vorbis `ARTIST`, MP4 `©ART`), and which keys are worth keeping is a matter of taste. So
+extraction follows an editable map, one `[[field]]` table per target field:
+
+```
+[[field]]
+name = "artist"               # stored as mfr_meta_artist
+type = "string"               # string, int, float or datetime
+from = ["TrackArtist", "Artist"]
+```
+
+The extractor collects every `(source key, value)` the file provides, then writes each
+field from the ''first'' key of its `from` list that is present ''and'' parses into its
+type — a malformed tag is skipped for the next source, never poisoning the field. Only
+these normalised fields are stored, never the hundreds of raw format-specific tags,
+which would flood the field catalogue.
+
+''Source keys'':
+
+* audio tags — `lofty`'s normalised item keys (`TrackTitle`, `TrackArtist`, `AlbumTitle`, `AlbumArtist`, `Genre`, `RecordingDate`, `Year`, `TrackNumber`, `DiscNumber`, `Comment`…), which already unify the ID3, Vorbis and MP4 spellings; an unmapped native tag is offered under its raw name;
+* image tags — EXIF/TIFF names (`DateTimeOriginal`, `Make`, `Model`, `Orientation`, `GPSLatitude`, `GPSLongitude`, `Artist`, `Copyright`…);
+* stream properties — computed, not tags, so under `@` keys: `@duration_ms`, `@bitrate`, `@sample_rate`, `@channels`, `@width`, `@height`.
+
+A `datetime` is stored as its instant: a bare year (Vorbis `DATE 1998`) becomes that year's
+1 January 00:00 UTC, EXIF `DateTimeOriginal` its exact instant. Only keys the file
+provides are written; the others stay unknown. All `mfr_meta_*` names are reserved
+([[Reserved fields]]).
+
+''The default map'' (`crates/daemon/src/default-metadata-map.toml`) has twenty fields:
+`title`, `artist`, `album_artist` (kept distinct from `artist`, to group compilations —
+merge them by adding its sources to `artist`), `album`, `genre`, `track`, `disc`, `date`
+(`DateTimeOriginal`, `RecordingDate`, `Year`), `comment`, `duration`, `bitrate`,
+`sample_rate`, `channels`, `width`, `height`, `camera_make`, `camera_model`, `orientation`,
+`gps_lat`, `gps_lon`.
+
+!! Where it lives
+
+`.metafolder/metadata-map.toml`, per repository, beside `config.json` and `schema.json` —
+ordinary trackable content, on the schema's model rather than the configuration
+repository's: repositories in different languages or conventions want different maps, and
+the map belongs with what it describes ([[Repository layout on disk]]).
+
+* `mf repo init` seeds it from the default baked into the daemon; editing the shipped default affects new repositories only.
+* At load, a ''missing'' file is written from the default, then read — repository data, not user configuration, so this is no runtime fallback. A ''malformed'' one fails that repository's load alone, never the daemon, like an invalid `schema.json`.
+
+A newly mapped field is picked up by a file's ''next'' extraction, which needs its marker
+cleared ([[When metadata is extracted]]).

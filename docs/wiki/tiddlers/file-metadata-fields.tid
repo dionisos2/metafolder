@@ -1,0 +1,30 @@
+title: File metadata fields
+tags: [[File tracking]]
+kind: reference
+aliases: stat mime mfr_mime
+summary: The mfr_* fields read from the filesystem — which exist on which platform — and the MIME type reconcile detects from content.
+
+The watcher and reconcile write the stat-derived fields of every tracked file and
+directory ([[Reserved fields]] has the full list). Their availability varies:
+
+|!Field |!Linux |!macOS |!Windows |
+|`mfr_type`, `mfr_size`, `mfr_mtime` |yes |yes |yes |
+|`mfr_btime` |if the filesystem supports it (`statx`) |yes (`st_birthtime`) |yes (`ftCreationTime`) |
+|`mfr_permissions`, `mfr_uid`, `mfr_gid` |yes |yes |never written |
+|`mfr_inode` |yes |yes |never written |
+|`mfr_mount` |yes |yes, without identity |never written |
+
+* The Unix-only fields stay ''unknown'' on Windows; a repository written on Unix and later watched on Windows keeps the Unix values untouched (they are simply not refreshed).
+* `mfr_btime` comes through `std::fs::Metadata::created()` and is absent where the filesystem keeps no creation time.
+* `mfr_inode` (`st_dev:st_ino`, only when the link count exceeds one — [[What counts as a duplicate]]) comes from the same `stat`, no extra call. Windows exposes no file index through `std`, so there every file counts as its own inode — over-counting reclaimable space rather than under-counting it.
+* The hashes are pure content and fully portable ([[File fingerprint]]); `mfr_mount`: [[mfr_mount]].
+
+!! MIME type
+
+`mfr_mime` is detected from content by the pure-Rust `infer` crate (magic bytes) on every
+platform — no system `libmagic`. The value is always a standard MIME string; what `infer`
+cannot classify from magic bytes (plain text, for one) leaves the field absent.
+
+It is filled by reconcile — full and scoped — for files that lack it (on by default;
+`mime: false`, `mf reconcile --no-mime`). It is never recomputed: a content change is
+not reflected until the field is cleared.

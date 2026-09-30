@@ -485,16 +485,18 @@ Vérification contre le code : conforme ; « Cost of the orphan search » (le
 Sources retirées (pointeurs) : spec-file-tracking « Orphans », « Orphan scan »,
 « Marking orphans », =mf orphan= ; spec-gui « Orphans ».
 
-** TODO 19. Métadonnées des fichiers
+** FAIT 19. Métadonnées des fichiers
 
 (sous File tracking)
-- [ ] =File metadata fields= — reference (les =mfr_*= de =stat=, MIME)
-- [ ] =Embedded metadata= — overview (=mfr_meta_*=, lofty/nom-exif, pas de sandbox)
-- [ ] =The metadata map= — reference (configuration par dépôt)
-- [ ] =When metadata is extracted= — reference (déclenchement, idempotence)
+- [X] =File metadata fields= — reference (avec le MIME)
+- [X] =Embedded metadata= — overview (avec le piège nom-exif de l'audit de sécurité)
+- [X] =The metadata map= — reference
+- [X] =When metadata is extracted= — reference
 
-Sources : spec-platform « File metadata fields », « MIME detection », « Embedded
-metadata extraction » ; mémoire =embedded-metadata-extraction=.
+Vérification contre le code : conforme. Sources retirées (pointeurs) :
+spec-platform « File metadata fields », « MIME detection », « Embedded metadata
+extraction ». Mémoire =security-audit-sept-2026= supprimée (ses pièges watchd sont
+dans « The fanotify broker », celui de nom-exif ici).
 
 ** TODO 20. Ordonner un dossier
 

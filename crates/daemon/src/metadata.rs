@@ -1,4 +1,4 @@
-//! Embedded-metadata extraction (spec-platform "Embedded metadata extraction").
+//! Embedded-metadata extraction (doc "Embedded metadata").
 //!
 //! Reads the *payload* metadata of media files — an audio file's
 //! artist/album/title, an image's capture date/camera/GPS — into reserved

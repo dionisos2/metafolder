@@ -432,7 +432,7 @@ fn test_reconcile_size_only_match_is_a_weak_candidate() {
     std::fs::remove_dir_all(root).unwrap();
 }
 
-// ── MIME detection (spec-platform "MIME detection") ─────────────────────────────
+// ── MIME detection (doc "File metadata fields") ─────────────────────────────
 
 const PNG_MAGIC: &[u8] = &[0x89, b'P', b'N', b'G', 0x0d, 0x0a, 0x1a, 0x0a, 0, 0, 0, 0];
 

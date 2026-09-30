@@ -122,7 +122,7 @@ fn test_btime_present_when_platform_supports_it() {
         PathBuf::from(env!("CARGO_TARGET_TMPDIR")).join(format!("mf_btime_{}", Uuid::new_v4()));
     std::fs::write(&path, b"birthday").unwrap();
     // `mfr_btime` mirrors `std::fs::Metadata::created()`, which is itself
-    // platform/filesystem dependent (spec-platform "File metadata fields").
+    // platform/filesystem dependent (doc "File metadata fields").
     let supported = std::fs::metadata(&path).unwrap().created().is_ok();
     let fields = fs_meta::stat_fields(&path).unwrap();
     let btime = fields.iter().find(|f| f.name == "mfr_btime");

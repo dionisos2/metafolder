@@ -23,7 +23,7 @@ pub(super) struct ReconcileBody {
     #[serde(default = "default_true")]
     mime: bool,
     /// Extract embedded `mfr_meta_*` fields for files not yet analysed
-    /// (default true; spec-platform "Embedded metadata extraction").
+    /// (default true; doc "Embedded metadata").
     #[serde(default = "default_true")]
     metadata: bool,
     /// Refresh the stat-derived `mfr_*` fields of files/directories still at

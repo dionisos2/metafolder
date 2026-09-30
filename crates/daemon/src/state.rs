@@ -555,7 +555,7 @@ impl RepoState {
     }
 
     /// Reads the repository's configuration files: the user schema and the
-    /// embedded-metadata map (doc "Schema", spec-platform "Configuration").
+    /// embedded-metadata map (doc "Schema", doc "The metadata map").
     ///
     /// Deliberately *not* part of [`Self::warm`]. These are small files that
     /// need no accelerator, and an invalid one makes the repository bad rather

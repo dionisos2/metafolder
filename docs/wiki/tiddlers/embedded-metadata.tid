@@ -1,0 +1,39 @@
+title: Embedded metadata
+tags: [[File tracking]]
+kind: overview
+aliases: mfr_meta exif tags id3
+summary: Reconcile reads the metadata inside media files — tags, EXIF, stream properties — into mfr_meta_* fields, with memory-safe parsers and a per-repository map.
+
+Many formats carry metadata about their ''content'': an audio file's artist, album and
+title, an image's capture date, camera and GPS position, a video's title. Unlike the stat
+fields, which describe the filesystem entry, these describe the payload. Reconcile
+extracts a curated, normalised subset into reserved `mfr_meta_*` fields, queryable like
+any other:
+
+```
+mf -n music metarecord -q 'mfr_meta_artist = "Nina Simone" AND mfr_meta_date > @"1960-01-01"' get
+same(mfr_meta_artist, mfr_path = "/music/a.flac")
+```
+
+The parsers are ''pure Rust and memory-safe'', in the daemon process:
+
+* audio — `lofty`: ID3v2/ID3v1, Vorbis comments (FLAC, Ogg, Opus), MP4/M4A atoms, tags ''and'' stream properties (duration, bitrate, sample rate, channels);
+* images — `nom-exif`: the EXIF/TIFF tags of JPEG, TIFF and common RAW formats — capture date, make and model, orientation, GPS, dimensions;
+* video containers (Matroska, MP4) — best effort: title, and dimensions and duration where cheap.
+
+''Why no sandbox here'', when the GUI confines every media decoder
+([[Sandboxing the media decoders]]): a memory-safe parser fed a crafted file can at worst
+panic or return wrong values, never execute code, unlike the C decoders behind `ffmpeg`
+or the WebView. So each backend runs under `catch_unwind` — a panic is a warning naming
+the file, its partial output dropped (without it, one image whose EXIF makes `nom-exif`
+hit an `assert!` on file-controlled sizes failed every reconcile of the repository) — and
+its allocations are bounded (lofty's allocation limit; for `nom-exif`, the file's real
+length). A richer `exiftool`/`ffprobe` backend would need that sandbox in the daemon
+first, and is out of scope until then.
+
+What is extracted is up to each repository ([[The metadata map]]); when it happens:
+[[When metadata is extracted]].
+
+!! Reference
+
+<<list-kind reference>>

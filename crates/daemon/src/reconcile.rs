@@ -84,10 +84,10 @@ fn cancelled() -> ApiError {
 /// is `Some`, the v2 similarity phase runs after fingerprinting, appending
 /// score-based candidates for still-unmatched orphans and new files
 /// (doc "File similarity"). When `compute_mime` is set, files
-/// without an `mfr_mime` get one from content analysis (spec-platform "MIME
-/// detection"). When `compute_metadata` is set, files without an
+/// without an `mfr_mime` get one from content analysis (doc "File metadata fields"). When
+/// `compute_metadata` is set, files without an
 /// `mfr_meta_extracted` marker get their embedded metadata extracted into
-/// `mfr_meta_*` fields (spec-platform "Embedded metadata extraction"). When
+/// `mfr_meta_*` fields (doc "Embedded metadata"). When
 /// `refresh` is set, files and directories still at their recorded path get
 /// their stat-derived `mfr_*` fields refreshed (catching in-place edits made
 /// while the watcher was not running), the same way single-metarecord reconcile
@@ -701,7 +701,7 @@ fn stat_paths(root: &Path, paths: &[RelPath], reporter: &Reporter) -> Vec<(RelPa
 /// Creates the metarecord for a new filesystem path (parents included).
 /// When `compute_mime` is set, a detectable file gets its `mfr_mime` as part of
 /// the create operation (folded in, so no separate field write / version bump);
-/// directories and undetectable files get none (spec-platform "MIME detection").
+/// directories and undetectable files get none (doc "File metadata fields").
 pub(crate) fn create_record_for(
     writer: &mut Writer,
     cache: &TreeCache,
@@ -772,7 +772,7 @@ fn int_field(writer: &Writer, uuid: Uuid, name: &str) -> Result<Option<i64>> {
     writer.store().int_field(uuid, name)
 }
 
-// ── MIME detection (spec-platform "MIME detection") ─────────────────────────────
+// ── MIME detection (doc "File metadata fields") ─────────────────────────────
 
 /// Content-based MIME detection with the pure-Rust `infer` crate (magic bytes).
 /// Returns `None` for unreadable files and for types `infer` cannot recognise
@@ -795,7 +795,7 @@ fn maybe_compute_mime(writer: &mut Writer, root: &Path, uuid: Uuid, rel: &RelPat
     Ok(())
 }
 
-// ── Embedded metadata (spec-platform "Embedded metadata extraction") ─────────────
+// ── Embedded metadata (doc "Embedded metadata") ─────────────
 
 /// Extracts embedded `mfr_meta_*` fields for a file that has not been analysed
 /// yet, using the per-repo `map`. Idempotent via the `mfr_meta_extracted`

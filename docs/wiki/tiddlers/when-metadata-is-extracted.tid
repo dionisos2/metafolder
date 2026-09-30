@@ -1,0 +1,22 @@
+title: When metadata is extracted
+tags: [[Embedded metadata]]
+kind: reference
+summary: A reconcile phase, on by default, that reads each file once — the mfr_meta_extracted marker — so re-running never re-parses; clear the marker to read again.
+
+Extraction is a phase of every reconcile, full and scoped, on by default (`metadata:
+false`, `mf reconcile --no-metadata` to skip it) — like the MIME type.
+
+A file may legitimately carry no embedded metadata (a `.txt`, a data blob), so "is an
+`mfr_meta_*` field absent?" cannot decide whether to read it again — such files would be
+re-parsed at every reconcile. Instead `mfr_meta_extracted = true` records that a file has
+been analysed: the phase skips files that have it, and sets it (with whatever was found)
+on the ones it reads. Re-running reconcile therefore neither re-parses nor grows the log.
+
+A content change is not reflected until the marker — and, to replace them, the stale
+`mfr_meta_*` values — are cleared; the same "clear to recompute" contract as `mfr_mime`
+([[File metadata fields]]):
+
+```
+mf -n music metarecord -q 'mfr_path ->* "/music/retagged"' field unset mfr_meta_extracted -f
+mf -n music reconcile --metarecord <uuid of /music/retagged>
+```
