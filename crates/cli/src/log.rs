@@ -241,7 +241,7 @@ pub struct UndoOpts {
 // ── mf rollback (coordinated navigation) ────────────────────────────────────────
 
 /// Parses a `--on-move-available`/`--on-move-unavailable` value
-/// (spec-event-log "Policies for move_file").
+/// (doc "Rolling back").
 pub fn parse_policy(s: &str) -> Result<Policy, CliError> {
     match s {
         "apply" => Ok(Policy::Apply),

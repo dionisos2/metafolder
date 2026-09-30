@@ -1,0 +1,47 @@
+title: Rollback endpoints
+tags: [[Rollback]]
+kind: reference
+audience: dev
+summary: The atomic POST /rollback, the plan and its summary, and the coordinated start / step / abort.
+
+|!Route |!Does |
+|`POST /repos/:repo/rollback` |navigates atomically, metadata only (no file is moved) |
+|`GET /repos/:repo/rollback/plan` |the ordered steps, without the lock |
+|`GET /repos/:repo/rollback/plan/summary` |counts, without the lock |
+|`POST /repos/:repo/rollback/start` |takes the lock, plans, answers the first step |
+|`POST /repos/:repo/rollback/step` |`{}` or `{"skip": true}`: applies the current step, answers the next |
+|`POST /repos/:repo/rollback/abort` |releases the lock → `{"head"}`; HEAD stays |
+
+''Targets'' (`{"target": …}`; for the plans, `target_id`, `target_label`,
+`target_timestamp`, `target_prev_revision`):
+
+* `{"id": N}` — operation N, anywhere in the tree;
+* `{"timestamp": T}` — the most recent operation on HEAD's ancestry whose revision is no later than T;
+* `{"label": L}` — the last operation of the most recent revision labelled L on HEAD's ancestry;
+* `{"prev_revision": true}` — the parent of the first operation of HEAD's revision: the whole last revision undone (from the root: the empty state).
+
+`POST /rollback` answers `{"previous_head", "new_head", "operations_unapplied",
+"operations_applied"}`.
+
+The summary — `{"total_operations", "by_type": {…}, "revisions_affected",
+"filesystem_steps"}` — is what decides the form: `filesystem_steps = 0` means the
+navigation rewinds in the database alone, and a client takes it in one `POST /rollback`
+instead of a round-trip per operation.
+
+!! Steps
+
+`start` answers `{"op": {…}, "remaining": N}` — or `{"op": null, "remaining": 0}` without
+taking the lock when the target is HEAD — and each `step` the next, until `op` is `null`:
+the target reached, the lock released, held events applied. Each step's op carries
+`filesystem`: `null`, or `{"action": "move"}` with `from`/`to` (paths to pass to `mv` as
+they are; absent when the move's snapshot is not a position — the file is then
+unavailable), `{"action": "restore_content"}`, `{"action": "trash_content"}`
+([[Filesystem coordination]]). An inverse step also carries `entity_version_before` and
+`entity_version_before_revision`, for the trash lookup (left out of forward steps, so
+auto-restore never fires while re-applying a deletion).
+
+The path is planned once, at `start`, and held with the lock, so a step costs the
+operation it applies. A step finding HEAD elsewhere than the plan expects fails rather
+than guess, leaving the plan for a retry or an `abort`; a second step sent while one runs
+is `409`. After `abort`, reversing any move already made (or reconciling) is the client's
+business.

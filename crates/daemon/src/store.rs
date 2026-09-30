@@ -496,7 +496,7 @@ pub struct RevisionMeta {
 }
 
 /// A filesystem fact a skipped step of a coordinated navigation leaves to be
-/// re-recorded once the navigation lock is released (spec-event-log "skip").
+/// re-recorded once the navigation lock is released (doc "Filesystem coordination").
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Restoration {
     /// The file is where this position says.

@@ -138,7 +138,7 @@ pub struct RepoState {
 /// State of an in-progress coordinated operation. Both kinds suspend the
 /// watcher's execution and refuse writes for the same reason: a client is about
 /// to move files, and the metadata explaining those moves is not written yet
-/// (spec-event-log "Rollback lock").
+/// (doc "Filesystem coordination").
 pub enum RollbackLock {
     /// A coordinated rollback navigation: the steps left to its target,
     /// planned once at `start` (nothing else writes while it runs).
@@ -818,7 +818,7 @@ impl RepoState {
     }
 
     /// Rejects a metadata write with `423 Locked` while a rollback navigation
-    /// is in progress (spec-event-log "Rollback lock").
+    /// is in progress (doc "Filesystem coordination").
     pub fn ensure_writable(&self) -> Result<(), ApiError> {
         if self.is_rollback_locked() {
             Err(ApiError::locked(

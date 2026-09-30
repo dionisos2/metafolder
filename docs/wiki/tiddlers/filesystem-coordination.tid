@@ -1,0 +1,61 @@
+title: Filesystem coordination
+tags: [[Rollback]]
+kind: reference
+summary: The daemon says which file action each step needs; the client carries it out — move, restore from the trash, send back to it — or skips, and a restoration corrects the metadata afterwards.
+
+The daemon applies metadata and does not judge whether a step is possible on disk: that
+belongs to the client, which sees the files, the permissions and the user. For each step
+it says what crossing it would take — `filesystem.action` in the plan and on each step
+([[Rollback endpoints]]):
+
+|!Action |!When |!The client |
+|`move` |a `file_moved` |checks the file is at `from`, applies the move policy ([[Rolling back]]), runs the move |
+|`restore_content` |undoing a `file_deleted`/`file_modified`, or bringing back a metarecord a trashing took |looks in the trash for this metarecord's content and moves it back — ''auto-restoring'' exactly what was deleted |
+|`trash_content` |re-applying a trashing (a redo), or taking back its undo |sends the file back to the trash, in a new entry, before the step deletes the metarecord |
+
+The op types cannot tell the trash cases apart: a trashing's `delete_metarecord` is known
+by its revision's `origin = trash`, but the undo of one done by revert is an
+ordinary-looking `create_metarecord`, and the redo of that an ordinary deletion — the
+daemon follows their `reverts_op_id` chain back to the trashing. A trash entry is found by
+''the metarecord it holds'', not by an id recorded on the operation: an undo consumes the
+entry and a redo makes a new one, so a recorded id would name something gone. Only one
+live entry can hold a metarecord. For `file_deleted`/`file_modified` the entry is matched
+by metarecord and ''the version before the revision'' (`entity_version_before_revision`
+on each inverse step — the first operation's `entity_version_before` by `seq`, since
+versions are hashes and have no order). With no entry — pruned, deleted by hand — the step
+is skipped: the metadata rewinds, the bytes stay gone, and the client says so. A rollback
+is never blocked by content the user chose to discard ([[Trash, undo and redo]]).
+
+!! Skipping, and the restoration
+
+A skipped step (`{"skip": true}`) still applies its ''metadata'' change — HEAD must cross
+it, and HEAD and the data move together. So the daemon also records a ''restoration'': a
+correcting write replayed as a new revision once the navigation ends, making the metadata
+true of the disk again:
+
+* a skipped `file_moved` — `mfr_path` put back to where the file is recorded ''before this step'' (the snapshot the step did not apply);
+* a skipped `file_deleted` — `mfr_path` set back to `nothing`: the file is still absent;
+* a skipped `file_modified` — the hashes cleared; size and mtime stay stale until a reconcile.
+
+Restorations wait in the store and survive a crash. It takes two revisions to reach a
+truthful state, and the state reached is truthful. (A revert needs none of this: it just
+leaves the operation out, [[What a revert writes]].)
+
+!! The lock
+
+`rollback/start` (and `revert/start`) enter the ''navigation lock'':
+
+* the watcher keeps running and buffering, but ''nothing is executed'' — neither its events nor restorations are applied — so a move the client just made is not ingested as a new file before the metadata explaining it lands;
+* every write endpoint answers `423 Locked`; reads work as usual;
+* the last step, `revert/commit`, or an `abort` releases it; then the held events and restorations are applied as a new revision on the current branch, with the watcher's usual compaction and batching ([[Event batching]]).
+
+The lock is not stored. A daemon that crashes restarts unlocked, HEAD on the last
+committed step; restorations are replayed at load, but the buffered watcher events are
+lost with everything else that happened while it was down — a reconcile is what recovers
+that. A move done after the last committed step leaves `mfr_path` stale until corrected.
+To resume, start the same navigation again: the plan is recomputed from HEAD, and moves
+already made are found done.
+
+The execution — policies, trash lookups, retrashing — is `core::navigation`, shared by the
+CLI and the GUI (which never asks questions under the lock: it applies moves, and applies
+the metadata when the file is gone).

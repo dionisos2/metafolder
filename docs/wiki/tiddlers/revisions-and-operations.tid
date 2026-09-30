@@ -31,7 +31,7 @@ Whether an operation can be undone ''on the filesystem'' is decided when it is u
 the metadata ones always; `file_deleted` and `file_modified` only if the content is in
 the trash (the change went through it — an `mf trash -f`, an earlier rollback),
 otherwise only the metadata comes back, and the truth is written again right after;
-`file_moved` only if the file is still where the move left it.
+`file_moved` only if the file is still where the move left it ([[Filesystem coordination]]).
 
 !! Origin
 

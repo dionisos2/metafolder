@@ -414,7 +414,7 @@ fn flush_summary(
 fn flush_pending_once(repo: &RepoState, report: FlushReport) -> Result<FlushStats> {
     // While a coordinated rollback holds the lock, pending operations (watcher
     // events and restoration ops) accumulate but are not committed; they are
-    // replayed once the lock is released (spec-event-log "Rollback lock").
+    // replayed once the lock is released (doc "Filesystem coordination").
     if repo.is_rollback_locked() {
         return Ok(FlushStats::default());
     }
@@ -653,7 +653,7 @@ fn flush_pending_once(repo: &RepoState, report: FlushReport) -> Result<FlushStat
 }
 
 /// Replays restoration ops left by skipped coordinated-rollback steps as a
-/// single revision (spec-event-log "skip"), then deletes them.
+/// single revision (doc "Filesystem coordination"), then deletes them.
 fn flush_restorations(conn: &mut dyn Database, retention: crate::log::Retention) -> Result<usize> {
     let rows = conn.restorations()?;
     if rows.is_empty() {

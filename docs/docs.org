@@ -573,17 +573,23 @@ connaissait pas le couplage à la corbeille. Sources retirées (pointeurs) :
 spec-event-log « Revert », « Operation dependencies », « Writing a revert », les
 routes =revert=, =mf revert=, la question ouverte.
 
-** TODO 24. Rollback et navigation
+** FAIT 24. Rollback et navigation
 
 (sous Event log)
-- [ ] =Rollback= — overview
-- [ ] =Rolling back= — guide (=mf log rollback=, plan, politiques =move_file=)
-- [ ] =Navigation= — reference, dev (algorithme, LCA, opérations inverses, remise en état)
-- [ ] =Filesystem coordination= — reference (navigation coordonnée, verrou, reprise après crash)
-- [ ] =Rollback endpoints= — reference, dev
+- [X] =Rollback= — overview
+- [X] =Rolling back= — guide (cibles, politiques =move_file=)
+- [X] =Navigation= — reference, dev (algorithme, inverses, remise en état)
+- [X] =Filesystem coordination= — reference (actions, restauration, verrou, reprise)
+- [X] =Rollback endpoints= — reference, dev
+- [X] =What undoing used to cost= — rationale, dev, record (ajoutée : la mémoire =undo-cost-per-operation=)
+- [X] note de commande : =mf log rollback=
 
-CLI : =mf log rollback=. Sources : spec-event-log « Navigation », « Coordinated navigation », routes
-=rollback=, « mf rollback ».
+Vérification contre le code : la bascule vers l'appel atomique lit
+=filesystem_steps= (la spec CLI décrivait encore =by_type=) ; les restaurations
+attendent dans leur table du magasin, plus dans =pending_operation= ; tout le
+côté client est dans =core::navigation= (partagé avec la GUI), plus « le CLI ».
+Sources retirées (pointeurs) : spec-event-log « Navigation », « Coordinated
+navigation », les routes =rollback=, =mf rollback=.
 
 ** TODO 25. Élagage et rétention
 

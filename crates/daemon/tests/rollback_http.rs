@@ -1,5 +1,5 @@
 //! HTTP-level tests for the v2 coordinated-navigation protocol
-//! (spec-event-log "Coordinated navigation"): plan/summary, the
+//! (doc "Filesystem coordination"): plan/summary, the
 //! start/step/abort lock cycle, and the 423-Locked write guard.
 
 use std::sync::Arc;

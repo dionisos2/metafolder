@@ -405,8 +405,8 @@ declare namespace Metafolder {
     notes: string[];
   }
 
-  /** Coordinated navigation of the event log (spec-event-log "Coordinated
-   *  navigation"), files included: a navigation that moves a file, brings one
+  /** Coordinated navigation of the event log (doc "Filesystem coordination"), files included: a
+   * navigation that moves a file, brings one
    *  back from the trash-bin or sends one back there does it, with no question
    *  asked while the repository is locked. Shared with `mf log` through
    *  `core::navigation`. Confirm *before* calling. */

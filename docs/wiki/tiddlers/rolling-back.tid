@@ -1,0 +1,42 @@
+title: Rolling back
+tags: [[Rollback]]
+kind: guide
+summary: mf log rollback to a label, an operation id or a time — plan first; the move policies decide what happens to each file.
+
+```
+mf -n music log rollback plan                 # what the default target would do
+mf -n music log rollback                      # undo the last revision
+mf -n music log rollback before-cleanup       # the most recent revision labelled so
+mf -n music log rollback --id 42              # an operation (mf log head / mf log list --ops)
+mf -n music log rollback --timestamp 2026-09-29T12:00:00Z
+```
+
+Without a target it undoes the revision HEAD is in (`prev_revision`). A label targets the
+most recent revision carrying it on HEAD's ancestry; `--timestamp` the most recent
+operation there whose revision is no later. `--id` reaches anywhere in the tree — a
+branch left by an earlier rollback included, which is how you get back to a future you
+rolled back from.
+
+It shows a summary first. When nothing on the way touches a file, the whole navigation is
+one atomic request; otherwise it goes step by step, one operation at a time, under the
+navigation lock, carrying out each file action ([[Filesystem coordination]]).
+
+!! Move policies
+
+Each step that moves a file follows a policy, chosen for two situations:
+
+|!Situation |!Default |!Flag |
+|the file is where the move left it |`apply` |`--on-move-available` |
+|the file is gone |`ask` |`--on-move-unavailable` |
+
+* `apply` — the metadata follows the navigation. With the file present it is moved first; an occupied destination file goes to the trash first (`reason = rollback`), so no byte is lost; an occupied destination ''directory'' skips just that step with a warning (trashing a whole directory to make room for one file is too much to do silently — trash it yourself with `mf trash -f` and rerun). With the file gone, no move is attempted and the metadata still follows, keeping the recorded path rather than `nothing` — a reconcile later corrects it.
+* `skip` — leave the file; the metadata is put back to where the file is recorded now. For a file present but impossible to move.
+* `abort` — stop there, leaving what was done done.
+* `ask` — prompt for one of the three.
+
+`--silent` suppresses information, not `ask` prompts. Interrupted or failing, the
+navigation is aborted cleanly: HEAD stays where the last step left it, and a move already
+made is not undone — reconcile, or roll forward again.
+
+In the GUI, the `log` panel's `log:rollback` moves to the selected revision, applying
+moves whether the file is there or not (no questions under the lock).

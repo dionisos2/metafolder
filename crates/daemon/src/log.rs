@@ -190,7 +190,7 @@ pub(crate) fn active_line_of(ancestry: Vec<OpRow>, all: Vec<OpRow>, head: i64) -
     line
 }
 
-// ── Navigation (spec-event-log "Navigation") ──────────────────────────────────
+// ── Navigation (doc "Navigation") ──────────────────────────────────
 
 /// A rollback target, as given in the API request.
 #[derive(Debug)]
@@ -416,7 +416,7 @@ fn linear_path(log: &dyn Log, head: i64, target: i64) -> Result<Option<Vec<(OpRo
 /// The full ordered list of operations to process to move HEAD from `head` to
 /// `target`: each unapply op (most recent first) as [`NavDir::Inverse`], then
 /// each apply op (oldest first) as [`NavDir::Forward`]. Empty when already at
-/// the target (spec-event-log "Coordinated navigation").
+/// the target (doc "Filesystem coordination").
 pub fn nav_path(
     log: &dyn Log,
     head: Option<i64>,
@@ -525,7 +525,7 @@ impl NavPlan {
 /// ([`NavPlan`]). Returns the new HEAD. When `skip` is set and the
 /// operation is a file op, a restoration entry is enqueued in
 /// `pending_operation` (replayed as a new branch once the lock is released —
-/// spec-event-log "skip").
+/// doc "Filesystem coordination").
 pub fn coordinated_step(
     store: &mut dyn Begin,
     target: Option<i64>,
@@ -541,7 +541,7 @@ pub fn coordinated_step(
 
 /// Enqueues the restoration operation for a skipped file op: a synthetic
 /// metadata write replayed after the lock is released, correcting the metadata
-/// to match the actual filesystem (spec-event-log "skip"). No filesystem check.
+/// to match the actual filesystem (doc "Filesystem coordination"). No filesystem check.
 ///
 /// For `file_moved` the restoration *rewinds* `mfr_path` to the location the
 /// file is recorded at **before this step** — i.e. the snapshot that is *not*
@@ -582,7 +582,7 @@ fn resync_version(tx: &dyn WriteTxn, uuid: Uuid) -> Result<()> {
     tx.set_version(uuid, version::of_rows(uuid, &rows))
 }
 
-/// Undoes one operation (spec-event-log "Inverse operations"). Field rows
+/// Undoes one operation (doc "Navigation"). Field rows
 /// are restored with their original primary keys.
 fn apply_inverse(tx: &dyn WriteTxn, op: &OpRow) -> Result<()> {
     let entity = op.entity_uuid;

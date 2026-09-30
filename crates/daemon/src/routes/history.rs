@@ -266,8 +266,7 @@ pub(super) async fn rollback(
             let result = crate::log::navigate(&mut *conn, resolved)?;
             // And the watch set with it: navigation restores `mf_watch`/
             // `mf_ignore` rows like any other, so the live watches must follow
-            // the state HEAD landed on (spec-event-log "Upkeep after a
-            // navigation").
+            // the state HEAD landed on (doc "Navigation").
             repo_state.refresh_watches(&conn);
             Ok(Json(result))
         })
@@ -339,7 +338,7 @@ pub(super) async fn prune_log(
     .await
 }
 
-// ── Coordinated navigation (spec-event-log "Coordinated navigation") ────────────
+// ── Coordinated navigation (doc "Filesystem coordination") ────────────
 
 /// Query-parameter target form for the plan endpoints.
 #[derive(Deserialize)]

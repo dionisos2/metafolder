@@ -575,8 +575,8 @@ pub(super) async fn rollback_step(
             crate::executor::flush_pending(repo_state)?;
             // The navigation restored (or took away) `mf_watch`/`mf_ignore`
             // rows; the watch set follows the state it landed on, exactly as
-            // after a write that touched those fields (spec-event-log "Upkeep
-            // after a navigation"). Not per step: the states in between need
+            // after a write that touched those fields (doc "Navigation"). Not per step: the states
+            // in between need
             // not be consistent even when the final one is.
             let conn = slowlog::timed("wait:conn", || repo_state.conn.lock_recover());
             repo_state.refresh_watches(&conn);
@@ -602,7 +602,7 @@ pub(super) async fn rollback_abort(
         crate::executor::flush_pending(repo_state)?;
         let conn = slowlog::timed("wait:conn", || repo_state.conn.lock_recover());
         // An abort keeps the state it stopped at, mid-navigation: the watch set
-        // follows that state too (spec-event-log "Upkeep after a navigation").
+        // follows that state too (doc "Navigation").
         repo_state.refresh_watches(&conn);
         let head = crate::store::Log::head(&*conn)?;
         Ok(Json(json!({"head": head})))

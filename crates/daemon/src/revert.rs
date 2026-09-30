@@ -145,8 +145,8 @@ pub fn analyse(log: &dyn Log, head: Option<i64>, requested: Vec<OpRow>) -> Resul
 }
 
 /// The filesystem action crossing an operation requires, if any — what the
-/// client has to do on disk for the metadata to stay true (spec-event-log
-/// "Coordinated navigation", doc "Trash, undo and redo").
+/// client has to do on disk for the metadata to stay true (doc "Filesystem coordination",
+/// doc "Trash, undo and redo").
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum FsAction {
     /// `mfr_path` moves: the file has to move with it.

@@ -954,7 +954,7 @@ fn test_groups_become_separate_revisions() {
     std::fs::remove_dir_all(root).unwrap();
 }
 
-// ── Coordinated-rollback skip restoration (spec-event-log "skip") ───────────────
+// ── Coordinated-rollback skip restoration (doc "Filesystem coordination") ───────────────
 
 /// The head op id's parent — the navigation target that undoes exactly the
 /// last operation.

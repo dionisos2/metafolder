@@ -3349,7 +3349,7 @@ may change). Commands: =log-detail:toggle whole|unchanged=,
   *Files are carried with the metadata.* Every navigation and revert the GUI
   writes — this one, =log:revert=, =log:undo=, =log:redo= — goes through the
   shared coordinated navigation (=core::navigation=, the same code as =mf log
-  rollback= / =revert=; spec-event-log "Coordinated navigation"): one atomic
+  rollback= / =revert=; doc "Filesystem coordination"): one atomic
   =POST /rollback= when no step has a =filesystem= action, otherwise
   =start=/=step= (or the coordinated revert), moving a file, bringing content
   back from the trash-bin, or sending it back there (a trashing redone,
@@ -3358,7 +3358,7 @@ may change). Commands: =log-detail:toggle whole|unchanged=,
   nothing while the repository is locked: every confirmation comes *before*
   the lock is taken, and a move applies whether or not the file is where the
   log says (=GUI_POLICIES=: apply/apply — when it is not, the metadata keeps the
-  recorded path, spec-event-log "Policies for move_file"). What the file
+  recorded path, doc "Rolling back"). What the file
   actions had to say (a file moved, one not found in the trash) follows the
   summary on the status bar. This replaces an earlier rule that sent every
   plan needing a file action to =mf log revert=, for fear of a lock held

@@ -1,0 +1,6 @@
+title: mf log rollback
+tags: [[CLI command]] [[Rollback]]
+kind: reference
+summary: Navigate the history with coordinated filesystem moves
+
+Moves HEAD to a label, an operation (`--id`) or a time (`--timestamp`) — by default undoing the last revision — carrying out each file move by policy; `plan` previews ([[Rolling back]]).

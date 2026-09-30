@@ -13,7 +13,7 @@
 //! - otherwise a **revert** — its inverse is written at HEAD, leaving the
 //!   watcher's revisions where they are.
 //!
-//! The two mechanisms are the daemon's (spec-event-log "Navigation" and
+//! The two mechanisms are the daemon's (doc "Navigation" and
 //! "Revert"); this module only chooses between them. It is pure: it reads a
 //! `GET /log` body and answers, so the CLI (synchronous) and the GUI
 //! (asynchronous) share one decision instead of each writing its own.

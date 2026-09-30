@@ -1,5 +1,5 @@
 //! Direction-awareness of the `skip` restoration in coordinated navigation
-//! (spec-event-log "skip"; review #6). A skipped `file_moved` must rewind
+//! (doc "Filesystem coordination"; review #6). A skipped `file_moved` must rewind
 //! `mfr_path` to the location the file is *recorded at before the step* — the
 //! snapshot the step did not apply: `is_new=1` on an inverse, `is_new=0` on a
 //! forward (redo) step.

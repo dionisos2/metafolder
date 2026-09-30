@@ -1,0 +1,24 @@
+title: What undoing used to cost
+tags: [[Rollback]]
+kind: rationale
+audience: dev
+status: record
+summary: Undoing a 2 000-file tagging took 6 min 45 s — 420 times the write it undid — from three costs proportional to the repository or the log, paid once per step.
+
+"Undoing during gui-tag-folder takes a long time" (user, September 2026). Measured:
+tagging a folder of 2 000 files, 0.96 s; undoing it (`mf log rollback --id`), 6 min 45 s.
+After the fix, 0.53 s — faster than the write it undoes. Three costs, each paid ''once per
+undone operation'', all in the coordinated protocol:
+
+* ''The CLI used the coordinated protocol for everything'' — an HTTP round-trip and a transaction per operation. That protocol exists only so the client can decide file moves; a tag has none. Now a navigation with no file step is one atomic request (the summary's `filesystem_steps`; at first, its `by_type`).
+* ''The resident forest was rebuilt at every step'' — a full scan per step, from reasoning "a rollback rewrites history in bulk" when a coordinated step rewrites one operation ([[Why the tree cache holds nothing]]).
+* ''The path was recomputed at every step'' by walking the whole log to the root, twice, with two counts — quadratic in the navigation. Now it is planned once at `start`, over a bounded walk widened geometrically, with a fallback to the common ancestor for divergent branches.
+
+A trap met on the way: settling a whole revision's forest cells at once is fine, but a
+step delivers only a piece of one; a child restored before its parent was placed detached
+and nothing re-attached it at the next step, so the subtree read as untracked and the next
+flush tracked it a second time.
+
+''How to apply'': in front of "X is slow", compare X with the cost of what X undoes or
+redoes (here: 420 times). And for any protocol ''by steps'', ask what each step re-reads: a
+plan recomputed per iteration is quadratic, a rebuild per step is repository × steps.

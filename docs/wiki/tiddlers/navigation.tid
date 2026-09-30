@@ -1,0 +1,50 @@
+title: Navigation
+tags: [[Rollback]]
+kind: reference
+audience: dev
+summary: Moving HEAD from one operation to another — through their lowest common ancestor, undoing then re-applying — atomically or one step at a time, and what the daemon owes afterwards.
+
+Given the current HEAD and a target:
+
+# find their ''lowest common ancestor'';
+# the ''unapply path'': from HEAD up to it (excluded), newest first;
+# the ''apply path'': from it down to the target (excluded), oldest first;
+# execute: each unapplied operation's inverse, then each applied operation's forward action, then move HEAD to the target.
+
+The ''atomic'' form (`POST /rollback`) does it all in one transaction: a crash leaves HEAD
+and the data as they were. The ''coordinated'' form does it one operation per
+transaction, so that the client can carry out each step's file action
+([[Filesystem coordination]]). A target of "nothing" (rolling back past the root) empties
+the repository.
+
+!! Inverses
+
+|!Operation |!Inverse |
+|`create_metarecord` |delete the metarecord and its rows |
+|`delete_metarecord` |recreate it from the snapshots; its version follows the restored rows |
+|`set_field` |delete the current rows of the cell; insert the before rows under their original ids |
+|`append_field` |delete the row whose id the after snapshot names |
+|`delete_field` |insert the before rows under their original ids |
+|`file_deleted`, `file_moved` |replace the current `mfr_path` row by the before rows, original ids |
+|`file_modified` |replace `mfr_size`, `mfr_mtime` and the hash rows by the before rows |
+|`unknown` |impossible — navigating before one is refused with `400` |
+
+Rows come back under their original ids, and each touched metarecord's version is
+recomputed from them ([[Log storage]]). Navigation writes rows directly, not through a
+`Writer`, and validates nothing: it restores states the log recorded as valid.
+
+!! Upkeep after a navigation
+
+A navigation restores `mf_watch`/`mf_ignore` rows like any others — rolling back the
+deletion of a tracked directory brings its tracking back — so the daemon owes the same
+follow-up as a write: the watch set is recomputed against the state HEAD landed on
+([[When watch or ignore changes]]). ''Once HEAD has landed'' is the whole rule: at the end
+of an atomic navigation; at the last step of a coordinated one, or at `abort` (which keeps
+the state it stopped at) — never in between, where each step is a fragment of a revision
+and the states passed need not be consistent. Without it, a repository watched nothing
+after a rollback that restored its tracking, until some unrelated write touched a rule.
+
+The watcher stays live throughout; its events are held until the navigation ends
+([[Filesystem coordination]]).
+
+Why a step costs the operation it applies, and not the log: [[What undoing used to cost]].

@@ -1,6 +1,6 @@
-//! Coordinated navigation of the event log (spec-event-log "Coordinated
-//! navigation", "Revert"), shared by the CLI (`mf log rollback`/`revert`/
-//! `undo`/`redo`) and the GUI (`log:undo`, `log:redo`, the log panel).
+//! Coordinated navigation of the event log (doc "Filesystem coordination",
+//! doc "Revert"), shared by the CLI (`mf log rollback`/`revert`/`undo`/`redo`)
+//! and the GUI (`log:undo`, `log:redo`, the log panel).
 //!
 //! The daemon owns the metadata and never touches a file; it says, operation by
 //! operation, what crossing it requires on disk (`filesystem.action`: move a
@@ -43,7 +43,7 @@ impl From<TrashError> for NavError {
     }
 }
 
-/// What to do with a `move` step (spec-event-log "Policies for move_file").
+/// What to do with a `move` step (doc "Rolling back").
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Policy {
     Apply,
@@ -274,7 +274,7 @@ pub fn decide_move(
         // Move the file there when it is present; when it is gone there is
         // nothing to move — the metadata still follows the rollback, keeping
         // the recorded path rather than rewinding to a location the file is
-        // not at (spec-event-log "Policies for move_file"; review #6).
+        // not at (doc "Rolling back"; review #6).
         Policy::Apply => {
             if available {
                 let dest = Path::new(to);

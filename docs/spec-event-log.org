@@ -59,150 +59,7 @@ Moved to the wiki: doc "Log storage".
 
 ** Navigation
 
-Navigation moves HEAD from its current position to any target operation in the
-tree. The target may be an ancestor (rollback), a descendant (redo), or any
-node on a different branch.
-
-*** Algorithm
-
-Given =current= (=log_head.op_id=) and =target=:
-
-1. Find the Lowest Common Ancestor (LCA) of =current= and =target=.
-2. Collect the /unapply path/: operations from =current= to LCA (LCA
-   excluded), ordered most-recent-first.
-3. Collect the /apply path/: operations from LCA to =target= (LCA excluded),
-   ordered oldest-first.
-4. Execute in a single transaction:
-   a. For each operation on the unapply path: execute its inverse (see below).
-   b. For each operation on the apply path: execute its forward action.
-   c. Update =log_head.op_id= to =target=.
-
-The entire navigation is atomic. A crash leaves HEAD and data tables in their
-pre-navigation state.
-
-If =target= is =NULL= (empty state), all =metadata= and =field= rows are
-deleted and =log_head.op_id= is set to =NULL=.
-
-*** Upkeep after a navigation
-
-A navigation restores =mf_watch= / =mf_ignore= rows like any other: rolling the
-deletion of a tracked directory back brings the tracking it carried, and rolling
-a tracking change back takes it away. The daemon therefore owes the same
-follow-up a write does (doc "When watch or ignore changes"): once HEAD has landed, the watch set is recomputed against
-the state it landed on.
-
-*Once HEAD has landed* is the whole rule. The atomic navigation recomputes at
-the end; a coordinated one recomputes when its last step completes — and on
-=abort=, which keeps the state it stopped at — never in between, where each
-step is only a part of a revision and the states passed through need not be
-consistent even when the final one is. The watcher stays live throughout and its
-buffer is replayed on release, so what happened during the navigation is not
-lost.
-
-Without this the repository watches nothing after a rollback that restored its
-tracking, and watches what it no longer tracks after one that removed it — until
-some unrelated write happens to touch =mf_watch= or =mf_ignore= again.
-
-*** Inverse operations
-
-| =op_type=        | Inverse action                                                                                    |
-|------------------+---------------------------------------------------------------------------------------------------|
-| =create_metarecord=   | Delete the metarecord and all its =field= rows                                                      |
-| =delete_metarecord=   | Recreate =metadata= and =field= rows from snapshots; the version follows the restored rows        |
-| =set_field=      | Delete current rows for =(uuid, field_name)=; insert =is_new=0= snapshot rows with original ids  |
-| =append_field=   | Delete the field row whose =id= matches the =is_new=1= snapshot =field_id=                        |
-| =delete_field=   | Insert the =is_new=0= snapshot row with its original =field_id=                                   |
-| =file_deleted=   | Delete the current =mfr_path= Nothing row; insert =is_new=0= snapshot rows with original ids     |
-| =file_moved=     | Delete current =mfr_path= row(s); insert =is_new=0= snapshot rows with original ids              |
-| =file_modified=  | Delete current =mfr_size=, =mfr_mtime=, hash rows; insert =is_new=0= snapshot rows               |
-| =unknown=        | Not possible — navigation before an =unknown= op is rejected with =400=                          |
-
-*** Filesystem coordination
-
-The daemon applies metadata changes as instructed and does not assess whether
-an operation is reversible in the current context. That responsibility belongs
-to the CLI, which has access to the filesystem state, user permissions, and
-interactive input.
-
-Four op types require attention at rollback time:
-
-- =file_moved=: the CLI checks whether the file still exists at its current
-  location before executing the =mv=. If the file is gone or inaccessible,
-  the CLI calls =step= with =skip: true=. If the destination path is
-  occupied, the =mv= would overwrite it — the CLI first moves that file to
-  the trash-bin (file content is never destroyed by rollback, as by sync; see
-  doc "Trash" for the layout, the manifest, and
-  =mf trash restore=/=prune=).
-- =file_deleted=, =file_modified=: the content is gone *unless the change
-  passed through the trash-bin*. On an inverse (rollback) step, the CLI looks
-  for a trash entry matching this metarecord and the version the record held
-  *before the revision being undone* (=entity_version_before_revision=, exposed
-  on the op — see below); if found, it moves the file back and calls =step {}=
-  (the real inverse restores =mfr_path= and the version), *auto-restoring* the
-  exact deleted content. Otherwise the content is truly gone: the CLI calls
-  =step {"skip": true}= (metadata rewinds) and, if some other content for the
-  record is trashed, prints a =mf trash restore= hint. See
-  doc "Trash, undo and redo".
-- =delete_metarecord=, in a revision stamped =origin = 'trash'=: the metarecord
-  was not merely deleted, it was *trashed*, and its bytes are in the trash-bin
-  (see doc "Trash, undo and redo"). The
-  inverse recreates the metarecord from the operation's own snapshots — the
-  daemon's half — while the CLI moves the file back out of the trash and consumes
-  the entry. The entry is found by *the metarecord it holds*, not by an id
-  recorded on the operation: an undo consumes the entry and a later redo makes a
-  new one, so a recorded id would name something that no longer exists. Only one
-  live entry can ever hold a given metarecord, since after a trashing the
-  metarecord is gone and nothing can trash it again until it returns.
-
-  With no entry holding it — the trash was pruned, or the entry deleted by hand —
-  the step is skipped: the metadata rewinds, the bytes stay gone, and the CLI
-  says so. A rollback is never blocked by content the user chose to discard.
-
-  Applied *forward* (redo), the same operation means "trash this file again": the
-  bytes go back into the trash, in a **new** entry, and the metarecords are
-  deleted again. Re-applying only the metadata half would delete the metarecords
-  and leave the file in place, where the watcher would track it afresh — a
-  duplicate of what was just undone.
-
-  For this correlation the daemon exposes, on each *inverse* step's op JSON
-  (omitted on forward/redo steps, so auto-restore never fires while re-applying
-  a deletion), both =entity_version_before= — the version *this* step moved away
-  from — and =entity_version_before_revision= — the =entity_version_before= of
-  the revision's *first* operation on that record, ordered by =seq=, i.e. the
-  version anything outside the revision (a trash entry) observed. One event may
-  write several fields of one record, so only the latter is a stable correlation
-  key: every operation of the revision carries the same value and therefore
-  reaches the same decision.
-
-  It is selected by =seq=, and not as the smallest of the revision's values,
-  because versions are content hashes and carry no order
-  (doc "Metarecord version"): "before the
-  revision" is a position in the revision, not a minimum.
-
-When =skip: true= is used, the daemon *still applies the step's metadata change*
-(the inverse on a rollback step, the forward action on a redo step — maintaining
-the HEAD↔data invariant). It additionally enqueues a /restoration operation/ in
-the watcher buffer — a synthetic write that is replayed as a new branch after
-navigation completes, correcting the metadata to match the actual filesystem
-state:
-
-- =file_moved= skip: restoration *rewinds* =mfr_path= to the location the file
-  is recorded at *before this step* — the snapshot the step did not just apply.
-  On a rollback (inverse) step that is the =is_new=1= snapshot (post-move); on a
-  redo (forward) step it is the =is_new=0= snapshot (pre-move). No filesystem
-  check is needed. Skip is meant for a file that is still present but could not
-  be moved, so the rewind keeps the metadata truthful; when the file is *gone*,
-  the CLI uses =step {}= instead (see [[*Policies for =move_file=]]).
-- =file_deleted= skip: restoration sets =mfr_path= to =Nothing= (re-metarecords
-  the deletion since the file is still absent).
-- =file_modified= skip: restoration clears =mfr_partial_hash= and
-  =mfr_full_hash= (→ =Nothing=); size and mtime are left stale until the
-  next reconcile.
-
-For the v1 atomic rollback (=POST /rollback=), the daemon always applies all
-metadata changes. The CLI should inspect the plan first (=GET /rollback/plan=)
-and use the coordinated navigation protocol if selective per-operation
-handling is needed.
+Moved to the wiki: doc "Navigation", doc "Filesystem coordination".
 
 ** Writing a revert
 
@@ -314,58 +171,8 @@ repository is created, which has no history to trim. A repository that is not
 being written to keeps whatever it has.
 
 ** Coordinated navigation
-Coordinated navigation handles =file_moved= operations by coupling each
-metadata change with a CLI-executed =mv= command. It proceeds one operation at
-a time, so a crash leaves at most one file and one metadata metarecord in an
-inconsistent state.
 
-The target may be any operation in the tree: an ancestor (rollback), a
-descendant (redo), or a node on a different branch. The daemon computes the
-correct =from=/=to= paths for each =move_file= step based on the navigation
-direction (unapply vs. apply).
-
-*** Rollback lock
-
-=POST /rollback/start= — and =POST /revert/start=, which needs the same
-protection for the same reason ([[*Filesystem actions]]) — enters /rollback
-lock/ mode:
-
-- The file watcher *continues to run normally*, buffering events as usual.
-- *Execution of pending operations is suspended* — buffered events accumulate in
-  memory and restoration ops from =skip= accumulate in =pending_operation=, but
-  neither is committed to the data tables.
-- All metadata write endpoints return =423 Locked= until the lock is released.
-- Read-only endpoints continue to work normally.
-
-The lock is released by the final =POST /rollback/step= (when HEAD reaches the
-target), by =POST /revert/commit=, or by either =abort=. On release, pending operations are
-processed and committed as a new revision on the current HEAD branch (applying
-the same compaction and batching rules as the normal watcher flush; see
-doc "Event batching").
-
-The lock is *not* stored in the database. If the daemon crashes, it restarts
-unlocked. Pending operations accumulated in =pending_operation= are preserved
-and replayed automatically on restart before the daemon accepts new requests.
-
-*** Crash recovery
-
-If the daemon crashes during a coordinated navigation:
-
-- HEAD reflects the last committed =step= (one transaction per step).
-- The rollback lock is not restored on restart.
-- Restoration ops from =skip= are held in =pending_operation= and replayed
-  automatically on restart as a new revision. Buffered *watcher events* are not:
-  they live in memory and a stopped daemon loses them, along with everything
-  else that happened while it was down — =reconcile= is what recovers that
-  (doc "Event batching").
-- Any file moves executed before the crash but after the last committed step
-  leave =mfr_path= stale until the replayed restoration ops correct them.
-  Running =reconcile= is still recommended to catch any remaining filesystem
-  drift.
-- To resume the navigation: call =POST /rollback/start= again with the same
-  target — it recomputes the plan from the current HEAD. File moves already
-  completed are idempotent (the =mv= may fail harmlessly or be skipped by the
-  CLI after checking).
+Moved to the wiki: doc "Filesystem coordination".
 
 ** HTTP API
 
@@ -385,36 +192,7 @@ Moved to the wiki: doc "Log endpoints".
 
 *** =POST /repos/:repo_uuid/rollback=
 
-Metadata-only rollback: navigates HEAD to the target in a single atomic
-transaction. For =file_moved= operations in the path, only the metadata change
-is applied — the file is not moved. Use the coordinated navigation protocol
-if filesystem coordination is needed.
-
-Request body:
-#+BEGIN_SRC json
-{"target": {"id": 2} | {"timestamp": T} | {"label": "before-cleanup"} | {"prev_revision": true}}
-#+END_SRC
-
-- ={"id": N}=: navigate to operation N.
-- ={"timestamp": T}=: navigate to the most recent operation on the HEAD
-  ancestry path whose revision timestamp is ≤ T.
-- ={"label": L}=: navigate to the last operation of the most recent revision
-  carrying label L on the HEAD ancestry path.
-- ={"prev_revision": true}=: navigate to the parent of the first operation in
-  HEAD's current revision (i.e. undo the entire last revision). If HEAD's
-  revision has only one operation, this is equivalent to ={"id":
-  parent_id_of_HEAD}=. If HEAD has no parent (tree root), navigates to the
-  empty state.
-
-Response body:
-#+BEGIN_SRC json
-{
-  "previous_head": 4,
-  "new_head": 2,
-  "operations_unapplied": 2,
-  "operations_applied": 0
-}
-#+END_SRC
+Moved to the wiki: doc "Rollback endpoints".
 
 *** =POST /repos/:repo_uuid/log/prune=
 
@@ -427,158 +205,24 @@ Request body:
 Response body: ={"pruned_operations": 47, "pruned_revisions": 12}=
 
 *** =GET /repos/:repo_uuid/rollback/plan=
-Returns the full ordered list of operations that would be processed to reach
-the target, without entering lock mode. Operations are listed in execution
-order (unapply path first, then apply path).
 
-Query parameters: =target_id=, =target_label=, =target_timestamp=,
-=target_prev_revision= (same semantics as =POST /rollback/start=).
-
-Example response:
-#+BEGIN_SRC json
-{
-  "operations": [
-    {"id": 101, "op_type": "move_file", "entity_uuid": "...",
-     "from": "/repo/B.mp3", "to": "/repo/A.mp3"},
-    {"id": 102, "op_type": "set_field", "entity_uuid": "..."},
-    {"id": 103, "op_type": "create_metarecord", "entity_uuid": "..."}
-  ],
-  "total": 3
-}
-#+END_SRC
+Moved to the wiki: doc "Rollback endpoints".
 
 *** =GET /repos/:repo_uuid/rollback/plan/summary=
-Returns statistics for the navigation without entering lock mode.
 
-Query parameters: same as =GET /rollback/plan=.
-
-Example response:
-#+BEGIN_SRC json
-{
-  "total_operations": 157,
-  "by_type": {
-    "file_moved": 45,
-    "file_deleted": 3,
-    "create_metarecord": 89,
-    "set_field": 20
-  },
-  "revisions_affected": 12,
-  "filesystem_steps": 48
-}
-#+END_SRC
-
-=filesystem_steps= counts the steps whose =filesystem= action is not =null=
-(see =POST /rollback/step=): zero means the navigation rewinds in the database
-alone, and a client may take it in one atomic =POST /rollback= instead of one
-round-trip per operation.
+Moved to the wiki: doc "Rollback endpoints".
 
 *** =POST /repos/:repo_uuid/rollback/start=
-Enters rollback lock, suspends pending operation execution, stores the target
-internally, and returns the first operation to process.
 
-If target == current HEAD there is nothing to do: the lock is not entered and
-the response is ={"op": null, "remaining": 0}= immediately.
-
-Request body:
-#+BEGIN_SRC json
-{"target": {"id": 42} | {"label": "before-cleanup"} | {"timestamp": T} | {"prev_revision": true}}
-#+END_SRC
-
-Response body:
-#+BEGIN_SRC json
-{
-  "op": {
-    "id": 101,
-    "op_type": "move_file",
-    "entity_uuid": "...",
-    "from": "/repo/music/B.mp3",
-    "to": "/repo/music/A.mp3"
-  },
-  "remaining": 156
-}
-#+END_SRC
-
-The daemon computes the inverse of each operation and returns what the CLI
-must execute. For =move_file=, =from= and =to= are the paths to pass to =mv=
-(already computed — the CLI executes them as-is). For all other operation
-types, =from= and =to= are absent — no filesystem action is required.
-
-Note: =op_type= in the coordinated navigation response reflects the *action to
-execute*, not the stored event. A =file_moved= metarecord in the DB produces a
-=move_file= response op; all other DB op types appear unchanged.
-
-The daemon does not check the filesystem state. The CLI inspects it and
-decides whether to proceed with the =mv= or call =step= with =skip: true=.
+Moved to the wiki: doc "Rollback endpoints".
 
 *** =POST /repos/:repo_uuid/rollback/step=
-Applies the inverse of the current operation atomically (one transaction),
-advances HEAD, and returns the next operation to process. The daemon always
-knows the current position (=log_head.op_id=) and the path to the target —
-planned once, at =start=, and held with the lock — so no =op_id= is needed from
-the client, and a step costs the operation it applies: re-reading the path at
-every step made a navigation of N operations cost N² (=tests/log_cost.rs=).
-Nothing else writes while the lock is held, so the plan stays true; a step that
-finds HEAD elsewhere than the plan expects fails rather than guess, and leaves
-the plan for a retry or an =abort=. A second step sent while one is running is
-answered =409=.
 
-Request body (normal — apply inverse):
-#+BEGIN_SRC json
-{}
-#+END_SRC
-
-Request body (skip — apply metadata inverse + enqueue restoration op):
-#+BEGIN_SRC json
-{"skip": true}
-#+END_SRC
-
-Response body (more operations remain):
-#+BEGIN_SRC json
-{
-  "op": {
-    "id": 102,
-    "op_type": "set_field",
-    "entity_uuid": "..."
-  },
-  "remaining": 154
-}
-#+END_SRC
-
-Response body (navigation complete — =op= is =null=):
-#+BEGIN_SRC json
-{"op": null, "remaining": 0}
-#+END_SRC
-
-Each operation handed out (here, by =POST /rollback/start= and in =GET
-/rollback/plan=) carries =filesystem=: =null= when crossing it touches no file,
-otherwise the action the client performs, as in the revert plan ([[*=GET
-/repos/:repo_uuid/revert/plan=]]):
-
-- ={"action": "move"}= — a =file_moved= (=from=/=to= beside it, as always);
-- ={"action": "restore_content"}= — the content comes back from the trash-bin:
-  the inverse of a =file_deleted=/=file_modified=, or a metarecord a trashing
-  took coming back;
-- ={"action": "trash_content"}= — a metarecord a trashing took going again, so
-  its bytes go back into the trash-bin (a redo of a trashing).
-
-The last two are why the field exists: the op type cannot tell them apart. A
-trashing's =delete_metarecord= is known by its revision's =origin = 'trash'=,
-but the undo of one that was a *revert* is an ordinary-looking
-=create_metarecord=, and the redo of that an ordinary =delete_metarecord=; the
-daemon follows their =reverts_op_id= chain back to the trashing
-(doc "Trash, undo and redo").
-
-When =op= is =null=, HEAD has reached the target. The lock is automatically
-released and the watcher buffer is replayed.
+Moved to the wiki: doc "Rollback endpoints".
 
 *** =POST /repos/:repo_uuid/rollback/abort=
-Releases the lock and replays the watcher buffer. HEAD remains at its current
-position — operations already applied by previous =step= calls are not undone.
 
-The caller is responsible for reversing any =mv= commands already executed
-(or running =reconcile= to re-sync the filesystem state).
-
-Response body: ={"head": <current_op_id>}=
+Moved to the wiki: doc "Rollback endpoints".
 
 *** Revert target
 
@@ -701,92 +345,7 @@ Moved to the wiki: doc "Undo and redo", doc "mf log redo".
 
 ** =mf rollback [<target>]=
 
-Navigates the history tree to a target operation using the coordinated
-navigation protocol.
-
-*** Synopsis
-
-#+BEGIN_SRC
-mf rollback [<target>] [options]
-mf rollback plan [<target>]
-#+END_SRC
-
-Target forms:
-- omitted: undo the last revision (passes ={"prev_revision": true}= to the
-  daemon — navigates to the parent of the first op in HEAD's current revision)
-- =<label>=: most recent revision with this label on the HEAD ancestry path
-- =--id N=: operation by id
-- =--timestamp T=: most recent operation on the HEAD ancestry path whose
-  revision timestamp ≤ T (ISO-8601, or @<unix-ms>)
-
-*** Behaviour
-
-1. Calls =GET /rollback/plan/summary= and displays a summary.
-2. *If the summary holds no operation type that could need a filesystem
-   decision* — nothing among =file_moved=, =file_deleted=, =file_modified= and
-   =delete_metarecord= (the last because a summary counts types and cannot say
-   which revision wrote them, and only a *trashing* leaves a file to bring
-   back) — the whole navigation is a single =POST /rollback=, and the steps
-   below are not run. One call, one transaction, instead of one round-trip per
-   operation: a "yes" on a folder writes one operation per file under it, so
-   taking that answer back (=mf log undo=, or a classification walk's *back*
-   key — spec-gui "Reserved keys") stepped once over the network per file.
-3. Calls =POST /rollback/start= to enter lock mode.
-4. For each operation:
-   - =move_file=: checks whether the file exists at =from=, applies the
-     relevant policy (see below), then calls =step {}= or =step {"skip":true}=.
-   - =file_deleted=, =file_modified=: if the trash-bin holds the content this
-     step deleted (matched by metarecord + =entity_version_before_revision=), moves the
-     file back and calls =step {}= (auto-restore); otherwise calls
-     =step {"skip": true}= — no filesystem action is possible and the
-     restoration op corrects the metadata on the new branch.
-   - All other types: calls =step {}=.
-5. On completion (=op= is =null=): displays a summary and exits.
-6. On error or user interrupt: calls =POST /rollback/abort= before exiting.
-
-*** Policies for =move_file=
-
-All four policies are available in both situations (some combinations are
-unusual but never forbidden):
-
-| Situation           | Default  | Available                     |
-|---------------------+----------+-------------------------------|
-| File available      | =apply=  | =apply=, =skip=, =abort=, =ask= |
-| File unavailable    | =ask=    | =apply=, =skip=, =abort=, =ask= |
-
-- =apply=: the metadata follows the navigation (call =step {}=). When the file
-  is present, =mv from to= is executed first; when it is *gone*, no =mv= is
-  attempted — the metadata still follows the rollback, keeping the recorded
-  path rather than =Nothing= (a later reconcile corrects it). If =to= is
-  occupied by a file, the =mv= would overwrite it — the CLI first moves that
-  file to the trash-bin (=reason=rollback=), so no byte is ever lost (see
-  doc "Trash"; recover it with =mf trash restore=). If =to= is occupied by a
-  *directory*, the CLI skips just this step (=step {"skip": true}=) with a
-  warning rather than aborting: trashing a whole directory (and displacing all
-  its tracked children) to make room for one file is too destructive to do
-  silently during an automated navigation — the user can trash it explicitly
-  with =mf trash -f= first, then rerun. The trash-then-=mv= is not atomic: a
-  rename that fails after trashing leaves =to= empty with its content
-  recoverable from the trash, and the navigation aborts mid-way.
-- =skip=: call =step {"skip": true}= without touching the filesystem — the
-  metadata is rewound to the file's current recorded location (restoration op,
-  see above). Intended for a file that is present but could not be moved; it is
-  still selectable for a gone file (the rewind then points at a missing
-  location, the caller's choice).
-- =abort=: call =POST /rollback/abort= and exit with a non-zero status
-- =ask=: prompt the user to choose between =apply=, =skip=, and =abort=
-
-Flags:
-- =--on-move-available [apply|skip|abort|ask]=
-- =--on-move-unavailable [apply|skip|abort|ask]=
-- =--silent=: suppress informational output and warnings; does not suppress
-  =ask= prompts
-
-*** =mf rollback plan [<target>]=
-
-Calls =GET /rollback/plan= and displays the full ordered list of operations
-that would be processed, without executing anything. Target is optional; omitted
-defaults to the previous revision (same as =mf rollback= with no target).
+Moved to the wiki: doc "Rolling back", doc "mf log rollback".
 
 ** =mf revert [<target>]=
 

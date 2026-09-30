@@ -1,0 +1,33 @@
+title: Rollback
+tags: [[Event log]]
+kind: overview
+aliases: rollback
+summary: A rollback moves HEAD to any point of the history tree — back, forward, onto another branch — undoing and redoing on the way, files included.
+
+A ''rollback'' ''navigates'' the history tree: it moves HEAD to a target operation — an
+ancestor (back in time), a descendant (a redo), or a node on another branch — undoing
+the operations between here and there and re-applying those between there and the
+target. Nothing is deleted: the branch left behind stays reachable, and a write after a
+rollback starts a new branch ([[History tree and HEAD]]).
+
+It is "take me back to how things were at lunchtime" — everything in between is undone
+because it is in the way. To undo one change and keep the rest, revert it
+([[Revert]]); to take back your last change whatever the watcher did since, undo
+([[Undo and redo]]).
+
+Files come along: moves made through metafolder are moved back, content that went
+through the trash comes back from it, and a redone trashing sends it there again
+([[Filesystem coordination]]). What cannot be undone on disk is left as it is, and the
+metadata is corrected to match it.
+
+!! Use it
+
+<<list-kind guide>>
+
+!! Reference
+
+<<list-kind reference>>
+
+!! Why it works this way
+
+<<list-kind rationale>>
