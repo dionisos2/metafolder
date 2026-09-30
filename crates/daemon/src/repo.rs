@@ -204,7 +204,20 @@ pub(crate) fn open_store(path: &Path) -> Result<crate::store::Handle> {
 pub fn load_repository(locator: RepoLocator) -> Result<OpenedRepo> {
     let metafolder_dir = locator.metafolder_dir()?;
     refuse_network_filesystem(&metafolder_dir)?;
-    let config = RepoConfig::read(&metafolder_dir)?;
+    let mut config = RepoConfig::read(&metafolder_dir)?;
+    // In the standard form the root is where `.metafolder/` is, whatever
+    // config.json remembers: a repository on a removable drive mounted at
+    // another path would otherwise be worked on at its old one (doc "Moving a
+    // repository").
+    if let RepoLocator::Root(root) = &locator {
+        // Resolved by `metafolder_dir` already; not its parent, which a
+        // symlinked `.metafolder/` would put elsewhere.
+        let root = root.canonicalize()?;
+        if config.root != root {
+            config.root = root;
+            config.write(&metafolder_dir)?;
+        }
+    }
     let who = config.name.clone();
     let internal_dir = metafolder_dir.join(INTERNAL_DIR);
     std::fs::create_dir_all(&internal_dir)

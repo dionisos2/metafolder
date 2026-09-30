@@ -137,6 +137,25 @@ fn test_load_standard_form_restores_uuid() {
 }
 
 #[test]
+fn test_a_moved_repository_is_loaded_at_its_new_root() {
+    // A removable drive is mounted at another path on another machine: the
+    // standard form's root is where `.metafolder/` is, not what config.json
+    // remembered.
+    let parent = temp_dir("moved");
+    let old = parent.join("before");
+    std::fs::create_dir(&old).unwrap();
+    drop(repo::init_repository(&old, None, None, false).unwrap());
+    let new = parent.join("after");
+    std::fs::rename(&old, &new).unwrap();
+
+    let loaded = repo::load_repository(RepoLocator::Root(new.clone())).unwrap();
+    assert_eq!(loaded.config.root, new.canonicalize().unwrap());
+    // And config.json says so too, for the next reader.
+    let on_disk = RepoConfig::read(&new.join(".metafolder")).unwrap();
+    assert_eq!(on_disk.root, new.canonicalize().unwrap());
+}
+
+#[test]
 fn test_load_fails_when_no_repository() {
     let root = temp_dir("noload");
     let err = repo::load_repository(RepoLocator::Root(root.to_path_buf())).unwrap_err();
