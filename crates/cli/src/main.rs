@@ -536,10 +536,10 @@ enum LogCommand {
 #[derive(Subcommand)]
 enum TagVerb {
     /// The record(s) have the tag (drops more general ancestor tags, and the
-    /// negatives on the tag or its ancestors)
+    /// negatives and mixed marks on the tag or its ancestors)
     Add { path: String },
     /// The record(s) do NOT have the tag (drops more specific descendant
-    /// negatives, and the positives on the tag or its descendants)
+    /// negatives, and the positives and mixed marks on the tag or its descendants)
     Deny { path: String },
     /// Mark the folder(s) mixed w.r.t. the tag
     Mixed { path: String },

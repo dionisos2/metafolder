@@ -11,8 +11,8 @@ Hierarchical tags: add/deny/mixed/remove a tag on the selected metarecord(s), or
 Usage: mf tag [OPTIONS] <COMMAND>
 
 Commands:
-  add     The record(s) have the tag (drops more general ancestor tags, and the negatives on the tag or its ancestors)
-  deny    The record(s) do NOT have the tag (drops more specific descendant negatives, and the positives on the tag or its descendants)
+  add     The record(s) have the tag (drops more general ancestor tags, and the negatives and mixed marks on the tag or its ancestors)
+  deny    The record(s) do NOT have the tag (drops more specific descendant negatives, and the positives and mixed marks on the tag or its descendants)
   mixed   Mark the folder(s) mixed w.r.t. the tag
   remove  Drop the tag from the record(s) (undo of add)
   list    List the tag vocabulary as TSV: path<TAB>partition<TAB>exclusive

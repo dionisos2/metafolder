@@ -4143,6 +4143,48 @@ fn test_mf_tag_add_and_deny_take_back_what_they_contradict() {
     assert_eq!(paths("tag"), vec!["cinema", "musique"], "a positive above stays");
 }
 
+/// "Mixed X" is "partly X": `add Y` makes the folder wholly Y and so wholly
+/// every ancestor of Y, `deny X` wholly not X and so not any descendant — each
+/// takes back the mixed marks it makes false, and only those.
+#[test]
+fn test_mf_tag_add_and_deny_take_back_the_mixed_marks_they_settle() {
+    let (repo, _root) = init_repo("tagmixed");
+    let rec = create_metarecord(&repo, &["note:string=x"]);
+    let tag = |args: &[&str]| {
+        let mut v: Vec<&str> = vec!["-u", repo.as_str(), "tag", "-i", rec.as_str()];
+        v.extend_from_slice(args);
+        assert_ok(&mf(&v));
+    };
+    let mixed = || -> Vec<String> {
+        let out = mf(&[
+            "-u",
+            &repo,
+            "metarecord",
+            "-i",
+            &rec,
+            "field",
+            "get",
+            "mixed_tag",
+            "--resolve",
+            "path",
+        ]);
+        assert_ok(&out);
+        let mut v: Vec<String> = out.stdout.lines().map(String::from).collect();
+        v.sort();
+        v
+    };
+
+    for t in ["musique", "musique/jazz", "musique/jazz/bebop", "cinema"] {
+        tag(&["mixed", t]);
+    }
+    tag(&["add", "musique/jazz"]);
+    assert_eq!(mixed(), vec!["cinema", "musique/jazz/bebop"], "jazz and music are settled");
+
+    tag(&["mixed", "cinema/noir"]);
+    tag(&["deny", "cinema"]);
+    assert_eq!(mixed(), vec!["musique/jazz/bebop"], "cinema and all below are settled");
+}
+
 /// `mf tag remove` prints what the other verbs print: how many records the
 /// write changed — here, lost the ref — whether or not the tag exists.
 #[test]

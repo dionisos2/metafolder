@@ -761,8 +761,8 @@ réservait =--eq= à =mf tag= (=mf metarecord= l'a aussi) ; la table =[tag]= de
 (1) =deny P= ne retirait pas un =tag= → P ni ceux des descendants, =add P= pas les
 négatifs — =gui-tag-folder.sh --redo= laissait donc un enregistrement
 contradictoire. *Tranché par l'utilisateur* : =add X= retire les négatifs de X et
-de ses ancêtres, =deny X= les positifs de X et de ses descendants (fait, test
-d'abord) ; (2) un =mf tag add= est plusieurs révisions (le
+de ses ancêtres, =deny X= les positifs de X et de ses descendants, et tous deux
+les =mixed_tag= des mêmes (faits, tests d'abord) ; (2) un =mf tag add= est plusieurs révisions (le
 ref, puis chaque ancêtre ou frère retiré, plus la création d'entrée) : =mf log
 undo= n'en défait que la dernière (la note le dit ; les scripts reviennent en
 arrière par une position du journal, eux). Sources retirées :
