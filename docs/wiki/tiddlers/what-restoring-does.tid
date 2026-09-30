@@ -27,5 +27,5 @@ a restore puts back.
 
 !! Edge cases
 
-* A buffered deletion of the same path, not yet flushed by the watcher when the file comes back, is recognised as an undone deletion and skipped: a fast delete-then-recreate at one path collapses to a refresh (spec-file-tracking "Event batching").
+* A buffered deletion of the same path, not yet flushed by the watcher when the file comes back, is recognised as an undone deletion and skipped: a fast delete-then-recreate at one path collapses to a refresh ([[Event semantics]]).
 * An entry captured before the metarecords were captured with their fields (September 2026) restores as it used to: it re-links what still exists and leaves the rest to the watcher.

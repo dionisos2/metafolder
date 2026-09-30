@@ -1158,7 +1158,7 @@ impl<'c> Writer<'c> {
     /// Deletes a metarecord and all its rows.
     ///
     /// One metarecord is never deleted: the repository root, the `mfr_path` root
-    /// position (spec-file-tracking "The root directory metarecord"). Every path
+    /// position (doc "TreeRef path conventions"). Every path
     /// hangs from it, and re-creating it is not a repair — a fresh metarecord
     /// gets a fresh uuid, while the whole forest keeps naming the deleted one.
     /// Recovery for a root deleted before this check existed is a rollback or a

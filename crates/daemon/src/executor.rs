@@ -123,7 +123,7 @@ fn correlate_renames(events: Vec<(FsEvent, Option<i64>)>) -> Vec<FsEvent> {
     slots.into_iter().flatten().map(|(ev, _)| ev).collect()
 }
 
-/// Compaction rules of spec-file-tracking: redundant sequences within the
+/// Compaction rules of doc "Event batching": redundant sequences within the
 /// batching window are simplified before any database write.
 ///
 /// Each rule looks for the *last* live earlier event matching a path in a
@@ -1032,7 +1032,7 @@ impl Apply<'_, '_> {
     fn orphan_subtree(&mut self, uuid: Uuid) -> Result<()> {
         self.step("orphan cascade over the subtree");
         let descendants = self.cache.descendants(self.writer.store(), "mfr_path", uuid)?;
-        // Mass-orphan circuit breaker (spec-file-tracking): a single event that
+        // Mass-orphan circuit breaker (doc "Orphan scan"): a single event that
         // would null thousands of paths is a filesystem going away, not a
         // deletion. Skipping is recoverable — the paths stay stale and
         // `mf orphan clear` confirms them after re-checking the disk — whereas

@@ -317,7 +317,7 @@ enum Step {
 ///
 /// The stamp (`mfr_hash_mtime` + `mfr_hash_size`) is what makes reuse safe in a
 /// subtree whose watching is off — there, no `Modify` event ever invalidates
-/// the hashes. Using mtime this way does not contradict spec-file-tracking's
+/// the hashes. Using mtime this way does not contradict doc "File fingerprint"'s
 /// "mtime is never used as a criterion": that rule governs *identity*, this is
 /// *cache invalidation*, and it fails safe — a mismatch costs a recomputation,
 /// never a wrong match.

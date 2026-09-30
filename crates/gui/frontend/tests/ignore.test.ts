@@ -257,8 +257,8 @@ describe('the command target directory', () => {
   });
 });
 
-// `mf:order` acts on the selection without asking (spec-gui "Order a folder's
-// children"): the selected folder itself, or the folder of the selected file —
+// `mf:order` acts on the selection without asking (doc "Ordering a folder"): the selected folder
+// itself, or the folder of the selected file —
 // the selection wins over the file manager's current directory, and with
 // neither there is nothing to number (never a silent fallback to the root).
 describe('the mf:order target directory', () => {

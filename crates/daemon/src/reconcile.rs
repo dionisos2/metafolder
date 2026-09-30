@@ -1,4 +1,4 @@
-//! Reconcile (spec-file-tracking): synchronises the database with the
+//! Reconcile (doc "Reconcile"): synchronises the database with the
 //! filesystem on demand. The fingerprint phase recovers moved files; new
 //! files get metarecords; orphaned metarecords keep their stale path (reconcile
 //! never writes Nothing).

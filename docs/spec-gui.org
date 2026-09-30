@@ -144,7 +144,7 @@ invalid stored values fall back to the config default.
 Orphaned metarecords — a metarecord with =mfr_path= whose file no longer
 exists on disk, either =mfr_path = Nothing= (the watcher saw the deletion)
 or a stale TreeRef (left in place by reconcile, see
-[[file:spec-file-tracking.org][spec-file-tracking.org]]) — are made visible:
+doc "Orphans") — are made visible:
 =metarecord-list= colours the row/card (theme variable =--mf-orphan=, purple
 by default) with a tooltip giving the reason; =metarecord-detail= shows a
 one-line note under the metarecord head. A metarecord with no =mfr_path=
@@ -1335,7 +1335,7 @@ Behaviours:
 | =orphan:detect=      | Mark the active repo's orphaned metarecords =orphan = true= and unmark the rest (=POST /orphans/mark=) — the GUI half of =mf orphan detect=; the count lands in the status bar and the message log |
 | =orphan:delete=      | Delete the metarecords carrying the marker (=POST /query/delete= over =orphan = true=), after a confirmation naming the count. Detection is *not* re-run: what is marked is what goes |
 | =orphan:detect-delete= | =orphan:detect= then =orphan:delete=, one confirmation between the two — the convenience form for "find the records whose file is gone and be rid of them" |
-| =mf:order= | Number the selected folder's direct children (=order_file= / =order_dir=) and mark the folder =order_numbered= — the GUI half of =mf order=; no prompt: the selected folder, or the selected file's folder (default =m o=) — see [[*Order a folder's children]] |
+| =mf:order= | Number the selected folder's direct children (=order_file= / =order_dir=) and mark the folder =order_numbered= — the GUI half of =mf order=; no prompt: the selected folder, or the selected file's folder (default =m o=) — see doc "Ordering a folder" |
 | =script:run [name]=  | Run an installed helper script — completes over the scripts in =~/.config/metafolder/scripts/=, the description taken from each script's =# Summary:= header; the chosen script runs as a subprocess (output in the =message= panel) — see doc "Shipped defaults in the source tree" |
 | =metarecord:remove=   | Remove the selected metarecord (confirmed; default =delete=). Without a file this is a plain =metarecord:delete=; with one, the question settles the file: =OK= trashes it — and the metarecord with it, =metarecord:trash='s action, the question doubling as its confirmation — =Cancel= keeps it and deletes the metarecord alone (=metarecord:delete= confirms) — see doc "Sending files to the trash" |
 | =metarecord:trash=   | Send the selected metarecord's file to the trash (confirmed; default =ctrl+delete=) — see doc "Sending files to the trash" |
@@ -2877,7 +2877,7 @@ rows are always shown, and navigating directly into a hidden directory
 
 The active repo's =.metafolder/internal/= directory and its contents are
 shown in red (=--mf-error=) with an =internal= badge: they are hard-excluded
-from tracking (see [[file:spec-file-tracking.org][spec-file-tracking.org]]),
+from tracking (see doc "Watch sources and regimes"),
 so the add-to-DB actions are disabled on them. The path comes from the
 =internal_dir= field of =GET /repos= (=metafolder.daemon.repoInternalDir=) —
 it is matched absolutely, not by name, since the metafolder may live
@@ -3225,33 +3225,7 @@ others", an extra predicate to narrow it.
 
 ** Order a folder's children
 
-=mf:order= is the GUI half of =mf order= (see
-[[file:spec-file-tracking.org][spec-file-tracking.org]] "=mf order="): it numbers
-the *direct children* of one folder so a "sort by position" orders them sensibly
-— files into =order_file=, directories into =order_dir=, an
-existing position never overwritten — and then marks the folder itself with
-=order_numbered = true=.
-
-The heuristic and the daemon orchestration are the CLI's, shared in
-=metafolder_core::order=; the shell only works out *which* folder, and asks
-nothing (default key =m o=):
-
-- the selected metarecord's folder — itself when it is a directory, its
-  containing folder when it is a file. The selection wins over the file
-  manager's current directory: pointing at a subfolder in a listing numbers
-  that subfolder, not the listing;
-- with nothing selected, the file manager's current directory;
-- with neither, a status-bar error — never a silent fallback to the repository
-  root, which would number a folder nobody pointed at.
-
-(The =ignore:*= commands keep their own order — the file manager's directory
-first — because an ignore set is about the directory being browsed.)
-
-The folder is resolved to its metarecord through =POST .../tree/resolve-path=;
-an untracked path is a status-bar error, never a silent no-op. On success the
-status bar reports the path and the number of positions written (or that every
-child already had one). Unlike the CLI there is no dry run: the message names
-what changed, and the write is one revision, undoable with =log:undo=.
+Moved to the wiki: doc "Ordering a folder".
 
 ** Unmounted volumes
 

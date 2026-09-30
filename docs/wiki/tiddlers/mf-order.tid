@@ -1,0 +1,6 @@
+title: mf order
+tags: [[CLI command]] [[File tracking]]
+kind: reference
+summary: Number a folder's direct children for sorting: assigns `order_file` / `order_dir` (files and dirs are numbered independently; an existing position is never overwritten), then marks the folder itself `order_numbered = true`. Orders by an ordering metadata, then a shared name pattern, then creation date
+
+Numbers a folder's direct children into `order_file` / `order_dir` and marks it `order_numbered`; `--dry-run` shows the plan ([[Ordering a folder]]).

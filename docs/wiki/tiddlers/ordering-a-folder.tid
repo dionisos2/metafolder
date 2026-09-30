@@ -1,0 +1,48 @@
+title: Ordering a folder
+tags: [[File tracking]]
+kind: guide
+aliases: order order_file order_dir order_numbered
+summary: mf order (or mf:order, m o) numbers a folder's direct children into order_file and order_dir — from track metadata, name numbers, then creation date — never overwriting a position.
+
+```
+mf -n music order /albums/kind-of-blue --dry-run    # uuid  field=pos  name, nothing written
+mf -n music order /albums/kind-of-blue              # prints how many positions it wrote
+mf -n music metarecord -q 'mfr_path -> "/albums/kind-of-blue"' get --sort order_file --select title
+```
+
+`mf order` numbers the ''direct children'' of a folder so that sorting by position orders
+them sensibly — an album's tracks, a series' seasons. Files and directories are numbered
+separately, into `order_file` and `order_dir`, so each kind sorts on its own. A child
+that already has a position is ''never overwritten'': your corrections survive a re-run.
+It works on tracked children — reconcile the folder first if some are missing. Then the
+folder itself gets `order_numbered = true` (once), so `order_numbered = true` finds the
+folders done and `order_numbered IS UNKNOWN` those still to do.
+
+The three fields are ordinary ''user'' fields (no reserved prefix), sharing `order_` so
+that typing `order` in a completion shows the family; edit them freely.
+
+!! How positions are chosen
+
+For each kind, three heuristics in turn, over a running maximum (`next` = max + 1).
+Gaps are deliberate — they mirror the numbers' differences — and positions are never
+compacted.
+
+# ''Metadata'' — children with an integer ordering field (`--meta`, default `mfr_meta_track`), sorted by it: the first at `next`, the others at `first + (value − first value)`; ties share a position.
+# ''Name pattern'' — children named `<prefix><number><suffix>`, grouped by identical prefix and suffix (the ''last'' run of digits is the number). A group needs two members and a smallest consecutive gap of at most `--max-gap` (default 1000 — beyond, the number is an id or a hash, not an order). A member already positioned pins the group; otherwise its lowest number goes at `next`, the others at `anchor + (number − anchor number)`.
+# ''Creation date'' — what is left, by `mfr_btime` (missing last, then by name), each at `next`.
+
+!! In the GUI
+
+`mf:order` (<<key "mf:order" "m o">>) numbers the selected folder — the selection itself
+when it is a directory, its folder when it is a file; with nothing selected, the file
+manager's current directory; with neither, an error, never the repository root. There is
+no dry run; the status bar names the folder and how many positions were written.
+
+''Each position is written as its own revision'', and the folder's marker as one more:
+an undo takes back only the last of them (the marker). To take a whole numbering back,
+roll back to the revision before it (`mf log rollback`). The orchestration lives in
+`metafolder_core::order`, shared by both.
+
+The two position fields were first named `order_position_file` and
+`order_position_dir`; the daemon renamed them when it opened a repository, in the data
+and in the log. That migration went with the SQLite backend.

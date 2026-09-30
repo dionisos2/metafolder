@@ -357,7 +357,7 @@ partial sync. This ordering also gives three guarantees for free: the two
 sides agree on =mf_sync= before the content decision reads it; =mfr_path= is
 written before the file is placed, so a sync-created record already exists at
 its path when the file arrives and the watcher's create/arrival event
-resolves to it rather than duplicating it (spec-file-tracking: =Create= /
+resolves to it rather than duplicating it (doc "Event semantics": =Create= /
 =Rename(To)= resolve by path first); and a crash between the metadata write
 and the disk operation leaves only a stale path, which the next run
 (uncommitted link, re-detected) or =reconcile= repairs.
@@ -708,7 +708,7 @@ Two mechanisms make these echoes no-ops:
    already consistent with the file.
 2. The executor's data refresh is *idempotent*: it produces no operation and
    no =version= bump when the record's stored stat already matches the file
-   on disk (see [[file:spec-file-tracking.org][spec-file-tracking.org]]). So the buffered echo of a sync
+   on disk (see doc "Event semantics"). So the buffered echo of a sync
    operation finds nothing to do.
 
 A *genuine* concurrent user change has a different size/mtime, so it is not

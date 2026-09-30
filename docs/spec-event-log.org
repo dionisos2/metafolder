@@ -1033,7 +1033,7 @@ The lock is released by the final =POST /rollback/step= (when HEAD reaches the
 target), by =POST /revert/commit=, or by either =abort=. On release, pending operations are
 processed and committed as a new revision on the current HEAD branch (applying
 the same compaction and batching rules as the normal watcher flush; see
-[[spec-file-tracking.org]]).
+doc "Event batching").
 
 The lock is *not* stored in the database. If the daemon crashes, it restarts
 unlocked. Pending operations accumulated in =pending_operation= are preserved

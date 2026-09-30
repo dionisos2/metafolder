@@ -1,0 +1,6 @@
+title: mf:order
+tags: [[GUI command]] [[File tracking]]
+kind: reference
+summary: Number the selected folder's (or selected file's folder's) direct children
+
+The GUI's `mf order`: the selected folder, or the selected file's, else the file manager's directory ([[Ordering a folder]]).

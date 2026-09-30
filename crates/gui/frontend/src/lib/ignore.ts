@@ -94,7 +94,7 @@ export async function targetDir(opts: TargetDirOptions): Promise<string> {
   return fmRelDir(opts) ?? (await selectedDir(opts)) ?? '';
 }
 
-/** The directory `mf:order` numbers (spec-gui "Order a folder's children"):
+/** The directory `mf:order` numbers (doc "Ordering a folder"):
  *  the selected metarecord's directory (itself when it is one, its parent
  *  otherwise) — the selection wins over the file manager's current directory,
  *  which only stands in when nothing is selected. Null when there is neither:

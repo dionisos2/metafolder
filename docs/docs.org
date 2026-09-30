@@ -498,13 +498,19 @@ spec-platform « File metadata fields », « MIME detection », « Embedded meta
 extraction ». Mémoire =security-audit-sept-2026= supprimée (ses pièges watchd sont
 dans « The fanotify broker », celui de nom-exif ici).
 
-** TODO 20. Ordonner un dossier
+** FAIT 20. Ordonner un dossier
 
-- [ ] =Ordering a folder= — guide (=mf order=, commande GUI)
-- [ ] =Migrating from order_position fields= — reference, record
+- [X] =Ordering a folder= — guide (avec l'ancienne migration =order_position_*=, en historique)
+- [X] notes de commande : =mf order=, =mf:order=
 
-CLI : =mf order=. GUI : =mf:order=. Sources : spec-file-tracking « mf order » ;
-spec-gui « Order a folder's children ».
+Vérification contre le code : la spec GUI disait l'écriture « une révision,
+annulable par =log:undo= » — c'est une révision par position plus une pour le
+marqueur (=core::order= écrit par =PUT … /fields/:name=), donc un undo ne reprend
+que le marqueur ; la note le dit (il n'existe pas de route qui écrive des valeurs
+différentes sur plusieurs metarecords en une révision). La migration
+=order_position_*= est partie avec SQLite. =spec-file-tracking.org= est supprimée :
+toutes ses sections sont dans le wiki (les citations restantes, mode spec entière,
+nomment chacune leur note).
 
 * Journal des événements
 

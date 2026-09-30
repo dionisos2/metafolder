@@ -36,8 +36,8 @@ misdetected MIME type, settling an `mfr_path` conflict the watcher cannot.
 |`mfr_duplicate_group` |`ref` |the duplicate group the file belongs to ([[Duplicate groups]]) |
 |`mfr_mount` |`string` |on a directory that is a mount point: the mounted volume's identity, best effort; never cleared ([[mfr_mount]]) |
 |`mfr_path_old` |`string` |where an orphaned metarecord last lived, frozen when its `mfr_path` became `nothing` ([[Orphans]], [[Event semantics]]) |
-|`mfr_watch_exceeded` |`bool` |on a directory the watch budget could not cover, inherited like `mf_watch` (spec-file-tracking "The watch budget") |
-|`mfr_meta_<name>` |any |a piece of embedded metadata (tags, EXIF…), by the repository's metadata map (spec-platform "Embedded metadata extraction") |
+|`mfr_watch_exceeded` |`bool` |on a directory the watch budget could not cover, inherited like `mf_watch` ([[The watch budget]]) |
+|`mfr_meta_<name>` |any |a piece of embedded metadata (tags, EXIF…), by the repository's metadata map ([[Embedded metadata]]) |
 |`mfr_meta_extracted` |`bool` |that the file's embedded metadata has been read |
 
 !! The fields that steer the daemon

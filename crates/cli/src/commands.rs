@@ -1165,7 +1165,7 @@ pub fn field_by_id_delete(ctx: &Ctx, id: i64, force: bool) -> Result<i32, CliErr
     Ok(0)
 }
 
-// ── File tracking (spec-file-tracking) ────────────────────────────────────────
+// ── File tracking (doc "File tracking") ────────────────────────────────────────
 
 pub fn track(ctx: &Ctx, path: &Path) -> Result<i32, CliError> {
     let base = ctx.repo_base()?;
@@ -1673,7 +1673,7 @@ fn format_task_line(task: &Json) -> String {
     format!("{id}  {kind}  {status}{phase_part}")
 }
 
-/// Renders the reconcile summary and candidate list (spec-file-tracking
+/// Renders the reconcile summary and candidate list (doc "Running a reconcile"
 /// "* CLI"). Candidates are informational: nothing is auto-confirmed.
 fn format_reconcile(resp: &Json) -> String {
     let created = resp["created"].as_u64().unwrap_or(0);
@@ -2962,7 +2962,7 @@ mod tests {
         );
     }
 
-    // ── format_reconcile (spec-file-tracking sample output) ──────────────────
+    // ── format_reconcile (doc "Running a reconcile" sample output) ──────────────────
 
     #[test]
     fn test_format_reconcile_summary_only() {

@@ -17,7 +17,7 @@ after the request.
 |`duplicates` |keeps what it computed: the hashes already committed and the groups of the largest files, found first; only the pruning of stale groups is skipped |
 |`relink` |keeps the pairings it already committed |
 |`query` |stops within a few hundred keys read, whatever it was doing; the waiting client gets a `409` (`query cancelled`) instead of results |
-|`flush` |stops at the next event and drops the half-applied group (groups already committed stay). Nothing is lost — the events go back to the buffer — and the repository's tracking is left ''paused'', or the next event would restart the flush you just stopped: resume it with `mf watch resume` (spec-file-tracking "Pausing ingestion") |
+|`flush` |stops at the next event and drops the half-applied group (groups already committed stay). Nothing is lost — the events go back to the buffer — and the repository's tracking is left ''paused'', or the next event would restart the flush you just stopped: resume it with `mf watch resume` ([[Pausing the watcher]]) |
 |`load`, `prune`, `rollback` |cannot be stopped: a load leaves the repository unusable until it ends, and the other two are single atomic transactions, with nothing to stop but a rollback of themselves |
 
 Stopping a flush ([[Pausing the watcher]]) is how a mistaken copy or a huge move is kept out of the

@@ -351,7 +351,7 @@ async fn test_create_get_delete_metarecord() {
 async fn test_the_repository_root_metarecord_cannot_be_deleted() {
     let (app, repo, root) = app_with_repo("root_kept").await;
 
-    // The root metarecord: the `mfr_path` forest root named "" (spec-file-tracking
+    // The root metarecord: the `mfr_path` forest root named "" (doc "TreeRef path conventions"
     // "The root directory metarecord").
     let (status, roots) =
         request(&app, "GET", &format!("/repos/{repo}/tree/roots?field=mfr_path"), None).await;

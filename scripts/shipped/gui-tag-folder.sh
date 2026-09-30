@@ -153,7 +153,7 @@ EXCLUDED=()
 
 # "In scope and still to be asked", as one predicate. Ends with `mfr_path IS
 # PRESENT`: a deleted file keeps its metarecord with `mfr_path = Nothing`
-# (spec-file-tracking), which has no place in a tree walk — it cannot be shown,
+# (doc "Nothing versus unknown"), which has no place in a tree walk — it cannot be shown,
 # and it would be counted as something left to ask about for ever.
 open_pred() {
     local parts=() uuid dir joined=""

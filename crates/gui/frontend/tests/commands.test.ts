@@ -73,7 +73,7 @@ describe('recent (shipped commands.js)', () => {
 });
 
 // `mf:order` asks nothing: it numbers the selected folder (or the selected
-// file's folder) straight away (spec-gui "Order a folder's children").
+// file's folder) straight away (doc "Ordering a folder").
 describe('mf:order builtin', () => {
   test('takes no argument, so it runs without a prompt', () => {
     expect(argSpecFor('mf:order')).toBeUndefined();

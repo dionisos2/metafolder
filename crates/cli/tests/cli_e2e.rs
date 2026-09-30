@@ -999,7 +999,7 @@ fn test_track_creates_entry_and_is_idempotent() {
     assert!(is_hex_uuid(&uuid));
 
     // Already tracked → idempotent: returns the existing uuid (POST /track is
-    // idempotent, spec-file-tracking).
+    // idempotent, doc "Tracking a folder").
     let out = mf(&["-u", &repo, "track", path.to_str().unwrap()]);
     assert_ok(&out);
     assert_eq!(out.stdout.trim(), uuid, "re-track returns the existing uuid");
