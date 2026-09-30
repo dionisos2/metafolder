@@ -310,21 +310,26 @@ critère =/= du nœud exact. L'alias =same= reste à « Finding duplicates » (c
 Sources retirées : spec-query sauf « Simplified query language » (pointeurs),
 spec-data-model « Pagination », la page =queries.html= et son entrée d'index.
 
-** TODO 11. Langage de requête simplifié
+** FAIT 11. Langage de requête simplifié
 
 (sous Query)
-- [ ] =Simplified query language= — overview
-- [ ] =Using simplified queries= — guide (=-s= dans la CLI, la zone de requête de la GUI)
-- [ ] =The default grammar= — reference (avec =<<live grammar>>=)
-- [ ] =Simplified grammar notation= — reference (lexer, notation, gabarits)
-- [ ] =Editing the grammar= — guide (=core/query-grammar=, validation)
-- [ ] =Dates in simplified queries= — reference
-- [ ] =Tag syntax in simplified queries= — reference (=#X=, =#==, =##==)
-- [ ] =Why expansion runs in the client= — rationale
+- [X] =Simplified query language= — overview (alias de l'ancienne page)
+- [X] =Using simplified queries= — guide (GUI, =-s=, tableau d'exemples)
+- [X] =The default grammar= — reference (avec =<<live grammar>>=)
+- [X] =Simplified grammar notation= — reference
+- [X] =Editing the grammar= — guide (avec la validation)
+- [X] =Dates in simplified queries= — reference
+- [X] =Tag syntax in simplified queries= — reference
+- [X] =Why expansion runs in the client= — rationale, dev
 
-Sources : spec-query « Simplified query language » ; help =simplified-query.html=,
-partie grammaire de =queries.html= ; mémoires =parametrable-query-design=,
-=simplified-tag-osm-syntax=.
+Vérification contre le code : chaque exemple des notes a été développé par le
+moteur et parsé (test jetable) ; la grammaire livrée a =!?= et =??=, absents de
+la spec ; =since=/=before=/=between= n'y prennent que des chaînes ; =under /music=
+ne se développe pas (=/= n'appartient pas à un mot : =under "/music"=) ; la page
+d'aide décrivait encore l'ancien =#tag= (sous-arbre) et l'alias =path= ; la
+mémoire de conception parlait d'un endpoint démon =/query/expand= retiré depuis
+(=0a7abb4=). Sources retirées : =spec-query.org= (supprimée), la page
+=simplified-query.html= et son entrée d'index ; mémoire =parametrable-query-design=.
 
 ** TODO 12. Moteur de requêtes
 

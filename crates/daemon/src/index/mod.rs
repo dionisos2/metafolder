@@ -1352,7 +1352,7 @@ impl Eval<'_> {
     fn osm_path(&self, field: &str, terms: &[String]) -> Result<RoaringBitmap, Unsupported> {
         // `osm` path mode is tree_ref-only: a field holding any other type is a
         // user error `query_validate` reports as a 400 with the "use osmd" hint
-        // (spec-query), before this runs. Decline rather than answer with an
+        // (doc "Ordered substring matching"), before this runs. Decline rather than answer with an
         // empty bitmap, which would turn that mistake into a silent "no rows".
         // A field with no values at all is vacuously empty in both engines.
         if self.src.value_type(field).is_some_and(|t| t != "tree_ref") {

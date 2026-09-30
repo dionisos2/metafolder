@@ -1,5 +1,5 @@
-//! Grammar AST and the parser for the grammar file (spec-query "Grammar
-//! notation"). The grammar is a list of named productions; each alternative is
+//! Grammar AST and the parser for the grammar file (doc "Simplified grammar notation"). The grammar
+//! is a list of named productions; each alternative is
 //! a sequence of items with an optional output template. Templates are kept as
 //! raw source here and parsed/evaluated separately (see `template`).
 

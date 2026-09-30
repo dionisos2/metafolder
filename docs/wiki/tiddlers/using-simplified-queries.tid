@@ -1,0 +1,44 @@
+title: Using simplified queries
+tags: [[Simplified query language]]
+kind: guide
+summary: Typing simplified queries in the GUI's query box and with -s on the command line, and seeing the DSL they become.
+
+!! In the GUI
+
+The query box of the `metarecord-list` panel takes simplified text; focus it with
+<<key "metarecord-list:focus simplified" Ctrl+/>> (or <<key "metarecord-list:focus simplified" "e s">>).
+''Show normal DSL'' reveals what it expands to, updated as you type. To edit the DSL
+by hand, ''freeze'' it: the DSL box then drives the query and the simplified text no
+longer does, until you focus the simplified box again, which unfreezes it. An
+expansion error shows under the simplified box; a DSL error under the DSL box.
+
+!! On the command line
+
+`-s` reads the `-q` selector as simplified text, expanding it locally before the query
+is sent:
+
+```
+mf -n music metarecord -q 'genre=jazz rating>=4' -s get
+mf -n music metarecord -q '#jazz modified younger 3d' -s get --count
+```
+
+!! With the default grammar
+
+|!You type |!It becomes |
+|`genre=jazz rating>3` |`genre = "jazz" AND rating > 3` |
+|`genre=jazz OR genre=blues`, `genre=jazz + genre=blues` |`… OR …` |
+|`!fav` |`NOT rating >= 4` |
+|`rating=4`, `seen=true` |`rating = 4`, `seen = true` — a number or a boolean stays one |
+|`title~live` |`title MATCHES "live"` |
+|`p osm "scien fic"`, `title osmd blue` |`osm(mfr_path, "scien fic")`, `osmd(title, "blue")` |
+|`rating?`, `rating!?`, `rating??` |`IS PRESENT`, `IS ABSENT`, `IS UNKNOWN` |
+|`size>=100MB`, `length<5mins` |`mfr_size >= 104857600`, `length < 300` |
+|`under "/music"` (quoted: a `/` is not part of a word) |`mfr_path ->* "/music"` |
+|`#jazz`, `#=music/jazz`, `##=music/jazz` |the tag macros ([[Tag syntax in simplified queries]]) |
+|`modified younger 3d` |a date macro ([[Dates in simplified queries]]) |
+|`3f2a…9b`, `tag->3f2a…9b` |that metarecord; the records pointing at it |
+
+Words separated by spaces mean `AND`; `OR` or `+` separate alternatives; `!` negates;
+parentheses group; an empty query matches everything. `p` is the file path
+(`mfr_path`), `size` is `mfr_size`, any other name passes through — so `path` is the
+tag hierarchy's field. The whole list: [[The default grammar]].

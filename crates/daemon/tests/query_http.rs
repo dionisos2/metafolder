@@ -148,7 +148,7 @@ async fn test_same_as_over_the_wire() {
 #[tokio::test]
 async fn test_osm_path_on_a_string_field_is_rejected() {
     // `osm` path mode is tree_ref-only: on a string field the daemon answers 400
-    // with the "use osmd" hint (spec-query). The rejection is made before
+    // with the "use osmd" hint (doc "Ordered substring matching"). The rejection is made before
     // evaluation (`query_validate`), from the field's stored type — an index
     // that quietly answered "no rows" would turn a user error into a silent
     // empty result.

@@ -1,6 +1,6 @@
 //! Integration tests for the query semantics — predicates, graph traversal,
 //! sorting — each query run through the serving path and the oracle, which must
-//! agree (spec-query, spec-data-model).
+//! agree (doc "Query", spec-data-model).
 
 use metafolder_core::metarecord::{Field, Value};
 use metafolder_core::query::{Aspect, FollowTarget, Query};
@@ -338,7 +338,7 @@ fn test_comparison_with_nothing_is_rejected() {
 
 #[test]
 fn test_validate_query_rejects_meaningless_comparisons() {
-    // The canonical, engine-independent comparison validator (spec-query): a
+    // The canonical, engine-independent comparison validator (doc "Comparisons"): a
     // comparison against `nothing`, and an *ordered* comparison on a type with
     // no meaningful order (bool / references), are rejected; equality on those
     // and ordered comparison on strings/numbers/datetimes stay allowed.

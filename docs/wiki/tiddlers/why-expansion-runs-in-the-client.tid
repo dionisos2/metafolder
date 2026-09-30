@@ -1,0 +1,27 @@
+title: Why expansion runs in the client
+tags: [[Simplified query language]]
+kind: rationale
+audience: dev
+summary: Expanding simplified text needs only the grammar and the input, so it is a pure function in core, called by the GUI and CLI — the daemon never sees the grammar.
+
+Expansion is a ''pure transformation'': it depends on the grammar file and the input
+text, never on a repository or on the daemon's state. So it lives in `core`
+(`core::simplified` — lexer, grammar, template, engine, and `load`, which reads the
+file), and the GUI and the CLI call it directly. There is no daemon endpoint.
+
+It first ran in the daemon, behind `POST /query/expand`, which held the grammar and
+answered the GUI's live preview. That made a client-side language a daemon concern: a
+round-trip per keystroke of preview, a grammar loaded by a process that never used it,
+and a daemon restart to pick up an edit. Moving it (commit `0a7abb45`) removed the
+route, the daemon's copy of the grammar and its loading at startup.
+
+Consequences:
+
+* the daemon only ever receives DSL — or rather its JSON form; the simplified language cannot change what a query means to the daemon;
+* relative dates resolve against the ''client's'' clock ([[Dates in simplified queries]]);
+* errors are the client's to report, in two surfaces: a ''grammar'' error (the text does not parse under the grammar) under the simplified box, a ''DSL'' error (the produced text is refused by the DSL parser) under the DSL box;
+* the grammar is user configuration of `core`, one file for every client, reloaded by the GUI with `config:reload grammar`.
+
+Why a hand-written engine rather than a parser library: grammars loaded at run time are
+rare among Rust parser libraries, none writes output through templates — the part that
+was ours regardless — and every other parser in the project is written by hand.

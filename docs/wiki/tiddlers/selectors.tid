@@ -9,7 +9,7 @@ verb'', so one selector serves every verb, `field` included:
 |!Option |!Selects |
 |`-i <uuid>` |one metarecord, by uuid (no query) |
 |`-q "<query>"` |the metarecords matching a query ([[Writing queries]]) |
-|`-s` |with `-q`: the text is the simplified language, expanded first — in the client, never by the daemon |
+|`-s` |with `-q`: the text is the simplified language, expanded first — in the client, never by the daemon ([[Using simplified queries]]) |
 |(none) |every metarecord |
 
 `-q` and `-i` are mutually exclusive; `-s` needs `-q`. `mf tag` adds `--eq

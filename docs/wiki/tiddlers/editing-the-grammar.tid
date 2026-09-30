@@ -1,0 +1,44 @@
+title: Editing the grammar
+tags: [[Simplified query language]]
+kind: guide
+summary: Change the simplified language by editing core/query-grammar — add a predicate, an alias, a shortcut — and reload it; what the load checks.
+
+The grammar is one file, global to all your repositories:
+`~/.config/metafolder/core/query-grammar`. The GUI and the CLI read it; the daemon
+never does. It lives in the configuration repository, so your edits are merged with
+future shipped changes ([[Updating the configuration]]).
+
+Most edits are one line in `predicate` or `field`:
+
+```
+# a shortcut: `todo` for the records tagged todo that are not done
+  | "todo"                  => tag -> (path = "todo") AND NOT done = true
+# an alias: `artist` for the embedded-metadata field
+field  = "p"      => mfr_path
+       | "artist" => mfr_meta_artist
+       | w:WORD   => $w
+# a new operator: `f ^ v` for "starts with"
+  | f:field "^" w:WORD      => $f MATCHES "^$w"
+```
+
+Put a new alternative before any other that would match the same start: choice is
+ordered, and the first alternative that succeeds wins ([[Simplified grammar notation]]).
+A synonym for an operator goes inside the repetition that uses it —
+`("OR" | "+")` — not as a second alternative, which ordered choice would never reach.
+
+The GUI reads the grammar at startup; after an edit, reload it without a restart with
+`config:reload grammar`. The CLI reads it at each `-s`.
+
+!! What the load checks
+
+A grammar is validated when it is loaded, and refused whole with an error naming the
+production at fault:
+
+* the start production `query` exists, and every production a rule refers to;
+* no ''left recursion'' (`or = or …` would loop forever);
+* every string literal lexes to ''exactly one'' token — a literal matches one input token by its text, so `"/fav"` (two tokens) could never match; the error suggests the split form, `"/" "fav"`.
+
+A missing or malformed file is an error when a client loads it — there is no fallback
+to a built-in grammar ([[No runtime fallback]]); an empty file is a grammar with no
+rules, accepting nothing. The DSL needs no grammar and is unaffected either way.
+Expansion errors carry the position in the simplified input.

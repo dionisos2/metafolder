@@ -1,0 +1,26 @@
+title: Tag syntax in simplified queries
+tags: [[Simplified query language]]
+kind: reference
+summary: #X finds a tag by fuzzy path, #=P a tag and its subtree by full path, ##=P exactly one tag.
+
+The default grammar has three tag forms. All select the records whose `tag` ref points
+at a tag entry (`mf_schema = "tag"`) chosen by its `path`:
+
+|!Form |!Selects |!Expands to |
+|`#jazz` |a tag found ''fuzzily'' along its path — name a leaf without its ancestors |`tag -> (mf_schema = "tag" AND osm(path, "jazz"))` |
+|`#=music/jazz` |that tag ''and every tag below it'', by full path from the root |`… path =>* "music/jazz"` |
+|`##=music/jazz` |''exactly'' that tag |`… path = "music/jazz"` |
+
+In `#X`, a `/` separates ordered-substring terms rather than anchoring a path:
+`#mu/ja` matches a path holding `mu` then `ja`, in order, not necessarily contiguous nor
+from the root ([[Ordered substring matching]]). A quoted value is one contiguous term:
+`#"jeux video"`. `#=` and `##=` take an unquoted slash-path. The three sigils are
+distinct tokens, so their order in the grammar does not matter.
+
+To negate, keep a space — `! #jazz`: `!#` lexes as one symbol.
+
+`#=` exists because tagging a record with a narrower tag drops the broader one, so
+"music/jazz or anything under it" is the question usually meant. Before August 2026
+bare `#X` was the subtree form and `##X` the exact one; the fuzzy `#X` replaced them,
+and `path` stopped being the file path's alias (it is `p` now) so that it could name
+the tag hierarchy's field.

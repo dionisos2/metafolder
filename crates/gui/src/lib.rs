@@ -371,7 +371,7 @@ pub fn run(options: Options) {
     // invalid file is fatal (doc "No runtime fallback").
     let keybindings = or_exit(config.load_keybindings());
     // The simplified-query grammar (shared, in core): expansion is done locally
-    // by the GUI backend, never proxied to the daemon (spec-query).
+    // by the GUI backend, never proxied to the daemon (doc "Why expansion runs in the client").
     let grammar = or_exit(metafolder_core::simplified::load::load_source());
     // The user's command module is read by the WebView, not here, so this is a
     // presence check: a missing file must fail the way every other missing

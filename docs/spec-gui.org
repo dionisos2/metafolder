@@ -1436,7 +1436,7 @@ handling — *not* =keybindings.toml=; note that a user binding of =ctrl+p= /
   previous walk stopped.
 - =ctrl+r= — an fzf-style search overlay anchored to the input, with its own
   search field: entries are listed newest first, deduplicated, and filtered
-  by client-side ordered-substring matching (the [[file:spec-query.org][OSM]]
+  by client-side ordered-substring matching (the OSM (doc "Ordered substring matching")
   semantics, without the path-mode =/= barrier). =ctrl+p=/=ctrl+n= and the
   arrows move the selection, =Enter= inserts the selection into the input,
   =Escape= cancels; losing focus also cancels.
@@ -2492,7 +2492,7 @@ reactively (see [[*Cross-panel selection]]).
 **** Finder (quick filter)
 
 A search box at the top of the panel — the /finder/ — is an incremental
-[[file:spec-query.org][OSM]] (ordered-substring) filter, the ergonomic way to
+OSM (doc "Ordered substring matching") (ordered-substring) filter, the ergonomic way to
 find a metarecord by a fragment of its name/label and/or path. As the user
 types (debounced), it re-runs the query; the terms are the input split on
 whitespace. =metarecord-list:focus finder= focuses it (default keybinding =/=; the
@@ -2543,7 +2543,7 @@ first display.
 
 **** Query editor (two zones)
 
-The query is written in the [[file:spec-query.org][simplified query language]]
+The query is written in the simplified query language (doc "Simplified query language")
 and transpiled to the normal DSL before execution. The editor exposes both
 forms, so the user can write quickly *and* drop to the full DSL when a query is
 too specific for the simplified surface — and learn the mapping by watching it.

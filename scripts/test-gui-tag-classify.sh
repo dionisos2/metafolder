@@ -34,7 +34,7 @@ setup_common() { # [<gui query response>]
     mock_respond 'gui layout right' 'saved-right'
     mock_respond 'gui workspace new*' 'ws-1'
     # The scope resolves to the one record the old single-uuid form named: a
-    # bare uuid is a valid query (spec-query, the UUID-atom bullet), so the old
+    # bare uuid is a valid query (doc "Query DSL grammar", the uuid-atom bullet), so the old
     # invocation keeps working.
     mock_respond 'metarecord -q rec-1 get --sort mfr_path*' 'rec-1'
 }

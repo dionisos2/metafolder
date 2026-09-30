@@ -4,7 +4,8 @@ kind: rationale
 audience: dev
 summary: Free punctuation is scarce and reserved; new syntax first looks for a free grammatical position, then a named operator, and a sigil last.
 
-The punctuation still free in the DSL ''and'' the simplified language is a scarce,
+The punctuation still free in the DSL ''and'' the simplified language
+([[Simplified query language]]) is a scarce,
 deliberately reserved resource. `#` (and `#=`, `##=`) belong to tags in the
 simplified language, `~` to its `MATCHES`, `+` to its `OR` — and `&` is kept free on
 purpose, as `+`'s natural companion for a future explicit `AND` there. The other

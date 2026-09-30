@@ -524,7 +524,7 @@ fn confirm(prompt: &str) -> Result<bool, CliError> {
     Ok(answer == "y" || answer == "yes")
 }
 
-// ── Query (spec-query) ────────────────────────────────────────────────────────
+// ── Query (doc "Query") ────────────────────────────────────────────────────────
 
 pub struct QueryArgs {
     pub predicate: String,
@@ -876,7 +876,7 @@ pub fn metarecord_get(
         // A UUID selector (-i) prints the full metadata object (`--select`
         // restricts it); a query selector (-q, already expanded) lists UUIDs.
         // The *typed flag* decides, never the shape of the text: a bare UUID is
-        // valid DSL (spec-query, the UUID-atom bullet), so `-q <uuid>` is an
+        // valid DSL (doc "Query DSL grammar", the uuid-atom bullet), so `-q <uuid>` is an
         // ordinary query and must print a UUID line like any other `-q`.
         Some(s) if by_id => {
             let fields: Option<Vec<String>> = select

@@ -493,7 +493,8 @@ pub fn grammar_source(app: AppHandle) -> String {
 }
 
 /// Expands simplified-language text to normal DSL text locally, via the shared
-/// grammar in core — no daemon round-trip (spec-query). Relative date macros
+/// grammar in core — no daemon round-trip (doc "Why expansion runs in the client"). Relative date
+/// macros
 /// resolve against the local clock.
 #[tauri::command]
 pub fn expand_query(app: AppHandle, text: String) -> Result<String, String> {

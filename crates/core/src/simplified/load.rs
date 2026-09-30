@@ -1,5 +1,5 @@
 //! Loading the global simplified-query grammar from the user configuration
-//! (doc "Configuration"; spec-query "Configuration"):
+//! (doc "Configuration"; doc "Editing the grammar"):
 //! `$XDG_CONFIG_HOME/metafolder/core/query-grammar`, installed by
 //! `metafolder-sync-config`. A missing or malformed grammar is an error; there
 //! is no embedded fallback. Expansion is a pure, client-side transformation
@@ -96,7 +96,7 @@ mod tests {
         let u = "8f3a2b1c4d5e6f708192a3b4c5d6e7f8";
         let v = "47ab0000000000000000000000000001";
         // A pasted UUID passes through to the DSL verbatim — one form in both
-        // languages (spec-query, the UUID-atom bullet).
+        // languages (doc "Query DSL grammar", the uuid-atom bullet).
         assert_eq!(expand(&g, u).unwrap(), u);
         assert_eq!(expand(&g, &format!("{u} rating>3")).unwrap(), format!("{u} AND rating > 3"));
         assert_eq!(expand(&g, &format!("{u} OR {v}")).unwrap(), format!("{u} OR {v}"));

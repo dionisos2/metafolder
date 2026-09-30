@@ -1,0 +1,63 @@
+title: Simplified grammar notation
+tags: [[Simplified query language]]
+kind: reference
+summary: The fixed lexer, the grammar notation (ordered choice, repetitions, captures) and the template language that writes the DSL.
+
+!! The lexer (fixed)
+
+The input is cut into tokens by a tokenizer you cannot configure; whitespace between
+tokens is dropped.
+
+|!Token |!Matches |
+|`UUID` |exactly 32 hex characters, maximal on both sides — tried first, since a uuid may start like a number or a word |
+|`WORD` |`[A-Za-z_][A-Za-z0-9_]*` |
+|`NUMBER` |an integer or float |
+|`STRING` |a double-quoted literal, with escapes |
+|`SYMBOL` |a maximal run of punctuation (`:`, `~`, `>=`, `..`, `+`, `#=`…) |
+|`(` `)` |each its own token |
+
+So `genre=jazz` and `genre = jazz` lex alike, as do `100MB` and `100 MB`; maximal munch
+gives word boundaries for free (a literal `"tag"` never matches `tags`). A hex run that
+is not exactly 32 long is a `NUMBER` or a `WORD` — the lexer reports nothing, the
+grammar decides.
+
+!! The grammar
+
+A list of named productions; the start production is `query`.
+
+|!Form |!Means |
+|`name = …` |a production |
+|`a b` |sequence |
+|`a*`, `a+`, `a?` |zero or more, one or more, optional |
+|`a ** s`, `a ++ s` |zero or more, one or more, separated by `s` |
+|`( … )` |grouping |
+|`"lit"` |one token whose text is `lit` |
+|`WORD` `NUMBER` `STRING` `UUID` |one token of that class |
+|`label:item` |binds the match (a list, for a repetition) |
+|`item => template` |the production's output |
+|`# …` |a comment |
+
+Alternatives are separated by a vertical bar, `a | b`: an ''ordered choice'' — the
+first alternative that succeeds wins, with no backtracking afterwards. So of two
+alternatives starting alike, the longer must come first (`"!?"` before `"?"`).
+
+A production without `=>` returns the source text it matched (a `STRING` keeps its
+quotes, a `WORD` stays bare).
+
+!! Templates
+
+Right of `=>`, a template is literal text with holes: `$name` interpolates a capture's
+text verbatim, `{ expr }` evaluates an expression. Adjacent text and captures simply
+concatenate. Everything is text, and nothing converts implicitly — `"007"` stays
+`"007"` — so numbers are asked for:
+
+|!In `{ }` |!Does |
+|`$name` |the capture's text |
+|`+ - * / %` |arithmetic on numbers (integer unless an operand is a float) |
+|`num(x)` |text to number, an error if it is not one |
+|`str(x)` |`x` as a DSL string literal — idempotent: a bare word is quoted, a quoted string left alone |
+|`join(sep, list)` |a repetition's captures joined by `sep` |
+|`now()` |the current time, Unix milliseconds — so a rule using it expands differently from one moment to the next |
+
+The set is deliberately small; a new function is an engine addition that breaks no
+grammar.

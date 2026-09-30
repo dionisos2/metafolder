@@ -1,0 +1,38 @@
+title: Simplified query language
+tags: Query
+kind: overview
+aliases: simplified-query simplified [[simplified query]] grammar query-grammar
+summary: A short, forgiving query surface whose whole syntax is an editable grammar; it expands on the client into the normal DSL.
+
+The DSL is precise but wordy for everyday filtering (`genre = "jazz" AND rating IS
+PRESENT`). The ''simplified'' language is shorter — `genre=jazz rating?` — and it is
+the default input of the GUI's query box and of `-q … -s` on the command line.
+
+It is not a second query engine: it ''expands into normal DSL text'', which is then
+parsed and run as usual.
+
+```
+simplified text → lexer → grammar → DSL text → DSL parser → query → daemon
+```
+
+Nothing in it is built in. Its entire syntax — the boolean skeleton, every
+predicate form, the tag and date macros, the field aliases — is a grammar file you
+can edit (`~/.config/metafolder/core/query-grammar`), each rule carrying the DSL text
+it produces. The shipped rules are defaults, not features.
+
+So the simplified language is ''not'' a superset of the DSL: a grammar may accept a
+DSL query, or not, or something else entirely, and expanding DSL text is not a no-op.
+The two stay explicit — the GUI shows both, the CLI takes simplified text only with
+`-s` — and a DSL form has a simplified spelling only if a grammar rule gives it one.
+
+!! Use it
+
+<<list-kind guide>>
+
+!! Reference
+
+<<list-kind reference>>
+
+!! Why it works this way
+
+<<list-kind rationale>>

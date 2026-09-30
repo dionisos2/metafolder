@@ -17,7 +17,7 @@ tag -> (path =>* "music/jazz")
 
 The ''simplified'' language is shorter, forgiving and configurable; it expands into
 the DSL on the client, and is what the GUI's query box takes by default (`mf … -s`
-on the command line). The notes here describe the DSL.
+on the command line). The notes here describe the DSL; the other has its own: [[Simplified query language]].
 
 Both compile to one JSON form ([[Query IR]]), which is what the daemon evaluates —
 from its store's bitmaps, never in SQL.

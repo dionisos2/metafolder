@@ -407,7 +407,7 @@ pub(super) struct SetRecordBody {
 }
 
 /// `PUT /repos/:repo/metarecords/:uuid` — whole-record set: replaces the entire
-/// field set, keeping the UUID, as one `SetRecord` op (spec-query). Literal
+/// field set, keeping the UUID, as one `SetRecord` op (doc "Metarecord endpoints"). Literal
 /// overwrite; reserved field names still need `force` to be written.
 pub(super) async fn put_metarecord(
     State(state): State<Arc<AppState>>,

@@ -84,15 +84,6 @@
     ]
   },
   {
-    "id": "simplified-query",
-    "title": "Simplified queries",
-    "file": "simplified-query.html",
-    "aliases": [
-      "simplified-query", "simplified", "simplified query", "grammar",
-      "query-grammar", "under", "fav"
-    ]
-  },
-  {
     "id": "metarecord-list",
     "title": "Metarecord list panel",
     "file": "metarecord-list.html",

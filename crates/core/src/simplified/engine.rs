@@ -1,4 +1,4 @@
-//! The grammar interpreter (spec-query "Simplified query language"). [`expand`]
+//! The grammar interpreter (doc "Simplified query language"). [`expand`]
 //! runs the grammar over the lexed input with ordered choice (first matching
 //! alternative wins, no backtracking once one succeeds) and renders each
 //! production's template, producing normal DSL text. [`validate`] is the

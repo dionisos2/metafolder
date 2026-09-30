@@ -1,4 +1,4 @@
-//! Output templates (spec-query "Template language"). A template is literal
+//! Output templates (doc "Simplified grammar notation"). A template is literal
 //! text with `$name` interpolations and `{ expr }` evaluated blocks. The base
 //! type is text; captures are text; conversion to a number is explicit
 //! (`num`), so there is no implicit coercion.

@@ -29,7 +29,7 @@
 # published nothing, a folder chosen from the completion. `q` on any
 # question stops the whole run, not just the record being classified.
 #
-# A bare UUID is a valid query (spec-query, the UUID-atom bullet), so the old
+# A bare UUID is a valid query (doc "Query DSL grammar", the uuid-atom bullet), so the old
 # single-metarecord invocation — `gui-tag-classify.sh <uuid>` — still works and
 # means exactly what it did.
 #

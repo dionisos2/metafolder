@@ -1,10 +1,10 @@
-//! Queries and the set layer (spec-query): `POST /query` and its profile,
+//! Queries and the set layer (doc "Query endpoints"): `POST /query` and its profile,
 //! the preparation feeding the evaluator, batch field writes, retype, delete.
 
 use super::*;
 
 /// `select`: absent → UUID strings; `"*"` → full objects; list → restricted
-/// objects (spec-query).
+/// objects (doc "Query endpoints").
 #[derive(Deserialize)]
 #[serde(untagged)]
 pub(super) enum SelectSpec {

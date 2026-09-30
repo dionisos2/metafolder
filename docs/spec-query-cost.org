@@ -8,7 +8,7 @@ and no cost model in the code. What it describes the daemon *doing* is therefore
 a proposal; what it describes the daemon *being* (one engine, three providers,
 the preparation) is current — with the key-value store's derived key spaces
 in place of the resident bitmaps since September 2026 — and is specified in
-[[file:spec-indexing.org][spec-indexing]] and [[file:spec-query.org][spec-query]]. The passages below that speak of resident
+[[file:spec-indexing.org][spec-indexing]] and doc "Query". The passages below that speak of resident
 structures — the "three resident systems", =forest_resident=, an index behind
 HEAD — predate that change and are to be read as such: nothing is resident and
 nothing lags HEAD any more.

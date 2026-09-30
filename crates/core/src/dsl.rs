@@ -1,5 +1,5 @@
 //! Query DSL: hand-written lexer + recursive-descent parser compiling the
-//! human-friendly predicate syntax to the `Query` JSON IR (spec-query
+//! human-friendly predicate syntax to the `Query` JSON IR (doc "Query DSL grammar"
 //! "* CLI", "Query DSL").
 
 use crate::metarecord::Value;

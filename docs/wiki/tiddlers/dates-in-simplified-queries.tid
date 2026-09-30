@@ -1,0 +1,25 @@
+title: Dates in simplified queries
+tags: [[Simplified query language]]
+kind: reference
+summary: modified/created with younger, older, since, before and between — relative dates expand against the client's clock.
+
+The default grammar reads dates as English, on `modified` (`mfr_mtime`) and `created`
+(`mfr_btime`):
+
+|!You type |!It becomes |
+|`modified younger 3d` |`mfr_mtime > @<now − 3 days>` — changed within the last three days |
+|`created older 2 weeks` |`mfr_btime < @<now − 2 weeks>` |
+|`modified since "2024-01-01"` |`mfr_mtime >= @"2024-01-01"` |
+|`created before "2024-01-01"` |`mfr_btime < @"2024-01-01"` |
+|`modified between "2024-01-01" and "2024-06-01"` |`mfr_mtime >= @"2024-01-01" AND mfr_mtime <= @"2024-06-01"` |
+
+A duration is a number and a unit, with or without a space (`30min`, `3d`, `2 weeks`):
+`s`/`sec`/`second(s)`, `min`/`minute(s)`, `h`/`hr`/`hour(s)`, `d`/`day(s)`,
+`w`/`week(s)`. Months and years are left out on purpose — they are not fixed
+durations. Absolute dates are quoted ISO-8601 strings, as the DSL's date literal takes
+them ([[Comparisons]]).
+
+A relative date is computed ''when the text is expanded'', from the client's clock
+(the template's `now()`): the same text expands differently later, and a saved
+simplified query means "the last three days" each time it runs. To date another
+field, add a `datefield` alternative ([[Editing the grammar]]).

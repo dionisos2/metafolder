@@ -143,7 +143,7 @@ recorded per row):
 | =Int= / =Float= / =DateTime=   | bit-sliced index (BSI), range     | [[*Bit-sliced index (BSI) for ordered/range fields][BSI]]               |
 | =Bool= / low-cardinality =String= | one bitmap per value           | [[*Bitmaps for categorical predicates][categorical bitmaps]]            |
 | =Ref= / =TreeRef=              | reverse (inverted) bitmaps        | [[*Reverse bitmaps for Ref / TreeRef][reverse bitmaps]]                 |
-| high-cardinality =String=      | inverted bitmaps for equality; =Matches= runs the regex over the field's distinct values in memory (see [[file:spec-query.org][spec-query.org]]) | |
+| high-cardinality =String=      | inverted bitmaps for equality; =Matches= runs the regex over the field's distinct values in memory (see doc "Regular expressions in queries") | |
 
 A field name has exactly one non-=Nothing= value type repository-wide (see
 [[file:spec-data-model.org][spec-data-model.org]] → "One value type per field
@@ -669,7 +669,7 @@ of a multi-term query.
 (eagerly populated) tree cache and passes the roots in as =PathRoots=, so the
 bitmap expansion seeds from the resolved root — =mfr_path ->* "/dir"= + sort is
 served fully in memory. *Exact-node equality* (=mfr_path = "/a/b.txt"=, the default =raw= aspect, see
-[[file:spec-query.org][spec-query.org]]) is supported the same way: the caller
+doc "Field aspects") is supported the same way: the caller
 resolves the operand to its node through the tree cache and passes it in as
 =NodeRoots=, and the index answers from that single interned id. The =Option=
 in that map is load-bearing — an entry mapping to =None= means "resolved, and it

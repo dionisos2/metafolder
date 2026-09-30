@@ -1,5 +1,5 @@
-//! Fixed tokenizer for the simplified query language (spec-query "Lexer
-//! (fixed)"). Whitespace is insignificant except as a token separator, so
+//! Fixed tokenizer for the simplified query language (doc "Simplified grammar notation").
+//! Whitespace is insignificant except as a token separator, so
 //! `genre:jazz` and `genre : jazz` — and `100MB` / `100 MB` — tokenize
 //! identically. Maximal munch on words gives free word boundaries.
 

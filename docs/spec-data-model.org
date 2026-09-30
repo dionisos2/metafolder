@@ -101,7 +101,7 @@ creates missing ancestors). Records reference entries through the multi-map =Ref
 fields =<positive>=/=<negative>=/=<mixed>= (=tag=/=negative_tag=/=mixed_tag=). All
 field names are configurable via the CLI config =[tag]= table (defaults reproduce
 this convention). A tag is selected in the DSL by its path with the exact-node
-form =path = "musique/jazz"= (see [[file:spec-query.org][spec-query.org]]).
+form =path = "musique/jazz"= (see doc "Field aspects").
 
 Verbs (the selector precedes the verb, as for =mf metarecord=):
 - =add <path>= — the record(s) *have* the tag: idempotently add the positive

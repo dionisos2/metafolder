@@ -275,7 +275,7 @@ mod tests {
         serde_json::from_str(&json).expect("deserialization failed")
     }
 
-    // ── JSON format (spec-query: "type" key, snake_case) ─────────────────────
+    // ── JSON format (doc "Query IR": "type" key, snake_case) ─────────────────────
 
     #[test]
     fn test_is_present_json_format() {

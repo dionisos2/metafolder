@@ -18,4 +18,5 @@ built-in default — the canonical one may have been deleted on purpose.
 `mf --no-config` skips the CLI's file entirely, for scripts that must not depend
 on your personal settings.
 
-The normal query language needs no grammar, and works without `core/query-grammar`.
+The normal query language needs no grammar, and works without `core/query-grammar`
+([[Editing the grammar]]).

@@ -1,0 +1,52 @@
+title: The default grammar
+tags: [[Simplified query language]]
+kind: reference
+aliases: under fav
+summary: The rules shipped in core/query-grammar — what each form expands to — and the grammar currently in effect.
+
+The shipped `query-grammar`, rule by rule. Every one is editable
+([[Editing the grammar]]); on your machine the grammar in effect may differ — the help
+panel shows it at the end of this page.
+
+!! The boolean skeleton
+
+```
+query   = q:or                       => $q
+or      = items:and ++ ("OR" | "+")  => {join(" OR ", $items)}
+and     = items:andterm +            => {join(" AND ", $items)}
+andterm = "AND" u:unary => $u  |  u:unary => $u
+unary   = "!" u:unary => NOT $u  |  a:atom => $a
+atom    = "(" q:query ")" => ($q)  |  p:predicate => $p
+```
+
+Juxtaposition is `AND` (the explicit keyword works too), `OR` or `+` separate
+alternatives, `!` negates, parentheses group. Precedence comes from this cascade, not
+from numbers.
+
+!! The predicates
+
+|!Form |!Expands to |
+|`f = v`, `f != v` |`f = v` / `f != v`, routed by the value's token: a string stays quoted, a number stays a number, `true`/`false` stay booleans, a bare word is quoted |
+|`f ~ v` |`f MATCHES "v"` |
+|`f osm v`, `f osmd v` |`osm(f, "v")`, `osmd(f, "v")` — quote several terms |
+|`f >= n`, `f <= n`, `f > n`, `f < n` |the comparison; `n` may carry `MB` (×1 048 576) or `mins` (×60) |
+|`f ?`, `f !?`, `f ??` |`f IS PRESENT`, `f IS ABSENT`, `f IS UNKNOWN` |
+|`under v` |`mfr_path ->* "v"` — `v` a word or a quoted string, so a path is quoted |
+|`modified`/`created` + `younger`, `older`, `since`, `before`, `between … and …` |[[Dates in simplified queries]] |
+|`#v`, `#=v`, `##=v` |[[Tag syntax in simplified queries]] |
+|a uuid |that uuid — the DSL's own uuid atom |
+|`f -> <uuid>` |`f -> (<uuid>)`: the records pointing at it |
+|`fav` |`rating >= 4` — an example rule; adapt it |
+
+Field aliases: `p` → `mfr_path`, `size` → `mfr_size`, any other word passes through
+(so `path` is the tag hierarchy's field). A field here is a `WORD`, which cannot hold
+`:`, so the simplified language cannot spell an aspect (`p:value`): write such a query
+in the DSL, or add a rule.
+
+Ordered choice decides between forms that start alike: `!?` and `??` come before `?`,
+the operator forms before the bare word `fav`. To negate a tag, keep a space: `! #jazz`
+— `!#` lexes as one symbol.
+
+!! The grammar in effect
+
+<<live grammar>>

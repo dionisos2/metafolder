@@ -33,7 +33,7 @@ setup_common() {
     mock_respond 'gui workspace new*' 'ws-1'
     mock_respond 'track *'           'rec-song'
     # The nested gui-tag-classify.sh now takes a QUERY: a bare uuid is one
-    # (spec-query, the UUID-atom bullet), so the example's `classify <uuid>`
+    # (doc "Query DSL grammar", the uuid-atom bullet), so the example's `classify <uuid>`
     # call still names exactly that record — through a query now.
     mock_respond 'metarecord -q rec-song get --sort mfr_path*' 'rec-song'
     mock_respond 'path --relative rec-song' '/song'
