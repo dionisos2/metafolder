@@ -1,0 +1,18 @@
+title: Contradicting a tag
+tags: [[Hierarchical tags]]
+kind: question
+summary: deny does not take back a positive, nor add a negative — so revising an answer leaves a record that both has and has not the tag.
+
+`mf tag deny P` adds `negative_tag` → P and drops the more specific negatives; it leaves
+any `tag` → P, and any `tag` to a descendant of P, in place. `mf tag add P` likewise
+leaves `negative_tag` → P and the negatives of P's ancestors. A record can therefore end
+up saying both "jazz" and "not music".
+
+The tagging scripts do not reach it in a normal run — they ask only what is undecided —
+but `gui-tag-folder.sh --redo` exists to revise answers, and answering `n` where `y`
+was given leaves both refs ([[Classifying with tags]]).
+
+The rule that would close it follows from [[Tag subsumption and exclusivity]]: `deny P`
+drops the positives of P and of its descendants (they all imply P), `add P` drops the
+negatives of P and of its ancestors (each is contradicted by P). Found while
+documenting (September 2026); not decided.

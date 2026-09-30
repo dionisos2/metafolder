@@ -1,4 +1,4 @@
-//! The hierarchical-tag model behind `mf tag` (spec-data-model "* CLI"):
+//! The hierarchical-tag model behind `mf tag` (doc "Hierarchical tags"):
 //! the field-name convention plus the pure subsumption/exclusivity helpers that
 //! the `gui-tag-*` scripts used to re-implement in bash. Everything here is
 //! pure and unit-tested; the HTTP orchestration lives in `commands::tag_*`.

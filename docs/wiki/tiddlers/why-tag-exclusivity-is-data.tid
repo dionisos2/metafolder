@@ -1,0 +1,13 @@
+title: Why tag exclusivity is data
+tags: [[Hierarchical tags]]
+kind: rationale
+summary: Which tags exclude each other is a flag on the tag entries, not a rule in the code — the vocabulary carries its own structure.
+
+Whether two tags can go together depends on the vocabulary, not on the program: a genre
+and a year can, two genres of one partition cannot, for one user's music and not
+another's. So the rule is two `bool` fields on the tag entries themselves —
+`partition` on a parent, `exclusive` on a child ([[Tag entries and references]]) — read
+with the vocabulary on every run. Declaring a new exclusive group is an edit to a
+metarecord, reviewable and undoable like any other, and the same flags drive both
+`mf tag add` (which drops the excluded siblings) and the classification flow (which
+stops asking about them).

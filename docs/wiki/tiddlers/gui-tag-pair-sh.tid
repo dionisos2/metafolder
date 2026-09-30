@@ -1,0 +1,6 @@
+title: gui-tag-pair.sh
+tags: [[Shipped script]] [[Hierarchical tags]]
+kind: reference
+summary: Interactive yes/no tagging of one tag across all files.
+
+One tag, asked file by file over a query: [[Classifying with tags]].

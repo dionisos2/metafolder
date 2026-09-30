@@ -1,0 +1,6 @@
+title: mf tag list
+tags: [[CLI command]] [[Hierarchical tags]]
+kind: reference
+summary: List the tag vocabulary as TSV: name<TAB>partition<TAB>exclusive
+
+The vocabulary, one tag per line, as the tagging scripts read it ([[Tagging from the command line]]).

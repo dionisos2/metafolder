@@ -1,0 +1,58 @@
+title: The query is the walk state
+tags: [[Hierarchical tags]]
+kind: rationale
+audience: dev
+aliases: gui-tag-folder-rework
+summary: gui-tag-folder.sh holds no list: each question is the first answer of "scope and not yet decided", since every answer is already a write.
+
+`gui-tag-folder.sh` used to read its whole scope before the first question — seven
+reads, the walk order computed by an external `sort`, everything held in bash arrays and
+capped at `MF_GUI_MAX_ENTRIES`. The rework (September 2026) starts from one observation:
+an answer is already a ''write''. So "what is left to ask" is a query, not bookkeeping:
+
+```
+<scope> AND <not yet decided> AND <not skipped>
+```
+
+Each step asks for its first match (`--limit 1`), and each answer removes its subject —
+a `y`/`n` on a folder writes the tag over `(<scope>) AND mfr_path ->* "P"` for its path P, so the
+whole subtree leaves the set at once. Nothing is read up front, nothing is held, there
+is no cap; a question costs two or three small round-trips, each behind a keypress.
+
+!! Walk order
+
+The only state is ''the current folder'': the path is the stack, and going up is
+trimming one component. At folder P:
+
+# the first undecided direct child in scope — folders first, then files, each by `order_dir`/`order_file` then path (so a numbered album is walked by track);
+# none? the first undecided in-scope ''descendant'' of P, by path — the walk moves to its parent without asking;
+# neither? up one component; above the root, the walk is done.
+
+Rule 2 is what reaches a scattered scope (`/a` out of scope, `/a/b/c.txt` in it):
+sorting by path is sorting depth first, so the first descendant is the one the walk
+should reach next, and every empty level is skipped in one step. There is no sort by
+depth to lean on instead: a `tree_ref` sort key orders on the whole path
+([[Pagination and sorting]]). The repository root is nobody's child, so at the walk root
+the folder query also asks for the forest root (`mfr_path:parent = "" OR mfr_path:parent
+IS ABSENT`). A leaf is "not a folder", not `mfr_type = "file"`: a symlink is neither,
+and a leaf query that missed it looped for ever without waiting for a key.
+
+!! Skips and the counter
+
+A skip is recorded, so it survives the run: `gui_tag_skipped`, a `ref` to the tag entry
+— the same shape as `tag`, one row per tag, so a skip for `music` does not skip for
+`jazz`, and the query needs one clause whatever their number. It is taken out ''by
+value'' (`field remove`), since `unset` would drop every tag's marker. When the tag entry
+does not exist yet, the skip holds for this run only, in a `uuid_in` list.
+
+"N left" is a `count` over the same predicate — exact, O(1) on the index. A skipped
+folder's subtree is still undecided, so both the count and the step query carry a
+`NOT mfr_path ->* "P"` per skipped folder P: rule 2 would otherwise walk into it.
+
+`--redo` drops the decided and skipped clauses, so nothing an answer writes narrows the
+query; it keeps its own memory — the entries asked, the folders answered whole — bounded
+by keypresses and restored by `back`.
+
+The unit suite drives the hermetic `mf` mock by declaring the walk as the ''successive
+answers'' to the step queries (queues that empty as the real set would); the semantics
+against a real daemon stay pinned by `scripts/test-scripts-integration.sh`.

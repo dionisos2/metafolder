@@ -1,0 +1,6 @@
+title: mf tag add
+tags: [[CLI command]] [[Hierarchical tags]]
+kind: reference
+summary: The record(s) have the tag (drops more general ancestor tags)
+
+Adds the tag to the selection, creating the entry if needed, then drops the ancestors and — for an exclusive tag — the siblings ([[Tag subsumption and exclusivity]]). Prints how many records gained the tag.

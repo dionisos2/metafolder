@@ -1,0 +1,20 @@
+title: Why tags are a forest
+tags: [[Hierarchical tags]]
+kind: rationale
+aliases: tag-unification
+summary: A tag's hierarchy is a tree_ref, as a file's is, so the query language, the tree panel and the forest's guarantees serve tags unchanged.
+
+Until August 2026 there were two tag conventions side by side: `mf tag` kept the
+hierarchy in a string `name` (`musique/jazz`, split on `/` by the client) with plural
+ref fields `tags`/`negative_tags`, while the shipped schema and the GUI placed a tag with
+a `tree_ref` `path` and pointed at it with `tag`. Everything was unified on the second
+(`6f05319`, `fc1524c`), for what the tree gives for free:
+
+* the query language already follows trees — `path =>* "musique"` is a tag and its whole subtree, `path = "musique/jazz"` exactly one node ([[Following references]], [[Field aspects]]);
+* the forest guarantees one position per tag, no cycle, and a parent that exists ([[TreeRef forest]], [[Referential integrity of a forest]]);
+* renaming or moving a tag is one write to one node, and every path under it follows;
+* the `treeref` panel browses and edits the vocabulary as it does folders.
+
+The field names became singular at the same time — `tag`, `negative_tag`,
+`mixed_tag` — since each row holds one tag. Data written with the old convention is not
+converted: `mf tag` does not see it.

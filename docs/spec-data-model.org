@@ -92,38 +92,7 @@ Moved to the wiki: doc "Editing metarecords from the command line".
 
 ** =mf tag [-i|-q|--eq] <verb> <path>= (hierarchical tags)
 
-Applies a *hierarchical tag convention* to the selected metarecord(s), owning
-the model the =gui-tag-*= scripts used to re-implement by hand. A *tag entry* is
-a metarecord =mf_schema = <entry_type>= (=tag=) whose position in the tag hierarchy is
-a =TreeRef= field =<path_field>= (=path=) — its resolved path (=musique/jazz=) is
-the tag's identity, and a nested path is a chain of tag-entry nodes (the CLI
-creates missing ancestors). Records reference entries through the multi-map =Ref=
-fields =<positive>=/=<negative>=/=<mixed>= (=tag=/=negative_tag=/=mixed_tag=). All
-field names are configurable via the CLI config =[tag]= table (defaults reproduce
-this convention). A tag is selected in the DSL by its path with the exact-node
-form =path = "musique/jazz"= (see doc "Field aspects").
-
-Verbs (the selector precedes the verb, as for =mf metarecord=):
-- =add <path>= — the record(s) *have* the tag: idempotently add the positive
-  ref, then drop the more general *ancestor* tags, and — when =<path>= is
-  =exclusive= (own flag, or its parent is a =partition=) — drop its *siblings*;
-- =deny <path>= — the record(s) do *not*: add the negative ref, drop the more
-  specific *descendant* negatives it subsumes;
-- =mixed <path>= — mark the folder(s) mixed w.r.t. the tag (no subsumption);
-- =remove <path>= — drop the positive ref (undo of =add=);
-- =list= — the vocabulary as TSV =path<TAB>partition<TAB>exclusive= (0/1),
-  path-sorted — the universe format the tagging flow consumes; takes no selector.
-
-=add=/=deny=/=mixed= auto-create the tag entry when the vocabulary lacks it. The
-write is applied across the whole selector set through the batch field endpoints
-(=POST …/query/fields/{add,remove}=), one call per set — no per-record loop.
-So a whole subtree is tagged with =mf tag -q 'mfr_path ->* "/dir"' add <path>=.
-
-Their idempotence is the daemon's: appending a ref a record already carries is a
-no-op (see doc "No duplicate rows"), so the ref is appended once and the row that
-already held it is left untouched, id included — no remove-then-append. The
-number printed is therefore how many records actually *gained* the ref: re-running
-the same =add= prints =0=, and the subsumption removals that follow are unaffected.
+Moved to the wiki: doc "Tagging from the command line", doc "Tag subsumption and exclusivity".
 
 ** =mf ignore <verb> <presets>= (named ignore presets)
 

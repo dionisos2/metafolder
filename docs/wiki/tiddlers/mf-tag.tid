@@ -1,0 +1,6 @@
+title: mf tag
+tags: [[CLI command]] [[Hierarchical tags]]
+kind: reference
+summary: Hierarchical tags: add/deny/mixed/remove a tag on the selected metarecord(s), or list the vocabulary. Encapsulates the subsumption and exclusivity rules (drop ancestors on add, descendants on deny). The field-name convention is configurable via the `[tag]` config table
+
+The hierarchical-tag verbs ([[Hierarchical tags]]). The selector (`-i`, `-q`, `-s`, `--eq`) precedes the verb and is required by all but `list`: [[Tagging from the command line]]. The rules the verbs apply are in [[Tag subsumption and exclusivity]].

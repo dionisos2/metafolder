@@ -12,8 +12,9 @@ verb'', so one selector serves every verb, `field` included:
 |`-s` |with `-q`: the text is the simplified language, expanded first — in the client, never by the daemon ([[Using simplified queries]]) |
 |(none) |every metarecord |
 
-`-q` and `-i` are mutually exclusive; `-s` needs `-q`. `mf tag` adds `--eq
-name[:type]=value` (repeatable, AND-ed: an exact match).
+`-q` and `-i` are mutually exclusive; `-s` needs `-q`. `mf metarecord` and `mf tag`
+([[Tagging from the command line]]) also take `--eq name[:type]=value` (repeatable,
+AND-ed: an exact match, with no DSL quoting to get wrong), exclusive of both.
 
 ''The option decides, never the shape of its text.'' A bare 32-hex uuid is a valid
 query, so `-q <uuid>` is an ordinary query and behaves like every other `-q`, while

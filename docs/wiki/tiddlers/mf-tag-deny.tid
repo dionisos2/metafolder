@@ -1,0 +1,6 @@
+title: mf tag deny
+tags: [[CLI command]] [[Hierarchical tags]]
+kind: reference
+summary: The record(s) do NOT have the tag (drops more specific descendants)
+
+Records that the selection has ''not'' the tag, and drops the more specific negatives it covers ([[Tag subsumption and exclusivity]]). A positive is left in place ([[Contradicting a tag]]).

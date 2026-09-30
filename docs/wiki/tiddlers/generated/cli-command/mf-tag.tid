@@ -15,7 +15,7 @@ Commands:
   deny    The record(s) do NOT have the tag (drops more specific descendants)
   mixed   Mark the folder(s) mixed w.r.t. the tag
   remove  Drop the tag from the record(s) (undo of add)
-  list    List the tag vocabulary as TSV: name<TAB>partition<TAB>exclusive
+  list    List the tag vocabulary as TSV: path<TAB>partition<TAB>exclusive
   help    Print this message or the help of the given subcommand(s)
 
 Options:

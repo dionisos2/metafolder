@@ -3,7 +3,7 @@
 # metarecords with a yes/no/mixed walk. The scripted `mf` shim
 # (scripts/lib/mf-mock.sh) stands in for the daemon + GUI.
 #
-# THE QUERY IS THE WALK STATE (docs/gui-tag-folder-rework.md). An answer is a
+# THE QUERY IS THE WALK STATE (doc "The query is the walk state"). An answer is a
 # write, so "what is left to ask" is a query: each step asks ONE question with
 # `--limit 1` over `<scope> AND <undecided> AND <not skipped>`, and every answer
 # takes its subject — a whole subtree, for a folder answered y/n — out of that

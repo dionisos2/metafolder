@@ -241,7 +241,7 @@ survit au run, s'annule par `back` comme toute autre réponse, et est proposé a
 nettoyage en fin de run puis au démarrage suivant. Prérequis levés en chemin :
 `:parent` servi par l'index, puis `mf … --count`.
 
-Conception : [gui-tag-folder-rework.md](gui-tag-folder-rework.md). Les deux
+Conception : wiki, doc "The query is the walk state". Les deux
 autres scripts (`gui-tag-classify.sh`, `gui-tag-pair.sh`) lisent toujours leur
 scope d'avance — mais ils classent UN metarecord (classify) ou une paire
 (pair), pas un sous-arbre : la borne y suffit.

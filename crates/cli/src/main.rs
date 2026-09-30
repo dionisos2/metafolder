@@ -543,7 +543,7 @@ enum TagVerb {
     Mixed { path: String },
     /// Drop the tag from the record(s) (undo of add)
     Remove { path: String },
-    /// List the tag vocabulary as TSV: name<TAB>partition<TAB>exclusive
+    /// List the tag vocabulary as TSV: path<TAB>partition<TAB>exclusive
     List,
 }
 

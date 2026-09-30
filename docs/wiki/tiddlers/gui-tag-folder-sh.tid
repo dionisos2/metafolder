@@ -1,0 +1,6 @@
+title: gui-tag-folder.sh
+tags: [[Shipped script]] [[Hierarchical tags]]
+kind: reference
+summary: Bulk-apply one tag over a query's metarecords (yes/no/mixed walk).
+
+One tag over a folder tree, answered a subtree at a time: [[Classifying with tags]]. How the walk works: [[The query is the walk state]].

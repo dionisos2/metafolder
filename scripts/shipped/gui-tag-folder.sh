@@ -27,7 +27,7 @@
 # the tag over `(scope) AND mfr_path ->* "<path>"`, so the whole subtree leaves
 # at once. Nothing is read up front, nothing is held in bash, and there is no
 # scope cap: the cost is two or three small round-trips per question, each
-# behind a human keypress. See docs/gui-tag-folder-rework.md.
+# behind a human keypress. See doc "The query is the walk state".
 #
 # THE QUERY IS ALSO THE SCOPE. A "yes" on a folder never reaches a metarecord
 # the query excludes: the subtree op is `(<query>) AND mfr_path ->* "<path>"`.

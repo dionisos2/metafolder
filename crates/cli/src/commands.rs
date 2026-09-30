@@ -1228,7 +1228,7 @@ pub fn order(
     Ok(0)
 }
 
-// ── mf tag (hierarchical-tag model, spec-data-model "* CLI") ──────────────────
+// ── mf tag (doc "Tag subsumption and exclusivity") ───────────────────────────
 
 /// The tag vocabulary loaded once per `mf tag` run.
 struct Vocab {
@@ -1242,7 +1242,7 @@ struct Vocab {
     exclusives: std::collections::HashSet<String>,
 }
 
-/// Loads the tag vocabulary (`type = entry_type`) with its flags, paginating.
+/// Loads the tag vocabulary (`<type_field> = <entry_type>`) with its flags, paginating.
 /// A tag's identity is the resolved path of its `path_field` TreeRef, fetched in
 /// one `resolve-tree` round-trip and joined onto the per-entry flags.
 fn load_vocab(ctx: &Ctx, base: &str) -> Result<Vocab, CliError> {
@@ -1451,8 +1451,8 @@ pub fn tag_remove(ctx: &Ctx, selector: &str, path: &str) -> Result<i32, CliError
     Ok(0)
 }
 
-/// `mf tag list` — the vocabulary as TSV `name<TAB>partition<TAB>exclusive`
-/// (0/1), name-sorted. This is exactly the universe format the tagging scripts
+/// `mf tag list` — the vocabulary as TSV `path<TAB>partition<TAB>exclusive`
+/// (0/1), path-sorted. This is exactly the universe format the tagging scripts
 /// consume.
 pub fn tag_list(ctx: &Ctx) -> Result<i32, CliError> {
     let base = ctx.repo_base()?;

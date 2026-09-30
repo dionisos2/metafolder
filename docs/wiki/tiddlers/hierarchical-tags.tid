@@ -1,0 +1,48 @@
+title: Hierarchical tags
+kind: overview
+aliases: tag tagging negative_tag mixed_tag vocabulary
+summary: Tags are metarecords placed in a tree by their path; a record points at the tags it has, the ones it has not, and — for a folder — the ones it partly has.
+
+A ''tag'' is a metarecord of its own, a ''tag entry'' (`mf_schema = "tag"`), whose
+place in the hierarchy is a `tree_ref` field `path`: `musique/jazz` is the entry named
+`jazz` under the entry named `musique` ([[TreeRef forest]]). The path is the tag's
+identity; an optional `label` may name it for display.
+
+A record says what it is about through three multi-valued `ref` fields pointing at tag
+entries:
+
+* `tag` — it ''has'' the tag;
+* `negative_tag` — it has ''not'' — an answer, not an absence: a record with neither was never asked;
+* `mixed_tag` — a folder whose content is partly tagged and partly not.
+
+Because a tag is an ordinary metarecord, everything else works on it unchanged: `tag ->
+(path = "musique/jazz")` finds the records with exactly that tag, `tag -> (path =>*
+"musique")` the ones with a music tag of any kind ([[Following references]]), the
+simplified language writes them `##=musique/jazz` and `#=musique`
+([[Tag syntax in simplified queries]]), and the `treeref` panel browses the vocabulary.
+
+The convention itself — which field is which — lives in the clients, not the daemon:
+`mf tag` applies it, with the field names of the `[tag]` table of
+[[CLI configuration]], and the GUI's tagging scripts build on `mf tag`.
+
+!! Use it
+
+<<list-kind guide>>
+
+!! Reference
+
+<<list-kind reference>>
+
+!! Why it works this way
+
+<<list-kind rationale>>
+
+!! Open questions
+
+<<list-kind question>>
+
+!! Commands
+
+<<tagged-with "CLI command">>
+
+<<tagged-with "Shipped script">>

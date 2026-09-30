@@ -13,7 +13,7 @@ personal settings.
 | |`page-size` |`500` |the page size `mf` asks for while streaming a listing |
 | |`reconcile-poll-interval-ms` |`200` |how often `mf reconcile` polls its task, when `--poll-interval` is not given |
 |`[repo]` |`name` or `uuid` |— |a default repository, used when no `-n`/`-u` (nor their variables) is given; without one, a command needing a repository and given none is a usage error |
-|`[tag]` |`type-field`, `entry-type`, `path-field`, `positive`, `negative`, `mixed` |`mf_schema`, `tag`, `path`, `tag`, `negative_tag`, `mixed_tag` |the field names of the tag model `mf tag` works with (the GUI's tagging scripts use the same) |
+|`[tag]` |`type-field`, `entry-type`, `path-field`, `positive`, `negative`, `mixed`, `partition`, `exclusive` |`mf_schema`, `tag`, `path`, `tag`, `negative_tag`, `mixed_tag`, `partition`, `exclusive` |the field names of the tag model `mf tag` works with (the GUI's tagging scripts use the same): [[Tag entries and references]] |
 
 Precedence, for every setting: an explicit flag or environment variable, then the
 file, then the built-in default.

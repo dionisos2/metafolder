@@ -1,0 +1,6 @@
+title: gui-tag-next.sh
+tags: [[Shipped script]] [[Hierarchical tags]]
+kind: reference
+summary: (no Summary: header — a helper, not offered by script:run)
+
+Not run on its own: the pure question selector `gui-tag-classify.sh` sources, unit-tested by `scripts/test-gui-tag-next.sh` ([[Classifying with tags]]).

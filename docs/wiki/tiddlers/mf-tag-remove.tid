@@ -1,0 +1,6 @@
+title: mf tag remove
+tags: [[CLI command]] [[Hierarchical tags]]
+kind: reference
+summary: Drop the tag from the record(s) (undo of add)
+
+Takes the positive ref off the selection, nothing else; `0` when the tag does not exist ([[Tagging from the command line]]). Negatives and mixed marks are removed with `mf metarecord … field remove`.

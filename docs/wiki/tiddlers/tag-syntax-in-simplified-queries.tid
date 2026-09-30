@@ -4,7 +4,7 @@ kind: reference
 summary: #X finds a tag by fuzzy path, #=P a tag and its subtree by full path, ##=P exactly one tag.
 
 The default grammar has three tag forms. All select the records whose `tag` ref points
-at a tag entry (`mf_schema = "tag"`) chosen by its `path`:
+at a tag entry (`mf_schema = "tag"`) chosen by its `path` ([[Hierarchical tags]]):
 
 |!Form |!Selects |!Expands to |
 |`#jazz` |a tag found ''fuzzily'' along its path — name a leaf without its ancestors |`tag -> (mf_schema = "tag" AND osm(path, "jazz"))` |

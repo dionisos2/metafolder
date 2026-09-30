@@ -1,0 +1,6 @@
+title: gui-tag-classify.sh
+tags: [[Shipped script]] [[Hierarchical tags]]
+kind: reference
+summary: Interactively classify a query's files by hierarchical tags.
+
+Every tag of each metarecord of a query, descending the vocabulary: [[Classifying with tags]].

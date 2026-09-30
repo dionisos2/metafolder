@@ -741,17 +741,34 @@ avant d'écrire les notes :
   =run.rs= se disent « squelette » / « à venir » ; CLAUDE.md nomme les routes
   =/repos/:a/:b/sync/*= (c'est =/sync/:a/:b/…=).
 
-** TODO 30. Tags hiérarchiques
+** FAIT 30. Tags hiérarchiques
 
-- [ ] =Hierarchical tags= — overview (entrées =type=tag=, refs, subsomption, exclusivité)
-- [ ] =Tagging from the command line= — guide (=mf tag=)
-- [ ] =Classifying with tags= — guide (scripts =gui-tag-*=)
-- [ ] =Tag exclusivity= — reference (=partition=, =exclusive=)
+- [X] =Hierarchical tags= — overview (entrées =mf_schema = "tag"=, forêt =path=, refs)
+- [X] =Tag entries and references= — reference (ajoutée : les champs, la table =[tag]=)
+- [X] =Tag subsumption and exclusivity= — reference (renommée : =partition=, =exclusive= et la subsomption)
+- [X] =Tagging from the command line= — guide (=mf tag=)
+- [X] =Classifying with tags= — guide (scripts =gui-tag-*=)
+- [X] =The query is the walk state= — rationale, dev (ajoutée : =docs/gui-tag-folder-rework.md=)
+- [X] =Why tags are a forest= — rationale (ajoutée : l'unification d'août 2026)
+- [X] =Why tag exclusivity is data= — rationale (ajoutée)
+- [X] =Contradicting a tag= — question (ajoutée, voir plus bas)
+- [X] notes de commande : =mf tag= et ses 5 verbes ; notes de script : les 4 =gui-tag-*=
 
-CLI : =mf tag *= (6). Scripts : =gui-tag-classify.sh=, =gui-tag-folder.sh=,
-=gui-tag-next.sh=, =gui-tag-pair.sh=. Sources : spec-data-model « mf tag » ;
-docs/gui-tag-folder-rework.md ; mémoires =hierarchical-tag-classification=,
-=treeref-syntax-and-tag-unification=.
+Vérification contre le code : =mf tag remove= affichait « removed <chemin> » au
+lieu d'un compte comme les autres verbes (corrigé, test d'abord, =c5817ed=) ;
+l'aide de =mf tag list= disait =name= (c'est le chemin) ; la note =Selectors=
+réservait =--eq= à =mf tag= (=mf metarecord= l'a aussi) ; la table =[tag]= de
+=CLI configuration= oubliait =partition=/=exclusive=. *Signalé, non tranché* :
+(1) =deny P= ne retire pas un =tag= → P ni ceux des descendants, =add P= pas les
+négatifs — =gui-tag-folder.sh --redo= laisse donc un enregistrement contradictoire
+(note =Contradicting a tag=) ; (2) un =mf tag add= est plusieurs révisions (le
+ref, puis chaque ancêtre ou frère retiré, plus la création d'entrée) : =mf log
+undo= n'en défait que la dernière (la note le dit ; les scripts reviennent en
+arrière par une position du journal, eux). Sources retirées :
+spec-data-model « mf tag » (pointeur), =docs/gui-tag-folder-rework.md= (les
+renvois des scripts et de =review-followups.md= pointent la note) ; mémoire
+=treeref-syntax-and-tag-unification= supprimée, =hierarchical-tag-classification=
+réduite à la recette de test.
 
 * Plateforme et sécurité
 

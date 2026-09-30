@@ -1,0 +1,41 @@
+title: Tagging from the command line
+tags: [[Hierarchical tags]]
+kind: guide
+summary: mf tag add, deny, mixed and remove over any selection — one file, a query, a whole folder — and mf tag list for the vocabulary.
+
+`mf tag` takes a selector before its verb, like `mf metarecord` ([[Selectors]]): `-i`
+one metarecord, `-q` a query (`-s` for simplified text), or `--eq name[:type]=value`
+(repeatable, AND-ed: an exact match with no DSL quoting to get wrong). A tag is named by
+its path.
+
+```
+mf tag -i 3f2a… add musique/jazz
+mf tag -q 'mfr_path ->* "/Albums/Coltrane"' add musique/jazz
+mf tag --eq note=draft deny administratif
+mf tag -q 'mfr_path =>* "/Albums/Mixes"' mixed musique/jazz
+mf tag -i 3f2a… remove musique/jazz
+```
+
+The second line tags a whole folder's content; `=>*` would include the folder itself
+([[Following references]]). A tag missing from the vocabulary is created on the first
+`add`, `deny` or `mixed` that names it, ancestors included.
+
+Each verb prints how many records it changed: gained the ref for `add`, `deny` and
+`mixed`, lost it for `remove`. `0` means nothing needed writing — the tag was already
+there, or was not. The rewrites that follow an `add` or a `deny` are not counted
+([[Tag subsumption and exclusivity]]).
+
+A verb is several writes, each its own revision of the event log
+([[Revisions and operations]]): creating a missing entry, adding the ref, then each ancestor or sibling
+dropped — only the writes that change something leave a revision. So `mf log undo`
+takes back the ''last'' of them: after an `add` that dropped an ancestor, it puts the
+ancestor back and leaves the new tag. To take a whole `add` back, roll back to the
+revision before it ([[Rolling back]]).
+
+```
+mf tag list
+```
+
+prints the vocabulary, one tag per line, sorted by path: `path<TAB>partition<TAB>exclusive`
+with the flags as `0`/`1`. It takes no selector; it is the format the tagging scripts
+read ([[Classifying with tags]]).

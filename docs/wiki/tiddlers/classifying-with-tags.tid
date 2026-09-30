@@ -1,0 +1,52 @@
+title: Classifying with tags
+tags: [[Hierarchical tags]]
+kind: guide
+aliases: classify
+summary: Three GUI scripts ask the questions for you — every tag of one file, one tag over many files, or one tag over a folder tree answered a subtree at a time.
+
+The GUI ships three tagging scripts, run from the GUI's `script:run` launcher or from a
+shell while the GUI is open. Each shows what it asks about in the panels and waits for a
+key; each writes through `mf tag`, so the rules of
+[[Tag subsumption and exclusivity]] hold whatever you answer. All three take a
+''query as their scope'': the argument if given, else the selection checked in the list,
+or the query the list shows, or — when the list shows nothing — a folder you pick. And
+all three are ''resumable'': what is already decided is not asked again, so a run can be
+stopped at any time and started again later. `gui-tag-classify.sh` and `gui-tag-pair.sh`
+read their whole scope first and refuse one larger than `MF_GUI_MAX_ENTRIES` (20 000,
+an environment variable); `gui-tag-folder.sh` reads nothing ahead and has no cap.
+
+|!Script |!Asks |!Keys |
+|[[gui-tag-classify.sh]] |every tag of one file, then the next file |`y`/→ has it, `n`/← has not, `q` stop |
+|[[gui-tag-pair.sh]] |one tag, file by file |`y`/→, `n`/←, `s`/↓ skip, `q` stop |
+|[[gui-tag-folder.sh]] |one tag over a folder tree, a subtree at a time |`y`/→, `n`/←, `m`/↑ mixed, `s`/↓ skip, Backspace/`u` back |
+
+!! Every tag of a file
+
+`gui-tag-classify.sh [<query>]` walks the metarecords of the query. For each it descends the
+vocabulary: it asks about top-level tags, and only goes down into a tag's children once
+you have said yes to it; a no closes the whole subtree below it, and a yes to an
+exclusive tag closes its siblings. The file shows in the left panel, its metadata in the
+right one. It only asks about tags that exist: grow the vocabulary with `mf tag add` or
+in the `treeref` panel.
+
+!! One tag, file by file
+
+`gui-tag-pair.sh [<tag> [<query>]]` asks the same question — has it the tag? — of every
+file of the scope that has no answer yet (neither `tag` nor `negative_tag` for it). A
+skipped file comes back on the next run. Without arguments it asks for the tag, with
+completion over the vocabulary.
+
+!! One tag over a folder tree
+
+`gui-tag-folder.sh [--redo] [<tag> [<query>]]` walks the tree depth first, a folder
+before what it holds, and an answer on a folder covers its whole subtree — ''within the
+scope'', never beyond it:
+
+* `y` / `n` — the folder and everything under it in scope has / has not the tag, in one write; the walk does not go inside.
+* `m` — mixed: the folder gets `mixed_tag`, and the walk goes in and asks its children.
+* `s` — skip: nothing is written about the tag, nothing under the folder is asked. The skip is recorded (a `gui_tag_skipped` ref to the tag), so the next run does not ask it either; at the end, and at the next start, the script offers to forget the skips.
+* Backspace or `u` — take the previous answer back, a skip included (through the event log).
+
+A folder numbered by `mf order` is walked in its order — an album track by track
+([[Ordering a folder]]). `--redo` asks everything again, answered or skipped: the way to
+revise a wrong answer over a subtree (but see [[Contradicting a tag]]).
