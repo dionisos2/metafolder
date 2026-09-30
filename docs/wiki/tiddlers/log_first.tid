@@ -1,0 +1,6 @@
+title: log:first
+tags: [[GUI command]] [[Event log]]
+kind: reference
+summary: Log: move the selection to the newest revision
+
+Selects the newest revision ([[log panel]]).

@@ -38,5 +38,5 @@ Each step that moves a file follows a policy, chosen for two situations:
 navigation is aborted cleanly: HEAD stays where the last step left it, and a move already
 made is not undone — reconcile, or roll forward again.
 
-In the GUI, the `log` panel's `log:rollback` moves to the selected revision, applying
+In the GUI, the [[log panel]]'s `log:rollback` moves to the selected revision, applying
 moves whether the file is there or not (no questions under the lock).

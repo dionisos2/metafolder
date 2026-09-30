@@ -1,6 +1,6 @@
 // log-detail panel: what the revision (or the operation) selected in the log
 // panel changed, field by field — the before and after of every operation
-// (spec-gui "Log detail view"). Follows `selected_log_entry`.
+// (doc "log-detail panel"). Follows `selected_log_entry`.
 
 import { byId, el, formatValue } from '/__ui.js';
 import { fieldChanges } from './snapshots.js';

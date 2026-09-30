@@ -1,0 +1,6 @@
+title: log:toggle
+tags: [[GUI command]] [[Event log]]
+kind: reference
+summary: Log: toggle a view flag (branch graph / the watcher’s revisions / the selected revision’s operations)
+
+`ops` expands or collapses the selected revision, `watcher` hides or shows the watcher's revisions, `graph` draws every branch ([[log panel]]).

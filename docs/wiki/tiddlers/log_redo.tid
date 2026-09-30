@@ -1,6 +1,6 @@
 title: log:redo
 tags: [[GUI command]] [[Event log]]
 kind: reference
-summary: Re-apply the revision ahead of HEAD
+summary: Take the newest undo back
 
 The GUI's redo: the same selection as `mf log redo` ([[Undo and redo]]).

@@ -1,7 +1,7 @@
 title: $:/mf/gen/GUI command/log:undo
 catalog: GUI command
 target: log:undo
-summary: Undo the last revision of the active repository
+summary: Undo the newest change you made in the active repository
 
 !! Reference
 

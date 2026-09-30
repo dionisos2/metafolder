@@ -1,5 +1,5 @@
 // log panel annotations: what each revision on the line *is*, so a revert can
-// be aimed rather than guessed (spec-gui "Event log").
+// be aimed rather than guessed (doc "log panel").
 //
 // Three things a revision list cannot show by revision number alone, and all
 // three decide whether undoing it makes sense:

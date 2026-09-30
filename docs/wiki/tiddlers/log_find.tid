@@ -1,0 +1,6 @@
+title: log:find
+tags: [[GUI command]] [[Event log]]
+kind: reference
+summary: Log: jump to a revision by number or label
+
+Jumps to a revision by number or label ([[log panel]]).

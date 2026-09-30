@@ -1,5 +1,5 @@
 // log panel: revisions in reverse chronological order, expandable into
-// operations; rollback and prune (spec-gui "Event log").
+// operations; rollback and prune (doc "log panel").
 
 import { byId, el, qs } from '/__ui.js';
 import { registerFind } from '/__find-entry.js';
@@ -409,7 +409,7 @@ export async function mount(root, metafolder) {
     if (!confirm(`Go to revision #${rev} (rollback or redo)?`)) return;
     try {
       // Files included: a step that moves a file, or brings one back from the
-      // trash-bin, does it (spec-gui "Revision commands"). Confirmed above, so
+      // trash-bin, does it (doc "Revision commands in the GUI"). Confirmed above, so
       // no dialog is open while the repository is locked.
       const result = await metafolder.log.rollback(repo, { id: lastOpOf(rev) });
       void statusBar.message(

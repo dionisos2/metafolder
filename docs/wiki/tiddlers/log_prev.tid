@@ -1,0 +1,6 @@
+title: log:prev
+tags: [[GUI command]] [[Event log]]
+kind: reference
+summary: Log: move the selection up
+
+Moves the selection up ([[log panel]]).

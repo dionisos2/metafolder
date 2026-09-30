@@ -1,0 +1,20 @@
+title: Revision commands in the GUI
+tags: [[Event log]]
+kind: guide
+summary: Undo, redo, revert, rollback, label and prune from the GUI — confirmations before, files carried along, no questions while the repository is locked.
+
+* <<key "log:undo" Ctrl+z>> / <<key "log:redo" Ctrl+Shift+z>> — from anywhere: the same selection as `mf log undo`/`redo` ([[Undo and redo]]). Neither asks — the result is itself undoable. A revert undo picks that is ''blocked'' is reported, naming `log:revert with-dependents`, rather than pulling someone else's changes in behind your back.
+* <<key "log:revert" Shift+r>> — reverts what the log panel has selected: the revision, or the single operation under the cursor ("undo just this one field" in one key). A confirmation names how many operations it undoes, says when files will move, and warns when the target was already undone. <<key "log:revert op" Shift+o>> narrows from a revision row (asking which operation when there are several), <<key "log:revert revision" Shift+v>> widens back.
+* <<key "log:revert with-dependents" Shift+d>> — the same on the dependency closure, always confirmed with how many operations it pulled in ([[Operation dependencies]]). A ''blocked'' plain revert does not open the dialog: the panel selects the blocking revision and says which operation stands in the way — "revert that one first" is then one key away — and offers this wider revert as the other way out.
+* `log:rollback` — after a confirmation, moves HEAD to the last operation of the selected revision: back, or forward and onto another branch — which is also how a rollback is undone ([[Rollback]]).
+* <<key "log:mark" Shift+l>> — sets or clears the selected revision's label.
+* `log:prune` — after a confirmation, prunes everything before the selected revision, for good ([[Pruning the log]]). Keeping the last N revisions, or linearizing, is `mf log prune`.
+
+''Files are carried with the metadata.'' Every navigation and revert the GUI writes goes
+through the same code as the CLI (`core::navigation`): one atomic request when no step
+touches a file, otherwise the coordinated form — moving a file back, bringing content back
+from the trash, sending it back there ([[Filesystem coordination]]). Every confirmation
+comes ''before'' the repository is locked, and nothing asks while it is: a move is applied
+whether or not the file is where the log says (when it is not, the metadata keeps the
+recorded path). What the file actions had to report follows the summary in the status bar.
+The panels refresh afterwards.

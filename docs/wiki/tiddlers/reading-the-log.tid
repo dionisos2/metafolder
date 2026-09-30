@@ -34,4 +34,4 @@ before and after; `--raw` the JSON. A `tree_ref` value shows its name, not a res
 path. `mf log head` prints the operation HEAD is on — what `--id` targets in a rollback
 or a revert.
 
-In the GUI: the `log` panel.
+In the GUI: the [[log panel]], and the [[log-detail panel]] beside it for what a revision changed.

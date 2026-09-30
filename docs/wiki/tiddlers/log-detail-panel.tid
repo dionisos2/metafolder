@@ -1,0 +1,23 @@
+title: log-detail panel
+tags: Panel [[Event log]]
+kind: reference
+aliases: log-detail snapshot before after diff selected_log_entry
+summary: What a revision — or one operation of it — changed, field by field, following the log panel's cursor.
+
+The [[log panel]] says ''that'' a revision happened; `log-detail` says what it did. Put
+it in the other slot (`panel:set type log-detail`, <<key "panel:set type log-detail" "t e">>):
+it follows the log panel's cursor (`selected_log_entry`) and reads the revision with its
+snapshots.
+
+* ''A revision'': its header — number, label, time, `HEAD` and `watcher` badges, operation count — then its operations, a hundred at a time (''Show more operations''): a reconcile is one revision of every file it found, never fetched whole.
+* ''An operation'' (the cursor inside an expanded revision): that operation alone, highlighted; `log-detail:toggle whole` (the ''Whole revision'' button) widens to the revision.
+
+Each operation shows its type, field and `undo of op N` badge, the metarecord it wrote with
+that metarecord's ''current'' path — clicking the uuid selects it and shows it in the other
+slot — and a before/after table: one row per field name, a name's values compared as a set
+(fields are a multi-map), rows marked added, removed or changed. Fields the operation
+recorded without changing are hidden, with a count, unless `log-detail:toggle unchanged`
+(the ''Unchanged fields'' checkbox). A `tree_ref` value is shown as the path it names.
+
+It re-reads when metarecords change (a rollback moves HEAD, a label may change);
+`log-detail:refresh` does it by hand.

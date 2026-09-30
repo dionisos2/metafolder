@@ -1,6 +1,6 @@
 title: Event log
 kind: overview
-aliases: log history
+aliases: log history event-log
 summary: Every write is a revision in a tree of operations kept beside the data — so any change can be audited, undone, reverted in place, or navigated back to.
 
 Every change to a repository's metadata is recorded in its ''event log'', in the same

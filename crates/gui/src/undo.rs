@@ -1,4 +1,4 @@
-//! `log:undo` / `log:redo` (spec-gui "Event log"): undo the last change the
+//! `log:undo` / `log:redo` (doc "Revision commands in the GUI"): undo the last change the
 //! *user* made to the active repository, and re-apply what a rollback undid.
 //!
 //! Undo is not "step HEAD back one revision": the watcher writes revisions of

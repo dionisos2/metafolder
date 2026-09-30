@@ -1,0 +1,6 @@
+title: log:mark
+tags: [[GUI command]] [[Event log]]
+kind: reference
+summary: Log: set or clear the selected revision label
+
+Sets or clears the selected revision's label ([[Revision commands in the GUI]]).

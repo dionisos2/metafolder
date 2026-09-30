@@ -50,7 +50,7 @@ from a metarecord you created.
 Only `watcher` puts a revision out of undo's reach — not "any origin that is set":
 `trash` exists so a client deciding whether to bring bytes back can tell a trashing from
 an ordinary deletion, while it stays an ordinary, undoable revision
-([[Trash, undo and redo]]). The GUI's log panel dims the watcher's revisions.
+([[Trash, undo and redo]]). The GUI's [[log panel]] dims the watcher's revisions.
 
 !! Label
 

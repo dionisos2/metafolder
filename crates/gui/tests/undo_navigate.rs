@@ -1,4 +1,4 @@
-//! `log:undo` / `log:redo` (spec-gui "Event log"): shell builtins
+//! `log:undo` / `log:redo` (doc "Revision commands in the GUI"): shell builtins
 //! navigating the active repo's event log through the daemon rollback
 //! API — in one atomic call when no step touches a file, through the
 //! coordinated protocol otherwise (`core::navigation`). Tests run a stub

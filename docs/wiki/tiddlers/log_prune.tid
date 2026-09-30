@@ -1,0 +1,6 @@
+title: log:prune
+tags: [[GUI command]] [[Event log]]
+kind: reference
+summary: Log: prune history before the selected revision
+
+Prunes the history before a revision, after asking ([[Revision commands in the GUI]], [[Pruning the log]]).

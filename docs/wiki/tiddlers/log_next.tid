@@ -1,0 +1,6 @@
+title: log:next
+tags: [[GUI command]] [[Event log]]
+kind: reference
+summary: Log: move the selection down
+
+Moves the selection down, into an expanded revision's operations too ([[log panel]]).

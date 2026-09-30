@@ -605,15 +605,25 @@ Les liens laissés en texte à l'item 21 sont posés. =spec-event-log.org= est
 supprimée : toutes ses sections sont dans le wiki (mode spec entière pour les
 citations restantes, chacune reprise à la main vers sa note).
 
-** TODO 26. L'historique dans la GUI
+** FAIT 26. L'historique dans la GUI
 
 (sous Event log ; les notes des panels sont ici plutôt que dans la partie GUI)
-- [ ] =log panel= — reference
-- [ ] =log-detail panel= — reference
-- [ ] =Revision commands in the GUI= — guide
+- [X] =log panel= — reference
+- [X] =log-detail panel= — reference
+- [X] =Revision commands in the GUI= — guide
+- [X] notes de commande : =log:*= (13), =log-detail:*= (2)
 
-GUI : =log:*= (13), =log-detail:*= (2) ; panels =log=, =log-detail=. Sources :
-spec-gui « Event log » ; help =log.html=, =log-detail.html=.
+Vérification contre le code : la spec disait que =log:prune= ouvre un dialogue
+(révision cible ou « garder les N dernières ») — c'est une simple confirmation
+sur la révision sélectionnée (la note renvoie à =mf log prune= pour le reste) ;
+l'aide =log.html= envoyait encore toute révision à actions fichiers vers =mf log
+revert=, règle abandonnée (la GUI porte les fichiers). Les libellés de
+=log:undo=/=log:redo= décrivaient l'ancien undo (« la dernière révision », « la
+révision devant HEAD ») : corrigés dans =crates/gui/src/lib.rs=. La fenêtre de
+1000 opérations du panel (« Show older operations ») n'était que dans le code.
+Sources retirées : spec-gui « Event log » (pointeur), aides =log.html= et
+=log-detail.html= ; les liens =data-help-page="log"= des anciennes pages passent
+par l'alias =log= de =Event log=.
 
 * Fonctions
 

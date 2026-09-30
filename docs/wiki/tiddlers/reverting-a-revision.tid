@@ -48,4 +48,4 @@ Reverted revision 12 as revision 57 (2 operations, 1 file moved).
 
 `--metadata-only` leaves out every operation needing a file action.
 
-In the GUI, the `log` panel's `log:revert` reverts what is selected.
+In the GUI, the [[log panel]]'s `log:revert` reverts what is selected ([[Revision commands in the GUI]]).

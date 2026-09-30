@@ -1,0 +1,6 @@
+title: log:refresh
+tags: [[GUI command]] [[Event log]]
+kind: reference
+summary: Log: refresh from the daemon
+
+Reads the log again ([[log panel]]).

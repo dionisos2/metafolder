@@ -1,0 +1,34 @@
+title: log panel
+tags: Panel [[Event log]]
+kind: reference
+summary: The repository's history, revision by revision — badges saying what each is, the watcher's revisions hideable, a cursor that reaches single operations.
+
+Open it with `panel:set type log` (<<key "panel:set type log" "t o">>). One row per
+revision, newest first: its number, time, operation count and ''status'' badges — what
+decides whether undoing it makes sense:
+
+* `HEAD` — where the history stands;
+* `watcher` — the daemon wrote it for the filesystem ([[Revisions and operations]]); the row is dimmed, and `log:undo` skips it;
+* `undo of #N` — it is itself a revert of `#N`;
+* `undone by #N` — a later revert put it back; its number is struck through, and reverting it again says so first.
+
+An expanded operation that reverted another names it, and one that was reverted is marked
+`undone`: a correction and its cause read from each other.
+
+!! Moving around
+
+* <<key "log:next" "↓ or j">> / <<key "log:prev" "↑ or k">>, <<key "log:first" Home>> / <<key "log:last" End>>, <<key "log:find" f>> (a revision by number or label) — the selection, over every listed row.
+* <<key "log:toggle ops" Enter>> (or a double click) — expand a revision into its operations, and collapse it. The cursor then walks the operations too, and a revert aims at the operation under it.
+* <<key "log:toggle watcher" Shift+w>> — hide or show the watcher's revisions (shown by default). A display filter over what was fetched: the revision HEAD is on is never hidden, the status line says how many are, and in the graph a shown revision hangs from its nearest shown ancestor. A selection inside a revision that gets hidden is dropped; a blocked revert whose blocker is a hidden watcher revision shows them again, since that is the row it points at.
+* <<key "log:toggle graph" Shift+g>> — every branch drawn as a graph (`mode=tree`) instead of the active line (`mode=active`, which keeps a rolled-back future listed for redo).
+* ''Show older operations'' — the list fetches the newest thousand operations, so a repository with millions of them still opens; the button widens the window by as much again. The graph is always complete (it needs every branch).
+* <<key "log:refresh" r>> — read the log again. The status line gives how many revisions and operations are listed, and the repository's totals when the window is only part of the log.
+
+!! Acting
+
+<<key "log:revert" Shift+r>>, <<key "log:revert op" Shift+o>>, <<key "log:revert revision" Shift+v>>,
+<<key "log:revert with-dependents" Shift+d>>, `log:rollback`, <<key "log:mark" Shift+l>>,
+`log:prune` — and the global <<key "log:undo" Ctrl+z>> / <<key "log:redo" Ctrl+Shift+z>>,
+also as toolbar buttons: [[Revision commands in the GUI]].
+
+The cursor is published as `selected_log_entry`, which the [[log-detail panel]] follows.

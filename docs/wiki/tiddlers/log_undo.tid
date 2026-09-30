@@ -1,6 +1,6 @@
 title: log:undo
 tags: [[GUI command]] [[Event log]]
 kind: reference
-summary: Undo the last revision of the active repository
+summary: Undo the newest change you made in the active repository
 
 The GUI's undo, from anywhere: the same selection as `mf log undo`, files included, without questions ([[Undo and redo]]).

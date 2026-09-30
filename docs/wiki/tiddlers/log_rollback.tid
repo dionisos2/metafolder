@@ -1,0 +1,6 @@
+title: log:rollback
+tags: [[GUI command]] [[Event log]]
+kind: reference
+summary: Log: rollback to the selected revision
+
+Moves HEAD to the selected revision, back or forward, files included ([[Revision commands in the GUI]]).
