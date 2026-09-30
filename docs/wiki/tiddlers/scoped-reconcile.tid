@@ -1,0 +1,15 @@
+title: Scoped reconcile
+tags: [[Reconcile]]
+kind: reference
+summary: A reconcile of one metarecord's subtree creates and refreshes there, but does no fingerprint or similarity matching.
+
+A reconcile with `{"metarecord": "<uuid>"}` (`mf reconcile --metarecord <uuid>`,
+`metarecord:reconcile`) runs on the subtree rooted at that metarecord — typically right
+after setting `mf_watch = true` on a directory:
+
+* walks it on disk (or refreshes the one file), evaluates eligibility for each path, creates the missing metarecords with all their `mfr_*` fields, and creates missing parent directories if needed;
+* refreshes the stat fields of those already there (unless `refresh: false`), and fills in MIME types and embedded metadata;
+* does ''no'' fingerprint or similarity matching — no orphan is followed. For that, reconcile the whole repository.
+
+Its result always has `moved = 0` and no candidates. It fails — the task ends `failed` —
+for an unknown metarecord, or one without a valid `mfr_path` (`nothing` or none).

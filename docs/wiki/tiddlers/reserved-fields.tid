@@ -29,7 +29,7 @@ misdetected MIME type, settling an `mfr_path` conflict the watcher cannot.
 |`mfr_permissions` |`string` |the Unix permission bits in octal, `"0644"`; Unix only |
 |`mfr_uid`, `mfr_gid` |`int` |the owner's user and group ids; Unix only |
 |`mfr_inode` |`string` |`<dev>:<ino>`, only on a file with more than one hard link — its presence marks a hard link ([[What counts as a duplicate]]); Unix only |
-|`mfr_mime` |`string` |the MIME type from the content, computed by reconcile; absent when undetectable or not yet computed |
+|`mfr_mime` |`string` |the MIME type from the content, computed by reconcile ([[Moves and candidates]]); absent when undetectable or not yet computed |
 |`mfr_partial_hash` |`string` |xxHash3 of the first and last 4 KiB, hex; absent until computed, cleared by a modification |
 |`mfr_full_hash` |`string` |xxHash3 of the whole content, hex |
 |`mfr_hash_mtime`, `mfr_hash_size` |`datetime`, `int` |the file's mtime and size when its hashes were computed, written and cleared with them ([[The duplicate hash cache]]) |

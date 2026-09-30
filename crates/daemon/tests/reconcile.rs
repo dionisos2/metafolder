@@ -1,4 +1,4 @@
-//! Tests for reconcile (spec-file-tracking "Reconcile"): filesystem walk,
+//! Tests for reconcile (doc "Reconcile"): filesystem walk,
 //! fingerprint phase, candidates, creation of new entries.
 
 use std::path::Path;

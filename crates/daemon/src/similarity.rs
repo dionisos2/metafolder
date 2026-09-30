@@ -1,4 +1,4 @@
-//! Filename similarity scoring (spec-file-tracking "File Similarity"), shared by
+//! Filename similarity scoring (doc "File similarity"), shared by
 //! reconcile's fingerprint fallback and the cross-repo `candidates` matcher.
 //! Pure functions over stored path/size metadata — no file content is read.
 

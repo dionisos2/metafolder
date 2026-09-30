@@ -1,0 +1,42 @@
+title: Running a reconcile
+tags: [[Reconcile]]
+kind: guide
+summary: mf reconcile or reconcile:run — a task you can follow and stop; what it prints, and how to confirm a candidate.
+
+```
+mf -n music reconcile                  # waits, drawing its progress
+mf -n music reconcile --no-wait        # prints the task id and returns
+mf -n music reconcile --threshold 0.7  # also look for renamed-and-edited files
+```
+
+It prints a summary and the candidate list:
+
+```
+created: 2  moved: 1
+
+Candidates (confirm with: mf set <uuid> 'mfr_path:tree_ref=<parent_uuid>/<name>' --force):
+  abc…  /music/jazz/old.mp3
+      → /music2/jazz_copy.mp3   (partial_hash)
+      → /backup/unknown.mp3     (size)
+```
+
+* ''created'' — metarecords made for files and directories that had none;
+* ''moved'' — orphans found again with certainty and followed;
+* ''candidates'' — orphans with possible matches that reconcile does not decide ([[Moves and candidates]]). Nothing is confirmed for you: set the orphan's `mfr_path` to the chosen location (a forced write, `mfr_path` being reserved). Until then the same candidate comes back at every reconcile, and the new file is not created — it waits.
+
+Options: `--metarecord <uuid>` reconciles one subtree ([[Scoped reconcile]]);
+`--threshold <0..1>` turns on the similarity phase ([[File similarity]]); `--no-mime`,
+`--no-metadata`, `--no-refresh` skip those phases; `--json` prints the raw result;
+`--poll-interval` sets how often progress is read (default from the CLI configuration).
+
+In the GUI, `reconcile:run` reconciles the active repository; its progress is in the
+task bar and the result lands in the status bar (`Reconcile: 3 created, 1 moved, 2
+candidates.`) and the message panel. From the metarecord detail panel,
+`metarecord:reconcile` reconciles the selected directory's subtree, and
+`metarecord:reconcile watch` sets `mf_watch = true` on it first — the one-gesture way
+to start tracking a folder.
+
+A reconcile is an observable, stoppable task ([[Task kinds]], [[Cancelling a task]]);
+only one runs at a time on a repository (a second is refused with `409`). Its phases:
+`index`, `scan`, `fingerprint`, `similarity`, `create`, `refresh`, `mime`,
+`metadata` ([[Task status and progress]]).

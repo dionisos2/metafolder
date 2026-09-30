@@ -11,15 +11,15 @@ mf -n music reconcile
 ```
 
 * `mf_watch = true` makes the directory and everything below it ''eligible''. The watcher starts following it at once — events there are recorded from now on.
-* The files already present have no metarecord yet: a ''reconcile'' creates them (and finds the files that moved while nobody watched).
+* The files already present have no metarecord yet: a ''reconcile'' creates them ([[Running a reconcile]]) (and finds the files that moved while nobody watched).
 
 To watch the whole repository, set `mf_watch` on the root (`mfr_path = ""`). A new
 repository's root already carries the `default` ignore preset, so build output and
 hidden entries are left out ([[Ignore presets]]); check what a path would do with
 `mf watch check` or the file manager's markings ([[Eligibility]]).
 
-In the GUI, set the field from the metarecord detail panel (`metarecord:field set`,
-`mf_watch:bool=true`), then run `reconcile:run`.
+In the GUI, select the directory and run `metarecord:reconcile watch`: it sets
+`mf_watch = true` and reconciles that subtree in one gesture ([[Scoped reconcile]]).
 
 !! Recording one path without watching
 

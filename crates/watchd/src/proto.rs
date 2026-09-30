@@ -219,7 +219,7 @@ pub enum ServerMsg {
     /// Events were *dropped* for this subscriber: its queue overflowed (a slow
     /// consumer). Everything between this marker and the previous message is
     /// gone. The subscriber recovers the way a daemon that was down does — a
-    /// reconcile (spec-file-tracking "Reconcile") — never by guessing.
+    /// reconcile (doc "Reconcile") — never by guessing.
     Overflow {},
     Error {
         message: String,

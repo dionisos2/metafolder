@@ -1,0 +1,20 @@
+title: Resolving paths
+tags: [[Reconcile]]
+kind: guide
+summary: mf path prints where a metarecord's file is — absolute, or relative to the repository — and --resolve-tree does it for a whole selection.
+
+```
+mf -n music path 3f2a…                # /data/music/jazz/blue.flac
+mf -n music path 3f2a… --relative     # /jazz/blue.flac ("/" for the root)
+mf -n music metarecord -q 'tag -> (path = "jazz")' get --resolve-tree mfr_path
+```
+
+`mf path` resolves one metarecord's `mfr_path` to its absolute path (the repository's
+root from `GET /repos`, joined with the position's path) in one request; `--relative`
+prints the repository-relative form, with a leading `/` and the root as `/`. It fails
+(exit code 1) when the metarecord has no position — untracked, or deleted.
+
+For many metarecords at once, `mf metarecord … get --resolve-tree <field>` resolves any
+`tree_ref` field of the selection in one request
+([[Editing metarecords from the command line]]). The conventions of those paths:
+[[TreeRef path conventions]].

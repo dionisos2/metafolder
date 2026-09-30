@@ -1,0 +1,6 @@
+title: mf path
+tags: [[CLI command]] [[Reconcile]]
+kind: reference
+summary: Print the filesystem path of a metarecord (walks the mfr_path chain)
+
+Prints a metarecord's absolute path, or with `--relative` its repository-relative one; exit code 1 without a position ([[Resolving paths]]).

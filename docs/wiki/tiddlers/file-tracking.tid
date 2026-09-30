@@ -1,6 +1,6 @@
 title: File tracking
 kind: overview
-aliases: tracking track watch mf_watch untracked mfr_path reconcile reconcile:run
+aliases: tracking track watch mf_watch untracked mfr_path
 summary: Tracking is opt-in — nothing is followed until mf_watch is set — and a tracked file's metarecord follows it as it moves, changes and disappears.
 
 A metarecord can describe anything, but most describe a file: they carry an
@@ -9,7 +9,7 @@ the filesystem ([[Reserved fields]]). ''Tracking'' is keeping those in step with
 disk:
 
 * the ''watcher'' follows live events and records them in batches — a file created, changed, moved, deleted;
-* ''reconcile'' walks the tree on demand, creating what is missing and recognising moved files by their content;
+* ''reconcile'' ([[Reconcile]]) walks the tree on demand, creating what is missing and recognising moved files by their content;
 * both obey the same ''eligibility'' rules: what is watched, what is ignored.
 
 Nothing is tracked until you ask. A new repository has `mf_watch = false` on its root:

@@ -1,0 +1,6 @@
+title: metarecord:reconcile
+tags: [[GUI command]] [[Reconcile]]
+kind: reference
+summary: Reconcile the selected metarecord's subtree (`watch`: start tracking it first)
+
+Reconciles the selected directory's subtree ([[Scoped reconcile]]); with `watch`, sets `mf_watch = true` on it first — tracking a folder in one gesture ([[Tracking a folder]]).

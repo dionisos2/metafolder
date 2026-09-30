@@ -1,4 +1,4 @@
-//! File fingerprints (spec-file-tracking "File fingerprint"): cascading
+//! File fingerprints (doc "File fingerprint"): cascading
 //! size → partial xxHash3 → full xxHash3 identity checks. mtime is never
 //! used as a criterion.
 

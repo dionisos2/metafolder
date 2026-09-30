@@ -31,8 +31,8 @@ pub struct CandidateMatch {
     pub path: String,
     /// `"partial_hash"` (strong), `"size"` (weak), or `"similarity"`.
     pub fingerprint: &'static str,
-    /// Similarity score in [0, 1] for `"similarity"` matches (spec-file-tracking
-    /// "File Similarity"); absent for fingerprint matches.
+    /// Similarity score in [0, 1] for `"similarity"` matches (doc "File similarity");
+    /// absent for fingerprint matches.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub score: Option<f64>,
 }
@@ -83,7 +83,7 @@ fn cancelled() -> ApiError {
 /// Everything runs in a single transaction (one revision). When `threshold`
 /// is `Some`, the v2 similarity phase runs after fingerprinting, appending
 /// score-based candidates for still-unmatched orphans and new files
-/// (spec-file-tracking "File Similarity"). When `compute_mime` is set, files
+/// (doc "File similarity"). When `compute_mime` is set, files
 /// without an `mfr_mime` get one from content analysis (spec-platform "MIME
 /// detection"). When `compute_metadata` is set, files without an
 /// `mfr_meta_extracted` marker get their embedded metadata extracted into

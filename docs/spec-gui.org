@@ -3179,15 +3179,7 @@ current selection.
 
 ** Reconcile
 
-=reconcile:run= calls =POST .../reconcile= (asynchronous — 202 + task id, see
-doc "Tasks") and polls the task only to know when it
-finishes; live progress is shown by the [[*Task bar]], not the status bar. On
-completion:
-- Status bar: ="Reconcile: N created, M updated, P unchanged."=
-- Full output (per-file actions and candidate stale matches) is appended to the
-  =message= panel type.
-
-** Duplicates
+Moved to the wiki: doc "Running a reconcile".
 
 =mf:duplicate scan= is the GUI half of =mf duplicate scan= (see
 doc "Duplicates"): it calls

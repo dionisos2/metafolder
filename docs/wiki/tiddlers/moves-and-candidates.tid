@@ -1,0 +1,44 @@
+title: Moves and candidates
+tags: [[Reconcile]]
+kind: reference
+summary: How reconcile decides a moved file — a definitive match is followed, a strong or weak one only offered — step by step.
+
+A whole-repository reconcile, step by step:
+
+''1.'' Splits the metarecords with a position into ''active'' (the path exists) and ''orphaned'' (a stale path).
+
+''2.'' Walks the disk, collecting every eligible path.
+
+''3. Fingerprint phase'' — for each orphan, among the unmatched paths on disk:
+
+|!Evidence |!Verdict |
+|same size, same partial hash, same full hash |''definitive'': `mfr_path` follows the file and its `mfr_*` fields are refreshed — counted as `moved` |
+|same size, same partial hash, no full hash stored |''strong candidate'' — offered |
+|same size, no partial hash stored |''weak candidate'' — offered |
+|different size or partial hash |no match |
+|no size stored |the orphan is skipped: nothing to go on |
+
+''4. Similarity phase'', only with a threshold — the still-unmatched orphans and new paths scored on names and sizes ([[File similarity]]);
+
+''5. Create'' — new paths claimed by nothing get their metarecord (with missing parent directories); a path that is some orphan's candidate is ''not'' created, it waits for your decision;
+
+''6.'' Orphans matched by nothing keep their stale path, untouched — reconcile never sets `mfr_path` to `nothing`;
+
+''7. Refresh'' the stat fields of what is in place (only changed fields are written, so an idle reconcile adds nothing to the log; hashes are left alone), then the ''MIME'' and ''metadata'' phases for files lacking them.
+
+All of it is one transaction, one revision. Offline mount points are pruned from the walk
+and from the orphan split: their existence on disk is unknown, not false.
+
+A candidate in the result:
+
+```
+{"metarecord_uuid": "abc…", "stale_path": "/music/jazz/old.mp3",
+ "matches": [{"path": "/music2/jazz_copy.mp3", "fingerprint": "partial_hash"},
+             {"path": "/backup/unknown.mp3", "fingerprint": "size"},
+             {"path": "/archive/old_renamed.mp3", "fingerprint": "similarity", "score": 0.82}]}
+```
+
+Confirm one by writing the orphan's `mfr_path` (forced); until then it is offered again.
+Directories are matched by path only, so a moved directory is an orphan with, at best,
+a similarity candidate. Following orphans by content outside a reconcile:
+`mf orphan relink`.

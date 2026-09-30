@@ -1,0 +1,34 @@
+title: Reconcile
+tags: [[File tracking]]
+kind: overview
+summary: Reconcile walks the tree on demand: it creates what is missing, recognises moved files by their content, refreshes what changed — and never marks a file deleted.
+
+The watcher records what happens while the daemon runs; ''reconcile'' makes the store
+agree with the disk after the fact. It walks the repository — pruned by eligibility and
+by offline mount points — and, in one revision:
+
+* ''creates'' a metarecord for every eligible file and directory that has none;
+* recognises files that ''moved'' while nobody watched, by their content fingerprint, and follows them ([[Moves and candidates]]);
+* ''refreshes'' the stat fields of what is still in place, catching edits made while the watcher was off;
+* fills in the MIME type and the embedded metadata of files that lack them.
+
+It runs when you ask ([[Running a reconcile]]) — after setting `mf_watch` on a folder,
+after the daemon was down, after a broker gap — and never on its own.
+
+What it never does: set `mfr_path` to `nothing`. A metarecord whose file is not where
+it was keeps its stale path; only the watcher, which ''saw'' the deletion, may say a
+file is gone. A stale path is an orphan to relink, or to clear, deliberately (`mf orphan`).
+
+!! Use it
+
+<<list-kind guide>>
+
+!! Reference
+
+<<list-kind reference>>
+
+!! Commands
+
+<<tagged-with "CLI command">>
+
+<<tagged-with "GUI command">>

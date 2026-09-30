@@ -7,7 +7,7 @@ Changing `mf_watch` or `mf_ignore` does ''not'' modify any existing metarecord. 
 changes what happens next:
 
 * the watcher re-applies its coverage ''at once'' — re-placing its per-directory watches in the budget regime, or simply filtering differently in the coverage regime — so events in a newly eligible subtree are captured from then on;
-* ''`mf_watch` set to `true`'' on a directory: the files already there have no metarecord yet; a reconcile creates them;
+* ''`mf_watch` set to `true`'' on a directory: the files already there have no metarecord yet; a reconcile creates them ([[Running a reconcile]]);
 * ''`mf_watch` set to `false`'', or a new pattern now matching tracked files: their metarecords stay exactly as they are, `mfr_path` included, and are no longer updated by the watcher or reconcile ([[Freezing metadata by not watching]]).
 
 A rollback or a redo that brings `mf_watch`/`mf_ignore` rows back or takes them away

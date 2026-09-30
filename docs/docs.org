@@ -429,21 +429,26 @@ check », « Watch activity », =mf watch=, « Configuring the watch scope », l
 question ouverte ; spec-platform « File watcher backends » ; spec-gui « Watch
 activity », « Tracking notices » ; =docs/watcher-fanotify.md= (supprimé).
 
-** TODO 16. Reconcile et empreintes
+** FAIT 16. Reconcile et empreintes
 
 (sous File tracking)
-- [ ] =Reconcile= — overview (ce qu'il crée, ce qu'il ne fait jamais : =mfr_path = Nothing=)
-- [ ] =Running a reconcile= — guide (=mf reconcile=, commande GUI, tâche observable)
-- [ ] =Scoped reconcile= — reference
-- [ ] =File fingerprint= — reference (xxHash3 partiel et complet)
-- [ ] =Moves and candidates= — reference (déplacements définitifs, candidats forts/faibles)
-- [ ] =File similarity= — reference (=--threshold=)
-- [ ] =Resolving paths= — guide (=mf path=)
+- [X] =Reconcile= — overview
+- [X] =Running a reconcile= — guide (=mf reconcile=, =reconcile:run=, =metarecord:reconcile [watch]=)
+- [X] =Scoped reconcile= — reference
+- [X] =File fingerprint= — reference
+- [X] =Moves and candidates= — reference
+- [X] =File similarity= — reference (MinHash et TLSH : proposés, non construits)
+- [X] =Resolving paths= — guide (=mf path=)
+- [X] notes de commande : =mf reconcile=, =mf path=, =reconcile:run=, =metarecord:reconcile=
 
-CLI : =mf reconcile=, =mf path=. GUI : =reconcile:run=, =metarecord:reconcile=.
-Sources : spec-file-tracking « File fingerprint », « File Similarity »,
-« Single-metarecord track », « Scoped reconcile », « Reconcile » ; spec-gui
-« Reconcile ».
+Vérification contre le code : la spec GUI annonçait « N created, M updated, P
+unchanged » — c'est « N created, M moved, P candidates » ; ni =fast-tlsh= ni
+=probabilistic-collections= ne sont des dépendances (la spec les présentait comme
+fournis) ; le reconcile a aussi une phase =metadata= et l'option =--no-metadata=,
+absentes de la spec CLI. Sources retirées (pointeurs) : spec-file-tracking « File
+fingerprint », « File Similarity », « Scoped (single-metarecord) reconcile »,
+« Reconcile », =mf reconcile=, =mf path= ; spec-gui « Reconcile » (le paragraphe
+=reconcile:run=).
 
 ** TODO 17. Points de montage
 

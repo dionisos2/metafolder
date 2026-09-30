@@ -13,103 +13,11 @@ control).
 
 ** File fingerprint
 
-Used by reconcile and the watcher to detect identity across renames/moves.
-*mtime is never used as a criterion* because it can change without the content
-changing (e.g. =touch=, copies without =--preserve=).
-
-Fingerprint is computed lazily in cascading steps — each step is only reached
-when the previous one is insufficient:
-
-1. *File size* (from =stat=, free during directory walk) — eliminates most
-   non-matches without opening any file.
-2. *Partial hash* — xxHash3 of the first 4 KB + last 4 KB of the file.
-   Computed on first open; stored in the database alongside the metarecord.
-3. *Full hash* — xxHash3 of the entire file content.
-   Computed only when size and partial hash both match and a definitive
-   identity check is required — re-homing an orphan, or confirming a duplicate
-   group (doc "Duplicates").
-
-A stored hash describes the file *as it was when the hash was computed*, so it
-is only reusable while the file has not changed since. The watcher's =Modify=
-invalidation covers the watched case; where watching is off the subtree is
-deliberately frozen and no event fires, so the hashes carry their own stamp —
-=mfr_hash_mtime= and =mfr_hash_size=, written and cleared with them. A stored
-hash is trusted only while both still match the live =stat=. Using mtime this
-way does not contradict the rule above: that rule forbids mtime as a criterion
-of *identity*, whereas here it invalidates a *cache*, and it fails safe — a
-mismatch costs a recomputation, never a wrong match. See
-doc "The duplicate hash cache".
-
-Hash functions are provided by the =xxhash-rust= crate. For content-based
-similarity between files that do not share an exact hash (e.g. slightly
-modified files), the =fast-tlsh= crate provides a TLSH locality-sensitive hash
-that can be used as an additional signal in the similarity phase (see
-[[*File Similarity]]).
-
-Files and directories are both tracked as first-class metarecords. Directories can
-carry arbitrary metadata fields (e.g. =mf_sync=, spec-sync) that files can inherit via
-the =value_uuid= chain of their =mfr_path= TreeRef field.
-
-The root directory metarecord has =mfr_path= with =value_uuid = x'00...00'= and
-=value_name = ""=. All other metarecords reference their direct parent directory via
-=value_uuid=. The root is looked up by
-=WHERE field_name = 'mfr_path' AND value_uuid = x'00...00' AND value_name = ''=.
+Moved to the wiki: doc "File fingerprint", doc "TreeRef path conventions".
 
 ** File Similarity
 
-Used by reconcile as a fallback when fingerprint matching fails — either because
-no =mfr_partial_hash= is stored for the orphaned metarecord, or because the file was both
-moved and modified (so hashes no longer match).
-
-*Orphaned metarecord*: a metarecord whose =mfr_path= TreeRef points to a filesystem location
-that no longer exists on disk (stale path), and that was not matched by
-fingerprint during the current reconcile run.
-
-*Unmatched new file*: a file present on disk that has no corresponding database
-metarecord and was not claimed by fingerprint matching.
-
-Similarity between an orphaned metarecord and an unmatched new file is computed from
-four signals:
-
-| Signal           | Formula                                                                  | Weight |
-|------------------+--------------------------------------------------------------------------+--------|
-| =name_sim=       | Trigram Jaccard similarity of basename without extension                 |    0.5 |
-| =ext_match=      | 1 if extensions are identical, 0 otherwise                               |    0.2 |
-| =size_proximity= | =max(0, 1 − |sz_a − sz_b| / max(sz_a, sz_b))=; 0 if either size unknown |    0.2 |
-| =path_sim=       | Longest common directory prefix length / max directory depth             |    0.1 |
-
-Final score = weighted sum of the four signals (range [0, 1]).
-
-*Candidate selection with MinHash banding* (crate: =probabilistic-collections=):
-
-Repositories can contain millions of files; O(n²) pair evaluation is
-impractical. Instead, a MinHash banding scheme is used to find candidate pairs
-in O(n) expected time:
-
-1. Each filename (basename without extension) is decomposed into character
-   trigrams. A MinHash signature of =k= hash values is computed over the trigram
-   set (=k= ≈ 128 in practice).
-2. The signature is split into =b= bands of =r= rows each (=k = b × r=). For
-   each band, the =r= hash values are combined into a single bucket key. Two
-   files are candidate pairs if and only if they share at least one bucket —
-   i.e. their MinHash signatures are identical on at least one band.
-3. The probability that two files with Jaccard similarity =s= become candidates
-   is =1 − (1 − sʳ)ᵇ=. Choosing =b= and =r= controls the recall/precision
-   trade-off independently of =n=.
-
-After candidate selection via banding, the full four-signal score is computed
-only for surviving pairs. The size range pre-filter (range scan on a
-size-sorted list, O(n log n)) is applied first to further reduce the candidate
-set before banding.
-
-Only pairs with =score ≥ threshold= are included in the reconcile response.
-
-*Implementation note*: the current implementation evaluates the four-signal
-score directly over the residual sets — the orphaned metarecords and new paths
-left *unmatched after the fingerprint phase*, which are typically small — rather
-than MinHash banding. Only same-kind pairs (file↔file, dir↔dir) are compared.
-MinHash banding (above) remains the planned optimisation for repositories whose
-*unmatched* sets are themselves very large.
+Moved to the wiki: doc "File similarity".
 
 ** Watch and Ignore
 
@@ -267,149 +175,11 @@ Moved to the wiki: doc "Tracking a folder".
 
 ** Scoped (single-metarecord) reconcile
 
-There is a *single* reconcile endpoint (see [[*Reconcile]]); a scoped reconcile
-is the same =POST /repos/:repo_uuid/reconcile= with a =metarecord= field in the
-body (32-char hex). It runs reconcile semantics scoped to the subtree rooted at
-that metarecord. Intended to be called after =mf_watch= is set to =true= on a
-metarecord added via doc "Tracking a folder" or created manually.
-
-Behaviour:
-- Walks the directory on disk (or refreshes a single file).
-- For each filesystem path found inside the subtree, evaluates eligibility
-  (=mf_watch= / =mf_ignore=) and creates missing metarecords with all =mfr_*=
-  fields; refreshes the =mfr_*= stat fields of metarecords that already exist
-  (the same refresh phase as full reconcile, disabled with ={"refresh": false}=).
-- Does not perform fingerprint or similarity matching (no orphan detection).
-  For orphan detection, omit =metarecord= (whole-repository reconcile).
-- Creates missing parent directory metarecords along the path if needed.
-
-Like every reconcile it is asynchronous (202 + task id, see
-doc "Tasks"). Scope errors surface as the task
-becoming =failed=: an unknown metarecord, or one with no valid =mfr_path= (path
-is =Nothing= or unknown). The result has =moved= always =0= and =candidates=
-always empty.
+Moved to the wiki: doc "Scoped reconcile".
 
 ** Reconcile
 
-#+BEGIN_SRC
-POST /repos/:repo_uuid/reconcile
-#+END_SRC
-
-Walks the repository root on the filesystem and synchronises the database.
-
-This endpoint is *asynchronous*: it returns =202= with a =task_id= immediately
-and runs the work (the steps below, unchanged) as a background /task/, rejecting
-a concurrent reconcile with =409=. Progress and the final =ReconcileResult= are
-observed via the task; see doc "Task kinds". An optional ={"metarecord": "<hex>"}= scopes it to a subtree (see
-[[*Scoped (single-metarecord) reconcile]]); absent, it covers the whole
-repository. The steps, the single transaction, the candidate semantics and the
-response body below describe the work the task performs.
-
-An optional ={"threshold": <0..1>}= body enables the similarity phase and
-sets the minimum similarity score (absent disables it; v1 behaviour). The
-optional ={"mime": false}= disables MIME computation (on by default; see
-[[file:spec-platform.org][spec-platform.org]] "MIME detection"). The optional
-={"refresh": false}= disables the refresh phase (on by default), which
-re-reads the stat-derived =mfr_*= fields of files and directories still at
-their recorded path — catching in-place edits made while the watcher was not
-running. This makes the full and single-metarecord reconcile behave the same
-way for unmoved files.
-
-*Steps:*
-
-1. Load all metarecords with a non-Nothing =mfr_path= TreeRef from the DB; separate
-   them into /active/ (path exists on disk) and /orphaned/ (path no longer
-   exists on disk, i.e. stale path).
-2. Walk the filesystem; collect all file and directory paths.
-3. *Fingerprint phase* — for each orphaned metarecord, search unmatched filesystem
-   paths using stored fingerprint data:
-   - Pre-filter by =mfr_size= (if stored): discard paths with different size.
-   - Among size matches, if =mfr_partial_hash= is stored: compute partial hash
-     of the disk file and compare:
-     - Partial hash matches AND =mfr_full_hash= is stored: compute full hash of
-       disk file → if matches → *definitive identity* → auto-update =mfr_path=
-       TreeRef and refresh =mfr_*= fields (counted as =moved=).
-     - Partial hash matches but no =mfr_full_hash= stored: *strong candidate* →
-       added to =candidates=.
-     - Partial hash does not match: discard.
-   - Size matches but no =mfr_partial_hash= stored: *weak candidate* → added
-     to =candidates=.
-   - No =mfr_size= stored: metarecord skipped (no fingerprint available).
-   New files that appear as a fingerprint candidate are *not* auto-created;
-   they wait for explicit confirmation.
-4. *Similarity phase* — for each still-unmatched orphaned metarecord and each
-   still-unmatched new path, compute the similarity score (see [[*File Similarity]]).
-   Pairs with =score ≥ threshold= are appended to =candidates=. New files that
-   appear as a candidate for at least one orphaned metarecord are *not* auto-created
-   as new metarecords; they wait for explicit confirmation.
-5. *Create* — new files not claimed by fingerprint (or similarity) → create
-   metarecord with =mfr_path= TreeRef and all =mfr_*= fields (=mfr_size=, =mfr_mtime=,
-   =mfr_permissions=, =mfr_uid=, =mfr_gid=, =mfr_type=); create missing parent
-   directory metarecords if needed.
-6. Orphaned metarecords not matched by fingerprint and not present in any candidate
-   pair keep their stale =mfr_path= TreeRef unchanged. *Reconcile never sets =mfr_path=
-   to =Nothing=.*
-7. *Refresh phase* — unless disabled (={"refresh": false}=), every metarecord
-   still at its recorded path (file or directory) has its stat-derived =mfr_*=
-   fields (=mfr_size=, =mfr_mtime=, =mfr_type=, =mfr_btime=, =mfr_permissions=,
-   =mfr_uid=, =mfr_gid=) re-read from disk and rewritten where they changed,
-   catching in-place edits. Only changed fields are written (idempotent runs do
-   not grow the log); content hashes are left untouched, like elsewhere in
-   reconcile.
-8. *MIME phase* — unless disabled (={"mime": false}=), every eligible file on
-   disk that has no =mfr_mime= gets one from content analysis
-   (see [[file:spec-platform.org][spec-platform.org]] "MIME detection"). Idempotent: existing values are
-   not recomputed.
-
-*Offline mount points*: the walk prunes any directory that is a declared but
-currently unmounted mount point, exactly as it prunes an ineligible one, so no
-metarecord below it is orphaned, refreshed or offered as a fingerprint candidate
-while the volume is away (see [[*Offline subtrees]]). Step 1's active/orphaned split
-skips those paths as well: their existence on disk is unknown, not false.
-
-*Directory identification*: directories have no fingerprint and are matched only
-by their path string. A directory metarecord whose path no longer exists on disk
-is left with its stale path (like any other orphan); it may appear in candidates
-if a new directory with a similar name exists.
-
-*Cascading Nothing*: whenever any metarecord's =mfr_path= is set to =Nothing= (by the
-watcher or manually), all metarecords whose =value_uuid=
-(directly or transitively, for =field_name = 'mfr_path'=) points to this metarecord are
-also set to =Nothing= in the same transaction. Descendants are collected
-iteratively using the tree cache (fetching missing nodes from the DB step by
-step), then cleared in a single batched UPDATE. No metarecord can have a valid path
-if one of its ancestors is gone.
-
-All creates and updates execute inside a single transaction.
-
-*Confirming a candidate*: the client sends a =PATCH= request to update the
-orphaned metarecord's =mfr_path= field to the chosen new location. The new file is then
-considered matched; if the client calls =reconcile= again without the candidate
-having been confirmed, the same candidate will be returned again.
-
-Response body:
-#+BEGIN_SRC json
-{
-  "created": 2,
-  "moved": 1,
-  "candidates": [
-    {
-      "metarecord_uuid": "abc...",
-      "stale_path": "/music/jazz/old.mp3",
-      "matches": [
-        {"path": "/music2/jazz_copy.mp3", "fingerprint": "partial_hash"},
-        {"path": "/backup/unknown.mp3",   "fingerprint": "size"}
-      ]
-    }
-  ]
-}
-#+END_SRC
-
-Similarity-based candidates carry =fingerprint = "similarity"= and a =score=
-field:
-#+BEGIN_SRC json
-{"path": "/archive/old_renamed.mp3", "fingerprint": "partial_hash", "score": 0.82}
-#+END_SRC
+Moved to the wiki: doc "Reconcile", doc "Moves and candidates", doc "Running a reconcile".
 
 ** Orphan scan
 
@@ -578,29 +348,7 @@ Moved to the wiki: doc "Eligibility".
 
 ** =mf reconcile=
 
-Calls =POST /reconcile= (full reconcile) and prints a summary followed by the
-candidate list:
-
-#+BEGIN_SRC
-created: 2  moved: 1
-
-Candidates (confirm with: mf set <uuid> 'mfr_path:tree_ref=<parent_uuid>/<name>' --force):
-  abc...  /music/jazz/old.mp3
-      → /music2/jazz_copy.mp3   (partial_hash)
-      → /backup/unknown.mp3     (size)
-#+END_SRC
-
-Candidates are informational: the CLI never auto-confirms a match. To confirm
-one, the user updates the orphaned metarecord's =mfr_path= as shown (a =force=
-write, since =mfr_path= is an =mfr_*= field).
-
-| Flag                  | Description                                                          |
-|-----------------------+----------------------------------------------------------------------|
-| =--metarecord <uuid>= | Scope the reconcile to that metarecord's subtree (sends =metarecord= in the body); otherwise the whole repository |
-| =--threshold <0..1>=  | Enable the similarity phase with this minimum score (full reconcile only) |
-| =--no-mime=           | Do not compute =mfr_mime= for files that lack it (sends =mime: false=) |
-| =--no-refresh=        | Do not refresh =mfr_*= stat fields of in-place (unmoved) files (sends =refresh: false=) |
-| =--json=              | Print the raw JSON response body                                     |
+Moved to the wiki: doc "Running a reconcile", doc "mf reconcile".
 
 ** =mf track <path>=
 
@@ -608,11 +356,7 @@ Moved to the wiki: doc "Tracking a folder", doc "mf track".
 
 ** =mf path <uuid>=
 
-Prints the absolute filesystem path of a metarecord by walking the =mfr_path=
-parent chain up to the root metarecord (repository root from =GET /repos=).
-With =--relative=, prints the repo-root-relative path instead, starting
-with =/= (the root metarecord itself is =/=). Fails with exit code 1 when the
-metarecord has no =mfr_path= TreeRef (untracked or deleted file).
+Moved to the wiki: doc "Resolving paths", doc "mf path".
 
 ** =mf orphan {list, detect, clear, relink}=
 

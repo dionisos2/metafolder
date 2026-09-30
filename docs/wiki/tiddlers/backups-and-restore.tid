@@ -47,7 +47,7 @@ touched (it is ordinary content — the backup's copy is there to take by hand).
 
 ''Everything written since the backup is lost'': your edits, and the file changes the
 watcher recorded. The command says when the backup was taken and advises
-`mf reconcile` to catch up with the files; it does not run it.
+`mf reconcile` to catch up with the files ([[Running a reconcile]]); it does not run it.
 
 A repository whose store is missing does not load at all — once, a load created an
 empty store in its place, a reconcile filled it, and the automatic backup then

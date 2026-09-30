@@ -70,8 +70,8 @@ impl OpType {
     /// for — as opposed to one the watcher records on the filesystem's behalf.
     ///
     /// The filesystem is authoritative for `mfr_path`: a directory that is gone
-    /// is gone, and the watcher nulls its whole subtree (spec-file-tracking
-    /// "Cascading removal"). A manual write has no such story, so it is held to
+    /// is gone, and the watcher nulls its whole subtree (doc "Event semantics").
+    /// A manual write has no such story, so it is held to
     /// the forest's referential integrity instead (see
     /// `Writer::check_forest_integrity`).
     pub fn is_manual(self) -> bool {

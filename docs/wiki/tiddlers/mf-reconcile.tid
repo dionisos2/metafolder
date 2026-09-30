@@ -1,0 +1,6 @@
+title: mf reconcile
+tags: [[CLI command]] [[Reconcile]]
+kind: reference
+summary: Reconcile the database with the filesystem
+
+Runs a reconcile as a task — waiting and drawing its progress, or with `--no-wait` printing its id — then prints what it created and moved and the candidates ([[Running a reconcile]]).

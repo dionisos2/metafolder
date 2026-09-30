@@ -26,6 +26,6 @@ repository is otherwise fully usable — queries, writes, reconcile (which reads
 directly, so it picks up what the buffer carries) and undo all work.
 
 The pause is in memory: unloading the repository or restarting the daemon clears it —
-and the buffered events with it, so run a reconcile afterwards. It is "let me look
+and the buffered events with it, so run a reconcile afterwards ([[Running a reconcile]]). It is "let me look
 before it lands", not a setting: the durable way to stop tracking a subtree is
 `mf_watch = false` ([[Tracking a folder]]). Pausing and resuming are idempotent.

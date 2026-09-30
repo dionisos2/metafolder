@@ -1,0 +1,23 @@
+title: File fingerprint
+tags: [[Reconcile]]
+kind: reference
+summary: Identity across moves is judged by content, in cascading steps — size, a partial xxHash3 of the first and last 4 KiB, the full xxHash3 — never by mtime.
+
+A file's identity across a rename or a move is judged by its ''content''. The
+fingerprint is computed lazily, each step reached only when the previous is not enough:
+
+# ''Size'' — free from `stat` during the walk; eliminates most non-matches without opening a file (`mfr_size`).
+# ''Partial hash'' — xxHash3 of the first 4 KiB and the last 4 KiB, computed on first open and stored (`mfr_partial_hash`).
+# ''Full hash'' — xxHash3 of the whole content (`mfr_full_hash`), computed only when size and partial hash match and a definitive answer is needed: following an orphan, confirming a duplicate group ([[Duplicates]]).
+
+''mtime is never a criterion of identity'': it changes without the content changing
+(`touch`, a copy without `--preserve`). It does serve to invalidate a ''cache'': a
+stored hash describes the file as it was when hashed, so it carries its stamp
+(`mfr_hash_mtime`, `mfr_hash_size`) and is trusted only while both still match the
+live `stat` — which fails safe, costing a recomputation, never a wrong match
+([[The duplicate hash cache]]). The watcher's `Modify` drops the hashes of a watched
+file; where watching is off no event fires, which is what the stamp is for.
+
+Hashes are `xxhash-rust`'s xxHash3 — fast, not cryptographic
+([[Why duplicates are not compared byte by byte]]). Directories have no fingerprint:
+they are matched by path only.

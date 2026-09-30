@@ -1,0 +1,6 @@
+title: reconcile:run
+tags: [[GUI command]] [[Reconcile]]
+kind: reference
+summary: Reconcile the active repository with the filesystem
+
+Reconciles the active repository; progress in the task bar, the summary in the status bar and the message panel ([[Running a reconcile]]).

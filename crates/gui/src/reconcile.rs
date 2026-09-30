@@ -1,4 +1,4 @@
-//! `reconcile:run` (spec-gui "Reconcile"): triggers a full reconcile on
+//! `reconcile:run` (doc "Running a reconcile"): triggers a full reconcile on
 //! the workspace's active repo, with a busy status while it runs, a
 //! summary in the status bar and the full result in the message log.
 

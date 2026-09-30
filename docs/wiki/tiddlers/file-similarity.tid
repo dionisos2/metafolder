@@ -1,0 +1,28 @@
+title: File similarity
+tags: [[Reconcile]]
+kind: reference
+summary: With --threshold, reconcile scores unmatched orphans against unmatched new paths on name, extension, size and directory — for files both moved and edited.
+
+The similarity phase is a fallback for what the fingerprint cannot match: an orphan with
+no stored partial hash, or a file both moved ''and'' modified. It runs only when a
+reconcile is given a threshold (`--threshold <0..1>`, `{"threshold": …}`), on the
+whole repository.
+
+It compares the orphans and the new paths ''left unmatched'' by the fingerprint phase —
+usually few — file with file and directory with directory, and scores each pair:
+
+|!Signal |!Measures |!Weight |
+|name |trigram Jaccard similarity of the base names, extension removed |0.5 |
+|extension |1 when identical, else 0 |0.2 |
+|size |`max(0, 1 − |a − b| / max(a, b))`, 0 when a size is unknown |0.2 |
+|directory |common directory prefix length over the greater depth |0.1 |
+
+Pairs scoring at least the threshold are offered as candidates with `"fingerprint":
+"similarity"` and their `score`; nothing is decided for you
+([[Moves and candidates]]).
+
+''Proposed, not built'': for repositories whose ''unmatched'' sets are themselves huge,
+MinHash banding over name trigrams would find candidate pairs in expected linear time
+instead of scoring every pair, after a size pre-filter; and a locality-sensitive content
+hash (TLSH) could add a content signal for slightly modified files. Neither library is a
+dependency today.

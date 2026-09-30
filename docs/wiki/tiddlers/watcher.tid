@@ -12,7 +12,7 @@ created, changed, moved, deleted. Events go through one pipeline whatever produc
 # once the filesystem has been quiet for two seconds the ''executor'' flushes the buffer: it compacts it, groups it by kind, and applies each group as one revision ([[Event batching]], [[Event semantics]]).
 
 Only the watcher (and a forced write) sets `mfr_path` to `nothing`: a file seen deleted.
-Reconcile never does; it leaves a stale path in place.
+Reconcile never does; it leaves a stale path in place ([[Reconcile]]).
 
 What the watcher cannot see, it cannot record: a daemon that is down, a broker that
 disconnected, a queue that overflowed — each such gap is announced, and closed by a
