@@ -1,7 +1,7 @@
 title: $:/mf/gen/GUI command/log:revert
 catalog: GUI command
 target: log:revert
-summary: Log: revert what is selected, or a wider scope (${Object.keys(REVERTS).join(' / ')})
+summary: Log: revert what is selected, or a wider scope
 
 !! Reference
 

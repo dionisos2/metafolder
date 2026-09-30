@@ -6,11 +6,11 @@ summary: The metarecord-detail panel type
 !! Commands
 
 * ``metarecord:back`` — Metarecord: back to the previously shown metarecord
-* ``metarecord:bulk`` — Bulk operation on the selection or the current query (${BULK_OPERATIONS.join(' / ')})
+* ``metarecord:bulk`` — Bulk operation on the selection or the current query
 * ``metarecord:cancel`` — Cancel the current field edit or add form
 * ``metarecord:create`` — Create a new metarecord
 * ``metarecord:delete`` — Delete the selected metarecord
-* ``metarecord:field`` — Field operation on this metarecord (${FIELD_OPERATIONS.join(' / ')})
+* ``metarecord:field`` — Field operation on this metarecord
 * ``metarecord:open-add-field`` — Open the add-field form on the selected metarecord
 * ``metarecord:reconcile`` — Reconcile the selected metarecord's subtree (`watch`: start tracking it first)
 * ``metarecord:row-delete`` — Delete the field under the cursor

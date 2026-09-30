@@ -5,11 +5,11 @@ summary: The metarecord-list panel type
 
 !! Commands
 
-* ``metarecord-list:apply`` — Metarecord list: apply a zone's content (${ZONE_NAMES.join(' / ')})
-* ``metarecord-list:clear`` — Metarecord list: clear a zone (${ZONE_NAMES.join(' / ')} / all)
+* ``metarecord-list:apply`` — Metarecord list: apply a zone's content
+* ``metarecord-list:clear`` — Metarecord list: clear a zone
 * ``metarecord-list:first`` — Metarecord list: move the selection to the first row
-* ``metarecord-list:focus`` — Metarecord list: focus a zone (${ZONE_NAMES.join(' / ')})
-* ``metarecord-list:insert`` — Metarecord list: insert text into a zone (${ZONE_NAMES.join(' / ')})
+* ``metarecord-list:focus`` — Metarecord list: focus a zone
+* ``metarecord-list:insert`` — Metarecord list: insert text into a zone
 * ``metarecord-list:last`` — Metarecord list: move the selection to the last loaded row
 * ``metarecord-list:next`` — Metarecord list: move the selection down
 * ``metarecord-list:open`` — Metarecord list: open the selection in the other panel
@@ -19,5 +19,5 @@ summary: The metarecord-list panel type
 * ``metarecord-list:query`` — Metarecord list: run a canned query (duplicates / orphans)
 * ``metarecord-list:refresh`` — Metarecord list: reload from the daemon
 * ``metarecord-list:select`` — Metarecord list: change the multi-selection (toggle / all / none)
-* ``metarecord-list:set`` — Metarecord list: change a view setting (${Object.keys(SETTINGS).join(' / ')})
+* ``metarecord-list:set`` — Metarecord list: change a view setting
 * ``metarecord-list:toggle`` — Metarecord list: toggle a view flag (normal)

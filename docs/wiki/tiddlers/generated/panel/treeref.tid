@@ -16,5 +16,5 @@ summary: The treeref panel type
 * ``treeref:prev`` — TreeRef explorer: move the cursor up
 * ``treeref:refresh`` — TreeRef explorer: reload from the daemon
 * ``treeref:root`` — TreeRef explorer: jump to the forest roots
-* ``treeref:set`` — TreeRef explorer: change a view setting (${Object.keys(TREEREF_SETTINGS).join(' / ')})
+* ``treeref:set`` — TreeRef explorer: change a view setting
 * ``treeref:toggle`` — TreeRef explorer: toggle a view flag (scope: the exact node ⇄ its whole subtree)

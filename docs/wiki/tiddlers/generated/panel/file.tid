@@ -10,7 +10,7 @@ summary: The file panel type
 * ``file:page`` — File: go to a page of the document
 * ``file:play-pause`` — File: play / pause the media
 * ``file:restart`` — File: play the media from the start
-* ``file:seek`` — File: seek the previewed media by a signed number of seconds (e.g. +${SEEK_STEP}, -${SEEK_STEP_LONG})
+* ``file:seek`` — File: seek the previewed media by a signed number of seconds
 * ``file:speed`` — File: step the playback rate
 * ``file:toggle`` — File: toggle a view flag
 * ``file:volume`` — File: step the volume

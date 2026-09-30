@@ -1,7 +1,7 @@
 title: $:/mf/gen/GUI command/treeref:set
 catalog: GUI command
 target: treeref:set
-summary: TreeRef explorer: change a view setting (${Object.keys(TREEREF_SETTINGS).join(' / ')})
+summary: TreeRef explorer: change a view setting
 
 !! Reference
 

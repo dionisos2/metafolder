@@ -1,7 +1,7 @@
 title: $:/mf/gen/GUI command/metarecord:bulk
 catalog: GUI command
 target: metarecord:bulk
-summary: Bulk operation on the selection or the current query (${BULK_OPERATIONS.join(' / ')})
+summary: Bulk operation on the selection or the current query
 
 !! Reference
 

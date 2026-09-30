@@ -1,7 +1,7 @@
 title: $:/mf/gen/GUI command/metarecord-list:focus
 catalog: GUI command
 target: metarecord-list:focus
-summary: Metarecord list: focus a zone (${ZONE_NAMES.join(' / ')})
+summary: Metarecord list: focus a zone
 
 !! Reference
 

@@ -13,6 +13,6 @@ summary: The log panel type
 * ``log:prev`` — Log: move the selection up
 * ``log:prune`` — Log: prune history before the selected revision
 * ``log:refresh`` — Log: refresh from the daemon
-* ``log:revert`` — Log: revert what is selected, or a wider scope (${Object.keys(REVERTS).join(' / ')})
+* ``log:revert`` — Log: revert what is selected, or a wider scope
 * ``log:rollback`` — Log: rollback to the selected revision
 * ``log:toggle`` — Log: toggle a view flag (branch graph / the watcher’s revisions / the selected revision’s operations)

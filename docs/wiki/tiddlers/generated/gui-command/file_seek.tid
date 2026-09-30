@@ -1,7 +1,7 @@
 title: $:/mf/gen/GUI command/file:seek
 catalog: GUI command
 target: file:seek
-summary: File: seek the previewed media by a signed number of seconds (e.g. +${SEEK_STEP}, -${SEEK_STEP_LONG})
+summary: File: seek the previewed media by a signed number of seconds
 
 !! Reference
 

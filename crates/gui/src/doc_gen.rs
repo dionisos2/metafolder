@@ -48,7 +48,56 @@ fn label_in(source: &str) -> String {
     let Some(quote) = rest.chars().next().filter(|c| matches!(c, '\'' | '"' | '`')) else {
         return String::new();
     };
-    rest[1..].split(quote).next().unwrap_or("").to_string()
+    let label = rest[1..].split(quote).next().unwrap_or("");
+    if quote == '`' {
+        without_interpolations(label)
+    } else {
+        label.to_string()
+    }
+}
+
+/// A template label without what only the running panel knows: a parenthesised
+/// aside holding an `${…}` goes whole (with the space before it), and any other
+/// `${…}` becomes an ellipsis.
+fn without_interpolations(label: &str) -> String {
+    let mut out = String::new();
+    let mut rest = label;
+    while let Some(open) = rest.find('(') {
+        let Some(close) = rest[open..].find(')').map(|c| open + c) else { break };
+        // Nested parentheses (a `join(' / ')` call) close later: extend to the
+        // parenthesis that balances the aside's.
+        let mut depth = 0;
+        let mut end = close;
+        for (i, ch) in rest[open..].char_indices() {
+            match ch {
+                '(' => depth += 1,
+                ')' => {
+                    depth -= 1;
+                    if depth == 0 {
+                        end = open + i;
+                        break;
+                    }
+                }
+                _ => {}
+            }
+        }
+        if rest[open..end].contains("${") {
+            out.push_str(rest[..open].trim_end());
+        } else {
+            out.push_str(&rest[..=end]);
+        }
+        rest = &rest[end + 1..];
+    }
+    out.push_str(rest);
+    let mut text = String::new();
+    let mut rest = out.as_str();
+    while let Some(start) = rest.find("${") {
+        text.push_str(&rest[..start]);
+        text.push('…');
+        rest = rest[start..].find('}').map_or("", |e| &rest[start + e + 1..]);
+    }
+    text.push_str(rest);
+    text
 }
 
 /// Every `(name, label)` a source registers after one of `markers` (`marker`
@@ -226,6 +275,18 @@ mod tests {
                 ("a:page".into(), "Go to a page".into()),
             ]
         );
+    }
+
+    #[test]
+    fn a_template_label_loses_what_only_runtime_knows() {
+        // A backtick label may interpolate a list the panel builds at run time;
+        // the scan cannot evaluate it, so the parenthesised aside holding it
+        // goes, and a bare interpolation becomes an ellipsis.
+        let label = |src: &str| label_in(src);
+        assert_eq!(label("label: `Focus a zone (${ZONES.join(' / ')})`,"), "Focus a zone");
+        assert_eq!(label("label: `Seek (e.g. +${STEP}, -${LONG}) now`,"), "Seek now");
+        assert_eq!(label("label: `Step by ${STEP} seconds`,"), "Step by … seconds");
+        assert_eq!(label("label: 'Plain (as is)',"), "Plain (as is)");
     }
 
     #[test]

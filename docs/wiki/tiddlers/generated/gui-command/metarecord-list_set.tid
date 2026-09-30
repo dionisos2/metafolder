@@ -1,7 +1,7 @@
 title: $:/mf/gen/GUI command/metarecord-list:set
 catalog: GUI command
 target: metarecord-list:set
-summary: Metarecord list: change a view setting (${Object.keys(SETTINGS).join(' / ')})
+summary: Metarecord list: change a view setting
 
 !! Reference
 

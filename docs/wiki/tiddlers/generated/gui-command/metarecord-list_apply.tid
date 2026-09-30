@@ -1,7 +1,7 @@
 title: $:/mf/gen/GUI command/metarecord-list:apply
 catalog: GUI command
 target: metarecord-list:apply
-summary: Metarecord list: apply a zone's content (${ZONE_NAMES.join(' / ')})
+summary: Metarecord list: apply a zone's content
 
 !! Reference
 
