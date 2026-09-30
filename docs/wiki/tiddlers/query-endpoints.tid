@@ -11,6 +11,7 @@ summary: POST /query and the /query/* family — every operation over a set of m
 |`POST /repos/:repo/query/fields/add` |`{"query", "name", "value", "force"?}` |`{"updated": N}` |
 |`POST /repos/:repo/query/fields/remove` |`{"query", "name", "value", "force"?}` |`{"updated": N}` |
 |`POST /repos/:repo/query/fields/unset` |`{"query", "name", "force"?}` |`{"updated": N}` |
+|`POST /repos/:repo/query/fields/batch` |`{"ops": [{"op", …}, …]}` |`{"results": [{"uuid"} or {"updated": N}, …]}` (below) |
 |`POST /repos/:repo/query/fields/resolve-tree` |`{"query", "field"?}` |`{"<uuid>": ["<path>"], …}` ([[Tree endpoints]]) |
 |`POST /repos/:repo/query/profile` |a query |its phases ([[POST /repos/:repo/query/profile]]) |
 
@@ -44,3 +45,22 @@ without `force` is a `400` ([[Reserved fields]]).
 * ''add'' appends a row to each match; a match already holding the value is untouched, so `updated` counts the metarecords that gained a row and re-running it gives `0`.
 * ''remove'' takes out the row equal to the value — at most one per match — leaving other rows and non-matches alone.
 * ''unset'' removes every row of the name: the field becomes unknown, not `nothing`.
+
+!! Several writes as one revision
+
+`POST /query/fields/batch` applies a list of writes, in order, as ''one'' revision — so
+a client operation made of several steps is undone in one step (`mf tag add` and the
+refs it drops, [[Tag subsumption and exclusivity]]). An op is one of:
+
+|!`op` |!Fields |!Result |
+|`create` |`fields`, `uuid`?, `force`? |`{"uuid"}` — the new metarecord; a `uuid` already taken is a `409` |
+|`set` |`query`, `name`, `value` or `values`, `force`? |`{"updated": N}` |
+|`add` / `remove` |`query`, `name`, `value`, `force`? |`{"updated": N}` |
+|`unset` |`query`, `name`, `force`? |`{"updated": N}` |
+
+Every `query` is resolved against the repository ''as it was before the batch'': an op
+never sees what an earlier one wrote — a creation included, which is why a client that
+needs to point at a new metarecord supplies its `uuid`. Schema validation runs once, at
+the end, on each metarecord the batch changed ([[Delta validation]]). All or nothing:
+one failing op rolls the whole batch back. An empty batch, or one that changes nothing,
+leaves no revision.

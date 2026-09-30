@@ -531,6 +531,213 @@ pub(super) async fn batch_unset(
     .await
 }
 
+/// One write of a `POST /query/fields/batch`: a creation, or one of the four
+/// set-layer verbs over a query.
+#[derive(Deserialize)]
+#[serde(tag = "op", rename_all = "snake_case")]
+pub(super) enum BatchOp {
+    Create {
+        #[serde(default)]
+        uuid: Option<String>,
+        fields: Vec<Field>,
+        #[serde(default)]
+        force: bool,
+    },
+    Set {
+        query: MetaQuery,
+        name: String,
+        #[serde(default)]
+        value: Option<Value>,
+        #[serde(default)]
+        values: Option<Vec<Value>>,
+        #[serde(default)]
+        force: bool,
+    },
+    Add {
+        query: MetaQuery,
+        name: String,
+        value: Value,
+        #[serde(default)]
+        force: bool,
+    },
+    Remove {
+        query: MetaQuery,
+        name: String,
+        value: Value,
+        #[serde(default)]
+        force: bool,
+    },
+    Unset {
+        query: MetaQuery,
+        name: String,
+        #[serde(default)]
+        force: bool,
+    },
+}
+
+#[derive(Deserialize)]
+pub(super) struct BatchBody {
+    ops: Vec<BatchOp>,
+}
+
+/// Writes one metarecord of a batch op; answers whether it changed.
+type WriteOne = Box<dyn FnMut(&mut Writer, Uuid) -> Result<bool, ApiError>>;
+
+/// A batch op made ready to apply: its query already resolved.
+enum Ready {
+    Create(Option<Uuid>, Vec<Field>),
+    Set(Vec<Uuid>, String, Vec<Value>),
+    Add(Vec<Uuid>, String, Value),
+    Remove(Vec<Uuid>, String, Value),
+    Unset(Vec<Uuid>, String),
+}
+
+/// `POST /repos/:repo/query/fields/batch`: several writes — creations and the
+/// set-layer verbs — applied in order as **one** revision, so a client
+/// operation made of several steps (`mf tag add` and its rewrites) is undone
+/// in one step (doc "Editing a set of metarecords"). Every query is resolved
+/// against the repository as it stood *before* the batch, so an op never sees
+/// what an earlier one wrote. Schema validation runs once at the end, per
+/// touched metarecord, on every name the batch wrote to it. All or nothing:
+/// any failure rolls the whole batch back. Answers one result per op —
+/// `{uuid}` for a creation, `{updated}` for the others.
+pub(super) async fn batch_writes(
+    State(state): State<Arc<AppState>>,
+    Path(repo): Path<String>,
+    payload: Result<Json<BatchBody>, JsonRejection>,
+) -> Result<Json<serde_json::Value>, ApiError> {
+    let Json(body) = payload?;
+    let repo_uuid = parse_uuid(&repo)?;
+    with_repo(&state, repo_uuid, move |repo_state| {
+        repo_state.ensure_writable()?;
+        let mut conn = slowlog::timed("wait:conn", || repo_state.conn.lock_recover());
+        let cache = repo_state.tree();
+        let mut ready = Vec::with_capacity(body.ops.len());
+        for op in body.ops {
+            ready.push(match op {
+                BatchOp::Create { uuid, fields, force } => {
+                    for field in &fields {
+                        check_writable(&field.name, force)?;
+                    }
+                    Ready::Create(uuid.as_deref().map(parse_uuid).transpose()?, fields)
+                }
+                BatchOp::Set { query, name, value, values, force } => {
+                    check_writable(&name, force)?;
+                    let rows = resolved_values(value, values)?;
+                    Ready::Set(resolve_query_uuids(&*conn, &cache, &query)?, name, rows)
+                }
+                BatchOp::Add { query, name, value, force } => {
+                    check_writable(&name, force)?;
+                    Ready::Add(resolve_query_uuids(&*conn, &cache, &query)?, name, value)
+                }
+                BatchOp::Remove { query, name, value, force } => {
+                    check_writable(&name, force)?;
+                    Ready::Remove(resolve_query_uuids(&*conn, &cache, &query)?, name, value)
+                }
+                BatchOp::Unset { query, name, force } => {
+                    check_writable(&name, force)?;
+                    Ready::Unset(resolve_query_uuids(&*conn, &cache, &query)?, name)
+                }
+            });
+        }
+
+        let mut writer = repo_state.writer(&mut conn, None)?;
+        let writing = slowlog::phase("write.fields");
+        // Every metarecord the batch changed, with the names it wrote there.
+        let mut touched: std::collections::BTreeMap<Uuid, Vec<String>> = Default::default();
+        let mut touch = |uuid: Uuid, name: &str| {
+            let names = touched.entry(uuid).or_default();
+            if !names.iter().any(|n| n == name) {
+                names.push(name.to_string());
+            }
+        };
+        let mut results = Vec::with_capacity(ready.len());
+        for op in ready {
+            let (uuids, name, mut write): (Vec<Uuid>, String, WriteOne) = match op {
+                Ready::Create(uuid, fields) => {
+                    let names: Vec<String> = fields.iter().map(|f| f.name.clone()).collect();
+                    let created = match uuid {
+                        Some(uuid) => {
+                            if Rows::version(writer.store(), uuid)?.is_some() {
+                                return Err(ApiError::conflict(format!(
+                                    "metarecord already exists: {uuid}"
+                                )));
+                            }
+                            writer.create_metarecord_with_uuid(uuid, fields)?
+                        }
+                        None => writer.create_metarecord(fields)?,
+                    };
+                    for name in &names {
+                        touch(created.uuid, name);
+                    }
+                    results.push(json!({ "uuid": hex(created.uuid) }));
+                    continue;
+                }
+                Ready::Set(uuids, name, rows) => {
+                    let field = name.clone();
+                    (
+                        uuids,
+                        name,
+                        Box::new(move |w: &mut Writer, u| {
+                            w.set_field_multi(u, &field, rows.clone())?;
+                            Ok(true)
+                        }),
+                    )
+                }
+                Ready::Add(uuids, name, value) => {
+                    let field = name.clone();
+                    (
+                        uuids,
+                        name,
+                        Box::new(move |w: &mut Writer, u| {
+                            Ok(w.append_field(u, &field, value.clone())?.created())
+                        }),
+                    )
+                }
+                Ready::Remove(uuids, name, value) => {
+                    let field = name.clone();
+                    (
+                        uuids,
+                        name,
+                        Box::new(move |w: &mut Writer, u| {
+                            Ok(w.delete_fields_valued(u, &field, &value)? > 0)
+                        }),
+                    )
+                }
+                Ready::Unset(uuids, name) => {
+                    let field = name.clone();
+                    (
+                        uuids,
+                        name,
+                        Box::new(
+                            move |w: &mut Writer, u| Ok(w.delete_fields_named(u, &field)? > 0),
+                        ),
+                    )
+                }
+            };
+            let mut updated = 0usize;
+            for uuid in uuids {
+                if write(&mut writer, uuid)? {
+                    updated += 1;
+                    touch(uuid, &name);
+                }
+            }
+            results.push(json!({ "updated": updated }));
+        }
+        drop(writing);
+        for (uuid, names) in &touched {
+            slowlog::timed("validate.schema", || {
+                validate_schema(repo_state, writer.store(), *uuid, names)
+            })?;
+        }
+        let effects = writer.effects();
+        slowlog::timed("commit", || writer.commit())?;
+        repo_state.settle(&conn, &effects)?;
+        Ok(Json(json!({ "results": results })))
+    })
+    .await
+}
+
 #[derive(Deserialize)]
 pub(super) struct RetypeBody {
     name: String,

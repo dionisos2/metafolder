@@ -1398,3 +1398,104 @@ async fn test_query_within_its_timeout_answers() {
     assert_eq!(status, StatusCode::OK, "{body}");
     assert_eq!(body, json!([a]));
 }
+
+/// The repository's revision count (`GET /log` totals).
+async fn revisions(app: &Router, repo: &str) -> u64 {
+    let (status, body) = request(app, "GET", &format!("/repos/{repo}/log?limit=1"), None).await;
+    assert_eq!(status, StatusCode::OK, "log failed: {body}");
+    body["total_revisions"].as_u64().unwrap()
+}
+
+/// `POST /query/fields/batch` applies a list of writes — creations included —
+/// as ONE revision, every query read against the repository as it was before
+/// the batch, each op reporting what it changed.
+#[tokio::test]
+async fn test_batch_of_writes_is_one_revision() {
+    let (app, repo, root) = setup("batch").await;
+    let jazz =
+        |v: &str| json!({"type": "eq", "field": "genre", "value": {"type": "string", "value": v}});
+    let a = create(&app, &repo, json!([{"name": "genre", "value": {"type": "string", "value": "jazz"}},
+                                       {"name": "tag", "value": {"type": "string", "value": "old"}}])).await;
+    let b = create(
+        &app,
+        &repo,
+        json!([{"name": "genre", "value": {"type": "string", "value": "rock"}}]),
+    )
+    .await;
+    let before = revisions(&app, &repo).await;
+
+    let fresh = "0123456789abcdef0123456789abcdef";
+    let (status, body) = request(
+        &app,
+        "POST",
+        &format!("/repos/{repo}/query/fields/batch"),
+        Some(json!({"ops": [
+            {"op": "create", "uuid": fresh,
+             "fields": [{"name": "genre", "value": {"type": "string", "value": "jazz"}}]},
+            {"op": "add", "query": jazz("jazz"), "name": "link",
+             "value": {"type": "ref", "value": fresh}},
+            {"op": "remove", "query": jazz("jazz"), "name": "tag",
+             "value": {"type": "string", "value": "old"}},
+            {"op": "set", "query": jazz("rock"), "name": "mood", "values": [
+                {"type": "string", "value": "loud"}, {"type": "string", "value": "fast"}]},
+            {"op": "unset", "query": jazz("rock"), "name": "absent"},
+        ]})),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "batch failed: {body}");
+    assert_eq!(
+        body,
+        json!({"results": [{"uuid": fresh}, {"updated": 1}, {"updated": 1}, {"updated": 1},
+                           {"updated": 0}]}),
+        "the new jazz record is not seen by the queries: they read the state before the batch"
+    );
+    assert_eq!(revisions(&app, &repo).await, before + 1, "one revision for the whole batch");
+
+    let (_, rec_a) = request(&app, "GET", &format!("/repos/{repo}/metarecords/{a}"), None).await;
+    let named = |n: &str| -> Vec<Value> {
+        rec_a["fields"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .filter(|f| f["name"] == n)
+            .map(|f| f["value"].clone())
+            .collect()
+    };
+    assert!(named("tag").is_empty(), "{rec_a}");
+    assert_eq!(named("link"), vec![json!({"type": "ref", "value": fresh})]);
+    let (_, rec_b) = request(&app, "GET", &format!("/repos/{repo}/metarecords/{b}"), None).await;
+    assert_eq!(
+        rec_b["fields"].as_array().unwrap().iter().filter(|f| f["name"] == "mood").count(),
+        2
+    );
+
+    // All or nothing: a failing op (a reserved field without force) rolls the
+    // whole batch back, the ops before it included.
+    let (status, _) = request(
+        &app,
+        "POST",
+        &format!("/repos/{repo}/query/fields/batch"),
+        Some(json!({"ops": [
+            {"op": "add", "query": jazz("rock"), "name": "tag",
+             "value": {"type": "string", "value": "x"}},
+            {"op": "add", "query": jazz("rock"), "name": "mfr_size",
+             "value": {"type": "int", "value": 1}},
+        ]})),
+    )
+    .await;
+    assert_eq!(status, StatusCode::BAD_REQUEST);
+    assert_eq!(revisions(&app, &repo).await, before + 1, "nothing written");
+
+    // An empty batch writes nothing.
+    let (status, body) = request(
+        &app,
+        "POST",
+        &format!("/repos/{repo}/query/fields/batch"),
+        Some(json!({"ops": []})),
+    )
+    .await;
+    assert_eq!((status, body), (StatusCode::OK, json!({"results": []})));
+    assert_eq!(revisions(&app, &repo).await, before + 1);
+
+    drop(root);
+}
