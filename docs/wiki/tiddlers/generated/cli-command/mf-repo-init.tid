@@ -8,7 +8,7 @@ summary: Initialise a new repository and print its UUID
 ```
 Initialise a new repository and print its UUID
 
-Applies the `default` ignore preset to the new root (spec-file-tracking "Ignore presets"); use --ignore to pick a different preset set, or --no-ignore to leave the root's mf_ignore empty.
+Applies the `default` ignore preset to the new root (doc "Ignore presets"); use --ignore to pick a different preset set, or --no-ignore to leave the root's mf_ignore empty.
 
 Usage: mf repo init [OPTIONS] <ROOT>
 

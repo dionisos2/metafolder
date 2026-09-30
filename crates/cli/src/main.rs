@@ -268,8 +268,8 @@ enum RepoCommand {
     },
     /// Initialise a new repository and print its UUID
     ///
-    /// Applies the `default` ignore preset to the new root (spec-file-tracking
-    /// "Ignore presets"); use --ignore to pick a different preset set, or
+    /// Applies the `default` ignore preset to the new root (doc "Ignore presets");
+    /// use --ignore to pick a different preset set, or
     /// --no-ignore to leave the root's mf_ignore empty.
     Init {
         root: PathBuf,

@@ -1,5 +1,5 @@
 /**
- * @file Exclusion marking for the file manager (spec-gui "Ignore patterns"):
+ * @file Exclusion marking for the file manager (doc "Setting ignore patterns"):
  * which entries of the current listing are not tracked on purpose — excluded by
  * an `mf_ignore` pattern, or where an `mf_watch = false` starts — and why.
  *
@@ -14,7 +14,7 @@ import { relPath } from './tracked.js';
 
 /** A repo-relative path re-anchored at its tracking scope — the form ignore
  *  patterns are matched against, hence the form an ad-hoc pattern must be
- *  written in (spec-file-tracking "Eligibility algorithm").
+ *  written in (doc "Eligibility").
  * @param {string} rel @param {string|null} scope */
 export function scopedPath(rel, scope) {
   if (!scope) return rel;

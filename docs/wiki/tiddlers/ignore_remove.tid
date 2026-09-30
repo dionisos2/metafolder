@@ -1,0 +1,6 @@
+title: ignore:remove
+tags: [[GUI command]] [[File tracking]]
+kind: reference
+summary: Remove an ignore preset's patterns from the target directory
+
+Removes a preset's patterns from the target directory ([[Setting ignore patterns]]).

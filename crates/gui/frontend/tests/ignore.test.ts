@@ -1,4 +1,4 @@
-// The ignore half of the GUI (spec-gui "Ignore patterns"): the panel API
+// The ignore half of the GUI (doc "Setting ignore patterns"): the panel API
 // surface, the target/copy-on-write resolution shared by every write, and the
 // four `ignore:*` commands.
 

@@ -1,4 +1,4 @@
-// Ignore patterns (spec-gui "Ignore patterns"): the pieces shared by the
+// Ignore patterns (doc "Setting ignore patterns"): the pieces shared by the
 // `ignore:*` commands and the file manager's Ignore menu — preset completion,
 // ad-hoc pattern construction, and the target resolution that makes the
 // nearest-ancestor-wins rule survivable.
@@ -86,7 +86,7 @@ export interface TargetDirOptions {
   selected: { uuid: string } | null;
 }
 
-/** The directory an `ignore:*` command targets (spec-gui "Ignore patterns"):
+/** The directory an `ignore:*` command targets (doc "Setting ignore patterns"):
  *  the file manager's current directory, else the selected metarecord's
  *  directory (itself when it is one, its parent otherwise), else the repository
  *  root. Always a repo-root-relative path. */

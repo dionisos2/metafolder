@@ -1041,7 +1041,7 @@ fn test_reconcile_reports_created_entries() {
     assert_eq!(parsed["moved"], 0);
 }
 
-// ── Ignore presets (spec-file-tracking "Ignore presets") ─────────────────────
+// ── Ignore presets (doc "Ignore presets") ─────────────────────
 
 /// The root metarecord's mf_ignore rows, one per line.
 fn root_ignore(repo: &str) -> String {

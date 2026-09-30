@@ -1,0 +1,48 @@
+title: Ignore presets
+tags: [[File tracking]]
+kind: reference
+aliases: ignore mf_ignore ignores preset presets ignore-presets excluded
+summary: Named groups of mf_ignore patterns in core/ignore-presets.toml, expanded by the client — the daemon only ever sees patterns.
+
+A ''preset'' is a named, reusable group of `mf_ignore` patterns, in
+`~/.config/metafolder/core/ignore-presets.toml` (installed with the configuration). It
+exists for naming and grouping only: turning a preset into patterns is done by the
+client (`core::ignore_presets`, shared by `mf` and the GUI) — the daemon never sees a
+preset name, only the patterns written.
+
+```
+[rust-build]
+description = "Cargo build intermediates (keeps the final binaries)"
+patterns = ['(^|/)target/([^/]+/)?[^/]+/(deps|build|incremental|examples|\.fingerprint)(/.*)?$']
+
+[default]
+description = "The default set of mf_ignore patterns for a fresh root"
+pattern-set = ["rust-build", "node", "node-build", "python", "julia", "cpp",
+               "java", "cache", "os", "editor", "git", "metafolder", "hidden"]
+```
+
+A preset is a ''leaf'' (a `patterns` list), a ''group'' (a `pattern-set` of other
+presets, expanded recursively), or both (the union). A reference cycle is an error, and
+so is a missing or malformed file — pointing at `metafolder-sync-config`, never falling
+back ([[No runtime fallback]]).
+
+|!Preset |!Leaves out |
+|`rust-build` |cargo's regenerated intermediates under `target/<profile>/` (`deps/`, `build/`, `incremental/`, `.fingerprint/`, `examples/`) — the final binaries stay tracked |
+|`node`, `node-build` |`node_modules`; JS/TS build caches and compiled native addons |
+|`python` |bytecode and tool caches |
+|`julia` |coverage, build and doc output |
+|`cpp` |object files, precompiled headers, CMake files |
+|`java` |`.class` files and the Gradle cache |
+|`cache` |generic caches and temporary files |
+|`os` |`.DS_Store`, `Thumbs.db`… |
+|`editor` |swap, backup and autosave files |
+|`git`, `metafolder` |`.git`, `.metafolder` |
+|`hidden` |every dot-prefixed entry |
+|`default` |all of the above — what a new root gets |
+
+The shipped set is ''conservative'': only clearly regenerable intermediates and junk,
+never ambiguous names like `dist/` or `build/`, static libraries or extension-less
+executables, which are often deliverables. `git` and `metafolder` stay separate from
+`hidden` (which already covers them) so that dropping "all hidden entries" from a
+directory does not silently un-ignore `.git` and `.metafolder`. Edit the file to add
+your own presets; applying them: [[Setting ignore patterns]].

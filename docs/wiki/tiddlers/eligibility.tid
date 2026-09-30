@@ -1,0 +1,51 @@
+title: Eligibility
+tags: [[File tracking]]
+kind: reference
+summary: The algorithm deciding whether a path is tracked — nearest mf_watch, a direct watch overriding ignores, patterns matched from the tracking scope — and how to ask it.
+
+For a repository-relative path `p` whose own metarecord is `e`:
+
+# Find ''watch_ancestor'': the nearest metarecord on the chain from `e` up (itself included) that has `mf_watch`. None → ''skip'' (the opt-in default).
+# Its `mf_watch` is `false` → ''skip''.
+# It is `e` itself — `mf_watch` set ''directly'' — → ''track'', whatever the patterns.
+# Find ''ignore_ancestor'': the nearest ancestor of `e` (itself excluded) with at least one `mf_ignore` row.
+# Re-anchor `p` at watch_ancestor (remove its directory prefix; unchanged when it is the root). If a pattern of ignore_ancestor matches → ''skip''.
+# Otherwise → ''track''.
+
+Step 3 is the per-metarecord override, and step 5 makes a directly watched directory a
+new ''tracking scope'': its descendants still go through the patterns, but matched from
+that directory down. So watching a directory whose own name an ancestor ignores — a
+hidden `.config`, `.git` itself — tracks its contents, while `.git`, `node_modules`,
+hidden entries ''below'' it stay ignored. To give it different patterns, set
+`mf_ignore` on it.
+
+A skipped directory skips its whole subtree without evaluating it. The watcher and
+reconcile both apply this before creating, updating or clearing anything; an ineligible
+path is silently left alone.
+
+!! Asking
+
+`POST /repos/:repo/eligibility` runs it for up to 1000 repository-relative paths
+(leading `/`, `""` the root), with the reason — what the file manager marks rows with:
+
+```
+{"paths": ["/music/track.flac", "/target/debug/deps"]}
+→ {"results": [
+    {"path": "/music/track.flac", "eligible": true, "reason": "tracked", "watch_scope": "", "ignore_source": "", "pattern": null},
+    {"path": "/target/debug/deps", "eligible": false, "reason": "ignored", "watch_scope": "", "ignore_source": "", "pattern": "(^|/)target/…"}]}
+```
+
+`reason` is the step that decided — `no_watch`, `watch_false`, `direct_watch`,
+`ignored`, `tracked`; `watch_scope` the tracking scope's path (`null` without any
+`mf_watch`); `ignore_source` the directory whose set applied (`null` if none);
+`pattern` the one that matched. Whether a change at a path would ''actually'' be
+recorded right now — the watcher's live coverage included — is `mf watch check`'s
+question, not this one.
+
+`GET /repos/:repo/ignore/effective?path=<dir>` answers which set ''governs writes''
+at a directory: `{"source": "/music", "source_uuid": "…", "direct": false, "patterns":
+[…]}` — `source` `null` when no set applies, `direct` when it is the directory's own.
+Unlike step 4 it includes the directory itself: the question is where a new pattern
+would land, not what filtered an entry. The GUI's copy-on-write prompt is built on it.
+
+Both are answered from [[The watch rule index]]: no store read per path.

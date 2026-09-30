@@ -1,5 +1,5 @@
 //! Tests for the watch/ignore eligibility algorithm
-//! (spec-file-tracking "Watch and Ignore").
+//! (doc "Watch and ignore fields").
 
 use metafolder_core::metarecord::{Field, Value};
 use metafolder_daemon::eligibility::is_eligible;
@@ -12,7 +12,7 @@ use metafolder_daemon::kvstore::KvStore;
 mod common;
 
 /// A representative default-like ignore set, mirroring the shipped `default`
-/// ignore preset (spec-file-tracking "Ignore presets"). Used to exercise the
+/// ignore preset (doc "Ignore presets"). Used to exercise the
 /// eligibility algorithm against a realistic pattern set; the daemon no longer
 /// ships these patterns itself (they are applied client-side at `mf repo init`).
 const DEFAULT_PATTERNS: &[&str] = &[
@@ -329,8 +329,7 @@ fn test_mf_sync_inherits_with_nearest_ancestor_override() {
     assert_eq!(of(&mut f, "/other/x"), "internal", "absent everywhere ⇒ internal");
 }
 
-// ── Explain: the reasoned form of the algorithm (spec-file-tracking
-// "Eligibility explain") ─────────────────────────────────────────────────────
+// ── Explain: the reasoned form of the algorithm (doc "Eligibility") ──
 
 #[test]
 fn test_explain_reports_the_deciding_step() {
@@ -412,7 +411,7 @@ fn test_explain_no_watch_anywhere() {
     assert_eq!(e.watch_scope, None);
 }
 
-// ── Effective ignore set (spec-file-tracking "Effective ignore set") ─────────
+// ── Effective ignore set (doc "Eligibility") ─────────
 
 #[test]
 fn test_effective_ignore_set_and_its_source() {

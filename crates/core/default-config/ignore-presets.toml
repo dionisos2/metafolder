@@ -1,4 +1,4 @@
-# Named mf_ignore presets (spec-file-tracking "Ignore presets").
+# Named mf_ignore presets (doc "Ignore presets").
 #
 # Each preset is either a *leaf* (a `patterns` list of regexes) or a *group*
 # (a `pattern-set` list of other preset names), or both (their expansions are

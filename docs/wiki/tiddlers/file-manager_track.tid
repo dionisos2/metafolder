@@ -1,0 +1,6 @@
+title: file-manager:track
+tags: [[GUI command]] [[File tracking]]
+kind: reference
+summary: File manager: track the selected path (mf_watch = false)
+
+The file manager's ''Add to DB'': records the selected untracked entries with `mf_watch = false` — recorded, not yet watched ([[Tracking a folder]]).

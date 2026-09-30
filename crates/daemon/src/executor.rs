@@ -521,8 +521,8 @@ fn flush_pending_once(repo: &RepoState, report: FlushReport) -> Result<FlushStat
     repo.tasks.mark_running(task);
     repo.tasks.set_progress(task, "flush", None, None);
 
-    // The rule index as of the batch's start (spec-file-tracking "The rule
-    // index"): every eligibility question of the flush is a lookup in it.
+    // The rule index as of the batch's start (doc "The watch rule index"): every eligibility
+    // question of the flush is a lookup in it.
     // Handed from group to group: a group that moves a rule re-reads it, and
     // the groups after it must see where the rule went.
     let mut rules = repo.watch_rules(&conn)?;

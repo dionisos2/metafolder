@@ -1,5 +1,5 @@
 /**
- * @file Ignore patterns (spec-gui "Ignore patterns") — the pieces the shell's
+ * @file Ignore patterns (doc "Setting ignore patterns") — the pieces the shell's
  * `ignore:*` commands and the file manager's Ignore menu both need: building an
  * ad-hoc pattern, and resolving the metarecord a write targets while keeping
  * the nearest-ancestor-wins rule survivable.
@@ -16,8 +16,7 @@ export function escapeRegex(literal) {
 
 /** A pattern matching exactly one path — and, when it is a directory, whatever
  *  is below it. `scoped` is the path re-anchored at the tracking scope, which is
- *  what patterns are matched against (spec-file-tracking "Eligibility
- *  algorithm").
+ *  what patterns are matched against (doc "Eligibility").
  * @param {string} scoped */
 export function patternForPath(scoped) {
   return `^${escapeRegex(scoped)}(/.*)?$`;

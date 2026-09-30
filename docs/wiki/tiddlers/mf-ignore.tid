@@ -1,0 +1,6 @@
+title: mf ignore
+tags: [[CLI command]] [[File tracking]]
+kind: reference
+summary: Named mf_ignore presets: apply/replace/remove them on a directory (default: list). The target directory is chosen with -d <path> (default: the repository root)
+
+Applies named ignore presets to a directory's `mf_ignore` set — `-d <path>`, default the root; with no verb, lists the presets ([[Setting ignore patterns]], [[Ignore presets]]).

@@ -1,4 +1,4 @@
-//! Ignore-preset Tauri commands (spec-gui "Ignore patterns"): the GUI's half of
+//! Ignore-preset Tauri commands (doc "Setting ignore patterns"): the GUI's half of
 //! `mf ignore`. Preset expansion reads a *config file*
 //! (`~/.config/metafolder/core/ignore-presets.toml`), which a panel cannot do,
 //! so it lives here; everything else is [`metafolder_core::ignore`], the same

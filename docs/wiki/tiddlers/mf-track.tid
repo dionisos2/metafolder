@@ -1,0 +1,6 @@
+title: mf track
+tags: [[CLI command]] [[File tracking]]
+kind: reference
+summary: Create the metarecord for a single path and print its UUID
+
+Records one file or directory — and its missing parents — with `mf_watch = false`, and prints its uuid; idempotent ([[Tracking a folder]]).

@@ -373,21 +373,28 @@ exception à « pas de repli »). Source retirée : =spec-schema.org=.
 
 * Suivi des fichiers
 
-** TODO 14. Suivre des dossiers
+** FAIT 14. Suivre des dossiers
 
-- [ ] =File tracking= — overview (opt-in, =mfr_path=, ce que « suivi » veut dire)
-- [ ] =Tracking a folder= — guide (=mf_watch=, =mf track=)
-- [ ] =Watch and ignore fields= — reference (=mf_watch= hérité, =mf_ignore=)
-- [ ] =Ignore presets= — reference (+ guide =mf ignore=, commandes GUI =ignore:*=)
-- [ ] =Eligibility= — reference (l'algorithme, le saut en cascade)
-- [ ] =When watch or ignore changes= — reference
-- [ ] =The watch rule index= — reference, dev
-- [ ] =Freezing metadata by not watching= — rationale
+- [X] =File tracking= — overview (alias de =tracking.html=)
+- [X] =Tracking a folder= — guide (avec =mf track= et =file-manager:track=)
+- [X] =Watch and ignore fields= — reference
+- [X] =Ignore presets= — reference (alias de =ignore.html=)
+- [X] =Setting ignore patterns= — guide (=mf ignore=, =ignore:*=, file manager, copy-on-write)
+- [X] =Eligibility= — reference (avec =POST /eligibility= et =GET /ignore/effective=, pris à l'item 15)
+- [X] =When watch or ignore changes= — reference
+- [X] =The watch rule index= — reference, dev
+- [X] =Freezing metadata by not watching= — rationale
+- [X] notes de commande : =mf ignore *= (5), =mf track=, =ignore:*= (4), =file-manager:track=
 
-CLI : =mf ignore *= (5), =mf track=. GUI : =ignore:*= (4). Sources : spec-file-tracking
-« Watch and Ignore » ; spec-data-model « mf ignore » ; spec-gui « Ignore patterns », « Tracking notices » ; help
-=tracking.html=, =ignore.html= ; mémoires =watch-rule-index=, =gui-ignore-patterns=,
-=watch-off-freezes-metadata=.
+Vérification contre le code : la page =ignore.html= disait les entrées ignorées
+« grisées et barrées » — le code (comme la spec) les met en couleur atténuée
+derrière un =⊘=, sans barré ; =mfr_watch_exceeded= passe par l'index des règles
+mais ne décide pas l'éligibilité (c'est le budget). Trouvé au passage : dix
+résumés de commandes GUI générés portaient un gabarit JS non évalué — corrigé dans
+le générateur (=542af74=). Sources retirées (pointeurs) : spec-file-tracking
+« Watch and Ignore », « Single-metarecord track », « Eligibility explain »,
+« Effective ignore set », =mf track= ; spec-data-model =mf ignore= ; spec-gui
+« Ignore patterns » ; les pages =tracking.html= et =ignore.html=.
 
 ** TODO 15. Le watcher
 

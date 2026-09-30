@@ -1,5 +1,5 @@
 //! HTTP-level tests for the ignore/eligibility introspection endpoints
-//! (spec-file-tracking "Eligibility explain" / "Effective ignore set").
+//! (doc "Eligibility").
 
 use axum::body::Body;
 use axum::http::{Request, StatusCode};

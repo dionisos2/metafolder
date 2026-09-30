@@ -1,0 +1,57 @@
+title: Setting ignore patterns
+tags: [[File tracking]]
+kind: guide
+summary: Apply presets with mf ignore or the ignore:* commands, ignore a path or an extension from the file manager — and mind the inherited set.
+
+!! From the command line
+
+```
+mf -n code ignore                          # the presets (ignore list)
+mf -n code ignore list -d /src             # … and the patterns active on /src
+mf -n code ignore add rust-build,node -d /src
+mf -n code ignore remove node -d /src
+mf -n code ignore set default              # replace the root's whole set
+mf -n code ignore set -d /src              # no preset: clear /src's set
+```
+
+`-d` names the target directory, repository-relative (default: the root). `add`
+appends the presets' patterns (skipping rows already there), `remove` deletes exactly
+those, `set` replaces the whole set. Presets are comma- or space-separated.
+
+!! In the GUI
+
+Four commands mirror the verbs, each completing over the installed presets:
+`ignore:list` (the presets and the target's active set, in the message panel — look
+before you write), `ignore:add`, `ignore:remove`, `ignore:set`. The ''target'' is the
+directory you are looking at: the file manager's current directory, else the selected
+metarecord if it is a directory, else the root. The status message always names it
+(`Ignore: +13 patterns on /music`).
+
+The file manager ''shows'' ignoring: an entry left untracked on purpose has a muted name
+behind a small `⊘`, and its tooltip gives the cause — `ignored by <pattern>` with the
+directory the set comes from, or `mf_watch = false` on the metarecord that decided (only
+where that differs from the listed directory, else a fresh repository would mark every
+row). It also ''offers'' it: a row's context menu has an ''Ignore'' section — this path
+exactly, every file with its extension here, or apply a preset. The patterns are built
+from the path relative to the tracking scope, regex-escaped, and written onto the
+''current directory'', not the row: an ignore set governs a subtree. The listing is
+re-marked right after the write.
+
+!! The inherited set
+
+Sets are replaced, never merged: the nearest ancestor with at least one row wins. So
+writing one pattern on a directory that has none drops the whole inherited set for its
+subtree. Before such a write the GUI asks:
+
+```
+/music/live has no ignore patterns of its own; it inherits 13 from /.
+  [Copy the 13 inherited patterns here, then apply]   (default)
+  [Start from an empty set here]
+  [Cancel]
+```
+
+Copying first makes the gesture mean "one more pattern here". From the command line,
+read the set with `mf ignore list -d <dir>` and write what you want with `set` or `add`.
+
+Ignoring never deletes a metarecord: it only stops future tracking
+([[When watch or ignore changes]]).

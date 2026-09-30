@@ -588,7 +588,7 @@ async function scriptCandidates(): Promise<string[]> {
 }
 
 // ── Ignore presets (the `ignore:*` builtins) ────────────────────────────────
-// The GUI half of `mf ignore` (spec-gui "Ignore patterns"). Preset expansion
+// The GUI half of `mf ignore` (doc "Setting ignore patterns"). Preset expansion
 // lives in the backend (it reads a config file); the target directory and the
 // copy-on-write prompt are shared with the file manager's Ignore menu
 // (`lib/ignore.ts`).

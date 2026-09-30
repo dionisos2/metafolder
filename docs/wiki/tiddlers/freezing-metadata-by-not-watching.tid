@@ -1,0 +1,20 @@
+title: Freezing metadata by not watching
+tags: [[File tracking]]
+kind: rationale
+summary: Turning watching off on a subtree is how you freeze its metarecords against outside changes, so nothing writes metadata there to make up for the missing watcher.
+
+A tracked file is, by construction, watched: `mf_watch` is inherited down the tree.
+Turning watching off on a subtree is therefore a ''deliberate'' act — it is how you
+''freeze'' its metarecords against outside processes (moves, deletions, rewrites) that
+would otherwise change their metadata: an archive you want recorded as it was, a
+volume another tool reorganises.
+
+So no part of metafolder writes metadata for an unwatched subtree ''to compensate'' for
+the missing watcher — setting `mfr_path` to `nothing` because "the repository is not
+watched, so someone has to", say. That would override exactly what the user asked for.
+When watching is on, the watcher does the work; when it is off, the metadata stays as it
+is, and a later reconcile or re-watching catches up when you choose.
+
+The limit is a request about the metarecord itself: trashing a file removes its
+metarecord even outside the watched area, because trashing is a request about the
+metarecord, not a tool guessing in the watcher's place ([[What trashing does]]).

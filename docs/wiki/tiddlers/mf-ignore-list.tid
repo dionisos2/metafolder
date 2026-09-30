@@ -1,0 +1,6 @@
+title: mf ignore list
+tags: [[CLI command]] [[File tracking]]
+kind: reference
+summary: List the available presets (with -d, also the target's active patterns)
+
+The installed presets with their descriptions; with `-d`, also the patterns governing that directory ([[Setting ignore patterns]]).

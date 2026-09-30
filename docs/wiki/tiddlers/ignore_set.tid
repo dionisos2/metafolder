@@ -1,0 +1,6 @@
+title: ignore:set
+tags: [[GUI command]] [[File tracking]]
+kind: reference
+summary: Replace the target directory's ignore set with a preset
+
+Replaces the target directory's whole set with a preset's patterns ([[Setting ignore patterns]]).

@@ -1,4 +1,4 @@
-//! Creating a repository from the GUI (spec-file-tracking "Ignore presets"):
+//! Creating a repository from the GUI (doc "Ignore presets"):
 //! the same `core::repo_init` orchestration the CLI's `mf repo init` uses —
 //! `POST /repos/init` then applying the `default` ignore preset to the new root
 //! — so a GUI-created repo gets the same default ignores (the daemon itself

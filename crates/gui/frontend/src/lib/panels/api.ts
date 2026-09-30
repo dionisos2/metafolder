@@ -410,8 +410,8 @@ export function createPanelApi(deps: PanelApiDeps, ctx: PanelApiCtx): PanelApiIn
         }
         return response.body;
       },
-      // Creates a repository and applies its ignore preset (spec-file-tracking
-      // "Ignore presets"): POST /repos/init then the `default` preset on the new
+      // Creates a repository and applies its ignore preset (doc "Ignore presets"):
+      // POST /repos/init then the `default` preset on the new
       // root, via core::repo_init — the same flow as `mf repo init`. Returns the
       // new repo's uuid. `daemon.call('POST', '/repos/init', ...)` would skip
       // the ignore step, so repo creation must go through here.
@@ -613,7 +613,7 @@ export function createPanelApi(deps: PanelApiDeps, ctx: PanelApiCtx): PanelApiIn
       delete: () => invoke('orphan_delete', { wsId: ctx.wsId }) as Promise<number>,
     },
 
-    /** Ignore presets (spec-gui "Ignore patterns"): preset expansion reads a
+    /** Ignore presets (doc "Setting ignore patterns"): preset expansion reads a
      *  config file, so it goes through the backend; the eligibility/effective
      *  introspection endpoints are plain `daemon.call`s. */
     ignore: {

@@ -113,270 +113,7 @@ MinHash banding (above) remains the planned optimisation for repositories whose
 
 ** Watch and Ignore
 
-The daemon uses two =mf_*= fields on directory metarecords to determine which
-files and directories to track. Both are inherited from the nearest ancestor
-that defines them. The root metarecord always defines =mf_watch= (=false= at
-init); =mf_ignore= is *not* written by the daemon at all (see "Ignore presets"
-below) — it is applied by the client tooling from named presets.
-
-*** Fields
-
-- =mf_watch= (Bool): whether this metarecord is eligible for tracking. Set on
-  directory metarecords to control whole subtrees; can also be set on individual
-  files for per-file override. Default on root: =false= (opt-in by default —
-  nothing is tracked until explicitly whitelisted).
-- =mf_ignore= (String, multi-map): each row is a regex pattern tested against
-  the path of a candidate, *relative to the tracking-scope root* — the nearest
-  ancestor on which =mf_watch= is set directly (the repository root in the
-  common case, giving a repo-root-relative path such as =/music/.git/config=;
-  see the eligibility algorithm below for the re-anchoring rule). All stored
-  paths are repo-root-relative so that the repository can be moved without
-  invalidating stored patterns. The nearest ancestor that has at least one
-  =mf_ignore= row provides the effective pattern set; patterns from different
-  ancestors are *not* merged.
-
-At =repo init= the daemon writes =mf_watch = false= on the root and *no*
-=mf_ignore= rows: the daemon carries no built-in ignore policy (it stays
-consistent with the config system's "no embedded defaults / no runtime
-fallback" rule — doc "Configuration"). A bare =POST /repos/init= therefore yields a
-root with an empty ignore set; this is harmless because =mf_watch= is =false=,
-so nothing is tracked until the user opts in, at which point they also choose an
-ignore set. The familiar default patterns are applied by the client tooling as
-the =default= preset (below), so the normal =mf repo init= / GUI "create repo"
-flow ends up with exactly the same patterns as before — they are merely sourced
-from configuration instead of being baked into the daemon.
-
-*** Ignore presets
-
-Ignore *presets* are named, reusable groups of =mf_ignore= patterns living in
-the user configuration (=~/.config/metafolder/core/ignore-presets.toml=, shipped
-from =crates/core/default-config/= and installed by =metafolder-sync-config=,
-like the simplified-query grammar). They exist purely for naming, documentation
-and grouping: expansion (preset name → patterns) is a *pure, client-side*
-transformation performed by =core::ignore_presets= and shared by the CLI and the
-GUI; the daemon never sees a preset name — it only ever receives the final
-=mf_ignore= strings.
-
-A preset is either a *leaf* (a =patterns= list) or a *group* (a =pattern-set=
-list of other preset names), or both (their expansions are unioned). Groups are
-expanded recursively; a reference cycle is a hard error. The file is *required*:
-a missing or malformed =ignore-presets.toml= is a startup/usage error pointing
-at =metafolder-sync-config= (never a silent fallback — doc "Configuration").
-
-#+BEGIN_SRC toml
-[rust-build]
-description = "Cargo build intermediates (keeps the final binaries)"
-patterns = ['(^|/)target/([^/]+/)?[^/]+/(deps|build|incremental|examples|\.fingerprint)(/.*)?$']
-
-[node]
-description = "npm dependencies"
-patterns = ['node_modules(/.*)?$']
-
-[python]
-description = "Python caches"
-patterns = ['__pycache__(/.*)?$']
-
-[git]
-description = "Git metadata"
-patterns = ['\.git(/.*)?$']
-
-[metafolder]
-description = "The .metafolder configuration directory"
-patterns = ['\.metafolder(/.*)?$']
-
-[hidden]
-description = "Every hidden (dot-prefixed) entry"
-patterns = ['(^|/)\.[^/]+']
-
-# … plus the shipped leaves node-build, julia, cpp, java, cache, os, editor
-# (abbreviated here; see crates/core/default-config/ignore-presets.toml).
-
-# A group preset: expands to the union of the referenced presets' patterns.
-[default]
-description = "The default set of mf_ignore patterns for a fresh root"
-pattern-set = ["rust-build", "node", "node-build", "python", "julia", "cpp",
-               "java", "cache", "os", "editor", "git", "metafolder", "hidden"]
-#+END_SRC
-
-The shipped file defines a preset per common toolchain / junk source:
-=rust-build=, =node= / =node-build= (npm deps; JS-TS build caches and compiled
-native addons), =python= (bytecode + tool caches), =julia= (coverage/build/doc
-output), =cpp= (object files, precompiled headers, CMake files), =java=
-(=.class= + the Gradle cache), =cache= (generic caches/temp), =os= (=.DS_Store=,
-=Thumbs.db=, …), =editor= (swap/backup/autosave), and =git= / =metafolder= /
-=hidden=. It stays *conservative*: only clearly regenerable intermediates and
-junk are matched — never ambiguous names like =dist/= / =build/=, static
-libraries, or extension-less executables, which are often tracked deliverables.
-
-=git= and =metafolder= are kept as leaf presets distinct from =hidden= (which
-already subsumes them) so that dropping "ignore all hidden entries" from a
-target does not silently un-ignore =.git= / =.metafolder=.
-
-The =rust-build= patterns ignore the intermediate build output cargo regenerates
-on every =cargo build= — =deps/=, =build/=, =incremental/=, =.fingerprint/= and
-=examples/= under =target/<profile>/= (and the cross-compile
-=target/<triple>/<profile>/…= form) — while leaving the *final* artifacts that
-sit directly in =target/<profile>/= (the built binaries and libraries) tracked.
-Splitting the shipped =default= into named leaf presets lets a user apply a
-subset (e.g. just =rust-build,node=) or drop one group without touching the
-others.
-
-**** Applying presets
-
-Applying a preset expands it to patterns client-side and writes them into the
-target metarecord's =mf_ignore= set via the daemon API: =add= appends,
-=remove= deletes the matching rows, and =set= *replaces* the whole set (drops
-every current =mf_ignore= row on the target, then writes the expanded patterns).
-Because the effective set is the nearest
-ancestor's (patterns are never merged across ancestors — see below), a preset is
-normally applied at the tracking-scope root it should govern.
-
-The full "create a repo with its default ignores" flow — =POST /repos/init=
-followed by applying the =default= preset to the new root — lives in =core= (a
-=core::repo_init= orchestration over a thin =DaemonClient= trait, in the same
-spirit as =core::sync= / =core::trash=) and is reused verbatim by both the CLI
-(=mf repo init=) and the GUI "create repo" flow, so the two behave identically.
-The preset-application half is exposed separately (=core::ignore::apply=) for the
-=mf ignore= command.
-
-*** Eligibility algorithm
-
-For a given repo-root-relative path =p= with direct metarecord =e=:
-
-1. Walk the ancestor chain (including =e= itself) to find =watch_ancestor= —
-   the nearest metarecord that has an =mf_watch= field.
-2. If =mf_watch= on =watch_ancestor= is =false= → *skip*.
-3. If =watch_ancestor= is =e= itself (=mf_watch= is set directly on =e=, not
-   inherited) → *track unconditionally*; skip steps 4–5.
-4. Walk the ancestor chain (*excluding* =e= itself) to find =ignore_ancestor= —
-   the nearest ancestor that has at least one =mf_ignore= row.
-5. Let =p_scoped= be =p= re-anchored at =watch_ancestor= — i.e. with the
-   directory prefix of =watch_ancestor= removed, so it is a leading-slash path
-   *relative to the tracking-scope root*. (When =watch_ancestor= is the
-   repository root this is =p= unchanged.) If any pattern in
-   =ignore_ancestor='s =mf_ignore= rows matches =p_scoped= → *skip*.
-6. Otherwise → *track*.
-
-Step 3 is the per-metarecord override: setting =mf_watch = true= directly on a
-metarecord forces *that metarecord* to be tracked regardless of any ancestor's
-ignore patterns. Its descendants still go through the ignore check (they inherit
-=mf_watch = true= but it is not "direct" on them) — but, by step 5, that check is
-performed *relative to the directly-watched directory*, which becomes a new
-tracking-scope root. So directly watching a directory tracks its contents, with
-the ignore patterns applying from that directory downwards:
-
-- The watched directory's own name is stripped before matching, so watching a
-  directory whose name would otherwise be ignored (e.g. a hidden =.config=, or
-  =.git= itself) no longer prunes its subtree.
-- Patterns still apply *inside* the scope: with the default rows, =.git=,
-  =node_modules= and hidden entries found *below* the watched directory remain
-  ignored.
-
-To instead give a directly-watched directory a different pattern set, set
-=mf_ignore= on it to replace the ancestor's patterns (they are not merged;
-including removing unwanted ones).
-
-*Replacing ignore patterns*: because patterns are not merged, a directory that
-needs a different pattern set must re-declare all desired patterns in its own
-=mf_ignore= rows. The recommended workflow is: query the effective =mf_ignore=
-rows for the target directory (via inherited property lookup), copy them, write
-them to the directory metarecord, then remove the unwanted pattern.
-
-*** The rule index
-
-The algorithm reads three fields — =mf_watch=, =mf_ignore= and
-=mfr_watch_exceeded= ([[*The watch budget]]) — and only on the metarecords that
-hold them. Those are few: a handful of directories the user chose, plus the
-budget's frontier. So the daemon keeps them in memory, per repository, keyed by
-their =mfr_path=: the *rule index*. Each entry holds the uuid, the three values
-and the =mf_ignore= patterns already compiled.
-
-Evaluating a path is then a walk up its own prefixes (=/a/b/c=, =/a/b=, =/a=,
-the root) in that map: no database read, no tree-cache lookup, no lock but the
-index's own. Every eligibility decision in the daemon goes through it — the
-watcher's ingest filter and flush, the reconcile walk, the budget placement,
-=POST /eligibility=, =POST /watch/check=, =GET /ignore/effective= — so none of
-them can disagree with another. The chain walk it replaced (one tree lookup and
-two field reads per ancestor, for every event) is kept as the *test oracle* the
-index is held to, on generated trees and rules (=tests/eligibility_oracle.rs=).
-
-*Freshness.* The index records the HEAD it was read at. A reader that holds the
-connection compares it with the current HEAD — one read — and rebuilds on a
-difference; every committed write also rebuilds it on the spot (=settle=), so the
-next reader rarely has to. A rebuild reads the holders of the three fields and
-their paths: proportional to the number of rules, not to the repository.
-
-*Inside a flush.* The executor applies renames and removals before they are
-committed; a path's rules can move with them. When the executor moves, orphans or
-re-homes a metarecord that holds a rule or is an ancestor of one, it re-reads
-the index from its own uncommitted state before the next event.
-
-*Keys are bytes, paths given as text are read both ways.* The index keys a rule
-by the exact bytes of its path's names (folded like the tree cache's when the
-filesystem is case-insensitive), so a name that is not text is matched exactly.
-A path that arrives as *text* — an API parameter such as =POST /eligibility=, a
-client showing a non-text name in its escaped form =caf%E9= — is read the way
-the tree cache reads one: a component that decodes as an escape may designate
-the name that really is that text or the one holding the escaped bytes, and the
-reading that leads to a rule is the one taken.
-
-*The index is an eligibility source, not a cache of answers.* A path that has
-never been seen is answered like any other: the map holds the rules, not the
-paths they govern.
-
-*** Cascading skip
-
-When a directory is skipped (=mf_watch = false= or matched by an ignore
-pattern), all of its descendants are also skipped without further evaluation.
-The tree cache is used to collect descendants efficiently.
-
-*** Interaction with reconcile and watcher
-
-Both reconcile and the watcher evaluate eligibility before creating, updating,
-or clearing any metarecord. Ineligible paths are silently ignored. The watcher
-additionally uses eligibility to decide *where live coverage is needed* — in the
-budget regime only eligible directories are watched, and in both regimes only
-eligible paths are ever recorded (see [[*File Watcher]], [[*Watch sources and
-regimes]]).
-
-*** Behaviour when =mf_watch= or =mf_ignore= changes
-
-Changing =mf_watch= or =mf_ignore= on a metarecord does *not* automatically
-modify any existing database metarecords. The changes take effect only on the next
-event (watcher or reconcile) for each affected path. The watcher does, however,
-*immediately re-apply its watch set* to match the new eligible-directory set —
-a re-placement of the per-directory watches in the budget regime; in the
-coverage regime there is nothing to place, and the change is live as soon as the
-event filter sees it (see [[*File Watcher]], [[*Watch sources and regimes]]) —
-so filesystem events arriving in a newly-eligible subtree start being captured
-at once, but the metarecords for files *already* present there still require a
-reconcile:
-
-- *=mf_watch= set to =true=* on a previously-unwatched directory: existing
-  files under that directory have no metarecords yet. A subsequent reconcile is
-  required to create them.
-- *=mf_watch= set to =false=* (or a new =mf_ignore= pattern now matches
-  existing metarecords): those metarecords are preserved as-is. They will no longer be
-  updated by the watcher or reconcile, but their metadata (including
-  =mfr_path=) remains unchanged until the user explicitly removes them.
-
-The re-application is owed by every way the eligible set can change, not only by a
-direct write: a rollback or redo that restores or takes away =mf_watch=
-/=mf_ignore= rows re-applies the watch set the same way, once HEAD has landed
-([[file:spec-event-log.org][spec-event-log.org]] "Upkeep after a navigation").
-
-This is intentional: existing metadata is never silently discarded. To clean
-up after a watch scope change, the client should use targeted delete
-operations:
-
-| Goal                                                    | Mechanism                                              |
-|---------------------------------------------------------+--------------------------------------------------------|
-| Remove all metarecords under a directory recursively        | Query =mfr_path follows_transitive "/dir"=, batch delete |
-| Remove metarecords whose =mfr_path= is =Nothing= (deleted)  | Query =mfr_path is_absent=, batch delete               |
-| Remove metarecords no longer in the watch scope             | Query the untracked subtree, batch delete              |
-
-These operations are available through the existing query + delete API
-primitives. No data is ever lost implicitly; the user remains in control.
+Moved to the wiki: doc "Watch and ignore fields", doc "Ignore presets", doc "Setting ignore patterns", doc "Eligibility", doc "The watch rule index", doc "When watch or ignore changes", doc "Freezing metadata by not watching".
 
 ** Mount points
 
@@ -553,7 +290,7 @@ a single =Rename(Both)=. Events without a cookie, and genuine one-sided renames
 
 In the *budget* regime — one of the two watch regimes of [[*Watch sources and
 regimes]] — the watcher places one *non-recursive* watch per *eligible
-directory* only (see [[*Watch and Ignore]]), rather than a single recursive
+directory* only (see doc "Watch and ignore fields"), rather than a single recursive
 watch on the whole root. The eligible set is computed by the same walk reconcile uses: descend only
 through eligible directories, prune ineligible subtrees, never follow symlinked
 directories (so a watch can never escape the repository root — e.g. a Wine
@@ -564,7 +301,7 @@ nowhere at all. The root is only the walk's base, never a gate on it: a
 directory carrying =mf_watch = true= directly is watched even when the root is
 not, each entry being judged on its own exactly as reconcile's walk judges it. The set is maintained incrementally as directories appear or
 disappear, and recomputed after a manual write changes =mf_watch=/=mf_ignore=
-(see [[*Behaviour when =mf_watch= or =mf_ignore= changes]]). An *offline* mount
+(see doc "When watch or ignore changes"). An *offline* mount
 point is pruned like an ineligible directory — no watch on it, none below it
 (see [[*Offline subtrees]]); the watch set is recomputed on the next refresh, so a
 remounted volume starts being watched again without restarting the daemon. In
@@ -572,7 +309,7 @@ the *coverage* regime none of this is placed at all — one kernel registration
 already covers the tree.
 
 Before processing any event, the daemon evaluates eligibility for the affected
-path (see [[*Watch and Ignore]]). Ineligible paths are silently ignored. Events
+path (see doc "Watch and ignore fields"). Ineligible paths are silently ignored. Events
 inside the repository's own =.metafolder/internal/= directory are always
 ignored — matched by absolute path, since =.metafolder/= may live anywhere
 (external database), including inside the watched root at an arbitrary depth.
@@ -589,7 +326,7 @@ and regimes]]). The backend delivers events and serves watch
 placements from a single thread, so a callback that waited on the repository
 connection would freeze every watch placement — and deadlock outright against a
 write that recomputes the watch set while holding that connection (see
-[[*Behaviour when =mf_watch= or =mf_ignore= changes]]). Nothing that can block
+doc "When watch or ignore changes"). Nothing that can block
 may run on the callback.
 
 *** Watch sources and regimes
@@ -631,7 +368,7 @@ reconnection (a flaky socket would fire one per blink). Nothing is ever
 inferred from a gap.
 
 What does *not* vary between regimes: the eligibility filter every event goes
-through (see [[*Watch and Ignore]]), the =.metafolder/internal/= hard skip,
+through (see doc "Watch and ignore fields"), the =.metafolder/internal/= hard skip,
 offline subtrees ([[*Offline subtrees]]), event batching and event semantics.
 
 Only one source is active for a repository at a time — fanotify when a broker is
@@ -1040,38 +777,7 @@ Parent directory lookup on =Create= or =Rename(To)= reads the store's forest
 
 ** Single-metarecord track
 
-#+BEGIN_SRC
-POST /repos/:repo_uuid/track
-#+END_SRC
-
-Creates a metadata metarecord for a single filesystem path without activating
-tracking. Intended for use from =file-manager= (and scripts) when the user
-wants to add a file or directory to the DB before deciding on its watch scope.
-
-Request body:
-#+BEGIN_SRC json
-{"path": "/absolute/path/to/file-or-dir"}
-#+END_SRC
-
-The path must be inside the repository root; otherwise =400= is returned.
-
-If the path is already tracked (a metarecord with a matching =mfr_path= TreeRef
-exists), the call is *idempotent*: the existing metarecord UUID is returned
-(=200=), and nothing is changed. Callers can therefore =track= a path to obtain
-its UUID without first checking whether it exists.
-
-Otherwise the daemon:
-1. Creates any missing parent directory metarecords along the path (with
-   =mf_watch = false=), using the tree cache for lookup.
-2. Creates the target metarecord with =mfr_path=, =mfr_type=, =mfr_size=,
-   =mfr_mtime=, =mfr_permissions=, =mfr_uid=, =mfr_gid= taken from =stat=,
-   and =mf_watch = false=.
-
-The new metarecord is *not* subject to eligibility checks (=mf_watch= / =mf_ignore=
-evaluation); the caller is responsible for configuring the watch scope
-afterwards (see [[*Watch and Ignore]]).
-
-Response body: ={"uuid": "<entry_uuid>"}= (newly created, or the existing one).
+Moved to the wiki: doc "Tracking a folder".
 
 ** Scoped (single-metarecord) reconcile
 
@@ -1079,7 +785,7 @@ There is a *single* reconcile endpoint (see [[*Reconcile]]); a scoped reconcile
 is the same =POST /repos/:repo_uuid/reconcile= with a =metarecord= field in the
 body (32-char hex). It runs reconcile semantics scoped to the subtree rooted at
 that metarecord. Intended to be called after =mf_watch= is set to =true= on a
-metarecord added via [[*Single-metarecord track]] or created manually.
+metarecord added via doc "Tracking a folder" or created manually.
 
 Behaviour:
 - Walks the directory on disk (or refreshes a single file).
@@ -1429,50 +1135,7 @@ one) is =200= and changes nothing.
 
 ** Eligibility explain
 
-#+BEGIN_SRC
-POST /repos/:repo_uuid/eligibility
-#+END_SRC
-
-Read-only *dry run* of the [[*Eligibility algorithm]] for a list of paths, with
-the reason attached. The algorithm's inputs (=mf_watch= / =mf_ignore= on the
-ancestor chain, the re-anchoring at the tracking-scope root, the
-nearest-ancestor-wins rule) are entirely daemon-side, so a client that wants to
-show *why* a path is or is not tracked — the GUI file manager greying out the
-entries an ignore pattern excludes, or answering "why is this file not tracked?"
-— must ask the daemon rather than re-implement the walk and re-run the regexes
-in another engine's dialect.
-
-Request body: repo-root-relative paths (leading slash, =""= is the root), at
-most 1000 per call:
-#+BEGIN_SRC json
-{"paths": ["/music/track.flac", "/target/debug/deps"]}
-#+END_SRC
-
-Response: one result per requested path, in the order given.
-#+BEGIN_SRC json
-{"results": [
-  {"path": "/music/track.flac", "eligible": true,  "reason": "tracked",
-   "watch_scope": "", "ignore_source": "", "pattern": null},
-  {"path": "/target/debug/deps", "eligible": false, "reason": "ignored",
-   "watch_scope": "", "ignore_source": "", "pattern": "(^|/)target/…"}
-]}
-#+END_SRC
-
-- =reason= — the algorithm step that decided: =no_watch= (no =mf_watch= anywhere
-  on the chain: the opt-in default), =watch_false= (the nearest =mf_watch= is
-  =false=), =direct_watch= (=mf_watch= set directly on the path: tracked
-  unconditionally, step 3), =ignored= (a pattern matched, step 5), =tracked=
-  (step 6).
-- =watch_scope= — the path of the tracking-scope root (the metarecord whose
-  =mf_watch= decided), against which patterns are matched; =null= when no
-  =mf_watch= was found.
-- =ignore_source= — the path of the nearest ancestor providing the effective
-  pattern set, =null= when none has one.
-- =pattern= — the pattern that matched, only for =reason = "ignored"=.
-
-Evaluating a path is a walk up its own prefixes in the rule index ([[*The rule
-index]]): no store read, patterns compiled once when the index is read, so a
-directory listing is one cheap request.
+Moved to the wiki: doc "Eligibility".
 
 ** Watch check
 
@@ -1481,7 +1144,7 @@ POST /repos/:repo_uuid/watch/check
 #+END_SRC
 
 The watcher's own answer for a list of paths: *would a change at each be
-recorded?* Where [[*Eligibility explain]] runs the tracking algorithm, this
+recorded?* Where doc "Eligibility" runs the tracking algorithm, this
 consults the *live coverage* ([[*File Watcher]]) — one step past eligibility,
 because the two can disagree, and the difference is exactly what a client
 showing "is this file watched?" must not flatten away:
@@ -1545,7 +1208,7 @@ per path, in the order given.
   Whether it *is* watched is the =watched= bit; the field is always present so
   a client can say what the answer was computed against.
 - =eligible= / =eligibility_reason= / =watch_scope= / =ignore_source= /
-  =pattern= — the path's own [[*Eligibility explain]] dry run, in the same
+  =pattern= — the path's own doc "Eligibility" dry run, in the same
   shape that endpoint answers.
 - =dir_eligible= / =dir_eligibility_reason= / =dir_watch_scope= /
   =dir_ignore_source= / =dir_pattern= — the covering directory's own dry run
@@ -1638,32 +1301,7 @@ the GUI shows the count in the file-manager and metarecord-detail
 
 ** Effective ignore set
 
-#+BEGIN_SRC
-GET /repos/:repo_uuid/ignore/effective?path=<repo-root-relative>
-#+END_SRC
-
-The =mf_ignore= pattern set that *governs* the given directory, and where it
-comes from. Since sets are never merged across ancestors (the nearest ancestor
-with at least one row wins), writing a single pattern onto a directory that has
-none silently drops the whole inherited set for that subtree — a trap this
-endpoint exists to let a client show and avoid (spec-gui "Ignore patterns"
-describes the copy-on-write flow built on it).
-
-#+BEGIN_SRC json
-{"source": "/music", "source_uuid": "<32hex>", "direct": false,
- "patterns": ["\\.git(/.*)?$", "…"]}
-#+END_SRC
-
-- =source= — the path of the metarecord providing the set, =null= when no
-  ancestor (nor the directory itself) has any =mf_ignore= row.
-- =direct= — whether =source= *is* the requested path (its own set, so editing
-  it changes nothing else) rather than an inherited one.
-- =patterns= — the source's rows, in order.
-
-Unlike the eligibility walk, the search *includes* the requested path itself:
-the question is "which set governs writes here", not "which set filtered this
-entry" (the algorithm's step 4 excludes the entry itself, which matters only for
-a file being tested).
+Moved to the wiki: doc "Eligibility".
 
 * CLI
 
@@ -1695,10 +1333,7 @@ write, since =mfr_path= is an =mfr_*= field).
 
 ** =mf track <path>=
 
-Calls =POST /track= for the given path (OS-native absolute path, or relative
-to the current directory — the CLI absolutises it). Prints the metarecord UUID.
-Idempotent: an already-tracked path prints its existing UUID rather than
-failing. Fails with exit code 1 when the path is outside the repository root.
+Moved to the wiki: doc "Tracking a folder", doc "mf track".
 
 ** =mf path <uuid>=
 
@@ -1897,7 +1532,7 @@ folder's children").
 ** Configuring the watch scope
 
 The watch/ignore system is driven by the =mf_watch= and =mf_ignore= fields
-(see [[*Watch and Ignore]]); no dedicated commands are needed:
+(see doc "Watch and ignore fields"); no dedicated commands are needed:
 
 #+BEGIN_SRC
 # Activate tracking for a directory metarecord

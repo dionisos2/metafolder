@@ -1,0 +1,29 @@
+title: The watch rule index
+tags: [[File tracking]]
+kind: reference
+audience: dev
+summary: Eligibility is answered from an in-memory map of the few metarecords holding mf_watch, mf_ignore or mfr_watch_exceeded, keyed by path bytes — no store read per path.
+
+The eligibility algorithm reads three fields — `mf_watch`, `mf_ignore`,
+`mfr_watch_exceeded` — and only on the metarecords that hold them: a handful of
+directories the user chose, plus the watch budget's frontier. So each repository keeps
+them in memory, keyed by their path: the ''rule index'' (`eligibility::WatchRules`).
+Each entry holds the uuid, the three values and the `mf_ignore` patterns already
+compiled.
+
+Evaluating a path is a walk up its own prefixes (`/a/b/c`, `/a/b`, `/a`, the root) in
+that map: no store read, no forest lookup. ''Every'' eligibility decision goes through it
+— the watcher's ingest filter and flush, the reconcile walk, the budget's placement,
+`POST /eligibility`, `POST /watch/check`, `GET /ignore/effective` — so none can
+disagree with another. The chain walk it replaced lives on as the test oracle it is held
+to, on generated trees and rules (`tests/eligibility_oracle.rs`).
+
+* ''Freshness.'' The index records the HEAD it was read at; a reader compares it with the current HEAD (one read) and rebuilds on a difference, and every committed write that touches a rule or moves a rule holder (or an ancestor of one) rebuilds it on the spot (`settle`). A rebuild reads the holders of the three fields and their paths: proportional to the rules, not to the repository.
+* ''Inside a flush.'' The executor applies moves and removals before committing, and a rule can move with them: when it moves, orphans or re-homes a holder or an ancestor of one, it re-reads the index from its own uncommitted state before the next event — and hands the re-read rules on to the next group of the flush (otherwise "rename a rule directory, then recreate it" lost the new one).
+* ''Keys are bytes.'' A rule is keyed by the exact bytes of its path's names, folded like the forest's when the filesystem is case-insensitive, so a name that is not text matches exactly. A path given as ''text'' (an API parameter, an escaped `caf%E9`) is read both ways, as the forest reads one ([[Tree names]]), and the reading leading to a rule is taken.
+* ''It holds rules, not answers.'' A path never seen is answered like any other.
+
+The filter at ingestion drops ineligible events before they are buffered; while a
+buffered event would move a rule, filtering stops until a flush has applied it. The
+filter lives in the daemon, not in the fanotify broker, which stays simple and knows
+nothing of the store (user decision).

@@ -43,8 +43,8 @@ misdetected MIME type, settling an `mfr_path` conflict the watcher cannot.
 !! The fields that steer the daemon
 
 |!Field |!Type |!Holds |
-|`mf_watch` |`bool` |whether this metarecord and what lies under it are tracked — inherited down `mfr_path`, off by default (spec-file-tracking "Watch and Ignore") |
-|`mf_ignore` |`string` |an ignore pattern, one row per pattern (spec-file-tracking "Watch and Ignore") |
+|`mf_watch` |`bool` |whether this metarecord and what lies under it are tracked — inherited down `mfr_path`, off by default ([[Watch and ignore fields]]) |
+|`mf_ignore` |`string` |an ignore pattern, one row per pattern ([[Ignore presets]]) |
 |`mf_schema` |`string` |the metarecord's types, one row per type ([[Schema]]) |
 |`mf_sync` |`string` |`internal` (default) or `external`: whether metafolder or another tool owns this content during sync; inherited down `mfr_path` |
 

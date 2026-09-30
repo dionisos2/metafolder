@@ -2520,7 +2520,7 @@ fn repo_rel(root: &Path, abs: &Path) -> Result<String, CliError> {
         .join("/"))
 }
 
-// ── Ignore presets (spec-file-tracking "Ignore presets") ─────────────────────
+// ── Ignore presets (doc "Ignore presets") ─────────────────────
 
 /// Loads the ignore presets from the user configuration (a missing/malformed
 /// file is a usage error pointing at metafolder-sync-config; doc "Configuration").

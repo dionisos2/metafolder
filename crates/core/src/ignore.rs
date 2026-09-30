@@ -1,5 +1,5 @@
-//! Applying named `mf_ignore` presets to a target metarecord (spec-file-tracking
-//! "Ignore presets" → "Applying presets"). Expansion is done client-side by
+//! Applying named `mf_ignore` presets to a target metarecord
+//! (doc "Setting ignore patterns"). Expansion is done client-side by
 //! [`crate::ignore_presets`]; this module turns an expanded pattern list into
 //! the daemon writes that update a target metarecord's `mf_ignore` set (append,
 //! remove, or whole-set replace). Shared by the CLI (`mf ignore`) and the GUI.

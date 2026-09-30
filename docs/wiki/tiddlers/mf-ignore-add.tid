@@ -1,0 +1,6 @@
+title: mf ignore add
+tags: [[CLI command]] [[File tracking]]
+kind: reference
+summary: Append the presets' patterns to the target's mf_ignore set
+
+Expands the presets and appends their patterns to the target's set, skipping those already there ([[Setting ignore patterns]]).

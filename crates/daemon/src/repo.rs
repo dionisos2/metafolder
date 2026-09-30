@@ -1,6 +1,6 @@
 //! Repository initialisation and loading: `.metafolder/` layout, config file,
 //! database creation, and the filesystem root metarecord with its default
-//! watch/ignore configuration (spec-file-tracking "Watch and Ignore").
+//! watch/ignore configuration (doc "Watch and ignore fields").
 
 use std::path::{Path, PathBuf};
 
@@ -143,7 +143,7 @@ pub fn seed_schema_file(metafolder_dir: &Path, source: &Path) {
 /// type, tracking disabled (opt-in). No `mf_ignore` is written: the daemon
 /// carries no built-in ignore policy (doc "No runtime fallback"); the
 /// default patterns are applied client-side as the `default` ignore preset by
-/// `mf repo init` / the GUI (spec-file-tracking "Ignore presets").
+/// `mf repo init` / the GUI (doc "Ignore presets").
 fn create_root_entry(conn: &mut crate::store::Handle) -> Result<()> {
     let fields = vec![
         Field::new("mfr_path", Value::TreeRef { parent: None, name: TreeName::default() }),

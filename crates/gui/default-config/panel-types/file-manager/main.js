@@ -105,7 +105,7 @@ export async function mount(root, metafolder) {
   let trackedPaths = new Map();
   /** Entries of the current listing left untracked on purpose — by an
    *  `mf_ignore` pattern or where an `mf_watch = false` starts — and why
-   *  (spec-gui "Ignore patterns"). Absolute path -> exclusion.
+   *  (doc "Setting ignore patterns"). Absolute path -> exclusion.
    *  @type {Map<string, import('./ignored.js').Exclusion>} */
   let excludedPaths = new Map();
   /** How many watcher events arrived under each listed entry since the load
@@ -191,8 +191,8 @@ export async function mount(root, metafolder) {
     }
   }
 
-  // Which listed entries an ignore pattern excludes (spec-gui "Ignore
-  // patterns"): one daemon call for the whole window, run after the tracked
+  // Which listed entries an ignore pattern excludes (doc "Setting ignore patterns"): one daemon
+  // call for the whole window, run after the tracked
   // status so the rows are already on screen.
   async function refreshEligibility() {
     const dir = currentDir;
@@ -305,7 +305,7 @@ export async function mount(root, metafolder) {
     rendered = Math.min(PAGE, listing.length);
     render(); // rows appear at once; tracked badges fill in just below
     // Published so the shell's `ignore:*` commands know which directory the
-    // user is looking at (spec-gui "Ignore patterns").
+    // user is looking at (doc "Setting ignore patterns").
     await workspace.set('file-manager:dir', dir);
     const dirUuid = await enrichSelfParent();
     await enrichChildren(dirUuid);
@@ -687,7 +687,7 @@ export async function mount(root, metafolder) {
     await workspace.set('metarecords:dirty', Date.now());
   }
 
-  // ── Ignore patterns (spec-gui "Ignore patterns") ───────────────────────────
+  // ── Ignore patterns (doc "Setting ignore patterns") ───────────────────────────
   // Adding a pattern always targets the *current directory*, never the row: an
   // ignore set governs a subtree, and writing it on the row would be both
   // useless (a file's own set is never consulted for itself) and a trap.

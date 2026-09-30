@@ -113,7 +113,7 @@ pub struct RepoState {
     /// separate from `conn`: counting is on the ingest path and reading it must
     /// answer while a flush holds the connection.
     pub watch_activity: Mutex<crate::watch_activity::WatchActivity>,
-    /// The rule index (spec-file-tracking "The rule index") and how far the
+    /// The rule index (doc "The watch rule index") and how far the
     /// ingest filter may trust it. Behind its own lock, held for a pointer copy:
     /// the ingest thread reads it without ever waiting for the connection.
     watch_rules: Mutex<RulesSlot>,
@@ -436,7 +436,7 @@ impl RepoState {
     }
 
     /// Recomputes the watcher's eligible-directory set after a manual write that
-    /// changed `mf_watch`/`mf_ignore` (spec-file-tracking "Watch and Ignore"),
+    /// changed `mf_watch`/`mf_ignore` (doc "Watch and ignore fields"),
     /// so a subtree just made eligible starts being watched immediately (and one
     /// just excluded stops). No-op when the watcher is not running (unit tests,
     /// or a repository being torn down). `conn` is the already-locked

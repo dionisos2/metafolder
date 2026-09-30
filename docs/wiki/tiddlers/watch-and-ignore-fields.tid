@@ -1,0 +1,23 @@
+title: Watch and ignore fields
+tags: [[File tracking]]
+kind: reference
+summary: mf_watch (inherited down the tree, false at the root) says what is tracked; mf_ignore patterns, from the nearest ancestor that has any, say what is left out.
+
+Two fields on directory metarecords decide what is tracked. Both are inherited from the
+nearest ancestor that defines them.
+
+* ''`mf_watch`'' (`bool`) — whether this metarecord and what lies under it are eligible. Set on a directory, it governs the subtree; set on a file, it overrides for that file. The root always has it, `false` at creation: nothing is tracked until you whitelist something.
+* ''`mf_ignore`'' (`string`, one row per pattern) — regular expressions tested against a candidate's path ''relative to its tracking scope'': the nearest ancestor on which `mf_watch` is set directly — the repository root in the common case, giving paths like `/music/.git/config`. The ''nearest ancestor with at least one row'' provides the whole set; sets from different ancestors are ''not merged''.
+
+That last rule is the one trap: writing a single pattern on a directory that had none
+replaces the whole inherited set for its subtree. The GUI offers to copy the inherited
+set first ([[Setting ignore patterns]]); by hand, read the effective set, copy it onto
+the directory, then edit.
+
+The daemon writes `mf_watch = false` on a new root and no `mf_ignore` at all — it has
+no built-in ignore policy. The familiar patterns come from the client, which applies the
+`default` preset at `mf repo init` and at the GUI's repository creation
+([[Ignore presets]]). Paths are repository-relative, so a repository can move without
+invalidating its patterns.
+
+The exact decision: [[Eligibility]].

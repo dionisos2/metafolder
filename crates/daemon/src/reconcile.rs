@@ -129,7 +129,7 @@ pub fn reconcile_full_reported(
 
     // Step 2 — pure walk: collect eligible paths (no stat), BFS by depth.
     let internal_dir = repo.internal_dir();
-    // The rule index (spec-file-tracking "The rule index"): the walk's
+    // The rule index (doc "The watch rule index"): the walk's
     // eligibility questions read nothing from the store.
     let rules = repo.watch_rules(writer.store())?;
     // Declared mount points with nothing mounted on them: their subtrees are
@@ -497,7 +497,7 @@ pub fn reconcile_metarecord_reported(
 
     // Pure walk of the subtree (BFS, no stat) then the determinate stat phase,
     // same shape as the whole-repository reconcile (doc "Tasks").
-    // The rule index (spec-file-tracking "The rule index"): the walk's
+    // The rule index (doc "The watch rule index"): the walk's
     // eligibility questions read nothing from the store.
     let rules = repo.watch_rules(writer.store())?;
     let mut paths: Vec<RelPath> = Vec::new();

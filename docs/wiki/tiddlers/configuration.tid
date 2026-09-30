@@ -5,7 +5,7 @@ summary: All user configuration is one git repository under ~/.config/metafolder
 
 Everything you can configure — the daemon's and the CLI's settings, the GUI's
 settings, keybindings, style, panel types and user commands, the query grammar,
-the ignore presets, the shipped scripts, even this documentation — lives in one
+the ignore presets ([[Ignore presets]]), the shipped scripts, even this documentation — lives in one
 place, `~/.config/metafolder/`, and that place is a ''git repository''. The
 shipped defaults sit on a `default` branch, your configuration on `main`, and an
 update is a git merge of one into the other: your edits survive upgrades, even of

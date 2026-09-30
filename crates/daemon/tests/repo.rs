@@ -67,7 +67,7 @@ fn test_init_creates_structure_and_root_metarecord() {
     // The daemon writes no mf_ignore at init: it carries no built-in ignore
     // policy (doc "No runtime fallback"); the default patterns are
     // applied client-side as the `default` ignore preset by `mf repo init` /
-    // the GUI (spec-file-tracking "Ignore presets").
+    // the GUI (doc "Ignore presets").
     assert!(entry.get_all("mf_ignore").is_empty(), "no ignore patterns are written at init");
 
     // The root entry creation went through the event log.

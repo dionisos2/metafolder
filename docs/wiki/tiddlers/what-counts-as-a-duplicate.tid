@@ -13,7 +13,7 @@ candidates are deliberately narrow:
 * ''Not on an offline volume'', and not unreadable (permission denied, a disconnected mount): both are counted as `skipped` in the summary, neither is an error.
 
 The scan follows the ''tracked set'' — every metarecord of a file — not what is
-watched: `mf_watch` and `mf_ignore` are not consulted. A subtree whose watching
+watched: `mf_watch` and `mf_ignore` are not consulted ([[Watch and ignore fields]]). A subtree whose watching
 was turned off still holds metarecords, and those files are still duplicates of
 each other.
 

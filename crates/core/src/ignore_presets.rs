@@ -1,4 +1,4 @@
-//! Named `mf_ignore` presets (spec-file-tracking "Ignore presets"): reusable,
+//! Named `mf_ignore` presets (doc "Ignore presets"): reusable,
 //! named groups of ignore-pattern regexes living in the user configuration
 //! (`$XDG_CONFIG_HOME/metafolder/core/ignore-presets.toml`, installed by
 //! `metafolder-sync-config`). Expansion (preset name -> patterns) is a pure,

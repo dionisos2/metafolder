@@ -678,7 +678,7 @@ pub(super) const ELIGIBILITY_MAX_PATHS: usize = 1000;
 
 /// `POST /repos/:repo/eligibility`: read-only dry run of the watch/ignore
 /// algorithm for a batch of repo-root-relative paths, each with the reason it
-/// was decided (spec-file-tracking "Eligibility explain"). Answered from the
+/// was decided (doc "Eligibility"). Answered from the
 /// rule index: no path costs a store read.
 pub(super) async fn eligibility_explain(
     State(state): State<Arc<AppState>>,
@@ -727,8 +727,8 @@ pub(super) struct EffectiveIgnoreParams {
 }
 
 /// `GET /repos/:repo/ignore/effective?path=<rel>`: the `mf_ignore` set that
-/// governs a directory and where it comes from (spec-file-tracking "Effective
-/// ignore set") — what a client needs to warn that writing here would shadow an
+/// governs a directory and where it comes from (doc "Eligibility") — what a client needs to warn
+/// that writing here would shadow an
 /// inherited set rather than extend it.
 pub(super) async fn effective_ignore(
     State(state): State<Arc<AppState>>,
@@ -757,7 +757,7 @@ pub(super) async fn effective_ignore(
 }
 
 /// Creates the metarecord for a single filesystem path without activating
-/// tracking (spec-file-tracking "Single-metarecord track"). Parents are created
+/// tracking (doc "Tracking a folder"). Parents are created
 /// with `mf_watch = false`; no eligibility check applies.
 pub(super) async fn track(
     State(state): State<Arc<AppState>>,
@@ -799,7 +799,7 @@ pub(super) async fn track(
         let cache = repo_state.tree();
         // Idempotent: a path already tracked returns its existing metarecord
         // uuid rather than an error, so callers can `track` without first
-        // checking (spec-file-tracking "Single-metarecord track").
+        // checking (doc "Tracking a folder").
         if let Some(existing) = cache.resolve_path(&conn, "mfr_path", &rel.display())? {
             return Ok(Json(json!({"uuid": hex(existing)})));
         }

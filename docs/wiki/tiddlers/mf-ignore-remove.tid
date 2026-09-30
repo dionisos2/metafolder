@@ -1,0 +1,6 @@
+title: mf ignore remove
+tags: [[CLI command]] [[File tracking]]
+kind: reference
+summary: Remove the presets' patterns from the target's mf_ignore set
+
+Removes exactly the presets' patterns from the target's set ([[Setting ignore patterns]]).

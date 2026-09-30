@@ -13,7 +13,7 @@ mf -n <name> repo unload                    # unload it
 
 ''Init'' creates `config.json` and the store ([[Storage]]); it fails if a repository is already
 there. The name defaults to the root directory's name. A new repository watches
-nothing: tracking is opt-in (spec-file-tracking "Watch and Ignore").
+nothing: tracking is opt-in ([[Tracking a folder]]).
 
 ''Load'' makes a daemon work on a repository. It is refused (`409`) when a loaded
 repository already has the same name, keeping `-n <name>` unambiguous, or when

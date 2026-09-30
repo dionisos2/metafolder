@@ -34,8 +34,8 @@ fn setup(prefix: &str) -> (Arc<RepoState>, TempDir) {
         let mut w = Writer::begin(&mut conn, None).unwrap();
         w.set_field(root_uuid, "mf_watch", Value::Bool(true)).unwrap();
         // The daemon no longer writes default mf_ignore at init (patterns come
-        // from the client-side `default` preset, spec-file-tracking "Ignore
-        // presets"); apply the representative default set so these tests keep a
+        // from the client-side `default` preset, doc "Ignore presets"); apply the representative
+        // default set so these tests keep a
         // realistic repo fixture where hidden entries and .metafolder are ignored.
         for pattern in DEFAULT_PATTERNS {
             w.append_field(root_uuid, "mf_ignore", Value::String((*pattern).into())).unwrap();
@@ -46,7 +46,7 @@ fn setup(prefix: &str) -> (Arc<RepoState>, TempDir) {
 }
 
 /// A representative default-like ignore set, mirroring the shipped `default`
-/// ignore preset (spec-file-tracking "Ignore presets").
+/// ignore preset (doc "Ignore presets").
 const DEFAULT_PATTERNS: &[&str] = &[
     r"(^|/)target/([^/]+/)?[^/]+/(deps|build|incremental|examples|\.fingerprint)(/.*)?$",
     r"node_modules(/.*)?$",

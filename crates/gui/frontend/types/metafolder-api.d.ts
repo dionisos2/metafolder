@@ -142,8 +142,8 @@ declare namespace Metafolder {
     /** Absolute paths — one, since `mfr_path` is single-valued; a list for the
      *  shape of the endpoint. */
     metarecordPaths(repo: string, metarecord: { uuid: string }): Promise<string[]>;
-    /** Creates a repository *and* applies its ignore preset (spec-file-tracking
-     *  "Ignore presets"), the same orchestration `mf repo init` uses; returns the
+    /** Creates a repository *and* applies its ignore preset (doc "Ignore presets"),
+     * the same orchestration `mf repo init` uses; returns the
      *  new repo's uuid. `call('POST', '/repos/init', …)` would skip the ignore
      *  step, so repository creation must go through here. */
     initRepo(opts: {
@@ -467,7 +467,7 @@ declare namespace Metafolder {
    *  positionally (name or UUID), order-independent. `plan`/`run` run
    *  non-interactively — conflicts are left unresolved for `plan_resolve`
    *  editing in the plan repo. */
-  /** Ignore presets (spec-gui "Ignore patterns"): the GUI half of `mf ignore`.
+  /** Ignore presets (doc "Setting ignore patterns"): the GUI half of `mf ignore`.
    *  Expansion reads a config file, so it goes through the backend; the
    *  eligibility / effective-set introspection are plain `daemon.call`s. */
   interface Ignore {

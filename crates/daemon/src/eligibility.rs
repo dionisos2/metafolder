@@ -1,9 +1,9 @@
-//! Watch/ignore eligibility (spec-file-tracking "Watch and Ignore"): decides
+//! Watch/ignore eligibility (doc "Watch and ignore fields"): decides
 //! whether a repo-root-relative path should be tracked, from the `mf_watch`
 //! and `mf_ignore` fields inherited along the `mfr_path` ancestor chain.
 //!
-//! Every decision is answered by the [`WatchRules`] index (spec-file-tracking
-//! "The rule index"): the few metarecords holding a rule, keyed by their path,
+//! Every decision is answered by the [`WatchRules`] index (doc "The watch rule index"):
+//! the few metarecords holding a rule, keyed by their path,
 //! so that evaluating a path reads nothing from the store.
 
 use std::collections::{HashMap, HashSet};
@@ -23,7 +23,7 @@ use crate::tree_cache::{normalize_name, TreeCache};
 pub const WATCH_EXCEEDED: &str = "mfr_watch_exceeded";
 
 /// Why [`WatchRules::explain`] decided the way it did — the step of the eligibility
-/// algorithm (spec-file-tracking "Eligibility algorithm") that settled it.
+/// algorithm (doc "Eligibility") that settled it.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Reason {
     /// No `mf_watch` anywhere on the ancestor chain: the opt-in default.
@@ -70,7 +70,7 @@ pub struct Explanation {
 }
 
 /// The `mf_ignore` set that *governs* `rel_path`, and where it comes from
-/// (spec-file-tracking "Effective ignore set").
+/// (doc "Eligibility").
 #[derive(Debug, Clone)]
 pub struct EffectiveIgnore {
     /// Path of the metarecord providing the set, `None` when nothing on the
@@ -159,7 +159,7 @@ struct Carrier {
     ignore: Vec<(String, std::result::Result<Regex, String>)>,
 }
 
-/// The rule index (spec-file-tracking "The rule index"): every metarecord that
+/// The rule index (doc "The watch rule index"): every metarecord that
 /// holds `mf_watch`, `mf_ignore` or `mfr_watch_exceeded`, keyed by its
 /// `mfr_path`. Few entries — the directories the user chose plus the watch
 /// budget's frontier — so a path is evaluated by walking up its own prefixes in
@@ -279,8 +279,8 @@ impl WatchRules {
         rel.components().iter().map(|c| normalize_name(c, self.case_insensitive)).collect()
     }
 
-    /// The eligibility algorithm itself (spec-file-tracking "Eligibility
-    /// algorithm"), keeping the reason it stopped at. Every eligibility decision
+    /// The eligibility algorithm itself (doc "Eligibility"), keeping the reason it stopped at.
+    /// Every eligibility decision
     /// in the daemon comes here — the verdict and its explanation can therefore
     /// never disagree. Fails only on an `mf_ignore` pattern that does not
     /// compile, once a path reaches it.
@@ -372,8 +372,8 @@ impl WatchRules {
         Ok(self.explain(rel)?.eligible)
     }
 
-    /// The `mf_ignore` set that governs writes at `rel` (spec-file-tracking
-    /// "Effective ignore set"). Unlike [`Self::explain`] this *includes* the
+    /// The `mf_ignore` set that governs writes at `rel` (doc "Eligibility").
+    /// Unlike [`Self::explain`] this *includes* the
     /// path itself: the question is "which set governs writes here", not
     /// "which set filtered this entry".
     pub fn effective_ignore(&self, rel: &RelPath) -> EffectiveIgnore {

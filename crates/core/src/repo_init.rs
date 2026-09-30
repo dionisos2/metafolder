@@ -1,6 +1,6 @@
-//! Creating a repository *with its default ignore set* (spec-file-tracking
-//! "Ignore presets" → "Applying presets"): `POST /repos/init` followed by
-//! applying an ignore preset (normally `default`) to the freshly created root.
+//! Creating a repository *with its default ignore set*
+//! (doc "Setting ignore patterns"): `POST /repos/init` followed by applying an
+//! ignore preset (normally `default`) to the freshly created root.
 //! This orchestration lives in `core` so the CLI (`mf repo init`) and the GUI
 //! "create repo" flow behave identically — the daemon itself writes no
 //! `mf_ignore` policy.

@@ -127,27 +127,7 @@ the same =add= prints =0=, and the subsumption removals that follow are unaffect
 
 ** =mf ignore <verb> <presets>= (named ignore presets)
 
-Applies named ignore presets (spec-file-tracking "Ignore presets") to a target
-directory metarecord's =mf_ignore= set. The target is chosen by =-d <path>= (a
-repo-root-relative directory path, resolved to its metarecord through the
-exact-path idiom, as =mf trash -f= does), defaulting to the *root* when omitted.
-
-- =add <presets>= — expand the presets (client-side) and *append* their patterns
-  to the target's =mf_ignore= set (deduplicating rows already present);
-- =remove <presets>= — remove exactly those patterns from the target's set;
-- =set <presets>= — *replace* the target's whole =mf_ignore= set with the
-  expanded patterns (drops all current rows first); =set= with no preset clears
-  the set. This is the =add=⁻¹-style overwrite, mirroring =mf metarecord set=;
-- =list= — the group default (=mf ignore= ≡ =mf ignore list=): lists the
-  available presets with their descriptions; with =-d= it also prints the
-  patterns currently active on the target.
-
-=<presets>= is one or more preset names (comma or space separated), e.g.
-=mf -n music ignore add rust-build,node -d /src=. A missing =ignore-presets.toml=
-is a usage error (exit 2) pointing at =metafolder-sync-config= — never a silent
-fallback. Expansion and preset loading live in =core= (=core::ignore_presets= /
-=core::ignore=), shared with the GUI; the daemon only ever receives the final
-=mf_ignore= strings.
+Moved to the wiki: doc "Setting ignore patterns", doc "mf ignore".
 
 ** =mf field <verb> <id>= (direct row access)
 

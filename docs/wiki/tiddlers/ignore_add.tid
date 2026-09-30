@@ -1,0 +1,6 @@
+title: ignore:add
+tags: [[GUI command]] [[File tracking]]
+kind: reference
+summary: Append an ignore preset's patterns to the target directory
+
+Appends a preset's patterns to the target directory — the file manager's current directory, else the selected directory, else the root; offers to copy an inherited set first ([[Setting ignore patterns]]).

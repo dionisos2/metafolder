@@ -7,7 +7,7 @@
 //! budget and its failures are visible (spec-file-tracking "The watch budget").
 //!
 //! Watches are placed **only on eligible directories** (the opt-in
-//! `mf_watch`/`mf_ignore` scope, spec-file-tracking "Watch and Ignore"). This
+//! `mf_watch`/`mf_ignore` scope, doc "Watch and ignore fields"). This
 //! matches the semantics of the reconcile walk ([`crate::reconcile`]):
 //! symlinked directories are never followed (so the watch cannot escape the
 //! repository root) and an unreadable directory is skipped rather than aborting
@@ -260,7 +260,7 @@ pub fn compute_watched_dirs_timed(
     // (`mf_watch = true` set directly on it — the opt-in default is false).
     let t = std::time::Instant::now();
     // Read once for the whole placement: every directory's eligibility is then
-    // a lookup (spec-file-tracking "The rule index").
+    // a lookup (doc "The watch rule index").
     let rules = match WatchRules::load(conn, cache.is_case_insensitive()) {
         Ok(rules) => rules,
         Err(err) => {
@@ -281,7 +281,7 @@ pub fn compute_watched_dirs_timed(
         }
         // An ineligible root does not end the walk: a directory carrying
         // `mf_watch = true` directly is tracked unconditionally
-        // (spec-file-tracking "Eligibility algorithm"), so the walk judges the
+        // (doc "Eligibility"), so the walk judges the
         // root's entries one by one exactly as reconcile's does — only a
         // repository with `mf_watch = false` *everywhere* is watched nowhere.
         // The descent is still bounded: an ineligible entry is pruned, never

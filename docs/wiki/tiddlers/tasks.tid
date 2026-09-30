@@ -1,6 +1,6 @@
 title: Tasks
 kind: overview
-aliases: task
+aliases: task task-bar
 summary: Long daemon work — a reconcile, a duplicate scan, a flush — runs as a task any client can observe, follow and often stop.
 
 Some daemon work can take a long time on a large repository: a full reconcile, a

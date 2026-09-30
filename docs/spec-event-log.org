@@ -564,8 +564,7 @@ deleted and =log_head.op_id= is set to =NULL=.
 A navigation restores =mf_watch= / =mf_ignore= rows like any other: rolling the
 deletion of a tracked directory back brings the tracking it carried, and rolling
 a tracking change back takes it away. The daemon therefore owes the same
-follow-up a write does (spec-file-tracking "Behaviour when =mf_watch= or
-=mf_ignore= changes"): once HEAD has landed, the watch set is recomputed against
+follow-up a write does (doc "When watch or ignore changes"): once HEAD has landed, the watch set is recomputed against
 the state it landed on.
 
 *Once HEAD has landed* is the whole rule. The atomic navigation recomputes at

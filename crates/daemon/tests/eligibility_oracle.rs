@@ -1,5 +1,5 @@
-//! The rule index against the chain walk it replaced (spec-file-tracking "The
-//! rule index"): on generated trees carrying generated `mf_watch` / `mf_ignore`
+//! The rule index against the chain walk it replaced (doc "The watch rule index"): on generated
+//! trees carrying generated `mf_watch` / `mf_ignore`
 //! / `mfr_watch_exceeded` rules, every probe must get the same verdict, the same
 //! reason and the same provenance from both.
 //!
@@ -52,7 +52,7 @@ fn prefixes(path: &str) -> Vec<String> {
     (0..comps.len()).map(|i| comps[..=i].join("/")).collect()
 }
 
-/// The chain walk (spec-file-tracking "Eligibility algorithm"), reading the
+/// The chain walk (doc "Eligibility"), reading the
 /// store at every step.
 fn oracle(conn: &KvStore, cache: &TreeCache, path: &str) -> Verdict {
     let comps: Vec<&str> = path.split('/').collect();

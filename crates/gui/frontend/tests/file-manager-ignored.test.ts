@@ -1,4 +1,4 @@
-// file-manager exclusion marking (spec-gui "Ignore patterns"): a listing's
+// file-manager exclusion marking (doc "Setting ignore patterns"): a listing's
 // excluded entries — by an mf_ignore pattern or by mf_watch = false — come from
 // a single POST /eligibility, and the same call yields the tracking scope the
 // ad-hoc patterns must be anchored at.

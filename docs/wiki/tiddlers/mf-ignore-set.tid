@@ -1,0 +1,6 @@
+title: mf ignore set
+tags: [[CLI command]] [[File tracking]]
+kind: reference
+summary: Replace the target's whole mf_ignore set with the presets' patterns (with no preset, clears the set)
+
+Replaces the target's whole set with the presets' patterns; with none, clears it — the subtree then inherits again ([[Setting ignore patterns]]).

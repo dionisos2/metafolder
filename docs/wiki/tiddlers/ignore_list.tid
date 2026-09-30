@@ -1,0 +1,6 @@
+title: ignore:list
+tags: [[GUI command]] [[File tracking]]
+kind: reference
+summary: Show the ignore presets and the target directory's patterns
+
+Shows the installed presets and the patterns governing the target directory in the message panel — the read-only way to look before writing ([[Setting ignore patterns]]).
