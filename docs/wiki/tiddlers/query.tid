@@ -20,7 +20,7 @@ the DSL on the client, and is what the GUI's query box takes by default (`mf …
 on the command line). The notes here describe the DSL; the other has its own: [[Simplified query language]].
 
 Both compile to one JSON form ([[Query IR]]), which is what the daemon evaluates —
-from its store's bitmaps, never in SQL.
+from its store's bitmaps, never in SQL ([[Query engine]]).
 
 !! Use it
 

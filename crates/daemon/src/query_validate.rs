@@ -5,8 +5,8 @@
 //! it is a `tree_ref` forest — which is why they used to be made by the SQL
 //! compiler, the only place that asked the database. The bitmap index carries
 //! the same map, so the rejection is made once, before the index runs, and it
-//! no longer depends on what would have served the query (doc "Field aspects", spec-indexing "No
-//! operand runs in SQL").
+//! no longer depends on what would have served the query (doc "Field aspects",
+//! doc "No operand runs in SQL").
 //!
 //! `type_of` answers "what does this field hold", as one of the `value_type`
 //! spellings (`"tree_ref"`, `"string"`, …), or `None` for a field with no data —

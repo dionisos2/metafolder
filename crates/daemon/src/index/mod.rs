@@ -1,4 +1,4 @@
-//! The query evaluator (spec-indexing.org): bitmap/BSI evaluation of a
+//! The query evaluator (doc "Indexing architecture"): bitmap/BSI evaluation of a
 //! [`Query`] over a [`Source`] — the key-value store's derived key spaces
 //! (`crate::kvstore::KvSource`), read in one snapshot per query.
 //!
@@ -7,7 +7,7 @@
 //! by an equivalence battery (`tests/index_oracle.rs`). The oracle is a *test
 //! fixture*, not a second engine: nothing falls back to it, and a shape that
 //! comes back `Unsupported` is a daemon bug, not a slow answer (see [`Gap`],
-//! spec-indexing "No operand runs in SQL").
+//! doc "No operand runs in SQL").
 //!
 //! Nothing is built at load or kept between queries. Shapes it cannot resolve
 //! on its own are handled with caller-supplied seeds ([`QueryRoots`]):
@@ -196,7 +196,7 @@ fn walk_bound(q: &Query, field: &str, roots: &QueryRoots<'_>) -> Option<Uuid> {
 }
 
 /// Text leaves a page without a count defers to the ids a walk visits
-/// (spec-indexing "A page costs the page"): each is a regex over the names of
+/// (doc "Sorting and postings"): each is a regex over the names of
 /// a `tree_ref` field, which the store's forest holds per metarecord.
 struct Residual<'q, 'k> {
     leaves: Vec<&'q Query>,
@@ -236,12 +236,12 @@ type SortEntry = (Vec<Option<SortRep>>, Uuid);
 /// index has not been taught, the index not being in the state it is supposed
 /// to be in, and a cursor the client brought from another query. Only the last
 /// is the user's doing, and it is the only one that is not a `500`
-/// (spec-indexing "Three kinds of gap").
+/// (doc "No operand runs in SQL").
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Gap {
     /// A query shape the index does not serve. Nothing answers it any more —
-    /// the SQL engine is off the serving path (spec-indexing "No operand runs
-    /// in SQL") — so this is a daemon bug reported as a `500`, like `State`.
+    /// the SQL engine is off the serving path (doc "No operand runs in SQL") — so this is a daemon
+    /// bug reported as a `500`, like `State`.
     /// It survives as its own variant because the two say different things to
     /// whoever reads the log: work never taught, against a caller that did not
     /// hand in what it had to.
@@ -292,7 +292,7 @@ fn bad_cursor(what: impl Into<String>) -> Unsupported {
     Unsupported { what: what.into(), gap: Gap::Cursor }
 }
 
-/// How a sorted page is produced (spec-indexing "A page costs the page").
+/// How a sorted page is produced (doc "Sorting and postings").
 /// `Fetch` reads every match's sort key and partially sorts them; `Walk` reads
 /// an ordered structure until the page is full; `Auto` — what the daemon uses —
 /// picks by estimated cost. Forcing one is for the tests that hold both to the
@@ -528,8 +528,8 @@ impl Eval<'_> {
         };
 
         // A page read from an ordered structure until it is full, when that is
-        // cheaper than sorting the whole match set (spec-indexing "A page costs
-        // the page"). `None` means the fetch below does it.
+        // cheaper than sorting the whole match set (doc "Sorting and postings"). `None` means the
+        // fetch below does it.
         let mut matched = matched;
         if let Some(limit) = limit.filter(|&l| l > 0) {
             let walked =
@@ -1277,7 +1277,7 @@ impl Eval<'_> {
 
     /// Transitive `Follows`: all descendants of the sub-query's matches, by
     /// iterative bitmap expansion over the reverse (direct-children) index
-    /// (spec-indexing "FollowsTransitive by iterative bitmap expansion").
+    /// (doc "Indexing architecture").
     fn follows_transitive(
         &self,
         field: &str,

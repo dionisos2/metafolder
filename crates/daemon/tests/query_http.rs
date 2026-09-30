@@ -177,8 +177,8 @@ async fn test_osm_path_on_a_string_field_is_rejected() {
 async fn test_type_dependent_rejections_are_made_before_evaluation() {
     // The rejections that depend on what a field *holds* used to be made by the
     // SQL compiler, so a query only ever met them by falling back to it. They
-    // are made upfront now, from the index's own type map (spec-indexing "No
-    // operand runs in SQL"): each of these is a 400, not an empty result, and
+    // are made upfront now, from the index's own type map (doc "No operand runs in SQL"): each of
+    // these is a 400, not an empty result, and
     // none of them reaches an engine.
     let (app, repo, root) = setup("typecheck").await;
     create(&app, &repo, json!([{"name": "label", "value": {"type": "string", "value": "jazz"}}]))

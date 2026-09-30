@@ -1,0 +1,32 @@
+title: The query oracle
+tags: [[Query engine]]
+kind: reference
+audience: dev
+summary: crates/query-oracle answers every query by reading every row — nothing derived — and the test batteries demand the same answer from the engine.
+
+`crates/query-oracle` is a second, ''naive'' evaluator: it reads every metarecord and
+every row through the `Rows` trait, and nothing derived — no bitmap, no partition, no
+forest key space — rebuilding the forest, the paths and the sort keys from the rows on
+each call. It is slow and, by construction, independent of what it checks: a mistake in
+a derived structure cannot be shared with it.
+
+It answers the same thing, page for page: the same results, cursors of its own (a JSON
+token, `pagination.rs`), the same rejections — it runs the same `query_validate` and
+compiles regexes through the same `regexp::compile`.
+
+The batteries that run both and demand one answer (most through `tests/common/engines.rs`):
+`tests/index_oracle.rs` (equivalence, including the determinism of the forest rewrite),
+`tests/query.rs`, `tests/osm.rs`, `tests/same_as.rs`, `tests/path_aspect.rs`,
+`tests/index_page_strategies.rs` (the fetch and the walk, page after page).
+
+It is a dev-dependency of the daemon and of nothing else, so no shipped binary links it
+and no request is ever served by it (Cargo allows the cycle: the oracle depends on the
+daemon for the storage traits, the validation and the error type). Until September 2026
+it was the old SQL engine; it was held to that one over the whole battery before the SQL
+engine went.
+
+Why keep one: a shape nobody cross-checks rots unnoticed. `MATCHES` under `:parent`
+once answered the `:value` question, and an ordered operator under it compared for
+equality, for as long as the index ''declined'' the aspect and nothing ever made the
+comparison. An engine that only tests is a cost; an index with no second opinion is a
+risk that has already materialised once.

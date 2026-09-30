@@ -1,5 +1,5 @@
 // metarecord-list asks for its first page without a count, and for the count
-// apart (spec-indexing "A page costs the page"): a page the daemon can stop
+// apart (doc "Sorting and postings"): a page the daemon can stop
 // walking at its end would otherwise wait for the whole match set to be
 // evaluated, just to print "/total" in the footer. The rows come first; the
 // total follows when it arrives, and a total for a query the list no longer

@@ -1,0 +1,64 @@
+title: Indexing architecture
+tags: [[Query engine]]
+kind: rationale
+audience: dev
+status: record
+summary: Why queries are set algebra over bitmaps — the complexity wall of conjunctions, one encoding per type, what was deliberately not built — and what became of the resident index.
+
+The design that made filtered, sorted, paginated queries scale (target: about two
+million metarecords), from September 2026. Its resident index is gone — the same
+evaluator now reads the key-value store's derived key spaces ([[Storage]]) — but the
+reasoning holds, and the store follows it.
+
+!! The problem
+
+The data model is entity–attribute–value: about one row per field per metarecord, so
+two million metarecords are sixteen million rows. In SQL, every page re-materialised
+the whole repository and scanned the field rows for its predicate: a full traversal
+was quadratic (×10 data → ×64 time), and even `LIMIT 100` was linear in the repository
+(57 ms at 5 000, 421 ms at 50 000).
+
+!! The complexity wall
+
+* ''One indexed dimension plus a limit'' can be sub-linear: `X LIMIT k` is O(log n + k) when an index yields `X` already in order.
+* ''A conjunction breaks it.'' No single-attribute index yields `X ∩ Y` in order; intersecting two index-accessible sets costs Ω(min(|X|, |Y|)) in the worst case, and a small result does not imply little work.
+* ''A sort independent of the filter'' is the same wall: "this folder, newest first" touches the folder or the date index, whichever is smaller, not the page.
+* ''An exact count'' of a large filtered set is O(m) in a B-tree, which stores no subtree cardinalities.
+
+True O(log n + k) for an independent conjunction needs an index on the ''pair'', and one
+per pair is a combinatorial explosion. So the aim was not to remove the wall but never
+to hit it by accident, to degrade knowingly when a query is intrinsically hard, and to
+shrink the constant of the unavoidable O(n) work by three to four orders of magnitude.
+
+!! Set algebra over compressed bitmaps
+
+The established answer (Druid, Pilosa, Oracle's bitmap indexes): each predicate is a
+roaring bitmap of dense ids, and `AND`/`OR`/`NOT` are word operations that skip empty
+blocks. ''Every field is indexed'', with no declaration — which fields a user filters on
+is not knowable in advance, and requiring one would produce "why is this slow?"
+surprises. The encoding is chosen from the field's one value type
+([[One value type per field name]]): a bitmap per value for categorical fields, reverse
+bitmaps (target → sources) for references and trees, and — in the resident design — a
+bit-sliced index for numeric and date ranges. The store keeps the first two as value
+partitions and postings ([[Sorting and postings]]); a bit-sliced index for numeric
+ranges is deferred there.
+
+Counts are ''exact'' and free: the result is a bitmap before it is counted, which is
+what took the count wall away. Approximate counts, once proposed, were never needed.
+
+The one planning rule is fixed and needs no statistics: bitmap work first, text scans
+last over what survives — "this folder, name matching X" costs the folder (207 → 10 ms).
+A page costs the page: fetch or walk by estimated cost ([[Sorting and postings]]).
+
+!! What was deliberately not built
+
+* ''Per-pair composite indexes'' — combinatorial, low value. The one exception considered, a tree-scoped sort index (folder, sort key) for "browse a folder sorted by date", became the store's ordered forest walk instead.
+* ''kd-trees / BKD-trees as the general index'' — they need a fixed, low-dimensional space; here the schema is open (hundreds of field names), the data sparse and three-valued (`nothing`, unknown have no coordinate), real queries one-dimensional, conjunctions dynamic, writes continuous (the watcher), and references a graph. A BKD index stays conceivable only as an opt-in secondary for one motif — a correlated numeric box (`date ∈ … AND size ∈ … AND rate ∈ …`) — if measurement ever shows bitmap intersection insufficient there.
+* ''The tree as a contiguous id range'' (ids in tree order, a subtree a range) — it would let a large subtree meet a selective predicate without enumerating the subtree, but tree-order ids do not survive moves. The store's descendant bitmaps made a subtree one read anyway ([[The forest in the store]]).
+
+!! What the resident index taught
+
+* A k-way union must be ''one'' union: unioning each child's bitmap into a growing level recopied its containers once per directory, and made an 11 699-file subtree cost 5 ms where the union costs a tenth of that — the same quadratic tail hid in every "union of many value bitmaps".
+* Only directories need asking for children: keeping the set of ids that have a child made a level's files — nearly all of it — cost no lookup (5 → 0.6 ms).
+* Catching a derived structure up must be paid by the ''writer'', not the next reader: a daemon writing unattended all night handed the first query a full rebuild (10.3 s for `GET /fields` on 50 000 metarecords). In the store, derived data is written in the revision's own transaction ([[Writes and atomicity]]).
+* A stored sort key for a path goes stale for a whole subtree at every rename; path keys are rebuilt from the forest instead.

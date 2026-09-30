@@ -1,5 +1,5 @@
 //! The page strategies of the bitmap index against the oracle
-//! (spec-indexing "A page costs the page"). A sorted page can be produced two
+//! (doc "Sorting and postings"). A sorted page can be produced two
 //! ways: *fetch* — every match's sort key, then a partial sort — or *walk* —
 //! an ordered structure (the uuid order, the bit-slices, the forest) read until
 //! the page is full. Both must give exactly the oracle's pages, cursor after

@@ -1,0 +1,43 @@
+title: Query cost model
+tags: [[Query engine]]
+kind: rationale
+audience: dev
+status: proposed
+summary: A proposed POST /query/explain that says, without running a query, what its work decomposes into — so clients decide, instead of the daemon refusing shapes.
+
+''Not implemented.'' A client cannot tell before sending a query whether it will take a
+millisecond or a minute, and that matters wherever a query sits in a loop with a human
+in it — a tagging script asking one question per entry with a live counter, a GUI panel
+opening on whatever was typed. Today the only way to know is to run it; the measured
+half exists after the fact (`POST /query/profile`, `mf slow replay` —
+[[Diagnosing a slow operation]]).
+
+''Describe, do not refuse.'' Refusing "unindexed" shapes behind a flag would freeze an
+implementation detail into the API, and "not served by the index" is not "slow" anyway —
+no shape falls back any more, and an index-served query over a large repository can
+still cost a great deal. So the daemon would ''describe'':
+
+```
+POST /repos/:repo/query/explain      (the body of POST /query)
+→ {"parameters": {"metarecords": 512340, "result": {"value": 1830, "estimated": true}},
+   "cost": {"relative": 61200, "duration_ms": {"low": 240, "high": 900, "calibrated": true},
+            "terms": [{"category": "path.assemble", "count": 512340, "ms": 410, …}, …]},
+   "state": {…}}
+```
+
+and the client drops its counter, warns, or refuses, on its own terms.
+
+The principles of the design:
+
+* ''Priced per provider'' — the forest (resolving and assembling paths, tree sort keys), the derived key spaces (leaves, combinations, subtrees, text scans, sorts, counts), the rows (assembling the page, by uuid). One leaf can raise two categories: `tag ->* "music/jazz"` resolves a path, then takes a subtree.
+* ''A count is the contract, a duration a band.'' Each term's count is a function of the query and the repository's cardinalities, independent of the machine; durations multiply declared constants (a `[query-cost]` table in the daemon configuration) and are always a range, marked uncalibrated when the defaults apply. The one estimated parameter is the match count, and every term depending on it says so.
+* ''Built by the code that does the work'' — computed during the real preparation and classification, never by a parallel classifier: two implementations of one decision is the shape that has produced real bugs here ([[Query validation]] is the precedent). Explain stops before evaluating, so its cost is O(query nodes), whatever the repository — and it is a dry run of the query's `400`s too.
+* ''State is reported, never estimated'' — a write in progress holding the repository, a cold page cache: observed and shown next to the estimate, not folded into it.
+
+What has changed since it was written: it priced the ''resident'' engine. On the store,
+some terms are cheaper than it assumed (a `:path` comparison seeks rather than
+assembling every path; a subtree is one bitmap read), and a better unit is at hand — the
+keys a query reads, which the store already counts for the cost tests and the slow log.
+Open: estimating the match count without value distributions (multiply leaf
+selectivities, and say it is estimated), subtree sizes without walking, and whether to
+publish the weights.

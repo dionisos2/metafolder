@@ -126,7 +126,7 @@ export async function mount(root, metafolder) {
 
   /**
    * The number of metarecords `query` matches, into the footer's "/total" —
-   * asked after the first page (spec-indexing "A page costs the page").
+   * asked after the first page (doc "Sorting and postings").
    * Unknown until it arrives, and left unknown if it fails: the rows are
    * what the list is for.
    * @param {string} r @param {unknown} query

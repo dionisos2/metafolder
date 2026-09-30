@@ -638,8 +638,7 @@ impl<'a> SortKeys<'a> {
     /// of which has its one position, so its one sort key, below it.
     /// `resume = (uuid, key)` starts strictly after the node of `uuid` whose
     /// key is `key` (a keyset cursor). The page strategies of the query index
-    /// use this to stop at the page's end (spec-indexing "A page costs the
-    /// page").
+    /// use this to stop at the page's end (doc "Sorting and postings").
     pub fn walk_sorted(
         &self,
         field: &str,

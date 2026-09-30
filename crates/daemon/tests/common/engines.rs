@@ -3,7 +3,7 @@
 //! The naive oracle (`metafolder-query-oracle`, which reads every row) is the
 //! reference; the evaluator over the store's derived key spaces (plus the
 //! forest, through the route's own preparation) is what the daemon serves from
-//! (spec-indexing "No operand runs in SQL"). The semantics batteries in this
+//! (doc "No operand runs in SQL"). The semantics batteries in this
 //! directory pin what a query *means*, so running them on the oracle alone
 //! would leave the serving path untested by everything they assert.
 

@@ -1,0 +1,31 @@
+title: Query engine
+tags: Query
+kind: overview
+audience: dev
+summary: How the daemon answers a query — one evaluator over the store's derived key spaces, the forest for the leaves no bitmap holds, a naive oracle to check them.
+
+The daemon has ''one'' query engine: `index::Eval`, generic over a `Source`, whose one
+implementation is `KvSource` — the key-value store's derived key spaces
+([[Store tables]]). It serves every filter, sort, count and page; there is no SQL and no
+fallback ([[No operand runs in SQL]]). Each request reads one snapshot of the store and
+nothing stays resident between requests.
+
+A query goes through validation ([[Query validation]]), a preparation in which the
+forest resolves paths and rewrites the leaves no bitmap can hold
+([[The forest as a query provider]]), the evaluation, and the page
+([[How queries are evaluated]]). The store's side of it — the forest's bitmaps, text
+search, sorting and postings — is described under [[Storage]].
+
+A second evaluator exists for tests only: [[The query oracle]].
+
+!! Reference
+
+<<list-kind reference>>
+
+!! Why it works this way
+
+<<list-kind rationale>>
+
+!! Open questions
+
+<<list-kind question>>

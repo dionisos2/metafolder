@@ -159,8 +159,7 @@ pub(super) fn engine(conn: &dyn crate::store::Store) -> Result<Engine<'_>, ApiEr
 /// ([`resolve_query_uuids`]). Path targets and exact-node operands resolve to
 /// metarecords through the tree cache; the leaves the bitmaps cannot serve — a
 /// `:path` predicate, an order-sensitive `osm` path — are resolved against the
-/// same forest and rewritten to `UuidIn` sets (spec-indexing "No operand runs in
-/// SQL").
+/// same forest and rewritten to `UuidIn` sets (doc "No operand runs in SQL").
 fn prepare_indexed_query<'a>(
     conn: &dyn crate::store::Store,
     cache: &crate::tree_cache::TreeCache,
@@ -221,7 +220,7 @@ pub(super) fn resolve_query_uuids(
 }
 
 /// A query the index declined, turned into the answer the client gets. There is
-/// no second engine to ask any more (spec-indexing "No operand runs in SQL"), so
+/// no second engine to ask any more (doc "No operand runs in SQL"), so
 /// only the cursor — the client's own input — can be at fault; anything else is
 /// the daemon failing to serve what it promises, reported as such rather than
 /// absorbed by an engine that would answer slowly.
@@ -251,7 +250,7 @@ fn run_query_filter(
     // The rejections that need the field's type follow, as soon as the index is
     // in hand — and *before* the preparation, which would otherwise rewrite an
     // invalid leaf into the empty set it matches and answer "no rows" where the
-    // user deserves a 400 (spec-indexing "No operand runs in SQL").
+    // user deserves a 400 (doc "No operand runs in SQL").
 
     let sort_by: Vec<crate::index::SortBy> = body
         .sort

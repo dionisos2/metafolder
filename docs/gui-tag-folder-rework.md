@@ -144,8 +144,7 @@ counter and the walk would disagree, and skipping a folder would stop meaning
    to the SQL engine. It now serves the aspect from the reverse index's parent
    partition — the children of a caller-resolved node, passed in through
    `QueryRoots.node` exactly as `->*` path targets and exact-node equality are —
-   and there is no SQL engine left to fall to (spec-indexing "No operand runs in
-   SQL").
+   and there is no SQL engine left to fall to (doc "No operand runs in SQL").
 2. ~~**`mf … --count`.**~~ ✅ *Done (September 2026).* The CLI exposed no count
    at all, and counting by counting lines is O(scope) output per question, which
    defeats the design. `mf metarecord [-q …] get --count` now prints the match

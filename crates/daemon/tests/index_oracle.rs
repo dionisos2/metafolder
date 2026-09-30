@@ -1,4 +1,4 @@
-//! Equivalence oracle for the query evaluator (spec-indexing.org).
+//! Equivalence oracle for the query evaluator (doc "Indexing architecture").
 //!
 //! Every query in the battery is run through BOTH the evaluator over the
 //! key-value store's derived key spaces — the serving path — and the naive
@@ -8,7 +8,7 @@
 //! present/absent overlap, multi-map min/max, ZERO_UUID tree roots.
 //!
 //! The oracle (a SQL engine until September 2026) is a *reference
-//! implementation*, never something a request falls back to (spec-indexing
+//! implementation*, never something a request falls back to (doc "Indexing architecture"
 //! "No operand runs in SQL"). Where a test asserts the evaluator declines a
 //! shape, what follows the decline is a `500`, not a second engine.
 
@@ -1592,8 +1592,7 @@ fn path_aspect_leaves_are_resolved_by_the_forest() {
     // The `:path` aspect was the last shape that sent a whole query to SQL. It
     // needs no SQL at all: the assembled paths come from the store's forest,
     // and the leaf is rewritten to the uuid set it matches, which the bitmaps
-    // then combine with everything else (spec-indexing "No operand runs in
-    // SQL").
+    // then combine with everything else (doc "No operand runs in SQL").
     let (mut o, [_root, _b, _c, _d]) = forest();
     let _unrelated = o.create(vec![Field::new("kind", s("file"))]);
 

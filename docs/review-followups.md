@@ -57,7 +57,7 @@ disponibles dans les deux situations. Implémenté dans `cli/src/log.rs`
 ## 7. `FollowsTransitive` : coût O(taille du sous-arbre) — ✅ les deux coûts levés / ⏳ la linéarité reste
 
 **Mise à jour (septembre 2026).** Les deux coûts décrits ci-dessous ont disparu
-avec l'unification du moteur (spec-indexing « No operand runs in SQL ») : il n'y
+avec l'unification du moteur (doc "No operand runs in SQL") : il n'y
 a plus de compilation SQL du tout, et le store garde, pour chaque champ
 `tree_ref`, le bitmap des descendants de chaque nœud (6516367).
 

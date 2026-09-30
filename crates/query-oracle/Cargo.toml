@@ -5,7 +5,7 @@ edition = "2021"
 publish = false
 
 # The naive query oracle the daemon's evaluator is validated against
-# (spec-indexing "It stays as the oracle"). A dev-dependency
+# (doc "The query oracle"). A dev-dependency
 # of the daemon and of nothing else, so it is never linked into a shipped
 # binary.
 

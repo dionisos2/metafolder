@@ -3,7 +3,7 @@
 //!
 //! Neither runs a query. What reads the `field` table here reads it *for a list
 //! of uuids* — which is all the SQL layer does on the serving path now
-//! (spec-indexing "No operand runs in SQL").
+//! (doc "No operand runs in SQL").
 
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;

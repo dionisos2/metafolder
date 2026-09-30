@@ -1,6 +1,6 @@
 //! The query oracle: every question answered by reading every row — the
 //! second implementation the index and the key-value store are held to
-//! (spec-indexing "It stays as the oracle").
+//! (doc "The query oracle").
 //!
 //! It reads the primary data only — the metarecords and their field rows,
 //! through the storage traits ([`Rows`]) — and nothing derived: no index, no

@@ -1,0 +1,29 @@
+title: The forest as a query provider
+tags: [[Query engine]]
+kind: reference
+audience: dev
+summary: The forest resolves path operands to nodes, and rewrites the two leaves no bitmap holds — :path and an order-sensitive osm path — into uuid_in sets.
+
+Before evaluation, `routes::prepare_indexed_query` asks the forest
+([[The tree cache]]) for what only it can answer:
+
+|!Step |!Applies to |!Hands the evaluator |
+|path targets |`->`, `->*`, `=>*` with a path |the node, in `QueryRoots.path` |
+|exact nodes |`=`/`!=` with a string on a `tree_ref`, `:parent = "<path>"` |the node or `None` — "resolved, no such node" — in `QueryRoots.node` |
+|forest leaves (`forest_query::resolve_path_leaves`) |the `:path` aspect; an `osm` path with several terms or a `/` |the `uuid_in` set it matches, in place of the leaf |
+|sort keys |a `tree_ref` sort |`SortKeys`, the path keys rebuilt from the forest |
+
+The `Option` of an exact node is load-bearing: a `None` entry means "resolved, and it is
+no node" (an empty result), a ''missing'' entry "nobody resolved it" — a daemon bug, so
+the operand can never be answered from the wrong (name-based) bitmap.
+
+Rewriting a forest leaf does not walk the whole forest when it can help it:
+
+* a `:path` comparison ''seeks'' (`PathSeek`): an exact path goes down its names, one read per level; a pattern anchored on a literal prefix seeks the prefix's folder; an ordering enters only the subtrees that can fall on the right side. `:path` ''presence'' needs no walk at all — a node has a path exactly when it has a position;
+* an `osm` path starts from the ''anchors'' of its last term, verifies each anchor's path, and takes its subtree, which the evaluator expands from its descendant bitmap; the anchors are first cut to the folders of an earlier, rarer term when that is cheaper;
+* what is left — an unanchored regex over paths, a last term ending with the separator — walks the stored forest.
+
+The rewrite must be deterministic: the cursor is bound to a hash of the rewritten
+query ([[How queries are evaluated]]). A field with no forest is the benign case: the
+leaf matches nothing, and the rewrite says so. `tests/path_aspect.rs` and
+`tests/index_oracle.rs` hold it to the oracle; `tests/kv_cost.rs` to its bounds.

@@ -1,0 +1,36 @@
+title: Query validation
+tags: [[Query engine]]
+kind: reference
+audience: dev
+summary: Every 400 a query can earn is raised before evaluation, in two passes — one over the IR alone, one that reads the fields' stored types.
+
+A query's refusals are made ''before'' anything evaluates it, so a rejection is a
+property of the query and never of what would have served it (`query_validate.rs`).
+
+!! Over the IR alone (`validate_query`, `check_query_size`)
+
+|!Refused |!Message |
+|a comparison with `nothing` |`comparisons with 'nothing' are not allowed; use is_absent / is_unknown` |
+|an ordered comparison on `bool` or a reference type |`ordered comparison is not supported on bool values` |
+|an empty `and`/`or` |`'and'/'or' need at least one operand` |
+|a pattern that does not compile, or is too large |`invalid regex pattern: …` |
+|more than 2000 nodes |`query too large (N nodes, maximum 2000); decompose it into smaller queries` |
+|more than 200 operands in one `and`/`or` |`a single 'and'/'or' may have at most 200 operands …` |
+
+!! With the stored types (`validate_query_types`)
+
+The second pass takes a `type_of` closure — on the serving path, the index's own field
+catalogue — and refuses:
+
+* `osm` in path mode on a field holding something other than `tree_ref` (`… use osmd`);
+* the `:parent` or `:path` aspect on a field that is not a `tree_ref`;
+* an ordered operator or `MATCHES` under `:parent`, or on a bare `tree_ref` — naming `:value` and `:path` as the candidates;
+* a `:path` operand that is not a string.
+
+A field with no data at all passes (`type_of` answers `None`): the query simply matches
+nothing there, like any predicate on an empty field.
+
+It runs ''before'' the preparation on purpose: the forest rewrite would otherwise turn
+an invalid leaf into the empty set it matches, and answer "no rows" where a `400` is
+owed. The index keeps defensive checks for the same shapes, which can therefore only
+fire on a daemon bug ([[How queries are evaluated]]).

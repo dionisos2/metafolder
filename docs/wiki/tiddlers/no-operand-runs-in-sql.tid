@@ -1,0 +1,42 @@
+title: No operand runs in SQL
+tags: [[Query engine]]
+kind: rationale
+audience: dev
+status: record
+summary: Every operand is answered by one structure and nothing falls back, so the cost floor of a fallback went away — and a gap is reported as the bug it is.
+
+Until September 2026 the daemon had two ways to answer a filter: the resident bitmap
+index, and an SQL compiler it fell back to for the shapes the index declined. The
+decision (September 2026) was that every ''operand'' is answered by the bitmaps or the
+forest, and that nothing falls back.
+
+''Nothing was missing to do it.'' The bitmaps already held a complete value → ids
+partition for every field, strings included, and both the parent and name partitions
+of a `tree_ref`. The two shapes still compiled to SQL — the `:path` aspect and a
+multi-term `osm` path — were already computed by the forest; they merely handed their
+answer back to the SQL compiler as a `VALUES` list. A wiring problem, not a data one.
+
+''What it bought is the floor, not one query's speed.'' A compiled query always carried
+the repository universe and a scan per leaf, so falling back meant paying the
+repository's size — twice when a count was asked. "Find this one file" by exact path had
+been the ''slowest'' query in the repository.
+
+''A gap is a bug.'' With no fallback, a shape the evaluator declines is answered `500`
+naming it — a silent fallback to an engine that answers anyway is exactly how a
+performance collapse hides. The kinds are kept apart (`index::Gap`):
+
+* ''Coverage'' — a shape the evaluator does not serve; nothing does, so a daemon bug;
+* ''State'' — the caller did not hand in what the evaluation needs (the sort keys of a `tree_ref` sort); the serving path always does, so a daemon bug too;
+* ''Cursor'' — a cursor from another query or sort: the client's own input, the one `400`.
+
+The match in `index::eval` is exhaustive on purpose: a new IR variant cannot be added
+without deciding how it is served.
+
+It came in five steps: the forest as a provider for its two leaves
+([[The forest as a query provider]]); fields seen only through `nothing` answered
+natively (a deletion — the case was unreachable); the type-dependent `400`s moved into
+one validation pass run before the preparation ([[Query validation]]); the route
+stopped falling back; and the SQL full-text table that pre-filtered `REGEXP`, maintained
+on every write and read by nobody any more, was dropped. The SQL engine then survived as
+the test oracle, until a naive one replaced it ([[The query oracle]]); SQLite itself
+went soon after ([[How the storage backend was built]]).

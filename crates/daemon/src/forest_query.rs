@@ -1,4 +1,4 @@
-//! The forest as a query provider (spec-indexing "No operand runs in SQL").
+//! The forest as a query provider (doc "No operand runs in SQL").
 //!
 //! The `:path` aspect reads a component no bitmap holds — the path assembled
 //! from the forest root — so the bitmap index declines it.

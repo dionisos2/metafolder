@@ -331,21 +331,27 @@ mémoire de conception parlait d'un endpoint démon =/query/expand= retiré depu
 (=0a7abb4=). Sources retirées : =spec-query.org= (supprimée), la page
 =simplified-query.html= et son entrée d'index ; mémoire =parametrable-query-design=.
 
-** TODO 12. Moteur de requêtes
+** FAIT 12. Moteur de requêtes
 
 (sous Query, tout /dev/)
-- [ ] =Query engine= — overview, dev (l'évaluateur, seule source : le stockage)
-- [ ] =Query validation= — reference, dev (tous les 400 avant évaluation)
-- [ ] =The forest as a query provider= — reference, dev
-- [ ] =The query oracle= — reference, dev (=query-oracle=, tests)
-- [ ] =Indexing architecture= — rationale, dev, record (spec-indexing : le problème, le mur de complexité, bitmaps/BSI, ce qu'on ne construit pas)
-- [ ] =No operand runs in SQL= — rationale, dev
-- [ ] =Query cost model= — rationale, dev, proposed (spec-query-cost, =POST /query/explain=)
-- [ ] =Query planner= — question, dev, proposed
+- [X] =Query engine= — overview, dev
+- [X] =Query validation= — reference, dev (tous les messages)
+- [X] =The forest as a query provider= — reference, dev
+- [X] =The query oracle= — reference, dev
+- [X] =Indexing architecture= — rationale, dev, record
+- [X] =No operand runs in SQL= — rationale, dev, record
+- [X] =Query cost model= — rationale, dev, proposed
+- [X] =Query planner= — question, dev, proposed
+- [X] =How queries are evaluated= (item 10) rattachée ici, l'oracle déplacé dans sa note
 
-Sources : spec-indexing entier ; spec-query-cost entier ; spec-query « Indexing &
-scaling », « MATCHES is answered in memory » ; mémoires =query-planner-reconsidered=,
-=duplicated-predicate-audit=.
+Vérification contre le code : les deux specs décrivaient l'index /résident/ ; le
+magasin n'a pas de BSI (plage numérique linéaire, reportée) ; le =:path= cherche
+(=PathSeek=) au lieu de parcourir toute la forêt, ce que =spec-query-cost=
+tarifait encore en =path.assemble= ; la note du modèle de coût le dit et propose
+les clés lues comme unité. Sources retirées : =spec-indexing.org=,
+=spec-query-cost.org= (supprimées) ; mémoire =query-planner-reconsidered= réduite
+à un pointeur. =duplicated-predicate-audit= reste en mémoire (une méthode) pour
+l'item 41.
 
 ** FAIT 13. Schéma
 

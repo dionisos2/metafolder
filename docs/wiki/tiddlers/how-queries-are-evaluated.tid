@@ -1,5 +1,5 @@
 title: How queries are evaluated
-tags: Query
+tags: [[Query engine]]
 kind: reference
 audience: dev
 summary: One evaluator over the store's bitmaps, no SQL and no fallback; two leaves are rewritten against the forest first, deterministically; a naive oracle checks it.
@@ -14,8 +14,8 @@ answer; a cursor it did not issue is a `400`.
 The steps of one request (`routes::run_query_filter`), each a phase of the slow log
 ([[What the slow log records]]):
 
-# ''Validate'' — the refusals of [[Comparisons]] and [[Query limits]], then those that need the field's stored type, read from the field catalogue (`query_validate.rs`).
-# ''Prepare'' — resolve what goes through the forest: path targets of `->`/`->*`/`=>*` and exact-node operands of `=`/`!=` become node uuids handed to the evaluator (`QueryRoots`); the two leaves no bitmap can hold — a `:path` predicate and an order-sensitive `osm` path — are resolved against the forest and ''rewritten'' into the `uuid_in` set they match (`forest_query.rs`).
+# ''Validate'' — every `400` ([[Query validation]]).
+# ''Prepare'' — resolve what goes through the forest: path targets of `->`/`->*`/`=>*` and exact-node operands of `=`/`!=` become node uuids handed to the evaluator (`QueryRoots`); the two leaves no bitmap can hold — a `:path` predicate and an order-sensitive `osm` path — are resolved against the forest and ''rewritten'' into the `uuid_in` set they match ([[The forest as a query provider]]).
 # ''Evaluate'' — the filter as bitmap operations; text predicates (`MATCHES`, `osmd`) run last inside an `AND`, on the running intersection; a subtree is a descendant bitmap; `count` is the bitmap's cardinality.
 # ''Page'' — fetch or walk, by estimated cost ([[Sorting and postings]]); a page without a count checks text predicates lazily, only where the sort looks ([[Text search in the store]]).
 
@@ -34,8 +34,5 @@ pagination test, which exercised only one of the four exits.
 
 !! The oracle
 
-`crates/query-oracle` is a second evaluator, for tests only: a naive scan of every
-row through the `Rows` trait, rebuilding the forest and the sort keys from the rows,
-nothing derived. `tests/index_oracle.rs` and the semantics batteries run both and
-demand one answer. It is a dev-dependency of the daemon and of nothing else, so no
-shipped binary links it. (It was an SQL engine until September 2026.)
+Every shape is held to a naive second evaluator that reads rows only:
+[[The query oracle]].

@@ -1,0 +1,23 @@
+title: Query planner
+tags: [[Query engine]]
+kind: question
+audience: dev
+status: proposed
+summary: The adaptive planner was dropped when each operand had one way to be answered; on the key-value store there are alternatives again, so a minimal one may be worth having.
+
+The original indexing design had an ''adaptive planner'' choosing an access path per
+operand. It was taken off the roadmap in September 2026: in the resident engine each
+operand had exactly one way to be answered, so there was nothing to choose.
+
+On the key-value store an operand can again be answered several ways — a posting or a
+walk of the value partition, a per-candidate check or a scan of distinct values, a
+fetch or an ordered walk — and small cost choices are already made, each by a fixed
+rule on exact counts: fetch versus walk ([[Sorting and postings]]), lazy text checks
+([[Text search in the store]]), `osm` anchors cut to a rarer term's folders
+([[The forest in the store]]), reading versus walking by uuid order.
+
+So a planner "may be useful again — to be seen" (user, September 2026). If one is
+proposed, it starts minimal and oriented to the store — one cost choice at a time, from
+what profiling finds — not from the old design, whose SQL-specific parts are obsolete
+and whose ambition was probably too great. Meanwhile such local choices are not a
+violation of anything.
