@@ -134,7 +134,7 @@ pub fn listing(log: &dyn Log, q: &LogQuery) -> Result<serde_json::Value> {
 /// asked for, or reaches the root. The walk grows geometrically, so finding
 /// nothing costs one full walk and finding it quickly costs almost nothing —
 /// the common case, a window of the most recent operations, is one bounded
-/// walk (spec-event-log "limit").
+/// walk (doc "Log endpoints").
 fn select_ops(log: &dyn Log, q: &LogQuery, head: Option<i64>) -> Result<Vec<OpRow>> {
     let Some(head) = head else {
         return Ok(match q.mode {

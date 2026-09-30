@@ -1,0 +1,6 @@
+title: mf log list
+tags: [[CLI command]] [[Event log]]
+kind: reference
+summary: Display the revision/operation history
+
+The active line by revision, newest first; `--ops`, `--tree`, `--graph`, filters and limits ([[Reading the log]]).

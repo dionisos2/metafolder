@@ -1,0 +1,37 @@
+title: Reading the log
+tags: [[Event log]]
+kind: guide
+summary: mf log lists the revisions of the active line, --ops expands them, --tree and --graph show every branch; mf log show details one revision.
+
+```
+mf -n music log                                # the last 20 revisions of the active line
+mf -n music log list --ops --limit 5           # … with their operations
+mf -n music log list --metarecord 3f2a…        # only what touched one metarecord
+mf -n music log list --since 2026-09-01 --until @1759000000000
+mf -n music log list --graph                   # every branch, drawn
+mf -n music log show 12                        # one revision, before and after each change
+mf -n music log show HEAD
+mf -n music log head                           # the operation id HEAD is on
+```
+
+`mf log` (`mf log list`) shows the ''active line'' — the history up to HEAD plus the
+continuation a rollback left below it, so a future you rolled back from stays listed for
+redo — one line per revision, newest first, HEAD marked:
+
+```
+> rev 12  2024-01-15 14:32  "before-cleanup"   ← HEAD
+  rev 11  2024-01-15 14:30  (5 ops: create_metarecord ×3, file_moved ×2)
+  rev 10  2024-01-14 09:12
+```
+
+* `--ops` expands each revision into its operations (`op 23  set_field(rating)  on <uuid>`); a revision a revert wrote is tagged `(revert of rev N)`, and each of its operations names the one it undid.
+* `--tree` lists every branch, those off the active line tagged `(branch)`; `--graph` draws them — the active line in the leftmost column, a branch opening a column to its right and joining back with `/`.
+* `--limit N` (default 20 revisions, or operations with `--ops`), `--all`, `--since`/`--until` (ISO-8601 or `@<unix ms>`), `--metarecord <uuid>` combine freely.
+* A reconcile is one revision of maybe tens of thousands of operations; the listing reads at most 500, so such a revision may be shown cut: `[95 of 50000 operations shown]`.
+
+`mf log show <id>` (or `HEAD`) prints each operation of one revision with its values
+before and after; `--raw` the JSON. A `tree_ref` value shows its name, not a resolved
+path. `mf log head` prints the operation HEAD is on — what `--id` targets in a rollback
+or a revert.
+
+In the GUI: the `log` panel.

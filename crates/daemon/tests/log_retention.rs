@@ -57,7 +57,7 @@ fn labelled(conn: &KvStore) -> usize {
 
 #[test]
 fn test_unlimited_retention_keeps_every_revision() {
-    // The default: nothing is ever dropped (spec-event-log "No history is lost").
+    // The default: nothing is ever dropped (doc "History tree and HEAD").
     let (mut conn, _dir) = test_conn();
     for _ in 0..50 {
         write_revision(&mut conn, Retention::UNLIMITED, None);

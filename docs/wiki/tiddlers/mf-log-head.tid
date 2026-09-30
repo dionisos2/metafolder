@@ -1,0 +1,6 @@
+title: mf log head
+tags: [[CLI command]] [[Event log]]
+kind: reference
+summary: Print the id of the operation the history is on (what --id targets)
+
+The id of the operation HEAD is on ([[History tree and HEAD]]).

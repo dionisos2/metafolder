@@ -514,20 +514,28 @@ nomment chacune leur note).
 
 * Journal des événements
 
-** TODO 21. Révisions et historique
+** FAIT 21. Révisions et historique
 
-- [ ] =Event log= — overview (chaque écriture est une révision)
-- [ ] =Revisions and operations= — reference (origine, labels, types d'opération)
-- [ ] =History tree and HEAD= — reference
-- [ ] =Reading the log= — guide (=mf log list/show/head=)
-- [ ] =Log storage= — reference, dev (=op_snapshot=, stabilité des ids et des versions, flux d'écriture)
-- [ ] =Reading the log costs the window= — rationale, dev (=log_view=, =tests/log_cost.rs=)
-- [ ] =Log endpoints= — reference, dev (=GET /log=, révisions, =PATCH= label)
+- [X] =Event log= — overview
+- [X] =Revisions and operations= — reference (types, origine, label ; réversibilité)
+- [X] =History tree and HEAD= — reference
+- [X] =Reading the log= — guide (=mf log list/show/head=)
+- [X] =Log storage= — reference, dev
+- [X] =Reading the log costs the window= — rationale, dev
+- [X] =Log endpoints= — reference, dev (avec =GET /log/since=)
+- [X] notes de commande : =mf log=, =list=, =show=, =head=
 
-CLI : =mf log=, =mf log {list,show,head}=. Sources : spec-event-log « Overview »,
-« Revision and operation », « Revision origin », « History tree », « HEAD
-pointer », « Label », « Operation types », « Storage », « Normal write flow »,
-« GET /log » et révisions, « mf log » ; mémoire =log-read-was-linear-in-the-log=.
+Vérification contre le code : les totaux de =GET /log= sont des statistiques
+d'arbre en O(1), plus des =COUNT(*)= ; l'option =no_log= (opération =unknown=)
+n'a jamais été faite — la note le dit ; =set_metarecord= manquait au tableau des
+types. *À relier aux items 23 à 25* (nommés en texte pour l'instant) : « Revisions
+and operations » → Revert, Filesystem coordination, Automatic retention ;
+« History tree and HEAD » → Pruning the log, Automatic retention. Sources retirées
+(pointeurs) : spec-event-log « Overview », « Revision and operation »,
+« Revision origin », « History tree », « HEAD pointer », « Label », « Operation
+types », « Storage », « Normal write flow », l'introduction de « HTTP API »,
+=GET /log=, les deux routes de révision, =mf log= ; mémoire
+=log-read-was-linear-in-the-log= réduite.
 
 ** TODO 22. Annuler et rétablir
 

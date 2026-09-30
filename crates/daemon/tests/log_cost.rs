@@ -180,7 +180,7 @@ fn a_filtered_bounded_read_looks_past_the_window_for_matches() {
     // One metarecord written at the very start, then 300 revisions touching
     // others. A bounded read filtered on that metarecord must still find its
     // operations: a window is a bound on what is *returned*, not a promise to
-    // stop looking (spec-event-log "limit").
+    // stop looking (doc "Log endpoints").
     let (mut kv, _dir) = common::kv::store();
     let mut w = Writer::begin(&mut kv, None).unwrap();
     let target =

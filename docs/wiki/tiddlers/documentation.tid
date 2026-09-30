@@ -13,6 +13,7 @@ through the `mf` command line and a desktop GUI.
 * [[Data model]] — metarecords, fields and their typed values; reading and editing them
 * [[Daemon]] — the server holding your repositories: loading, configuring, its reports
 * [[Duplicates]] — finding byte-identical files and deleting the copies you choose
+* [[Event log]] — the history of every change: reading it, undoing, reverting, rolling back
 * [[File tracking]] — what is tracked, the watcher, reconcile, ignore patterns
 * [[Query]] — selecting metarecords: the DSL, its predicates, pages and sorts
 * [[Schema]] — types of metarecords and the constraints on their fields

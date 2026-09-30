@@ -1,0 +1,59 @@
+title: Revisions and operations
+tags: [[Event log]]
+kind: reference
+aliases: revision operation op_type origin label
+summary: An operation is one atomic change; a revision groups the operations of one request, with its time, an optional label and who asked for it.
+
+An ''operation'' is one atomic change — setting one field on one metarecord. It is the
+node of the history tree and the unit a navigation crosses.
+
+A ''revision'' groups the operations of one request. Most hold one operation (a field
+edited); batch commands make large ones: a set over K matches is K operations, a
+reconcile creating M files M, a watcher `Remove` of a directory with N descendants N+1
+`file_deleted`. The revision is the smallest unit a rollback moves by (a navigation to an
+operation id can stop inside one); undoing one operation of a revision in place is a
+revert's job.
+
+!! Operation types
+
+|!Type |!Change |!On the filesystem |
+|`create_metarecord` |a metarecord created |— |
+|`delete_metarecord` |a metarecord deleted, its fields with it |— |
+|`set_metarecord` |a metarecord's whole field set replaced |— |
+|`set_field` |every row of one field name replaced |— |
+|`append_field` |one row appended |— |
+|`delete_field` |one or several rows of a name removed |— |
+|`file_deleted` |watcher: the file is gone, `mfr_path` → `nothing` |the content is gone |
+|`file_moved` |watcher: renamed or moved, `mfr_path` changed |a move to undo |
+|`file_modified` |watcher: the content changed, hashes dropped |the old content is gone |
+
+Whether an operation can be undone ''on the filesystem'' is decided when it is undone:
+the metadata ones always; `file_deleted` and `file_modified` only if the content is in
+the trash (the change went through it — an `mf trash -f`, an earlier rollback),
+otherwise only the metadata comes back, and the truth is written again right after;
+`file_moved` only if the file is still where the move left it.
+
+!! Origin
+
+A revision records ''who asked for it'' — `origin`:
+
+* `watcher` — written by the daemon on the filesystem's behalf: the watcher's flush, and the restoration replay after a skipped navigation step;
+* `trash` — the metarecord deletion a trashing writes ([[POST /repos/:repo/metarecords/trash]]);
+* none — every other write a client requested.
+
+The daemon sets it from ''which endpoint was called'', never from a value a client
+sends: a client able to name its origin could pass its writes off as the daemon's, out
+of undo's reach. It is the revision that carries it because the operation types cannot:
+a file ''arriving'' is a `create_metarecord` plus field writes, indistinguishable by type
+from a metarecord you created.
+
+Only `watcher` puts a revision out of undo's reach — not "any origin that is set":
+`trash` exists so a client deciding whether to bring bytes back can tell a trashing from
+an ordinary deletion, while it stays an ordinary, undoable revision
+([[Trash, undo and redo]]). The GUI's log panel dims the watcher's revisions.
+
+!! Label
+
+A revision may carry a ''label'', a human name that serves as a rollback target: the most
+recent revision carrying it (labels are not unique). Set it with the write, or later
+(`PATCH /log/revisions/:id`). A labelled revision can also stop the retention trim.

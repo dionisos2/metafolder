@@ -542,8 +542,8 @@ fn flush_pending_once(repo: &RepoState, report: FlushReport) -> Result<FlushStat
         let mut applied = 0usize;
         for (_, group) in groups {
             let mut writer = repo.writer(&mut conn, None)?;
-            // The filesystem's doing, not a client's (spec-event-log "Revision
-            // origin"): an arrival is a `create_metarecord` like any other, so
+            // The filesystem's doing, not a client's (doc "Revisions and operations"): an arrival
+            // is a `create_metarecord` like any other, so
             // the revision has to say where it came from.
             writer.set_origin(log::ORIGIN_WATCHER)?;
             let mut apply = Apply {

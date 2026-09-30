@@ -451,7 +451,7 @@ pub trait Log {
     /// Every operation, whatever branch it is on, oldest first.
     fn all_ops(&self) -> Result<Vec<OpRow>>;
     /// The active line through `head`: its ancestors, then the branch that
-    /// continues below it (spec-event-log "Active line"), oldest first.
+    /// continues below it (doc "Log endpoints"), oldest first.
     fn active_line(&self, head: i64) -> Result<Vec<OpRow>>;
     /// Whether an operation has a child (a continuation below it).
     fn has_children(&self, op: i64) -> Result<bool>;

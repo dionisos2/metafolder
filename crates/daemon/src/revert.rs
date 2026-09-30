@@ -252,7 +252,7 @@ pub fn apply(writer: &mut Writer, ops: &[OpRow]) -> Result<usize> {
     let mut done = 0usize;
     for op in ops.iter().rev() {
         // Everything written for this op names it, so a later reader can tell a
-        // correction from a change (spec-event-log "reverts_op_id").
+        // correction from a change (doc "Log storage").
         writer.reverting(Some(op.id));
         // Read through the writer's own transaction, so the state the revert
         // is computed from is the state it is written into.

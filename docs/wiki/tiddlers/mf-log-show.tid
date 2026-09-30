@@ -1,0 +1,6 @@
+title: mf log show
+tags: [[CLI command]] [[Event log]]
+kind: reference
+summary: Show full details of one revision (a revision id, or HEAD)
+
+One revision's operations with their values before and after; `--raw` for the JSON ([[Reading the log]]).

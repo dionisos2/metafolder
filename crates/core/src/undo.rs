@@ -21,11 +21,11 @@
 use serde_json::Value as Json;
 
 /// The `revision.origin` the daemon stamps on a revision it wrote on the
-/// filesystem's behalf (spec-event-log "Revision origin").
+/// filesystem's behalf (doc "Revisions and operations").
 pub const ORIGIN_WATCHER: &str = "watcher";
 
 /// Operation types the watcher records on the filesystem's behalf
-/// (spec-event-log "Operation types"). Everything else is a client's write.
+/// (doc "Revisions and operations"). Everything else is a client's write.
 const WATCHER_OP_TYPES: [&str; 3] = ["file_deleted", "file_moved", "file_modified"];
 
 /// Whether an operation type is one the watcher writes for the filesystem,
@@ -50,7 +50,7 @@ pub struct LogRevision {
     /// `Some("watcher")` for a revision the daemon wrote on the filesystem's
     /// behalf; `None` for a client's own write — and for every revision of a
     /// database written before the column existed, where the operation types
-    /// are the fallback (spec-event-log "Revision origin").
+    /// are the fallback (doc "Revisions and operations").
     pub origin: Option<String>,
 }
 
@@ -90,7 +90,7 @@ impl LogOp {
     }
 
     /// An unlogged write carries no snapshots, so neither mechanism can undo
-    /// it (spec-event-log "Operation types").
+    /// it (doc "Revisions and operations").
     fn is_unknown(&self) -> bool {
         self.op_type == "unknown"
     }
@@ -205,7 +205,7 @@ impl RevisionOnLine<'_> {
     }
 
     /// Whether the daemon wrote it for the filesystem rather than a client
-    /// asking for it — the revision says so (spec-event-log "Revision origin"),
+    /// asking for it — the revision says so (doc "Revisions and operations"),
     /// and on a database written before it could, the operation types are the
     /// fallback: sound (the watcher does write those types) without being exact
     /// (a file *arriving* is a `create_metarecord`). An unlogged write is

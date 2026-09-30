@@ -1,4 +1,4 @@
-//! The logged write flow (spec-event-log "Normal write flow"). Every write to
+//! The logged write flow (doc "Log storage"). Every write to
 //! the data tables goes through a [`Writer`], which records a revision, one
 //! operation per atomic change with before/after snapshots, and keeps the
 //! `log_head` pointer consistent with the data tables — all in one store
@@ -18,8 +18,8 @@ use crate::store::{Begin, Database, Log, NewOp, Restoration, Store, WriteTxn};
 use crate::version;
 
 /// The `revision.origin` of a revision the daemon writes on the filesystem's
-/// behalf — the watcher's flush and the restoration replay (spec-event-log
-/// "Revision origin"). A client's own write leaves the column NULL.
+/// behalf — the watcher's flush and the restoration replay (doc "Revisions and operations").
+/// A client's own write leaves the column NULL.
 pub const ORIGIN_WATCHER: &str = "watcher";
 
 /// `revision.origin` for the metarecord deletion a trashing writes
@@ -27,7 +27,7 @@ pub const ORIGIN_WATCHER: &str = "watcher";
 ///
 /// Deliberately *not* `watcher`: a trashing is a write the user asked for and
 /// must stay undoable, and only `watcher` disqualifies a revision from being
-/// undone (spec-event-log "Revision origin"). It is a distinct value only so
+/// undone (doc "Revisions and operations"). It is a distinct value only so
 /// that a client walking a rollback knows the bytes of a deleted metarecord are
 /// in the trash-bin rather than gone.
 pub const ORIGIN_TRASH: &str = "trash";
@@ -35,7 +35,7 @@ pub const ORIGIN_TRASH: &str = "trash";
 /// Maximum depth of a TreeRef chain (spec-main invariant).
 pub const MAX_TREE_DEPTH: usize = 1000;
 
-/// Operation types recorded in the log (spec-event-log "Operation types").
+/// Operation types recorded in the log (doc "Revisions and operations").
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum OpType {
     CreateRecord,
@@ -117,8 +117,8 @@ pub struct OpRow {
     /// database written before the column existed. Allowed to dangle: pruning
     /// may remove the operation it names.
     pub reverts_op_id: Option<i64>,
-    /// The `origin` of the revision this operation belongs to (spec-event-log
-    /// "Revision origin"), carried along so a reader never has to go back to
+    /// The `origin` of the revision this operation belongs to (doc "Revisions and operations"),
+    /// carried along so a reader never has to go back to
     /// the revision for it. `None` for a revision nothing stamped.
     ///
     /// It is what separates two operations the op type alone cannot: an
@@ -146,7 +146,7 @@ pub enum Delta {
 
 /// The active line through `head` from its ancestry (HEAD-first) and every
 /// operation: the ancestors root-first, then the branch below `head` that
-/// leads to the newest operation (spec-event-log "Active line"). Pure, so
+/// leads to the newest operation (doc "Log endpoints"). Pure, so
 /// every storage backend walks it the same way.
 pub(crate) fn active_line_of(ancestry: Vec<OpRow>, all: Vec<OpRow>, head: i64) -> Vec<OpRow> {
     // Ancestry is HEAD→root; reverse to root→HEAD.
@@ -625,8 +625,8 @@ fn apply_inverse(tx: &dyn WriteTxn, op: &OpRow) -> Result<()> {
         other => anyhow::bail!("unsupported op_type '{other}' in the log"),
     }
     // The version is not restored from the log: it is a function of the rows
-    // this step has just put back (spec-event-log "Field ID and version
-    // stability"). `entity_version_before`/`after` are provenance, and nothing
+    // this step has just put back (doc "Log storage"). `entity_version_before`/`after` are
+    // provenance, and nothing
     // reads them to decide what to write.
     resync_version(tx, entity)
 }
@@ -671,8 +671,8 @@ fn apply_forward(tx: &dyn WriteTxn, op: &OpRow) -> Result<()> {
         other => anyhow::bail!("unsupported op_type '{other}' in the log"),
     }
     // The version is not restored from the log: it is a function of the rows
-    // this step has just put back (spec-event-log "Field ID and version
-    // stability"). `entity_version_before`/`after` are provenance, and nothing
+    // this step has just put back (doc "Log storage"). `entity_version_before`/`after` are
+    // provenance, and nothing
     // reads them to decide what to write.
     resync_version(tx, entity)
 }
@@ -945,7 +945,7 @@ impl<'c> Writer<'c> {
     }
 
     /// Marks this revision as written on the filesystem's behalf rather than at
-    /// a client's request (spec-event-log "Revision origin"). The watcher's
+    /// a client's request (doc "Revisions and operations"). The watcher's
     /// flush and the restoration replay set it; every other write leaves it
     /// unset, which is what "a client asked for this" means.
     ///

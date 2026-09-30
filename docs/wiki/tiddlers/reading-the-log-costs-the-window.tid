@@ -1,0 +1,28 @@
+title: Reading the log costs the window
+tags: [[Event log]]
+kind: rationale
+audience: dev
+summary: A bounded read of the log reads what it returns — not the log behind it — and a filter widens the walk rather than returning nothing.
+
+"Loading the log takes a long time" (user report, September 2026). Reproduced by grafting
+200 000 revisions into a bench repository, it had two independent causes:
+
+* `GET /log` built its table of timestamps from ''every'' revision, even for a window of fifty operations — 330–500 ms on 200 000 revisions. It now reads only the revisions of the operations it returns: 15 ms.
+* `mf log list`, which shows twenty ''revisions'', sent the daemon no bound and cut on its side — seven seconds in the daemon and about two minutes formatting. Hence the `revisions=N` parameter: 14 ms.
+
+Then a reconcile: one revision of 100 000 operations made twenty revisions 100 000
+operations again — 0.7 s and 395 MiB for twenty lines. So `revisions` and `limit` are
+two ''maxima'' (the user's call, replacing "revisions are always whole"): the walk stops
+at whichever it reaches first, and the one revision it may cut, the oldest, says so
+(`partial`, `op_count`).
+
+''A bound bounds what is returned, not the search.'' With a filter (`metarecord_uuid`,
+`since`, `until`), the walk widens geometrically until it has what was asked for or
+reaches the root: `--limit 10` on one old metarecord used to return nothing, because
+none of the repository's last ten operations happened to be its.
+
+What stays proportional to the log, by construction: `mode=tree` (a graph needs every
+branch). The totals are B-tree statistics now, not counts. The read side was moved out
+of the routes into `log_view.rs` so its cost could be tested on its own:
+`tests/log_cost.rs` holds a fifty-operation window to the same number of keys on a log of
+five thousand and of five hundred thousand ([[Storage]]).

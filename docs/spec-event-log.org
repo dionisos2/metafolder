@@ -3,175 +3,33 @@
 
 * Overview
 
-Every write operation on metadata metarecords is recorded in an append-only event
-log stored in the repository's store, beside its data. The log maintains a tree of /operations/
-that enables:
-
-- *Auditing*: full history of changes to any metarecord.
-- *Rollback*: navigating the history tree to any past or future state.
-- *Revert*: undoing one past revision or operation in place, by writing the
-  state it replaced as a new revision rather than by moving HEAD.
-- *Undo* / *Redo*: taking back the newest change /the user/ made — and taking
-  that back in turn — choosing between the two mechanisms above according to
-  what has been written since (see [[*Undo]], [[*Redo]]).
-- *Non-destructive branching*: after rolling back, any new write creates a new
-  branch — previously "future" operations are never lost.
-
-The current database state reflects exactly the operation pointed to by /HEAD/.
-Formally: replaying, in order, all operations on the path from the root to HEAD
-reproduces the current state of all data tables.
+Moved to the wiki: doc "Event log".
 
 * Concepts
 
 ** Revision and operation
 
-An /operation/ is one atomic change (e.g. setting one field on one metarecord). It
-is the node of the history tree and the unit of crash-safe rollback.
-
-A /revision/ groups all operations produced by a single API call. It is a
-grouping annotation on operations, not a tree node. It is not possible to roll
-back a single operation within a multi-operation revision via the high-level
-rollback API — the revision remains the minimum unit of user-facing rollback.
-Direct operation-level navigation is available via =op_id=. Undoing one
-operation of a revision /in place/ is a different matter, and is what
-[[*Revert]] is for.
-
-In practice, most revisions contain a single operation (a user editing one
-field). Revisions with many operations arise from batch commands: a =batch_set=
-on K metarecords produces K operations; a =reconcile= creating M files produces M
-operations; a watcher =Remove= on a directory with N descendants produces N+1
-=file_deleted= operations. For large batches, operations are inserted in bulk.
+Moved to the wiki: doc "Revisions and operations".
 
 ** Revision origin
 
-A revision records /who asked for it/. =revision.origin= is:
-
-- =watcher= for the revisions the daemon writes on the filesystem's behalf — the
-  watcher's flush and the restoration replay that follows a skipped navigation
-  step;
-- =trash= for the metarecord deletion a trashing writes
-  (doc "POST /repos/:repo/metarecords/trash");
-- =NULL= for every other write a client requested.
-
-The origin is set by the daemon, from *which endpoint was called* — never from a
-value a client supplies. A client able to name its own origin could pass its
-writes off as the daemon's and put them out of reach of [[*Undo]].
-
-It is the revision that carries this, not the operation types, because the types
-cannot express it. A file *arriving* is recorded as a =create_metarecord= plus
-its field writes, indistinguishable by type from a metarecord the user created;
-only =file_deleted=, =file_moved= and =file_modified= name the watcher, and they
-cover the changes to an /existing/ record, not the new ones. A reader that judged
-by type alone would read every arrival as the user's work.
-
-The distinction exists for [[*Undo]], which must not rewind past what the
-filesystem really did. It is also displayed: the GUI's log panel dims the
-watcher's revisions (spec-gui "Event log").
-
-Only =watcher= carries that disqualification — *not* "any origin that is set".
-=trash= exists precisely so that a trashing can be told apart from an ordinary
-deletion by a client deciding whether to bring bytes back, while remaining an
-ordinary, undoable revision the user asked for. Reading the rule as "the origin
-is not NULL, so it is the daemon's" would make trashing the one destructive
-operation that cannot be taken back — which is the opposite of the point.
-
-A database written before the column existed has =NULL= everywhere; a reader
-falls back to the operation types there, which is sound (the watcher does write
-those types) without being exact (an arrival still reads as the user's).
+Moved to the wiki: doc "Revisions and operations".
 
 ** History tree
 
-Operations form a tree: each operation has a =parent_id= pointing to the
-operation it was created from (=NULL= for the root). The /HEAD/ pointer metarecords
-the current operation — the one whose state is reflected in the data tables.
-
-Operations within the same revision form a chain: the first operation's
-=parent_id= is the HEAD before the revision; each subsequent operation's
-=parent_id= is the previous operation in the revision. HEAD advances to the
-last operation of the revision on commit.
-
-Example (two revisions, =rev_1= with one op and =rev_2= with two ops):
-
-#+BEGIN_SRC
-op_1 [rev_1] ← op_2 [rev_2] ← op_3 [rev_2] ← HEAD
-#+END_SRC
-
-After rolling back to =op_1= and writing =op_4=:
-
-#+BEGIN_SRC
-op_1 ← op_2 ← op_3   ← branch (still reachable)
-     └─ op_4           ← HEAD
-#+END_SRC
-
-History is lost in exactly two ways, both configured: an explicit prune (see
-[[*Log pruning]]) and the retention limit (see [[*Automatic retention]]), which
-keeps the last 200 revisions out of the box. Nothing else drops an operation —
-a rollback abandons a branch, it does not delete it.
+Moved to the wiki: doc "History tree and HEAD".
 
 ** HEAD pointer
 
-A singleton table =log_head= records the current operation. All data tables
-(=metadata=, =field=) reflect exactly the state of the
-operation at HEAD.
-
-Invariant: HEAD and the data tables are always mutually consistent. Every HEAD
-update and every data change execute in a single transaction, so a crash
-leaves both in a consistent state.
+Moved to the wiki: doc "History tree and HEAD".
 
 ** Label
 
-A revision may carry an optional human-readable =label=. A label serves as a
-named rollback target: ={"label": "before-cleanup"}= navigates HEAD to the last
-operation of the most recent revision carrying that label.
-
-A label is set either at write time (passed in the API call that creates the
-revision) or post-hoc via =PATCH /log/revisions/:rev_id=. Labels are not
-unique; rollback to a label targets the most recent matching revision.
+Moved to the wiki: doc "Revisions and operations".
 
 ** Operation types
 
-| =op_type=        | Description                                              | Filesystem coordination   |
-|------------------+----------------------------------------------------------+---------------------------|
-| =create_metarecord=   | New metadata metarecord created                               | None                      |
-| =delete_metarecord=   | Metarecord deleted (all fields cascade)                       | None                      |
-| =set_field=      | All rows for =(uuid, field_name)= replaced               | None                      |
-| =append_field=   | One field row appended (multi-map)                       | None                      |
-| =delete_field=   | One field row removed (by =field_id=)                    | None                      |
-| =file_deleted=   | Watcher: file removed; =mfr_path= → =Nothing=            | File is gone              |
-| =file_moved=     | Watcher: file renamed/moved; =mfr_path= TreeRef updated  | =mv= required (see below) |
-| =file_modified=  | Watcher: file content changed; hashes invalidated        | Content is gone           |
-| =unknown=        | Unlogged write; marks a weak root (see [[*Normal write flow]]) | None               |
-
-Reversibility is assessed dynamically at rollback time, not stored statically:
-
-- =create_metarecord= … =delete_field=: always fully reversible (pure metadata).
-- =file_deleted=, =file_modified=: reversible at the filesystem level *only if
-  the content is in the trash-bin* — the change passed through it, e.g. an
-  =mf trash -f= or an earlier rollback. The CLI then puts the file back and lets
-  the daemon apply the real inverse, so content and metadata come back together.
-  A trashed *directory* covers its whole subtree: restoring that one blob makes
-  every descendant's step reversible too, whatever order the cascade is
-  navigated in.
-
-  Otherwise the content is gone and the CLI passes =skip: true=, which skips the
-  *filesystem* action and nothing else. The daemon still applies the metadata
-  inverse — HEAD has to cross the operation, and the HEAD↔data invariant forbids
-  passing one without applying it — and then enqueues a /restoration operation/
-  that re-records the truth on the new branch once the navigation ends (see
-  [[*Filesystem coordination]]). So a =file_deleted= has its =mfr_path=
-  restored and set back to =Nothing= one revision later, and a =file_modified=
-  has its hashes cleared with =mfr_size= and =mfr_mtime= left stale until a
-  reconcile. The state one ends up in is truthful; it takes two revisions to
-  get there.
-- =file_moved=: reversible if and only if the file still exists at its current
-  location at rollback time. If the file has since been deleted or moved again,
-  the =mv= cannot be executed and only the metadata can be restored (stale
-  path).
-
-That assessment is about the filesystem, it is genuinely dynamic, and it applies
-to a rollback and to a revert alike. Whether an operation can be undone /on its
-own/ is a different question, structural and answered from the log alone — see
-[[*Operation dependencies]]. It concerns the revert only.
+Moved to the wiki: doc "Revisions and operations".
 
 ** Revert
 
@@ -189,7 +47,7 @@ by one entry saying so. Nothing is removed from the history: the mistake and its
 correction are both on the record, which is what an audit log is for.
 
 A revert is an ordinary write in every other respect. It goes through
-[[*Normal write flow]] like any other; it can itself be reverted (restoring the
+doc "Log storage" like any other; it can itself be reverted (restoring the
 original change); it can be rolled back across, pruned, and trimmed by
 retention. The only thing that marks it is a =reverts_op_id= column naming what
 each of its operations undid, kept for display and provenance.
@@ -240,7 +98,7 @@ guarantees structurally what the dependency check must establish explicitly for
 a revert, which is why the check belongs to the revert alone.
 
 It is a separate axis from the filesystem reversibility of
-[[*Operation types]], and the two are evaluated independently: dependency asks
+doc "Revisions and operations", and the two are evaluated independently: dependency asks
 whether the metadata change is still meaningful, filesystem reversibility
 whether the file action that accompanies it is possible.
 
@@ -327,7 +185,7 @@ undoes that one:
 A revision is *not* a candidate when:
 
 - it is the daemon's — and that means =origin = 'watcher'= exactly, not merely
-  an origin that is set (see [[*Revision origin]]); on a pre-migration database,
+  an origin that is set (see doc "Revisions and operations"); on a pre-migration database,
   when all its operations are watcher types. A revision stamped =trash= *is* a
   candidate: the user asked for it;
 - it is *itself* a revert (any of its operations carries =reverts_op_id=).
@@ -408,130 +266,11 @@ would find its target "already undone" and refuse to take it back a second time.
 
 ** Storage
 
-The log lives in the repository's key-value store, beside the data it
-describes (doc "Store tables"): one transaction writes both. A
-*revision* holds its timestamp, optional label and origin; an *operation*
-holds the fields below; each operation keeps its before and after snapshot
-rows; HEAD is a record of its own; the restoration ops a skipped navigation
-step leaves (see [[*Coordinated navigation]]) wait in their own table and
-survive a daemon crash. Watcher events are not held here: they are buffered in
-memory (doc "Event batching"). The log was a set of SQLite
-tables until September 2026 (=revision=, =operation=, =op_snapshot=,
-=log_head=, =pending_operation=); their names survive in the text below.
-
-| Operation field         | Holds                                                                 |
-|-------------------------+-----------------------------------------------------------------------|
-| =id=                    | never reused                                                          |
-| =parent_id=             | the operation it follows; none for the root                          |
-| =rev_id=                | its revision                                                          |
-| =seq=                   | its position in the revision (1-based)                                |
-| =op_type=               | see Operation types                                                   |
-| =entity_uuid=           | the metarecord it changed                                             |
-| =entity_version_before= | the metarecord's version before it (provenance, not authority)        |
-| =entity_version_after=  | … and after it                                                        |
-| =field_name=            | the field it changed, for a field operation                           |
-| =reverts_op_id=         | the operation it undid, for one a revert wrote (see [[*Revert]])      |
-
-Beside them the store keeps an operation's children, a revision's operations
-in =seq= order, and a metarecord's operations, so a walk down the tree, a
-revision's listing and a metarecord's history are each a prefix read.
-
-=reverts_op_id= is set on each operation a [[*Revert]] writes, naming the
-operation it undid. Two readers use it: displays, and [[*Undo]] — which is why a
-revert has to record it and not merely look like one. Nothing in the /write/
-path branches on it, and it is allowed to dangle: [[*Log pruning]] and a
-retention trim (see [[*Automatic retention]]) may remove the operation it
-points at, and neither goes back to clear it.
-
-*** Snapshot rows (=op_snapshot=)
-
-Each operation stores its before/after state as snapshot rows, in the column
-form of a field row (doc "The column form of a value"). =is_new=0= = state before the op;
-=is_new=1= = state after. =field_id= is the original =field.id= and is
-restored exactly on inverse (see [[*Field ID and version stability]]).
-
-Per operation type:
-
-| =op_type=       | =is_new=0= rows (before)                             | =is_new=1= rows (after)                          |
-|-----------------+------------------------------------------------------+--------------------------------------------------|
-| =create_metarecord=  | none                                                 | all field rows of the created metarecord              |
-| =delete_metarecord=  | all field rows of the deleted metarecord                  | none                                             |
-| =set_field=     | all previous rows for =(uuid, field_name)=           | the new single row                               |
-| =append_field=  | none                                                 | the appended row                                 |
-| =delete_field=  | the deleted row                                      | none                                             |
-| =file_deleted=  | the =mfr_path= row(s) before deletion                | one row: =value_type=nothing=                    |
-| =file_moved=    | the previous =mfr_path= row(s)                       | the new =mfr_path= row(s)                        |
-| =file_modified= | =mfr_size=, =mfr_mtime=, hash rows before            | new =mfr_size=, =mfr_mtime= rows                 |
-
-For =file_deleted= on a directory: each descendant metarecord receives its own
-=file_deleted= operation within the same revision. Operations and their
-snapshot rows are inserted in bulk for large cascades.
-
-*** Field ID and version stability
-
-A field row's id is never reused. Snapshot rows preserve the original
-=field_id=. On inverse, the daemon restores rows under their original id. This ensures that
-operations on other branches that reference the same =field_id= remain valid
-after navigating across that operation's boundary.
-
-=metadata.version=, by contrast, is *not* restored from the log — it is
-*recomputed*. The version is a hash of the metarecord's content
-(doc "Metarecord version"), so restoring the
-field rows restores the version with them: navigation recomputes it from the
-rows it has just put back, for each metarecord it touched, and what it obtains
-is necessarily the version that state carried when it was first written. This is
-what keeps =version= a reliable cache key across rollback/redo cycles.
-
-The contrast with =field.id= is the point. A row id is an identifier the log
-must carry, because nothing else determines it. A version is a *function of the
-state*, so carrying it would only create a second source of truth that could
-disagree with the rows. There is no allocator to keep monotonic across branches,
-nothing to rebuild when navigation recreates a metarecord whose row had been
-deleted, and no way for a version to describe a state other than the one it
-sits on.
-
-=entity_version_before= / =entity_version_after= remain on every operation —
-both hashes are known at write time and cost nothing to record — but they are
-*provenance, not authority*: they say which state an operation moved away from
-and towards, which is what a client correlating an operation with something
-observed from outside the revision needs ([[*Filesystem coordination]]). No
-navigation step reads them to decide what to write.
+Moved to the wiki: doc "Log storage".
 
 ** Normal write flow
 
-Every API call that modifies metadata:
-
-1. Opens a write transaction.
-2. Inserts one =revision= row with the optional =label= from the request.
-3. For each change (first to last):
-   a. Records the before state: reads the affected =field= rows and the current
-      =metadata.version=, to be written as =op_snapshot= rows (=is_new=0=).
-   b. Applies the change to the data tables (=metadata.version= is updated
-      incrementally from the rows added and removed — see
-      doc "Metarecord version").
-   c. Records the after state: reads the resulting =field= rows, written as
-      =op_snapshot= rows (=is_new=1=).
-   d. Inserts one =operation= row with:
-      - =parent_id= = current =log_head.op_id= (the running HEAD within this transaction)
-      - =rev_id= = the revision created in step 2
-      - =seq= = incrementing from 1
-      - =entity_version_before= = the version recorded in step 3a
-      - =entity_version_after= = the version the record holds after step 3b
-   e. Inserts the =op_snapshot= rows for this operation.
-   f. Updates the running HEAD to this new operation's =id=.
-4. Writes the final =log_head.op_id= to the singleton row.
-5. Commits the transaction.
-
-For batch operations, all =operation= rows are inserted together in a single
-=INSERT= after computing all =parent_id= values.
-
-All write operations — including =reconcile= — follow this flow and produce
-log metarecords. If performance ever becomes a concern for large bulk operations,
-an optional =no_log= flag may be added to the relevant API endpoints. When
-used, a single =unknown= operation is inserted at HEAD instead of individual
-change metarecords. It has no =op_snapshot= rows, acts as a weak root (navigation before
-it is impossible, like after Prune-before), and the =unknown= flag is noted
-in the response.
+Moved to the wiki: doc "Log storage".
 
 ** Navigation
 
@@ -893,7 +632,7 @@ a revert happens to restore a metarecord to a state it already held, it recovers
 that state's version too — which is correct, because it *is* that state. Only
 the =field.id= values differ, and they are not content.
 
-That is deliberate, and the contrast with [[*Field ID and version stability]] is
+That is deliberate, and the contrast with doc "Log storage" is
 the point. Navigation recreates a state the log already described, so it can and
 must restore its identifiers exactly. A revert produces a state the repository
 has never been in — the reverted change is gone, everything after it is still
@@ -1061,220 +800,19 @@ If the daemon crashes during a coordinated navigation:
 
 ** HTTP API
 
-#+BEGIN_SRC
-GET   /repos/:repo_uuid/log
-GET   /repos/:repo_uuid/log/since?op=<id>
-GET   /repos/:repo_uuid/log/revisions/:rev_id
-PATCH /repos/:repo_uuid/log/revisions/:rev_id
-POST  /repos/:repo_uuid/log/prune
-POST  /repos/:repo_uuid/rollback
-GET   /repos/:repo_uuid/revert/plan
-POST  /repos/:repo_uuid/revert
-#+END_SRC
-
-=GET /log/since= is the change feed for client caches: it returns the current
-=head= plus every operation created after =op= (by id, across *all* branches —
-a new edit after a rollback has a larger id and is included), each naming its
-=entity_uuid=. With no =op= it returns just the head; the =operations= array is
-empty when nothing changed. So one poll both detects a change and describes
-which metarecords it touched. (A *pure* rollback/redo moves =head= to an
-existing op without creating a new one, so the forward delta is empty even
-though =head= changed — a client that caches entities falls back to a coarse
-refresh in that case.)
-
-Coordinated navigation:
-#+BEGIN_SRC
-GET  /repos/:repo_uuid/rollback/plan
-GET  /repos/:repo_uuid/rollback/plan/summary
-POST /repos/:repo_uuid/rollback/start
-POST /repos/:repo_uuid/rollback/step
-POST /repos/:repo_uuid/rollback/abort
-
-POST /repos/:repo_uuid/revert/start
-POST /repos/:repo_uuid/revert/commit
-POST /repos/:repo_uuid/revert/abort
-#+END_SRC
+Moved to the wiki: doc "Log endpoints". The navigation, prune and revert routes follow.
 
 *** =GET /repos/:repo_uuid/log=
 
-Returns the history as a flat list of operations and revisions, with HEAD
-marked. The client reconstructs the tree from =parent_id=.
-
-Query parameters:
-
-| Parameter            | Default    | Description                                                                          |
-|----------------------+------------+--------------------------------------------------------------------------------------|
-| =mode=               | =linear=   | =linear=: HEAD ancestry only (root → HEAD); =active=: the line through HEAD (ancestry + forward to the most-recent leaf); =tree=: all branches |
-| =metarecord_uuid=         | —          | Only operations whose =entity_uuid= matches this metarecord UUID                          |
-| =limit=              | —          | Maximum number of operations to return (the most recent ones)                        |
-| =revisions=          | —          | Maximum number of *revisions* to return (the most recent ones) — whole, unless =limit= cuts the oldest |
-| =since=              | —          | Include only operations in revisions with timestamp ≥ T (Unix ms)                    |
-| =until=              | —          | Include only operations in revisions with timestamp ≤ T (Unix ms)                    |
-| =include_snapshots=  | =false=    | If =true=, each operation includes =snapshots_before= and =snapshots_after= arrays   |
-
-In =linear= mode, operations are ordered from root to HEAD (oldest first). In
-=active= mode, operations are ordered root → HEAD → leaf (oldest first): the
-HEAD ancestry plus the forward continuation that, at each fork below HEAD,
-follows the child whose subtree holds the most recently created operation. This
-keeps a rolled-back "future" visible for redo while hiding operations on
-divergent branches. In =tree= mode, operations are returned in insertion order
-(by =id=). The client reconstructs tree structure from =parent_id= in all cases.
-
-For =linear= and =active= modes, =limit= is not merely a post-filter: it bounds
-the walk itself, so listing the most recent =N= operations stays O(N) on a
-repository with millions of operations (a large initial reconcile) instead of
-loading the whole history. =linear= walks HEAD's ancestry capped at =limit=;
-=active= does the same whenever HEAD has no forward continuation (the common
-case, checked with an indexed lookup) and otherwise falls back to the full
-computation so a rolled-back redo future is still surfaced. The observable
-result is unchanged — the most recent =limit= operations of the selected line.
-GUI clients use this to page the log list ("Show more" grows the window).
-
-=revisions= is the same bound counted in revisions, for the clients that
-display a history *by revision* rather than by operation (=mf log list= groups
-operations under theirs). Without it such a client has no bound it can use: a
-revision holds anything from one operation to the tens of thousands a reconcile
-writes, so asking for operations either fetches far too many or cuts a revision
-in half. Revisions are returned *whole* — an operation is never shown without
-its siblings — and the newest ones first, so a window of twenty revisions costs
-the twenty revisions and not the log behind them.
-
-That is not a bound, though, when one revision is a reconcile: twenty revisions
-of a freshly reconciled 50 000-file repository are 50 000 operations, and
-=mf log list= spent 0.7 s and 400 MB reading them to print twenty lines. So
-=revisions= and =limit= combine as two *maxima*: the answer holds at most
-=revisions= revisions and at most =limit= operations, the newest ones — the
-walk stops at whichever bound it reaches first. Only the oldest revision of the
-window can be cut, and it says so: its entry in =revisions= carries
-="partial": true= and =op_count=, how many operations it holds in all (the
-newest of a revision's operations are the ones kept, and =seq= numbers them
-from 1, so the highest =seq= shown is that count). A revision shown whole
-carries neither. Under a =metarecord_uuid= filter nothing is marked: the filter
-leaves out most of every revision by design. =mf log list= asks for twenty
-revisions and at most 500 operations, and prints a cut revision's line with
-=[95 of 50000 operations shown]=.
-
-**A bound is a bound on what is returned, not a promise to stop looking.** When
-the request also filters (=metarecord_uuid=, =since=, =until=), the walk widens
-geometrically until it has what was asked for or reaches the root: asking for
-the last ten operations of one metarecord answers with its last ten operations,
-however far back they are, and not with "none of the last ten operations of the
-repository happen to be yours". Finding them quickly costs almost nothing;
-finding nothing costs one full walk.
-
-The whole-log costs left are the two totals below and =mode=tree=, which is
-unbounded by construction (a graph needs every branch). Everything else a
-bounded read does is proportional to the window (spec-perf, pinned by
-=crates/daemon/tests/log_cost.rs=).
-
-Response body:
-#+BEGIN_SRC json
-{
-  "head": 3,
-  "operations": [
-    {"id": 1, "parent_id": null, "rev_id": 1, "seq": 1,
-     "op_type": "create_metarecord", "entity_uuid": "...", "field_name": null,
-     "reverts_op_id": null},
-    {"id": 2, "parent_id": 1, "rev_id": 2, "seq": 1,
-     "op_type": "set_field", "entity_uuid": "...", "field_name": "rating",
-     "reverts_op_id": null},
-    {"id": 3, "parent_id": 2, "rev_id": 2, "seq": 2,
-     "op_type": "set_field", "entity_uuid": "...", "field_name": "genre",
-     "reverts_op_id": null}
-  ],
-  "revisions": [
-    {"id": 1, "timestamp": 1700000000000, "label": null, "origin": null},
-    {"id": 2, "timestamp": 1700000001000, "label": "before-cleanup",
-     "origin": null}
-  ],
-  "total_operations": 3,
-  "total_revisions": 2
-}
-#+END_SRC
-
-Only revisions referenced by at least one returned operation are included in
-=revisions=.
-
-=reverts_op_id= names the operation a revert undid (=null= for an ordinary
-write), and =origin= says who wrote the revision (="watcher"= for the daemon's
-own, =null= for a client's — see [[*Revision origin]]). Together they are what a
-client needs to make sense of its own history: [[*Undo]] reads both, and the
-GUI's log panel displays them.
-
-=total_operations= and =total_revisions= count the *whole* log of the
-repository, not the returned window: they are unaffected by =mode=, =limit=,
-=metarecord_uuid= and the time filters. A client showing a bounded window (the
-GUI log panel fetches only the most recent =limit= operations) reports how much
-log there is from them.
+Moved to the wiki: doc "Log endpoints", doc "Reading the log costs the window".
 
 *** =GET /repos/:repo_uuid/log/revisions/:rev_id=
 
-Returns full details for a single revision, including all its operations and
-their before/after snapshots. Snapshots are always included (this endpoint is
-intended for the detail view).
-
-=:rev_id= may be a numeric id or the literal =head= to target the revision that
-contains the current HEAD operation.
-
-A revision can hold every operation of a reconcile — hundreds of thousands, each
-with its snapshots — so the operations detailed can be narrowed (optional query
-parameters, added without an =API_VERSION= bump since the default is unchanged):
-
-- =offset= / =limit= — a window of the revision's operations, in order;
-- =op= — the one operation with that id (=404= if it is not in this revision).
-
-=revision.is_head= and =revision.operation_count= always describe the whole
-revision, whatever the window.
-
-Response body:
-#+BEGIN_SRC json
-{
-  "revision": {
-    "id": 12,
-    "timestamp": 1700000001000,
-    "label": "before-cleanup",
-    "origin": null,
-    "is_head": true,
-    "operation_count": 2
-  },
-  "operations": [
-    {
-      "id": 22, "seq": 1,
-      "op_type": "set_field",
-      "entity_uuid": "...",
-      "field_name": "rating",
-      "snapshots_before": [
-        {"field_id": 43, "field_name": "rating", "value_type": "int", "value_int": 3}
-      ],
-      "snapshots_after": [
-        {"field_id": 43, "field_name": "rating", "value_type": "int", "value_int": 5}
-      ]
-    },
-    {
-      "id": 23, "seq": 2,
-      "op_type": "file_moved",
-      "entity_uuid": "...",
-      "field_name": null,
-      "snapshots_before": [
-        {"field_id": 1, "field_name": "mfr_path", "value_type": "tree_ref",
-         "value_uuid": "<parent_uuid>", "value_name": "old.mp3"}
-      ],
-      "snapshots_after": [
-        {"field_id": 1, "field_name": "mfr_path", "value_type": "tree_ref",
-         "value_uuid": "<parent_uuid>", "value_name": "new.mp3"}
-      ]
-    }
-  ]
-}
-#+END_SRC
-
-Returns =404= if the revision does not exist.
+Moved to the wiki: doc "Log endpoints".
 
 *** =PATCH /repos/:repo_uuid/log/revisions/:rev_id=
 
-Sets or clears the label on an existing revision.
-
-Request body: ={"label": "before-cleanup"}= or ={"label": null}=
+Moved to the wiki: doc "Log endpoints".
 
 *** =POST /repos/:repo_uuid/rollback=
 
@@ -1646,49 +1184,9 @@ all subcommands of =mf log= — =mf log rollback=, =mf log revert=, =mf log
 prune= — and named here by their verb alone for brevity.
 
 ** =mf log=
-Displays the history of revisions or operations.
 
-*** Synopsis
+Moved to the wiki: doc "Reading the log", doc "mf log".
 
-#+BEGIN_SRC
-mf log [options]
-#+END_SRC
-
-*** Behaviour
-
-Calls =GET /log= and formats the result. By default, displays the active line
-through HEAD (=mode=active=: the ancestry plus the most-recent forward
-continuation, so a rolled-back future stays listed for redo while divergent
-branches are hidden) grouped by revision, most recent first. HEAD is marked
-with an asterisk.
-
-Default output (one line per revision):
-
-#+BEGIN_SRC
-> rev 12  2024-01-15 14:32  "before-cleanup"   ← HEAD
-  rev 11  2024-01-15 14:30  (5 ops: create_metarecord ×3, file_moved ×2)
-  rev 10  2024-01-14 09:12
-#+END_SRC
-
-With =--ops=, each revision is expanded to show its individual operations:
-
-#+BEGIN_SRC
-> rev 12  2024-01-15 14:32  "before-cleanup"   ← HEAD
-    op 23  set_field(rating)  on <uuid>
-    op 22  set_field(genre)   on <uuid>
-  rev 11  ...
-#+END_SRC
-
-A revision written by =mf revert= is tagged =(revert of rev N)=; with =--ops=,
-each of its operations names the operation it undid.
-
-With =--tree=, every branch (including those left behind by past rollbacks) is
-shown as a flat list, with off-active-line revisions tagged =(branch)=. With
-=--graph=, every branch is instead drawn as an ASCII graph: the active line
-keeps the leftmost column and a divergent branch opens a column to its right,
-converging back into its parent with a =/= connector:
-
-#+BEGIN_SRC
 *      rev 12  2024-01-15 14:32   ← HEAD
 | *    rev 11  2024-01-15 14:30
 |/

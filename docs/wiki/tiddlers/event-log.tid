@@ -1,0 +1,37 @@
+title: Event log
+kind: overview
+aliases: log history
+summary: Every write is a revision in a tree of operations kept beside the data — so any change can be audited, undone, reverted in place, or navigated back to.
+
+Every change to a repository's metadata is recorded in its ''event log'', in the same
+store and the same transaction as the change itself. The log is a ''tree'' of
+operations, which is what makes it more than an audit trail:
+
+* ''auditing'' — the full history of any metarecord ([[Reading the log]]);
+* ''undo'' and ''redo'' — take back the newest change ''you'' made, and take that back in turn;
+* ''revert'' — undo one past revision or operation ''in place'', by writing what it replaced as a new revision;
+* ''rollback'' — move the current state to any point of the tree, past or future;
+* ''non-destructive branching'' — after moving back, a new write starts a new branch; the "future" left behind is not lost.
+
+The data always reflects exactly the operation ''HEAD'' points at: replaying the
+operations from the root to HEAD reproduces it ([[History tree and HEAD]]). History is
+lost only by an explicit prune, or by the retention limit (the last 200 revisions by
+default).
+
+!! Use it
+
+<<list-kind guide>>
+
+!! Reference
+
+<<list-kind reference>>
+
+!! Why it works this way
+
+<<list-kind rationale>>
+
+!! Commands
+
+<<tagged-with "CLI command">>
+
+<<tagged-with "GUI command">>

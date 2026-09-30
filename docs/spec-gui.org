@@ -3255,7 +3255,7 @@ what decides whether undoing it makes sense:
 
 - =HEAD= — where the history stands;
 - =watcher= — the daemon wrote it for the filesystem (=revision.origin=, see
-  [[file:spec-event-log.org][spec-event-log.org]] "Revision origin"; on a
+  doc "Revisions and operations"; on a
   pre-migration database, judged by the operation types). The row is dimmed:
   it is not the user's to undo, and =log:undo= skips it;
 - =undo of #N= — the revision is itself a revert of =#N=;

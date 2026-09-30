@@ -1,0 +1,54 @@
+title: Log endpoints
+tags: [[Event log]]
+kind: reference
+audience: dev
+summary: GET /log (linear, active or tree, bounded two ways), the change feed GET /log/since, one revision in detail, and setting a label.
+
+|!Route |!Does |
+|`GET /repos/:repo/log` |the history, as operations and revisions (below) |
+|`GET /repos/:repo/log/since?op=<id>` |the change feed: HEAD, and every operation created after `op` |
+|`GET /repos/:repo/log/revisions/:rev_id` |one revision with all its operations and their snapshots; `head` for HEAD's |
+|`PATCH /repos/:repo/log/revisions/:rev_id` |`{"label": "…"}` or `{"label": null}` |
+
+!! GET /log
+
+|!Parameter |!Default |!Does |
+|`mode` |`linear` |`linear`: the root to HEAD; `active`: that plus the continuation below HEAD, following at each fork the child holding the most recent operation; `tree`: every branch |
+|`metarecord_uuid` |— |only the operations of that metarecord |
+|`limit` |— |at most this many operations, the newest |
+|`revisions` |— |at most this many revisions, the newest — whole unless `limit` cuts the oldest |
+|`since`, `until` |— |only operations in revisions timestamped within (Unix ms) |
+|`include_snapshots` |`false` |each operation with `snapshots_before`/`snapshots_after` |
+
+```
+{"head": 3,
+ "operations": [{"id": 1, "parent_id": null, "rev_id": 1, "seq": 1, "op_type": "create_metarecord",
+                 "entity_uuid": "…", "field_name": null, "reverts_op_id": null}, …],
+ "revisions": [{"id": 1, "timestamp": 1700000000000, "label": null, "origin": null}, …],
+ "total_operations": 3, "total_revisions": 2}
+```
+
+Operations run oldest first (`tree`: by id); the client rebuilds the tree from
+`parent_id`. `revisions` lists only those the returned operations belong to; a revision
+cut by `limit` carries `"partial": true` and `op_count`. The totals describe the ''whole''
+log, whatever the window. Bounds limit the walk itself, and a filter widens it until it
+finds what was asked ([[Reading the log costs the window]]).
+
+!! GET /log/since
+
+The change feed clients poll: the current `head` and every operation created after `op`
+— by id, across ''all'' branches (a write after a rollback has a larger id), each naming
+its `entity_uuid`. Without `op`, just the head. A pure rollback or redo moves `head` to an
+existing operation without creating one: the list is empty though `head` changed, and a
+client falls back to a full refresh. The GUI's change feed is built on it.
+
+!! One revision
+
+`GET /log/revisions/:rev_id` always includes snapshots (it is for the detail view):
+`{"revision": {"id", "timestamp", "label", "origin", "is_head", "operation_count"},
+"operations": [{"id", "seq", "op_type", "entity_uuid", "field_name", "snapshots_before",
+"snapshots_after"}, …]}`, a snapshot being a row in column form
+(`{"field_id": 43, "field_name": "rating", "value_type": "int", "value_int": 3}`). A
+revision may hold a whole reconcile, so `offset`/`limit` window its operations and `op`
+picks one (`404` if not in it); `is_head` and `operation_count` always describe the whole
+revision. `404` for an unknown revision.

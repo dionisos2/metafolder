@@ -584,7 +584,7 @@ async fn reconcile(app: &Router, repo: &str) {
     panic!("reconcile did not finish in time");
 }
 
-// ── What a revert leaves behind (spec-event-log "reverts_op_id") ──────────────
+// ── What a revert leaves behind (doc "Log storage") ──────────────
 
 /// Every operation a revert writes names the operation it undid, so a later
 /// reader — the undo selection above all — can tell a correction from a change

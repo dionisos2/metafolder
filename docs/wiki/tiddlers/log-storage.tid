@@ -1,0 +1,73 @@
+title: Log storage
+tags: [[Event log]]
+kind: reference
+audience: dev
+summary: What an operation records, its before and after snapshot rows, why row ids are restored and versions recomputed, and how one write lays it all down.
+
+The log lives in the repository's store, beside the data it describes — one transaction
+writes both ([[Store tables]]): a ''revision'' holds its timestamp, label and origin; an
+''operation'' the fields below; each operation its before and after ''snapshot'' rows;
+HEAD is a record of its own; the restorations a skipped navigation step leaves wait in
+their own table and survive a crash. (Watcher events are not here: they are buffered in
+memory.) The names below — `operation`, `op_snapshot`, `log_head` — are those of the
+SQLite tables of before September 2026.
+
+|!Operation field |!Holds |
+|`id` |never reused |
+|`parent_id` |the operation it follows; none for the root |
+|`rev_id`, `seq` |its revision, and its place in it (from 1) |
+|`op_type` |[[Revisions and operations]] |
+|`entity_uuid` |the metarecord it changed |
+|`entity_version_before`, `…_after` |the metarecord's version on each side — provenance, not authority |
+|`field_name` |for a field operation |
+|`reverts_op_id` |for an operation a revert wrote: the one it undid |
+
+The store also keeps each operation's children, each revision's operations in order and
+each metarecord's operations, so a walk down the tree, a revision's listing and a
+metarecord's history are each a prefix read.
+
+`reverts_op_id` is read by displays and by the undo selection — which is why a revert
+records it rather than merely looking like one. Nothing on the write path branches on it,
+and it may dangle: pruning and retention may remove the operation it names.
+
+!! Snapshots
+
+Each operation stores its state before and after as rows in the column form of a field
+row ([[The column form of a value]]), each keeping its original field id:
+
+|!Type |!Before |!After |
+|`create_metarecord` |— |every row of the new metarecord |
+|`delete_metarecord` |every row of the deleted one |— |
+|`set_field` |the previous rows of the name |the new rows |
+|`append_field` |— |the appended row |
+|`delete_field` |the deleted rows |— |
+|`file_deleted` |the `mfr_path` row |one `nothing` row |
+|`file_moved` |the previous `mfr_path` row |the new one |
+|`file_modified` |`mfr_size`, `mfr_mtime` and the hash rows |the new `mfr_size`, `mfr_mtime` |
+
+A directory's `file_deleted` gives each descendant its own operation in the same revision.
+
+!! Ids restored, versions recomputed
+
+A row id is never reused, and an undone operation puts rows back ''under their original
+id'' — so an operation on another branch naming the same row stays valid after a
+navigation crosses it. The version is the opposite: never restored from the log but
+''recomputed'' from the rows just put back — it is a hash of the content
+([[Metarecord version]]), so it is necessarily the version that state had. Carrying it
+would only make a second source of truth. The `entity_version_*` fields stay, costing
+nothing at write time, for clients correlating an operation with something observed
+outside; no navigation reads them to decide what to write.
+
+!! One write
+
+Every request that changes metadata goes through one `log::Writer`, in one transaction:
+a revision is opened (with the request's label); for each change, the affected rows and
+the version are read (the before snapshot), the change is applied (the version updated
+incrementally), the resulting rows read (the after snapshot), and an operation written
+whose parent is the running HEAD, which then moves to it; finally HEAD is recorded and
+the transaction commits. Every writer — reconcile included — follows it, which is what
+keeps the data and HEAD consistent ([[Writes and atomicity]]).
+
+(An `unknown` operation type exists for an unlogged write — no snapshots, a weak root
+navigation cannot go before. No endpoint writes one: the `no_log` option it was meant for
+was never needed.)
