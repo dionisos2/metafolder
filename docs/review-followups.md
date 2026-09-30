@@ -52,7 +52,7 @@ et conserve le chemin post-rollback, plutôt qu'un rewind vers un emplacement
 vide ou un `Nothing`. Les quatre politiques (`apply|skip|abort|ask`) restent
 disponibles dans les deux situations. Implémenté dans `cli/src/log.rs`
 (`decide_move` ne tente le `mv` que si le fichier est présent), spec mise à jour
-(`spec-event-log.org` : section « skip » + « Policies for move_file »).
+(wiki : doc "Filesystem coordination" + doc "Rolling back").
 
 ## 7. `FollowsTransitive` : coût O(taille du sous-arbre) — ✅ les deux coûts levés / ⏳ la linéarité reste
 

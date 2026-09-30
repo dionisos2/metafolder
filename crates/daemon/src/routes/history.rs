@@ -1,4 +1,4 @@
-//! The event log (spec-event-log): reading it, labelling revisions, pruning,
+//! The event log (doc "Event log"): reading it, labelling revisions, pruning,
 //! the atomic rollback and the coordinated navigation.
 
 use super::*;
@@ -247,7 +247,7 @@ pub(super) struct RollbackBody {
     target: TargetBody,
 }
 
-/// MetaRecord-only atomic rollback (spec-event-log `POST /rollback`).
+/// Metadata-only atomic rollback (doc "Rollback endpoints").
 pub(super) async fn rollback(
     State(state): State<Arc<AppState>>,
     Path(repo): Path<String>,
@@ -393,7 +393,7 @@ pub(super) fn snapshot_abs_path(
     Ok(None)
 }
 
-/// Builds the action JSON for one navigation step (spec-event-log: the
+/// Builds the action JSON for one navigation step (doc "Rollback endpoints": the
 /// response `op_type` reflects the *action to execute* — a stored `file_moved`
 /// becomes `move_file` with `from`/`to`; everything else is unchanged).
 pub(super) fn action_op_json(

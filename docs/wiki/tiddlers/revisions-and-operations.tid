@@ -56,4 +56,4 @@ an ordinary deletion, while it stays an ordinary, undoable revision
 
 A revision may carry a ''label'', a human name that serves as a rollback target: the most
 recent revision carrying it (labels are not unique). Set it with the write, or later
-(`PATCH /log/revisions/:id`). A labelled revision can also stop the retention trim.
+(`PATCH /log/revisions/:id`). A labelled revision can also stop the retention trim ([[Automatic retention]]).

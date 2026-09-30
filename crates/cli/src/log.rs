@@ -1,4 +1,4 @@
-//! Event-log CLI commands (spec-event-log "* CLI"): `mf log`, `mf log show`,
+//! Event-log CLI commands (doc "Reading the log"): `mf log`, `mf log show`,
 //! `mf prune`, and the coordinated-navigation `mf rollback`. All are thin
 //! formatters over the daemon's `/log`, `/rollback`, and `/log/prune`
 //! endpoints. Target resolution (`--id`, `--timestamp`, `<label>`, or the

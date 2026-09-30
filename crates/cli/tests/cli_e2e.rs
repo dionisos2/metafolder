@@ -1438,7 +1438,7 @@ fn test_schema_reload_invalid_file_fails() {
     assert!(out.stderr.starts_with("error:"));
 }
 
-// ── Event log: mf log / mf log show / mf prune (spec-event-log) ─────────────────
+// ── Event log: mf log / mf log show / mf prune (doc "Event log") ─────────────────
 
 #[test]
 fn test_log_lists_revisions_most_recent_first() {

@@ -1,4 +1,4 @@
-//! Automatic log retention (spec-event-log "Automatic retention"): the log
+//! Automatic log retention (doc "Automatic retention"): the log
 //! keeps a bounded number of revisions behind HEAD, the oldest falling off as
 //! new ones arrive.
 

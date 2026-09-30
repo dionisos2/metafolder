@@ -1,0 +1,6 @@
+title: mf log prune before
+tags: [[CLI command]] [[Event log]]
+kind: reference
+summary: Make <target> the new root, deleting all older operations
+
+Makes the target the new root, deleting everything older — irreversible ([[Pruning the log]]).

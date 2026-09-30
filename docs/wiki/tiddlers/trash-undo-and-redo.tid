@@ -26,7 +26,7 @@ only way back.
 An ordinary deletion of a metarecord touches no file, so the op type cannot tell
 the client that bytes are involved. The daemon does: every step of a navigation,
 and every operation of a revert plan, carries a `filesystem` action
-(spec-event-log "Coordinated navigation"):
+([[Filesystem coordination]]):
 
 * `restore_content` — a metarecord a trashing took is coming back: the client finds the live entry holding it and moves its bytes back;
 * `trash_content` — it is going again (a redo): the client sends the file back to the trash as a trashing does, captured first, into a new entry.

@@ -12,7 +12,7 @@ violation carries a `violations` array) and a status:
 |`401` |no session token, or the wrong one ([[Session tokens]]) |
 |`404` |no such repository (not loaded), metarecord, field row or task |
 |`409` |a conflict with the current state: a repository already initialised there, a name already loaded, a store locked by another daemon, a reconcile or duplicate scan already running, a revert blocked by later changes, an unload while work runs |
-|`423` |the repository is locked by a coordinated navigation (spec-event-log "Rollback lock") |
+|`423` |the repository is locked by a coordinated navigation ([[Filesystem coordination]]) |
 |`503` |the repository is still loading: watch its `load` task |
 |`500` |an internal error — the store, the disk — the message saying which |
 

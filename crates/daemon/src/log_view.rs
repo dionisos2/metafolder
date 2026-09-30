@@ -1,5 +1,5 @@
 //! Reading the event log back out: the listing `GET /repos/:repo/log` serves,
-//! and the JSON shape of one operation (spec-event-log).
+//! and the JSON shape of one operation (doc "Log endpoints").
 //!
 //! It lives beside the log rather than inside the route for one reason: the
 //! cost of a *bounded* read is an invariant worth testing on its own
@@ -290,7 +290,7 @@ fn revision_meta(
     log.revisions(&unique)
 }
 
-/// One operation, in the shape every `/log` response uses (spec-event-log).
+/// One operation, in the shape every `/log` response uses (doc "Log endpoints").
 pub fn op_json(log: &dyn Log, op: &OpRow, include_snapshots: bool) -> Result<serde_json::Value> {
     let mut value = json!({
         "id": op.id,
@@ -309,12 +309,12 @@ pub fn op_json(log: &dyn Log, op: &OpRow, include_snapshots: bool) -> Result<ser
     Ok(value)
 }
 
-/// Snapshot rows in their raw column form (spec-event-log examples).
+/// Snapshot rows in their raw column form (doc "Log endpoints" examples).
 pub fn snapshots_json(log: &dyn Log, op_id: i64, after: bool) -> Result<serde_json::Value> {
     let blob_hex = |b: Vec<u8>| b.iter().map(|x| format!("{x:02x}")).collect::<String>();
     let mut out = Vec::new();
     for row in log.snapshots(op_id, after)? {
-        // Raw column form (spec-event-log examples), null columns omitted.
+        // Raw column form (doc "Log endpoints" examples), null columns omitted.
         let encoded = rows::encode_value(&row.value);
         let mut snapshot = json!({
             "field_id": row.id,

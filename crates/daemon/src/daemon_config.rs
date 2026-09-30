@@ -36,7 +36,7 @@ pub const DEFAULT_WATCHD_SOCKET: &str = "/run/metafolder/watchd.sock";
 /// default installation from growing without bound. Labelled revisions are kept
 /// regardless (see `log_retention_keep_labels`), so the one kind of history a
 /// user deliberately named is the one the limit cannot take
-/// (spec-event-log "Automatic retention").
+/// (doc "Automatic retention").
 pub const DEFAULT_LOG_RETENTION_REVISIONS: u64 = 200;
 
 /// Default threshold for the slow-operation log (doc "Slow log"): an operation

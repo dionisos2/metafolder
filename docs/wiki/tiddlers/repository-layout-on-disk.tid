@@ -30,7 +30,7 @@ store ([[Storage]]) is refused on a network filesystem ([[Storage safety]]). `in
 |`root` |path |the watched directory, absolute — usually `.metafolder/`'s parent, anywhere for an external one |
 |`schema` |path |optional: the user schema, relative to `.metafolder/` or absolute (default `.metafolder/schema.json`) |
 |`created_at` |integer |creation time, Unix seconds |
-|`log_retention_revisions` |integer |optional: how many revisions of history the log keeps, overriding the daemon's setting (`0`: everything) |
+|`log_retention_revisions` |integer |optional: how many revisions of history the log keeps, overriding the daemon's setting (`0`: everything) ([[Automatic retention]]) |
 |`log_retention_keep_labels` |bool |optional: whether a labelled revision stops the trim, overriding the daemon's setting |
 |`system` |bool |a repository the daemon uses internally (a sync plan repository): hidden from `GET /repos` unless `?all=true` |
 |`storage` |string |the store holding the data: the key-value store. Absent means a SQLite repository from before September 2026, which is refused at load ([[How the storage backend was built]]) |

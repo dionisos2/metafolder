@@ -23,7 +23,7 @@ op_1 ← op_2 ← op_3   ← a branch, still reachable
 the data are always consistent: every HEAD move and every data change happen in one
 transaction, so a crash leaves both as they were ([[Writes and atomicity]]). A rollback
 abandons a branch; it deletes nothing. History is lost in exactly two configured ways:
-a prune (`mf log prune`) and the retention limit.
+a prune ([[Pruning the log]]) and the retention limit ([[Automatic retention]]).
 
 Reading the tree, three views: the ''linear'' line (the root to HEAD), the ''active''
 line (that, plus the continuation below HEAD toward the most recent operation — a

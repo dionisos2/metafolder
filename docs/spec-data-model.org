@@ -79,7 +79,7 @@ Moved to the wiki: doc "Following a task", doc "Cancelling a task".
 
 *** =mf log {list|rollback|prune}=
 
-Repository history (spec-event-log). =list= (default) is the former flat =mf
+Repository history (doc "Reading the log"). =list= (default) is the former flat =mf
 log=; =rollback= and =prune= are unchanged.
 
 *** =mf retype <name> <type>=

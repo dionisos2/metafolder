@@ -1,0 +1,31 @@
+title: Pruning the log
+tags: [[Event log]]
+kind: guide
+aliases: prune
+summary: mf log prune before makes an operation the new root, deleting what is older; linearize drops the branches up to it. Both are irreversible.
+
+```
+mf -n music log list --tree                    # look first: what would go
+mf -n music log prune before before-cleanup    # everything older than that label goes
+mf -n music log prune before --id 55
+mf -n music log prune linearize --timestamp 2026-09-01T00:00:00Z
+```
+
+Both are ''irreversible'': deleted operations cannot be navigated back to. Both ask for
+confirmation (unless `--force`; `--silent` does not skip it), and the target — a label,
+`--id` or `--timestamp`, resolved as for a rollback — must be HEAD or an ancestor of it
+(`400` otherwise).
+
+* ''`before <target>`'' makes the target the new ''root'': every operation strictly older goes, and every branch whose whole ancestry lies before it. `Pruned 47 operations across 3 revisions. New root: op 55 (rev 8, 2024-01-10 09:00)`.
+* ''`linearize <target>`'' deletes the branches that diverge from HEAD's line between the root and the target, leaving that segment a straight line. `Pruned 12 operations across 4 revisions. History linearized up to op 55.`
+
+After a `before`, the new root is a ''weak root'': its predecessors are gone, so the state
+there cannot be rebuilt from the log alone. Navigation within what remains is unaffected;
+undo will not go past it. For disaster recovery, rely on a backup of the store
+([[Backups and restore]]), not on replaying the log.
+
+The space pruning frees is reused by the store's next writes; a backup is a compacted
+copy. The retention limit does the same as `before` automatically ([[Automatic retention]]).
+
+`POST /repos/:repo/log/prune` with `{"mode": "before" | "linearize", "target": {"id": N}
+| {"timestamp": T} | {"label": "…"}}` answers `{"pruned_operations", "pruned_revisions"}`.

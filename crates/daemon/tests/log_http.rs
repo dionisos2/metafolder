@@ -1,5 +1,5 @@
 //! HTTP-level tests for the event log endpoints and the atomic rollback
-//! (spec-event-log): history reading, labels, navigation, pruning.
+//! (doc "Event log"): history reading, labels, navigation, pruning.
 
 use std::sync::Arc;
 

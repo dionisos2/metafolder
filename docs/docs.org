@@ -591,15 +591,19 @@ côté client est dans =core::navigation= (partagé avec la GUI), plus « le CLI
 Sources retirées (pointeurs) : spec-event-log « Navigation », « Coordinated
 navigation », les routes =rollback=, =mf rollback=.
 
-** TODO 25. Élagage et rétention
+** FAIT 25. Élagage et rétention
 
 (sous Event log)
-- [ ] =Pruning the log= — guide (=mf log prune before/linearize=)
-- [ ] =Automatic retention= — reference
-- [ ] =Prune endpoint= — reference, dev
+- [X] =Pruning the log= — guide (avec =POST /log/prune=)
+- [X] =Automatic retention= — reference
+- [X] notes de commande : =mf log prune=, =before=, =linearize=
 
-CLI : =mf log prune *= (3). Sources : spec-event-log « Log pruning », « Automatic retention », =POST
-/log/prune=, « mf prune ».
+Vérification contre le code : l'élagage ne fait plus de =VACUUM= (LMDB réutilise
+ses pages libres ; une sauvegarde est la copie compactée) ; =mf log
+mark-checkpoint= n'existe pas (un label se pose par =PATCH /log/revisions/:id=).
+Les liens laissés en texte à l'item 21 sont posés. =spec-event-log.org= est
+supprimée : toutes ses sections sont dans le wiki (mode spec entière pour les
+citations restantes, chacune reprise à la main vers sa note).
 
 ** TODO 26. L'historique dans la GUI
 

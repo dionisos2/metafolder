@@ -19,7 +19,7 @@ done. The synchronous kinds return their result with the request's own response;
 they are registered only so that other clients can see the repository is busy
 and why their own work waits. The coordinated, step-by-step navigation
 (`rollback/start`, `step`, `abort`) is not a task: its lock is observable on its
-own (spec-event-log "Coordinated navigation").
+own ([[Filesystem coordination]]).
 
 `flush` is internal but shown like any other — a client may offer to hide it,
 since flushes are frequent (one per quiet period of filesystem activity).

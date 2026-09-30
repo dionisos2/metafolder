@@ -1,0 +1,6 @@
+title: mf log prune
+tags: [[CLI command]] [[Event log]]
+kind: reference
+summary: Permanently remove operations from the history (irreversible)
+
+Permanently removes operations from the history: `before` a target, or the branches up to one (`linearize`) ([[Pruning the log]]).

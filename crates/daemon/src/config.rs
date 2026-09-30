@@ -43,8 +43,8 @@ pub struct RepoConfig {
     pub created_at: u64,
     /// Revisions of history this repository's event log keeps behind HEAD,
     /// overriding the daemon's `[settings] log-retention-revisions`. `0` keeps
-    /// everything; absent defers to the daemon (spec-event-log "Automatic
-    /// retention"). Per repository because the volumes are not comparable — a
+    /// everything; absent defers to the daemon (doc "Automatic retention"). Per repository because
+    /// the volumes are not comparable — a
     /// watched media tree writes revisions all day, a hand-curated one barely
     /// any.
     #[serde(default, skip_serializing_if = "Option::is_none")]

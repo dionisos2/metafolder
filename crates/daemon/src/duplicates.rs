@@ -33,7 +33,7 @@ pub const GROUP_SCHEMA: &str = "duplicate_group";
 pub const GROUP_FIELD: &str = "mfr_duplicate_group";
 
 /// Records per revision when writing the hash cache. A transaction per file
-/// would cost one `fsync` each (spec-event-log); one transaction for the whole
+/// would cost one `fsync` each (doc "Writes and atomicity"); one transaction for the whole
 /// scan would throw away every hash computed so far when the scan is cancelled
 /// — and the hash cache is precisely the work worth keeping.
 const BATCH_RECORDS: usize = 500;

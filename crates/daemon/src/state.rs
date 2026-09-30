@@ -61,7 +61,7 @@ pub struct RepoState {
     /// the baked-in default so a `RepoState` built without `activate` (unit
     /// tests) still extracts with sensible defaults.
     pub metadata_map: Mutex<crate::metadata_map::MetadataMap>,
-    /// Coordinated-rollback lock (spec-event-log): `Some` while a rollback
+    /// Coordinated-rollback lock (doc "Filesystem coordination"): `Some` while a rollback
     /// navigation is in progress, carrying its resolved target. Never
     /// persisted — a crash restarts unlocked.
     pub rollback_lock: Mutex<Option<RollbackLock>>,

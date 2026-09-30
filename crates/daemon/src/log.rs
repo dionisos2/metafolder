@@ -677,7 +677,7 @@ fn apply_forward(tx: &dyn WriteTxn, op: &OpRow) -> Result<()> {
     resync_version(tx, entity)
 }
 
-// ── Pruning (spec-event-log "Log pruning") ────────────────────────────────────
+// ── Pruning (doc "Pruning the log") ────────────────────────────────────
 
 #[derive(Debug, Clone, Copy)]
 pub enum PruneMode {
@@ -820,7 +820,7 @@ impl WriteEffects {
     }
 }
 
-// ── Automatic retention (spec-event-log "Automatic retention") ────────────────
+// ── Automatic retention (doc "Automatic retention") ────────────────
 
 /// How much history the log keeps behind HEAD. Applied by [`Writer::commit`],
 /// inside the write's own transaction: a trim is a range delete over the

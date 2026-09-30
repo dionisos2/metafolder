@@ -1,0 +1,39 @@
+title: Automatic retention
+tags: [[Event log]]
+kind: reference
+aliases: retention log-retention-revisions
+summary: The log keeps the last 200 revisions behind HEAD by default, labelled ones never trimmed; the trim rides the write that triggers it.
+
+A watched repository writes a revision per batch of filesystem events and would keep
+them for ever; most of that history is of no interest. Retention is pruning as a standing
+policy. Two settings, per repository (its `config.json`) or daemon-wide (`[settings]`,
+[[Daemon configuration]]):
+
+* ''`log-retention-revisions`'' — how many revisions to keep behind HEAD; default 200, `0` keeps everything. A revision is an ''event'' — a batch of filesystem changes, one command — not an operation, and one event routinely carries thousands of operations; 200 is far more history than anyone walks back through.
+* ''`log-retention-keep-labels`'' — when true (the default), a labelled revision is a floor: nothing older than the oldest label goes, and the log grows past the limit rather than lose a named checkpoint. Label a revision (`PATCH /log/revisions/:id`, or with the write) to say "keep everything from here".
+
+The limit being on by default, a repository is trimmed on its first write after the
+setting takes effect — permanently, without asking. That is the point (an unbounded log is
+what it protects against), but a one-way door: a repository whose whole history matters
+wants `log-retention-revisions = 0`, or a label, ''before'' it is written again.
+
+!! What a trim does
+
+A trim is a `prune before` whose target is the first operation of the oldest revision to
+keep — same rules, same ''weak root'' afterwards ([[Pruning the log]]). It runs ''inside
+the transaction of the write that triggered it'', after HEAD moved: a range deletion of the
+oldest operations and their snapshots, cheaper than the append that triggered it, riding a
+commit that was being paid for anyway. It does not run at every write: the log may drift a
+tenth of the limit past it (at least one revision) first — so the oldest, coldest pages are
+dirtied once per slack, not at every commit.
+
+!! When a trim declines
+
+The cut must be an ancestor of HEAD, as for an explicit prune. After a rollback it may not
+be — the newest revisions by id sit on the abandoned branch, and cutting there would delete
+the history HEAD stands on. The trim then does nothing and the log grows past the limit,
+temporarily: as the current line becomes the newest again, the cut lands on it, and the
+abandoned branch goes with everything below it.
+
+A trim happens only on a write: a repository nobody writes to keeps what it has. The
+repository's creation (its root metarecord) is never trimmed — there is nothing before it.

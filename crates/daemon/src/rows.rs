@@ -1,7 +1,7 @@
 //! A repository's rows as the storage layer hands them over, and the column
 //! form a value is stored in: `value_type` and the one or two columns its type
 //! uses. The key-value store keeps its rows in that form, and the log's
-//! snapshots are shown in it (spec-event-log), so it is a persisted format:
+//! snapshots are shown in it (doc "Log storage"), so it is a persisted format:
 //! changing it is a migration.
 
 use anyhow::{bail, Context, Result};

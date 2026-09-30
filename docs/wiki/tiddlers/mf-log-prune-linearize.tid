@@ -1,0 +1,6 @@
+title: mf log prune linearize
+tags: [[CLI command]] [[Event log]]
+kind: reference
+summary: Delete branch operations diverging from the HEAD path up to <target>
+
+Deletes the branches diverging from HEAD's line up to the target — irreversible ([[Pruning the log]]).
