@@ -695,6 +695,52 @@ panels (pour l'item 37).
 CLI : =mf sync *= (7). GUI : =sync:*= (4) ; panel =sync=. Sources : spec-sync entier ;
 help =sync.html= ; mémoires =sync-design=, =http-n-plus-one=.
 
+*Reporté (30 sept. 2026) : trop gros pour l'instant.* La vérification contre le
+code (=core::sync=, =daemon/src/sync.rs=, =routes/sync.rs=) a montré que la spec
+décrit bien plus que ce qui est fait. À régler (ou à documenter comme limite)
+avant d'écrire les notes :
+
+- Bugs (comportement faux) :
+  1. *Confirmé* (test =test_sync_rename_with_a_field_change_is_not_reverted=,
+     =#[ignore]= dans =cli_e2e.rs=) : un fichier renommé *et* modifié (un champ)
+     du même côté voit son renommage annulé au sync suivant. L'op =sync= écrit
+     les champs de B, donc la version de B change, donc l'op =move= est lue
+     périmée et sautée ; le commit enregistre alors le nouveau chemin de A dans
+     le snapshot, et le run suivant prend le chemin non déplacé de B pour le
+     changement. Sans le champ, le même renommage passe.
+  2. Un conflit résolu =skip= : le commit enregistre la valeur de A dans le
+     snapshot (=commit_entry= ne prend que les champs de A), donc au sync suivant
+     seul B paraît changé et sa valeur écrase A sans conflit. La spec veut que le
+     champ reste en conflit.
+  3. Aucune écriture du run ne passe =expected_version= (=put_field(…, None)=) :
+     le contrôle de fraîcheur n'est que =stale()= côté client, avant l'op. Et
+     =commit_entry= relit les versions après coup (la spec l'interdit) : un
+     changement concurrent pendant le run est marqué « en sync » et jamais
+     propagé.
+- Non implémenté (la spec le décrit comme fait) :
+  4. Contenu : une modification du contenu d'un fichier déjà lié n'est jamais
+     propagée (=needs_copy= ne copie que vers un bout /nu/) ; idem les
+     permissions (=chmod= seulement accolé à une copie). Pas de conflit de contenu.
+  5. Champs : les =tree_ref= autres que =mfr_path= (tags hiérarchiques…) ne sont
+     jamais synchronisés (=syncable_fields= les exclut) ; les =ref= seulement au
+     premier sync (=scalar_by_name= les retire au re-sync) ; le snapshot n'a pas
+     de double perspective en pratique (refs exclues, =mfr_path= stocké en chaîne).
+  6. Pas de =mkdir= (dossier vide) ni de symlink (=exec_copy= lit à travers le
+     lien) ; pas de réécriture des champs stat de la cible après une copie (le
+     premier mécanisme anti-écho), donc le lien repasse =ahead_b= après l'écho du
+     watcher, et =plan= n'enregistre jamais les versions d'un diff effectif vide.
+  7. Suppressions : propagées sans confirmation (décision =sync-design= : non
+     destructif, corbeille + journal — la spec n'a jamais été mise à jour) ; un
+     lien aux deux bouts supprimés (=missing_both=) n'est jamais nettoyé.
+  8. =[settings]= (=commit-batch-size=, =transfer-batch-size=) lus mais ignorés
+     (un seul commit pour tout) ; =similarity-threshold= encore accepté alors que
+     l'appariement n'en a plus ; le prompt de conflit dit =a=/=b= (la spec : le
+     nom du dépôt) et n'offre pas « sauter le lien ».
+- Petits écarts de doc : la « sérialisation des appels sur une paire » n'est
+  que celle des transactions d'écriture LMDB ; les en-têtes de =plan.rs= et
+  =run.rs= se disent « squelette » / « à venir » ; CLAUDE.md nomme les routes
+  =/repos/:a/:b/sync/*= (c'est =/sync/:a/:b/…=).
+
 ** TODO 30. Tags hiérarchiques
 
 - [ ] =Hierarchical tags= — overview (entrées =type=tag=, refs, subsomption, exclusivité)

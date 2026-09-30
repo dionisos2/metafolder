@@ -3691,6 +3691,67 @@ fn test_sync_run_moves_diverged_file() {
     assert!(repo_root_of(&b).join(winner).exists(), "B file at winner path");
 }
 
+/// A file renamed on one side *and* given a new field between two syncs: the
+/// rename reaches the other side, and a later sync does not take it back.
+///
+/// Fails today (docs/docs.org, item 29): the `sync` op writes B's fields, which
+/// changes B's version, so the `move` op reads as stale and is skipped; the
+/// commit then records A's new path as the snapshot's, and the next run takes
+/// B's unmoved path for the change — moving A's file back. Without the field
+/// change the same rename syncs.
+#[test]
+#[ignore = "known bug: the rename is reverted (docs/docs.org, item 29)"]
+fn test_sync_rename_with_a_field_change_is_not_reverted() {
+    let (a, _adir) = tracked_repo("mvfld_a", &[("old.txt", b"content")]);
+    let (b, _bdir) = tracked_repo("mvfld_b", &[("old.txt", b"content")]);
+    let intents = write_intents(
+        "mvfld",
+        &format!("[[intents]]\nrepo = '{a}'\nquery = 'mfr_type = \"file\"'\n"),
+    );
+    let sync = || {
+        assert_ok(&mf(&["sync", "plan", &a, &b, "--intents", intents.to_str().unwrap()]));
+        assert_ok(&mf(&["sync", "run", &a, &b, "--yes"]));
+    };
+    sync();
+
+    // Rename on A (with the watcher off, so the test drives the record itself),
+    // and tag it in the same breath.
+    let root_a_uuid =
+        mf(&["-u", &a, "metarecord", "-q", "mf_watch = true", "get"]).stdout.trim().to_string();
+    assert_ok(&mf(&[
+        "-u",
+        &a,
+        "metarecord",
+        "-i",
+        &root_a_uuid,
+        "field",
+        "set",
+        "mf_watch:bool=false",
+    ]));
+    let xa = query_one(&a, "mfr_path:value = \"old.txt\"");
+    let root_a = repo_root_of(&a);
+    std::fs::rename(root_a.join("old.txt"), root_a.join("new.txt")).unwrap();
+    assert_ok(&mf(&[
+        "-u",
+        &a,
+        "metarecord",
+        "-i",
+        &xa,
+        "field",
+        "set",
+        &format!("mfr_path:tree_ref={root_a_uuid}/new.txt"),
+        "-f",
+    ]));
+    assert_ok(&mf(&["-u", &a, "metarecord", "-i", &xa, "field", "add", "tag:string=jazz"]));
+
+    sync();
+    sync();
+
+    assert!(root_a.join("new.txt").exists(), "A keeps its rename");
+    assert!(repo_root_of(&b).join("new.txt").exists(), "B follows the rename");
+    assert!(!repo_root_of(&b).join("old.txt").exists(), "B's old name is gone");
+}
+
 #[test]
 fn test_sync_show_renders_plan_status() {
     // After a plan, show lists the ops as green (baselines current); changing a
