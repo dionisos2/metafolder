@@ -769,7 +769,7 @@ export async function mount(root, metafolder) {
     }
   }
 
-  // Edit guard (spec-gui "Cross-panel selection"). An add in progress (form
+  // Edit guard (doc "Cross-panel selection"). An add in progress (form
   // open with a field name typed) counts, so switching metarecord asks before
   // discarding it — the add is bound to the metarecord being edited.
   function addFieldInProgress() {

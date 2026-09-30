@@ -1,0 +1,48 @@
+title: Cross-panel selection
+tags: GUI
+kind: reference
+aliases: selection select checked multi-select reveal file-manager:reveal metarecord-list:folder
+summary: Selecting a metarecord in one panel shows it in the others of the workspace; checking metarecords gathers a set for a bulk operation, across lists.
+
+!! The highlighted metarecord
+
+Moving the cursor in `metarecord-list`, `file-manager`, `treeref` or `recent` sets the
+workspace's selection ([[Workspace variables]]). Every panel of the ''same'' workspace
+that follows it — `metarecord-detail`, `file`, `workspace-info` — updates at once, in
+either slot; a slot showing another workspace is not affected.
+
+''Opening'' a row of `metarecord-list` — a double-click, or
+<<key "metarecord-list:open" Enter>> — shows it in the other slot of the same
+workspace: in the `file` panel when the metarecord has a path, in
+`metarecord-detail` otherwise (`panel:reveal`). A hidden slot is opened for it.
+
+When `metarecord-detail` is editing a field, it asks before showing another
+metarecord: ''Unsaved changes — discard and switch metarecord?''
+
+!! Showing the folder
+
+Two commands show the folder of the selection, ''in place of the focused panel''. Both
+are also in the right-click menu of the panels showing metarecords.
+
+* `file-manager:reveal` (''Open folder in file manager'') shows it on disk: the folder itself when the selection is a folder, else the folder holding the file, with the file highlighted.
+* `metarecord-list:folder` (<<key "metarecord-list:folder" "g f">>, ''Open folder in metarecord-list'') shows the same folder's ''metarecords'' instead — its files and subfolders, as the query `mfr_path -> "<folder>"`. The folder is the selected metarecord's (itself when it is a folder), else the selected path's (an untracked file has no metarecord to ask), else the file manager's current folder, else the repository's root. A selection outside the repository is refused, rather than silently answered for the root.
+
+The two are defined in the shipped `gui/commands.js`. They leave their request in a
+variable of the target panel — `file-manager:reveal-path`, `metarecord-list:query-request`,
+each with a `nonce` — then switch the slot, so the panel acts on it whether it was
+already there or not, once per request.
+
+!! The checked selection
+
+Besides the one highlighted metarecord, a workspace has a ''set'' of checked ones:
+what the bulk operations act on (the ''Checked selection'' target of
+`metarecord:bulk`), and what `mf gui selected` prints for a script.
+
+* <<key "metarecord-list:select toggle" Space>> checks or unchecks the row, in `metarecord-list` and in `file-manager` alike; so does ''Add to the selection'' in a row's right-click menu. A file-manager row is checked through its metarecord: an untracked file has none, and says so — track it first.
+* ''It survives changing the list'': a checked metarecord stays checked when the query or the finder moves on, so a set can be gathered from several lists — and from the file manager — before anything acts on it. `select all` checks every loaded row ''on top of'' what is checked; `select none` (<<key "metarecord-list:select none" ctrl+space>>) empties it.
+* Only a metarecord that no longer ''exists'' — deleted or trashed, from anywhere, the command line included — leaves it, when a panel next reloads its rows: it could never be shown or unchecked again.
+* It holds metarecords of the workspace's one repository.
+
+Every panel of the workspace shows the set as it stands, wherever it changed — a row
+checked in one panel is lit in the other — and gives its size; the
+`metarecord-list` footer adds how many of the checked are among its own rows.

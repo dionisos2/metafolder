@@ -1,4 +1,4 @@
-// Repository path helpers (spec-gui "Cross-panel selection"): the daemon's
+// Repository path helpers (doc "Cross-panel selection"): the daemon's
 // `mfr_path` TreeRef convention, not OS paths — `''` is the repository root, a
 // descendant is leading-"/"-rooted (`'/live'`).
 //

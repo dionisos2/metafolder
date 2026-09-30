@@ -1,0 +1,25 @@
+title: Why the daemon's warnings are routed by repository
+tags: [[Connection to the daemon]]
+kind: rationale
+audience: dev
+summary: A flush on one repository has no business in the message log of another; a warning about a repository nobody looks at is shown everywhere rather than dropped.
+
+Each entry of the daemon's diagnostics feed carries a `repo` field. For a long time
+no emitter filled it, and the GUI appended every line to every workspace, calling
+them all "daemon-wide". With two repositories loaded, the flushes of A filled the
+message panel of B, where nothing told them from B's own — which makes the panel
+useless as soon as one works on two repositories, and the cause could not be seen
+from the GUI: the field existed, it only always looked empty.
+
+So the daemon says which repository a line is about — the watcher and the executor
+(a flush's summary, a flush stopped or failed, a watch not placed, the budget spent),
+a failed automatic backup — and the GUI routes by it (`crates/gui/src/diagnostics.rs`:
+`Line::concerns`).
+
+Two rules follow:
+
+* ''A line about a repository no workspace shows is shown everywhere''. An error about a repository nobody is looking at is precisely the one worth seeing; dropping it would hide it.
+* ''A new diagnostic about a repository uses the `_for` variant'' (`diagnostics::warn_for(scope, message, repo)`, and `info_for`, `error_for`). The plain `warn`/`info`/`error` are for what is genuinely about the whole daemon.
+
+Filling the field needed no `API_VERSION` bump: it was already in the JSON, always
+`null`; giving it a value changes no shape.

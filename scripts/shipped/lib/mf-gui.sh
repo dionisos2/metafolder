@@ -394,7 +394,7 @@ mf_gui_ask_answer() { # <message> <letter>...
 # branch stops on, like the quit key.
 #
 # The question travels as the wait's own `--prompt`, which is what puts it in
-# the dedicated question bar above the status line (spec-gui "Status bar"). It
+# the dedicated question bar above the status line (doc "Status bar and task bar"). It
 # used to be posted separately with `mf gui message` and the wait carried no
 # prompt at all: the bar showed the keys under an empty label, the question sat
 # on the status line, and the next message — a progress phase, a report —

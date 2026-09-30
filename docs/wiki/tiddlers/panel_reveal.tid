@@ -1,0 +1,6 @@
+title: panel:reveal
+tags: [[GUI command]] [[Panel slots and layout]]
+kind: reference
+summary: Show a panel type for this workspace in the other slot
+
+Shows the named panel type for this workspace in the other slot, opening that slot if it was hidden, and taking it over if it showed another workspace — what a double-click in `metarecord-list` does ([[Cross-panel selection]]).

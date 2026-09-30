@@ -14,7 +14,7 @@ GET /health  →  {"status": "ok", "version": "<crate version>",
 Enough to confirm the daemon, its build and its repositories in one call.
 `api_version` is the wire-protocol version, shared by every service and distinct
 from the crate version: the GUI compares it with its own and shows an
-"incompatible daemon" banner on a mismatch. Like every route, it needs the
+"incompatible daemon" banner on a mismatch ([[Connection to the daemon]]). Like every route, it needs the
 session token.
 
 !! The diagnostics feed
@@ -28,7 +28,7 @@ The warnings the daemon prints on stderr, also kept in memory so that a client c
 read them: the daemon is its own process, and a warning from the watcher — a
 directory it could not watch, events it had to drop, a file it skipped — would
 otherwise reach only whatever terminal started it. The GUI shows them in its
-`message` panel.
+`message` panel ([[Connection to the daemon]]).
 
 Each entry is `{id, at_ms, level, scope, message, repo}`, oldest first. `level` is
 `info`, `warning` or `error`; `info` is what the daemon ''did'' — the one line each

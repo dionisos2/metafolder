@@ -85,9 +85,9 @@ function deactivateHelpCursor() {
 }
 
 export function installKeys() {
-  // The native context menu is suppressed everywhere (spec-gui "Context
-  // menus"); the default menu (Copy + layout commands) replaces it in the
-  // shell areas — panel iframes install their own copy via the shim.
+  // The native context menu is suppressed everywhere (doc "Context menus");
+  // the one default menu (Copy + layout commands) replaces it, over the
+  // shell and every panel alike.
   installContextMenuSuppression(window);
   defaultMenu = installDefaultContextMenu(window, dispatch);
   for (const provider of pendingProviders) defaultMenu.addItems(provider);

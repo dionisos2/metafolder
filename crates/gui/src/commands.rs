@@ -550,7 +550,7 @@ pub fn label_separator(app: AppHandle) -> String {
 }
 
 /// The external programs `file:open-with` offers as completions (config.toml
-/// `open-with`, spec-gui "Opening a file with another program"). Candidates
+/// `open-with`, doc "Opening a file with another program"). Candidates
 /// only — the prompt accepts any command line the user types.
 #[tauri::command]
 pub fn open_with_programs(app: AppHandle) -> Vec<String> {

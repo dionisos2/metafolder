@@ -27,7 +27,7 @@ on the selected metarecord:
 * <<key "metarecord:trash" Ctrl+Delete>> — <<cmd "metarecord:trash">>: trashes the file at once (confirmed).
 * <<key "metarecord:delete" Shift+Delete>> — <<cmd "metarecord:delete">>: deletes the metarecord and keeps the file.
 
-The metarecord panels also offer ''Move to trash'' in their context menu.
+The metarecord panels also offer ''Move to trash'' in their context menu ([[Context menus]]).
 
 !! From the file manager
 

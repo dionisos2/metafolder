@@ -1,0 +1,59 @@
+title: Panel slots and layout
+tags: GUI
+kind: reference
+aliases: layout slot slots split fullscreen divider panel-slot repo-indicator
+summary: Two panel slots side by side, each showing one panel of one workspace; splitting, focusing, swapping, fullscreen.
+
+The window has two ''slots'', left and right. At startup only the left one is shown.
+Each slot shows a workspace — or none: an empty slot says ''No workspace selected'' —
+and, inside it, one panel type. The two slots may show the same workspace, each
+with its own panel type — a list on the left, the detail of its selection on the
+right, sharing that workspace's variables — or two different workspaces.
+
+One workspace cannot show the same panel type in both slots: each workspace has one
+instance of each panel type. Asking for it (`panel:set type`) is refused; a slot that
+would get it falls back to `metarecord-detail`, or to no panel at all, the header
+then asking for one.
+
+The ''focused'' slot has a coloured border (the theme's `--mf-focus-border`) and
+receives the keys. <<key "panel:focus next" o>> moves the focus to the other slot; a
+click in a slot focuses it.
+
+!! Splitting
+
+|!Command |!Key |!Does |
+|`panel:toggle split` |<<key "panel:toggle split" v>> |split when one slot is shown, unsplit when both are |
+|`panel:split` | |show the second slot |
+|`panel:unsplit` |<<key "panel:unsplit" u>> |hide the non-focused slot |
+|`panel:hide` | |hide the focused slot |
+|`panel:swap` |<<key "panel:swap" x>> |exchange the two slots' panel types |
+
+A slot that is hidden remembers its workspace and panel type, and shows them again
+on the next split. A split with nothing remembered shows the focused workspace in
+both slots. The divider between the slots can be dragged; its position belongs to
+the window, not to a workspace.
+
+''Each workspace remembers how many panels it had.'' Coming back to a workspace
+through `workspace:goto`, `workspace:next`/`workspace:prev` or `workspace:new` shows
+it with one panel or two, as it was left. The count is recorded only while the
+workspace has the window to itself — in the focused slot, the other slot hidden or
+showing the same workspace — so that splitting, unsplitting or hiding a slot there
+changes it, while a mixed layout (two workspaces side by side) changes nobody's. A
+new workspace starts with one panel.
+
+!! The slot header
+
+Each slot has a thin header bar:
+
+* the ''panel menu'', naming the panel type shown; choosing another one is `panel:set type <name>` ([[Panel types]]);
+* the ''repository indicator'': the name of the workspace's repository, or ''no repo'' (its uuid is in the tooltip). It only informs: a workspace's repository never changes ([[Workspaces]]);
+* the mouse's layout commands: ◫ to split when the slot is alone; ⇄ to swap and × to hide ''this'' slot when both are shown; ⛶ to focus this slot and go fullscreen.
+
+!! Fullscreen
+
+<<key "panel:toggle fullscreen" z>> — the key a tmux zooms a pane with — shows the
+focused panel alone: no tab bar, header, command input, status bar or other slot, and
+the window itself goes fullscreen, like a video player. The same key, or Escape
+(even from a text field inside the panel), comes back.
+
+<<list-kind reference>>

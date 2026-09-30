@@ -1,0 +1,7 @@
+title: devtools:open
+tags: [[GUI command]] GUI
+kind: reference
+aliases: devtools inspector
+summary: Open the WebKit web inspector
+
+Opens the WebKit inspector on the GUI's web view — the console, the DOM of every panel (through its shadow root), the network. The right-click menu offers it too ([[Context menus]]).

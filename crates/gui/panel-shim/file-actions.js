@@ -1,4 +1,4 @@
-// Shared filesystem-action helpers (spec-gui "Context menus"): the cut / copy /
+// Shared filesystem-action helpers (doc "Context menus"): the cut / copy /
 // paste / rename / duplicate / trash operations that any panel can offer on a
 // metarecord backed by a file or directory. Served at /__file-actions.js and
 // imported by the file-manager and every metarecord-bearing panel, so a single

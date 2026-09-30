@@ -63,7 +63,7 @@
     {:else}
       {#if !store.daemonConnected}
         <div class="daemon-banner" data-help-topic="connection">
-          Daemon unreachable at {store.daemonUrl} — daemon-dependent commands are disabled.
+          Daemon unreachable at {store.daemonUrl} — whatever needs it fails until it is back.
         </div>
       {:else if !store.daemonCompatible}
         <div class="daemon-banner" data-help-topic="connection">

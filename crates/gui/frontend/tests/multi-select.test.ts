@@ -1,7 +1,7 @@
 // The checked multi-selection (/__multi-select.js): one workspace-wide set of
 // metarecords — the `selected_metarecords` variable, the target of the bulk
 // operations and of `mf gui selected` — gathered across several lists and from
-// the file manager (spec-gui "Workspace variables", "The checked selection").
+// the file manager (doc "Workspace variables", doc "Cross-panel selection").
 // What this pins is the mirror discipline: every mutation is a
 // read-modify-write of the variable whose echo comes back to the writing panel
 // too (the backend broadcasts `workspace-var-changed` to every instance of the

@@ -394,7 +394,7 @@ describe('file-manager filesystem operations', () => {
   test('a row menu normalizes to the canonical category order', async () => {
     // The panel pushes its categories in the order that reads best in the
     // source; what the user sees is orderMenu's canonical one, the same in
-    // every panel (spec-gui "Context menus").
+    // every panel (doc "Context menus").
     const { orderMenu } = await import('../../panel-shim/menu.js');
     const s = stub('repo-1');
     const captured: Metafolder.MenuItem[][] = [];

@@ -99,7 +99,7 @@ tag_entry() { mock_respond "metarecord -q mf_schema = \"tag\" AND path = \"$1\" 
 markers_count() { mock_respond 'metarecord -q *gui_tag_skipped -> (mf_schema = "tag" AND path = "*") get --count' "$1"; }
 
 # How many times the walk asked about one entry. The question travels as the
-# wait's own --prompt (spec-gui "Status bar": that is what puts it in the
+# wait's own --prompt (doc "Status bar and task bar": that is what puts it in the
 # dedicated question bar), so it is the `gui input` call that carries it.
 asked() { mock_count "gui input --prompt '$1' has tag*"; }
 

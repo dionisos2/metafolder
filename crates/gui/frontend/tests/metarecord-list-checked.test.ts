@@ -1,4 +1,4 @@
-// The checked multi-selection survives changing the list (spec-gui "The checked
+// The checked multi-selection survives changing the list (doc "Cross-panel
 // selection"): rows checked in one list stay checked when the query moves to
 // another, so a selection can be gathered across several lists — and rows
 // checked elsewhere (the file manager, a script) light up here too. It used to

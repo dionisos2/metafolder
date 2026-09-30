@@ -294,7 +294,7 @@ async fn test_set_url_is_visible() {
 async fn test_daemon_diagnostics_reach_the_message_log() {
     // The daemon is a separate process, so its stderr is invisible to the GUI:
     // its warnings are drained from the feed into the message panels instead
-    // (spec-gui "Daemon diagnostics").
+    // (doc "Connection to the daemon").
     let (url, _) = spawn_stub().await;
     let proxy = DaemonProxy::new(url);
     let (_notifier, gui) = gui_with_notifier();

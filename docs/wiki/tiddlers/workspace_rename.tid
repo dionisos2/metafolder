@@ -1,0 +1,6 @@
+title: workspace:rename
+tags: [[GUI command]] Workspaces
+kind: reference
+summary: Rename the focused slot's workspace
+
+Renames the focused slot's workspace (double-clicking a tab does the same for that tab). A name given by hand is kept for good: it no longer follows the repository's numbering. See [[Workspaces]].

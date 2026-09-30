@@ -1,0 +1,51 @@
+title: Workspace variables
+tags: GUI
+kind: reference
+audience: dev
+aliases: workspace-variables variables vars selected_metarecord selected_paths selected_metarecords active_repo metarecords:dirty
+summary: A per-workspace key-value store the panels communicate through — the selection, the active repository, and each panel's own keys.
+
+Each workspace has a key-value store, shared by every panel loaded in it; a change is
+pushed at once to all of them. Panels talk through it without knowing one another:
+the list writes the selection, the detail and the file panels follow it. The Rust side
+holds it, so a script reads the same values — `GET /gui/workspaces/:id/vars/:key`,
+or `mf gui selected` for the checked set — and the `workspace-info` panel shows them
+live.
+
+!! The standard variables
+
+|!Key |!Value |!Meaning |
+|`active_repo` |uuid or `null` |the workspace's repository; read-only, fixed when the workspace takes one ([[Workspaces]]) |
+|`selected_metarecord` |`{uuid, repo}` or `null` |the highlighted metarecord; `null` for an untracked file |
+|`selected_paths` |list of absolute paths |the highlighted file — at most one entry, one position of the metarecord's `mfr_path` (a list, as scripts read it) |
+|`selected_metarecords` |list of uuids |the ''checked'' metarecords, for a bulk operation ([[Cross-panel selection]]) |
+|`selected_log_entry` |`{repo, rev_id, op_id}` or `null` |the revision under the log's cursor, with the operation when the cursor is on one; what [[log-detail panel]] shows |
+|`selected_treeref` |`{repo, field, uuid, path}` or `null` |the node selected in `treeref` |
+|`metarecords:dirty` |a time in ms |set whenever something the metarecord panels show may have changed (a write from the GUI, a reconcile…); they re-read on it |
+|`pick_request` |object or `null` |marks a workspace as a value picker, with who asked and what to restore |
+|`pick_result` |object or `null` |the picker's answer, delivered to the workspace that asked |
+
+A panel keeps its own variables under its name — `metarecord-list:query`,
+`file-manager:dir`, `treeref:scope` — and some are requests another panel or a
+command leaves for it: `file-manager:reveal-path` and `metarecord-list:query-request`
+carry a `nonce`, so that the same request made twice acts twice and a request acts
+only once ([[Cross-panel selection]]).
+
+!! The selection is a pair, published metarecord first
+
+`selected_metarecord` and `selected_paths` name the ''same'' highlighted thing, and
+whatever moves the selection writes `selected_metarecord` first and `selected_paths`
+second. The panels react to `selected_paths` and read `selected_metarecord` at that
+moment — the `file` panel does, to know which metarecord holds the playback position
+of the file it is about to show — so the matching metarecord has to be in place
+already. Writing the paths first hands every one of them the ''previous'' metarecord:
+one file on screen, another one read from and written to.
+
+It binds the scripting API as much as the panels: `PUT /gui/panels/:slot/view` with
+`{"type": "file", "path": …}` resolves the metarecord ''before'' it writes either
+variable. A script walking a folder one `mf gui view left file --path` at a time
+(`gui-tag-folder.sh`) otherwise ran a whole session one answer behind.
+
+A panel may move `selected_metarecord` ''alone'' — following a reference in
+`metarecord-detail` does — and the `file` panel deliberately ignores that, keeping the
+file it was showing.

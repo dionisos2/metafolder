@@ -72,9 +72,14 @@
       <span class="panel-type-chevron" aria-hidden="true">▾</span>
     </button>
     <span class="header-right">
-      <span class="repo-indicator" title="active repository">
+      <span
+        class="repo-indicator"
+        title={workspace?.active_repo ? `active repository ${workspace.active_repo}` : 'active repository'}
+      >
         {#if workspace?.active_repo}
-          {workspace.active_repo.slice(0, 8)}
+          <!-- The name when the daemon gave one; a uuid prefix is only a
+               fallback (the daemon was unreachable when the repo was adopted). -->
+          {workspace.repo_name ?? workspace.active_repo.slice(0, 8)}
         {:else}
           no repo
         {/if}
@@ -120,7 +125,7 @@
     {:else if payload.panel_type === null}
       <p class="placeholder">Choose a panel type in the header</p>
     {/if}
-    <!-- Panel iframes are positioned over this area by PanelHost. -->
+    <!-- Panel hosts are positioned over this area by PanelHost. -->
   </div>
 </section>
 

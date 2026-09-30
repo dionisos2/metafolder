@@ -1,6 +1,6 @@
 //! `GuiState`: single source of truth for workspaces, layout, variables and
 //! message logs, shared by the Tauri commands and the GUI HTTP API
-//! (spec-gui "Concepts"). Every mutation pushes an event to the frontend
+//! (doc "GUI"). Every mutation pushes an event to the frontend
 //! through the [`FrontendNotifier`].
 
 pub mod layout;
@@ -153,7 +153,7 @@ impl Inner {
     /// auto-named workspace sharing the given base (the repository name, or
     /// "Workspace"). Custom-named workspaces (`auto_index == None`) do not
     /// participate, so the counter fills gaps like the id numbering. The
-    /// display name is "<base> <index>" (spec-gui "Workspace name").
+    /// display name is "<base> <index>" (doc "Workspaces").
     fn next_index_for_base(&self, base: &str) -> u64 {
         let used: std::collections::HashSet<u64> = self
             .workspaces
@@ -166,7 +166,7 @@ impl Inner {
 
     /// Assigns a workspace to a slot, showing the slot and restoring the
     /// workspace's last panel type for it. When that panel type is already
-    /// shown for the same workspace in the other visible slot (one iframe
+    /// shown for the same workspace in the other visible slot (one instance
     /// exists per (workspace, panel type)), the slot falls back to
     /// `metarecord-detail` — pairing the list with the detail view is the
     /// expected split — and, when that one is taken too or no repo is
@@ -225,7 +225,7 @@ impl Inner {
     /// two slots on different workspaces) owns nothing and records nothing, so
     /// each workspace keeps the count it last had on its own. Consumed by
     /// [`assign_both`](Self::assign_both) when navigation brings a workspace
-    /// back (spec-gui "Per-workspace panel count").
+    /// back (doc "Panel slots and layout").
     fn record_split(&mut self) {
         let focused = self.focused;
         let Some(ws_id) = self.slot(focused).workspace.clone() else {
@@ -261,6 +261,7 @@ impl Inner {
                 id: w.id.clone(),
                 name: w.name.clone(),
                 active_repo: w.active_repo.clone(),
+                repo_name: w.repo_name.clone(),
             })
             .collect()
     }
@@ -565,7 +566,7 @@ impl GuiState {
     pub fn get_var(&self, ws_id: &str, key: &str) -> Result<Value, String> {
         let inner = self.lock();
         let ws = inner.workspace(ws_id)?;
-        // `active_repo` is a standard variable (spec-gui) but lives as a
+        // `active_repo` is a standard variable (doc "Workspace variables") but lives as a
         // workspace field: set at creation, never changed.
         if key == "active_repo" {
             return Ok(ws.active_repo.as_deref().map(Value::from).unwrap_or(Value::Null));
@@ -582,7 +583,7 @@ impl GuiState {
 
     /// [`create_workspace`](Self::create_workspace) carrying the repository's
     /// human name (resolved by the caller from the daemon) so the workspace is
-    /// auto-named after it (spec-gui "Workspace name").
+    /// auto-named after it (doc "Workspaces").
     pub fn create_workspace_named(
         &self,
         active_repo: Option<String>,
@@ -834,7 +835,7 @@ impl GuiState {
         })
     }
 
-    /// Marks a (workspace, panel type) instance as ready (iframe loaded
+    /// Marks a (workspace, panel type) instance as ready (panel mounted
     /// and initialized); reported by the frontend.
     pub fn set_panel_ready(&self, ws_id: &str, panel_type: &str) -> Result<(), String> {
         let mut inner = self.lock();
@@ -898,7 +899,7 @@ impl GuiState {
 
     /// `panel:set type` — switches the panel type displayed in a slot.
     /// Rejected when the other slot already shows the same panel type of
-    /// the same workspace (one iframe per (workspace, panel type)).
+    /// the same workspace (one instance per (workspace, panel type)).
     pub fn set_panel_type(&self, slot_id: SlotId, panel_type: &str) -> Result<(), String> {
         self.mutate(|inner| {
             let ws_id = inner
@@ -919,7 +920,7 @@ impl GuiState {
                 }
                 // The other slot is hidden but remembers this same (workspace,
                 // panel type): drop its assignment so revealing it later cannot
-                // duplicate the panel (one iframe per (workspace, panel type)).
+                // duplicate the panel (one instance per (workspace, panel type)).
                 inner.slot_mut(other_id).panel_type = None;
                 inner.workspace_mut(&ws_id)?.last_panel.remove(&other_id);
             }
@@ -931,7 +932,7 @@ impl GuiState {
     }
 
     /// Sets `active_repo` on a workspace that does not have one yet
-    /// (spec-gui "Repo indicator": in-place selection at startup). Once
+    /// (doc "Workspaces": in-place selection at startup). Once
     /// set, the repo never changes — open another workspace instead.
     pub fn adopt_repo(&self, ws_id: &str, repo: &str) -> Result<(), String> {
         self.adopt_repo_named(ws_id, repo, None)
@@ -1285,6 +1286,24 @@ mod tests {
         let info = state.workspaces().into_iter().find(|w| w.id == id).unwrap();
         assert_eq!(info.name, "my_repo 1");
         assert_eq!(info.active_repo.as_deref(), Some("uuid-a"));
+    }
+
+    #[test]
+    fn test_workspace_info_carries_the_repo_name_for_the_indicator() {
+        // The slot header's repo indicator shows the repository's name, not
+        // its uuid: the descriptor has to carry it, and a hand-renamed tab
+        // keeps it (the tab name is no longer the repo's).
+        let (_, state) = state();
+        let id = state.workspace_new_named(Some("uuid-a".into()), Some("my_repo".into()));
+        state.rename_workspace(&id, "photos").unwrap();
+        let info = state.workspaces().into_iter().find(|w| w.id == id).unwrap();
+        assert_eq!(info.repo_name.as_deref(), Some("my_repo"));
+
+        let first = state.workspaces().into_iter().find(|w| w.id == "ws-1").unwrap();
+        assert_eq!(first.repo_name, None);
+        state.adopt_repo_named("ws-1", "uuid-b", Some("other".into())).unwrap();
+        let first = state.workspaces().into_iter().find(|w| w.id == "ws-1").unwrap();
+        assert_eq!(first.repo_name.as_deref(), Some("other"));
     }
 
     #[test]
@@ -1843,7 +1862,7 @@ mod tests {
     fn test_active_repo_is_a_readonly_standard_variable() {
         let (_, state) = state();
         let id = state.workspace_new(Some("repo-7".into()));
-        // Readable through the variable store (spec-gui standard vars)...
+        // Readable through the variable store (doc "Workspace variables")...
         assert_eq!(state.get_var(&id, "active_repo").unwrap(), json!("repo-7"));
         assert_eq!(state.get_var("ws-1", "active_repo").unwrap(), Value::Null);
         // ...but immutable: set at creation, never changed.
@@ -1854,8 +1873,8 @@ mod tests {
     fn test_adopt_repo_sets_active_repo_once() {
         let (notifier, state) = state();
         notifier.clear();
-        // ws-1 starts with no repo: adoption allowed (spec-gui "Repo
-        // indicator": selection sets it in place when null).
+        // ws-1 starts with no repo: adoption allowed (doc
+        // "Workspaces": selection sets it in place when null).
         state.adopt_repo("ws-1", "repo-1").unwrap();
         assert_eq!(state.get_var("ws-1", "active_repo").unwrap(), json!("repo-1"));
         assert_eq!(state.workspaces()[0].active_repo.as_deref(), Some("repo-1"));

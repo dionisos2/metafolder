@@ -1,0 +1,6 @@
+title: panel:focus
+tags: [[GUI command]] [[Panel slots and layout]]
+kind: reference
+summary: Focus a panel slot (next / left / right)
+
+Moves the keyboard focus to another visible slot: `next` (the default) to the other one, `left` or `right` to that one whichever holds the focus now. See [[Panel slots and layout]].

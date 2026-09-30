@@ -1,0 +1,6 @@
+title: panel:toggle
+tags: [[GUI command]] [[Panel slots and layout]]
+kind: reference
+summary: Toggle a layout flag (split / fullscreen)
+
+`split` splits when one slot is visible and unsplits when both are — the everyday layout key; `fullscreen` shows the focused panel alone, the window itself fullscreen, and back (<<key "panel:toggle fullscreen" z>> or Escape). See [[Panel slots and layout]].

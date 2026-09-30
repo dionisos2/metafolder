@@ -1,6 +1,6 @@
 // Command invocation parsing, autocomplete filtering and dispatch
 // (spec-gui "Command input"). Parsing and filtering are pure and unit
-// tested; dispatch routes to Tauri commands and panel iframes.
+// tested; dispatch routes to Tauri commands and panel instances.
 
 import { osmMatch } from '../../../panel-shim/finder.js';
 import { bindingMatches } from '../../../panel-shim/keyhints.js';
@@ -1461,7 +1461,7 @@ async function runCommand(name: string, args: string[], ws: string | null): Prom
       return true;
     case 'panel:reveal': {
       // Shows the given panel type for the SAME workspace in the other
-      // slot, opening it if hidden (spec-gui "Cross-panel selection").
+      // slot, opening it if hidden (doc "Cross-panel selection").
       if (!args[0] || !ws) return true;
       const other = store.layout.focused === 'left' ? 'right' : 'left';
       await invoke('tab_assign', { wsId: ws, slot: other });

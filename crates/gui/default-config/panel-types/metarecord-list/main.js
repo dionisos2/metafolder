@@ -186,8 +186,8 @@ export async function mount(root, metafolder) {
   /** @type {SortKey[]} */
   let sort = [];
   let cursorIndex = -1;
-  // The checked multi-selection (workspace `selected_metarecords`, spec-gui
-  // "The checked selection"): workspace-wide and shared with the file manager,
+  // The checked multi-selection (workspace `selected_metarecords`, doc
+  // "Cross-panel selection"): workspace-wide and shared with the file manager,
   // kept across list changes — checking rows in several lists is what it is
   // for. The rows shown here are only where it is seen and edited.
   const selection = createMultiSelect({ workspace, daemon, render });
@@ -1018,7 +1018,7 @@ export async function mount(root, metafolder) {
     await showQuery(`same(mfr_duplicate_group, ${uuid})`);
   }
 
-  // ── Listing a folder (spec-gui "Cross-panel selection") ───────────────────
+  // ── Listing a folder (doc "Cross-panel selection") ───────────────────
 
   /** Put `dsl` in the normal zone — shown and frozen, so a query the GUI wrote
    *  stays visible, hand-editable and composable rather than being a hidden

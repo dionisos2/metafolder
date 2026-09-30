@@ -1,5 +1,5 @@
-//! HTTP proxy to the metafolder daemon (spec-gui "Connection to the
-//! daemon"). Panels and the shell go through this backend client: the
+//! HTTP proxy to the metafolder daemon (doc "Connection to the daemon").
+//! Panels and the shell go through this backend client: the
 //! WebView cannot call the daemon directly (no CORS there, and the
 //! daemon must stay GUI-agnostic). Tracks reachability and emits
 //! `daemon-health-changed` on transitions.
@@ -23,7 +23,7 @@ pub fn error_message(body: &Value, fallback: impl FnOnce() -> String) -> String 
     body["error"].as_str().map_or_else(fallback, str::to_string)
 }
 
-/// The outcome of one `/health` probe (spec-gui "Connection to the daemon").
+/// The outcome of one `/health` probe (doc "Connection to the daemon").
 ///
 /// `reachable` alone drives the "daemon unreachable" banner; `compatible`
 /// additionally distinguishes a *reachable but wrong-version* daemon (the GUI
@@ -308,8 +308,8 @@ impl DaemonProxy {
 
     /// The repository's human name (`GET /repos/:uuid` → `name`), best-effort:
     /// `None` if the daemon is unreachable or the repo is unknown. Used to
-    /// auto-name a workspace after the repo it loads (spec-gui "Workspace
-    /// name"); the caller falls back to the plain "Workspace N" numbering.
+    /// auto-name a workspace after the repo it loads (doc "Workspaces"); the
+    /// caller falls back to the plain "Workspace N" numbering.
     pub async fn repo_name(&self, uuid: &str) -> Option<String> {
         let response = self.request("GET", &format!("/repos/{uuid}"), None).await.ok()?;
         if response.status != 200 {
@@ -318,10 +318,10 @@ impl DaemonProxy {
         response.body.get("name").and_then(Value::as_str).map(str::to_string)
     }
 
-    /// Drains the daemon's diagnostics feed into every workspace's message log
-    /// (spec-gui "Daemon diagnostics"). The daemon runs as its own process, so
-    /// its stderr is invisible here; this is the only way its warnings reach
-    /// the person using the GUI.
+    /// Drains the daemon's diagnostics feed into the workspace message logs,
+    /// routed by repository (doc "Connection to the daemon"). The daemon runs
+    /// as its own process, so its stderr is invisible here; this is the only
+    /// way its warnings reach the person using the GUI.
     ///
     /// Best effort: an unreachable or unexpected answer leaves the cursor where
     /// it was, so nothing is skipped and the next poll retries the same spot.
@@ -353,8 +353,7 @@ impl DaemonProxy {
             }
             // Nowhere to route it: a repository loaded with no workspace on it.
             // Showing it everywhere is better than dropping it — an error about
-            // a repository nobody is looking at is exactly the one worth seeing,
-            // and the message names its repository.
+            // a repository nobody is looking at is exactly the one worth seeing.
             if !shown {
                 for workspace in &workspaces {
                     let _ = gui.append_message(&workspace.id, &line.text);

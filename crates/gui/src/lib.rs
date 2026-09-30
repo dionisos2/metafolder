@@ -288,7 +288,7 @@ fn spawn_confinement_probe(allow_unsandboxed: bool) {
 }
 
 /// Polls the daemon for reachability and drains its diagnostics feed
-/// (spec-gui "Connection to the daemon").
+/// (doc "Connection to the daemon").
 fn spawn_health_polling(
     daemon: Arc<daemon_proxy::DaemonProxy>,
     gui: Arc<GuiState>,

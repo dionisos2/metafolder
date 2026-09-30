@@ -1,0 +1,6 @@
+title: panel:swap
+tags: [[GUI command]] [[Panel slots and layout]]
+kind: reference
+summary: Exchange the two slots' panel types
+
+Exchanges the panel types of the two visible slots; each slot keeps its workspace. The header's ⇄ button does the same. See [[Panel slots and layout]].

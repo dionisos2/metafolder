@@ -1,4 +1,4 @@
-//! Panel slots and window layout (spec-gui "Panel slot", "Layout and panels").
+//! Panel slots and window layout (doc "Panel slots and layout").
 
 use serde::{Deserialize, Serialize};
 

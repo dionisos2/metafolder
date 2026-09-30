@@ -12,7 +12,7 @@ its default; this note says what each part is for.
 |`open-with` |the programs `file:open-with` offers to open a file with (completion candidates, not a whitelist; default: the desktop's handler) |
 |`[page-size]` |how many rows or tiles each list panel loads per window, by panel type: `metarecord-list` 100, `file` 150, `file-manager` and `treeref` 200 |
 |`[settings]` |timings of the GUI itself: the daemon health poll, a reconcile's completion poll, the repository-list cache, and the GUI's slow-log threshold ([[Slow log configuration]]) |
-|`[panels]` |timings shared by every panel: how long status messages and errors stay, the finder's and the live preview's debounce, the repos panel's task poll |
+|`[panels]` |timings shared by every panel: the finder's and the live preview's debounce, the repos panel's task poll; `status-message-ms` and `status-error-ms` are left without effect since status messages stopped clearing themselves ([[Status bar and task bar]]) |
 |`[ref-seeds]` |how the targets of a `ref` field are named where a value is typed or shown: which metarecords (a query) and by which columns, per field, `*` being the default rule |
 |`[completion]` |the separator joining the columns of a multi-column completion label |
 |`[panel-defaults.<panel>]` |each panel type's initial values — the columns `metarecord-list` opens on, the fields its finder searches, the field `treeref` opens on, the extensions `file` previews… — handed to that panel as `metafolder.defaults`. A custom panel type gets its own table the same way; the GUI knows nothing of the keys. Where a panel keeps a setting per workspace, the stored value wins |

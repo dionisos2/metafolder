@@ -1,0 +1,52 @@
+title: Workspaces
+tags: GUI
+kind: reference
+aliases: workspace tab tab-bar tabs
+summary: A workspace is one tab: a repository, the state of every panel opened in it, its variables and its messages.
+
+A ''workspace'' holds everything one line of work needs, and each is a tab of the
+tab bar:
+
+* its ''repository'' — fixed when the workspace takes one;
+* the state of every panel type opened in it this session — scroll position, query draft, display mode… Switching a slot to another panel type and back finds the first one as it was left;
+* its [[workspace variables|Workspace variables]], through which its panels talk to each other — the selection first of all ([[Cross-panel selection]]);
+* its status line and its message log (the `message` panel), which other workspaces do not see ([[Status bar and task bar]]);
+* whether it was last shown with one panel or two ([[Panel slots and layout]]).
+
+Nothing of it outlives the session: the GUI starts with a single empty workspace.
+
+!! One repository, for good
+
+A workspace's repository is set once: when it is created on one, or when a workspace
+without one — the one the GUI starts with — takes the repository picked in the
+`repos` panel. It never changes afterwards; picking another repository opens a new
+workspace. A selection or a variable naming a metarecord of the first repository
+therefore can never end up read against another.
+
+`workspace:new` opens the new workspace on the focused workspace's repository
+unless it is given another one.
+
+!! The tab bar
+
+One tab per workspace, in creation order, each with its name:
+
+* ''Workspace N'' for a workspace without a repository, the repository's name and a number (''photos 2'') for one on a repository — counted separately for each name, the lowest free number first. The repository's name is read from the daemon when the workspace takes it, and kept: renaming the repository later does not rename the tab.
+* A name given by hand — `workspace:rename`, or a double-click on the tab — is kept as it is, and leaves the numbering.
+
+Two dots on a tab say where it is shown: green in the focused slot, red in the other
+one, both when it fills both slots, none when it is not on screen (the colours are
+the theme's `--mf-tab-focused` and `--mf-tab-unfocused`).
+
+* A ''left-click'' shows the workspace in the focused slot.
+* A ''right-click'' shows it in the other slot — the way, with `workspace:next slot`, to put two workspaces side by side.
+* The ''×'' closes it, like `workspace:close` for that tab: every slot that showed it moves to the tab before (after, for the first tab), or is left empty when none remains.
+
+!! Moving between workspaces
+
+<<key "workspace:next" n>> and <<key "workspace:prev" p>> move to the next and
+previous tab, wrapping round; <<key "workspace:goto 1" 1>> to <<key "workspace:goto 9" 9>>
+go to a tab by its position; <<key "workspace:new" ctrl+t>> opens one and
+<<key "workspace:close" ctrl+w>> closes the focused one. All of them move ''both''
+panels together, so the two slots never drift apart unnoticed.
+
+<<list-kind reference>>

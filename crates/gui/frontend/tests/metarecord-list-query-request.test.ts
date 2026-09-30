@@ -1,4 +1,4 @@
-// metarecord-list "list a folder" flow (spec-gui "Cross-panel selection"): the
+// metarecord-list "list a folder" flow (doc "Cross-panel selection"): the
 // panel honours a `metarecord-list:query-request` workspace variable — set by the
 // `metarecord-list:folder` command from another panel — by putting the DSL
 // in the normal zone (visible, frozen, editable) and running it, both when it

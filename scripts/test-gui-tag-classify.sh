@@ -41,7 +41,7 @@ setup_common() { # [<gui query response>]
 
 # The ordered list of tags actually asked about, comma-joined.
 asked_order() {
-    # The question rides on the wait's own --prompt (spec-gui "Status bar"), so
+    # The question rides on the wait's own --prompt (doc "Status bar and task bar"), so
     # it is the `gui input` call that carries it.
     mock_calls_matching "gui input --prompt add tag '*' ?*" \
         | sed -n "s/.*add tag '\\([^']*\\)'.*/\\1/p" | paste -sd, -

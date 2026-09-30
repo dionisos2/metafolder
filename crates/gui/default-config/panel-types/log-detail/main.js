@@ -112,7 +112,7 @@ export async function mount(root, metafolder) {
   }
 
   /** Publishes a metarecord the operation touched as the selection, and shows
-   *  it in the other slot (spec-gui "Cross-panel selection").
+   *  it in the other slot (doc "Cross-panel selection").
    *  @param {string} uuid */
   async function openMetarecord(uuid) {
     if (!entry) return;

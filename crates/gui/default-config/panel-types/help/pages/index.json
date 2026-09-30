@@ -3,12 +3,7 @@
     "id": "getting-started",
     "title": "Getting started",
     "file": "getting-started.html",
-    "aliases": [
-      "help", "start", "interface", "tab-bar", "tab", "panel", "panel-type",
-      "layout", "connection", "daemon",
-      "status-bar",
-      "devtools", "quit", "help-cursor", "config-open"
-    ]
+    "aliases": ["help", "start", "help-cursor", "config-open"]
   },
   {
     "id": "find",

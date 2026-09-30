@@ -1,5 +1,4 @@
-// The checked multi-selection (spec-gui "Workspace variables" → "The checked
-// selection"), served at /__multi-select.js for panel types.
+// The checked multi-selection (doc "Cross-panel selection"), served at /__multi-select.js for panel types.
 //
 // `selected_metarecords` is one workspace-wide set of metarecord uuids — the
 // target of the bulk field operations (`metarecord:bulk`) and of

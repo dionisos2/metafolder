@@ -1,4 +1,4 @@
-# Metafolder GUI settings (doc "Configuration"; spec-gui "Connection to the daemon").
+# Metafolder GUI settings (doc "Configuration"; doc "Connection to the daemon").
 # Installed into ~/.config/metafolder/gui/ by metafolder-sync-config.
 # CLI flags (--daemon-port / --gui-port) override these at launch.
 
@@ -60,10 +60,10 @@ slow-operation-threshold-ms = 2000
 # Shared panel UX timing knobs, handed to every panel. Every key optional.
 [panels]
 
-# Standard status-message duration (ms) before it auto-clears. Default: 5000.
+# Durations (ms) the panels attach to a status message, ordinary and error.
+# Without effect: a status message stays until the next one replaces it (or
+# `status:clear`), so these no longer hide anything. Defaults: 5000, 8000.
 status-message-ms = 5000
-
-# Longer status duration (ms) for errors and important notices. Default: 8000.
 status-error-ms = 8000
 
 # Debounce (ms) of the incremental finder filter in metarecord-list: a burst of

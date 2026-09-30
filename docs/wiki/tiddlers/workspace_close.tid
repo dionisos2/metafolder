@@ -1,0 +1,6 @@
+title: workspace:close
+tags: [[GUI command]] Workspaces
+kind: reference
+summary: Close the focused slot's workspace
+
+Closes the focused slot's workspace: its tab goes, and every slot that showed it moves to the previous tab (the next one when the first tab closes), or is left empty when no workspace remains. The tab's × does the same for the tab clicked. See [[Workspaces]].

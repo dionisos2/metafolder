@@ -1,0 +1,6 @@
+title: workspace:next
+tags: [[GUI command]] Workspaces
+kind: reference
+summary: Move to the next workspace (`slot`: the focused slot only)
+
+Moves both panels to the next tab, wrapping round, restoring the number of panels that workspace was left with. `workspace:next slot` moves the focused slot only — the one way, with a tab click, to put the two slots on different workspaces. See [[Workspaces]].

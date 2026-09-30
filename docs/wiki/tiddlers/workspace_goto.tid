@@ -1,0 +1,6 @@
+title: workspace:goto
+tags: [[GUI command]] Workspaces
+kind: reference
+summary: Move both panels to workspace number N
+
+Moves both panels to the workspace at position N in the tab bar, counting from 1, restoring the number of panels it was left with ([[Panel slots and layout]]).

@@ -1,0 +1,6 @@
+title: workspace:new
+tags: [[GUI command]] Workspaces
+kind: reference
+summary: Create a workspace and show it in both slots
+
+Creates a workspace and shows it in both slots, on the repository given as argument (its uuid) or, with none, on the focused workspace's — the repos panel passes the one you picked. The new workspace starts with a single panel. See [[Workspaces]].

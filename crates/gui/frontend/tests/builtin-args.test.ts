@@ -112,7 +112,7 @@ describe('the other builtins that take arguments', () => {
     // Reveal shows the type for the *same workspace* in the other slot, so it
     // needs one on screen.
     store.panelTypes = ['file', 'help'];
-    store.workspaces = [{ id: 'ws-1', name: 'music', active_repo: null }];
+    store.workspaces = [{ id: 'ws-1', name: 'music', active_repo: null, repo_name: null }];
     store.layout.left = { visible: true, workspace_id: 'ws-1', panel_type: 'message' };
     const done = dispatch('panel:reveal');
 
@@ -148,8 +148,8 @@ describe('the other builtins that take arguments', () => {
 
   test('workspace:goto asks which workspace and completes over them', async () => {
     store.workspaces = [
-      { id: 'ws-1', name: 'music', active_repo: null },
-      { id: 'ws-2', name: 'photos', active_repo: null },
+      { id: 'ws-1', name: 'music', active_repo: null, repo_name: null },
+      { id: 'ws-2', name: 'photos', active_repo: null, repo_name: null },
     ];
     const done = dispatch('workspace:goto');
 
@@ -163,7 +163,7 @@ describe('the other builtins that take arguments', () => {
   });
 
   test('workspace:rename asks for the name, pre-filled with the current one', async () => {
-    store.workspaces = [{ id: 'ws-1', name: 'music', active_repo: null }];
+    store.workspaces = [{ id: 'ws-1', name: 'music', active_repo: null, repo_name: null }];
     store.layout.left = { visible: true, workspace_id: 'ws-1', panel_type: 'message' };
     const done = dispatch('workspace:rename');
 

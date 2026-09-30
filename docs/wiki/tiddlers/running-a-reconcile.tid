@@ -30,7 +30,7 @@ Options: `--metarecord <uuid>` reconciles one subtree ([[Scoped reconcile]]);
 `--poll-interval` sets how often progress is read (default from the CLI configuration).
 
 In the GUI, `reconcile:run` reconciles the active repository; its progress is in the
-task bar and the result lands in the status bar (`Reconcile: 3 created, 1 moved, 2
+task bar and the result lands in the status bar ([[Status bar and task bar]]) (`Reconcile: 3 created, 1 moved, 2
 candidates.`) and the message panel. From the metarecord detail panel,
 `metarecord:reconcile` reconciles the selected directory's subtree, and
 `metarecord:reconcile watch` sets `mf_watch = true` on it first — the one-gesture way

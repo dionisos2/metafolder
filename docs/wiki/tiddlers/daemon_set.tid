@@ -1,0 +1,6 @@
+title: daemon:set
+tags: [[GUI command]] [[Connection to the daemon]]
+kind: reference
+summary: Change a daemon setting (url)
+
+`daemon:set url <url>` points the GUI at another daemon for the rest of the session, checks it at once and says whether it answered. The address it starts with is `daemon-port` in the configuration ([[Connection to the daemon]]).

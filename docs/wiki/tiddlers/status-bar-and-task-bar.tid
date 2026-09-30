@@ -1,0 +1,51 @@
+title: Status bar and task bar
+tags: GUI
+kind: reference
+aliases: status-bar status task-bar spinner progress key-hints
+summary: The status line says what the last command did; the task bar above it shows what is still running — daemon tasks, scripts, slow daemon calls.
+
+!! The status bar
+
+A read-only line at the very bottom of the window, never focused. It shows:
+
+* the message of the last thing that reported — ''Metarecord deleted.'', a reconcile's summary — in red for an error, with a spinner while a command says it is busy;
+* the name of the workspace it belongs to, and, dimmed, the last command run.
+
+It belongs to a workspace: when the two slots show the same workspace there is one
+line, when they show two there are two, each its own workspace's. Every status
+message also goes to the workspace's message log, the `message` panel.
+
+''A message stays until the next one replaces it'', so that there is time to read it;
+<<key "status:clear" ctrl+l>> (`status:clear`, which works while typing too) clears
+it. The durations a message carries — `status-message-ms`, `status-error-ms` in
+[[GUI configuration]], `timeout_ms` of `POST /gui/message` — no longer hide
+anything.
+
+Two bars can appear just above it, so that a status message never covers them: the
+continuations of a key sequence being typed, and the question a running script is
+asking, with the keys it accepts.
+
+!! The task bar
+
+Just above the status bar, and only while there is something in it, the task bar
+shows what is in flight. It is not tied to a workspace, except for scripts.
+
+* ''Daemon tasks'' — every pending or running task of every loaded repository, whoever started it, the command line included: a bar when the task knows its amount of work, a spinner otherwise, labelled with its kind and phase ([[Following a task]]). The GUI asks the daemon every 300 ms, and shows a task only once it has run for a second: a watcher flush lasts milliseconds and fires whenever a watched file is touched, and showing it would make every panel jump for work nobody asked to see — what a flush did goes to the message log instead ([[What a flush reports]]).
+* ''Scripts'' — a `!` command, a `script:run` script or a `file:open-with` program, for as long as it runs, labelled by its name. It spins while working, and gains a progress bar when the script reports its counts through `mf gui progress`, with a phase naming the current step. While the script waits for an answer it stops spinning and says ''your answer'': working and waiting for you must never look alike. A script's entry belongs to the workspaces the script owns, and is hidden with them.
+* ''A daemon call you are waiting on'' — see below.
+
+!! A daemon call you are waiting on
+
+Most daemon calls — a write, a query — take milliseconds and show nothing. A few do
+not, and while one runs every other action on the repository waits behind it:
+without anything on screen the GUI does not look busy but broken — keys do nothing,
+the panels do not move, and nothing tells that from a crash.
+
+So the task bar shows one entry for the daemon calls made on your behalf that are
+still running, labelled `<METHOD> <path>` with a spinner, and `+N` when others wait
+behind it. It appears only once a call has lasted 300 ms, so the fast majority never
+make it flicker, and it names the ''oldest'' call still running — the one actually
+waited on. The GUI's background polls (the change feed, the task bar's own) have
+nobody waiting on them and are not counted.
+
+<<list-kind reference>>

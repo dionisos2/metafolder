@@ -1,0 +1,6 @@
+title: panel:hide
+tags: [[GUI command]] [[Panel slots and layout]]
+kind: reference
+summary: Hide the focused panel slot
+
+Hides the focused slot and gives the focus to the other; the slot remembers its workspace and panel type for the next split. The × of a slot's header does the same for that slot. See [[Panel slots and layout]].

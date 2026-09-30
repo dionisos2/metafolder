@@ -1,0 +1,6 @@
+title: status:clear
+tags: [[GUI command]] [[Status bar and task bar]]
+kind: reference
+summary: Clear the status bar message
+
+Clears the focused workspace's status line — the message and the last command's name. Status messages do not go away on their own ([[Status bar and task bar]]); this is the way to dismiss one, even while typing.

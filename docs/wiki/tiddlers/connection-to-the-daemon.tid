@@ -1,0 +1,48 @@
+title: Connection to the daemon
+tags: GUI
+kind: reference
+aliases: connection daemon-connection banner unreachable incompatible api-version diagnostics
+summary: Which daemon the GUI talks to, the banners when it cannot or should not, and how the daemon's warnings reach the message log.
+
+The GUI talks to a daemon it does not start: on `127.0.0.1`, at `daemon-port` of
+[[GUI configuration]] (default 7523, the daemon's own default, so a fresh install
+connects without any flag), or at `--daemon-port` given at launch.
+`daemon:set url <url>` points it elsewhere for the rest of the session. Every request carries the
+daemon's session token ([[Session tokens]]).
+
+Everything goes through the GUI's Rust side — the web view cannot reach the daemon
+itself — and the panels read nothing from a cache: each read is a request.
+
+!! Health and the banners
+
+Every five seconds (`daemon-health-poll-secs`), and at once after `daemon:set`, the
+GUI asks `GET /health` ([[Health and diagnostics]]).
+
+* ''Daemon unreachable'' — no answer, or not a 200: a red banner says so above the tabs. The GUI itself keeps working — panels, command input, keys, the scripting API — but whatever needs the daemon fails, with its error, until it answers again. Nothing is disabled beforehand.
+* ''Incompatible daemon'' — it answers, but reports an `api_version` other than the GUI's own, or none: the banner says that data may be missing or wrong, and that both should be rebuilt from the same source. It is the usual mishap of development — a rebuilt daemon restarted under a GUI still running the old code, or the reverse — which otherwise shows as empty or broken panels without a word.
+
+The panels never pass a failed read off as an empty result: `metarecord-list` and
+`file-manager` show the error in their body, and stay there, rather than an empty
+list; `file-manager` falls back to browsing the disk alone rather than hanging on
+''Loading…'' when the daemon does not answer.
+
+!! The daemon's warnings
+
+The daemon is its own process, and the GUI cannot read its standard error. On each
+health poll that reaches it, the GUI reads the daemon's diagnostics feed
+(`GET /diagnostics`) and appends each new line to the message logs, as
+`daemon <scope>: <message>` — `error:` spelled out for an error, a warning being the ordinary case.
+The `info` level arrives too: it is how each watcher flush says what it applied
+([[What a flush reports]]) — the answer to ''why did something just happen when I
+did nothing?''. When the feed lost entries before they were read, a line says so.
+
+A line about a repository goes to the workspaces on that repository only; a line
+about none, to every workspace; a line about a repository no workspace shows, to
+every workspace too ([[Why the daemon's warnings are routed by repository]]).
+
+The GUI starts reading from the beginning of the feed, so the first poll brings what
+the daemon said before the GUI was up — why a repository failed to load, say. It
+moves on only after a well-formed answer: a daemon out of reach, or an answer of an
+unexpected shape, is read again from the same point, so nothing is skipped.
+
+<<list-kind reference>>

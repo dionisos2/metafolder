@@ -1,0 +1,55 @@
+title: Panel types
+tags: GUI
+kind: overview
+aliases: panel-type panels
+summary: What a slot can show — a list, a detail, a file, the log… — the built-in panel types, your own, and what a panel keeps.
+
+A ''panel type'' is a kind of content a slot can show. Each is a directory under
+`~/.config/metafolder/gui/panel-types/` holding an `index.html` and its script; the
+directory's name is the type's name. The built-in ones are installed there with the
+configuration, so they can be read and changed like the rest of it
+([[Updating the configuration]]); a new directory there is a new panel type,
+listed next to the others.
+
+Choose one with the panel menu of the slot's header, with `panel:set type <name>`,
+or with the `t` keys: <<key "panel:set type metarecord-list" "t l">> for the list,
+<<key "panel:set type metarecord-detail" "t d">> the detail,
+<<key "panel:set type file" "t f">> the file, <<key "panel:set type file-manager" "t m">>
+the file manager…
+
+|!Panel type |!Shows |
+|`metarecord-list` |the metarecords a query selects, as a table or a grid; the main source of the selection |
+|`metarecord-detail` |every field of the selected metarecord |
+|`file` |a preview of the selected file — image, video, audio, text, PDF — or a folder's thumbnails |
+|`file-manager` |the file tree on disk, tracked or not, with file operations |
+|`treeref` |a tree of metarecords (a `tree_ref` field such as `mfr_path` or tags), from the roots down |
+|`recent` |the metarecords most recently viewed in this GUI |
+|`repos` |the repositories: load, create, unload, their running tasks |
+|[[log panel]] |the event log, revision by revision |
+|[[log-detail panel]] |what the revision selected in the log changed, field by field |
+|[[trash panel]] |the repository's trash |
+|[[duplicates panel]] |groups of byte-identical files |
+|`sync` |synchronisation between two repositories |
+|`message` |the workspace's messages: status messages, commands run, shell output, the daemon's reports |
+|`workspace-info` |the workspace's variables, live — for debugging panels and scripts |
+|`help` |this documentation |
+|`hello` |a minimal example to start a panel type from |
+
+The [[Panel]] catalog has a note for each.
+
+!! What a panel keeps
+
+A panel keeps its whole state for the session, per workspace, even while another
+panel type is displayed in its slot: switching back finds it as it was.
+
+Being ''built'' is distinct from being ''shown''. When the GUI starts, it builds every
+installed panel type once, hidden, in the first workspace, so that every panel's
+commands exist from the start; that costs the panels' construction only — a panel
+defers its expensive work (a directory listing, the log, streaming a file) until it is
+first displayed, and a hidden panel asked to refresh several times refreshes once when
+it is shown. At the same moment, the GUI reports in the message log every key bound
+to a command that no panel and no builtin defines.
+
+<<list-kind reference>>
+
+<<list-kind guide>>

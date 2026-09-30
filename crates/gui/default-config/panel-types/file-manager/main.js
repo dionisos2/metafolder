@@ -122,8 +122,8 @@ export async function mount(root, metafolder) {
   let revealNonce = null;
 
   const entriesList = byId(root, 'entries');
-  // The checked multi-selection (workspace `selected_metarecords`, spec-gui
-  // "The checked selection"): the same workspace-wide set the metarecord list
+  // The checked multi-selection (workspace `selected_metarecords`, doc
+  // "Cross-panel selection"): the same workspace-wide set the metarecord list
   // gathers and the bulk operations act on — checked rows of the disk view
   // join it by their metarecord uuid.
   const selection = createMultiSelect({ workspace, daemon, render });
@@ -506,7 +506,7 @@ export async function mount(root, metafolder) {
     else await select(index);
   }
 
-  // ── The checked multi-selection (spec-gui "The checked selection") ─────────
+  // ── The checked multi-selection (doc "Cross-panel selection") ─────────
   // The same workspace-wide set the metarecord list gathers (and the bulk
   // operations act on), checked here by metarecord uuid. Only a row that HAS a
   // metarecord can join it: an untracked entry has none to check, and tracking
@@ -788,7 +788,7 @@ export async function mount(root, metafolder) {
     gotoRootButton.textContent = repoRoot === null ? 'root' : 'repo root';
   }
 
-  // ── Reveal a path (spec-gui "Cross-panel selection") ───────────────────────
+  // ── Reveal a path (doc "Cross-panel selection") ───────────────────────
   // Another panel asks the file manager to show a metarecord's folder: the
   // folder itself for a directory, or the containing folder (with the file
   // highlighted) for a file. The request travels through the workspace variable

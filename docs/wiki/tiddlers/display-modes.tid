@@ -1,0 +1,21 @@
+title: Display modes
+tags: GUI
+kind: reference
+aliases: display-mode mode grid table
+summary: A panel that can lay out the same content in several ways — metarecord-list as a table or a grid — keeps its mode per workspace.
+
+A ''display mode'' is one of several layouts a panel type offers for the same
+content. It is part of the panel's state in its workspace: another workspace's list
+keeps its own mode, and the mode survives switching the slot to another panel type
+and back — not the end of the session.
+
+`metarecord-list` has two:
+
+* `table` (the default) — one row per metarecord, one column per chosen field;
+* `grid` — a thumbnail per metarecord, for image and video collections.
+
+`metarecord-list:set mode grid` and `metarecord-list:set mode table` switch between
+them.
+
+Other panels choose their layout from what they show rather than offering a mode:
+the `file` panel previews a file, and shows a folder as a grid of thumbnails.

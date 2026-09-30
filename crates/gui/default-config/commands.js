@@ -136,7 +136,7 @@ function dslString(value) {
  *
  * Null when a selection exists but lies outside the repository: listing the
  * root instead would silently answer a different question. Note the priority
- * is the opposite of the `ignore:*` commands' target directory (spec-gui
+ * is the opposite of the `ignore:*` commands' target directory (doc
  * "Cross-panel selection"): there the file manager's directory is the subject,
  * here the clicked row is.
  * @param {MetafolderApi} mf
@@ -260,7 +260,7 @@ export default {
     },
   },
 
-  // Reveal folder (spec-gui "Cross-panel selection"): open the folder of the
+  // Reveal folder (doc "Cross-panel selection"): open the folder of the
   // current selection in the file manager, replacing the focused panel — the
   // folder itself when a directory is selected, or the folder containing the
   // selected file. What crosses is the path, as the `file-manager:reveal-path`
@@ -283,7 +283,7 @@ export default {
 
   // The mirror image of `file-manager:reveal` (keybindings.toml "g f"): show
   // the same folder's *metarecords* instead of its disk entries, replacing the
-  // focused panel (spec-gui "Cross-panel selection"). The folder becomes the DSL
+  // focused panel (doc "Cross-panel selection"). The folder becomes the DSL
   // `mfr_path -> "<folder>"` (Follows: its files *and* its subdirectories, the
   // contents a file manager shows), landed in the DSL zone frozen so it stays
   // visible and editable. Repository-relative paths follow the `mfr_path`
@@ -435,8 +435,8 @@ export default {
   // Open a recently-viewed metarecord (keybindings.toml "g r"): the pick
   // completes over the recently-viewed list (newest first), and the choice
   // publishes the selection and reveals the matching viewer in the *other*
-  // slot, exactly like a metarecord-list open (spec-gui "Cross-panel
-  // selection") — the file panel when the metarecord has a file, the detail
+  // slot, exactly like a metarecord-list open (doc "Cross-panel selection")
+  // — the file panel when the metarecord has a file, the detail
   // panel when it has none. The candidate lines are shaped by `recentLine`
   // above: reshape it to reshape the pick.
   'recent': {

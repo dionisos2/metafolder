@@ -1,5 +1,5 @@
 // HTML context menu module (panel-shim/menu.js), shared by the shell and
-// the panel iframes (spec-gui "Context menus").
+// the panels (doc "Context menus").
 
 import { afterEach, describe, expect, test, vi } from 'vitest';
 import {

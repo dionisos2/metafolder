@@ -29,7 +29,7 @@ only once it has run for a second: a watcher flush lasts milliseconds and fires
 whenever a watched file is touched, and showing it would make the panels jump
 for work nobody asked to see (what a flush did is reported in the `message`
 panel instead). Since it polls the daemon, it shows any task, not only the GUI's
-own, and reopening the GUI mid-reconcile resumes showing it.
+own, and reopening the GUI mid-reconcile resumes showing it ([[Status bar and task bar]]).
 
 The `repos` panel lists each repository's active tasks under it, with a
 ''Stop'' button for those that can be stopped ([[Cancelling a task]]).

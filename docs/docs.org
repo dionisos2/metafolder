@@ -829,27 +829,53 @@ network access », « =/fsraw= », spec-platform « Session-token runtime direct
 
 * GUI
 
-** TODO 33. Le shell
+** FAIT 33. Le shell
 
-- [ ] =GUI= — overview
-- [ ] =Workspaces= — reference (onglets, barre d'onglets)
-- [ ] =Panel slots and layout= — reference (deux slots, split, plein écran)
-- [ ] =Panel types= — overview (le catalogue =Panel=)
-- [ ] =Display modes= — reference
-- [ ] =Workspace variables= — reference, dev (la sélection est une paire, sélection cochée)
-- [ ] =Status bar and task bar= — reference (dont les tâches du démon, spec-tasks « GUI »)
-- [ ] =Connection to the daemon= — reference (indicateur de dépôt, diagnostics, version d'API incompatible)
-- [ ] =Context menus= — reference (menu par défaut, actions sur fichiers)
-- [ ] =Cross-panel selection= — reference
-- [ ] =Opening a file with another program= — guide
+- [X] =GUI= — overview
+- [X] =Workspaces= — reference (onglets, barre d'onglets)
+- [X] =Panel slots and layout= — reference (deux slots, split, plein écran, en-tête et indicateur de dépôt)
+- [X] =Panel types= — overview (la table des types intégrés, renvoie au catalogue =Panel=)
+- [X] =Display modes= — reference
+- [X] =Workspace variables= — reference, dev (la sélection est une paire)
+- [X] =Status bar and task bar= — reference (dont les tâches du démon, les scripts, l'appel attendu)
+- [X] =Connection to the daemon= — reference (bannières, version d'API incompatible, diagnostics)
+- [X] =Why the daemon's warnings are routed by repository= — rationale, dev (ajoutée : la mémoire =diagnostics-are-repo-scoped=)
+- [X] =Context menus= — reference (menu par défaut, actions sur fichiers)
+- [X] =Cross-panel selection= — reference (avec la sélection cochée, et les deux commandes « dossier »)
+- [X] =Opening a file with another program= — guide
+- [X] les notes de commande : =workspace:*= (6), =panel:*= (8), =status:clear=, =message:clear=, =quit=, =devtools:open=, =daemon:set=
 
-GUI : =workspace:*= (6), =panel:*= (8), =status:clear=, =message:clear=, =quit=,
-=devtools:open=, =daemon:set=. Sources : spec-gui « Overview », « Workspace »,
-« Panel slot », « Panel type », « Display mode », « Workspace variables »,
-« Repo indicator », « Daemon diagnostics », « Connection to the daemon », « Tab
-bar », « Layout and panels », « Status bar », « Task bar », « Context menus »,
-« Cross-panel selection », « Opening a file with another program » ; help
-=getting-started.html= (partie interface) ; mémoire =diagnostics-are-repo-scoped=.
+Vérification contre le code : l'indicateur de dépôt de l'en-tête affichait les 8
+premiers caractères de l'uuid, pas le nom ; corrigé, test d'abord (le nom capturé
+à l'adoption passe dans =WorkspaceInfo.repo_name=, ajout additif à =GET
+/gui/workspaces=). La bannière « démon injoignable » disait les commandes qui en
+dépendent désactivées : rien ne les désactive, elles échouent ; texte corrigé. La
+spec disait les messages de la barre d'état effacés après 5 s : ils restent
+depuis =20910dd= (juin), jusqu'au suivant ou =status:clear= ; les réglages
+=status-message-ms= / =status-error-ms= sont restés, sans effet (commentaires et
+=GUI configuration= corrigés). Elle disait aussi les diagnostics ajoutés à
+*tous* les workspaces (routés par dépôt depuis =bac289f=), le démon sans
+authentification (jeton de session), =t=/=w= pour =workspace:new=/=close= (=ctrl+t=,
+=ctrl+w=), le drapeau plein écran dans l'état Rust (il est côté shell), et parlait
+d'iframes (menus, construction des panels) ; elle ignorait =panel:hide=,
+=panel:reveal=, =panel:focus left/right=, le double-clic de renommage d'un onglet
+et la variable =metarecords:dirty=. Commentaires périmés corrigés (iframes,
+« tous les workspaces »). *Signalé, non tranché* : (1) les deux réglages
+=status-*-ms= sans effet sont encore lus et passés à ~80 appels des panels —
+les retirer est un nettoyage à part ; (2) une ligne de diagnostic d'un dépôt
+qu'aucun workspace ne montre est affichée partout, mais son texte ne nomme pas
+toujours le dépôt (une sauvegarde automatique échouée, par exemple) ; (3)
+=panel:reveal= (le double-clic de =metarecord-list=) prend l'autre slot même s'il
+montrait un autre workspace. Sources retirées (pointeurs) : spec-gui « Overview »,
+« Workspace », « Panel slot », « Panel type », « Display mode » (ses paragraphes
+propres à =metarecord-list= déplacés dans la section de ce panel, pour l'item
+38 ; la construction différée des panels dans « Panel type system », pour
+l'item 37), « Workspace variables », les deux « Status bar », « Repo indicator »,
+« Daemon diagnostics », « Connection to the daemon », « Tab bar », « Layout and
+panels », « Task bar », « Context menus », « Cross-panel selection », « Opening a
+file with another program » ; la partie « interface » de =getting-started.html=
+(la page reste pour l'item 1) et ses alias. Mémoire =diagnostics-are-repo-scoped=
+devenue la note =rationale=.
 
 ** TODO 34. Commandes et saisie
 

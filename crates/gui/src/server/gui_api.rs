@@ -90,7 +90,7 @@ pub async fn create_workspace(
     let task = body.task;
     let mut active_repo = body.active_repo;
     // Resolve the repo's human name so the workspace is auto-named after it
-    // (spec-gui "Workspace name"); best-effort, falls back to "Workspace N".
+    // (doc "Workspaces"); best-effort, falls back to "Workspace N".
     let mut repo_name = None;
     if active_repo.is_none() {
         // Default to the daemon's first loaded repository.

@@ -1,4 +1,4 @@
-//! Workspace: self-contained state container (spec-gui "Workspace").
+//! Workspace: self-contained state container (doc "Workspaces").
 
 use super::layout::SlotId;
 use serde::Serialize;
@@ -8,7 +8,7 @@ use std::collections::{HashMap, HashSet};
 pub struct Workspace {
     pub id: String,
     pub name: String,
-    /// Set at creation, never changed afterwards (spec-gui "Workspace").
+    /// Set at creation, never changed afterwards (doc "Workspaces").
     pub active_repo: Option<String>,
     /// Human repository name captured when the workspace adopts a repo (the
     /// daemon owns the canonical name; `active_repo` is only its uuid). `None`
@@ -29,9 +29,9 @@ pub struct Workspace {
     /// Panel count remembered while this workspace owned the window: `true`
     /// = two panels, `false` = one. Restored by keyboard navigation
     /// (`assign_both`); recorded by split/unsplit/close while the workspace
-    /// owns the window (spec-gui "Per-workspace panel count").
+    /// owns the window (doc "Panel slots and layout").
     pub split: bool,
-    /// Panel types whose iframe finished initializing in this workspace
+    /// Panel types whose instance finished mounting in this workspace
     /// (GET /gui/panels/:slot/view "loading"/"ready").
     pub ready_panels: HashSet<String>,
 }
@@ -57,4 +57,7 @@ pub struct WorkspaceInfo {
     pub id: String,
     pub name: String,
     pub active_repo: Option<String>,
+    /// The repository's name as captured when the workspace adopted it (see
+    /// [`Workspace::repo_name`]) — what the slot header's repo indicator shows.
+    pub repo_name: Option<String>,
 }

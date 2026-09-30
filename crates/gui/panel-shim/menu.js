@@ -1,5 +1,5 @@
 // metafolder HTML context menu — served at /__menu.js for panel types and
-// imported by the shell and the shim (spec-gui "Context menus"). The
+// imported by the shell and the shim (doc "Context menus"). The
 // native WebView menu (back/forward/...) is suppressed everywhere except
 // editable text fields; panels build their own menus with showMenu (via
 // metafolder.contextMenu).
@@ -104,7 +104,7 @@ function isHeader(item) {
 }
 
 /**
- * The canonical category order, shared by every menu in the GUI (spec-gui
+ * The canonical category order, shared by every menu in the GUI (doc
  * "Context menus"). A right-click reads the same way in every panel because
  * the categories always come in this order, whatever order the panel happened
  * to push them in; a header the list does not know keeps its relative position
@@ -396,7 +396,7 @@ export function scopedProvider(host, provider) {
 }
 
 /**
- * Installs the default context menu (spec-gui "Context menus"): right-click
+ * Installs the default context menu (doc "Context menus"): right-click
  * anywhere that is not an editable text field and where no more specific
  * menu opened shows Copy (the selection, captured at open time) and the
  * everyday layout commands, sent through `dispatch(invocation)`.

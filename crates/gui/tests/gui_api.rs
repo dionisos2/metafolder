@@ -129,7 +129,10 @@ async fn test_workspaces_list_create_delete() {
 
     let (status, body) = request(&ctx.router, "GET", "/gui/workspaces", None).await;
     assert_eq!(status, StatusCode::OK);
-    assert_eq!(body, json!([{"id": "ws-1", "name": "Workspace 1", "active_repo": null}]));
+    assert_eq!(
+        body,
+        json!([{"id": "ws-1", "name": "Workspace 1", "active_repo": null, "repo_name": null}])
+    );
 
     // Explicit repo.
     let (status, body) = request(

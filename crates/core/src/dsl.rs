@@ -1025,8 +1025,8 @@ mod tests {
         );
     }
 
-    // The repository root is the empty `mfr_path` (spec-gui "Cross-panel
-    // selection" builds `mfr_path -> ""` to list it), so an empty path operand
+    // The repository root is the empty `mfr_path` (doc "Cross-panel selection"
+    // builds `mfr_path -> ""` to list it), so an empty path operand
     // is a legal target, not a missing one.
     #[test]
     fn test_follows_empty_path_is_the_forest_root() {

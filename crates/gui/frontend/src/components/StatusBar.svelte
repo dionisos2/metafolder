@@ -3,7 +3,7 @@
   import { dispatch } from '../lib/commands';
 
   // One bar when both visible slots show the same workspace; two
-  // otherwise (spec-gui "Status bar").
+  // otherwise (doc "Status bar and task bar").
   const barWorkspaces = $derived.by(visibleWorkspaces);
 
   // A script's question belongs to the workspaces that script owns: switching

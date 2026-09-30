@@ -1,0 +1,6 @@
+title: panel:unsplit
+tags: [[GUI command]] [[Panel slots and layout]]
+kind: reference
+summary: Hide the non-focused panel slot
+
+Hides the non-focused slot. Its workspace keeps its tab, and the slot remembers what it showed for the next split. See [[Panel slots and layout]].

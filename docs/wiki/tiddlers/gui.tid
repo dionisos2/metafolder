@@ -1,0 +1,40 @@
+title: GUI
+kind: overview
+aliases: interface gui shell window
+summary: The desktop interface: workspaces in tabs, one or two panels side by side, a command input, and status and task bars — all driven from the keyboard.
+
+The GUI (`metafolder-gui`) is a window onto a running daemon: it loads and shows
+repositories, edits metarecords, runs queries and reconciles, and walks the event
+log — what `mf` does, in visual form. It connects to the daemon over HTTP and never
+starts or stops it ([[Connection to the daemon]]).
+
+From top to bottom, the window holds:
+
+* the ''tab bar'' — one tab per [[workspace|Workspaces]];
+* one or two ''panel slots'' side by side, each showing a panel of the workspace assigned to it ([[Panel slots and layout]], [[Panel types]]);
+* the ''command input'', always there: a command name after `:`, a shell command after `!`;
+* the ''task bar'', when something is in flight, and the ''status bar'' ([[Status bar and task bar]]).
+
+Four principles shape it:
+
+* ''Keyboard first'': every command can be reached from the keyboard, and every key can be rebound.
+* ''Command driven'': everything the GUI does is a named command, typed in the command input or bound to a key; the menus and buttons invoke the same commands.
+* ''Scriptable'': the GUI serves a local HTTP API, so that a script — through `mf gui` — can open panels and wait for the user's answer.
+* ''Themeable'': its look is a CSS file read at startup.
+
+Nothing of a session is kept: the GUI starts with one empty workspace each time.
+
+!! How it is built
+
+A Tauri v2 application: a Rust side and the system's web view (WebKit2GTK on
+Linux). The Rust side owns every piece of state — workspaces, layout, workspace
+variables, keybindings, the command registry — and the shell, written in Svelte,
+only mirrors it through events; the scripting API and the window therefore always
+agree. Panel types are plain HTML and JavaScript, with no build step, and run in
+the shell's own page, each in its shadow root.
+
+<<list-kind reference>>
+
+<<list-kind guide>>
+
+<<list-kind rationale>>

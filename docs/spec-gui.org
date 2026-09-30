@@ -3,240 +3,29 @@
 
 * Overview
 
-The GUI is a graphical interface to the Metafolder daemon. It exposes the full
-CLI surface in visual form: repository management (init/load/list), metarecord
-CRUD, query execution, reconcile, and event log inspection. It communicates
-with an already-running daemon over HTTP and does not manage the daemon's
-lifecycle.
-
-Four cross-cutting design principles govern the GUI:
-- *Keyboard-first*: every command is reachable from the keyboard; all
-  keybindings are configurable.
-- *Command-driven*: a persistent status bar shows notifications; a command
-  input accepts named commands and shell invocations.
-- *Scriptable*: the GUI exposes its own local HTTP API so that external scripts
-  can drive panels and wait for user input.
-- *Themeable*: appearance is controlled by a CSS file loaded at startup.
-
-The GUI is built with *Tauri* (v2): a Rust backend communicating with a
-system WebView frontend. The shell frontend is *Svelte 5* (Vite build);
-panel types are plain HTML/JS with no build step. The Rust backend owns all
-canonical state (workspaces, layout, variables, keybindings, command
-registry); the shell is a thin reflection updated through Tauri events, so
-the scripting HTTP API and the window always agree.
+Moved to the wiki: doc "GUI".
 
 * Concepts
 
 ** Workspace
 
-A self-contained state container. Each workspace holds: the state of every
-panel type that has been loaded in it during the session (scroll position,
-query draft, display mode, etc.), the workspace variables, the status bar
-history, and its *panel count* — whether it was last shown with one or two
-panels while it owned the window (see [[*Layout and panels]]). Panel types
-retain their state for the lifetime of the session — switching to a different
-panel type and back restores the previous state. Workspace state is not
-persisted across sessions; the GUI starts fresh each time.
-
-The =active_repo= of a workspace is set when the workspace is created and
-cannot be changed. To work with a different repository, a new workspace is
-created (see [[*Tab bar]]). This prevents =selected_metarecord= and other workspace
-variables from becoming invalid due to a repo switch.
+Moved to the wiki: doc "Workspaces".
 
 ** Panel slot
 
-One of two fixed content areas in the window (left and right). Each slot is
-assigned at most one workspace. An unassigned slot remains visible but shows a
-centred "No workspace selected" message; the user can assign a workspace by
-clicking a tab or using =workspace:new=. A workspace can be assigned to zero,
-one, or both slots simultaneously.
-
-When both slots display the same workspace, each slot independently selects
-which panel type to show. This enables, for example, =metarecord-list= on the left
-and =file= on the right within one workspace, sharing its variables
-(=selected_metarecord=, etc.).
-
-The two slots are separated by a draggable divider; the width ratio is part of
-the window state (not per-workspace). The focused slot has a visible indicator
-(border highlight — theme-controlled) and receives keyboard input.
+Moved to the wiki: doc "Panel slots and layout".
 
 ** Panel type
 
-The content/functionality kind displayed inside a panel. Each panel type is
-implemented as a directory containing an =index.html= entry point; built-in
-types ship as default examples in the user's config directory so they can be
-inspected and modified. The panel type name is the directory name.
-
-Built-in panel types:
-
-| Name             | Description                                                  |
-|------------------+--------------------------------------------------------------|
-| =metarecord-list=     | Metadata metarecords filtered by an embedded query; primary selection source |
-| =metarecord-detail=   | All fields of the selected metarecord; follows =selected_metarecord=   |
-| =file=           | Preview of the file at the active path from =selected_paths=        |
-| =file-manager=   | Filesystem tree navigator; browse and add files/dirs to the DB |
-| =workspace-info= | Current workspace variables — useful for debugging and scripting |
-| =message=        | Persistent log of status bar messages, shell output, and reconcile results |
-| =log=            | Event log (revisions and operations)                         |
-| =log-detail=     | What the revision or operation selected in =log= changed, field by field; follows =selected_log_entry= |
-| =repos=          | Repository list, init, load, unload, per-repo running tasks, tracking notices |
-| =treeref=        | TreeRef forest explorer; pick a TreeRef field, navigate roots→leaves |
-| =trash=          | Repository trash-bin: list, restore, delete, empty (see doc "Sending files to the trash") |
-| =duplicates=     | Groups of byte-identical files, worst reclaimable space first (see doc "duplicates panel") |
-| =recent=         | The metarecords most recently viewed in this GUI, newest first; the =recent= picker's panel form |
-| =sync=           | Cross-repo sync: status, plan, show, run (see [[file:spec-sync.org][spec-sync.org]]) |
-| =help=           | In-app help: static pages with a grep search box (see [[*Help]]) |
-
-Users can add custom panel types by creating a new directory under
-=~/.config/metafolder/gui/panel-types/<name>/=. Custom types appear alongside
-built-in types in the panel type selector.
-
-Each panel type retains its full state for the lifetime of the session, even
-when not displayed. Switching to another panel type and back restores the
-previous state unchanged.
-
-Panel *construction* is separate from the *first display*: loading the
-iframe registers commands, keybinding suggestions and listeners, but a
-panel's expensive work — the directory listing of =file-manager=, the log
-fetch, streaming the previewed file — is deferred to the first actual
-display via =metafolder.whenVisible(fn)=
-(=metafolder.visible= exposes the current state; while hidden, repeated
-triggers re-arming the same callback coalesce into one run on show). The
-shell pre-instantiates every installed panel type once at startup, hidden,
-for the startup workspace: all panel commands are registered from the
-start at the cost of construction only, without daemon traffic.
+Moved to the wiki: doc "Panel types".
 
 ** Display mode
 
-The visual representation used within a panel type that supports several
-layouts. Stored as part of the panel type's state in the workspace.
-
-The =metarecord-list= panel type supports at minimum:
-- =table= — tabular list with configurable columns.
-- =grid= — thumbnail grid, useful for image collections.
-
-=metarecord-list= runs its query *eagerly* on the first display, and again
-whenever a repo becomes active: the (possibly empty) query is executed and the
-repo's contents shown straight away, rather than waiting for an explicit apply
-or =metarecord-list:refresh=. Queries are fast enough that showing the list is
-the better default. The list stays empty only while there is no active repo.
-(Historically this panel deferred its query until an explicit user action; the
-value-picker case — =pick_request=, where rows are needed to pick from — was the
-one exception and is now subsumed by the eager run.)
-
-For large result sets, =metarecord-list= uses the daemon's cursor pagination
-(=limit= / =cursor= / =sort= on =POST /query=, see the Pagination section of
-[[file:spec-data-model.org][spec-data-model.org]]), fetching further pages as
-the user scrolls; a footer shows =loaded/total= rows (the total from the
-daemon's =count=, asked *apart*, once the first page is shown: a page the
-daemon stops at its end would otherwise wait for every match to be found —
-doc "Sorting and postings"). Scrolling is not the only way down: moving the selection
-past the last loaded row (=metarecord-list:next=) fetches the next page too,
-so keyboard and script navigation reach the whole result set even when the
-panel is not the displayed one (no scroll event ever fires there). The default page size comes from the GUI config
-(=[page-size].metarecord-list= in =config.toml=, default 100) — the smallest of
-the list panels, as each row needs several daemon round-trips (TreeRef path
-resolution, ref-target metarecords) and parsing. It is further overridable per
-workspace: =metarecord-list:set page-size <n>= persists it in the
-=metarecord-list:page-size= workspace variable (also settable by scripts);
-invalid stored values fall back to the config default.
-
-Orphaned metarecords — a metarecord with =mfr_path= whose file no longer
-exists on disk, either =mfr_path = Nothing= (the watcher saw the deletion)
-or a stale TreeRef (left in place by reconcile, see
-doc "Orphans") — are made visible:
-=metarecord-list= colours the row/card (theme variable =--mf-orphan=, purple
-by default) with a tooltip giving the reason; =metarecord-detail= shows a
-one-line note under the metarecord head. A metarecord with no =mfr_path=
-field at all is not a file metarecord and is never marked.
-
-Not-watched metarecords are made visible the same way (doc "Checking whether a path is watched"): =metarecord-list= colours the row/card amber
-(=--mf-warning=) with the reason on hover — a record *watched* through any of
-its paths stays unmarked, its reason still on hover — and =metarecord-detail=
-always states the verdict in a note under the head, dim when watched, amber
-with the reason when not. The verdict asks the daemon's live coverage
-(=POST /repos/:repo/watch/check=, one batch call per page in the list, one
-per load in the detail) and covers the states eligibility cannot: a subtree
-left uncovered (=mfr_watch_exceeded=), an unplugged volume, the daemon's own
-runtime directory. A
-metarecord with no =mfr_path= at all, or one whose answer has not landed (the
-daemon down, or older than the endpoint), is left unmarked: "unknown" never
-reads as "unwatched". The amber yields to the stronger signals — the orphan
-purple and the unplugged-volume note keep their own marking.
+Moved to the wiki: doc "Display modes".
 
 ** Workspace variables
 
-A reactive, per-workspace key-value store shared across all panel types
-loaded in the workspace. Panel types read and write these variables to communicate without
-being directly coupled to each other.
-
-Standard variables:
-
-| Key                | Type                          | Description                        |
-|--------------------+-------------------------------+------------------------------------|
-| =active_repo=      | =string \vert null=           | UUID of the active repository      |
-| =selected_paths=   | =string[]=                    | Absolute path of the highlighted filesystem metarecord — at most one entry, a metarecord holding one =mfr_path= position (the variable stays a list: scripts read it as one) |
-| =selected_metarecord=   | =\{uuid, repo\} \vert null=   | Metadata metarecord for the highlighted path (null if untracked) |
-| =selected_metarecords= | =string[]=                    | UUIDs of the /checked/ metarecords — the multi-selection, kept across list changes and shared by every panel of the workspace (see [[*The checked selection]]) |
-| =selected_log_entry= | =\{repo, rev_id, op_id\} \vert null= | Revision under the =log= panel's cursor, with the operation when the cursor is on one (=op_id= null otherwise); read by =log-detail= |
-| =selected_treeref= | =\{repo, field, uuid, path\} \vert null= | TreeRef node selected in the =treeref= panel |
-| =pick_request=     | =\{caller_ws, token, picker_slot, restore\} \vert null= | Set on a *picker* workspace at creation; marks it as a value picker linked back to =caller_ws=, with the slot to restore on close (see [[*Value picker]]) |
-| =pick_result=      | =\{token, uuid\} \vert \{token, path\} \vert \{token, cancelled\} \vert null= | Delivered to the *calling* workspace when a picker confirms (=uuid= or =path=, per the request's =result= kind) or cancels; the requesting form matches =token= and consumes it |
-
-Panel types may define their own variables using namespaced keys (e.g.
-=my-panel:current-node=).
-
-*** The selection is a pair, published metarecord-first
-
-=selected_metarecord= and =selected_paths= name the *same* highlighted thing,
-and a publisher that moves the selection sets =selected_metarecord= *first*,
-=selected_paths= second. Consumers react to =selected_paths= and read
-=selected_metarecord= at that moment — the =file= panel does, to learn which
-metarecord holds the playback position of the file it is about to show — so the
-matching metarecord has to be in place already. Publishing the paths first
-hands every consumer the *previous* metarecord: one file on screen, another one
-read from and written to.
-
-This binds the scripting API as much as the panels: =PUT
-/gui/panels/:slot/view= with ={"type": "file", "path": …}= resolves the
-metarecord *before* it writes either variable, never between them. A script
-that walks a folder one =mf gui view left file --path= at a time (=gui-tag-folder=)
-otherwise runs a whole session one answer behind.
-
-A panel may move =selected_metarecord= *alone* — following a reference in
-=metarecord-detail= is exactly that — and the =file= panel deliberately ignores
-it, keeping the file it was showing (see [[*Video playback position]]).
-
-*** The checked selection
-
-Where =selected_metarecord= names the one highlighted thing,
-=selected_metarecords= is a *set*: the metarecords checked for a bulk operation
-(the =selection= target of =metarecord:bulk= and of the bulk form's /Checked
-selection/ choice), printed for a script by =mf gui selected=. It belongs to the
-workspace and it *accumulates*:
-
-- Rows are checked with =Space= (=metarecord-list:select toggle= /
-  =file-manager:select toggle=) or from a row's right-click menu, in the
-  =metarecord-list= and in the =file-manager= alike. A file-manager row joins by
-  its metarecord's uuid; an *untracked* entry has none to check and says so
-  (tracking it first is the way).
-- The selection *survives changing the list*: a checked metarecord stays
-  checked when the query or the finder moves to another result, so a selection
-  can be gathered in several lists — and in the file manager — before anything
-  acts on it. =select all= checks every loaded row *on top of* what is already
-  checked ("all of this list", never a replacement of the whole selection);
-  =select none= (=Ctrl+Space=) empties it.
-- The one thing dropped from the selection is a metarecord that no longer
-  *exists* (deleted or trashed — from anywhere, the CLI included, so each panel
-  prunes against the daemon when its listing reloads): it could never be shown
-  or unchecked again. Merely leaving the current query drops nothing.
-- It names metarecords of one repository: switching the workspace to another
-  repository starts a new selection.
-
-Every panel of the workspace shows the set as it stands, wherever the change
-came from — a row checked in one panel lights up in the other — and reports its
-count (the =metarecord-list= footer adds how many of the checks its own rows
-carry).
+Moved to the wiki: doc "Workspace variables".
 
 ** Value picker
 
@@ -576,21 +365,7 @@ them, so every shortcut is visible and editable in that one file;
 
 ** Status bar
 
-A read-only line at the very bottom of the window, always visible and never
-focused. Displays status messages, error notifications, the name of the last
-executed command (dim text), and a spinner during long operations. Content is
-*per-workspace*. When both slots display the same workspace, one status bar is
-shown; when the two slots display different workspaces, two status bars are
-shown (one per slot). Messages auto-clear after a configurable timeout
-(default 5 s).
-
-A running script's *question* does **not** share this line. When a
-=POST /gui/input= wait carries a =prompt=, that question — and the keys the
-wait accepts — is shown in a *dedicated bar* just above the status line (the
-same place as the pending key-sequence reminder), so a status or error message
-can never overwrite the question the user is being asked. The bar clears when
-the wait resolves. It also carries the "script keys" checkbox and a reminder
-that escape stops the script (see [[*Script keys]]).
+Moved to the wiki: doc "Status bar and task bar".
 
 ** Command input
 
@@ -887,38 +662,13 @@ question is not refused with =409= for the rest of the GUI's life.
 
 ** Repo indicator
 
-A read-only label in the slot's header bar showing the name of the active
-repository for that slot's workspace. It is purely informational; the user
-cannot change =active_repo= through it.
-
-To open a repository, the user uses =repos:open= (e.g. via a menu or
-keybinding), which switches the focused slot to the =repos= panel type where
-the desired repo can be selected or a new one initialised. Selecting a repo
-in the =repos= panel type opens a new workspace (tab) with that repo as
-=active_repo=, assigned to the focused slot. If the focused slot's workspace
-already has =active_repo = null= (e.g. at startup), the selection sets it
-in place instead.
+Moved to the wiki: doc "Workspaces".
 
 * GUI
 
 ** Daemon diagnostics
 
-The GUI polls =GET /diagnostics= (see doc "Health and diagnostics") on the
-same loop as the health probe, and appends what it finds to *every* workspace's
-message log — a daemon-wide warning concerns them all, not whichever one happens
-to be focused. This is the only way the daemon's warnings reach the user: the
-daemon is a separate process and the GUI cannot read its stderr.
-
-A line reads =daemon <scope>: <message>=, with =error:= spelled out for the
-error level (a warning is the common case, and the prefix would be noise on
-every line). The =info= level arrives here too: it is how each watcher flush
-says what it applied, and to what (doc "What a flush reports") —
-the answer to "why did something just happen when I did nothing?". When the feed reports dropped entries, a line says so before them.
-
-The cursor starts at 0, so the first poll picks up whatever the daemon already
-warned about — including why a repository failed to load, which happens before
-the GUI is up. It only advances on a well-formed answer: an unreachable daemon
-or an unexpected shape re-polls the same position rather than skipping entries.
+Moved to the wiki: doc "Connection to the daemon".
 
 ** Slow daemon calls
 
@@ -926,36 +676,7 @@ Moved to the wiki: doc "Correlating the GUI and the daemon".
 
 ** Connection to the daemon
 
-The GUI connects to the daemon on 127.0.0.1 at the port configured by the user:
-=daemon-port= in =~/.config/metafolder/gui/config.toml= (default =7523=, the
-daemon's own default port — so a fresh install connects with no flag),
-overridable at launch with =--daemon-port=. At runtime the =daemon:set url=
-command can repoint the proxy at an arbitrary URL (a power-user override).
-
-On startup (and whenever the URL changes) the GUI calls =GET /health=. If the
-daemon is unreachable or returns a non-200 response, a prominent error banner
-is shown and all daemon-dependent commands are disabled. The GUI itself
-(panels, status bar, command input, keybindings, panel type system, and the
-GUI API) remains functional.
-
-=GET /health= also reports =api_version=, the wire-protocol version shared by
-every service (=core::API_VERSION=; distinct from the crate semver, and bumped
-by hand whenever a change to the HTTP contract would make an older client
-misbehave). The GUI compares the daemon's =api_version= against its own
-compiled-in value: a reachable daemon reporting a different version (or none —
-a daemon predating the field) is *incompatible*, and a distinct banner warns
-that data may be missing or wrong and the two sides should be rebuilt from the
-same source. This catches the common development mishap of restarting a rebuilt
-daemon against a still-running older GUI (or vice versa), which otherwise
-manifests as silently empty or broken panels.
-
-Independently, panels never present a failed daemon fetch as an empty result:
-=metarecord-list= and =file-manager= render a *persistent* error state in the
-panel body (not only a transient status-bar flash) when a query or directory
-listing fails, and =file-manager= degrades to disk-only browsing rather than
-hanging on "Loading…" when the daemon calls in its start-up path fail.
-
-No authentication: the daemon is local-only and requires none.
+Moved to the wiki: doc "Connection to the daemon".
 
 ** Ref value seeds
 
@@ -1077,185 +798,19 @@ panels as =metafolder.settings= / =metafolder.pageSize=. What belongs in
 
 ** Tab bar
 
-A row of tabs at the top of the window. Each tab represents one workspace.
-Tabs have a short user-editable name. The default name is auto-generated from
-the workspace's repository: a workspace with no repository is ="Workspace N"=,
-a workspace showing repository =my_repo= is ="my_repo N"=, where =N= is a
-per-base counter (the repository name, or ="Workspace"=, each numbered
-independently and gap-filled when a workspace closes). So a session might read
-="Workspace 1"=, ="my_repo 1"=, ="my_repo 2"=, ="Workspace 2"=,
-="other_repo 1"=. The repository name is captured (from the daemon) when the
-workspace adopts the repository and is *frozen*: a later daemon-side repository
-rename does not propagate to the tab name. Renaming a tab by hand freezes its
-name and removes it from its base's numbering. Tab state is not persisted
-across sessions.
-
-Color indicators show the current slot assignments:
-- *Green*: workspace displayed in the focused slot.
-- *Red*: workspace displayed in the non-focused slot.
-- *Green + red*: workspace displayed in both slots simultaneously.
-- No color: workspace not currently visible in either slot.
-
-*Left-click* on a tab: assigns that workspace to the focused slot (the slot
-keeps focus). *Right-click*: assigns that workspace to the non-focused slot.
-Each tab carries a *close button* (=×=) that closes its workspace — the
-mouse equivalent of =workspace:close=, except it targets the clicked tab's
-workspace rather than the focused slot's.
-
-| Command                  | Description                                      |
-|--------------------------+--------------------------------------------------|
-| =workspace:new=          | Create a workspace in BOTH slots (inherits the focused repo unless one is given) |
-| =workspace:close=        | Close the focused slot's workspace (removes its tab; its slots switch to the previous workspace — the next one for the first tab — or become unassigned when none remains) |
-| =workspace:rename=       | Rename the focused slot's workspace              |
-| =workspace:goto=         | Move BOTH panels to workspace N (1-based; N is a parameter) |
-| =workspace:next=         | Move BOTH panels to the next workspace (wraps)   |
-| =workspace:prev=         | Move BOTH panels to the previous workspace       |
-| =workspace:next slot= | Assign the next workspace to the focused slot only (wraps) |
-| =workspace:prev slot= | Assign the previous workspace to the focused slot only |
-
-Default keybinding suggestions: =t= for =workspace:new=, =w= for
-=workspace:close=, =n= / =p= for =workspace:next= / =workspace:prev=, =1= … =9=
-for =workspace:goto=. The default navigation keys move both panels together:
-the two slots only end up on different workspaces through an explicit tab
-click or the focused-slot =workspace:next slot= / =workspace:prev slot=
-commands (no default binding). Command names never bake in a parameter —
-=workspace:goto= takes N as an argument.
-
-Default bindings use plain keys: modifier combos (=ctrl+…=, =alt+…=) are
-reserved for bindings with =text-input = true=, which must fire while a
-text input is focused and therefore cannot use plain printable keys.
+Moved to the wiki: doc "Workspaces".
 
 ** Layout and panels
 
-The window area (below the tab bar) is divided into:
-- *Two panel slots* (left and right), each assigned one workspace (see
-  [[*Panel slot]]). At startup only the left slot is visible.
-- *Command input*: a single line just above the status bar(s), always
-  visible.
-- *Status bar*: one or two read-only lines at the very bottom (see
-  [[*Status bar]]).
-
-=panel:split= shows the right slot. If no workspace was previously assigned
-to it, the focused workspace is shown in both slots; the same panel type
-cannot be displayed twice for one workspace, so the new slot falls back to
-=metarecord-detail= (pairing the list with the detail view is the expected
-split). When the workspace has no active repo, or =metarecord-detail= is
-already shown in the other slot, the new slot gets no panel type and the
-type picker is presented. No workspace is silently created, except when
-the layout has no focused workspace at all (the only meaningful split
-then). =panel:unsplit= hides the non-focused slot; the
-workspace remains in the tab bar. =panel:toggle split= splits when a single
-slot is visible and unsplits when both are — the everyday command; default
-suggestions: =v= for =panel:toggle split=, =u= for =panel:unsplit=, =o= for
-=panel:focus next=, =x= for =panel:swap=. The focused slot has a visible indicator (border
-highlight — theme-controlled); focus switches via =panel:focus next=.
-
-*Per-workspace panel count.* Each workspace remembers whether it was last
-shown with one or two panels, and the navigation commands that move both
-panels together (=workspace:goto=, =workspace:next= / =workspace:prev=, and
-=workspace:new=) restore that count: returning to a workspace left split
-reopens its second panel, returning to one left single keeps a single panel —
-the second slot still remembers its workspace but stays hidden. A new workspace defaults to a
-single panel. The count is recorded only while the workspace *owns the window*
-— it occupies the focused slot with the other slot hidden or showing the same
-workspace — so =panel:split= / =panel:unsplit= and closing a slot update it,
-while a mixed layout (the two slots on different workspaces, reachable through
-a tab click or the focused-slot =workspace:next slot= /
-=workspace:prev slot=) records nothing and leaves each workspace's
-remembered count untouched. Only the count is per-workspace; the divider
-width ratio remains window state (see [[*Panel slot]]).
-
-Each slot has a thin header bar showing the current panel type name and the
-repo indicator. The header contains a dropdown that lists all available panel
-types (built-in and custom); selecting one switches the displayed panel type
-for that slot. The same switch is available via =panel:set type <name>= and
-configurable keybindings.
-
-The header also carries the mouse equivalents of the layout commands: when
-the slot is the only visible one, a *split button* (=◫=, =panel:split=
-semantics) shows the second slot; when both slots are visible, a *close
-button* (=×=) hides that slot — its own slot, unlike =panel:unsplit= which
-hides the non-focused one — and a *swap button* (=⇄=, =panel:swap=)
-exchanges the panel types of the two slots. The hidden slot's workspace
-assignment is remembered either way. A *fullscreen button* (=⛶=,
-=panel:toggle fullscreen=) focuses the slot and enters fullscreen.
-
-*Fullscreen*: =panel:toggle fullscreen= toggles an immersive mode showing only the
-focused panel — the tab bar, command input, status bar, slot header and the
-other slot are all hidden, and the OS window itself goes fullscreen (like a
-video player). It is bound to =z= by default — the key that zooms a pane in a
-tmux — so the same key goes in and back out. =Escape= also leaves fullscreen
-(even from inside a panel text input); the canonical flag lives in the
-Rust-owned GUI state.
+Moved to the wiki: doc "Panel slots and layout".
 
 ** Status bar
 
-Always-visible read-only area at the bottom. Shows:
-- Status messages after commands (e.g. ="Metarecord deleted."=).
-- Error messages from failed operations.
-- The last executed command name (dim text).
-
-A running shell script's loading indicator (spinner) lives in the *task bar*,
-not here (see [[*Task bar]]).
-
-Live progress of daemon /tasks/ (reconcile, query, flush) is *not* shown here
-but in a dedicated *task bar* just above the status bar, to avoid saturating it
-(see [[*Task bar]] and doc "Following a task").
-
-Content is per-workspace. When both slots display the same workspace, one
-status bar is shown. When the two slots display different workspaces, two
-status bars are shown (one per slot, each reflecting its own workspace).
+Moved to the wiki: doc "Status bar and task bar".
 
 ** Task bar
 
-A dedicated bar directly above the status bar, showing in-flight daemon tasks
-(doc "Tasks"). It polls =GET /tasks= (all loaded repositories) and lists each
-=running= / =pending= task with a determinate progress bar when the task
-reports =done=/=total=, a spinner otherwise, labelled by =kind=/=phase=. It is
-hidden when there are no tasks, and a task only earns a place once it has been
-in flight for a grace period (doc "Following a task") — showing the bar re-lays out
-every panel, which is not worth doing for the millisecond-long watcher flush
-that fires whenever anything touches a watched file. What that flush did is
-reported in the [[*Message view]] instead, like any other daemon diagnostic.
-Unlike the status bar it is not tied to a workspace: it surfaces every
-blocking task on the loaded repositories, including reconciles started from the
-CLI or another client.
-
-Running *shell scripts* (a =!= command, or the =script:run= builtin) also
-appear here as a loading indicator for the whole time the subprocess runs, so a
-slow script never looks frozen. These are GUI-side, not daemon tasks: the GUI
-tracks them itself (=script-task-changed=) rather than polling =GET /tasks=.
-The entry is labelled by the script's base name; it spins while the script
-works, and *gains a determinate progress bar* when the script reports
-=done=/=total= via =mf gui progress= (which also sets a =phase= label for the
-current step, e.g. the file being processed) — the spinner stays, since it is
-the motion that says "working" (see [[*Working vs. awaiting an answer]]). While
-the script is blocked on a user answer it neither spins nor advances: the bar
-goes away, the counts stay, and it says the answer is awaited, so "still
-working" and "your turn" are never confused. Unlike a daemon task, a script's entry is scoped
-to the workspaces that script owns (see [[*Script session]]) and is hidden with
-them. When the GUI launches a script it injects a per-run id as
-=METAFOLDER_GUI_TASK=, which =mf gui progress=, =mf gui input=, =mf gui prompt=
-and =mf gui workspace new= all read so a script addresses its own entry
-regardless of the focused workspace; outside the GUI the variable is unset and
-the call is a harmless no-op.
-
-*** A daemon call the user is waiting on
-
-Not every wait is a task. An ordinary daemon call — a write, a query — is
-answered in milliseconds and shows nothing; a few are not, and while one runs it
-holds the repository's connection, so *every other action queues behind it*.
-With nothing on screen for it, the GUI does not read as busy but as broken: the
-keys do nothing, the panels do not move, and there is no way to tell that from a
-crash.
-
-So the bar also shows one entry for the foreground daemon calls in flight,
-labelled =<METHOD> <path>=, spinning, with =+N= when others are queued behind
-the one named. It appears only once a call has outlasted a short grace period
-(300 ms), so the fast majority never make it strobe, and it names the *oldest*
-call still running — the one actually being waited on. Only calls made on the
-user's behalf are counted: the background polls (the change feed, this
-bar's own task list) have nobody waiting on them and stay silent.
+Moved to the wiki: doc "Status bar and task bar".
 
 ** Command input
 
@@ -1497,7 +1052,7 @@ Within =metarecord-list=:
   =selected_paths= is non-empty), opening the slot if hidden. See
   [[*Cross-panel selection]].
 - =Space= checks/unchecks the row for the multi-selection (updates
-  =selected_metarecords=; see [[*The checked selection]] — the checks are kept
+  =selected_metarecords=; see doc "Cross-panel selection" — the checks are kept
   when the list changes).
 - =Ctrl+Space= clears the multi-selection (=metarecord-list:select none=,
   resets =selected_metarecords= to =[]=).
@@ -1749,84 +1304,7 @@ drift from =keybindings.toml= the way a hand-written key did. Rules
 
 ** Context menus
 
-The WebView's native context menu (back/forward/reload/inspect…) is
-suppressed everywhere — in the shell and inside every panel iframe — with
-one exception: editable text fields keep the native menu (cut/copy/paste
-has no cheap HTML replacement). The "is this a text field?" test uses the
-event's *composed* target (=composedPath()[0]=), not =event.target=: a
-right-click inside a panel's Shadow DOM is retargeted to the panel host at the
-shell listener, so testing =event.target= would wrongly suppress the native
-menu — and its cut/copy/paste — over panel text inputs. Its Inspect Element
-metarecord is replaced by the =devtools:open= command, which opens the WebKit
-inspector (no default keybinding; the =devtools= Tauri feature keeps it
-available in release builds).
-
-Panels backed by files prepend the shared *file actions* — Open with…, Cut,
-Copy, Paste, Rename, Duplicate, Copy full path (the entry's absolute OS path,
-to the text clipboard) and Move to trash — for the right-clicked metarecord's
-file
-(the file-manager, metarecord-list, metarecord-detail, file, recent
-and the =mfr_path= treeref). They come from =/__file-actions.js=, whose
-clipboard is one realm-wide singleton, so a Cut/Copy in any of them pastes in
-another (the file manager included). List panels tag each file row with
-=data-mf-path= (and =data-mf-isdir=/=data-mf-name=) so a ready-made provider
-resolves the clicked row; the file-manager and metarecord-detail supply the
-items from their own row/record menu directly.
-
-Right-clicking anywhere else shows the *default menu*: =Copy= (the text
-selection at open time; disabled when nothing is selected), the everyday
-layout commands (=panel:toggle split=, =panel:swap=) and =devtools:open=.
-The shell installs it for its own areas (tab bar, slot headers, status
-bar) and the shim installs one per panel document. It stands down where a
-more specific right-click behaviour exists: editable text fields, the tab
-bar's right-click (assign to the other slot), and any element handler
-that opened its own menu. Panels prepend their own metarecords to it with
-=metafolder.contextMenu.addDefaultItems(event => items)=.
-
-Where a per-element context menu makes sense, panels show one via
-=metafolder.contextMenu(event, items)= (see [[*The =metafolder= API]]); the
-shared implementation lives in =/__menu.js=. The menu is rendered in the
-document that opened it (a menu opened inside a panel iframe is clipped
-to that iframe), positioned at the pointer (flipped at the viewport
-edges), and dismissed by =Escape=, a click outside, or opening another
-menu. =Up= / =Down= / =Enter= navigate it, and typing jumps to the first
-enabled item whose label starts with the typed prefix (native-select
-typeahead: the buffer resets after a second's pause, repeating one letter
-cycles through its matches). While a menu is open the keybinding matchers
-stand down — regardless of which copy of the menu module opened it, the
-shell's bundled one or the =/__menu.js= one panels import — so its
-navigation and typeahead keys never trigger panel commands.
-Items are grouped under non-interactive *category headers* (=mf-menu-header=) so
-a right-click reads at a glance which operations act on the *metarecord*, its
-*file*, the selected *text*, or the *view*: the shared file actions carry a
-=File= header, each panel prepends a =Metarecord= header to its record
-operations, and the default menu labels its selection =Copy= as =Text= and the
-layout commands as =View=. A header is not selectable and is skipped by keyboard
-navigation and typeahead. A menu item is either =\{label, action?, disabled?\}=,
-a =\{header\}= category label, or the string =-= for a separator.
-
-Every menu is *normalized* before it is shown (=orderMenu= in =/__menu.js=), so
-the same right-click reads the same way in every panel whatever order the panel
-happened to push its items in:
-
-- The categories always come in one canonical order — =Metarecord=, =File=,
-  =Directory=, =Ignore=, =Text=, =View= — and a header that is not in that list
-  keeps its relative position after the known ones.
-- Items pushed before any header (a panel's single primary action, e.g. the
-  duplicates panel's "Keep this copy" or a picker's "Pick this folder") lead the
-  menu, above the categories.
-- Two providers contributing the same category are merged into one, and a
-  category with no entry is dropped along with its header.
-- *Separators are derived, never authored*: the =-= a builder passes is dropped
-  and exactly one rule is drawn at each category boundary. A rule therefore
-  always means "a new category starts here" and never cuts a category in half.
-  The one exception is a menu with no header at all (a two-item row menu, the
-  panel-type picker), which is passed through untouched — its author's =-=
-  included.
-
-Appearance: classes =mf-menu=, =mf-menu-item= (=active=,
-=disabled=), =mf-menu-header= and =mf-menu-separator=, with built-in defaults
-that the user stylesheet overrides.
+Moved to the wiki: doc "Context menus".
 
 ** Style and theming
 
@@ -1945,6 +1423,17 @@ are worth stating because their absence looks like an oversight:
   session (and sub-modules like =./columns.js= would still not be re-imported).
 
 ** Panel type system
+
+Panel *construction* is separate from the *first display*: mounting a
+panel registers commands, keybinding suggestions and listeners, but a
+panel's expensive work — the directory listing of =file-manager=, the log
+fetch, streaming the previewed file — is deferred to the first actual
+display via =metafolder.whenVisible(fn)=
+(=metafolder.visible= exposes the current state; while hidden, repeated
+triggers re-arming the same callback coalesce into one run on show). The
+shell pre-instantiates every installed panel type once at startup, hidden,
+for the startup workspace: all panel commands are registered from the
+start at the cost of construction only, without daemon traffic.
 
 *** Directory layout
 
@@ -2445,7 +1934,7 @@ variables, so they survive the panel and can be set by scripts.
 
 Supports sorting by column, multi-selection (=selected_metarecords=), and full
 keyboard navigation. The multi-selection is the workspace's checked selection
-([[*The checked selection]]): it survives changing the list — a checked row the
+(doc "Cross-panel selection"): it survives changing the list — a checked row the
 new query no longer matches stays checked, so a selection can be gathered in
 several lists — and the =file-manager= checks its rows into the same set.
 
@@ -2454,6 +1943,55 @@ to =workspace.selected_metarecord= and sets =workspace.selected_paths= to the li
 of resolved absolute paths from all =mfr_path= field rows of that metarecord
 (empty list if the metarecord has no valid =mfr_path=). Other panels update
 reactively (see [[*Cross-panel selection]]).
+
+=metarecord-list= runs its query *eagerly* on the first display, and again
+whenever a repo becomes active: the (possibly empty) query is executed and the
+repo's contents shown straight away, rather than waiting for an explicit apply
+or =metarecord-list:refresh=. Queries are fast enough that showing the list is
+the better default. The list stays empty only while there is no active repo.
+(Historically this panel deferred its query until an explicit user action; the
+value-picker case — =pick_request=, where rows are needed to pick from — was the
+one exception and is now subsumed by the eager run.)
+
+For large result sets, =metarecord-list= uses the daemon's cursor pagination
+(=limit= / =cursor= / =sort= on =POST /query=, see the Pagination section of
+[[file:spec-data-model.org][spec-data-model.org]]), fetching further pages as
+the user scrolls; a footer shows =loaded/total= rows (the total from the
+daemon's =count=, asked *apart*, once the first page is shown: a page the
+daemon stops at its end would otherwise wait for every match to be found —
+doc "Sorting and postings"). Scrolling is not the only way down: moving the selection
+past the last loaded row (=metarecord-list:next=) fetches the next page too,
+so keyboard and script navigation reach the whole result set even when the
+panel is not the displayed one (no scroll event ever fires there). The default page size comes from the GUI config
+(=[page-size].metarecord-list= in =config.toml=, default 100) — the smallest of
+the list panels, as each row needs several daemon round-trips (TreeRef path
+resolution, ref-target metarecords) and parsing. It is further overridable per
+workspace: =metarecord-list:set page-size <n>= persists it in the
+=metarecord-list:page-size= workspace variable (also settable by scripts);
+invalid stored values fall back to the config default.
+
+Orphaned metarecords — a metarecord with =mfr_path= whose file no longer
+exists on disk, either =mfr_path = Nothing= (the watcher saw the deletion)
+or a stale TreeRef (left in place by reconcile, see
+doc "Orphans") — are made visible:
+=metarecord-list= colours the row/card (theme variable =--mf-orphan=, purple
+by default) with a tooltip giving the reason; =metarecord-detail= shows a
+one-line note under the metarecord head. A metarecord with no =mfr_path=
+field at all is not a file metarecord and is never marked.
+
+Not-watched metarecords are made visible the same way (doc "Checking whether a path is watched"): =metarecord-list= colours the row/card amber
+(=--mf-warning=) with the reason on hover — a record *watched* through any of
+its paths stays unmarked, its reason still on hover — and =metarecord-detail=
+always states the verdict in a note under the head, dim when watched, amber
+with the reason when not. The verdict asks the daemon's live coverage
+(=POST /repos/:repo/watch/check=, one batch call per page in the list, one
+per load in the detail) and covers the states eligibility cannot: a subtree
+left uncovered (=mfr_watch_exceeded=), an unplugged volume, the daemon's own
+runtime directory. A
+metarecord with no =mfr_path= at all, or one whose answer has not landed (the
+daemon down, or older than the endpoint), is left unmarked: "unknown" never
+reads as "unwatched". The amber yields to the stronger signals — the orphan
+purple and the unplugged-volume note keep their own marking.
 
 **** Finder (quick filter)
 
@@ -2738,8 +2276,7 @@ filesystem fact, and a reserved name would need =force=. Nothing is stored for
 an untracked file (no metarecord to hold it), nor for a file reached by
 drilling into a directory listing, where the panel holds a path but no
 metarecord: the position follows =selected_metarecord=, which every panel
-publishing =selected_paths= sets *first* (see [[*The selection is a pair,
-published metarecord-first]]).
+publishing =selected_paths= sets *first* (see doc "Workspace variables").
 
 When the player is loaded, a stored position is seeked to and shown in the
 media toolbar
@@ -2900,7 +2437,7 @@ and never an error.
 single-element list containing the highlighted path. If the path has an
 existing metadata metarecord in the active repo, =workspace.selected_metarecord= is also
 updated; otherwise it is set to =null=. A *tracked* row can also be checked
-into =workspace.selected_metarecords= ([[*The checked selection]] — the
+into =workspace.selected_metarecords= (doc "Cross-panel selection" — the
 multi-selection the =metarecord-list= gathers and the bulk
 operations act on, kept across lists): an untracked entry has no metarecord to
 check and says so rather than silently doing nothing.
@@ -2915,7 +2452,7 @@ file), and drops the root constraint if the target lies outside the repo. See
 selection for a file; =Backspace= goes up one level; =/= jumps to the root and
 =Ctrl+H= shows/hides the dot-entries; =r= refreshes;
 =Space= checks/unchecks the highlighted entry for the multi-selection and
-=Ctrl+Space= clears it ([[*The checked selection]]);
+=Ctrl+Space= clears it (doc "Cross-panel selection");
 =Delete= deletes the highlighted entry; =F2= renames; =Ctrl+C= / =Ctrl+X= /
 =Ctrl+V= copy / cut / paste; =Ctrl+D= duplicates; =Ctrl+Shift+N= creates a
 folder.
@@ -2953,8 +2490,7 @@ Both are confirmed.
 *Context menu*: right-clicking a row moves the cursor there and opens an
 HTML menu ([[*Context menus]]). A tracked row opens with the shared *Metarecord*
 category (open in detail/file, copy UUID) and its checked-selection toggle
-(=Add to the selection= / =Remove from the selection=, [[*The checked
-selection]]). Then come =Open= (directories), =Track=
+(=Add to the selection= / =Remove from the selection=, doc "Cross-panel selection"). Then come =Open= (directories), =Track=
 (disabled when there is no active repo, the path is already tracked, or it is
 outside the repo root), the clipboard actions (=Cut=, =Copy=, =Paste=), =Rename…=,
 =Duplicate=, =Copy full path=, the delete action (=Move to trash= with a repo,
@@ -2978,7 +2514,7 @@ space in the listing offers just =New folder…= / =New file…= / =Paste=.
 | =file-manager:paste=      | Paste the clipboard into the current directory (=Ctrl+V=; copy or move) |
 | =file-manager:delete=     | Delete the selected entry (=Delete=): to the repo trash when a repo is active, else permanently; confirmed. A *tracked* entry has its metarecords captured and deleted like any other trashing (doc "What trashing does") — the GUI is the path most deletions take, and must not be the one that still leaves orphans |
 | =file-manager:find=       | Move the cursor onto an entry of the current directory (=f=), its name collected in the command input — the shared list-panel find, see [[*Find an entry]]. Only the displayed directory is searched (hidden entries only when they are shown), and a directory is selected, not entered. |
-| =file-manager:select=     | Change the checked multi-selection (=toggle= / =all= / =none=): check/uncheck the highlighted entry's metarecord (=toggle=; an untracked entry has none and says so), check every tracked entry of the directory on top of what is already checked (=all=), or empty the selection (=none=) — the workspace-wide set shared with =metarecord-list=, see [[*The checked selection]] |
+| =file-manager:select=     | Change the checked multi-selection (=toggle= / =all= / =none=): check/uncheck the highlighted entry's metarecord (=toggle=; an untracked entry has none and says so), check every tracked entry of the directory on top of what is already checked (=all=), or empty the selection (=none=) — the workspace-wide set shared with =metarecord-list=, see doc "Cross-panel selection" |
 
 *** =treeref= panel type
 
@@ -3082,56 +2618,7 @@ for monitoring GUI state from scripts.
 
 *** Cross-panel selection
 
-Selecting a metarecord in =metarecord-list= or =file-manager= updates the workspace
-variables =selected_paths= and/or =selected_metarecord= (see the respective panel
-type sections for details). Any slot in the same workspace displaying
-=metarecord-detail=, =file=, or =workspace-info= subscribes reactively and updates
-automatically. Slots showing different workspaces are unaffected.
-
-*Double-click* (or =Enter= / =Right= keybinding) in =metarecord-list=: if the
-other slot shows the same workspace and is displaying a different panel type,
-it is switched to =metarecord-detail= (or =file= if the metarecord has a valid
-=mfr_path=). If the other slot is hidden, it is opened (showing the same
-workspace).
-
-*Edit guard*: before =metarecord-detail= replaces its content with a new metarecord, it
-checks whether any field is being edited. If so, an alert is shown:
-="Unsaved changes — discard and switch metarecord? [Confirm / Cancel]"=. The switch
-proceeds only if the user confirms.
-
-*Reveal folder*: the =file-manager:reveal= command (a shipped
-=gui/commands.js= entry; also the right-click menu item "Open folder in file
-manager" in =metarecord-list= and =metarecord-detail=) opens the selected metarecord's folder in the file manager,
-*replacing the focused panel* — the folder itself when the metarecord is a
-directory, or the folder containing the file (with the file highlighted) when it
-is a file. It reads the selection's first =selected_paths= entry, publishes it as
-the workspace variable =file-manager:reveal-path= (={ path, nonce }=), then
-switches the focused slot to =file-manager=; the =file-manager= panel stats the
-path to tell a directory from a file and navigates there (honouring the request
-both when it mounts and while already mounted, the =nonce= guaranteeing an
-identical repeated request re-triggers while the same request acts only once).
-
-*List folder*: the =metarecord-list:folder= command (default =g f=; a shipped
-=gui/commands.js= entry; also the
-right-click menu item "Open folder in metarecord-list", offered by every panel
-showing metarecords — the file manager included, where "and now show me these as
-metarecords" is exactly the question) is the mirror image: it shows the same
-folder's *metarecords* instead of its disk entries, *replacing the focused
-panel*. The folder is resolved selection-first — the selected metarecord's own
-directory (itself when =mfr_type= is =dir=, its parent otherwise, via
-=resolve-tree=), else the selected path's (statted, since an untracked row has no
-metarecord to ask), else the file manager's current directory, else the
-repository root. A selection outside the repository is refused with a status
-message rather than silently answering for the root. Note the opposite priority
-from the =ignore:*= commands' target directory, where the file manager's
-directory is the subject and the selection only a fallback: here the clicked row
-is the subject. The folder becomes the DSL =mfr_path -> "<folder>"= (=Follows=:
-the metarecords whose =mfr_path= parent is that node — its files *and* its
-subdirectories, the contents a file manager shows), published as the workspace
-variable =metarecord-list:query-request= (={ dsl, nonce }=) before the focused
-slot switches to =metarecord-list=. Repository-relative paths follow the
-=mfr_path= convention throughout: =""= is the repository root, a descendant is
-leading-"/"-rooted.
+Moved to the wiki: doc "Cross-panel selection".
 
 ** Message view
 
@@ -3157,25 +2644,7 @@ sessions.
 
 ** Opening a file with another program
 
-Everything the GUI cannot show itself is handed to an external program.
-=file:open-with= (default =g w=, and *Open with…* in the right-click menu of
-any file row) asks for the program in the command input and runs it on the
-current selection.
-
-- *Target*: =selected_paths= — so it works from whichever panel carries the
-  selection (list, detail, file, file-manager, recent, treeref). The
-  menu item publishes the right-clicked row as the selection first, exactly
-  like the reveal commands do. With nothing selected it reports "no file or
-  folder is selected" and does nothing.
-- *Program*: the argument completes over the top-level =open-with= array of the
-  GUI =config.toml= (default =["xdg-open"]=, the desktop's own handler). Those
-  are *candidates, not a whitelist*: any command line may be typed, and the
-  whole line is inserted verbatim so flags survive (=gimp -n=). Only the paths
-  are shell-quoted, and they are appended after the line.
-- *Execution*: the same subprocess path as a =!= command (output in the
-  =message= panel, a spinner in the [[*Task bar]]) — but the focused slot is
-  *not* switched to the =message= panel: launching a viewer must not disturb
-  what is on screen.
+Moved to the wiki: doc "Opening a file with another program".
 
 ** Reconcile
 
@@ -3258,12 +2727,14 @@ daemon connectivity.
 
 *** =GET /gui/workspaces=
 
-Returns the list of all open workspaces.
+Returns the list of all open workspaces. =repo_name= is the repository's name
+as captured when the workspace adopted it (null with no repository, or when the
+daemon could not name it then).
 
 #+BEGIN_SRC json
 [
-  {"id": "ws-1", "name": "Workspace 1", "active_repo": "<repo_uuid>"},
-  {"id": "ws-2", "name": "Workspace 2", "active_repo": null}
+  {"id": "ws-1", "name": "my_repo 1", "active_repo": "<repo_uuid>", "repo_name": "my_repo"},
+  {"id": "ws-2", "name": "Workspace 1", "active_repo": null, "repo_name": null}
 ]
 #+END_SRC
 
@@ -3342,7 +2813,7 @@ Request body examples:
 When =type= is =file= and =path= is provided, =selected_metarecord= is set to
 the matching metadata metarecord (or =null= if the file is untracked) and
 =selected_paths= is set to =[path]= — *in that order*, the lookup done before
-either write (see [[*The selection is a pair, published metarecord-first]]).
+either write (see doc "Workspace variables").
 
 Omitting =path= leaves =selected_paths= unchanged and the =file= panel type
 displays whatever path was already active. An *empty* =path= is a third thing:

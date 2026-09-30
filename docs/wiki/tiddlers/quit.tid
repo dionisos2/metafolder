@@ -1,0 +1,6 @@
+title: quit
+tags: [[GUI command]] GUI
+kind: reference
+summary: Exit the GUI
+
+Closes the GUI window, and so the GUI. The daemon keeps running: it is its own process.

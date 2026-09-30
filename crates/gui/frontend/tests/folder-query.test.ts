@@ -1,4 +1,4 @@
-// Listing a folder in the metarecord list (spec-gui "Cross-panel selection"),
+// Listing a folder in the metarecord list (doc "Cross-panel selection"),
 // as the shipped `commands.js` defines it since `metarecord-list:folder` left
 // the shell builtins: the repo-relative folder a selection designates, and the
 // DSL that lists its direct children, landed as the

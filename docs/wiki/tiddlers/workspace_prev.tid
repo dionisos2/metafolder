@@ -1,0 +1,6 @@
+title: workspace:prev
+tags: [[GUI command]] Workspaces
+kind: reference
+summary: Move to the previous workspace (`slot`: the focused slot only)
+
+The mirror of `workspace:next`: the previous tab, wrapping round; `slot` for the focused slot only. See [[Workspaces]].

@@ -1,0 +1,6 @@
+title: panel:split
+tags: [[GUI command]] [[Panel slots and layout]]
+kind: reference
+summary: Show the second panel slot
+
+Shows the second slot, with the workspace and panel type it remembers, or else the focused workspace — falling back to `metarecord-detail` when the panel type it would get is already on screen for that workspace. The header's ◫ button does the same. See [[Panel slots and layout]].

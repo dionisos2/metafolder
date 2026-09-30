@@ -70,9 +70,11 @@ impl Default for Settings {
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "kebab-case", default)]
 pub struct PanelSettings {
-    /// Standard status-message duration (ms) before it auto-clears.
+    /// Duration (ms) the panels attach to an ordinary status message. No
+    /// longer acted on: a status message stays until the next one replaces it
+    /// (doc "Status bar and task bar"), so this only travels with the message.
     pub status_message_ms: u32,
-    /// Longer status duration (ms) used for errors and important notices.
+    /// Same, for errors and important notices — equally without effect.
     pub status_error_ms: u32,
     /// Debounce (ms) of the incremental finder filter in `metarecord-list`.
     pub finder_debounce_ms: u32,
@@ -104,7 +106,7 @@ pub type PanelDefaults =
     std::collections::HashMap<String, serde_json::Map<String, serde_json::Value>>;
 
 /// GUI settings read from `~/.config/metafolder/gui/config.toml` (doc "Configuration";
-/// spec-gui "Connection to the daemon"). Missing fields fall back to the
+/// doc "Connection to the daemon"). Missing fields fall back to the
 /// defaults below — notably the daemon's own default port, so a fresh install
 /// connects without any flag or extra file.
 #[derive(Debug, Clone, PartialEq, Deserialize)]
@@ -142,7 +144,7 @@ pub struct GuiConfig {
     pub ref_seeds: std::collections::HashMap<String, RefSeed>,
     /// Completion-wide knobs (`[completion]`, spec-gui "Completion views").
     pub completion: CompletionSettings,
-    /// External programs offered by `file:open-with` (spec-gui "Opening a file
+    /// External programs offered by `file:open-with` (doc "Opening a file
     /// with another program"), read from the top-level `open-with` array. They
     /// are completion candidates, not a whitelist: any command line may be
     /// typed. Defaults to the desktop's own handler.

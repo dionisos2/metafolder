@@ -8,6 +8,8 @@ export interface WorkspaceInfo {
   id: string;
   name: string;
   active_repo: string | null;
+  /** The repository's name, captured when the workspace adopted it. */
+  repo_name: string | null;
 }
 
 export interface SlotPayload {
