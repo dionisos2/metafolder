@@ -1,0 +1,10 @@
+title: Platform open questions
+tags: Platform
+kind: question
+status: deferred
+summary: Unicode normalisation of names, Windows long paths, and what a port to macOS or Windows would take.
+
+* ''Unicode normalisation.'' macOS filesystems normalise names (HFS+ stores NFD; APFS compares normalisation-insensitively). A repository created on Linux with NFC names and opened on a Mac may see the "same" name as another byte sequence, which a lookup by bytes misses. Whether names should be normalised (to NFC) at the filesystem boundary, or compared normalisation-insensitively the way case is ([[Case sensitivity]]), is open — normalising breaks the rule that the stored name is the exact bytes ([[Tree names]]).
+* ''Windows long paths.'' A path longer than 260 characters needs the `\\?\` prefix or a registry opt-in; whether the daemon should add the prefix itself is open.
+* ''Porting.'' The daemon calls `flock`, `statvfs`, `sysconf` and Unix sockets without a fallback ([[Platform]]); Windows needs `LockFileEx` for [[The repository lock]], `GetDiskFreeSpaceEx` for the store's growth, and another transport to the fanotify broker (or none: it is Linux-only). The GUI needs another way to confine its media decoders than `bwrap` ([[Sandboxing the media decoders]]), and the session tokens their hardening ([[Session tokens]]).
+* ''Path arguments that are not UTF-8.'' They cannot cross the JSON API today, and the clients that move files join the displayed path rather than the bytes ([[Path representation]]); a wire form carrying a path's bytes would fix both.

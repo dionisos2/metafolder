@@ -1,0 +1,28 @@
+title: Symbolic links
+tags: Platform
+kind: reference
+aliases: symlink symlinks
+summary: A symlink is tracked as itself — its own metadata and its target path — and never followed, so nothing outside the repository is ever read through one.
+
+A symbolic link is a tracked entity of its own, never a way through to its target. The
+daemon stats with `lstat` (Rust's `symlink_metadata`), never `stat`, everywhere it looks
+at a path.
+
+!! What is recorded
+
+* `mfr_type = "symlink"`;
+* the link's own `mfr_size` (the length of its target path), `mfr_mtime` and, on Unix, `mfr_permissions`, `mfr_uid`, `mfr_gid`;
+* `mfr_symlink_target`: where it points, as `readlink` returns it (relative or absolute). It is stored as text; an undecodable byte in it becomes U+FFFD.
+
+A broken link — its target gone — is still on disk, and is tracked like any other.
+
+!! What is never done through one
+
+* ''Reading the target.'' No fingerprint, MIME type or embedded metadata: those are for regular files only. So a link is never a duplicate of anything ([[What counts as a duplicate]]).
+* ''Descending.'' A link to a directory is a leaf: the reconcile walk does not enter it and the watcher places no watch there ([[Watch sources and regimes]]), so a link cannot make the daemon read, or watch, a tree outside the root.
+* ''Moving the target.'' Trashing a link trashes the link ([[What trashing does]]), and a rollback moves the link itself.
+
+One exception, a known gap: a sync that copies a link to the other repository reads through it and writes the target's content there as a regular file.
+
+The consequence: the watcher and reconcile always agree on a link, since neither looks
+past it; and a link to something big costs nothing.

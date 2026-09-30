@@ -1,0 +1,43 @@
+title: Network and special filesystems
+tags: Platform
+kind: reference
+aliases: nfs smb sshfs fuse
+summary: The store refuses a network filesystem, the tracked files do not; FUSE, removable and read-only volumes each have their own rules.
+
+!! Where `.metafolder/` may live
+
+The store is memory-mapped and locked with `flock` ([[Storage]], [[The repository lock]]),
+and neither is safe over a network: a `.metafolder/` on NFS, SMB/CIFS, SSHFS, 9p or a
+cluster filesystem is ''refused'' at `init` and at load ([[Storage safety]] has the
+list). The test is a list of known filesystem types, read from `/proc/self/mountinfo`:
+FUSE counts only for the remote kinds it names (`fuse.sshfs`, `fuse.rclone`, `fuse.s3fs`…),
+so a local drive through `fuse.ntfs-3g` is accepted — and so is a remote FUSE filesystem
+missing from the list. Where the mount table cannot be read (no `/proc`), nothing is
+refused.
+
+!! Where the files may live
+
+Anywhere readable. For files on a share, keep `.metafolder/` on a local disk, as an
+external one:
+
+```
+mf repo init /mnt/nas/photos --metafolder ~/metafolder/photos
+```
+
+What a remote root costs:
+
+* ''Watching'' may see nothing: inotify reports only the changes made through this machine's mount, never those made by the server or another client. A `mf reconcile` catches up ([[Reconcile]]).
+* ''Reconcile and fingerprints'' read over the network: a first reconcile of a large share is slow.
+* ''Case sensitivity'' is the server's, and is probed like any other ([[Case sensitivity]]).
+
+!! Removable volumes
+
+A volume mounted inside a tracked tree is a ''mount point'': while it is unplugged, its
+subtree is frozen rather than read as deleted ([[Mount points]]). A whole repository on a
+removable drive moves with it ([[Moving a repository]]).
+
+!! Read-only volumes
+
+The files may be read-only — reconcile and the watcher only read them. `.metafolder/`
+may not: the store and its lock file are opened for writing at every load, so a repository whose `.metafolder/` is
+on read-only media must use an external one.

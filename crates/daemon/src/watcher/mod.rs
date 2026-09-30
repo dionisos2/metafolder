@@ -547,7 +547,7 @@ fn translate(
             );
         }
         // Data modifications; unknown Modify kinds fall back to Data
-        // semantics (full refresh + hash invalidation, spec-platform).
+        // semantics (full refresh + hash invalidation).
         notify::EventKind::Modify(ModifyKind::Data(_))
         | notify::EventKind::Modify(ModifyKind::Any) => {
             events.extend(

@@ -775,17 +775,37 @@ réduite à la recette de test.
 
 * Plateforme et sécurité
 
-** TODO 31. Plateforme
+** FAIT 31. Plateforme
 
-- [ ] =Platform= — overview
-- [ ] =Path representation= — reference
-- [ ] =Case sensitivity= — reference
-- [ ] =Network and special filesystems= — reference
-- [ ] =Platform open questions= — question (normalisation Unicode, chemins longs Windows, liens symboliques)
+- [X] =Platform= — overview (ce qui tourne où : Linux seul construit et testé)
+- [X] =Path representation= — reference
+- [X] =Case sensitivity= — reference
+- [X] =Moving a repository= — guide (ajoutée)
+- [X] =Network and special filesystems= — reference
+- [X] =Symbolic links= — reference (ajoutée : la spec la rangeait en question ouverte, c'est tranché)
+- [X] =Platform open questions= — question (normalisation Unicode, chemins longs Windows, portage, chemins non UTF-8)
 
-Sources : spec-platform « Overview », « Path representation », « Case
-sensitivity », « Network and special filesystems », « Daemon », « CLI »,
-« Open questions ».
+Vérification contre le code : la spec disait viser Linux, macOS et Windows ; le
+démon appelle =flock=, =statvfs=, =sysconf= et des sockets Unix sans repli (il ne
+compile pas sous Windows), =watchd= est Linux seul, la GUI refuse de démarrer sans
+=bwrap= — la note =Platform= le dit. Elle disait aussi les noms non UTF-8 « non
+supportés, ignorés » : ils sont suivis par octets depuis =Tree names= ; =config.json=
+n'a pas de champ =metafolder=. Corrigés, tests d'abord : (1) un dépôt déplacé
+(forme standard, disque monté ailleurs) était chargé à l'ancien =root= de
+=config.json= — réconcilié et surveillé au mauvais endroit (=d277955=) ; (2) le
+repli insensible à la casse comparait en ASCII (=eq_ignore_ascii_case=) alors que
+l'index des règles plie l'Unicode : « /ÉTÉ » éligible mais introuvable
+(=7d872fe=) ; (3) la sonde de casse interrogeait le système de fichiers de
+=.metafolder/internal/=, faux pour un =.metafolder= externe sur un autre disque :
+elle lit maintenant une entrée de la racine, sans rien écrire (=41be292=). *Signalé, non
+tranché* : un chemin *argument* non UTF-8 ne passe pas l'API JSON (=mf track=
+refuse), et les clients qui déplacent des fichiers (rollback, sync) joignent le
+chemin *affiché* à la racine, donc ratent un nom non UTF-8 (=Path
+representation=, =Tree names= corrigée : elle comptait =POST /track= parmi les
+chemins portés en octets) ; =mfr_symlink_target= est stocké avec perte. La liste
+des FUSE distants est une liste noire (un FUSE distant inconnu passe). Sources
+retirées : =spec-platform.org= (supprimée ; le pointeur de spec-gui « Media codec
+support » renvoie à =Platform=).
 
 ** FAIT 32. Sécurité
 

@@ -1,0 +1,41 @@
+title: Path representation
+tags: Platform
+kind: reference
+summary: Inside metafolder a path is relative to the repository root and /-separated; native paths appear only where a location on this machine is meant.
+
+!! Repository paths
+
+Everywhere inside metafolder — the store, the HTTP API, the query DSL, the event log —
+a file's path is relative to the repository root, written with `/`: `""` is the root,
+`/Music/a.flac` a file below it. A path is not stored as text but as a chain of
+`mfr_path` nodes, one per component ([[TreeRef forest]]); a component never contains
+a separator.
+
+Each component keeps the ''exact bytes'' the filesystem returned: a name need not be
+valid UTF-8, and such a file is tracked like any other. Its text shows each
+undecodable byte as `%XX` ([[Tree names]]).
+
+The conversion to a native path happens only at the filesystem boundary, by joining
+the components onto the root: in the daemon (the reconcile walk, the watcher, `POST
+/track`), and in the clients that touch files themselves (the file moves of a rollback,
+the copies and moves of a sync).
+
+!! Native paths
+
+Absolute, native paths appear in only two places:
+
+* `config.json`'s `root`, and `schema` when absolute ([[Repository layout on disk]]);
+* the API parameters that name a location on this machine: `POST /repos/init`, `POST /repos/load`, `POST /repos/:repo/track` — and so `mf repo init`, `mf repo load`, `mf track`, `mf trash -f`, `mf order`, `mf watch check`.
+
+They are not portable, and need not be: the CLI, the GUI and the daemon run on the same
+machine. The CLI turns a relative argument into an absolute one before sending it (the
+daemon's working directory is not yours).
+
+Output — query results, `mf path`, reconcile candidates, the log — always shows the
+repository form, on every platform.
+
+!! Limits
+
+* A path ''argument'' must be valid UTF-8: the API carries it as a JSON string, and `mf` refuses one that is not ("non-UTF-8 path is not supported"). Such a file is tracked by reconcile and the watcher, but cannot be named to `mf track`.
+* Those clients join the ''displayed'' path, as the API returns it, onto the root: for a name that is not valid UTF-8 they reach `caf%E9.mp4`, not the file — a rollback reports it "not on disk", a sync cannot copy or move it.
+* A symlink's target (`mfr_symlink_target`) is stored as text; an undecodable byte in it becomes U+FFFD ([[Symbolic links]]).

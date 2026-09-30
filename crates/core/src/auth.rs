@@ -202,7 +202,7 @@ fn write_token_file(path: &Path, token: &str) -> Result<(), String> {
         .map_err(|e| format!("cannot set permissions on {}: {e}", path.display()))
 }
 
-// ── Non-Unix fallback (Windows: deferred hardening, see spec-platform) ───────
+// ── Non-Unix fallback (Windows: deferred hardening, doc "Session tokens") ─
 
 #[cfg(not(unix))]
 fn read_random(buf: &mut [u8]) -> Result<(), String> {

@@ -1,5 +1,4 @@
-# Embedded-metadata extraction map (spec-platform "Embedded metadata
-# extraction"). Per-repository file: this default seeds `.metafolder/
+# Embedded-metadata extraction map (doc "The metadata map"). Per-repository file: this default seeds `.metafolder/
 # metadata-map.toml` at `mf init`; editing an existing repo's copy changes what
 # that repo extracts.
 #

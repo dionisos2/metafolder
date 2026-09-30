@@ -1,0 +1,33 @@
+title: Platform
+kind: overview
+aliases: platforms portability windows macos
+summary: Linux is the platform metafolder runs on; the data model is portable, and the code is written for macOS and Windows where it can be, but neither is built or tested.
+
+The ''data'' is platform-independent: paths are stored relative to the repository
+root, `/`-separated, as the exact bytes of their names ([[Path representation]]), so a
+repository created on one machine can be loaded on another — a repository on a
+removable drive, say ([[Moving a repository]]).
+
+The ''programs'' are another matter. What runs where, today:
+
+|!Piece |!Linux |!macOS |!Windows |
+|daemon, `mf` |built and tested |not built: written with Unix calls only (`flock`, `statvfs`, Unix sockets), no port work done |does not compile: those calls have no fallback |
+|watcher |the inotify source, or the fanotify broker ([[Watch sources and regimes]]) |the `notify` source would place one registration per directory |same |
+|`metafolder-watchd` |yes |no (fanotify is Linux-only) |no |
+|GUI |yes |refuses to start: it needs `bwrap` ([[Sandboxing the media decoders]]) |same |
+
+Where the code does branch per platform, both branches are kept honest — the stat
+fields that exist only on Unix ([[File metadata fields]]), the token directory
+([[Session tokens]]), mount point detection without `/proc` ([[Mount point detection]])
+— but nothing exercises the non-Linux ones. Treat macOS and Windows as ''design
+targets'': a change should not make a port harder than it is, and should not claim one
+exists.
+
+The GUI renders in the system WebView (WebKit2GTK on Linux); which audio and video
+codecs it can play depends on the GStreamer plugins installed.
+
+<<list-kind reference>>
+
+<<list-kind guide>>
+
+<<list-kind question>>

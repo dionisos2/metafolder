@@ -43,7 +43,7 @@ pub fn extract(abs: &Path, map: &MetadataMap) -> Vec<Field> {
 
 /// Applies the mapping to an already-collected source set. For each entry the
 /// **first** present source that coerces into the entry's type wins; a present
-/// but non-coercible source is skipped and the next one tried (spec-platform).
+/// but non-coercible source is skipped and the next one tried (doc "The metadata map").
 fn apply_map(sources: &HashMap<String, SourceValue>, map: &MetadataMap) -> Vec<Field> {
     let mut fields = Vec::new();
     for m in &map.fields {

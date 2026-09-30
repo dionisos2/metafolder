@@ -16,10 +16,13 @@ The split is forced: an encoding that leaves every valid UTF-8 name unchanged
 nowhere free for an undecodable name. So identity lives in the bytes, and the text is
 not a bijection: a file really named `caf%E9.mp4` shows the same text.
 
-Every path the daemon handles carries the bytes end to end: the reconcile walk, the
-watcher and its buffered events, the executor, `POST /track`. Where text is meant,
-text is used: `mf_ignore` patterns are regexes over displayed paths, and responses
-report the displayed form.
+Every path the daemon finds on disk carries the bytes end to end: the reconcile walk,
+the watcher and its buffered events, the executor. Where text is meant, text is used:
+`mf_ignore` patterns are regexes over displayed paths, and responses report the
+displayed form. Two gaps remain ([[Path representation]]): a path ''argument''
+(`POST /track`, `mf track`) crosses the JSON API as a string, so it must be valid
+UTF-8; and the clients that move files (rollback, sync) join the displayed path onto
+the root, which misses such a file.
 
 !! Looking a name up
 
@@ -33,7 +36,7 @@ A query returns a set, so returning both is honest. A ''resolution'' that must y
 one node — `tree/resolve-path`, `mf path`, the GUI's navigation — cannot add them: it
 takes a `form` (`verbatim` or `escaped`) choosing one reading, and without it two
 matches are an ambiguity, answered as no match rather than a guess. Lookups also
-follow the repository's case sensitivity (spec-platform "Case sensitivity").
+follow the repository's [[case sensitivity|Case sensitivity]].
 
 !! On the wire
 

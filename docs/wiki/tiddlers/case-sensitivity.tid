@@ -1,0 +1,38 @@
+title: Case sensitivity
+tags: Platform
+kind: reference
+aliases: case-insensitive casefold
+summary: The daemon probes whether the repository's filesystem folds case; on one that does, path lookups match names regardless of case, while the stored name keeps the on-disk casing.
+
+Linux filesystems usually tell `Photo.jpg` and `photo.jpg` apart; macOS and Windows
+ones usually do not, while preserving the casing a name was created with. A watcher
+event or a typed path may then spell a name in another case than the one stored, and
+must still find the same metarecord.
+
+!! The probe
+
+At `init` and at every load, the daemon asks the filesystem holding the ''root'':
+
+# it takes an entry of the root whose name changes when its case is swapped (`.metafolder` itself, in the standard form) and looks that swapped name up: the same file (same device and inode) means case-insensitive; nothing, or another file, case-sensitive;
+# only a root with no such entry — an empty one with an external `.metafolder` — falls back to creating a probe file in `.metafolder/internal/` and reading it back through another casing. That answers for the root only when both are on the same filesystem; when they are not, the repository counts as case-sensitive (with a warning) until a load finds an entry.
+
+The answer lives in memory for as long as the repository is loaded; nothing is written
+to the store. `mf repo load` shows the phase (`probe case sensitivity`).
+
+!! What it changes
+
+* The ''stored'' name always keeps the on-disk casing: `mfr_path` shows `Photo.jpg`, never a folded form.
+* ''Lookups'' of a path — the watcher's and reconcile's (by the path they found on disk), `POST /repos/:repo/tree/resolve-path`, the GUI's navigation, a path given as a query's follow target ([[Following references]]) — first match the exact bytes, and on a case-insensitive repository fall back to comparing the lowercased names.
+* ''Comparisons'' are not lookups: `mfr_path:path = "/music"` and a regex over a path compare the stored text, case-sensitively, on every repository ([[Field aspects]]); `osm` ignores case everywhere ([[Ordered substring matching]]).
+* The ''watch rules'' index ([[The watch rule index]]) keys each rule's path by the same lowercased names, so eligibility agrees with the lookups.
+
+Folding is Unicode lowercasing (`É` matches `é`), applied only to the parts of a name
+that are valid UTF-8: two names differing in an undecodable byte stay two names
+([[Tree names]]).
+
+!! Limits
+
+* ''One answer per repository.'' A case-insensitive volume mounted inside a case-sensitive root (or the reverse), and Linux's per-directory case folding (`chattr +F` on ext4), get the root's answer.
+* ''Folding is not the filesystem's.'' APFS and NTFS use their own case tables; Unicode lowercasing agrees with them on every ordinary name, not on every corner of Unicode. Nor does it compare names up to Unicode normalisation ([[Platform open questions]]).
+* ''A repository moved'' to a filesystem of the other kind is re-probed at its next load. Moved from Linux to a case-insensitive disk, two siblings differing only in case cannot both exist there any more; a lookup that could name either returns the first.
+* The probe's first step can be fooled by a hard link whose name differs from its twin only in case, on a case-sensitive filesystem.

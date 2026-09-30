@@ -1,0 +1,40 @@
+title: Moving a repository
+tags: Platform
+kind: guide
+summary: A repository moves with its files — to another directory, another machine, a drive mounted elsewhere; only an external .metafolder needs its root edited by hand.
+
+Nothing in a repository's store names an absolute path: every tracked path is relative to
+the root ([[Path representation]]). Only `config.json` records the root, and how it is
+found again depends on where `.metafolder/` lives.
+
+!! Standard form
+
+`.metafolder/` inside the root: move, copy or re-mount the whole directory, then load it
+where it is now.
+
+```
+mf -n music repo unload           # on the daemon that had it, if any
+mf repo load /run/media/me/Drive/Music
+```
+
+The root is wherever `.metafolder/` is: a load by root corrects `config.json`'s `root`
+when it has changed. A drive mounted at `/media/Drive` on one machine and
+`/run/media/me/Drive` on another is the same repository on both.
+
+!! External `.metafolder/`
+
+When `.metafolder/` is elsewhere (`--metafolder`), the load reads the root from
+`config.json` and cannot guess a new one. After moving the files, edit `root` in
+`.metafolder/config.json` (an absolute path) while the repository is unloaded, then load
+it as usual:
+
+```
+mf repo load --metafolder <path>
+```
+
+!! Things to know
+
+* The repository keeps its uuid and its name; a load is refused while another loaded repository has the same name ([[Creating and loading a repository]]).
+* Case sensitivity is probed again at the load, so a repository moved to a filesystem of the other kind follows it ([[Case sensitivity]]).
+* The store must not be on a network filesystem ([[Network and special filesystems]]).
+* Moving the files does not change their metadata: the metarecords are the same, and nothing is reconciled on its own. A `mf reconcile` after a copy that did not preserve modification times refreshes them.

@@ -1,5 +1,5 @@
 //! Tests for file fingerprints (doc "File fingerprint") and
-//! the stat-derived `mfr_*` field values (spec-platform).
+//! the stat-derived `mfr_*` field values (doc "File metadata fields").
 
 use std::path::PathBuf;
 

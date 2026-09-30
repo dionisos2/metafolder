@@ -395,7 +395,7 @@ pub fn reconcile_full_reported(
         }
     }
 
-    // Step 6 — MIME phase (spec-platform): every eligible file on disk now has
+    // Step 6 — MIME phase (doc "File metadata fields"): every eligible file on disk now has
     // a record; fill in mfr_mime where it is still absent.
     if compute_mime {
         let mime_total = disk_files.len() as u64;
@@ -413,7 +413,7 @@ pub fn reconcile_full_reported(
         }
     }
 
-    // Step 7 — metadata phase (spec-platform): extract embedded `mfr_meta_*`
+    // Step 7 — metadata phase (doc "When metadata is extracted"): extract embedded `mfr_meta_*`
     // fields for files not yet marked `mfr_meta_extracted`.
     if compute_metadata {
         let map = repo.metadata_map.lock_recover().clone();

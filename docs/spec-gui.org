@@ -3856,8 +3856,7 @@ floating palette. To be revisited once the panel type ecosystem grows.
 
 The =file= panel type uses HTML5 =<audio>= / =<video>=; supported formats
 depend on the system WebView, which differs per platform (WebKit2GTK on
-Linux, WKWebView on macOS, WebView2 on Windows — see
-[[file:spec-platform.org][spec-platform.org]]). On Linux, H.264 may require
+Linux, WKWebView on macOS, WebView2 on Windows — wiki: doc "Platform"). On Linux, H.264 may require
 GStreamer plugin packages (e.g. =gst-plugins-bad=, =gst-libav=).
 
 On Linux, a missing audio sink does not fail gracefully: WebKitGTK

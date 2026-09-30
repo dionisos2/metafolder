@@ -11,12 +11,12 @@ use metafolder_core::metarecord::{Field, Value};
 /// (`file`/`dir`/`symlink`), `mfr_size`, `mfr_mtime`, `mfr_btime` (when the
 /// platform/filesystem records it), and on Unix `mfr_permissions`, `mfr_uid`,
 /// `mfr_gid`. For a symlink, `mfr_symlink_target` records where it points.
-/// (`mfr_mime` is v2.)
+/// (`mfr_mime` comes from content, in reconcile.)
 ///
 /// Symlinks are **never dereferenced** (`lstat`, not `stat`): a symlink is a
 /// first-class entity described by its own metadata and its target *path*, so
 /// the daemon never reads the target's content or stats a location outside the
-/// repository through a link (spec-platform "Symbolic links").
+/// repository through a link (doc "Symbolic links").
 /// [`stat_fields`] plus `mfr_mount` when `abs` is a directory that is a mount
 /// point right now (doc "Mount points"). Every call site that
 /// knows the repository root uses this form; the root itself is never marked,

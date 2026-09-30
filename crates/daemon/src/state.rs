@@ -56,7 +56,7 @@ pub struct RepoState {
     pub handles: Mutex<Option<RepoHandles>>,
     /// Loaded user schema; replaced atomically on reload (doc "Schema").
     pub schema: Mutex<Option<crate::schema::CompiledSchema>>,
-    /// The per-repo embedded-metadata extraction map (spec-platform). Loaded
+    /// The per-repo embedded-metadata extraction map (doc "The metadata map"). Loaded
     /// (seeding/self-healing the on-disk file) in `activate`; initialised here to
     /// the baked-in default so a `RepoState` built without `activate` (unit
     /// tests) still extracts with sensible defaults.
