@@ -1,4 +1,4 @@
-//! Revert (spec-event-log "Revert"): the plan, the one-shot revert and the
+//! Revert (doc "Revert"): the plan, the one-shot revert and the
 //! coordinated one.
 
 use super::*;

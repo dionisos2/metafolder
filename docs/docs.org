@@ -551,18 +551,27 @@ Vérification contre le code : conforme (la GUI porte désormais les fichiers,
 Sources retirées (pointeurs) : spec-event-log « Undo », « Redo », =mf log undo=,
 =mf log redo=.
 
-** TODO 23. Revert
+** FAIT 23. Revert
 
 (sous Event log)
-- [ ] =Revert= — overview
-- [ ] =Reverting a revision= — guide (=mf log revert=, plan, options)
-- [ ] =Operation dependencies= — reference (revert des dépendants, d'un ensemble)
-- [ ] =What a revert writes= — reference, dev (contenu, héritage, ids et versions, actions fichiers)
-- [ ] =Revert endpoints= — reference, dev
-- [ ] =Collapsing a revert to one operation per cell= — question
+- [X] =Revert= — overview
+- [X] =Reverting a revision= — guide
+- [X] =Operation dependencies= — reference (avec la fermeture)
+- [X] =What a revert writes= — reference, dev (contenu, héritage, actions fichiers dont la corbeille, sauter est gratuit)
+- [X] =Revert endpoints= — reference, dev
+- [X] =Collapsing a revert to one operation per cell= — question
+- [X] note de commande : =mf log revert=
 
-CLI : =mf log revert=. Sources : spec-event-log « Revert », « Operation dependencies », « Writing a
-revert », routes =revert=, « mf revert », « Open questions ».
+Vérification contre le code : *un vrai bogue* — le revert d'un =delete_field=
+ne remettait que la première ligne, alors qu'un =unset= (ou un =remove=) d'un
+champ multi-valué journalise /une/ opération portant toutes les lignes : défaire
+par revert l'unset d'un tag à trois valeurs n'en rendait qu'une ; et le plan
+annonçait =writes: "set_field"= pour tout ce qui n'était pas un type fichier.
+Corrigés, tests d'abord (=656ce9e=). La spec parlait d'index SQL
+(=idx_operation_entity=, =AUTOINCREMENT=) ; le tableau des actions fichiers ne
+connaissait pas le couplage à la corbeille. Sources retirées (pointeurs) :
+spec-event-log « Revert », « Operation dependencies », « Writing a revert », les
+routes =revert=, =mf revert=, la question ouverte.
 
 ** TODO 24. Rollback et navigation
 

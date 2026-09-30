@@ -1,0 +1,46 @@
+title: Operation dependencies
+tags: [[Revert]]
+kind: reference
+summary: A set of operations can be reverted when nothing outside it, since its oldest member, wrote one of its cells; otherwise it is blocked — and its dependency closure is what --with-dependents reverts.
+
+Every operation writes one ''cell'':
+
+* an operation with a field name writes `(metarecord, field)` — the watcher's `file_*` operations included, each naming the field it wrote;
+* `create_metarecord`, `delete_metarecord` and `set_metarecord` write the ''whole metarecord'': `(metarecord, *)`, which intersects every cell of it.
+
+Operations whose cells do not intersect are ''independent'': they commute. Sharing a
+cell, they do not — a `set_field` replaces every row of its cell, so the later one erases
+what the earlier wrote. Hence the rule:
+
+''A set of operations is revertable when no operation outside it, between its oldest
+member and HEAD along HEAD's ancestry, writes one of its cells.'' Otherwise it is
+''blocked by'' that operation, which the daemon names — so "why can I not undo this?" is
+answered by an operation you can go and look at, and usually revert first.
+
+The check is ''structural'': it reads the log and nothing else — not the files, not the
+values, not even the snapshots. Two callers at the same HEAD get the same answer, until
+HEAD moves. It is cheap: per metarecord the set touches, a prefix read of that
+metarecord's operations — proportional to their history, not to the log.
+
+''Rollback needs no such check'': it undoes operations newest first down to its target, so
+whatever overwrote an operation is undone before that operation's turn. The ordering gives
+it structurally what a revert must check. Dependency is also a separate question from
+whether the ''file'' side can be undone ([[Revisions and operations]]).
+
+!! Taking the blockers along
+
+`with_dependents` reverts the ''dependency closure'': add every blocker to the set,
+recompute, repeat until nothing is added. One pass is not enough — an entity-wide blocker
+widens the cells in play (a `delete_metarecord` dragged in makes every operation on that
+metarecord a blocker in turn). It terminates, a blocker always being younger than the
+set's oldest member. The closure need not be contiguous: operations writing none of its
+cells stay between its members, untouched.
+
+Look at how far it grew before confirming. At the limit, where it swallows everything
+since the target, a dependent-including revert ''is'' a rollback to the target's parent,
+written forward instead of moving HEAD. Between "undo this one field" and "undo
+everything since", the mechanism is continuous; the closure's size says where a request
+landed.
+
+A target must lie on HEAD's ancestry: an operation on a branch a rollback abandoned is not
+part of the current history (`400`).

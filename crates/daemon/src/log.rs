@@ -112,8 +112,8 @@ pub struct OpRow {
     /// `entity_version_before + 1`.
     pub entity_version_after: Option<u64>,
     pub field_name: Option<String>,
-    /// The operation this one undid, when a revert wrote it (spec-event-log
-    /// "Revert"). `None` for an ordinary write — and for every row of a
+    /// The operation this one undid, when a revert wrote it (doc "Revert").
+    /// `None` for an ordinary write — and for every row of a
     /// database written before the column existed. Allowed to dangle: pruning
     /// may remove the operation it names.
     pub reverts_op_id: Option<i64>,
@@ -1046,7 +1046,7 @@ impl<'c> Writer<'c> {
     }
 
     /// Declares that the operations recorded from now on undo `op_id`, which
-    /// each of them records as its `reverts_op_id` (spec-event-log "Revert").
+    /// each of them records as its `reverts_op_id` (doc "Revert").
     /// A revert sets it around each operation it walks; `None` restores the
     /// ordinary, unattributed write.
     pub fn reverting(&mut self, op_id: Option<i64>) {
@@ -1252,7 +1252,7 @@ impl<'c> Writer<'c> {
 
     /// [`Self::set_field_multi`] under a chosen op type, returning one row id
     /// per *given* value, in order. A revert needs both: the watcher types when
-    /// it undoes a file event (spec-event-log "Revert content"), and the ids to
+    /// it undoes a file event (doc "What a revert writes"), and the ids to
     /// remap the row-scoped inverses that follow it — so a repeated value, which
     /// is collapsed to a single row (doc "No duplicate rows"),
     /// reports the id of the row that swallowed it rather than shifting the

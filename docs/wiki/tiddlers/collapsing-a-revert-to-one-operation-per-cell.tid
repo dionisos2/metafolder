@@ -1,0 +1,16 @@
+title: Collapsing a revert to one operation per cell
+tags: [[Revert]]
+kind: question
+audience: dev
+status: deferred
+summary: A revert could write one operation per cell instead of one per reverted operation; deferred — it would be a second way of computing a revert.
+
+A revert writes one operation per reverted operation. It could write one per ''cell'':
+for each cell the set touches, the state before the set's earliest operation on it,
+written once — reverting a four-operation retype would take one operation.
+
+Deferred deliberately: the gain is log volume, on revisions rarely large; the cost is a
+second way of computing what a revert writes, with its own case analysis for the
+entity-wide and `file_*` types, and a correctness that no longer follows from the
+rollback inverses the tests already cover. Worth revisiting only if batch reverts turn
+out to bloat the log in practice.

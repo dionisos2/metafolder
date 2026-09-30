@@ -13,7 +13,7 @@ pub struct ApiError {
     /// Schema violations, rendered as a `violations` array (doc "Schema").
     pub violations: Option<Vec<serde_json::Value>>,
     /// Extra top-level fields merged into the body — a blocked revert names
-    /// what stands in its way (spec-event-log "POST /revert").
+    /// what stands in its way (doc "Revert endpoints").
     pub extra: Option<serde_json::Map<String, serde_json::Value>>,
 }
 

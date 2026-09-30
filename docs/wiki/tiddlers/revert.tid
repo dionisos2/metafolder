@@ -1,0 +1,36 @@
+title: Revert
+tags: [[Event log]]
+kind: overview
+aliases: revert
+summary: A revert undoes one past revision or operation in place — writing back the state it replaced as a new revision — while everything after it stays.
+
+Rollback moves HEAD: it undoes everything back to a point in time, and what it passes
+over is undone because it is ''in the way'', not because anyone objected to it. Right for
+"take me back to lunchtime"; wrong for "that one rename was a mistake" — above all in a
+watched repository, where dozens of unrelated watcher revisions may have landed since.
+
+A ''revert'' answers the second question. It undoes one revision, or one operation,
+''without moving HEAD'': the daemon computes the state that change replaced and writes it
+back as an ordinary new revision. The log grows by one entry saying so, and nothing
+leaves it — the mistake and its correction are both on the record, which is what an
+audit log is for.
+
+A revert is an ordinary write in every other respect: it can itself be reverted
+(restoring the original change), rolled back across, pruned and trimmed. What marks it is
+`reverts_op_id` on each of its operations, naming what it undid.
+
+Not every change can be reverted on its own: a later one may have overwritten what it
+wrote, leaving no meaningful "before" to restore ([[Operation dependencies]]). Undo reverts
+for you when the watcher has written since your change ([[Undo and redo]]).
+
+!! Use it
+
+<<list-kind guide>>
+
+!! Reference
+
+<<list-kind reference>>
+
+!! Open questions
+
+<<list-kind question>>

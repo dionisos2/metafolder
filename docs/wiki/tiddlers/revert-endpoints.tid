@@ -1,0 +1,52 @@
+title: Revert endpoints
+tags: [[Revert]]
+kind: reference
+audience: dev
+summary: GET /revert/plan, the single-shot POST /revert, and the coordinated start/commit/abort — and the target they share.
+
+|!Route |!Does |
+|`GET /repos/:repo/revert/plan?target_rev_id=…` or `target_op_ids=…&with_dependents=…` |what a revert would do; writes nothing, takes no lock |
+|`POST /repos/:repo/revert` |checks, writes and commits in one transaction |
+|`POST /repos/:repo/revert/start` |the coordinated form: takes the lock, fixes the target, answers the plan (`409` if blocked, lock not taken) |
+|`POST /repos/:repo/revert/commit` |`{"apply": [ids], "label"?}` — writes what the client managed, releases the lock |
+|`POST /repos/:repo/revert/abort` |releases the lock, writes nothing → `{"head"}` |
+
+''The target'', the same everywhere: `{"rev_id": N}`, `{"rev_id": "head"}`, or
+`{"op_ids": [22, 23]}`; every member on HEAD's ancestry (`400` otherwise). With
+`with_dependents`, the set is the dependency closure and a blocked target is no longer an
+error.
+
+!! The plan
+
+```
+{"revertable": false, "requires_lock": true,
+ "operations": [{"id": 23, "op_type": "file_moved", "entity_uuid": "…", "field_name": "mfr_path",
+                 "writes": "file_moved", "restores": [{"field_name": "mfr_path", "value_type": "tree_ref", …}],
+                 "filesystem": {"action": "move", "from": "/repo/music/new.mp3", "to": "/repo/music/old.mp3"},
+                 "blocked_by": {"op_id": 91, "rev_id": 40, "timestamp": …, "op_type": "file_moved", …}}],
+ "blocked": [...], "dependents": [...]}
+```
+
+* `writes` — the type the revert would record ([[What a revert writes]]); `restores` — the state it would write, in snapshot form (empty: the cell is removed).
+* `filesystem` — `null`, or `{"action": "move", "from", "to"}` (paths ready for `mv`), `{"action": "restore_content"}` (from the trash), `{"action": "trash_content"}` (back to the trash). The daemon does not look whether the content is there. `requires_lock` is true when any operation has one.
+* `blocked_by`, `blocked` (their union), `revertable` (no blocker); `dependents` — the closure minus the target, reported either way so a client can offer "these N as well" without a second call. With `with_dependents`, `operations` is the closure, each marked `origin: "requested"` or `"dependent"`.
+
+!! POST /revert
+
+`{"target", "label"?, "with_dependents"?, "skip_filesystem"?}` → `{"revision", "head",
+"reverted_operations", "skipped_operations": [{"op_id", "reason"}]}`. `skip_filesystem`
+leaves out the operations needing a file action instead of refusing — it never means
+"write the metadata anyway": a revert never records a change it knows untrue of the
+disk. With nothing left to apply it writes nothing (`revision: null`).
+
+|!Status |!When |
+|`400` |target off HEAD's ancestry; an `unknown` operation; the revert would leave two types under one name |
+|`404` |no such revision or operation — pruned, trimmed, or never there |
+|`409` |blocked without `with_dependents` (the body adds `blocked`); a file action needed without `skip_filesystem` |
+|`423` |a navigation lock is held |
+
+`commit` may only narrow the target fixed at `start` (an id outside it is `400`);
+operations left out are reported with `reason: "client_skipped"`. The dependency check
+is re-run in `commit`'s transaction — for the daemon's own guarantee: under the lock
+HEAD cannot have moved. After `abort`, reversing any file action already done (or
+reconciling) is the client's job, as for a rollback.

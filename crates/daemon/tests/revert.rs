@@ -1,4 +1,4 @@
-//! Library-level tests for reverting (spec-event-log "Revert"), where a
+//! Library-level tests for reverting (doc "Revert"), where a
 //! revision's exact shape can be built on purpose.
 //!
 //! The delicate cases all come from one place: a rollback's inverse restores

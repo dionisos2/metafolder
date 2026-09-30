@@ -1,4 +1,4 @@
-//! Reverting operations (spec-event-log "Revert").
+//! Reverting operations (doc "Revert").
 //!
 //! A revert undoes a set of past operations *without moving HEAD*: it applies
 //! the inverse of each member, newest to oldest, and writes those inverses
@@ -21,8 +21,7 @@ use crate::rows::FieldRow;
 use crate::store::Log;
 
 /// The cell an operation writes: one field of an entity, or the whole entity
-/// when the operation carries no field name (spec-event-log "Operation
-/// dependencies").
+/// when the operation carries no field name (doc "Operation dependencies").
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Cell {
     pub entity: Uuid,
@@ -223,7 +222,7 @@ pub fn fs_action<L: Log + ?Sized>(log: &L, op: &OpRow) -> Result<Option<FsAction
 }
 
 /// The op type a revert of `op` writes: the type of the change it actually
-/// makes, filesystem included (spec-event-log "Revert content"). It is what
+/// makes, filesystem included (doc "What a revert writes"). It is what
 /// tells a later navigation that crossing this operation needs a file action,
 /// so a revert that moved a file must record `file_moved` and not `set_field`.
 pub fn written_as(op: &OpRow) -> OpType {

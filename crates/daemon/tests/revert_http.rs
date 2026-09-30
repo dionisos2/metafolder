@@ -1,4 +1,4 @@
-//! HTTP-level tests for the revert endpoints (spec-event-log "Revert"):
+//! HTTP-level tests for the revert endpoints (doc "Revert"):
 //! the dependency check, its closure, and what a revert writes.
 
 use std::sync::Arc;

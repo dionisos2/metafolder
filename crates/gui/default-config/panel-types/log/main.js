@@ -447,9 +447,9 @@ export async function mount(root, metafolder) {
   }
 
   // Undoes the selected revision in place, by writing its inverse at HEAD
-  // (spec-event-log "Revert"). Unlike a rollback it does not move HEAD, so the
+  // (doc "Revert"). Unlike a rollback it does not move HEAD, so the
   // watcher flushes that landed since are left exactly where they are.
-  /** What `GET /revert/plan` answers (spec-event-log "Revert").
+  /** What `GET /revert/plan` answers (doc "Revert").
    *  A blocker names the operation that stands in the way and the revision it
    *  belongs to.
    *  @typedef {{revertable?: boolean, blocked?: {rev_id: number, op_id: number}[],

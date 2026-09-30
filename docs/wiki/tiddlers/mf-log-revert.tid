@@ -1,0 +1,6 @@
+title: mf log revert
+tags: [[CLI command]] [[Revert]]
+kind: reference
+summary: Undo a revision (or an operation) by writing its inverse at HEAD
+
+Reverts a revision (default: HEAD's), or operations with `--op`, by writing their inverse at HEAD; `plan` previews it; blocked targets name their blockers ([[Reverting a revision]]).

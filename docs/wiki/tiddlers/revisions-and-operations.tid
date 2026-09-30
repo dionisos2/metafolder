@@ -12,7 +12,7 @@ edited); batch commands make large ones: a set over K matches is K operations, a
 reconcile creating M files M, a watcher `Remove` of a directory with N descendants N+1
 `file_deleted`. The revision is the smallest unit a rollback moves by (a navigation to an
 operation id can stop inside one); undoing one operation of a revision in place is a
-revert's job.
+revert's job ([[Revert]]).
 
 !! Operation types
 

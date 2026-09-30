@@ -4200,7 +4200,7 @@ fn test_slow_replay_runs_a_logged_query_again_and_shows_where_it_goes() {
     assert_eq!(out.stdout.lines().count(), 2, "{}", out.stdout);
 }
 
-// ── `mf log revert` (spec-event-log "mf revert") ──────────────────────────────
+// ── `mf log revert` (doc "Reverting a revision") ──────────────────────────────
 
 #[tokio::test(flavor = "current_thread")]
 async fn test_log_revert_undoes_a_revision_and_reports_the_blocker() {

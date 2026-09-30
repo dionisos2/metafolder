@@ -966,7 +966,7 @@ mod tests {
     }
 }
 
-// ── `mf log revert` (spec-event-log "mf revert") ──────────────────────────────
+// ── `mf log revert` (doc "Reverting a revision") ──────────────────────────────
 
 /// What to revert: a revision, an explicit list of operations, or — omitted —
 /// the revision HEAD sits in.
