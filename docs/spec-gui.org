@@ -3368,7 +3368,7 @@ may change). Commands: =log-detail:toggle whole|unchanged=,
   Redo toolbar buttons).
 
   Undo undoes the newest change *the user* made, and picks the mechanism for
-  it: the [[file:spec-event-log.org][spec-event-log.org]] "Undo" selection,
+  it: the doc "The undo selection" selection,
   shared with =mf log undo= through =core::undo=. A rollback when the user's
   change is the last thing in the log (={"prev_revision": true}=), a revert
   when the watcher has written since. A revert that is *blocked* is reported
@@ -3377,8 +3377,7 @@ may change). Commands: =log-detail:toggle whole|unchanged=,
   back. One that needs a file action is carried out, files included (see
   =log:rollback=).
 
-  Redo is its mirror — the [[file:spec-event-log.org][spec-event-log.org]]
-  "Redo" selection, also from =core::undo=: HEAD forward onto what an undo's
+  Redo is its mirror — the doc "The undo selection" selection, also from =core::undo=: HEAD forward onto what an undo's
   rollback unapplied (=GET .../log?mode=active= carries that continuation), a
   rollback over the revert an undo wrote, or a revert of that revert when the
   daemon has written since. So a redo survives the watcher having moved a file

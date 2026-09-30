@@ -4404,7 +4404,7 @@ fn log_head_prints_the_head_operation_id() {
     assert_eq!(now.stdout.trim(), before_id.to_string(), "HEAD is back where it was");
 }
 
-// ── `mf log undo` (spec-event-log "mf log undo") ──────────────────────────────
+// ── `mf log undo` (doc "Undo and redo") ──────────────────────────────
 
 /// With nothing but the user's own writes in the log, undo is a rollback: HEAD
 /// moves back over the last revision and the log keeps no correction.

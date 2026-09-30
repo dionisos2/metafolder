@@ -537,17 +537,19 @@ types », « Storage », « Normal write flow », l'introduction de « HTTP API 
 =GET /log=, les deux routes de révision, =mf log= ; mémoire
 =log-read-was-linear-in-the-log= réduite.
 
-** TODO 22. Annuler et rétablir
+** FAIT 22. Annuler et rétablir
 
 (sous Event log)
-- [ ] =Undo and redo= — guide (=mf log undo/redo=, =log:undo/redo= dans la GUI)
-- [ ] =The undo selection= — reference (ce qu'un undo reprend, et comment)
-- [ ] =Why undo does not step HEAD back= — rationale
-- [ ] =Why undo and redo do not oscillate= — rationale
+- [X] =Undo and redo= — guide (CLI et GUI, fichiers compris)
+- [X] =The undo selection= — reference (undo et redo)
+- [X] =Why undo does not step HEAD back= — rationale
+- [X] =Why undo and redo do not oscillate= — rationale, dev
+- [X] notes de commande : =mf log undo=, =mf log redo=, =log:undo=, =log:redo=
 
-CLI : =mf log {undo,redo}=. Sources : spec-event-log « Undo », « Redo », « mf log
-undo », « mf log redo » ;
-mémoire =undo-cost-per-operation=.
+Vérification contre le code : conforme (la GUI porte désormais les fichiers,
+=d76dbab=). La mémoire =undo-cost-per-operation= sert l'item 24 (navigation).
+Sources retirées (pointeurs) : spec-event-log « Undo », « Redo », =mf log undo=,
+=mf log redo=.
 
 ** TODO 23. Revert
 

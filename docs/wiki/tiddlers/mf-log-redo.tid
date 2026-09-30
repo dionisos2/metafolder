@@ -1,0 +1,6 @@
+title: mf log redo
+tags: [[CLI command]] [[Event log]]
+kind: reference
+summary: Take the newest undo back, whichever mechanism that takes
+
+Takes the newest undo back — forward, rollback or revert of the revert; `plan` shows which ([[Undo and redo]]).

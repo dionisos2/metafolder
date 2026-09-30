@@ -1,4 +1,4 @@
-//! The undo selection (spec-event-log "mf log undo"): deciding *what* a plain
+//! The undo selection (doc "The undo selection"): deciding *what* a plain
 //! "undo" should undo, and *how*.
 //!
 //! Undo is not "step HEAD back one revision". Between the change a user wants

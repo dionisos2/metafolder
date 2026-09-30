@@ -1,0 +1,45 @@
+title: The undo selection
+tags: [[Event log]]
+kind: reference
+summary: What undo and redo choose — which revision, and whether by rollback, revert or moving forward — computed from the log alone, in core, by every client.
+
+!! Undo
+
+Undo walks down HEAD's ancestry for the newest revision ''the user wrote'', and undoes it:
+
+* by a ''rollback'' if it is the revision HEAD sits in and all of it still stands — HEAD moves back over it and the log keeps no trace of a mistake nobody saw;
+* otherwise by a ''revert'', which leaves everything written since where it is.
+
+A revision is ''not'' a candidate when:
+
+* it is the daemon's — `origin = watcher` exactly, not any set origin ([[Revisions and operations]]); on a database older than the origin, when all its operations are watcher types. A `trash` revision ''is'' a candidate: you asked for it;
+* it is ''itself'' a revert — undoing an undo is a redo, and treating it as a candidate would make undo a two-state oscillation;
+* every one of its operations has already been undone;
+* it holds only `unknown` operations, which carry nothing to invert;
+* it is the root of the history — the root metarecord written at init, or the oldest revision left after a prune. (`mf log revert <id>` still reaches it.)
+
+A revision partly undone already — some operations reverted one by one — is undone by
+its remaining operations. The walk follows HEAD's parents, so a redo future and divergent
+branches are ignored.
+
+!! Redo
+
+In order:
+
+# ''HEAD is not at a tip'': an undo rolled it back and what it unapplied is still ahead — move HEAD forward onto it, the exact inverse.
+# ''HEAD sits in a revert, and nothing was written since'': roll back over it — the undo goes as cleanly as it came.
+# ''The newest revision the user wrote is a revert, with the daemon's revisions on top'': revert that revert, in place.
+
+Anything else is nothing to redo — notably when the newest revision you wrote is an
+ordinary change and not an undo.
+
+!! Where it lives
+
+The selection is a pure function of `GET /log`, in `core::undo`, shared by `mf log
+undo`/`redo` and the GUI's `log:undo`/`log:redo`; the daemon has no undo endpoint — it
+offers the mechanisms, the client picks. Undo reads the linear line, redo the active one
+(it needs HEAD's forward continuation), each in two bounded passes — 500 operations, then
+20 000 — rather than one unbounded one: after a large reconcile the ancestry is millions
+of rows, and a repository whose last manual change is older than the second window is
+told so rather than scanned whole. The mechanisms themselves — including the files they
+move — are run by `core::navigation`, the same for both clients.

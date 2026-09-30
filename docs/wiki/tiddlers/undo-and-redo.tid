@@ -1,0 +1,40 @@
+title: Undo and redo
+tags: [[Event log]]
+kind: guide
+aliases: undo redo
+summary: mf log undo (Ctrl+Z) takes back the newest change you made, whatever the watcher wrote since; mf log redo (Ctrl+Shift+Z) takes the newest undo back.
+
+```
+mf -n music log undo plan      # what undo would do, and why — nothing written
+mf -n music log undo
+mf -n music log redo plan
+mf -n music log redo
+```
+
+In the GUI: <<key "log:undo" Ctrl+z>> and <<key "log:redo" Ctrl+Shift+z>>, from anywhere.
+
+''Undo'' takes back the newest change ''you'' made — not the watcher's, not a previous
+undo. It picks the way itself ([[The undo selection]]): when your change is the last thing
+in the log, it ''rolls back'' over it, leaving no trace; when the watcher has written
+since, it ''reverts'' it in place, leaving the watcher's revisions standing — they record
+what really happened on disk ([[Why undo does not step HEAD back]]). Pressed again, it
+takes back the change before, and so on.
+
+''Redo'' takes the newest undo back: moving HEAD forward again after an undo-by-rollback,
+rolling back an undo-by-revert that is still the last thing in the log, or reverting that
+revert when the watcher has written since. It re-applies undos only — not arbitrary
+history (that is `mf log rollback`). Undo and redo compose: undo, redo, undo lands where
+the first undo did ([[Why undo and redo do not oscillate]]).
+
+Neither needs a target: finding it is their whole job. `plan` shows the mechanism, the
+revision and the reason, and writes nothing. With nothing to take back they say
+`Nothing to undo.` / `Nothing to redo.` and exit 0.
+
+Files come along. Undoing a trashing brings the file back from the trash, redoing it
+sends it there again; undoing a move made through metafolder moves the file back
+([[Trash, undo and redo]]). On the command line the move policies apply
+(`--on-move-available`, default `apply`; `--on-move-unavailable`, default `ask`), with
+`--with-dependents`, `--metadata-only`, `--force`, `--silent` passed to the revert when
+undo picks one. The GUI asks nothing: a move is applied if the file is there, and applied
+to the metadata alone if it is not; a revert blocked by later changes is reported rather
+than forced.

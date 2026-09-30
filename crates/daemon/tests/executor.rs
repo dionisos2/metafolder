@@ -1526,7 +1526,7 @@ fn test_a_flush_never_scans_the_repository_for_orphans() {
 /// A revision the watcher writes says so (`revision.origin`), whatever
 /// operation types it holds: a file arriving is recorded as a
 /// `create_metarecord`, indistinguishable by type from a user's write, and the
-/// undo selection (spec-event-log "mf log undo") must not mistake one for the
+/// undo selection (doc "Undo and redo") must not mistake one for the
 /// other.
 #[test]
 fn test_a_watcher_revision_records_its_origin() {

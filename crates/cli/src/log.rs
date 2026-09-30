@@ -73,12 +73,12 @@ impl TargetArgs {
     }
 }
 
-// ── mf log undo (spec-event-log "mf log undo") ───────────────────────────────
+// ── mf log undo (doc "Undo and redo") ───────────────────────────────
 
 /// Reads enough of the log to decide what undo should undo. Two bounded reads
 /// rather than one unbounded one: a repository whose last manual change is
 /// older than [`undo::WINDOW`] operations — a large reconcile sits in between —
-/// asks again with [`undo::WIDE_WINDOW`] (spec-event-log "mf log undo").
+/// asks again with [`undo::WIDE_WINDOW`] (doc "Undo and redo").
 fn undo_plan(ctx: &Ctx, base: &str) -> Result<undo::UndoPlan, CliError> {
     for limit in [undo::WINDOW, undo::WIDE_WINDOW] {
         let log = ctx.client.get(
@@ -151,7 +151,7 @@ pub fn undo_run(
 /// `mf log redo [plan]`: takes the newest undo back, whichever mechanism that
 /// takes — HEAD forward onto what a rollback unapplied, a rollback over the
 /// revert an undo wrote, or a revert of that revert when the watcher has
-/// written since (spec-event-log "Redo").
+/// written since (doc "The undo selection").
 pub fn redo_run(
     ctx: &Ctx,
     plan_only: bool,

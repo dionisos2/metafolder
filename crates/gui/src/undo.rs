@@ -29,7 +29,7 @@ use serde_json::{json, Value};
 use std::sync::Arc;
 
 /// Reads enough of the log to decide what undo should undo — two bounded reads
-/// rather than one unbounded one (spec-event-log "mf log undo").
+/// rather than one unbounded one (doc "Undo and redo").
 async fn undo_plan(daemon: &DaemonProxy, repo: &str) -> Result<UndoPlan, String> {
     for limit in [undo::WINDOW, undo::WIDE_WINDOW] {
         let log = read_log(daemon, repo, "linear", limit).await?;
