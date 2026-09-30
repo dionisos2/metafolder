@@ -1,0 +1,6 @@
+title: mf orphan relink
+tags: [[CLI command]] [[Orphans]]
+kind: reference
+summary: Re-home orphans onto files that carry their content (hashes candidates)
+
+Re-homes orphans onto tracked files carrying their content, as a task ([[Relinking orphans]]).

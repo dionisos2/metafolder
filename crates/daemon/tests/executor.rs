@@ -541,7 +541,7 @@ fn test_rename_from_clears_path() {
 /// That search can only pay off by *hashing the arriving file*, and a single
 /// event can carry a whole subtree: an operation heavy enough to belong to a
 /// command the user runs, not to the event path. It is now `orphan relink`
-/// (spec-file-tracking "Relinking orphans"), and the metadata waits on the
+/// (doc "Relinking orphans"), and the metadata waits on the
 /// orphan until it is run.
 #[test]
 fn test_an_arrival_does_not_re_home_an_orphan_by_fingerprint() {
@@ -1202,7 +1202,7 @@ fn test_a_cascade_larger_than_the_limit_is_refused() {
     // the whole repository. Nulling thousands of paths on one event is never
     // what the user asked for: the cascade is skipped, the metadata survives,
     // and `mf orphan clear` remains the deliberate way to confirm it
-    // (spec-file-tracking "Mass-orphan circuit breaker").
+    // (doc "Orphan scan").
     let root = TempDir::new("exec_breaker");
     let opened = repo::init_repository(&root, None, None, false).unwrap();
     let settings = metafolder_daemon::daemon_config::DaemonSettings {

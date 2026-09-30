@@ -22,5 +22,6 @@ sentence naming what to plug back in — `volume not mounted: label:PHOTOS
 * ''file-manager'' — a banner above a listing at or below an offline mount point, and an `⏏ not mounted` badge (amber name, the sentence as tooltip) on such entries.
 * ''metarecord-list'' — unavailable rows in amber with the sentence as tooltip; nothing is filtered out, browsing that metadata with the drive unplugged being the point.
 
-Nothing offers to "clean up" unavailable records: orphan detection refuses them by design.
+Nothing offers to "clean up" unavailable records: orphan detection refuses them by design
+([[Orphan scan]]).
 The helper is `panel-shim/mounts.js`.

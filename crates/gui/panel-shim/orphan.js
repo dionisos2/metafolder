@@ -1,5 +1,5 @@
-// Orphan detection for file/directory metarecords (spec-file-tracking
-// "Orphaned metarecord"), served at /__orphan.js for panel types
+// Orphan detection for file/directory metarecords (doc "Orphans"),
+// served at /__orphan.js for panel types
 // (metarecord-list row colouring, metarecord-detail note).
 
 /**

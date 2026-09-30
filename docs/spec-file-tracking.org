@@ -29,62 +29,7 @@ Moved to the wiki: doc "Mount points", doc "mfr_mount", doc "Offline subtrees".
 
 ** Orphans
 
-*** Relinking orphans
-
-A metarecord orphaned by a file that left keeps its fingerprints, so the file
-can be recognised if it comes back. Confirming that means *hashing the
-candidate*, and =mf orphan relink= is where it happens: a command the user runs,
-observable and cancellable like the duplicate scan (see
-doc "Tasks").
-
-It used to happen inline, on every arriving file. That could not be right. One
-filesystem event can carry a whole subtree — a directory pasted in arrives as a
-single =Create= — so the flush could be made to hash an arbitrary amount of
-data, on the path that is supposed to keep the repository in step with the disk.
-And it almost never paid: only the duplicate scan stores the fingerprints the
-search needs, so on a repository where it has never run there is nothing to
-find, and the search was pure cost.
-
-The consequence is deliberate and worth stating plainly: *metadata no longer
-follows a file by itself across a move the watcher could not observe*. The file
-is tracked afresh and the metadata waits on the orphan until a relink is run.
-
-Pairing rules:
-
-- An orphan is a candidate only if it carries *both* fingerprints — nothing else
-  confirms identity.
-- A tracked file is a candidate only if its metarecord carries no field outside
-  the =mfr_*= namespace. One the user has annotated is reported as a *conflict*
-  and left alone: absorbing it would delete what was attached to it.
-- On a confirmed match the *orphan takes the tracked position* and the
-  metarecord that held it is deleted — that way round, because the orphan's uuid
-  is what references elsewhere point at, and preserving it is the whole reason
-  to re-home rather than track afresh.
-
-*** Cost of the orphan search
-
-The fingerprint pairing [[*Relinking orphans]] performs reads the repository's
-orphans in one query, and that query joins =field= to itself on
-=metarecord_uuid=: it must *seek* those rows rather than scan them — see the
-=INDEXED BY= invariant in [[file:spec-main.org][spec-main.org]]. Unguarded it is
-quadratic in the repository, which on a build tree (where most metarecords are
-orphans of deleted artifacts) is the difference between milliseconds and never
-finishing.
-
-*** Mass-orphan circuit breaker
-
-Independently of mount points: a single filesystem event batch that would orphan
-a very large number of metarecords is a symptom, not a legitimate deletion — a
-filesystem going away, an unmount metafolder did not recognise, a mount point
-moved under the daemon's feet. The executor refuses a cascade of more than
-=orphan-cascade-limit= metarecords (daemon setting, default 10 000; =0= disables
-the check): the cascade is skipped, a warning is logged, and the metadata is
-left untouched.
-
-The refusal is deliberately recoverable rather than fatal: nothing is lost, the
-paths simply stay stale, and a genuinely huge deletion is confirmed with the
-tool that exists for it — =mf orphan clear=, which is user-driven and
-re-verifies every path against the disk before writing =Nothing=.
+Moved to the wiki: doc "Orphans", doc "Relinking orphans", doc "Orphan scan".
 
 * Daemon
 
@@ -110,86 +55,11 @@ Moved to the wiki: doc "Reconcile", doc "Moves and candidates", doc "Running a r
 
 ** Orphan scan
 
-Reconcile re-homes moved files and leaves the rest stale; it never writes
-=Nothing=. But a metarecord whose file was deleted *while its subtree was
-unwatched* keeps a live-looking =mfr_path= and no =mfr_path_old= — invisible to a
-query, which sees only the database, never the disk. The *orphan scan* is the
-diagnostic for exactly this state, and *clear* is its cleanup.
-
-An orphan is therefore a file that went away **without being asked to**: removed
-with =rm=, by another tool, or while nothing was watching. A deletion that went
-through metafolder is not one of them — trashing captures the metarecords and
-deletes them outright (see doc "Trash"),
-so it leaves nothing behind to scan for. That is what makes acting on the scan's
-answer safe: everything it reports is genuinely gone, with no copy of the bytes
-anywhere, rather than something the user put in the trash and could still want
-back.
-
-*Scan* (=POST /repos/:repo/orphans/scan=, read-only). Driven by the *tracked
-set*, not the eligible tree: every metarecord that still resolves an =mfr_path=
-is checked against the disk, so a subtree deleted while unwatched is still found.
-A record is reported *only when a readable ancestor directory proves the file is
-truly absent*: the scan climbs from the path to its nearest existing ancestor and
-reports an orphan only if that ancestor could be read (=read_dir= succeeded) and
-the path is absent below it. An unreadable (=EACCES=) or stale-handle
-(=ENOTCONN=) ancestor — or a broken symlink still present at the path — yields
-"unknown", never an orphan.
-
-That guard is *not* sufficient on its own for a removable volume: an unmounted
-mount point is an ordinary directory that reads back empty, so its whole subtree
-would look "definitely gone". Paths at or below an *offline* mount point
-(doc "Offline subtrees") therefore yield "unknown" too, before the ancestor walk is
-even attempted. The two guards together are what make it safe to null the paths
-afterwards: neither a permission drop nor an unplugged drive can mass-orphan a
-subtree.
-Response: ={"count": N, "orphans": [{"uuid": "<32hex>", "stale_path": "/…"}]}=.
-
-*Clear* (=POST /repos/:repo/orphans/clear=, body ={"uuids": ["<32hex>", …]}=).
-For each given metarecord *still* definitely gone (re-verified, so a
-since-recreated file is skipped), it performs the same transition the watcher
-makes on a live delete: snapshot =mfr_path_old=, set =mfr_path= to =Nothing=, and
-cascade both to every descendant — all in one revision. Response:
-={"cleared": N}=. This is a new, explicit component that writes =Nothing=,
-alongside the watcher and =force= writes; *reconcile still never does*.
+Moved to the wiki: doc "Orphan scan".
 
 ** Marking orphans
 
-The scan answers a question; *marking* records the answer. =POST
-/repos/:repo/orphans/mark= flags every orphaned metarecord with =orphan = true=,
-in one revision, and takes the flag back from the records that are not orphaned
-any more. Response: ={"orphans": N, "marked": A, "unmarked": B}= — how many carry
-the marker afterwards, how many were newly flagged, how many were unflagged.
-
-*Both populations count.* "Orphan" here means what the user means by it: a
-record whose =mfr_path= still resolves to a path [[*Orphan scan][the scan]] proves gone, *and*
-one already orphaned to =Nothing= (by the watcher, by =clear=, or by a =force=
-write). The first needs the disk; the second is =is_absent(mfr_path)=. The
-guards are the scan's, unchanged: an unreadable ancestor or an offline mount
-point yields "unknown", so neither a permission drop nor an unplugged drive
-marks anything.
-
-*It writes only the marker.* =mfr_path= is left exactly as it is — marking is
-not clearing, and =clear= stays the one component besides the watcher and
-=force= writes that writes =Nothing=. A detection run is therefore taken back by
-a plain undo.
-
-*The field is the user's, not the daemon's.* =orphan= carries no =mfr_= prefix
-on purpose: it is the answer to a question the user asked at a point in time,
-not a fact the daemon keeps up to date. It must be queryable (=orphan = true=),
-visible in the detail panel, editable and removable by hand — none of which the
-reserved namespace allows (doc "Reserved fields"). The consequences
-are the ones that come with any user field: a repository whose schema constrains
-=orphan= must accept a =bool= there, and a repository that already uses the name
-for something else gets the ordinary type-lock error rather than a silent
-overwrite.
-
-*The marker is the last run's answer, not a label.* A record that carries it and
-whose file is back is unmarked by the next run. That is what makes acting on the
-marked set — deleting it, typically — safe: the set means "gone as of the last
-detection", and re-running detection is how it is brought up to date. Deleting
-is not a distinct component: the marked set is an ordinary query, so it is
-=POST /query/delete= over ={"type": "eq", "field": "orphan", "value": {"type":
-"bool", "value": true}}= like any other bulk delete.
+Moved to the wiki: doc "Finding and clearing orphans".
 
 ** Mount status
 
@@ -231,26 +101,7 @@ Moved to the wiki: doc "Resolving paths", doc "mf path".
 
 ** =mf orphan {list, detect, clear, relink}=
 
-Diagnoses and cleans up metarecords whose file is gone (see [[*Orphan scan]]).
-=list= (the default) calls =POST /orphans/scan= and prints =uuid <TAB>
-stale_path=, one per line, or a "no orphans" line.
-
-=detect= calls =POST /orphans/mark= (see [[*Marking orphans]]) and prints
-=N orphan(s): A marked, B unmarked=. Where =list= reports, =detect= writes the
-report into the repository as =orphan = true=, which is what makes it reachable
-from a query — =mf metarecord -q 'orphan = true' get= lists them,
-=mf metarecord -q 'orphan = true' delete= is how they are removed. It is the
-command the GUI's =orphan:detect= drives (spec-gui "Orphans"). =clear [-y]= scans, prints the
-records to stderr, prompts for confirmation (skipped with =-y=), then calls
-=POST /orphans/clear= with the scanned uuids and prints =cleared N=. It is kept
-separate from =mf reconcile= on purpose: detection needs a disk scan, but the
-intent (diagnose / clean up missing files) is not reconcile's sync semantics.
-
-=relink [--json] [--no-wait] [--poll-interval MS]= re-homes orphans onto files
-that carry their content (see [[*Relinking orphans]]). It calls
-=POST /orphans/relink=, which answers =202= with a task id, and polls it exactly
-as =mf reconcile= and =mf duplicate scan= do. It prints
-=relinked: N  conflicts: N  skipped: N=.
+Moved to the wiki: doc "Finding and clearing orphans", doc "mf orphan".
 
 ** =mf mount {list, forget}=
 

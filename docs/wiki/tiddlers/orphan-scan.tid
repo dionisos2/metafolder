@@ -1,0 +1,42 @@
+title: Orphan scan
+tags: [[Orphans]]
+kind: reference
+audience: dev
+summary: The scan reports a file missing only when a readable ancestor proves it absent and no offline mount point is above it; the endpoints, and the mass-orphan circuit breaker.
+
+The scan is driven by the ''tracked set'', not the eligible tree: every metarecord that
+still resolves an `mfr_path` is checked against the disk, so a subtree deleted while
+unwatched is still found. A record is reported only when ''a readable ancestor proves the
+file absent'': the scan climbs from the path to its nearest existing ancestor, and
+reports an orphan only if that ancestor could be listed and the path is absent below it.
+An unreadable (`EACCES`) or stale-handle (`ENOTCONN`) ancestor, or a broken symlink
+still present at the path, yields ''unknown'', never an orphan.
+
+That guard alone would not save a removable volume — an unmounted mount point reads back
+as an empty, readable directory — so paths at or below an offline mount point are
+"unknown" before the walk is attempted ([[Offline subtrees]]). Together the two guards
+are what make acting on the answer safe: neither a permission drop nor an unplugged
+drive can orphan a subtree.
+
+|!Route |!Does |
+|`POST /repos/:repo/orphans/scan` |read-only: `{"count": N, "orphans": [{"uuid", "stale_path"}]}` |
+|`POST /repos/:repo/orphans/mark` |writes `orphan = true` on both kinds and unmarks the rest, one revision: `{"orphans": N, "marked": A, "unmarked": B}` |
+|`POST /repos/:repo/orphans/clear` |`{"uuids": [...]}`: for each still missing (re-verified), `mfr_path_old` captured, `mfr_path = nothing`, cascade — one revision: `{"cleared": N}` |
+|`POST /repos/:repo/orphans/relink` |a task (`202`), result `relinked`, `conflicts`, `skipped` ([[Relinking orphans]]) |
+
+Marking counts both populations — the missing (which needs the disk) and the deleted
+(`mfr_path IS ABSENT`) — with the scan's guards unchanged. Deleting the marked set is not
+a component of its own: it is `POST /query/delete` over `orphan = true`.
+
+!! The mass-orphan circuit breaker
+
+Independently of mount points: one event batch that would orphan a very large number of
+metarecords is a symptom, not a deletion — a filesystem going away, an unmount the
+daemon did not recognise, a mount point moved under it. The executor refuses a cascade
+of more than `orphan-cascade-limit` metarecords (default 10 000, `0` disables it,
+[[Daemon configuration]]): the cascade is skipped, a warning logged, the metadata left
+as it was. Recoverable, not fatal: the paths just stay stale, and a genuinely huge
+deletion is confirmed with `mf orphan clear`, which re-verifies every path first.
+
+(The pairing query of the SQL era had to seek, not scan, or it was quadratic on a build
+tree full of deleted artifacts; the store's keyed reads made that constraint moot.)

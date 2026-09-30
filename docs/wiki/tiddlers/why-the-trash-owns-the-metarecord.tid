@@ -12,7 +12,7 @@ Until September 2026 a trashing left the metarecord behind, orphaned
 
 The metadata was the one part of the trash's promise it did not keep. So the
 invariant became: ''a metarecord dies with its bytes, never before.'' Pruning is
-the single point of destruction, and "orphan" recovers its strict meaning: a file
+the single point of destruction, and "orphan" recovers its strict meaning ([[Orphans]]): a file
 that went away without being asked to.
 
 !! Who does what

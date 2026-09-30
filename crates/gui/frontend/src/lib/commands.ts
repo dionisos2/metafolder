@@ -1510,7 +1510,7 @@ async function runCommand(name: string, args: string[], ws: string | null): Prom
       if (ws) await invoke('duplicate_scan', { wsId: ws });
       return true;
     case 'orphan:detect':
-      // Mark the orphaned metarecords (spec-file-tracking "Marking orphans").
+      // Mark the orphaned metarecords (doc "Finding and clearing orphans").
       // The Rust side posts its own status; swallow the rejection so an error
       // is not surfaced twice.
       if (ws) await invoke('orphan_detect', { wsId: ws }).catch(() => 0);

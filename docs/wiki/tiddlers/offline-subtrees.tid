@@ -10,7 +10,7 @@ Everything at or below it is ''frozen'':
 |!Component |!On an offline subtree |
 |watcher |no watch there; any event landing in it is dropped |
 |reconcile |pruned from the walk: nothing created, refreshed, offered or MIME-typed. A scoped reconcile aimed at or into it fails — `… is on a volume that is not mounted: nothing to reconcile until it is back` — rather than reporting "no change" |
-|orphan scan and marking |"unknown", never an orphan |
+|orphan scan and marking |"unknown", never an orphan ([[Orphan scan]]) |
 |`mf_watch`, `mf_ignore` |unchanged: eligibility is evaluated as usual; the freeze is one more filter |
 |queries |unaffected — a disconnected drive's metadata stays fully queryable, the whole point of recording it |
 

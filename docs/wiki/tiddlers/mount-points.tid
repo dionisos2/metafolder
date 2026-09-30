@@ -13,7 +13,7 @@ empty one that a thousand tracked files are gone.
 A tracked path has three states, not two:
 
 * ''present'' — the file is there;
-* ''absent'' — the file is gone: `mfr_path = nothing` (only the watcher, `mf orphan clear` and forced writes record that);
+* ''absent'' — the file is gone: `mfr_path = nothing` (only the watcher, `mf orphan clear` and forced writes record that — [[Orphans]]);
 * ''unavailable'' — the volume holding it is not mounted. Nothing is recorded: the metarecord keeps its path, its metadata is frozen, and the subtree is skipped by everything until the volume is back ([[Offline subtrees]]).
 
 The third state is never stored on the metarecords themselves: it is derived, when asked,

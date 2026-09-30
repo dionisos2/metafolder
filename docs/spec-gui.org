@@ -1325,7 +1325,7 @@ Behaviours:
 | =metarecord-list:clear <zone\|all>= | Empty a zone and focus it; =all= empties the three search fields and re-runs (an empty query matches everything) |
 | =metarecord-list:apply <zone> [stay]= | Commit a zone's content. It leaves the zone afterwards — so the panel accelerators resume without a separate Escape — unless =stay= is given, and only ever gives up a focus that zone itself holds |
 | =metarecord-list:insert <zone> <text> [stay]= | Splice text into a zone at the caret, replacing the selection, and focus the zone — unless =stay= is given, the modifier =apply= takes with the same meaning (*the focus stays where it is*), which is what a caller that writes and runs the query at once needs. Because =stay= trails the free text, a trailing token that is not exactly =stay= is taken as more text (an unquoted =text= may hold spaces); a literal trailing "stay" takes double quotes. It prepares the query rather than running it: =apply= runs it. The one command that writes into a text zone |
-| =metarecord-list:query <what>= | Run a canned query in the visible DSL zone, shown and frozen so it stays editable and composable: =duplicates= (the selection's byte-identical twins, =same(mfr_duplicate_group, <uuid>)=) or =orphans= (=orphan = true=, the metarecords the last =orphan:detect= marked — it detects nothing and reads no disk, it shows what detection wrote, see [[file:spec-file-tracking.org][spec-file-tracking.org]] "Marking orphans") |
+| =metarecord-list:query <what>= | Run a canned query in the visible DSL zone, shown and frozen so it stays editable and composable: =duplicates= (the selection's byte-identical twins, =same(mfr_duplicate_group, <uuid>)=) or =orphans= (=orphan = true=, the metarecords the last =orphan:detect= marked — it detects nothing and reads no disk, it shows what detection wrote, see doc "Finding and clearing orphans") |
 | =metarecord-list:toggle <flag>= | Flip a view flag (=normal=: show/hide the normal DSL editor) |
 | =file-manager:reveal= | Open the selected metarecord's folder in the file manager, replacing the focused panel (directory → itself, file → containing folder with the file highlighted) — see [[*Cross-panel selection]] |
 | =metarecord-list:folder= | List the selected metarecord's folder in =metarecord-list=, replacing the focused panel (directory → itself, file → its containing folder; default =g f=): the query =mfr_path -> "<folder>"= lands in the DSL zone, frozen, so it stays visible and editable — see [[*Cross-panel selection]] |
@@ -1884,7 +1884,7 @@ That rule guards against *silent* replacement, not against shipped commands
 living here: =metarecord:remove= (the =Delete= key on a metarecord, see
 doc "Sending files to the trash"), =file-manager:reveal= and
 =metarecord-list:folder= (see [[*Cross-panel selection]]), =orphan:delete= /
-=orphan:detect-delete= (see [[*Orphans]]), and =repos:switch= / =recent= (the
+=orphan:detect-delete= (see doc "Orphans in the GUI"), and =repos:switch= / =recent= (the
 repository pick and the recently-viewed pick, =g o= / =g r=) are shipped
 entries of this very
 file rather than compiled builtins, precisely so their questions and the
@@ -2234,7 +2234,7 @@ await metafolder.fs.remove('/path')                 // permanent delete of a fil
 
 **** =metafolder.orphans=
 
-The orphaned-metarecords half of =mf orphan= (see [[*Orphans]]), driven through
+The orphaned-metarecords half of =mf orphan= (see doc "Orphans in the GUI"), driven through
 the orphan Tauri commands. =detect()= scans and writes the =orphan = true=
 marker (resolving to how many carry it afterwards); =count()= reads the marked
 set as it stands — detection is not re-run; =delete()= removes the marked
@@ -3259,40 +3259,7 @@ Moved to the wiki: doc "Unmounted volumes in the GUI".
 
 ** Orphans
 
-An *orphan* is a metarecord whose file is gone: either =mfr_path = Nothing= (the
-watcher saw the deletion) or a =mfr_path= that still resolves to a path the disk
-no longer has (a subtree deleted while unwatched — reconcile leaves those in
-place). The second kind is invisible to a query, which sees the database and
-never the disk, so finding them takes a scan.
-
-The GUI does not hold that scan's answer in a panel. =orphan:detect= asks the
-daemon to *write* it, as an ordinary field — =orphan = true= — and everything
-downstream is then a plain query (spec-file-tracking "Marking orphans"):
-
-- =orphan:detect= — =POST /orphans/mark=. Reports =N orphaned metarecords marked
-  orphan = true (A new, B no longer orphaned)= in the status bar and the message
-  log, and nudges the panels (=metarecords:dirty=). It writes the marker and
-  nothing else: =mfr_path= is left alone, so a detection run is taken back by a
-  plain =log:undo=.
-- =metarecord-list:query orphans= — the query =orphan = true= in the visible DSL
-  zone. No scan, no daemon write: it shows what detection last wrote, which is
-  also how a new user finds out what detection *did*.
-- =orphan:delete= — deletes the marked metarecords (=POST /query/delete= over the
-  same predicate), after a confirmation naming the count. Detection is not
-  re-run, so a set the user narrowed by hand (unsetting the marker on records
-  they want kept) is respected exactly.
-- =orphan:detect-delete= — the two in a row, with the confirmation in between.
-
-Because the marker is an ordinary user field it is editable and queryable like
-any other: =orphan = true AND mfr_size > 1000000= narrows it, the detail panel
-shows it, and unsetting it by hand takes a record out of the next deletion. It
-is also *the last run's answer, not a label*: a record that carries it and whose
-file is back is unmarked by the next detection run. That is what makes deleting
-the marked set safe.
-
-The row colouring is independent of it and stays as it is: =metarecord-list=
-paints a row purple when the record it shows is orphaned (see the concept
-above), whether or not a detection has ever run.
+Moved to the wiki: doc "Finding and clearing orphans", doc "Orphans in the GUI".
 
 ** Watch activity
 

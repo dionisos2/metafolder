@@ -423,7 +423,7 @@ declare namespace Metafolder {
     ): Promise<Reverted>;
   }
 
-  /** Orphaned metarecords (spec-gui "Orphans"): the shared `mf orphan` layer,
+  /** Orphaned metarecords (doc "Orphans in the GUI"): the shared `mf orphan` layer,
    *  driven through the orphan Tauri commands. `detect` writes the
    *  `orphan = true` marker and reports its counts itself; `count` reads the
    *  marked set as it stands — detection is not re-run; `delete` removes the

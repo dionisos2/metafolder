@@ -990,7 +990,7 @@ export async function mount(root, metafolder) {
     await fetchPage(true);
   }
 
-  // ── Orphans (spec-file-tracking "Marking orphans") ────────────────────────
+  // ── Orphans (doc "Finding and clearing orphans") ────────────────────────
 
   /** Show the metarecords `orphan:detect` marked. No scan, no hidden override:
    *  the marker is an ordinary field, so this is the query `orphan = true`

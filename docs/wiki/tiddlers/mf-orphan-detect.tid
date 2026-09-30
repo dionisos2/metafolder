@@ -1,0 +1,6 @@
+title: mf orphan detect
+tags: [[CLI command]] [[Orphans]]
+kind: reference
+summary: Mark every orphaned metarecord with `orphan = true` (and unmark the rest)
+
+Marks every orphan `orphan = true` and unmarks the rest, in one revision ([[Finding and clearing orphans]]).

@@ -9,7 +9,7 @@ summary: What the flush does for each kind of filesystem event — and the cases
 |`Remove` |Record the last path in `mfr_path_old`, set `mfr_path` to `nothing` (the metarecord is kept) and drop `mfr_duplicate_group` — the hashes are ''kept'', to re-home a file that reappears; for a directory, the same cascades to every descendant in the transaction. ''Skipped when the path exists again at flush time'' (below) |
 |`Rename(Both)` |Change the position: the name (a rename) or the parent (a move) — one row, whatever is below; children follow, naming their parent by uuid. If the destination was tracked, the rename destroyed that file: its metarecord is orphaned first, then the moved one takes the position |
 |`Rename(From)` |The file left the watched scope: as `Remove`, cascade included — unless the same batch finds it again (below) |
-|`Rename(To)` |A file arrived from outside: create its metarecord. Orphans are ''not'' searched by fingerprint — that is `mf orphan relink`, which you run. The one identity recovered is the other half of a move the watcher only half saw, matched on type, size and mtime — no file is read |
+|`Rename(To)` |A file arrived from outside: create its metarecord. Orphans are ''not'' searched by fingerprint — that is `mf orphan relink`, which you run ([[Relinking orphans]]). The one identity recovered is the other half of a move the watcher only half saw, matched on type, size and mtime — no file is read |
 |`Modify(Data)` |Refresh size and mtime; drop both hashes, their stamp and `mfr_duplicate_group` — the content that made it a duplicate is gone ([[The duplicate hash cache]]) |
 |`Modify(Metadata)` |Refresh permissions, owner, group and mtime; the hashes stay valid |
 

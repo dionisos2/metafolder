@@ -1,0 +1,6 @@
+title: mf orphan
+tags: [[CLI command]] [[Orphans]]
+kind: reference
+summary: Orphans: list metarecords whose file is gone, or clear them (default: list)
+
+Metarecords whose file is gone: scanning for them (the default), marking, clearing and relinking them ([[Orphans]]).

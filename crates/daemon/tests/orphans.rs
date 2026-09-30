@@ -1,4 +1,4 @@
-//! Tests for the orphan scan (spec-file-tracking "Orphan scan"): tracked
+//! Tests for the orphan scan (doc "Orphan scan"): tracked
 //! metarecords whose `mfr_path` points to a file that is definitely gone are
 //! reported, while records under an unreadable/missing-mount ancestor are left
 //! as "unknown" (never falsely orphaned).
@@ -345,7 +345,7 @@ fn test_relink_refuses_to_absorb_an_annotated_metarecord() {
     );
 }
 
-// ── Marking orphans (spec-file-tracking "Marking orphans") ───────────────────
+// ── Marking orphans (doc "Finding and clearing orphans") ───────────────────
 
 /// The metarecords carrying `orphan = true`, sorted — what a query for the
 /// marker would return.

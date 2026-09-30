@@ -1,0 +1,28 @@
+title: Relinking orphans
+tags: [[Orphans]]
+kind: guide
+summary: mf orphan relink puts an orphan's metadata back onto a tracked file with the same content — the orphan's uuid survives, the stranger's metarecord goes.
+
+When a file moves where the watcher could not follow — a backend that cannot pair a
+rename, a move made while the daemon was down — it is tracked afresh at its new place,
+and its metadata (your tags, your fields, references from elsewhere) stays on the
+orphan. ''Relink'' puts them back together:
+
+```
+mf -n music orphan relink            # waits for the task, then:
+relinked: 41  conflicts: 2  skipped: 5
+```
+
+It is a task you can follow and stop, like the duplicate scan (`--no-wait`, `--json`,
+`--poll-interval`). The rules:
+
+* an orphan is a candidate only if it carries ''both'' fingerprints — nothing else confirms identity ([[File fingerprint]]). Only the duplicate scan stores full hashes, so run one first on a repository that never had one ([[Finding duplicates]]);
+* a tracked file is a candidate only if its metarecord carries nothing outside `mfr_*`. One you have annotated is a ''conflict'', left alone: absorbing it would delete what you attached;
+* on a match, the ''orphan takes the tracked position'' and the fresh metarecord is deleted — that way round, because the orphan's uuid is what references elsewhere point at, and keeping it is the whole reason to relink rather than start over;
+* candidates that cannot be read (permissions, an offline volume) are ''skipped''.
+
+This used to happen inline, on every arriving file — and could not be right: one event
+can carry a whole pasted subtree, so the flush could be made to hash any amount of data
+on the path meant to keep up with the disk, and it almost never paid, since without a
+duplicate scan there are no hashes to match. So, plainly: ''metadata does not follow a
+file by itself across a move the watcher could not observe'' — until you relink.

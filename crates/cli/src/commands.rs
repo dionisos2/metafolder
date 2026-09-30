@@ -1708,7 +1708,7 @@ fn format_reconcile(resp: &Json) -> String {
     out
 }
 
-// ── Orphans (spec-file-tracking "Orphan scan") ────────────────────────────────
+// ── Orphans (doc "Orphan scan") ────────────────────────────────
 
 /// `mf orphan list` — scan for tracked metarecords whose file is gone and print
 /// `uuid <TAB> stale_path`, one per line.
@@ -1732,7 +1732,7 @@ pub fn orphan_list(ctx: &Ctx) -> Result<i32, CliError> {
 
 /// `mf orphan detect` — flag every orphaned metarecord with `orphan = true`
 /// and take the flag back from the records that are no longer orphaned
-/// (spec-file-tracking "Marking orphans"). Unlike `clear` it touches no
+/// (doc "Finding and clearing orphans"). Unlike `clear` it touches no
 /// `mfr_path`: it only makes the state queryable.
 pub fn orphan_detect(ctx: &Ctx) -> Result<i32, CliError> {
     let base = ctx.repo_base()?;
@@ -1914,7 +1914,7 @@ fn print_group_members(ctx: &Ctx, base: &str, group: &str) -> Result<(), CliErro
 
 /// `mf duplicate scan` — start the scan and follow its task to completion.
 /// `mf orphan relink`: re-home orphans onto the files that carry their content
-/// (spec-file-tracking "Relinking orphans"). Asynchronous like the duplicate
+/// (doc "Relinking orphans"). Asynchronous like the duplicate
 /// scan — it hashes candidates — so it polls the task the daemon returns.
 pub fn orphan_relink(
     ctx: &Ctx,

@@ -1,4 +1,4 @@
-// metarecord-list:query orphans (spec-file-tracking "Marking orphans"): the
+// metarecord-list:query orphans (doc "Finding and clearing orphans"): the
 // marked orphans are reached by an ordinary query, `orphan = true`, typed into
 // the visible DSL zone. The command exists to show new users what
 // `orphan:detect` wrote — it detects nothing itself, and touches the disk not

@@ -469,19 +469,21 @@ spec-file-tracking « Mount points » (sauf ses sous-sections d'orphelins, regro
 sous « Orphans » pour l'item 18), « Mount status », =mf mount= ; spec-platform
 « Mount point detection » ; spec-gui « Unmounted volumes ».
 
-** TODO 18. Orphelins
+** FAIT 18. Orphelins
 
 (sous File tracking)
-- [ ] =Orphans= — overview
-- [ ] =Finding and clearing orphans= — guide (=mf orphan detect/clear=, champ =orphan=)
-- [ ] =Relinking orphans= — guide
-- [ ] =Orphan scan= — reference, dev (coût, disjoncteur de masse)
-- [ ] =Orphans in the GUI= — reference
+- [X] =Orphans= — overview
+- [X] =Finding and clearing orphans= — guide (=list=, =detect=, =clear=, =orphan:*=, =metarecord-list:query orphans=)
+- [X] =Relinking orphans= — guide
+- [X] =Orphan scan= — reference, dev (gardes, routes, disjoncteur)
+- [X] =Orphans in the GUI= — reference
+- [X] notes de commande : =mf orphan *= (5), =orphan:*= (3)
 
-CLI : =mf orphan *= (5). GUI : =orphan:*= (3). Sources : spec-file-tracking
-« Relinking orphans », « Cost of the orphan search », « Mass-orphan circuit
-breaker », « Orphan scan », « Marking orphans » ; spec-gui « Orphans » ;
-mémoire =orphan-scan-clear=.
+Vérification contre le code : conforme ; « Cost of the orphan search » (le
+=INDEXED BY= SQL) est sans objet sur le stockage clé-valeur ; CLAUDE.md oubliait
+=mf orphan clear= parmi ceux qui écrivent =mfr_path = Nothing= : corrigé.
+Sources retirées (pointeurs) : spec-file-tracking « Orphans », « Orphan scan »,
+« Marking orphans », =mf orphan= ; spec-gui « Orphans ».
 
 ** TODO 19. Métadonnées des fichiers
 

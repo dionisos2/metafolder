@@ -1,4 +1,4 @@
-//! `orphan:detect` / `orphan:delete` (spec-gui "Orphans"): the shell builtins
+//! `orphan:detect` / `orphan:delete` (doc "Orphans in the GUI"): the shell builtins
 //! that mark the active repo's orphaned metarecords and delete the marked set.
 //! Tests run a stub daemon on an ephemeral port.
 

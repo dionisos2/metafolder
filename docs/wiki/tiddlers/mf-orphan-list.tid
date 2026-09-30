@@ -1,0 +1,6 @@
+title: mf orphan list
+tags: [[CLI command]] [[Orphans]]
+kind: reference
+summary: List orphaned metarecords (uuid, stale path) — the default
+
+Scans the disk and prints each missing orphan's uuid and stale path ([[Finding and clearing orphans]]).

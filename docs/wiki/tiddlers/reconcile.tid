@@ -17,7 +17,7 @@ after the daemon was down, after a broker gap — and never on its own.
 
 What it never does: set `mfr_path` to `nothing`. A metarecord whose file is not where
 it was keeps its stale path; only the watcher, which ''saw'' the deletion, may say a
-file is gone. A stale path is an orphan to relink, or to clear, deliberately (`mf orphan`).
+file is gone. A stale path is an orphan to relink, or to clear, deliberately ([[Orphans]]).
 
 !! Use it
 

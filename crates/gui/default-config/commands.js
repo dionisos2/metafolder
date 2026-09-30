@@ -325,7 +325,7 @@ export default {
     },
   },
 
-  // Delete the metarecords marked orphan = true (spec-gui "Orphans"): their
+  // Delete the metarecords marked orphan = true (doc "Orphans in the GUI"): their
   // files are gone already, what goes is the metadata still standing for them.
   // Detection is *not* re-run — what is marked is what goes, so a set the user
   // narrowed by hand (unsetting the marker on records they want kept) is

@@ -1,0 +1,6 @@
+title: mf orphan clear
+tags: [[CLI command]] [[Orphans]]
+kind: reference
+summary: Orphan the scanned records: freeze mfr_path_old, set mfr_path = Nothing
+
+Scans, confirms (unless `-y`), and records each still-missing file as deleted — `mfr_path = nothing`, cascaded ([[Finding and clearing orphans]]).

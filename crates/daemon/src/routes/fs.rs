@@ -333,8 +333,8 @@ pub(super) async fn watch_check(
 }
 
 /// `POST /repos/:repo/orphans/scan`: read-only disk scan for tracked
-/// metarecords whose `mfr_path` is definitely gone (spec-file-tracking "Orphan
-/// scan"). Returns `{count, orphans: [{uuid, stale_path}]}`. Unlike reconcile it
+/// metarecords whose `mfr_path` is definitely gone (doc "Orphan scan"). Returns `{count, orphans:
+/// [{uuid, stale_path}]}`. Unlike reconcile it
 /// writes nothing; unlike a query it consults the filesystem, so it is a
 /// distinct operation rather than a predicate.
 pub(super) async fn orphans_scan(
@@ -358,7 +358,7 @@ pub(super) struct OrphansClearBody {
 
 /// `POST /repos/:repo/orphans/clear`: orphan the given metarecords whose file is
 /// still gone — snapshot `mfr_path_old`, set `mfr_path` to `Nothing`, cascade to
-/// descendants (spec-file-tracking "Orphan scan"). Re-verifies each against the
+/// descendants (doc "Orphan scan"). Re-verifies each against the
 /// disk, so a since-recreated file is skipped. Returns `{cleared}`.
 pub(super) async fn orphans_clear(
     State(state): State<Arc<AppState>>,
@@ -378,7 +378,7 @@ pub(super) async fn orphans_clear(
 
 /// `POST /repos/:repo/orphans/mark`: flag every orphaned metarecord with
 /// `orphan = true` and take the flag back from records that are not orphaned
-/// any more, in one revision (spec-file-tracking "Marking orphans"). Both
+/// any more, in one revision (doc "Finding and clearing orphans"). Both
 /// populations count: a stale `mfr_path` the disk scan proves gone, and one
 /// already `Nothing`. Returns `{orphans, marked, unmarked}`.
 pub(super) async fn orphans_mark(
@@ -624,7 +624,7 @@ pub(super) async fn watch_exceeded_set(
 }
 
 /// `POST /repos/:repo/orphans/relink`: re-home orphaned metarecords onto the
-/// files that carry their content (spec-file-tracking "Relinking orphans").
+/// files that carry their content (doc "Relinking orphans").
 ///
 /// Asynchronous like the duplicate scan, and for the same reason: it hashes
 /// candidate files. `202` with the task id; the result travels with the task.

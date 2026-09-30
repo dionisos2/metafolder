@@ -923,8 +923,8 @@ impl Apply<'_, '_> {
             return Ok(true);
         }
         // A file that arrives is tracked afresh. Re-homing an orphan that holds
-        // its content is `orphan relink` (spec-file-tracking "Relinking
-        // orphans"): confirming that identity means hashing the arriving file,
+        // its content is `orphan relink` (doc "Relinking orphans"): confirming that identity means
+        // hashing the arriving file,
         // and one event can carry a whole subtree, so it belongs to a command
         // the user runs and not to the event path.
         // The other half of a move whose destination the watcher could not see

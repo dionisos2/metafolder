@@ -6,7 +6,7 @@ summary: The eight kinds of task, which ones run in the background, and which ca
 |!Kind |!What |!Started by |
 |`reconcile` |a full or scoped reconcile ([[Running a reconcile]]) |`POST …/reconcile` — asynchronous, `202` and a task id |
 |`duplicates` |a duplicate scan ([[The duplicate scan]]) |`POST …/duplicates/scan` — asynchronous |
-|`relink` |re-homing orphaned metarecords onto the files carrying their content |`POST …/orphans/relink` — asynchronous |
+|`relink` |re-homing orphaned metarecords onto the files carrying their content ([[Relinking orphans]]) |`POST …/orphans/relink` — asynchronous |
 |`load` |the background half of loading a repository: its mount points, the buffered filesystem events, the watcher |`POST /repos/load` |
 |`flush` |the watcher applying a batch of buffered events |the daemon itself |
 |`query` |a query being evaluated |`POST …/query` — synchronous |

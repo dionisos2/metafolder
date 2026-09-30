@@ -1,6 +1,6 @@
 // Orphan detection (panel-shim/orphan.js): a metarecord whose tracked file
 // no longer exists on disk — mfr_path = nothing (the watcher saw the
-// deletion) or stale tree_refs (spec-file-tracking "Orphaned metarecord").
+// deletion) or stale tree_refs (doc "Orphans").
 
 import { describe, expect, test, vi } from 'vitest';
 import { orphanState, orphanLabel } from '../../panel-shim/orphan.js';

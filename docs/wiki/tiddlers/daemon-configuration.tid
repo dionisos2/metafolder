@@ -26,7 +26,7 @@ watch-quiet-period-ms = 2000
 |`watch-quiet-period-ms` |`2000` |how long the filesystem must stay quiet before the watcher applies its buffered events ([[Event batching]]) |
 |`watch-budget-share` |`50` |the percentage of the kernel's per-user inotify watch limit this daemon allows itself ([[The watch budget]]) |
 |`watchd-socket` |`/run/metafolder/watchd.sock` |where the fanotify broker is looked for at load ([[Watch sources and regimes]]): reachable, the tree is covered through it; not, the daemon watches with inotify. A path where nothing listens keeps it on inotify |
-|`orphan-cascade-limit` |`10000` |the largest number of metarecords one watcher batch may orphan; beyond, the cascade is skipped with a warning (`0`: no limit) |
+|`orphan-cascade-limit` |`10000` |the largest number of metarecords one watcher batch may orphan; beyond, the cascade is skipped with a warning (`0`: no limit; [[Orphan scan]]) |
 |`log-retention-revisions` |`200` |revisions of history the event log keeps behind HEAD (`0`: everything); a repository can override it |
 |`log-retention-keep-labels` |`true` |whether a labelled revision stops the trim; a repository can override it |
 |`slow-operation-threshold-ms`, `slow-read-threshold-ms`, `slow-operation-reads-threshold` |`2000`, `100`, `100000` |[[Slow log configuration]] |

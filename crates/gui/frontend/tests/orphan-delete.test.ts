@@ -1,4 +1,4 @@
-// The orphan cleanup (spec-gui "Orphans"), as the shipped `commands.js`
+// The orphan cleanup (doc "Orphans in the GUI"), as the shipped `commands.js`
 // defines it since `orphan:delete` / `orphan:detect-delete` left the shell
 // builtins: count the marked set, ask about it by name, delete what is marked —
 // detection is *not* re-run, so a set the user narrowed by hand is respected

@@ -602,7 +602,7 @@ export function createPanelApi(deps: PanelApiDeps, ctx: PanelApiCtx): PanelApiIn
         invoke('log_revert', { repo, target, withDependents }) as Promise<Metafolder.Reverted>,
     },
 
-    /** Orphaned metarecords (spec-gui "Orphans"): the shared layer behind
+    /** Orphaned metarecords (doc "Orphans in the GUI"): the shared layer behind
      *  `mf orphan`, driven through the orphan Tauri commands. Each reports its
      *  own outcome to the status bar (`delete` also to the message log) and
      *  nudges the panels (`metarecords:dirty`), so a caller confirms in

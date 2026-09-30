@@ -1,4 +1,4 @@
-//! Orphan scan (spec-file-tracking "Orphan scan"): find tracked metarecords
+//! Orphan scan (doc "Orphan scan"): find tracked metarecords
 //! whose `mfr_path` points to a filesystem location that is *definitely* gone,
 //! and (`clear`) commit that fact by orphaning them — snapshotting
 //! `mfr_path_old` and setting `mfr_path` to `Nothing`, cascading to descendants
@@ -10,7 +10,7 @@
 //! subtree deleted while unwatched is still found. It is guarded against false
 //! positives: a path is reported only when a readable ancestor directory proves
 //! the file is truly absent — an unreadable (EACCES) or missing-mount ancestor
-//! yields "unknown", never an orphan (spec-file-tracking "Orphan scan").
+//! yields "unknown", never an orphan (doc "Orphan scan").
 
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
@@ -140,7 +140,7 @@ fn dir_state(dir: &Path, cache: &mut HashMap<PathBuf, DirState>) -> DirState {
 /// broken symlink), or the nearest non-missing ancestor is unreadable, or the
 /// walk climbs out of the repository root without finding a readable ancestor,
 /// the answer is `false` (unknown), so a permission drop or an unmounted mount
-/// never mass-orphans a subtree (spec-file-tracking "Orphan scan").
+/// never mass-orphans a subtree (doc "Orphan scan").
 fn is_definitely_gone(root: &Path, rel: &str, cache: &mut HashMap<PathBuf, DirState>) -> bool {
     let abs = root.join(rel.trim_start_matches('/'));
     if std::fs::symlink_metadata(&abs).is_ok() {
@@ -160,7 +160,7 @@ fn is_definitely_gone(root: &Path, rel: &str, cache: &mut HashMap<PathBuf, DirSt
     false
 }
 
-// ── Marking orphans (spec-file-tracking "Marking orphans") ───────────────────
+// ── Marking orphans (doc "Finding and clearing orphans") ───────────────────
 
 /// The field the mark run maintains. An ordinary *user* field on purpose: it is
 /// the answer to a question the user asked, not a fact the daemon keeps up to
@@ -224,7 +224,7 @@ pub fn mark_orphans(repo: &RepoState) -> Result<MarkResult, ApiError> {
     Ok(result)
 }
 
-// ── Relinking orphans by fingerprint (spec-file-tracking "Relinking orphans") ─
+// ── Relinking orphans by fingerprint (doc "Relinking orphans") ─
 
 /// What a relink did.
 #[derive(Debug, Default, serde::Serialize, PartialEq, Eq)]

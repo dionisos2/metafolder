@@ -1,0 +1,39 @@
+title: Orphans
+tags: [[File tracking]]
+kind: overview
+aliases: orphan orphaned missing
+summary: An orphan is a metarecord whose file went away without being asked to — seen deleted by the watcher, or gone while nobody watched; find them, mark them, relink or delete them.
+
+An ''orphan'' is a metarecord whose file is gone, in one of two ways:
+
+* ''deleted'' — `mfr_path` is `nothing`: the watcher saw the file go, and recorded where it was in `mfr_path_old`;
+* ''missing'' — `mfr_path` still resolves, but the disk no longer has that path: the file went while its subtree was unwatched, or moved where reconcile could not follow it (reconcile never writes `nothing`, it leaves the stale path).
+
+The second kind is invisible to a query, which sees the store and never the disk: finding
+it takes a ''scan'' of the disk ([[Orphan scan]]). A deletion that went through
+metafolder is neither: trashing takes the metarecords with the file ([[Trash]]), so
+everything an orphan scan reports is genuinely gone, with no copy anywhere.
+
+What to do with them:
+
+* ''find and mark'' them — `mf orphan detect` writes `orphan = true` on both kinds, and from then on they are an ordinary query ([[Finding and clearing orphans]]);
+* ''relink'' them — put a moved file's metadata back onto it by content ([[Relinking orphans]]);
+* ''clear'' the missing ones — record them as deleted, as the watcher would have;
+* ''delete'' them — `mf metarecord -q 'orphan = true' delete`.
+
+Orphans behind an unplugged volume are never reported: they are unavailable, not gone
+([[Offline subtrees]]).
+
+!! Use it
+
+<<list-kind guide>>
+
+!! Reference
+
+<<list-kind reference>>
+
+!! Commands
+
+<<tagged-with "CLI command">>
+
+<<tagged-with "GUI command">>

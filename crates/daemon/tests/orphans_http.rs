@@ -1,5 +1,5 @@
 //! HTTP-level tests for the orphan scan/clear endpoints
-//! (`POST /repos/:repo/orphans/{scan,clear}`, spec-file-tracking "Orphan scan").
+//! (`POST /repos/:repo/orphans/{scan,clear}`, doc "Orphan scan").
 
 use axum::body::Body;
 use axum::http::{Request, StatusCode};
@@ -106,7 +106,7 @@ async fn scan_then_clear_over_http() {
 
 /// `POST /orphans/mark` writes the queryable marker, and the marked set is then
 /// an ordinary query — which is how the GUI's `orphan:delete` removes them
-/// (spec-file-tracking "Marking orphans").
+/// (doc "Finding and clearing orphans").
 #[tokio::test]
 async fn mark_then_delete_by_query_over_http() {
     let (app, repo, root) = setup("mark").await;

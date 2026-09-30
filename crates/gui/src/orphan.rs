@@ -1,5 +1,5 @@
-//! `orphan:detect` / `orphan:delete` / `orphan:detect-delete` (spec-gui
-//! "Orphans"): the GUI half of `mf orphan detect`.
+//! `orphan:detect` / `orphan:delete` / `orphan:detect-delete` (doc "Orphans in the GUI"):
+//! the GUI half of `mf orphan detect`.
 //!
 //! Detection is the daemon's (`POST /orphans/mark`): it needs the disk. What it
 //! writes is an ordinary field, `orphan = true`, so everything downstream is a

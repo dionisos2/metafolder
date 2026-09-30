@@ -1,0 +1,6 @@
+title: orphan:delete
+tags: [[GUI command]] [[Orphans]]
+kind: reference
+summary: Delete the metarecords marked orphan = true (confirmed)
+
+Deletes the metarecords carrying the marker, after a confirmation naming the count; does not re-run detection ([[Finding and clearing orphans]]).

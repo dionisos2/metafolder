@@ -1,0 +1,6 @@
+title: orphan:detect
+tags: [[GUI command]] [[Orphans]]
+kind: reference
+summary: Mark the active repository's orphaned metarecords orphan = true (mf orphan detect)
+
+Marks the active repository's orphans `orphan = true` and unmarks the rest; the count in the status bar and message log ([[Finding and clearing orphans]]).

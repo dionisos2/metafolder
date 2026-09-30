@@ -1,0 +1,28 @@
+title: Finding and clearing orphans
+tags: [[Orphans]]
+kind: guide
+summary: mf orphan list scans, detect marks them orphan = true for queries, clear records the missing ones as deleted; in the GUI, orphan:detect and orphan:delete.
+
+```
+mf -n music orphan                       # orphan list: scan, print uuid  stale_path
+mf -n music orphan detect                # mark them: "12 orphan(s): 3 marked, 1 unmarked"
+mf -n music metarecord -q 'orphan = true' get --resolve-tree mfr_path
+mf -n music metarecord -q 'orphan = true AND mfr_size > 1000000' delete
+mf -n music orphan clear                 # record the missing ones as deleted (asks; -y does not)
+```
+
+* `mf orphan list` scans the disk and prints each missing orphan's uuid and stale path, or "no orphans".
+* `mf orphan detect` writes the answer into the repository: `orphan = true` on every orphan of ''both'' kinds, in one revision, and takes the marker back from records that are not orphaned any more. It writes only the marker — `mfr_path` is untouched — so `mf log undo` takes a detection back.
+* The marker is an ordinary ''user'' field — no `mfr_` prefix, on purpose: it is your question's answer at a moment, not a fact the daemon maintains. So it is queryable, visible in the detail panel, and editable: unset it on a record you want to keep and the next deletion leaves it alone. A repository already using `orphan` for something else gets the ordinary type-lock error rather than an overwrite.
+* It is ''the last run's answer, not a label'': a marked record whose file came back is unmarked by the next detection. That is what makes deleting the marked set safe — re-run detection first when in doubt.
+* `mf orphan clear` scans, lists what it found on stderr, asks, then records each ''still''-missing file as deleted — the watcher's own transition: `mfr_path_old` captured, `mfr_path = nothing`, cascaded to descendants, in one revision. A file recreated meanwhile is skipped. It is the one component besides the watcher and forced writes that writes `nothing`, and it is kept apart from reconcile on purpose: reconcile stays non-destructive.
+
+!! In the GUI
+
+* `orphan:detect` — marks them, reporting `N orphaned metarecords marked orphan = true (A new, B no longer orphaned)` in the status bar and message log.
+* `metarecord-list:query orphans` — puts `orphan = true` in the list's visible DSL zone: what detection last wrote, with no scan.
+* `orphan:delete` — deletes the marked metarecords after a confirmation naming the count, without re-running detection, so a set you narrowed by hand is respected exactly.
+* `orphan:detect-delete` — both, with the confirmation in between.
+
+Independently of any detection, the metarecord list paints an orphaned record's row
+purple, and the detail panel says so ([[Orphans in the GUI]]).

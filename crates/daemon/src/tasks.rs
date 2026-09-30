@@ -78,7 +78,7 @@ pub enum TaskKind {
     /// an unload is refused until it finishes (doc "Creating and loading a repository").
     Load,
     /// Re-homing orphaned metarecords onto files that carry their content
-    /// (`POST /orphans/relink`, spec-file-tracking "Relinking orphans"). Hashes
+    /// (`POST /orphans/relink`, doc "Relinking orphans"). Hashes
     /// candidate files, so it is cancellable like the duplicate scan — and for
     /// the same reason: the work already committed is kept.
     Relink,

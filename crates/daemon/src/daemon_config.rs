@@ -57,8 +57,8 @@ pub const DEFAULT_SLOW_OPERATION_READS_THRESHOLD: u64 = 100_000;
 pub const DEFAULT_SLOW_READ_THRESHOLD_MS: u64 = 100;
 
 /// Default mass-orphan circuit breaker: the largest cascade of
-/// `mfr_path = Nothing` a single watcher batch may apply (spec-file-tracking
-/// "Mass-orphan circuit breaker"). `0` disables the check.
+/// `mfr_path = Nothing` a single watcher batch may apply (doc "Orphan scan").
+/// `0` disables the check.
 pub const DEFAULT_ORPHAN_CASCADE_LIMIT: usize = 10_000;
 
 /// Every how many days each repository's automatic backup is taken

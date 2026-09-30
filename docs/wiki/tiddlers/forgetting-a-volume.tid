@@ -16,7 +16,7 @@ or a "no mount points" line; `--json` the raw answer ([[Mount status]]).
 `mf mount forget <uuid>` un-declares a mount point: a forced unset of `mfr_mount`. The
 directory becomes an ordinary tracked directory again — so if nothing is mounted there,
 its former contents stop being frozen, and the next orphan detection will rightly report
-them as gone. It is the escape hatch for "this is not a mount point any more".
+them as gone ([[Finding and clearing orphans]]). It is the escape hatch for "this is not a mount point any more".
 
 There is no `mf mount add`: mount points are detected. Mount the volume and run a
 reconcile to record one; after plugging a known one back in, reconcile its subtree to

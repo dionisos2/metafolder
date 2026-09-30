@@ -41,4 +41,4 @@ A candidate in the result:
 Confirm one by writing the orphan's `mfr_path` (forced); until then it is offered again.
 Directories are matched by path only, so a moved directory is an orphan with, at best,
 a similarity candidate. Following orphans by content outside a reconcile:
-`mf orphan relink`.
+`mf orphan relink` ([[Relinking orphans]]).
