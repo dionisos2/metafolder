@@ -1441,8 +1441,11 @@ pub fn tag_deny(ctx: &Ctx, selector: &str, path: &str) -> Result<i32, CliError> 
     Ok(0)
 }
 
-/// `mf tag [sel] mixed <path>` — mark the folder(s) mixed w.r.t. the tag (no
-/// subsumption; the descend logic lives in the scripts).
+/// `mf tag [sel] mixed <path>` — mark the folder(s) mixed w.r.t. the tag, and
+/// drop the whole answers that contradicts: "partly X" is false once the
+/// folder wholly has X or a descendant of X (a positive on the tag or below),
+/// or wholly lacks X or an ancestor of X (a negative on the tag or above). The
+/// descend logic lives in the scripts.
 pub fn tag_mixed(ctx: &Ctx, selector: &str, path: &str) -> Result<i32, CliError> {
     let base = ctx.repo_base()?;
     let cfg = ctx.tag.clone();
@@ -1450,6 +1453,18 @@ pub fn tag_mixed(ctx: &Ctx, selector: &str, path: &str) -> Result<i32, CliError>
     let query = target_query(selector)?;
     let tag_uuid = ensure_tag_entry(ctx, &base, &mut vocab, path)?;
     let n = tag_batch_append(ctx, &base, &query, &cfg.mixed, &tag_uuid)?;
+    let descendants = crate::tag::descendants(path, &vocab.names);
+    for positive in std::iter::once(path).chain(descendants.iter().map(String::as_str)) {
+        if let Some(uuid) = vocab.name2uuid.get(positive) {
+            tag_batch_remove(ctx, &base, &query, &cfg.positive, uuid)?;
+        }
+    }
+    let ancestors = crate::tag::ancestors(path);
+    for negative in std::iter::once(path).chain(ancestors.iter().map(String::as_str)) {
+        if let Some(uuid) = vocab.name2uuid.get(negative) {
+            tag_batch_remove(ctx, &base, &query, &cfg.negative, uuid)?;
+        }
+    }
     println!("{n}");
     Ok(0)
 }

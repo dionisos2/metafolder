@@ -1,12 +1,12 @@
 title: $:/mf/gen/CLI command/mf tag mixed
 catalog: CLI command
 target: mf tag mixed
-summary: Mark the folder(s) mixed w.r.t. the tag
+summary: Mark the folder(s) mixed w.r.t. the tag (drops the positives on the tag or its descendants, and the negatives on the tag or its ancestors)
 
 !! Reference
 
 ```
-Mark the folder(s) mixed w.r.t. the tag
+Mark the folder(s) mixed w.r.t. the tag (drops the positives on the tag or its descendants, and the negatives on the tag or its ancestors)
 
 Usage: mf tag mixed <PATH>
 

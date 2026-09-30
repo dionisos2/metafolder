@@ -4185,6 +4185,49 @@ fn test_mf_tag_add_and_deny_take_back_the_mixed_marks_they_settle() {
     assert_eq!(mixed(), vec!["musique/jazz/bebop"], "cinema and all below are settled");
 }
 
+/// `mixed X` is "partly X and partly not": it takes back the whole answers it
+/// contradicts — a positive on X or below (wholly jazz is wholly music), a
+/// negative on X or above (wholly not music is wholly not jazz) — and only those.
+#[test]
+fn test_mf_tag_mixed_takes_back_the_whole_answers_it_contradicts() {
+    let (repo, _root) = init_repo("tagmixed2");
+    let rec = create_metarecord(&repo, &["note:string=x"]);
+    let tag = |args: &[&str]| {
+        let mut v: Vec<&str> = vec!["-u", repo.as_str(), "tag", "-i", rec.as_str()];
+        v.extend_from_slice(args);
+        assert_ok(&mf(&v));
+    };
+    let paths = |field: &str| -> Vec<String> {
+        let out = mf(&[
+            "-u",
+            &repo,
+            "metarecord",
+            "-i",
+            &rec,
+            "field",
+            "get",
+            field,
+            "--resolve",
+            "path",
+        ]);
+        assert_ok(&out);
+        let mut v: Vec<String> = out.stdout.lines().map(String::from).collect();
+        v.sort();
+        v
+    };
+
+    tag(&["add", "musique/jazz/bebop"]);
+    tag(&["add", "cinema"]);
+    tag(&["mixed", "musique/jazz"]);
+    assert_eq!(paths("tag"), vec!["cinema"], "bebop wholly implied jazz wholly");
+    assert_eq!(paths("mixed_tag"), vec!["musique/jazz"]);
+
+    tag(&["deny", "livres"]);
+    tag(&["deny", "livres/bd/manga"]);
+    tag(&["mixed", "livres/bd"]);
+    assert_eq!(paths("negative_tag"), vec!["livres/bd/manga"], "not manga stays compatible");
+}
+
 /// `mf tag remove` prints what the other verbs print: how many records the
 /// write changed — here, lost the ref — whether or not the tag exists.
 #[test]

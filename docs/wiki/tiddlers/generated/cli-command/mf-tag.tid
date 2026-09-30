@@ -13,7 +13,7 @@ Usage: mf tag [OPTIONS] <COMMAND>
 Commands:
   add     The record(s) have the tag (drops more general ancestor tags, and the negatives and mixed marks on the tag or its ancestors)
   deny    The record(s) do NOT have the tag (drops more specific descendant negatives, and the positives and mixed marks on the tag or its descendants)
-  mixed   Mark the folder(s) mixed w.r.t. the tag
+  mixed   Mark the folder(s) mixed w.r.t. the tag (drops the positives on the tag or its descendants, and the negatives on the tag or its ancestors)
   remove  Drop the tag from the record(s) (undo of add)
   list    List the tag vocabulary as TSV: path<TAB>partition<TAB>exclusive
   help    Print this message or the help of the given subcommand(s)

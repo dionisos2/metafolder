@@ -3,4 +3,4 @@ tags: [[CLI command]] [[Hierarchical tags]]
 kind: reference
 summary: Mark the folder(s) mixed w.r.t. the tag
 
-Marks the selected folders as partly tagged (`mixed_tag`), with no other rewrite (a later `add` or `deny` takes the mark back); `gui-tag-folder.sh` then asks their content ([[Classifying with tags]]).
+Marks the selected folders as partly tagged (`mixed_tag`), taking back the whole answers that contradicts ([[Tag subsumption and exclusivity]]); a later `add` or `deny` takes the mark back in turn; `gui-tag-folder.sh` then asks their content ([[Classifying with tags]]).

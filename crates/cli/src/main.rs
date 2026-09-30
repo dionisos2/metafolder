@@ -541,7 +541,8 @@ enum TagVerb {
     /// The record(s) do NOT have the tag (drops more specific descendant
     /// negatives, and the positives and mixed marks on the tag or its descendants)
     Deny { path: String },
-    /// Mark the folder(s) mixed w.r.t. the tag
+    /// Mark the folder(s) mixed w.r.t. the tag (drops the positives on the tag
+    /// or its descendants, and the negatives on the tag or its ancestors)
     Mixed { path: String },
     /// Drop the tag from the record(s) (undo of add)
     Remove { path: String },
