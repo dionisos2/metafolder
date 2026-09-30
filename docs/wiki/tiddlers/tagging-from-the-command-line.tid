@@ -25,12 +25,10 @@ Each verb prints how many records it changed: gained the ref for `add`, `deny` a
 there, or was not. The rewrites that follow an `add` or a `deny` are not counted
 ([[Tag subsumption and exclusivity]]).
 
-A verb is several writes, each its own revision of the event log
-([[Revisions and operations]]): creating a missing entry, adding the ref, then each ancestor or sibling
-dropped — only the writes that change something leave a revision. So `mf log undo`
-takes back the ''last'' of them: after an `add` that dropped an ancestor, it puts the
-ancestor back and leaves the new tag. To take a whole `add` back, roll back to the
-revision before it ([[Rolling back]]).
+A verb is several writes — creating a missing entry, adding the ref, dropping what it
+subsumes or contradicts — sent as one batch, so it is ''one'' revision of the event log
+([[Revisions and operations]]): `mf log undo` takes the whole command back, the entries
+it created included ([[Undo and redo]]).
 
 ```
 mf tag list

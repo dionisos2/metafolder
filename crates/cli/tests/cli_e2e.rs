@@ -4228,6 +4228,56 @@ fn test_mf_tag_mixed_takes_back_the_whole_answers_it_contradicts() {
     assert_eq!(paths("negative_tag"), vec!["livres/bd/manga"], "not manga stays compatible");
 }
 
+/// One `mf tag` is one revision: the entry it creates, the ref it adds and
+/// everything it drops come back together with a single `mf log undo`.
+#[test]
+fn test_mf_tag_is_undone_in_one_step() {
+    let (repo, _root) = init_repo("tagundo");
+    let rec = create_metarecord(&repo, &["note:string=x"]);
+    let tag = |args: &[&str]| {
+        let mut v: Vec<&str> = vec!["-u", repo.as_str(), "tag", "-i", rec.as_str()];
+        v.extend_from_slice(args);
+        assert_ok(&mf(&v));
+    };
+    let paths = |field: &str| -> Vec<String> {
+        let out = mf(&[
+            "-u",
+            &repo,
+            "metarecord",
+            "-i",
+            &rec,
+            "field",
+            "get",
+            field,
+            "--resolve",
+            "path",
+        ]);
+        assert_ok(&out);
+        let mut v: Vec<String> = out.stdout.lines().map(String::from).collect();
+        v.sort();
+        v
+    };
+    let vocabulary = || mf(&["-u", &repo, "tag", "list"]).stdout;
+
+    tag(&["add", "musique"]);
+    tag(&["mixed", "musique/jazz"]);
+    tag(&["deny", "cinema"]);
+    let vocabulary_before = vocabulary();
+
+    // Creates the bebop entry, adds it, and drops the ancestor positive and
+    // the ancestor's mixed mark: four writes.
+    tag(&["add", "musique/jazz/bebop"]);
+    assert_eq!(paths("tag"), vec!["musique/jazz/bebop"]);
+    assert!(paths("mixed_tag").is_empty());
+    assert_ne!(vocabulary(), vocabulary_before);
+
+    assert_ok(&mf(&["-u", &repo, "log", "undo"]));
+    assert_eq!(paths("tag"), vec!["musique"]);
+    assert_eq!(paths("mixed_tag"), vec!["musique/jazz"]);
+    assert_eq!(paths("negative_tag"), vec!["cinema"]);
+    assert_eq!(vocabulary(), vocabulary_before, "the entry the add created is gone too");
+}
+
 /// `mf tag remove` prints what the other verbs print: how many records the
 /// write changed — here, lost the ref — whether or not the tag exists.
 #[test]

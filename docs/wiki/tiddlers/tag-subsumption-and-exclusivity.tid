@@ -13,9 +13,11 @@ most specific thing known about it, and `mf tag` rewrites it to stay so:
 * ''Exclusivity'' — when P is exclusive, `add P` also removes the `tag` refs to P's siblings. P is exclusive when it carries `exclusive = true`, or when its parent carries `partition = true` (all the parent's children are then exclusive of one another).
 * `remove P` rewrites nothing else.
 
-The rewrite is per record, over the whole selection, in the order: add the ref, drop what
-it subsumes, drop what it contradicts, drop the siblings — each a single set write
-([[Editing a set of metarecords]]).
+The rewrite is per record, over the whole selection, in the order: create the entry if it
+is missing, add the ref, drop what it subsumes, drop what it contradicts, drop the
+siblings — all of it one batch, one revision ([[Query endpoints]]). Each step reads the
+selection as it was before the command, so a query that names the tag itself
+(`-q 'tag -> …'`) selects the same records for every step.
 Adding a ref the record already has writes nothing ([[No duplicate rows]]), so running
 the same `add` twice leaves the rows, ids included, as they were.
 

@@ -763,10 +763,11 @@ négatifs — =gui-tag-folder.sh --redo= laissait donc un enregistrement
 contradictoire. *Tranché par l'utilisateur* : =add X= retire les négatifs de X et
 de ses ancêtres, =deny X= les positifs de X et de ses descendants, et tous deux
 les =mixed_tag= des mêmes ; =mixed X= les positifs de X et de ses descendants et
-les négatifs de X et de ses ancêtres (faits, tests d'abord) ; (2) un =mf tag add= est plusieurs révisions (le
+les négatifs de X et de ses ancêtres (faits, tests d'abord) ; (2) un =mf tag add= était plusieurs révisions (le
 ref, puis chaque ancêtre ou frère retiré, plus la création d'entrée) : =mf log
-undo= n'en défait que la dernière (la note le dit ; les scripts reviennent en
-arrière par une position du journal, eux). Sources retirées :
+undo= n'en défaisait que la dernière. *Tranché* : une commande, une révision —
+nouvel endpoint additif =POST /query/fields/batch= (=26781a0=), sur lequel
+=mf tag= envoie tout son travail. Sources retirées :
 spec-data-model « mf tag » (pointeur), =docs/gui-tag-folder-rework.md= (les
 renvois des scripts et de =review-followups.md= pointent la note) ; mémoire
 =treeref-syntax-and-tag-unification= supprimée, =hierarchical-tag-classification=
