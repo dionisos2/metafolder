@@ -22,5 +22,5 @@ summary: The file-manager panel type
 * ``file-manager:rename`` — File manager: rename the selected entry
 * ``file-manager:root`` — File manager: jump to the root (the repo root, or / with no repo)
 * ``file-manager:select`` — File manager: change the checked multi-selection (toggle / all / none)
-* ``file-manager:toggle`` — File manager: toggle a view flag (root constraint / hidden dot-entries / 
+* ``file-manager:toggle`` — File manager: toggle a view flag (root constraint / hidden dot-entries / sort by watch activity)
 * ``file-manager:track`` — File manager: track the selected path (mf_watch = false)

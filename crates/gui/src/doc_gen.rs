@@ -48,11 +48,21 @@ fn label_in(source: &str) -> String {
     let Some(quote) = rest.chars().next().filter(|c| matches!(c, '\'' | '"' | '`')) else {
         return String::new();
     };
-    let label = rest[1..].split(quote).next().unwrap_or("");
+    // A long label is wrapped as `'first half ' + 'second half'`: follow the
+    // concatenation, literal after literal.
+    let mut label = String::new();
+    let mut rest = &rest[1..];
+    while let Some(end) = rest.find(quote) {
+        label.push_str(&rest[..end]);
+        let after = rest[end + 1..].trim_start();
+        let Some(next) = after.strip_prefix('+').map(str::trim_start) else { break };
+        let Some(next) = next.strip_prefix(quote) else { break };
+        rest = next;
+    }
     if quote == '`' {
-        without_interpolations(label)
+        without_interpolations(&label)
     } else {
-        label.to_string()
+        label
     }
 }
 
@@ -287,6 +297,13 @@ mod tests {
         assert_eq!(label("label: `Seek (e.g. +${STEP}, -${LONG}) now`,"), "Seek now");
         assert_eq!(label("label: `Step by ${STEP} seconds`,"), "Step by … seconds");
         assert_eq!(label("label: 'Plain (as is)',"), "Plain (as is)");
+    }
+
+    #[test]
+    fn a_label_split_over_concatenated_literals_is_read_whole() {
+        // rustfmt-style wrapping of a long label: `'a ' +\n  'b'`.
+        let src = "label:\n      'File manager: toggle a view flag (root / ' +\n      'sort by activity)',\n    args: [";
+        assert_eq!(label_in(src), "File manager: toggle a view flag (root / sort by activity)");
     }
 
     #[test]
