@@ -14,7 +14,7 @@
 # skip subtrees under a generic negative, honour exclusivity) is the pure
 # selector in gui-tag-next.sh. The tag MODEL — creating entries, adding the
 # ref, and the subsumption/exclusivity rewrites (drop ancestors on add,
-# descendants on deny, siblings when exclusive) — is `mf tag`, so this driver no
+# descendants on deny, siblings when exclusive, contradicted answers) — is `mf tag`, so this driver no
 # longer re-implements any of it.
 #
 # The vocabulary and exclusivity flags come from `mf tag list`

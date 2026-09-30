@@ -1,12 +1,12 @@
 title: $:/mf/gen/CLI command/mf tag add
 catalog: CLI command
 target: mf tag add
-summary: The record(s) have the tag (drops more general ancestor tags)
+summary: The record(s) have the tag (drops more general ancestor tags, and the negatives on the tag or its ancestors)
 
 !! Reference
 
 ```
-The record(s) have the tag (drops more general ancestor tags)
+The record(s) have the tag (drops more general ancestor tags, and the negatives on the tag or its ancestors)
 
 Usage: mf tag add <PATH>
 

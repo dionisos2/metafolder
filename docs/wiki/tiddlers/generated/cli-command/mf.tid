@@ -27,7 +27,7 @@ Commands:
   track       Create the metarecord for a single path and print its UUID
   path        Print the filesystem path of a metarecord (walks the mfr_path chain)
   order       Number a folder's direct children for sorting: assigns `order_file` / `order_dir` (files and dirs are numbered independently; an existing position is never overwritten), then marks the folder itself `order_numbered = true`. Orders by an ordering metadata, then a shared name pattern, then creation date
-  tag         Hierarchical tags: add/deny/mixed/remove a tag on the selected metarecord(s), or list the vocabulary. Encapsulates the subsumption and exclusivity rules (drop ancestors on add, descendants on deny). The field-name convention is configurable via the `[tag]` config table
+  tag         Hierarchical tags: add/deny/mixed/remove a tag on the selected metarecord(s), or list the vocabulary. Encapsulates the subsumption and exclusivity rules (drop ancestors on add, descendants on deny, and whatever the new answer contradicts). The field-name convention is configurable via the `[tag]` config table
   ignore      Named mf_ignore presets: apply/replace/remove them on a directory (default: list). The target directory is chosen with -d <path> (default: the repository root)
   schema      User schema commands
   gui         Drive the GUI through its scripting HTTP API

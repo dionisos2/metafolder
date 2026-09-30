@@ -1376,8 +1376,9 @@ fn tag_batch_remove(
 }
 
 /// `mf tag [sel] add <path>` — the record(s) *have* the tag: (idempotently) add
-/// the positive ref, drop the more general ancestor tags, and, when the tag is
-/// exclusive, drop its siblings. The idempotence is the daemon's: appending a
+/// the positive ref, drop the more general ancestor tags, the negatives it
+/// contradicts (on the tag and its ancestors), and, when the tag is exclusive,
+/// its siblings. The idempotence is the daemon's: appending a
 /// ref a record already carries is a no-op (doc "No duplicate rows"), so the row that is already
 /// there is left alone, id included.
 pub fn tag_add(ctx: &Ctx, selector: &str, path: &str) -> Result<i32, CliError> {
@@ -1387,9 +1388,17 @@ pub fn tag_add(ctx: &Ctx, selector: &str, path: &str) -> Result<i32, CliError> {
     let query = target_query(selector)?;
     let tag_uuid = ensure_tag_entry(ctx, &base, &mut vocab, path)?;
     let n = tag_batch_append(ctx, &base, &query, &cfg.positive, &tag_uuid)?;
-    for ancestor in crate::tag::ancestors(path) {
-        if let Some(uuid) = vocab.name2uuid.get(&ancestor) {
+    let ancestors = crate::tag::ancestors(path);
+    for ancestor in &ancestors {
+        if let Some(uuid) = vocab.name2uuid.get(ancestor) {
             tag_batch_remove(ctx, &base, &query, &cfg.positive, uuid)?;
+        }
+    }
+    // Having the tag means having every ancestor: a negative on any of them,
+    // or on the tag itself, is now false.
+    for contradicted in std::iter::once(path).chain(ancestors.iter().map(String::as_str)) {
+        if let Some(uuid) = vocab.name2uuid.get(contradicted) {
+            tag_batch_remove(ctx, &base, &query, &cfg.negative, uuid)?;
         }
     }
     if crate::tag::is_exclusive(path, &vocab.partitions, &vocab.exclusives) {
@@ -1404,7 +1413,8 @@ pub fn tag_add(ctx: &Ctx, selector: &str, path: &str) -> Result<i32, CliError> {
 }
 
 /// `mf tag [sel] deny <path>` — the record(s) do *not* have the tag: add the
-/// negative ref, drop the more specific descendant negatives it subsumes.
+/// negative ref, drop the more specific descendant negatives it subsumes and the
+/// positives it contradicts (on the tag and its descendants).
 pub fn tag_deny(ctx: &Ctx, selector: &str, path: &str) -> Result<i32, CliError> {
     let base = ctx.repo_base()?;
     let cfg = ctx.tag.clone();
@@ -1412,9 +1422,17 @@ pub fn tag_deny(ctx: &Ctx, selector: &str, path: &str) -> Result<i32, CliError> 
     let query = target_query(selector)?;
     let tag_uuid = ensure_tag_entry(ctx, &base, &mut vocab, path)?;
     let n = tag_batch_append(ctx, &base, &query, &cfg.negative, &tag_uuid)?;
-    for descendant in crate::tag::descendants(path, &vocab.names) {
-        if let Some(uuid) = vocab.name2uuid.get(&descendant) {
+    let descendants = crate::tag::descendants(path, &vocab.names);
+    for descendant in &descendants {
+        if let Some(uuid) = vocab.name2uuid.get(descendant) {
             tag_batch_remove(ctx, &base, &query, &cfg.negative, uuid)?;
+        }
+    }
+    // Not having the tag means having none of its descendants: a positive on
+    // any of them, or on the tag itself, is now false.
+    for contradicted in std::iter::once(path).chain(descendants.iter().map(String::as_str)) {
+        if let Some(uuid) = vocab.name2uuid.get(contradicted) {
+            tag_batch_remove(ctx, &base, &query, &cfg.positive, uuid)?;
         }
     }
     println!("{n}");

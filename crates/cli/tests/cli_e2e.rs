@@ -4090,6 +4090,59 @@ fn test_mf_tag_subsumption_exclusivity_deny_list() {
     assert!(out.stdout.lines().any(|l| l == "cinema/thriller\t0\t0"), "list:\n{}", out.stdout);
 }
 
+/// A positive and a negative never contradict each other: `add X` takes back
+/// the negatives of X and of its ancestors (X implies them), `deny X` the
+/// positives of X and of its descendants (they imply X). A negative below X,
+/// or a positive above it, is compatible and stays.
+#[test]
+fn test_mf_tag_add_and_deny_take_back_what_they_contradict() {
+    let (repo, _root) = init_repo("tagcontra");
+    let rec = create_metarecord(&repo, &["note:string=x"]);
+    let tag = |args: &[&str]| {
+        let mut v: Vec<&str> = vec!["-u", repo.as_str(), "tag", "-i", rec.as_str()];
+        v.extend_from_slice(args);
+        assert_ok(&mf(&v));
+    };
+    let paths = |field: &str| -> Vec<String> {
+        let out = mf(&[
+            "-u",
+            &repo,
+            "metarecord",
+            "-i",
+            &rec,
+            "field",
+            "get",
+            field,
+            "--resolve",
+            "path",
+        ]);
+        assert_ok(&out);
+        let mut v: Vec<String> = out.stdout.lines().map(String::from).collect();
+        v.sort();
+        v
+    };
+
+    tag(&["deny", "musique"]);
+    tag(&["deny", "musique/jazz/bebop"]);
+    tag(&["add", "musique/jazz"]);
+    assert_eq!(paths("tag"), vec!["musique/jazz"]);
+    assert_eq!(
+        paths("negative_tag"),
+        vec!["musique/jazz/bebop"],
+        "the ancestor's negative is contradicted, the descendant's is not"
+    );
+
+    tag(&["add", "musique/jazz/cool"]);
+    tag(&["add", "cinema"]);
+    tag(&["deny", "musique/jazz"]);
+    assert_eq!(paths("negative_tag"), vec!["musique/jazz"], "bebop's is subsumed");
+    assert_eq!(paths("tag"), vec!["cinema"], "jazz/cool implied jazz; cinema is unrelated");
+
+    tag(&["add", "musique"]);
+    tag(&["deny", "musique/rock"]);
+    assert_eq!(paths("tag"), vec!["cinema", "musique"], "a positive above stays");
+}
+
 /// `mf tag remove` prints what the other verbs print: how many records the
 /// write changed — here, lost the ref — whether or not the tag exists.
 #[test]

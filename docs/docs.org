@@ -751,7 +751,6 @@ avant d'écrire les notes :
 - [X] =The query is the walk state= — rationale, dev (ajoutée : =docs/gui-tag-folder-rework.md=)
 - [X] =Why tags are a forest= — rationale (ajoutée : l'unification d'août 2026)
 - [X] =Why tag exclusivity is data= — rationale (ajoutée)
-- [X] =Contradicting a tag= — question (ajoutée, voir plus bas)
 - [X] notes de commande : =mf tag= et ses 5 verbes ; notes de script : les 4 =gui-tag-*=
 
 Vérification contre le code : =mf tag remove= affichait « removed <chemin> » au
@@ -759,9 +758,11 @@ lieu d'un compte comme les autres verbes (corrigé, test d'abord, =c5817ed=) ;
 l'aide de =mf tag list= disait =name= (c'est le chemin) ; la note =Selectors=
 réservait =--eq= à =mf tag= (=mf metarecord= l'a aussi) ; la table =[tag]= de
 =CLI configuration= oubliait =partition=/=exclusive=. *Signalé, non tranché* :
-(1) =deny P= ne retire pas un =tag= → P ni ceux des descendants, =add P= pas les
-négatifs — =gui-tag-folder.sh --redo= laisse donc un enregistrement contradictoire
-(note =Contradicting a tag=) ; (2) un =mf tag add= est plusieurs révisions (le
+(1) =deny P= ne retirait pas un =tag= → P ni ceux des descendants, =add P= pas les
+négatifs — =gui-tag-folder.sh --redo= laissait donc un enregistrement
+contradictoire. *Tranché par l'utilisateur* : =add X= retire les négatifs de X et
+de ses ancêtres, =deny X= les positifs de X et de ses descendants (fait, test
+d'abord) ; (2) un =mf tag add= est plusieurs révisions (le
 ref, puis chaque ancêtre ou frère retiré, plus la création d'entrée) : =mf log
 undo= n'en défait que la dernière (la note le dit ; les scripts reviennent en
 arrière par une position du journal, eux). Sources retirées :

@@ -49,4 +49,4 @@ scope'', never beyond it:
 
 A folder numbered by `mf order` is walked in its order — an album track by track
 ([[Ordering a folder]]). `--redo` asks everything again, answered or skipped: the way to
-revise a wrong answer over a subtree (but see [[Contradicting a tag]]).
+revise a wrong answer over a subtree: the new answer takes the old one back.

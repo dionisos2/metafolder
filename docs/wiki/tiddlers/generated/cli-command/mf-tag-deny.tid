@@ -1,12 +1,12 @@
 title: $:/mf/gen/CLI command/mf tag deny
 catalog: CLI command
 target: mf tag deny
-summary: The record(s) do NOT have the tag (drops more specific descendants)
+summary: The record(s) do NOT have the tag (drops more specific descendant negatives, and the positives on the tag or its descendants)
 
 !! Reference
 
 ```
-The record(s) do NOT have the tag (drops more specific descendants)
+The record(s) do NOT have the tag (drops more specific descendant negatives, and the positives on the tag or its descendants)
 
 Usage: mf tag deny <PATH>
 

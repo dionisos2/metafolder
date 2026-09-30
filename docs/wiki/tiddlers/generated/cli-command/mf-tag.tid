@@ -1,18 +1,18 @@
 title: $:/mf/gen/CLI command/mf tag
 catalog: CLI command
 target: mf tag
-summary: Hierarchical tags: add/deny/mixed/remove a tag on the selected metarecord(s), or list the vocabulary. Encapsulates the subsumption and exclusivity rules (drop ancestors on add, descendants on deny). The field-name convention is configurable via the `[tag]` config table
+summary: Hierarchical tags: add/deny/mixed/remove a tag on the selected metarecord(s), or list the vocabulary. Encapsulates the subsumption and exclusivity rules (drop ancestors on add, descendants on deny, and whatever the new answer contradicts). The field-name convention is configurable via the `[tag]` config table
 
 !! Reference
 
 ```
-Hierarchical tags: add/deny/mixed/remove a tag on the selected metarecord(s), or list the vocabulary. Encapsulates the subsumption and exclusivity rules (drop ancestors on add, descendants on deny). The field-name convention is configurable via the `[tag]` config table
+Hierarchical tags: add/deny/mixed/remove a tag on the selected metarecord(s), or list the vocabulary. Encapsulates the subsumption and exclusivity rules (drop ancestors on add, descendants on deny, and whatever the new answer contradicts). The field-name convention is configurable via the `[tag]` config table
 
 Usage: mf tag [OPTIONS] <COMMAND>
 
 Commands:
-  add     The record(s) have the tag (drops more general ancestor tags)
-  deny    The record(s) do NOT have the tag (drops more specific descendants)
+  add     The record(s) have the tag (drops more general ancestor tags, and the negatives on the tag or its ancestors)
+  deny    The record(s) do NOT have the tag (drops more specific descendant negatives, and the positives on the tag or its descendants)
   mixed   Mark the folder(s) mixed w.r.t. the tag
   remove  Drop the tag from the record(s) (undo of add)
   list    List the tag vocabulary as TSV: path<TAB>partition<TAB>exclusive
