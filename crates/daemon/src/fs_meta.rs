@@ -18,7 +18,7 @@ use metafolder_core::metarecord::{Field, Value};
 /// the daemon never reads the target's content or stats a location outside the
 /// repository through a link (spec-platform "Symbolic links").
 /// [`stat_fields`] plus `mfr_mount` when `abs` is a directory that is a mount
-/// point right now (spec-file-tracking "Mount points"). Every call site that
+/// point right now (doc "Mount points"). Every call site that
 /// knows the repository root uses this form; the root itself is never marked,
 /// its parent being outside the repository.
 pub fn stat_fields_in(root: &Path, abs: &Path) -> Result<Vec<Field>> {
@@ -115,7 +115,7 @@ mod tests {
         let sub = stat_fields_in(&dir, &dir.join("sub")).unwrap();
         assert_eq!(field(&sub, "mfr_mount"), None);
         // The repository root is never marked: its parent lies outside the
-        // repository (spec-platform "Mount point detection").
+        // repository (doc "Mount point detection").
         let root = stat_fields_in(&dir, &dir).unwrap();
         assert_eq!(field(&root, "mfr_mount"), None);
 

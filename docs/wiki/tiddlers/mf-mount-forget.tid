@@ -1,0 +1,6 @@
+title: mf mount forget
+tags: [[CLI command]] [[Mount points]]
+kind: reference
+summary: Un-declare a mount point (force-unsets `mfr_mount` on that metarecord)
+
+Un-declares a mount point (a forced unset of `mfr_mount`), after confirmation unless `-y` ([[Forgetting a volume]]).

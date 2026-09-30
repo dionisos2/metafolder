@@ -1,0 +1,23 @@
+title: Forgetting a volume
+tags: [[Mount points]]
+kind: guide
+summary: mf mount lists the mount points and their state; mf mount forget un-declares one that is no longer a mount point.
+
+```
+mf -n media mount                       # mount list
+online     /media/backup   uuid:1234-ABCD  uuid:1234-ABCD
+offline    /media/photos   label:PHOTOS    -
+mf -n media mount forget 3f2a…          # asks for confirmation; -y does not
+```
+
+`mf mount list` (the default) prints `state  path  expected  current` per mount point,
+or a "no mount points" line; `--json` the raw answer ([[Mount status]]).
+
+`mf mount forget <uuid>` un-declares a mount point: a forced unset of `mfr_mount`. The
+directory becomes an ordinary tracked directory again — so if nothing is mounted there,
+its former contents stop being frozen, and the next orphan detection will rightly report
+them as gone. It is the escape hatch for "this is not a mount point any more".
+
+There is no `mf mount add`: mount points are detected. Mount the volume and run a
+reconcile to record one; after plugging a known one back in, reconcile its subtree to
+catch up (`mf reconcile --metarecord <uuid>`).

@@ -292,7 +292,7 @@ pub fn compute_watched_dirs_timed(
         }
     }
     // Declared mount points with nothing mounted: no watch on them, none below
-    // (spec-file-tracking "Offline subtrees"). Recomputed on every refresh, so
+    // (doc "Offline subtrees"). Recomputed on every refresh, so
     // a remounted volume is watched again without restarting the daemon.
     let offline = crate::mount::offline(conn, cache, root).unwrap_or_default();
     let mut walk = Walk {

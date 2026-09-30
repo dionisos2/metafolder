@@ -450,17 +450,24 @@ fingerprint », « File Similarity », « Scoped (single-metarecord) reconcile �
 « Reconcile », =mf reconcile=, =mf path= ; spec-gui « Reconcile » (le paragraphe
 =reconcile:run=).
 
-** TODO 17. Points de montage
+** FAIT 17. Points de montage
 
 (sous File tracking)
-- [ ] =Mount points= — overview (volumes amovibles, sous-arbre hors ligne figé)
-- [ ] =mfr_mount= — reference (identité du volume)
-- [ ] =Mount point detection= — reference, dev (=mountinfo=, repli =st_dev=)
-- [ ] =Forgetting a volume= — guide (=mf mount=)
-- [ ] =Unmounted volumes in the GUI= — reference
+- [X] =Mount points= — overview
+- [X] =mfr_mount= — reference (avec l'identité du volume)
+- [X] =Offline subtrees= — reference (ajoutée : le gel)
+- [X] =Mount point detection= — reference, dev
+- [X] =Mount status= — reference (ajoutée : =GET /mounts=, la réponse sans verrou)
+- [X] =Forgetting a volume= — guide
+- [X] =Unmounted volumes in the GUI= — reference
+- [X] notes de commande : =mf mount *= (3)
 
-CLI : =mf mount *= (3). Sources : spec-file-tracking « Mount points », « Mount
-status » ; spec-platform « Mount point detection » ; spec-gui « Unmounted volumes ».
+Vérification contre le code : conforme ; un reconcile ciblé sur un volume débranché
+n'est pas « refusé en 400 » à la requête — c'est la tâche qui échoue avec ce
+message (le reconcile est asynchrone). Sources retirées (pointeurs) :
+spec-file-tracking « Mount points » (sauf ses sous-sections d'orphelins, regroupées
+sous « Orphans » pour l'item 18), « Mount status », =mf mount= ; spec-platform
+« Mount point detection » ; spec-gui « Unmounted volumes ».
 
 ** TODO 18. Orphelins
 

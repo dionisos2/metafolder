@@ -78,7 +78,7 @@ Availability of the =mfr_*= stat-derived fields per platform:
 - Hashing (=mfr_partial_hash=, =mfr_full_hash=) is pure content-based
   (=xxhash-rust=) and fully portable.
 - =mfr_mount= marks a mount point; its detection and the identity string it
-  stores are platform-dependent — see [[*Mount point detection]] below.
+  stores are platform-dependent — see doc "Mount point detection" below.
 
 ** MIME detection
 
@@ -317,73 +317,7 @@ cleared — the same "clear to recompute" contract as =mfr_mime=.
 
 ** Mount point detection
 
-The =mfr_mount= field marks a directory that is the mount point of another
-volume, and its absence-while-declared freezes the subtree
-([[file:spec-file-tracking.org][spec-file-tracking.org]] "Mount points"). Both
-halves are platform-dependent.
-
-*** Is this directory a mount point?
-
-*Linux — ask the kernel.* A path is a mount point iff it appears as one in
-=/proc/self/mountinfo=. That list is authoritative for the daemon's mount
-namespace, and it is the only source that gets both of these right:
-
-- a =mount --bind= of a directory from the *same* filesystem shares its
-  superblock, so its device id equals its parent's — invisible to a =st_dev=
-  comparison, yet =umount= still empties it. (Every real filesystem has its own
-  superblock — ext4, btrfs, tmpfs, NFS, and every FUSE mount such as gocryptfs,
-  encfs or sshfs — so this superblock *sharing* is the only blind spot a device
-  comparison has;)
-- btrfs gives each *subvolume* an anonymous device id, so a device comparison
-  calls a plain subvolume boundary a mount point although nothing is mounted
-  there and nothing can be unplugged.
-
-The table is re-read at most once per second and kept as a process-wide
-snapshot: every directory a reconcile touches asks the question, and the kernel
-regenerates that file on each read. A second of staleness is harmless — mounting
-a volume triggers no reconcile of its own, so the answer is consumed by a later
-operation anyway.
-
-Paths are matched verbatim against the table's canonical form. Every path the
-daemon builds starts at the canonicalized repository =root= and never traverses
-a symlinked directory (neither the reconcile walk nor the watcher follows one),
-so no per-probe =canonicalize= is needed.
-
-*Other Unix (macOS), and Linux with an unreadable =/proc=* — fall back to
-comparing the device id of the directory with that of its parent (=st_dev=, via
-=std::os::unix::fs::MetadataExt::dev=), with the two divergences above. An
-empty mount-table snapshot is precisely the signal to fall back.
-
-The repository root is a special case in both cases — its parent lies outside
-the repository — and is never marked.
-
-*Windows*: =std::fs::Metadata= exposes no device id, and a removable volume is
-normally a drive letter (its own repository root) rather than a directory inside
-a tree. Mount points are therefore *not detected on Windows*: =mfr_mount= is
-never written, exactly like =mfr_permissions=. A repository whose =mfr_mount=
-fields were written on Unix keeps them, and a Windows daemon still honours the
-freeze — which needs only the field's presence and a "is something mounted
-here" answer.
-
-*** Volume identity (the field's value)
-
-Best effort, in this order; the first form that can be determined wins:
-
-| Form            | Source                                                                 |
-|-----------------+------------------------------------------------------------------------|
-| =uuid:<UUID>=   | Linux: the entry of =/dev/disk/by-uuid/= whose =rdev= equals the mount's =major:minor= (from =/proc/self/mountinfo=) |
-| =label:<LABEL>= | Linux: same, through =/dev/disk/by-label/=                              |
-| =device:<SRC>=  | Linux: the mount source field of =/proc/self/mountinfo= (=/dev/sdb1=, =user@host:/export=, =tmpfs=…) |
-| =mounted=       | anything else (no mount table available, or nothing identifiable found) |
-
-Matching by =rdev= rather than by symlink target makes the lookup immune to
-=/dev/mapper= indirections and multi-hop symlinks. =/proc/self/mountinfo= is
-Linux-only; macOS falls back to =mounted= (=getmntinfo= would require a =libc=
-dependency the daemon does not have — a possible refinement, not a requirement:
-the value is informational, and the semantics ride on the field's presence).
-
-The value is *opaque to every consumer*. Only =GET /mounts= interprets it, and
-only to compare the stored string with the one read from disk (=mismatch=).
+Moved to the wiki: doc "Mount point detection", doc "mfr_mount".
 
 ** File watcher backends
 

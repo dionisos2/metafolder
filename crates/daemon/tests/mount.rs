@@ -1,4 +1,4 @@
-//! Tests for mount points (spec-file-tracking "Mount points"): a directory
+//! Tests for mount points (doc "Mount points"): a directory
 //! carrying `mfr_mount` that is *not* a mount point right now is offline, and
 //! its subtree is frozen — invisible to the reconcile walk, to the fingerprint
 //! phase, to the orphan scan and to the watcher's watch placement.

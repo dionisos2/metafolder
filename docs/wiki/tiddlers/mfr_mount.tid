@@ -1,0 +1,27 @@
+title: mfr_mount
+tags: [[Mount points]]
+kind: reference
+summary: The field marking a directory as a mount point, holding the mounted volume's best-effort identity — written by the daemon, never cleared by it.
+
+`mfr_mount` (`string`) is written by the daemon on a ''directory'' metarecord that is a
+mount point when it is seen — by reconcile (walk and refresh) and by the watcher when
+such a directory appears. It is reserved: yours to write only with `force`.
+
+* Its ''presence'' carries the meaning; its ''value'' is informational — what to plug back in, and a way to notice that a different volume is mounted now. Consumers treat it as opaque; only the mount status compares it ([[Mount status]]).
+* It is ''never cleared by the daemon''. A directory with `mfr_mount` that is not a mount point right now is exactly the unavailable state — the one thing that must not be forgotten. A directory that stopped being a mount point for good is un-declared by you (`mf mount forget`, [[Forgetting a volume]]).
+* On a mounted volume it is refreshed like any daemon field, so a volume swapped for another updates the recorded identity at the next reconcile.
+
+!! The identity
+
+The first form that can be determined wins:
+
+|!Form |!Source |
+|`uuid:<UUID>` |Linux: the `/dev/disk/by-uuid/` entry whose device number (`rdev`) is the mount's `major:minor` in `/proc/self/mountinfo` |
+|`label:<LABEL>` |Linux: the same through `/dev/disk/by-label/` |
+|`device:<SRC>` |Linux: the mount's source (`/dev/sdb1`, `user@host:/export`, `tmpfs`…) |
+|`mounted` |anything else — no mount table, nothing identifiable |
+
+Matching by device number rather than by symlink target is immune to `/dev/mapper`
+indirections and chains of links. macOS gets `mounted` (reading its mount table would
+need a dependency the daemon does not have — a refinement, not a requirement). Windows
+never writes the field ([[Mount point detection]]).

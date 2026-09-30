@@ -864,7 +864,7 @@ export async function mount(root, metafolder) {
     }
     // The file may be on a volume that is not plugged in. Saying "no preview
     // available" there would leave the user guessing why a file the database
-    // knows about will not open (spec-gui "Unmounted volumes").
+    // knows about will not open (doc "Unmounted volumes in the GUI").
     const mount = await unavailableMount(path);
     if (generation !== renderGeneration) return;
     if (mount) {

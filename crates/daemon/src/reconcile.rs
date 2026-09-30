@@ -134,7 +134,7 @@ pub fn reconcile_full_reported(
     let rules = repo.watch_rules(writer.store())?;
     // Declared mount points with nothing mounted on them: their subtrees are
     // frozen — not walked, not orphaned, not offered as candidates
-    // (spec-file-tracking "Offline subtrees").
+    // (doc "Offline subtrees").
     let offline = crate::mount::offline(writer.store(), &cache, &root)?;
     let paths = walk(&root, &internal_dir, &RelPath::root(), &rules, &offline, reporter)?;
 
@@ -486,7 +486,7 @@ pub fn reconcile_metarecord_reported(
         // Aimed at (or into) a volume that is not plugged in. Doing nothing
         // silently would look like "reconcile found no change"; say so instead
         // — this is exactly the operation the user runs once the drive is back
-        // (spec-file-tracking "Offline subtrees").
+        // (doc "Offline subtrees").
         return Err(ApiError::bad_request(format!(
             "{base} is on a volume that is not mounted: nothing to reconcile until it is back"
         )));

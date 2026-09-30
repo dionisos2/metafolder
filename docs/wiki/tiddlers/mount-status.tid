@@ -1,0 +1,31 @@
+title: Mount status
+tags: [[Mount points]]
+kind: reference
+summary: GET /mounts lists the declared mount points with their state now — online, mismatch or offline — and answers even while a long write holds the repository.
+
+`GET /repos/:repo/mounts` lists every metarecord carrying `mfr_mount`, with its state
+computed at request time — one `lstat` pair per mount point, no walk:
+
+```
+{"mounts": [
+  {"uuid": "…", "path": "/media/backup", "expected": "uuid:1234-ABCD", "current": "uuid:1234-ABCD", "state": "online"},
+  {"uuid": "…", "path": "/media/photos", "expected": "label:PHOTOS", "current": null, "state": "offline"}]}
+```
+
+* `path` — repository-relative, `null` when its `mfr_path` no longer resolves;
+* `expected` — the stored `mfr_mount`; `current` — the identity read from disk now, `null` when nothing is mounted;
+* `state` — `online` (mounted, same identity), `mismatch` (mounted, another identity or none determinable — ''not'' frozen: those files exist), `offline` (nothing mounted — frozen, [[Offline subtrees]]).
+
+It is how a client explains a subtree that looks empty or stale instead of presenting it
+as deleted ([[Unmounted volumes in the GUI]]).
+
+''It answers while the repository is busy.'' Clients ask on every listing they draw, and
+a long write — a reconcile, a big flush — owns the repository for its whole
+transaction: waiting turned a 2 ms answer into a measured 151 s. The wait bought no
+freshness. Of the answer's two halves, only the ''declared set'' comes from the store,
+and a write in flight has committed nothing — so the set last read is the committed one:
+it is kept resident, filled at load and refreshed by every call that does get the
+repository. The other half — is something mounted there, and what — is read from the
+disk on every request. So `state` and `current` are never stale; only a mount point
+declared by the write running now is missing until it commits. (It does not generalise:
+an endpoint reading metarecord data has nothing resident to answer from.)

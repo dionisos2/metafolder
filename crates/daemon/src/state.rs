@@ -70,7 +70,7 @@ pub struct RepoState {
     /// reconcile.
     pub tasks: crate::tasks::TaskRegistry,
     /// The repository's declared mount points as of the last read that could
-    /// take the repository (spec-file-tracking "Mount status"). Filled by the
+    /// take the repository (doc "Mount status"). Filled by the
     /// load and refreshed by every unblocked `GET …/mounts`; served as it stands
     /// while a long write holds the connection, where waiting for it would buy
     /// no freshness — a writer in flight has committed

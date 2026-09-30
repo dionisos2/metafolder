@@ -25,7 +25,7 @@ everywhere) is watched nowhere. The root is the walk's base, not a gate: a direc
 with `mf_watch = true` is watched even when the root is not. The set follows directories
 appearing and disappearing, and is recomputed after a write changing `mf_watch`,
 `mf_ignore` or `mfr_watch_exceeded`. An offline mount point is pruned like an
-ineligible directory until it is back (spec-file-tracking "Offline subtrees").
+ineligible directory until it is back ([[Offline subtrees]]).
 
 !! What does not vary
 

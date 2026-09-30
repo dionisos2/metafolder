@@ -1,0 +1,34 @@
+title: Mount points
+tags: [[File tracking]]
+kind: overview
+aliases: mount mounts volume unmounted
+summary: A removable volume inside a repository is recorded as a mount point; while it is unplugged its subtree is frozen — unavailable, never deleted.
+
+A directory of a watched tree can be the mount point of a removable or network volume —
+a USB key, an external drive, an SSHFS export. Unplugged, the directory is still there,
+just empty: nothing in its content tells that apart from "everything inside was
+deleted". So metafolder records mount points explicitly, and must never conclude from an
+empty one that a thousand tracked files are gone.
+
+A tracked path has three states, not two:
+
+* ''present'' — the file is there;
+* ''absent'' — the file is gone: `mfr_path = nothing` (only the watcher, `mf orphan clear` and forced writes record that);
+* ''unavailable'' — the volume holding it is not mounted. Nothing is recorded: the metarecord keeps its path, its metadata is frozen, and the subtree is skipped by everything until the volume is back ([[Offline subtrees]]).
+
+The third state is never stored on the metarecords themselves: it is derived, when asked,
+from the mount point above them — a directory carrying `mfr_mount` ([[mfr_mount]]).
+Mount points are detected, not declared: mount the volume and reconcile, and it is
+recorded.
+
+!! Reference
+
+<<list-kind reference>>
+
+!! Use it
+
+<<list-kind guide>>
+
+!! Commands
+
+<<tagged-with "CLI command">>

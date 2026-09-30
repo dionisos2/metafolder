@@ -34,7 +34,7 @@ misdetected MIME type, settling an `mfr_path` conflict the watcher cannot.
 |`mfr_full_hash` |`string` |xxHash3 of the whole content, hex |
 |`mfr_hash_mtime`, `mfr_hash_size` |`datetime`, `int` |the file's mtime and size when its hashes were computed, written and cleared with them ([[The duplicate hash cache]]) |
 |`mfr_duplicate_group` |`ref` |the duplicate group the file belongs to ([[Duplicate groups]]) |
-|`mfr_mount` |`string` |on a directory that is a mount point: the mounted volume's identity, best effort; never cleared (spec-file-tracking "Mount points") |
+|`mfr_mount` |`string` |on a directory that is a mount point: the mounted volume's identity, best effort; never cleared ([[mfr_mount]]) |
 |`mfr_path_old` |`string` |where an orphaned metarecord last lived, frozen when its `mfr_path` became `nothing` (spec-file-tracking "Orphan origin") |
 |`mfr_watch_exceeded` |`bool` |on a directory the watch budget could not cover, inherited like `mf_watch` (spec-file-tracking "The watch budget") |
 |`mfr_meta_<name>` |any |a piece of embedded metadata (tags, EXIF…), by the repository's metadata map (spec-platform "Embedded metadata extraction") |

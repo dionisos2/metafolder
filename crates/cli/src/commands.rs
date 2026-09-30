@@ -2047,7 +2047,7 @@ pub fn duplicate_clear(ctx: &Ctx, yes: bool) -> Result<i32, CliError> {
     Ok(0)
 }
 
-// ── Mount points (spec-file-tracking "Mount points") ──────────────────────────
+// ── Mount points (doc "Mount points") ──────────────────────────
 
 /// `mf mount list` — the declared mount points and their current state.
 pub fn mount_list(ctx: &Ctx, raw_json: bool) -> Result<i32, CliError> {

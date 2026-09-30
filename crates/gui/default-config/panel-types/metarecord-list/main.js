@@ -682,7 +682,7 @@ export async function mount(root, metafolder) {
 
   /** @type {Array<import('/__mounts.js').Mount>} the repo's mount points,
    *  refreshed with the listing: a record on an unplugged volume is
-   *  *unavailable*, never an orphan (spec-gui "Unmounted volumes"). */
+   *  *unavailable*, never an orphan (doc "Unmounted volumes in the GUI"). */
   let mounts = [];
 
   /** Re-reads the repository's mount points (one cheap daemon call). */

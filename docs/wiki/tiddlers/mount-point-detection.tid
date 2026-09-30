@@ -1,0 +1,33 @@
+title: Mount point detection
+tags: [[Mount points]]
+kind: reference
+audience: dev
+summary: A directory is a mount point iff the kernel's mount table says so (cached one second); without /proc, a device id differing from the parent's — with two known blind spots.
+
+''Linux — ask the kernel.'' A path is a mount point iff it appears as one in
+`/proc/self/mountinfo`, authoritative for the daemon's mount namespace, and the only
+source that gets both of these right:
+
+* a `mount --bind` of a directory of the ''same'' filesystem shares its superblock, so its device id equals its parent's — invisible to a device comparison, yet `umount` still empties it (every real filesystem, FUSE ones included, has its own superblock, so this sharing is the comparison's only blind spot);
+* btrfs gives each ''subvolume'' an anonymous device id, so a device comparison calls a plain subvolume boundary a mount point, though nothing can be unplugged there.
+
+The table is re-read at most once per second, as a process-wide snapshot: every directory
+a reconcile touches asks, and the kernel regenerates the file on each read. A second of
+staleness is harmless — mounting triggers nothing by itself. Paths are matched verbatim
+against the table's canonical form: every path the daemon builds starts at the
+canonicalised root and never crosses a symlinked directory, so no per-probe
+`canonicalize` is needed.
+
+''Other Unix (macOS), or Linux without a readable `/proc`'': compare the directory's
+device id with its parent's (`st_dev`), with the two blind spots above. An empty table
+snapshot is the signal to fall back.
+
+The repository root is never marked: its parent lies outside the repository.
+
+''Windows'': no device id is exposed, and a removable volume is usually a drive letter —
+its own repository root. Mount points are not detected there: `mfr_mount` is never
+written. A repository whose fields were written on Unix keeps them, and a Windows
+daemon still honours the freeze, which needs only the field and an "is something
+mounted here" answer.
+
+`crates/daemon/src/mount.rs`; `stat_fields_in` adds `mfr_mount` on a live mount point.

@@ -499,7 +499,7 @@ export async function mount(root, metafolder) {
    * Shows the purple orphan line when the tracked file is gone — or, first, the
    * amber "volume not mounted" line when it is merely unavailable: a stale path
    * on an unplugged drive is not an orphan, and saying so would invite the user
-   * to clean up records they want kept (spec-gui "Unmounted volumes").
+   * to clean up records they want kept (doc "Unmounted volumes in the GUI").
    */
   async function fillOrphanNote() {
     const selection = current;

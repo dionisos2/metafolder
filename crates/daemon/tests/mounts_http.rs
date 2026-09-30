@@ -1,5 +1,4 @@
-//! HTTP-level test for `GET /repos/:repo/mounts` (spec-file-tracking "Mount
-//! status").
+//! HTTP-level test for `GET /repos/:repo/mounts` (doc "Mount status").
 
 use axum::body::Body;
 use axum::http::{Request, StatusCode};

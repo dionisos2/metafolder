@@ -25,7 +25,7 @@ The reasons, in the order they decide:
 |`watched` |— it is |
 |`untracked` |the path, or the directory covering it, is not eligible — including a file under a directory a pattern matched alone: the walk pruned the directory, so nothing can cover it |
 |`excluded` |under a subtree carrying `mfr_watch_exceeded` ([[The watch budget]]), in either regime |
-|`offline` |its mount point has nothing mounted |
+|`offline` |its mount point has nothing mounted ([[Offline subtrees]]) |
 |`internal` |under `.metafolder/internal/`, never watched |
 |`unwatched` |eligible but uncovered for no recorded reason: the kernel refused the watch (starved) — the budget regime's alone |
 

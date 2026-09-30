@@ -1,12 +1,11 @@
-//! Mount points (spec-file-tracking "Mount points", spec-platform "Mount point
-//! detection").
+//! Mount points (doc "Mount points", doc "Mount point detection").
 //!
 //! A directory inside a repository can be the mount point of a removable or
 //! network volume. Unmounted, it is an ordinary empty directory — nothing in
 //! its content tells that state apart from "the user deleted everything", so
 //! the daemon records the mount point explicitly (`mfr_mount` on the directory
 //! metarecord) and freezes the subtree while nothing is mounted there
-//! (spec-file-tracking "Offline subtrees").
+//! (doc "Offline subtrees").
 //!
 //! Detection asks the kernel: on Linux, a path is a mount point iff it appears
 //! in `/proc/self/mountinfo`, cached as a short-lived snapshot ([`table`]).
@@ -39,7 +38,7 @@ pub const FIELD: &str = "mfr_mount";
 /// The identity of the volume mounted at `abs` right now, or `None` when `abs`
 /// is not a mount point. The string is best-effort and *opaque to callers*:
 /// `uuid:…` / `label:…` / `device:…` / the bare `mounted` fallback
-/// (spec-platform "Volume identity").
+/// (doc "mfr_mount").
 pub fn probe(abs: &Path) -> Option<String> {
     if !is_mount_point(abs) {
         return None;
@@ -85,7 +84,7 @@ fn dev_differs_from_parent(abs: &Path) -> bool {
 
 /// Mount points are not detected on Windows: `Metadata` exposes no device id,
 /// and a removable volume is a drive letter rather than a directory inside a
-/// tree (spec-platform "Mount point detection").
+/// tree (doc "Mount point detection").
 #[cfg(not(unix))]
 fn dev_differs_from_parent(_abs: &Path) -> bool {
     false
@@ -190,7 +189,7 @@ fn abs_of(root: &Path, rel: &str) -> PathBuf {
 }
 
 /// The repo-root-relative paths of the *offline* mount points: the subtrees
-/// every component must leave frozen (spec-file-tracking "Offline subtrees").
+/// every component must leave frozen (doc "Offline subtrees").
 #[derive(Debug, Clone, Default)]
 pub struct OfflineMounts {
     paths: Vec<String>,
@@ -358,7 +357,7 @@ pub mod table {
     }
 
     /// No mount table without `/proc`: the empty snapshot sends every caller to
-    /// the device-id comparison (spec-platform "Mount point detection").
+    /// the device-id comparison (doc "Mount point detection").
     #[cfg(not(target_os = "linux"))]
     fn read_table() -> MountTable {
         MountTable::default()
@@ -384,7 +383,7 @@ fn identity(abs: &Path) -> Option<String> {
 }
 
 /// No mount table without a `libc` dependency; the identity degrades to the
-/// bare `mounted` marker (spec-platform "Volume identity").
+/// bare `mounted` marker (doc "mfr_mount").
 #[cfg(not(target_os = "linux"))]
 fn identity(_abs: &Path) -> Option<String> {
     None

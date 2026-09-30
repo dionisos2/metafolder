@@ -131,7 +131,7 @@ export async function mount(root, metafolder) {
   const mountBanner = byId(root, 'mount-banner');
   /** @type {Array<import('/__mounts.js').Mount>} the repo's declared mount
    *  points, refreshed with each listing: an unplugged volume must read as
-   *  "unavailable", not as an empty folder (spec-gui "Unmounted volumes"). */
+   *  "unavailable", not as an empty folder (doc "Unmounted volumes in the GUI"). */
   let mounts = [];
   const pathElement = byId(root, 'current-path');
   const addButton = byId(root, 'add', HTMLButtonElement);

@@ -1,0 +1,6 @@
+title: mf mount list
+tags: [[CLI command]] [[Mount points]]
+kind: reference
+summary: List the declared mount points and their state — the default
+
+One line per mount point — state, path, expected and current identity ([[Mount status]]).

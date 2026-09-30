@@ -46,7 +46,7 @@ impl Default for ReconcileBody {
 /// whole repository.
 /// `GET /repos/:repo/mounts`: the repository's declared mount points — every
 /// metarecord carrying `mfr_mount` — with the state read from disk right now
-/// (spec-file-tracking "Mount status"). Read-only and cheap: one stat pair per
+/// (doc "Mount status"). Read-only and cheap: one stat pair per
 /// mount point, no walk. It is how a client explains a subtree that looks empty
 /// or stale ("volume not mounted") instead of showing it as deleted.
 ///

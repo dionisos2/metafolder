@@ -264,7 +264,7 @@ pub enum WatchedReason {
     /// budget's frontier, or a deliberate `mf watch exceeded set`.
     Excluded,
     /// Under a declared mount point with nothing mounted: frozen until the
-    /// volume returns (spec-file-tracking "Offline subtrees").
+    /// volume returns (doc "Offline subtrees").
     Offline,
     /// Inside the daemon's own runtime directory: never watched, whatever the
     /// eligibility says.

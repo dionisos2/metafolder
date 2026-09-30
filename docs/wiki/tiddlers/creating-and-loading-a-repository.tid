@@ -18,7 +18,7 @@ nothing: tracking is opt-in ([[Tracking a folder]]).
 ''Load'' makes a daemon work on a repository. It is refused (`409`) when a loaded
 repository already has the same name, keeping `-n <name>` unambiguous, or when
 another daemon holds its lock. The daemon answers at once and does the rest in
-the background as a `load` task ([[Tasks]]): reading the declared mount points,
+the background as a `load` task ([[Tasks]]): reading the declared mount points ([[Mount points]]),
 applying the restorations a skipped rollback step left, starting the watcher
 ([[Watcher]]).
 `mf repo load` waits for it, drawing its progress (`--no-wait` returns at once).

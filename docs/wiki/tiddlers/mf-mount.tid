@@ -1,0 +1,6 @@
+title: mf mount
+tags: [[CLI command]] [[Mount points]]
+kind: reference
+summary: Mount points: list the repository's removable volumes, or forget one
+
+The repository's mount points: listing them (the default) and forgetting one ([[Forgetting a volume]]).

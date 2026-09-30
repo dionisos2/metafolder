@@ -5,7 +5,7 @@ summary: Reconcile walks the tree on demand: it creates what is missing, recogni
 
 The watcher records what happens while the daemon runs; ''reconcile'' makes the store
 agree with the disk after the fact. It walks the repository — pruned by eligibility and
-by offline mount points — and, in one revision:
+by offline mount points ([[Offline subtrees]]) — and, in one revision:
 
 * ''creates'' a metarecord for every eligible file and directory that has none;
 * recognises files that ''moved'' while nobody watched, by their content fingerprint, and follows them ([[Moves and candidates]]);

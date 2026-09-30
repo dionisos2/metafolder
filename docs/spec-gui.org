@@ -3255,54 +3255,7 @@ what changed, and the write is one revision, undoable with =log:undo=.
 
 ** Unmounted volumes
 
-A repository can contain the mount point of a removable or network volume
-(spec-file-tracking "Mount points"). While the volume is not mounted, its
-metarecords are still in the database, still queryable, and still shown by every
-list — but the files behind them are *unavailable*, not deleted. The GUI's job
-is to make that distinction visible, because the two look identical otherwise:
-an orphan (=mfr_path = Nothing=) is a file that is gone for good, an unavailable
-record is one that comes back when the drive is plugged in.
-
-*Source of truth*: =GET /repos/:repo/mounts= (spec-file-tracking "Mount
-status"), fetched by the panels through =metafolder.daemon= and re-read whenever
-a panel reloads what it shows (a new directory listing, a new query, a repo
-switch) — the call is cheap, and a volume can be plugged in or pulled out
-between two of them. A daemon that cannot answer (an older one, one that is
-down) degrades to "no mount points": the display loses a distinction, it never
-blocks. A path is *unavailable* when it is at or below a mount point whose state
-is =offline=.
-
-*Presentation* — one shared vocabulary across panels, distinct from the orphan
-one: the =--mf-warning= amber (never the =--mf-error= red of
-=.metafolder/internal/=, never the =--mf-orphan= purple), and one sentence that
-names what to plug back in — ="volume not mounted: label:PHOTOS
-(/media/photos)"=, built from the mount point's path and its =expected=
-identity.
-
-*Per panel*:
-- =metarecord-detail= — an amber line above the field list when *every* path of
-  the displayed record is behind an offline mount point. It is checked *before*
-  the orphan line and replaces it: a stale path on an unplugged drive is not an
-  orphan, and saying so would invite the user to clean up records they want
-  kept.
-- =file= — no preview is attempted: the panel shows that sentence where "no
-  preview available" would go, so the user is not left guessing why a file the
-  database knows about will not open.
-- =file-manager= — a banner above the listing when the displayed directory is
-  itself at or below an offline mount point, and an =⏏ not mounted= badge (amber
-  name, the sentence as tooltip) on any listed entry that is.
-- =metarecord-list= — unavailable rows are amber with the sentence as their
-  tooltip; no filtering is applied, since browsing that metadata with the drive
-  unplugged is the point.
-
-Nothing in the GUI ever offers to "clean up" unavailable records: =mf orphan= is
-the only path to writing =Nothing=, and it refuses these by design. =orphan:detect=
-inherits the same guard — a record at or below an offline mount point is never
-marked, so =orphan:delete= cannot reach one. Nor is a
-reconcile offered from the banner: while the volume is away the daemon rejects
-one, and once it is back the banner is gone — the user runs
-=reconcile:run= on the subtree when they want the off-line changes picked up
-(spec-file-tracking "Offline subtrees").
+Moved to the wiki: doc "Unmounted volumes in the GUI".
 
 ** Orphans
 

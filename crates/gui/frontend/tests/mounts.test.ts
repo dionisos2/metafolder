@@ -1,4 +1,4 @@
-// Unmounted volumes (panel-shim/mounts.js, spec-gui "Unmounted volumes"): a
+// Unmounted volumes (panel-shim/mounts.js, doc "Unmounted volumes in the GUI"): a
 // metarecord whose file sits on a volume that is not plugged in is
 // *unavailable*, not orphaned — the panels must tell the two apart.
 

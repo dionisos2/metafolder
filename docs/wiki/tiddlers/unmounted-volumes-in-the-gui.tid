@@ -1,0 +1,26 @@
+title: Unmounted volumes in the GUI
+tags: [[Mount points]]
+kind: reference
+summary: Records behind an unplugged volume are shown in amber with the volume to plug back in — distinct from orphans, never offered for cleanup.
+
+While a volume is unplugged its metarecords are still listed and queryable, but the
+files are ''unavailable'', not deleted. The panels make the difference visible, since the
+two look identical otherwise: an orphan is gone for good, an unavailable record comes
+back with the drive.
+
+The source is `GET /repos/:repo/mounts` ([[Mount status]]), re-read whenever a panel
+reloads what it shows (a listing, a query, a repository switch). A daemon that cannot
+answer degrades to "no mount points": a lost distinction, never a blocked display. A path
+is unavailable at or below an `offline` mount point.
+
+One vocabulary: the warning amber (never the error red, never the orphan purple) and one
+sentence naming what to plug back in — `volume not mounted: label:PHOTOS
+(/media/photos)`.
+
+* ''metarecord-detail'' — an amber line above the fields when every path of the record is behind an offline mount point, checked before the orphan line and replacing it: a stale path on an unplugged drive is not an orphan.
+* ''file'' — no preview is attempted; the sentence stands where "no preview available" would.
+* ''file-manager'' — a banner above a listing at or below an offline mount point, and an `⏏ not mounted` badge (amber name, the sentence as tooltip) on such entries.
+* ''metarecord-list'' — unavailable rows in amber with the sentence as tooltip; nothing is filtered out, browsing that metadata with the drive unplugged being the point.
+
+Nothing offers to "clean up" unavailable records: orphan detection refuses them by design.
+The helper is `panel-shim/mounts.js`.

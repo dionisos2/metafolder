@@ -1,5 +1,5 @@
-// Unmounted volumes (spec-gui "Unmounted volumes", spec-file-tracking "Mount
-// points"), served at /__mounts.js for panel types.
+// Unmounted volumes (doc "Unmounted volumes in the GUI", doc "Mount points"), served at
+// /__mounts.js for panel types.
 //
 // A repository can hold the mount point of a removable or network volume. While
 // nothing is mounted there, its metarecords stay in the database and stay

@@ -718,7 +718,7 @@ struct Apply<'a, 'c> {
     arriving: &'a std::collections::HashSet<RelPath>,
     /// Mount points that are declared but not mounted right now: every event
     /// landing in one is dropped, because the content behind those paths is
-    /// *unavailable*, not gone (spec-file-tracking "Offline subtrees").
+    /// *unavailable*, not gone (doc "Offline subtrees").
     offline: &'a crate::mount::OfflineMounts,
     /// Mass-orphan circuit breaker (0 = disabled).
     orphan_limit: usize,
