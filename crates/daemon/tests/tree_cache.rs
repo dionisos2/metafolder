@@ -206,6 +206,25 @@ fn test_case_insensitive_resolution() {
     assert_eq!(insensitive.resolve_path(&conn, "mfr_path", "/MUSIC").unwrap(), Some(music));
 }
 
+#[test]
+fn test_case_insensitive_resolution_folds_beyond_ascii() {
+    // macOS and Windows fold accented letters too; the rule index
+    // (`normalize_name`) already did, so a path the watcher found eligible
+    // must resolve here as well.
+    let (mut conn, _dir) = test_conn();
+    let root = tree_entry(&mut conn, "mfr_path", None, "");
+    let summer = tree_entry(&mut conn, "mfr_path", Some(root), "Été");
+
+    let insensitive = TreeCache::new(true);
+    assert_eq!(insensitive.resolve_path(&conn, "mfr_path", "/ÉTÉ").unwrap(), Some(summer));
+    assert_eq!(insensitive.resolve_path(&conn, "mfr_path", "/été").unwrap(), Some(summer));
+    let rel = metafolder_daemon::relpath::RelPath::from_display("/éTÉ");
+    assert_eq!(insensitive.resolve_rel(&conn, "mfr_path", &rel).unwrap(), Some(summer));
+
+    let sensitive = TreeCache::new(false);
+    assert_eq!(sensitive.resolve_path(&conn, "mfr_path", "/été").unwrap(), None);
+}
+
 // ── Undecodable names (doc "Tree names") ─────────────────────────
 
 /// Creates a tree entry whose name is given as exact bytes.

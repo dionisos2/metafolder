@@ -366,8 +366,10 @@ fn a_child_is_found_by_its_bytes_or_its_text() {
     assert_eq!(tx.child_by_text("loc", Some(root), "Photos", false).unwrap(), Some(a));
     assert_eq!(tx.child_by_text("loc", Some(root), "photos", false).unwrap(), None);
     assert_eq!(tx.child_by_text("loc", Some(root), "PHOTOS", true).unwrap(), Some(a));
-    // NOCASE folds ASCII letters only.
-    assert_eq!(tx.child_by_text("loc", Some(root), "ÉTÉ", true).unwrap(), None);
+    // The fold is Unicode, as the watch rule index's (doc "Case sensitivity"),
+    // not SQLite's ASCII-only NOCASE.
+    assert_eq!(tx.child_by_text("loc", Some(root), "ÉTÉ", true).unwrap(), Some(e));
+    assert_eq!(tx.child_by_text("loc", Some(root), "ÉTÉ", false).unwrap(), None);
     assert_eq!(tx.child_by_text("loc", Some(root), "Été", true).unwrap(), Some(e));
 
     assert_eq!(tx.positions("loc", a).unwrap(), [(Some(root), "Photos".to_string())]);
