@@ -29,7 +29,7 @@ pub struct OpenedRepo {
     pub conn: crate::store::Handle,
     pub metafolder_dir: PathBuf,
     /// Whether the repository's filesystem matches names case-insensitively
-    /// (probed at init/load time; spec-platform "Case sensitivity").
+    /// (probed at init/load time; doc "Case sensitivity").
     pub case_insensitive: bool,
 }
 
@@ -42,9 +42,31 @@ impl std::fmt::Debug for OpenedRepo {
     }
 }
 
-/// Probes the filesystem's case sensitivity by creating a lowercase file in
-/// `.metafolder/internal/` and accessing it through an uppercase name.
-fn probe_case_insensitive(internal_dir: &Path) -> bool {
+/// Probes the case sensitivity of the filesystem holding `root` (doc "Case
+/// sensitivity").
+///
+/// First without writing anything: an entry of the root reached again through
+/// its case-swapped name, as the same file, is a case-insensitive filesystem;
+/// not found, or another file, a case-sensitive one. Only a root with no entry
+/// to try (a fresh, empty one outside the standard form) falls back to creating
+/// a probe file in `internal/` — which answers for the root only when both are
+/// on the same filesystem; otherwise the repository counts as case-sensitive
+/// until a load finds an entry.
+fn probe_case_insensitive(root: &Path, internal_dir: &Path) -> bool {
+    if let Some(answer) = probe_root_entries(root) {
+        return answer;
+    }
+    if !same_filesystem(root, internal_dir) {
+        crate::diagnostics::warn(
+            "repo",
+            format!(
+                "cannot probe the case sensitivity of {}: it is empty and .metafolder is on \
+                 another filesystem; treated as case-sensitive until a load finds an entry",
+                root.display()
+            ),
+        );
+        return false;
+    }
     let lower = internal_dir.join(".case_probe_a");
     let upper = internal_dir.join(".CASE_PROBE_A");
     if std::fs::write(&lower, b"").is_err() {
@@ -53,6 +75,59 @@ fn probe_case_insensitive(internal_dir: &Path) -> bool {
     let insensitive = upper.exists();
     let _ = std::fs::remove_file(&lower);
     insensitive
+}
+
+/// The read-only half of the probe: `None` when no entry of `root` has a name
+/// whose case can be swapped.
+fn probe_root_entries(root: &Path) -> Option<bool> {
+    for entry in std::fs::read_dir(root).ok()?.flatten() {
+        let name = entry.file_name();
+        let Some(text) = name.to_str() else { continue };
+        let swapped: String = text
+            .chars()
+            .map(|c| {
+                if c.is_lowercase() {
+                    c.to_uppercase().to_string()
+                } else {
+                    c.to_lowercase().to_string()
+                }
+            })
+            .collect();
+        if swapped == text {
+            continue;
+        }
+        let Ok(original) = entry.path().symlink_metadata() else { continue };
+        return Some(match root.join(&swapped).symlink_metadata() {
+            Ok(other) => same_file(&original, &other),
+            Err(_) => false,
+        });
+    }
+    None
+}
+
+#[cfg(unix)]
+fn same_file(a: &std::fs::Metadata, b: &std::fs::Metadata) -> bool {
+    use std::os::unix::fs::MetadataExt;
+    (a.dev(), a.ino()) == (b.dev(), b.ino())
+}
+
+#[cfg(not(unix))]
+fn same_file(a: &std::fs::Metadata, b: &std::fs::Metadata) -> bool {
+    a.len() == b.len() && a.modified().ok() == b.modified().ok()
+}
+
+#[cfg(unix)]
+fn same_filesystem(a: &Path, b: &Path) -> bool {
+    use std::os::unix::fs::MetadataExt;
+    match (a.metadata(), b.metadata()) {
+        (Ok(a), Ok(b)) => a.dev() == b.dev(),
+        _ => false,
+    }
+}
+
+#[cfg(not(unix))]
+fn same_filesystem(_: &Path, _: &Path) -> bool {
+    true
 }
 
 /// How to locate an existing repository for loading.
@@ -118,7 +193,7 @@ pub fn init_repository(
         Box::new(crate::kvstore::KvStore::open(&internal_dir.join(KV_DIR))?);
     create_root_entry(&mut conn)?;
 
-    let case_insensitive = probe_case_insensitive(&internal_dir);
+    let case_insensitive = probe_case_insensitive(&config.root, &internal_dir);
     Ok(OpenedRepo { config, conn, metafolder_dir, case_insensitive })
 }
 
@@ -247,7 +322,7 @@ pub fn load_repository(locator: RepoLocator) -> Result<OpenedRepo> {
     };
     let case_insensitive = {
         let _p = Phase::begin(&who, "probe case sensitivity");
-        probe_case_insensitive(&internal_dir)
+        probe_case_insensitive(&config.root, &internal_dir)
     };
     Ok(OpenedRepo { config, conn, metafolder_dir, case_insensitive })
 }

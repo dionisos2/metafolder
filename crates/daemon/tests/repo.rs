@@ -185,6 +185,24 @@ fn test_case_sensitivity_probe() {
 }
 
 #[test]
+fn test_the_case_probe_asks_the_root_filesystem_not_the_metafolder_one() {
+    // An external `.metafolder/` may sit on another filesystem than the files
+    // (a case-sensitive disk, the files on a case-insensitive drive): the answer
+    // must be the root's. No case-insensitive filesystem here, so the root shows
+    // what one would — a name reachable through another casing, the same file.
+    let root = temp_dir("probe_root");
+    let meta = temp_dir("probe_meta");
+    std::fs::write(root.join("Photo.jpg"), b"x").unwrap();
+    std::fs::hard_link(root.join("Photo.jpg"), root.join("pHOTO.JPG")).unwrap();
+
+    let opened = repo::init_repository(&root, Some(&meta.join("meta")), None, false).unwrap();
+    assert!(opened.case_insensitive);
+    drop(opened);
+    let loaded = repo::load_repository(RepoLocator::Metafolder(meta.join("meta"))).unwrap();
+    assert!(loaded.case_insensitive);
+}
+
+#[test]
 fn test_config_exists_helper() {
     let root = temp_dir("exists");
     assert!(!RepoConfig::exists(&root.join(".metafolder")));
