@@ -28,7 +28,10 @@ The reading rule: ''the last line names the phase that is running''. Load work i
 proportional to the repository, not the code; a phase can run for minutes on a
 large one.
 
-The replay reports ''inside'' itself, being the least predictable phase: how many
+The replay phase is named after the persistent event buffer it used to empty. The
+buffer lives in memory now ([[Event batching]]), so at load it is empty and the phase
+only applies the restorations a skipped rollback step left; its per-event report below
+is kept for the day it has events again. It reports ''inside'' itself: how many
 events it read, how many were left after compaction, then each event as it
 applies it — and, for a directory that arrived whole (one event hiding a whole
 subtree), the entries it has ingested so far:

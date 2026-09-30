@@ -387,26 +387,7 @@ only to compare the stored string with the one read from disk (=mismatch=).
 
 ** File watcher backends
 
-The =notify= crate abstracts the per-OS event APIs: inotify (Linux), FSEvents
-(macOS), ReadDirectoryChangesW (Windows). Behavioural differences the daemon
-must absorb:
-
-- *Rename correlation*: on Linux, =MOVED_FROM= / =MOVED_TO= pairs are matched
-  by inotify cookie into =Rename(Both)=. On backends where correlation is
-  unavailable or unreliable, a rename may surface as =Remove= followed by
-  =Create=; identity is then recovered through the orphan fingerprint search
-  of the =Rename(To)= / reconcile path (see
-  [[file:spec-file-tracking.org][spec-file-tracking.org]]). The data model is
-  unaffected.
-- *Data/Metadata distinction*: where the backend cannot distinguish
-  =Modify(Data)= from =Modify(Metadata)=, the daemon falls back to
-  =Modify(Data)= semantics (full refresh + hash invalidation).
-- *Recursion*: inotify requires one watch per directory (the =notify= crate
-  manages this); FSEvents and ReadDirectoryChangesW are natively recursive.
-  This is an implementation detail with no spec-visible effect, except that
-  on Linux very large repositories may hit
-  =fs.inotify.max_user_watches=; the daemon logs a clear error when watch
-  registration fails.
+Moved to the wiki: doc "Watch sources and regimes".
 
 ** Network and special filesystems
 

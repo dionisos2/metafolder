@@ -18,7 +18,7 @@ use crate::store::{Rows, Store};
 use crate::tree_cache::{normalize_name, TreeCache};
 
 /// The field recording a directory the watch budget could not afford
-/// (spec-file-tracking "The watch budget"). Reserved (`mfr_*`), inherited down
+/// (doc "The watch budget"). Reserved (`mfr_*`), inherited down
 /// the `mfr_path` tree like `mf_watch`.
 pub const WATCH_EXCEEDED: &str = "mfr_watch_exceeded";
 
@@ -396,7 +396,7 @@ impl WatchRules {
 
     /// The directory whose `mfr_watch_exceeded = true` covers `rel` (the path
     /// itself included; the nearest value decides), `None` when nothing
-    /// excludes it (spec-file-tracking "The watch budget").
+    /// excludes it (doc "The watch budget").
     pub fn exceeded_by(&self, rel: &RelPath) -> Option<String> {
         let comps = rel.components();
         let key = self.key(rel);

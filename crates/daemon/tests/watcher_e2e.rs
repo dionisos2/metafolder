@@ -719,7 +719,7 @@ async fn test_swapping_two_tracked_files_keeps_both_metarecords(regime: Regime) 
 }
 
 /// What the watcher delivers is counted under every ancestor of its path
-/// (spec-file-tracking "Watch activity"), so a client can walk down from the
+/// (doc "Watch activity"), so a client can walk down from the
 /// root to where the events come from.
 async fn test_delivered_events_are_counted_per_subtree(regime: Regime) {
     let fs = regime.fs();
@@ -771,7 +771,7 @@ async fn set_on(app: &Router, repo: &str, file_name: &str, name: &str, value: Va
 }
 
 /// Ineligible events are dropped as they arrive, before the buffer
-/// (spec-file-tracking "Filtering at ingestion"): with ingestion paused, what
+/// (doc "Event batching"): with ingestion paused, what
 /// waits in the buffer is exactly what was delivered for the eligible file.
 async fn test_ignored_events_never_reach_the_buffer(regime: Regime) {
     let fs = regime.fs();
@@ -833,8 +833,7 @@ async fn test_ignored_events_never_reach_the_buffer(regime: Regime) {
 /// A directory carrying a rule, renamed away and re-created under its old name
 /// in one burst: the rules still place the rule at the old path until the
 /// flush, and filtering against them would drop the new directory. Ingestion
-/// stops filtering until that flush (spec-file-tracking "Rules that are about
-/// to move").
+/// stops filtering until that flush (doc "Event batching").
 async fn test_a_rule_directory_renamed_and_recreated_keeps_the_new_one(regime: Regime) {
     let fs = regime.fs();
     let (app, repo, root) = watched_repo("e2e_rule_move", regime).await;

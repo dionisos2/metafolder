@@ -1,0 +1,31 @@
+title: Pausing the watcher
+tags: [[Watcher]]
+kind: guide
+summary: mf watch pause stops the flush in progress and keeps the next from starting; the events stay buffered until mf watch resume.
+
+A flush is not always short: a directory of a hundred thousand files dropped into a
+watched repository is one batch, and applying it holds the repository for as long as it
+takes. To say ''stop'':
+
+```
+mf -n photos watch pause      # stop the flush in progress; buffer what comes
+mf -n photos watch            # paused  12043 event(s) waiting  …
+mf -n photos watch resume     # apply what accumulated (after the quiet period)
+```
+
+Stopping a flush — `mf watch pause`, the ''Stop'' of its task in the repos panel, or
+`mf task show <id> --stop` — means ''pause ingestion'' for this repository:
+
+* the flush stops at the next event; the group in progress is ''abandoned, not committed'' — no half-group is ever visible — and groups already committed stay;
+* the batch goes ''back to the head of the buffer'': on resume it is applied again from its start (the event semantics are idempotent for that);
+* the repository then ''stays paused'': the watcher keeps buffering, the executor does not flush. Without the pause, the next event would restart the very flush just stopped. A stopped flush is not a failed one.
+
+The repos panel shows `tracking paused — N event(s) waiting` in amber, with a
+''Resume'' button (`repos:resume`); a pause from the CLI shows there too. A paused
+repository is otherwise fully usable — queries, writes, reconcile (which reads the disk
+directly, so it picks up what the buffer carries) and undo all work.
+
+The pause is in memory: unloading the repository or restarting the daemon clears it —
+and the buffered events with it, so run a reconcile afterwards. It is "let me look
+before it lands", not a setting: the durable way to stop tracking a subtree is
+`mf_watch = false` ([[Tracking a folder]]). Pausing and resuming are idempotent.

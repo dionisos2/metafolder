@@ -97,7 +97,7 @@ impl TaskKind {
     /// Whether a task of this kind can be cancelled (doc "Cancelling a task").
     /// `flush` is internal, but its size is the user's doing — a single batch
     /// can carry a whole directory tree — so it *is* stoppable, and stopping it
-    /// pauses ingestion (spec-file-tracking "Pausing ingestion"). `load` is a
+    /// pauses ingestion (doc "Pausing the watcher"). `load` is a
     /// harmless warmup; `prune` and `rollback` are single atomic transactions
     /// with no cooperative cancellation point (interrupting one would only roll
     /// it back).
@@ -591,7 +591,7 @@ mod tests {
     #[test]
     fn request_cancel_accepts_a_flush() {
         // Stopping a flush is a supported operation: it pauses ingestion
-        // (spec-file-tracking "Pausing ingestion").
+        // (doc "Pausing the watcher").
         let r = reg();
         let flush = r.start(TaskKind::Flush);
         assert_eq!(r.request_cancel(flush), CancelOutcome::Requested);

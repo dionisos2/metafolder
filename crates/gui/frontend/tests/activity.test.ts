@@ -1,5 +1,5 @@
-// The watch-activity shim (/__activity.js, spec-file-tracking "Watch
-// activity"): per-path watcher event counts for the file-manager rows and the
+// The watch-activity shim (/__activity.js, doc "Watch activity"): per-path watcher event counts for
+// the file-manager rows and the
 // metarecord-detail note.
 
 import { describe, expect, test, vi } from 'vitest';

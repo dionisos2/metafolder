@@ -1,0 +1,6 @@
+title: mf watch resume
+tags: [[CLI command]] [[Watcher]]
+kind: reference
+summary: Resume ingestion and apply what was buffered meanwhile
+
+Resumes ingestion and prints how many events are about to be applied ([[Pausing the watcher]]).

@@ -1,4 +1,4 @@
-// file-manager watch activity (spec-gui "Watch activity"): each row shows how
+// file-manager watch activity (doc "Watch activity"): each row shows how
 // many watcher events arrived under it since the load (recursive counts, the
 // "." row being the directory's own), so the user can walk down from the root
 // to where the events come from.

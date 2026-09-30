@@ -1,0 +1,38 @@
+title: Watcher
+tags: [[File tracking]]
+kind: overview
+aliases: watcher flush
+summary: The watcher follows filesystem events live, buffers them in memory, and records them in batches once the disk has been quiet for two seconds.
+
+The watcher records what happens to tracked files while the daemon runs: a file
+created, changed, moved, deleted. Events go through one pipeline whatever produces them:
+
+# a ''source'' delivers them — inotify, one watch per directory (the ''budget'' regime), or a fanotify broker covering whole filesystems (the ''coverage'' regime) ([[Watch sources and regimes]]);
+# the ''ingest'' thread counts them ([[Watch activity]]), drops those on ineligible paths ([[Eligibility]]) and buffers the rest, in memory;
+# once the filesystem has been quiet for two seconds the ''executor'' flushes the buffer: it compacts it, groups it by kind, and applies each group as one revision ([[Event batching]], [[Event semantics]]).
+
+Only the watcher (and a forced write) sets `mfr_path` to `nothing`: a file seen deleted.
+Reconcile never does; it leaves a stale path in place.
+
+What the watcher cannot see, it cannot record: a daemon that is down, a broker that
+disconnected, a queue that overflowed — each such gap is announced, and closed by a
+reconcile you run. Nothing is inferred from a gap, and no reconcile is
+started on its own.
+
+!! Use it
+
+<<list-kind guide>>
+
+!! Reference
+
+<<list-kind reference>>
+
+!! Open questions
+
+<<list-kind question>>
+
+!! Commands
+
+<<tagged-with "CLI command">>
+
+<<tagged-with "GUI command">>

@@ -2092,7 +2092,7 @@ pub fn mount_forget(ctx: &Ctx, uuid: &str, yes: bool) -> Result<i32, CliError> {
     field_unset(ctx, uuid, "mfr_mount", true)
 }
 
-// ── Watcher ingestion (spec-file-tracking "Pausing ingestion") ────────────────
+// ── Watcher ingestion (doc "Pausing the watcher") ────────────────
 
 /// Renders the shared `{paused, pending_events}` body of the three `watch`
 /// routes as one line.
@@ -2105,8 +2105,7 @@ fn print_watch(resp: &serde_json::Value, raw_json: bool) -> Result<i32, CliError
     // The buffer is in memory, so the count is always there — no "unavailable"
     // case to render any more. The coverage is worth showing next to it: one
     // watch per directory in the budget regime, the whole tree under a single
-    // registration in the coverage regime (spec-file-tracking "Watch sources
-    // and regimes").
+    // registration in the coverage regime (doc "Watch sources and regimes").
     let waiting = resp["pending_events"].as_i64().unwrap_or(0);
     println!("{state:<10}\t{waiting} event(s) waiting\t{}", coverage(resp));
     // A repository left on inotify says why — no broker at the socket, the
@@ -2115,7 +2114,7 @@ fn print_watch(resp: &serde_json::Value, raw_json: bool) -> Result<i32, CliError
         println!("fanotify broker not used: {reason}");
     }
     // A budget in trouble adds its own lines, so neither condition passes
-    // unnoticed (spec-file-tracking "The watch budget").
+    // unnoticed (doc "The watch budget").
     let budget = &resp["watch_budget"];
     if budget["starved"].as_bool().unwrap_or(false)
         || budget["exceeded_dirs"].as_i64().unwrap_or(0) > 0
@@ -2127,8 +2126,7 @@ fn print_watch(resp: &serde_json::Value, raw_json: bool) -> Result<i32, CliError
 
 /// The coverage column of `watch status` and `watch exceeded`: per-directory
 /// watches in the budget regime, the whole tree under one registration in the
-/// coverage regime — the active source named either way (spec-file-tracking
-/// "Watch sources and regimes").
+/// coverage regime — the active source named either way (doc "Watch sources and regimes").
 fn coverage(resp: &serde_json::Value) -> String {
     let backend = resp["backend"].as_str().unwrap_or("?");
     match resp["watched_dirs"].as_i64() {
@@ -2138,7 +2136,7 @@ fn coverage(resp: &serde_json::Value) -> String {
 }
 
 /// `mf watch exceeded` / `... list`: the subtrees the watch budget could not
-/// afford (spec-file-tracking "The watch budget").
+/// afford (doc "The watch budget").
 pub fn watch_exceeded_list(ctx: &Ctx, raw_json: bool) -> Result<i32, CliError> {
     let base = ctx.repo_base()?;
     let resp = ctx.client.get(&format!("{base}/watch/exceeded"), &[])?;
@@ -2181,8 +2179,7 @@ pub fn watch_exceeded_set(
 }
 
 /// The budget line shared by `watch status` and `watch exceeded`. The coverage
-/// regime has no budget to report (spec-file-tracking "Watch sources and
-/// regimes") — nothing is printed.
+/// regime has no budget to report (doc "Watch sources and regimes") — nothing is printed.
 fn print_watch_budget(resp: &serde_json::Value) {
     let budget = &resp["watch_budget"];
     if budget.is_null() {
@@ -2215,7 +2212,7 @@ pub fn watch_status(ctx: &Ctx, raw_json: bool) -> Result<i32, CliError> {
     print_watch(&resp, raw_json)
 }
 
-// ── Watch check (spec-file-tracking "Watch check") ────────────────────────────
+// ── Watch check (doc "Checking whether a path is watched") ────────────────────────────
 
 /// Repo-root-relative form (leading slash, `""` is the root) of a CLI path
 /// argument: an existing path is canonicalised and made relative to the
@@ -2297,7 +2294,7 @@ fn not_watched_phrase(entry: &serde_json::Value) -> String {
 }
 
 /// `mf watch check <path>…`: whether the watcher records a change at each path
-/// (spec-file-tracking "Watch check"). One line per path; the exit code is 1
+/// (doc "Checking whether a path is watched"). One line per path; the exit code is 1
 /// ("found problems") when any path is not watched, so a script can assert on
 /// watchability the way `mf schema check` does on violations.
 pub fn watch_check(ctx: &Ctx, paths: &[String], raw_json: bool) -> Result<i32, CliError> {
@@ -2340,7 +2337,7 @@ pub fn watch_check(ctx: &Ctx, paths: &[String], raw_json: bool) -> Result<i32, C
 }
 
 /// `mf watch activity [path]`: one step of the walk from the root down to where
-/// the watcher's events come from (spec-file-tracking "Watch activity").
+/// the watcher's events come from (doc "Watch activity").
 pub fn watch_activity(
     ctx: &Ctx,
     path: Option<&str>,

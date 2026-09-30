@@ -396,29 +396,38 @@ le générateur (=542af74=). Sources retirées (pointeurs) : spec-file-tracking
 « Effective ignore set », =mf track= ; spec-data-model =mf ignore= ; spec-gui
 « Ignore patterns » ; les pages =tracking.html= et =ignore.html=.
 
-** TODO 15. Le watcher
+** FAIT 15. Le watcher
 
 (sous File tracking)
-- [ ] =Watcher= — overview
-- [ ] =Watch sources and regimes= — reference (inotify / budget, fanotify / couverture)
-- [ ] =The watch budget= — reference
-- [ ] =The fanotify broker= — reference, dev (=watchd=, docs/watcher-fanotify.md)
-- [ ] =Event batching= — reference (période de calme, compaction, groupes)
-- [ ] =Event semantics= — reference, dev
-- [ ] =What a flush reports= — reference
-- [ ] =Pausing the watcher= — guide
-- [ ] =Checking whether a path is watched= — guide (=mf watch check=, =POST /watch/check=, explain)
-- [ ] =Watch activity= — guide (=mf watch activity=, panel GUI)
-- [ ] =Watcher endpoints= — reference, dev
+- [X] =Watcher= — overview
+- [X] =Watch sources and regimes= — reference
+- [X] =The watch budget= — reference (avec =mfr_watch_exceeded= et =mf watch exceeded=)
+- [X] =The fanotify broker= — reference, dev (tout =docs/watcher-fanotify.md=, supprimé)
+- [X] =Event batching= — reference
+- [X] =Event semantics= — reference, dev
+- [X] =What a flush reports= — reference
+- [X] =Pausing the watcher= — guide
+- [X] =Checking whether a path is watched= — guide
+- [X] =Watch activity= — guide
+- [X] =Watcher endpoints= — reference, dev
+- [X] =Watcher pitfalls= — reference, dev (ajoutée : les mémoires)
+- [X] =Testing the watcher= — reference, dev (ajoutée : oracle watcher ≡ reconcile, noyau simulé)
+- [X] =Watcher open questions= — question
+- [X] notes de commande : =mf watch *= (10), =repos:watch-exceeded=, =repos:resume=
 
-CLI : =mf watch *= (10). Sources : spec-file-tracking « File Watcher », « Watch
-status, pause and resume », « Eligibility explain », « Watch check », « Watch
-activity », « Effective ignore set », « Configuring the watch scope »,
-« Watcher reliability » ; spec-gui « Watch activity » ; spec-platform « File
-watcher backends » ; docs/watcher-fanotify.md ; mémoires
-=watcher-callback-must-not-block=, =watcher-move-identity-bugs=,
-=watcher-echo-destroyed-derived-data=, =watcher-quiet-period-coupling=,
-=watchd-testing=, =watch-activity-counter=.
+Vérification contre le code : la pause ne reconstruit plus de cache d'arbre (il ne
+cache rien) ; le budget d'échecs de flush n'existe plus (le tampon est en mémoire) ;
+le cookie de renommage voyage dans le tampon en mémoire, plus dans
+=pending_operation= ; à l'arrivée, aucune recherche d'orphelin par empreinte —
+trois commentaires de =executor.rs=, spec-platform et CLAUDE.md disaient le
+contraire : corrigés ; la phase de chargement « replay the buffered filesystem
+events » ne rejoue plus que les restaurations (le tampon est vide au chargement) —
+son libellé et ses rapports par événement sont vestigiaux (la note du rapport de
+démarrage le dit ; code laissé tel quel). Sources retirées (pointeurs) :
+spec-file-tracking « File Watcher », « Watch status, pause and resume », « Watch
+check », « Watch activity », =mf watch=, « Configuring the watch scope », la
+question ouverte ; spec-platform « File watcher backends » ; spec-gui « Watch
+activity », « Tracking notices » ; =docs/watcher-fanotify.md= (supprimé).
 
 ** TODO 16. Reconcile et empreintes
 

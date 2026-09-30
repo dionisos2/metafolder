@@ -1,0 +1,6 @@
+title: mf watch activity
+tags: [[CLI command]] [[Watcher]]
+kind: reference
+summary: How many watcher events arrived under a directory since the load, and under which of its children — walk down from / to find the noise
+
+A directory's event count and its busiest children, each as a share of the total; `--reset` starts over ([[Watch activity]]).

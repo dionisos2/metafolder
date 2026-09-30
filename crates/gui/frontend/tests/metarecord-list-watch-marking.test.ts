@@ -1,5 +1,5 @@
 // The metarecord-list marks rows whose tracked file is not watched
-// (spec-file-tracking "Watch check"): amber, with the reason on hover, from
+// (doc "Checking whether a path is watched"): amber, with the reason on hover, from
 // one batch daemon call per page. The marking must yield to the stronger
 // signals (orphan purple, unplugged amber) and must never mistake a missing
 // answer — a daemon without the endpoint, or a down one — for "unwatched".

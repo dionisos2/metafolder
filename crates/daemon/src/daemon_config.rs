@@ -25,8 +25,8 @@ pub const DEFAULT_WATCH_QUIET_PERIOD_MS: u64 = 2000;
 /// files still have somewhere to go.
 pub const DEFAULT_WATCH_BUDGET_SHARE: u8 = 50;
 
-/// Default socket of the fanotify broker (docs/watcher-fanotify.md "The
-/// broker"): probed at load — reachable, and the source becomes fanotify;
+/// Default socket of the fanotify broker (doc "The fanotify broker"): probed at load — reachable,
+/// and the source becomes fanotify;
 /// absent, and the daemon says so and watches with inotify.
 pub const DEFAULT_WATCHD_SOCKET: &str = "/run/metafolder/watchd.sock";
 
@@ -77,12 +77,12 @@ pub struct DaemonSettings {
     /// filesystems that emit bursts of events.
     pub watch_quiet_period_ms: u64,
     /// Percentage of the kernel's per-user watch limit this daemon will spend
-    /// (spec-file-tracking "The watch budget"). A ceiling it imposes on itself
+    /// (doc "The watch budget"). A ceiling it imposes on itself
     /// so other programs keep some, not a reservation — nothing can be
     /// reserved, and the kernel never says what is still free.
     pub watch_budget_share: u8,
     /// Where the fanotify broker is probed at load ([settings] watchd-socket,
-    /// spec-file-tracking "Watch sources and regimes"): reachable, and the
+    /// doc "Watch sources and regimes"): reachable, and the
     /// daemon covers the tree through it; absent, and the daemon watches with
     /// inotify and says so. Pointing it at a path where nothing listens is how
     /// one stays on inotify.
@@ -308,7 +308,7 @@ mod tests {
     #[test]
     fn test_the_broker_socket_is_configurable() {
         // No watch-backend knob: the socket is probed and the source follows
-        // (spec-file-tracking "Watch sources and regimes"). A path where
+        // (doc "Watch sources and regimes"). A path where
         // nothing listens is how one stays on inotify.
         let s: DaemonSettings = toml::from_str("watchd-socket = \"/tmp/w.sock\"").unwrap();
         assert_eq!(s.watchd_socket, PathBuf::from("/tmp/w.sock"));

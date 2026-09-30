@@ -1,0 +1,42 @@
+title: Watch activity
+tags: [[Watcher]]
+kind: guide
+summary: The daemon counts watcher events per path, recursively, since the load — follow the largest counts down from the root to find where the noise comes from.
+
+A repository can receive far more events than its user makes — a build tree, a browser
+cache, a package manager's objects. To find where they come from, the daemon counts, per
+path, the events the watcher delivers:
+
+```
+mf -n home watch activity
+/: 182340 event(s) since 2026-09-27T14:02:11Z
+  111210   61.0%  /dev
+   40118   22.0%  /.cache
+mf -n home watch activity /dev          # one step further down
+mf -n home watch activity --reset       # start counting again
+```
+
+Then decide: `mf_watch = false` on the directory, or an ignore pattern
+([[Setting ignore patterns]]). Nothing is excluded automatically — a file edited all
+afternoon, a large copy and a build directory all produce many events, and only the
+last is noise.
+
+In the GUI the file manager shows each row's count (`7`, `1.2k`, `46k`; the `.` row is
+the current directory's own), the hover giving how many, since when and the share of
+the total. A row holding a tenth of all events or more (once the repository has seen a
+hundred) is a ''hot spot'', in bold amber: browse from the root down the hot rows.
+''by activity'' (`file-manager:toggle activity`, <<key "file-manager:toggle activity" Ctrl+Shift+a>>)
+sorts the entries busiest first. The metarecord detail panel shows the count at the
+record's file. A quiet path shows nothing, and an unanswered call too: unknown never
+reads as zero.
+
+!! How it counts
+
+* ''Recursive'': an event at `/a/b/c` counts once on it, `/a/b`, `/a` and the root; a rename on every path along both sides. The root's count is the total, and the largest counts lead down to the source — per-directory counts would not, a build tree scattering its events over hundreds of hash-named directories each quiet on its own.
+* ''As delivered'': counted on arrival, before compaction and before any filter. Under the coverage regime an untracked subtree still sends events and still counts; under the budget regime it holds no watch and sends nothing.
+* ''In memory only'': from the load (`since_ms`) or the last reset. A diagnosis of the current load, not history — a field would add a revision per flush to the very log the noise floods.
+* ''Bounded'': at most 100 000 paths; past that the least active go, deepest first among equals, so a path never outlives its parent. Small counts are approximate, large ones exact.
+
+The counts answer from memory, never waiting for the repository — so they answer during
+a long flush, which is when the question is asked. `mfr_watch_exceeded` is not a remedy
+for noise: it is the budget's ([[The watch budget]]).

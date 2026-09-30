@@ -1,0 +1,6 @@
+title: mf watch exceeded clear
+tags: [[CLI command]] [[Watcher]]
+kind: reference
+summary: Watch a subtree again (fails if the budget has no room)
+
+Covers a subtree again; refused (409) in the budget regime when there is no headroom ([[The watch budget]]).

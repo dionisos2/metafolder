@@ -1,5 +1,5 @@
-//! The subscriber-facing half of the broker (docs/watcher-fanotify.md "The
-//! broker"): a Unix socket, one *bounded* queue per subscriber, and a broadcast
+//! The subscriber-facing half of the broker (doc "The fanotify broker"): a Unix socket, one
+//! *bounded* queue per subscriber, and a broadcast
 //! that adapts and filters each event per subscriber before queueing it.
 //!
 //! The bounding is the design: a subscriber that cannot keep up **loses**

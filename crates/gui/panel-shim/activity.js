@@ -1,4 +1,4 @@
-// Watch activity for panels (spec-file-tracking "Watch activity"), served at
+// Watch activity for panels (doc "Watch activity"), served at
 // /__activity.js: how many filesystem events the watcher delivered under each
 // path since the repository was loaded. Counts are recursive — a directory's
 // includes everything below it, and the root's is the total — so a user can

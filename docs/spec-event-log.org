@@ -415,7 +415,7 @@ holds the fields below; each operation keeps its before and after snapshot
 rows; HEAD is a record of its own; the restoration ops a skipped navigation
 step leaves (see [[*Coordinated navigation]]) wait in their own table and
 survive a daemon crash. Watcher events are not held here: they are buffered in
-memory (spec-file-tracking "Event batching"). The log was a set of SQLite
+memory (doc "Event batching"). The log was a set of SQLite
 tables until September 2026 (=revision=, =operation=, =op_snapshot=,
 =log_head=, =pending_operation=); their names survive in the text below.
 
@@ -1049,7 +1049,7 @@ If the daemon crashes during a coordinated navigation:
   automatically on restart as a new revision. Buffered *watcher events* are not:
   they live in memory and a stopped daemon loses them, along with everything
   else that happened while it was down — =reconcile= is what recovers that
-  (spec-file-tracking "Event batching").
+  (doc "Event batching").
 - Any file moves executed before the crash but after the last committed step
   leave =mfr_path= stale until the replayed restoration ops correct them.
   Running =reconcile= is still recommended to catch any remaining filesystem

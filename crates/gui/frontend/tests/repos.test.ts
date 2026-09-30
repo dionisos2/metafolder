@@ -46,8 +46,7 @@ function fakeDaemon() {
   const repos: Repo[] = [];
   const tasks: Record<string, unknown>[] = [];
   const cancelled: string[] = [];
-  // Ingestion state of every repo of this fake daemon (spec-file-tracking
-  // "Watch status, pause and resume").
+  // Ingestion state of every repo of this fake daemon (doc "Watcher endpoints").
   const watch = { paused: false, pending: 0 };
   let nextUuid = 1;
   const uuid = () => String(nextUuid++).padStart(32, '0');

@@ -1,0 +1,63 @@
+title: Event semantics
+tags: [[Watcher]]
+kind: reference
+audience: dev
+summary: What the flush does for each kind of filesystem event — and the cases where a literal reading would lose a metarecord: undone deletions, moves into new or just-moved directories, echoes.
+
+|!Event |!Action |
+|`Create` |If a metarecord already holds this path, refresh it as for `Modify(Data)` (idempotent — a replay, or a file placed where the store expected one, e.g. by sync). Otherwise create a metarecord under its parent with `mfr_path` and the stat fields |
+|`Remove` |Record the last path in `mfr_path_old`, set `mfr_path` to `nothing` (the metarecord is kept) and drop `mfr_duplicate_group` — the hashes are ''kept'', to re-home a file that reappears; for a directory, the same cascades to every descendant in the transaction. ''Skipped when the path exists again at flush time'' (below) |
+|`Rename(Both)` |Change the position: the name (a rename) or the parent (a move) — one row, whatever is below; children follow, naming their parent by uuid. If the destination was tracked, the rename destroyed that file: its metarecord is orphaned first, then the moved one takes the position |
+|`Rename(From)` |The file left the watched scope: as `Remove`, cascade included — unless the same batch finds it again (below) |
+|`Rename(To)` |A file arrived from outside: create its metarecord. Orphans are ''not'' searched by fingerprint — that is `mf orphan relink`, which you run. The one identity recovered is the other half of a move the watcher only half saw, matched on type, size and mtime — no file is read |
+|`Modify(Data)` |Refresh size and mtime; drop both hashes, their stamp and `mfr_duplicate_group` — the content that made it a duplicate is gone ([[The duplicate hash cache]]) |
+|`Modify(Metadata)` |Refresh permissions, owner, group and mtime; the hashes stay valid |
+
+Where a backend cannot tell data from metadata changes, `Modify(Data)` applies.
+`mfr_inode` belongs to the stat fields: written when the link count exceeds one, removed
+when it is back to one, by every path that refreshes stat fields and no other
+([[What counts as a duplicate]]).
+
+''Refreshes are idempotent.'' When the stored size and mtime (and, for metadata, the
+attributes) already equal what `stat` says, nothing is written — no operation, no new
+version. The check is on the stat ''alone'', deliberately: an echo (a replay, the
+watcher seeing a change the daemon itself just made, a tool's spurious event) must not
+''destroy'' derived data. Making the skip conditional on the hashes being absent inverted
+it — every echo threw away a valid hash cache and a duplicate scan's whole result. Size
+and mtime are the same evidence the hash stamp relies on, and fail the same safe way: a
+same-second, same-size rewrite is missed, and reconcile catches it.
+
+''Undone deletions.'' A `Remove`/`Rename(From)` applies only if its path is ''still gone
+at flush time''. A delete and a recreate within one window collapse to a refresh. This
+matters most for the trash: a restore relinks the metarecord before moving the file
+back, and a buffered deletion from the trashing would otherwise fire against the
+restored file, strand the metarecord and create a second one ([[What restoring does]]).
+A ''directory'' made again still gets the cascade below it, less what came back: a
+source covering the whole filesystem reports `rm -r d && mkdir d` as the removal of `d`
+alone, so the cascade is the only word on what was inside.
+
+''Moves into a new directory.'' "Create a folder, drop a file into it": with watches per
+directory, only the `From` half arrives — the new folder's watch cannot exist before the
+kernel reports its creation. Read literally: "the file left" and "an unrelated file
+appeared", and everything attached to the metarecord stays on an orphan. So the new
+directory's scan re-pairs: a path arriving with no metarecord is matched against the paths ''renamed away in the same batch'' that
+are gone from disk and still tracked, on type, size and mtime — what a rename keeps
+exactly (a watcher-created metarecord carries no hashes, and the old file is gone, so
+there is nothing to hash). A match is an ordinary move; a moved directory carries its
+subtree. The fanotify source delivers such a move whole (the new directory's `Create`
+and a `Rename(Both)` into it), so the new directory's scan leaves every path a move of
+the batch lands on to that move — scanning it first created a second metarecord that the
+move then orphaned.
+
+''Moves out of a directory that just moved'' (`mv d e && mv e/x x` in one batch): the
+departure from the moved directory is never delivered, only the arrival. So the tracked
+entries of each directory a `Rename(Both)` of the batch lands on or leaves, that are
+gone from disk, count as departures too — direct entries only. The batch's departures
+are indexed once by that key: pairing each arrival with each departure (a `stat` and a
+store read per pair) held the repository a minute for a few hundred files each way.
+
+''Orphan origin.'' Orphaning captures the last path into `mfr_path_old`, a frozen string
+— not a position, never rewritten by later moves — so where every orphan lived is
+readable on the record itself. Written only on the transition to `nothing`, overwritten
+by a later orphaning, not cleared by a re-homing. Reconcile never orphans, so never
+writes it.

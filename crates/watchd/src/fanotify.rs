@@ -1,10 +1,10 @@
-//! The kernel-facing half of the broker (docs/watcher-fanotify.md "The
-//! broker"): one fanotify group for the machine, one mark per *filesystem* a
+//! The kernel-facing half of the broker (doc "The fanotify broker"): one fanotify group for the
+//! machine, one mark per *filesystem* a
 //! subscribed root is on or has mounted beneath it, and file-handle events
 //! resolved into paths.
 //!
-//! Why fanotify and not inotify is a spec question (spec-file-tracking "Watch
-//! sources and regimes"); why these flags and not others is here:
+//! Why fanotify and not inotify is a spec question (doc "Watch sources and regimes"); why these
+//! flags and not others is here:
 //!
 //! - `FAN_REPORT_DFID_NAME` (5.9+): events carry the *parent directory's* file
 //!   handle plus the entry name — the only form that reports creations,
@@ -87,7 +87,7 @@ pub(crate) const METADATA_LEN: usize = 24;
 
 /// Everything the broker asks of the kernel, checked up front so a
 /// mis-deployed broker fails at start with the remedy in hand rather than at
-/// the first event (docs/watcher-fanotify.md "The broker").
+/// the first event (doc "The fanotify broker").
 pub fn preflight(probe: &Path) -> Result<()> {
     preflight_with(probe, resolve_handle_verbose)
 }
@@ -1103,7 +1103,7 @@ fn place_mark(op: u32, mask: u64, mut mark: impl FnMut(u64) -> io::Result<()>) -
 /// [`without_rename`]): moves then arrive as `FAN_MOVED_FROM`/`FAN_MOVED_TO`
 /// pairs with nothing to correlate them by, and read as delete + create — the
 /// same degradation the notify sources have on backends without rename
-/// correlation (spec-file-tracking "File Watcher").
+/// correlation (doc "Watcher").
 fn mask() -> u64 {
     FAN_CREATE
         | FAN_DELETE

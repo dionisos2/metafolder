@@ -1,4 +1,4 @@
-//! Pending-event executor (spec-file-tracking "Event batching"): the watcher
+//! Pending-event executor (doc "Event batching"): the watcher
 //! buffers raw filesystem events in memory; after a quiet period the executor
 //! compacts them, groups them by resulting operation type (one revision per
 //! group), and applies the event semantics to the data tables through the
@@ -85,8 +85,8 @@ fn return_pending(repo: &RepoState, events: Vec<(FsEvent, Option<i64>)>) {
 /// `RenameFrom`/`RenameTo` events (its From/To correlation can fail under load)
 /// back into a single [`FsEvent::Rename`], by pairing events that carry the
 /// same non-null inotify cookie. Without this, an intra-tree rename would
-/// degrade into a delete + arrival (two revisions; identity preserved only if
-/// the content is unchanged, via the fingerprint search). Events without a
+/// degrade into a delete + arrival (two revisions, and the metarecord orphaned
+/// until an `mf orphan relink`). Events without a
 /// cookie, and genuine one-sided renames (a file that left or entered the
 /// repository, with no matching cookie), are left untouched.
 fn correlate_renames(events: Vec<(FsEvent, Option<i64>)>) -> Vec<FsEvent> {
@@ -275,7 +275,7 @@ pub struct FlushStats {
     pub revisions: usize,
     /// The flush was stopped at the user's request: the group it was applying
     /// was abandoned, the buffer was left in place, and ingestion is now paused
-    /// (spec-file-tracking "Pausing ingestion").
+    /// (doc "Pausing the watcher").
     pub cancelled: bool,
 }
 
@@ -371,7 +371,7 @@ pub fn describe(ev: &FsEvent) -> String {
 const SUMMARY_EVENTS: usize = 3;
 
 /// The one line a flush leaves in the diagnostics feed — and so in the GUI's
-/// message panel (spec-file-tracking "Event batching").
+/// message panel (doc "Event batching").
 ///
 /// A flush runs because the watcher saw something, never on a timer, but the
 /// events it saw may all be about ignored paths: from outside, that flush is
@@ -418,7 +418,7 @@ fn flush_pending_once(repo: &RepoState, report: FlushReport) -> Result<FlushStat
     if repo.is_rollback_locked() {
         return Ok(FlushStats::default());
     }
-    // Ingestion paused (spec-file-tracking "Pausing ingestion"): the watcher
+    // Ingestion paused (doc "Pausing the watcher"): the watcher
     // keeps buffering, nothing is applied until a resume.
     if repo.is_ingestion_paused() {
         return Ok(FlushStats::default());
@@ -442,8 +442,7 @@ fn flush_pending_once(repo: &RepoState, report: FlushReport) -> Result<FlushStat
     // the now-empty buffer and is picked up by the next round. On any path that
     // does not apply the batch, it goes back (`return_pending`).
     // Read *before* draining: every touching batch counted here is already in
-    // the buffer, hence in this flush (spec-file-tracking "Rules that are about
-    // to move").
+    // the buffer, hence in this flush (doc "Event batching").
     let touch_mark = repo.rules_touch_mark();
     let taken = take_pending(repo);
     if taken.is_empty() {
@@ -857,9 +856,9 @@ impl Apply<'_, '_> {
     /// Create for the directory, but inotify's recursive watch is only
     /// registered *after* the directory exists — anything already inside it
     /// never fires its own event (the classic recursive-watch race). Children
-    /// are ingested with arrival semantics (`ingest_arrival`), so a moved-in
-    /// subtree reuses orphaned metarecords by fingerprint rather than
-    /// duplicating them. Idempotent with any child events that did fire.
+    /// are ingested with arrival semantics (`ingest_arrival`), so what a move of
+    /// this batch brings keeps its metarecord rather than arriving as a
+    /// stranger. Idempotent with any child events that did fire.
     fn scan_dir(&mut self, rel: &RelPath) -> Result<()> {
         let mut stack = vec![rel.clone()];
         let mut ingested = 0usize;
@@ -913,9 +912,8 @@ impl Apply<'_, '_> {
     }
 
     /// Per-path arrival ingest (no subtree scan): refresh a known path, else
-    /// reuse an orphaned metarecord when a full-hash fingerprint confirms
-    /// identity (files only), otherwise create. Returns whether the path was
-    /// eligible.
+    /// re-pair it with a departure of this batch, otherwise create. Returns
+    /// whether the path was eligible.
     fn ingest_arrival(&mut self, rel: &RelPath) -> Result<bool> {
         if !self.eligible(rel)? {
             return Ok(false);
@@ -931,8 +929,7 @@ impl Apply<'_, '_> {
         // the user runs and not to the event path.
         // The other half of a move whose destination the watcher could not see
         // (a directory created in this same batch): re-pair it rather than let
-        // the file arrive as a stranger. Tried after the fingerprint search — an
-        // exact hash is stronger evidence — and it is the only chance a moved
+        // the file arrive as a stranger. It is the only chance a moved
         // *directory* gets.
         if let Some(from) = self.find_departed_match(rel)? {
             self.apply_rename(&from, rel)?;
@@ -1056,7 +1053,7 @@ impl Apply<'_, '_> {
         }
         // Snapshot every path *before* any write: `path_of` walks the store, and
         // clearing a parent's `mfr_path` would break its descendants' walk. `mfr_path_old` is a frozen String recording
-        // where the orphan last lived (spec-file-tracking "Orphan origin").
+        // where the orphan last lived (doc "Event semantics").
         let mut olds = Vec::with_capacity(descendants.len() + 1);
         for &u in std::iter::once(&uuid).chain(descendants.iter()) {
             olds.push((u, self.cache.path_of(self.writer.store(), "mfr_path", u)?));

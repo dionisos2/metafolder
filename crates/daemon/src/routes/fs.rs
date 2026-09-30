@@ -80,11 +80,11 @@ pub(super) async fn mounts(
     .await
 }
 
-/// The body all three `watch` routes answer with (spec-file-tracking "Watch
-/// status, pause and resume"): whether ingestion is paused, how many
+/// The body all three `watch` routes answer with (doc "Watcher endpoints"): whether ingestion is
+/// paused, how many
 /// filesystem events are waiting to be applied, how long the executor waits
 /// before applying them (`quiet_period_ms`), which watch source is active
-/// (`backend`, [[spec-file-tracking "Watch sources and regimes"]]), and —
+/// (`backend`, doc "Watch sources and regimes"), and —
 /// budget regime only — the two budget fields, which answer `null` under
 /// coverage: no per-directory state, nothing to run out of.
 ///
@@ -132,8 +132,8 @@ pub(super) async fn watch_status(
 }
 
 /// `POST /repos/:repo/watch/pause`: stops the flush in progress (if any) and
-/// keeps the executor from starting another (spec-file-tracking "Pausing
-/// ingestion"). The buffered events are left in place; a resume applies them.
+/// keeps the executor from starting another (doc "Pausing the watcher"). The buffered events are
+/// left in place; a resume applies them.
 ///
 /// Deliberately *not* run through `with_repo`: it must answer while a flush
 /// holds the connection — that is the whole point — so it touches only the
@@ -184,8 +184,8 @@ pub(super) struct WatchActivityBody {
 }
 
 /// `POST /repos/:repo/watch/activity`: how many watcher events were delivered
-/// under each of the given paths (recursive; spec-file-tracking "Watch
-/// activity"). In memory: never waits for the connection.
+/// under each of the given paths (recursive; doc "Watch activity"). In memory: never waits for the
+/// connection.
 pub(super) async fn watch_activity_of(
     State(state): State<Arc<AppState>>,
     Path(repo): Path<String>,
@@ -258,7 +258,7 @@ pub(super) struct WatchCheckBody {
 
 /// `POST /repos/:repo/watch/check`: the watcher's own answer for a batch of
 /// repo-root-relative paths — would a change at each be recorded?
-/// (spec-file-tracking "Watch check"). Where `POST /eligibility` explains the
+/// (doc "Checking whether a path is watched"). Where `POST /eligibility` explains the
 /// tracking algorithm, this consults the *live watch set*: a tracked path
 /// inside a watch-excluded subtree, under `.metafolder/internal/`, or on an
 /// unplugged volume is still not watched, and the response names why.
@@ -285,7 +285,7 @@ pub(super) async fn watch_check(
     with_repo(&state, repo_uuid, move |repo_state| {
         // What the answer is computed against is regime-specific: the live
         // watch set in the budget regime, the tree itself under coverage
-        // (spec-file-tracking "Watch check").
+        // (doc "Checking whether a path is watched").
         let watched = repo_state.watched_dir_set();
         let coverage = if repo_state.watch_budget_regime() {
             crate::watcher::Coverage::Watches(&watched)
@@ -541,7 +541,7 @@ pub(super) struct WatchExceededBody {
 }
 
 /// `GET /repos/:repo/watch/exceeded`: the subtree roots left unwatched for want
-/// of budget (spec-file-tracking "The watch budget").
+/// of budget (doc "The watch budget").
 pub(super) async fn watch_exceeded_list(
     State(state): State<Arc<AppState>>,
     Path(repo): Path<String>,
@@ -573,7 +573,7 @@ pub(super) async fn watch_exceeded_list(
 /// what to give up first: watching that subtree would need watches that are not
 /// there, and silently doing nothing would be worse than saying so. The
 /// coverage regime has no headroom to run out of and always allows the clear
-/// (spec-file-tracking "Watch sources and regimes").
+/// (doc "Watch sources and regimes").
 pub(super) async fn watch_exceeded_set(
     State(state): State<Arc<AppState>>,
     Path(repo): Path<String>,

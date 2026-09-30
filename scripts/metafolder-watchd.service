@@ -1,4 +1,4 @@
-# The metafolder fanotify broker (docs/watcher-fanotify.md "The broker").
+# The metafolder fanotify broker (doc "The fanotify broker").
 #
 # Install (and update): make install-watchd — builds the broker, installs it
 # at /usr/local/bin, creates its system user (metafolder-watchd.sysusers),

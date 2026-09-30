@@ -1,5 +1,5 @@
 //! HTTP-level tests for `GET /repos/:repo/watch` and its pause/resume pair
-//! (spec-file-tracking "Watch status, pause and resume").
+//! (doc "Watcher endpoints").
 
 use axum::body::Body;
 use axum::http::{Request, StatusCode};
@@ -92,7 +92,7 @@ async fn watch_on_an_unknown_repository_is_404() {
     assert_eq!(status, StatusCode::NOT_FOUND);
 }
 
-// ── Watch check (spec-file-tracking "Watch check") ───────────────────────────
+// ── Watch check (doc "Checking whether a path is watched") ───────────────────────────
 
 async fn check_paths(app: &Router, repo: &str, paths: Value) -> (StatusCode, Value) {
     request(app, "POST", &format!("/repos/{repo}/watch/check"), Some(paths)).await
@@ -376,7 +376,7 @@ async fn watch_check_validates_its_input() {
     assert_eq!(status, StatusCode::NOT_FOUND);
 }
 
-// ── Watch activity (spec-file-tracking "Watch activity") ────────────────────
+// ── Watch activity (doc "Watch activity") ────────────────────
 
 /// Feeds events to the repository's activity counter as the watcher would.
 fn deliver(state: &AppState, repo: &str, paths: &[&str]) {

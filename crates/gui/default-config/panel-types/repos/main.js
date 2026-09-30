@@ -216,8 +216,8 @@ export async function mount(root, metafolder) {
   // Poll the daemon for in-flight tasks (doc "Tasks") and surface the active
   // ones under their repository, each with a Stop button when the daemon says
   // the task can be stopped (`cancellable`, doc "Cancelling a task") — stopping
-  // a flush pauses the repository's tracking (spec-file-tracking "Pausing
-  // ingestion"), which the row below then offers to resume.
+  // a flush pauses the repository's tracking (doc "Pausing the watcher"), which the row below then
+  // offers to resume.
 
   async function pollTasks() {
     /** @type {Task[]} */
@@ -356,7 +356,7 @@ export async function mount(root, metafolder) {
 
     // Someone else holds the watches. Transient and external, so the daemon
     // records nothing — which is exactly why it has to be visible for as long
-    // as it lasts (spec-file-tracking "Two different failures").
+    // as it lasts (doc "The watch budget").
     if (budget.starved) {
       notices.push(
         el(

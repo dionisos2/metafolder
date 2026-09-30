@@ -542,7 +542,7 @@ export async function mount(root, metafolder) {
     return found.every(Boolean) ? found[0] : null;
   }
 
-  // ── Watch note (spec-file-tracking "Watch check") ─────────────────────────
+  // ── Watch note (doc "Checking whether a path is watched") ─────────────────────────
 
   /** The fetched watch state of the displayed record. Keyed on the loaded
    *  object (a `metarecords:dirty` reload re-resolves), like pathsMemo.
@@ -598,7 +598,7 @@ export async function mount(root, metafolder) {
     else watchNote.hidden = true;
   }
 
-  /** The watch activity note (spec-gui "Watch activity"): how many watcher
+  /** The watch activity note (doc "Watch activity"): how many watcher
    *  events arrived at the record's file (under it, for a directory) since the
    *  load. Were there several paths (an older repository's multi-position
    *  record), the busiest one is shown — the counts of nested paths overlap,

@@ -1,0 +1,26 @@
+title: What a flush reports
+tags: [[Watcher]]
+kind: reference
+summary: Every flush that applied something writes one diagnostics line — events, time, revisions, ineligible paths turned away, and the first few events.
+
+A flush with something to apply records ''one line'' in the diagnostics feed (`info`,
+scope `executor`, [[Health and diagnostics]]), which the GUI's message panel shows:
+
+```
+flush on photos: 2 events in 3 ms -> nothing written (2 ignored); touched /x, modified /y
+```
+
+The repository, the number of events ''after compaction'', the time, the revisions
+written, the paths turned away as ineligible, and the first events (the rest counted as
+`(+N more)`).
+
+The ''ignored'' count is why the line exists. A flush never runs on a timer — the
+executor sleeps until the watcher pings it — so a flush means the watcher really saw
+something; one that wrote nothing would otherwise look like a flush for no reason. The
+line names the path responsible. Since ineligible events are dropped at ingestion
+([[Event batching]]) such flushes are rarer: while that filter is off, or for a path
+whose rules changed between ingestion and the flush.
+
+A flush with an empty buffer reports nothing and registers no task. A flush that ran
+registers a `flush` task, stoppable from the repos panel or `mf task show --stop`
+([[Pausing the watcher]]).

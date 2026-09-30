@@ -158,8 +158,8 @@ mod tests {
 
     #[test]
     fn test_an_info_line_reads_like_any_other() {
-        // What each watcher flush leaves behind (spec-file-tracking "What a
-        // flush reports"): routine, and marked no differently from a warning.
+        // What each watcher flush leaves behind (doc "What a flush reports"): routine, and marked
+        // no differently from a warning.
         let page = json!({
             "entries": [
                 { "level": "info", "scope": "executor",

@@ -88,7 +88,7 @@ pub fn clear_orphans(repo: &RepoState, uuids: &[Uuid]) -> Result<usize, ApiError
         }
         // Snapshot every path *before* any write: clearing a parent's `mfr_path`
         // would break its descendants' `path_of` walk (mirrors the watcher's
-        // `apply_remove`; spec-file-tracking "Orphan origin").
+        // `apply_remove`; doc "Event semantics").
         let descendants = cache.descendants(writer.store(), "mfr_path", uuid)?;
         let mut olds = Vec::with_capacity(descendants.len() + 1);
         for &u in std::iter::once(&uuid).chain(descendants.iter()) {

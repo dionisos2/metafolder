@@ -1,0 +1,13 @@
+title: Watcher pitfalls
+tags: [[Watcher]]
+kind: reference
+audience: dev
+summary: Mistakes the watcher has made and must not make again — a blocking callback, literal readings that lose identity, echoes destroying derived data, client timers guessing the quiet period.
+
+* ''The event callback must never block.'' The backend delivers events and serves watch placements from one thread. Placing a new directory's watch from the callback, while holding the repository's connection, froze the whole daemon on the creation of any directory (every request hung): the event loop waited on a connection held by a write waiting on the event loop. The callback only translates and hands over to the ingest thread (`watcher::start`), which does the rest. Covered by `watcher_e2e::test_new_directory_does_not_wedge_the_daemon`. A test that "hangs" was this deadlock, not the container — look at the threads' `/proc/<tid>/wchan` (a `futex_do_wait`) before blaming the environment.
+* ''Literal readings lose identity.'' Three bugs (August 2026), all invisible to tests that stated the expected result by hand: a move into a just-created directory (half an event, see [[Event semantics]]); overwriting a tracked file (`mv a b`, a download, an editor's atomic save) violating the forest's unique position — the flush failed and, with the old persistent buffer, was replayed for ever: tracking dead, restart included; swapping two files through a temporary name, which compaction collapsed into a cycle. The re-pairing that fixed the first was then quadratic (400 + 400 files held the repository 14 s) — tested by a ratio, not a duration.
+* ''An echo must not destroy derived data.'' A refresh skipped only when the stat matched ''and'' the hashes were already absent, so every redundant event erased a valid hash cache — and a duplicate scan's result a second after it ended. The symptom was an intermittent CLI end-to-end test, one failure in five; the same test in-process was stable, the difference being the shared daemon's live watcher. For a flaky end-to-end test on metadata, compare with the in-process one first, and assert stage by stage. (And `cargo test -p metafolder-cli --test cli_e2e` does not always rebuild the `mf` binary it runs: build it first.)
+* ''Never hard-code a delay waiting for the watcher.'' Three panels had catch-up timers tuned for a 500 ms quiet period; at 2 s they all fired before the flush. Clients read `quiet_period_ms` from `GET /watch` (the `panel-shim/watcher-settle.js` helper schedules at quiet period + offset).
+* ''Never drop a lone half of a rename'' at ingestion: it breaks the correlation the flush relies on.
+
+The method that found most of these: [[Testing the watcher]].

@@ -1,0 +1,6 @@
+title: mf watch exceeded
+tags: [[CLI command]] [[Watcher]]
+kind: reference
+summary: Subtrees left unwatched for want of inotify watches (the budget)
+
+Manages `mfr_watch_exceeded`, the subtrees left uncovered; with no verb, lists them ([[The watch budget]]).

@@ -1,4 +1,4 @@
-//! Watch activity (spec-file-tracking "Watch activity"): how many filesystem
+//! Watch activity (doc "Watch activity"): how many filesystem
 //! events the watcher delivered under each path since the repository was
 //! loaded (or the counter last reset). In memory only — a diagnosis of where
 //! the event load comes from right now, not a history.

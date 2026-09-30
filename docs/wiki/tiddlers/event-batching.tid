@@ -1,0 +1,65 @@
+title: Event batching
+tags: [[Watcher]]
+kind: reference
+summary: Events wait in memory until the disk has been quiet for 2 s, then are filtered, re-paired, compacted and split by kind into revisions.
+
+The watcher does not apply events one by one: it buffers them ''in memory'', and the
+executor applies the buffer once ''2 s'' pass with no new event
+(`watch-quiet-period-ms`, [[Daemon configuration]]). It was 500 ms, which made a save, a
+copy or an archive extraction — bursts longer than half a second — several flushes, each
+its own revision, burying your own changes in the log and spending the retention
+budget. The cost is latency: a change appears two seconds after the disk goes quiet. It
+is a debounce, not a cap: a stream with no two-second pause is flushed when it stops.
+A client waiting for the watcher reads the period from `GET /watch` (`quiet_period_ms`)
+rather than guessing.
+
+The buffer does ''not'' survive the daemon. It used to be persisted and replayed at
+load, which bought nothing — a daemon that is down misses every event meanwhile, so only
+a reconcile closes that gap, and it closes the buffer's too — and cost an `fsync` per
+event on the watcher's hot path and a failure mode of its own: a batch that could never
+apply was retried for ever, restart included, silently switching tracking off. In memory,
+a batch that fails goes back to the head of the buffer and is retried at the next flush,
+until the daemon stops.
+
+Ingestion is batched too: the ingest thread takes everything the backend has delivered
+(up to a few thousand events) at once, so a mass arrival costs a handful of lock
+acquisitions. Pasting N files is N `Create` events and ''one'' revision, undone as a unit.
+
+!! Filtering at ingestion
+
+An event on an ineligible path is dropped before it is buffered: it never reaches
+compaction, never holds the quiet period open, never makes a flush. Under coverage this
+is where an ignored subtree's load ends (a filesystem mark cannot exclude a subtree, and
+[[Watch activity]] still counts it). Only what cannot change the outcome is dropped:
+`Create`, `Remove`, `ModifyData`, `ModifyMeta` on an ineligible path; a `Rename` whose
+''both'' sides are ineligible; never a one-sided `RenameFrom`/`RenameTo`, which would
+break the correlation below. The flush checks eligibility again anyway.
+
+While the buffer holds a rename or a removal of a directory carrying a rule (or of an
+ancestor of one), filtering against the old positions would drop events the flush would
+keep — so filtering stops until a flush that drained that event has committed. A change
+of `mf_watch`/`mf_ignore` applies from the next ingest batch; events already dropped are
+not revisited.
+
+!! The flush
+
+''Step 1 — rename correlation.'' A rename delivered as a separate `RenameFrom`/`RenameTo` pair is fused back by the inotify cookie both halves carry — looked up by cookie, not by scanning the batch backwards, which was quadratic on dropping a folder in from outside (its `RenameTo` halves never have a partner).
+
+''Step 2 — compaction'', before any write:
+
+|!Within the window |!Becomes |
+|`Create A`, `Remove A` |nothing |
+|`Create A`, `Rename A→B` |`Create B` |
+|`Create A`, `Modify(Data) A` |`Create A` |
+|`Rename A→B`, `Rename B→C` |`Rename A→C` (but see below) |
+|`Modify(Data) A` × N |one `Modify(Data) A` |
+
+A rename chain is ''not'' collapsed when its destination is the source of a rename still
+to apply: swapping two files through a temporary name (`A→TMP`, `B→A`, `TMP→B`) would
+collapse to the cycle `A→B`, `B→A`, which no order can apply. The hop through the
+temporary name breaks the cycle, as it did on disk.
+
+''Step 3 — split by kind.'' The compacted operations are grouped by resulting operation type; each group is one revision, committed in the order of its first event. So a batch of 5 creations and 2 modifications is two revisions — never a mix of kinds, each undone on its own. A very large copy arriving over more than the window may be split across flushes; each part is still undone on its own.
+
+The revisions carry `origin = watcher`, which is how an undo tells your changes from the
+watcher's. What each event does: [[Event semantics]].

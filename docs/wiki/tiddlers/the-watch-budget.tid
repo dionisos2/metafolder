@@ -1,0 +1,50 @@
+title: The watch budget
+tags: [[Watcher]]
+kind: reference
+aliases: mfr_watch_exceeded
+summary: inotify costs one kernel watch per directory from a per-user supply; the daemon caps its share, records the subtrees it could not afford as mfr_watch_exceeded, and reports a kernel refusal as a state.
+
+inotify holds one watch per directory — there is no recursive watch — so a tree of N
+eligible directories costs N kernel watches out of `fs.inotify.max_user_watches`, a
+''per-user'' supply shared with every other program that watches files, each watch
+costing about a kilobyte of unswappable kernel memory. (This is the budget regime's
+own: the coverage regime has nothing per directory to budget.)
+
+''The share.'' `[settings] watch-budget-share` (percent, default 50) caps what one
+daemon spends: `cap = max_user_watches × share ÷ 100` ([[Daemon configuration]]). A
+self-imposed ceiling, not a reservation — the kernel exposes the limit, not what is
+free.
+
+!! Two different failures
+
+* ''Our cap is reached'': the repository wants more than this daemon will spend — a lasting property of this repository on this machine, so it is ''recorded'': `mfr_watch_exceeded` on the frontier.
+* ''The kernel refuses (`ENOSPC`) under our cap'': something else took the watches — transient and external, so ''nothing is written''; the placement stops there and `watch_budget.starved` says so for as long as it lasts (a state, not a message — the 500-entry diagnostics ring would evict the notice under its own repetitions). The repos panel shows it in red: nothing was recorded, and the remedy is outside metafolder.
+
+!! mfr_watch_exceeded
+
+A reserved field, inherited down `mfr_path` like `mf_watch` — the nearest ancestor
+defining it wins, a value set directly overrides. `true` means ''leave this subtree
+uncovered by the watcher'', and every regime honours it: the budget regime places no
+watch there, the coverage regime records no event under it.
+
+It means nothing else: the subtree stays tracked — reconcile walks it, queries return
+it, the scans consider it, `mf_watch` still says what you ''want'' watched. Changes there
+are noticed by the next reconcile instead of immediately.
+
+* The daemon writes it only on the ''frontier'' — the subtree roots the placement did not enter, never every directory beneath — which is what keeps it affordable in exactly the case that triggers it. Only the budget regime writes it on its own.
+* It is ''sticky'': never cleared by the daemon, so the uncovered set is stable across sessions and yours to reshape. Grown headroom shows in `watch_budget`; reclaiming it is explicit.
+* Writing it takes effect at once (re-placement, or a new event filter).
+* Setting it is always allowed. Clearing it is refused with `409` in the budget regime when there is no headroom, naming what to set first; under coverage it is always allowed.
+* It does not travel through sync: what is left uncovered is a fact about one machine.
+
+```
+mf -n big watch exceeded                   # the subtrees carrying it, with the budget line
+mf -n big watch exceeded set /archive      # leave /archive uncovered, freeing its watches
+mf -n big watch exceeded clear /archive    # cover it again (409 without headroom)
+```
+
+`mf watch status` adds a line when the budget is in trouble; the repos panel shows
+`N subtree(s) unwatched` (amber, a button listing them — `repos:watch-exceeded`). It is
+not a remedy for a noisy directory — that is `mf_watch = false` or a pattern
+([[Watch activity]]). Tested by lowering `watch-budget-share` until an ordinary fixture
+exceeds it.

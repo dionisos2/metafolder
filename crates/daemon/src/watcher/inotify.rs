@@ -1,10 +1,10 @@
-//! The inotify watch source — the *budget* regime of spec-file-tracking "Watch
-//! sources and regimes": one *non-recursive* watch per eligible directory,
+//! The inotify watch source — the *budget* regime of doc "Watch sources and regimes": one
+//! *non-recursive* watch per eligible directory,
 //! placed and maintained by hand, out of a per-user kernel budget shared with
 //! every other program on the machine that watches files. The `notify` crate's
 //! recursive mode does exactly this internally (a walk plus one watch per
 //! directory), so the placement is done here explicitly, where its cost, its
-//! budget and its failures are visible (spec-file-tracking "The watch budget").
+//! budget and its failures are visible (doc "The watch budget").
 //!
 //! Watches are placed **only on eligible directories** (the opt-in
 //! `mf_watch`/`mf_ignore` scope, doc "Watch and ignore fields"). This
@@ -44,7 +44,7 @@ use crate::tree_cache::TreeCache;
 use crate::watcher::{Placement, Regime};
 
 /// The name of the notify backend this source runs on — what `GET /watch`
-/// reports as `backend` (spec-file-tracking "Watch sources and regimes").
+/// reports as `backend` (doc "Watch sources and regimes").
 pub const fn platform_backend_name() -> &'static str {
     if cfg!(target_os = "linux") {
         "inotify"
@@ -74,8 +74,7 @@ pub(crate) struct Source {
 impl Source {
     /// Adds a non-recursive watch on `dir` (idempotent). Returns whether the
     /// directory is now watched. Failures are swallowed: one unreadable/racing
-    /// directory must never abort watching the rest (spec-file-tracking "File
-    /// Watcher").
+    /// directory must never abort watching the rest (doc "Watcher").
     ///
     /// `quiet` suppresses the per-directory warning, for the bulk placement
     /// that reports its failures as one summary instead.
@@ -173,7 +172,7 @@ pub fn kernel_watch_limit() -> Option<usize> {
 }
 
 /// How many watches this daemon will spend: `share` percent of the kernel's
-/// limit (spec-file-tracking "The watch budget").
+/// limit (doc "The watch budget").
 ///
 /// A ceiling it imposes on itself, not a reservation: the kernel exposes the
 /// limit, never what is still available, and nothing can be reserved. The floor
@@ -218,7 +217,7 @@ fn budget_report(unwatched: usize, watched: usize) -> Option<String> {
 }
 
 /// What a placement decided: the directories to watch, and the subtree roots the
-/// budget could not afford (spec-file-tracking "The watch budget").
+/// budget could not afford (doc "The watch budget").
 pub struct WatchPlan {
     pub dirs: HashSet<PathBuf>,
     /// Repo-root-relative paths to record as `mfr_watch_exceeded`. Only the
@@ -364,7 +363,7 @@ impl Walk<'_> {
 fn collect_eligible_dirs(root: &Path, base: &RelPath, rules: &WatchRules, walk: &mut Walk) {
     // Each entry carries the exclusion inherited from its ancestors, so the
     // nearest-ancestor rule costs one field read per directory and not one
-    // ancestor chain (spec-file-tracking "The watch budget").
+    // ancestor chain (doc "The watch budget").
     let mut stack = vec![(base.clone(), false)];
     while let Some((dir, inherited_excluded)) = stack.pop() {
         let abs = dir.to_abs(root);
@@ -508,8 +507,7 @@ fn maintain_watches(
         source.watch_dir(dir);
     }
     // A directory that arrived into a full budget is recorded like any other
-    // frontier, so the choice survives the session (spec-file-tracking "The
-    // watch budget").
+    // frontier, so the choice survives the session (doc "The watch budget").
     if !frontier.is_empty() {
         repo.record_watch_frontier(&frontier);
     }
@@ -588,7 +586,7 @@ impl crate::watcher::Source for Source {
         let watched = self.watched_count();
         // Refused by the kernel while under our own ceiling: another program is
         // holding the budget. Transient and external — reported, never recorded
-        // (spec-file-tracking "Two different failures").
+        // (doc "The watch budget").
         if let Some(report) = budget_report(starved, watched) {
             crate::diagnostics::error_for("watcher", report, self.repo);
         }

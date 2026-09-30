@@ -1,0 +1,33 @@
+title: Watcher endpoints
+tags: [[Watcher]]
+kind: reference
+audience: dev
+summary: GET /watch and pause/resume, watch check, the activity counts, the exceeded subtrees — the watcher's HTTP surface.
+
+|!Route |!Does |
+|`GET /repos/:repo/watch` |the watch status (below) |
+|`POST /repos/:repo/watch/pause` |pauses ingestion, stopping the flush in progress; answers the status |
+|`POST /repos/:repo/watch/resume` |resumes and pings the executor; answers the status |
+|`POST /repos/:repo/watch/check` |`{"paths": [...]}` (≤ 1000) → one verdict per path ([[Checking whether a path is watched]]) |
+|`POST /repos/:repo/watch/activity` |`{"paths": [...]}` (≤ 1000) → `{"since_ms", "total", "results": [{"path", "events"}]}` |
+|`GET /repos/:repo/watch/activity?path=&limit=` |one path's count and its busiest direct children (default the root, 50) |
+|`POST /repos/:repo/watch/activity/reset` |forgets every count → `{"since_ms", "total": 0}` |
+|`GET /repos/:repo/watch/exceeded` |the directories carrying `mfr_watch_exceeded` |
+|`POST /repos/:repo/watch/exceeded` |`{"path": "/dir", "exceeded": true}` sets it (always allowed), `false` clears it (`409` without headroom, budget regime) |
+
+```
+{"paused": true, "pending_events": 12043, "quiet_period_ms": 2000, "backend": "inotify",
+ "backend_reason": "no broker at /run/metafolder/watchd.sock", "watched_dirs": 22838,
+ "watch_budget": {"limit": 524288, "share": 50, "cap": 262144, "starved": false, "exceeded_dirs": 3}}
+```
+
+* `paused` — in memory: a reload or restart starts unpaused. `pending_events` — events in the buffer, exact, read without the repository's lock, so it answers while the flush being stopped holds it.
+* `quiet_period_ms` — so a client that just changed the disk itself (the GUI renaming or trashing a file) schedules its re-read from it, not from a guess.
+* `backend`, `backend_reason` ([[Watch sources and regimes]]); `watched_dirs` and `watch_budget` are `null` under coverage ([[The watch budget]]).
+
+Pausing and resuming are idempotent (`200`, nothing changes). The check's answer carries,
+per path: `watched`, `reason`, `watched_dir` (the directory the answer was computed
+against), the path's own eligibility dry run (`eligible`, `eligibility_reason`,
+`watch_scope`, `ignore_source`, `pattern`) and its directory's (`dir_…`), `excluded_by`
+for `excluded`, `offline_mount` for `offline`. The activity routes answer from memory,
+never waiting for the repository.

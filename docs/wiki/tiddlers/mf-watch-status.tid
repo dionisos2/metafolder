@@ -1,0 +1,6 @@
+title: mf watch status
+tags: [[CLI command]] [[Watcher]]
+kind: reference
+summary: Show whether ingestion is running or paused — the default
+
+One line — `running` or `paused`, the buffered events, the coverage and its source (`22838 directory(ies) watched (inotify)`, `tree covered (fanotify)`) — plus a line when the watch budget is in trouble, and why the broker is not used when it is not ([[Watcher endpoints]]).

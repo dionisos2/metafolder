@@ -737,8 +737,8 @@ export async function mount(root, metafolder) {
   }
 
   /** Marks the row/card when the watcher will not record a change at the
-   *  tracked file: amber, with the reason on hover (spec-file-tracking "Watch
-   *  check"). A watched record — the normal case — stays unmarked; the reason
+   * tracked file: amber, with the reason on hover (doc "Checking whether a path is watched"). A
+   * watched record — the normal case — stays unmarked; the reason
    *  is still on hover. The verdict comes from the page's batch fetch
    *  (prepareNow), so this is a synchronous read: an entry missing means
    *  "unknown" (no paths, or no answer) and marks nothing.

@@ -1,6 +1,6 @@
 //! The systemd unit is part of the broker's security: it is what grants the two
 //! capabilities, and what takes everything else away. These tests hold it to
-//! that (docs/watcher-fanotify.md "The broker").
+//! that (doc "The fanotify broker").
 
 use std::collections::HashMap;
 use std::path::PathBuf;

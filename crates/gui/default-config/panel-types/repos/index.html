@@ -86,7 +86,7 @@
         color: var(--mf-error, #c44c56);
       }
       /* Paused tracking: amber, like an unavailable volume — a state to act
-         on, not an error (spec-file-tracking "Pausing ingestion"). */
+         on, not an error (doc "Pausing the watcher"). */
       .repo-watch:not(:empty) {
         display: flex;
         align-items: center;
@@ -113,7 +113,7 @@
       }
       /* The kernel refusing watches to a daemon under its own ceiling is
          someone else's doing and nothing was recorded: an error, not a state
-         the user chose (spec-file-tracking "Two different failures"). */
+         the user chose (doc "The watch budget"). */
       .watch-starved {
         color: var(--mf-error, #c44c56);
       }

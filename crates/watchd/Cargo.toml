@@ -4,7 +4,7 @@ version = "0.3.0"
 edition = "2021"
 publish = false
 
-# The privileged fanotify broker (docs/watcher-fanotify.md "The broker"): a
+# The privileged fanotify broker (doc "The fanotify broker"): a
 # library — the protocol, the permission filter and the fanotify reader, so the
 # daemon links the protocol and tests can drive the server with synthetic
 # events — plus the `metafolder-watchd` binary that wires them together.

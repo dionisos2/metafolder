@@ -1,5 +1,5 @@
-//! The privileged fanotify broker (spec-file-tracking "Watch sources and
-//! regimes"; design: docs/watcher-fanotify.md). One process per machine holds
+//! The privileged fanotify broker (doc "Watch sources and regimes"; design:
+//! doc "The fanotify broker"). One process per machine holds
 //! the fanotify group that covers the filesystems of every subscribed repository
 //! root, resolves the file handles the kernel reports into paths, and streams
 //! the events to subscribers over a Unix socket — filtered per subscriber, so

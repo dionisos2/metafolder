@@ -1,0 +1,6 @@
+title: mf watch pause
+tags: [[CLI command]] [[Watcher]]
+kind: reference
+summary: Stop the flush in progress and pause ingestion (nothing is lost)
+
+Stops the flush in progress (its group abandoned, its events kept) and keeps the next from starting ([[Pausing the watcher]]).

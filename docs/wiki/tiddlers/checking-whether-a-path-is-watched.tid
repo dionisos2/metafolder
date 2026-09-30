@@ -1,0 +1,38 @@
+title: Checking whether a path is watched
+tags: [[Watcher]]
+kind: guide
+summary: mf watch check asks the live coverage whether a change at a path would be recorded — one step past eligibility — and says why not.
+
+Eligibility says whether a path ''should'' be tracked ([[Eligibility]]); `mf watch
+check` asks whether a change there ''would be recorded now'' — the live coverage. The two
+can disagree:
+
+```
+mf -n docs watch check ./note.txt build/out.o /archive/x.tgz
+watched      	/docs/note.txt	(changes under /docs are recorded)
+NOT watched  	/build/out.o	— matches the mf_ignore pattern "(^|/)build(/.*)?$" of /
+NOT watched  	/archive/x.tgz	— inside /archive (mfr_watch_exceeded — deliberate `mf watch exceeded set`, or the watch budget's frontier)
+```
+
+Paths are filesystem paths (absolute or relative to the current directory), made
+repository-relative; a `/`-leading path that no longer exists is taken as already
+repository-relative (an orphan's stale path). The exit code is 1 when any path is not
+watched, so a script can assert on it. `--json` prints the raw answer.
+
+The reasons, in the order they decide:
+
+|!Reason |!Why not watched |
+|`watched` |— it is |
+|`untracked` |the path, or the directory covering it, is not eligible — including a file under a directory a pattern matched alone: the walk pruned the directory, so nothing can cover it |
+|`excluded` |under a subtree carrying `mfr_watch_exceeded` ([[The watch budget]]), in either regime |
+|`offline` |its mount point has nothing mounted |
+|`internal` |under `.metafolder/internal/`, never watched |
+|`unwatched` |eligible but uncovered for no recorded reason: the kernel refused the watch (starved) — the budget regime's alone |
+
+"Watched" for a directory is its own coverage; for anything else, its containing
+directory's. The answer is the live truth, not what the fields ask for. A paused
+repository answers the same — coverage stays, events buffer.
+
+In the GUI, the metarecord list marks unwatched records in amber (the reason on hover),
+and the metarecord detail panel states the verdict. A missing answer — the daemon down
+or older than the endpoint — is "unknown", never "unwatched".

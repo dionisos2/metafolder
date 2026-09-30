@@ -1,6 +1,6 @@
-//! The fanotify watch source — the *coverage* regime of spec-file-tracking
-//! "Watch sources and regimes". It is a *client* of the machine's fanotify
-//! broker (crates/watchd, docs/watcher-fanotify.md): one kernel registration
+//! The fanotify watch source — the *coverage* regime of doc "Watch sources and regimes".
+//! It is a *client* of the machine's fanotify
+//! broker (crates/watchd, doc "The fanotify broker"): one kernel registration
 //! covers the repository root, and the events arrive over a Unix socket, each
 //! one already narrowed to what this daemon's own uid may see. No
 //! per-directory watches, no budget, no placement walk — `refresh` has nothing
@@ -9,7 +9,7 @@
 //! The broker is a separate process and can go away. The client then says so
 //! and reconnects for ever: events in between are lost, exactly like the events
 //! of a daemon that was down, and a `reconcile` is what closes the gap
-//! (spec-file-tracking "Event batching"). The *first* connection is different:
+//! (doc "Event batching"). The *first* connection is different:
 //! it is made synchronously, so a load that wanted fanotify either knows it is
 //! covered or falls back (or fails) with the reason.
 
@@ -145,8 +145,7 @@ impl Source {
                             }
                             // Events while the connection was down are gone,
                             // like those of a daemon that was down: the gap
-                            // closes with a reconcile (spec-file-tracking
-                            // "Event batching").
+                            // closes with a reconcile (doc "Event batching").
                             crate::diagnostics::error_for(
                                 "watcher",
                                 format!(
@@ -327,7 +326,7 @@ impl crate::watcher::Source for Source {
         // Coverage is the kernel's: one mark per mount holds the whole tree,
         // whatever eligibility says. Nothing to place, nothing to run out of —
         // `mfr_watch_exceeded` is honoured by the event filter instead
-        // (spec-file-tracking "Watch sources and regimes").
+        // (doc "Watch sources and regimes").
         Placement { watched: 0, starved: 0, frontier: Vec::new() }
     }
 

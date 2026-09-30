@@ -1,5 +1,5 @@
 //! Tests for the pending-event executor: compaction, revision grouping, and
-//! filesystem event semantics (spec-file-tracking "File Watcher").
+//! filesystem event semantics (doc "Watcher").
 
 use std::path::Path;
 use std::sync::Arc;
@@ -240,7 +240,7 @@ fn test_create_directory_scans_its_existing_contents() {
     // arrives as one Create for the directory, but its contents already existed
     // before a recursive watch could be registered, so their own events are
     // lost. The executor must scan a newly-created directory and track what is
-    // already inside it (spec-file-tracking "File Watcher").
+    // already inside it (doc "Watcher").
     let (repo, root, _) = setup("dirscan");
     write_file(&root, "backup/a.txt", b"a");
     write_file(&root, "backup/sub/b.txt", b"bb");
@@ -1243,7 +1243,7 @@ fn test_a_cascade_larger_than_the_limit_is_refused() {
     assert_eq!(field_value(&repo_state, small, "mfr_path"), Some(Value::Nothing));
 }
 
-// ── Buffering the events (spec-file-tracking "Event batching") ───────────────
+// ── Buffering the events (doc "Event batching") ───────────────
 
 #[test]
 fn test_enqueue_all_buffers_a_batch_as_one_transaction() {
@@ -1276,7 +1276,7 @@ fn test_enqueue_all_buffers_a_batch_as_one_transaction() {
     assert!(resolve(&repo, "/b.txt").is_some());
 }
 
-// ── Stopping a flush (spec-file-tracking "Pausing ingestion") ─────────────────
+// ── Stopping a flush (doc "Pausing the watcher") ─────────────────
 
 /// The number of buffered filesystem events left waiting.
 fn pending_events(repo: &RepoState) -> usize {

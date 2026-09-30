@@ -1,5 +1,5 @@
 //! Per-subscriber permission filtering — the invariant of
-//! docs/watcher-fanotify.md ("Permissions"): *no hop reveals more than the next
+//! doc "The fanotify broker": *no hop reveals more than the next
 //! hop's own credentials could discover by walking the filesystem.* The broker
 //! runs privileged and sees the whole mount; a subscriber learns of an entry
 //! only if its own uid could reach the entry's parent directory and list it.

@@ -23,8 +23,7 @@ use crate::tree_cache::TreeCache;
 const SLOW_EVENT: std::time::Duration = std::time::Duration::from_secs(1);
 
 /// The published rule index of a repository, with the two counters that say
-/// whether the ingest thread may filter against it (spec-file-tracking
-/// "Filtering at ingestion", "Rules that are about to move").
+/// whether the ingest thread may filter against it (doc "Event batching").
 #[derive(Default)]
 struct RulesSlot {
     rules: Option<Arc<crate::eligibility::WatchRules>>,
@@ -85,7 +84,7 @@ pub struct RepoState {
     /// The kernel refused watches while this daemon was still under its own
     /// ceiling: another program holds the budget. A *state*, not a message —
     /// it lasts as long as the condition, so a client can keep it on screen
-    /// (spec-file-tracking "Two different failures").
+    /// (doc "The watch budget").
     starved_watches: std::sync::atomic::AtomicBool,
     /// Subtree roots carrying `mfr_watch_exceeded = true`, counted at each
     /// placement (see [`RepoState::exceeded_dirs`]).
@@ -102,14 +101,14 @@ pub struct RepoState {
     /// but the repository.
     watch_quiet_period: std::time::Duration,
     /// The watcher's buffered filesystem events, awaiting a flush
-    /// (spec-file-tracking "Event batching"). In memory, deliberately: a daemon
+    /// (doc "Event batching"). In memory, deliberately: a daemon
     /// that is down misses every event anyway, and closing *that* gap needs a
     /// reconcile — which closes this one too. Persisting the buffer bought no
     /// coherence, cost a transaction on the watcher's hot path, and made a batch
     /// the executor could not apply outlive a restart.
     pub pending: Mutex<Vec<(crate::executor::FsEvent, Option<i64>)>>,
     /// How many events the watcher delivered under each path since the load
-    /// (spec-file-tracking "Watch activity"). In memory, like the buffer, and
+    /// (doc "Watch activity"). In memory, like the buffer, and
     /// separate from `conn`: counting is on the ingest path and reading it must
     /// answer while a flush holds the connection.
     pub watch_activity: Mutex<crate::watch_activity::WatchActivity>,
@@ -124,8 +123,8 @@ pub struct RepoState {
     /// Mass-orphan circuit breaker (`[settings] orphan-cascade-limit`), read by
     /// the executor before applying a cascade.
     pub orphan_cascade_limit: usize,
-    /// Ingestion of filesystem events is paused (spec-file-tracking "Pausing
-    /// ingestion"): the watcher keeps buffering events into
+    /// Ingestion of filesystem events is paused (doc "Pausing the watcher"): the watcher keeps
+    /// buffering events into
     /// `pending_operation`, the executor applies none until a resume. Set by
     /// stopping a flush, and by `POST /watch/pause`. In memory like the task
     /// registry: a reload or a restart starts ingesting again.
@@ -476,7 +475,7 @@ impl RepoState {
     }
 
     /// Records the subtree roots the watch budget could not afford, as
-    /// `mfr_watch_exceeded = true` (spec-file-tracking "The watch budget").
+    /// `mfr_watch_exceeded = true` (doc "The watch budget").
     ///
     /// Only the frontier reaches here — the subtrees the placement did not
     /// enter — so a repository too large to watch does not also pay one write
@@ -500,7 +499,7 @@ impl RepoState {
     }
 
     /// The active watch source's wire name — `GET /watch`'s `backend`
-    /// (spec-file-tracking "Watch sources and regimes"). While the watcher is
+    /// (doc "Watch sources and regimes"). While the watcher is
     /// not running (unit tests, a repository being torn down) the platform's
     /// notify backend is named, so the view still answers.
     /// Why this repository is not on the fanotify broker, when it is not
@@ -521,7 +520,7 @@ impl RepoState {
     }
 
     /// Whether the watch-budget vocabulary applies to this repository's source
-    /// (spec-file-tracking "Watch sources and regimes"): `watch_budget` and
+    /// (doc "Watch sources and regimes"): `watch_budget` and
     /// `watched_dirs` carry nothing under the coverage regime, where one
     /// registration covers the tree and there is no per-directory state.
     pub fn watch_budget_regime(&self) -> bool {
@@ -767,8 +766,8 @@ impl RepoState {
             let mut p = Phase::begin(&who, "place the filesystem watches");
             let conn = self.conn.lock_recover();
             let watched = self.refresh_watches(&conn);
-            // What coverage looks like is regime-specific (spec-file-tracking
-            // "Watch sources and regimes"): one inotify watch per directory —
+            // What coverage looks like is regime-specific (doc "Watch sources and regimes"):
+            // one inotify watch per directory —
             // worth stating, the budget is per user and shared — or the whole
             // tree under one registration.
             p.detail(if self.watch_budget_regime() {
@@ -808,7 +807,7 @@ impl RepoState {
     }
 
     /// Whether the kernel is refusing watches although this daemon is under its
-    /// own ceiling (spec-file-tracking "Two different failures").
+    /// own ceiling (doc "The watch budget").
     pub fn starved_watches(&self) -> bool {
         self.starved_watches.load(std::sync::atomic::Ordering::Relaxed)
     }

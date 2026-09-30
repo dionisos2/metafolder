@@ -1,5 +1,5 @@
 //! The wire protocol between the broker and its subscribers
-//! (docs/watcher-fanotify.md "The broker"): one JSON object per line over a
+//! (doc "The fanotify broker"): one JSON object per line over a
 //! Unix stream socket — NDJSON, so a subscriber can be written in any language
 //! and the stream is readable while it runs.
 //!
@@ -108,7 +108,7 @@ fn decode_hex(hex: &str) -> Option<Vec<u8>> {
 }
 
 /// What the broker saw, in the daemon's own vocabulary — the `FsEvent` forms
-/// of spec-file-tracking "Event semantics", so a subscriber's translation is a
+/// of doc "Event semantics", so a subscriber's translation is a
 /// rename of fields and nothing more.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "kind", rename_all = "snake_case")]
@@ -159,7 +159,7 @@ impl Event {
     /// `roots` *and* `visible` says the subscriber could have discovered the
     /// path itself. A two-sided rename degrades to its one-sided form when the
     /// other side is out of scope — the same distinction the daemon draws for
-    /// a move that leaves the watched tree (spec-file-tracking "File Watcher").
+    /// a move that leaves the watched tree (doc "Watcher").
     pub fn adapt(
         &self,
         roots: &[PathBuf],

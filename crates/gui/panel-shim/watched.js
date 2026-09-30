@@ -1,5 +1,5 @@
-// Watch-state reporting for file metarecords (spec-file-tracking "Watch
-// check"), served at /__watched.js for panel types (metarecord-list row
+// Watch-state reporting for file metarecords (doc "Checking whether a path is watched"), served at
+// /__watched.js for panel types (metarecord-list row
 // marking, metarecord-detail note).
 //
 // "Watched" is the watcher's own truth, one step past the tracking algorithm:

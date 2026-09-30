@@ -94,8 +94,8 @@ export async function mount(root, metafolder) {
   let cursorIndex = -1;
   let constrainToRoot = true;
   let showHidden = false;
-  /** Order the entries by watch activity, busiest first (spec-gui "Watch
-   *  activity"), instead of the disk's order. */
+  /** Order the entries by watch activity, busiest first (doc "Watch activity"), instead of the
+   * disk's order. */
   let sortActivity = false;
   /** The directory's entries in the disk's order (hidden ones filtered), what
    *  `listing` is rebuilt from when the activity order changes.
@@ -109,7 +109,7 @@ export async function mount(root, metafolder) {
    *  @type {Map<string, import('./ignored.js').Exclusion>} */
   let excludedPaths = new Map();
   /** How many watcher events arrived under each listed entry since the load
-   *  (spec-gui "Watch activity"; recursive counts). Null when unknown — the
+   *  (doc "Watch activity"; recursive counts). Null when unknown — the
    *  daemon did not answer — which shows nothing rather than zeros.
    *  @type {import('/__activity.js').Activity|null} */
   let activity = null;
@@ -205,7 +205,7 @@ export async function mount(root, metafolder) {
   }
 
   // The watch activity of the directory and its rendered entries: one call for
-  // the window, like the eligibility (spec-gui "Watch activity").
+  // the window, like the eligibility (doc "Watch activity").
   async function refreshActivity() {
     const dir = currentDir;
     if (dir === null) return;

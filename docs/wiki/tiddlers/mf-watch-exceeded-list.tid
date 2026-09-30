@@ -1,0 +1,6 @@
+title: mf watch exceeded list
+tags: [[CLI command]] [[Watcher]]
+kind: reference
+summary: List the subtrees left unwatched for want of budget — the default
+
+The directories carrying `mfr_watch_exceeded`, with the budget line ([[The watch budget]]).

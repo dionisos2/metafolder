@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # End-to-end test of the fanotify broker against a real kernel, with real
-# privileges — the one thing the test suite cannot do (docs/watcher-fanotify.md
+# privileges — the one thing the test suite cannot do (doc "The fanotify broker"
 # "Tests": handle resolution needs CAP_DAC_READ_SEARCH in the *initial* user
 # namespace, which no container or user namespace grants).
 #

@@ -1,6 +1,6 @@
 //! `metafolder-watchd` — the privileged fanotify broker
-//! (docs/watcher-fanotify.md "The broker"; spec-file-tracking "Watch sources
-//! and regimes"). One per machine: it holds the fanotify group covering the
+//! (doc "The fanotify broker"; doc "Watch sources and regimes"). One per machine: it
+//! holds the fanotify group covering the
 //! filesystems of every subscribed repository root, and streams the events to the
 //! subscribers' daemons over a Unix socket — each seeing only what its own
 //! credentials could discover.

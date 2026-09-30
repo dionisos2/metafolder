@@ -4636,7 +4636,7 @@ fn test_repo_restore() {
 }
 
 // `mf watch activity` walks down from the root to where the watcher's events
-// come from (spec-file-tracking "Watch activity").
+// come from (doc "Watch activity").
 #[test]
 fn test_watch_activity_ranks_the_busy_subtree() {
     let (repo, root) = init_repo("watch_activity");

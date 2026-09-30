@@ -16,8 +16,8 @@
 pub mod engines;
 pub mod kv;
 
-/// The two watch sources a repository can run on (spec-file-tracking "Watch
-/// sources and regimes"): the inotify source, and the fanotify broker
+/// The two watch sources a repository can run on (doc "Watch sources and regimes"): the inotify
+/// source, and the fanotify broker
 /// (`metafolder-watchd`) when one answers — or the same broker over a
 /// simulated kernel ([`sim_broker`]), which needs no privilege and so runs
 /// everywhere.

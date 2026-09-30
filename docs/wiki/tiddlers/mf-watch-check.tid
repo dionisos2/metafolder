@@ -1,0 +1,6 @@
+title: mf watch check
+tags: [[CLI command]] [[Watcher]]
+kind: reference
+summary: Report whether the watcher records a change at each path
+
+One line per path, watched or not and why; exit code 1 when any is not ([[Checking whether a path is watched]]).

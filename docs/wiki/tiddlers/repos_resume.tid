@@ -1,0 +1,6 @@
+title: repos:resume
+tags: [[GUI command]] [[Watcher]]
+kind: reference
+summary: Repos: resume tracking on the active repository
+
+Resumes a paused repository's tracking — the repos panel's ''Resume'' button next to `tracking paused — N event(s) waiting` ([[Pausing the watcher]]).

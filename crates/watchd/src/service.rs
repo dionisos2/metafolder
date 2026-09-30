@@ -170,7 +170,7 @@ pub fn follow_mounts(
 /// Binds the socket, replacing a stale one. World-connectable *on purpose*:
 /// the gate is the per-uid filter, not the socket's mode — a subscriber can
 /// always connect and then learns only what its own uid may see
-/// (docs/watcher-fanotify.md "Permissions").
+/// (doc "The fanotify broker").
 pub fn bind(socket: &Path) -> Result<UnixListener> {
     bind_with(socket, |p| std::fs::set_permissions(p, std::fs::Permissions::from_mode(0o666)))
 }

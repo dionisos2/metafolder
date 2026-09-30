@@ -19,7 +19,8 @@ nothing: tracking is opt-in ([[Tracking a folder]]).
 repository already has the same name, keeping `-n <name>` unambiguous, or when
 another daemon holds its lock. The daemon answers at once and does the rest in
 the background as a `load` task ([[Tasks]]): reading the declared mount points,
-applying the filesystem events buffered meanwhile, starting the watcher.
+applying the restorations a skipped rollback step left, starting the watcher
+([[Watcher]]).
 `mf repo load` waits for it, drawing its progress (`--no-wait` returns at once).
 Until the load is done the repository describes itself (it is in `GET /repos`, its
 task names its phase) but answers every data request with `503`: no client reads

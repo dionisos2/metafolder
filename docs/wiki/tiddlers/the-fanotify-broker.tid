@@ -1,0 +1,67 @@
+title: The fanotify broker
+tags: [[Watcher]]
+kind: reference
+audience: dev
+aliases: watchd metafolder-watchd fanotify
+summary: metafolder-watchd, a small privileged service holding one fanotify group for the machine, marks filesystems, resolves handles to paths and streams each daemon what its user could see.
+
+''Why.'' The inotify source costs in three places: the placement walk at every load and
+eligibility change, the per-user watch budget (a large personal repository sits close to
+the limit), and one inotify instance per repository. fanotify covers a whole filesystem
+with one mark — but not unprivileged: since 5.13 an unprivileged group may mark
+''inodes only'', and directory monitoring is then non-recursive and racy.
+`FAN_MARK_FILESYSTEM` needs `CAP_SYS_ADMIN`. Hence a broker.
+
+`crates/watchd` (`metafolder-watchd`) runs as its own `metafolder-watchd` user
+(`scripts/metafolder-watchd.sysusers`, unit `scripts/metafolder-watchd.service`) holding
+`CAP_SYS_ADMIN` and `CAP_DAC_READ_SEARCH` and nothing else: no network, a read-only
+filesystem, kernel interfaces fenced off, a syscall filter, memory, task and descriptor
+ceilings, no `PrivateTmp` (it must name paths as the host does);
+`tests/service_unit.rs` holds the unit file to all of it. It holds ''one fanotify group
+for the machine'':
+
+* marks every filesystem holding a subscribed root, and each mounted beneath one, following `/proc/self/mountinfo` as mounts come and go;
+* resolves each event's file handles to a path (`open_by_handle_at`);
+* filters per subscriber and streams events as NDJSON over a Unix socket (`Subscribe`, `Subscribed`, `Event`, `Overflow`, `Error`).
+
+No business logic: no eligibility, no compaction — those stay in the daemon, which
+chooses the broker at load when `[settings] watchd-socket` answers. Paths on the wire are
+byte strings: a JSON string when they are text, else `{"text", "bytes"}` as on the
+daemon's API ([[Tree names]]).
+
+!! Permissions
+
+The deployment is strictly single-user (a bearer token per service). The rule at every
+hop: ''no hop reveals more than the next hop's own credentials could discover by walking
+the filesystem''. The broker identifies each subscriber by `SO_PEERCRED` and sends an
+event only if that uid, with its groups, could discover it walking down from its root —
+search every ancestor, ''list'' every directory from the root to the entry's parent.
+Subscribing to a root passes the same check, and so does resolving it (symlinks, `..`),
+one component at a time through directories the subscriber may traverse (resolving with
+the broker's own capability made `/secret/x/../../tmp` an oracle for `/secret/x`). Mode
+bits only: stricter than an ACL would be, never looser. The daemon then never reports a
+path it could not stat itself.
+
+The socket is world-connectable, so what a peer can make the broker hold is bounded: a
+message is at most 256 KiB, a uid 256 connections, the machine 1024, and a peer that
+hangs up is let go entirely.
+
+!! What the kernel allows — verified
+
+* ''A filesystem mark, not a mount mark.'' The kernel refuses every entry event (`FAN_CREATE`, `FAN_DELETE`, `FAN_MOVE*`, `FAN_RENAME`, `FAN_ATTRIB`) on `FAN_MARK_MOUNT` (EINVAL); the first broker used mount marks and could not have started. A filesystem mark reaches every mount of that filesystem — bind mounts, other namespaces — so events outside the roots arrive too: a directory's "under a root?" verdict is resolved once per directory handle and remembered (`Scope`), forgotten on any directory move.
+* ''Events carry handles, not paths'' (`FAN_REPORT_FID`); resolving needs `CAP_DAC_READ_SEARCH` and a live path on that filesystem — the broker keeps every subscribed root and mount of it and uses the first still there (keeping only the first root blinded every other repository on the disk once it was deleted). Descriptors live for one batch, so a drive can still be unmounted.
+* ''`FAN_RENAME` alone.'' It carries both sides in one event; a mark also asking for `FAN_MOVED_FROM`/`TO` gets each move three times, the one-sided pair read as a departure plus an arrival. The pair is asked for only before 5.17.
+* ''A handle outlives its path'': a moved directory keeps its handle, so every remembered handle → path answer is forgotten on a directory move.
+* ''The kernel merges unread events'' (`fanotify_should_merge`, up to 128 back): without `FAN_REPORT_TARGET_FID`, "`x` deleted" and a new "`x` created" merge into one `CREATE|DELETE`, order lost. With it, a repeated move `a→b, b→a, a→b` still merges; the broker checks each moved object's position at the end of a batch and puts back a hop that a merge made vanish (`restore_merged_moves`).
+* ''Info records are 4-aligned'': walking them by `len` rounded to 8 lost the new side of renames for some name lengths.
+* ''Versions'': `FAN_REPORT_FID` 5.1, `FAN_REPORT_DFID_NAME` 5.9, `FAN_REPORT_TARGET_FID` 5.17 (also 5.15.154, 5.10.220) — detected at startup.
+* ''Limits'': `max_user_groups`, `max_user_marks`, `max_queued_events`; an overflow is announced, never a silent gap. No events for `mmap` writes, none remote on network filesystems (inotify is the fallback), some FUSE report a zero fsid, a filesystem without export handles cannot be marked at all.
+
+!! Open
+
+A mark whose filesystem is still mounted elsewhere after it left a root cannot be lifted
+by path and stays until the broker restarts (its events are dropped by the filter).
+Events outside the roots still cost the kernel's queue; ignore marks
+(`FAN_MARK_IGNORE`, 6.0+) on busy outside directories would stop them there — not built.
+A per-repository override of the source has not been asked for. Testing it:
+[[Testing the watcher]].

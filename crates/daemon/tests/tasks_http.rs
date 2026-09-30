@@ -305,7 +305,7 @@ async fn cancel_flush_task_stops_it_and_pauses_ingestion() {
     // A flush is internal but its size is the user's doing, so it *is*
     // stoppable — and stopping it pauses the repository's tracking, or the next
     // event would start the very flush that was just stopped
-    // (spec-file-tracking "Pausing ingestion").
+    // (doc "Pausing the watcher").
     let (app, state, repo) = app_with_repo("cancelflush");
     let repo_uuid = Uuid::parse_str(&repo).unwrap();
     let id = state.repo(repo_uuid).unwrap().tasks.start(TaskKind::Flush);

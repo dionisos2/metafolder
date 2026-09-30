@@ -1,5 +1,5 @@
-//! The watch sources end to end (spec-file-tracking "Watch sources and
-//! regimes"): the source *choice* at load, and the fanotify source — a
+//! The watch sources end to end (doc "Watch sources and regimes"): the source *choice* at load, and
+//! the fanotify source — a
 //! stand-in broker on a Unix socket, events on the wire becoming metarecords
 //! through the real pipeline (client → ingest → executor).
 //!
@@ -174,7 +174,7 @@ fn dead_socket() -> PathBuf {
 #[test]
 fn test_without_a_broker_the_notify_source_watches_and_says_so() {
     // No option anywhere: the socket is probed, and the fallback is announced
-    // (spec-file-tracking "Watch sources and regimes"). The socket name is
+    // (doc "Watch sources and regimes"). The socket name is
     // unique per test, so the message is attributed exactly (the diagnostics
     // feed is process-wide and the tests run in parallel).
     let socket = dead_socket();
@@ -236,7 +236,7 @@ fn test_events_from_the_broker_become_metarecords() {
 #[test]
 fn test_an_excluded_subtree_is_not_recorded_under_the_coverage_source() {
     // `mfr_watch_exceeded` means *leave this subtree uncovered* in every
-    // regime (spec-file-tracking "Watch sources and regimes") — under coverage
+    // regime (doc "Watch sources and regimes") — under coverage
     // the daemon drops what happens there instead of having no watch on it.
     let socket = dead_socket();
     let (repo, root) = setup("excluded", fanotify_settings(&socket));

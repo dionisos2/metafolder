@@ -1,4 +1,4 @@
-// The watch-state shim (/__watched.js, spec-file-tracking "Watch check"):
+// The watch-state shim (/__watched.js, doc "Checking whether a path is watched"):
 // phrasing the daemon's per-path answers, and a metarecord's verdict from the
 // results of its several paths. The daemon call itself is thin — the phrasing
 // is what a user reads.

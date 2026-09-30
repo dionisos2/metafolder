@@ -1,4 +1,4 @@
-// metarecord-detail's watch note (spec-file-tracking "Watch check"): the
+// metarecord-detail's watch note (doc "Checking whether a path is watched"): the
 // verdict under the metarecord head — dim when watched, amber with the reason
 // when not — and the reconcile button's label following the fetched answer
 // rather than the record's raw `mf_watch` field (a record inheriting
@@ -213,7 +213,7 @@ describe('metarecord-detail watch note', () => {
     expect(p.note.hidden).toBe(true);
   });
 
-  // spec-gui "Watch activity": how many watcher events the record's file
+  // doc "Watch activity": how many watcher events the record's file
   // received since the load, and its share of the repository's.
   test('the activity note counts the events at the record, amber on a hot spot', async () => {
     activityCounts = { '': 1000, '/notes.txt': 400 };

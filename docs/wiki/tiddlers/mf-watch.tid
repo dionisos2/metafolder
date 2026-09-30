@@ -1,0 +1,6 @@
+title: mf watch
+tags: [[CLI command]] [[Watcher]]
+kind: reference
+summary: Watcher ingestion: show, pause or resume the recording of filesystem events, and check whether a path is watched
+
+The watcher of the selected repository: its status (the default), pausing and resuming, whether paths are watched, where events come from, and the subtrees left uncovered ([[Watcher]]).

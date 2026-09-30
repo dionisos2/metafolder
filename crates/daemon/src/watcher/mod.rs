@@ -1,14 +1,14 @@
-//! The filesystem watcher (spec-file-tracking "File Watcher"): translates the
+//! The filesystem watcher (doc "Watcher"): translates the
 //! source's events into [`crate::executor::FsEvent`]s, enqueues them in the
 //! persistent buffer and pings the executor. Events under
 //! `.metafolder/internal/` (the daemon's own database writes) are skipped;
 //! names travel as their exact bytes (doc "Tree names").
 //!
-//! One pipeline, two *sources* behind it ([`Source`]; spec-file-tracking "Watch
-//! sources and regimes"): [`inotify`] — the notify backend, one non-recursive
+//! One pipeline, two *sources* behind it ([`Source`]; doc "Watch sources and regimes"): [`inotify`]
+//! — the notify backend, one non-recursive
 //! watch per eligible directory, the *budget* regime — and [`fanotify`], the
 //! client of the fanotify broker covering the tree with one kernel
-//! registration per mount, the *coverage* regime (docs/watcher-fanotify.md).
+//! registration per mount, the *coverage* regime (doc "The fanotify broker").
 //! Exactly one source is active per repository at a time; translation,
 //! buffering, compaction and the executor are shared and do not care which
 //! source produced an event.
@@ -37,8 +37,8 @@ pub mod inotify;
 
 pub use inotify::{budget_cap_for, kernel_watch_limit};
 
-/// How the kernel covers a tree (spec-file-tracking "Watch sources and
-/// regimes"): the *budget* regime holds one watch per directory and can run out
+/// How the kernel covers a tree (doc "Watch sources and regimes"): the *budget* regime holds one
+/// watch per directory and can run out
 /// of them, the *coverage* regime has one registration for the whole tree and
 /// no budget at all. This decides whether the budget-only fields of `GET /watch`
 /// (=watched_dirs=, =watch_budget=) carry anything.
@@ -49,7 +49,7 @@ pub enum Regime {
 }
 
 /// What covers paths, as `POST /watch/check` answers against it
-/// (spec-file-tracking "Watch check"): the live watch set in the budget
+/// (doc "Checking whether a path is watched"): the live watch set in the budget
 /// regime, the tree itself under coverage — where the only ways a path is
 /// *not* covered are the structural skips the reason ladder reports anyway.
 #[derive(Debug, Clone, Copy)]
@@ -60,8 +60,8 @@ pub enum Coverage<'a> {
     Tree,
 }
 
-/// What a watch source does to sit behind [`WatcherHandle`] (spec-file-tracking
-/// "Watch sources and regimes"): keep live coverage in step with the
+/// What a watch source does to sit behind [`WatcherHandle`] (doc "Watch sources and regimes"):
+/// keep live coverage in step with the
 /// repository's eligibility, report what is covered, and react to the arrivals
 /// and departures in the event stream. Everything downstream — translation,
 /// buffering, compaction, the executor — is shared; only the way the kernel
@@ -105,7 +105,7 @@ pub(crate) trait Source: Send + Sync {
 /// stream without waiting for it to end.
 const MAX_INGEST_BATCH: usize = 4096;
 
-/// What one placement achieved (spec-file-tracking "The watch budget").
+/// What one placement achieved (doc "The watch budget").
 pub struct Placement {
     /// Directories now watched.
     pub watched: usize,
@@ -134,7 +134,7 @@ impl WatcherHandle {
     }
 
     /// What the active source is called on the wire (`GET /watch` `backend`):
-    /// "inotify", "fanotify", … (spec-file-tracking "Watch sources and regimes").
+    /// "inotify", "fanotify", … (doc "Watch sources and regimes").
     pub fn backend(&self) -> &'static str {
         self.source.name()
     }
@@ -220,7 +220,7 @@ pub fn start(repo: &Arc<RepoState>, pinger: ExecutorPinger) -> Result<WatcherHan
     Ok(WatcherHandle { source, fallback })
 }
 
-/// Opens the watch source (spec-file-tracking "Watch sources and regimes"):
+/// Opens the watch source (doc "Watch sources and regimes"):
 /// the fanotify broker's stream when one answers at `[settings] watchd-socket`,
 /// the notify source otherwise — announced, never silent. Probed once, at
 /// load: a restart is what re-decides (a broker that comes up later is picked
@@ -249,7 +249,7 @@ fn open_source(
     }
 }
 
-// ── Watch check (spec-file-tracking "Watch check") ───────────────────────────
+// ── Watch check (doc "Checking whether a path is watched") ───────────────────────────
 
 /// Why [`explain_watched`] decided the way it did — what stands between the
 /// path and the watcher recording a change at it.
@@ -450,7 +450,7 @@ fn covers(m: &str, rel: &str) -> bool {
 /// registration reaches the whole tree, so the only ways a directory is *not*
 /// covered are the structural skips the reason ladder reports anyway — the
 /// daemon's own internals, an unplugged volume, a recorded exclusion
-/// (spec-file-tracking "Watch sources and regimes").
+/// (doc "Watch sources and regimes").
 fn covered_by_tree(
     conn: &dyn crate::store::Store,
     cache: &TreeCache,
@@ -571,7 +571,7 @@ fn ingest(
     events: Vec<(FsEvent, Option<i64>)>,
 ) {
     // Counted as delivered, before any filter: what the kernel sends is the
-    // load, whether or not it is recorded (spec-file-tracking "Watch activity").
+    // load, whether or not it is recorded (doc "Watch activity").
     repo.watch_activity.lock_recover().record(&events);
     let Some((rules, trusted)) = ingest_rules(repo) else {
         // The rules could not be read: buffer everything, the flush decides.
@@ -583,21 +583,21 @@ fn ingest(
         return;
     };
     // A batch that moves a rule is not filtered, and turns filtering off until
-    // a flush has applied it (spec-file-tracking "Rules that are about to
-    // move"). Counted *after* buffering, so that a flush that reads the count
+    // a flush has applied it (doc "Event batching"). Counted *after* buffering, so that a flush
+    // that reads the count
     // before draining has the batch.
     let touching = touches_rules(&rules, &events);
     // The coverage regime honours `mfr_watch_exceeded` by *dropping* what
     // happens under it; the budget regime honours it by never seeing it (no
     // watch is placed there). A move across the boundary keeps only its
     // visible side — exactly what a move out of the watched tree looks like
-    // (spec-file-tracking "Watch sources and regimes").
+    // (doc "Watch sources and regimes").
     let events = match source.map(Source::regime) {
         Some(Regime::Coverage) => drop_excluded(&rules, &events),
         _ => events,
     };
-    // What the flush would turn away anyway (spec-file-tracking "Filtering at
-    // ingestion"): dropped here, it never keeps the quiet period open nor makes
+    // What the flush would turn away anyway (doc "Event batching"): dropped here, it never keeps
+    // the quiet period open nor makes
     // a flush.
     let events = if trusted && !touching { drop_ineligible(&rules, events) } else { events };
     if events.is_empty() {
@@ -659,7 +659,7 @@ fn touches_rules(rules: &WatchRules, events: &[(FsEvent, Option<i64>)]) -> bool 
 }
 
 /// Drops the events the flush would turn away as ineligible
-/// (spec-file-tracking "Filtering at ingestion"), and only those whose dropping
+/// (doc "Event batching"), and only those whose dropping
 /// cannot change what the flush does: a `Rename` with an eligible side is kept
 /// whole (the flush chooses between a move and a stale path), and a one-sided
 /// `Rename(From)` / `Rename(To)` is always kept — dropping one half would break
@@ -831,7 +831,7 @@ mod tests {
     #[test]
     fn test_an_exclusion_is_honoured_under_coverage_too() {
         // The one piece of watch-budget vocabulary both regimes share
-        // (spec-file-tracking "Watch sources and regimes"): `true` means
+        // (doc "Watch sources and regimes"): `true` means
         // *leave this subtree uncovered*, wherever the coverage comes from.
         let mut fx = Fixture::new();
         fx.mark_exceeded("/dir", true);

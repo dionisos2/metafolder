@@ -173,7 +173,7 @@ pub(super) async fn cancel_task(
     match repo.tasks.request_cancel(task_uuid) {
         CancelOutcome::Requested => {
             // Stopping a flush is the same operation as pausing ingestion
-            // (spec-file-tracking "Pausing ingestion"): set the pause here
+            // (doc "Pausing the watcher"): set the pause here
             // rather than leaving it to the worker, so it holds even if that
             // flush happened to finish just before it saw the request —
             // otherwise the user asked for a stop and tracking carried on.

@@ -38,8 +38,8 @@ watch-quiet-period-ms = 2000
 # Windows, whose backends watch a tree with one registration. Default: 50.
 watch-budget-share = 50
 
-# Where the fanotify broker is probed at load (spec-file-tracking "Watch
-# sources and regimes"; docs/watcher-fanotify.md). There is no watch-backend
+# Where the fanotify broker is probed at load (doc "Watch sources and regimes";
+# doc "The fanotify broker"). There is no watch-backend
 # option: the socket is the switch. Reachable, and the daemon covers the whole
 # tree through the broker — one kernel registration per mount, no
 # per-directory watches, no watch budget; absent, and the daemon says so and

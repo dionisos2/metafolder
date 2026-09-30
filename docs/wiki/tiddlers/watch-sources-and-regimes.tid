@@ -1,0 +1,58 @@
+title: Watch sources and regimes
+tags: [[Watcher]]
+kind: reference
+summary: The budget regime places one inotify watch per eligible directory; the coverage regime (fanotify) covers whole filesystems — the rest of the pipeline is the same.
+
+Two regimes, by how a source covers a tree:
+
+* ''Budget'' — the `notify` source: inotify on Linux, one registration per directory. A watch set is computed, placed and maintained; the supply is finite ([[The watch budget]]). It runs on every platform (on macOS and Windows too, placing one registration per directory, the budget being inert where no limit is readable).
+* ''Coverage'' — the fanotify source, through a privileged broker ([[The fanotify broker]]): one ''filesystem'' mark per filesystem the tree spans — the root's and each mounted beneath it, followed as drives come and go. Nothing to place, nothing to run out of.
+
+One source is active per repository — fanotify when `[settings] watchd-socket` answers
+at load, the `notify` backend otherwise, never both (every change would be recorded
+twice). A socket path where nothing listens is how to stay on inotify on purpose.
+`GET /watch` reports the active `backend` (`inotify`, `fanotify`, `fsevents`,
+`readdirectorychangesw`) and, when a repository is not on the broker, `backend_reason`
+— what the probe met; `mf watch status` prints it.
+
+!! The budget regime's placement
+
+One non-recursive watch per ''eligible'' directory, found by the walk reconcile uses:
+through eligible directories only, never following a symlinked directory (so a watch
+never escapes the root — a Wine `dosdevices/z: -> /` is not traversed), skipping an
+unreadable directory rather than failing. A fresh repository (`mf_watch = false`
+everywhere) is watched nowhere. The root is the walk's base, not a gate: a directory
+with `mf_watch = true` is watched even when the root is not. The set follows directories
+appearing and disappearing, and is recomputed after a write changing `mf_watch`,
+`mf_ignore` or `mfr_watch_exceeded`. An offline mount point is pruned like an
+ineligible directory until it is back (spec-file-tracking "Offline subtrees").
+
+!! What does not vary
+
+Both regimes share the eligibility filter, the hard skip of `.metafolder/internal/`
+(matched by absolute path, since `.metafolder/` may live anywhere — the daemon's own
+writes must not feed back into the stream; the rest of `.metafolder/` is ordinary
+content), offline subtrees, batching and event semantics. The vocabulary too:
+`mf_watch`/`mf_ignore` say what should be covered, `mfr_watch_exceeded` says "leave this
+subtree uncovered" in both. Only the budget's own answers are budget-only:
+`watch_budget` and `watched_dirs` (both `null` under coverage), and the `unwatched`
+reason of a watch check.
+
+!! When the broker goes away
+
+The coverage source's broker is a separate process. A disconnect, a reconnect and an
+overflow are each announced by a diagnostic naming `mf reconcile`, and the gap closes
+with that reconcile — the posture of a daemon that was down. Reconciling stays manual:
+not after an overflow (it comes from load, a reconcile would add to it), not after a
+reconnection (a flaky socket would fire one per blink).
+
+!! Renames
+
+`notify` correlates the two halves of a rename inside the watched tree into one
+`Rename(Both)`; a lone `Rename(From)` means the file left, a lone `Rename(To)` that it
+came from outside. Where a backend cannot correlate, a rename surfaces as `Remove` +
+`Create` and identity is ''not'' recovered inline: the old metarecord is orphaned until
+`mf orphan relink`. Under load `notify` itself may split a rename; the inotify cookie
+travels with each half, and the flush fuses them back ([[Event batching]]). fanotify's
+`FAN_RENAME` carries both sides in one event, and sees a move in or out of the repository
+as a move.
