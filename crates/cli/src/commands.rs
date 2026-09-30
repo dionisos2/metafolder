@@ -1361,17 +1361,18 @@ fn tag_batch_append(
     Ok(resp["updated"].as_u64().unwrap_or(0))
 }
 
-/// Removes the rows equal to `field:ref=<tag_uuid>` over the target set.
+/// Removes the rows equal to `field:ref=<tag_uuid>` over the target set;
+/// returns how many records lost one.
 fn tag_batch_remove(
     ctx: &Ctx,
     base: &str,
     query: &Json,
     field: &str,
     tag_uuid: &str,
-) -> Result<(), CliError> {
+) -> Result<u64, CliError> {
     let body = json!({"query": query, "name": field, "value": {"type": "ref", "value": tag_uuid}});
-    ctx.client.post(&format!("{base}/query/fields/remove"), &body)?;
-    Ok(())
+    let resp = ctx.client.post(&format!("{base}/query/fields/remove"), &body)?;
+    Ok(resp["updated"].as_u64().unwrap_or(0))
 }
 
 /// `mf tag [sel] add <path>` — the record(s) *have* the tag: (idempotently) add
@@ -1434,7 +1435,8 @@ pub fn tag_mixed(ctx: &Ctx, selector: &str, path: &str) -> Result<i32, CliError>
 }
 
 /// `mf tag [sel] remove <path>` — drop the positive ref (symmetric undo of add);
-/// a no-op when the tag entry does not exist.
+/// a no-op when the tag entry does not exist. Prints how many records lost it,
+/// as the other verbs print how many gained theirs.
 pub fn tag_remove(ctx: &Ctx, selector: &str, path: &str) -> Result<i32, CliError> {
     let base = ctx.repo_base()?;
     let cfg = ctx.tag.clone();
@@ -1444,8 +1446,8 @@ pub fn tag_remove(ctx: &Ctx, selector: &str, path: &str) -> Result<i32, CliError
         return Ok(0);
     };
     let query = target_query(selector)?;
-    tag_batch_remove(ctx, &base, &query, &cfg.positive, tag_uuid)?;
-    println!("removed {path}");
+    let n = tag_batch_remove(ctx, &base, &query, &cfg.positive, tag_uuid)?;
+    println!("{n}");
     Ok(0)
 }
 

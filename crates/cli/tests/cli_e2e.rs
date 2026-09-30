@@ -4090,6 +4090,27 @@ fn test_mf_tag_subsumption_exclusivity_deny_list() {
     assert!(out.stdout.lines().any(|l| l == "cinema/thriller\t0\t0"), "list:\n{}", out.stdout);
 }
 
+/// `mf tag remove` prints what the other verbs print: how many records the
+/// write changed — here, lost the ref — whether or not the tag exists.
+#[test]
+fn test_mf_tag_remove_prints_how_many_records_lost_the_tag() {
+    let (repo, _root) = init_repo("tagrm");
+    let x = create_metarecord(&repo, &["note:string=x"]);
+    let y = create_metarecord(&repo, &["note:string=y"]);
+    let tag = |args: &[&str]| {
+        let mut v: Vec<&str> = vec!["-u", repo.as_str(), "tag"];
+        v.extend_from_slice(args);
+        let out = mf(&v);
+        assert_ok(&out);
+        out.stdout.trim().to_string()
+    };
+    tag(&["-i", &x, "add", "music"]);
+    let both = format!("uuid_in({x}, {y})");
+    assert_eq!(tag(&["-q", &both, "remove", "music"]), "1", "only x carried it");
+    assert_eq!(tag(&["-q", &both, "remove", "music"]), "0", "nothing left to remove");
+    assert_eq!(tag(&["-q", &both, "remove", "nowhere"]), "0", "an unknown tag removes nothing");
+}
+
 #[test]
 fn test_watch_status_pause_and_resume() {
     let (repo, _root) = init_repo("watchpause");
