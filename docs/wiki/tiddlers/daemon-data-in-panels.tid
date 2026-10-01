@@ -1,0 +1,60 @@
+title: Daemon data in panels
+tags: [[Writing a panel type]]
+kind: rationale
+audience: dev
+aliases: gui-cache change-feed changes.ts reads.ts no-cache
+summary: The GUI keeps no metarecord, path or query result: each read is a daemon round-trip, and one shared change feed tells panels when to read again — a cache was built, and removed for its bugs.
+
+Nothing on the GUI side keeps daemon ''data'' — metarecords, paths, query results.
+Each read (`metafolder.daemon.query`, `metarecords`, `treePaths`, `fields`, `call`)
+is a round-trip to the daemon, which answers from its store in about a millisecond:
+a page of a query ≈ 1 ms, the paths of a page ≈ 0.5 ms, one metarecord ≈ 0.15 ms on
+a repository of 20 000 files. A panel keeps what it displays, for as long as it
+displays it, and reads it again when told that it changed
+(`frontend/src/lib/panels/reads.ts`).
+
+!! The cache that was removed
+
+Until September 2026 a cache shared by every panel (metarecords, tree paths, query
+results) served those reads, invalidated from the change feed. It was removed once
+the daemon had made it pointless, and for what it cost. Every one of its bugs came
+from the same question — when does a kept answer stop being true? — answered wrong
+each time:
+
+* A change ''anywhere'' in the repository, landing while a read was in flight, threw that read away. The rows it was for kept their placeholders — a `mfr_path:path` column showing bare file names — until something else repainted them.
+* A daemon ''read'' sent as a `POST` (`query/fields/resolve-tree`, `tree/resolve-path`, `orphans/scan`: the body carries the query) was taken for a write and invalidated everything. With the previous point, opening a folder in the file manager marked healthy rows of the list as orphans.
+* A path spells the name of every ancestor, but renaming a directory writes that directory alone. The feed never named the files below it, and their kept paths stayed wrong until evicted.
+
+Do not bring one back for query results or metarecords. ''Configuration is another
+matter'', and is kept: it changes when a file is edited, not at every write. The
+user schema is read once per repository and shared by every panel (`loadSchema`,
+`/__schema-template.js`; a failed read is not kept), and an instance keeps the
+answer of `GET /repos` for `repoRoot`.
+
+!! The change feed
+
+What remains shared is the change feed (`changes.ts`, one for the whole page). It
+holds one number per repository — the head of the log at its last poll — and asks
+the daemon `GET /repos/:repo/log/since?op=<head>` ([[Log endpoints]]):
+
+* in the background, every 7 seconds, for each repository a panel has read;
+* on demand, with `metafolder.changes.sync(repo)` — after the GUI changed the disk itself, once the watcher's quiet period has passed (`createCatchup`, [[Event batching]]).
+
+Subscribers receive `{repo, uuids}`: the metarecords touched, or `null` for the
+whole repository — a rollback, a list the daemon truncated, a repository that was
+empty at the previous poll. The feed reports every change, a panel's own writes
+included; it is the only way a panel hears of the others: the watcher recording a
+rename, another panel, `mf`.
+
+''The baseline is taken before the first read.'' The first poll of a repository
+reports nothing, it only records the head. Every daemon call naming a repository
+therefore waits for that first poll before it is sent. Taken after the read, the
+baseline would already include whatever changed in between, and the panel would
+never hear of it.
+
+!! What a panel does with it
+
+* It reads again what it shows, when a change names a metarecord it shows or names the whole repository.
+* A panel that shows ''paths'' reads them again at ''any'' change of its repository — the directory rename above: the feed names the directory, the screen shows its contents. That is one `treePaths` call for the rows loaded.
+* A read that has not landed, or failed, is ''unknown'', never ''absent''. A path not read yet says nothing about where the file is; reading it as "no path" is how a healthy row was shown as an orphaned metarecord.
+* It unsubscribes in the function `mount` returns.

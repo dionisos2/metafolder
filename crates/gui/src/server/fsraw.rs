@@ -3,7 +3,7 @@
 //! and HTTP Range support (audio/video seeking in the WebView).
 //!
 //! Unrestricted local read access is the documented panel-type trust
-//! model (spec-gui "Custom panel type trust model").
+//! model (doc "GUI design decisions").
 //!
 //! # Invariant: a raw file is media, never a document
 //!

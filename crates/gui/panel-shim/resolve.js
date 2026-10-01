@@ -1,4 +1,4 @@
-// TreeRef path resolution (spec-gui "Path display"). Paths are
+// TreeRef path resolution (doc "GUI design decisions"). Paths are
 // repo-root-relative ('/'-joined names). Resolution is delegated to the
 // daemon's tree-resolve endpoint (one round-trip, no client-side chain walk);
 // `resolvePaths(uuids, field)` returns `{ uuid: [paths] }` in `field`'s forest. Nothing is kept: a path

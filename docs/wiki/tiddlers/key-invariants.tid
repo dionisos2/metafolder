@@ -64,7 +64,7 @@ change of design, to be decided as such, with its note rewritten.
 
 * Every media decoder runs sandboxed, and the GUI refuses to start without the sandbox ([[Sandboxing the media decoders]]; semgrep `mf-unsandboxed-decoder`).
 * A file's bytes are never loaded into the WebView as a document ([[Why /fsraw never serves a document]]).
-* A panel queries its shadow root, never `document`, which is the shell (semgrep `mf-panel-queries-document`).
+* A panel queries its shadow root, never `document`, which is the shell ([[Writing a panel type]]; semgrep `mf-panel-queries-document`).
 * The GUI's JavaScript is typechecked without exception (semgrep `mf-typecheck-suppressed-in-gui-js`).
 * The Rust side owns the state of the window; the shell mirrors it ([[GUI]]).
 

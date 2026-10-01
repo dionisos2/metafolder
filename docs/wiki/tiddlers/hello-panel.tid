@@ -1,0 +1,20 @@
+title: hello panel
+tags: Panel [[Writing a panel type]]
+kind: reference
+audience: dev
+aliases: hello example-panel
+summary: The smallest panel type: it shows its workspace and the active repository, and registers one command — a directory to copy to start a panel of your own.
+
+`hello` is an example, not a tool: two files, about forty lines, to copy under
+`~/.config/metafolder/gui/panel-types/<your-name>/` ([[Writing a panel type]]).
+Show it with `panel:set type hello`.
+
+It does one thing of each kind a panel does:
+
+* it finds its elements in its root — `byId(root, 'workspace')`, from `/__ui.js`;
+* it reads a workspace variable, `active_repo`, and follows it with `workspace.onChange`. A variable is `unknown` to the type checker, so the panel says how it becomes text;
+* it registers a command, [[hello:greet]], which writes to the status bar.
+
+It reads nothing from the daemon, so it has nothing to defer and no change feed to
+follow; `mount` returns nothing because nothing is attached outside the root
+([[The metafolder API]]).

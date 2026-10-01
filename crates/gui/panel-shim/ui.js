@@ -1,5 +1,5 @@
 // metafolder panel UI helpers — served at /__ui.js for panel types
-// (spec-gui "The metafolder API"). Plain DOM building (no innerHTML:
+// (doc "The metafolder API"). Plain DOM building (no innerHTML:
 // values come from user files, keep textContent semantics) and the
 // canonical display form of the data model's Value variants.
 

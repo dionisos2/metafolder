@@ -1,0 +1,7 @@
+title: hello:greet
+tags: [[GUI command]] [[Writing a panel type]]
+kind: reference
+audience: dev
+summary: Hello: greet in the status bar
+
+Writes `Hello!` in the status bar for three seconds. It is the command the example [[hello panel]] registers, to show `commands.register`; it exists once the panel has been created, like any panel's command.

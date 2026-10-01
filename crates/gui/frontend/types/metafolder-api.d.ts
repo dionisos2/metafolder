@@ -1,5 +1,5 @@
 // The `metafolder` object every panel receives as `mount(root, metafolder)`
-// (spec-gui "The metafolder API"), and the data-model shapes it carries.
+// (doc "The metafolder API"), and the data-model shapes it carries.
 //
 // This file is a *script*, not a module: it has no top-level import or export,
 // so its declarations are global to the whole TypeScript program. That is what
@@ -293,8 +293,11 @@ declare namespace Metafolder {
 
   interface CommandOptions {
     label?: string;
+    /** Accepted and ignored: where a key applies is said by the binding
+     *  (`addKeybinding`), not by the command. */
     textInput?: boolean;
-    /** Pre-fill the command input instead of running straight away. */
+    /** Put the owning panel on screen before running, when it is not
+     *  (doc "Writing a panel type"). */
     reveal?: boolean;
     /** Append the invocation to the workspace message log (default true). */
     log?: boolean;

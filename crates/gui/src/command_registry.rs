@@ -17,7 +17,7 @@ pub struct CommandDef {
     /// Panel type that registered the command; `None` for builtins.
     pub owner: Option<String>,
     /// Whether invoking the command should reveal the owning panel type
-    /// when it is not displayed (spec-gui open question, resolved).
+    /// when it is not displayed (doc "Writing a panel type").
     pub reveal: bool,
     /// Whether each invocation is echoed to the workspace message panel.
     /// Defaults to true; basic editing primitives opt out to avoid noise.

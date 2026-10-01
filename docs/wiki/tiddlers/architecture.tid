@@ -59,7 +59,7 @@ A request goes through the same few layers whatever it asks:
 The Rust side owns every piece of state and the Svelte shell mirrors it through
 events; panels are plain HTML and JavaScript running in the shell's page, each in
 its shadow root, and read the daemon with no cache between them and it
-([[GUI]], [[Panel types]]). Media is decoded out of process, sandboxed
+([[GUI]], [[Panel types]], [[Daemon data in panels]]). Media is decoded out of process, sandboxed
 ([[Sandboxing the media decoders]]).
 
 !! Configuration and defaults

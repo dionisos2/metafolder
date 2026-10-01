@@ -1,7 +1,6 @@
 //! `~/.config/metafolder/gui/` access (doc "Configuration", doc "Style and theming";
-//! spec-gui "Panel type system"): reading the keybindings, stylesheet and
-//! panel types that `metafolder-sync-config` installed, plus the port
-//! discovery file for scripts.
+//! doc "Writing a panel type"): reading the keybindings, stylesheet and
+//! panel types that `metafolder-sync-config` installed.
 //!
 //! There is no installation or embedded fallback here. The configuration is
 //! materialised by `metafolder-sync-config` into the git-backed config repo;

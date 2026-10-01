@@ -1,0 +1,203 @@
+title: The metafolder API
+tags: [[Writing a panel type]]
+kind: reference
+audience: dev
+aliases: metafolder-api panel-api api.ts __ui.js panel-shim
+summary: The object a panel's mount receives — the daemon, the change feed, workspace variables, commands and keys, the file system, the status bar — and the helper modules served beside it.
+
+`mount(root, metafolder)` receives one object per panel instance, built by
+`createPanelApi` (`frontend/src/lib/panels/api.ts`) and typed by
+`frontend/types/metafolder-api.d.ts`, which declares `MetafolderApi` globally so
+that a panel's JSDoc can name it without an import. Every method calls a command of
+the Rust side directly. A [[user command|User commands]] receives the same object
+as `mf`, less what only means something inside a panel.
+
+!! The panel itself
+
+|!Member |!Is |
+|`workspaceId`, `panelType` |the instance's workspace and type |
+|`guiServer` |the GUI server's base URL, `http://127.0.0.1:<gui-port>`, for `/fsraw`, `/thumbnail`, `/document` |
+|`sessionToken` |the token those routes want as `?token=` in a URL given to an `<img>` or a `<video>` ([[Session tokens]]) |
+|`pageSize` |this type's entry of `[page-size]` in `config.toml`, or `undefined` |
+|`settings` |the `[panels]` table, frozen, keys in camelCase: `finderDebounceMs`, `livePreviewDebounceMs`, `taskPollMs`… each possibly `undefined` |
+|`defaults` |this type's `[panel-defaults.<type>]` table, frozen, keys in camelCase (`text-preview-limit` reads as `textPreviewLimit`); a key the user did not set is `undefined` ([[GUI configuration]]) |
+|`visible` |whether the panel is on screen now |
+|`whenVisible(fn)` |runs `fn` now when visible, else once at the next display; the same function armed several times runs once |
+|`onVisibility(listener)` |`listener(visible, slot)` at each change; `slot` is `left`, `right` or `null` |
+|`ready` |an already resolved promise, kept for panels that awaited it |
+
+!! `daemon`
+
+The daemon's HTTP API, through the Rust proxy ([[Connection to the daemon]]). Paths
+are the daemon's own ([[Query endpoints]], [[Metarecord endpoints]]).
+
+|!Method |!Does |
+|`request(method, path, body?, opts?)` |one round-trip; resolves to `{status, body}` whatever the status |
+|`call(method, path, body?, opts?)` |the same, but returns the body and throws the daemon's `error` message on a status of 400 or more |
+|`query(repo, body, opts?)` |one page of `POST /query`: `{uuids, records, nextCursor, total}` (`total` is `null` unless the body asked for it) |
+|`metarecords(repo, uuids)` |the named metarecords that exist, as a `Map` by uuid — one `uuid_in` query |
+|`treePaths(repo, field, uuids)` |`{uuid: [path]}`: each one's positions in a `tree_ref` field, `[]` for one without any |
+|`fields(repo)` |the field catalogue, `[{name, type}]` |
+|`resolvePath(repo, uuid)` |the repository-relative path of a metarecord's `mfr_path` |
+|`resolveTreeRef(repo, {parent, name}, field?)` |the path a `tree_ref` value names (`field` defaults to `mfr_path`) |
+|`metarecordPaths(repo, metarecord)` |its absolute paths on this machine |
+|`repoRoot(repo)`, `repoInternalDir(repo)` |the repository's root and its `.metafolder/internal/`, from `GET /repos` (kept per instance once read) |
+|`initRepo({root, name?, metafolder?, noIgnore?, ignore?})` |creates a repository ''and'' applies its ignore presets, as `mf repo init` does; a bare `POST /repos/init` would skip them |
+|`setContext(text)` |declares what the user asked for (a query's text, 200 characters at most); it is sent with the panel's later calls and written to the [[Slow log]] when one is slow. `null` clears it |
+
+Nothing here is kept between two calls, paths included
+([[Daemon data in panels]], [[TreeRef path conventions]]). `call` also accepts two
+paths the daemon does not serve, kept from before `metarecords` and `treePaths`:
+`POST /repos/:repo/metarecords/batch {uuids}` and
+`POST /repos/:repo/tree/resolve {field?, uuids}`.
+
+''Aborting a read.'' `request`, `call` and `query` take `{signal}` (an
+`AbortSignal`) as `opts`. Aborting drops the call in flight and rejects the promise
+with an `AbortError`, as `fetch` does. The daemon sees the connection close and
+cancels the query instead of finishing it for nobody ([[Query limits]]) — which
+matters because a repository answers one operation at a time: the count of a query
+the user already replaced would hold the next page behind it. `metarecord-list`
+aborts its page and its count at each new query. The abort and the call are two
+separate commands, so the abort may reach the proxy first: it is then kept for 30
+seconds and the call is dropped on arrival, never sent.
+
+`parseQuery` and `expandQuery` are older names of `query.parse` and `query.expand`.
+
+!! `changes`
+
+The change feed ([[Daemon data in panels]]).
+
+* `subscribe(({repo, uuids}) => …)` — called for each change the feed sees; `uuids` are the metarecords touched, or `null` for "the whole repository". Returns the function that unsubscribes: return it from `mount`.
+* `sync(repo)` — polls now, on top of the background poll.
+
+!! `query`
+
+Text transformations run in the GUI's Rust side by the shared engine, with no
+daemon round-trip ([[Why expansion runs in the client]]). Each rejects on a parse
+error.
+
+* `parse(dsl)` — DSL text to the query's JSON form.
+* `expand(text)` — simplified text to DSL text.
+* `grammarSource()` — the simplified grammar's source, for the help.
+
+!! `workspace`
+
+The [[workspace variables|Workspace variables]] of the instance's workspace.
+
+* `get(key)`, `set(key, value)` — both return promises.
+* `onChange(key, listener)` — `listener(value)` at each change of `key`; with the key `'*'`, `listener(value, key)` for every variable.
+* `adoptRepo(repo)` — sets `active_repo` on a workspace that has none yet; a workspace never changes repository afterwards ([[Workspaces]]).
+
+!! `commands`, `invoke`, `addKeybinding`
+
+```
+metafolder.commands.register('my-panel:set-mode', {
+  label: 'My panel: change the display mode',
+  args: [{ name: 'mode', prompt: () => 'Mode?', complete: () => ['list', 'grid'] }],
+  handler: (mode) => setMode(mode),
+});
+metafolder.addKeybinding('my-panel:set-mode list', 'ctrl+l');
+metafolder.addKeybinding('my-panel:open-form', 'ctrl+e', { textInput: true });
+await metafolder.invoke('panel:split');
+```
+
+|!Option of `register` |!Meaning |
+|`label` |shown beside the name in the command input (default: the name) |
+|`handler` |receives the arguments, as strings; may be async; what it throws is shown in the status bar |
+|`args` |the declared arguments, asked for when missing ([[Interactive command arguments]], [[Completion views]]) |
+|`reveal` |`true` puts the panel on screen before running ([[Writing a panel type]]) |
+|`log` |`false` keeps the invocations out of the message log — for a command run at each key press |
+
+A command of this name defined in `commands.js` is dropped in favour of the
+panel's ([[User commands]]). `register` also accepts `textInput`, and ignores it:
+where a key applies is said by the binding, not by the command.
+
+`addKeybinding(invocation, combo, {when?, textInput?, focus?})` ''suggests'' a key:
+it is applied unless `keybindings.toml` already binds that combo in that scope, and
+it is not written to the file ([[Changing keybindings]]). `when` defaults to the
+panel's type — the key applies while a panel of that type has the focus; the other
+two are those of [[Keybindings]]. `combo` may be a sequence (`g r`).
+
+`commands.invoke(invocation)` runs a command line as if typed, and
+`metafolder.invoke` is the same function. `commands.keybindings()` resolves to the
+compiled key table as it stands — `[{keys, invocation, when, text_input, focus}]` —
+which is what the help fills its key hints from.
+
+!! `fs`
+
+The disk, through the Rust side; the daemon is not involved, so a tracked file
+changed here is recorded when the watcher sees it or at the next reconcile.
+
+|!Method |!Does |
+|`readDir(path)` |`[{name, path, is_dir, escaped}]` |
+|`stat(path)` |`{path, is_dir, size, mtime}`, following symbolic links; `mtime` in milliseconds |
+|`exists(path)` |whether anything is there, a broken link included |
+|`homeDir()` |the user's home directory |
+|`mkdir(path)` |one directory, whose parent must exist |
+|`createFile(path)` |an empty file |
+|`move(from, to)` |a rename, falling back to copy and delete across file systems |
+|`copy(from, to)` |a file or a whole tree |
+|`remove(path)` |a permanent deletion, of a tree too |
+
+None of them overwrites: `mkdir`, `createFile`, `move` and `copy` fail when the
+destination exists.
+
+''A path is a handle.'' The frontend speaks JSON, so a path it holds is text, while
+a path on disk is bytes that need not be UTF-8. Every path crossing this boundary
+is in the `%XX` form of [[Tree names]]: itself when it is text, `/dir/caf%E9.mp4`
+when it holds a byte no text can represent. A panel slices and joins it like a
+plain path and hands it back unchanged — to `fs`, or as `?path=` to `/fsraw`,
+`/thumbnail`, `/document` — and the Rust side turns it back into the exact bytes.
+A handle that spells an escape has two readings; the one that exists on disk is
+taken, the literal one first, and a path that exists under neither is taken
+literally, so creating `new%file.txt` creates exactly that. `readDir` marks with
+`escaped: true` an entry whose name needed escaping.
+
+!! Other members
+
+|!Member |!Is |
+|`statusBar.message(text, timeoutMs?)`, `statusBar.error(error, timeoutMs?)` |a line in the workspace's status bar; `error` takes what a `catch` caught ([[Status bar and task bar]]) |
+|`messages.list()`, `messages.append(text)`, `messages.onAppend(listener)` |the workspace's message log; the listener receives `null` when the log is cleared |
+|`contextMenu(event, items)` |opens the HTML menu at the event's position; an item is `{label, action?, disabled?}`, a header or `'-'`. Returns nothing: the chosen item runs its `action` ([[Context menus]]) |
+|`contextMenu.addDefaultItems(event => items)` |adds items to the default menu when it opens inside this panel |
+|`pick.start(spec)` |opens a picker workspace; the answer comes back as the `pick_result` variable, matched by the `token` of the spec ([[Value picker]]). `createPickRunner` of `/__value-widget.js` wraps it |
+|`config.refSeed(field)`, `config.labelSeparator()` |the `[ref-seeds]` rule of a field and the separator of a completion label ([[Ref value seeds]]); `pickerSeed` and `refCompletionSeed` read the two older tables |
+|`history.read(repo, zone)`, `history.append(repo, zone, entry)` |the store behind `attachHistory` of `/__history.js` ([[Input history]]) |
+|`recent.list(repo, limit?)`, `recent.touch(repo, uuid)` |the recently viewed metarecords |
+|`trash.list`, `restore`, `remove`, `empty`, `trashPath` |the repository's trash ([[Trash]]) |
+|`log.rollback(repo, target)`, `log.revert(repo, target, withDependents)` |navigation of the event log, files included ([[Filesystem coordination]]) |
+|`orphans.detect()`, `count()`, `delete()` |the orphaned metarecords of the workspace's repository ([[Orphans in the GUI]]) |
+|`ignore.presets()`, `current`, `apply`, `write` |ignore presets ([[Setting ignore patterns]]) |
+|`sync.status`, `link`, `unlink`, `plan`, `run`, `show` |synchronisation between two repositories |
+|`bench.measure(name, fn)`, `bench.record(name, ms)` |times a phase for the profiling harness; every daemon call is timed already, as `mf:daemon <method> <path>` |
+
+These go through the Rust side rather than the daemon because they are either not
+the daemon's business — the history, the recent list, the trash are files the GUI
+manages itself ([[GUI design decisions]]) — or an orchestration shared with `mf`.
+
+!! Helper modules
+
+The GUI server serves, beside the panels, modules any panel may import by an
+absolute path: `import { el, byId } from '/__ui.js'`. Their sources are in
+`crates/gui/panel-shim/`.
+
+|!Module |!Gives |
+|`/__ui.js` |`el(tag, props, ...children)`, `byId`, `qs`, `qsa`; `formatValue`, `valueEl` for a field value; `field`, `fields`, `byName` to read a metarecord's fields; `thumbnail`, `fileTypeGlyph`; `messageOf`, `formatSize`, `formatAge` |
+|`/__menu.js`, `/__select.js` |the HTML menu, and a drop-down built on it in place of the native `<select>` |
+|`/__file-actions.js` |cut, copy, paste, rename, trash on a row, with one clipboard for the whole GUI, and the shared context menu |
+|`/__multi-select.js` |the checked selection ([[Cross-panel selection]]) |
+|`/__find-entry.js` |`registerFind`: a panel's `<panel>:find` command ([[Jumping to an entry]]) |
+|`/__history.js` |`attachHistory` on a text field |
+|`/__paged-list.js`, `/__coalesce.js` |loading a long list by pages; `latestOnly`, for an effect asked for faster than it runs |
+|`/__value-widget.js`, `/__schema-template.js`, `/__completions.js` |typed value inputs and the picker runner; the user schema, read once per repository; the candidate rules of a completion |
+|`/__columns.js`, `/__finder.js` |the column and finder syntaxes of `metarecord-list` |
+|`/__orphan.js`, `/__mounts.js`, `/__watched.js`, `/__activity.js`, `/__ignore.js` |what a row says about its file: orphaned, on an unmounted volume, watched or not, how noisy, ignored |
+|`/__watcher-settle.js` |`createCatchup`: re-reading after the panel changed the disk itself, timed from the daemon's quiet period ([[Event batching]]) |
+|`/__keyhints.js`, `/__help.js` |the help panel's key hints and page lookup |
+
+`el` builds DOM without `innerHTML` — values come from the user's files, and text
+stays text. `class` takes a string or an array whose falsy entries are dropped, a
+key starting with `on` attaches a listener, a key that is a property of the element
+is assigned, and any other becomes an attribute. Children are flattened, and
+`null`, `undefined` and `false` are skipped, so `cond && el(…)` can be written
+inline.

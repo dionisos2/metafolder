@@ -1,5 +1,5 @@
 //! `metafolder.fs` backend: direct filesystem access for panel types
-//! (spec-gui "metafolder.fs"). Not routed through the daemon.
+//! (doc "The metafolder API"). Not routed through the daemon.
 
 use metafolder_core::trash::{copy_path, move_path};
 use serde::Serialize;

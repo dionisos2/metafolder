@@ -324,7 +324,7 @@
     // on, so the prompts and the work are one panel's.
     setPanelArgs(panelArgSource);
 
-    // Commands owned by panel types (spec-gui: lazy hidden instantiation;
+    // Commands owned by panel types (doc "Writing a panel type": lazy hidden instantiation;
     // reveal switches a slot to the owning panel type).
     setPanelDispatch(async (command: CommandDef, args: string[]) => {
       const wsId = focusedWs();

@@ -41,7 +41,7 @@ describe('treeNameOf', () => {
   });
 });
 
-describe('treeRefPath (spec-gui "Path display" convention)', () => {
+describe('treeRefPath (doc "TreeRef path conventions")', () => {
   test('filesystem forest: empty root makes descendants leading-"/"-rooted', () => {
     expect(treeRefPath([''])).toBe('/'); // the repository root itself
     expect(treeRefPath(['', 'projets'])).toBe('/projets');

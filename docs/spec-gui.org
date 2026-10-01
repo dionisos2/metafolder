@@ -398,405 +398,8 @@ Moved to the wiki: doc "Reloading the configuration".
 
 ** Panel type system
 
-Panel *construction* is separate from the *first display*: mounting a
-panel registers commands, keybinding suggestions and listeners, but a
-panel's expensive work — the directory listing of =file-manager=, the log
-fetch, streaming the previewed file — is deferred to the first actual
-display via =metafolder.whenVisible(fn)=
-(=metafolder.visible= exposes the current state; while hidden, repeated
-triggers re-arming the same callback coalesce into one run on show). The
-shell pre-instantiates every installed panel type once at startup, hidden,
-for the startup workspace: all panel commands are registered from the
-start at the cost of construction only, without daemon traffic.
-
-*** Directory layout
-
-Panel types live under =~/.config/metafolder/gui/panel-types/=:
-
-#+BEGIN_SRC
-~/.config/metafolder/gui/panel-types/
-  metarecord-list/
-    index.html        ← entry point
-  metarecord-detail/
-    index.html
-  file/
-    index.html
-  message/
-    index.html
-  log/
-    index.html
-  repos/
-    index.html
-  my-custom-panel/    ← user-defined
-    index.html
-#+END_SRC
-
-Built-in types ship as pre-populated examples installed by
-=metafolder-sync-config= (see doc "Configuration"). The user
-edits them freely on the config repository's =main= branch; upgrades are a git
-merge of the shipped =default= branch, not a copy-if-unmodified pass. There is
-no =panel-types-defaults/= mirror.
-
-Panel types are served by the GUI's own HTTP server (the GUI API port,
-default 7524): =GET /panel/<name>/<file>=, **verbatim** (permissive CORS, so
-the shell can fetch/=import()= them from its own origin). The shell mounts a
-panel into a Shadow DOM root and applies the user stylesheet itself (no
-serve-time injection). Raw local files for the =file= panel type are served by
-=GET /fsraw?path=...= with HTTP Range support (media seeking). Poster
-thumbnails (videos and GIFs) are served by =GET /thumbnail?path=...=: a small
-still PNG of one frame
-extracted with =ffmpeg= and cached on disk inside the file's repository, under
-=<repo>/.metafolder/internal/thumbnails= (keyed by the source's
-path/mtime/size), so the cache is scoped to the repo and removed with it. The
-owning repository is resolved from the daemon's =GET /repos= (each entry's
-=root= and =internal_dir=) by longest-root match — the innermost repo when
-repos are nested — not by walking the filesystem, so the external-database
-layout is handled and a stray =.metafolder/= directory cannot be mistaken for a
-repo. A file inside no repository is not cached and gets no thumbnail — the
-panel shows a glyph. A video must never be
-handed to an =<img src=/fsraw>= — WebKit would decode the whole file and crash
-the web process — so the panels point video tiles at =/thumbnail= instead; a
-non-2xx (unsupported type, not in a repo, missing decoder…) falls back to a
-type glyph. GIF tiles also go through =/thumbnail= — served raw they would
-*animate*, and a grid of animated tiles is a distraction — but their non-2xx
-fallback is the animated =/fsraw= original first (safe for an =<img>=), then
-the glyph.
-
-*** The =metafolder= API
-
-The shell passes a =metafolder= object to each panel type's =mount(root,
-metafolder)=. It provides three namespaces:
-
-**** =metafolder.daemon=
-
-Async access to the daemon HTTP API (proxied by the Rust backend) plus a
-few helpers:
-
-#+BEGIN_SRC js
-// Raw call: resolves to {status, body} whatever the status.
-const response = await metafolder.daemon.request('GET', '/repos')
-// Same, but throws Error(body.error) on status >= 400 and returns the
-// body directly — the usual form inside try/catch.
-const metarecord = await metafolder.daemon.call('GET', `/repos/${repo}/metarecords/${uuid}`)
-// mfr_path resolution (see "Path display"), asked of the daemon each time.
-await metafolder.daemon.resolvePath(repo, uuid)
-await metafolder.daemon.resolveTreeRef(repo, { parent, name })
-// Absolute root directory of a repository (cached GET /repos).
-const root = await metafolder.daemon.repoRoot(repo)
-// Absolute path of the repo's .metafolder/internal/ directory (cached
-// GET /repos) — the only path always excluded from tracking.
-const internal = await metafolder.daemon.repoInternalDir(repo)
-// Absolute filesystem paths of a metarecord: one per mfr_path tree_ref
-// (multi-map), unresolvable (stale) refs skipped.
-const paths = await metafolder.daemon.metarecordPaths(repo, metarecord)
-// Reads that return what they read (see "Daemon data"):
-const { uuids, records, nextCursor, total } = await metafolder.daemon.query(repo, body)
-const byUuid = await metafolder.daemon.metarecords(repo, uuids)            // Map
-const paths = await metafolder.daemon.treePaths(repo, 'mfr_path', uuids)    // {uuid: [path]}
-const catalog = await metafolder.daemon.fields(repo)                       // [{name, type}]
-#+END_SRC
-
-=daemon.call= also answers two shorthands the daemon itself does not serve:
-=POST /repos/:repo/metarecords/batch {uuids}= (→ ={uuid: metarecord}=, one
-=uuid_in= query) and =POST /repos/:repo/tree/resolve {field?, uuids}= (→
-={uuid: [path]}=, one =query/fields/resolve-tree=).
-
-*Aborting a read.* =request=, =call= and =query= take a last =opts= argument,
-={signal}= (an =AbortSignal=). Aborting it drops the call in flight — the shell
-names it (=abortId=) and the =daemon_abort= Tauri command drops its request —
-and the promise rejects with an =AbortError=, as =fetch= does. The two
-commands are separate invocations, so the abort can reach the proxy before its
-call does: it is then kept (30 s) and the call is dropped on arrival, never
-sent. The dropped
-connection is the daemon's cue: it cancels the query it was running instead of
-finishing it for nobody (doc "Query limits"), which matters
-because a repository answers one operation at a time — a count of a query the
-user already replaced held the next page behind it. =metarecord-list= aborts
-its page and its count when the query changes (a finder keystroke, a new
-query), and runs the new one once the old has unwound.
-
-**** =metafolder.changes=
-
-The daemon change feed (see "Daemon data"): what changed that the panel did
-not write itself.
-
-#+BEGIN_SRC js
-// Called with the touched uuids, or null for the whole repository.
-const unsubscribe = metafolder.changes.subscribe(({ repo, uuids }) => { … })
-// Poll now, on top of the background timer (a catch-up after a disk change).
-await metafolder.changes.sync(repo)
-#+END_SRC
-
-**** =metafolder.query=
-
-Pure query transformations, run **locally** in the GUI backend (the shared
-=metafolder-core= engine) — never a daemon round-trip. Both throw on a
-parse/grammar error.
-
-#+BEGIN_SRC js
-// Compiles normal DSL text to the Query JSON IR.
-const ir = await metafolder.query.parse('rating > 3')
-// Expands simplified-language text to normal DSL text (relative-date macros
-// use the local clock).
-const dsl = await metafolder.query.expand('genre=jazz rating>=4')
-#+END_SRC
-
-(=metafolder.daemon.parseQuery= / =expandQuery= remain as deprecated aliases
-for older panels.)
-
-**** =metafolder.workspace=
-
-Reactive per-workspace key-value store.
-
-#+BEGIN_SRC js
-metafolder.workspace.set('selected_metarecord', { uuid, repo })
-const metarecord = metafolder.workspace.get('selected_metarecord')
-metafolder.workspace.onChange('selected_metarecord', ({ uuid, repo }) => { ... })
-#+END_SRC
-
-Standard keys: =active_repo=, =selected_paths=, =selected_metarecord=,
-=selected_metarecords=. Panel types may use namespaced custom keys (e.g.
-=my-panel:state=).
-
-**** =metafolder.pick=
-
-Opens a value picker (see [[*Value picker]]). =start(spec)= creates a linked
-picker workspace in the state =spec= describes (including the =result= kind —
-=uuid= or =path=) and returns its id; the result arrives later as the
-=pick_result= workspace variable, which the caller matches by =token=. The
-panel-shim =createPickRunner(metafolder)= wraps this: =run(\{field, valueType\})=
-for =ref=/=tree_ref= uuid picks, and =request(spec)= as a low-level form (used
-by the repos panel to pick a folder with =result: 'path'= and the =file-manager=
-panel).
-
-#+BEGIN_SRC js
-const token = String(++pickSeq)
-metafolder.workspace.onChange('pick_result', (result) => {
-  if (!result || result.token !== token) return
-  if (!result.cancelled) parentInput.value = result.uuid  // a metarecord uuid
-})
-await metafolder.pick.start({
-  token,
-  repo,
-  name: 'Pick: tag',
-  prompt: 'Select a value for “tag” — Ctrl+Enter to confirm, Ctrl+Esc to cancel',
-  panel: { type: 'metarecord-list', vars: { 'metarecord-list:query': seed } },
-})
-#+END_SRC
-
-**** =metafolder.config=
-
-Read-only access to GUI configuration the panel may need. =refSeed(field)=
-returns the rule naming a =ref= field's targets — ={query, columns}=, or =null=
-when neither the field nor the =*= default has one (see doc "Ref value seeds") —
-and =labelSeparator()= the join of a multi-column completion label (see
-[[*Completion views]]). =pickerSeed(field)= is the legacy per-field picker
-query, still read where no rule names the field. The caller folds the seed
-into the =pick.start= spec, keeping the seed policy on the calling side.
-
-#+BEGIN_SRC js
-const rule = await metafolder.config.refSeed('tag')
-const seed = rule?.query ?? ((await metafolder.config.pickerSeed('tag')) ?? undefined)
-#+END_SRC
-
-**** =metafolder.defaults=
-
-This panel type's *configured defaults*: the =[panel-defaults.<panel-type>]=
-table of =~/.config/metafolder/gui/config.toml=, handed over synchronously as a
-frozen object with the keys camelCased (=text-preview-limit= reads as
-=textPreviewLimit=). See doc "GUI configuration".
-
-#+BEGIN_SRC js
-const columns = metafolder.defaults.columns ?? DEFAULT_COLUMNS
-#+END_SRC
-
-**** =metafolder.commands= and =metafolder.addKeybinding=
-
-#+BEGIN_SRC js
-// text-input controls whether the command's default bindings fire in text inputs;
-// it is also used as the default for addKeybinding calls for this command.
-// (a legacy `scope` option is accepted and ignored: every command is
-// listed and invocable whatever panel is focused)
-metafolder.commands.register('my-panel:change-mode', {
-  label: 'My Panel: Change display mode',
-  // log defaults to true: each invocation is echoed to the message panel.
-  // Pass log: false for high-frequency commands that would flood the log.
-  handler: ({ mode }) => { ... }
-})
-
-// Suggest default keybindings (applied only if no conflict in user config).
-// Optional third argument: { when, textInput } overrides.
-metafolder.addKeybinding('my-panel:change-mode list', 'ctrl+l')
-metafolder.addKeybinding('my-panel:change-mode grid', 'ctrl+g')
-metafolder.addKeybinding('my-panel:edit-text', 'ctrl+e', { textInput: true })
-metafolder.addKeybinding('editing:unfocus',    'escape', { textInput: true })
-
-// The compiled table as it stands now (a snapshot, not a subscription): what
-// the user's keybindings.toml and the panel suggestions add up to. The help
-// pages fill their key hints from it (see *Help*).
-const bindings = await metafolder.commands.keybindings()
-// [{ keys: ['ctrl+shift+z'], invocation: 'log:redo', when: null,
-//    text_input: false, focus: null }, …]
-
-// `commands.invoke` lifted to the top of the object — one alias, not two APIs.
-// Composing existing commands through it is what a command is *for*
-// (doc "User commands").
-await metafolder.invoke('panel:split')
-#+END_SRC
-
-Registered commands appear in the command input autocomplete alongside
-built-in commands. The autocomplete shows global commands always, plus local
-commands for the currently focused panel type.
-
-**** =metafolder.fs=
-
-Direct filesystem access via the GUI backend (Tauri/Rust). Available to all
-panel types; not routed through the daemon.
-
-*Paths are handles.* The frontend speaks JSON, so every path it holds is text —
-but a POSIX path is a byte string that need not be UTF-8 (see doc "Tree names"). Every path crossing this boundary is therefore in the same
-=%XX= escaped form the rest of metafolder shows: itself when the path is text,
-=/dir/caf%E9.mp4= when it holds a byte no text can represent. A panel slices and
-joins it like the plain path it usually is, and hands it back unchanged — to an
-=fs= call, to =?path== on =/fsraw=, =/thumbnail= or =/__media-probe= — and the
-backend turns it into the exact bytes before touching the disk.
-
-Rendering it lossily instead, as this used to, produced a path that named
-nothing: the row appeared in the file manager and *every* action on it failed,
-because =caf<?>.mp4= is three bytes where the disk has one.
-
-A handle that spells an escape has two readings, and an operation on the disk
-needs one: **existence decides**, the literal file winning when it is really
-there. A path that exists under neither reading stays verbatim, so creating
-=new%file.txt= makes exactly that.
-
-=readDir= marks an entry whose name needed escaping with =escaped: true=; the
-file-manager shows those rows with a ⚠ and says renaming the file is what makes
-it ordinary again.
-
-#+BEGIN_SRC js
-// List directory contents
-const metarecords = await metafolder.fs.readDir('/path/to/dir')
-// metarecords: [{name: "foo.mp3", path: "/path/to/dir/foo.mp3", is_dir: false,
-//                escaped: false}, ...]
-
-// Stat a single path
-const info = await metafolder.fs.stat('/path/to/file')
-// info: {path, is_dir, size, mtime}
-
-// Write operations (the file-manager panel's create/copy/move/delete). None
-// overwrite an existing destination — a clash rejects rather than clobbers —
-// and the daemon is never involved, so a tracked metarecord goes stale until
-// the watcher or a reconcile catches up.
-await metafolder.fs.mkdir('/path/to/new-dir')      // parent must exist; errors if present
-await metafolder.fs.createFile('/path/to/new-file') // empty file; errors if present (never truncates)
-await metafolder.fs.move('/from', '/to')            // rename/move (cross-filesystem safe)
-await metafolder.fs.copy('/from', '/to')            // file or whole tree; source kept
-await metafolder.fs.remove('/path')                 // permanent delete of a file/symlink/tree
-#+END_SRC
-
-**** =metafolder.orphans=
-
-The orphaned-metarecords half of =mf orphan= (see doc "Orphans in the GUI"), driven through
-the orphan Tauri commands. =detect()= scans and writes the =orphan = true=
-marker (resolving to how many carry it afterwards); =count()= reads the marked
-set as it stands — detection is not re-run; =delete()= removes the marked
-metarecords, their files already gone. Each reports its own outcome to the
-status bar (=delete= also to the message log) and nudges the panels
-(=metarecords:dirty=), so a caller confirms in between and says nothing after.
-
-#+BEGIN_SRC js
-const marked = await metafolder.orphans.count()
-if (marked > 0 && confirm(`Delete ${marked} metarecords?`)) await metafolder.orphans.delete()
-#+END_SRC
-
-**** =metafolder.history=
-
-The persistent store behind the input-history helper (see [[*Input history]]):
-GUI-side files under the repo's =.metafolder/gui/history/<zone>=, not
-routed through the daemon. Panels normally consume it through
-=attachHistory= (=/__history.js=) rather than directly.
-
-#+BEGIN_SRC js
-const entries = await metafolder.history.read(repo, 'my-panel:search')  // oldest first
-await metafolder.history.append(repo, 'my-panel:search', 'the submitted text')
-#+END_SRC
-
-**** =metafolder.contextMenu=
-
-HTML context menu at the event's position (see [[*Context menus]]; the
-native menu is suppressed). Items are ={label, action?, disabled?}=
-objects and ='-'= separators; resolves with the chosen item (its
-=action= already run) or =null= when dismissed.
-
-=metafolder.contextMenu.addDefaultItems(event => items)= registers a
-provider whose items appear above the built-in metarecords of the default
-menu (see [[*Context menus]]) when it opens in this panel's document.
-
-#+BEGIN_SRC js
-row.addEventListener('contextmenu', (event) => {
-  void metafolder.contextMenu(event, [
-    { label: 'Open', action: () => open(item) },
-    '-',
-    { label: 'Track', disabled: alreadyTracked, action: () => track(item) },
-  ])
-})
-#+END_SRC
-
-**** =metafolder.statusBar=
-
-#+BEGIN_SRC js
-metafolder.statusBar.message('Sync complete.', 5000)  // timeout_ms or null
-metafolder.statusBar.error(error)  // catch-block form: String(error.message), 8 s
-#+END_SRC
-
-**** =metafolder.bench=
-
-Profiling instrumentation (see [[*Bench harness]]). =measure(name, fn)= times an
-async or sync phase and =record(name, durationMs)= logs a pre-computed
-duration. Names are =mf:*= labels. Each measure is emitted as a
-=performance.measure= (so it also appears in the WebKit inspector Timeline) and
-reported to the shell's =GET /gui/bench= buffer. Daemon calls are instrumented
-automatically (=mf:daemon <method> <path>=, ids collapsed to =:id=), so panels
-only mark their own phases.
-
-#+BEGIN_SRC js
-await metafolder.bench.measure('mf:list:render', () => render())
-metafolder.bench.record('mf:custom', elapsedMs)
-#+END_SRC
-
-**** UI helpers: =/__ui.js=
-
-A small module served by the GUI server next to the shim, importable by
-any panel type (=import { el, formatValue, field } from '/__ui.js'=):
-
-- =el(tag, props, ...children)= — DOM building without =innerHTML=
-  (values come from user files; text stays text). =class= accepts a
-  string or an array whose falsy metarecords are dropped; =on*= props attach
-  event listeners; existing IDL properties are assigned and other keys
-  become attributes. Child arrays are flattened and
-  =null=/=undefined=/=false= children are skipped.
-- =formatValue({type, value})= — the canonical display form of a data
-  model =Value= (=∅= for =nothing=, =parent / name= for =tree_ref=,
-  =repo :: metarecord= for =externalref=, =String(value)= otherwise).
-- =valueEl(value, onOpen)= — same display as a DOM node where metarecord
-  references are clickable links (class =ref-link=, styled by the user
-  stylesheet): the uuid of =ref=/=refbase=, the =parent= of a
-  =tree_ref=, the =metarecord= of an =externalref=. Clicking calls
-  =onOpen(uuid, repo)= with =repo= null except for =externalref=.
-- =field(metarecord, name)= — first field with that name (fields are a
-  multi-map), or =undefined=.
-- =thumbnail(guiServer, path, options)= — a thumbnail node for a filesystem
-  entry, so the "never put a non-image in an =<img>=" rule lives in one place:
-  an image becomes a lazy =<img>= at =/fsraw=, a video or GIF a lazy =<img>=
-  at =/thumbnail= (a server-extracted still poster frame), and directories,
-  every other type and a failed load fall back to a type glyph =<span>=
-  (=fileTypeGlyph=) — a GIF poster failure retries the animated =/fsraw=
-  original before the glyph.
-- =fileTypeGlyph(path, fallback)= — an emoji icon for a file's type (🎬 video,
-  🎵 music, 📕 PDF, 🖼️ image, 🗜️ archive…), or =fallback= (default 📄) for an
-  unrecognised extension. Used for the =file-manager= list icons and as the
-  =thumbnail= fallback.
+Moved to the wiki: doc "Writing a panel type", doc "The metafolder API" (the
+=metafolder= object and the =/__*.js= helper modules), doc "Panel pitfalls".
 
 ** Repository management
 
@@ -1110,7 +713,7 @@ file-manager tracking, …) — unless an edit is in progress: reloading
 would silently discard it, so the stale view persists until the edit is
 saved or cancelled.
 
-Reference values are clickable (=valueEl=, see [[*UI helpers: =/__ui.js=]]):
+Reference values are clickable (=valueEl= of =/__ui.js=, doc "The metafolder API"):
 clicking the uuid of a =ref=/=refbase=, the parent of a =tree_ref= or the
 metarecord of an =externalref= sets =selected_metarecord= to the referenced metarecord —
 the panel follows it like any other selection change (the edit guard below
@@ -1284,6 +887,27 @@ depending on the file type; renders documents (PDF) as page images (see
 [[*Documents]]); falls back to a plain-text view for text files; shows "no
 preview available" for unsupported formats. Works with both tracked and
 untracked files.
+
+*Serving files*: Raw local files for the =file= panel type are served by
+=GET /fsraw?path=...= with HTTP Range support (media seeking). Poster
+thumbnails (videos and GIFs) are served by =GET /thumbnail?path=...=: a small
+still PNG of one frame
+extracted with =ffmpeg= and cached on disk inside the file's repository, under
+=<repo>/.metafolder/internal/thumbnails= (keyed by the source's
+path/mtime/size), so the cache is scoped to the repo and removed with it. The
+owning repository is resolved from the daemon's =GET /repos= (each entry's
+=root= and =internal_dir=) by longest-root match — the innermost repo when
+repos are nested — not by walking the filesystem, so the external-database
+layout is handled and a stray =.metafolder/= directory cannot be mistaken for a
+repo. A file inside no repository is not cached and gets no thumbnail — the
+panel shows a glyph. A video must never be
+handed to an =<img src=/fsraw>= — WebKit would decode the whole file and crash
+the web process — so the panels point video tiles at =/thumbnail= instead; a
+non-2xx (unsupported type, not in a repo, missing decoder…) falls back to a
+type glyph. GIF tiles also go through =/thumbnail= — served raw they would
+*animate*, and a grid of animated tiles is a distraction — but their non-2xx
+fallback is the animated =/fsraw= original first (safe for an =<img>=), then
+the glyph.
 
 Which extensions take which route — and how much of a text file is read into
 the preview — is configuration, not a constant:
@@ -1575,7 +1199,7 @@ that window's names), not for every child up front, so the per-entry daemon
 lookups are bounded to what is on screen. =file-manager:refresh= re-reads the
 current directory and its tracked status, preserving the cursor.
 
-*File operations*: the panel edits the disk directly (via [[*=metafolder.fs=][=metafolder.fs=]], never
+*File operations*: the panel edits the disk directly (via =metafolder.fs=, doc "The metafolder API", never
 the daemon — the same way it reads it), so it can stand in for a general
 file browser: create a folder or an empty file, copy/cut/paste, rename,
 duplicate and delete. This is deliberately *disk-only*: a tracked
@@ -2240,134 +1864,39 @@ curl -s -X DELETE "$GUI/gui/workspaces/$WS_RIGHT"
 
 ** Frontend framework
 
-Svelte 5 + Vite for the shell. Built-in panel types are plain HTML/JS (no
-build step) so users can read and copy them as examples.
+Moved to the wiki: doc "GUI design decisions".
 
 ** =metafolder= API delivery mechanism
 
-Panel types run **in the shell's JS realm**, not in iframes. Each instance
-(one per (workspace, panel type), kept alive while hidden for state retention,
-never reparented) is a host element with its own **Shadow DOM** root for CSS
-isolation. The shell fetches the panel's =index.html= into the shadow root
-(scripts stripped), =import()=s its =main.js= and calls the contract
-=export function mount(root, metafolder)= (returning an optional cleanup
-function). =metafolder= is a plain object whose methods call the Rust backend
-directly — there is no =postMessage= bridge. Because everything shares one
-realm, panel key events bubble to the shell's single key matcher (text-input
-detection pierces shadow roots via =composedPath()=).
-
-This abandons iframe isolation deliberately: one realm lets every panel share
-the shell's services — one change feed, one key matcher — without a message
-bridge or per-access copies (a shared daemon-data cache was the first reason
-given; it was built, then removed — see [[*Daemon data]]). Panels
-are **trusted code** (they already have filesystem and shell access through the
-API — see [[*Custom panel type trust model]]); a throw in =mount= is contained
-by an error boundary, but a panel can otherwise touch shared state.
-
-A corollary: the same panel type cannot be displayed in both slots for the
-same workspace (one instance cannot render twice); =panel:set type= rejects
-this with a status bar error.
+Moved to the wiki: doc "GUI design decisions".
 
 ** Daemon access
 
-Panels and the shell reach the daemon through the Rust backend (a reqwest
-proxy exposed as =metafolder.daemon.request=). The WebView cannot call the
-daemon directly (CORS), and the daemon stays GUI-agnostic.
+Moved to the wiki: doc "GUI design decisions".
 
 ** Daemon data
 
-Nothing on the GUI side keeps daemon *data* — metarecords, paths, query
-results. Every read of it is a daemon round-trip —
-=metafolder.daemon.query= / =metarecords= / =treePaths= / =fields=, or
-=daemon.call= — answered from the daemon's store in about a millisecond (spec-perf: a page of a query ≈ 1 ms, the paths of a page
-≈ 0.5 ms, one metarecord ≈ 0.15 ms on a 20 000-file repository). A panel keeps
-what it displays, for as long as it displays it, and reads it again when told
-it changed.
-
-Configuration is another matter, and is kept: it changes when a file is
-edited, not with every write. The user schema is read once per repository
-and shared by every panel (=loadSchema= in =panel-shim/schema-template.js=; a
-failed read is not kept, the next one asks again).
-
-It used to be otherwise: a shared in-realm cache (metarecords, TreeRef paths,
-query results) served those reads, invalidated from the change feed. It was
-removed once the daemon made it pointless, and for what it cost. Every one of
-its bugs came from the same question — when does a kept answer stop being
-true? — and the answers kept being wrong:
-
-- A change *anywhere* in the repository landing while a read was in flight
-  threw the whole read away; the rows it was for then showed placeholders (a
-  =mfr_path:path= column showed leaf names) until something else repainted
-  them.
-- A daemon read sent as a POST (=tree/resolve-path=, =query/fields/
-  resolve-tree=…) was taken for a write and invalidated everything, with the
-  same effect — healthy rows marked as orphans.
-- A path spells every ancestor's name, but renaming a directory writes that
-  directory alone: the feed never named the files below it, and their kept
-  paths stayed wrong until evicted.
-
-What remains shared is the *change feed* (=metafolder.changes=): =GET
-/repos/:repo/log/since= polled in the background (~7 s) for every repository a
-panel has read, and on demand (=changes.sync=, e.g. the catch-up after the GUI
-changed the disk itself, timed from the watcher's quiet period). It holds only
-the last head seen per repository and tells subscribers what changed — the
-touched uuids, or =null= for the whole repository (a rollback, a delta the
-daemon truncated, the empty→filled transition). A repository's baseline is
-taken *before* the first read of it: a baseline taken by the first poll after a
-read would swallow whatever changed in between.
-
-A subscriber re-reads what it shows. A panel that shows paths re-reads them on
-*any* change of its repository, not only on a change to a row it displays —
-the directory-rename case above: the feed names the directory, the screen shows
-its contents. That is one =resolve-tree= call for the loaded rows.
-
-A read that has not landed yet (or failed) is *unknown*, never *absent*: a path
-not read yet says nothing about where a file is, and reading it as "no path" is
-how a healthy row ends up marked as an orphaned metarecord.
+Moved to the wiki: doc "Daemon data in panels".
 
 ** Commands targeting an absent panel type
 
-Commands registered by a panel type whose instance is not mounted yet in
-the focused workspace are dispatched after lazily creating the hidden
-instance. Commands registered with =reveal: true= (e.g. =metarecord:create=,
-=log:rollback=) additionally switch a slot to the owning panel type first:
-the other slot when it shows the same workspace, otherwise the focused
-slot. Limitation: a panel type's commands only exist in the registry once
-the panel has been instantiated at least once in the session.
+Moved to the wiki: doc "Writing a panel type".
 
 ** Path display
 
-Path resolution runs **daemon-side**, in one round-trip whatever the depth:
-=POST /repos/:repo/query/fields/resolve-tree= ={ query, field? }= walks each
-matching metarecord's TreeRef positions through the in-memory tree cache and
-returns repo-root-relative paths (the explicit-UUID case uses a =uuid_in= query).
-It is general over any TreeRef field (=mfr_path= by default) and multi-map
-(an array per metarecord; stale positions skipped). A single metarecord can also
-use the direct =GET …/metarecords/:uuid/fields/:name/resolve-tree=. The CLI's =mf path= and the
-GUI shim's =metafolder.daemon.resolvePath= / =resolveTreeRef= /
-=metarecordPaths= / =treePaths= are thin wrappers over it (nothing memoized: a
-path goes stale with any ancestor's rename); =repoRoot= gives the absolute
-root. Panels that render many rows resolve a whole page in batch when
-it is fetched (see the =metarecord-list= data/view split) rather than per cell —
-rendering itself makes no daemon calls.
+Moved to the wiki: doc "GUI design decisions".
 
 ** GUI API port persistence
 
-The GUI binds the =gui-port= configured in =~/.config/metafolder/gui/config.toml=
-(default 7524; overridable with =--gui-port=). The CLI reads that same
-=config.toml=, so the port is a fixed, shared setting — there is no runtime
-=gui.port= discovery file to write or clean up.
+Moved to the wiki: doc "GUI design decisions".
 
 ** Concurrent script sessions
 
-Only one =POST /gui/input= / =POST /gui/prompt= wait at a time; concurrent
-calls fail immediately with =409= (no queueing).
+Moved to the wiki: doc "GUI design decisions".
 
 ** Panel type update strategy
 
-Resolved by the git-backed config repository: =metafolder-sync-config= merges
-the shipped =default= branch into the user's =main= branch (see
-doc "Configuration").
+Moved to the wiki: doc "GUI design decisions".
 
 ** Bench harness
 
@@ -2411,24 +1940,11 @@ Moved to the wiki: doc "Why /fsraw never serves a document".
 
 ** Custom panel type trust model (resolved: trusted)
 
-The =metafolder.fs= API gives panel types unrestricted filesystem access and
-=commands.invoke('!…')= runs arbitrary shell commands, so the iframe was never
-a security boundary against panel code — the boundary is Tauri's capability
-layer (GUI ↔ OS). Panel types are therefore treated as **trusted code**, and
-the GUI runs them in the shell's own JS realm (Shadow DOM for CSS isolation,
-no realm/process isolation; see [[*=metafolder= API delivery mechanism]]),
-which is what lets panels share the shell's services directly. A throw in a
-panel's =mount= is contained by an error boundary, but a buggy panel can still
-corrupt shared state. To be revisited only if a panel-type *distribution*
-mechanism (untrusted third-party panels) is ever added — that would need real
-sandboxing, not the iframe.
+Moved to the wiki: doc "GUI design decisions".
 
 ** Panel type selector UX
 
-The current design uses a dropdown in the panel header. This may not be
-practical when many panel types are installed. Alternatives: a dedicated
-keybinding that opens an autocomplete picker (command-input style), or a
-floating palette. To be revisited once the panel type ecosystem grows.
+Moved to the wiki: doc "GUI design decisions".
 
 ** Media codec support
 

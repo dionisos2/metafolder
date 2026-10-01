@@ -1,6 +1,6 @@
-// Visibility gate, served at /__visibility.js and used by the shim to
-// back metafolder.visible / metafolder.whenVisible. Panel construction
-// (command registration, listeners) happens at iframe load; expensive
+// Visibility gate, bundled into the shell (PanelHost.svelte), where it backs
+// metafolder.visible / metafolder.whenVisible (doc "Writing a panel type").
+// Panel construction (command registration, listeners) happens in `mount`; expensive
 // work — the first daemon fetch, a directory listing — is deferred
 // through the gate to the first actual display, so panel types can be
 // pre-instantiated hidden at startup for the cost of registration only.

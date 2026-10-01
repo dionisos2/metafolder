@@ -16,7 +16,7 @@ export function childrenQuery(field, parentUuid) {
 
 // The display / query path of a forest node, from the ordered node names on the
 // path from a forest root to it. Matches the daemon's `paths_of` convention
-// (spec-gui "Path display"): the filesystem forest's empty-named root makes the
+// (doc "TreeRef path conventions"): the filesystem forest's empty-named root makes the
 // path leading-"/"-rooted ("/a/b", the root itself "/"); a named-root forest
 // (e.g. tags) has no leading slash ("domaine", "domaine/sub"). An empty list is
 // the empty string (no node selected). This is why the treeref breadcrumb and

@@ -1,0 +1,39 @@
+title: Panel pitfalls
+tags: [[Writing a panel type]]
+kind: reference
+audience: dev
+aliases: pitfalls gotchas hidden-attribute
+summary: What costs a round-trip in the real window when writing a panel — hidden against display, document against root, el() without a text property, tables keyed by command name, nothing reloaded.
+
+Each of these looked right in the code and wrong on screen. Rust does not compile
+panels; `npm --prefix crates/gui/frontend run typecheck` catches the type errors,
+the semgrep rule the second item, and nothing the first.
+
+!! CSS
+
+* ''An element with an explicit `display` ignores its `hidden` attribute.'' A rule of the panel beats the browser's own `[hidden] { display: none }`, so `element.hidden = true` does nothing on an element the panel styled as `display: flex`. The media toolbar of the `file` panel stayed over a folder's grid for that reason. Put `[hidden] { display: none !important; }` at the top of the panel's `<style>` instead of hunting the rule. The panel tests strip the styles, so only the real window shows this.
+* ''There is no `body`.'' The panel's markup lives in `<div class="mf-panel-body">` inside the shadow root: a `body { … }` rule matches nothing, write `.mf-panel-body { … }`. That element fills the slot.
+* ''The panel's style sheet comes after the user's.'' At equal weight the panel wins, so a colour hard-coded in a panel cannot be themed: use the variables of `style.css` ([[Style and theming]]).
+* A panel's `<style>` is adopted as a constructed style sheet: `@import` does not work in it, and a relative `url()` does not resolve against the panel's directory.
+
+!! DOM
+
+* ''`document` is the shell.'' `document.getElementById` finds the shell's nodes, or nothing. Use `root`, or `byId(root, …)` / `qs(root, …)` from `/__ui.js` (semgrep rule `mf-panel-queries-document`).
+* ''A listener on `document` or `window` outlives the panel'' unless the function returned by `mount` removes it.
+* ''`el()` has no `text` property.'' A label is a ''child'': `el('span', {}, 'label')`. Written `el('span', { text: 'label' })` it becomes an attribute, and the panel shows nothing.
+* ''A row offering the shared context menu carries `data-mf-uuid`'' — and `data-mf-path`, its absolute path, when it has a file. Without them the menu of `/__file-actions.js` finds nothing to act on ([[Context menus]]).
+* ''A key event in a text field'': the shell tells a text field by the event's `composedPath()`, since the event's target, seen from the shell, is the panel's host. Code of a panel that inspects events from outside its root must do the same.
+* ''Never give an `<img>` anything but an image.'' Pointed at a video, WebKit decodes the whole file and the web process crashes. `thumbnail()` of `/__ui.js` holds the rule: an image goes to `/fsraw`, a video, a GIF or a PDF to `/thumbnail`, the rest gets a glyph.
+
+!! State
+
+* ''A table keyed by command name mixes the workspaces.'' A panel type is mounted once per workspace, and every instance registers the same names: whatever the shell stores under the name alone belongs to the instance mounted last. The command input once offered another workspace's completion list while the handler ran on the right panel — the handlers were kept per instance, the argument declarations were not. Shell-side state about panels is keyed by workspace and type, resolved against the focused workspace, and the instance is created first if that workspace never showed the panel (`argSource.ts`).
+* ''`mount` runs hidden at startup.'' A daemon read in `mount` is paid by every start of the GUI, for a panel that may never be shown: go through `whenVisible` ([[Writing a panel type]]).
+* ''Unknown is not absent.'' A path, a schema or a count that has not been read yet is not an empty one ([[Daemon data in panels]]).
+* ''A resolved path is used as it is'': never prepend a `/` ([[TreeRef path conventions]]).
+
+!! Reloading
+
+* Nothing of a panel is reloaded while the GUI runs. `main.js` is imported with a parameter that changes at each start of the GUI; the modules it imports (`./columns.js`, `/__ui.js`) are not, and a page loads a module once. Restart the GUI.
+* A built-in panel edited in the source tree is not the one served: run `metafolder-sync-config`. A `/__*.js` helper or the shell needs a rebuild of the GUI binary ([[Writing a panel type]]).
+* Icons shown as empty boxes are a missing emoji font, not a stale build: the file manager's row icons and the type glyphs are emoji.

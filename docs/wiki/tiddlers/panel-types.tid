@@ -9,7 +9,7 @@ A ''panel type'' is a kind of content a slot can show. Each is a directory under
 directory's name is the type's name. The built-in ones are installed there with the
 configuration, so they can be read and changed like the rest of it
 ([[Updating the configuration]]); a new directory there is a new panel type,
-listed next to the others.
+listed next to the others ([[Writing a panel type]]).
 
 Choose one with the panel menu of the slot's header, with `panel:set type <name>`,
 or with the `t` keys: <<key "panel:set type metarecord-list" "t l">> for the list,
@@ -33,7 +33,7 @@ the file manager…
 |`message` |the workspace's messages: status messages, commands run, shell output, the daemon's reports |
 |`workspace-info` |the workspace's variables, live — for debugging panels and scripts |
 |[[help panel]] |this documentation |
-|`hello` |a minimal example to start a panel type from |
+|[[hello panel]] |a minimal example to start a panel type from |
 
 The [[Panel]] catalog has a note for each.
 

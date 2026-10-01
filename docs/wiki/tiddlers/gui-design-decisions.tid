@@ -1,0 +1,111 @@
+title: GUI design decisions
+tags: GUI [[Writing a panel type]]
+kind: rationale
+audience: dev
+aliases: design-decisions trust-model iframe panel-trust
+summary: Why panels are plain files run in the shell's page and trusted, why the web view reaches the daemon through Rust, why paths are resolved by the daemon, and why the daemon knows nothing of the GUI.
+
+The decisions behind how the GUI is built, each with what it rules out. Those about
+security have their own notes ([[Sandboxing the media decoders]],
+[[No network access]], [[Why /fsraw never serves a document]]), and the absence of a
+data cache has [[Daemon data in panels]].
+
+!! The shell is compiled, the panels are not
+
+The shell is Svelte 5, built with Vite and bundled into the binary. The panel types
+are plain HTML and JavaScript with ''no build step'', installed as files of the
+configuration: a user can read a built-in panel, change it, or copy it into a new
+one ([[Writing a panel type]]). The price is that the panels' JavaScript is checked
+from outside — JSDoc types against `metafolder-api.d.ts`, a test that mounts each
+panel against its own markup — rather than compiled.
+
+!! Panels run in the shell's page
+
+Panels first ran in iframes, with a `postMessage` bridge to the shell. They now run
+in the shell's own page, each in a shadow root, and the API is an object whose
+methods call the Rust side directly.
+
+One page lets every panel share the shell's services — one change feed, one key
+matcher, one clipboard for the file actions, one context menu — with no bridge to
+maintain and no copy at each access. A shared data cache was the first reason
+given; it was built, then removed ([[Daemon data in panels]]), and the others held.
+
+What was given up is isolation, and it was never real: see the next section. What
+remains of it is an error boundary — a panel that throws in `mount` shows its error
+and the shell goes on — and the shadow root, which keeps a panel's CSS to itself.
+
+A corollary: an instance cannot be drawn twice, so one workspace cannot show the
+same panel type in both slots ([[Panel slots and layout]]).
+
+!! Panels are trusted
+
+`metafolder.fs` reads and writes any file the user can, `/fsraw` serves any local
+file, and `invoke('!…')` runs a shell command. The iframe was therefore never a
+security boundary against a panel's code: the boundary is between the GUI and the
+operating system, and a panel is on the GUI's side of it. A panel type is code the
+user installed, like a shell script in their `PATH`.
+
+This holds as long as panel types come from the user's own configuration. A way to
+''distribute'' panels written by others would need a real sandbox — and an iframe
+would not be one.
+
+What is ''not'' trusted is the content panels display: a media file is decoded in a
+sandbox, and a file is never loaded as a document.
+
+!! The web view reaches the daemon through Rust
+
+A panel calls `metafolder.daemon.request`, the Rust side makes the HTTP request
+(`daemon_proxy.rs`) and adds the session token ([[Connection to the daemon]]). The
+web view could not call the daemon itself — another origin, and the daemon sends no
+CORS header — and it should not: the daemon stays ignorant of the GUI, and its
+token stays out of the page.
+
+!! The daemon does not serve the GUI
+
+A feature only the GUI has adds ''no endpoint to the daemon'', even when its files
+live in the repository's `.metafolder/`. The input histories and the recently viewed
+list are written by the GUI's Rust side, which finds the
+directory from `GET /repos` ([[Input history]]). "The daemon owns `.metafolder/`"
+was the argument for the first version of the input history, with daemon endpoints;
+it was rejected: what the daemon serves is the repository's data, to any client.
+
+Likewise, such files do not go to `internal/` by reflex. `.metafolder/gui/` is
+ordinary trackable content; only the store and its sidecars are excluded from
+tracking.
+
+!! Paths are resolved by the daemon
+
+A `tree_ref` holds a parent and a name; its path is the chain of names up to the
+root. The daemon resolves it, for a whole set in one request
+(`POST /query/fields/resolve-tree`, [[Resolving paths]]), and `resolvePath`,
+`resolveTreeRef`, `metarecordPaths` and `treePaths` are thin wrappers over it. A
+client walking the chain itself would make one round-trip per level and per row.
+Nothing is memoised: a path goes stale with the rename of any ancestor. A panel
+with many rows resolves a page when it fetches it, never per cell while drawing.
+
+!! One configured port
+
+The GUI server binds the `gui-port` of `gui/config.toml` (7524 by default,
+`--gui-port` to override), and `mf gui` reads the same file
+([[GUI configuration]]). There is no port file written at startup to discover and
+clean up; the cost is that two GUIs need two ports given by hand.
+
+!! One question at a time
+
+A script waits for the user with `POST /gui/input` or `POST /gui/prompt`. Only one
+such wait exists at a time: a second one is refused at once with `409`, not queued.
+A queue would show the user a question whose script may have given up since.
+
+!! Updates are a merge
+
+A built-in panel is a file the user may have edited. A new version reaches it by
+the git merge that updates the rest of the configuration
+([[Why the configuration is a git repository]]), not by a "replace unless modified"
+pass, which froze every edited file at its old version.
+
+!! Open: choosing a panel type
+
+The slot header's menu lists every installed type, which will not scale to many.
+The keyboard already has two other ways — the `t` sequences and `panel:set type`
+with completion in the command input ([[Panel types]]) — so the menu is left as it
+is until the number of types makes it a problem.

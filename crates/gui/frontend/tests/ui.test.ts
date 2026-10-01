@@ -1,5 +1,5 @@
 // Panel UI helpers (panel-shim/ui.js): DOM building and Value display,
-// shared by the built-in panel types (spec-gui "The metafolder API").
+// shared by the built-in panel types (doc "The metafolder API").
 
 import { describe, expect, test, vi } from 'vitest';
 import { el, field, fields, formatAge, formatSize, formatValue, messageOf, valueEl, thumbnail, isThumbnailable, isVideoThumbnailable, fileTypeGlyph, looksLikeText } from '../../panel-shim/ui.js';

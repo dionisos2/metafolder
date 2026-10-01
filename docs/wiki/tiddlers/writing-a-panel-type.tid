@@ -1,0 +1,114 @@
+title: Writing a panel type
+tags: [[Panel types]]
+kind: guide
+audience: dev
+aliases: custom-panel panel-development writing-a-panel
+summary: A panel type is a directory with an index.html and a main.js exporting mount(root, metafolder); the shell mounts it in a shadow root, in its own page, and hands it the API.
+
+A panel type is a directory of `~/.config/metafolder/gui/panel-types/`: its name is
+the type's name, and it is listed as soon as it holds an `index.html`
+([[Panel types]]). Two files make a panel:
+
+```
+panel-types/my-panel/
+  index.html    the markup and the style
+  main.js       export function mount(root, metafolder)
+```
+
+Copy the [[hello panel]] to start: it is the smallest panel that reads a workspace
+variable, follows it, and registers a command. The built-in panels are in the same
+directory, plain HTML and JavaScript with no build step, to be read as examples —
+their sources are in `crates/gui/default-config/panel-types/`.
+
+!! What the shell does with the two files
+
+For each panel it creates, the shell (`PanelHost.svelte`):
+
+# fetches `index.html` from the GUI server (`GET /panel/<type>/index.html`), which serves the directory's files as they are;
+# creates a host element with a ''shadow root'', and moves the children of the page's `<body>` into a `<div class="mf-panel-body">` inside it. `<script>` elements are dropped; the `<style>` elements become one style sheet;
+# gives the shadow root four style sheets, in this order: the shell's base sheet, the user's `style.css`, the panel's own, the help cursor's. At equal weight the panel's rule therefore wins over the user's ([[Style and theming]]);
+# imports `main.js` and calls `mount(root, metafolder)`: `root` is the shadow root, `metafolder` is [[The metafolder API]].
+
+`mount` may be async, and may return a function: the shell calls it when the panel
+is destroyed, to remove what the panel attached outside its root — a listener on
+`document`, a subscription to the change feed. An error thrown by `mount`, or a file
+that cannot be loaded, is caught: the panel shows `panel "<type>" failed to load`
+with the error, and the rest of the GUI goes on.
+
+```
+import { byId, el } from '/__ui.js';
+
+/** @param {ShadowRoot} root @param {MetafolderApi} metafolder */
+export function mount(root, metafolder) {
+  const list = byId(root, 'entries');
+  const refresh = async () => {
+    const repo = await metafolder.workspace.get('active_repo');
+    if (typeof repo !== 'string') return;
+    const { records } = await metafolder.daemon.query(repo, { query: { type: 'is_present', field: 'rating' }, select: '*', limit: 50 });
+    list.replaceChildren(...records.map((record) => el('li', { 'data-mf-uuid': record.uuid }, record.uuid)));
+  };
+  metafolder.workspace.onChange('active_repo', () => metafolder.whenVisible(refresh));
+  metafolder.whenVisible(refresh);
+  return metafolder.changes.subscribe(() => metafolder.whenVisible(refresh));
+}
+```
+
+!! One page, no isolation
+
+Panels run ''in the shell's own page'', not in iframes: a panel is ordinary
+JavaScript of that page, and `metafolder` is a plain object whose methods call the
+Rust side directly. The shadow root isolates the panel's CSS and nothing else.
+Three consequences:
+
+* `document` is the shell. A panel looks its elements up in `root` — `root.getElementById(…)`, or `byId(root, …)` from `/__ui.js`, which throws on a missing id (semgrep rule `mf-panel-queries-document`).
+* Key events bubble from the panel to the shell's single key matcher: a panel does not handle keys, it registers commands and suggests keys for them ([[Keybindings]]).
+* A panel is ''trusted code'': it can reach the file system and run shell commands through the API, and it can break state it shares with the others ([[GUI design decisions]]).
+
+!! One instance per workspace and type
+
+The shell keeps one instance of a panel type ''per workspace'', created the first
+time it is needed and destroyed with the workspace. It is never moved in the
+document, and it stays alive, hidden, while another type is shown in its slot: that
+is what keeps a panel's state for the session. Hence the rule that one workspace
+cannot show the same type in both slots ([[Panel slots and layout]]).
+
+Every instance of a type registers the ''same command names''. The registry holds
+one entry per name; the handler and the declared arguments are kept per instance,
+and a command runs on the instance of the focused workspace, which is created
+first if that workspace never showed the panel. A command registered with
+`reveal: true` also puts its panel on screen first: in the other slot when that
+slot shows the same workspace, in the focused one otherwise.
+
+Whatever the shell keeps about panels must be keyed by workspace as well as by
+name: a table keyed by command name alone belongs to whichever instance registered
+last, usually another workspace's ([[Panel pitfalls]]).
+
+!! Built is not shown
+
+One second after startup the shell creates every installed panel type once, hidden,
+in the focused workspace, so that every panel's commands exist from the start.
+`mount` must therefore be cheap: register commands, suggest keys, attach listeners —
+and put anything that reads the daemon or the disk behind `metafolder.whenVisible(fn)`,
+which runs `fn` at once when the panel is on screen and at its next display
+otherwise. The same function asked for several times while hidden runs once.
+
+!! Reading and writing
+
+* Data comes from the daemon at each read, and nothing on the GUI side keeps it: a panel keeps what it displays and reads it again when the change feed says so ([[Daemon data in panels]]).
+* What panels share goes through [[workspace variables|Workspace variables]] — the active repository, the selection — and a panel's own state is a variable named `<panel>:<key>`.
+* Everything a panel lets the user do is a command, so that it can be typed, bound to a key and run by a script ([[Commands]], [[Command naming]]).
+
+!! Trying it
+
+Nothing is reloaded while the GUI runs: a module is loaded once per page, and a
+panel lives until its workspace is closed. Restart the GUI after an edit
+([[Reloading the configuration]]). Three more things when working on the built-in
+panels in a checkout:
+
+* they are served from the configuration repository, not from the source tree: run `metafolder-sync-config` after editing `crates/gui/default-config/` ([[Updating the configuration]]);
+* the `/__*.js` helpers (`panel-shim/`) are compiled into the GUI binary, and the shell is bundled into it: editing either needs `npm --prefix crates/gui/frontend run build` and `cargo build -p metafolder-gui`;
+* `npm --prefix crates/gui/frontend run typecheck` checks the panels' JavaScript against the API's types (`types/metafolder-api.d.ts`), and `npm test` mounts them in jsdom — without their `<style>`, so a CSS mistake is only seen in the real window ([[devtools:open]] opens the inspector).
+
+<<list-kind reference>>
+
+<<list-kind rationale>>

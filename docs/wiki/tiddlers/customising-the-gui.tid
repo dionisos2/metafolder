@@ -19,7 +19,7 @@ of its own: a file that is missing or malformed stops it at startup
 |what a panel opens on: the columns of the list, the field of the tree… |`config.toml`, `[panel-defaults]` — [[GUI configuration]] |at the next start |
 |how the target of a reference is named where one is typed or shown |`config.toml`, `[ref-seeds]` — [[Ref value seeds]] |at the next start |
 |the words of the simplified query language |`core/query-grammar` — [[Editing the grammar]] |`config:reload grammar` |
-|what a panel does, or a panel type of your own |`panel-types/` — [[Panel types]] |at the next start |
+|what a panel does, or a panel type of your own |`panel-types/` — [[Panel types]], [[Writing a panel type]] |at the next start |
 
 [[Reloading the configuration]] says why some of these need a restart.
 

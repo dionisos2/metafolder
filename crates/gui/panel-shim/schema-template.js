@@ -90,7 +90,7 @@ export function templateFields(schema, type) {
 //
 // A schema is configuration, not data: it changes when its file is edited and
 // reloaded, not with every write. So it is read once per repository and kept,
-// for every panel of the realm (spec-gui "Daemon data": the rule against
+// for every panel of the realm (doc "Daemon data in panels": the rule against
 // keeping daemon answers is about query results). A failed read is not kept:
 // it counts as "no schema" for the caller, and the next one asks again.
 

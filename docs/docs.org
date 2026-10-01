@@ -704,7 +704,7 @@ is SQL », =db::…=, l'index en mémoire), désormais cinq questions au stockag
 il faut deux undo). Le slug du wiki confondait =mf:duplicate= et =mf duplicate= :
 corrigé (=:= → =_= à l'intérieur d'un nom). =metarecord-list:query= reste à
 l'item 38. Mémoire =duplicate-detection-design= réduite aux pièges JS des
-panels (pour l'item 37).
+panels (repris à l'item 37 dans =Panel pitfalls=).
 
 ** TODO 29. Synchronisation
 
@@ -1053,21 +1053,51 @@ pour l'item 38), « Panel defaults », « Style and theming », « User commands
 =config:*= et =user:*=. Mémoire =gui-config-reload= supprimée,
 =gui-user-commands-js= réduite à la méthode de test e2e.
 
-** TODO 37. Écrire un panel
+** FAIT 37. Écrire un panel
 
 (tout /dev/)
-- [ ] =Writing a panel type= — guide, dev (dossier, =mount(root, metafolder)=, Shadow DOM)
-- [ ] =The metafolder API= — reference, dev
-- [ ] =Daemon data in panels= — rationale, dev (pas de cache, le flux de changements)
-- [ ] =Panel pitfalls= — reference, dev (=hidden= contre =display=, rechargement des sous-modules, CSS de =body=)
-- [ ] =hello panel= — reference
-- [ ] =GUI design decisions= — rationale, dev (framework, livraison de l'API, accès au démon, affichage des chemins, port, sessions concurrentes, mises à jour des panels, confiance)
+- [X] =Writing a panel type= — guide, dev (dossier, =mount(root, metafolder)=, Shadow DOM, une instance par workspace × type, construit ≠ affiché) — sert de note d'ensemble et de tag au sujet
+- [X] =The metafolder API= — reference, dev (l'objet entier, et les modules =/__*.js=)
+- [X] =Daemon data in panels= — rationale, dev (pas de cache, le flux de changements)
+- [X] =Panel pitfalls= — reference, dev (=hidden= contre =display=, =document=, =el()=, tables indexées par nom de commande, rechargement)
+- [X] =hello panel= — reference
+- [X] =GUI design decisions= — rationale, dev (framework, une seule page, confiance, accès au démon, « le démon ne sert pas la GUI », chemins, port, une question à la fois, mises à jour, choix du type de panel)
+- [X] la note de commande : =hello:greet=
 
-GUI : =hello:*= ; panel =hello=. Sources : spec-gui « Panel type system »,
-« Resolved design decisions » (sauf sécurité), « Custom panel type trust
-model », « Panel type selector UX » ; CLAUDE.md « GUI dev gotchas » ; mémoires
-=gui-cache-removed=, =gui-cache-read-post-regression=, =gui-hidden-attribute-vs-display=,
-=gui-per-workspace-panel-instances=, =gui-owns-gui-concerns=.
+Vérification contre le code. La spec ne décrivait qu'une partie de l'objet
+=metafolder= : manquaient =settings=, =pageSize=, =sessionToken=, =guiServer=,
+=onVisibility=, =daemon.setContext=, =daemon.initRepo=, =workspace.adoptRepo= et
+la clé ='*'= de =onChange=, =fs.exists= / =homeDir=, =messages=, =recent=, =trash=,
+=log=, =ignore=, =sync=, =query.grammarSource=, et presque tous les modules
+=/__*.js= (seul =/__ui.js= était décrit). Écarts : (a) la spec disait que
+=contextMenu= « se résout avec l'élément choisi » — il ne rend rien ; (b) elle
+disait que l'option =textInput= de =commands.register= fixe le défaut des
+=addKeybinding= de la commande, et qu'une option =scope= est tolérée — =textInput=
+est acceptée et *ignorée* (le défaut de =addKeybinding= est =false=), =scope=
+n'existe plus ; (c) « trois namespaces » ; (d) le sondage du flux « ~7 s » est
+une constante (7000 ms), pas un réglage. Commentaires périmés corrigés : le
+=reveal= de =metafolder-api.d.ts= (« pré-remplit la saisie », alors qu'il montre
+le panel), l'en-tête de =visibility.js= (« servi à =/__visibility.js= », « au
+chargement de l'iframe » — il n'est pas servi, il est dans le bundle du shell),
+celui de =gui/src/config.rs= (un « fichier de découverte du port » qui n'existe
+plus). *Signalé, non tranché* : (1) =textInput= reste dans le type
+=CommandOptions= sans effet — le retirer, ou lui rendre son rôle de défaut ; (2)
+=daemon.parseQuery= / =expandQuery=, =config.pickerSeed= / =refCompletionSeed= et
+les deux raccourcis de =daemon.call= (=metarecords/batch=, =tree/resolve=) sont
+des doublons hérités ; (3) =spec-gui= « Bench harness » et « Media codec
+support » parlent encore d'iframes (items 41 et 39). La mesure « panel detail
+≈ 25 ms » de la mémoire n'a pas été reprise : non revérifiable ici.
+Sources retirées (pointeurs) : spec-gui « Panel type system » entier (le
+paragraphe sur =/fsraw= et =/thumbnail= déplacé dans la section =file=, pour
+l'item 39), « Frontend framework », « =metafolder= API delivery mechanism »,
+« Daemon access », « Daemon data », « Commands targeting an absent panel type »,
+« Path display », « GUI API port persistence », « Concurrent script sessions »,
+« Panel type update strategy », « Custom panel type trust model », « Panel type
+selector UX » (« Bench harness » reste, pour l'item 41). Mémoires
+=gui-hidden-attribute-vs-display=, =gui-per-workspace-panel-instances=,
+=gui-owns-gui-concerns= et =duplicate-detection-design= supprimées (devenues des
+notes) ; =gui-cache-removed= et =gui-cache-read-post-regression= réduites à la
+méthode (vraie GUI + captures, =changeFeed._reset()= dans les tests).
 
 ** TODO 38. Panels de navigation
 

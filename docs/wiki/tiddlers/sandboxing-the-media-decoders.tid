@@ -5,7 +5,7 @@ audience: dev
 aliases: bwrap bubblewrap sandbox untrusted-media
 summary: Every decoder of an image, a video or a PDF runs confined — bwrap, a syscall filter, resource limits — and the GUI checks it at startup.
 
-Panels are trusted code; the files they show are not. Images and video are
+Panels are trusted code ([[GUI design decisions]]); the files they show are not. Images and video are
 decoded by large C libraries with a long history of memory-safety bugs, and here
 the decoding is ''passive'': a thumbnail is generated and a codec probed for any
 file that merely appears in a panel. A PDF is parsed by poppler as soon as its
