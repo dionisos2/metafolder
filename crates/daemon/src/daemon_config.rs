@@ -67,9 +67,11 @@ pub const DEFAULT_AUTO_BACKUP_DAYS: u32 = 1;
 
 /// Tunable daemon settings (the `[settings]` table of `config.toml`). These are
 /// UX/performance knobs, all optional: a missing table or key keeps the default
-/// below, so an empty config behaves exactly as before.
+/// below, so an empty config behaves exactly as before. An unknown key is an
+/// error, like anywhere else in the file: a misspelt setting must not be read
+/// as "the default".
 #[derive(Debug, Clone, PartialEq, Deserialize)]
-#[serde(rename_all = "kebab-case", default)]
+#[serde(rename_all = "kebab-case", default, deny_unknown_fields)]
 pub struct DaemonSettings {
     /// Quiet period before the watcher's executor flushes buffered filesystem
     /// events (compaction + one revision per group). Larger values batch more
@@ -317,7 +319,7 @@ mod tests {
     #[test]
     fn test_read_config_parses_the_settings_table() {
         let path = write_config(
-            "[settings]\nwatch-quiet-period-ms = 1500\ntree-cache-max-nodes = 42\n\
+            "[settings]\nwatch-quiet-period-ms = 1500\n\
              orphan-cascade-limit = 7\nlog-retention-revisions = 500\n\
              log-retention-keep-labels = true\n",
         );
@@ -332,16 +334,20 @@ mod tests {
     }
 
     #[test]
-    fn test_a_retired_setting_is_ignored_rather_than_fatal() {
-        // `tree-cache-max-nodes` was the TreeRef cache's node budget. Nothing is
-        // resident any more — the forest is read from the store — so the key
-        // is gone. A malformed daemon
-        // config aborts startup, so an existing config still carrying it must
-        // not be malformed: the key is simply ignored.
-        let path = write_config("[settings]\ntree-cache-max-nodes = 42\n");
-        let config = read_config(&path).expect("a retired key must not abort startup");
-        assert_eq!(config.settings, DaemonSettings::default());
-        std::fs::remove_file(&path).unwrap();
+    fn test_an_unknown_setting_is_an_error() {
+        // A key the daemon does not know is a misspelt one, or one that no
+        // longer exists (`tree-cache-max-nodes`, the budget of a cache that is
+        // gone). Ignoring it would read as "the default" with nothing to say
+        // the file was not understood, so it aborts startup like any other
+        // malformed config, naming the key.
+        for src in
+            ["[settings]\nwatch-quiet-period = 250\n", "[settings]\ntree-cache-max-nodes = 42\n"]
+        {
+            let path = write_config(src);
+            let err = format!("{:#}", read_config(&path).expect_err(src));
+            assert!(err.contains("unknown field"), "{src}: {err}");
+            std::fs::remove_file(&path).unwrap();
+        }
     }
 
     #[test]

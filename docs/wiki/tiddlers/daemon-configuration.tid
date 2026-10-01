@@ -32,9 +32,9 @@ watch-quiet-period-ms = 2000
 |`slow-operation-threshold-ms`, `slow-read-threshold-ms`, `slow-operation-reads-threshold` |`2000`, `100`, `100000` |[[Slow log configuration]] |
 |`auto-backup-days` |`1` |every how many days each loaded repository gets its automatic backup, into `internal/backups/auto/` — one slot, replaced only by a backup that checks clean (`0`: off; [[Backups and restore]]) |
 
-A missing file is an empty one. A malformed one — invalid TOML, an unknown
-top-level key, a `[[load]]` entry with both or neither of `root`/`metafolder` —
-stops the daemon at startup. An unknown key ''inside `[settings]`'' is ignored, so
-that a retired setting does not break every configuration that still carries
-it. A repository that fails to load is a warning; the daemon starts anyway, with
+A missing file is an empty one. A malformed one — invalid TOML, an unknown key
+anywhere in it, a `[[load]]` entry with both or neither of `root`/`metafolder` —
+stops the daemon at startup, with a message naming what is wrong: a misspelt
+setting would otherwise be read as "the default", and so would a setting that no
+longer exists. A repository that fails to load is a warning; the daemon starts anyway, with
 the others.
