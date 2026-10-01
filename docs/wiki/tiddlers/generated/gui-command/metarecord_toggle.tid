@@ -1,0 +1,9 @@
+title: $:/mf/gen/GUI command/metarecord:toggle
+catalog: GUI command
+target: metarecord:toggle
+summary: Metarecord: toggle a flag (force: allow writing the reserved mfr_* fields)
+
+!! Reference
+
+* Defined by the ``metarecord-detail`` panel
+* No default key

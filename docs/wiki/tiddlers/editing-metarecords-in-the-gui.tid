@@ -102,6 +102,12 @@ has no type either: `edit` on it asks for one when the repository knows none, an
 
 !! Reserved fields
 
-Writing an `mfr_*` field needs force ([[Reserved fields]]). The `m` commands and the
-forms apply it by themselves when the field named is one — naming it is the intent.
-Only the rows of the detail panel are locked, until its ''force'' box is checked.
+An `mfr_*` field is the daemon's: it may overwrite what you put there, and writing
+one needs force ([[Reserved fields]]). Nothing here forces by itself — naming the
+field is not the acknowledgement.
+
+* In [[metarecord-detail panel]], the ''force (mfr_*)'' box unlocks the rows of such fields and lets its add form, `metarecord:field` and `metarecord:bulk` write them. `metarecord:toggle force` checks it from the keyboard.
+* The list's bulk form has its own ''Force'' box.
+
+Without it the write is refused, saying which box to check. An ordinary field never
+carries force, whatever the boxes say.

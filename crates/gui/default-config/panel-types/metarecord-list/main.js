@@ -1276,7 +1276,13 @@ export async function mount(root, metafolder) {
 
       const name = bulkName.value.trim();
       if (!name) throw new Error('field name is required');
-      const force = name.startsWith('mfr_') || bulkForce.checked;
+      // A reserved field is written only when the user says so (doc "Reserved
+      // fields"): naming it is not the acknowledgement, the box is.
+      const reserved = name.startsWith('mfr_');
+      if (reserved && !bulkForce.checked) {
+        throw new Error(`"${name}" is a reserved field (mfr_*) — check Force to write it`);
+      }
+      const force = reserved && bulkForce.checked;
       if (!confirm(`${op.verb} "${name}" ${op.prep} ${n} metarecord${n === 1 ? '' : 's'}?`)) return;
       // Value-less ops (unset) act on the name alone.
       const widget = bulkWidget;

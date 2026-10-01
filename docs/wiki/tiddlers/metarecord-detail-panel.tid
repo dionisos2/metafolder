@@ -41,7 +41,8 @@ one.
 * <<key "metarecord:field set" "m s">> and the other `m` keys — the same from the command input, with completion ([[Editing metarecords in the GUI]]).
 
 `mfr_*` rows are the daemon's and cannot be edited ([[Reserved fields]]) until the
-''force'' box is checked.
+''force (mfr_*)'' box is checked (`metarecord:toggle force`); the same box is what
+lets the add form and the `m` commands write such a field.
 
 While a value is being edited or the add form holds a name, the panel does not
 reload, and it asks before showing another metarecord. Otherwise it reloads whenever

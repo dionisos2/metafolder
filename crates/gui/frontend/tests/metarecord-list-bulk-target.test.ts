@@ -188,3 +188,25 @@ describe('the bulk form target', () => {
     expect(post!.body).toEqual({ query: { type: 'uuid_in', uuids: ['uuid-a'] } });
   });
 });
+describe('the bulk form and reserved fields', () => {
+  const fieldWrites = (calls: { method: string; path: string }[]) =>
+    calls.filter((c) => c.method === 'POST' && c.path.includes('/query/fields/'));
+
+  test('an mfr_* field is refused while Force is unchecked', async () => {
+    const { shadow, calls } = await mountList({});
+    (shadow.getElementById('bulk-form') as HTMLElement).classList.add('open');
+    (shadow.getElementById('bulk-name') as HTMLInputElement).value = 'mfr_mime';
+    await apply(shadow);
+    expect(fieldWrites(calls)).toEqual([]);
+    expect(shadow.getElementById('bulk-error')!.textContent).toMatch(/reserved.*Force/s);
+  });
+
+  test('checked, the write goes with force', async () => {
+    const { shadow, calls } = await mountList({});
+    (shadow.getElementById('bulk-form') as HTMLElement).classList.add('open');
+    (shadow.getElementById('bulk-name') as HTMLInputElement).value = 'mfr_mime';
+    (shadow.getElementById('bulk-force') as HTMLInputElement).checked = true;
+    await apply(shadow);
+    expect((fieldWrites(calls)[0] as { body?: unknown }).body).toMatchObject({ name: 'mfr_mime', force: true });
+  });
+});

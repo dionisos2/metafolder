@@ -1117,7 +1117,7 @@ méthode (vraie GUI + captures, =changeFeed._reset()= dans les tests).
 - [X] =message panel= — reference
 - [X] =Why recently viewed is kept by the GUI= — rationale, dev (ajoutée : la mémoire =recently-viewed-metarecords=)
 - [X] =Why there is no ref-list panel= — rationale, dev (ajoutée : la mémoire =ref-list-replaced-by-treeref=)
-- [X] les notes de commande : =repos:*= (8 ; =repos:resume= et =repos:watch-exceeded= existaient), =metarecord-list:*= (17), =metarecord:*= (10), =treeref:*= (13), =recent= et =recent:*= (8)
+- [X] les notes de commande : =repos:*= (8 ; =repos:resume= et =repos:watch-exceeded= existaient), =metarecord-list:*= (17), =metarecord:*= (11, dont =metarecord:toggle=, ajoutée), =treeref:*= (13), =recent= et =recent:*= (8)
 
 Vérification contre le code. *Corrigé, test d'abord* (trois commits à part) : (1)
 =workspace-info= ne montrait pas « toutes les variables » : il lisait les cinq
@@ -1146,20 +1146,28 @@ par la spec : la première ouverture d'un dépôt qui compare son schéma à ses
 formulaire de retype ; l'état d'erreur de la liste (un échec de lecture ne se lit
 jamais comme « 0 résultat ») ; le tri à trois états ; =metarecord-list:select all=,
 =:page next=, =:base-query-text= ; l'ambre d'un volume non monté dans la liste ; la
-note d'activité du détail ; =metarecord:reconcile= ; le fait qu'une opération de
-=metarecord:bulk= sur la /sélection/ s'exécute sans confirmation (seule la cible
-=query= confirme, =delete= toujours) alors que le formulaire de la liste confirme
-toujours ; le =reveal= de =metarecord:field= (le détail est affiché d'abord).
-*Signalé, non tranché* : (a) =metarecord:field rename=, =retype= et un =remove=
-touchant plusieurs lignes écrivent une révision /par ligne/ (un =PATCH= ou un
-=DELETE= chacun) : les annuler demande autant de =ctrl+z= — la note le dit ; une
-écriture atomique demanderait un point d'entrée de plus côté démon ; (b) la case
-« Force » du formulaire de modification en masse ne sert à rien pour un champ
-=mfr_*= (forcé d'office dès que le nom commence par =mfr_=), et n'a d'effet sur
-aucun autre ; (c) =repos:unload <nom>= prend le premier dépôt de ce nom — sans
-ambiguïté tant que le démon refuse deux dépôts chargés du même nom ; (d) le mode
-=grid= de la liste n'est pas une variable de workspace, contrairement aux autres
-réglages du panel : un script ne peut ni le lire ni le poser.
+note d'activité du détail ; =metarecord:reconcile= ; le =reveal= de
+=metarecord:field= (le détail est affiché d'abord).
+*Tranché par l'utilisateur*, fait dans des commits à part, test d'abord : (a)
+=metarecord:field rename=, =retype= et un =remove= touchant plusieurs lignes
+écrivaient une révision /par ligne/ (un =PATCH= ou un =DELETE= chacun) ; ils passent
+par =POST /query/fields/batch= et sont une révision, donc un seul =ctrl+z=. Trouvé
+au passage : =retype= sur un champ qui a des valeurs lisait son argument de type
+comme une valeur (la queue des arguments se lit depuis la fin, et l'argument valeur
+y est absent) et réécrivait les lignes sous leur type d'origine — il ne retypait
+rien ; (b) plus aucun forçage implicite des champs =mfr_*= : le formulaire de la
+liste, celui du détail, =metarecord:field= et =metarecord:bulk= envoyaient =force=
+dès que le nom commençait par =mfr_= (une commodité du premier commit des commandes
+interactives, sans décision derrière), ce qui vidait la case « Force » de son sens ;
+l'écriture est maintenant refusée tant que la case n'est pas cochée, en disant
+laquelle, et =metarecord:toggle force= la coche au clavier. Restent forcés d'office,
+la position réservée étant l'objet même de la commande : =treeref:add= dans la forêt
+=mfr_path= et les gabarits de =metarecord:create= ; (c) =metarecord:bulk= sur la
+/sélection/ s'exécutait sans confirmation (seule la cible =query= confirmait) : les
+deux confirment, en nommant le nombre, comme le formulaire de la liste ; (d) le mode
+=table= / =grid= de la liste est la variable de workspace =metarecord-list:mode=.
+*Signalé, non tranché* : =repos:unload <nom>= prend le premier dépôt de ce nom —
+sans ambiguïté tant que le démon refuse deux dépôts chargés du même nom.
 Sources retirées (pointeurs) : spec-gui « Repository management » (« Repo list »,
 « Init repo », « Load repo »), « =metarecord-list= panel type » (avec « Keyboard »,
 « Finder », « Query editor »), « =metarecord-detail= panel type » (avec « Naming a

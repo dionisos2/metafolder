@@ -426,3 +426,44 @@ describe('metarecord:bulk — every write is confirmed', () => {
     expect(calls.filter((c) => c.path.includes('/query/fields/'))).toEqual([]);
   });
 });
+
+describe('reserved fields — force is asked for, never assumed', () => {
+  const writes = (calls: Call[]) => calls.filter((c) => c.method !== 'GET' && !(c.body as { count?: boolean } | null)?.count);
+
+  test('metarecord:field on an mfr_* field is refused until force is on', async () => {
+    const { specs, calls } = await mountPanel([], { mfr_mime: 'string' });
+    await expect(
+      Promise.resolve(specs.get('metarecord:field')!.handler('set', 'mfr_mime', 'text/plain')),
+    ).rejects.toThrow(/reserved.*force/s);
+    expect(writes(calls)).toEqual([]);
+  });
+
+  test('metarecord:toggle force lets it through, with force sent', async () => {
+    const { specs, calls } = await mountPanel([], { mfr_mime: 'string' });
+    await specs.get('metarecord:toggle')!.handler('force');
+    await specs.get('metarecord:field')!.handler('set', 'mfr_mime', 'text/plain');
+    expect(writes(calls)).toEqual([
+      {
+        method: 'PUT',
+        path: `/repos/${REPO}/metarecords/${UUID}/fields/mfr_mime`,
+        body: { value: { type: 'string', value: 'text/plain' }, force: true },
+      },
+    ]);
+  });
+
+  test('an ordinary field never carries force, the box checked or not', async () => {
+    const { specs, calls } = await mountPanel([], { rating: 'int' });
+    await specs.get('metarecord:toggle')!.handler('force');
+    await specs.get('metarecord:field')!.handler('set', 'rating', '5');
+    expect(writes(calls)[0].body).toEqual({ value: { type: 'int', value: 5 } });
+  });
+
+  test('metarecord:bulk follows the same rule', async () => {
+    const { specs, calls } = await mountPanel([], { mfr_mime: 'string' }, { selected_metarecords: ['uuid-a'] });
+    vi.stubGlobal('confirm', vi.fn(() => true));
+    await expect(
+      Promise.resolve(specs.get('metarecord:bulk')!.handler('selection', 'set', 'mfr_mime', 'x')),
+    ).rejects.toThrow(/reserved.*force/s);
+    expect(writes(calls)).toEqual([]);
+  });
+});

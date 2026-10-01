@@ -17,3 +17,4 @@ summary: The metarecord-detail panel type
 * ``metarecord:row-edit`` — Edit the field under the cursor
 * ``metarecord:row-next`` — Move the field cursor down
 * ``metarecord:row-prev`` — Move the field cursor up
+* ``metarecord:toggle`` — Metarecord: toggle a flag (force: allow writing the reserved mfr_* fields)

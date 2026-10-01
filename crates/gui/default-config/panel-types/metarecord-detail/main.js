@@ -207,6 +207,23 @@ export async function mount(root, metafolder) {
 
   /** @param {string} name */
   const isReserved = (name) => name.startsWith('mfr_');
+  /** The `force` a write to `names` carries (doc "Reserved fields"): none for
+   *  ordinary fields; for an `mfr_*` one, `force` when the panel's box is
+   *  checked — and a refusal otherwise. Naming a reserved field is not the
+   *  acknowledgement that the daemon may overwrite it: the box is.
+   *  @param {...string} names @returns {{force?: true}} */
+  function forceFor(...names) {
+    const reserved = names.find(isReserved);
+    if (reserved === undefined) return {};
+    if (forceBox.checked) return { force: true };
+    throw new Error(
+      `"${reserved}" is a reserved field (mfr_*) — turn force on to write it ` +
+        '(the "force (mfr_*)" box, or metarecord:toggle force)',
+    );
+  }
+  /** The same as a DELETE body, which is null when it carries nothing.
+   *  @param {string} name */
+  const forceBodyFor = (name) => (isReserved(name) ? forceFor(name) : null);
   const dirty = () => {
     forgetTreePaths(); // our own write may have moved a node in some forest
     return workspace.set('metarecords:dirty', Date.now());
@@ -617,7 +634,7 @@ export async function mount(root, metafolder) {
       // A field row by its repo-global id (PATCH /repos/:repo/fields/:id).
       await daemon.call('PATCH', `/repos/${current.repo}/fields/${field.id}`, {
         value: newValue,
-        ...(isReserved(field.name) && { force: true }),
+        ...forceFor(field.name),
       });
       editingField = null;
       await load();
@@ -635,7 +652,7 @@ export async function mount(root, metafolder) {
       await daemon.call(
         'DELETE',
         `/repos/${current.repo}/fields/${field.id}`,
-        isReserved(field.name) ? { force: true } : null,
+        forceBodyFor(field.name),
       );
       await load();
       await dirty();
@@ -658,7 +675,7 @@ export async function mount(root, metafolder) {
     try {
       const { name, value } = readAddForm();
       if (!current) throw new Error('no metarecord selected');
-      const force = isReserved(name) ? { force: true } : {};
+      const force = forceFor(name);
       if (replace) {
         await daemon.call('PUT', api(`/fields/${encodeURIComponent(name)}`), { value, ...force });
       } else {
@@ -1300,7 +1317,7 @@ export async function mount(root, metafolder) {
       run: async (field, raw, type) => {
         const cur = requireCurrent();
         const value = await parseValueForField(cur.repo, field, type, raw);
-        const force = isReserved(field) ? { force: true } : {};
+        const force = forceFor(field);
         await daemon.call('PUT', api(`/fields/${encodeURIComponent(field)}`), { value, ...force });
         await load();
         await dirty();
@@ -1317,7 +1334,7 @@ export async function mount(root, metafolder) {
       run: async (field, raw, type) => {
         const cur = requireCurrent();
         const value = await parseValueForField(cur.repo, field, type, raw);
-        const force = isReserved(field) ? { force: true } : {};
+        const force = forceFor(field);
         await daemon.call('POST', api('/fields'), { name: field, value, ...force });
         await load();
         await dirty();
@@ -1367,7 +1384,7 @@ export async function mount(root, metafolder) {
         // argument settled: giving an absence a value establishes a type.
         const as = row.value.type !== 'nothing' ? row.value.type : type;
         const value = await parseValueForField(cur.repo, field, as, raw);
-        const force = isReserved(field) ? { force: true } : {};
+        const force = forceFor(field);
         await daemon.call('PATCH', `/repos/${cur.repo}/fields/${row.id}`, { value, ...force });
         await load();
         await dirty();
@@ -1409,12 +1426,12 @@ export async function mount(root, metafolder) {
         if (rows.length === 0) throw new Error(`no field "${field}"`);
         const matches = await rowsMatching(cur, rows, raw);
         if (matches.length === 0) throw new Error(`no value "${raw}" on "${field}"`);
-        const force = isReserved(field) ? { force: true } : {};
+        const force = forceFor(field);
         if (matches.length === 1) {
           await daemon.call(
             'DELETE',
             `/repos/${cur.repo}/fields/${matches[0].id}`,
-            isReserved(field) ? { force: true } : null,
+            forceBodyFor(field),
           );
         } else {
           // Several rows: one write, so one revision and one undo. A value
@@ -1447,7 +1464,7 @@ export async function mount(root, metafolder) {
         await daemon.call(
           'DELETE',
           api(`/fields/${encodeURIComponent(field)}`),
-          isReserved(field) ? { force: true } : null,
+          forceBodyFor(field),
         );
         await load();
         await dirty();
@@ -1464,7 +1481,7 @@ export async function mount(root, metafolder) {
         const rows = rowsOfName(field);
         if (rows.length === 0) throw new Error(`no field "${field}"`);
         if (newName === field) return;
-        const force = isReserved(field) || isReserved(newName) ? { force: true } : {};
+        const force = forceFor(field, newName);
         // One revision: the old name goes, and the new one holds what it had
         // plus the moved values.
         const values = distinctValues([...rowsOfName(newName), ...rows].map((r) => r.value));
@@ -1502,7 +1519,7 @@ export async function mount(root, metafolder) {
         const all = (metarecord?.fields ?? []).filter((f) => f.name === field);
         if (all.length === 0) throw new Error(`no field "${field}"`);
         const concrete = all.filter((f) => f.value.type !== 'nothing');
-        const force = isReserved(field) ? { force: true } : {};
+        const force = forceFor(field);
         // One revision either way: the field's rows are rewritten together.
         /** @type {Metafolder.Value[]} */
         let values;
@@ -1915,7 +1932,7 @@ export async function mount(root, metafolder) {
    *  @param {BulkTarget} t @param {string} route @param {object} body
    *  @param {string} field */
   async function bulkCall(t, route, body, field) {
-    const force = isReserved(field) ? { force: true } : {};
+    const force = forceFor(field);
     const resp = /** @type {{updated?: number}} */ (
       await daemon.call('POST', `/repos/${t.repo}/query/fields/${route}`, {
         query: t.query,
@@ -2105,6 +2122,19 @@ export async function mount(root, metafolder) {
   void commands.register('metarecord:row-delete', {
     label: 'Delete the field under the cursor',
     handler: deleteCursorRow,
+  });
+  void commands.register('metarecord:toggle', {
+    label: 'Metarecord: toggle a flag (force: allow writing the reserved mfr_* fields)',
+    args: [{ name: 'flag', prompt: () => 'Which flag? (force)', complete: () => ['force'] }],
+    handler: (flag) => {
+      if (flag !== 'force') throw new Error(`unknown flag: "${flag ?? ''}" (expected force)`);
+      forceBox.checked = !forceBox.checked;
+      render();
+      void statusBar.message(
+        forceBox.checked ? 'force on — mfr_* fields can be written' : 'force off',
+        statusMessageMs,
+      );
+    },
   });
   void commands.register('metarecord:cancel', {
     label: 'Cancel the current field edit or add form',

@@ -1,0 +1,6 @@
+title: metarecord:toggle
+tags: [[GUI command]] Metarecord
+kind: reference
+summary: Metarecord: toggle a flag (force: allow writing the reserved mfr_* fields)
+
+`metarecord:toggle force` checks or unchecks the ''force'' box of [[metarecord-detail panel]]: while it is on, the rows of `mfr_*` fields can be edited there, and `metarecord:field` and `metarecord:bulk` may write such a field ([[Reserved fields]], [[Editing metarecords in the GUI]]).
