@@ -171,10 +171,6 @@
     font-family: var(--mf-font-mono, monospace);
     font-size: 0.9em;
   }
-  .hint {
-    color: var(--mf-fg-dim, #8a8a96);
-    font-size: 0.85em;
-  }
   button {
     font: inherit;
     background: var(--mf-bg, #1e1e24);
