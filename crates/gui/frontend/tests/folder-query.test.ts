@@ -51,7 +51,7 @@ const state = {
   isDir: async (_path: string) => false,
 };
 
-/** The `mf` a user command is handed (spec-gui "User commands"), faked. */
+/** The `mf` a user command is handed (doc "User commands"), faked. */
 function fakeMf() {
   return {
     workspace: {

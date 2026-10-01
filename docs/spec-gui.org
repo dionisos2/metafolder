@@ -219,121 +219,11 @@ Moved to the wiki: doc "Connection to the daemon".
 
 ** Ref value seeds
 
-A =ref= field points to a metarecord by uuid, which is unreadable to type by
-hand and useless to look at. A *seed rule* says how its targets are *named*
-instead — which metarecords may be named, and how each is shown — and that one
-naming governs every value slot of the field: the candidates a value
-completion offers, what typed text must spell to name a target, what a value
-reads back as (its annotation line, an =edit= pre-fill), what =remove= and
-=edit= name a row by, and where its value picker opens (see [[*Value picker]]).
-
-The rule is configured per field name in =~/.config/metafolder/gui/config.toml=,
-in a =[ref-seeds]= table. Each entry is =["query", "columns"]= — a
-=metarecord-list= query (which metarecords may be named; omitted = all of
-them) and a columns spec (how each is shown — the very vocabulary a list cell
-is built with, its =:path= aspects and =field>sub= follows included, see
-[[*metarecord-list= panel type]]). The =*= entry is the default rule, read for
-every field that names none:
-
-#+BEGIN_SRC toml
-[ref-seeds]
-tag    = ['mf_schema = "tag"', 'path:path']
-author = ['mf_schema = "person"', 'full_name:name']
-'*'    = 'path:path mfr_path:path name label'
-#+END_SRC
-
-A value is then entered as the target's *label* — its columns joined by the
-completion separator (=label-separator=, see [[*Completion views]]) — and a
-32-char hex uuid is always accepted directly (an explicit uuid wins). The
-label is matched *whole*, and in *some* view (see below): text no candidate is
-named by is a *hard error*, as is a label several targets bear (the error
-names their duplicate-label forms) — never a silently-wrong ref.
-
-The candidates come one *page* at a time (a counted daemon query, ≤ 100 rows,
-sorted by the naming columns then the uuid), narrowed on the typed text: each
-term is OR-ed over every naming column, a superset of the label matches, so
-narrowing can never lose the wanted candidate. The naming is offered as the
-*views* of [[*Completion views]]: the whole line first, then one column at a
-time — a cycled view offering only the records that /have/ its column —
-because which naming reaches the wanted metarecord fastest depends on the
-metarecord. Interactively the view on screen /is/ the vocabulary (the same
-text names different metarecords in different views, by design); an inline
-value has no view to be read in and must be unambiguous across them.
-
-The rule is read through the API as =metafolder.config.refSeed(field)= (the
-named rule wins, =*= is the default), with
-=metafolder.config.labelSeparator()= for the join. The legacy tables are
-still read for a field no rule names: =[ref-completion-seeds]= (a =tree_ref=
-field whose paths name the targets, and resolve a typed path through
-=POST …/tree/resolve-path=) and =[picker-seeds]= (a picker start query). The
-tag model's three ref fields (=tag= / =negative_tag= / =mixed_tag=) are
-seeded by default against their =path= hierarchy.
-
-The vocabulary is shared *both ways*: what is entered as a label is read back
-as one. The rule is exactly what says how to render the value it names — under
-the value (its annotation line), as the pre-fill of an =edit=, and among the
-values =metarecord:field remove= and =edit= name — and a target the naming
-cannot name falls back to its uuid, the only name it has.
-
-=metarecord:field remove= (=m d=) is where this matters most: it names what it
-drops as a *value*, not as a row — the field first, then the value, the exact
-inverse of =add= and the mirror of =mf metarecord field remove=. The value is
-read as one being added (a label names the very uuid =add= would have
-written), and *every row equal to it* is deleted: a value is not a row, and
-equal rows are indistinguishable in a value's terms. Its candidates are the
-record's own values, read back in the same vocabulary (∅ offering the
-explicit =Nothing= rows, which have no raw form to parse) — not the rule's
-candidates: only what the record holds can be removed from it. The
-=metarecord:bulk remove= candidates are the rule's instead, because its value
-is not on any one record. A value the record does not hold is refused. To
-delete one *specific*
-row — the twin of a duplicate, one =Nothing= among several — there is the row's
-delete button and =metarecord:row-delete=, which take the row itself.
-
-=metarecord:field edit= (=m v=) names its row the same way =remove= names a
-value: the field first, then which of its values — asked only when there are
-several, since with one the field names the row already — then the replacement,
-pre-filled with the value being edited as it reads. The replacement is read as
-the row's own type (a Nothing row, which has none, takes the type argument and
-so establishes one). What both flows replace picked rows by display labels of
-the form =tag = <uuid>=: untypeable inline — the label contains spaces, and
-only the last argument absorbs several — and unreadable at that.
+Moved to the wiki: doc "Ref value seeds".
 
 ** Panel defaults
 
-A panel's *initial* values — the columns =metarecord-list= opens on, the
-=tree_ref= field =treeref= explores, which extensions the =file= panel previews
-as text — are user configuration, not constants baked into the panel code. They
-live in =~/.config/metafolder/gui/config.toml=, one table per panel type:
-
-#+BEGIN_SRC toml
-[panel-defaults.metarecord-list]
-columns       = "mfr_path:path mfr_type &version"
-finder-fields = ["mfr_path:path", "label:value", "name:value"]
-
-[panel-defaults.treeref]
-field = "mfr_path"
-#+END_SRC
-
-Each table is handed to the panel of that name (and to no other) as
-=metafolder.defaults=, with the keys camelCased — so a *custom* panel type gets
-its own defaults the same way, with no Rust-side knowledge of its keys: the
-tables are passed through verbatim. Three rules make the mechanism safe:
-
-- *Every key is optional.* An absent key (or table) leaves the panel on its own
-  module fallback, so a minimal =config.toml= still runs and a new panel
-  default never breaks an existing configuration.
-- *A bad value falls back, it never breaks the panel.* An invalid columns spec
-  or a non-numeric limit is ignored in favour of the built-in value.
-- *Persisted state still wins.* Where a panel already stores the setting per
-  workspace (=metarecord-list:columns=, =metarecord-list:finder-fields=,
-  =treeref:field=), the configured default is only the value used when nothing
-  is stored yet.
-
-Timing knobs shared by *all* panels (=[panels]=: status durations, debounces)
-and the per-panel page sizes (=[page-size]=) stay in their own tables, reaching
-panels as =metafolder.settings= / =metafolder.pageSize=. What belongs in
-=[panel-defaults]= is what one panel type alone gives meaning to.
+Moved to the wiki: doc "GUI configuration".
 
 ** Tab bar
 
@@ -421,9 +311,6 @@ Moved to the wiki: doc "The command input".
 | =log:undo=           | Undo the newest change the user made, on the active repo (default =ctrl+z=) |
 | =log:redo=           | Take the newest undo back, on the active repo (default =ctrl+shift+z=) |
 | =log:prune=          | Prune the event log                            |
-| =config:open=        | Open settings (keybindings, style, daemon URL) |
-| =config:reload <what>= | Re-read user configuration without a restart — see [[*Reloading configuration]] |
-| =user:*=             | Whatever =~/.config/metafolder/gui/commands.js= defines — see [[*User commands]] |
 | =devtools:open=      | Open the WebKit inspector (replaces the suppressed native menu's Inspect Element) |
 | =quit=               | Exit the GUI                                   |
 | =answer:send <value>=     | Resolve the current =POST /gui/input= wait with =<value>=     |
@@ -499,119 +386,15 @@ Moved to the wiki: doc "Context menus".
 
 ** Style and theming
 
-The GUI loads =~/.config/metafolder/gui/style.css= at startup and applies it
-globally to the WebView. The stylesheet is shipped and installed by
-=metafolder-sync-config= (see doc "Configuration"); a missing
-or unreadable file is a startup error, not a fall back to an embedded default.
-The =config:open= settings view shows the active CSS path and offers a reload
-button (=config:reload style=); the GUI also auto-reloads on file change via
-inotify.
+Moved to the wiki: doc "Style and theming".
 
 ** User commands
 
-=~/.config/metafolder/gui/commands.js= is a JavaScript module the shell imports
-at startup. Its default export maps a command name to its definition — the key
-*is* the name, so there is no registration call:
-
-#+BEGIN_SRC js
-export default {
-  'user:tag-query': {
-    label: 'Insert a tag filter in the simplified query and search',
-    args: [{ name: 'tag', prompt: () => 'Tag?', complete: (mf) => tagPaths(mf) }],
-    // The pair is the point: `insert`'s `stay` keeps the focus where it is
-    // (the search is this command's job, not an edit session in the query
-    // zone), and `apply` is the Enter nobody presses. The text is quoted so a
-    // tag whose path holds spaces still splices as one value.
-    run: async (mf, tag) => {
-      await mf.invoke(`metarecord-list:insert simplified "#=${tag}" stay`);
-      await mf.invoke('metarecord-list:apply simplified');
-    },
-  },
-};
-#+END_SRC
-
-Every function is handed =mf= first — the same =metafolder= object panels get
-(see [[*The =metafolder= API]]), so there is one API to learn — and =run= then
-receives the arguments collected inline or through the minibuffer. =label=
-defaults to the name, =log= to true, =args= is an ordinary [[*Command][argument
-declaration]], so a user command gets interactive prompting, the =…= marker and
-the listing's keybinding expansion for free.
-
-A user command is a *builtin registered at runtime*: it has no owner, because
-its code is in the shell realm and not in any panel. Its =mf= is therefore
-scoped to the **focused workspace**, read at each call rather than captured —
-a user command acts wherever the user is when it fires. The panel-only members
-(=panelType=, =pageSize=, =defaults=, the visibility hooks) are absent rather
-than faked, and =commands.register= is not offered: a command file declares its
-commands by exporting them, and a second way to do it could only get out of
-step with the file.
-
-Builtins win a name collision. A =commands.js= entry can add to the command set
-but never silently replace part of it.
-
-That rule guards against *silent* replacement, not against shipped commands
-living here: =metarecord:remove= (the =Delete= key on a metarecord, see
-doc "Sending files to the trash"), =file-manager:reveal= and
-=metarecord-list:folder= (see [[*Cross-panel selection]]), =orphan:delete= /
-=orphan:detect-delete= (see doc "Orphans in the GUI"), and =repos:switch= / =recent= (the
-repository pick and the recently-viewed pick, =g o= / =g r=) are shipped
-entries of this very
-file rather than compiled builtins, precisely so their questions and the
-actions their answers run stay editable. They are ordinary entries in every
-respect — dropping one drops the command, and the bindings that name it go
-dead until they are rebound.
-
-A command here is expected to *compose existing commands* through =mf.invoke=.
-Something that cannot be said that way is usually a base command missing rather
-than a reason to reach into the daemon from a config file.
-
-*Failure is loud.* A missing file fails at startup like any other missing
-configuration (=metafolder-sync-config= ships a default, so its absence means
-an incomplete installation). A file that is present but does not parse, or
-whose export is malformed, can only be caught by the WebView — Rust has no
-JavaScript engine — so the shell imports it during boot, *outside* the
-per-module error boundary panels get, and a rejection leaves the initialisation
-banner on screen with the JavaScript error, line and column included. No panel
-is ever mounted, so *no* panel command is registered either and the GUI is
-unusable — configuration is corrected before the GUI runs. (The scripting API
-still answers for the handful of commands Rust serves on its own, such as the
-layout primitives: its listener is installed before the import. Nothing that
-needs a panel, or a user command, exists.)
-
-=config:reload commands= re-imports the module without a restart, forgetting
-the commands the previous version registered first, so a definition deleted
-from the file leaves the listing with it.
+Moved to the wiki: doc "User commands".
 
 ** Reloading configuration
 
-=config:reload <what>= re-reads user configuration without a restart:
-
-| =what= | effect |
-|--------+--------|
-| =keybindings= | re-reads =gui/keybindings.toml= and pushes the compiled table; the editor in [[*Configuration][=config:open=]] already applied its own edits live, this is for a file edited *outside* the GUI |
-| =style= | re-reads =gui/style.css= and emits the change, so the shell document *and* every panel's adopted stylesheet follow (the settings view's reload button goes through this) |
-| =grammar= | re-reads =core/query-grammar=; core reads the file on every call, so the GUI's startup snapshot was the only thing making an edit need a restart |
-| =commands= | re-imports =gui/commands.js= (see [[*User commands]]), forgetting what the previous version registered |
-| =all= | the four above, in that order |
-
-Reloading keybindings drops the in-memory suggestions panels contributed with
-=metafolder.addKeybinding=, since the file is the whole table; a panel
-re-registers them when it is next instantiated. A script's temporary bindings
-survive — the push layers them back on.
-
-Three configuration files are deliberately *not* reloadable, and the reasons
-are worth stating because their absence looks like an oversight:
-- =core/ignore-presets.toml= is *already* live: it is read on every invocation
-  and nothing caches it, so there would be nothing to refresh.
-- =gui/config.toml= is only half reloadable. =gui-port= bound the HTTP server
-  and =[settings]= was consumed when the polling tasks were spawned; =[page-size]=,
-  =[panels]= and =[panel-defaults]= are frozen into each panel instance when it
-  mounts. Refreshing the other half alone would leave the GUI in a state no
-  configuration file describes, which is worse than asking for a restart.
-- =gui/panel-types/= is served from disk per request, so the *server* side is
-  already live; what is stale is the WebView's module cache, and clearing it
-  means tearing down panel instances that are deliberately kept for the whole
-  session (and sub-modules like =./columns.js= would still not be re-imported).
+Moved to the wiki: doc "Reloading the configuration".
 
 ** Panel type system
 
@@ -805,7 +588,7 @@ await metafolder.pick.start({
 
 Read-only access to GUI configuration the panel may need. =refSeed(field)=
 returns the rule naming a =ref= field's targets — ={query, columns}=, or =null=
-when neither the field nor the =*= default has one (see [[*Ref value seeds]]) —
+when neither the field nor the =*= default has one (see doc "Ref value seeds") —
 and =labelSeparator()= the join of a multi-column completion label (see
 [[*Completion views]]). =pickerSeed(field)= is the legacy per-field picker
 query, still read where no rule names the field. The caller folds the seed
@@ -821,7 +604,7 @@ const seed = rule?.query ?? ((await metafolder.config.pickerSeed('tag')) ?? unde
 This panel type's *configured defaults*: the =[panel-defaults.<panel-type>]=
 table of =~/.config/metafolder/gui/config.toml=, handed over synchronously as a
 frozen object with the keys camelCased (=text-preview-limit= reads as
-=textPreviewLimit=). See [[*Panel defaults]].
+=textPreviewLimit=). See doc "GUI configuration".
 
 #+BEGIN_SRC js
 const columns = metafolder.defaults.columns ?? DEFAULT_COLUMNS
@@ -857,7 +640,7 @@ const bindings = await metafolder.commands.keybindings()
 
 // `commands.invoke` lifted to the top of the object — one alias, not two APIs.
 // Composing existing commands through it is what a command is *for*
-// (see *User commands*).
+// (doc "User commands").
 await metafolder.invoke('panel:split')
 #+END_SRC
 
@@ -1075,7 +858,7 @@ metarecords.
 
 Default display mode: =table= with columns =mfr_path:path= (resolved path),
 =mfr_type=, =&version= — configurable as
-=[panel-defaults.metarecord-list].columns= (see [[*Panel defaults]]), and
+=[panel-defaults.metarecord-list].columns= (see doc "GUI configuration"), and
 overridden by the stored =metarecord-list:columns= of the workspace. The
 =metarecord-list:set mode= command switches between display modes; grid mode
 names each tile with =[panel-defaults.metarecord-list].grid-name-column=
@@ -1254,7 +1037,7 @@ zone and is only written while that zone is shown.
 
 The searched fields default to =mfr_path:path label:value name:value=,
 configurable as =[panel-defaults.metarecord-list].finder-fields= (see
-[[*Panel defaults]]) and overridable per workspace via the
+doc "GUI configuration") and overridable per workspace via the
 =metarecord-list:finder-fields= variable (a list of =field= or =field:aspect=
 entries); a value picker may seed it. The finder
 text itself persists in =metarecord-list:finder=. When the panel is opened as a
@@ -1358,7 +1141,7 @@ terms, since a uuid does not:
 Keyboard: =Tab= moves between rows, =Enter= edits, =d= deletes the row (with
 confirmation). That deletion is *per row*; =metarecord:field remove= (=m d=)
 removes by value instead, dropping every row equal to the value it names —
-see [[*Ref value seeds]].
+see doc "Ref value seeds".
 
 At the bottom of the panel:
 - /New metarecord/ button (or =metarecord:create= command) → creates a metarecord
@@ -1382,6 +1165,35 @@ At the bottom of the panel:
 Protected =mfr_*= fields are read-only by default; an advanced toggle exposes
 a =force= checkbox.
 
+**** Naming a value to remove or edit
+
+A =ref= value is typed and read back as its target's label under the field's
+seed rule (doc "Ref value seeds").
+
+=metarecord:field remove= (=m d=) is where this matters most: it names what it
+drops as a *value*, not as a row — the field first, then the value, the exact
+inverse of =add= and the mirror of =mf metarecord field remove=. The value is
+read as one being added (a label names the very uuid =add= would have
+written), and *every row equal to it* is deleted: a value is not a row, and
+equal rows are indistinguishable in a value's terms. Its candidates are the
+record's own values, read back in the same vocabulary (∅ offering the
+explicit =Nothing= rows, which have no raw form to parse) — not the rule's
+candidates: only what the record holds can be removed from it. The
+=metarecord:bulk remove= candidates are the rule's instead, because its value
+is not on any one record. A value the record does not hold is refused. To
+delete one *specific*
+row — the twin of a duplicate, one =Nothing= among several — there is the row's
+delete button and =metarecord:row-delete=, which take the row itself.
+
+=metarecord:field edit= (=m v=) names its row the same way =remove= names a
+value: the field first, then which of its values — asked only when there are
+several, since with one the field names the row already — then the replacement,
+pre-filled with the value being edited as it reads. The replacement is read as
+the row's own type (a Nothing row, which has none, takes the type argument and
+so establishes one). What both flows replace picked rows by display labels of
+the form =tag = <uuid>=: untypeable inline — the label contains spaces, and
+only the last argument absorbs several — and unreadable at that.
+
 **** Keyboard
 
 Every action is also a command, so the panel is fully keyboard-drivable:
@@ -1404,7 +1216,7 @@ current values), then the type, then the new value through the minibuffer, with
 completion and the current value pre-filled. =TreeRef= values are edited as
 paths (completed against the field's forest, resolved through
 =POST …/tree/resolve-path= on commit); =ref= values are named by their rule
-(see [[*Ref value seeds]]). A =bool= value completes
+(see doc "Ref value seeds"). A =bool= value completes
 over its closed set — =false= / =true= — with no repository lookup. This value
 completion and resolution is shared by the direct and the bulk value commands
 alike.
@@ -1478,7 +1290,7 @@ the preview — is configuration, not a constant:
 =[panel-defaults.file].image-extensions= / =audio-extensions= /
 =video-extensions= / =text-extensions= and =text-preview-limit= (default 256
 KiB, fetched with a =Range= header so a multi-GB log only pulls that prefix).
-See [[*Panel defaults]]. The text extensions are a *fast path*, not the only
+See doc "GUI configuration". The text extensions are a *fast path*, not the only
 way in: any other extension is decided by sniffing the fetched bytes, so an
 unlisted script still previews — while a listed one previews even when the
 sniff would reject its encoding (UTF-16 holds NULs).
@@ -1545,7 +1357,7 @@ focused):
 
 The step and the bounds of a manual zoom are configurable
 (=[panel-defaults.file].zoom-step= / =zoom-min= / =zoom-max=, defaults 1.25 /
-0.05 / 40 — see [[*Panel defaults]]).
+0.05 / 40 — see doc "GUI configuration").
 
 "Fit" fills the viewer, scaling to whichever of full width or full height comes
 first without distortion. A manual zoom (=+= / =-= / =0=) sizes the media in
@@ -1650,7 +1462,7 @@ this panel they already jump the metarecord-list to its first/last row (like
 the arrow keys), and flipping through the files of a folder is the more
 frequent gesture. Which extensions take this route, and at what resolution,
 are =[panel-defaults.file].document-extensions= / =document-dpi= (defaults
-=["pdf"]= / 150 — see [[*Panel defaults]]); the zoom works on the rendered
+=["pdf"]= / 150 — see doc "GUI configuration"); the zoom works on the rendered
 image, so the DPI is the *rendering* detail, not the displayed size.
 
 *The file's own bytes never reach the WebView*, and that is the whole reason
@@ -1820,7 +1632,7 @@ by the daemon. The primary use is observing a tag hierarchy.
 *Field picker*: a dropdown of the repo's TreeRef field names
 (=GET /repos/:repo/fields?type=tree_ref=, [[file:spec-data-model.org][spec-data-model.org]]); =mfr_path= is the
 default, configurable as =[panel-defaults.treeref].field= (see
-[[*Panel defaults]]) and overridden by a stored =treeref:field=. Changing the field resets navigation to the roots. =treeref:set field=
+doc "GUI configuration") and overridden by a stored =treeref:field=. Changing the field resets navigation to the roots. =treeref:set field=
 (=Shift+F=) is its keyboard equivalent: it asks for the field name in the command
 input, completing over the same list, and mirrors the pick back into the
 dropdown. The minibuffer starts *empty* — the answer names another forest, not

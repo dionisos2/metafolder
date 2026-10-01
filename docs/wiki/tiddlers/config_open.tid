@@ -1,0 +1,6 @@
+title: config:open
+tags: [[GUI command]] [[Customising the GUI]]
+kind: reference
+summary: Open the settings view
+
+Opens the settings view over the window: the daemon's address, the paths of the configuration files, a button that reloads the style sheet, and the keybinding editor ([[Changing keybindings]]). See [[Customising the GUI]].

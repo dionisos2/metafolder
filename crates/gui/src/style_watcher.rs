@@ -1,4 +1,4 @@
-//! Auto-reload of `style.css` (spec-gui "Style and theming"): watches the
+//! Auto-reload of `style.css` (doc "Style and theming"): watches the
 //! config directory and pushes a `style-changed` event with the new CSS
 //! whenever the stylesheet changes.
 

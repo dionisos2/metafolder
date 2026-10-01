@@ -1,5 +1,5 @@
 title: GUI configuration
-tags: Configuration
+tags: Configuration [[Customising the GUI]]
 kind: reference
 summary: gui/config.toml — ports, programs to open files with, list page sizes, timings, ref seeds, and each panel's initial values.
 
@@ -13,9 +13,33 @@ its default; this note says what each part is for.
 |`[page-size]` |how many rows or tiles each list panel loads per window, by panel type: `metarecord-list` 100, `file` 150, `file-manager` and `treeref` 200 |
 |`[settings]` |timings of the GUI itself: the daemon health poll, a reconcile's completion poll, the repository-list cache, and the GUI's slow-log threshold ([[Slow log configuration]]) |
 |`[panels]` |timings shared by every panel: the finder's and the live preview's debounce, the repos panel's task poll; `status-message-ms` and `status-error-ms` are left without effect since status messages stopped clearing themselves ([[Status bar and task bar]]) |
-|`[ref-seeds]` |how the targets of a `ref` field are named where a value is typed or shown: which metarecords (a query) and by which columns, per field, `*` being the default rule |
+|`[ref-seeds]` |how the targets of a `ref` field are named where a value is typed or shown: which metarecords (a query) and by which columns, per field, `*` being the default rule ([[Ref value seeds]]) |
 |`[completion]` |the separator joining the columns of a multi-column completion label |
 |`[panel-defaults.<panel>]` |each panel type's initial values — the columns `metarecord-list` opens on, the fields its finder searches, the field `treeref` opens on, the extensions `file` previews… — handed to that panel as `metafolder.defaults`. A custom panel type gets its own table the same way; the GUI knows nothing of the keys. Where a panel keeps a setting per workspace, the stored value wins |
 
 Every key is optional: a key, or a whole table, left out keeps its default. The
 file itself must exist ([[No runtime fallback]]).
+
+The file is read once, at startup: a change needs a restart
+([[Reloading the configuration]]).
+
+!! A panel's initial values
+
+What a panel opens on is configuration, not a constant of its code. Each
+`[panel-defaults.<panel>]` table belongs to the panel type of that name:
+
+```
+[panel-defaults.metarecord-list]
+columns       = "mfr_path:path mfr_type &version"
+finder-fields = ["mfr_path:path", "label:value", "name:value"]
+
+[panel-defaults.treeref]
+field = "mfr_path"
+```
+
+* A key left out keeps the value built into the panel.
+* A value the panel cannot use — a columns text that does not parse, a size that is not a number — is ignored in favour of the built-in one; it never breaks the panel.
+* These are ''initial'' values. Where a panel keeps the setting per workspace — the columns and the finder fields of the list, the field of `treeref` — the configured value is only what a workspace starts with ([[Workspace variables]]).
+
+What every panel shares stays in its own table: `[panels]` for the timings,
+`[page-size]` for the page sizes.

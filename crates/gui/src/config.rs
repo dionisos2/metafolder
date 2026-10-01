@@ -1,5 +1,5 @@
-//! `~/.config/metafolder/gui/` access (doc "Configuration"; spec-gui "Panel type
-//! system", "Style and theming"): reading the keybindings, stylesheet and
+//! `~/.config/metafolder/gui/` access (doc "Configuration", doc "Style and theming";
+//! spec-gui "Panel type system"): reading the keybindings, stylesheet and
 //! panel types that `metafolder-sync-config` installed, plus the port
 //! discovery file for scripts.
 //!
@@ -97,8 +97,8 @@ impl Default for PanelSettings {
 }
 
 /// Per-panel-type default values (the `[panel-defaults.<panel-type>]` tables of
-/// `config.toml`), handed to each panel as `metafolder.defaults` (spec-gui
-/// "Panel defaults"). Deliberately untyped: panel types are user-extensible, so
+/// `config.toml`), handed to each panel as `metafolder.defaults` (doc
+/// "GUI configuration"). Deliberately untyped: panel types are user-extensible, so
 /// the GUI cannot know a custom panel's keys — a table is passed through to its
 /// panel verbatim, and each panel keeps its own module fallback for a key the
 /// user did not configure.
@@ -126,18 +126,18 @@ pub struct GuiConfig {
     /// Per-panel-type default values (`[panel-defaults.<panel-type>]`), passed
     /// through to each panel as `metafolder.defaults`.
     pub panel_defaults: PanelDefaults,
-    /// Per-field-name seed queries for `ref` value pickers (spec-gui "Picker
-    /// seeds"), read from the `[picker-seeds]` table: field name → query text
+    /// Per-field-name seed queries for `ref` value pickers (doc "Ref value seeds"),
+    /// read from the `[picker-seeds]` table: field name → query text
     /// (in the `metarecord-list` query box's syntax, where the seed is injected).
     pub picker_seeds: std::collections::HashMap<String, String>,
-    /// Per-field-name completion seeds for `ref` *values* (spec-gui "Ref value
-    /// completion"), read from the `[ref-completion-seeds]` table: field name →
+    /// Per-field-name completion seeds for `ref` *values* (doc "Ref value seeds"),
+    /// read from the `[ref-completion-seeds]` table: field name →
     /// the name of a `tree_ref` field whose paths seed the value completion and
     /// against which a typed path is resolved back to the target uuid.
     /// Legacy: `[ref-seeds]` wins where both name a field.
     pub ref_completion_seeds: std::collections::HashMap<String, String>,
-    /// Per-field rules naming a `ref` field's targets (spec-gui "Ref value
-    /// seeds"), read from the `[ref-seeds]` table: field name →
+    /// Per-field rules naming a `ref` field's targets (doc "Ref value seeds"),
+    /// read from the `[ref-seeds]` table: field name →
     /// `["query", "columns"]` (which metarecords may be named, and how each is
     /// shown — the `metarecord-list` query and columns syntaxes). The `"*"`
     /// entry is the default rule, read for every field that names none.
@@ -172,7 +172,7 @@ impl Default for CompletionSettings {
     }
 }
 
-/// One `[ref-seeds]` rule (spec-gui "Ref value seeds"): how a `ref` field's
+/// One `[ref-seeds]` rule (doc "Ref value seeds"): how a `ref` field's
 /// targets are *named* in every value slot — which metarecords may be named
 /// (`query`, in the `metarecord-list` query box's syntax; none = all of them)
 /// and how each is shown (`columns`, in the `metarecord-list` columns syntax).
@@ -433,7 +433,7 @@ impl ConfigDir {
         self.root.join("commands.js")
     }
 
-    /// The user's command module (spec-gui "User commands"). A missing file is
+    /// The user's command module (doc "User commands"). A missing file is
     /// an error, like every other configuration file: a shipped default is
     /// installed by `metafolder-sync-config`, so its absence means the
     /// installation is incomplete rather than that the user wants no commands.

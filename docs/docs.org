@@ -978,19 +978,49 @@ la table « Command names », les lignes des commandes de cet item ; help
 =keybindings.html=, =find.html= et leurs alias (=help= et =help-cursor= retirés
 de =getting-started=).
 
-** TODO 36. Personnalisation
+** FAIT 36. Personnalisation
 
-- [ ] =Customising the GUI= — overview
-- [ ] =Style and theming= — guide (=style.css=)
-- [ ] =User commands= — guide (=commands.js=, =mf.invoke=)
-- [ ] =Reloading the configuration= — reference (ce qui est rechargeable, et pourquoi pas le reste)
-- [X] =GUI configuration= — reference (=gui/config.toml=) — écrite à l'item 4
-- [ ] =Ref value seeds= — reference
+- [X] =Customising the GUI= — overview (un tableau : quoi changer, dans quel fichier, quand cela prend effet)
+- [X] =Style and theming= — guide (=style.css=)
+- [X] =User commands= — guide (=commands.js=, =mf.invoke=)
+- [X] =Reloading the configuration= — reference (ce qui est rechargeable, et pourquoi pas le reste)
+- [X] =GUI configuration= — reference (=gui/config.toml=) — écrite à l'item 4 ; complétée ici par « A panel's initial values » (la section « Panel defaults » de la spec)
+- [X] =Ref value seeds= — reference
+- [X] =Why user commands are JavaScript= — rationale, dev (ajoutée : la mémoire =gui-user-commands-js=)
+- [X] =How reloading is implemented= — reference, dev (ajoutée : la mémoire =gui-config-reload=)
+- [X] les notes de commande : =config:open=, =config:reload=, =user:rate=, =user:tag-query=
 
-GUI : =config:*= (2), =user:*= (2 : =user:rate=, =user:tag-query=). Sources :
-spec-gui « Style and theming », « User commands », « Reloading configuration »,
-« Panel defaults », « Ref value seeds » ; mémoires =gui-user-commands-js=,
-=gui-config-reload=.
+Vérification contre le code. *Corrigé, test d'abord* (deux commits à part) : (a) la spec
+disait « les builtins gagnent une collision de nom ». Ils gagnaient à
+l'exécution seulement : une entrée de =commands.js= nommée comme un builtin
+(=quit=…) remplaçait son libellé et sa déclaration d'arguments dans la liste, et
+=config:reload commands= retirait ensuite le builtin du registre et vidait ses
+arguments. Le registre refuse maintenant le nom (=register_user=), l'entrée
+n'installe rien et la barre d'état la nomme ; (b) l'étiquette d'une cible
+joignait toutes les colonnes de la règle, vides comprises : avec la règle =*=
+livrée, un metarecord n'ayant qu'un =name= se lisait — et devait se taper —
+=" |  | N | "=, et un metarecord sans aucune des colonnes =" | "= au lieu de son
+uuid ; les colonnes absentes sont omises. Autres écarts : le libellé de
+=config:reload= omettait =commands= ; l'en-tête du =style.css= livré disait de
+le copier dans =~/.config/metafolder-gui/= ; la spec disait qu'un rechargement
+des raccourcis perd les touches suggérées (elles sont reportées depuis l'item
+35) ; les citations =spec-gui "Ref value completion"= et ="Picker seeds"= du code
+visaient des sections qui n'existaient plus. Ignorés par la spec : un panel
+applique sa propre feuille de style *après* celle de l'utilisateur (à poids
+égal le panel gagne — la note le dit, c'est ce qui surprend en écrivant une
+règle), =--mf-find= / =--mf-find-current=, =all= qui s'arrête à la première
+partie en échec en gardant les précédentes, les tables héritées qui ne sont lues
+que sans règle =*=. *Non corrigé, à trancher* : (1) une entrée de =commands.js=
+homonyme d'une commande de /panel/ l'emporte toujours à l'exécution (le dispatch
+la cherche avant les panels) alors que le registre garde celle enregistrée en
+dernier ; (2) le surveillant de =style.css= (et =/__style.css=) applique une
+feuille vide quand le fichier est illisible, au lieu de garder l'ancienne.
+Sources retirées (pointeurs) : spec-gui « Ref value seeds » (ses paragraphes sur
+=metarecord:field remove= / =edit= déplacés dans la section =metarecord-detail=,
+pour l'item 38), « Panel defaults », « Style and theming », « User commands »,
+« Reloading configuration » ; de la table « Command names », les lignes
+=config:*= et =user:*=. Mémoire =gui-config-reload= supprimée,
+=gui-user-commands-js= réduite à la méthode de test e2e.
 
 ** TODO 37. Écrire un panel
 

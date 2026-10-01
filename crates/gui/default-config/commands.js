@@ -24,8 +24,7 @@
 // `metarecord-list:folder`, the orphan cleanup `orphan:delete` /
 // `orphan:detect-delete`, and the picks `repos:switch` / `recent` are defined
 // here rather than compiled into the shell exactly so their questions, and the
-// actions their answers run, stay editable (doc "Sending files to the trash", spec-gui.org
-// "Cross-panel selection" / "Orphans" / "Command names").
+// actions their answers run, stay editable (doc "User commands").
 //
 // A syntax error in this file stops the GUI from starting, with the error on
 // screen. `config:reload commands` re-reads it without a restart.

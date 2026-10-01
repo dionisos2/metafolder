@@ -77,7 +77,7 @@ live-preview-debounce-ms = 130
 # 1500.
 task-poll-ms = 1500
 
-# Ref value seeds (spec-gui "Ref value seeds"). A `ref` field points to a
+# Ref value seeds (doc "Ref value seeds"). A `ref` field points to a
 # metarecord by uuid, which is unreadable to type by hand — so a rule here says
 # how its targets are *named* everywhere a value is typed or shown: which
 # metarecords may be named (a `metarecord-list` query, optional — the picker
@@ -103,7 +103,7 @@ mixed_tag    = ['mf_schema = "tag"', 'path:path']
 [completion]
 label-separator = ' | '
 
-# Per-panel-type default values (spec-gui "Panel defaults"). Each table is
+# Per-panel-type default values (doc "GUI configuration"). Each table is
 # handed verbatim to the panel of that name as `metafolder.defaults` (keys
 # camelCased: `text-preview-limit` reads as `metafolder.defaults.textPreviewLimit`),
 # so a custom panel type gets its own table the same way — the GUI knows

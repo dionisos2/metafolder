@@ -1,6 +1,6 @@
 /* Default metafolder GUI stylesheet.
- * Copy to ~/.config/metafolder-gui/style.css and edit freely; the GUI
- * reloads it automatically when the file changes. */
+ * Installed as ~/.config/metafolder/gui/style.css: edit it freely, the GUI
+ * reloads it when the file changes (doc "Style and theming"). */
 
 :root {
   --mf-bg: #1e1e24;

@@ -27,7 +27,7 @@ A synonym for an operator goes inside the repetition that uses it —
 `("OR" | "+")` — not as a second alternative, which ordered choice would never reach.
 
 The GUI reads the grammar at startup; after an edit, reload it without a restart with
-`config:reload grammar`. The CLI reads it at each `-s`.
+`config:reload grammar` ([[Reloading the configuration]]). The CLI reads it at each `-s`.
 
 !! What the load checks
 

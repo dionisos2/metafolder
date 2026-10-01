@@ -3,7 +3,7 @@
 // first, then the value. `remove` is the exact inverse of `add` (every row
 // equal to the value it names is deleted), and `edit` names the row to change
 // and its replacement. Both travel the same raw vocabulary values are written
-// in — so a `ref` with a completion seed (spec-gui "Ref value completion") is
+// in — so a `ref` with a completion seed (doc "Ref value seeds") is
 // named by its PATH in the seed forest rather than its uuid, on the way in
 // (parsed as one being added) and on the way out (the candidates offered, and
 // the value an edit starts from). This replaces row picks whose labels spelled

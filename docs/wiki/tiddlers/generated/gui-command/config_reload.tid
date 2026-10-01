@@ -1,7 +1,7 @@
 title: $:/mf/gen/GUI command/config:reload
 catalog: GUI command
 target: config:reload
-summary: Re-read user configuration without a restart (keybindings / style / grammar / all)
+summary: Re-read user configuration without a restart (keybindings / style / grammar / commands / all)
 
 !! Reference
 

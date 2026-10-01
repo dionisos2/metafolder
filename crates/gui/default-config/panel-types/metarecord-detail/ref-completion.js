@@ -1,4 +1,4 @@
-// Ref-value completion/resolution helper (spec-gui "Ref value completion").
+// Ref-value completion/resolution helper (doc "Ref value seeds").
 //
 // A `ref` field points to a metarecord by uuid, which is unreadable to type by
 // hand. When the field has a completion seed configured (config.toml

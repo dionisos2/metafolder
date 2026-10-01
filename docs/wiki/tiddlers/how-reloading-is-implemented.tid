@@ -1,0 +1,18 @@
+title: How reloading is implemented
+tags: [[Customising the GUI]]
+kind: reference
+audience: dev
+summary: config:reload swaps what Rust holds and pushes what the shell mirrors; the details that are not cosmetic, and the list of targets kept in two places.
+
+`config_reload` (`crates/gui/src/commands.rs`) handles the targets in the order of
+`RELOAD_TARGETS`; what each one does is in [[Reloading the configuration]].
+
+* ''`keybindings`'' goes through `push_keytable`, not `push_keybindings`: the first layers the temporary keys of a running script back on top, the second would drop them. The suggestions made with `addKeybinding` are carried over to the new set (`with_suggestions_of`), since the file does not contain them.
+* ''`style`'' emits `style-changed` from Rust instead of returning the CSS. The shell's document and the style sheet adopted by every panel's shadow root both follow that event; a caller that fetched the CSS and applied it would update the shell only. The settings view's button goes through the command for that reason, and the file watcher (`style_watcher.rs`) emits the same event.
+* ''`grammar`'' — `core::simplified::load` reads the file at every call; only the GUI kept the result of the first one. The grammar and what is derived from it sit behind one lock and are swapped together.
+* ''`commands`'' — Rust only checks that the file can be read. Importing the module is the shell's part, done by the frontend's `config:reload` case after the Rust command returned ([[Why user commands are JavaScript]]).
+
+The list of targets exists twice: `RELOAD_TARGETS` in Rust, which resolves the
+argument, and in `frontend/src/lib/commands.ts`, which completes it. Neither can see
+the other when compiling, so a Rust test reads the TypeScript source and compares
+the two.

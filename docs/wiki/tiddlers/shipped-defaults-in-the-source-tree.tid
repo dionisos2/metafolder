@@ -33,7 +33,7 @@ and leave the help panel empty.
 ''User commands.'' `gui/commands.js` ships a few worked examples and the utility
 commands defined there rather than compiled in, so that their questions and
 answers stay yours to change. It is a JavaScript module the GUI imports: code in
-the configuration, as the panel types and the scripts are.
+the configuration, as the panel types and the scripts are ([[User commands]]).
 
 !! The code
 

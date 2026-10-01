@@ -1,0 +1,85 @@
+title: User commands
+tags: [[Customising the GUI]] Commands
+kind: guide
+aliases: commands.js user-commands custom-commands mf.invoke user:
+summary: commands.js defines commands of your own in JavaScript — a name, the questions it asks, and what it runs, usually other commands through mf.invoke.
+
+`~/.config/metafolder/gui/commands.js` is a JavaScript module. What it exports is a
+set of commands: each key is a command's name, each value its definition. There is
+nothing to register.
+
+```
+export default {
+  'user:rate': {
+    label: 'Rate the selected metarecords',
+    args: [{ name: 'rating', prompt: () => 'Rating? (1-5)', complete: () => ['1', '2', '3', '4', '5'] }],
+    run: (mf, rating) => mf.invoke(`metarecord:bulk selection set rating ${rating}`),
+  },
+};
+```
+
+Such a command is a command like any other ([[Commands]]): it is listed in the
+command input, asks for the arguments it was not given, can be bound to a key in
+`keybindings.toml` ([[Changing keybindings]]) and run by a script.
+
+!! A definition
+
+|!Key |!Meaning |
+|`run` |required: the function the command runs. It receives `mf`, then the arguments |
+|`label` |what the command input shows beside the name (default: the name) |
+|`args` |the arguments, in order ([[Interactive command arguments]]) |
+|`log` |`false` keeps the command out of the message log (default: `true`) |
+
+An argument has a `name` and, all optional: `prompt` (the question), `complete` (the
+candidates: a function, or an array of views — [[Completion views]]), `initial`
+(text already in the input), `optional`, `when` (whether to ask, given the earlier
+answers) and `views`. Each of these functions receives `mf` first, where a panel's
+receives nothing.
+
+!! `mf`
+
+`mf` is the object panels get as `metafolder`, with `mf.invoke("<invocation>")` to
+run a command as if it were typed. A user command belongs to no panel, so:
+
+* it acts on the ''focused workspace'', looked up each time it runs: `mf.workspace.get('active_repo')` is the repository of where you are now;
+* what only means something inside a panel is absent — the panel's type, page size, default values and visibility, and `commands.register`.
+
+A command here is meant to ''combine existing commands''. `mf.daemon` is there for
+reading what a question needs — the shipped file lists the tag paths for a
+completion that way — but something that cannot be said with existing commands is
+usually a base command that is missing.
+
+An error thrown by `run` is shown in the status bar, like any command's failure.
+
+!! The shipped entries
+
+The shipped file holds two examples, `user:rate` and `user:tag-query`, and seven
+commands of the GUI itself that are written here so that their questions and what
+their answers run can be edited:
+
+* `metarecord:remove` ([[Sending files to the trash]]);
+* `file-manager:reveal` and `metarecord-list:folder` ([[Cross-panel selection]]);
+* `orphan:delete` and `orphan:detect-delete` ([[Orphans in the GUI]]);
+* `repos:switch` and `recent`, the two pickers.
+
+They are ordinary entries: removing one removes the command, and a key bound to it
+then runs nothing ([[Changing keybindings]]).
+
+!! Names
+
+Any name will do; `user:` keeps yours apart from the shipped ones. A name that is
+already a command of the shell (`quit`, `panel:set`…) is ''left out'': the shell's
+command stays as it is, and the status bar names the entry that was ignored. An
+entry can add to the command set, never replace part of it unnoticed.
+
+!! Applying a change
+
+`config:reload commands` reads the file again: the commands of the previous version
+are forgotten, so an entry deleted from the file leaves the command input
+([[Reloading the configuration]]).
+
+A file that cannot be used — a syntax error, an export that is not an object, an
+entry without a `run` function — is refused as a whole:
+
+* on a reload, the error goes to the status bar and the commands already there stay;
+* at startup, the GUI stops on a banner showing the JavaScript error. No panel is loaded. Correct the file and start again ([[No runtime fallback]]).

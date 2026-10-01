@@ -387,7 +387,7 @@ export function promptsForInput(invocation: string): boolean {
   return false;
 }
 
-// ── User commands (spec-gui "User commands") ───────────────────────────────
+// ── User commands (doc "User commands") ───────────────────────────────
 // Commands defined in ~/.config/metafolder/gui/commands.js. They are ordinary
 // *builtins registered at runtime* — no owner, no panel — so they need a
 // handler table of their own, looked up after the builtin switch (a user

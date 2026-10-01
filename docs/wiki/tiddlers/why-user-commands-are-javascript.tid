@@ -1,0 +1,63 @@
+title: Why user commands are JavaScript
+tags: [[Customising the GUI]]
+kind: rationale
+audience: dev
+summary: commands.js is code rather than a TOML table of commands; a user command is a builtin registered at runtime; a broken file stops the GUI instead of being skipped.
+
+!! JavaScript, not TOML
+
+A TOML table was considered first for user commands: a name, a template of the
+invocation to run, the source of each argument's completions. The objection to
+JavaScript was that the configuration repository would then contain code.
+
+It already does: the panel types are JavaScript imported into the shell's page, and
+the shipped scripts are shell. The TOML form, on the other hand, needed a small
+language of its own to say where completions come from — a list, a query, the paths
+of a field — to be invented, documented and then extended at each new need. A
+function that returns the candidates needs none of it, and gets the same API panels
+have ([[User commands]]).
+
+The key of the export ''is'' the name: there is no `register` call that the file
+could forget or do twice, and reloading knows exactly what the file defined.
+
+!! A builtin registered at runtime
+
+A user command has no owner in the command registry (`owner: None`), like the
+shell's own commands: its code runs in the shell's page and in no panel. Two things
+follow.
+
+* Its `mf` is built for the ''focused workspace'', and the workspace is read through a getter at each call, not captured when the file is loaded.
+* The dispatch looks for it after the shell's own `switch` and before the panels' commands, and the registry refuses to register it under the name of a shell command (`CommandRegistry::register_user`). Before that refusal the entry's label and argument declaration replaced the builtin's while the builtin still ran, and a reload removed the builtin from the registry.
+
+`mf.invoke` exists because of this feature. The API only had `commands.invoke`,
+while everything written about user commands said `mf.invoke`: combining commands is
+the whole point, so the call is at the top of the object, for panels too.
+
+!! A broken file stops the GUI
+
+A missing file is caught by Rust before any window opens, like any other missing
+configuration file. A file that does not parse can only be seen by the web view —
+Rust has no JavaScript engine. The shell therefore imports it during its own start,
+''outside'' the error boundary that isolates a panel's module, and a rejection leaves
+the initialisation banner on screen with the error. No panel is mounted, so no panel
+command exists either. The scripting API still answers for what Rust serves alone
+(the layout), because its listener is installed before the import.
+
+Skipping a broken file would start a GUI in which keys silently run nothing.
+
+On a reload the order matters: the module is imported and validated ''first'', and
+the previous commands are forgotten only then. Clearing first meant that one bad
+edit removed every user command until the file parsed again.
+
+!! Testing it
+
+Both bugs above the unit tests could not see were found by driving the real GUI:
+start it on another port, then send invocations to it:
+
+```
+mf gui --gui-url http://127.0.0.1:7534 command "<invocation>"
+```
+
+`/gui/command` goes through the shell's dispatch, so an answer
+proves the shell runs, and `unknown command` on a panel's command proves it does
+not.

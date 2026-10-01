@@ -1,0 +1,44 @@
+title: Style and theming
+tags: [[Customising the GUI]]
+kind: guide
+aliases: style.css theme theming css colours colors stylesheet
+summary: The look of the GUI is one CSS file, style.css: a few variables carry the colours and fonts, and saving the file restyles the window at once.
+
+`~/.config/metafolder/gui/style.css` is an ordinary style sheet, applied to the
+whole window: the shell (tabs, command input, status bar) and every panel.
+
+!! Colours and fonts
+
+The shipped file starts with the variables everything else is drawn with. Changing
+a value there is enough for most themes:
+
+|!Variable |!Used for |
+|`--mf-bg`, `--mf-bg-raised` |the background, and the background of what sits above it (bars, headers, menus) |
+|`--mf-fg`, `--mf-fg-dim` |text, and secondary text and borders |
+|`--mf-accent`, `--mf-focus-border` |links and highlights; the frame of the focused slot |
+|`--mf-error`, `--mf-ok`, `--mf-warning` |messages, by kind |
+|`--mf-cursor`, `--mf-checked` |the row under the cursor; the checked rows ([[Cross-panel selection]]) |
+|`--mf-orphan`, `--mf-unwatched` |rows whose file is gone; rows left untracked on purpose |
+|`--mf-tab-focused`, `--mf-tab-unfocused` |the tabs of the workspaces shown in the focused and in the other slot |
+|`--mf-font`, `--mf-font-mono` |the two fonts |
+|`--mf-find`, `--mf-find-current` |the matches of [[Find in a panel]]; not in the shipped file, add them to change the two yellows |
+
+The rest of the file restyles what the web view draws badly on a dark background:
+scroll bars, drop-down lists, buttons, links to metarecords, context menus (the
+classes `mf-menu`, `mf-menu-item`, `mf-menu-separator`).
+
+!! Rules of your own
+
+Any CSS may be added. Two things decide whether a rule reaches its target:
+
+* The shell and each panel are separate trees (a panel lives in a shadow root). The style sheet is applied to each of them, so a selector matches ''inside'' one tree: `button` reaches every button, but a selector cannot go from the shell into a panel. A panel's outermost element is `.mf-panel-body`.
+* A panel's own style comes after yours. Where both set the same property with selectors of the same weight, the panel wins; a variable, a more specific selector or `!important` gets through.
+
+!! Applying a change
+
+The GUI watches the file: saving it restyles the window, with no command. `config:reload
+style`, and the ''Reload'' button of the settings view (`config:open`), do the same by
+hand ([[Reloading the configuration]]).
+
+A CSS mistake breaks nothing: the web view ignores the rule it cannot read. The
+shipped sheet can be brought back with git ([[Updating the configuration]]).

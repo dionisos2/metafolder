@@ -1,4 +1,4 @@
-// The shipped ~/.config/metafolder/gui/commands.js (spec-gui "User commands").
+// The shipped ~/.config/metafolder/gui/commands.js (doc "User commands").
 //
 // The default file is executable documentation: `user:tag-query` is the
 // example the spec teaches with, and its *composition* is the whole point —

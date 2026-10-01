@@ -74,7 +74,7 @@ And a text field keeps its own keys: the command input's list and completion
 
 !! Keys suggested by a panel or a user command
 
-A panel type that is not shipped with the GUI, and the user's `gui/commands.js`,
+A panel type that is not shipped with the GUI, and the user's `gui/commands.js` ([[User commands]]),
 can ''suggest'' a key for their commands (`metafolder.addKeybinding`). A suggestion
 applies only where the file has no binding for the same key in the same place: the
 file always wins. Suggestions are not written to the file. The built-in panels

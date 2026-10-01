@@ -217,7 +217,7 @@ declare namespace Metafolder {
      *  field, or null (config.toml `[ref-completion-seeds]`). */
     refCompletionSeed(field: string): Promise<string | null>;
     /** The `[ref-seeds]` rule naming a `ref` field's targets —
-     *  `{query, columns}` (spec-gui "Ref value seeds"): which metarecords may
+     *  `{query, columns}` (doc "Ref value seeds"): which metarecords may
      *  be named, and how each is shown (the `metarecord-list` query and columns
      *  syntaxes). The named rule wins, `"*"` is the default; null when neither
      *  exists. */
@@ -587,7 +587,7 @@ declare namespace Metafolder {
     readonly workspace: Workspace;
     readonly commands: Commands;
     /** `commands.invoke` lifted to the top of the object
-     *  (`withTopLevelInvoke`, spec-gui "User commands"): composing existing
+     *  (`withTopLevelInvoke`, doc "User commands"): composing existing
      *  commands is what a command is *for*, so the call it makes most should
      *  not need a path through the object. Panels get the alias too — one API
      *  to learn, not two. */

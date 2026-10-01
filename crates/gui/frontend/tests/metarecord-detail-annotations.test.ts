@@ -51,7 +51,7 @@ function annotatorFor(entries: Entry[], seeds: Record<string, string> = {}) {
     }
     return out;
   });
-  // What a ref target answers to under its value: its naming (spec-gui
+  // What a ref target answers to under its value: its naming (doc
   // "Ref value seeds"), read back here the way the panel reads a legacy seed
   // back — the target's whole path in the seeded forest, resolved by the
   // daemon in one call.

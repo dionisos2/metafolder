@@ -1,0 +1,71 @@
+title: Ref value seeds
+tags: [[Customising the GUI]]
+kind: reference
+aliases: ref-seeds seed-rule ref-completion naming-references
+summary: A [ref-seeds] rule says, per field, which metarecords a ref may point to and by which columns they are named — in completions, in typed values and where the value is shown.
+
+A `ref` value is the uuid of a metarecord: unreadable, and impossible to type. A
+''seed rule'' gives the targets of a field a name instead. It is used wherever the
+field's value is entered or shown in the detail of a metarecord: the candidates of
+its completion, what a typed value must spell, the line under a value, the text an
+edit starts from, and the query the [[Value picker]] opens on.
+
+!! The rule
+
+Rules are in `gui/config.toml` ([[GUI configuration]]), one per field name:
+
+```
+[ref-seeds]
+tag    = ['mf_schema = "tag"', 'path:path']
+author = ['mf_schema = "person"', 'full_name name']
+'*'    = 'path:path mfr_path:path name label'
+```
+
+A rule is `["query", "columns"]`, or `"columns"` alone:
+
+* the ''query'' says which metarecords may be named, in the query language; without one, all of them;
+* the ''columns'' say how each is named, in the syntax of the columns of the metarecord list — `path:path` is the full path of a `tree_ref` field, `author>name` follows a reference.
+
+`*` is the rule of every field that has none. A rule with more than two parts stops
+the GUI at startup.
+
+The shipped file names the three fields of the tag model (`tag`, `negative_tag`,
+`mixed_tag`) by the path of the tag ([[Hierarchical tags]]), and everything else, by
+`*`, by a path, a name or a label.
+
+!! Typing a value
+
+The value is typed as the target's ''label'': its columns, joined by the separator
+of `[completion]` (`label-separator`, `" | "` when not set). A column the target
+does not have is left out.
+
+* The label is matched ''whole''. A text that names no candidate is an error, and so is a label that several targets bear — the error lists them. A wrong reference is never written silently.
+* A uuid (32 hexadecimal characters) is always accepted as it is.
+
+!! The candidates
+
+The completion offers the naming as several views ([[Completion views]]): the whole
+line first, then each column alone — a column's view listing only the metarecords
+that have that column. Which one reaches a metarecord fastest depends on the
+metarecord.
+
+Each view is one page of at most 100 candidates, sorted by the naming columns and
+asked of the daemon again as the text changes: every word typed must appear in one
+of the columns. A rule may therefore select the whole repository.
+
+While a view is on screen, a text names what it names ''in that view''. A value
+given with the command, with no view to read it in, is looked up in all of them and
+must name one target across them.
+
+!! Reading a value back
+
+What is typed is what is shown: under a `ref` value, and as the starting text of an
+edit, the target reads as its label under the same rule. A target that has none of
+the columns reads as its uuid, in the candidates as well.
+
+!! Older tables
+
+Two tables that came before `[ref-seeds]` are still read for a field that no rule
+covers, which requires that there be no `*` rule either: `[picker-seeds]` (field →
+the query the value picker opens on) and `[ref-completion-seeds]` (field → a
+`tree_ref` field whose paths name the targets).

@@ -12,7 +12,7 @@ panels and keys, then hand it back to the form.
 !! Picking
 
 * The picker opens in the ''other'' slot, and takes the focus; the form stays visible. Its status bar says what to choose.
-* For a `ref` it is a `metarecord-list`, with the finder focused: type to narrow. It starts on the query configured for the field, if there is one ([[GUI configuration]]). For a `tree_ref` it is the `treeref` panel, on the field's own tree.
+* For a `ref` it is a `metarecord-list`, with the finder focused: type to narrow. It starts on the query configured for the field, if there is one ([[Ref value seeds]]). For a `tree_ref` it is the `treeref` panel, on the field's own tree.
 * Move as usual: highlighting a row commits nothing.
 * <<key "pick:confirm" "ctrl+enter">> confirms; <<key "pick:cancel" "ctrl+escape">> gives up. Closing the picker like any workspace gives up too.
 

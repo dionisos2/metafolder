@@ -114,7 +114,7 @@ function camelCaseKeys(table: Record<string, unknown>): Record<string, unknown> 
 }
 
 /**
- * The API a *user command* gets (spec-gui "User commands").
+ * The API a *user command* gets (doc "User commands").
  *
  * A user command has no panel: its code lives in the shell realm, and it acts
  * on whatever workspace is focused when it runs — so `wsId` is read through a
@@ -490,7 +490,7 @@ export function createPanelApi(deps: PanelApiDeps, ctx: PanelApiCtx): PanelApiIn
       refCompletionSeed: (field: string) =>
         invoke('ref_completion_seed', { field }) as Promise<string | null>,
       // The `[ref-seeds]` rule naming a `ref` field's targets —
-      // `{query, columns}` (spec-gui "Ref value seeds"): which metarecords may
+      // `{query, columns}` (doc "Ref value seeds"): which metarecords may
       // be named, and how each is shown. The named rule wins, `"*"` is the
       // default; null when neither exists.
       refSeed: (field: string) =>

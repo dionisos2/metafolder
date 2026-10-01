@@ -1,0 +1,28 @@
+title: Reloading the configuration
+tags: [[Customising the GUI]] Configuration
+kind: reference
+aliases: reload config-reload hot-reload restart
+summary: config:reload re-reads the keybindings, the style sheet, the query grammar and commands.js while the GUI runs; the rest of the configuration is read at startup, and why.
+
+`config:reload <what>` reads a part of the configuration again, without a restart.
+
+|!`what` |!Reads |!Notes |
+|`keybindings` |`gui/keybindings.toml` |for a file edited outside the GUI: the settings view applies its own changes. Keys suggested by a panel or by `commands.js`, and the temporary keys of a running script, are kept ([[Changing keybindings]]) |
+|`style` |`gui/style.css` |also done automatically when the file is saved ([[Style and theming]]) |
+|`grammar` |`core/query-grammar` |the simplified query language ([[Editing the grammar]]) |
+|`commands` |`gui/commands.js` |the commands of the previous version are forgotten first ([[User commands]]) |
+|`all` |the four, in this order | |
+
+The status bar reports what was reloaded. A file that cannot be read or is malformed
+is refused with the reason, and what was in effect stays. With `all`, the parts
+before the failing one are reloaded and the ones after it are not.
+
+Another name is refused with the list of the accepted ones.
+
+!! What is not reloadable
+
+Three parts of the configuration are left out on purpose.
+
+* ''`core/ignore-presets.toml`'' needs no reload: it is read each time an `ignore:*` command runs.
+* ''`gui/config.toml`'' is read at startup, and much of it is used up then: `gui-port` is the port the GUI's server is listening on, the timings of `[settings]` were given to background tasks when they started, and the page sizes, panel timings and `[panel-defaults]` are handed to each panel when it is created. Reloading only what could be would leave the GUI in a state that no configuration file describes; a restart is asked for instead ([[GUI configuration]]).
+* ''`gui/panel-types/`'' — the files are read from disk each time they are asked for, but the web view keeps a JavaScript module once it is loaded, and a panel, once created, lives until the GUI exits. An edited panel is picked up at the next start ([[Panel types]]).

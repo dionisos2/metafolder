@@ -1,0 +1,6 @@
+title: user:rate
+tags: [[GUI command]] [[Customising the GUI]]
+kind: reference
+summary: Rate the selected metarecords
+
+Asks for a rating from 1 to 5 and sets the field `rating` to it on the checked metarecords ([[Cross-panel selection]]); with none checked there is nothing to do. It is `metarecord:bulk selection set rating <n>` with one question less: an example of the shipped `commands.js`, to edit or delete ([[User commands]]).

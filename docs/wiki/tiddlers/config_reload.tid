@@ -1,0 +1,6 @@
+title: config:reload
+tags: [[GUI command]] [[Customising the GUI]]
+kind: reference
+summary: Re-read user configuration without a restart (keybindings / style / grammar / commands / all)
+
+Reads a part of the configuration again while the GUI runs, and reports what was reloaded in the status bar. A malformed file is refused and what was in effect stays. See [[Reloading the configuration]], which also says what needs a restart.

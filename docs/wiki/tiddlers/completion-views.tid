@@ -14,7 +14,8 @@ The ''label'' is what the list shows and what the typed text is matched against;
 ''value'' is what the command receives. A plain string is both, so a completion with
 nothing to gain from the split stays a plain list. Where they differ, the list names
 things the way a person reads them while the command gets what it must act on: a
-`ref` candidate is labelled by its target's path or name, and valued with its uuid.
+`ref` candidate is labelled by its target's path or name, and valued with its uuid
+([[Ref value seeds]]).
 
 Text typed in full that spells a label names its value, exactly as picking the row
 does. Text no label spells is taken as itself — which is how a uuid, or a value that

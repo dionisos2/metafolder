@@ -24,7 +24,7 @@ const calls = {
   sets: [] as { key: string; value: unknown }[],
 };
 
-/** The `mf` a user command is handed (spec-gui "User commands"), faked. */
+/** The `mf` a user command is handed (doc "User commands"), faked. */
 function fakeMf() {
   return {
     workspace: {

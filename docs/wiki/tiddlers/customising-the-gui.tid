@@ -1,0 +1,33 @@
+title: Customising the GUI
+tags: GUI
+kind: overview
+aliases: customisation customization customizing personalisation settings-files
+summary: What of the GUI is yours to change — keys, look, commands, settings, how references are named — the file each lives in, and what takes effect without a restart.
+
+Everything the GUI lets you change is a file of `~/.config/metafolder/gui/`, in the
+[[configuration repository|The configuration repository]]. The shipped version of
+each is installed by `metafolder-sync-config`, and an update merges the new shipped
+version into yours ([[Updating the configuration]]). The GUI never writes a default
+of its own: a file that is missing or malformed stops it at startup
+([[No runtime fallback]]).
+
+|!To change |!Edit |!Takes effect |
+|what a key runs |`keybindings.toml`, or the settings view — [[Changing keybindings]] |at once from the settings view; `config:reload keybindings` after editing the file |
+|colours, fonts, the look of a widget |`style.css` — [[Style and theming]] |when the file is saved |
+|the commands themselves: add yours, edit the shipped ones written in JavaScript |`commands.js` — [[User commands]] |`config:reload commands` |
+|ports, page sizes, timings, the programs offered to open a file |`config.toml` — [[GUI configuration]] |at the next start |
+|what a panel opens on: the columns of the list, the field of the tree… |`config.toml`, `[panel-defaults]` — [[GUI configuration]] |at the next start |
+|how the target of a reference is named where one is typed or shown |`config.toml`, `[ref-seeds]` — [[Ref value seeds]] |at the next start |
+|the words of the simplified query language |`core/query-grammar` — [[Editing the grammar]] |`config:reload grammar` |
+|what a panel does, or a panel type of your own |`panel-types/` — [[Panel types]] |at the next start |
+
+[[Reloading the configuration]] says why some of these need a restart.
+
+`config:open` opens the ''settings view'': the paths of these files, a button that
+reloads the style sheet, and the keybinding editor.
+
+<<tagged-with "GUI command">>
+
+<<list-kind guide>>
+
+<<list-kind reference>>

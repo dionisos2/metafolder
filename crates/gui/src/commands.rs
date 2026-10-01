@@ -45,7 +45,7 @@ pub struct App {
     pub ref_completion_seeds: std::collections::HashMap<String, String>,
     /// Per-field rules naming a `ref` field's targets (config.toml
     /// `[ref-seeds]`): field name → `{query, columns}`, with `"*"` the default
-    /// rule (spec-gui "Ref value seeds").
+    /// rule (doc "Ref value seeds").
     pub ref_seeds: std::collections::HashMap<String, crate::config::RefSeed>,
     /// Completion-wide knobs (config.toml `[completion]`).
     pub completion: crate::config::CompletionSettings,
@@ -531,7 +531,7 @@ pub fn pick_cancel(app: AppHandle) -> Result<(), String> {
 }
 
 /// The configured `ref` picker seed query for a field name (config.toml
-/// `[picker-seeds]`), or null when none is set (spec-gui "Picker seeds").
+/// `[picker-seeds]`), or null when none is set (doc "Ref value seeds").
 #[tauri::command]
 pub fn picker_seed(app: AppHandle, field: String) -> Option<String> {
     app.picker_seeds.get(&field).cloned()
@@ -540,7 +540,7 @@ pub fn picker_seed(app: AppHandle, field: String) -> Option<String> {
 /// The configured `ref` value completion seed for a field name (config.toml
 /// `[ref-completion-seeds]`): the `tree_ref` field whose paths seed the value
 /// completion and against which a typed path resolves to the target uuid, or
-/// null when none is set (spec-gui "Ref value completion").
+/// null when none is set (doc "Ref value seeds").
 #[tauri::command]
 pub fn ref_completion_seed(app: AppHandle, field: String) -> Option<String> {
     app.ref_completion_seeds.get(&field).cloned()
@@ -740,7 +740,7 @@ pub async fn list_scripts() -> Result<Vec<metafolder_core::scripts::ScriptInfo>,
         .map_err(|e| format!("blocking task failed: {e}"))
 }
 
-// ── Reloading the user configuration (spec-gui "Reloading configuration") ──
+// ── Reloading the user configuration (doc "Reloading the configuration") ──
 
 /// What `config:reload` can re-read while the GUI runs, in the order `all`
 /// applies them.

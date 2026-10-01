@@ -23,7 +23,7 @@ const state = {
   detectError: null as Error | null,
 };
 
-/** The `mf` a user command is handed (spec-gui "User commands"), faked: the
+/** The `mf` a user command is handed (doc "User commands"), faked: the
  *  calls are recorded, the answers and refusals read from `state`. */
 function fakeMf() {
   return {

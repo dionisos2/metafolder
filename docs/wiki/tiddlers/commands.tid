@@ -31,7 +31,7 @@ An argument left out is not an error: the command input asks for it
 
 * The ''shell'' defines the builtins: workspaces, panel slots, the command input, find, help, undo…
 * Each ''panel type'' registers its own when it is built, under its name: `metarecord-list:next`, `file:zoom`.
-* The user's `gui/commands.js` adds more.
+* The user's `gui/commands.js` adds more ([[User commands]]).
 
 The GUI builds every installed panel type once at startup, hidden, so that all the
 commands exist from the start ([[Panel types]]). The names follow one rule

@@ -31,5 +31,6 @@ The programs read `main`'s working tree, and only it; they never run git. Only
 `metafolder-sync-config` does ([[Updating the configuration]]).
 
 The per-program files: [[Daemon configuration]], [[GUI configuration]], [[CLI configuration]],
-[[Slow log configuration]] (daemon and GUI). `docs/` is the one directory that is
+[[Slow log configuration]] (daemon and GUI); the other files of `gui/` are in
+[[Customising the GUI]]. `docs/` is the one directory that is
 a build product rather than a source file.

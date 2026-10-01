@@ -1,0 +1,6 @@
+title: user:tag-query
+tags: [[GUI command]] [[Customising the GUI]]
+kind: reference
+summary: Insert a tag filter in the simplified query and search
+
+Asks for a tag, completing over the paths of the existing ones, then adds `#=<tag>` — the tag of that path, and those under it — to the simplified query of the metarecord list and runs the search; the focus stays where it was ([[Tag syntax in simplified queries]]). An example of the shipped `commands.js`, to edit or delete ([[User commands]]).

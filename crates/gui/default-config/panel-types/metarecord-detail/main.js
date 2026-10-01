@@ -847,7 +847,7 @@ export async function mount(root, metafolder) {
 
   /** A one-line editable form of a value — the inverse of `parseValueForField`.
    *  Async: a tree_ref renders as its resolved path, and a `ref` with a
-   *  completion seed (spec-gui "Ref value completion") as its path in the seed
+   *  completion seed (doc "Ref value seeds") as its path in the seed
    *  forest. Values are *entered* that way, so every form that shows one to be
    *  edited or removed shows it that way too.
    *  @param {string} repo @param {string} uuid @param {string} field
@@ -859,7 +859,7 @@ export async function mount(root, metafolder) {
       case 'bool':
         return value.value ? 'true' : 'false';
       case 'ref': {
-        // A `[ref-seeds]` rule names the target (spec-gui "Ref value seeds"):
+        // A `[ref-seeds]` rule names the target (doc "Ref value seeds"):
         // the value reads back as the label its naming gives the target — what
         // is typed is what is shown.
         const seeds = await refSeedsFor(repo, field);
@@ -910,7 +910,7 @@ export async function mount(root, metafolder) {
     }
   }
 
-  /** The `[ref-seeds]` engine of a field (spec-gui "Ref value seeds"), built
+  /** The `[ref-seeds]` engine of a field (doc "Ref value seeds"), built
    *  once per field — its columns parse once, its pages come per call — and
    *  null for a field no rule names (not even the `*` default), where the
    *  legacy completion seeds still speak. @param {string} repo
@@ -964,7 +964,7 @@ export async function mount(root, metafolder) {
   }
 
   /** What a `ref` value reads back as under the value: its label in the
-   *  field's `[ref-seeds]` naming (spec-gui "Ref value seeds"), else its path
+   *  field's `[ref-seeds]` naming (doc "Ref value seeds"), else its path
    *  in a legacy seed forest, else null — the target's `name` then applies.
    *  @param {string} repo @param {string} field @param {string} uuid */
   async function refLabelFor(repo, field, uuid) {
@@ -1069,12 +1069,12 @@ export async function mount(root, metafolder) {
    *  @param {string} repo @param {string} field @param {string} type @param {string} raw */
   async function parseValueForField(repo, field, type, raw) {
     if (type === 'ref') {
-      // A `[ref-seeds]` rule names the targets (spec-gui "Ref value seeds"):
+      // A `[ref-seeds]` rule names the targets (doc "Ref value seeds"):
       // what is typed is a label of its naming, whole, resolved to the uuid it
       // names (an explicit uuid always wins).
       const seeds = await refSeedsFor(repo, field);
       if (seeds) return { type, value: await seeds.resolve(raw) };
-      // Legacy (spec-gui "Ref value completion"): `raw` is a PATH in the seed
+      // Legacy (doc "Ref value seeds"): `raw` is a PATH in the seed
       // tree_ref field, resolved to the target uuid (a 32-hex `raw` is always
       // taken as the uuid directly).
       const seedField = await config.refCompletionSeed(field);
@@ -1402,7 +1402,7 @@ export async function mount(root, metafolder) {
     remove: {
       // The inverse of `add`, spelled like it — and like the CLI's
       // `field remove`: the field first, then the *value*, parsed as one being
-      // added (spec-gui "Ref value completion": a seeded ref is named by its
+      // added (doc "Ref value seeds": a seeded ref is named by its
       // path in the seed forest, never by its uuid). It used to pick a row by
       // its display label — a label that spelled a ref out as its uuid, and
       // that could not even be typed inline (labels contain spaces, and only

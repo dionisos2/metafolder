@@ -35,7 +35,7 @@ function panelCommands(): Set<string> {
   return names;
 }
 
-/** Commands the shipped commands.js defines (spec-gui "User commands"): the
+/** Commands the shipped commands.js defines (doc "User commands"): the
  *  name is the entry's key in the default export (`'name': {`). The scan is a
  *  superset at worst — extra names only weaken the check. */
 function userCommands(): Set<string> {

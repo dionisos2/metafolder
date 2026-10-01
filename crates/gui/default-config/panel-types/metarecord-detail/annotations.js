@@ -9,7 +9,7 @@
 //   refLabel(field, uuid)      -> a ref target's name under its value, or null
 //
 // The ref case reads the target back the way the field names its targets
-// (spec-gui "Ref value seeds"): the label of its `[ref-seeds]` rule is exactly
+// (doc "Ref value seeds"): the label of its `[ref-seeds]` rule is exactly
 // the form such a value is entered in. It matters for tags, whose hierarchy
 // lives in a TreeRef `path` and whose `name`/`label` is optional — without it
 // a `tag` value shows nothing but its uuid.
@@ -46,7 +46,7 @@ export function createAnnotator({ resolvePaths, getMetarecords, refLabel }) {
   }
 
   /** The name a `ref` target answers to under its value — its label in the
-   *  field's naming (spec-gui "Ref value seeds"), or null when it has none.
+   *  field's naming (doc "Ref value seeds"), or null when it has none.
    *  Unlike the tree_ref case this names the target itself (not its parent).
    *  @param {string} fieldName @param {string} uuid
    *  @returns {Promise<string|null>} */

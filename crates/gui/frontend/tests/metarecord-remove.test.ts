@@ -32,7 +32,7 @@ const state = {
   trashError: null as Error | null,
 };
 
-/** The `mf` a user command is handed (spec-gui "User commands"), faked: the
+/** The `mf` a user command is handed (doc "User commands"), faked: the
  *  calls are recorded, the daemon's answers read from `state`. */
 function fakeMf() {
   return {

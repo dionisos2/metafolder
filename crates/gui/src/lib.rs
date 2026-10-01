@@ -107,7 +107,7 @@ fn register_builtins(registry: &CommandRegistry) {
         ("config:open", "Open the settings view", true),
         (
             "config:reload",
-            "Re-read user configuration without a restart (keybindings / style / grammar / all)",
+            "Re-read user configuration without a restart (keybindings / style / grammar / commands / all)",
             true,
         ),
         ("devtools:open", "Open the WebKit web inspector", true),
@@ -377,7 +377,7 @@ pub fn run(options: Options) {
     // presence check: a missing file must fail the way every other missing
     // configuration file does, before a window exists. A file that is present
     // but does not parse can only be caught by the shell, which refuses to
-    // finish booting and shows the JavaScript error (spec-gui "User commands").
+    // finish booting and shows the JavaScript error (doc "User commands").
     or_exit(config.load_commands_js());
 
     // GUI settings (config.toml), with the CLI flags as optional overrides.
