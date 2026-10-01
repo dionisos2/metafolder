@@ -18,3 +18,7 @@ crates/gui/frontend/coverage/
 crates/gui/frontend/package-lock.json
 .mypy_cache/
 docs/wiki/dist/
+
+# Scratch diagnostics script and its output
+/do.sh
+/do-out/
