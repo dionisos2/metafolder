@@ -73,7 +73,7 @@ export async function loadUserCommands(): Promise<string[]> {
   // Said rather than swallowed: the entry is in the file and does nothing.
   if (refused.length > 0) {
     await status(
-      `commands.js: ${refused.join(', ')} ${refused.length > 1 ? 'are' : 'is'} already a command of the GUI — left out, the builtin stands`,
+      `commands.js: ${refused.join(', ')} ${refused.length > 1 ? 'are' : 'is'} already a command of the GUI — left out, the existing one stands`,
     );
   }
   return names;

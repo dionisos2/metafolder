@@ -4,9 +4,11 @@
   import {
     deadInvocations,
     dispatch,
+    dropUserCommand,
     registerArgs,
     setPanelArgs,
     setPanelDispatch,
+    status,
   } from '../commands';
   import { addDefaultMenuItems } from '../keys';
   import { focusedWs, refreshCommands, slotPayload, store } from '../store.svelte';
@@ -87,6 +89,13 @@
       {
         invoke,
         dispatch,
+        claimCommand: (name) => {
+          if (dropUserCommand(name)) {
+            void status(
+              `commands.js: ${name} is already a command of the ${panelType} panel — left out, the panel's stands`,
+            );
+          }
+        },
         registerHandler: (name, handler) => panelHandlers.set(`${key}|${name}`, handler),
         registerArgs: (name, args) => {
           panelArgSource.register(key, name, args);
@@ -261,11 +270,10 @@
       return instances.get(instanceKey(payload.workspace_id, payload.panel_type))?.shadow ?? null;
     });
 
-    // Initialize the shared user stylesheet, kept live on style changes.
-    void fetch(`${base}/__style.css`)
-      .then((r) => r.text())
-      .then((css) => userSheet.replaceSync(css))
-      .catch(() => {});
+    // The shared user stylesheet starts as what the shell applied at startup
+    // (this component mounts once the store is ready) and follows
+    // `style-changed` from there — `config:reload style`.
+    userSheet.replaceSync(currentStyle());
 
     // Pre-instantiate every panel type once (hidden) so all panel commands are
     // registered session-wide. Delayed so the startup layout settles first.

@@ -8,7 +8,7 @@ summary: config:reload re-reads the keybindings, the style sheet, the query gram
 
 |!`what` |!Reads |!Notes |
 |`keybindings` |`gui/keybindings.toml` |for a file edited outside the GUI: the settings view applies its own changes. Keys suggested by a panel or by `commands.js`, and the temporary keys of a running script, are kept ([[Changing keybindings]]) |
-|`style` |`gui/style.css` |also done automatically when the file is saved ([[Style and theming]]) |
+|`style` |`gui/style.css` |the shell and every panel are restyled ([[Style and theming]]) |
 |`grammar` |`core/query-grammar` |the simplified query language ([[Editing the grammar]]) |
 |`commands` |`gui/commands.js` |the commands of the previous version are forgotten first ([[User commands]]) |
 |`all` |the four, in this order | |

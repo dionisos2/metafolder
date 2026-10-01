@@ -2,7 +2,7 @@ title: Style and theming
 tags: [[Customising the GUI]]
 kind: guide
 aliases: style.css theme theming css colours colors stylesheet
-summary: The look of the GUI is one CSS file, style.css: a few variables carry the colours and fonts, and saving the file restyles the window at once.
+summary: The look of the GUI is one CSS file, style.css: a few variables carry the colours and fonts, and config:reload style applies an edit without a restart.
 
 `~/.config/metafolder/gui/style.css` is an ordinary style sheet, applied to the
 whole window: the shell (tabs, command input, status bar) and every panel.
@@ -36,9 +36,13 @@ Any CSS may be added. Two things decide whether a rule reaches its target:
 
 !! Applying a change
 
-The GUI watches the file: saving it restyles the window, with no command. `config:reload
-style`, and the ''Reload'' button of the settings view (`config:open`), do the same by
-hand ([[Reloading the configuration]]).
+After editing the file, `config:reload style` restyles the window, shell and panels
+alike; the ''Reload'' button of the settings view (`config:open`) runs the same
+command ([[Reloading the configuration]]). The file is not watched: nothing changes
+until it is reloaded.
 
-A CSS mistake breaks nothing: the web view ignores the rule it cannot read. The
-shipped sheet can be brought back with git ([[Updating the configuration]]).
+A CSS mistake breaks nothing: the web view ignores the rule it cannot read. A file
+that cannot be read at all is another matter — at startup it stops the GUI with the
+error, like any other configuration file ([[No runtime fallback]]), and on a reload
+the error goes to the status bar and the style in effect stays. The shipped sheet
+can be brought back with git ([[Updating the configuration]]).

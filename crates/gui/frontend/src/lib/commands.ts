@@ -530,6 +530,18 @@ export async function runUserCommand(name: string, args: string[]): Promise<bool
   return true;
 }
 
+/**
+ * Drops one user command because a panel registers a command of that name;
+ * false when there was none. Panels mount after `commands.js` is loaded, so
+ * this is where such an entry is refused: left in place it would run instead
+ * of the panel's command (it is looked up first) under the panel's label.
+ */
+export function dropUserCommand(name: string): boolean {
+  if (!userHandlers.delete(name)) return false;
+  registerArgs(name, []);
+  return true;
+}
+
 /** Drops every installed user command, for `config:reload commands`. */
 export function clearUserCommands(): string[] {
   const names = [...userHandlers.keys()];

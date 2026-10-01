@@ -2240,7 +2240,6 @@ dependencies = [
  "http-body-util",
  "libc",
  "metafolder-core",
- "notify",
  "reqwest 0.12.28",
  "serde",
  "serde_json",

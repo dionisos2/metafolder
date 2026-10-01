@@ -350,6 +350,12 @@ export function workspaceById(id: string | null): WorkspaceInfo | undefined {
   return store.workspaces.find((w) => w.id === id);
 }
 
+/** The user stylesheet as last applied — what a panel's shadow root adopts
+ *  when it is created after the fact. */
+export function currentStyle(): string {
+  return document.getElementById('mf-style')?.textContent ?? '';
+}
+
 export function applyStyle(css: string) {
   let element = document.getElementById('mf-style');
   if (!element) {

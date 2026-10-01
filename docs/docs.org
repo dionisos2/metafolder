@@ -1010,11 +1010,17 @@ applique sa propre feuille de style *après* celle de l'utilisateur (à poids
 égal le panel gagne — la note le dit, c'est ce qui surprend en écrivant une
 règle), =--mf-find= / =--mf-find-current=, =all= qui s'arrête à la première
 partie en échec en gardant les précédentes, les tables héritées qui ne sont lues
-que sans règle =*=. *Non corrigé, à trancher* : (1) une entrée de =commands.js=
-homonyme d'une commande de /panel/ l'emporte toujours à l'exécution (le dispatch
-la cherche avant les panels) alors que le registre garde celle enregistrée en
-dernier ; (2) le surveillant de =style.css= (et =/__style.css=) applique une
-feuille vide quand le fichier est illisible, au lieu de garder l'ancienne.
+que sans règle =*=. *Tranché par l'utilisateur*, corrigé test d'abord : (1) une
+entrée de =commands.js= homonyme d'une commande de /panel/ l'emportait à
+l'exécution (le dispatch la cherche avant les panels) alors que le registre
+gardait celle enregistrée en dernier ; elle est refusée comme pour un builtin —
+à l'enregistrement du panel, puisque les panels s'enregistrent après le
+chargement du fichier ; (2) =style.css= n'est plus surveillé : il se recharge
+comme les autres, par =config:reload style=. Le surveillant et la route
+=/__style.css= appliquaient une feuille vide quand le fichier était illisible ;
+tous deux sont retirés (avec la dépendance =notify= et la commande =load_style=),
+un panel part de la feuille que le shell détient, et un fichier illisible est une
+erreur — au démarrage comme au rechargement.
 Sources retirées (pointeurs) : spec-gui « Ref value seeds » (ses paragraphes sur
 =metarecord:field remove= / =edit= déplacés dans la section =metarecord-detail=,
 pour l'item 38), « Panel defaults », « Style and theming », « User commands »,

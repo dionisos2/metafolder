@@ -68,9 +68,10 @@ then runs nothing ([[Changing keybindings]]).
 !! Names
 
 Any name will do; `user:` keeps yours apart from the shipped ones. A name that is
-already a command of the shell (`quit`, `panel:set`…) is ''left out'': the shell's
-command stays as it is, and the status bar names the entry that was ignored. An
-entry can add to the command set, never replace part of it unnoticed.
+already a command — of the shell (`quit`, `panel:set`…) or of a panel
+(`log:find`…) — is ''left out'': the existing command stays as it is, and the status
+bar names the entry that was ignored. An entry can add to the command set, never
+replace part of it unnoticed.
 
 !! Applying a change
 

@@ -90,15 +90,7 @@ pub fn build_router(state: ServerState) -> Router {
         .route("/__select.js", get(|| async { javascript(SELECT_JS) }))
         .route("/__multi-select.js", get(|| async { javascript(MULTI_SELECT_JS) }))
         .route("/__file-actions.js", get(|| async { javascript(FILE_ACTIONS_JS) }))
-        .route(
-            "/__style.css",
-            get(|axum::extract::State(state): axum::extract::State<ServerState>| async move {
-                use axum::response::IntoResponse;
-                let css = state.config.load_style().unwrap_or_default();
-                ([("content-type", "text/css")], css).into_response()
-            }),
-        )
-        // The user's command module, like `/__style.css` a file of the gui
+        // The user's command module, a file of the gui
         // config directory. Unprotected on purpose: `import()` cannot send an
         // Authorization header, which is why panel assets are exempt too.
         .route(

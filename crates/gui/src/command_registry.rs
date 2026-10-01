@@ -51,13 +51,15 @@ impl CommandRegistry {
     }
 
     /// Registers a command defined in `commands.js` (doc "User commands"): a
-    /// builtin in every respect, except that it never replaces one. Returns
-    /// false, leaving the registry untouched, when `name` is a builtin already
-    /// — the loader forgets the previous file's commands before registering,
-    /// so whatever ownerless command is still there is the shell's own.
+    /// builtin in every respect, except that it never replaces a command.
+    /// Returns false, leaving the registry untouched, when `name` is taken —
+    /// the loader forgets the previous file's commands before registering, so
+    /// whatever is still there is the shell's own or a panel's. (At startup
+    /// the panels register *after* the file is loaded; the shell then drops
+    /// the entry when the panel claims the name.)
     pub fn register_user(&self, name: &str, label: &str, log: bool) -> bool {
         let mut commands = self.commands.lock_recover();
-        if commands.get(name).is_some_and(|def| def.owner.is_none()) {
+        if commands.contains_key(name) {
             return false;
         }
         commands.insert(
@@ -197,6 +199,11 @@ mod tests {
         let quit = registry.get("quit").unwrap();
         assert_eq!(quit.label, "Exit the GUI");
         assert!(!quit.log);
+
+        // Nor a panel's, once the panel has registered it (a reload).
+        registry.register_panel("log", "log:find", "Find", false, true);
+        assert!(!registry.register_user("log:find", "Mine", true));
+        assert_eq!(registry.get("log:find").unwrap().owner.as_deref(), Some("log"));
 
         assert!(registry.register_user("user:mine", "Mine", true));
         assert_eq!(registry.get("user:mine").unwrap().owner, None);

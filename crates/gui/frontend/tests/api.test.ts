@@ -314,6 +314,34 @@ describe('panel api — workspace', () => {
 });
 
 describe('panel api — commands & keybindings', () => {
+  test('registering a command claims its name first', () => {
+    // The shell drops a commands.js entry of that name (doc "User commands")
+    // before the panel's handler and arguments are recorded.
+    const order: string[] = [];
+    const noop = () => {};
+    const instance = createPanelApi(
+      {
+        invoke: vi.fn(async () => null),
+        dispatch: vi.fn(),
+        claimCommand: (name: string) => void order.push(`claim ${name}`),
+        registerHandler: (name: string) => void order.push(`handler ${name}`),
+        registerArgs: noop,
+        onCommandsChanged: noop,
+        addDefaultMenuItems: noop,
+      },
+      {
+        wsId: 'ws-1',
+        panelType: 'log',
+        guiServer: 'http://127.0.0.1:7524',
+        sessionToken: 'test-token',
+        root: {} as ShadowRoot,
+        visibilityGate: { visible: false, set: noop, whenVisible: noop } as never,
+      },
+    );
+    (instance.api as any).commands.register('log:find', { handler: () => {} });
+    expect(order).toEqual(['claim log:find', 'handler log:find']);
+  });
+
   test('register stores the handler and registers metadata', () => {
     const { api, invoke, registerHandler, onCommandsChanged } = setup();
     const handler = vi.fn();

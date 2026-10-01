@@ -20,9 +20,8 @@
   });
 
   async function reloadStyle() {
-    // Through the command, not `load_style`: that only refreshed the shell
-    // document and left every panel's adopted stylesheet on the old CSS,
-    // because the panels follow the `style-changed` event instead.
+    // Through the command: it emits `style-changed`, which the shell document
+    // and every panel's adopted stylesheet both follow.
     await dispatch('config:reload style');
   }
 
@@ -92,10 +91,6 @@
         <dt>Panel types</dt>
         <dd><code>{store.ui.configInfo.panel_types}</code></dd>
       </dl>
-      <p class="hint">
-        The stylesheet also reloads automatically when the file changes.
-      </p>
-
       <h3>Keybindings</h3>
       <div class="binding-form">
         <input placeholder="combo (e.g. ctrl+k or g g)" bind:value={combo} />

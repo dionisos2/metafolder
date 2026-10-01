@@ -58,8 +58,6 @@ pub struct App {
     pub commands: Arc<crate::server::command_wait::CommandWait>,
     /// Shared bench buffer fed by the panels' `performance.measure` reports.
     pub bench: Arc<crate::server::bench::BenchBuffer>,
-    /// Keeps the style.css auto-reload watcher alive.
-    pub style_watcher: Mutex<Option<crate::style_watcher::StyleWatcher>>,
     /// Session token for this GUI server (doc "Session tokens"), handed to the WebView.
     pub gui_token: Arc<str>,
 }
@@ -385,13 +383,6 @@ pub fn remove_user_keybinding(
     drop(keybindings);
     crate::push_keybindings(&app.gui, &compiled);
     Ok(compiled)
-}
-
-/// Current stylesheet, for manual reloads. An unreadable file yields empty CSS
-/// at this runtime path; startup already fails when configuration is missing.
-#[tauri::command]
-pub fn load_style(app: AppHandle) -> String {
-    app.config.load_style().unwrap_or_default()
 }
 
 /// Config paths shown in the settings view.

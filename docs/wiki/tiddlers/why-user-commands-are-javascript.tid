@@ -27,7 +27,7 @@ shell's own commands: its code runs in the shell's page and in no panel. Two thi
 follow.
 
 * Its `mf` is built for the ''focused workspace'', and the workspace is read through a getter at each call, not captured when the file is loaded.
-* The dispatch looks for it after the shell's own `switch` and before the panels' commands, and the registry refuses to register it under the name of a shell command (`CommandRegistry::register_user`). Before that refusal the entry's label and argument declaration replaced the builtin's while the builtin still ran, and a reload removed the builtin from the registry.
+* The dispatch looks for it after the shell's own `switch` and before the panels' commands, and the registry refuses to register it under a name that is taken (`CommandRegistry::register_user`). The panels register after the file is loaded at startup, so a clash with a panel's command is settled when the panel claims the name: the shell drops the entry then (`dropUserCommand`). Before that refusal the entry's label and argument declaration replaced the builtin's while the builtin still ran, and a reload removed the builtin from the registry.
 
 `mf.invoke` exists because of this feature. The API only had `commands.invoke`,
 while everything written about user commands said `mf.invoke`: combining commands is

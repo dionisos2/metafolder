@@ -65,14 +65,15 @@ async fn test_panel_html_served_verbatim() {
 }
 
 #[tokio::test]
-async fn test_user_stylesheet_is_served_to_panels() {
+async fn test_the_stylesheet_is_not_served_over_http() {
+    // Panels adopt the sheet the shell holds (the initial state, then
+    // `style-changed`). A route re-reading the file handed out an empty sheet
+    // when it could not be read — a second, silent way to load the style.
     let (_guard, config, router) = setup();
     std::fs::write(config.style_css_path(), "body { color: teal }").unwrap();
 
-    let (status, content_type, body) = get(&router, "/__style.css").await;
-    assert_eq!(status, StatusCode::OK);
-    assert!(content_type.starts_with("text/css"));
-    assert_eq!(String::from_utf8(body).unwrap(), "body { color: teal }");
+    let (status, _, _) = get(&router, "/__style.css").await;
+    assert_eq!(status, StatusCode::NOT_FOUND);
 }
 
 /// The user command module is served like the stylesheet: a file of the gui

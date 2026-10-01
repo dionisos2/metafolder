@@ -13,6 +13,7 @@ import {
   clearUserCommands,
   deadInvocations,
   dispatch,
+  dropUserCommand,
   filterCommands,
   filterCompletionItems,
   installUserCommands,
@@ -284,6 +285,24 @@ describe('installUserCommands', () => {
     // A reload forgets what the file installed, and only that.
     expect(clearUserCommands()).toEqual(['user:a']);
     expect(argSpecFor('quit')![0].name).toBe('builtin-arg');
+  });
+
+  test("a panel's command takes its name back from an entry", async () => {
+    // Panels register after the file is loaded, so the entry is dropped then:
+    // its handler, and its argument spec — which a panel command declaring no
+    // arguments would otherwise inherit.
+    await installUserCommands(
+      { 'log:find': { args: [{ name: 'mine' }], run: () => {} }, 'user:a': { run: () => {} } },
+      mf,
+      async () => {},
+    );
+    expect(dropUserCommand('log:find')).toBe(true);
+    expect(await runUserCommand('log:find', [])).toBe(false);
+    expect(argSpecFor('log:find')).toBeUndefined();
+    expect(await runUserCommand('user:a', [])).toBe(true);
+    // Nothing to drop the second time (each workspace's instance registers).
+    expect(dropUserCommand('log:find')).toBe(false);
+    expect(dropUserCommand('log:next')).toBe(false);
   });
 
   test('`run` is called with the api first, then the collected arguments', async () => {

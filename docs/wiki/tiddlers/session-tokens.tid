@@ -39,7 +39,7 @@ private directory is harmless.
 
 * ''The daemon'': every route, `/health` included. `Authorization: Bearer <token>`, compared in constant time; otherwise `401` with the usual `{"error": …}`.
 * ''The GUI server'': the scripting API (`/gui/*`) and every route that serves file contents (`/fsraw`, `/thumbnail`, `/document`, `/document/info`, `/__media-probe`). Those last five also accept the token as a `?token=` query parameter: an `<img>` or `<video>` source cannot send a header, and that form is honoured nowhere else.
-* ''Open on the GUI server'': the panel files, the shell's helper modules (`/__*.js`), the style sheet, the user's `commands.js` and the rendered documentation (`/docs/…`). They are loaded by `import()` or `<link>`, which cannot send a header, and they are shipped or user-written code, no private data.
+* ''Open on the GUI server'': the panel files, the shell's helper modules (`/__*.js`), the user's `commands.js` and the rendered documentation (`/docs/…`). They are loaded by `import()` or `<link>`, which cannot send a header, and they are shipped or user-written code, no private data.
 
 !! The clients
 

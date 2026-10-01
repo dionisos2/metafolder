@@ -36,7 +36,6 @@ pub mod server;
 pub mod shell_exec;
 pub mod slow;
 pub mod state;
-pub mod style_watcher;
 pub mod sync;
 pub mod thumbnails;
 pub mod trash;
@@ -415,13 +414,6 @@ pub fn run(options: Options) {
         .setup(move |tauri_app| {
             let notifier = Arc::new(TauriNotifier(tauri_app.handle().clone()));
             let gui = Arc::new(GuiState::new(notifier));
-            let style_watcher = match style_watcher::watch(config.clone(), gui.clone()) {
-                Ok(watcher) => Some(watcher),
-                Err(error) => {
-                    eprintln!("metafolder-gui: style auto-reload disabled: {error}");
-                    None
-                }
-            };
             let keybindings = Arc::new(Mutex::new(keybindings));
             let input = Arc::new(server::input_wait::InputWait::new());
             let command_wait = Arc::new(server::command_wait::CommandWait::new());
@@ -447,7 +439,6 @@ pub fn run(options: Options) {
                 input: input.clone(),
                 commands: command_wait.clone(),
                 bench: bench.clone(),
-                style_watcher: Mutex::new(style_watcher),
                 gui_token: gui_token.clone(),
             });
             tauri::Manager::manage(tauri_app, app);
@@ -518,7 +509,6 @@ pub fn run(options: Options) {
             commands::get_compiled_keybindings,
             commands::set_user_keybinding,
             commands::remove_user_keybinding,
-            commands::load_style,
             commands::config_info,
             fs_commands::fs_read_dir,
             fs_commands::fs_stat,

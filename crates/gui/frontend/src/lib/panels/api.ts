@@ -63,6 +63,10 @@ export interface PanelApiDeps {
   invoke: (command: string, args?: Record<string, unknown>) => Promise<unknown>;
   /** Runs a command invocation through the shell dispatcher (commands.ts). */
   dispatch: (invocation: string) => Promise<unknown>;
+  /** Told a panel is about to register `name`, before its handler and
+   *  arguments are recorded: the shell drops a `commands.js` entry of that
+   *  name, which must not shadow a panel's command (doc "User commands"). */
+  claimCommand?: (name: string) => void;
   /** Stores a panel command handler in the shell-side registry (per instance). */
   registerHandler: (name: string, handler: (...args: string[]) => unknown) => void;
   /** Stores a panel command's declared arguments, per instance like the
@@ -528,6 +532,7 @@ export function createPanelApi(deps: PanelApiDeps, ctx: PanelApiCtx): PanelApiIn
           args?: ArgSpec[];
         } = {},
       ) {
+        deps.claimCommand?.(name);
         if (handler) deps.registerHandler(name, handler);
         // Declared arguments are collected interactively by the command input
         // when missing (doc "Interactive command arguments"); the spec functions stay in the

@@ -13,7 +13,7 @@ of its own: a file that is missing or malformed stops it at startup
 
 |!To change |!Edit |!Takes effect |
 |what a key runs |`keybindings.toml`, or the settings view — [[Changing keybindings]] |at once from the settings view; `config:reload keybindings` after editing the file |
-|colours, fonts, the look of a widget |`style.css` — [[Style and theming]] |when the file is saved |
+|colours, fonts, the look of a widget |`style.css` — [[Style and theming]] |`config:reload style` |
 |the commands themselves: add yours, edit the shipped ones written in JavaScript |`commands.js` — [[User commands]] |`config:reload commands` |
 |ports, page sizes, timings, the programs offered to open a file |`config.toml` — [[GUI configuration]] |at the next start |
 |what a panel opens on: the columns of the list, the field of the tree… |`config.toml`, `[panel-defaults]` — [[GUI configuration]] |at the next start |

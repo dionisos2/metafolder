@@ -5,7 +5,7 @@
 // metafolder.contextMenu).
 
 // Default appearance, prepended to <head> so the user stylesheet
-// (/__style.css, loaded after) wins on equal specificity.
+// (style.css, adopted after) wins on equal specificity.
 const MENU_CSS = `
 .mf-menu {
   position: fixed;
