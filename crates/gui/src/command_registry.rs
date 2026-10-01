@@ -76,8 +76,8 @@ impl CommandRegistry {
     }
 
     /// Registers a command from a panel type. Re-registering the same
-    /// name replaces the previous definition (panels re-register on
-    /// iframe reload).
+    /// name replaces the previous definition (every workspace's instance
+    /// of a panel type registers the same names).
     pub fn register_panel(
         &self,
         panel_type: &str,

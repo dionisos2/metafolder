@@ -1586,7 +1586,7 @@ Responses: ={"event": "ok"}= / ={"event": "error", "message": "unknown command: 
 
 Note: the call resolves when =dispatch()= and its awaited work complete, which
 for commands that open or refresh a panel does *not* include the panel's own
-asynchronous render inside its iframe.
+asynchronous render.
 
 *** =GET /gui/bench= / =POST /gui/bench/clear=
 
@@ -1917,7 +1917,7 @@ Mechanism:
   opens, list+detail navigation, file-manager navigation, paging), clearing the
   buffer before each and printing the per-phase timings after.
 
-Because a panel's render happens asynchronously inside its iframe, the
+Because a panel's render happens asynchronously, after its command returned, the
 =POST /gui/command= call alone cannot time it — the harness's per-phase reports,
 not the command's resolution, are the source of truth for render cost. The
 =metarecord-list:page next= command loads the next page on demand (the
@@ -1955,7 +1955,7 @@ GStreamer plugin packages (e.g. =gst-plugins-bad=, =gst-libav=).
 
 On Linux, a missing audio sink does not fail gracefully: WebKitGTK
 crashes its web process while building the playback pipeline, which
-freezes the entire GUI (the shell and all panel iframes share that one
+freezes the entire GUI (the shell and every panel live in that one
 process). Two defenses are implemented:
 
 - =GET /__media-support= on the GUI server reports

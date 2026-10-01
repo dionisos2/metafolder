@@ -1080,12 +1080,16 @@ une constante (7000 ms), pas un réglage. Commentaires périmés corrigés : le
 le panel), l'en-tête de =visibility.js= (« servi à =/__visibility.js= », « au
 chargement de l'iframe » — il n'est pas servi, il est dans le bundle du shell),
 celui de =gui/src/config.rs= (un « fichier de découverte du port » qui n'existe
-plus). *Signalé, non tranché* : (1) =textInput= reste dans le type
-=CommandOptions= sans effet — le retirer, ou lui rendre son rôle de défaut ; (2)
-=daemon.parseQuery= / =expandQuery=, =config.pickerSeed= / =refCompletionSeed= et
-les deux raccourcis de =daemon.call= (=metarecords/batch=, =tree/resolve=) sont
-des doublons hérités ; (3) =spec-gui= « Bench harness » et « Media codec
-support » parlent encore d'iframes (items 41 et 39). La mesure « panel detail
+plus). *Tranché par l'utilisateur*, fait dans des commits à part, test d'abord : (1)
+l'option =textInput= de =commands.register=, sans effet, est retirée ; (2) les
+doublons hérités de l'API le sont aussi — =daemon.parseQuery= / =expandQuery=
+(restent =query.parse= / =expand=), les deux raccourcis de =daemon.call=
+(=metarecords/batch=, =tree/resolve= : restent =daemon.metarecords= /
+=treePaths=), et =config.pickerSeed= / =refCompletionSeed= avec les deux tables
+de =config.toml= qu'ils lisaient (=[picker-seeds]=, =[ref-completion-seeds]=,
+désormais ignorées : =[ref-seeds]= est la seule règle) ; (3) les mentions
+d'iframes qui restaient dans =spec-gui= et dans trois commentaires du code sont
+corrigées. La mesure « panel detail
 ≈ 25 ms » de la mémoire n'a pas été reprise : non revérifiable ici.
 Sources retirées (pointeurs) : spec-gui « Panel type system » entier (le
 paragraphe sur =/fsraw= et =/thumbnail= déplacé dans la section =file=, pour

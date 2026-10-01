@@ -1379,7 +1379,7 @@ async function runCommand(name: string, args: string[], ws: string | null): Prom
       }
       return true;
     // editing:* acts on the shell command input (editingTarget) when set,
-    // otherwise on the deep-focused panel input (replacing the old per-iframe
+    // otherwise on the deep-focused panel input (replacing the old per-panel
     // shim handlers). Only `confirm` stays command-input-only — Enter must
     // reach a panel form's own keydown handler (see keys.ts).
     case 'editing:unfocus':
