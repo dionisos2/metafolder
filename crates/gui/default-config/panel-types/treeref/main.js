@@ -135,6 +135,7 @@ export async function mount(root, metafolder) {
     field = name;
     stack = [];
     fieldSelect.setValue(name); // mirror the command into the drop-down
+    await workspace.set('treeref:field', name);
     renderQueryPreview();
     await fetchChildren(true);
   }

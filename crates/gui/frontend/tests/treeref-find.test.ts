@@ -156,4 +156,13 @@ describe('treeref:set field', () => {
     // erased before typing.
     expect(args![1].initial!(['field'])).toBe('');
   });
+
+  test('the chosen field is stored, like the ref field and the scope', async () => {
+    const s = stub();
+    await mount(s);
+    await s.handlers.get('treeref:set')!('field', 'tag');
+    // `treeref:field` is what a script reads and what `start` restores from; a
+    // choice that stayed in the panel's memory was invisible to both.
+    expect(s.api.workspace.set).toHaveBeenCalledWith('treeref:field', 'tag');
+  });
 });
