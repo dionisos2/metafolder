@@ -65,8 +65,6 @@ function stubApi(vars: Record<string, unknown>, calls: Call[]) {
           calls.push({ method, path, body });
           return { results: [], next_cursor: null };
         },
-        parseQuery: async () => null,
-        expandQuery: async () => '',
         resolvePath: async () => '',
         resolveTreeRef: async () => '',
         repoRoot: async () => '/repo',

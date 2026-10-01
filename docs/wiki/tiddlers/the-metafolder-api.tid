@@ -61,8 +61,6 @@ aborts its page and its count at each new query. The abort and the call are two
 separate commands, so the abort may reach the proxy first: it is then kept for 30
 seconds and the call is dropped on arrival, never sent.
 
-`parseQuery` and `expandQuery` are older names of `query.parse` and `query.expand`.
-
 !! `changes`
 
 The change feed ([[Daemon data in panels]]).

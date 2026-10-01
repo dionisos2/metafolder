@@ -87,8 +87,6 @@ function stub(vars: Record<string, unknown>, existing: Set<string>) {
         }
         return {};
       },
-      parseQuery: async () => null,
-      expandQuery: async () => '',
       resolvePath: async () => '',
       resolveTreeRef: async () => '',
       repoRoot: async () => '/repo',

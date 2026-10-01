@@ -80,8 +80,6 @@ function stubApi(vars: Record<string, unknown>, reads: Read[]) {
           reads.push(read);
           return counter(read);
         },
-        parseQuery: async () => null,
-        expandQuery: async () => '',
         resolvePath: async () => '',
         resolveTreeRef: async () => '',
         repoRoot: async () => '/repo',

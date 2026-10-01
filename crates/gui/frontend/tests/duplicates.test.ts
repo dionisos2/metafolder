@@ -115,8 +115,6 @@ function stubApi(
         fields: async () => [],
         request: async () => ({ status: 200, body: null }),
         call: daemonStub(calls, groups, members, options.failLoad),
-        parseQuery: async () => null,
-        expandQuery: async () => '',
         resolvePath: async () => '',
         resolveTreeRef: async () => '',
         repoRoot: async () => '/repo',

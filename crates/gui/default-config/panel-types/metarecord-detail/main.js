@@ -939,7 +939,7 @@ export async function mount(root, metafolder) {
     return createRefSeeds({
       rule,
       separator,
-      parseQuery: (dsl) => daemon.parseQuery(dsl),
+      parseQuery: (dsl) => metafolder.query.parse(dsl),
       runQuery: async (query, opts) => {
         const body = /** @type {{results?: Metafolder.Metarecord[], total?: number}} */ (
           await daemon.call('POST', `/repos/${repo}/query`, {
@@ -1707,7 +1707,7 @@ export async function mount(root, metafolder) {
       const raw = await workspace.get('metarecord-list:base-query-text');
       const dsl = typeof raw === 'string' ? raw.trim() : '';
       all = dsl === '';
-      query = dsl === '' ? MATCH_ALL : await daemon.parseQuery(dsl);
+      query = dsl === '' ? MATCH_ALL : await metafolder.query.parse(dsl);
     }
     const count = await countMatches(repo, query);
     return { query, count, all };

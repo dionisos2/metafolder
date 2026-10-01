@@ -77,8 +77,6 @@ function stubApi(handlers: Map<string, Handler>, calls: QueryCall[], pages: numb
       fields: async () => [],
       request: async () => ({ status: 200, body: null }),
       call: async () => null,
-      parseQuery: async () => null,
-      expandQuery: async () => '',
       resolvePath: async () => '',
       resolveTreeRef: async () => '',
       repoRoot: async () => '/tmp/repo',

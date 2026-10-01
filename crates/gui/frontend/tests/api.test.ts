@@ -503,3 +503,13 @@ describe('panel api — misc surface', () => {
     expect(api.visible).toBe(true);
   });
 });
+
+// One name per thing: the aliases and shorthands that duplicated a member of
+// the API are gone (doc "The metafolder API").
+describe('panel api — no duplicate members', () => {
+  test('query parsing lives in `query` only', () => {
+    const { api } = setup();
+    expect('parseQuery' in api.daemon).toBe(false);
+    expect('expandQuery' in api.daemon).toBe(false);
+  });
+});

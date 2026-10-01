@@ -67,8 +67,6 @@ function stubApi(vars: Record<string, unknown>, calls: Call[]) {
           if ((body as { count?: boolean })?.count === true) return counter(body);
           return { results: [], next_cursor: null };
         },
-        parseQuery: async () => null,
-        expandQuery: async () => '',
         resolvePath: async () => '',
         resolveTreeRef: async () => '',
         repoRoot: async () => '/repo',

@@ -82,8 +82,6 @@ async function mountPanel(fields: Field[], catalog: Record<string, string> = {},
         if (method === 'POST' && path.includes('/query/fields/')) return { updated: 2 };
         return null;
       },
-      parseQuery: async () => null,
-      expandQuery: async () => '',
       resolvePath: async () => '',
       resolveTreeRef: async () => '',
       repoRoot: async () => '/tmp/repo',

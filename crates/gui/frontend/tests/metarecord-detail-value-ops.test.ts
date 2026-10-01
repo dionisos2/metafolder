@@ -117,8 +117,6 @@ async function mountPanel(
         }
         return null;
       },
-      parseQuery: async () => null,
-      expandQuery: async () => '',
       resolvePath: async () => '',
       resolveTreeRef: async () => '',
       repoRoot: async () => '/tmp/repo',

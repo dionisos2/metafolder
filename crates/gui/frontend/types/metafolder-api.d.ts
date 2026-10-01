@@ -130,8 +130,6 @@ declare namespace Metafolder {
      *  …/metarecords/batch {uuids}` → `{uuid: metarecord}` and `POST
      *  …/tree/resolve {field?, uuids}` → `{uuid: [paths]}`. */
     call(method: string, path: string, body?: unknown, opts?: ReadOptions): Promise<unknown>;
-    parseQuery(dsl: string): Promise<unknown>;
-    expandQuery(simplified: string): Promise<unknown>;
     /** The repo-root-relative path of a metarecord's `mfr_path`. */
     resolvePath(repo: string, uuid: string): Promise<string>;
     /** The path a `tree_ref` value names, in the forest of `field` — the field

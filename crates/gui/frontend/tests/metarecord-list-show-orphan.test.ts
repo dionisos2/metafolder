@@ -70,8 +70,6 @@ function stubApi(handlers: Map<string, Handler>, calls: Call[], queryCalls: unkn
         fields: async () => [],
         request: async () => ({ status: 200, body: null }),
         call: daemonStub(calls),
-        parseQuery: async () => null,
-        expandQuery: async () => '',
         resolvePath: async () => '',
         resolveTreeRef: async () => '',
         repoRoot: async () => '/tmp/repo',

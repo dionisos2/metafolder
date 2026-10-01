@@ -83,8 +83,6 @@ async function mountPanel(firstUuid: string) {
         if (method === 'GET' && match) return { uuid: match[1], version: 1, fields: [] };
         return null;
       },
-      parseQuery: async () => null,
-      expandQuery: async () => '',
       resolvePath: async () => '',
       resolveTreeRef: async () => '',
       repoRoot: async () => '/tmp/repo',

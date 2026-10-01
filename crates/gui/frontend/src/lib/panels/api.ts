@@ -433,8 +433,6 @@ export function createPanelApi(deps: PanelApiDeps, ctx: PanelApiCtx): PanelApiIn
           noIgnore: opts.noIgnore ?? false,
           ignore: opts.ignore ?? null,
         }) as Promise<string>,
-      parseQuery: (dsl: string) => api.query.parse(dsl),
-      expandQuery: (s: string) => api.query.expand(s),
       resolvePath: (repo: string, uuid: string) => resolverFor(repo).resolveUuid(uuid),
       resolveTreeRef: (
         repo: string,
