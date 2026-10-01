@@ -1,5 +1,5 @@
 // metarecord-list panel: metarecords of the active repo filtered by an embedded
-// DSL query; primary selection source (spec-gui "metarecord-list panel type").
+// DSL query; primary selection source (doc "metarecord-list panel").
 
 import { byId, el, fields, messageOf, qs, thumbnail } from '/__ui.js';
 import { orphanState, orphanLabel } from '/__orphan.js';
@@ -157,8 +157,8 @@ export async function mount(root, metafolder) {
   /** @type {Record<string, unknown>|null} null = match all (the structural base query) */
   let queryIR = null;
   // The same base query as DSL *text*, kept in step with `queryIR` at every
-  // assignment below. It is what a script receives (`mf gui query`, spec-gui
-  // "Finder"): text is what `mf metarecord -q` takes and what a script composes
+  // assignment below. It is what a script receives (`mf gui query`,
+  // doc "metarecord-list panel"): text is what `mf metarecord -q` takes and what a script composes
   // with. It must be this local and not `metarecord-list:normal-query`, which
   // mirrors the B zone and is therefore only written while that zone is shown.
   /** @type {string} '' = match all */
@@ -1450,7 +1450,7 @@ export async function mount(root, metafolder) {
   // the query runs (`recomputeQuery`), so anything that hands the user zone A
   // must unfreeze B first or the field it just focused feeds nothing.
   // Unfreezing discards a hand-edited B, which re-mirrors expand(A) — that is
-  // the accepted trade in spec-gui "Query editor".
+  // the accepted trade in doc "metarecord-list panel".
 
   /**
    * @typedef {object} Zone
@@ -1641,7 +1641,7 @@ export async function mount(root, metafolder) {
       return fetchPage(true);
     },
   });
-  // Two entry points to bulk editing (spec-gui "metarecord-list panel type"):
+  // Two entry points to bulk editing (doc "Editing metarecords in the GUI"):
   // this one is the mouse-oriented half — the in-panel form (op picker + value
   // widget), opened by the footer button. The keyboard half is
   // `metarecord:bulk <op>`, which lives with the commands that perform it.

@@ -1,0 +1,6 @@
+title: treeref:toggle
+tags: [[GUI command]] [[TreeRef forest]]
+kind: reference
+summary: TreeRef explorer: toggle a view flag (scope: the exact node ⇄ its whole subtree)
+
+`treeref:toggle scope` switches the query of the [[treeref panel]]'s ref bar between the node itself and the node with everything below it.

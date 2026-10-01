@@ -1,0 +1,6 @@
+title: metarecord:row-next
+tags: [[GUI command]] Metarecord
+kind: reference
+summary: Move the field cursor down
+
+Moves the cursor of [[metarecord-detail panel]] down one field row.

@@ -1,0 +1,40 @@
+title: Why recently viewed is kept by the GUI
+tags: [[Panel types]]
+kind: rationale
+audience: dev
+summary: The list of metarecords last looked at is a file of the GUI, not a field of the metarecord: a view must not be a write; it stores a time, and the panel shows a snapshot.
+
+!! A view is not a write
+
+The obvious place for "last viewed" is a field on the metarecord. But every write to
+the daemon goes through the event log: one revision, and a new version of the
+metarecord, per write ([[Writes and atomicity]]). Recording each ''view'' that way
+would fill the history with revisions nobody made, put them in the way of
+<<key "log:undo" Ctrl+z>>, and change a version that other clients compare.
+
+So the list is the GUI's, as the input history is ([[Input history]]): one text file
+per repository, `.metafolder/gui/recent`, a line `<uuid>` tab `<ISO-8601 time>` per
+metarecord, newest first, at most 200. Viewing a metarecord again moves its line to
+the front rather than adding one. `crates/gui/src/recent.rs` holds it, behind
+`metafolder.recent.touch` and `metafolder.recent.list` ([[The metafolder API]]); the
+[[metarecord-detail panel]] and the `file` panel call `touch` when the metarecord they
+show changes, and not when the same one is reloaded.
+
+!! A time, not a counter
+
+Each line carries when the metarecord was viewed, not a rank. A counter would need
+its maximum read back at each start; with a time and an order, the file ''is'' the
+state, and the panel can say "3 min ago" for free.
+
+!! The panel shows a snapshot
+
+The [[recent panel]] reads the list when it is shown, on a refresh and when
+metarecords change — not at each view. Moving its cursor selects a row, which the
+detail panel beside it shows, which is a view: a live list would reorder itself under
+the cursor at every step.
+
+!! The pick does not need the panel
+
+`recent`, the pick of the command input, is defined in the shipped `gui/commands.js`
+([[User commands]]) and reads the same list: it works whether or not the panel was
+ever shown, and its lines are reshaped there (`recentLine`).

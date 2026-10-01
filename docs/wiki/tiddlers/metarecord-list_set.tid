@@ -1,0 +1,6 @@
+title: metarecord-list:set
+tags: [[GUI command]] Metarecord
+kind: reference
+summary: Metarecord list: change a view setting
+
+Changes a setting of the [[metarecord-list panel]] in this workspace: `mode` (`table` or `grid`, [[Display modes]]) or `page-size`, the number of rows loaded at a time.

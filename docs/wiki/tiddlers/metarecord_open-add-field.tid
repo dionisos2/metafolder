@@ -1,0 +1,6 @@
+title: metarecord:open-add-field
+tags: [[GUI command]] Metarecord
+kind: reference
+summary: Open the add-field form on the selected metarecord
+
+Opens the form of [[metarecord-detail panel]] adding a value to the selected metarecord: a name, a type, a value, then ''Add field'' or ''Set field (replace)''.

@@ -1,0 +1,6 @@
+title: recent:open
+tags: [[GUI command]] [[Panel types]]
+kind: reference
+summary: Recent: open the highlighted metarecord in the other panel
+
+Shows the row under the cursor of the [[recent panel]] in the other slot — the `file` panel when the metarecord has a file, [[metarecord-detail panel]] otherwise.

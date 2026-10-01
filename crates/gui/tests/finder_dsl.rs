@@ -2,7 +2,7 @@
 //!
 //! `panel-shim/finder.js` builds the finder's quick-filter clause twice: as IR
 //! (what the panel runs) and as DSL text (what `mf gui query` hands a script,
-//! spec-gui "Finder"). Two builders, one meaning — so they are pinned to the
+//! doc "metarecord-list panel"). Two builders, one meaning — so they are pinned to the
 //! same vectors, `panel-shim/finder-vectors.json`:
 //!
 //! - `frontend/tests/finder.test.ts` asserts the JS builders produce each

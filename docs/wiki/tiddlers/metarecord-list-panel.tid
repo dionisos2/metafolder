@@ -1,0 +1,130 @@
+title: metarecord-list panel
+tags: Panel Metarecord
+kind: reference
+aliases: metarecord-list columns metarecords quick-filter query-editor
+summary: The metarecords a query selects, as a table or a grid: a finder and a two-form query above, chosen columns, a cursor that is the workspace's selection, and bulk edits.
+
+Open it with `panel:set type metarecord-list`
+(<<key "panel:set type metarecord-list" "t l">>). It lists the metarecords of the
+workspace's repository that match its query — all of them while the query is empty —
+and runs that query as soon as it is shown, without waiting for an `Enter`.
+
+!! Three search fields
+
+From top to bottom. What runs is the query of the second or third, ''and'' the
+finder.
+
+* The ''finder'' (<<key "metarecord-list:focus finder" "/">>) narrows the list as you type, half a second after the last key. Each word must appear, in order, in one of the fields it searches ([[Ordered substring matching]]): `scien fic` finds `science-fiction`, `conf gui` a path `…/config/…/gui/…`. Those fields are named at the right of the box — `mfr_path`, `label` and `name` unless configured otherwise.
+* The ''simplified query'' (<<key "metarecord-list:focus simplified" "Ctrl+/">>) takes the [[Simplified query language]]. `Enter` or ''Apply'' runs it.
+* The ''normal DSL'' below shows what the simplified query expands to, as you type it: that text is the query sent to the daemon ([[Writing queries]]). It is read-only until ''Freeze'' is checked; frozen, it is edited by hand and it alone is run, whatever the simplified field holds. Unfreezing brings the expansion back and discards the hand edit. ''Hide normal DSL'' (`metarecord-list:toggle normal`) hides it.
+
+`Enter` in any of them applies and leaves the field, so that the panel's keys work
+again; <<key "metarecord-list:apply finder stay" Shift+Enter>> applies and stays. An
+error is shown under the field it comes from — the expansion's under the simplified
+query, the parser's under the normal DSL. The finder and the simplified query each
+keep a history, recorded when you apply and not at each debounced run
+([[Input history]]).
+
+|!Key |!Does |
+|<<key "metarecord-list:focus finder" "e f">>, <<key "metarecord-list:focus simplified" "e s">>, <<key "metarecord-list:focus normal" "e q">> |edit the finder, the simplified query, the normal DSL, keeping what it holds |
+|<<key "metarecord-list:clear finder" f>>, <<key "metarecord-list:clear simplified" s>>, <<key "metarecord-list:clear normal" q>> |empty it first |
+|<<key "metarecord-list:clear all" c>> |empty the three and list everything |
+
+Going to the simplified query unfreezes the normal DSL, and going to the normal DSL
+shows and freezes it: the field the key lands in is always one the query reads.
+
+A query written by a command arrives in the normal DSL, shown and frozen, so that it
+stays visible and can be edited or combined: `metarecord-list:folder`
+(<<key "metarecord-list:folder" "g f">>, the selection's folder —
+[[Cross-panel selection]]), `treeref:list-refs` ([[treeref panel]]), and
+`metarecord-list:query`, which takes `duplicates` (the files byte-identical to the
+selection, `same(mfr_duplicate_group, <uuid>)` — [[Duplicates]]) or `orphans`
+(`orphan = true`, what the last detection marked — [[Finding and clearing orphans]]).
+
+!! Columns
+
+The ''columns'' field below the queries chooses what the table shows; ''Apply'' or
+`Enter` redraws it, without asking the daemon again for the rows. Columns are
+separated by spaces or commas, and an empty field brings the configured ones back. A
+column that does not parse is reported under the field and the previous columns stay.
+
+* `name` — the field's values, every row of a field that has several, separated by commas.
+* `name:aspect` — one aspect of a `tree_ref` value: `:path` (the path from the root), `:value` (the node's own name), `:parent` (the parent's uuid), `:raw` (parent and name, the default). The same names as in a query ([[Field aspects]]).
+* `name>sub` — follows a `ref` to its target and shows the target's `sub` field: `tag>label`, or `tag>path:path` for an aspect of it. One `>` only. A target that no longer exists shows the uuid.
+* `a | b` — the first of the two that has a value: `tag>label | tag>path:value`. Parentheses may group it.
+* `&uuid`, `&version` — the metarecord's own uuid and [[version|Metarecord version]], which are not fields.
+
+Clicking a header sorts by it — ascending, then descending, then not at all. The
+daemon sorts the field's stored values, so a `tag>label` column sorts by the `tag`
+uuids; `&` columns do not sort ([[Pagination and sorting]]). Dragging a header's right
+edge resizes the column.
+
+!! Rows
+
+The list loads a page of 100 rows (`[page-size]`, [[GUI configuration]];
+`metarecord-list:set page-size <n>` for this workspace) and the next one when the
+scroll or the cursor reaches the end; `metarecord-list:page next` asks for it. The
+footer gives `loaded/total` — the total is asked from the daemon apart, after the
+first page ([[Sorting and postings]]) — and how many metarecords are checked.
+
+`metarecord-list:set mode grid` shows a thumbnail per metarecord instead of the table,
+named by the path ([[Display modes]]).
+
+A row's colour says something about its file:
+
+* ''purple'' — the file is gone: the metarecord is an orphan ([[Orphans in the GUI]]);
+* ''amber'' — the file is not watched, so a change to it would not be recorded, or it sits on a volume that is not mounted ([[Checking whether a path is watched]], [[Unmounted volumes in the GUI]]).
+
+The reason is in the tooltip — also on a watched row, which is not coloured. A
+metarecord without `mfr_path` is not a file and is never marked; neither is one whose
+answer has not arrived, since unknown must not read as unwatched.
+
+When the list cannot be read — the daemon down, a query refused — the reason takes
+the place of the rows and of the footer: a failed read never looks like an empty
+result. The list re-reads itself when something in the GUI changes metarecords, and
+re-reads the paths of its rows whenever the daemon reports a change in the repository.
+
+!! The cursor and the selection
+
+* <<key "metarecord-list:next" "↓ or j">> / <<key "metarecord-list:prev" "↑ or k">>, <<key "metarecord-list:first" Home>> / <<key "metarecord-list:last" End>> (the last row ''loaded'') — move the cursor. The row under it is the workspace's selection, which the other panels follow; the arrows work from the finder too.
+* <<key "metarecord-list:open" "Enter or →">>, or a double click — show it in the other slot: the `file` panel when it has a file, [[metarecord-detail panel]] otherwise.
+* <<key "metarecord-list:select toggle" Space>> — check the row; `metarecord-list:select all` checks every loaded row, <<key "metarecord-list:select none" Ctrl+Space>> unchecks everything ([[Cross-panel selection]]).
+* <<key "metarecord-list:refresh" r>> — run the query again; the cursor stays on its metarecord.
+* <<key "metarecord:remove" Delete>>, <<key "metarecord:trash" Ctrl+Delete>>, <<key "metarecord:delete" Shift+Delete>> — remove the selected metarecord, its file, or the metarecord alone ([[Sending files to the trash]]).
+
+A right click acts on the row clicked: the metarecord's actions, ''Add to the
+selection'', and the file's actions when it has one ([[Context menus]]).
+
+!! Editing
+
+The `m` keys edit the fields of the selected metarecord, and of the checked ones or
+of every match, from the command input; ''Edit / delete…'' in the footer
+(`metarecord-list:open-bulk-edit`) opens a form doing the same with the mouse. Both
+are described in [[Editing metarecords in the GUI]].
+
+!! As a value picker
+
+Opened to pick a metarecord ([[Value picker]]), the panel puts the focus in the
+finder, and a row's right-click menu starts with ''Pick this metarecord''.
+
+!! Its variables
+
+The panel keeps its state in [[workspace variables|Workspace variables]], which a
+script can read and set.
+
+|!Variable |!Holds |
+|`metarecord-list:finder` |the finder's text |
+|`metarecord-list:finder-fields` |the fields the finder searches, as `field:path` or `field:value`; a bare `field` is searched as a path when it is a `tree_ref` |
+|`metarecord-list:query` |the simplified query |
+|`metarecord-list:normal-query`, `:normal-shown`, `:normal-frozen` |the normal DSL field, whether it is shown (yes unless `false`), whether it is frozen |
+|`metarecord-list:columns`, `:column-widths` |the columns, as a list, and their widths |
+|`metarecord-list:page-size` |the page size, when changed |
+|`metarecord-list:effective-query` |what was last run, finder included, as [[Query IR]] — what `metarecord:bulk` acts on |
+|`metarecord-list:effective-query-text` |the same as DSL text (empty for everything), which `mf gui query` prints |
+|`metarecord-list:base-query-text` |the query without the finder, as DSL text |
+|`metarecord-list:query-request` |`{dsl, nonce}` — a query another panel asks it to show |
+
+`metarecord-list:insert <zone> <text>` writes into one of the four fields (`finder`,
+`simplified`, `normal`, `columns`) at the caret, and `metarecord-list:apply <zone>`
+runs it; each takes a final `stay` to leave the focus where it is. A command of yours
+that writes a query and runs it is those two in a row ([[User commands]]).

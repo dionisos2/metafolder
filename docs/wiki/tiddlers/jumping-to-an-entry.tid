@@ -1,7 +1,7 @@
 title: Jumping to an entry
 tags: GUI
 kind: guide
-aliases: find-entry jump-to-entry file-manager:find treeref:find recent:find
+aliases: find-entry jump-to-entry file-manager:find
 summary: In a list panel, f asks for a name in the command input and moves the cursor onto the row — selected, not opened.
 
 In a panel that shows rows under a cursor,

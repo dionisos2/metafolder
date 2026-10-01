@@ -1,0 +1,107 @@
+title: Editing metarecords in the GUI
+tags: GUI Metarecord
+kind: guide
+aliases: bulk-edit m-keys edit-metarecord
+summary: Change the fields of one metarecord, of the checked ones or of everything a query matches — by row, from the command input with the m keys, or with a form.
+
+Three ways, for three scopes. All of them write through the daemon, so each change is
+in the event log and <<key "log:undo" Ctrl+z>> takes it back ([[Undo and redo]]).
+
+!! One row: the detail panel
+
+In [[metarecord-detail panel]], put the cursor on a row and press
+<<key "metarecord:row-edit" Enter>> to change its value,
+<<key "metarecord:row-delete" d>> to delete it, <<key "metarecord:open-add-field" a>>
+to add one. This is the way to act on ''one particular row'' — one of two equal
+values, one `nothing` among several.
+
+!! One metarecord: `metarecord:field`
+
+`metarecord:field <operation> <field> …` acts on the metarecord shown in the detail
+panel, which is the selected one. Everything is asked in the command input, with
+completion, and what is given on the line is not asked
+([[Interactive command arguments]]) — so the same command is a key, a few prompts, or
+one line: `metarecord:field set rating 5`. The `m` keys work from the list and the
+detail alike; from the list, the detail panel is brought on screen first, so that the
+change is seen ([[Commands]]).
+
+|!Key |!Operation |!Does |
+|<<key "metarecord:field set" "m s">> |`set` |gives the field this value, in place of every value it had |
+|<<key "metarecord:field add" "m a">> |`add` |adds a value to the field; one it already holds changes nothing ([[No duplicate rows]]) |
+|<<key "metarecord:field edit" "m v">> |`edit` |changes one value: the field, ''which'' value when it has several, then the new one, starting from the old |
+|<<key "metarecord:field remove" "m d">> |`remove` |removes a value — every row equal to it |
+|<<key "metarecord:field unset" "m u">> |`unset` |removes the field altogether: it becomes unknown, which is not `nothing` ([[Nothing versus unknown]]) |
+|<<key "metarecord:field rename" "m n">> |`rename` |renames the field on this metarecord, all its values with it |
+|<<key "metarecord:field retype" "m t">> |`retype` |converts its values to another type, on this metarecord |
+
+`set`, `add`, `edit` and `unset` write one revision. `rename` and `retype` write one
+per row of the field, and `remove` one per row removed, so undoing them takes as many
+steps. To rename or retype a field in the whole repository, use `mf retype` or the
+repos panel's ''Retype…'' ([[Changing a field's type]]).
+
+!! Several metarecords: `metarecord:bulk`
+
+`metarecord:bulk <target> <operation> …` does the same over a set, in one revision
+([[Editing a set of metarecords]]). The target comes first and is never guessed:
+
+* `selection` — the checked metarecords ([[Cross-panel selection]]);
+* `query` — everything the list shows, its finder included; every metarecord of the repository when the list has no query.
+
+<<key "metarecord:bulk" "m b">> asks for it, saying what each would act on
+(`selection = 3 checked · query = 1204 matching`) and proposing `selection` when
+something is checked. An empty selection is nothing to do; it never falls back on the query.
+
+|!Key |!Operation |
+|<<key "metarecord:bulk selection set" "m m s">> |`set` a field on the checked metarecords |
+|<<key "metarecord:bulk selection add" "m m a">> |`add` a value |
+|<<key "metarecord:bulk selection remove" "m m v">> |`remove` a value |
+|<<key "metarecord:bulk selection unset" "m m r">> |`unset` a field |
+|<<key "metarecord:bulk selection delete" "m m d">> |`delete` the metarecords themselves; their files stay on disk |
+
+On the checked metarecords an operation runs at once — they were chosen one by one.
+On `query` it first asks, giving the number of metarecords it will change. `delete`
+always asks.
+
+The same with the mouse: ''Edit / delete…'' in the footer of
+[[metarecord-list panel]] opens a form — target, operation, field, type and value
+([[Field editor]]). Its target starts on ''Query shown'', and it always asks before
+writing.
+
+!! Typing a value
+
+The value is typed on one line, in the form its type reads ([[Field editor]]). Two
+things make that workable for references:
+
+* a `tree_ref` is typed as a path in its tree, completed over the tree's paths: `music/jazz`;
+* a `ref` is typed as the name its seed rule gives the target — a tag by its path — and completed over the rule's candidates, <<key "completion:cycle forward" "Ctrl+,">> going through its columns ([[Ref value seeds]], [[Completion views]]). A uuid is always accepted.
+
+What `edit` and `remove` offer are the values the metarecord ''has'', read back the
+same way, `∅` standing for an explicit `nothing`. `remove` on the checked or matching
+metarecords offers the rule's candidates instead: its value is on no single
+metarecord.
+
+!! The type is asked only when nothing gives it
+
+A value is read as the field's type: the one its rows have on this metarecord, else
+the one the field has in the repository or in the schema
+([[One value type per field name]]). When neither says, the type is asked ''before''
+the value — it decides how the value is read — and completed over the types. It is
+never assumed to be `string`.
+
+On one line, the type goes between the field and the value, and only where it would
+have been asked: `metarecord:field set rating int 5` for a field nobody has yet,
+`metarecord:field set tag jazz` for one whose type is known. A line that gives no
+type for a field nothing settles is refused.
+
+`retype` always takes a type, since naming one is what it does.
+
+A field whose only value is `nothing` is a field like any other here: its name is
+completed, `remove` names its value `∅`, `rename` takes it along. Having no value, it
+has no type either: `edit` on it asks for one when the repository knows none, and
+`retype` asks for the value that goes with the new type.
+
+!! Reserved fields
+
+Writing an `mfr_*` field needs force ([[Reserved fields]]). The `m` commands and the
+forms apply it by themselves when the field named is one — naming it is the intent.
+Only the rows of the detail panel are locked, until its ''force'' box is checked.

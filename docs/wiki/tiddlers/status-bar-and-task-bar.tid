@@ -13,7 +13,7 @@ A read-only line at the very bottom of the window, never focused. It shows:
 
 It belongs to a workspace: when the two slots show the same workspace there is one
 line, when they show two there are two, each its own workspace's. Every status
-message also goes to the workspace's message log, the `message` panel.
+message also goes to the workspace's message log, the [[message panel]].
 
 ''A message stays until the next one replaces it'', so that there is time to read it;
 <<key "status:clear" ctrl+l>> (`status:clear`, which works while typing too) clears

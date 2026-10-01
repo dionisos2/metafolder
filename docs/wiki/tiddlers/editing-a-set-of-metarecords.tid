@@ -21,6 +21,7 @@ the number of matches (`--force` skips it) and is atomic. `mfr_*` fields need `-
 Check the selection first — `mf -n music metarecord -q '…' get --count` — then
 write. To target a hand-picked set, list the uuids: `-q 'uuid_in(3f2a…, 7c11…)'`.
 
-The GUI's `metarecord:bulk` does the same over a list's selection, and the daemon's
+The GUI's `metarecord:bulk` does the same over the checked metarecords or over what a
+list shows ([[Editing metarecords in the GUI]]), and the daemon's
 `/query/fields/{set,add,remove,unset}` and `/query/delete` are the endpoints behind
 both ([[Query endpoints]]).

@@ -11,7 +11,7 @@
 //
 // And it grows the forest: `treeref:add` creates a metarecord positioned at a
 // new node under the current one (schema type first, then the name), the way
-// the file manager creates a folder. Spec-gui "treeref panel type".
+// the file manager creates a folder. doc "treeref panel".
 
 import { byId, el } from '/__ui.js';
 import { createPagedList } from '/__paged-list.js';
@@ -225,7 +225,7 @@ export async function mount(root, metafolder) {
   }
 
   /** Creates a metarecord positioned at a new node of the explored forest
-   *  (spec-gui "treeref panel type"): the schema type's template fields, plus
+   *  (doc "treeref panel"): the schema type's template fields, plus
    *  one `tree_ref` row on the explored field whose parent is the node the
    *  panel is open on and whose name is the chosen value. A blank schema type
    *  creates a record carrying only its position. The new element joins the
@@ -497,7 +497,7 @@ export async function mount(root, metafolder) {
     handler: () => refresh(),
   });
   // The drop-down's keyboard equivalent: pick the TreeRef field to explore
-  // without leaving the keyboard (spec-gui "treeref panel type").
+  // without leaving the keyboard (doc "treeref panel").
 
   // Jump to a child by name — the shared list-panel find, on the same key as
   // everywhere else. Only the *loaded* children are searched, as in a paged
@@ -569,7 +569,7 @@ export async function mount(root, metafolder) {
     handler: listRefs,
   });
 
-  // Adding an element to the forest (spec-gui "treeref panel type"), on the
+  // Adding an element to the forest (doc "treeref panel"), on the
   // toolbar's "add" button and ctrl+n. Two interactive arguments (doc
   // "Interactive command arguments"): the schema type seeds the new
   // metarecord's template fields (a blank answer creates a record carrying

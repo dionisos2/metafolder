@@ -1,0 +1,6 @@
+title: metarecord-list:query
+tags: [[GUI command]] Metarecord
+kind: reference
+summary: Metarecord list: run a canned query (duplicates / orphans)
+
+Runs a ready-made query in the [[metarecord-list panel]], written in its normal DSL, frozen, where it can be edited: `duplicates` — the files byte-identical to the selected one ([[Duplicates]]) — or `orphans` — the metarecords the last detection marked, without detecting anything itself ([[Finding and clearing orphans]]).

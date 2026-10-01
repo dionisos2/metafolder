@@ -1,0 +1,6 @@
+title: treeref:refresh
+tags: [[GUI command]] [[TreeRef forest]]
+kind: reference
+summary: TreeRef explorer: reload from the daemon
+
+Reads the repository's fields and the children shown again, in the [[treeref panel]].

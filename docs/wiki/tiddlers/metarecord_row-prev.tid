@@ -1,0 +1,6 @@
+title: metarecord:row-prev
+tags: [[GUI command]] Metarecord
+kind: reference
+summary: Move the field cursor up
+
+Moves the cursor of [[metarecord-detail panel]] up one field row.

@@ -1,0 +1,6 @@
+title: treeref:root
+tags: [[GUI command]] [[TreeRef forest]]
+kind: reference
+summary: TreeRef explorer: jump to the forest roots
+
+Goes back to the roots of the tree the [[treeref panel]] walks.

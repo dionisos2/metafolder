@@ -441,7 +441,7 @@
 
 # treeref: build the "what points at this node?" query and run it in a
 # metarecord-list opened in the other slot ("l"), or pick the Ref field it
-# follows back ("e"). See spec-gui "treeref panel type".
+# follows back ("e"). See doc "treeref panel".
 "l" = { command = "treeref:list-refs", when = "treeref" }
 "e" = { command = "treeref:set ref-field", when = "treeref" }
 "q" = { command = "metarecord-list:clear normal", when = "metarecord-list" }

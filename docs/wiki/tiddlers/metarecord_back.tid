@@ -1,0 +1,6 @@
+title: metarecord:back
+tags: [[GUI command]] Metarecord
+kind: reference
+summary: Metarecord: back to the previously shown metarecord
+
+Returns to the metarecord [[metarecord-detail panel]] showed before this one, and again through the trail — after following a reference, or after any other change of the selection.

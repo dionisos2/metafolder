@@ -1,0 +1,6 @@
+title: metarecord-list:apply
+tags: [[GUI command]] Metarecord
+kind: reference
+summary: Metarecord list: apply a zone's content
+
+Runs what a field of the [[metarecord-list panel]] holds — `finder`, `simplified`, `normal` or `columns` — and leaves the field, so that the panel's keys work again. A final `stay` keeps the focus in it; a focus held elsewhere is never taken away.

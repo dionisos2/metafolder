@@ -1,0 +1,6 @@
+title: treeref:next
+tags: [[GUI command]] [[TreeRef forest]]
+kind: reference
+summary: TreeRef explorer: move the cursor down
+
+Moves the cursor of the [[treeref panel]] down one node; the node under it is the workspace's selection.

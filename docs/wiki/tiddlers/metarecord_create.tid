@@ -1,0 +1,6 @@
+title: metarecord:create
+tags: [[GUI command]] Metarecord
+kind: reference
+summary: Create a new metarecord
+
+Creates a metarecord at once and selects it, in [[metarecord-detail panel]]. It asks for a schema type, whose template fields are filled in; left blank, the metarecord is empty. A type the schema does not declare is refused ([[Schema]]).

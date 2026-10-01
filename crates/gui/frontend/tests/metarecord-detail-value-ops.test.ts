@@ -1,5 +1,5 @@
 // Naming a value to act on — `metarecord:field remove` and
-// `metarecord:field edit` (spec-gui "metarecord-detail panel type"): the field
+// `metarecord:field edit` (doc "Editing metarecords in the GUI"): the field
 // first, then the value. `remove` is the exact inverse of `add` (every row
 // equal to the value it names is deleted), and `edit` names the row to change
 // and its replacement. Both travel the same raw vocabulary values are written

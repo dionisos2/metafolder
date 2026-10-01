@@ -10,7 +10,7 @@ tab bar:
 * its ''repository'' — fixed when the workspace takes one;
 * the state of every panel type opened in it this session — scroll position, query draft, display mode… Switching a slot to another panel type and back finds the first one as it was left;
 * its [[workspace variables|Workspace variables]], through which its panels talk to each other — the selection first of all ([[Cross-panel selection]]);
-* its status line and its message log (the `message` panel), which other workspaces do not see ([[Status bar and task bar]]);
+* its status line and its message log (the [[message panel]]), which other workspaces do not see ([[Status bar and task bar]]);
 * whether it was last shown with one panel or two ([[Panel slots and layout]]).
 
 Nothing of it outlives the session: the GUI starts with a single empty workspace.
@@ -19,7 +19,7 @@ Nothing of it outlives the session: the GUI starts with a single empty workspace
 
 A workspace's repository is set once: when it is created on one, or when a workspace
 without one — the one the GUI starts with — takes the repository picked in the
-`repos` panel. It never changes afterwards; picking another repository opens a new
+[[repos panel]]. It never changes afterwards; picking another repository opens a new
 workspace. A selection or a variable naming a metarecord of the first repository
 therefore can never end up read against another.
 

@@ -1,4 +1,4 @@
-// message panel: per-workspace append-only log (spec-gui "Message view").
+// message panel: per-workspace append-only log (doc "message panel").
 
 import { byId, el } from '/__ui.js';
 
@@ -22,7 +22,7 @@ export async function mount(root, metafolder) {
     );
   }
 
-  /** Newest first (spec-gui "Message view"): a new entry goes on TOP, so the
+  /** Newest first (doc "message panel"): a new entry goes on TOP, so the
    *  latest output is where the eye already is and no scrolling is needed.
    *  @param {unknown} raw an Entry, or null when the log was cleared */
   function append(raw) {

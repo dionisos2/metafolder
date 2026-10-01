@@ -13,7 +13,7 @@ a `tree_ref` `path` and pointed at it with `tag`. Everything was unified on the 
 * the query language already follows trees — `path =>* "musique"` is a tag and its whole subtree, `path = "musique/jazz"` exactly one node ([[Following references]], [[Field aspects]]);
 * the forest guarantees one position per tag, no cycle, and a parent that exists ([[TreeRef forest]], [[Referential integrity of a forest]]);
 * renaming or moving a tag is one write to one node, and every path under it follows;
-* the `treeref` panel browses and edits the vocabulary as it does folders.
+* the [[treeref panel]] browses and edits the vocabulary as it does folders.
 
 The field names became singular at the same time — `tag`, `negative_tag`,
 `mixed_tag` — since each row holds one tag. Data written with the old convention is not

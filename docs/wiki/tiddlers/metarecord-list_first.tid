@@ -1,0 +1,6 @@
+title: metarecord-list:first
+tags: [[GUI command]] Metarecord
+kind: reference
+summary: Metarecord list: move the selection to the first row
+
+Moves the cursor of the [[metarecord-list panel]], and the selection with it, to the first row.

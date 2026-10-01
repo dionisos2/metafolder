@@ -4,8 +4,8 @@ kind: reference
 aliases: field-editor value-widget widget
 summary: The input a form shows for a field's value follows the value's type: a number box, a checkbox, a uuid with a pick button, a parent and a name.
 
-The forms that write a value — adding or editing a field in `metarecord-detail`,
-the bulk edit of `metarecord-list` — show the same editor: a ''type'' button, and
+The forms that write a value — adding or editing a field in [[metarecord-detail panel]],
+the bulk edit of [[metarecord-list panel]] — show the same editor: a ''type'' button, and
 the input matching the type chosen.
 
 |!Type |!Input |
@@ -33,7 +33,7 @@ at the bottom of a panel, where the system's list opens downwards, off the windo
 !! In the command input
 
 The `metarecord:field` and `metarecord:bulk` commands take a value on one line
-instead:
+instead ([[Editing metarecords in the GUI]]):
 
 |!Type |!Written |
 |`string` |as is |

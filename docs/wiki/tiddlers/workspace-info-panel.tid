@@ -1,0 +1,19 @@
+title: workspace-info panel
+tags: Panel [[Panel types]]
+kind: reference
+aliases: workspace-info
+summary: Every variable of the workspace with its value, live — to see what the panels tell one another, and what a script would read.
+
+Open it with `panel:set type workspace-info`
+(<<key "panel:set type workspace-info" "t w">>). It shows the
+[[workspace variables|Workspace variables]] of its workspace, one row each, the value
+as JSON, updated as it changes.
+
+The standard ones come first, `null` while unset — `active_repo`, `selected_paths`,
+`selected_metarecord`, `selected_metarecords`, `selected_log_entry`,
+`selected_treeref` — then every other variable the workspace holds, by name: each
+panel's own (`metarecord-list:query`, `treeref:scope`…) and whatever a script wrote.
+
+It is read-only, and has no command of its own. It is the place to look when a panel
+does not follow another, and to find the name of the variable a script should read
+(`GET /gui/workspaces/:id/vars/:key`).

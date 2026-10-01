@@ -1,0 +1,6 @@
+title: metarecord-list:folder
+tags: [[GUI command]] Metarecord
+kind: reference
+summary: List the selected metarecord's folder in the metarecord list (focused panel)
+
+Lists the selection's folder — the folder itself when a folder is selected — as metarecords, in place of the focused panel: the query `mfr_path -> "<folder>"` lands in the normal DSL of the [[metarecord-list panel]], frozen ([[Cross-panel selection]]). Defined in the shipped `gui/commands.js` ([[User commands]]).

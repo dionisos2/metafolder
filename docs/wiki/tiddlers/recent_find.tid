@@ -1,0 +1,6 @@
+title: recent:find
+tags: [[GUI command]] [[Panel types]]
+kind: reference
+summary: Recent: jump to a metarecord by name
+
+Moves the cursor of the [[recent panel]] to a row named in the command input; a candidate carries its path ([[Jumping to an entry]]).

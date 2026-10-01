@@ -3,4 +3,4 @@ tags: [[GUI command]] GUI
 kind: reference
 summary: Clear the workspace message log
 
-Empties the focused workspace's message log, the history the `message` panel shows. Other workspaces keep theirs.
+Empties the focused workspace's message log, the history the [[message panel]] shows. Other workspaces keep theirs.

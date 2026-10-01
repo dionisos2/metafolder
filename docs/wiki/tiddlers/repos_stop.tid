@@ -1,0 +1,6 @@
+title: repos:stop
+tags: [[GUI command]] Repository
+kind: reference
+summary: Repos: stop one of the active repository's running tasks
+
+Stops one of the active repository's pending or running tasks, picked among those the daemon lets be stopped — a row's ''Stop'' button in the [[repos panel]] ([[Cancelling a task]]).

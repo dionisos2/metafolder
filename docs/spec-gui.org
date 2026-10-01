@@ -250,10 +250,6 @@ Moved to the wiki: doc "The command input".
 | Command              | Description                                    |
 |----------------------+------------------------------------------------|
 | =daemon:set url <url>= | Change daemon URL — the setting and the URL are asked in the minibuffer when not named |
-| =repos:open=         | Switch focused panel slot to =repos= for repo selection |
-| =repos:open-init=         | Open init-repo form                            |
-| =repos:load=              | Pick a folder and load the repository in it (default =g l=)     |
-| =repos:switch [repo]=    | Open a loaded repository: the =repo= pick completes over the daemon's loaded ones ("<name> — <root>"), and the pick opens exactly like a click in the =repos= panel — the focused workspace adopts it when it has no repository yet, otherwise a new workspace opens on it (default =g o=) |
 | =workspace:new=      | Create a new workspace, assign to both slots   |
 | =workspace:close=    | Close the focused slot's workspace (slot falls back to the previous workspace) |
 | =workspace:rename=   | Rename the focused slot's workspace            |
@@ -270,25 +266,7 @@ Moved to the wiki: doc "The command input".
 | =panel:set type <name>= | Switch focused slot to the named panel type |
 | =panel:swap=         | Exchange the two slots' panel types            |
 | =panel:toggle fullscreen=   | Toggle showing only the focused panel fullscreen (default =z=; escape also exits) |
-| =metarecord:create=       | Create a new metarecord immediately and select it (=metarecord-detail=) |
-| =metarecord:delete=       | Delete the selected metarecord, the file kept (confirmed; default =shift+delete=) |
-| =metarecord:row-next= / =metarecord:row-prev= | Move the field-row cursor (=metarecord-detail=) |
-| =metarecord:row-edit=   | Edit the field row under the cursor                 |
-| =metarecord:row-delete= | Delete the field row under the cursor               |
-| =metarecord:cancel=  | Cancel the current field edit or add form           |
-| =metarecord:field <op> [target] [which] [type] [value]= | Field operation on the *current* metarecord. =op= is =set= (overwrite every value), =add= (append one value — a value it already holds is a no-op, doc "No duplicate rows"), =edit= (change one value), =remove= (drop every row equal to the value it names — the inverse of =add=), =unset= (remove the field entirely → /unknown/), =rename= (all its values), =retype= (all its values). =target= always names a field. =which= names the row =edit= changes by its value's raw form (∅ an explicit absence), and is asked only when the field holds several values — with one, the field names the row already. =type= is taken only when the operation writes a value and nothing settles its type (always for =retype=, which is the operation that names one); =remove= takes none — every row it can name carries the type its value is read as — see "The type is an argument" below |
-| =metarecord:bulk <target> <op> [field] [type] [value]= | The same over the target the invocation names: =selection= (the checkbox selection, =selected_metarecords=) or =query= (the current query — the *effective* one, finder included; when the list has not run, its base query text, and the empty one reads as every metarecord). The target is asked first when not named — completed over =selection= / =query=, pre-filled with what a checked selection would mean, and naming what each choice would act on; there is no fall-through, so an empty selection is nothing to do rather than the query. An old positional invocation (=metarecord:bulk set …=) fails loudly with the new syntax in the error. =op= is =set= / =add= / =remove= / =unset= — the daemon's set-layer routes =POST /query/fields/{set,add,remove,unset}= — plus =delete=, which deletes the metarecords themselves (=POST /query/delete=; the files stay on disk) and so names no field |
-| =metarecord-list:open-bulk-edit= | Mouse flow: open the in-panel bulk edit / delete form, whose target drop-down names the same two choices (the checked selection, or the query shown — the default) |
-| =metarecord-list:set <setting> <value>= | Change a view setting: =mode= (=table= / =grid=) or =page-size= (results per fetch) |
-| =metarecord-list:focus <zone>= | Move the keyboard focus to a zone (=finder= / =simplified= / =normal= / =columns=). =simplified= unfreezes zone B first and =normal= reveals and freezes it, because a shown-and-frozen B is what the query runs — focusing a zone the query ignores would hand the user an inert field |
-| =metarecord-list:clear <zone\|all>= | Empty a zone and focus it; =all= empties the three search fields and re-runs (an empty query matches everything) |
-| =metarecord-list:apply <zone> [stay]= | Commit a zone's content. It leaves the zone afterwards — so the panel accelerators resume without a separate Escape — unless =stay= is given, and only ever gives up a focus that zone itself holds |
-| =metarecord-list:insert <zone> <text> [stay]= | Splice text into a zone at the caret, replacing the selection, and focus the zone — unless =stay= is given, the modifier =apply= takes with the same meaning (*the focus stays where it is*), which is what a caller that writes and runs the query at once needs. Because =stay= trails the free text, a trailing token that is not exactly =stay= is taken as more text (an unquoted =text= may hold spaces); a literal trailing "stay" takes double quotes. It prepares the query rather than running it: =apply= runs it. The one command that writes into a text zone |
-| =metarecord-list:query <what>= | Run a canned query in the visible DSL zone, shown and frozen so it stays editable and composable: =duplicates= (the selection's byte-identical twins, =same(mfr_duplicate_group, <uuid>)=) or =orphans= (=orphan = true=, the metarecords the last =orphan:detect= marked — it detects nothing and reads no disk, it shows what detection wrote, see doc "Finding and clearing orphans") |
-| =metarecord-list:toggle <flag>= | Flip a view flag (=normal=: show/hide the normal DSL editor) |
 | =file-manager:reveal= | Open the selected metarecord's folder in the file manager, replacing the focused panel (directory → itself, file → containing folder with the file highlighted) — see [[*Cross-panel selection]] |
-| =metarecord-list:folder= | List the selected metarecord's folder in =metarecord-list=, replacing the focused panel (directory → itself, file → its containing folder; default =g f=): the query =mfr_path -> "<folder>"= lands in the DSL zone, frozen, so it stays visible and editable — see [[*Cross-panel selection]] |
-| =recent [metarecord]=   | Open a recently-viewed metarecord (completes over the list, newest first; default =g r=): the selection is published and the matching viewer revealed in the *other* slot — =file= when the metarecord has a file, =metarecord-detail= when not (the [[*Cross-panel selection]] open) |
 | =reconcile:run=      | Trigger reconcile on the active repo           |
 | =mf:duplicate scan=  | Scan the active repo for byte-identical files and record the groups — the GUI half of =mf duplicate scan=; progress in the [[*Task bar]], summary in the status bar (see [[*Duplicates]]) |
 | =orphan:detect=      | Mark the active repo's orphaned metarecords =orphan = true= and unmark the rest (=POST /orphans/mark=) — the GUI half of =mf orphan detect=; the count lands in the status bar and the message log |
@@ -296,8 +274,6 @@ Moved to the wiki: doc "The command input".
 | =orphan:detect-delete= | =orphan:detect= then =orphan:delete=, one confirmation between the two — the convenience form for "find the records whose file is gone and be rid of them" |
 | =mf:order= | Number the selected folder's direct children (=order_file= / =order_dir=) and mark the folder =order_numbered= — the GUI half of =mf order=; no prompt: the selected folder, or the selected file's folder (default =m o=) — see doc "Ordering a folder" |
 | =script:run [name]=  | Run an installed helper script — completes over the scripts in =~/.config/metafolder/scripts/=, the description taken from each script's =# Summary:= header; the chosen script runs as a subprocess (output in the =message= panel) — see doc "Shipped defaults in the source tree" |
-| =metarecord:remove=   | Remove the selected metarecord (confirmed; default =delete=). Without a file this is a plain =metarecord:delete=; with one, the question settles the file: =OK= trashes it — and the metarecord with it, =metarecord:trash='s action, the question doubling as its confirmation — =Cancel= keeps it and deletes the metarecord alone (=metarecord:delete= confirms) — see doc "Sending files to the trash" |
-| =metarecord:trash=   | Send the selected metarecord's file to the trash (confirmed; default =ctrl+delete=) — see doc "Sending files to the trash" |
 | =file:open-with [program]= | Open the selected file or folder with an external program (default =g w=) — see [[*Opening a file with another program]] |
 | =ignore:list=        | Show the installed ignore presets and the target's active patterns in the =message= panel — see doc "Setting ignore patterns" |
 | =ignore:add <preset>= | Append an ignore preset's patterns to the target directory (completes over the installed presets) |
@@ -316,17 +292,12 @@ Moved to the wiki: doc "The command input".
 | =answer:send <value>=     | Resolve the current =POST /gui/input= wait with =<value>=     |
 | =script-keys:toggle=      | Give the keys a script's question awaits back to the GUI, or take them again (default =tab=; see [[*Script keys]]) |
 | =script:stop [<task>]=    | Stop a running script — its whole process group. No argument: the script asking the current question |
-| =message:clear=           | Clear the =message= panel log for this workspace              |
-| =status:clear=            | Dismiss the transient status-bar message (default =ctrl+l=)   |
 | =file-manager:track=        | Add selected path via =POST .../track= (=mf_watch = false=)   |
 | =file-manager:root=  | Jump to the root in =file-manager= — the =active_repo= root, or =/= with no repo (default =/=) |
 | =file-manager:refresh=    | Reload the current directory in =file-manager=               |
 | =file-manager:toggle root= | Toggle the "constrain to root" checkbox in =file-manager=    |
 | =file-manager:toggle hidden= | Toggle the "hidden files" checkbox in =file-manager= (default =ctrl+h=) |
 | =file-manager:find=       | Jump to an entry of the displayed directory by name (default =f=; see doc "Jumping to an entry") |
-| =treeref:find=            | Jump to a child of the displayed node by name (default =f=)   |
-| =trash:find=              | Jump to a trash entry by name (default =f=)                   |
-| =recent:find=             | Jump to a recently-viewed metarecord by name (default =f=)    |
 | =file:back=               | Up one level in the =file= panel: out of a drilled-in listing, or to the folder holding the previewed file (default =backspace=) |
 | =file:zoom in=            | Enlarge the previewed image/video (default =+=)              |
 | =file:zoom out=           | Shrink the previewed image/video (default =-=)               |
@@ -341,18 +312,6 @@ Moved to the wiki: doc "The command input".
 | =file:speed reset=        | Back to normal speed (default =shift+backspace=)              |
 | =file:volume up= / =-down= | Step the volume ±10 %, before or during playback (default =shift+up= / =shift+down=) |
 | =file:mute=               | Mute/unmute, before or during playback (default =ctrl+m=)     |
-| =metarecord:back=         | Return to the previously shown metarecord (=metarecord-detail=, default =backspace= / =left=) |
-
-A field whose only value is =Nothing= (an *explicit absence*, distinct from
-the field not existing) is still a first-class target of =metarecord:field=:
-its name is offered by the completion of =rename=, =retype=, =edit= and
-=remove=, and =remove= names such a row as ∅ — the glyph an absence displays
-as, which no raw form parses. Renaming moves the Nothing row with the rest of
-the field. Because a =Nothing=
-value carries no type, giving such a field a value first *establishes a type*:
-=edit= uses the field's single established type when one is known (from the
-schema or from other records) and otherwise asks which type to use; =retype= on
-an otherwise-empty field likewise asks for a value to attach to the chosen type.
 
 ** Input history
 
@@ -403,478 +362,22 @@ Moved to the wiki: doc "Writing a panel type", doc "The metafolder API" (the
 
 ** Repository management
 
-*** Repo list
-
-Calls =GET /repos= at startup and on explicit refresh. Results populate the
-Repo indicator and the =repos= panel type.
-
-*** Init repo
-
-=repos:open-init= is a command of the =repos= panel type. It transforms the
-=repos= panel to show an inline form with an optional =name= input and a
-=root= input (the daemon API also accepts an external =metafolder= location,
-but the GUI does not expose it). The =root= input is paired with a *Browse…*
-button that opens a folder picker through the value-picker system (see
-[[*Value picker]]): the =file-manager= panel opens in the other slot (started
-at the typed path or the home directory, with no active repo so it browses the
-raw disk), and the confirmed folder path fills the input — prefilling the name
-with the folder name when blank. Submitting calls =POST /repos/init=. On
-success the new repo is adopted in place when the current workspace has no
-=active_repo= yet (the focused panel switches to =metarecord-list=); when the
-workspace already has a repo, the new one is only added to the list (a status
-message points the user to it). Init never spawns a workspace. On =409= an
-error message appears in the status bar and the form remains open.
-
-*** Load repo
-
-The *Load repo* button of the =repos= panel transforms it to show an inline
-form with a single =root= input, also paired with the *Browse…* folder picker.
-Submitting calls =POST /repos/load=. On success the loaded repo is adopted in
-place when the current workspace has no =active_repo= yet, otherwise it is only
-added to the list; like init, load never spawns a workspace.
-
-=repos:load= (default =g l=) is the same load without the form: the command
-opens the folder picker straight away (a =file-manager= picker on the raw disk,
-started at the home directory) and loads the folder that is picked, adopting it
-under the same rule. Cancelling the picker loads nothing. Since there is no form
-to land in, a =POST /repos/load= failure — the folder is not a repository — is
-reported in the status bar. The form remains for typing or correcting a path by
-hand.
-
-The intended flow is: =repos:open= (global) → navigate to the =repos= panel
-→ select a loaded repo or trigger =repos:open-init= / =repos:load= from there
-(=g l= runs the same command from anywhere, so the panel visit is only needed
-for the list itself).
-
-*** Tracking notices
-
-Moved to the wiki: doc "Pausing the watcher", doc "The watch budget".
+Moved to the wiki: doc "repos panel" (the list, init, load, unload, retype, the
+tasks and the tracking notices under each repository).
 
 ** Metarecord management
 
 *** =metarecord-list= panel type
 
-Displays metarecords for the active repo (=active_repo= workspace variable)
-filtered by an embedded query written in the two-zone query editor at the top
-of the panel (see [[*Query editor (two zones)]]). An empty query matches all
-metarecords.
-
-Default display mode: =table= with columns =mfr_path:path= (resolved path),
-=mfr_type=, =&version= — configurable as
-=[panel-defaults.metarecord-list].columns= (see doc "GUI configuration"), and
-overridden by the stored =metarecord-list:columns= of the workspace. The
-=metarecord-list:set mode= command switches between display modes; grid mode
-names each tile with =[panel-defaults.metarecord-list].grid-name-column=
-(default =mfr_path:path=).
-
-The columns input is a separate row below the query editor, with its own
-/Apply/ button (=metarecord-list:focus columns= focuses it). The panel always
-queries with =select: '*'=, so applying new columns is a pure re-render — no
-request.
-
-Each column is one token of the columns input (space- or comma-separated,
-with spaces around =|= tolerated; an empty input restores the defaults;
-invalid tokens are reported under the input and the previous columns are
-kept). A token combines two orthogonal operators — a /projection/ (=:mode=)
-and a /follow/ (=>=) — plus a fallback (=|=):
-
-- =name= — the raw field value(s). A multi-map field shows every row in
-  the cell, comma-joined. =version= is an ordinary field name here.
-- =name:aspect= — projects a =tree_ref= value: =:value= (the leaf name),
-  =:parent= (the parent's uuid), =:path= (the path from the repository root —
-  the root shows =/=; a stale/unresolved =tree_ref= falls back to its leaf
-  name), =:raw= (the parent/name couple, the default). An aspect that does not
-  apply to the value's type falls back to the raw display. These are the *same
-  four aspect names the query DSL uses* (=field:aspect=, see
-  doc "Field aspects"), so reading a value
-  is spelled the same way in a column, in the finder and in a predicate.
-- =name>sub= — follows a =ref=/=refbase= value to the target metarecord and
-  shows its =sub= field rows (comma-joined; e.g. =tag>label=). =sub= may
-  itself be projected (=tag>path:value=, or =tag>path:path= to resolve the
-  target's tree path). One =>= only — no deep chains. A missing target
-  metarecord falls back to the raw uuid; a present target whose =sub= field
-  is absent yields no value (so a fallback can take over).
-- =a | b= — fallback: the cell shows the first alternative that yields a
-  value (e.g. =tag>label | tag>path:value= — the label if any, else the
-  tag's leaf name).
-- =&uuid= / =&version= — the metarecord's own uuid and version. These are
-  metarecord metadata, not fields (=&= cannot appear in a field name), so a
-  user field named =version= never collides with them.
-
-Sorting always uses the underlying raw field (the daemon sorts raw
-values): clicking a =tag>label= header sorts by the =tag= uuids (a
-fallback sorts by its first alternative's field). Meta
-(=&=) columns are not sortable. Column widths are adjustable by dragging
-the right edge of a header. The column list and the widths are persisted
-in the =metarecord-list:columns= and =metarecord-list:column-widths= workspace
-variables, so they survive the panel and can be set by scripts.
-
-Supports sorting by column, multi-selection (=selected_metarecords=), and full
-keyboard navigation. The multi-selection is the workspace's checked selection
-(doc "Cross-panel selection"): it survives changing the list — a checked row the
-new query no longer matches stays checked, so a selection can be gathered in
-several lists — and the =file-manager= checks its rows into the same set.
-
-When the user moves the selection, =metarecord-list= writes the highlighted metarecord
-to =workspace.selected_metarecord= and sets =workspace.selected_paths= to the list
-of resolved absolute paths from all =mfr_path= field rows of that metarecord
-(empty list if the metarecord has no valid =mfr_path=). Other panels update
-reactively (see [[*Cross-panel selection]]).
-
-=metarecord-list= runs its query *eagerly* on the first display, and again
-whenever a repo becomes active: the (possibly empty) query is executed and the
-repo's contents shown straight away, rather than waiting for an explicit apply
-or =metarecord-list:refresh=. Queries are fast enough that showing the list is
-the better default. The list stays empty only while there is no active repo.
-(Historically this panel deferred its query until an explicit user action; the
-value-picker case — =pick_request=, where rows are needed to pick from — was the
-one exception and is now subsumed by the eager run.)
-
-For large result sets, =metarecord-list= uses the daemon's cursor pagination
-(=limit= / =cursor= / =sort= on =POST /query=, see the Pagination section of
-[[file:spec-data-model.org][spec-data-model.org]]), fetching further pages as
-the user scrolls; a footer shows =loaded/total= rows (the total from the
-daemon's =count=, asked *apart*, once the first page is shown: a page the
-daemon stops at its end would otherwise wait for every match to be found —
-doc "Sorting and postings"). Scrolling is not the only way down: moving the selection
-past the last loaded row (=metarecord-list:next=) fetches the next page too,
-so keyboard and script navigation reach the whole result set even when the
-panel is not the displayed one (no scroll event ever fires there). The default page size comes from the GUI config
-(=[page-size].metarecord-list= in =config.toml=, default 100) — the smallest of
-the list panels, as each row needs several daemon round-trips (TreeRef path
-resolution, ref-target metarecords) and parsing. It is further overridable per
-workspace: =metarecord-list:set page-size <n>= persists it in the
-=metarecord-list:page-size= workspace variable (also settable by scripts);
-invalid stored values fall back to the config default.
-
-Orphaned metarecords — a metarecord with =mfr_path= whose file no longer
-exists on disk, either =mfr_path = Nothing= (the watcher saw the deletion)
-or a stale TreeRef (left in place by reconcile, see
-doc "Orphans") — are made visible:
-=metarecord-list= colours the row/card (theme variable =--mf-orphan=, purple
-by default) with a tooltip giving the reason; =metarecord-detail= shows a
-one-line note under the metarecord head. A metarecord with no =mfr_path=
-field at all is not a file metarecord and is never marked.
-
-Not-watched metarecords are made visible the same way (doc "Checking whether a path is watched"): =metarecord-list= colours the row/card amber
-(=--mf-warning=) with the reason on hover — a record *watched* through any of
-its paths stays unmarked, its reason still on hover — and =metarecord-detail=
-always states the verdict in a note under the head, dim when watched, amber
-with the reason when not. The verdict asks the daemon's live coverage
-(=POST /repos/:repo/watch/check=, one batch call per page in the list, one
-per load in the detail) and covers the states eligibility cannot: a subtree
-left uncovered (=mfr_watch_exceeded=), an unplugged volume, the daemon's own
-runtime directory. A
-metarecord with no =mfr_path= at all, or one whose answer has not landed (the
-daemon down, or older than the endpoint), is left unmarked: "unknown" never
-reads as "unwatched". The amber yields to the stronger signals — the orphan
-purple and the unplugged-volume note keep their own marking.
-
-**** Keyboard
-
-The shipped keys (=when = "metarecord-list"=):
-- =/= focuses the finder (=metarecord-list:focus finder=); =Ctrl+/= the structural query
-  editor (=metarecord-list:focus simplified=).
-- Two families edit the three search fields (in addition to =/= and =Ctrl+/=),
-  both scoped to the panel: an =e= chord edits a field (focus, keep content),
-  the bare field letter clears it first. The field letter is shared: =f= finder,
-  =s= simplified query (=e s= / =s= *unfreeze* B — a frozen B stays
-  authoritative, so typing in A would otherwise change nothing), =q= the normal
-  DSL (opens + freezes it). So =e f= / =e s= / =e q= to edit, =f= / =s= / =q= to
-  clear-then-edit, and =c= clears all three at once (=clear all=).
-- =Enter= in any of the search fields applies and *leaves* the field (blur), so
-  the panel accelerators resume without a separate =Escape=; =Shift+Enter=
-  applies but keeps the focus for another edit.
-- =Up= / =Down= move the selection (updates =selected_metarecord=).
-- =Enter= or =Right= switches the other slot to =metarecord-detail= (or =file= if
-  =selected_paths= is non-empty), opening the slot if hidden. See
-  doc "Cross-panel selection".
-- =Space= checks/unchecks the row for the multi-selection (updates
-  =selected_metarecords=; see doc "Cross-panel selection" — the checks are kept
-  when the list changes).
-- =Ctrl+Space= clears the multi-selection (=metarecord-list:select none=,
-  resets =selected_metarecords= to =[]=).
-
-**** Finder (quick filter)
-
-A search box at the top of the panel — the /finder/ — is an incremental
-OSM (doc "Ordered substring matching") (ordered-substring) filter, the ergonomic way to
-find a metarecord by a fragment of its name/label and/or path. As the user
-types (debounced), it re-runs the query; the terms are the input split on
-whitespace. =metarecord-list:focus finder= focuses it (default keybinding =/=; the
-structural query editor moves to =Ctrl+/=). The finder and the query input
-each keep a per-repository input history (see [[*Input history]]); an entry is
-recorded on explicit submission (=Enter= / the apply commands), not by the
-debounce.
-
-The finder builds an OSM sub-query *OR-combined across a set of target fields*
-and *AND-ed onto the base query* (the two-zone editor below is unchanged), so a
-structural query (e.g. =mf_schema = "tag"=) and a typed fragment compose. Each target
-carries its aspect: =:path= (a =tree_ref= field's assembled path, compiling to
-=osm=) or =:value= (the field's own value, compiling to =osmd=) — the same
-aspect names the columns and the query DSL use. The aspect is *explicit* in the
-default config (=field:path= / =field:value=), so it never depends on the async
-field catalog; a bare =field= (no aspect) auto-detects from the catalog
-(=tree_ref= → path, else value). An unknown field just contributes nothing, so a target list
-is always safe. The bulk-edit and the result count operate on the target the
-form names: this *effective* (finder-filtered) query by default, or the checked
-selection spelled with the same =uuid_in= IR the detail panel's bulk commands
-write. The panel publishes the effective query (as the query IR actually run)
-in the =metarecord-list:effective-query= workspace variable on every fetch, so
-another panel — the =metarecord-detail= bulk field-edit commands — can target
-exactly what the list shows, the live finder narrowing included.
-
-It publishes the same query as *DSL text* next to it, in
-=metarecord-list:effective-query-text= (=""= = match all), for a script asking
-what the panel shows (=mf gui query=): text is what =mf metarecord -q= takes and
-what a script composes with (=(<query>) AND mfr_path ->* "/dir"=). The text is
-not un-parsed from the IR — the base part is the normal DSL the editor already
-expanded, and the finder clause is written by a text builder beside the IR one
-(=osm(field:path, "…")= / =osmd(field:value, "…")=, OR-ed and parenthesised,
-terms escaped). The IR stays authoritative for what the panel runs; the two
-builders are pinned to one meaning by shared vectors
-(=panel-shim/finder-vectors.json=), which the frontend suite checks against
-both builders and a Rust test checks through the real parser. The variable
-=metarecord-list:normal-query= is *not* a substitute: it mirrors the normal-DSL
-zone and is only written while that zone is shown.
-
-The searched fields default to =mfr_path:path label:value name:value=,
-configurable as =[panel-defaults.metarecord-list].finder-fields= (see
-doc "GUI configuration") and overridable per workspace via the
-=metarecord-list:finder-fields= variable (a list of =field= or =field:aspect=
-entries); a value picker may seed it. The finder
-text itself persists in =metarecord-list:finder=. When the panel is opened as a
-value picker (its workspace has a =pick_request=), the finder is focused on
-first display.
-
-**** Query editor (two zones)
-
-The query is written in the simplified query language (doc "Simplified query language")
-and transpiled to the normal DSL before execution. The editor exposes both
-forms, so the user can write quickly *and* drop to the full DSL when a query is
-too specific for the simplified surface — and learn the mapping by watching it.
-
-- *Zone A (simplified)* is always visible and has its own /Apply/ button;
-  =metarecord-list:focus simplified= focuses it — and unfreezes B first,
-  (=e s=) focuses it *and* unfreezes B first, so what is typed in A drives the
-  query again. An empty zone A matches all.
-- *Zone B (normal DSL)* below A is *revealed by default* — the expanded DSL is
-  what actually runs, so showing it teaches the mapping — and a toggle hides it
-  again; the choice persists per workspace (only an explicitly stored =false=
-  hides it). While B is shown and **not frozen**, it is a read-only live mirror
-  of =expand(A)= (debounced ~120–150 ms, via =metafolder.query.expand=). A *Freeze* checkbox next to B decouples
-  it: B becomes editable and authoritative, and editing A no longer changes it.
-  Unfreezing re-syncs B from =expand(A)= — manual edits to B are then discarded
-  (accepted).
-
-Execution always runs the content of B; when B is hidden, B is computed as
-=expand(A)= on Apply. The resulting DSL text is compiled with
-=metafolder.query.parse= and the query is issued (with =select: '*'=, as
-above).
-
-Errors appear under the zone that produced them: a grammar/expansion error under
-A, a =parse_query= error under B (where the offending DSL text is visible when B
-is shown).
-
-The editor state persists in workspace variables, so it survives the panel and
-can be set by scripts:
-
-| Variable                        | Meaning                                                                    |
-|---------------------------------+----------------------------------------------------------------------------|
-| =metarecord-list:query=         | zone A text (simplified)                                                   |
-| =metarecord-list:normal-shown=  | whether zone B is revealed (unset = revealed)                               |
-| =metarecord-list:normal-frozen= | whether zone B is frozen (decoupled, authoritative)                        |
-| =metarecord-list:normal-query=  | zone B text — authoritative while frozen, otherwise a cache of =expand(A)= |
-
-*Run a query from another panel*: the panel also honours a
-=metarecord-list:query-request= workspace variable (={ dsl, nonce }=), set by
-=metarecord-list:folder= (a folder's contents) or by =treeref:list-refs=
-(what points at a tree node) — it puts the DSL in zone B, *shown and frozen*,
-and runs it. A
-query the GUI wrote is a starting point, not a mode: frozen zone B leaves it
-visible, hand-editable and composable (the same choice
-=metarecord-list:query= makes). The
-request is honoured both when the panel mounts and
-while it is already mounted, the =nonce= making an identical repeated request
-re-trigger while the same request acts only once. See
-[[*Cross-panel selection]].
+Moved to the wiki: doc "metarecord-list panel" (the finder, the two-zone query
+editor, the columns, the rows and their marks, the selection, the panel's
+workspace variables) and doc "Editing metarecords in the GUI" (the bulk form).
 
 *** =metarecord-detail= panel type
 
-When =selected_metarecord= is =null=, displays a centred "No metarecord selected"
-message and the /New metarecord/ button.
-
-Otherwise calls =GET .../metarecords/:uuid= and displays all fields. Each field
-row shows name, value, an edit button, and a delete button.
-
-The panel reloads the displayed metarecord when another panel signals a data
-change through the =metarecords:dirty= workspace variable (log navigation,
-file-manager tracking, …) — unless an edit is in progress: reloading
-would silently discard it, so the stale view persists until the edit is
-saved or cancelled.
-
-Reference values are clickable (=valueEl= of =/__ui.js=, doc "The metafolder API"):
-clicking the uuid of a =ref=/=refbase=, the parent of a =tree_ref= or the
-metarecord of an =externalref= sets =selected_metarecord= to the referenced metarecord —
-the panel follows it like any other selection change (the edit guard below
-applies). For an =externalref= the target repository is the reference's;
-loading fails with the usual error message when that repository is not
-loaded.
-
-Following a reference is a *navigation*: =metarecord:back= (default
-=backspace= or =left=) returns to the metarecord shown before, and walks back
-out of a whole chain of them. The trail records every move of
-=selected_metarecord= the panel sees, wherever it came from — a reference
-click here, a row picked in =metarecord-list=, a script — since the selection
-is a workspace variable no panel owns. (=Enter= keeps its meaning in this
-panel, editing the field under the cursor.)
-
-Under a reference value, a dim *annotation line* names the target in human
-terms, since a uuid does not:
-- a =tree_ref= shows its resolved path;
-- a =ref= whose field has a *completion seed* (see [[*Ref value completion]])
-  shows the target's path in the seed forest — the field that says a value is
-  entered as a path in that forest is exactly the one that says how to read it
-  back. This is what makes tag values legible: a tag's hierarchy lives in its
-  =tree_ref= =path= and its name is optional, so =tag= / =negative_tag= /
-  =mixed_tag= would otherwise show nothing but a uuid;
-- otherwise (or when the target is not in the seed forest) the target's =name=
-  field, a soft convention — a metarecord with none simply gets no annotation.
-
-Keyboard: =Tab= moves between rows, =Enter= edits, =d= deletes the row (with
-confirmation). That deletion is *per row*; =metarecord:field remove= (=m d=)
-removes by value instead, dropping every row equal to the value it names —
-see doc "Ref value seeds".
-
-At the bottom of the panel:
-- /New metarecord/ button (or =metarecord:create= command) → creates a metarecord
-  *immediately* with =POST .../metarecords= and sets it as =selected_metarecord=,
-  so the ordinary field-editing commands (=metarecord:open-add-field=,
-  =metarecord:field set=, the =m …= sequence) apply to a live record from the
-  start — there is no staged, not-yet-saved draft. The command first prompts for
-  a schema type (blank = an empty record; a type seeds its template fields, one
-  atomic create); the linked =metarecord-list= panel (if any) refreshes. To
-  abandon a record created this way, delete it (=metarecord:delete=).
-- /Add field/ → =POST .../metarecords/:uuid/fields=
-- /Set field/ → =PATCH .../metarecords/:uuid=
-- /Delete metarecord/ → confirmation → =DELETE .../metarecords/:uuid=
-- /Watch and reconcile/ → visible when the metarecord's =mf_watch= field is
-  =false= or absent. Sets =mf_watch = true= (=PATCH=), then calls
-  =POST .../metarecords/:uuid/reconcile=. A spinner appears in the status bar
-  during the operation; the result is appended to the =message= panel type.
-  Useful after adding a metarecord via =file-manager:track= to activate tracking and
-  populate the subtree.
-
-Protected =mfr_*= fields are read-only by default; an advanced toggle exposes
-a =force= checkbox.
-
-**** Naming a value to remove or edit
-
-A =ref= value is typed and read back as its target's label under the field's
-seed rule (doc "Ref value seeds").
-
-=metarecord:field remove= (=m d=) is where this matters most: it names what it
-drops as a *value*, not as a row — the field first, then the value, the exact
-inverse of =add= and the mirror of =mf metarecord field remove=. The value is
-read as one being added (a label names the very uuid =add= would have
-written), and *every row equal to it* is deleted: a value is not a row, and
-equal rows are indistinguishable in a value's terms. Its candidates are the
-record's own values, read back in the same vocabulary (∅ offering the
-explicit =Nothing= rows, which have no raw form to parse) — not the rule's
-candidates: only what the record holds can be removed from it. The
-=metarecord:bulk remove= candidates are the rule's instead, because its value
-is not on any one record. A value the record does not hold is refused. To
-delete one *specific*
-row — the twin of a duplicate, one =Nothing= among several — there is the row's
-delete button and =metarecord:row-delete=, which take the row itself.
-
-=metarecord:field edit= (=m v=) names its row the same way =remove= names a
-value: the field first, then which of its values — asked only when there are
-several, since with one the field names the row already — then the replacement,
-pre-filled with the value being edited as it reads. The replacement is read as
-the row's own type (a Nothing row, which has none, takes the type argument and
-so establishes one). What both flows replace picked rows by display labels of
-the form =tag = <uuid>=: untypeable inline — the label contains spaces, and
-only the last argument absorbs several — and unreadable at that.
-
-**** Keyboard
-
-Every action is also a command, so the panel is fully keyboard-drivable:
-- =Down= / =Up= (or =j= / =k=) move the field-row cursor
-  (=metarecord:row-next= / =metarecord:row-prev=).
-- =Enter= on a row starts inline editing (=metarecord:row-edit=); in the
-  inline editor =Enter= confirms and =Escape= cancels.
-- =d= deletes the field row under the cursor (=metarecord:row-delete=, with
-  confirmation).
-- =a= opens the add-field form (=metarecord:open-add-field=); =Ctrl-n= creates a new
-  metarecord (=metarecord:create=) and selects it.
-All of these are =when = "metarecord-detail"= bindings of the shipped
-=keybindings.toml= (doc "Keybindings").
-
-Beyond the cursor-driven inline editor, the panel also registers a family of
-*command-input-driven* field operations that need no cursor navigation: they
-declare their arguments (doc "Interactive command arguments"), so invoking one from the command
-input collects the field name (or a value to edit, selected among the record's
-current values), then the type, then the new value through the minibuffer, with
-completion and the current value pre-filled. =TreeRef= values are edited as
-paths (completed against the field's forest, resolved through
-=POST …/tree/resolve-path= on commit); =ref= values are named by their rule
-(see doc "Ref value seeds"). A =bool= value completes
-over its closed set — =false= / =true= — with no repository lookup. This value
-completion and resolution is shared by the direct and the bulk value commands
-alike.
-
-*The type is an argument.* When a value command targets a field whose value
-type cannot be determined automatically (no row on the record, nothing in the
-schema-aware catalog), the type is *asked* through the command input rather
-than silently defaulting to =string= — for =metarecord:field set= / =add= /
-=edit= and for =metarecord:bulk set= / =add= / =remove= alike. The per-record
-=remove= asks none: every row it can name carries the type its value is read
-as. It is one of the
-command's declared arguments like any other, so it is completed over the
-concrete types (every type but =nothing=, which has no value to parse) and it
-is asked *before* the value: the value is parsed as that type, and a question
-that decides how the next answer is read cannot come after it. Being an
-argument, it is also positional — a fully inline invocation names it between
-the field and the value (=metarecord:field set rating int 5=), and only when it
-would have been asked: the shorter form stays the whole story for a field whose
-type is already settled (=metarecord:field set tag jazz=). An invocation that
-names none, on a field nothing settles, is refused rather than guessed.
-=retype= is the one operation that always takes it — naming a new type is what
-it does — and when the field it retypes holds nothing but an explicit =Nothing=
-there is no value to re-encode, so the new type is followed by the value that
-gives it meaning. The two commands are =metarecord:field <op>= on the
-current metarecord (=set=, =add=, =edit=, =remove=, =unset=, =rename=,
-=retype=) and =metarecord:bulk <target> <op>= (=set=, =add=, =remove=,
-=unset=, =delete=) over the target the invocation names — the checkbox
-selection (=selected_metarecords=) or the current query, asked first with
-completion (pre-filled with what a checked selection means, so the common
-answer is still Enter, and naming what each choice would act on: the checked
-count and the query's match count). There is no inferred target: a selection
-that silently widens to the whole query — or the reverse — was exactly the
-confusion the argument removed, so an empty selection is "nothing to do" and a
-broad query is what =query= spells. The default
-suggestions bind them under an =m= sequence prefix (=m s= set, =m a= add, =m v=
-edit a value, =m d= remove a value, =m u= unset, =m n= rename, =m t= retype,
-and =m b= / =m m <op>= for the bulk half), active in both
-the =metarecord-list= and =metarecord-detail= panels so the family is reachable
-whether the list or the detail is focused.
-
-For bulk edits there are two entry points. The *mouse-oriented* one is an
-in-panel =metarecord-list= form (target drop-down + operation picker + typed
-value widget + =force=), opened by the footer "Edit / delete…" button
-(=metarecord-list:open-bulk-edit=); its target defaults to the query, the scope
-that flow has always acted on. The *keyboard-oriented* one is
-=metarecord:bulk= itself: invoked bare (=m b=) it collects the target and then
-the operation in the command input, and a keybinding may name both up front
-(=m m s= set on the selection, =m m a= add, =m m v= remove one value, =m m r=
-unset the field, =m m d= delete the metarecords — the fastest bulk flow, the
-checked selection; the query-scoped one goes through =m b=) — the same command
-either way, since arguments supplied inline skip their prompt. Both families
-are bound in the list *and* the detail panel:
-a command reaches its panel whatever is focused, so which panel registered it
-is not a scope. A bulk operation counts its matches (daemon-side =count=) and
-names that number in its confirmation.
+Moved to the wiki: doc "metarecord-detail panel" (the rows, the notes, following
+references, creating and reconciling) and doc "Editing metarecords in the GUI"
+(=metarecord:field=, =metarecord:bulk=, naming a value, the type argument).
 
 *** =file= panel type
 
@@ -1249,103 +752,11 @@ space in the listing offers just =New folder…= / =New file…= / =Paste=.
 
 *** =treeref= panel type
 
-A navigator for a *TreeRef forest*, the way =file-manager= navigates the disk
-— but over any TreeRef field (=mfr_path=, or a user tag tree), driven entirely
-by the daemon. The primary use is observing a tag hierarchy.
-
-*Field picker*: a dropdown of the repo's TreeRef field names
-(=GET /repos/:repo/fields?type=tree_ref=, [[file:spec-data-model.org][spec-data-model.org]]); =mfr_path= is the
-default, configurable as =[panel-defaults.treeref].field= (see
-doc "GUI configuration") and overridden by a stored =treeref:field=. Changing the field resets navigation to the roots. =treeref:set field=
-(=Shift+F=) is its keyboard equivalent: it asks for the field name in the command
-input, completing over the same list, and mirrors the pick back into the
-dropdown. The minibuffer starts *empty* — the answer names another forest, not
-an edit of the current one, so a pre-fill would only have to be erased first
-(the dropdown already shows which field is current).
-
-*Navigation*: by *parent UUID*, not by path string, so a name containing =/=
-is handled correctly. The view *starts at the forest roots*, fetched from
-=GET /repos/:repo/tree/roots?field=<field>= ([[file:spec-data-model.org][spec-data-model.org]]) — the roots' parent
-is the root sentinel, which =Follows= cannot address (the empty path resolves
-to the sentinel's *children*, and only when a root is literally named =""=, as
-=mfr_path='s repo-root metarecord is). A node =U='s direct children are then
-fetched with =Follows{field, target: \{uuid_in: [U]\}\}=, each row showing the
-single name component it contributes (read directly from its =tree_ref= value —
-no =resolve-tree= round-trip). The empty-named =mfr_path= root displays as =/=.
-A breadcrumb shows the current path; clicking a crumb jumps there.
-Branch-vs-leaf is *not* predicted up front: descending into a leaf simply shows
-an empty list. Children are fetched page by page (=[page-size].treeref=,
-default 200) with more on scroll; the (few) roots are fetched in one call.
-
-*Adding an element*: =treeref:add= (the toolbar's =+ add= button, =ctrl+n=) grows
-the forest — a new node under the node the panel is *open on* (the parent of the
-displayed list, so the element joins it; at the forest roots it becomes a root).
-It creates a metarecord positioned there, and asks for its two inputs in the
-command input, in order (spec-gui "Interactive command arguments"): the *schema
-type* the record is created with (completing over the schema's declared
-metarecord types, doc "Schema"; its template fields seed the record — =mf_schema=,
-then the type's constrained fields; a blank answer creates a record carrying
-only its position, as =metarecord:create= does), then the *value*, the new
-node's single name component (=/= inside it is rejected, as in any =tree_ref=
-name). The record's position is one =tree_ref= row on the *explored field*,
-parent the current node and name the chosen value — a template row already
-naming that field is overridden by it. The new element joins the displayed list
-and takes the cursor (and the selection it publishes).
-
-*Selection*: highlighting a node sets =selected_metarecord= (=\{uuid, repo\}=,
-so =metarecord-detail= follows) and =selected_treeref=
-(=\{repo, field, uuid, path\}=).
-
-*Keyboard*: =Up=/=Down= (or =j=/=k=) move; =Enter=/=Right= descend;
-=Backspace=/=Left= go up; =/= jumps back to the forest roots (as it jumps to the
-root in the file manager); =r= refreshes; =f= jumps to a child by name (see
-doc "Jumping to an entry"), =Shift+F= picks the explored field; =l= lists what points at
-the node, =s= toggles the scope, =e= picks the Ref field; =ctrl+n= adds an
-element under the current node (see above).
-
-*Ref bar — "what points at this node?"*. The companion question a tree
-inevitably raises ("what is tagged with this?") is answered by *building a
-query*, not by a second panel type. A second toolbar row carries a *Ref field*
-picker (=GET /repos/:repo/fields?type=ref=; default =tag=, the common case,
-configurable as =[panel-defaults.treeref].ref-field= and overridden by a stored
-=treeref:ref-field=), a *scope* selector (=exact= / =+ descendants=, stored as
-=treeref:scope=), and a read-only preview of the DSL those two produce for the
-node under the cursor — so the bar says what the command will *do*, not merely
-which field it reads:
-
-- =exact= — =\<ref\> -> (\<tree\> = "<path>")=: the node itself. On a TreeRef
-  field =\=​= is the exact node at that path (doc "Field aspects"), so this pins one node at every depth, a forest root included.
-- =+ descendants= — =\<ref\> -> (\<tree\> =>* "<path>")=: the node *and* every
-  descendant — classic tag inheritance, where selecting =music= also surfaces
-  things tagged =music/rock=.
-
-=treeref:list-refs= (=l=, and the right-click item /List what <ref> points at
-here/) publishes that DSL as =metarecord-list:query-request= and opens
-=metarecord-list= *in the other slot*, so the tree stays visible and the next
-node can be asked about straight away. The query lands in the list's normal-DSL
-zone, *shown and frozen*: it is a starting point, editable and composable, not a
-mode — which is the reason a dedicated panel type is not needed for it.
-
-| Command            | Description                                  |
-|--------------------+----------------------------------------------|
-| =treeref:descend=  | Descend into the selected node               |
-| =treeref:parent=   | Go up one level                              |
-| =treeref:root=     | Jump to the forest roots                     |
-| =treeref:refresh=  | Reload the field lists and current children  |
-| =treeref:add=      | Add an element under the current node (args: schema type, then name) |
-| =treeref:set field= | Explore another TreeRef field (arg: field name, no pre-fill) |
-| =treeref:find=     | Jump to a loaded child by name (=f=; see doc "Jumping to an entry") |
-| =treeref:list-refs= | List the metarecords whose Ref field points at the selected node |
-| =treeref:toggle scope= | Toggle between =exact= and =+ descendants= |
-| =treeref:set ref-field= | Choose the Ref field to follow back (arg: field name) |
+Moved to the wiki: doc "treeref panel".
 
 *** =workspace-info= panel type
 
-Displays all workspace variables for the current workspace: =active_repo=,
-=selected_paths=, =selected_metarecord=, =selected_metarecords=, and any custom
-namespaced variables. Values are shown in JSON format and update reactively
-as they change. Read-only; useful for debugging panel type communication and
-for monitoring GUI state from scripts.
+Moved to the wiki: doc "workspace-info panel".
 
 *** Cross-panel selection
 
@@ -1353,25 +764,7 @@ Moved to the wiki: doc "Cross-panel selection".
 
 ** Message view
 
-The =message= panel type is a scrollable, append-only log, *per-workspace*,
-shown *newest first* (anti-chronological): a new entry is prepended, so the
-latest output is always at the top with no scrolling. The view follows the
-newest entry only while the reader is already at the top — someone who
-scrolled down into the history keeps their position.
-It receives:
-- All messages posted to the active workspace's status bar (with timestamp).
-- Every command invocation dispatched in this workspace, echoed as
-  =​> name args= before the command runs — unless the command opted out of
-  logging at registration (see "Command", the =log= flag). Basic editing
-  primitives (=editing:*=, =command-input:focus command=) opt out to avoid noise.
-- stdout/stderr of shell commands run via =!= in this workspace (echoed as
-  =$ command=).
-- Reconcile progress and results triggered from this workspace.
-- Any message posted by a script via =POST /gui/message= targeting this
-  workspace (also shown in the status bar as a transient notification).
-
-The log is cleared by the =message:clear= command. It is not persisted across
-sessions.
+Moved to the wiki: doc "message panel".
 
 ** Opening a file with another program
 

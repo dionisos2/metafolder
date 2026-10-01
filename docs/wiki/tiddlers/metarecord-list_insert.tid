@@ -1,0 +1,6 @@
+title: metarecord-list:insert
+tags: [[GUI command]] Metarecord
+kind: reference
+summary: Metarecord list: insert text into a zone
+
+Writes text into a field of the [[metarecord-list panel]] at the caret, in place of what is selected there, and puts the focus in it — unless a final `stay` leaves the focus where it is. It prepares the query and does not run it: `metarecord-list:apply` does. Text ending in the word `stay` takes double quotes. `user:tag-query` is these two commands in a row ([[User commands]]).

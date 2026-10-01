@@ -27,7 +27,7 @@ vocabulary: it asks about top-level tags, and only goes down into a tag's childr
 you have said yes to it; a no closes the whole subtree below it, and a yes to an
 exclusive tag closes its siblings. The file shows in the left panel, its metadata in the
 right one. It only asks about tags that exist: grow the vocabulary with `mf tag add` or
-in the `treeref` panel.
+in the [[treeref panel]].
 
 !! One tag, file by file
 

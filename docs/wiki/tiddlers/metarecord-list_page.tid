@@ -1,0 +1,6 @@
+title: metarecord-list:page
+tags: [[GUI command]] Metarecord
+kind: reference
+summary: Metarecord list: load a page (next)
+
+`metarecord-list:page next` loads the next page of the [[metarecord-list panel]]. Only forward: the list grows as it is read.

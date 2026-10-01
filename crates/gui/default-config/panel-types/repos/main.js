@@ -1,5 +1,5 @@
 // repos panel: list loaded repositories, init/load new ones, open a
-// repository in a workspace (spec-gui "Repository management").
+// repository in a workspace (doc "repos panel").
 
 import { byId, el, messageOf, qsa } from '/__ui.js';
 import { createPickRunner } from '/__value-widget.js';
@@ -627,8 +627,8 @@ export async function mount(root, metafolder) {
   });
 
   // The four commands below are the panel's buttons, made reachable the way
-  // every other behaviour is (spec-gui "Every user-visible behaviour is a
-  // command"): Unload, a task's Stop, Resume tracking, and the unwatched-subtree
+  // every other behaviour is (doc "Commands"):
+  // Unload, a task's Stop, Resume tracking, and the unwatched-subtree
   // notice. They were clickable and nothing else — invisible to the autocomplete,
   // unbindable, and unreachable from a script.
 

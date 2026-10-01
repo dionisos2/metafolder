@@ -1,0 +1,36 @@
+title: recent panel
+tags: Panel [[Panel types]]
+kind: reference
+aliases: recently-viewed
+summary: The metarecords you looked at last in this repository, newest first — as a panel, and as a pick from the command input.
+
+A metarecord is ''viewed'' when `metarecord-detail` or the `file` panel shows it. The
+GUI keeps the last 200 of each repository, most recent first, each once: viewing one
+again moves it to the front. The list is the GUI's — a file of the repository,
+`.metafolder/gui/recent` — and no field of the metarecord: recording a view writes
+nothing to the daemon, so it adds no revision to the event log.
+
+!! As a pick
+
+<<key "recent" "g r">> (`recent`) lists them in the command input, each as its path,
+its `label` and its `name`. Type to narrow, `Enter` to open: the metarecord becomes
+the selection and is shown in the ''other'' slot — in the `file` panel when it has a
+file, in `metarecord-detail` otherwise ([[Cross-panel selection]]). The lines are
+built by `recentLine` in the shipped `gui/commands.js` ([[User commands]]): change it
+there to change what a line shows.
+
+!! As a panel
+
+Open it with `panel:set type recent` (<<key "panel:set type recent" "t v">>). One row
+per metarecord: its `label`, else its `name`, else the start of its uuid; its path;
+how long ago it was viewed.
+
+* <<key "recent:next" "↓ or j">> / <<key "recent:prev" "↑ or k">>, <<key "recent:first" Home>> / <<key "recent:last" End>> — move the cursor. The row under it is the workspace's selection, so a detail or file panel beside it follows.
+* <<key "recent:open" "Enter or →">>, or a double click — show it in the other slot, as the pick does.
+* <<key "recent:find" f>> — jump to a row by name; a candidate carries its path, which tells two rows of the same name apart ([[Jumping to an entry]]).
+* <<key "recent:refresh" r>> — read the list again.
+
+The rows are a snapshot: they are read when the panel is shown, on a refresh and when
+metarecords change, not at each view — walking the list does not reorder it under
+the cursor, although each row walked is itself a view. A right click offers the
+metarecord's actions and, when it has a file, the file's ([[Context menus]]).

@@ -1,0 +1,6 @@
+title: metarecord:bulk
+tags: [[GUI command]] Metarecord
+kind: reference
+summary: Bulk operation on the selection or the current query
+
+Sets, adds, removes or unsets a field on a set of metarecords — or deletes them — in one revision: `metarecord:bulk <selection|query> <operation> [field] [type] [value]`. The target is the checked metarecords or what the list shows, and is asked first when not given ([[Editing metarecords in the GUI]]).

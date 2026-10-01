@@ -1,0 +1,6 @@
+title: metarecord-list:clear
+tags: [[GUI command]] Metarecord
+kind: reference
+summary: Metarecord list: clear a zone
+
+Empties a field of the [[metarecord-list panel]] and puts the focus in it; `all` empties the finder and both queries and lists everything. Clearing the finder widens the list at once; clearing `simplified` unfreezes the normal DSL, and clearing `normal` shows and freezes it.

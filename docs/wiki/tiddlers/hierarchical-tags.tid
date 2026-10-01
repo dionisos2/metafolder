@@ -19,7 +19,7 @@ Because a tag is an ordinary metarecord, everything else works on it unchanged: 
 (path = "musique/jazz")` finds the records with exactly that tag, `tag -> (path =>*
 "musique")` the ones with a music tag of any kind ([[Following references]]), the
 simplified language writes them `##=musique/jazz` and `#=musique`
-([[Tag syntax in simplified queries]]), and the `treeref` panel browses the vocabulary.
+([[Tag syntax in simplified queries]]), and the [[treeref panel]] browses the vocabulary.
 
 The convention itself — which field is which — lives in the clients, not the daemon:
 `mf tag` applies it, with the field names of the `[tag]` table of

@@ -1,0 +1,75 @@
+title: treeref panel
+tags: Panel [[TreeRef forest]]
+kind: reference
+summary: Walks a tree of metarecords — the files, or a tag hierarchy — from its roots down; adds nodes to it, and lists what points at a node.
+
+Open it with `panel:set type treeref` (<<key "panel:set type treeref" "t t">>). It
+walks one [[TreeRef forest]] — the tree a `tree_ref` field draws — the way the file
+manager walks the disk, for any such field: `mfr_path`, the files, or a hierarchy of
+tags ([[Hierarchical tags]]).
+
+The ''field'' button chooses the tree, among the repository's `tree_ref` fields;
+<<key "treeref:set field" Shift+f>> (`treeref:set field`) asks for it in the command
+input. It starts on `mfr_path` (`[panel-defaults.treeref]`, [[GUI configuration]]),
+and changing it goes back to the roots.
+
+!! Walking
+
+The panel shows the roots, then the children of the node it was taken into; the line
+above them gives the path to it, each piece a link back. Whether a node has children
+is not known beforehand: going into a leaf shows an empty list.
+
+|!Key |!Does |
+|<<key "treeref:next" "↓ or j">> / <<key "treeref:prev" "↑ or k">>, <<key "treeref:first" Home>> / <<key "treeref:last" End>> |move the cursor (`End`: the last child loaded) |
+|<<key "treeref:descend" "Enter or →">>, or a double click |go into the node |
+|<<key "treeref:parent" "Backspace or ←">> |back to its parent |
+|<<key "treeref:root" "/">> |back to the roots |
+|<<key "treeref:find" f>> |jump to a child by name, among those loaded ([[Jumping to an entry]]) |
+|<<key "treeref:refresh" r>> |read the fields and the children again |
+
+The node under the cursor is the workspace's selection, so [[metarecord-detail panel]]
+beside it shows it; its field, uuid and path are also published as `selected_treeref`
+([[Workspace variables]]). Children are loaded 200 at a time (`[page-size]`), more as
+the list scrolls; the roots come all at once.
+
+<<key "metarecord:remove" Delete>>, <<key "metarecord:trash" Ctrl+Delete>> and
+<<key "metarecord:delete" Shift+Delete>> act on the selected node's metarecord
+([[Sending files to the trash]]). In the `mfr_path` tree a node is a file or a folder,
+and its right-click menu has the file's actions too ([[Context menus]]).
+
+!! Adding a node
+
+<<key "treeref:add" Ctrl+n>> (`treeref:add`, the ''+ add'' button) creates a
+metarecord placed under the node the panel is ''in'' — next to the rows shown, not
+under the cursor; at the roots, it is a new root. It asks two things:
+
+# the ''schema type'' to create it with, completed over the types the schema declares ([[Schema]]): its template fields are filled in. Left blank, the metarecord holds its position and nothing else; a type the schema does not have is refused.
+# its ''name'', one piece of path — a `/` in it is refused ([[Tree names]]).
+
+The new node gets the cursor.
+
+!! What points at this node?
+
+A tree raises the question at once — what is tagged with this? The second row of the
+toolbar answers it by writing a query:
+
+* ''ref'' — the `ref` field to follow back into the tree: `tag` unless configured otherwise (<<key "treeref:set ref-field" e>>, `treeref:set ref-field`);
+* ''scope'' — `exact`, the node itself, or `+ descendants`, the node and everything below it (<<key "treeref:toggle scope" s>>);
+* and the query the two make for the node under the cursor:
+
+```
+tag -> (path = "music/jazz")      the node itself
+tag -> (path =>* "music/jazz")    the node and every tag below it
+```
+
+<<key "treeref:list-refs" l>> (`treeref:list-refs`, or ''List what tag points at here''
+in the right-click menu) runs it in a [[metarecord-list panel]] opened in the
+''other'' slot: the tree stays in view for the next node. The query lands in the
+list's normal DSL, shown and frozen, where it can be narrowed or combined with
+anything else ([[Following references]]).
+
+!! As a value picker
+
+Opened to pick a `tree_ref` parent ([[Value picker]]), the panel starts on the field
+being edited, and a node's right-click menu starts with ''Pick this folder'' or
+''Pick this node''.

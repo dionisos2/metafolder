@@ -1,0 +1,6 @@
+title: metarecord:row-delete
+tags: [[GUI command]] Metarecord
+kind: reference
+summary: Delete the field under the cursor
+
+Deletes the field row under the cursor of [[metarecord-detail panel]], after a confirmation — that row only, where `metarecord:field remove` deletes every row equal to a value. An `mfr_*` row is left alone unless ''force'' is checked.

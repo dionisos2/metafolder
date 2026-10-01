@@ -1,0 +1,6 @@
+title: treeref:add
+tags: [[GUI command]] [[TreeRef forest]]
+kind: reference
+summary: TreeRef explorer: add an element under the current node
+
+Creates a metarecord placed under the node the [[treeref panel]] is in — a new root at the roots. It asks for a schema type, then for the node's name; the new node gets the cursor.

@@ -20,7 +20,7 @@ The daemon keeps at most 200 characters of either header.
 
 A panel declares its context with `metafolder.daemon.setContext(text)` — a local
 assignment, no call — and it rides along with that panel's calls until replaced;
-the `metarecord-list` panel sets it to the DSL text whenever it compiles a query.
+the [[metarecord-list panel]] sets it to the DSL text whenever it compiles a query.
 It is a hint for whoever reads the log, not an exact attribution: a call made
 just after a query carries that query's text too.
 

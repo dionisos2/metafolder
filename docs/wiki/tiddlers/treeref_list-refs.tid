@@ -1,0 +1,6 @@
+title: treeref:list-refs
+tags: [[GUI command]] [[TreeRef forest]]
+kind: reference
+summary: TreeRef explorer: list the metarecords pointing at the selected node
+
+Lists the metarecords whose `ref` field points at the node under the cursor of the [[treeref panel]] — or at anything below it, with the scope on `+ descendants` — in a [[metarecord-list panel]] opened in the other slot. The query is written in the list's normal DSL, where it can be edited.

@@ -1,4 +1,4 @@
-// The `[ref-seeds]` rule engine (spec-gui "Ref value seeds"): the candidates
+// The `[ref-seeds]` rule engine (doc "Ref value seeds"): the candidates
 // of a `ref` value are the metarecords a rule's query selects, each named by
 // its columns — the whole line, then one column at a time as cycled views
 // (doc "Completion views"). One page of the daemon at a time, narrowed on

@@ -3,4 +3,4 @@ tags: [[GUI command]] [[Watcher]]
 kind: reference
 summary: Repos: list the subtrees left unwatched for want of watch budget
 
-Writes the subtrees carrying `mfr_watch_exceeded` to the message log — what the repos panel's amber `N subtree(s) unwatched` button does ([[The watch budget]]).
+Writes the subtrees carrying `mfr_watch_exceeded` to the message log — what the [[repos panel]]'s amber `N subtree(s) unwatched` button does ([[The watch budget]]).

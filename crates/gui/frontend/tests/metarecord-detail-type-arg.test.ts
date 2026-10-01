@@ -1,5 +1,6 @@
-// The value *type* is an ordinary command argument (spec-gui "metarecord-detail
-// panel type"): when nothing settles what type a field's value should have,
+// The value *type* is an ordinary command argument
+// (doc "Editing metarecords in the GUI"): when nothing settles what type a
+// field's value should have,
 // `metarecord:field` and `metarecord:bulk` ask for it through the command
 // input — with completion over the concrete types, and *before* the value,
 // since the value is parsed as that type. It used to be a `window.prompt`

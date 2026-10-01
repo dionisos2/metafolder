@@ -1105,25 +1105,76 @@ selector UX » (« Bench harness » reste, pour l'item 41). Mémoires
 notes) ; =gui-cache-removed= et =gui-cache-read-post-regression= réduites à la
 méthode (vraie GUI + captures, =changeFeed._reset()= dans les tests).
 
-** TODO 38. Panels de navigation
+** FAIT 38. Panels de navigation
 
-- [ ] =repos panel= — reference (liste, init, chargement avec progression)
-- [ ] =metarecord-list panel= — reference (colonnes, modes, zones, finder)
-- [ ] =metarecord-detail panel= — reference
-- [ ] =Editing metarecords in the GUI= — guide (=metarecord:field=, =metarecord:bulk=, lignes)
-- [ ] =treeref panel= — reference (la barre de refs : « qu'est-ce qui pointe ici ? »)
-- [ ] =recent panel= — reference (et le sélecteur =recent=)
-- [ ] =workspace-info panel= — reference
-- [ ] =message panel= — reference
+- [X] =repos panel= — reference (liste, init, chargement avec progression, tâches et notices de suivi sous chaque dépôt, déchargement, retype)
+- [X] =metarecord-list panel= — reference (les trois champs de recherche, colonnes, lignes et leurs marques, sélection, variables)
+- [X] =metarecord-detail panel= — reference
+- [X] =Editing metarecords in the GUI= — guide (=metarecord:field=, =metarecord:bulk=, lignes, le type demandé, nommer une valeur)
+- [X] =treeref panel= — reference (la barre de refs : « qu'est-ce qui pointe ici ? »)
+- [X] =recent panel= — reference (et le sélecteur =recent=)
+- [X] =workspace-info panel= — reference
+- [X] =message panel= — reference
+- [X] =Why recently viewed is kept by the GUI= — rationale, dev (ajoutée : la mémoire =recently-viewed-metarecords=)
+- [X] =Why there is no ref-list panel= — rationale, dev (ajoutée : la mémoire =ref-list-replaced-by-treeref=)
+- [X] les notes de commande : =repos:*= (8 ; =repos:resume= et =repos:watch-exceeded= existaient), =metarecord-list:*= (17), =metarecord:*= (10), =treeref:*= (13), =recent= et =recent:*= (8)
 
-GUI : =repos:*= (10), =metarecord-list:*= (17), =metarecord:*= (hors corbeille, 11),
-=treeref:*= (13), =recent:*= (8) ; panels =repos=,
-=metarecord-list=, =metarecord-detail=, =treeref=, =recent=, =workspace-info=,
-=message=. Sources : spec-gui « Repository management », « metarecord-list »,
-« metarecord-detail », « treeref », « workspace-info », « Message view » ; help
-=repos.html=, =metarecord-list.html=, =metarecord-detail.html=, =treeref.html=,
-=recent.html=, =workspace-info.html=, =message.html= ; mémoires
-=recently-viewed-metarecords=, =ref-list-replaced-by-treeref=.
+Vérification contre le code. *Corrigé, test d'abord* (trois commits à part) : (1)
+=workspace-info= ne montrait pas « toutes les variables » : il lisait les cinq
+variables standard par leur nom et n'apprenait les autres que par les événements
+de changement, donc une variable écrite avant sa construction (la requête de la
+liste, ses colonnes) restait invisible jusqu'à son prochain changement ; un panel
+peut maintenant les lire toutes (=workspace.all()=, commande =ws_vars=, ajout
+additif), et =selected_treeref= rejoint les standards ; (2) =treeref= n'écrivait
+jamais =treeref:field= — la spec disait le champ « stocké », seuls le champ Ref et
+la portée l'étaient — donc ni un script ni =workspace-info= ne voyaient la forêt
+affichée ; (3) =metarecord:create= lisait un type de schéma inconnu comme une
+réponse vide et créait un metarecord vide sans rien dire, là où =treeref:add=
+refusait la même faute.
+Écarts de la spec et des pages help, corrigés dans les notes : une erreur d'init
+ou de chargement s'affiche dans le formulaire, pas dans la barre d'état (seul
+=repos:load=, sans formulaire, y écrit) ; le bouton « Watch and reconcile » n'est
+pas masqué une fois le metarecord surveillé, il devient « Reconcile » ; =Tab= ne
+déplace pas le curseur des lignes du détail (=↓=/=↑=, =j=/=k=) ; « Set field » est
+un =PUT …/fields/:name=, pas un =PATCH= du metarecord ; les colonnes livrées
+comptent =order_file= ; la page help donnait =c s= pour vider la requête simplifiée
+(c'est =s=), parlait de commandes =tab:*= et d'un « nom du workspace » que
+=workspace-info= n'affiche pas ; la mémoire donnait =s v= pour le panel =recent=
+(=t v=) et =recent= pour un builtin du shell (il est dans =commands.js=). Ignorés
+par la spec : la première ouverture d'un dépôt qui compare son schéma à ses données
+(20 violations au plus) ; =repos:unload=, =repos:stop=, =repos:open-retype= et le
+formulaire de retype ; l'état d'erreur de la liste (un échec de lecture ne se lit
+jamais comme « 0 résultat ») ; le tri à trois états ; =metarecord-list:select all=,
+=:page next=, =:base-query-text= ; l'ambre d'un volume non monté dans la liste ; la
+note d'activité du détail ; =metarecord:reconcile= ; le fait qu'une opération de
+=metarecord:bulk= sur la /sélection/ s'exécute sans confirmation (seule la cible
+=query= confirme, =delete= toujours) alors que le formulaire de la liste confirme
+toujours ; le =reveal= de =metarecord:field= (le détail est affiché d'abord).
+*Signalé, non tranché* : (a) =metarecord:field rename=, =retype= et un =remove=
+touchant plusieurs lignes écrivent une révision /par ligne/ (un =PATCH= ou un
+=DELETE= chacun) : les annuler demande autant de =ctrl+z= — la note le dit ; une
+écriture atomique demanderait un point d'entrée de plus côté démon ; (b) la case
+« Force » du formulaire de modification en masse ne sert à rien pour un champ
+=mfr_*= (forcé d'office dès que le nom commence par =mfr_=), et n'a d'effet sur
+aucun autre ; (c) =repos:unload <nom>= prend le premier dépôt de ce nom — sans
+ambiguïté tant que le démon refuse deux dépôts chargés du même nom ; (d) le mode
+=grid= de la liste n'est pas une variable de workspace, contrairement aux autres
+réglages du panel : un script ne peut ni le lire ni le poser.
+Sources retirées (pointeurs) : spec-gui « Repository management » (« Repo list »,
+« Init repo », « Load repo »), « =metarecord-list= panel type » (avec « Keyboard »,
+« Finder », « Query editor »), « =metarecord-detail= panel type » (avec « Naming a
+value to remove or edit », « Keyboard »), « =treeref= panel type »,
+« =workspace-info= panel type », « Message view » ; de la table « Command names »,
+les lignes =repos:*=, =metarecord-list:*=, =metarecord:*=, =recent=, =treeref:find=,
+=recent:find=, =trash:find=, =message:clear=, =status:clear=, et le paragraphe sur
+=Nothing= qui la suivait ; help =repos.html=, =metarecord-list.html=,
+=metarecord-detail.html=, =treeref.html=, =recent.html=, =workspace-info.html=,
+=message.html= et leurs entrées d'index (les identifiants =metarecord-list=,
+=metarecord-detail=, =repos=, =workspace-info=, =message= deviennent des alias des
+notes, que les pages help restantes citent encore ; =treeref= et =tree= étaient déjà
+ceux de =TreeRef forest=, =recent= est le titre de la commande). Mémoires
+=recently-viewed-metarecords= et =ref-list-replaced-by-treeref= réduites à un
+pointeur.
 
 ** TODO 39. Panels de fichiers
 

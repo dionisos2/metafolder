@@ -1,0 +1,6 @@
+title: metarecord:field
+tags: [[GUI command]] Metarecord
+kind: reference
+summary: Field operation on this metarecord
+
+Changes a field of the selected metarecord from the command input: `metarecord:field <set|add|edit|remove|unset|rename|retype> <field> …`, each missing argument asked with completion ([[Editing metarecords in the GUI]]).

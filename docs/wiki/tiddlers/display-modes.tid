@@ -9,7 +9,7 @@ content. It is part of the panel's state in its workspace: another workspace's l
 keeps its own mode, and the mode survives switching the slot to another panel type
 and back — not the end of the session.
 
-`metarecord-list` has two:
+[[metarecord-list panel]] has two:
 
 * `table` (the default) — one row per metarecord, one column per chosen field;
 * `grid` — a thumbnail per metarecord, for image and video collections.

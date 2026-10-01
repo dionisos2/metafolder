@@ -1,4 +1,4 @@
-// metarecord-list column specs (spec-gui "metarecord-list panel type"): the
+// metarecord-list column specs (doc "metarecord-list panel"): the
 // mini-language of the columns input. Two orthogonal operators plus a fallback:
 //   &uuid / &version      metarecord metadata
 //   field                 raw field value(s)

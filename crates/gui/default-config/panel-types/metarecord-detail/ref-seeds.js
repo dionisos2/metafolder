@@ -31,7 +31,7 @@ import { completionLabels } from '/__completions.js';
 import { MATCH_ALL } from '/__value-widget.js';
 
 /**
- * A parsed column of the naming (spec-gui "metarecord-list panel type").
+ * A parsed column of the naming (doc "metarecord-list panel").
  * @typedef {import('/__columns.js').Column} Column
  *
  * One named candidate: what it reads as (its raw label), the form it is shown

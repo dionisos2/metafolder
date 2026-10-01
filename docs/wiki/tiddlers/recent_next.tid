@@ -1,0 +1,6 @@
+title: recent:next
+tags: [[GUI command]] [[Panel types]]
+kind: reference
+summary: Recent: move down
+
+Moves the cursor of the [[recent panel]] down one row; the row under it is the workspace's selection.

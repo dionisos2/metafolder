@@ -1,0 +1,6 @@
+title: metarecord-list:refresh
+tags: [[GUI command]] Metarecord
+kind: reference
+summary: Metarecord list: reload from the daemon
+
+Runs the query of the [[metarecord-list panel]] again. The cursor stays on its metarecord when it is still listed.

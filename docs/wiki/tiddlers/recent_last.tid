@@ -1,0 +1,6 @@
+title: recent:last
+tags: [[GUI command]] [[Panel types]]
+kind: reference
+summary: Recent: jump to the oldest
+
+Moves the cursor of the [[recent panel]] to the oldest one kept.

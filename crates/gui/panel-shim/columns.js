@@ -1,4 +1,4 @@
-// metarecord-list column specs (spec-gui "metarecord-list panel type").
+// metarecord-list column specs (doc "metarecord-list panel").
 //
 // One token of the columns input (tokens separated by whitespace or commas;
 // spaces around `|` are tolerated). Two orthogonal operators plus a fallback:
@@ -19,7 +19,7 @@
 // change the sort field (the daemon sorts raw values; sort uses the first
 // alternative's base field).
 //
-// Data/view split (spec-gui): the `:path` projection (TreeRef -> path) and the
+// Data/view split: the `:path` projection (TreeRef -> path) and the
 // `>` follow need daemon data; main.js fetches it in batch after a page loads
 // and this module only *formats* — `treeRefFields` / `refTargetUuids` /
 // `followedTreeFields` say what to fetch, `fillColumns` fills the display text

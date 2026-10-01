@@ -1,0 +1,6 @@
+title: metarecord-list:next
+tags: [[GUI command]] Metarecord
+kind: reference
+summary: Metarecord list: move the selection down
+
+Moves the cursor of the [[metarecord-list panel]] down one row, loading the next page when it is on the last row loaded — so a script or a key reaches every match, even while the panel is not on screen.

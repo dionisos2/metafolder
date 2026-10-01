@@ -1,4 +1,4 @@
-// Finder query builder (spec-gui "Finder"): turns the quick-filter text into an
+// Finder query builder (doc "metarecord-list panel"): turns the quick-filter text into an
 // OSM sub-query OR-combined across a set of target fields and AND-ed with the
 // panel's base query. Pure, framework-free, shared with the panels and unit
 // tested (frontend/tests/finder.test.ts).
@@ -86,8 +86,8 @@ export function composeQuery(baseIR, clause) {
 }
 
 // ── The same clause, as DSL text ────────────────────────────────────────────
-// A script asking the GUI what it is showing (`mf gui query`, spec-gui
-// "Finder") needs the query as *text*: that is what it passes to `mf metarecord
+// A script asking the GUI what it is showing (`mf gui query`,
+// doc "metarecord-list panel") needs the query as *text*: that is what it passes to `mf metarecord
 // -q`, and what it composes with — `(<query>) AND mfr_path ->* "/dir"` is a
 // string concatenation, which the IR is not. So the clause is built twice, and
 // the two builders are pinned to one meaning by the shared vectors in

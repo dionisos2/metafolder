@@ -1,0 +1,6 @@
+title: metarecord-list:toggle
+tags: [[GUI command]] Metarecord
+kind: reference
+summary: Metarecord list: toggle a view flag (normal)
+
+`metarecord-list:toggle normal` shows or hides the normal DSL field of the [[metarecord-list panel]]. Hidden, the simplified query is expanded when it is applied.

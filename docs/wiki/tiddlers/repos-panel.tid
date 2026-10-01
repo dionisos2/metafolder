@@ -1,0 +1,50 @@
+title: repos panel
+tags: Panel Repository
+kind: reference
+aliases: repos
+summary: The repositories the daemon has loaded, each with its running tasks and tracking notices; opens them, loads and creates new ones, unloads them.
+
+Open it with `repos:open` or `panel:set type repos` (<<key "panel:set type repos" "t r">>).
+One row per repository the daemon has loaded: its name, its root and the start of its
+uuid. The list is read when the panel is built, after each thing the panel does, and
+by <<key "repos:refresh" r>> (`repos:refresh`) — a repository loaded from the command
+line meanwhile appears at the next of these.
+
+!! Opening a repository
+
+Click a row. A workspace that has no repository yet adopts it and shows it in
+`metarecord-list`; a workspace that already has one keeps it — a workspace never
+changes repository ([[Workspaces]]) — and a new workspace opens on the one clicked.
+<<key "repos:switch" "g o">> (`repos:switch`) does the same from anywhere: the
+command input completes over `<name> — <root>` lines, and a bare name or a uuid is
+accepted too.
+
+The first click on a repository also compares its schema with its data, up to twenty
+violations, and says how many it found in the message log ([[Schema]]).
+
+!! Loading and creating
+
+* ''Load repo…'' opens a form holding the root directory, typed or picked with ''Browse…'' — a `file-manager` [[Value picker]] on the whole disk, starting at the path already typed or at your home directory.
+* <<key "repos:load" "g l">> (`repos:load`) skips the form: the folder picker opens at once and the folder picked is loaded. Cancelling the picker loads nothing.
+* ''Init new repo…'' (`repos:open-init`) opens the form creating a repository: a root directory and an optional name, which defaults to the folder's — picking the folder fills it. The new root gets the `default` ignore preset ([[Ignore presets]]). A `.metafolder` kept outside the root is command-line only (`mf repo init --metafolder`).
+
+A repository loaded or created this way is adopted by a workspace that has none, and
+otherwise only joins the list, with a status message saying so: neither opens a
+workspace. A refusal — a folder that is no repository, a name already loaded, a root
+that already holds one — is shown in the form, which stays open; `repos:load` has no
+form, and says it in the status bar.
+
+Loading finishes in the background ([[Creating and loading a repository]]): the row
+shows the `load` task with its phase, and the repository answers once it is done.
+
+!! Under each row
+
+* ''Tasks'' — every pending or running task of the repository, as `kind: phase done/total`, with a ''Stop'' button when the daemon says it can be stopped ([[Cancelling a task]]). `repos:stop` stops one of the active repository's, completing over them. Stopping a flush pauses the repository's tracking, and the status bar says so.
+* ''Tracking notices'' — what makes a repository record less than it seems to: `tracking paused — N event(s) waiting` with a ''Resume'' button (`repos:resume`, [[Pausing the watcher]]); `out of inotify watches`; and `N subtree(s) unwatched`, a button listing them in the message log (`repos:watch-exceeded`, [[The watch budget]]).
+
+Both are asked again every 1.5 s (`task-poll-ms`, [[GUI configuration]]).
+
+!! Unloading and retyping
+
+* ''Unload'' on a row, or `repos:unload` followed by a name (completed over the loaded ones), unloads the repository from the daemon. What the daemon refuses — a task still running — is said in the status bar.
+* ''Retype…'' on a row, or `repos:open-retype` for the active repository, opens the form converting every value of a field to another type: it counts the metarecords holding the field, asks, then reports how many values were converted and how many fell back to the type's default ([[Changing a field's type]]).

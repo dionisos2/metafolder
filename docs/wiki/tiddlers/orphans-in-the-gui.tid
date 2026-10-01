@@ -3,8 +3,8 @@ tags: [[Orphans]]
 kind: reference
 summary: An orphaned record's row is purple in the list and its detail says why — deleted or missing — whether or not detection ever ran.
 
-The metarecord list paints a row ''purple'' when the record it shows is orphaned, and the
-detail panel adds a note, both through `panel-shim/orphan.js`: ''deleted'' when
+The metarecord list ([[metarecord-list panel]]) paints a row ''purple'' when the record it
+shows is orphaned, and [[metarecord-detail panel]] adds a note, both through `panel-shim/orphan.js`: ''deleted'' when
 `mfr_path` is `nothing` (the watcher saw the file go), ''missing'' when the stored path no
 longer exists on disk (the file vanished while untracked). This is computed on display,
 independently of the `orphan` marker detection writes ([[Finding and clearing orphans]]).

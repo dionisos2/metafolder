@@ -1,0 +1,6 @@
+title: treeref:first
+tags: [[GUI command]] [[TreeRef forest]]
+kind: reference
+summary: TreeRef explorer: move to the first child
+
+Moves the cursor of the [[treeref panel]] to the first child.

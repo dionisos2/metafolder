@@ -1,0 +1,6 @@
+title: metarecord:row-edit
+tags: [[GUI command]] Metarecord
+kind: reference
+summary: Edit the field under the cursor
+
+Edits the value of the row under the cursor of [[metarecord-detail panel]], in place: `Enter` saves, `Escape` cancels ([[Field editor]]).

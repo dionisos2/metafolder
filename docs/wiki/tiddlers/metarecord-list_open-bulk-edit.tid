@@ -1,0 +1,6 @@
+title: metarecord-list:open-bulk-edit
+tags: [[GUI command]] Metarecord
+kind: reference
+summary: Metarecord list: open the bulk edit / delete form (set/add/remove/unset/delete)
+
+Opens, or closes, the form at the bottom of the [[metarecord-list panel]] that sets, adds, removes or unsets a field — or deletes the metarecords — over the checked selection or the query shown ([[Editing metarecords in the GUI]]).

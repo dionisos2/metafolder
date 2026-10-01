@@ -1,0 +1,6 @@
+title: metarecord-list:focus
+tags: [[GUI command]] Metarecord
+kind: reference
+summary: Metarecord list: focus a zone
+
+Puts the focus in a field of the [[metarecord-list panel]]: `finder`, `simplified`, `normal` or `columns`. `simplified` unfreezes the normal DSL first, and `normal` shows and freezes it — the field the focus lands in is always one the query reads.

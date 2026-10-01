@@ -3,7 +3,7 @@
 // collected arguments map back onto an operation whose arity depends on that.
 //
 // A value cannot be parsed without a type, and nothing may guess it silently
-// (spec-gui "metarecord-detail panel type"): when the record, the schema and
+// (doc "Editing metarecords in the GUI"): when the record, the schema and
 // the repo's field catalogue all say nothing, the type is *asked* — as an
 // ordinary argument, through the command input, before the value it types.
 

@@ -1,0 +1,6 @@
+title: repos:open-init
+tags: [[GUI command]] Repository
+kind: reference
+summary: Repos: open the init form
+
+Opens the form creating a repository, in the [[repos panel]]: a root directory and an optional name.

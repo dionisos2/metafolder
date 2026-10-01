@@ -1,0 +1,6 @@
+title: metarecord-list:select
+tags: [[GUI command]] Metarecord
+kind: reference
+summary: Metarecord list: change the multi-selection (toggle / all / none)
+
+Changes the checked selection from the [[metarecord-list panel]]: `toggle` checks or unchecks the row under the cursor, `all` checks every row loaded on top of what is checked, `none` unchecks everything ([[Cross-panel selection]]).

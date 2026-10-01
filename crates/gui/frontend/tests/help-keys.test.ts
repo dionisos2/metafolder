@@ -86,8 +86,11 @@ function taggedInvocations(): { page: string; invocation: string }[] {
 describe('help page key hints', () => {
   test('the pages do tag their shortcuts', () => {
     const tagged = taggedCommands();
-    expect(tagged.length).toBeGreaterThan(50);
-    expect(new Set(tagged.map((t) => t.page)).size).toBeGreaterThan(5);
+    // The pages are leaving for the wiki, topic by topic (docs/docs.org): what
+    // is left is the file panels' and the scripting page. The floor only keeps
+    // the checks below from passing on nothing.
+    expect(tagged.length).toBeGreaterThan(20);
+    expect(new Set(tagged.map((t) => t.page)).size).toBeGreaterThan(2);
   });
 
   test('no shipped page advertises a shortcut the shipped bindings do not give', () => {

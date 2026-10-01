@@ -1,0 +1,6 @@
+title: recent:prev
+tags: [[GUI command]] [[Panel types]]
+kind: reference
+summary: Recent: move up
+
+Moves the cursor of the [[recent panel]] up one row.

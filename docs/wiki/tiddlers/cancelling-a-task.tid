@@ -7,7 +7,7 @@ summary: Stop a reconcile, a scan, a query or a flush; what stopping each one le
 mf task show <id> --stop     (or --cancel)
 ```
 
-or the ''Stop'' button next to the task in the `repos` panel. A task says whether
+or the ''Stop'' button next to the task in the [[repos panel]]. A task says whether
 it can be stopped (`cancellable` in [[Task endpoints]]). Stopping is cooperative:
 the task stops at its next checkpoint, so the status reads `cancelled` a moment
 after the request.

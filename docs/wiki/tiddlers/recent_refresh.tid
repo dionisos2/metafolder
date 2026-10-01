@@ -1,0 +1,6 @@
+title: recent:refresh
+tags: [[GUI command]] [[Panel types]]
+kind: reference
+summary: Recent: reload the list
+
+Reads the recently viewed metarecords again, in the [[recent panel]].

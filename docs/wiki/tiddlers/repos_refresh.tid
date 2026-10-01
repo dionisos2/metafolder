@@ -1,0 +1,6 @@
+title: repos:refresh
+tags: [[GUI command]] Repository
+kind: reference
+summary: Repos: refresh the repository list
+
+Reads the loaded repositories, their tasks and their tracking notices again ([[repos panel]]).

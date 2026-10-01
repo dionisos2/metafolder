@@ -1,0 +1,6 @@
+title: metarecord-list:prev
+tags: [[GUI command]] Metarecord
+kind: reference
+summary: Metarecord list: move the selection up
+
+Moves the cursor of the [[metarecord-list panel]] up one row.

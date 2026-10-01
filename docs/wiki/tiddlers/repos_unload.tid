@@ -1,0 +1,6 @@
+title: repos:unload
+tags: [[GUI command]] Repository
+kind: reference
+summary: Repos: unload a repository from the daemon
+
+Unloads the repository named, completed over the loaded ones — a row's ''Unload'' button in the [[repos panel]]. What the daemon refuses is said in the status bar ([[Creating and loading a repository]]).

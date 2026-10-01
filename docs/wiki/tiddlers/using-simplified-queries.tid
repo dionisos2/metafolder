@@ -5,7 +5,7 @@ summary: Typing simplified queries in the GUI's query box and with -s on the com
 
 !! In the GUI
 
-The query box of the `metarecord-list` panel takes simplified text; focus it with
+The query box of the [[metarecord-list panel]] takes simplified text; focus it with
 <<key "metarecord-list:focus simplified" Ctrl+/>> (or <<key "metarecord-list:focus simplified" "e s">>).
 ''Show normal DSL'' reveals what it expands to, updated as you type. To edit the DSL
 by hand, ''freeze'' it: the DSL box then drives the query and the simplified text no

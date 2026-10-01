@@ -1,0 +1,6 @@
+title: metarecord-list:last
+tags: [[GUI command]] Metarecord
+kind: reference
+summary: Metarecord list: move the selection to the last loaded row
+
+Moves the cursor of the [[metarecord-list panel]] to the last row ''loaded'' — not the last match of a list that has more to load.

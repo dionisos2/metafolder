@@ -1,0 +1,6 @@
+title: recent
+tags: [[GUI command]] [[Panel types]]
+kind: reference
+summary: Open a recently-viewed metarecord
+
+Opens a metarecord looked at recently, picked in the command input among the last ones viewed, newest first: it becomes the selection and is shown in the other slot ([[recent panel]]). Defined in the shipped `gui/commands.js` ([[User commands]]).

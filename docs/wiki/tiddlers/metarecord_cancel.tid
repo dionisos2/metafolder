@@ -1,0 +1,6 @@
+title: metarecord:cancel
+tags: [[GUI command]] Metarecord
+kind: reference
+summary: Cancel the current field edit or add form
+
+Leaves the value being edited in [[metarecord-detail panel]] and closes its add form, saving nothing.

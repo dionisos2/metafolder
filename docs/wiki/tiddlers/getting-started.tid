@@ -87,7 +87,7 @@ metafolder-gui
 ```
 
 The GUI connects to the running daemon ([[Connection to the daemon]]) and starts
-with one empty workspace: pick a repository in the `repos` panel, and the
+with one empty workspace: pick a repository in the [[repos panel]], and the
 workspace is on it ([[Workspaces]]).
 
 * The window shows one or two ''panels'' side by side; each slot can show any panel type — the list of metarecords, the detail of one, the file manager, the log… ([[Panel types]], [[Panel slots and layout]]).

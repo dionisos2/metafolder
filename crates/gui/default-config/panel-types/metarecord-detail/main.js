@@ -1,5 +1,5 @@
 // metarecord-detail panel: shows and edits all fields of selected_metarecord
-// (spec-gui "metarecord-detail panel type").
+// (doc "metarecord-detail panel").
 
 import { byId, el, messageOf, valueEl } from '/__ui.js';
 import { orphanState, orphanLabel } from '/__orphan.js';
@@ -678,7 +678,7 @@ export async function mount(root, metafolder) {
     return loadSharedSchema(daemon, repo);
   }
 
-  /** Creates a metarecord immediately (spec-gui "metarecord-detail panel type")
+  /** Creates a metarecord immediately (doc "metarecord-detail panel")
    *  and selects it, so every field-editing command applies to a live record
    *  from the start — there is no staged draft. A `type` seeds the schema's
    *  template fields; otherwise the record is created empty.
@@ -1029,8 +1029,8 @@ export async function mount(root, metafolder) {
 
   /** Builds a Value of `type` from a one-line raw string. tree_ref is special:
    *  `raw` is a PATH, whose parent is resolved to a uuid via /tree/resolve-path.
-   *  ref is special when the field has a completion seed (spec-gui "Ref value
-   *  completion"): `raw` is a PATH in the seed tree_ref field, resolved to the
+   *  ref is special when the field has a completion seed (doc "Ref value seeds"):
+   *  `raw` is a PATH in the seed tree_ref field, resolved to the
    *  target uuid (a 32-hex `raw` is always taken as the uuid directly).
    *  @param {string} repo @param {string} field @param {string} type @param {string} raw */
   async function parseValueForField(repo, field, type, raw) {
@@ -1091,8 +1091,8 @@ export async function mount(root, metafolder) {
     return pending;
   }
 
-  /** The views of a value argument for `type` on `field` (spec-gui "Completion
-   *  views"): the field's `[ref-seeds]` naming when it has a rule — the whole
+  /** The views of a value argument for `type` on `field` (doc "Completion views"):
+   *  the field's `[ref-seeds]` naming when it has a rule — the whole
    *  line, then each column, `completion:cycle` walking them — and one plain
    *  view otherwise (a tree_ref's own forest, a legacy seed forest's paths, a
    *  closed value set). @param {string} repo @param {string} field
@@ -1523,7 +1523,7 @@ export async function mount(root, metafolder) {
       {
         name: 'type',
         // Only when nothing settles it — and *before* the value, which is
-        // parsed as it (spec-gui "metarecord-detail panel type"). An operation
+        // parsed as it (doc "Editing metarecords in the GUI"). An operation
         // whose type is settled takes no such argument, so the value stays the
         // third token: `metarecord:field set tag jazz` still runs unprompted,
         // while a brand-new field spells its type out between the two.
@@ -1621,8 +1621,8 @@ export async function mount(root, metafolder) {
   }
 
   /** The type of a bulk write whose invocation carried none — the inline case.
-   *  Refuses rather than guessing `string` (spec-gui "metarecord-detail panel
-   *  type"). @param {string} repo @param {string} field */
+   *  Refuses rather than guessing `string` (doc "Editing metarecords in the GUI").
+   *  @param {string} repo @param {string} field */
   async function requireBulkType(repo, field) {
     await warmFieldCatalog(repo);
     const known = knownType(repo, field);
@@ -1958,8 +1958,8 @@ export async function mount(root, metafolder) {
   byId(root, 'add-cancel').addEventListener('click', () => addForm.classList.remove('open'));
   forceBox.addEventListener('change', render);
 
-  // Back out of a chain of followed references (spec-gui "metarecord-detail
-  // panel type"): the selection returns to the previously shown record, which
+  // Back out of a chain of followed references (doc "metarecord-detail panel"):
+  // the selection returns to the previously shown record, which
   // every panel following `selected_metarecord` picks up.
   void commands.register('metarecord:back', {
     label: 'Metarecord: back to the previously shown metarecord',
@@ -2032,7 +2032,7 @@ export async function mount(root, metafolder) {
     },
   });
 
-  // Keyboard editing (spec-gui): every field/metarecord operation is a command,
+  // Keyboard editing (doc "Commands"): every field/metarecord operation is a command,
   // so the panel is fully drivable without the mouse.
   void commands.register('metarecord:row-next', {
     label: 'Move the field cursor down',

@@ -1,0 +1,6 @@
+title: repos:open
+tags: [[GUI command]] Repository
+kind: reference
+summary: Open the repository panel in the focused slot
+
+Shows the [[repos panel]] in the focused slot, in place of the panel there.

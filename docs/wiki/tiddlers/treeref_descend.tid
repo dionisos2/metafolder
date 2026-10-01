@@ -1,0 +1,6 @@
+title: treeref:descend
+tags: [[GUI command]] [[TreeRef forest]]
+kind: reference
+summary: TreeRef explorer: descend into the selected node
+
+Goes into the node under the cursor of the [[treeref panel]], showing its children; a leaf shows an empty list.

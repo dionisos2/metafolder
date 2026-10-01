@@ -1,0 +1,6 @@
+title: repos:switch
+tags: [[GUI command]] Repository
+kind: reference
+summary: Open a loaded repository in the current or a new workspace
+
+Opens a loaded repository, picked in the command input among `<name> — <root>` lines; a bare name or a uuid is accepted too. It opens like a click in the [[repos panel]]: a workspace without a repository adopts it, otherwise a new workspace opens on it. Defined in the shipped `gui/commands.js` ([[User commands]]).

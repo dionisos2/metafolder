@@ -1,0 +1,6 @@
+title: recent:first
+tags: [[GUI command]] [[Panel types]]
+kind: reference
+summary: Recent: jump to the most recent
+
+Moves the cursor of the [[recent panel]] to the most recently viewed metarecord.

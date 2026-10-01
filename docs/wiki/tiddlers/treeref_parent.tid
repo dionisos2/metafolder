@@ -1,0 +1,6 @@
+title: treeref:parent
+tags: [[GUI command]] [[TreeRef forest]]
+kind: reference
+summary: TreeRef explorer: go up one level
+
+Goes back to the parent of the node the [[treeref panel]] is in.

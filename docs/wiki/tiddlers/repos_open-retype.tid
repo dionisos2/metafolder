@@ -1,0 +1,6 @@
+title: repos:open-retype
+tags: [[GUI command]] Repository
+kind: reference
+summary: Repos: open the field-type conversion form for the active repository
+
+Opens the [[repos panel]]'s form converting a field to another type across the active repository ([[Changing a field's type]]). Without an active repository it says so and opens nothing.

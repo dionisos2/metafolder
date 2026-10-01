@@ -1,0 +1,6 @@
+title: treeref:set
+tags: [[GUI command]] [[TreeRef forest]]
+kind: reference
+summary: TreeRef explorer: change a view setting
+
+Changes a setting of the [[treeref panel]]: `field`, the tree it walks, or `ref-field`, the `ref` field `treeref:list-refs` follows back — each completed over the repository's fields of that type.

@@ -45,7 +45,7 @@ export function treeNameOf(metarecord, field) {
 
 // The DSL selecting the metarecords whose `refField` (a Ref field) points into
 // the tree node at `path` in `treeField`'s forest — the query the `treeref`
-// panel hands to `metarecord-list` (spec-gui "treeref panel type").
+// panel hands to `metarecord-list` (doc "treeref panel").
 //
 //   - scope 'exact'   : `tag -> (path = "music/jazz")`, the node itself. On a
 // TreeRef field `=` is the exact node at that path (doc "Field aspects"), so this pins one node at

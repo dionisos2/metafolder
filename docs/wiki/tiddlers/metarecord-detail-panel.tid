@@ -1,0 +1,59 @@
+title: metarecord-detail panel
+tags: Panel Metarecord
+kind: reference
+aliases: metarecord-detail detail edit-field
+summary: Every field of the selected metarecord, one row each, edited in place; references are followed like links, and notes say whether its file is gone or unwatched.
+
+Open it with `panel:set type metarecord-detail`
+(<<key "panel:set type metarecord-detail" "t d">>). It shows the workspace's selected
+metarecord ([[Cross-panel selection]]): its uuid and [[version|Metarecord version]],
+then one row per field row — name, type, value. A field holding several values has as
+many rows ([[Fields and values]]). With nothing selected it says so, and offers ''New
+metarecord''.
+
+!! Notes under the head
+
+* ''Orphan'', in purple — the file is gone, deleted or missing ([[Orphans in the GUI]]); or, in amber, its volume is not mounted, which is not the same thing ([[Unmounted volumes in the GUI]]).
+* ''Watched or not'' — whether the daemon would record a change to the file: dim when it does, amber with the reason when it does not. It is the watcher's own answer, asked at each load, so a metarecord inheriting `mf_watch = true` reads as watched though it carries no such field ([[Checking whether a path is watched]]).
+* ''Activity'' — how many filesystem events arrived at the file, or under it for a folder, since the repository was loaded or the counters were reset, with their share of the repository's; shown only when there were some ([[Watch activity]]).
+
+A metarecord without a file has none of them.
+
+!! Following references
+
+A reference is a link: clicking the uuid of a `ref`, the parent of a `tree_ref` or
+the metarecord of an `externalref` selects the metarecord it points to, and the panel
+shows it. <<key "metarecord:back" "Backspace or ←">> (`metarecord:back`) returns to
+the one shown before, and again through the whole trail — the last fifty, however
+each was reached: a link here, a row of the list, a script.
+
+Under a reference, a dim line names its target, since a uuid does not: the path of a
+`tree_ref`; for a `ref`, the target's label under the field's seed rule — its path for
+a tag ([[Ref value seeds]]) — and otherwise the target's `name` field, when it has
+one.
+
+!! Editing
+
+* <<key "metarecord:row-next" "↓ or j">> / <<key "metarecord:row-prev" "↑ or k">> — move the cursor over the rows.
+* <<key "metarecord:row-edit" Enter>>, or the row's ''Edit'' button — edit the value in place, with the [[Field editor]]: `Enter` saves, `Escape` cancels (`metarecord:cancel`).
+* <<key "metarecord:row-delete" d>>, or the row's ''Delete'' button — delete that row, after a confirmation.
+* <<key "metarecord:open-add-field" a>>, or ''Add / set field…'' — the form for a new value: a name, a type, a value, then ''Add field'' (one more row) or ''Set field (replace)'' (in place of every row of that name). A name the repository already knows offers its type and `nothing` only ([[One value type per field name]]).
+* <<key "metarecord:field set" "m s">> and the other `m` keys — the same from the command input, with completion ([[Editing metarecords in the GUI]]).
+
+`mfr_*` rows are the daemon's and cannot be edited ([[Reserved fields]]) until the
+''force'' box is checked.
+
+While a value is being edited or the add form holds a name, the panel does not
+reload, and it asks before showing another metarecord. Otherwise it reloads whenever
+something in the GUI changes metarecords.
+
+!! The metarecord itself
+
+* <<key "metarecord:create" Ctrl+n>> (`metarecord:create`, ''New metarecord'') — creates a metarecord at once and selects it, so that the editing above applies to it from the start. It asks for a schema type, completed over the schema's ([[Schema]]): the type's template fields are filled in; left blank, the metarecord is empty. A type the schema does not declare is refused. To abandon it, delete it.
+* ''Reconcile'' (`metarecord:reconcile`) — reconciles the folder's subtree ([[Scoped reconcile]]). While the metarecord is not watched the button reads ''Watch and reconcile'' and sets `mf_watch = true` first (`metarecord:reconcile watch`, [[Tracking a folder]]). The task bar shows the progress, the status bar the result.
+* ''Delete metarecord'' (<<key "metarecord:delete" Shift+Delete>>) — deletes the metarecord and keeps its file; <<key "metarecord:remove" Delete>> and <<key "metarecord:trash" Ctrl+Delete>> deal with the file as well ([[Sending files to the trash]]).
+
+A right click offers the same, ''Copy UUID'' — a bare uuid pasted in a query box
+selects that metarecord — and the file's actions when it has one ([[Context menus]]).
+
+Showing a metarecord here records it as viewed ([[recent panel]]).

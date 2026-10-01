@@ -18,20 +18,20 @@ or with the `t` keys: <<key "panel:set type metarecord-list" "t l">> for the lis
 the file manager…
 
 |!Panel type |!Shows |
-|`metarecord-list` |the metarecords a query selects, as a table or a grid; the main source of the selection |
-|`metarecord-detail` |every field of the selected metarecord |
+|[[metarecord-list panel]] |the metarecords a query selects, as a table or a grid; the main source of the selection |
+|[[metarecord-detail panel]] |every field of the selected metarecord |
 |`file` |a preview of the selected file — image, video, audio, text, PDF — or a folder's thumbnails |
 |`file-manager` |the file tree on disk, tracked or not, with file operations |
-|`treeref` |a tree of metarecords (a `tree_ref` field such as `mfr_path` or tags), from the roots down |
-|`recent` |the metarecords most recently viewed in this GUI |
-|`repos` |the repositories: load, create, unload, their running tasks |
+|[[treeref panel]] |a tree of metarecords (a `tree_ref` field such as `mfr_path` or tags), from the roots down |
+|[[recent panel]] |the metarecords most recently viewed in this GUI |
+|[[repos panel]] |the repositories: load, create, unload, their running tasks |
 |[[log panel]] |the event log, revision by revision |
 |[[log-detail panel]] |what the revision selected in the log changed, field by field |
 |[[trash panel]] |the repository's trash |
 |[[duplicates panel]] |groups of byte-identical files |
 |`sync` |synchronisation between two repositories |
-|`message` |the workspace's messages: status messages, commands run, shell output, the daemon's reports |
-|`workspace-info` |the workspace's variables, live — for debugging panels and scripts |
+|[[message panel]] |the workspace's messages: status messages, commands run, shell output, the daemon's reports |
+|[[workspace-info panel]] |the workspace's variables, live — for debugging panels and scripts |
 |[[help panel]] |this documentation |
 |[[hello panel]] |a minimal example to start a panel type from |
 
@@ -53,3 +53,5 @@ to a command that no panel and no builtin defines ([[Commands]]).
 <<list-kind reference>>
 
 <<list-kind guide>>
+
+<<list-kind rationale>>
