@@ -46,10 +46,7 @@ are the daemon's own ([[Query endpoints]], [[Metarecord endpoints]]).
 |`setContext(text)` |declares what the user asked for (a query's text, 200 characters at most); it is sent with the panel's later calls and written to the [[Slow log]] when one is slow. `null` clears it |
 
 Nothing here is kept between two calls, paths included
-([[Daemon data in panels]], [[TreeRef path conventions]]). `call` also accepts two
-paths the daemon does not serve, kept from before `metarecords` and `treePaths`:
-`POST /repos/:repo/metarecords/batch {uuids}` and
-`POST /repos/:repo/tree/resolve {field?, uuids}`.
+([[Daemon data in panels]], [[TreeRef path conventions]]).
 
 ''Aborting a read.'' `request`, `call` and `query` take `{signal}` (an
 `AbortSignal`) as `opts`. Aborting drops the call in flight and rejects the promise

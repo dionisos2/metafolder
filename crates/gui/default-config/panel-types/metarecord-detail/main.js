@@ -436,14 +436,9 @@ export async function mount(root, metafolder) {
     try {
       metarecord = /** @type {Loaded} */ (await daemon.call('GET', api('')));
       annotator = createAnnotator({
-        resolvePaths: (field, uuids) =>
-          /** @type {Promise<Record<string, string[]>>} */ (
-            daemon.call('POST', `/repos/${selection.repo}/tree/resolve`, { field, uuids })
-          ),
-        getMetarecords: (uuids) =>
-          /** @type {Promise<Record<string, Metafolder.Metarecord>>} */ (
-            daemon.call('POST', `/repos/${selection.repo}/metarecords/batch`, { uuids })
-          ),
+        resolvePaths: (field, uuids) => daemon.treePaths(selection.repo, field, uuids),
+        getMetarecords: async (uuids) =>
+          Object.fromEntries(await daemon.metarecords(selection.repo, uuids)),
         refLabel: (field, uuid) => refLabelFor(selection.repo, field, uuid),
       });
     } catch (error) {
@@ -901,9 +896,7 @@ export async function mount(root, metafolder) {
     const seed = await config.refCompletionSeed(field);
     if (!seed) return null;
     try {
-      const byUuid = /** @type {Record<string, string[]>} */ (
-        await daemon.call('POST', `/repos/${repo}/tree/resolve`, { field: seed, uuids: [uuid] })
-      );
+      const byUuid = await daemon.treePaths(repo, seed, [uuid]);
       return (byUuid[uuid] ?? [])[0] ?? null;
     } catch {
       return null; // a failed lookup degrades to the uuid, never to a wrong path
@@ -952,14 +945,8 @@ export async function mount(root, metafolder) {
         );
         return { records: body.results ?? [], total: body.total ?? null };
       },
-      resolvePaths: (f, uuids) =>
-        /** @type {Promise<Record<string, string[]>>} */ (
-          daemon.call('POST', `/repos/${repo}/tree/resolve`, { field: f, uuids })
-        ),
-      getMetarecords: (uuids) =>
-        /** @type {Promise<Record<string, Metafolder.Metarecord>>} */ (
-          daemon.call('POST', `/repos/${repo}/metarecords/batch`, { uuids })
-        ),
+      resolvePaths: (f, uuids) => daemon.treePaths(repo, f, uuids),
+      getMetarecords: async (uuids) => Object.fromEntries(await daemon.metarecords(repo, uuids)),
     });
   }
 

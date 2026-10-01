@@ -125,10 +125,7 @@ declare namespace Metafolder {
      *  the query it was running — and the promise rejects with an
      *  `AbortError`, as `fetch` does. So do `call` and `query`. */
     request(method: string, path: string, body?: unknown, opts?: ReadOptions): Promise<DaemonResponse>;
-    /** As `request`, but throws the daemon's `{"error": …}` message on >= 400.
-     *  Also answers two shorthands the daemon does not serve: `POST
-     *  …/metarecords/batch {uuids}` → `{uuid: metarecord}` and `POST
-     *  …/tree/resolve {field?, uuids}` → `{uuid: [paths]}`. */
+    /** As `request`, but throws the daemon's `{"error": …}` message on >= 400. */
     call(method: string, path: string, body?: unknown, opts?: ReadOptions): Promise<unknown>;
     /** The repo-root-relative path of a metarecord's `mfr_path`. */
     resolvePath(repo: string, uuid: string): Promise<string>;

@@ -12,7 +12,6 @@ import { daemonWork } from '../working';
 import { createChangeFeed, type ChangeEvent } from './changes';
 import {
   createReads,
-  translate,
   type DaemonResponse,
   type RawFetcher,
   type ReadOptions,
@@ -270,7 +269,7 @@ export function createPanelApi(deps: PanelApiDeps, ctx: PanelApiCtx): PanelApiIn
   ): Promise<DaemonResponse> {
     const repo = path.match(REPO_PATH)?.[1];
     if (repo !== undefined) await changeFeed.baseline(repo, rawFetch);
-    return translate(method, path, body, rawFetch, opts);
+    return rawFetch(method, path, body, opts);
   }
   const reads = createReads((m, p, b, opts) => daemonRequest(m, p, b, opts));
 
@@ -294,17 +293,8 @@ export function createPanelApi(deps: PanelApiDeps, ctx: PanelApiCtx): PanelApiIn
     if (!resolvers.has(repo)) {
       resolvers.set(
         repo,
-        createPathResolver(async (uuids: string[], field: string) => {
-          const response = await daemonRequest('POST', `/repos/${repo}/tree/resolve`, {
-            field,
-            uuids,
-          });
-          if (response.status !== 200) {
-            const err = (response.body as { error?: string })?.error;
-            throw new Error(err ?? `tree/resolve failed (HTTP ${response.status})`);
-          }
-          return response.body as Record<string, string[]>; // { uuid: [paths] }
-        }),
+        // { uuid: [paths] }
+        createPathResolver((uuids: string[], field: string) => reads.treePaths(repo, field, uuids)),
       );
     }
     return resolvers.get(repo)!;

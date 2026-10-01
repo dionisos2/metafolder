@@ -265,7 +265,7 @@ describe('panel api — daemon', () => {
     const { api, invoke } = setup();
     answering(invoke, { status: 200, body: { u1: ['/a'] } });
     await api.daemon.treePaths('r2', 'mfr_path', ['u1']);
-    await api.daemon.call('POST', '/repos/r2/tree/resolve', { uuids: ['u1'] });
+    await api.daemon.treePaths('r2', 'mfr_path', ['u1']);
     const resolves = invoke.mock.calls.filter(
       (c) => (c[1] as { path?: string })?.path === '/repos/r2/query/fields/resolve-tree',
     );
@@ -511,5 +511,17 @@ describe('panel api — no duplicate members', () => {
     const { api } = setup();
     expect('parseQuery' in api.daemon).toBe(false);
     expect('expandQuery' in api.daemon).toBe(false);
+  });
+
+  test('daemon.call sends every path to the daemon as it is', async () => {
+    const { api, invoke } = setup();
+    invoke.mockResolvedValue({ status: 200, body: {} });
+    await api.daemon.call('POST', '/repos/r9/tree/resolve', { uuids: ['u1'] });
+    await api.daemon.call('POST', '/repos/r9/metarecords/batch', { uuids: ['u1'] });
+    const paths = invoke.mock.calls
+      .filter((c) => c[0] === 'daemon_request')
+      .map((c) => (c[1] as { path: string }).path)
+      .filter((p) => !p.endsWith('/log/since'));
+    expect(paths).toEqual(['/repos/r9/tree/resolve', '/repos/r9/metarecords/batch']);
   });
 });

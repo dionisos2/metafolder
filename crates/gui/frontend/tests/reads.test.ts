@@ -1,11 +1,9 @@
 // The panel API's daemon reads (lib/panels/reads.ts). Nothing here is kept:
 // every read is a daemon round-trip, so an answer can never outlive the change
-// that made it wrong. Two conveniences remain — the `metarecords/batch` and
-// `tree/resolve` shorthands panels (and user commands) call through
-// `daemon.call`, which the daemon itself does not serve.
+// that made it wrong.
 
 import { describe, expect, test, vi } from 'vitest';
-import { createReads, translate, type DaemonResponse } from '../src/lib/panels/reads';
+import { createReads, type DaemonResponse } from '../src/lib/panels/reads';
 
 const ok = (body: unknown) => ({ status: 200, body });
 const rec = (uuid: string) => ({ uuid, version: 1, fields: [] });
@@ -67,39 +65,5 @@ describe('reads — nothing is kept', () => {
     const raw = answering(ok([{ name: 'tag', type: 'tree_ref' }, { name: 3 }]));
     const reads = createReads(raw);
     expect(await reads.fields('r')).toEqual([{ name: 'tag', type: 'tree_ref' }]);
-  });
-});
-
-describe('reads — the daemon.call shorthands', () => {
-  test('POST …/metarecords/batch answers {uuid: record}', async () => {
-    const raw = answering(ok({ results: [rec('a1')] }));
-    const res = await translate('POST', '/repos/r/metarecords/batch', { uuids: ['a1', 'b2'] }, raw);
-    expect(res).toEqual(ok({ a1: rec('a1') }));
-  });
-
-  test('POST …/tree/resolve answers {uuid: [paths]} for mfr_path by default', async () => {
-    const raw = answering(ok({ a1: ['/a1'] }));
-    const res = await translate('POST', '/repos/r/tree/resolve', { uuids: ['a1', 'b2'] }, raw);
-    expect(res).toEqual(ok({ a1: ['/a1'], b2: [] }));
-    expect(raw.mock.calls[0][2]).toEqual({
-      query: { type: 'uuid_in', uuids: ['a1', 'b2'] },
-      field: 'mfr_path',
-    });
-  });
-
-  test('a daemon error passes through unchanged', async () => {
-    const err = { status: 404, body: { error: 'no such repo' } };
-    const raw = answering(err);
-    expect(await translate('POST', '/repos/r/tree/resolve', { uuids: ['a'] }, raw)).toBe(err);
-  });
-
-  test('anything else goes straight to the daemon', async () => {
-    const raw = answering(ok('x'));
-    await translate('PUT', '/repos/r/metarecords/a1/fields/tag', { v: 1 }, raw);
-    expect(raw).toHaveBeenCalledWith('PUT', '/repos/r/metarecords/a1/fields/tag', { v: 1 }, undefined);
-    // …with what the caller passed along (an abort signal).
-    const signal = new AbortController().signal;
-    await translate('GET', '/repos/r/fields', null, raw, { signal });
-    expect(raw).toHaveBeenLastCalledWith('GET', '/repos/r/fields', null, { signal });
   });
 });

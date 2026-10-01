@@ -37,8 +37,8 @@ function fakeMf() {
       list: async () => state.entries,
     },
     daemon: {
-      call: async (_method: string, path: string) =>
-        path.endsWith('/metarecords/batch') ? state.records : state.paths,
+      metarecords: async () => new Map(Object.entries(state.records)),
+      treePaths: async () => state.paths,
       metarecordPaths: async (_repo: string, metarecord: { uuid: string }) =>
         (state.paths[metarecord.uuid] ?? []).map((rel) => (rel === '' ? '/srv' : `/srv/${rel}`)),
     },

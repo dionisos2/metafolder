@@ -51,7 +51,7 @@ function shadowFor(): ShadowRoot {
 /** Mounts the panel on a metarecord holding `fields`.
  *  `seeds` is the `[ref-completion-seeds]` map (ref field → tree_ref field);
  *  `tree` maps a path to the metarecord uuid it resolves to — read backwards
- *  for the path read-back (`/tree/resolve`) and forwards for path resolution
+ *  for the path read-back (`treePaths`) and forwards for path resolution
  *  (`/tree/resolve-path`), the two directions `resolveRefValue` and
  *  `rawOfValue` travel. `treePaths` answers the tree_ref read-back
  *  (`…/fields/:field/resolve-tree`). */
@@ -95,7 +95,7 @@ async function mountPanel(
     daemon: {
       query: async () => ({ uuids: [], nextCursor: null, total: 0 }),
       treePaths: async (_repo: string, _field: string, uuids: string[]) =>
-        Object.fromEntries(uuids.map((uuid) => [uuid, [] as string[]])),
+        Object.fromEntries(uuids.map((u) => [u, byUuid[u] ? [byUuid[u]] : []])),
       metarecords: async () => new Map(),
       fields: async () => Object.entries(catalog).map(([name, type]) => ({ name, type })),
       request: async () => ({ status: 200, body: null }),
@@ -110,10 +110,6 @@ async function mountPanel(
         if (method === 'POST' && path.endsWith('/tree/resolve-path')) {
           const { path: p } = body as { field: string; path: string };
           return { uuid: tree[p] ?? null };
-        }
-        if (method === 'POST' && path.endsWith('/tree/resolve')) {
-          const { uuids } = body as { field: string; uuids: string[] };
-          return Object.fromEntries(uuids.map((u) => [u, byUuid[u] ? [byUuid[u]] : []]));
         }
         return null;
       },

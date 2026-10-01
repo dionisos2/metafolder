@@ -32,11 +32,6 @@ type Metarecord = Metafolder.Metarecord;
 
 const ok = (body: unknown): DaemonResponse => ({ status: 200, body });
 
-// The two shorthands `daemon.call` still accepts, which the daemon does not
-// serve: a named set of metarecords, and the paths of a named set.
-const BATCH = /^\/repos\/([^/]+)\/metarecords\/batch$/;
-const TREE_RESOLVE = /^\/repos\/([^/]+)\/tree\/resolve$/;
-
 function uuidIn(uuids: string[]) {
   return { type: 'uuid_in', uuids };
 }
@@ -68,24 +63,6 @@ async function treeResolve(
   const out: Record<string, string[]> = {};
   for (const uuid of uuids) out[uuid] = fetched[uuid] ?? [];
   return ok(out);
-}
-
-/** `daemon.call`: the two shorthands are answered here, everything else goes
- *  to the daemon as is. */
-export function translate(
-  method: string,
-  path: string,
-  body: unknown,
-  raw: RawFetcher,
-  opts?: ReadOptions,
-): Promise<DaemonResponse> {
-  const clean = path.split('?')[0];
-  const b = (body ?? {}) as { uuids?: string[]; field?: string };
-  let m = method === 'POST' ? clean.match(BATCH) : null;
-  if (m) return batch(m[1], b.uuids ?? [], raw);
-  m = method === 'POST' ? clean.match(TREE_RESOLVE) : null;
-  if (m) return treeResolve(m[1], b.field ?? 'mfr_path', b.uuids ?? [], raw);
-  return raw(method, path, body, opts);
 }
 
 function check(res: DaemonResponse): unknown {

@@ -451,18 +451,14 @@ export default {
           const entries = /** @type {{ uuid: string }[]} */ (await mf.recent.list(repo));
           const uuids = entries.map((e) => e.uuid);
           if (uuids.length === 0) return [];
-          // `daemon.call` is untyped on purpose — the daemon's JSON is not a
-          // TypeScript type — so the shapes are asserted where they are read.
-          const [batch, tree] = await Promise.all([
-            mf.daemon.call('POST', `/repos/${repo}/metarecords/batch`, { uuids }),
-            mf.daemon.call('POST', `/repos/${repo}/tree/resolve`, { field: 'mfr_path', uuids }),
+          const [records, paths] = await Promise.all([
+            mf.daemon.metarecords(repo, uuids),
+            mf.daemon.treePaths(repo, 'mfr_path', uuids),
           ]);
-          const records = /** @type {Record<string, Metafolder.Metarecord>} */ (batch);
-          const paths = /** @type {Record<string, string[]>} */ (tree);
           /** @type {string[]} */
           const lines = [];
           for (const { uuid } of entries) {
-            const line = recentLine(records[uuid], paths[uuid]?.[0] ?? '', uuid);
+            const line = recentLine(records.get(uuid), paths[uuid]?.[0] ?? '', uuid);
             if (!recentChoices.has(line)) recentChoices.set(line, uuid); // newest wins on a collision
             lines.push(line);
           }
