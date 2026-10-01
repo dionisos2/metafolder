@@ -370,6 +370,15 @@ pub fn remove_user_keybinding(
     when: Option<String>,
     focus: Option<String>,
 ) -> Result<Vec<CompiledBinding>, String> {
+    // A suggested key (`addKeybinding`) is not in the file: there is nothing
+    // to remove, and it would be back at the next start anyway. Say so rather
+    // than leave the row in place without a word.
+    if app.keybindings.lock_recover().is_suggestion(&combo, when.as_deref(), focus.as_deref()) {
+        return Err(format!(
+            "{combo} is suggested by a panel or by commands.js, not set in keybindings.toml: \
+             bind the same key in the same place to override it"
+        ));
+    }
     let set = app.config.remove_user_keybinding(&combo, when.as_deref(), focus.as_deref())?;
     let mut keybindings = app.keybindings.lock_recover();
     *keybindings = set.with_suggestions_of(&keybindings);

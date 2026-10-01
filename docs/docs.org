@@ -963,12 +963,13 @@ spec : =log:find= et =duplicates:find= (six panels, pas quatre), la recherche
 insensible à la casse, la recherche qui suit le focus, =F1=, =t e=, la touche =+=
 écrite =plus=, « une touche qui lance une commande ne commence jamais une
 séquence ». =scripts/doc check= accepte maintenant =<<key "a, b">>= (plusieurs
-commandes, chacune vérifiée). *Signalé, non tranché* : (1) deux clés TOML qui
-écrivent la même combinaison (="shift+ctrl+a"= et ="ctrl+shift+a"=) dans la même
-portée ne sont pas refusées, et laquelle gagne dépend de l'ordre d'une table de
-hachage ; (2) =find:next= / =find:prev= lancées barre fermée (commande tapée,
-script) repeignent les correspondances sans rouvrir la barre ; (3) dans
-l'éditeur, « Remove » sur une touche suggérée ne fait rien et ne le dit pas.
+commandes, chacune vérifiée). *Tranché par l'utilisateur*, corrigé test d'abord : (1) une
+combinaison liée deux fois dans la même portée — y compris écrite de deux façons
+(="shift+ctrl+a"= et ="ctrl+shift+a"=) — est refusée à la lecture du fichier, au
+lieu de dépendre de l'ordre d'une table de hachage ; (2) =find:next= /
+=find:prev= ne font rien barre fermée (elles repeignaient les correspondances
+sans barre pour les effacer) ; (3) « Remove » sur une touche suggérée, qui n'est
+pas dans le fichier, le dit au lieu de ne rien faire.
 Sources retirées (pointeurs) : spec-gui « Keybinding », « Keyboard navigation »
 (ses paragraphes propres à =metarecord-list= et =metarecord-detail=, dont les
 familles =metarecord:field= / =metarecord:bulk=, déplacés dans les sections de

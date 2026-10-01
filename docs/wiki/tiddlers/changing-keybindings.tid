@@ -26,8 +26,9 @@ then remove the old row. And changing only the `when` of a row adds a second
 binding beside the first.
 
 A key suggested by a panel or by `commands.js` is listed too, but is not in the
-file: ''Remove'' does nothing to it. Bind the same key in the same place to what
-you want instead.
+file: there is nothing to remove, and the suggestion would be made again at the next
+start. ''Remove'' says so. Bind the same key in the same place to what you want
+instead: the file wins over a suggestion.
 
 !! In the file
 
@@ -49,11 +50,14 @@ binding, or a list of them when the key does different things in different place
 ]
 ```
 
-A key appears once in the file — TOML refuses a second entry of the same name — which
-is why its bindings are a list.
+A key appears once in the file, which is why its bindings are a list, and has one
+binding per place: the same key bound twice with the same `when` and `focus` is
+refused, also when it is written in two ways (`"shift+ctrl+a"` and `"ctrl+shift+a"`
+are one key).
 
 After editing the file, `config:reload keybindings` reads it again. A file that
-cannot be read as TOML, or a malformed key, is refused with the reason, and the
+cannot be read as TOML, a malformed key or a key bound twice in the same place is
+refused with the reason, and the
 bindings in effect stay. At startup the same mistake stops the GUI
 ([[No runtime fallback]]).
 

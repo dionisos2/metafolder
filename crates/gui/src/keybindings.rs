@@ -150,9 +150,29 @@ pub fn parse_toml(source: &str) -> Result<Vec<(Vec<String>, BindingSpec)>, Strin
     let table: HashMap<String, SpecOrList> =
         toml::from_str(source).map_err(|e| format!("invalid keybindings file: {e}"))?;
     let mut entries: Vec<(Vec<String>, BindingSpec)> = Vec::new();
+    // One combo has one binding per (when, focus) scope. TOML only refuses a
+    // key written twice the same way: two spellings of one combo
+    // ("shift+ctrl+a", "ctrl+shift+a") are caught here, like a scope repeated
+    // in a combo's array.
+    let mut seen: HashMap<BindingKey, String> = HashMap::new();
     for (combo, value) in table {
         let keys = parse_combo(&combo)?;
         for spec in value.into_vec() {
+            let key = (keys.clone(), spec.when.clone(), spec.focus.clone());
+            if let Some(other) = seen.insert(key, combo.clone()) {
+                let (first, second) =
+                    if other <= combo { (&other, &combo) } else { (&combo, &other) };
+                let scope = match (&spec.focus, &spec.when) {
+                    (Some(focus), _) => format!("in the {focus} widget"),
+                    (None, Some(when)) => format!("in {when}"),
+                    (None, None) => "globally".to_string(),
+                };
+                return Err(if first == second {
+                    format!("\"{first}\" is bound twice {scope}")
+                } else {
+                    format!("\"{first}\" and \"{second}\" are the same key, bound twice {scope}")
+                });
+            }
             entries.push((keys.clone(), spec));
         }
     }
@@ -242,6 +262,16 @@ impl KeybindingSet {
             }
         }
         self
+    }
+
+    /// Whether the binding of this combo and scope is a suggestion — in effect,
+    /// but not in the file, so not something the file's editor can remove.
+    pub fn is_suggestion(&self, combo: &str, when: Option<&str>, focus: Option<&str>) -> bool {
+        parse_combo(combo).is_ok_and(|keys| {
+            self.suggestions
+                .iter()
+                .any(|s| s.keys == keys && s.when.as_deref() == when && s.focus.as_deref() == focus)
+        })
     }
 
     /// Flat table for the frontend matcher, deterministically ordered.
@@ -526,6 +556,42 @@ mod tests {
             .unwrap();
         let table = set.compiled();
         assert_eq!(table.len(), 2);
+    }
+
+    #[test]
+    fn test_one_combo_spelled_twice_in_the_same_scope_is_refused() {
+        // TOML sees two keys; they are one combo, and which binding won used
+        // to depend on the order of a hash table.
+        let source = r#"
+"shift+ctrl+a" = { command = "first" }
+"ctrl+shift+a" = { command = "second" }
+"#;
+        let error = parse_toml(source).unwrap_err();
+        assert!(error.contains("shift+ctrl+a") && error.contains("ctrl+shift+a"), "{error}");
+        assert!(KeybindingSet::from_source(source).is_err());
+
+        // The same scope twice under one key is the same mistake.
+        let twice = r#""j" = [
+  { command = "a", when = "log" },
+  { command = "b", when = "log" },
+]"#;
+        assert!(parse_toml(twice).is_err());
+
+        // Two spellings in different scopes are two bindings.
+        let scoped = r#"
+"shift+ctrl+a" = { command = "first", when = "log" }
+"ctrl+shift+a" = { command = "second" }
+"#;
+        assert_eq!(parse_toml(scoped).unwrap().len(), 2);
+    }
+
+    #[test]
+    fn test_a_suggestion_is_told_apart_from_a_binding_of_the_file() {
+        let mut set = KeybindingSet::from_source(r#""x" = { command = "mine" }"#).unwrap();
+        set.add_suggestion("shift+ctrl+y", "my-panel:go", Some("my-panel"), false, None).unwrap();
+        assert!(set.is_suggestion("ctrl+shift+Y", Some("my-panel"), None));
+        assert!(!set.is_suggestion("ctrl+shift+y", None, None));
+        assert!(!set.is_suggestion("x", None, None));
     }
 
     #[test]
