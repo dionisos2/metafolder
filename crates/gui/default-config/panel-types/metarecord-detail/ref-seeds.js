@@ -1,4 +1,4 @@
-// The `[ref-seeds]` rule engine (spec-gui "Ref value seeds"): how a `ref`
+// The `[ref-seeds]` rule engine (doc "Ref value seeds"): how a `ref`
 // field's targets are *named* in every value slot — the candidates a value
 // completion offers, the label a value reads back as, and what typed text
 // must spell to name one.
@@ -113,7 +113,10 @@ export function createRefSeeds(ctx) {
       .filter(isSortable)
       .map((column) => ({ field: column.name, order: 'asc' }));
     const { records, total } = await ctx.runQuery(query, { sort, limit: PAGE });
-    const raw = await labelRows(viewColumns, records);
+    const raw = (await labelRows(viewColumns, records)).map((item) => ({
+      ...item,
+      label: item.label === '' ? item.value : item.label,
+    }));
     const shown = new Map(completionLabels(raw).map((item) => [item.value, item.label]));
     return {
       rows: raw.map((item) => ({
@@ -186,7 +189,14 @@ export function createRefSeeds(ctx) {
     const data = await buildData(viewColumns, metarecords);
     fillColumns(viewColumns, metarecords, data);
     return metarecords.map((metarecord) => ({
-      label: viewColumns.map((column) => cellText(column, metarecord)).join(ctx.separator),
+      // A column the target does not have is left out, not joined as an empty
+      // cell: the label is typed back whole, and " |  | name | " is not
+      // something to type. With none of them the label is empty — the target
+      // then has no name but its uuid.
+      label: viewColumns
+        .map((column) => cellText(column, metarecord))
+        .filter((cell) => cell !== '')
+        .join(ctx.separator),
       value: metarecord.uuid,
     }));
   }

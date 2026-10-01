@@ -195,6 +195,23 @@ describe('reading a value back', () => {
     expect(await seeds.labelOf('b0')).toBeNull();
   });
 
+  test('a column the target does not have is left out of its label', async () => {
+    // Found on the shipped `*` rule: a record with only a name read back as
+    // " |  | N | ", and that is what had to be typed to name it.
+    const named: Metarecord = { uuid: 'n0', fields: [{ name: 'name', value: str('N') }] };
+    const { seeds } = engineFor({
+      rule: { query: null, columns: 'path:path mfr_path:path name label' },
+      targets: { n0: named },
+    });
+    expect(await seeds.labelOf('n0')).toBe('N');
+  });
+
+  test('a target with none of several columns has no label either', async () => {
+    const bare: Metarecord = { uuid: 'b0', fields: [{ name: 'other', value: str('x') }] };
+    const { seeds } = engineFor({ rule: { query: null, columns: 'path:path name' }, targets: { b0: bare } });
+    expect(await seeds.labelOf('b0')).toBeNull();
+  });
+
   test('a followed column names the referent', async () => {
     const tagged: Metarecord = { uuid: 't0', fields: [{ name: 'tag', value: ref('j0') }] };
     const tag: Metarecord = { uuid: 'j0', fields: [{ name: 'label', value: str('Jazz') }] };
