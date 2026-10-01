@@ -353,8 +353,10 @@ pub fn set_user_keybinding(
         focus.as_deref(),
         text_input.unwrap_or(false),
     )?;
-    let compiled = set.compiled();
-    *app.keybindings.lock_recover() = set;
+    let mut keybindings = app.keybindings.lock_recover();
+    *keybindings = set.with_suggestions_of(&keybindings);
+    let compiled = keybindings.compiled();
+    drop(keybindings);
     crate::push_keybindings(&app.gui, &compiled);
     Ok(compiled)
 }
@@ -369,8 +371,10 @@ pub fn remove_user_keybinding(
     focus: Option<String>,
 ) -> Result<Vec<CompiledBinding>, String> {
     let set = app.config.remove_user_keybinding(&combo, when.as_deref(), focus.as_deref())?;
-    let compiled = set.compiled();
-    *app.keybindings.lock_recover() = set;
+    let mut keybindings = app.keybindings.lock_recover();
+    *keybindings = set.with_suggestions_of(&keybindings);
+    let compiled = keybindings.compiled();
+    drop(keybindings);
     crate::push_keybindings(&app.gui, &compiled);
     Ok(compiled)
 }
@@ -770,7 +774,10 @@ pub fn config_reload(app: AppHandle, what: String) -> Result<String, String> {
         match target {
             "keybindings" => {
                 let set = app.config.load_keybindings()?;
-                *app.keybindings.lock_recover() = set;
+                {
+                    let mut keybindings = app.keybindings.lock_recover();
+                    *keybindings = set.with_suggestions_of(&keybindings);
+                }
                 // Through push_keytable, not push_keybindings: a script's
                 // temporary bindings are layered on top and must survive.
                 crate::server::gui_api::push_keytable(&app.gui, &app.keybindings);

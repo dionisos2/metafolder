@@ -55,7 +55,7 @@
     }
   }
 
-  async function resetBinding(binding: Binding) {
+  async function removeBinding(binding: Binding) {
     bindingError = '';
     try {
       store.keytable = await invoke<Binding[]>('remove_user_keybinding', {
@@ -70,7 +70,7 @@
 </script>
 
 <!-- svelte-ignore a11y_no_static_element_interactions, a11y_click_events_have_key_events -->
-<div class="backdrop" onclick={close} data-help-topic="config">
+<div class="backdrop" onclick={close} data-help-topic="settings">
   <div class="dialog" onclick={(e) => e.stopPropagation()}>
     <header>
       <h2>Settings</h2>
@@ -120,7 +120,7 @@
                 >
                 <td>
                   <button onclick={() => prefill(binding)}>Edit</button>
-                  <button onclick={() => resetBinding(binding)}>Reset</button>
+                  <button onclick={() => removeBinding(binding)}>Remove</button>
                 </td>
               </tr>
             {/each}

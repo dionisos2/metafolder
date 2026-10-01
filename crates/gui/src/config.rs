@@ -309,6 +309,11 @@ impl ConfigDir {
     /// Writes (upserts) one keybinding into `keybindings.toml` and returns the
     /// recompiled set. Combos are matched after normalization, so
     /// `"shift+ctrl+a"` replaces an existing `"ctrl+shift+a"` entry.
+    ///
+    /// The file is edited, not rewritten: it is the user's — comments, order
+    /// and layout included — and `metafolder-sync-config` merges the shipped
+    /// one into it, so a rewrite would turn every later merge into a conflict
+    /// (doc "The keybindings file").
     pub fn set_user_keybinding(
         &self,
         combo: &str,
@@ -318,33 +323,51 @@ impl ConfigDir {
         text_input: bool,
     ) -> Result<KeybindingSet, String> {
         let normalized = crate::keybindings::parse_combo(combo)?.join(" ");
-        let mut table = self.read_user_keybindings_table()?;
-        // A combo may already hold several scoped bindings (as an array): collect
-        // them, drop the one for this exact (when, focus) scope, then add it back.
-        let mut elements = take_combo_elements(&mut table, &normalized);
-        elements.retain(|e| !(binding_when(e) == when && binding_focus(e) == focus));
-        let mut entry = toml::Table::new();
-        entry.insert("command".into(), toml::Value::String(command.to_string()));
-        if let Some(when) = when {
-            entry.insert("when".into(), toml::Value::String(when.to_string()));
+        let mut doc = self.read_keybindings_document()?;
+        let keys = combo_keys(&doc, &normalized);
+        // The binding of this exact (when, focus) scope is changed where it is.
+        let existing = keys.iter().find(|key| {
+            doc.get(key.as_str()).is_some_and(|item| element_index(item, when, focus).is_some())
+        });
+        if let Some(key) = existing {
+            let item = doc.get_mut(key).expect("the key was just found");
+            let element = element_mut(item, when, focus).expect("the element was just found");
+            set_in_place(element, "command", command.into());
+            if text_input {
+                set_in_place(element, "text-input", true.into());
+            } else {
+                element.remove("text-input");
+            }
+        } else {
+            let mut entry = toml_edit::InlineTable::new();
+            entry.insert("command", command.into());
+            if let Some(when) = when {
+                entry.insert("when", when.into());
+            }
+            if let Some(focus) = focus {
+                entry.insert("focus", focus.into());
+            }
+            if text_input {
+                entry.insert("text-input", true.into());
+            }
+            // A new scope joins the combo's other bindings; a new combo goes
+            // at the end of the file.
+            match keys.first() {
+                Some(key) => push_element(doc.get_mut(key).expect("listed key"), entry),
+                None => {
+                    doc.insert(&normalized, toml_edit::value(entry));
+                }
+            }
         }
-        if let Some(focus) = focus {
-            entry.insert("focus".into(), toml::Value::String(focus.to_string()));
-        }
-        if text_input {
-            entry.insert("text-input".into(), toml::Value::Boolean(true));
-        }
-        elements.push(entry);
-        table.insert(normalized, collapse_elements(elements));
-        self.write_user_keybindings_table(&table)?;
+        self.write_keybindings_document(&doc)?;
         self.load_keybindings()
     }
 
     /// Removes (unbinds) one `(when, focus)`-scoped binding of `combo` from
-    /// `keybindings.toml` (other scopes of the same combo are kept); a missing
-    /// binding is a no-op. Reverting to a shipped default is a git operation on
-    /// the config repo, not handled here (doc "Configuration"). Returns the recompiled
-    /// set.
+    /// `keybindings.toml` (other scopes of the same combo are kept, and so is
+    /// the rest of the file, as it is written); a missing binding is a no-op.
+    /// Reverting to a shipped default is a git operation on the config repo,
+    /// not handled here (doc "Configuration"). Returns the recompiled set.
     pub fn remove_user_keybinding(
         &self,
         combo: &str,
@@ -352,34 +375,44 @@ impl ConfigDir {
         focus: Option<&str>,
     ) -> Result<KeybindingSet, String> {
         let normalized = crate::keybindings::parse_combo(combo)?.join(" ");
-        let mut table = self.read_user_keybindings_table()?;
-        let mut elements = take_combo_elements(&mut table, &normalized);
-        elements.retain(|e| !(binding_when(e) == when && binding_focus(e) == focus));
-        if !elements.is_empty() {
-            table.insert(normalized, collapse_elements(elements));
+        let mut doc = self.read_keybindings_document()?;
+        for key in combo_keys(&doc, &normalized) {
+            let item = doc.get_mut(&key).expect("listed key");
+            let emptied = match item {
+                toml_edit::Item::Value(toml_edit::Value::Array(array)) => {
+                    array.retain(|value| !value_in_scope(value, when, focus));
+                    array.is_empty()
+                }
+                toml_edit::Item::ArrayOfTables(tables) => {
+                    tables.retain(|table| !in_scope(table, when, focus));
+                    tables.is_empty()
+                }
+                single => element_index(single, when, focus).is_some(),
+            };
+            if emptied {
+                doc.remove(&key);
+            }
         }
-        self.write_user_keybindings_table(&table)?;
+        self.write_keybindings_document(&doc)?;
         self.load_keybindings()
     }
 
-    fn read_user_keybindings_table(&self) -> Result<toml::Table, String> {
+    fn read_keybindings_document(&self) -> Result<toml_edit::DocumentMut, String> {
         let path = self.keybindings_path();
         match std::fs::read_to_string(&path) {
-            Ok(content) => {
-                toml::from_str(&content).map_err(|e| format!("invalid keybindings file: {e}"))
-            }
-            Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(toml::Table::new()),
+            Ok(content) => content
+                .parse::<toml_edit::DocumentMut>()
+                .map_err(|e| format!("invalid keybindings file: {e}")),
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(toml_edit::DocumentMut::new()),
             Err(e) => Err(format!("cannot read {}: {e}", path.display())),
         }
     }
 
-    fn write_user_keybindings_table(&self, table: &toml::Table) -> Result<(), String> {
+    fn write_keybindings_document(&self, doc: &toml_edit::DocumentMut) -> Result<(), String> {
         std::fs::create_dir_all(&self.root)
             .map_err(|e| format!("cannot create {}: {e}", self.root.display()))?;
         let path = self.keybindings_path();
-        let serialized =
-            toml::to_string_pretty(table).map_err(|e| format!("cannot serialize: {e}"))?;
-        std::fs::write(&path, serialized)
+        std::fs::write(&path, doc.to_string())
             .map_err(|e| format!("cannot write {}: {e}", path.display()))
     }
 
@@ -455,51 +488,109 @@ impl ConfigDir {
     }
 }
 
-/// The `when` scope of one binding element (`None` = global).
-fn binding_when(element: &toml::Table) -> Option<&str> {
-    element.get("when").and_then(toml::Value::as_str)
-}
-
-/// The `focus` scope of one binding element (`None` = not focus-scoped).
-fn binding_focus(element: &toml::Table) -> Option<&str> {
-    element.get("focus").and_then(toml::Value::as_str)
-}
-
-/// Removes every user-file entry whose key normalizes to `normalized` (a combo
-/// may be spelled differently, and its value may be a single table or an array)
-/// and returns their binding elements as a flat list.
-fn take_combo_elements(table: &mut toml::Table, normalized: &str) -> Vec<toml::Table> {
-    let keys: Vec<String> = table
-        .keys()
-        .filter(|k| {
-            crate::keybindings::parse_combo(k).map(|ks| ks.join(" ") == normalized).unwrap_or(false)
+/// The keys of `doc` that spell the combo `normalized` (a combo may be written
+/// in more than one way, `"shift+ctrl+a"` and `"ctrl+shift+a"`).
+fn combo_keys(doc: &toml_edit::DocumentMut, normalized: &str) -> Vec<String> {
+    doc.iter()
+        .map(|(key, _)| key)
+        .filter(|key| {
+            crate::keybindings::parse_combo(key)
+                .map(|ks| ks.join(" ") == normalized)
+                .unwrap_or(false)
         })
-        .cloned()
-        .collect();
-    let mut elements = Vec::new();
-    for key in keys {
-        match table.remove(&key) {
-            Some(toml::Value::Table(t)) => elements.push(t),
-            Some(toml::Value::Array(arr)) => {
-                for v in arr {
-                    if let toml::Value::Table(t) = v {
-                        elements.push(t);
-                    }
-                }
-            }
-            _ => {}
-        }
-    }
-    elements
+        .map(str::to_string)
+        .collect()
 }
 
-/// A combo's TOML value: a single table when there is one binding, an array of
-/// tables when there are several `when`-scoped ones.
-fn collapse_elements(mut elements: Vec<toml::Table>) -> toml::Value {
-    if elements.len() == 1 {
-        toml::Value::Table(elements.pop().unwrap())
-    } else {
-        toml::Value::Array(elements.into_iter().map(toml::Value::Table).collect())
+/// Whether one binding element has exactly this `(when, focus)` scope (`None`
+/// = global, resp. not focus-scoped).
+fn in_scope(element: &dyn toml_edit::TableLike, when: Option<&str>, focus: Option<&str>) -> bool {
+    element.get("when").and_then(toml_edit::Item::as_str) == when
+        && element.get("focus").and_then(toml_edit::Item::as_str) == focus
+}
+
+fn value_in_scope(value: &toml_edit::Value, when: Option<&str>, focus: Option<&str>) -> bool {
+    value.as_inline_table().is_some_and(|table| in_scope(table, when, focus))
+}
+
+/// Where the binding of this scope sits in a combo's value — which is one
+/// binding (index 0) or several, each written inline or under a table header
+/// (`[combo]` / `[[combo]]`, what the editor wrote before it kept the layout).
+fn element_index(item: &toml_edit::Item, when: Option<&str>, focus: Option<&str>) -> Option<usize> {
+    match item {
+        toml_edit::Item::Value(toml_edit::Value::Array(array)) => {
+            array.iter().position(|value| value_in_scope(value, when, focus))
+        }
+        toml_edit::Item::ArrayOfTables(tables) => {
+            tables.iter().position(|table| in_scope(table, when, focus))
+        }
+        single => single.as_table_like().filter(|table| in_scope(*table, when, focus)).map(|_| 0),
+    }
+}
+
+fn element_mut<'a>(
+    item: &'a mut toml_edit::Item,
+    when: Option<&str>,
+    focus: Option<&str>,
+) -> Option<&'a mut dyn toml_edit::TableLike> {
+    let index = element_index(item, when, focus)?;
+    match item {
+        toml_edit::Item::Value(toml_edit::Value::Array(array)) => array
+            .get_mut(index)
+            .and_then(toml_edit::Value::as_inline_table_mut)
+            .map(|table| table as &mut dyn toml_edit::TableLike),
+        toml_edit::Item::ArrayOfTables(tables) => {
+            tables.get_mut(index).map(|table| table as &mut dyn toml_edit::TableLike)
+        }
+        single => single.as_table_like_mut(),
+    }
+}
+
+/// Sets `key` in one binding element, keeping the spacing and the comment
+/// around a value that was already there.
+fn set_in_place(element: &mut dyn toml_edit::TableLike, key: &str, mut value: toml_edit::Value) {
+    if let Some(toml_edit::Item::Value(old)) = element.get(key) {
+        *value.decor_mut() = old.decor().clone();
+    }
+    element.insert(key, toml_edit::Item::Value(value));
+}
+
+/// Adds one binding to a combo that already has some, in the form the combo is
+/// written in: a single inline binding becomes an array, one binding per line.
+fn push_element(item: &mut toml_edit::Item, entry: toml_edit::InlineTable) {
+    match item {
+        toml_edit::Item::Value(toml_edit::Value::Array(array)) => push_line(array, entry),
+        toml_edit::Item::ArrayOfTables(tables) => tables.push(entry.into_table()),
+        toml_edit::Item::Table(table) => {
+            let mut tables = toml_edit::ArrayOfTables::new();
+            tables.push(std::mem::take(table));
+            tables.push(entry.into_table());
+            *item = toml_edit::Item::ArrayOfTables(tables);
+        }
+        toml_edit::Item::Value(single) => {
+            // The spacing and trailing comment of the value stay with the
+            // array that takes its place.
+            let decor = std::mem::take(single.decor_mut());
+            let mut array = toml_edit::Array::new();
+            if let toml_edit::Value::InlineTable(first) = std::mem::replace(single, 0.into()) {
+                push_line(&mut array, first);
+            }
+            push_line(&mut array, entry);
+            *array.decor_mut() = decor;
+            *single = toml_edit::Value::Array(array);
+        }
+        toml_edit::Item::None => *item = toml_edit::value(entry),
+    }
+}
+
+/// Appends `element` on a line of its own.
+fn push_line(array: &mut toml_edit::Array, element: toml_edit::InlineTable) {
+    let mut value = toml_edit::Value::InlineTable(element);
+    value.decor_mut().set_prefix("\n  ");
+    array.push_formatted(value);
+    array.set_trailing_comma(true);
+    if !array.trailing().as_str().is_some_and(|trailing| trailing.contains('\n')) {
+        array.set_trailing("\n");
     }
 }
 
@@ -878,6 +969,121 @@ mod tests {
         let downs: Vec<_> = set.compiled().into_iter().filter(|b| b.keys == ["down"]).collect();
         assert_eq!(downs.len(), 1);
         assert_eq!(downs[0].when.as_deref(), Some("metarecord-list"));
+        std::fs::remove_dir_all(config.root()).unwrap();
+    }
+
+    // The file is the user's, comments and order included, and the next
+    // `metafolder-sync-config` merges the shipped one into it: an edit that
+    // rewrote it whole would turn every later merge into a conflict.
+    const COMMENTED: &str = "# Navigation.\n\"j\" = [\n  # the list\n  { command = \"metarecord-list:next\", when = \"metarecord-list\" },\n  { command = \"file-manager:next\", when = \"file-manager\" },\n]\n\n# Tabs.\n\"ctrl+t\" = { command = \"workspace:new\" } # new tab\n\"a\" = { command = \"first\" }\n";
+
+    #[test]
+    fn test_set_keybinding_changes_only_the_binding_it_names() {
+        let config = kb_dir();
+        std::fs::write(config.keybindings_path(), COMMENTED).unwrap();
+
+        config.set_user_keybinding("ctrl+t", "workspace:close", None, None, false).unwrap();
+        let written = std::fs::read_to_string(config.keybindings_path()).unwrap();
+        assert_eq!(written, COMMENTED.replace("workspace:new", "workspace:close"));
+
+        config
+            .set_user_keybinding("j", "file-manager:down", Some("file-manager"), None, false)
+            .unwrap();
+        let written = std::fs::read_to_string(config.keybindings_path()).unwrap();
+        assert_eq!(
+            written,
+            COMMENTED
+                .replace("workspace:new", "workspace:close")
+                .replace("file-manager:next", "file-manager:down")
+        );
+        std::fs::remove_dir_all(config.root()).unwrap();
+    }
+
+    #[test]
+    fn test_set_keybinding_adds_a_new_binding_without_touching_the_rest() {
+        let config = kb_dir();
+        std::fs::write(config.keybindings_path(), COMMENTED).unwrap();
+
+        // A new combo goes at the end.
+        config.set_user_keybinding("alt+x", "panel:swap", None, None, true).unwrap();
+        let written = std::fs::read_to_string(config.keybindings_path()).unwrap();
+        assert!(written.starts_with(COMMENTED), "{written}");
+        let set = config.load_keybindings().unwrap();
+        let added = set.compiled().into_iter().find(|b| b.keys == ["alt+x"]).unwrap();
+        assert_eq!(added.invocation, "panel:swap");
+        assert!(added.text_input);
+
+        // A new scope of an existing combo joins its array, one per line.
+        config.set_user_keybinding("j", "treeref:next", Some("treeref"), None, false).unwrap();
+        let written = std::fs::read_to_string(config.keybindings_path()).unwrap();
+        assert!(written.contains("# Navigation.") && written.contains("  # the list\n"));
+        assert!(written.contains("# new tab"));
+        assert!(
+            written.contains("\n  { command = \"treeref:next\", when = \"treeref\" },\n]"),
+            "{written}"
+        );
+        assert_eq!(scopes_of(&config.load_keybindings().unwrap(), &["j"]).len(), 3);
+        std::fs::remove_dir_all(config.root()).unwrap();
+    }
+
+    #[test]
+    fn test_remove_keybinding_keeps_the_comments_of_the_rest() {
+        let config = kb_dir();
+        std::fs::write(config.keybindings_path(), COMMENTED).unwrap();
+
+        config.remove_user_keybinding("a", None, None).unwrap();
+        let written = std::fs::read_to_string(config.keybindings_path()).unwrap();
+        assert_eq!(written, COMMENTED.replace("\"a\" = { command = \"first\" }\n", ""));
+
+        config.remove_user_keybinding("j", Some("file-manager"), None).unwrap();
+        let written = std::fs::read_to_string(config.keybindings_path()).unwrap();
+        assert!(written.contains("  # the list\n"), "{written}");
+        assert!(written.contains("# new tab"));
+        assert!(!written.contains("file-manager"));
+        assert_eq!(
+            scopes_of(&config.load_keybindings().unwrap(), &["j"]),
+            vec![Some("metarecord-list".into())]
+        );
+        std::fs::remove_dir_all(config.root()).unwrap();
+    }
+
+    #[test]
+    fn test_editing_the_shipped_keybindings_changes_one_line() {
+        let shipped = include_str!("../default-config/keybindings.toml");
+        let config = kb_dir();
+        std::fs::write(config.keybindings_path(), shipped).unwrap();
+
+        config.set_user_keybinding("h h", "help:open queries", None, None, false).unwrap();
+        config.set_user_keybinding("f", "trash:other", Some("trash"), None, false).unwrap();
+        let written = std::fs::read_to_string(config.keybindings_path()).unwrap();
+        let changed: Vec<(&str, &str)> =
+            shipped.lines().zip(written.lines()).filter(|(a, b)| a != b).collect();
+        assert_eq!(shipped.lines().count(), written.lines().count());
+        assert_eq!(changed.len(), 2, "{changed:?}");
+        std::fs::remove_dir_all(config.root()).unwrap();
+    }
+
+    #[test]
+    fn test_keybindings_written_as_table_headers_are_still_edited() {
+        // The shape the editor used to write (`[combo]` / `[[combo]]`).
+        let config = kb_dir();
+        std::fs::write(
+            config.keybindings_path(),
+            "[a]\ncommand = \"first\"\n\n[[j]]\ncommand = \"metarecord-list:next\"\nwhen = \"metarecord-list\"\n\n[[j]]\ncommand = \"file-manager:next\"\nwhen = \"file-manager\"\n",
+        )
+        .unwrap();
+
+        config.set_user_keybinding("a", "second", None, None, false).unwrap();
+        config.set_user_keybinding("a", "third", Some("log"), None, false).unwrap();
+        config.set_user_keybinding("j", "treeref:next", Some("treeref"), None, false).unwrap();
+        let set = config.remove_user_keybinding("j", Some("file-manager"), None).unwrap();
+        assert_eq!(
+            scopes_of(&set, &["j"]),
+            vec![Some("metarecord-list".into()), Some("treeref".into())]
+        );
+        assert_eq!(scopes_of(&set, &["a"]), vec![None, Some("log".into())]);
+        let a = set.compiled().into_iter().find(|b| b.keys == ["a"] && b.when.is_none()).unwrap();
+        assert_eq!(a.invocation, "second");
         std::fs::remove_dir_all(config.root()).unwrap();
     }
 

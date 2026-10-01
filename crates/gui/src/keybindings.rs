@@ -1,13 +1,13 @@
-//! Keybinding engine (spec-gui "Keybinding"): combo parsing, TOML model,
-//! defaults + user + panel-suggestion merging, and compilation into the
-//! flat table pushed to the frontend matcher (`panel-shim/keymatch.js`).
+//! Keybinding engine (doc "Keybindings"): combo parsing, TOML model,
+//! panel-suggestion merging, and compilation into the flat table pushed to
+//! the frontend matcher (`panel-shim/keymatch.js`).
 //!
-//! Merge semantics:
-//! - The engine ships defaults (`default-config/keybindings.toml`); the
-//!   user file contains only overrides and wins per key combo.
+//! - `keybindings.toml` is the complete set (doc "The keybindings file"): the
+//!   shipped bindings and the user's edits are one file, merged by git, and
+//!   the engine has no defaults layer of its own.
 //! - Panel suggestions (`metafolder.addKeybinding`) are weakest: applied
-//!   only when the merged table has no binding with the same combo and
-//!   the same `when` scope.
+//!   only when the file has no binding with the same combo and the same
+//!   `when` and `focus` scope.
 
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
@@ -227,6 +227,21 @@ impl KeybindingSet {
             focus: focus.map(str::to_string),
         });
         Ok(())
+    }
+
+    /// This set with the suggestions `previous` held, each applied under the
+    /// usual rule (a configured binding of the same combo and scope wins). The
+    /// file is read again when a binding is edited or the configuration
+    /// reloaded; the suggestions are not in it, and the panels that made them
+    /// are not mounted a second time.
+    pub fn with_suggestions_of(mut self, previous: &KeybindingSet) -> Self {
+        for suggestion in &previous.suggestions {
+            let key = (suggestion.keys.clone(), suggestion.when.clone(), suggestion.focus.clone());
+            if !self.config.contains_key(&key) {
+                self.suggestions.push(suggestion.clone());
+            }
+        }
+        self
     }
 
     /// Flat table for the frontend matcher, deterministically ordered.
@@ -511,6 +526,25 @@ mod tests {
             .unwrap();
         let table = set.compiled();
         assert_eq!(table.len(), 2);
+    }
+
+    #[test]
+    fn test_suggestions_survive_a_reread_of_the_file() {
+        // Editing a binding or `config:reload keybindings` reads the file
+        // again; what the panels suggested is not in it and must be kept.
+        let mut set = KeybindingSet::from_source("").unwrap();
+        set.add_suggestion("x", "my-panel:go", Some("my-panel"), false, None).unwrap();
+        set.add_suggestion("y", "my-panel:back", Some("my-panel"), false, None).unwrap();
+
+        let reread = KeybindingSet::from_source(r#""x" = { command = "mine", when = "my-panel" }"#)
+            .unwrap()
+            .with_suggestions_of(&set);
+        let table = reread.compiled();
+        // The file now binds `x` in that scope: its suggestion gives way.
+        let x: Vec<_> = table.iter().filter(|b| b.keys == ["x"]).collect();
+        assert_eq!(x.len(), 1);
+        assert_eq!(x[0].invocation, "mine");
+        assert!(table.iter().any(|b| b.keys == ["y"] && b.invocation == "my-panel:back"));
     }
 
     #[test]
