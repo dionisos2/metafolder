@@ -22,7 +22,7 @@ live.
 |`selected_log_entry` |`{repo, rev_id, op_id}` or `null` |the revision under the log's cursor, with the operation when the cursor is on one; what [[log-detail panel]] shows |
 |`selected_treeref` |`{repo, field, uuid, path}` or `null` |the node selected in `treeref` |
 |`metarecords:dirty` |a time in ms |set whenever something the metarecord panels show may have changed (a write from the GUI, a reconcile…); they re-read on it |
-|`pick_request` |object or `null` |marks a workspace as a value picker, with who asked and what to restore |
+|`pick_request` |object or `null` |marks a workspace as a [[value picker|Value picker]], with who asked and what to restore |
 |`pick_result` |object or `null` |the picker's answer, delivered to the workspace that asked |
 
 A panel keeps its own variables under its name — `metarecord-list:query`,

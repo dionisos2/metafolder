@@ -48,7 +48,7 @@
     return which === 'bash' ? store.bashDrafts : store.inputDrafts;
   }
 
-  // Per-repo input history (spec-gui "Input history"): ctrl-p/ctrl-n walk,
+  // Per-repo input history (doc "Input history"): ctrl-p/ctrl-n walk,
   // ctrl-r OSM search. The zone follows the mode (`:` vs `!` are separate
   // histories) and turns off while a script prompt is active. The store is
   // GUI-side (the history_read/history_append Tauri commands — the panel
@@ -82,7 +82,7 @@
   }
 
   // The line belongs either to the prompt on screen or to the focused
-  // workspace's draft for the current mode (spec-gui "Command input"): on every
+  // workspace's draft for the current mode (doc "The command input"): on every
   // change of owner the outgoing text is stashed and the incoming one restored.
   // Switching the focused slot to another workspace therefore restores that
   // workspace's draft — and puts a script's question away, keeping what was
@@ -171,7 +171,7 @@
           ? bashCandidates.map((name) => ({ name, label: '', shortcuts: [] }))
           : filterCommands(listedCommands(store.commands, store.keytable), draft),
   );
-  /** Every loaded prompt candidate as the resolution sees it (spec-gui
+  /** Every loaded prompt candidate as the resolution sees it (doc
    *  "Completion views"): the label matched whole, the value it names. */
   const promptChoices = $derived(
     store.ui.promptItems.map((item) => ({ name: item.label, value: item.value })),
@@ -202,7 +202,7 @@
 
   // A truncated candidate page is narrowed by asking its source again as the
   // user types (debounced — a keystroke is not a request); a complete page is
-  // narrowed by the local filter alone (spec-gui "Completion views").
+  // narrowed by the local filter alone (doc "Completion views").
   $effect(() => {
     const typed = draft;
     if (promptText === null || !store.ui.promptMore) return;
@@ -382,7 +382,7 @@
     if (event.key === 'Enter') {
       event.preventDefault();
       // Ctrl/Cmd-Enter confirms the typed free value even when a completion is
-      // highlighted (spec-gui "Interactive command arguments").
+      // highlighted (doc "Interactive command arguments").
       void submit(event.ctrlKey || event.metaKey);
     } else if (event.key === 'Escape') {
       event.preventDefault();
@@ -415,7 +415,7 @@
       lineStart: () => element?.setSelectionRange(0, 0),
       lineEnd: () => element?.setSelectionRange(draft.length, draft.length),
       // `completion:cycle`: the next (or previous) view of the prompt's
-      // candidates (spec-gui "Completion views"). The input owns the cycle
+      // candidates (doc "Completion views"). The input owns the cycle
       // because it owns the draft the candidates narrow on.
       cycleCompletion: (delta: number) => {
         const views = store.ui.promptSource?.views ?? [];

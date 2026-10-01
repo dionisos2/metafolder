@@ -75,7 +75,7 @@ export async function mount(root, metafolder) {
   let retypeTarget = null;
 
   // ── Folder picker ─────────────────────────────────────────────────────────
-  // Reuses the value-picker system (spec-gui "Value picker"): "Browse…" opens
+  // Reuses the value-picker system (doc "Value picker"): "Browse…" opens
   // the file-manager in the other slot and returns the chosen folder path.
   const pickRunner = createPickRunner(metafolder);
   /** @type {string|null} cached; the default start when the input is empty */

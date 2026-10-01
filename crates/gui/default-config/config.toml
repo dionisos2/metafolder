@@ -97,7 +97,7 @@ mixed_tag    = ['mf_schema = "tag"', 'path:path']
 # author       = ['mf_schema = "person"', 'full_name:name']
 '*'          = 'path:path mfr_path:path name label'
 
-# Completion-wide knobs (spec-gui "Completion views"). The separator joins the
+# Completion-wide knobs (doc "Completion views"). The separator joins the
 # columns of a multi-column label — the label is typed back whole, so the join
 # must be deterministic and typeable. Default: " | ".
 [completion]

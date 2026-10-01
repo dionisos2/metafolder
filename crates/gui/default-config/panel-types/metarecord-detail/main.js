@@ -93,7 +93,7 @@ export async function mount(root, metafolder) {
 
   const addNameInput = () => byId(root, 'add-name', HTMLInputElement);
 
-  // Value picker (spec-gui "Value picker"): one runner per panel, shared by the
+  // Value picker (doc "Value picker"): one runner per panel, shared by the
   // add-field form and the inline editors. `pickOpts(nameOf)` builds the
   // widget option that opens a picker seeded for the field being edited.
   const pickRunner = createPickRunner(metafolder);
@@ -783,7 +783,7 @@ export async function mount(root, metafolder) {
     return confirm('Unsaved changes — discard and switch metarecord?');
   }
 
-  // ── Interactive field-editing commands (spec-gui "Command") ─────────────
+  // ── Interactive field-editing commands (doc "Interactive command arguments") ─────────────
   // Each command drives the whole edit from the command input: its arg specs
   // supply the completion and the pre-filled value, so no in-panel cursor
   // navigation is needed. All act on the displayed metarecord (`current`).
@@ -1171,7 +1171,7 @@ export async function mount(root, metafolder) {
   /** One candidate per row of `field` — the values `remove` and `edit` can
    *  name: what the row reads as (a seeded ref's label — the raw vocabulary
    *  values are entered in) paired with what the row *is* (its value), so a
-   *  pick reaches the handler already identified (spec-gui "Completion views").
+   *  pick reaches the handler already identified (doc "Completion views").
    *  ∅ names the explicit absences, which carry no value at all. Equal rows
    *  collapse in the list (the duplicate-label rule), and are named alike
    *  anyway. @param {string} field */
@@ -1251,7 +1251,7 @@ export async function mount(root, metafolder) {
 
   // ── Field operations on the current metarecord ──────────────────────────
   //
-  // One command, the operation as its first argument (spec-gui "Command"):
+  // One command, the operation as its first argument (doc "Command naming"):
   // `metarecord:field set tag jazz`. The vocabulary is the daemon's set layer
   // and the CLI's — set / add / remove / unset — plus rename and retype, which
   // have no set-layer route of their own. `delete` is deliberately absent
@@ -1291,7 +1291,7 @@ export async function mount(root, metafolder) {
    *               CompletionView[] | Promise<CompletionView[]>}} [value]
    *   the last argument, absent when the operation takes none — and, with its
    *   own `when`, taken only in some of its cases. `views` is the cycled
-   *   candidate naming (spec-gui "Completion views"), and wins over `complete`
+   *   candidate naming (doc "Completion views"), and wins over `complete`
    * @property {(target: string, value: string, type: string, which?: string) => unknown} run
    *   `type` is the collected or settled value type, empty for the operations
    *   that write no value; `which` names the row to act on, empty when the
@@ -2021,7 +2021,7 @@ export async function mount(root, metafolder) {
     label: 'Create a new metarecord',
     reveal: true,
     // The schema type is collected through the command input's completion
-    // (spec-gui "Interactive command arguments"): the completion lists the
+    // (doc "Interactive command arguments"): the completion lists the
     // schema's declared metarecord types, a blank answer creates an empty
     // record, and picking a type seeds its template fields. The record is
     // created immediately and selected, so every field-editing command applies

@@ -1,0 +1,86 @@
+title: Commands
+tags: GUI
+kind: overview
+aliases: command registry dispatch invocation
+summary: Everything the GUI does is a named command — typed in the command input, bound to a key, clicked in a menu or sent by a script — and a command asks for the arguments it was not given.
+
+A ''command'' is a named operation, with arguments: `panel:split`,
+`workspace:goto 2`, `metarecord:field set rating 5`. Everything the GUI does is
+one. The same invocation string runs it from anywhere:
+
+* typed in [[the command input|The command input]];
+* bound to a key (the keybindings map a key to an invocation, arguments included);
+* clicked — a button or a menu entry invokes the command, it does not have code of its own ([[Context menus]]);
+* sent by a script, with `mf gui command`.
+
+The [[GUI command]] catalog has a note for each.
+
+!! An invocation
+
+A name, then arguments separated by spaces. Double quotes keep the spaces of an
+argument (`metarecord-list:insert finder "two words" stay`), and the
+''last'' argument a command declares takes everything that is left, so it needs no
+quotes: `workspace:rename My music`.
+
+An invocation starting with `!` is not a command but a shell line ([[Bash mode]]).
+
+An argument left out is not an error: the command input asks for it
+([[Interactive command arguments]]). So one learns a command by running it bare.
+
+!! Where commands come from
+
+* The ''shell'' defines the builtins: workspaces, panel slots, the command input, find, help, undo…
+* Each ''panel type'' registers its own when it is built, under its name: `metarecord-list:next`, `file:zoom`.
+* The user's `gui/commands.js` adds more.
+
+The GUI builds every installed panel type once at startup, hidden, so that all the
+commands exist from the start ([[Panel types]]). The names follow one rule
+([[Command naming]]).
+
+!! A command runs on its panel, focused or not
+
+Every command is listed and can be run whatever panel has the focus. A panel's
+command is handed to the panel type that registered it, in the ''focused workspace'':
+acting on a panel that is not focused — or not even displayed — is legitimate. The
+arrow keys of the `file` panel run `metarecord-list:next` and `metarecord-list:prev`
+on the list of the other slot; a workspace that never showed the panel has it built
+for the occasion.
+
+A command registered with `reveal` shows its panel first when it is not on screen —
+in the other slot when that one shows the same workspace, else in place of the
+focused panel.
+
+What depends on the focus is the ''key'', not the command: a keybinding may be
+restricted to a panel type (`when`).
+
+!! Every control is a command
+
+Each button of a panel or of the shell runs a command, and each text field has a
+command that focuses it (`command-input:focus command`, `metarecord-list:focus finder`,
+`workspace:rename`). So everything can be bound to a key and driven by a script.
+The controls ''inside'' a form a command opened — its Cancel, its submit — and those
+tied to a position — one particular tab, one slot's `×` — have no command of their own.
+
+!! What is written to the message log
+
+Each invocation is written to the workspace's messages as `> name arguments`, before
+it runs — with the arguments that were asked for, so the line is what actually ran.
+A command may opt out (`log: false`): the keystroke-level ones do — `editing:*`,
+`command-input:focus`, `completion:cycle`, `find:*`, `help*`, `status:clear`.
+
+A command that fails says why in the status bar. An unknown name is ''unknown
+command: …''.
+
+!! Keys bound to nothing
+
+A key bound to a command that does not exist runs nothing. Once every panel is built,
+the GUI lists these bindings in the message log, key and invocation — a typo in
+`keybindings.toml`, or a command renamed since. Only the first word of the invocation
+is looked up, since the rest are arguments. A test checks the shipped keybindings the
+same way.
+
+<<list-kind reference>>
+
+<<list-kind guide>>
+
+<<list-kind rationale>>

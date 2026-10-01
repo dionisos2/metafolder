@@ -1,0 +1,58 @@
+title: Input history
+tags: GUI
+kind: guide
+aliases: input-history recall ctrl-p ctrl-n ctrl-r
+summary: Each text zone remembers what was submitted in it, per repository: `ctrl+p` and `ctrl+n` walk back and forth, `ctrl+r` searches.
+
+The text zones keep what was submitted in them, ''per repository and per zone''.
+Four zones have a history:
+
+* the command input in command mode, and in bash mode — two separate histories ([[The command input]], [[Bash mode]]);
+* the finder and the query of `metarecord-list`.
+
+!! Recalling
+
+|!Key |!Does |
+|`ctrl+p` / `ctrl+n` |the previous / the next entry, as in a terminal. What was being typed is kept at the newest end and comes back when walking past it. |
+|`ctrl+r` |a search box over the entries: newest first, each shown once, narrowed by the pieces typed, in order. `ctrl+p` / `ctrl+n` or the arrows choose, `Enter` puts the entry in the zone, `Escape` — or clicking elsewhere — gives up. |
+
+Editing the recalled text ends the walk: the edited text is the new draft. Leaving
+the zone ends it too, so the first `ctrl+p` after coming back recalls the newest
+entry again.
+
+These three keys belong to the zones themselves and are not in `keybindings.toml`.
+Binding `ctrl+p`, `ctrl+n` or `ctrl+r` there with `text-input = true` would take
+them over.
+
+!! What is recorded
+
+An entry is recorded when the zone is ''submitted'' — `Enter`, or the command that
+applies it — never while typing. The command mode records what actually ran: the
+command chosen in the list, not the few letters typed to reach it. An answer to a
+question — a command's argument, a script's prompt — is not recorded.
+
+Submitting the same text twice in a row records it once. Each zone keeps its 1000
+newest entries.
+
+In a workspace without a repository the history still works, but lasts the session
+only; it is not carried into a repository's history when one is opened.
+
+!! Where it is kept
+
+In the repository: one plain-text file per zone,
+`.metafolder/gui/history/<zone>` — `shell:command`, `shell:bash`,
+`metarecord-list:finder`, `metarecord-list:query` — one entry per line, the newest
+last. The file is replaced whole at each addition (written aside, then renamed), so
+an interrupted write leaves the previous history intact.
+
+These files are ordinary content of `.metafolder/`, unlike `internal/`: they can be
+tracked, and are in practice ignored by the `.metafolder` pattern every repository
+starts with ([[Repository layout on disk]]).
+
+The GUI reads and writes them itself; the daemon has no part in it and no endpoint
+for it. It finds the repository's `.metafolder/` from `GET /repos`, which is right
+also when that directory lives outside the root. A panel reaches its own zones
+through `metafolder.history.read` and `metafolder.history.append`, and the keys
+through `attachHistory` of `/__history.js`. A zone's name is made of lowercase
+letters, digits, `:`, `_` and `-`, 64 at most, so it cannot name a file outside the
+history directory.

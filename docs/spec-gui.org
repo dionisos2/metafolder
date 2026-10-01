@@ -29,232 +29,13 @@ Moved to the wiki: doc "Workspace variables".
 
 ** Value picker
 
-Filling a =ref= or =tree_ref= field with a metarecord UUID by hand is
-impractical. Instead, a field-editing form opens a *picker*: a normal,
-throwaway workspace the user drives with the existing panels (lists, the
-=treeref= explorer, …), then confirms a selection that is handed back to the
-form. No new selection UI is duplicated into the forms; the picker reuses every
-panel, keybinding and future navigation improvement.
-
-The mechanism is a thin protocol over [[*Workspace variables][workspace
-variables]], with the only cross-workspace step performed in the GUI backend
-(panels can read/write only their own workspace's variables):
-
-1. *Start* — the calling panel invokes the =metafolder.pick.start(spec)= API
-   (structured arguments; not a string command). =spec= fully describes the
-   picker's initial state — the caller decides everything, because only it
-   knows what its picker is for: the active repo, the picker =panel= type with
-   its seed variables, a workspace =name=, and a =prompt= shown in the picker's
-   status bar. The backend creates a workspace, stores
-   =pick_request = \{caller_ws, token, picker_slot, restore\}= on it, and opens
-   it in the slot *other* than the caller's — so the calling form stays visible
-   in the focused slot — then focuses the picker and posts the prompt. The
-   other slot's prior state is remembered in =restore= and reinstated when the
-   pick ends. The =token= is an opaque value the caller mints to match the
-   result to the exact widget that requested it.
-
-2. *Navigate* — the picker behaves like any workspace; highlighting an entry
-   publishes =selected_metarecord= as usual.
-
-3. *Confirm / cancel* — =pick:confirm= reads the focused picker's
-   =pick_request= and the requested selection, closes the picker, restores the
-   slot it occupied, refocuses the caller, and writes =pick_result= into
-   =caller_ws= (the single cross-workspace write). =pick:cancel= writes
-   =\{token, cancelled: true\}= instead. Closing a picker by hand is a cancel.
-
-The =result= kind in the spec chooses what is returned:
-- =uuid= (default) — the picker's =selected_metarecord=; =pick_result= is
-  =\{token, uuid\}=. The form decides where it lands: for =ref= it is the
-  value; for =tree_ref= it fills the =parent= slot, leaving the =name= for the
-  user to type (e.g. picking =/document/test= (uuid =123=) for a new field
-  =plop= yields =\{123, ""\}=, then the user types =plop= →
-  =\{123, "plop"\}= → path =/document/test/plop=).
-- =path= — the picker's first =selected_paths= entry; =pick_result= is
-  =\{token, path\}=. Used to choose a folder with the =file-manager= panel
-  (e.g. the repos panel's *Browse…* button — the picker opens =file-manager=
-  on the disk, the user highlights a folder, =.= being the current directory).
-
-Seeding comes from the field's rule — a rule's query is where its targets live
-— with a legacy per-field picker query as the fallback, see [[*Ref value
-seeds]]. The calling panel reads it through the API and folds it into =spec=,
-so the seed policy stays the caller's decision.
+Moved to the wiki: doc "Value picker".
 
 ** Command
 
-A named, invocable operation with an optional parameter string. Commands are
-registered by panel types (built-in or custom) and are available in the
-command input with autocomplete. Every user-visible behaviour is a command.
-Keybindings map key combos to command invocation strings (command name plus
-optional parameters).
-
-Every registered command is listed in the autocomplete and invocable by
-name, whatever panel is focused: invocations are dispatched to the panel
-type that registered the command (in the focused workspace), so acting on
-an unfocused — or hidden — panel is legitimate (e.g. the file panel's
-arrow keys drive =metarecord-list:next= / =metarecord-list:prev= in the other slot).
-Focus-dependent behaviour belongs to keybindings (=when=, see
-[[*Keybinding]]), not to commands. Panel commands are registered when the
-panel type is instantiated; the shell pre-instantiates every installed
-panel type once at startup (hidden, see [[*Panel type]]), so all command
-names are known from the start. The registry survives iframe removal
-(workspace closed): a later dispatch re-instantiates the owner lazily.
-
-Discoverability rule: every interactive control's action is reachable as a
-registered command, and every edit zone has a command that focuses (or
-opens) it. So each top-level action button in a panel or the shell maps to a
-command (the button invokes it), and each text input has a focus command —
-the command input (=command-input:focus command=), the metarecord-list query and
-columns inputs (=metarecord-list:focus simplified=, =metarecord-list:focus columns=),
-the workspace rename (=workspace:rename=), the metarecord-detail add-field
-form (=metarecord:open-add-field=). Shell controls map to the panel commands
-(=panel:set type=, =panel:swap=, =panel:split=, =panel:hide=). Transient
-controls *inside* a flow already opened by a command — a form's =Cancel=, a
-folder picker's navigation, a form's submit — and inherently positional
-controls — an individual tab or a specific slot's =×= (their action is
-covered by =workspace:goto= / =workspace:close= / =panel:hide=) — need not
-each carry their own command.
-
-Naming: a panel type's commands are prefixed with the panel type
-(=metarecord-list:next=), the shell's own with the concept they act on
-(=panel:split=, =workspace:new=). A command that is simply *the GUI half of a
-=mf= subcommand* — same work, same fields, the CLI's orchestration — takes the
-=mf:= prefix and the CLI verb, so the link is immediate: =mf:order= is
-=mf order=. (=reconcile:run= predates the rule and keeps its name.)
-
-Each command carries a =log= flag (default =true=): when set, every
-invocation is echoed to the workspace [[*Message view][message panel]] as
-=​> name args= before the command runs. Panels register commands with
-=log= (=metafolder.commands.register=); the builtin editing primitives
-(=editing:*=, =command-input:focus command=) register with =log: false= so
-keystroke-level actions do not flood the log.
-
-A command may *declare its arguments* — and every command that takes arguments
-does, the shell builtins included, so an invocation that merely *omits* one is
-collected rather than refused (a bare =panel:set= asks which setting, then
-which panel type; =panel:set type= supplies the first and asks only the
-second). Each declared argument carries up to four functions, all evaluated
-*lazily* when the argument is asked for (never
-at registration) and all receiving the arguments already collected so far: a
-=prompt= (the text shown in the command input), an optional =initial= (a
-pre-filled, editable value — e.g. the current value of the field being
-edited), an optional =complete= (the candidate list offered by the
-input's autocomplete), and an optional =when= (whether the argument applies at
-all). =when= is what lets *one* command cover a family of operations: the
-declared arguments are the union of what any operation takes, and the ones an
-operation has no use for are dropped — =metarecord:bulk delete= names no
-field, =metarecord:bulk unset= no value. Because it only ever sees *prior*
-arguments, it is always decidable by the time the argument is reached, and a
-dropped argument consumes no inline token either. An argument may instead be
-marked =optional=: it is a trailing modifier whose absence is itself the
-documented meaning (=workspace:next= moves both panels, =workspace:next slot=
-the focused one only), and it is never asked for. Only a trailing run of
-arguments can be optional, since the arguments are filled positionally.
-Because =initial= is a function and not a constant, it
-can read live state at the moment of the prompt. When a command with declared
-arguments is invoked with fewer parameters than declared (from a keybinding,
-the command input, or =POST /gui/command=), the command input collects the
-missing arguments one at a time: for each, it shows the =prompt=, pre-fills
-=initial=, offers =complete= (filtered like command suggestions), and waits.
-=Escape= at any point abandons the whole invocation. A panel command's
-declared arguments belong to the *panel instance* that registered them, not to
-the command name: a panel type is mounted once per workspace, every instance
-registers the same names, and the four functions read the state of the one
-that declared them. The prompts come from the instance of the *focused*
-workspace — the same one the handler runs on — so a completion list can never
-be another workspace's. Parameters supplied inline skip their prompt, so a
-fully-specified invocation
-(=metarecord:field remove tag musique/jazz=) runs without prompting — the
-interactive collection is a fallback for the missing tail, not a separate
-mode.
-
-The command-input autocomplete distinguishes the two kinds of command by the
-menu-item *ellipsis convention*: a command that, invoked bare, reopens the
-minibuffer to collect input shows a trailing =…= after its name; a command
-that acts immediately (selecting or opening a DOM element, toggling a panel)
-shows none. A command prompts when it declares arguments and the invocation
-lacks a required one (the interactive collection above) — there is no second
-mechanism, so a builtin that collects a value (=workspace:rename=) is marked
-exactly like a panel command that does. The marker is display-only — it is not
-part of the command name written into the input when a suggestion is accepted.
-
-*Dead keys.* A keybinding whose command does not exist runs nothing and says
-nothing, so a typo — or a command renamed out from under a personal
-=keybindings.toml=, which =metafolder-sync-config= merges but never validates —
-is silently inert. Once the panels have been pre-instantiated (and therefore
-every command name is known: the builtins come from Rust, the panel commands
-from their JavaScript), the shell lists any such binding in the
-[[*Message view][message panel]], combo and invocation. Only the first token of
-an invocation is a name, since a binding may pre-fill arguments. The shipped
-table is checked the same way by a test, so a rename cannot leave a default
-binding dead either.
-
-*Command listing.* The input lists every registered command, plus one entry
-per *bound* parameterized invocation: a keybinding whose invocation carries
-arguments (=metarecord:bulk delete=, =panel:set type file=) earns its own line,
-showing its combo. This is what keeps a generic command's genericity from
-costing discoverability. Naming an operation as an argument instead of in the
-command name would otherwise hide it — =metarecord:bulk set= is not findable by
-typing =set= if only =metarecord:bulk= is listed — while listing every
-combination a command accepts would bury the list under variations nobody uses.
-Keying the expansion to the keybinding table answers both: whatever the user
-put on a key is discoverable by reading the list, and the rest is found through
-the operation's own prompt. It also makes every shortcut visible in one place,
-parameterized ones included. Combos are attached by *exact* invocation, so a
-bare entry does not collect its variants' keys — =panel:set type= otherwise
-listed all fourteen of them on one line, with nothing saying which combo went
-with which panel type. Consequently the =…= marker is computed per *entry*,
-not per command: =metarecord:bulk set= still has a field and a value to ask
-for and carries it, while =metarecord:bulk delete= is complete and runs on
-Enter.
-
-*Naming convention.* One rule generates the whole command set:
-
-#+BEGIN_QUOTE
-=<namespace>:<verb> [arguments]=, the verb taken from the closed list below,
-and *whatever varies between sibling commands is an argument, never part of
-the verb*.
-#+END_QUOTE
-
-So there is no =zoom-in= beside =zoom-out=, no =bulk-set-field= beside
-=bulk-delete=: one =zoom=, one =bulk=, each taking what varies. The set stays
-small enough to read, a keybinding says what it does
-(=metarecord:bulk delete=), and adding a variant costs a table entry instead
-of a command. The [[*Command listing][listing]] is what keeps this from
-costing discoverability.
-
-The verbs, grouped by *what they touch* — which is the thing a name must make
-obvious, so that nothing that writes to the repository can be mistaken for
-something that only moves the view:
-
-| touches | verbs |
-|---------+-------|
-| a text zone | =focus <zone>=, =clear <zone>=, =apply <zone> [stay]=, =insert <zone> <text> [stay]= |
-| a form, overlay or panel | =open [what]=, =open-X= (a form of this panel), =close=, =cancel=, =reveal <type>= |
-| a view flag | =toggle <flag>= |
-| the cursor or the selection | =next=, =prev=, =first=, =last=, =page <which>=, =find [text]=, =select <toggle\|all\|none>=, and the =row-X= family (the row under the cursor) |
-| a view setting | =set <setting> [value]= |
-| the media player | =play-pause=, =restart=, =mute=, =seek <±s>=, =speed <up\|down\|reset>=, =volume <up\|down>=, =zoom <in\|out\|fit\|reset>= |
-| the repository | =<noun> <op>= with =op= ∈ =set= / =add= / =remove= / =unset= / =delete= (the daemon's and the CLI's vocabulary), and the plain verbs =create=, =delete=, =rename=, =track=, =trash=, =restore=, =prune=, =reconcile=, =rollback=, =undo=, =redo=, =revert [what]=, =mark=, =run=, =load=, =unload=, =stop= |
-
-The screen/repository split therefore reads off the name: *a command that
-writes to the repository carries either =<noun> <op>= or a plain verb from the
-last row; everything else only moves the view.*
-
-Two forms are kept although the rule alone would fold them away, and
-deliberately:
-- =open-X= names a *form belonging to this panel* (=metarecord:open-add-field=,
-  =metarecord-list:open-bulk-edit=, =repos:open-init=). Folding it into
-  =open <what>= would collide with a bare =X:open= that means something else —
-  =repos:open= shows the repos panel, it does not open a form.
-- =row-X= is the cursor family (=metarecord:row-next= / =row-edit= /
-  =row-delete=). It is deliberately not =field-X=: that would put
-  =metarecord:field-edit= one hyphen from =metarecord:field edit=, which asks
-  what to edit — the field, then *which* of its values — instead of taking the
-  one under the cursor.
-
-=edit-= is not a verb. A command that merely focuses an input is =focus=, one
-that opens a form is =open=, and an edit through the minibuffer is =<noun>
-<op>= — so nothing is named for the fact that typing happens.
+Moved to the wiki: doc "Commands", doc "Interactive command arguments" (declared
+arguments), doc "The command input" (the listing, the =…= marker) and
+doc "Command naming" (the naming convention and its verbs).
 
 ** Keybinding
 
@@ -369,169 +150,27 @@ Moved to the wiki: doc "Status bar and task bar".
 
 ** Command input
 
-A single-line text input permanently visible just above the status bar,
-with two modes distinguished by the prompt character. A configurable
-keybinding gives it keyboard focus in either mode (default suggestions:
-=:= for *command mode*, =!= for *bash mode* — =command-input:focus bash=);
-=Escape= removes the focus (the draft is kept). There is one command input;
-it targets the focused slot's workspace. Content (text and cursor position)
-is per-workspace *and per-mode*: switching the focused slot to a different
-workspace restores the command input state of that workspace, including any
-partial command being typed, and switching modes preserves both lines.
-
-*Command mode* (=:= prompt) accepts a command name (with inline completion)
-optionally followed by space-separated parameters. The suggestion list is
-filtered fuzzily and case-insensitively: the draft is split on whitespace
-and the terms must appear in the command name in order ("con def" matches
-like the regex =.*con.*def.*=). The first (best) suggestion is always
-selected; =Up=/=Down= move the selection. =Tab= writes the selected
-suggestion into the input (without executing); =Enter= always runs exactly
-what is typed — never the selection, since one is always highlighted.
-Because spaces are fuzzy term separators, the list simply empties when
-typed arguments stop matching any command name. Typing =!= at the start of
-an empty command-mode draft switches to bash mode (continuity with the
-historical single-input =!command= syntax).
-
-*Bash mode* (=!= prompt) accepts a shell command — executed as a subprocess;
-stdout/stderr goes to the =message= panel type and to the terminal from
-which the GUI was launched. Running it switches the focused slot to the
-=message= panel type so the output is visible, unless a =message= panel is
-already visible in the workspace. In invocation strings (keybindings,
-=POST /gui/command=) a shell command is still written with the =!= prefix:
-the mode split is a UI affordance, not a wire-format change.
+Moved to the wiki: doc "The command input" and doc "Bash mode".
 
 *** Interactive command arguments (command mode)
 
-When the invoked command declares arguments (see [[*Command]]) and the typed
-line supplies fewer than declared, the input does not error: it collects the
-missing arguments in order, reusing the same prompt/autocomplete machinery as
-a script's =POST /gui/prompt= — the prompt character shows the argument's
-=prompt= text, the field is pre-filled with its =initial= value, and the
-suggestion list offers =complete='s candidates filtered like command names.
-This is the uniform answer to an incomplete invocation — the shell builtins
-included: =panel:set= asks which setting, then which panel type (completing
-over the installed panel types), =panel:set type= asks only the second, and
-=daemon:set url= asks only the URL. A wrong *value* (typed free, past the
-completions) is a different matter and stays the handler's error to name.
-Unlike command mode (where =Enter= always runs the typed text), a prompt
-=Enter= accepts the *highlighted candidate* and advances to the next
-argument — no =Tab= needed. To submit a *new value* that is not in the list
-(even one that ordered-substring-matches an existing candidate), either
-=Ctrl-Enter=, or =Up= past the top of the list to deselect it (the minibuffer
-itself) and then =Enter=; with no candidates highlighted, or none offered,
-=Enter= submits what was typed — or, when that spells a candidate's label
-whole, the value it names (see [[*Completion views]]). =Escape= abandons the
-whole invocation. Only one prompt owns the input at a time: an
-interactive argument collection and a script prompt are mutually exclusive
-(whichever holds the input makes the other refuse to start).
+Moved to the wiki: doc "Interactive command arguments".
 
 **** Completion views
 
-A prompt's candidates are *couples*: the =label= the list shows (and the
-filter reads) and the =value= the command receives. A plain string candidate
-is its own label and value, so every completion that gains nothing from the
-split stays a plain list. Where the two differ, what is seen is a name and
-what runs is what it names — a =ref= candidate is labelled the way a human
-reads its target and valued with that metarecord's uuid, and the collected
-argument *is* the value. A typed answer that spells a label whole names its
-value exactly as a pick does; text no label names is taken as itself, which
-is how an uuid or a brand-new value is entered.
-
-Two candidates that read the same are both *suffixed with their values* (the
-duplicate-label rule) — for every completion, whatever it completes: no listed
-row is ever a coin flip between two different things, and each stays
-addressable by typing it whole. Exact duplicates (same label, same value)
-collapse first.
-
-A completion may offer several *views* of its candidates. Usually it offers
-one — which is why the mechanism is invisible until it is needed. A =ref=
-value names its target one way (=path=), then another (=name=), then a third
-(=label=), because which naming reaches the wanted metarecord fastest depends
-on the metarecord: the user picks the view that names theirs the quickest.
-An argument declares its views as an array of builders, each with a =title=
-the input shows in the hint while it is on screen;
-=completion:cycle forward= / =completion:cycle back= (default =ctrl+,= /
-=ctrl+.=, rebindable — deliberately a chord, so an ordinary =comma= stays
-typable) walk the array, wrapping; with a single view the command is a
-silent no-op.
-
-Each builder is called with the typed text (and the arguments collected so
-far) and returns one *page* of candidates plus whether the source holds more
-(=more=). A complete page is narrowed by the local filter alone; a truncated
-one is re-asked as the user types (debounced). A builder therefore fetches at
-most one bounded page — a daemon request with its =count= and the view's own
-sort — however large the selection behind it.
+Moved to the wiki: doc "Completion views".
 
 *** Bash completion (bash mode)
 
-=Tab= in bash mode completes the word before the cursor by asking =bash=
-itself (never live while typing): when the =bash-completion= package is
-installed its programmable completions are used (e.g. =git= subcommands),
-otherwise a =compgen= fallback completes command names in command position
-and filenames elsewhere (directories decorated with a trailing =/=). A
-single candidate is inserted directly (with a trailing space, unless a
-directory); several candidates first extend the word to their longest
-common prefix, then are listed like command suggestions — =Up=/=Down=
-select, =Tab= inserts the selection. Unlike command mode, =Enter= always
-runs the typed line (as in bash); any edit invalidates the candidate list.
-The completion harness never expands or executes the typed line itself (no
-=eval=; tokenization is plain whitespace splitting, with the replaced word
-approximating readline's word breaks — quotes, =VAR==, =host:=). A missing
-=bash= disables completion with a status-bar error; candidates are capped
-at 500 and completion at 3 s.
+Moved to the wiki: doc "Bash mode".
 
 *** Placeholders in =!= commands
 
-A =!= command line may reference the *selection* and the *active workspace*
-through =%=-tokens, expanded *client-side* just before the command runs — so
-the GUI can pass their identity to user scripts:
-
-| Token            | Expands to                                                       |
-|------------------+------------------------------------------------------------------|
-| =%u=             | the selected metarecord's UUID (=workspace.selected_metarecord=) |
-| =%v=             | its =version=                                                    |
-| =%p=             | the selected file's OS-absolute path (=workspace.selected_paths=) |
-| =%r=             | the active repository's UUID (=workspace.active_repo=; =%r:uuid=) |
-| =%r:name=        | the active repository's name                                     |
-| =%<field>=       | the value of a single-valued scalar field                        |
-| =%<field>:path=  | a =TreeRef= field resolved to its path *within that forest*       |
-| =%%=             | a literal =%=                                                    |
-
-=<field>= is a field name (=[A-Za-z_][A-Za-z0-9_]*=); =u=, =v=, =p=, =r= are
-reserved shorthands. A =%= not followed by =%= or a name is left literal
-(e.g. =50% off=). =%p= and =%r= read their workspace var directly, so they do
-not need a selected *metarecord* (=%p= works for an untracked file).
-
-=%p= and =%<field>:path= are *not* the same path. =%p= is the selected file's
-absolute path on disk (the panel's resolved =selected_paths=). =%<field>:path=
-is the position of a =TreeRef= field in *its own* forest, resolved through
-=…/resolve-tree= — for =mfr_path= that is the repository-relative tree path, not
-the on-disk path. To hand a script the file on disk, use =%p=; use
-=%<field>:path= to follow an arbitrary tree field.
-
-Each substituted value is shell-quoted, so paths with spaces are safe.
-Substitution is *strict*: if a token cannot be resolved — nothing is selected,
-no active repository, no/several selected paths, the field is absent,
-multi-valued, or empty, or a bare =%<field>= names a =TreeRef= (use =:path=) —
-the command is *not* run and the reason is posted to the status bar. Only =!=
-commands are expanded; named commands are not.
+Moved to the wiki: doc "Bash mode".
 
 ** Field editor
 
-An inline editor for a single field value, adapting its widget to the type:
-
-| Value type    | Widget                                         |
-|---------------+------------------------------------------------|
-| =String=      | Text input                                     |
-| =Int=         | Integer input                                  |
-| =Float=       | Float input                                    |
-| =Bool=        | Checkbox / toggle                              |
-| =DateTime=    | Date-time picker (ISO-8601 output)             |
-| =Nothing=     | Read-only label "absent"                       |
-| =Ref=         | UUID text input (lookup by path available)     |
-| =TreeRef=     | Parent UUID + name, or path string             |
-| =RefBase=     | UUID text input                                |
-| =ExternalRef= | Repo UUID + metarecord UUID                         |
+Moved to the wiki: doc "Field editor".
 
 ** Script session
 
@@ -814,32 +453,7 @@ Moved to the wiki: doc "Status bar and task bar".
 
 ** Command input
 
-Always visible: a prompt character and a text field above the status
-bar(s). A configurable keybinding gives it keyboard focus — =:= (default)
-in command mode, =!= in bash mode, the prompt character showing the active
-mode; =Escape= unfocuses it, keeping the draft. The autocomplete
-suggestions are shown only while the input is focused. There is one command
-input; it targets the focused slot's workspace. Content is per-workspace
-and per-mode: switching the focused slot to a different workspace restores
-that workspace's command input state.
-
-Behaviours:
-- Command mode: typing a command name + =Enter= → invokes the command
-  (=Tab= completes shell-style; =Up=/=Down= browse the suggestions, see
-  [[*Command input]]).
-- Parameters follow the command name, separated by spaces.
-- Bash mode: a shell line + =Enter= → runs in background; output goes to
-  the =message= panel type and the launching terminal. The focused slot
-  switches to the =message= panel (unless already visible), and
-  =%=-placeholders are expanded from the selected metarecord first (see
-  [[*Command input]]). =Tab= completes via bash itself (see [[*Bash completion
-  (bash mode)]]). A leading =!= typed in command mode switches to bash mode.
-- When a script calls =POST /gui/prompt=, the command input grabs the focus
-  (in command mode) and shows the script-supplied prompt text — while one of
-  the workspaces that script owns is on screen; switching to another workspace
-  hands the line back (see [[*Ownership of a script's workspaces]]).
-- Both modes keep a per-repository input history — =ctrl+p=/=ctrl+n= walk,
-  =ctrl+r= searches (see [[*Input history]]).
+Moved to the wiki: doc "The command input".
 
 *** Command names (non-exhaustive default set)
 
@@ -919,18 +533,9 @@ Behaviours:
 | =user:*=             | Whatever =~/.config/metafolder/gui/commands.js= defines — see [[*User commands]] |
 | =devtools:open=      | Open the WebKit inspector (replaces the suppressed native menu's Inspect Element) |
 | =quit=               | Exit the GUI                                   |
-| =command-input:focus command=  | Focus the command input in command mode (default =:=)         |
-| =command-input:focus bash=     | Focus the command input in bash mode (default =!=)            |
-| =editing:unfocus=         | Remove focus from the active text input (=text-input = true=) |
-| =editing:discard=         | Clear the active text input, then remove focus (default =ctrl+q=; =text-input = true=) — the command input when it holds the focus, otherwise the focused panel input |
-| =editing:confirm=         | Confirm the current text input (=text-input = true=) — the *command input only*: elsewhere the key is left to the panel form's own handler |
-| =editing:goto line-start= | Move cursor to start of line (=text-input = true=)            |
-| =editing:goto line-end=   | Move cursor to end of line (=text-input = true=)              |
 | =answer:send <value>=     | Resolve the current =POST /gui/input= wait with =<value>=     |
 | =script-keys:toggle=      | Give the keys a script's question awaits back to the GUI, or take them again (default =tab=; see [[*Script keys]]) |
 | =script:stop [<task>]=    | Stop a running script — its whole process group. No argument: the script asking the current question |
-| =pick:confirm=            | Confirm the focused picker's selection, hand its UUID back to the calling form (see [[*Value picker]]) |
-| =pick:cancel=             | Cancel the focused picker, returning to the calling form with no value |
 | =message:clear=           | Clear the =message= panel log for this workspace              |
 | =status:clear=            | Dismiss the transient status-bar message (default =ctrl+l=)   |
 | =file-manager:track=        | Add selected path via =POST .../track= (=mf_watch = false=)   |
@@ -971,64 +576,7 @@ an otherwise-empty field likewise asks for a value to attach to the chosen type.
 
 ** Input history
 
-Text zones keep a persistent input history, *per repository × per zone*.
-This is purely a GUI feature — the daemon plays no part in it (see [[*Storage]]).
-The shared helper (=/__history.js=, used by the shell command input and the
-panels — one implementation, injected dependencies) attaches three keys
-directly on the input (the same pattern as the panels' local =Enter=/=Escape=
-handling — *not* =keybindings.toml=; note that a user binding of =ctrl+p= /
-=ctrl+n= / =ctrl+r= with =text-input = true= would shadow them):
-
-- =ctrl+p= / =ctrl+n= — walk back / forward through the zone's entries,
-  readline-style: the in-progress draft is kept at the newest position and
-  restored when walking past it; any real edit resets the walk (the edited
-  text becomes the new draft). Entries are fetched at the start of each walk.
-  *Leaving the zone ends the walk*: the position cannot outlive the focus,
-  since the text it belongs to does not either (the shell restores the
-  workspace's stored draft on blur), so the first =ctrl+p= after coming back
-  recalls the newest entry again rather than the one after wherever the
-  previous walk stopped.
-- =ctrl+r= — an fzf-style search overlay anchored to the input, with its own
-  search field: entries are listed newest first, deduplicated, and filtered
-  by client-side ordered-substring matching (the OSM (doc "Ordered substring matching")
-  semantics, without the path-mode =/= barrier). =ctrl+p=/=ctrl+n= and the
-  arrows move the selection, =Enter= inserts the selection into the input,
-  =Escape= cancels; losing focus also cancels.
-
-The zones (v1): =shell:command= and =shell:bash= (the two command-input
-modes — separate histories; a script prompt records nothing), and
-=metarecord-list:finder= / =metarecord-list:query=. An entry is recorded on
-*explicit submission only* — =Enter= in the input or the corresponding
-apply command, never a debounced keystroke. The shell command mode records
-what actually ran (the resolved suggestion), the other zones the submitted
-text.
-
-The active repository is the workspace's =active_repo=. Without one, the
-history still works but is *session-only* (in memory, per attachment); it
-is not migrated into a repository's persisted history when one becomes
-active.
-
-*** Storage
-
-Histories are owned by the *GUI*, not the daemon — they are a pure GUI
-concern, so there are no daemon endpoints for them even though the files
-live inside =.metafolder/=: plain-text files
-=.metafolder/gui/history/<zone>=, UTF-8, one entry per line, oldest first /
-newest last. The GUI resolves the repository's =.metafolder/= location from
-=GET /repos= (the parent of =internal_dir=, correct for external
-=.metafolder/= placements) and reads/writes the files itself, through the
-=history_read= / =history_append= Tauri commands (exposed to panels as
-=metafolder.history.read/append=). Files are capped to the newest 1000
-entries and rewritten atomically (temp file + rename); an append equal to
-the newest entry is a no-op (consecutive dedup); an empty/whitespace or
-multi-line entry is rejected.
-
-Unlike =internal/=, =gui/history/= is ordinary trackable =.metafolder/=
-content — harmless to track, and in practice covered by the default
-=\.metafolder(/.*)?$= ignore pattern set at init.
-
-Zone names match =[a-z0-9:_-]{1,64}= (rejected otherwise) — no =/=, =.= or
-uppercase, so a zone cannot traverse out of the history directory.
+Moved to the wiki: doc "Input history".
 
 ** Keyboard navigation
 

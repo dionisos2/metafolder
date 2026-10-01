@@ -1,0 +1,58 @@
+title: Value picker
+tags: GUI
+kind: reference
+aliases: value-picker picker pick
+summary: To fill a reference, a form opens a throwaway workspace in the other slot: browse it with the ordinary panels, then confirm the highlighted metarecord.
+
+Typing a metarecord's uuid to fill a `ref` or a `tree_ref` is impractical. The
+🔍 button of a value field ([[Field editor]]) opens a ''picker'' instead: an ordinary
+workspace, made for the occasion, in which you find the metarecord with the usual
+panels and keys, then hand it back to the form.
+
+!! Picking
+
+* The picker opens in the ''other'' slot, and takes the focus; the form stays visible. Its status bar says what to choose.
+* For a `ref` it is a `metarecord-list`, with the finder focused: type to narrow. It starts on the query configured for the field, if there is one ([[GUI configuration]]). For a `tree_ref` it is the `treeref` panel, on the field's own tree.
+* Move as usual: highlighting a row commits nothing.
+* <<key "pick:confirm" "ctrl+enter">> confirms; <<key "pick:cancel" "ctrl+escape">> gives up. Closing the picker like any workspace gives up too.
+
+Either way the picker disappears, the slot shows again what it showed before — or
+is hidden again — and the focus returns to the form.
+
+The two keys are chords so that plain `Enter` and `Escape` keep their meaning in
+the picker's panels. Confirming with nothing highlighted is refused, and the picker
+stays open.
+
+!! What comes back
+
+* For a `ref`, the uuid is the value.
+* For a `tree_ref`, the uuid is the ''parent''; the name remains to be typed. Picking `/document/test` and typing `report` gives `/document/test/report`.
+
+A picker can also return a ''path'': the `repos` panel's //Browse…// opens the
+`file-manager` on the disk, and the folder highlighted there comes back.
+
+!! How it works
+
+A thin protocol over [[Workspace variables]]. The form calls
+`metafolder.pick.start(spec)`, and decides everything about its picker, since only
+it knows what the picker is for:
+
+|!`spec` |!Meaning |
+|`token` |any value, returned with the answer: it tells the form which of its fields asked |
+|`panel` |`{type, vars}` — the panel type to show, and the workspace variables to start it with (a query, a tree field) |
+|`repo` |the picker's repository |
+|`name` |the picker workspace's name |
+|`prompt` |the text shown in its status bar |
+|`result` |`uuid` (the default): the picker's `selected_metarecord`. `path`: the first of its `selected_paths` |
+
+The GUI creates the workspace, records `pick_request` on it — who asked, the token,
+which slot it took and what that slot showed — and shows it in the slot other than
+the caller's.
+
+On confirmation it reads the selection, closes the picker, restores the slot and
+writes `pick_result` in the ''caller's'' workspace: `{token, uuid}` or
+`{token, path}`, and `{token, cancelled: true}` for a cancellation. This is the one
+write across workspaces, and it is why the protocol is in the GUI's Rust side: a
+panel only reads and writes the variables of its own workspace.
+
+`createPickRunner` of `/__value-widget.js` wraps the exchange in a promise.

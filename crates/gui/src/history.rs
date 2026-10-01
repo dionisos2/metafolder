@@ -1,4 +1,4 @@
-//! Per-repo input history (spec-gui "Input history"): one plain-text file per
+//! Per-repo input history (doc "Input history"): one plain-text file per
 //! text zone under `.metafolder/gui/history/<zone>`, one entry per line,
 //! oldest first. Purely a GUI concern — the daemon has no part in it; the GUI
 //! resolves the repository's `.metafolder/` location (via `GET /repos`) and

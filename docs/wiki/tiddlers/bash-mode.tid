@@ -1,0 +1,74 @@
+title: Bash mode
+tags: Commands
+kind: reference
+aliases: bash bang placeholder placeholders substitution substitutions
+summary: After `!`, the command input runs a shell line: its output goes to the message panel, `Tab` completes like bash, and `%` tokens stand for the selection.
+
+<<key "command-input:focus bash" "!">> puts [[the command input|The command input]]
+in bash mode: the prompt reads `!` and the line is a shell command.
+<<key "editing:confirm" Enter>> runs it as typed, with `sh -c`, in the background.
+
+* The line is written to the workspace's messages as `$ command`, then each line of its output as it comes; a failure adds `[exit N]` and an error in the status bar. The output also goes to the terminal the GUI was started from.
+* The focused slot switches to the `message` panel so that the output shows — unless a `message` panel is already visible for this workspace, in which case nothing moves.
+* While it runs, it shows in the task bar as a script, and `script:stop` stops it with everything it started ([[Status bar and task bar]]).
+
+The mode is a convenience of the input, not another format: in a keybinding or in
+`mf gui command`, a shell line is an invocation starting with `!`.
+
+!! Completion
+
+`Tab` completes the word before the caret by asking `bash` itself — on `Tab` only,
+never while typing.
+
+* With the `bash-completion` package installed, its completions are used (the subcommands of `git`, for instance). Otherwise command names complete in command position and file names elsewhere, a directory shown with a trailing `/`.
+* A single candidate is inserted, followed by a space unless it is a directory.
+* Several candidates first extend the word to their longest common start, then are listed: `Up` and `Down` choose, `Tab` inserts. `Enter` still runs the line as typed, as in bash. Any edit drops the list.
+* On an empty line the list holds the shell's own commands and keywords, not every program of `PATH`; one letter typed searches them all.
+
+The typed line is never expanded nor run to complete it: it is split at spaces, and
+the word replaced is cut the way readline cuts it — after an opening quote, after `=`
+or `:`. A completion gives up after 3 seconds and returns at most 500 candidates.
+Without `bash`, `Tab` reports an error in the status bar.
+
+!! Placeholders
+
+A `%` token in the line is replaced, just before the line runs, by something of the
+selection or of the workspace — to hand them to a script:
+
+|!Token |!Replaced by |
+|`%u` |the selected metarecord's uuid |
+|`%v` |its version |
+|`%p` |the selected file's absolute path on disk |
+|`%r`, `%r:uuid` |the workspace's repository, as a uuid |
+|`%r:name` |its name |
+|`%<field>` |the value of a field holding one scalar value |
+|`%<field>:path` |a `tree_ref` field, as its path in its own tree |
+|`%%` |a literal `%` |
+
+```
+!echo %u %v           runs  echo '8f3…a1' '7'
+!vlc %p               runs  vlc '/music/My Track.flac'
+!mf -u %r metarecord  runs  mf -u 'a1b2…' metarecord
+!grep %artist notes   runs  grep 'Miles Davis' notes
+```
+
+* A field name is a letter or `_` followed by letters, digits or `_`; `u`, `v`, `p` and `r` are taken. A `%` followed by neither `%` nor a name stays as it is: `50% off`.
+* Each value is quoted for the shell, so a path with spaces or quotes is one argument.
+* `%<field>` gives a string, an integer, a float, a date (as ISO-8601) or a boolean (`true`, `false`). A `tree_ref` needs the `:path` form; the other reference types cannot be substituted.
+* `%p` and `%r` need no selected ''metarecord'': `%p` works on an untracked file chosen in the file manager.
+
+Substitution is ''strict''. If a token cannot be replaced, the line does ''not'' run
+and the status bar says why: nothing selected, no repository, no selected path or
+several, a field that is missing, holds several values or holds `Nothing`, a bare
+`%<field>` naming a `tree_ref`, an unknown `:modifier`. A half-substituted line never
+runs.
+
+Only shell lines are substituted; a `%` in a command's argument is left alone.
+
+!! `%p` is not `%mfr_path:path`
+
+`%p` is where the selected file ''is on disk'' — what a script usually wants.
+`%<field>:path` is the position of a `tree_ref` in its own tree, as the daemon
+resolves it: for `mfr_path`, the path ''inside the repository'', not the path on disk
+([[TreeRef path conventions]]). Use `%p` for the file, and `%<field>:path` to follow
+any other tree field, a tag for instance.

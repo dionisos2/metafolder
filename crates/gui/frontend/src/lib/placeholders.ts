@@ -1,4 +1,4 @@
-// Placeholder substitution for `!` shell commands (spec-gui "Command input").
+// Placeholder substitution for `!` shell commands (doc "Bash mode").
 // A `!` command line may reference the selection and the active workspace
 // through `%`-tokens, so the GUI can hand their identity to user scripts:
 //

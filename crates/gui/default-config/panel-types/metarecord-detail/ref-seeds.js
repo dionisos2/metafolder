@@ -7,7 +7,7 @@
 // metarecords may be named (the `metarecord-list` query syntax) and how each
 // is shown (its columns syntax — the very vocabulary a list cell is built
 // with, /__columns.js). The naming views follow the columns: the whole line
-// first, then one column at a time (spec-gui "Completion views"), because
+// first, then one column at a time (doc "Completion views"), because
 // which naming reaches the wanted metarecord fastest depends on the
 // metarecord. Every view is one *page* of the daemon at a time (counted, so
 // `more` is known), narrowed on the typed text — the rule behind a `*` entry

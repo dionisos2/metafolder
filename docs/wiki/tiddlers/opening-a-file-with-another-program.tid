@@ -10,7 +10,7 @@ in any panel carrying the selection — the list, the detail, `file`, the file m
 choose ''Open with…'' in the right-click menu of a file row, which selects that row
 first.
 
-The command input asks for the program, completing over the `open-with` list of
+The command input asks for the program ([[Interactive command arguments]]), completing over the `open-with` list of
 [[GUI configuration]] — by default `["xdg-open"]`, the desktop's own choice for that
 kind of file:
 

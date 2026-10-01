@@ -1,0 +1,6 @@
+title: editing:confirm
+tags: [[GUI command]] Commands
+kind: reference
+summary: Confirm the focused text input
+
+Submits the command input: runs the command, or answers the question on the line. It acts on the command input ''only'': in a field of a panel the key is left to the panel, whose form has its own meaning for it (running the query, saving the field). See [[The command input]].

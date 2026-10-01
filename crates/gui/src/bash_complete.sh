@@ -1,4 +1,4 @@
-# Completion harness for the GUI bash input (spec-gui "Command input").
+# Completion harness for the GUI bash input (doc "Bash mode").
 # $1 = the command line up to the cursor. Prints the word being completed,
 # then the candidates, all NUL-terminated.
 #

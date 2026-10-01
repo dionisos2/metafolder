@@ -658,7 +658,7 @@ mod tests {
     /// the first argument; every `m` binding is that command with the
     /// operation pre-filled. The listing expands exactly these, so a binding
     /// that names no operation would also hide that operation from the
-    /// command input (spec-gui "Command listing").
+    /// command input (doc "The command input").
     #[test]
     fn test_shipped_defaults_prefill_the_field_operations() {
         let defaults = include_str!("../default-config/keybindings.toml");

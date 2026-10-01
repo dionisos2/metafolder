@@ -142,7 +142,7 @@ pub struct GuiConfig {
     /// shown — the `metarecord-list` query and columns syntaxes). The `"*"`
     /// entry is the default rule, read for every field that names none.
     pub ref_seeds: std::collections::HashMap<String, RefSeed>,
-    /// Completion-wide knobs (`[completion]`, spec-gui "Completion views").
+    /// Completion-wide knobs (`[completion]`, doc "Completion views").
     pub completion: CompletionSettings,
     /// External programs offered by `file:open-with` (doc "Opening a file
     /// with another program"), read from the top-level `open-with` array. They

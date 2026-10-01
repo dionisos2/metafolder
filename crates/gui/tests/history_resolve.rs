@@ -1,4 +1,4 @@
-//! Input-history repo resolution (spec-gui "Input history"): the GUI turns a
+//! Input-history repo resolution (doc "Input history"): the GUI turns a
 //! repository uuid into its `.metafolder/` location through the daemon's
 //! `GET /repos` (parent of `internal_dir`), then reads/writes the history
 //! files itself — no daemon endpoint is involved. A stub daemon on an

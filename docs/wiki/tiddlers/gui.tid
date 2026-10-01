@@ -12,13 +12,13 @@ From top to bottom, the window holds:
 
 * the ''tab bar'' — one tab per [[workspace|Workspaces]];
 * one or two ''panel slots'' side by side, each showing a panel of the workspace assigned to it ([[Panel slots and layout]], [[Panel types]]);
-* the ''command input'', always there: a command name after `:`, a shell command after `!`;
+* the ''command input'', always there: a command name after `:`, a shell command after `!` ([[The command input]]);
 * the ''task bar'', when something is in flight, and the ''status bar'' ([[Status bar and task bar]]).
 
 Four principles shape it:
 
 * ''Keyboard first'': every command can be reached from the keyboard, and every key can be rebound.
-* ''Command driven'': everything the GUI does is a named command, typed in the command input or bound to a key; the menus and buttons invoke the same commands.
+* ''Command driven'': everything the GUI does is a named command, typed in the command input or bound to a key; the menus and buttons invoke the same commands ([[Commands]]).
 * ''Scriptable'': the GUI serves a local HTTP API, so that a script — through `mf gui` — can open panels and wait for the user's answer.
 * ''Themeable'': its look is a CSS file read at startup.
 

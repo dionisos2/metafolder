@@ -139,7 +139,7 @@ async function collect(spec: Spec, provided: string[], answers: string[]) {
   const queue = [...answers];
   const args = await collectArgs(spec.args ?? [], provided, async (request) => {
     prompts.push(request.prompt);
-    // The recorded candidates are the labels the list shows (spec-gui
+    // The recorded candidates are the labels the list shows (doc
     // "Completion views"); the values ride along in the live source.
     completions.push(
       Promise.resolve(request.completions).then((items) =>

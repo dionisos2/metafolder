@@ -642,7 +642,7 @@ describe('argSpecs registry', () => {
 
 describe('promptsForInput', () => {
   // The autocomplete marks a command with a trailing "…" when invoking it
-  // reopens the minibuffer to collect input (spec-gui "Command"): the same
+  // reopens the minibuffer to collect input (doc "The command input"): the same
   // ellipsis convention as menu items that open a dialog. The signal is the
   // interactive-argument mechanism — a registered ArgSpec, which every command
   // that takes arguments declares, builtins included.
@@ -888,7 +888,7 @@ describe('resolvePromptValue', () => {
     expect(resolvePromptValue('newvalue', [], 0, false)).toBe('newvalue');
   });
 
-  // The candidate is a couple (spec-gui "Completion views"): the label is what
+  // The candidate is a couple (doc "Completion views"): the label is what
   // is shown and matched whole, the value is what the command receives.
   const named = [
     { name: 'musique (uuid-1)', value: 'uuid-1' },
@@ -914,7 +914,7 @@ describe('resolvePromptValue', () => {
   });
 });
 
-describe('completion views (spec-gui "Completion views")', () => {
+describe('completion views (doc "Completion views")', () => {
   function scriptedPrompt(answers: (string | null)[]) {
     const requests: ArgPromptRequest[] = [];
     let i = 0;

@@ -1,0 +1,71 @@
+title: Command naming
+tags: Commands
+kind: rationale
+aliases: naming verbs command-names
+summary: One rule names every GUI command — a namespace, a verb from a closed list, and whatever varies as an argument — so that a name says whether it writes to the repository.
+
+Every command is named
+
+```
+<namespace>:<verb> [arguments]
+```
+
+with the verb taken from the closed list below, and ''whatever varies between sibling
+commands is an argument, never part of the verb''. There is no `zoom-in` beside
+`zoom-out`, no `bulk-set-field` beside `bulk-delete`: one `file:zoom`, one
+`metarecord:bulk`, each taking what varies.
+
+The namespace is the panel type for a panel's command (`metarecord-list:next`), and
+the thing acted on for the shell's (`panel:split`, `workspace:new`). A command that
+is the GUI half of an `mf` subcommand — same work, same fields — takes the `mf:`
+prefix and the CLI's verb: `mf:order` is `mf order`. (`reconcile:run` is older than
+the rule and keeps its name.)
+
+!! Why arguments and not names
+
+* The set stays small enough to read: the sweep of September 2026 took it from about 200 commands to about 135.
+* A keybinding says what it does: `{ command = "metarecord:bulk selection delete" }`.
+* A variant costs an entry in a table, not a command.
+
+Naming the operation in an argument would hide it — `metarecord:bulk selection set`
+cannot be found by typing `set` if only `metarecord:bulk` is listed — and listing
+every combination would bury the list. The command input therefore lists, besides
+every command, each invocation with arguments ''that a key runs''
+([[The command input]]). What the user put on a key is found by reading the list;
+the rest, through the command's own questions.
+
+!! The verbs
+
+Grouped by what they touch, which is what a name must make obvious:
+
+|!Touches |!Verbs |
+|a text zone |`focus <zone>`, `clear <zone>`, `apply <zone> [stay]`, `insert <zone> <text> [stay]` |
+|a form, an overlay, a panel |`open [what]`, `open-X` (a form of this panel), `close`, `cancel`, `reveal <type>` |
+|a view flag |`toggle <flag>` |
+|the cursor or the selection |`next`, `prev`, `first`, `last`, `page <which>`, `find [text]`, `select <toggle/all/none>`, and the `row-X` family (the row under the cursor) |
+|a view setting |`set <setting> [value]` |
+|the media player |`play-pause`, `restart`, `mute`, `seek <±s>`, `speed <up/down/reset>`, `volume <up/down>`, `zoom <in/out/fit/reset>` |
+|the repository |`<noun> <op>` with `op` among `set`, `add`, `remove`, `unset`, `delete`, and the plain verbs `create`, `delete`, `rename`, `track`, `trash`, `restore`, `prune`, `reconcile`, `rollback`, `undo`, `redo`, `revert [what]`, `mark`, `run`, `load`, `unload`, `stop` |
+
+''A command that writes to the repository carries either `<noun> <op>` or a plain
+verb of the last row; everything else only moves the view.'' Nothing that writes can
+be mistaken for something that scrolls.
+
+The five operations are those of the daemon and of the CLI ([[The verb pattern]]):
+`set` replaces a field's values, `add` and `remove` put one in and take one out,
+`unset` removes the field, and `delete` destroys a thing that has an id.
+
+!! Two forms kept on purpose
+
+* `open-X` names a ''form of this panel'' (`metarecord:open-add-field`, `repos:open-init`). Folding it into `open <what>` would collide with the bare `repos:open`, which shows the repos panel and opens no form.
+* `row-X` is the cursor family (`metarecord:row-next`, `row-edit`, `row-delete`). It is deliberately not `field-X`: `metarecord:field-edit` would sit one hyphen away from `metarecord:field edit`, which asks which field and which value instead of taking the row under the cursor.
+
+`edit-` is not a verb. Focusing an input is `focus`, opening a form is `open`, and an
+edit made through the command input is `<noun> <op>`: nothing is named for the fact
+that typing happens.
+
+!! What the renaming taught
+
+* A name built by a template in the code is invisible to a search, and so to the test that checks the keybindings: helpers build the ''arguments'', never the name.
+* Folding two commands into one argument can narrow a rule that listed them: the keys reserved for the command input came out reserving `:` and no longer `!`.
+* An exact key match wins over a longer sequence: binding `m b` makes `m b d` unreachable.

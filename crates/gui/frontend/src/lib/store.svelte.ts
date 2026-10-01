@@ -438,7 +438,7 @@ export async function initStore() {
   }>('prompt-requested', (event) => {
     const prompt = promptRequestState(event.payload);
     // A script's list is static and has one view: strings are their own
-    // labels and values (spec-gui "Completion views").
+    // labels and values (doc "Completion views").
     const items = completionLabels(prompt.completions);
     store.ui.promptText = prompt.text;
     store.ui.promptItems = items;

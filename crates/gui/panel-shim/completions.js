@@ -1,4 +1,4 @@
-// The candidate rules every completion shares (spec-gui "Completion views"):
+// The candidate rules every completion shares (doc "Completion views"):
 // a candidate is a couple — the label shown (and matched whole) and the value
 // the command receives — a plain string is both, and two candidates that read
 // the same are both suffixed with their values so every listed row names
@@ -19,7 +19,7 @@
  */
 
 /**
- * One cycled view of a completion (spec-gui "Completion views"): its title
+ * One cycled view of a completion (doc "Completion views"): its title
  * while on screen, and its candidates for the typed text and the arguments
  * collected so far.
  * @typedef {{title?: string,

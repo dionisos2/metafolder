@@ -1,5 +1,5 @@
-// The shell builtins declare their arguments like every other command (spec-gui
-// "Command"), so an invocation that merely omits one is collected in the
+// The shell builtins declare their arguments like every other command (doc
+// "Interactive command arguments"), so an invocation that merely omits one is collected in the
 // minibuffer — with its completions — instead of reaching the handler and
 // failing there. `panel:set` typed bare asks which setting, then which panel
 // type; `panel:set type` supplies the first and asks only the second.

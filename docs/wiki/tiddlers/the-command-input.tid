@@ -1,0 +1,64 @@
+title: The command input
+tags: Commands
+kind: guide
+aliases: command-input minibuffer editing autocomplete suggestions
+summary: The line above the status bar: type a command after `:` or a shell line after `!`, pick from the suggestions, answer what a command or a script asks.
+
+The command input is the line just above the status bar, always there. It runs
+[[commands|Commands]], runs shell lines, and is where a command or a script asks
+its questions.
+
+* <<key "command-input:focus command" ":">> focuses it in ''command mode'' — the prompt reads `:`.
+* <<key "command-input:focus bash" "!">> focuses it in ''bash mode'' — the prompt reads `!` ([[Bash mode]]). Typing `!` first in an empty command line switches too.
+* <<key "editing:unfocus" Escape>> leaves it, keeping what was typed.
+
+There is one command input, and it acts on the workspace of the focused slot. What
+is typed is kept ''per workspace and per mode'': moving to another workspace brings
+back its own half-typed line, and each mode has its own.
+
+!! Running a command
+
+Type some of a command's name. The list above the line shows the commands that
+match, with what each does and the keys bound to it; it shows only while the input
+has the focus.
+
+* The match is by ordered pieces, not by prefix: the text is split at spaces and the pieces must appear in the name in that order, in any case. `con def` matches like `.*con.*def.*`. Names starting with the first piece come first.
+* The first row is highlighted. `Up` and `Down` move the highlight, `Home` and `End` jump to the ends.
+* <<key "editing:confirm" Enter>> ''runs the highlighted row'' — so `pa sw` then `Enter` runs `panel:swap`. When nothing is listed, because arguments were typed after the name, it runs the line as typed.
+* `Tab` writes the highlighted row into the line without running it, ready for arguments.
+
+A row ending in `…` is a command that will ask for something before acting
+([[Interactive command arguments]]); one without acts at once. The `…` is not part of
+the name.
+
+The list holds every command, and one more row for each ''key bound to an invocation
+with arguments'': `panel:set type file` has its row, with its key, because a key runs
+it. So every shortcut can be found by reading the list, and the variants nobody bound
+do not fill it — they are reached by running the command bare and answering.
+
+Since `Enter` runs the highlighted row, a line that is the beginning of a listed row
+runs that row: `panel:set type` then `Enter` runs the first `panel:set type …` listed,
+it does not ask for the type. Type `panel:set` alone to be asked.
+
+!! Editing keys
+
+They act on the command input, and on any text field of a panel that has the focus:
+
+|!Key |!Command |!Does |
+|<<key "editing:confirm" Enter>> |`editing:confirm` |submit — the command input only; in a panel's field the key is the panel's |
+|<<key "editing:unfocus" Escape>> |`editing:unfocus` |leave, keeping the text |
+|<<key "editing:discard" "ctrl+q">> |`editing:discard` |empty the field and leave |
+|<<key "editing:goto line-start" "ctrl+a">> |`editing:goto line-start` |caret to the start |
+|<<key "editing:goto line-end" "ctrl+e">> |`editing:goto line-end` |caret to the end |
+
+`ctrl+p`, `ctrl+n` and `ctrl+r` recall what was typed before ([[Input history]]).
+
+!! Answering a question
+
+When a command needs an argument, or a script asks something, the prompt shows the
+question in place of `:` and the list shows the possible answers. The keys differ
+slightly from command mode — see [[Interactive command arguments]]. `Escape` gives up.
+
+A question belongs to the workspace it was asked in. Showing another workspace puts
+it away — the line is an ordinary command line again — and coming back restores it,
+with what was typed.

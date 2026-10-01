@@ -283,7 +283,7 @@ impl Emit {
     const BOTH: Emit = Emit { workspaces: true, layout: true };
 }
 
-/// One slot of a value picker's initial layout (spec-gui "Value picker"):
+/// One slot of a value picker's initial layout (doc "Value picker"):
 /// a panel type plus the workspace variables to seed it with.
 #[derive(Debug, Clone, Deserialize)]
 pub struct PickPanel {
@@ -294,7 +294,7 @@ pub struct PickPanel {
 }
 
 /// Everything the calling form decides about its picker. The caller owns the
-/// whole initial state — only it knows what the picker is for (spec-gui
+/// whole initial state — only it knows what the picker is for (doc
 /// "Value picker"). `caller_ws` and `token` form the return contract. The
 /// picker opens in the *other* slot, so a single panel describes it.
 #[derive(Debug, Clone, Deserialize)]
@@ -635,6 +635,17 @@ impl GuiState {
     /// tab was closed), or becomes unassigned (but stays visible) when no
     /// workspace remains.
     pub fn close_workspace(&self, ws_id: &str) -> Result<(), String> {
+        // A value picker closed by hand is a cancel (doc "Value picker"): the
+        // form that opened it is waiting for an answer, and the slot it took
+        // is to be given back. With the caller gone there is nobody to answer,
+        // and it closes like any workspace.
+        let is_picker = self
+            .lock()
+            .workspace(ws_id)
+            .is_ok_and(|ws| ws.vars.get("pick_request").is_some_and(|v| !v.is_null()));
+        if is_picker && self.finish_pick(ws_id, false).is_ok() {
+            return Ok(());
+        }
         self.mutate(|inner| {
             let index = inner
                 .workspaces
@@ -1005,7 +1016,7 @@ impl GuiState {
         Ok(())
     }
 
-    // ── Value picker (spec-gui "Value picker") ───────────────────────────
+    // ── Value picker (doc "Value picker") ───────────────────────────
 
     /// `metafolder.pick.start` — opens a picker in the slot *other* than the
     /// caller's, so the calling form stays visible in the focused slot. Creates
@@ -1070,26 +1081,26 @@ impl GuiState {
     /// `pick:confirm` — hands the focused picker's `selected_metarecord` uuid
     /// back to the calling workspace as `pick_result`, then closes the picker.
     pub fn pick_confirm(&self) -> Result<(), String> {
-        self.finish_pick(true)
+        let picker = self.focused_workspace_id().ok_or("no focused workspace")?;
+        self.finish_pick(&picker, true)
     }
 
     /// `pick:cancel` — closes the focused picker, returning to the caller with
     /// `pick_result = {token, cancelled: true}` and no value.
     pub fn pick_cancel(&self) -> Result<(), String> {
-        self.finish_pick(false)
+        let picker = self.focused_workspace_id().ok_or("no focused workspace")?;
+        self.finish_pick(&picker, false)
     }
 
     /// Shared body of [`pick_confirm`](Self::pick_confirm) /
-    /// [`pick_cancel`](Self::pick_cancel): reads the focused picker's request
-    /// and selection, builds the result, closes the picker, refocuses the
-    /// caller, then delivers `pick_result`.
-    fn finish_pick(&self, confirm: bool) -> Result<(), String> {
+    /// [`pick_cancel`](Self::pick_cancel): reads the picker's request and
+    /// selection, builds the result, closes the picker, refocuses the caller,
+    /// then delivers `pick_result`.
+    fn finish_pick(&self, picker_ws: &str, confirm: bool) -> Result<(), String> {
         // Read the picker's link + slot-restore info + current selection.
-        let (picker_ws, caller_ws, token, picker_slot, restore, result_kind, selected, paths) = {
+        let (caller_ws, token, picker_slot, restore, result_kind, selected, paths) = {
             let inner = self.lock();
-            let picker_ws =
-                inner.slot(inner.focused).workspace.clone().ok_or("no focused workspace")?;
-            let ws = inner.workspace(&picker_ws)?;
+            let ws = inner.workspace(picker_ws)?;
             let request = ws
                 .vars
                 .get("pick_request")
@@ -1106,7 +1117,7 @@ impl GuiState {
             let result_kind = request["result"].as_str().unwrap_or("uuid").to_string();
             let selected = ws.vars.get("selected_metarecord").cloned().unwrap_or(Value::Null);
             let paths = ws.vars.get("selected_paths").cloned().unwrap_or(Value::Null);
-            (picker_ws, caller_ws, token, picker_slot, restore, result_kind, selected, paths)
+            (caller_ws, token, picker_slot, restore, result_kind, selected, paths)
         };
 
         // Build the result (a confirm needs the kind of selection requested).
@@ -2051,6 +2062,29 @@ mod tests {
             state.get_var("ws-1", "pick_result").unwrap(),
             json!({ "token": 7, "cancelled": true })
         );
+    }
+
+    #[test]
+    fn test_closing_a_picker_by_hand_is_a_cancel() {
+        // A picker closed like any workspace (its tab's ×, workspace:close)
+        // must still answer the form that opened it — which otherwise waits
+        // for ever — and give the slot back.
+        let (_, state) = state();
+        let other = state.workspace_new(Some("repo-1".into())); // ws-2, focused left
+        state.panel_split().unwrap(); // right shows ws-2's detail view
+        let picker = state.pick_start(pick_spec(&other)).unwrap();
+
+        state.close_workspace(&picker).unwrap();
+
+        assert!(state.workspaces().iter().all(|w| w.id != picker));
+        assert_eq!(
+            state.get_var(&other, "pick_result").unwrap(),
+            json!({ "token": 7, "cancelled": true })
+        );
+        let layout = state.layout();
+        assert_eq!(layout.right.workspace_id.as_deref(), Some(other.as_str()));
+        assert_eq!(layout.right.panel_type.as_deref(), Some("metarecord-detail"));
+        assert_eq!(layout.focused, SlotId::Left);
     }
 
     // ── Status bar and message log ───────────────────────────────────────

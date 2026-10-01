@@ -75,7 +75,7 @@ export async function mount(root, metafolder) {
   let internalDir = null;
   /** @type {string|null} */
   let currentDir = null;
-  // True when this panel is a value picker resolving to a folder path (spec-gui
+  // True when this panel is a value picker resolving to a folder path (doc
   // "Value picker", e.g. the repos panel's "Browse…"): the right-click menu then
   // offers "Pick this folder", so confirming does not depend on knowing the
   // Ctrl+Enter keybinding.
@@ -545,7 +545,7 @@ export async function mount(root, metafolder) {
     await selection.clear();
   }
 
-  // Confirm a folder-path pick with `path` (spec-gui "Value picker"): publish it
+  // Confirm a folder-path pick with `path` (doc "Value picker"): publish it
   // as the selection and run the global confirm command, which hands it back to
   // the caller (e.g. the repos panel) as `pick_result`.
   /** @param {string} path */
@@ -1234,7 +1234,7 @@ export async function mount(root, metafolder) {
   async function start() {
     repo = /** @type {string|null} */ ((await workspace.get('active_repo')) ?? null);
     constrainBox.disabled = repo === null;
-    // A value picker (spec-gui "Value picker") can seed the directory to open
+    // A value picker (doc "Value picker") can seed the directory to open
     // at — e.g. the repos panel's folder picker starts from the typed path.
     const seedDir = await workspace.get('file-manager:start-dir');
     const seedStart = typeof seedDir === 'string' && seedDir ? seedDir : null;

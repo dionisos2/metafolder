@@ -202,7 +202,7 @@ declare namespace Metafolder {
     grammarSource(): Promise<string>;
   }
 
-  /** Value picker (spec-gui "Value picker"): opens a linked picker workspace
+  /** Value picker (doc "Value picker"): opens a linked picker workspace
    *  whose confirmed selection comes back as the `pick_result` workspace
    *  variable, matched by `token`. */
   interface Pick {
@@ -223,7 +223,7 @@ declare namespace Metafolder {
      *  exists. */
     refSeed(field: string): Promise<{ query: string | null; columns: string } | null>;
     /** What joins the columns of a multi-column completion label (config.toml
-     *  `[completion].label-separator`, spec-gui "Completion views"). */
+     *  `[completion].label-separator`, doc "Completion views"). */
     labelSeparator(): Promise<string>;
   }
 
@@ -236,7 +236,7 @@ declare namespace Metafolder {
     onChange(key: string, listener: (value: unknown, key?: string) => void): void;
   }
 
-  /** One completion candidate (spec-gui "Completion views"): the label shown
+  /** One completion candidate (doc "Completion views"): the label shown
    *  (and matched whole) and the value the command receives. A plain string is
    *  both. */
   type CompletionItem = string | { label: string; value: string };
@@ -258,7 +258,7 @@ declare namespace Metafolder {
       | Promise<CompletionItem[] | CompletionPage>;
   }
 
-  /** One declared command argument (spec-gui "Command"). Its `prompt`,
+  /** One declared command argument (doc "Interactive command arguments"). Its `prompt`,
    *  `initial` and `complete` are functions evaluated *lazily* when the
    *  argument is asked for (never at registration), each receiving the
    *  arguments already collected — so `initial` can read live state (e.g. the
@@ -277,7 +277,7 @@ declare namespace Metafolder {
       | CompletionItem[]
       | CompletionPage
       | Promise<CompletionItem[] | CompletionPage>;
-    /** The cycled views of the candidates (spec-gui "Completion views"), for
+    /** The cycled views of the candidates (doc "Completion views"), for
      *  the case where *which* views there are depends on the arguments
      *  collected so far. Wins over `complete`. */
     views?(prior: string[]): CompletionView[] | Promise<CompletionView[]>;
@@ -440,7 +440,7 @@ declare namespace Metafolder {
     delete(): Promise<number>;
   }
 
-  /** Per-repo input history (spec-gui "Input history"): GUI-side files under
+  /** Per-repo input history (doc "Input history"): GUI-side files under
    *  `.metafolder/gui/history/<zone>`. The store behind `attachHistory`. */
   interface History {
     read(repo: string, zone: string): Promise<string[]>;

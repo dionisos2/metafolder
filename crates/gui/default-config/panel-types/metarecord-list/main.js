@@ -245,7 +245,7 @@ export async function mount(root, metafolder) {
   const bulkForce = byId(root, 'bulk-force', HTMLInputElement);
   const bulkError = byId(root, 'bulk-error');
 
-  // Per-repo input history (spec-gui "Input history"): ctrl-p/ctrl-n walk,
+  // Per-repo input history (doc "Input history"): ctrl-p/ctrl-n walk,
   // ctrl-r OSM search. Recorded on explicit submits only, never the debounce.
   const historyDeps = {
     /** @param {string} histRepo @param {string} zone */
@@ -1166,7 +1166,7 @@ export async function mount(root, metafolder) {
     delete: { path: 'query/delete', verb: 'Delete', prep: '', valueless: true, noField: true },
   };
 
-  // Value picker (spec-gui "Value picker") for the bulk-set value widget.
+  // Value picker (doc "Value picker") for the bulk-set value widget.
   const pickRunner = createPickRunner(metafolder);
   const bulkPickOpts = {
     /** @param {string} valueType */

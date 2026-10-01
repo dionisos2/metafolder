@@ -1,0 +1,6 @@
+title: editing:unfocus
+tags: [[GUI command]] Commands
+kind: reference
+summary: Leave the focused text input
+
+Takes the keyboard away from the text field that has it, and keeps what was typed there: the command input, or a field of a panel. In the command input, it also abandons the question being asked, if there is one — a command collecting its arguments is given up, a script reads a cancellation. See [[The command input]].

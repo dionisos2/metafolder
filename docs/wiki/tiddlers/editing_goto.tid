@@ -1,0 +1,6 @@
+title: editing:goto
+tags: [[GUI command]] Commands
+kind: reference
+summary: Move the cursor to the line start / line end
+
+Moves the caret of the text field that has the keyboard — the command input or a field of a panel — to `line-start` or `line-end`. See [[The command input]].

@@ -1,5 +1,5 @@
 // Command invocation parsing, autocomplete filtering and dispatch
-// (spec-gui "Command input"). Parsing and filtering are pure and unit
+// (doc "The command input"). Parsing and filtering are pure and unit
 // tested; dispatch routes to Tauri commands and panel instances.
 
 import { osmMatch } from '../../../panel-shim/finder.js';
@@ -94,7 +94,7 @@ export interface ListedCommand extends CommandDef {
 
 /**
  * What the command input offers: every registered command, plus one entry per
- * *bound* parameterized invocation (spec-gui "Command listing").
+ * *bound* parameterized invocation (doc "The command input").
  *
  * A pre-filled variant earns a line only when a key runs it. That is what
  * keeps the two goals from fighting: every keybinding — parameterized ones
@@ -174,7 +174,7 @@ export function resolveSubmission(
  *  — or a deselected list, or no completions at all — takes the typed text,
  *  so a brand-new value that ordered-substring-matches an existing completion
  *  can still be entered. Typed text still resolves like a pick when it spells
- *  a candidate's label whole (spec-gui "Completion views"): the label is what
+ *  a candidate's label whole (doc "Completion views"): the label is what
  *  is seen, the value is what is named. `all` is every loaded candidate — the
  *  filtered `suggestions` may have narrowed one away. */
 export function resolvePromptValue(
@@ -232,7 +232,7 @@ export function filterCompletionItems<T extends { label: string }>(
     .map((c) => items[c.index]);
 }
 
-// ── Interactive command arguments (spec-gui "Command") ─────────────────
+// ── Interactive command arguments (doc "Interactive command arguments") ─────────────────
 // A command may declare its arguments; each carries lazily-evaluated
 // functions (never read at registration) that receive the arguments already
 // collected. When a command is invoked with fewer parameters than declared,
@@ -252,7 +252,7 @@ export interface ArgSpec {
    *  daemon can narrow as the user types) and the arguments collected so far;
    *  a plain `string[]` result means its candidates are their own labels and
    *  values. An *array* of views is several: one shown at a time, walked by
-   *  `completion:cycle` (spec-gui "Completion views"). */
+   *  `completion:cycle` (doc "Completion views"). */
   complete?: CompletionFn | CompletionView[];
   /** The cycled views of the candidates, for the case where *which* views
    *  there are depends on the arguments collected so far — a `ref` value is
@@ -351,7 +351,7 @@ export function argSpecFor(name: string): ArgSpec[] | undefined {
 }
 
 /** Whether invoking `invocation` reopens the minibuffer to collect input,
- *  rather than acting immediately (spec-gui "Command"). Drives the trailing
+ *  rather than acting immediately (doc "The command input"). Drives the trailing
  *  "…" the autocomplete shows — the menu-item ellipsis convention. The signal
  *  is the interactive-argument mechanism (a registered ArgSpec, the minibuffer
  *  completion path): every command that takes arguments declares them, builtins
@@ -394,7 +394,7 @@ export interface UserCommand {
     initial?: (mf: unknown, prior: string[]) => string | Promise<string>;
     complete?: UserCompletionFn | UserCompletionView[];
     /** The cycled views, when which ones exist depends on the prior answers
-     *  (spec-gui "Completion views"). Wins over `complete` unless empty. */
+     *  (doc "Completion views"). Wins over `complete` unless empty. */
     views?: (mf: unknown, prior: string[]) => CompletionView[] | Promise<CompletionView[]>;
     when?: (mf: unknown, prior: string[]) => boolean;
   }[];
@@ -770,7 +770,7 @@ registerArgs('completion:cycle', [
   {
     name: 'direction',
     // Optional and never asked for: its absence *is* the forward cycle — the
-    // point of the default binding (spec-gui "Completion views").
+    // point of the default binding (doc "Completion views").
     optional: true,
     prompt: () => 'Cycle which way? (forward / back)',
     complete: () => ['forward', 'back'],
@@ -975,7 +975,7 @@ export function setPanelDispatch(fn: PanelDispatch | null) {
   panelDispatch = fn;
 }
 
-// ── Builtin argument declarations (spec-gui "Command") ─────────────────
+// ── Builtin argument declarations (doc "Interactive command arguments") ─────────────────
 // Every argument a builtin takes is declared here, like a panel command's, so
 // a missing one is collected in the minibuffer — with its completions — instead
 // of reaching the handler and failing there. `panel:set` typed bare asks which
@@ -1173,7 +1173,7 @@ function shellExpandDeps(ws: string | null): ExpandDeps {
 
 /**
  * Prompt driver for interactive argument collection: opens the command input
- * as a frontend-resolved prompt (spec-gui "Interactive command arguments")
+ * as a frontend-resolved prompt (doc "Interactive command arguments")
  * and resolves to the chosen *value* (a candidate's, or the typed text when
  * none names it), or null on Escape. Refuses (null) when a prompt already
  * owns the input — an interactive collection and a script prompt are mutually
@@ -1233,7 +1233,7 @@ async function promptForArg(request: ArgPromptRequest): Promise<string | null> {
 
 /** Publishes a prompt's candidates: labels normalized, and identical labels
  *  suffixed with their values so every listed row names exactly one thing
- *  (spec-gui "Completion views"). */
+ *  (doc "Completion views"). */
 function setPromptItems(items: CompletionItem[]): void {
   const pairs = completionLabels(items);
   store.ui.promptItems = pairs;
@@ -1288,7 +1288,7 @@ export async function dispatch(invocation: string): Promise<DispatchResult> {
   let { args } = parsed;
   const ws = focusedWs();
 
-  // Interactive arguments (spec-gui "Command"): a command declaring arguments
+  // Interactive arguments (doc "Interactive command arguments"): a command declaring arguments
   // invoked with fewer than declared collects the missing tail through the
   // command input. Escape (null) abandons the whole invocation silently.
   // A panel command's spec belongs to the focused workspace's instance of the
@@ -1610,7 +1610,7 @@ async function runCommand(name: string, args: string[], ws: string | null): Prom
     case 'daemon:set': {
       // `setting` and `value` were collected by dispatch (inline or in the
       // minibuffer). `url` is the only setting there is, but `set <setting>
-      // <value>` is the naming convention (spec-gui "Naming convention"), so
+      // <value>` is the naming convention (doc "Command naming"), so
       // the shape matches `panel:set`.
       if (args[0] !== 'url') {
         await status(`unknown setting: "${args[0] ?? ''}" (expected url)`);

@@ -1,4 +1,4 @@
-//! Command registry (spec-gui "Command"): named operations registered by
+//! Command registry (doc "Commands"): named operations registered by
 //! the shell (builtin) or by panel types, listed by the command input
 //! autocomplete. Every registered command is listed and invocable
 //! regardless of which panel is focused — invocations are dispatched to

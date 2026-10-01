@@ -1,7 +1,7 @@
 // Placeholder substitution for `!` shell commands (lib/placeholders.ts):
 // `%u`/`%v`/`%p`/`%r`/`%<field>`/`%<field>:path` expand to data from the
 // selection and the active workspace. Parsing and substitution are pure; the
-// async orchestrator is driven with stub deps. spec-gui "Command input".
+// async orchestrator is driven with stub deps. doc "Bash mode".
 
 import { describe, expect, test, vi } from 'vitest';
 import {

@@ -569,7 +569,7 @@ export async function mount(root, metafolder) {
   });
 
   // Adding an element to the forest (spec-gui "treeref panel type"), on the
-  // toolbar's "add" button and ctrl+n. Two interactive arguments (spec-gui
+  // toolbar's "add" button and ctrl+n. Two interactive arguments (doc
   // "Interactive command arguments"): the schema type seeds the new
   // metarecord's template fields (a blank answer creates a record carrying
   // only its position), then the value names the new node.
@@ -669,7 +669,7 @@ export async function mount(root, metafolder) {
     }
     fieldSelect.element.toggleAttribute('disabled', false);
     addButton.toggleAttribute('disabled', false);
-    // A value picker (spec-gui "Value picker") can seed the field to explore and
+    // A value picker (doc "Value picker") can seed the field to explore and
     // arms the "Pick this folder/node" context-menu item.
     picking = !!(await workspace.get('pick_request'));
     const seedField = await workspace.get('treeref:field');

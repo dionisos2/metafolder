@@ -1,0 +1,77 @@
+title: Interactive command arguments
+tags: Commands
+kind: reference
+aliases: arguments args prompt argspec
+summary: A command run without all its arguments asks for the missing ones in the command input, one at a time, each with its own completions.
+
+A command that takes arguments ''declares'' them — the shell's builtins as much as
+the panels' commands. When an invocation supplies fewer than declared, whether it
+comes from a key, the command input or a script, the command input asks for the
+missing ones in order. `panel:set` asks which setting, then which panel type;
+`panel:set type` asks only the type; `panel:set type file` asks nothing. Asking is
+what happens to an incomplete invocation, not a separate mode.
+
+A wrong ''value'' is another matter: it reaches the command, which says what is wrong
+with it.
+
+!! Answering
+
+The prompt shows the question, the line holds a starting value when there is one
+(the current name for `workspace:rename`), and the list shows the candidates,
+narrowed as you type like the command list.
+
+|!Key |!Does |
+|`Enter` |answers with the ''highlighted candidate'', and moves on to the next argument |
+|`ctrl+Enter` |answers with the text as typed, even when a candidate is highlighted — for a new value that happens to match an existing one |
+|`Up` past the first row |removes the highlight; `Enter` then answers with the text as typed |
+|`Tab` |writes the highlighted candidate into the line |
+|<<key "completion:cycle forward" "ctrl+,">> / <<key "completion:cycle back" "ctrl+.">> |show the candidates named another way, when there are several ([[Completion views]]) |
+|`Escape` |abandons the whole invocation; nothing runs |
+
+With no candidate offered, or none highlighted, `Enter` answers with the text as
+typed. The hint at the right of the line recalls the two forms: `⏎ pick · ⌃⏎ new`.
+
+At most 200 candidates are shown; typing narrows them.
+
+One question at a time holds the line: while a script's question is pending, a
+command that needs to ask refuses with ''the command input is busy with another
+prompt'', and the reverse.
+
+Nothing answered here goes into the [[input history|Input history]].
+
+!! What a command declares
+
+For whoever writes a panel or a user command — for each argument, in order:
+
+|!Field |!Meaning |
+|`name` |the argument's name |
+|`prompt(prior)` |the question shown |
+|`initial(prior)` |a starting value, editable |
+|`complete(partial, prior)` |the candidates: one function, or an array of views ([[Completion views]]) |
+|`views(prior)` |the views, when which ones exist depends on the earlier answers; wins over `complete` unless it returns none |
+|`when(prior)` |whether the argument applies at all |
+|`optional` |the argument may be left out, and is then never asked for |
+
+Every function is called when the argument is reached, never at registration, and
+receives the arguments collected so far — so `initial` reads the live state, and the
+candidates of a value depend on the field named before it. The question opens at
+once: its candidates may arrive after, so a slow list never delays the prompt.
+
+`when` lets one command cover a family of operations. The command declares every
+argument any of its operations takes, and those an operation has no use for are
+dropped: `metarecord:bulk selection delete` names no field, `… unset` no value. A
+dropped argument takes no word of the invocation either.
+
+`optional` is for a trailing modifier whose absence is itself the meaning:
+`workspace:next` moves both panels, `workspace:next slot` the focused one only.
+Only the last arguments can be optional, since they are filled by position.
+
+The last declared argument takes all the remaining words of the invocation.
+
+!! Whose arguments
+
+A panel type is built once per workspace, and every one of them registers the same
+command names. The declared arguments belong to the panel ''instance'': the questions
+come from the instance of the focused workspace — the one the command will run on —
+so the candidates are never another workspace's. A workspace that never showed the
+panel has it built before the first question.

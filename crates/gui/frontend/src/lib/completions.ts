@@ -1,4 +1,4 @@
-// Completion candidates for the command input (spec-gui "Completion views").
+// Completion candidates for the command input (doc "Completion views").
 //
 // A candidate is a couple: the *label* the list shows (and a typed answer
 // matches on, whole) and the *value* the command receives. A plain string is

@@ -1,4 +1,4 @@
-// Input-history helper (spec-gui "Input history"), shared by the shell
+// Input-history helper (doc "Input history"), shared by the shell
 // command input and the panel text zones. One history per repository × zone,
 // stored GUI-side under the repo's `.metafolder/gui/history/` (the Tauri
 // `history_read`/`history_append` commands — the daemon plays no part);

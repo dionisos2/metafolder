@@ -48,7 +48,7 @@ commands exist from the start; that costs the panels' construction only — a pa
 defers its expensive work (a directory listing, the log, streaming a file) until it is
 first displayed, and a hidden panel asked to refresh several times refreshes once when
 it is shown. At the same moment, the GUI reports in the message log every key bound
-to a command that no panel and no builtin defines.
+to a command that no panel and no builtin defines ([[Commands]]).
 
 <<list-kind reference>>
 

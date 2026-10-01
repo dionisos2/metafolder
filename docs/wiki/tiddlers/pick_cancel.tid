@@ -1,0 +1,6 @@
+title: pick:cancel
+tags: [[GUI command]] [[Value picker]]
+kind: reference
+summary: Cancel the value picker
+
+Closes the focused picker without a value and gives its slot back; the form that opened it stays as it was. Outside a picker it does nothing. See [[Value picker]].

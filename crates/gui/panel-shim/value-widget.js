@@ -150,7 +150,7 @@ export function parseRawValue(type, raw) {
 }
 
 /**
- * Drives the value picker (spec-gui "Value picker") for the field forms. One
+ * Drives the value picker (doc "Value picker") for the field forms. One
  * instance per panel; `run({field, valueType})` opens a linked picker workspace
  * and resolves to the chosen metarecord uuid (or null on cancel). The picker
  * opens in the other panel slot and reuses existing panels — `metarecord-list`
@@ -220,7 +220,7 @@ export function createPickRunner(metafolder) {
   return {
     request,
     // Convenience for the ref/tree_ref field widgets: a uuid picker reusing the
-    // metarecord-list / treeref panels (spec-gui "Value picker").
+    // metarecord-list / treeref panels (doc "Value picker").
     /** @param {{field?: string|null, valueType: string}} target */
     async run({ field, valueType }) {
       let panel;

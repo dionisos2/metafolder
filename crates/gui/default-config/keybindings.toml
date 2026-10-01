@@ -33,7 +33,7 @@
 "ctrl+a" = { command = "editing:goto line-start", text-input = true }
 "ctrl+e" = { command = "editing:goto line-end", text-input = true }
 
-# Completion views (spec-gui "Completion views"): walk the views of the prompt's
+# Completion views (doc "Completion views"): walk the views of the prompt's
 # candidates, next/previous. A prompt with a single view (the common case)
 # ignores both — and a plain comma stays a comma, which is the whole reason
 # the cycle is on Ctrl+punctuation rather than on the key it used to suggest.
@@ -66,7 +66,7 @@
 "ctrl+z" = { command = "log:undo" }
 "ctrl+shift+z" = { command = "log:redo" }
 
-# Value picker (spec-gui "Value picker"): confirm/cancel the current pick.
+# Value picker (doc "Value picker"): confirm/cancel the current pick.
 # Dedicated combos so normal Enter/Escape keep working in the picker's panels;
 # a stray press outside a picker is a silent no-op. The `focus = "finder"`
 # entry lets Ctrl+Enter confirm a pick while typing in the metarecord-list
@@ -467,7 +467,7 @@
 # the query the list shows) — so the whole
 # family is reachable whether the list or the detail panel is focused. Each
 # command still collects its arguments (field / value / type) in the command
-# input, with completion (see spec-gui "Interactive command arguments").
+# input, with completion (see doc "Interactive command arguments").
 # Mnemonics: s=set, a=add, v=value(edit), d=delete(a value), u=unset, n=name,
 # t=type, b=bulk. The per-record family is one command with the operation as
 # its first argument (`metarecord:field`), the bulk one carries a target first

@@ -1,4 +1,4 @@
-// Where a panel command's declared arguments live (spec-gui "Command").
+// Where a panel command's declared arguments live (doc "Interactive command arguments").
 //
 // A panel type is mounted once per workspace, and every instance registers the
 // same command names. The argument functions (`prompt`, `initial`, `complete`,

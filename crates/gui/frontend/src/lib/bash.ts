@@ -1,4 +1,4 @@
-// Pure logic of the bash input's Tab completion (spec-gui "Command input").
+// Pure logic of the bash input's Tab completion (doc "Bash mode").
 // The candidates come from the Rust `bash_complete` command, which returns
 // the word being completed (the text the candidates replace) alongside them.
 

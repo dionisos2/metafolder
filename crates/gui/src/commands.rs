@@ -501,7 +501,7 @@ pub fn expand_query(app: AppHandle, text: String) -> Result<String, String> {
     metafolder_core::simplified::engine::expand(&app.grammar.lock_recover().0, &text)
 }
 
-// ── Value picker (spec-gui "Value picker") ─────────────────────────────────
+// ── Value picker (doc "Value picker") ─────────────────────────────────
 
 #[tauri::command]
 pub fn pick_start(app: AppHandle, spec: crate::state::PickSpec) -> Result<String, String> {
@@ -543,7 +543,7 @@ pub fn ref_seed(app: AppHandle, field: String) -> Option<crate::config::RefSeed>
 }
 
 /// What joins the columns of a multi-column completion label (config.toml
-/// `[completion].label-separator`, spec-gui "Completion views").
+/// `[completion].label-separator`, doc "Completion views").
 #[tauri::command]
 pub fn label_separator(app: AppHandle) -> String {
     app.completion.label_separator.clone()
@@ -660,7 +660,7 @@ pub fn quit(window: tauri::Window) {
     let _ = window.close();
 }
 
-/// Input history (spec-gui "Input history") — a GUI-side concern: the files
+/// Input history (doc "Input history") — a GUI-side concern: the files
 /// live under the repo's `.metafolder/gui/history/` but the daemon plays no
 /// part; the GUI reads/writes them directly (crate::history).
 #[tauri::command]

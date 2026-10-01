@@ -1,4 +1,4 @@
-//! `!` shell commands from the command input (spec-gui "Command input"):
+//! `!` shell commands from the command input (doc "Bash mode"):
 //! run as a subprocess; stdout/stderr lines go to the workspace message
 //! log (message panel type) and to the terminal that launched the GUI.
 

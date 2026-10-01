@@ -1,0 +1,6 @@
+title: completion:cycle
+tags: [[GUI command]] Commands
+kind: reference
+summary: Cycle the prompt's completion views (forward / back)
+
+Shows the next way (`forward`, the default) or the previous one (`back`) of naming the candidates of the question on the command line, wrapping around; the hint at the right of the line names the view shown. With a single view — the usual case — it does nothing and says nothing. See [[Completion views]].

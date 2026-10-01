@@ -1,6 +1,6 @@
 // Input-history helper (panel-shim/history.js): readline-style ctrl-p/ctrl-n
 // navigation + ctrl-r OSM search overlay, shared by the shell command input
-// and the panel text zones (spec-gui "Input history").
+// and the panel text zones (doc "Input history").
 
 import { afterEach, describe, expect, test, vi } from 'vitest';
 import { attachHistory, filterHistory } from '/__history.js';

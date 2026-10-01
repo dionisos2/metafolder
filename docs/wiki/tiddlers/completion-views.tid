@@ -1,0 +1,59 @@
+title: Completion views
+tags: Commands
+kind: reference
+audience: dev
+aliases: completion completions candidates views
+summary: A candidate of a question is a label and a value; a completion may name its candidates in several ways, cycled with a key, and fetches one bounded page at a time.
+
+The candidates offered by a question in the command input
+([[Interactive command arguments]], or a script's prompt) follow three rules.
+
+!! A candidate is a label and a value
+
+The ''label'' is what the list shows and what the typed text is matched against; the
+''value'' is what the command receives. A plain string is both, so a completion with
+nothing to gain from the split stays a plain list. Where they differ, the list names
+things the way a person reads them while the command gets what it must act on: a
+`ref` candidate is labelled by its target's path or name, and valued with its uuid.
+
+Text typed in full that spells a label names its value, exactly as picking the row
+does. Text no label spells is taken as itself — which is how a uuid, or a value that
+does not exist yet, is entered.
+
+!! No two rows read the same
+
+Two candidates with the same label and different values are both suffixed with their
+value, for every completion whatever it completes: no row is a coin flip between two
+things, and each can still be reached by typing it whole. Exact duplicates — same
+label, same value — are merged first.
+
+!! Views
+
+A completion may offer several ''views'' of its candidates: the same things, named
+differently. Usually there is one, and nothing shows. A `ref` value has several,
+because which naming reaches a metarecord fastest depends on the metarecord — its
+path, its name, a label.
+
+An argument declares its views as an array, each with a `title` and an `items`
+function. <<key "completion:cycle forward" "ctrl+,">> and
+<<key "completion:cycle back" "ctrl+.">> walk the array, wrapping; the hint at the
+right of the line shows the title and the position (`path 1/3`). The default keys
+are chords on purpose: a plain comma stays typable. With one view the command does
+nothing.
+
+!! One page at a time
+
+A view's function is called with the text typed and the arguments collected so far,
+and returns one ''page'' of candidates — an array, or `{items, more}` where `more`
+says the source holds more than it returned.
+
+* A complete page is narrowed by the local filter alone, as the user types.
+* A truncated page is asked again with the new text, 150 ms after the last keystroke.
+
+So a view never fetches more than one bounded page — one daemon request, with a
+limit and the view's own order — however many candidates stand behind it. The first
+page is requested when the question opens and is not waited for.
+
+The rules themselves — normalising a candidate, the duplicate-label suffix — are in
+`panel-shim/completions.js` (served as `/__completions.js`), shared by the shell and
+the panels that have to resolve a typed label the same way.

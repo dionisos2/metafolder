@@ -471,7 +471,7 @@ export function createPanelApi(deps: PanelApiDeps, ctx: PanelApiCtx): PanelApiIn
       grammarSource: () => invoke('grammar_source') as Promise<string>,
     },
 
-    // Value picker (spec-gui "Value picker"): open a linked picker workspace
+    // Value picker (doc "Value picker"): open a linked picker workspace
     // whose confirmed selection (a metarecord uuid) comes back as the
     // `pick_result` workspace variable, matched by `token`. `callerWs` is
     // injected so the result returns to this panel's own workspace.
@@ -530,7 +530,7 @@ export function createPanelApi(deps: PanelApiDeps, ctx: PanelApiCtx): PanelApiIn
       ) {
         if (handler) deps.registerHandler(name, handler);
         // Declared arguments are collected interactively by the command input
-        // when missing (spec-gui "Command"); the spec functions stay in the
+        // when missing (doc "Interactive command arguments"); the spec functions stay in the
         // shell realm alongside the panel.
         if (args) deps.registerArgs(name, args);
         const result = invoke('register_command', {
@@ -657,7 +657,7 @@ export function createPanelApi(deps: PanelApiDeps, ctx: PanelApiCtx): PanelApiIn
         invoke('sync_show', { repoA, repoB, conflicts, files }) as Promise<Record<string, unknown>>,
     },
 
-    /** Per-repo input history (spec-gui "Input history") — GUI-side files
+    /** Per-repo input history (doc "Input history") — GUI-side files
      *  under `.metafolder/gui/history/<zone>`; the store behind the shared
      *  `attachHistory` helper (`/__history.js`). */
     history: {

@@ -1,0 +1,6 @@
+title: editing:discard
+tags: [[GUI command]] Commands
+kind: reference
+summary: Clear and leave the focused text input
+
+Empties the text field that has the keyboard, then leaves it: the command input — whose draft for this workspace is forgotten, and whose pending question is abandoned — or a field of a panel, which sees the deletion as if it had been typed. See [[The command input]].

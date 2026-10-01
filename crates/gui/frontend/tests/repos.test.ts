@@ -115,7 +115,7 @@ function setup(options: { activeRepo?: string | null } = {}) {
   const vars = new Map<string, unknown>([['active_repo', options.activeRepo ?? null]]);
   const dispatch = vi.fn(async (_invocation: string) => {});
   const handlers = new Map<string, (...a: string[]) => unknown>();
-  /** Every value-picker session the panel opened (spec-gui "Value picker"). */
+  /** Every value-picker session the panel opened (doc "Value picker"). */
   const picks: Record<string, unknown>[] = [];
   // `repo_init` is a Tauri command, not an HTTP call: it does POST /repos/init
   // plus the ignore preset, and returns the new uuid (crates/gui/src/repo_init.rs).

@@ -1,5 +1,5 @@
 // The completion candidate rules the system applies to *any* command
-// (spec-gui "Completion views"): a plain string is its own label and value;
+// (doc "Completion views"): a plain string is its own label and value;
 // two candidates that read the same are both suffixed with their values, so
 // every listed row is addressable and names exactly one thing; a page says
 // whether it is the whole set; a bound view memoizes its last page, because

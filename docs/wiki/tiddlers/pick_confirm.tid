@@ -1,0 +1,6 @@
+title: pick:confirm
+tags: [[GUI command]] [[Value picker]]
+kind: reference
+summary: Confirm the value picker's selection
+
+Hands what is highlighted in the focused picker back to the form that opened it, closes the picker and gives its slot back. With nothing highlighted the picker stays open. Outside a picker it does nothing. See [[Value picker]].

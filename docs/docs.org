@@ -877,21 +877,49 @@ file with another program » ; la partie « interface » de =getting-started.htm
 (la page reste pour l'item 1) et ses alias. Mémoire =diagnostics-are-repo-scoped=
 devenue la note =rationale=.
 
-** TODO 34. Commandes et saisie
+** FAIT 34. Commandes et saisie
 
-- [ ] =Commands= — overview (noms, registre, dispatch)
-- [ ] =The command input= — guide (modes commande et bash)
-- [ ] =Interactive command arguments= — reference
-- [ ] =Bash mode= — reference (complétion, espaces réservés des commandes =!=)
-- [ ] =Input history= — guide (=ctrl-p/n/r=, stockage par dépôt)
-- [ ] =Value picker= — reference
-- [ ] =Field editor= — reference
+- [X] =Commands= — overview (invocation, registre, dispatch, journal des messages, touches mortes)
+- [X] =The command input= — guide (modes commande et bash, liste, touches d'édition)
+- [X] =Interactive command arguments= — reference
+- [X] =Completion views= — reference, dev (ajoutée : la section la plus citée du code, 25 renvois)
+- [X] =Command naming= — rationale (ajoutée : la règle de nommage, ses verbes, la mémoire =gui-command-vocabulary=)
+- [X] =Bash mode= — reference (complétion, espaces réservés des commandes =!=)
+- [X] =Input history= — guide (=ctrl-p/n/r=, stockage par dépôt)
+- [X] =Value picker= — reference
+- [X] =Field editor= — reference
+- [X] les notes de commande : =command-input:focus=, =editing:*= (4), =completion:cycle=, =pick:*= (2)
 
-GUI : =command-input:focus=, =editing:*= (4), =completion:cycle=, =pick:*= (2).
-Sources : spec-gui « Command », « Command input » (concept et GUI),
-« Command names », « Input history », « Value picker », « Field editor » ;
-help =command-input.html=, =input-history.html=, =value-picker.html= ;
-mémoires =interactive-command-args=, =input-history-feature=, =gui-command-vocabulary=.
+Vérification contre le code : la spec et la page help disaient que =Enter=, en
+mode commande, exécute « exactement ce qui est tapé, jamais la sélection » ; il
+exécute la ligne surlignée depuis =148b8f3a=, et le texte tapé seulement quand la
+liste est vide — la note le dit, et l'historique enregistre bien la commande
+résolue. Elle disait aussi « fermer un picker à la main est une annulation » :
+rien ne le faisait — le formulaire attendait sa réponse pour toujours et le slot
+n'était pas rendu ; corrigé, test d'abord (=close_workspace= annule le picker,
+ou ferme simplement si l'appelant a disparu). La table de l'éditeur de champ
+décrivait un sélecteur de date et une « recherche par chemin » pour les refs :
+c'est un champ texte ISO-8601 et le bouton du picker ; le menu des types n'offre
+que 8 des 10 types (=refbase= et =externalref= s'éditent là où ils existent déjà).
+Ignorés par la spec : =Home=/=End= dans la liste, la complétion bash d'une ligne
+vide (les commandes du shell, pas tout le =PATH=), =[exit N]= et l'erreur en barre
+d'état d'une commande =!= qui échoue, les types de référence non substituables
+par =%<champ>=, le plafond de 200 candidats affichés. Elle parlait encore
+d'iframes (registre). *Signalé, non tranché* : puisque =Enter= exécute la ligne
+surlignée, une ligne qui est le début d'une entrée listée exécute cette entrée —
+=panel:set type= puis =Enter= lance le premier =panel:set type …= lié à une touche
+(=duplicates=) au lieu de demander le type, et =metarecord:bulk selection= lance
+=… selection add= ; la note le dit, mais une invocation incomplète tapée en
+entier devrait sans doute l'emporter sur la liste. Sources retirées (pointeurs) :
+spec-gui « Value picker », « Command » (avec « Dead keys », « Command listing »,
+« Naming convention »), les deux « Command input » (avec « Interactive command
+arguments », « Completion views », « Bash completion », « Placeholders »),
+« Field editor », « Input history » ; de la table « Command names », les lignes
+des commandes de cet item (elle reste pour les items 35 à 40, et son paragraphe
+sur =Nothing= pour l'item 38) ; help =command-input.html=, =input-history.html=,
+=value-picker.html= et leurs alias. Mémoires =interactive-command-args= et
+=input-history-feature= supprimées, =gui-command-vocabulary= réduite aux pièges
+du renommage en masse.
 
 ** TODO 35. Raccourcis, recherche, aide
 

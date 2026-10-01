@@ -1,5 +1,5 @@
 // Unit tests for createPickRunner (panel-shim/value-widget.js): the value
-// picker driver shared by the field forms (spec-gui "Value picker").
+// picker driver shared by the field forms (doc "Value picker").
 import { describe, it, expect, vi } from 'vitest';
 import { createPickRunner } from '/__value-widget.js';
 

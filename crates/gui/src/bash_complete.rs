@@ -1,4 +1,4 @@
-//! Bash completion for the bash input (spec-gui "Command input"): runs an
+//! Bash completion for the bash input (doc "Bash mode"): runs an
 //! embedded harness script in a throwaway `bash`, using the system
 //! bash-completion package when installed and falling back to `compgen`
 //! (command names in command position, filenames elsewhere). The line is
