@@ -699,238 +699,728 @@ impl KvStore {
 
     /// Where the derived key spaces differ from what the primary data
     /// derives (at most a hundred lines; empty when they agree). Ids are
-    /// compared through the uuids they name, so a store whose ids were
-    /// allocated in another order still agrees.
+    /// compared through the store's own id mapping, itself checked against
+    /// the metarecords, so a store whose ids were allocated in another order
+    /// still agrees.
+    ///
+    /// The comparison holds neither side: a store's derived data is larger
+    /// than the memory of the machine that checks it (every trigram of every
+    /// text, per holder). Both sides are *streamed* into fingerprints — an
+    /// order-free sum of entry hashes, per key space and per bucket of
+    /// [`BUCKETS`] — and only where two fingerprints differ is a bucket's
+    /// content collected, in a second pass, to name its entries. What stays
+    /// resident is what the forest's closure needs (a parent per node) and
+    /// one record's field at a time.
     pub fn check_derived(&self) -> Result<Vec<String>> {
         let r = self.env.read_txn()?;
-        let t = &self.t;
-        let mut diff = Vec::new();
+        let mut diff = Diff::default();
 
-        // Expected, from the primary data.
-        let mut universe = BTreeSet::new();
-        for entry in t.metarecords.iter(&r)? {
-            universe.insert(uuid_of(entry?.0));
+        let mut sums = Sums::new();
+        self.walk_entries(&r, &mut diff, &mut |side, entry| {
+            sums.add(side, &entry);
+            Ok(())
+        })?;
+        let wanted = sums.differing();
+        if wanted.iter().any(|buckets| !buckets.is_empty()) {
+            let mut detail = Detail::new(wanted);
+            // The first pass already said what it found outside the entries.
+            let mut said = Diff::default();
+            self.walk_entries(&r, &mut said, &mut |side, entry| {
+                detail.add(&self.t, &r, side, &entry)
+            })?;
+            detail.report(&mut diff);
         }
-        type Part = (String, u8, Vec<u8>, Uuid);
-        let mut parts: BTreeMap<Part, i64> = BTreeMap::new();
-        let mut kids: BTreeMap<([u8; 16], String, Uuid), i64> = BTreeMap::new();
-        let mut sets: BTreeSet<(u8, String, Uuid)> = BTreeSet::new();
-        let mut grams: BTreeSet<(String, [u8; 3], Uuid)> = BTreeSet::new();
-        let mut referrers: BTreeSet<(String, [u8; 16], Uuid)> = BTreeSet::new();
-        let mut valued: BTreeMap<(String, Uuid), usize> = BTreeMap::new();
-        // Per forest: each node's parent, for the closure below.
-        let mut parent_of: BTreeMap<(String, Uuid), Uuid> = BTreeMap::new();
-        for entry in t.cells.iter(&r)? {
+        self.check_postings(&r, &mut diff)?;
+        Ok(diff.lines)
+    }
+
+    /// Every entry the primary data derives ([`Side::Expected`]) and every
+    /// entry the derived tables hold ([`Side::Got`]), postings aside, handed
+    /// to `sink` one at a time. What cannot be an entry — a metarecord with
+    /// no dense id, an id the two mappings disagree on — goes to `diff`.
+    fn walk_entries(
+        &self,
+        r: &RoTxn<'_>,
+        diff: &mut Diff,
+        sink: &mut dyn FnMut(Side, Entry<'_>) -> Result<()>,
+    ) -> Result<()> {
+        let t = &self.t;
+
+        // The universe and the id mappings.
+        let mut metarecords = 0u64;
+        for entry in t.metarecords.iter(r)? {
+            let (k, _) = entry?;
+            metarecords += 1;
+            match id_of(t, r, &k[..16])? {
+                Some(id) => sink(Side::Expected, Entry::set(UNIVERSE, "", id))?,
+                None => diff.push(format!("ids: {} has no dense id", uuid_of(k))),
+            }
+        }
+        let mut mapped = 0u64;
+        for entry in t.ids.iter(r)? {
             let (k, v) = entry?;
-            let uuid = uuid_of(k);
+            mapped += 1;
+            let back = t.uuids.get(r, &v[..4])?;
+            if back.map(|u| &u[..16]) != Some(&k[..16]) {
+                diff.push(format!(
+                    "ids: {} -> {}, but uuids says {:?}",
+                    uuid_of(k),
+                    dense(v),
+                    back.map(uuid_of)
+                ));
+            }
+        }
+        if mapped != metarecords {
+            diff.push(format!("ids: map {mapped} metarecords, the store holds {metarecords}"));
+        }
+
+        // Expected, from the rows — which the primary table keeps grouped by
+        // metarecord and field, so everything a (metarecord, field) derives
+        // is known when its last row is read.
+        let mut group = Group::default();
+        // Per field: the ids with a child, and each node's parent (with the
+        // node's own id), for the closure below.
+        let mut parents: BTreeMap<String, RoaringBitmap> = BTreeMap::new();
+        let mut fields: HashMap<String, u32> = HashMap::new();
+        let mut parent_of: HashMap<(u32, Uuid), (Uuid, Option<u32>)> = HashMap::new();
+        let mut owner: Option<([u8; 16], Option<u32>)> = None;
+        for entry in t.cells.iter(r)? {
+            let (k, v) = entry?;
+            let uuid: [u8; 16] = k[..16].try_into().expect("a 16-byte uuid");
             let row = dec_row(v)?;
-            let f = row.name.clone();
-            let mut add = |part: u8, key: Vec<u8>| {
-                *parts.entry((f.clone(), part, key, uuid)).or_default() += 1;
+            let id = match owner {
+                Some((u, id)) if u == uuid => id,
+                _ => {
+                    let id = id_of(t, r, &uuid)?;
+                    if id.is_none() {
+                        diff.push(format!("rows of {}: no dense id", Uuid::from_bytes(uuid)));
+                    }
+                    owner = Some((uuid, id));
+                    id
+                }
             };
+            if group.uuid != uuid || group.field != row.name {
+                group.flush(sink)?;
+                group = Group { uuid, id, field: row.name.clone(), ..Group::default() };
+            }
             if let Some(key) = value_key(&row.value) {
-                add(VALUE, key);
+                *group.parts.entry((VALUE, key)).or_default() += 1;
             }
             if let Some(key) = name_part_key(&row.value) {
-                add(NAME, key);
+                *group.parts.entry((NAME, key)).or_default() += 1;
             }
             if let Some(target) = target_of(&row.value) {
-                add(TARGET, target.to_vec());
+                *group.parts.entry((TARGET, target.to_vec())).or_default() += 1;
+                group.targets.insert(target);
             }
-            if let Value::TreeRef { .. } = row.value {
-                let parent = target_of(&row.value).expect("a tree_ref has a parent key");
-                *kids.entry((parent, f.clone(), uuid)).or_default() += 1;
-                if universe.contains(&Uuid::from_bytes(parent)) {
-                    sets.insert((PARENTS, f.clone(), Uuid::from_bytes(parent)));
+            if let Value::TreeRef { parent, .. } = &row.value {
+                let target = target_of(&row.value).expect("a tree_ref has a parent key");
+                *group.kids.entry(target).or_default() += 1;
+                if let Some(parent_id) = id_of(t, r, &target)? {
+                    match parents.get_mut(&row.name) {
+                        Some(set) => {
+                            set.insert(parent_id);
+                        }
+                        None => {
+                            parents.insert(row.name.clone(), RoaringBitmap::from_iter([parent_id]));
+                        }
+                    }
+                }
+                if let Some(p) = parent {
+                    let next = fields.len() as u32;
+                    let field = *fields.entry(row.name.clone()).or_insert(next);
+                    parent_of.insert((field, Uuid::from_bytes(uuid)), (*p, id));
                 }
             }
             if let Some(text) = search_text(&row.value) {
                 if text.len() <= TRIGRAM_MAX {
-                    for gram in trigrams(&text) {
-                        grams.insert((f.clone(), gram, uuid));
-                    }
+                    group.grams.extend(trigrams(&text));
                 } else {
-                    sets.insert((LONG_TEXTS, f.clone(), uuid));
+                    group.long = true;
                 }
             }
-            if let Some(target) = target_of(&row.value) {
-                referrers.insert((f.clone(), target, uuid));
-            }
-            if let Value::TreeRef { parent: Some(p), .. } = &row.value {
-                parent_of.insert((f.clone(), uuid), *p);
-            }
-            let kind = if matches!(row.value, Value::Nothing) { ABSENT } else { PRESENT };
-            if kind == PRESENT {
-                *valued.entry((f.clone(), uuid)).or_default() += 1;
-            }
-            sets.insert((kind, f, uuid));
-        }
-
-        for ((f, uuid), n) in valued {
-            if n > 1 {
-                sets.insert((MULTI, f, uuid));
-            }
-        }
-
-        // Actual: the id mappings first, then everything through them.
-        let mut to_uuid: HashMap<u32, Uuid> = HashMap::new();
-        for entry in t.uuids.iter(&r)? {
-            let (k, v) = entry?;
-            to_uuid.insert(dense(k), uuid_of(v));
-        }
-        let mut mapped = BTreeSet::new();
-        for entry in t.ids.iter(&r)? {
-            let (k, v) = entry?;
-            let (uuid, id) = (uuid_of(k), dense(v));
-            if to_uuid.get(&id) != Some(&uuid) {
-                diff.push(format!("ids: {uuid} -> {id}, but uuids says {:?}", to_uuid.get(&id)));
-            }
-            mapped.insert(uuid);
-        }
-        if mapped != universe {
-            diff.push(format!(
-                "ids: map {} metarecords, the store holds {}",
-                mapped.len(),
-                universe.len()
-            ));
-        }
-        let uuid = |id: u32, diff: &mut Vec<String>| {
-            let u = to_uuid.get(&id).copied();
-            if u.is_none() {
-                diff.push(format!("dense id {id} names no metarecord"));
-            }
-            u
-        };
-
-        let mut got_universe = BTreeSet::new();
-        let mut got_sets = BTreeSet::new();
-        let mut got_referrers = BTreeSet::new();
-        let mut got_descendants = BTreeSet::new();
-        let mut got_postings: BTreeMap<(String, Vec<u8>), BTreeSet<Uuid>> = BTreeMap::new();
-        for entry in t.sets.iter(&r)? {
-            let (k, v) = entry?;
-            let kind = k[0];
-            let (field, rest) = if kind == UNIVERSE {
-                (String::new(), &k[1..])
+            if matches!(row.value, Value::Nothing) {
+                group.absent = true;
             } else {
-                let (f, rest) = unesc(&k[1..])?;
-                (String::from_utf8(f).context("a field name")?, rest)
-            };
-            for id in decode_set(v)? {
-                let Some(u) = uuid(id, &mut diff) else { continue };
-                if kind == UNIVERSE {
-                    got_universe.insert(u);
-                } else if kind == REFERRERS {
-                    let target: [u8; 16] = rest[..16].try_into().context("a target uuid")?;
-                    got_referrers.insert((field.clone(), target, u));
-                } else if kind == POSTINGS {
-                    let key = rest[..rest.len() - 2].to_vec();
-                    got_postings.entry((field.clone(), key)).or_default().insert(u);
-                } else if kind == DESCENDANTS {
-                    let node: [u8; 16] = rest[..16].try_into().context("a node uuid")?;
-                    got_descendants.insert((field.clone(), node, u));
-                } else {
-                    got_sets.insert((kind, field.clone(), u));
-                }
+                group.valued += 1;
             }
         }
-        report(&mut diff, "referrer", lines(&referrers), lines(&got_referrers));
-        let mut descendants: BTreeSet<(String, [u8; 16], Uuid)> = BTreeSet::new();
-        for ((field, node), first) in &parent_of {
+        group.flush(sink)?;
+        for (field, set) in &parents {
+            for id in set {
+                sink(Side::Expected, Entry::set(PARENTS, field, id))?;
+            }
+        }
+        let names: HashMap<u32, &str> =
+            fields.iter().map(|(name, i)| (*i, name.as_str())).collect();
+        for ((field, _), (first, id)) in &parent_of {
+            let Some(id) = *id else { continue };
             let mut up = Some(*first);
             for _ in 0..crate::log::MAX_TREE_DEPTH {
                 let Some(ancestor) = up else { break };
-                descendants.insert((field.clone(), *ancestor.as_bytes(), *node));
-                up = parent_of.get(&(field.clone(), ancestor)).copied();
+                let entry = Entry {
+                    space: DESCENDANT,
+                    tag: 0,
+                    field: names[field],
+                    key: ancestor.as_bytes(),
+                    id,
+                    count: 1,
+                };
+                sink(Side::Expected, entry)?;
+                up = parent_of.get(&(*field, ancestor)).map(|(parent, _)| *parent);
             }
         }
-        report(&mut diff, "descendant", lines(&descendants), lines(&got_descendants));
-        if got_universe != universe {
-            diff.push(format!(
-                "universe: {} ids, the store holds {} metarecords",
-                got_universe.len(),
-                universe.len()
-            ));
-        }
-        report(&mut diff, "set", lines(&sets), lines(&got_sets));
+        drop(parent_of);
 
-        let mut got_parts = BTreeMap::new();
-        for entry in t.parts.iter(&r)? {
+        // Got: the derived tables, as they are.
+        for entry in t.sets.iter(r)? {
             let (k, v) = entry?;
-            let (field, rest) = unesc(k)?;
-            let (part, key, id) =
-                (rest[0], &rest[1..rest.len() - 4], dense(&rest[rest.len() - 4..]));
-            let Some(u) = uuid(id, &mut diff) else { continue };
-            let field = String::from_utf8(field).context("a field name")?;
-            got_parts.insert((field, part, key.to_vec(), u), from_be(v));
-        }
-        report(&mut diff, "part", lines(&parts), lines(&got_parts));
-
-        // Postings: required from the threshold on, and exact wherever kept
-        // (a value grown rarer keeps its posting).
-        let mut holders: BTreeMap<(String, Vec<u8>), BTreeSet<Uuid>> = BTreeMap::new();
-        for (field, part, key, u) in parts.keys() {
-            if *part == VALUE {
-                holders.entry((field.clone(), key.clone())).or_default().insert(*u);
+            let kind = k[0];
+            if kind == POSTINGS {
+                continue; // not an equality: see `check_postings`
             }
-        }
-        for (value, ids) in &holders {
-            match got_postings.remove(value) {
-                Some(got) if got != *ids => diff.push(format!(
-                    "posting of {value:?}: {} ids, the value has {} holders",
-                    got.len(),
-                    ids.len()
-                )),
-                None if ids.len() as u64 >= POSTING_MIN => {
-                    diff.push(format!("posting missing: {value:?} ({} holders)", ids.len()))
-                }
-                _ => {}
-            }
-        }
-        for value in got_postings.keys() {
-            diff.push(format!("posting unexpected: {value:?} (no holder)"));
-        }
-
-        let mut got_kids = BTreeMap::new();
-        for entry in t.kids.iter(&r)? {
-            let (k, v) = entry?;
-            let parent: [u8; 16] = k[..16].try_into().expect("a 16-byte uuid");
-            let (field, rest) = unesc(&k[16..])?;
-            let Some(u) = uuid(dense(rest), &mut diff) else { continue };
-            let field = String::from_utf8(field).context("a field name")?;
-            got_kids.insert((parent, field, u), from_be(v));
-        }
-        report(&mut diff, "kid", lines(&kids), lines(&got_kids));
-
-        let mut got_grams = BTreeSet::new();
-        for entry in t.grams.iter(&r)? {
-            let (k, v) = entry?;
-            let (field, rest) = unesc(k)?;
-            let field = String::from_utf8(field).context("a field name")?;
-            let gram: [u8; 3] = rest[..3].try_into().context("a trigram")?;
+            let (name, rest) =
+                if kind == UNIVERSE { (Vec::new(), &k[1..]) } else { unesc(&k[1..])? };
+            let field = std::str::from_utf8(&name).context("a field name")?;
+            let (space, tag, key) = match kind {
+                REFERRERS => (REFERRER, 0, &rest[..16]),
+                DESCENDANTS => (DESCENDANT, 0, &rest[..16]),
+                _ => (SET, kind, &rest[..0]),
+            };
             for id in decode_set(v)? {
-                let Some(u) = uuid(id, &mut diff) else { continue };
-                got_grams.insert((field.clone(), gram, u));
+                sink(Side::Got, Entry { space, tag, field, key, id, count: 1 })?;
             }
         }
-        report(&mut diff, "gram", lines(&grams), lines(&got_grams));
+        for entry in t.parts.iter(r)? {
+            let (k, v) = entry?;
+            let (name, rest) = unesc(k)?;
+            let entry = Entry {
+                space: PART,
+                tag: rest[0],
+                field: std::str::from_utf8(&name).context("a field name")?,
+                key: &rest[1..rest.len() - 4],
+                id: dense(&rest[rest.len() - 4..]),
+                count: from_be(v),
+            };
+            sink(Side::Got, entry)?;
+        }
+        for entry in t.kids.iter(r)? {
+            let (k, v) = entry?;
+            let (name, rest) = unesc(&k[16..])?;
+            let entry = Entry {
+                space: KID,
+                tag: 0,
+                field: std::str::from_utf8(&name).context("a field name")?,
+                key: &k[..16],
+                id: dense(rest),
+                count: from_be(v),
+            };
+            sink(Side::Got, entry)?;
+        }
+        for entry in t.grams.iter(r)? {
+            let (k, v) = entry?;
+            let (name, rest) = unesc(k)?;
+            let field = std::str::from_utf8(&name).context("a field name")?;
+            for id in decode_set(v)? {
+                sink(
+                    Side::Got,
+                    Entry { space: GRAM, tag: 0, field, key: &rest[..3], id, count: 1 },
+                )?;
+            }
+        }
+        Ok(())
+    }
 
-        diff.truncate(100);
-        Ok(diff)
+    /// Postings: required from the threshold on, and exact wherever kept (a
+    /// value grown rarer keeps its posting). Held against the value
+    /// partition, where a value's holders are adjacent — and which
+    /// [`Self::walk_entries`] holds against the rows.
+    fn check_postings(&self, r: &RoTxn<'_>, diff: &mut Diff) -> Result<()> {
+        let t = &self.t;
+        // `(field, value key)`, as the lines name a value.
+        let value = |name_and_key: &[u8]| -> Result<(String, Vec<u8>)> {
+            let (name, key) = unesc(name_and_key)?;
+            Ok((String::from_utf8(name).context("a field name")?, key.to_vec()))
+        };
+
+        // Each posting kept, against its value's holders.
+        let exact = |prefix: &[u8], got: &RoaringBitmap, diff: &mut Diff| -> Result<()> {
+            let (field, key) = value(&prefix[1..])?;
+            let run = [&name_key(&field)[..], &[VALUE], &key].concat();
+            let mut holders = RoaringBitmap::new();
+            for entry in t.parts.prefix_iter(r, &run)? {
+                let (k, _) = entry?;
+                if k.len() == run.len() + 4 {
+                    holders.insert(dense(&k[run.len()..]));
+                }
+            }
+            if holders.is_empty() {
+                diff.push(format!("posting unexpected: {:?} (no holder)", (field, key)));
+            } else if holders != *got {
+                diff.push(format!(
+                    "posting of {:?}: {} ids, the value has {} holders",
+                    (field, key),
+                    got.len(),
+                    holders.len()
+                ));
+            }
+            Ok(())
+        };
+        let mut posting: Option<(Vec<u8>, RoaringBitmap)> = None;
+        for entry in t.sets.prefix_iter(r, &[POSTINGS])? {
+            let (k, v) = entry?;
+            let prefix = &k[..k.len() - 2];
+            if posting.as_ref().is_some_and(|(p, _)| p != prefix) {
+                let (p, got) = posting.take().expect("a posting");
+                exact(&p, &got, diff)?;
+            }
+            posting.get_or_insert_with(|| (prefix.to_vec(), RoaringBitmap::new())).1 |=
+                decode_set(v)?;
+        }
+        if let Some((p, got)) = posting {
+            exact(&p, &got, diff)?;
+        }
+
+        // Each value held often enough, against the postings.
+        let required = |run: &[u8], holders: u64, diff: &mut Diff| -> Result<()> {
+            if holders < POSTING_MIN {
+                return Ok(());
+            }
+            let (name, rest) = unesc(run)?;
+            if rest[0] != VALUE {
+                return Ok(());
+            }
+            let name_len = run.len() - rest.len();
+            let prefix = [&[POSTINGS][..], &run[..name_len], &rest[1..]].concat();
+            let mut chunks = t.sets.prefix_iter(r, &prefix)?;
+            if chunks.next().transpose()?.is_none() {
+                let field = String::from_utf8(name).context("a field name")?;
+                diff.push(format!(
+                    "posting missing: {:?} ({holders} holders)",
+                    (field, rest[1..].to_vec())
+                ));
+            }
+            Ok(())
+        };
+        let mut run: (Vec<u8>, u64) = (Vec::new(), 0);
+        for entry in t.parts.iter(r)? {
+            let (k, _) = entry?;
+            let prefix = &k[..k.len() - 4];
+            if run.0 != prefix {
+                if run.1 > 0 {
+                    required(&run.0, run.1, diff)?;
+                }
+                run = (prefix.to_vec(), 0);
+            }
+            run.1 += 1;
+        }
+        if run.1 > 0 {
+            required(&run.0, run.1, diff)?;
+        }
+        Ok(())
     }
 }
 
-/// Every entry of a collection, as text — what [`report`] compares.
-fn lines<T: std::fmt::Debug>(items: impl IntoIterator<Item = T>) -> BTreeSet<String> {
-    items.into_iter().map(|e| format!("{e:?}")).collect()
+/// The lines of a check, capped: a store that diverges everywhere must not
+/// cost its size in messages.
+#[derive(Default)]
+struct Diff {
+    lines: Vec<String>,
 }
 
-/// The entries one side holds and the other does not (or holds otherwise).
-fn report(diff: &mut Vec<String>, what: &str, expected: BTreeSet<String>, got: BTreeSet<String>) {
-    for e in expected.difference(&got) {
-        diff.push(format!("{what} missing: {e}"));
+impl Diff {
+    const MAX: usize = 100;
+
+    fn push(&mut self, line: String) {
+        if self.lines.len() < Self::MAX {
+            self.lines.push(line);
+        }
     }
-    for e in got.difference(&expected) {
-        diff.push(format!("{what} unexpected: {e}"));
+}
+
+/// The key spaces [`KvStore::check_derived`] compares entry by entry, by the
+/// name its lines give them.
+const SPACES: [&str; 6] = ["set", "referrer", "descendant", "part", "kid", "gram"];
+const SET: usize = 0;
+const REFERRER: usize = 1;
+const DESCENDANT: usize = 2;
+const PART: usize = 3;
+const KID: usize = 4;
+const GRAM: usize = 5;
+
+/// How many buckets each key space's entries are spread over. A divergence
+/// costs the content of the buckets it falls in — a 4096th of the key space
+/// each — and not the key space.
+const BUCKETS: usize = 4096;
+
+/// How many differing buckets of a key space are detailed: enough to fill the
+/// report, without collecting a key space that diverges everywhere.
+const DETAILED: usize = 4;
+
+#[derive(Clone, Copy, PartialEq)]
+enum Side {
+    Expected,
+    Got,
+}
+
+/// One entry of a derived key space, in the one form both sides produce:
+/// what derives it on one, the key that holds it on the other.
+#[derive(Clone, Copy)]
+struct Entry<'a> {
+    space: usize,
+    /// The set kind, or the partition.
+    tag: u8,
+    field: &'a str,
+    /// A partition key, a trigram, or the uuid a referrer, a descendant or a
+    /// child is filed under.
+    key: &'a [u8],
+    id: u32,
+    /// Rows, where the key space counts them; 1 elsewhere.
+    count: i64,
+}
+
+impl<'a> Entry<'a> {
+    fn set(kind: u8, field: &'a str, id: u32) -> Entry<'a> {
+        Entry { space: SET, tag: kind, field, key: &[], id, count: 1 }
+    }
+
+    /// A hash of the whole entry; `buf` is scratch space.
+    fn hash(&self, buf: &mut Vec<u8>) -> u128 {
+        buf.clear();
+        buf.push(self.space as u8);
+        buf.push(self.tag);
+        buf.extend_from_slice(&(self.field.len() as u32).to_be_bytes());
+        buf.extend_from_slice(self.field.as_bytes());
+        buf.extend_from_slice(self.key);
+        buf.extend_from_slice(&self.id.to_be_bytes());
+        buf.extend_from_slice(&self.count.to_be_bytes());
+        xxhash_rust::xxh3::xxh3_128(buf)
+    }
+
+    /// The entry as a line names it, its id resolved to the metarecord.
+    fn show(&self, t: &Tables, r: &RoTxn<'_>) -> Result<String> {
+        let who = match t.uuids.get(r, &self.id.to_be_bytes())? {
+            Some(uuid) => uuid_of(uuid).to_string(),
+            None => format!("dense id {} (no metarecord)", self.id),
+        };
+        let field = self.field;
+        Ok(match self.space {
+            SET => format!("({}, {field:?}, {who})", self.tag),
+            REFERRER | DESCENDANT => format!("({field:?}, {}, {who})", uuid_of(self.key)),
+            PART => format!("({field:?}, {}, {:?}, {who}): {}", self.tag, self.key, self.count),
+            KID => format!("({}, {field:?}, {who}): {}", uuid_of(self.key), self.count),
+            _ => format!("({field:?}, {:?}, {who})", String::from_utf8_lossy(self.key)),
+        })
+    }
+}
+
+/// Everything one field of one metarecord derives.
+#[derive(Default)]
+struct Group {
+    uuid: [u8; 16],
+    id: Option<u32>,
+    field: String,
+    parts: BTreeMap<(u8, Vec<u8>), i64>,
+    kids: BTreeMap<[u8; 16], i64>,
+    grams: BTreeSet<[u8; 3]>,
+    targets: BTreeSet<[u8; 16]>,
+    /// Non-`Nothing` rows.
+    valued: usize,
+    absent: bool,
+    long: bool,
+}
+
+impl Group {
+    fn flush(&self, sink: &mut dyn FnMut(Side, Entry<'_>) -> Result<()>) -> Result<()> {
+        // No id: nothing in the derived tables can name this metarecord, and
+        // the walk has said so.
+        let Some(id) = self.id else { return Ok(()) };
+        let field = self.field.as_str();
+        let mut emit = |space, tag, key: &[u8], count| {
+            sink(Side::Expected, Entry { space, tag, field, key, id, count })
+        };
+        for ((part, key), rows) in &self.parts {
+            emit(PART, *part, key, *rows)?;
+        }
+        for (parent, rows) in &self.kids {
+            emit(KID, 0, parent, *rows)?;
+        }
+        for gram in &self.grams {
+            emit(GRAM, 0, gram, 1)?;
+        }
+        for target in &self.targets {
+            emit(REFERRER, 0, target, 1)?;
+        }
+        let kinds = [
+            (PRESENT, self.valued > 0),
+            (ABSENT, self.absent),
+            (MULTI, self.valued > 1),
+            (LONG_TEXTS, self.long),
+        ];
+        for (kind, holds) in kinds {
+            if holds {
+                emit(SET, kind, &[], 1)?;
+            }
+        }
+        Ok(())
+    }
+}
+
+/// Both sides' fingerprints: per key space and bucket, how many entries and
+/// the sum of their hashes — equal whatever the order they came in.
+struct Sums {
+    sides: [Vec<(u64, u128)>; 2],
+    buf: Vec<u8>,
+}
+
+impl Sums {
+    fn new() -> Sums {
+        let empty = || vec![(0, 0); SPACES.len() * BUCKETS];
+        Sums { sides: [empty(), empty()], buf: Vec::new() }
+    }
+
+    fn add(&mut self, side: Side, entry: &Entry<'_>) {
+        let hash = entry.hash(&mut self.buf);
+        let slot = &mut self.sides[side as usize][entry.space * BUCKETS + bucket(hash)];
+        slot.0 += 1;
+        slot.1 = slot.1.wrapping_add(hash);
+    }
+
+    /// Per key space, the first buckets whose two sides differ.
+    fn differing(&self) -> Vec<Vec<usize>> {
+        (0..SPACES.len())
+            .map(|space| {
+                (0..BUCKETS)
+                    .filter(|b| {
+                        self.sides[0][space * BUCKETS + b] != self.sides[1][space * BUCKETS + b]
+                    })
+                    .take(DETAILED)
+                    .collect()
+            })
+            .collect()
+    }
+}
+
+fn bucket(hash: u128) -> usize {
+    (hash % BUCKETS as u128) as usize
+}
+
+/// The second pass: the entries of the buckets that differ, as text.
+struct Detail {
+    wanted: Vec<Vec<usize>>,
+    sides: [Vec<BTreeSet<String>>; 2],
+    buf: Vec<u8>,
+}
+
+impl Detail {
+    fn new(wanted: Vec<Vec<usize>>) -> Detail {
+        let empty = || vec![BTreeSet::new(); SPACES.len()];
+        Detail { wanted, sides: [empty(), empty()], buf: Vec::new() }
+    }
+
+    fn add(&mut self, t: &Tables, r: &RoTxn<'_>, side: Side, entry: &Entry<'_>) -> Result<()> {
+        if self.wanted[entry.space].contains(&bucket(entry.hash(&mut self.buf))) {
+            self.sides[side as usize][entry.space].insert(entry.show(t, r)?);
+        }
+        Ok(())
+    }
+
+    /// The entries one side holds and the other does not (or holds otherwise).
+    fn report(&self, diff: &mut Diff) {
+        // Referrers and descendants first, then the sets, as the lines have
+        // always come.
+        for space in [REFERRER, DESCENDANT, SET, PART, KID, GRAM] {
+            let (expected, got) = (&self.sides[0][space], &self.sides[1][space]);
+            let what = SPACES[space];
+            for e in expected.difference(got) {
+                diff.push(format!("{what} missing: {e}"));
+            }
+            for e in got.difference(expected) {
+                diff.push(format!("{what} unexpected: {e}"));
+            }
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use metafolder_core::metarecord::{Field, TreeName, Value};
+
+    use super::*;
+    use crate::kvstore::test_store;
+    use crate::log::Writer;
+
+    /// A root, a folder and files under it, with texts and a value frequent
+    /// enough to have a posting.
+    fn populated() -> (KvStore, crate::kvstore::TestDir) {
+        let (mut store, dir) = test_store();
+        let tree = |parent, name: &str| Value::TreeRef { parent, name: TreeName::from(name) };
+        let mut w = Writer::begin(&mut store, None).unwrap();
+        let root = w.create_metarecord(vec![Field::new("loc", tree(None, ""))]).unwrap().uuid;
+        let folder =
+            w.create_metarecord(vec![Field::new("loc", tree(Some(root), "dir"))]).unwrap().uuid;
+        for i in 0..(POSTING_MIN as usize + 6) {
+            w.create_metarecord(vec![
+                Field::new("loc", tree(Some(folder), &format!("file{i}.txt"))),
+                Field::new("kind", Value::String("text".into())),
+                Field::new("title", Value::String(format!("title number {i}"))),
+                Field::new("link", Value::Ref(folder)),
+            ])
+            .unwrap();
+        }
+        w.commit().unwrap();
+        (store, dir)
+    }
+
+    /// Applies `tamper` to the tables, behind the store's back.
+    fn tamper(store: &KvStore, tamper: impl FnOnce(&Tables, &mut heed::RwTxn<'_>)) {
+        let mut w = store.env.write_txn().unwrap();
+        tamper(&store.t, &mut w);
+        w.commit().unwrap();
+    }
+
+    fn first_key(
+        store: &KvStore,
+        db: impl Fn(&Tables) -> &super::super::Db,
+        prefix: &[u8],
+    ) -> Vec<u8> {
+        let r = store.env.read_txn().unwrap();
+        let (k, _) = db(&store.t).prefix_iter(&r, prefix).unwrap().next().unwrap().unwrap();
+        k.to_vec()
+    }
+
+    /// The first lines of a diff, for a failure message.
+    fn some(diff: &[String]) -> String {
+        diff.iter().take(5).cloned().collect::<Vec<_>>().join("\n")
+    }
+
+    fn has(diff: &[String], start: &str) -> bool {
+        diff.iter().any(|line| line.starts_with(start))
+    }
+
+    #[test]
+    fn test_a_healthy_store_checks_clean() {
+        let (store, _dir) = populated();
+        assert_eq!(store.check_derived().unwrap(), Vec::<String>::new());
+    }
+
+    #[test]
+    fn test_a_lost_trigram_chunk_is_named() {
+        let (store, _dir) = populated();
+        let key = first_key(&store, |t| &t.grams, &gram_prefix("title", b"num"));
+        tamper(&store, |t, w| {
+            t.grams.delete(w, &key).unwrap();
+        });
+        let diff = store.check_derived().unwrap();
+        assert!(has(&diff, "gram missing: "), "{}", some(&diff));
+        assert!(!has(&diff, "gram unexpected: "), "{}", some(&diff));
+        assert!(diff.iter().all(|l| l.starts_with("gram ")), "only the trigrams differ: {diff:?}");
+    }
+
+    #[test]
+    fn test_a_partition_entry_nothing_derives_is_named() {
+        let (store, _dir) = populated();
+        let existing = first_key(&store, |t| &t.parts, &name_key("title"));
+        let id = &existing[existing.len() - 4..];
+        let bogus = [&name_key("title")[..], &[VALUE], &value_key(&Value::Bool(true)).unwrap(), id]
+            .concat();
+        tamper(&store, |t, w| {
+            t.parts.put(w, &bogus, &be(1)).unwrap();
+        });
+        let diff = store.check_derived().unwrap();
+        assert!(has(&diff, "part unexpected: "), "{}", some(&diff));
+        assert!(!has(&diff, "part missing: "), "{}", some(&diff));
+    }
+
+    #[test]
+    fn test_a_wrong_row_count_is_named_on_both_sides() {
+        let (store, _dir) = populated();
+        let key = {
+            let r = store.env.read_txn().unwrap();
+            let (k, _) = store.t.kids.iter(&r).unwrap().next().unwrap().unwrap();
+            k.to_vec()
+        };
+        tamper(&store, |t, w| {
+            t.kids.put(w, &key, &be(7)).unwrap();
+        });
+        let diff = store.check_derived().unwrap();
+        assert!(has(&diff, "kid missing: ") && has(&diff, "kid unexpected: "), "{}", some(&diff));
+    }
+
+    #[test]
+    fn test_a_lost_set_chunk_is_named_by_its_key_space() {
+        let cases: [(&str, Vec<u8>); 3] = [
+            ("set missing: ", set_prefix(PRESENT, Some("kind"))),
+            ("descendant missing: ", vec![DESCENDANTS]),
+            ("referrer missing: ", vec![REFERRERS]),
+        ];
+        for (expected, prefix) in cases {
+            let (store, _dir) = populated();
+            let key = first_key(&store, |t| &t.sets, &prefix);
+            tamper(&store, |t, w| {
+                t.sets.delete(w, &key).unwrap();
+            });
+            let diff = store.check_derived().unwrap();
+            assert!(
+                !diff.is_empty() && diff.iter().all(|l| l.starts_with(expected)),
+                "{}",
+                some(&diff)
+            );
+        }
+    }
+
+    #[test]
+    fn test_postings_are_required_and_exact() {
+        let (store, _dir) = populated();
+        let posting = posting_prefix("kind", &value_key(&Value::String("text".into())).unwrap());
+        let key = first_key(&store, |t| &t.sets, &posting);
+
+        // Inexact: one holder short.
+        let short = {
+            let r = store.env.read_txn().unwrap();
+            let mut set = decode_set(store.t.sets.get(&r, &key).unwrap().unwrap()).unwrap();
+            set.remove(set.max().unwrap());
+            let mut bytes = Vec::new();
+            set.serialize_into(&mut bytes).unwrap();
+            bytes
+        };
+        tamper(&store, |t, w| {
+            t.sets.put(w, &key, &short).unwrap();
+        });
+        let diff = store.check_derived().unwrap();
+        assert!(has(&diff, "posting of "), "{}", some(&diff));
+
+        // Gone, for a value over the threshold.
+        tamper(&store, |t, w| {
+            t.sets.delete(w, &key).unwrap();
+        });
+        let diff = store.check_derived().unwrap();
+        assert!(has(&diff, "posting missing: "), "{}", some(&diff));
+
+        // Kept for a value nothing holds.
+        let orphan =
+            [&posting_prefix("kind", &value_key(&Value::Bool(true)).unwrap())[..], &[0, 0]]
+                .concat();
+        tamper(&store, |t, w| {
+            t.sets.put(w, &key, &short).unwrap();
+            t.sets.put(w, &orphan, &short).unwrap();
+        });
+        let diff = store.check_derived().unwrap();
+        assert!(has(&diff, "posting unexpected: "), "{}", some(&diff));
+    }
+
+    #[test]
+    fn test_an_id_naming_no_metarecord_is_reported() {
+        let (store, _dir) = populated();
+        let mut stray = RoaringBitmap::new();
+        stray.insert(4_000_000);
+        let mut bytes = Vec::new();
+        stray.serialize_into(&mut bytes).unwrap();
+        tamper(&store, |t, w| {
+            t.sets.put(w, &set_key(PRESENT, Some("kind"), 61), &bytes).unwrap();
+        });
+        let diff = store.check_derived().unwrap();
+        assert!(has(&diff, "set unexpected: "), "{}", some(&diff));
+        assert!(diff.iter().any(|l| l.contains("4000000")), "{}", some(&diff));
     }
 }

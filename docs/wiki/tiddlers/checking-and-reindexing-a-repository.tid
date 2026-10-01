@@ -9,13 +9,23 @@ mf -n music repo reindex     # derive again what the store derives
 ```
 
 `check` compares the store's derived key spaces — ids, sets, partitions, the
-forest, trigrams, postings — with a rebuild from the primary data, and lists every
-difference, one line each (nothing when the store is healthy). It also names the
+forest, trigrams, postings — with a rebuild from the primary data, and lists the
+differences, one line each (nothing when the store is healthy; a hundred lines at
+most). It also names the
 metarecords an older daemon let hold several positions in one forest: the data is
 not damaged, but the daemon no longer means anything by it ([[One position per forest]]).
 
 `reindex` rebuilds all the derived data from the primary data. Derived data is a
 function of the primary data, so reindexing never loses anything; it is the repair
 for what `check` reports.
+
+The comparison holds neither side in memory: the derived data of a large
+repository — every trigram of every text, per holder — is larger than the machine
+that checks it, and the check also runs inside the daemon, on each automatic backup
+([[Backups and restore]]). Both sides are streamed into fingerprints (a sum of entry
+hashes per key space, cut in buckets), and only the buckets whose fingerprints differ
+are read again to name their entries. What stays resident is a parent per forest
+node. A check that listed everything it compared was killed for lack of memory on a
+3 GB store, taking the daemon with it at every start.
 
 Both hold the repository while they run: other work on it waits.
