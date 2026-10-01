@@ -107,7 +107,7 @@ async function mountPanel(watchResults: Record<string, unknown>[] | null) {
     changes: { sync: async () => {}, subscribe: () => () => {} },
     query: { parse: async () => null, expand: async () => '', grammarSource: async () => '' },
     pick: { start: async () => '' },
-    config: { pickerSeed: async () => null },
+    config: {},
     workspace: {
       get: async (key: string) => store.get(key) ?? null,
       set: async (key: string, value: unknown) => void store.set(key, value),

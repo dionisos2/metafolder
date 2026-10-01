@@ -88,8 +88,7 @@ task-poll-ms = 1500
 # Written `"columns"` or `["query", "columns"]`. The `*` entry is the default
 # rule, read for every field that names none. The tag model's three ref fields
 # point at their `path` hierarchy; everything else falls to `*`, which names by
-# the columns a list would show. (The legacy `[picker-seeds]` and
-# `[ref-completion-seeds]` tables are still read for a field no rule names.)
+# the columns a list would show.
 [ref-seeds]
 tag          = ['mf_schema = "tag"', 'path:path']
 negative_tag = ['mf_schema = "tag"', 'path:path']

@@ -62,10 +62,3 @@ must name one target across them.
 What is typed is what is shown: under a `ref` value, and as the starting text of an
 edit, the target reads as its label under the same rule. A target that has none of
 the columns reads as its uuid, in the candidates as well.
-
-!! Older tables
-
-Two tables that came before `[ref-seeds]` are still read for a field that no rule
-covers, which requires that there be no `*` rule either: `[picker-seeds]` (field →
-the query the value picker opens on) and `[ref-completion-seeds]` (field → a
-`tree_ref` field whose paths name the targets).

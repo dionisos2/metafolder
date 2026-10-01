@@ -398,10 +398,6 @@ describe('panel api — misc surface', () => {
 
   test('config seeds route to their commands', async () => {
     const { api, invoke } = setup();
-    await api.config.pickerSeed('tag');
-    expect(invoke).toHaveBeenCalledWith('picker_seed', { field: 'tag' });
-    await api.config.refCompletionSeed('tag');
-    expect(invoke).toHaveBeenCalledWith('ref_completion_seed', { field: 'tag' });
     await api.config.refSeed('tag');
     expect(invoke).toHaveBeenCalledWith('ref_seed', { field: 'tag' });
     await api.config.labelSeparator();
@@ -511,6 +507,12 @@ describe('panel api — no duplicate members', () => {
     const { api } = setup();
     expect('parseQuery' in api.daemon).toBe(false);
     expect('expandQuery' in api.daemon).toBe(false);
+  });
+
+  test('a ref field is named by its [ref-seeds] rule only', () => {
+    const { api } = setup();
+    expect('pickerSeed' in api.config).toBe(false);
+    expect('refCompletionSeed' in api.config).toBe(false);
   });
 
   test('daemon.call sends every path to the daemon as it is', async () => {

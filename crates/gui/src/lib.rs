@@ -384,8 +384,6 @@ pub fn run(options: Options) {
     let gui_config = or_exit(config.load_config());
     let gui_port = options.gui_port.unwrap_or(gui_config.gui_port);
     let page_sizes = gui_config.page_size.clone();
-    let picker_seeds = gui_config.picker_seeds.clone();
-    let ref_completion_seeds = gui_config.ref_completion_seeds.clone();
     let ref_seeds = gui_config.ref_seeds.clone();
     let completion = gui_config.completion.clone();
     let open_with = gui_config.open_with.clone();
@@ -427,8 +425,6 @@ pub fn run(options: Options) {
 
                 gui_port,
                 page_sizes: page_sizes.clone(),
-                picker_seeds: picker_seeds.clone(),
-                ref_completion_seeds: ref_completion_seeds.clone(),
                 ref_seeds: ref_seeds.clone(),
                 completion: completion.clone(),
                 open_with: open_with.clone(),
@@ -565,8 +561,6 @@ pub fn run(options: Options) {
             commands::pick_start,
             commands::pick_confirm,
             commands::pick_cancel,
-            commands::picker_seed,
-            commands::ref_completion_seed,
             commands::ref_seed,
             commands::label_separator,
             commands::open_with_programs,

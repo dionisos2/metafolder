@@ -205,12 +205,6 @@ declare namespace Metafolder {
   }
 
   interface PanelConfig {
-    /** The configured `ref` picker seed query for a field, or null
-     *  (config.toml `[picker-seeds]`). */
-    pickerSeed(field: string): Promise<string | null>;
-    /** The configured `ref` value completion seed (a tree_ref field name) for a
-     *  field, or null (config.toml `[ref-completion-seeds]`). */
-    refCompletionSeed(field: string): Promise<string | null>;
     /** The `[ref-seeds]` rule naming a `ref` field's targets —
      *  `{query, columns}` (doc "Ref value seeds"): which metarecords may
      *  be named, and how each is shown (the `metarecord-list` query and columns

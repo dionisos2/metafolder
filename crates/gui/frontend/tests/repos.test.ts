@@ -152,7 +152,7 @@ function setup(options: { activeRepo?: string | null } = {}) {
       case 'append_message':
       case 'suggest_keybinding':
       case 'bench_record':
-      case 'picker_seed':
+      case 'ref_seed':
       case 'fs_home_dir':
         return command === 'fs_home_dir' ? '/home/user' : null;
       default:

@@ -23,7 +23,7 @@ const PANEL_DIR = resolve(process.cwd(), '../default-config/panel-types/metareco
 
 const REPO = 'repo-1';
 const UUID = 'uuid-1';
-// Real 32-hex uuids: `resolveRefValue` takes one as a uuid verbatim.
+// Real 32-hex uuids: a ref value typed as one is taken as a uuid verbatim.
 const U_JAZZ = 'a'.repeat(32);
 const U_BLUES = 'b'.repeat(32);
 const U_PARENT = 'c'.repeat(32);
@@ -49,11 +49,11 @@ function shadowFor(): ShadowRoot {
 }
 
 /** Mounts the panel on a metarecord holding `fields`.
- *  `seeds` is the `[ref-completion-seeds]` map (ref field → tree_ref field);
+ *  `seeds` maps a ref field to the tree_ref field its `[ref-seeds]` rule names
+ *  the targets by (`<field>:path`);
  *  `tree` maps a path to the metarecord uuid it resolves to — read backwards
- *  for the path read-back (`treePaths`) and forwards for path resolution
- *  (`/tree/resolve-path`), the two directions `resolveRefValue` and
- *  `rawOfValue` travel. `treePaths` answers the tree_ref read-back
+ *  for a target's label (`treePaths`) and forwards for a tree_ref's parent
+ *  (`/tree/resolve-path`). `treePaths` answers the tree_ref read-back
  *  (`…/fields/:field/resolve-tree`). */
 async function mountPanel(
   fields: Field[],
@@ -79,6 +79,18 @@ async function mountPanel(
     ...Object.entries(vars),
   ]);
   const byUuid = Object.fromEntries(Object.entries(tree).map(([path, uuid]) => [uuid, path]));
+  /** A target of the seeded refs: a node of the `path` forest. */
+  const target = (uuid: string) => ({
+    uuid,
+    version: 1,
+    fields: [
+      {
+        id: 100,
+        name: 'path',
+        value: { type: 'tree_ref', value: { parent: null, name: byUuid[uuid].split('/').pop() } },
+      },
+    ],
+  });
   const api = {
     ready: Promise.resolve(),
     workspaceId: 'ws-1',
@@ -96,7 +108,8 @@ async function mountPanel(
       query: async () => ({ uuids: [], nextCursor: null, total: 0 }),
       treePaths: async (_repo: string, _field: string, uuids: string[]) =>
         Object.fromEntries(uuids.map((u) => [u, byUuid[u] ? [byUuid[u]] : []])),
-      metarecords: async () => new Map(),
+      metarecords: async (_repo: string, uuids: string[]) =>
+        new Map(uuids.filter((u) => byUuid[u]).map((u) => [u, target(u)])),
       fields: async () => Object.entries(catalog).map(([name, type]) => ({ name, type })),
       request: async () => ({ status: 200, body: null }),
       call: async (method: string, path: string, body: unknown = null) => {
@@ -107,6 +120,11 @@ async function mountPanel(
         // The whole-forest path listing behind a value completion: empty —
         // these tests name values, they do not complete over the forest.
         if (method === 'POST' && path.endsWith('/resolve-tree')) return {};
+        // The targets a `[ref-seeds]` rule names: every node of `tree`.
+        if (method === 'POST' && path === `/repos/${REPO}/query`) {
+          const results = Object.keys(byUuid).map(target);
+          return { results, total: results.length };
+        }
         if (method === 'POST' && path.endsWith('/tree/resolve-path')) {
           const { path: p } = body as { field: string; path: string };
           return { uuid: tree[p] ?? null };
@@ -123,9 +141,8 @@ async function mountPanel(
     query: { parse: async () => null, expand: async () => '', grammarSource: async () => '' },
     pick: { start: async () => '' },
     config: {
-      pickerSeed: async () => null,
-      refCompletionSeed: async (field: string) => seeds[field] ?? null,
-      refSeed: async () => null,
+      refSeed: async (field: string) =>
+        seeds[field] ? { query: null, columns: `${seeds[field]}:path` } : null,
       labelSeparator: async () => ' | ',
     },
     recent: { touch: async () => {}, list: async () => [] },

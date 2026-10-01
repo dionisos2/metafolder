@@ -156,7 +156,7 @@ literally, so creating `new%file.txt` creates exactly that. `readDir` marks with
 |`contextMenu(event, items)` |opens the HTML menu at the event's position; an item is `{label, action?, disabled?}`, a header or `'-'`. Returns nothing: the chosen item runs its `action` ([[Context menus]]) |
 |`contextMenu.addDefaultItems(event => items)` |adds items to the default menu when it opens inside this panel |
 |`pick.start(spec)` |opens a picker workspace; the answer comes back as the `pick_result` variable, matched by the `token` of the spec ([[Value picker]]). `createPickRunner` of `/__value-widget.js` wraps it |
-|`config.refSeed(field)`, `config.labelSeparator()` |the `[ref-seeds]` rule of a field and the separator of a completion label ([[Ref value seeds]]); `pickerSeed` and `refCompletionSeed` read the two older tables |
+|`config.refSeed(field)`, `config.labelSeparator()` |the `[ref-seeds]` rule of a field and the separator of a completion label ([[Ref value seeds]]) |
 |`history.read(repo, zone)`, `history.append(repo, zone, entry)` |the store behind `attachHistory` of `/__history.js` ([[Input history]]) |
 |`recent.list(repo, limit?)`, `recent.touch(repo, uuid)` |the recently viewed metarecords |
 |`trash.list`, `restore`, `remove`, `empty`, `trashPath` |the repository's trash ([[Trash]]) |

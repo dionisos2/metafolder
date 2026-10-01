@@ -18,7 +18,6 @@ import {
 import { loadSchema as loadSharedSchema, schemaTypes, templateFields } from '/__schema-template.js';
 import { fileMenuItems, metarecordMenuItems } from '/__file-actions.js';
 import { createAnnotator } from './annotations.js';
-import { completionSourceField, resolveRefValue } from './ref-completion.js';
 import { createRefSeeds } from './ref-seeds.js';
 import { createNavHistory } from './nav-history.js';
 import { settledType, splitTypeValue } from './field-args.js';
@@ -862,9 +861,9 @@ export async function mount(root, metafolder) {
           const label = await seeds.labelOf(String(value.value)).catch(() => null);
           if (label) return label;
         }
-        // A target outside a legacy seed forest has no path to show and keeps
-        // its uuid — unambiguous either way, only less legible.
-        return (await refSeedPath(repo, field, value.value)) ?? String(value.value);
+        // A target the naming gives no label keeps its uuid — unambiguous
+        // either way, only less legible.
+        return String(value.value);
       }
       case 'refbase':
         return String(value.value);
@@ -884,22 +883,6 @@ export async function mount(root, metafolder) {
       default:
         // Only primitive-valued types (string/int/float/datetime) reach here.
         return String(value.value);
-    }
-  }
-
-  /** A `ref` target's path in the field's seed forest, or null when the field
-   *  has no completion seed or the target is not in that forest — the read-back
-   *  twin of `resolveRefValue` (ref-completion.js), which maps a typed path the
-   *  other way.
-   *  @param {string} repo @param {string} field @param {string} uuid */
-  async function refSeedPath(repo, field, uuid) {
-    const seed = await config.refCompletionSeed(field);
-    if (!seed) return null;
-    try {
-      const byUuid = await daemon.treePaths(repo, seed, [uuid]);
-      return (byUuid[uuid] ?? [])[0] ?? null;
-    } catch {
-      return null; // a failed lookup degrades to the uuid, never to a wrong path
     }
   }
 
@@ -951,16 +934,12 @@ export async function mount(root, metafolder) {
   }
 
   /** What a `ref` value reads back as under the value: its label in the
-   *  field's `[ref-seeds]` naming (doc "Ref value seeds"), else its path
-   *  in a legacy seed forest, else null — the target's `name` then applies.
+   *  field's `[ref-seeds]` naming (doc "Ref value seeds"), else null — the
+   *  target's `name` then applies.
    *  @param {string} repo @param {string} field @param {string} uuid */
   async function refLabelFor(repo, field, uuid) {
     const seeds = await refSeedsFor(repo, field);
-    if (seeds) {
-      const label = await seeds.labelOf(uuid).catch(() => null);
-      if (label) return label;
-    }
-    return refSeedPath(repo, field, uuid);
+    return seeds ? seeds.labelOf(uuid).catch(() => null) : null;
   }
 
   /** A value's payload in an order-independent shape, so identity comparison
@@ -1061,17 +1040,8 @@ export async function mount(root, metafolder) {
       // names (an explicit uuid always wins).
       const seeds = await refSeedsFor(repo, field);
       if (seeds) return { type, value: await seeds.resolve(raw) };
-      // Legacy (doc "Ref value seeds"): `raw` is a PATH in the seed
-      // tree_ref field, resolved to the target uuid (a 32-hex `raw` is always
-      // taken as the uuid directly).
-      const seedField = await config.refCompletionSeed(field);
-      const value = await resolveRefValue(raw, seedField, async (f, p) => {
-        const res = /** @type {{uuid: string|null}} */ (
-          await daemon.call('POST', `/repos/${repo}/tree/resolve-path`, { field: f, path: p })
-        );
-        return res.uuid;
-      });
-      return { type, value };
+      // No rule names this field (not even `*`): the value is the uuid typed.
+      return { type, value: raw.trim() };
     }
     if (type !== 'tree_ref') return parseRawValue(type, raw);
     const path = raw.trim();
@@ -1135,9 +1105,8 @@ export async function mount(root, metafolder) {
     // A closed value set (bool: true/false) needs no repository lookup.
     const closed = rawValueCompletions(type);
     if (closed.length > 0) return [plainView(type, Promise.resolve(closed))];
-    const seedField = type === 'ref' ? await config.refCompletionSeed(field) : null;
-    const source = completionSourceField(type, field, seedField);
-    return source ? [plainView('path', treePathsForField(repo, source))] : [];
+    // A tree_ref value completes over its own forest.
+    return type === 'tree_ref' ? [plainView('path', treePathsForField(repo, field))] : [];
   }
 
   /** The one view of a plain candidate list. @param {string} title

@@ -92,8 +92,6 @@ async function mountPanel(fields: Field[], catalog: Record<string, string> = {},
     query: { parse: async () => null, expand: async () => '', grammarSource: async () => '' },
     pick: { start: async () => '' },
     config: {
-      pickerSeed: async () => null,
-      refCompletionSeed: async () => null,
       refSeed: async () => null,
       labelSeparator: async () => ' | ',
     },

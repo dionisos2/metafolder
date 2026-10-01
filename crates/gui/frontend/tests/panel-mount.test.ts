@@ -75,7 +75,7 @@ function stubApi(panelType: string, defaults: Record<string, unknown> = {}) {
     changes: { sync: async () => {}, subscribe: () => () => {} },
     query: { parse: async () => null, expand: async () => '', grammarSource: async () => '' },
     pick: { start: async () => '' },
-    config: { pickerSeed: async () => null },
+    config: {},
     workspace: {
       get: async () => null,
       set: async () => {},

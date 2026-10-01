@@ -36,13 +36,6 @@ pub struct App {
     pub panel_settings: crate::config::PanelSettings,
     /// Per-panel-type default values (config.toml `[panel-defaults.<type>]`).
     pub panel_defaults: crate::config::PanelDefaults,
-    /// Per-field `ref` picker seed queries (config.toml `[picker-seeds]`).
-    pub picker_seeds: std::collections::HashMap<String, String>,
-    /// Per-field `ref` value completion seeds (config.toml
-    /// `[ref-completion-seeds]`): field name → the `tree_ref` field to seed the
-    /// value completion and resolve typed paths against. Legacy: `[ref-seeds]`
-    /// wins where both name a field.
-    pub ref_completion_seeds: std::collections::HashMap<String, String>,
     /// Per-field rules naming a `ref` field's targets (config.toml
     /// `[ref-seeds]`): field name → `{query, columns}`, with `"*"` the default
     /// rule (doc "Ref value seeds").
@@ -521,23 +514,7 @@ pub fn pick_cancel(app: AppHandle) -> Result<(), String> {
     app.gui.pick_cancel()
 }
 
-/// The configured `ref` picker seed query for a field name (config.toml
-/// `[picker-seeds]`), or null when none is set (doc "Ref value seeds").
-#[tauri::command]
-pub fn picker_seed(app: AppHandle, field: String) -> Option<String> {
-    app.picker_seeds.get(&field).cloned()
-}
-
-/// The configured `ref` value completion seed for a field name (config.toml
-/// `[ref-completion-seeds]`): the `tree_ref` field whose paths seed the value
-/// completion and against which a typed path resolves to the target uuid, or
-/// null when none is set (doc "Ref value seeds").
-#[tauri::command]
-pub fn ref_completion_seed(app: AppHandle, field: String) -> Option<String> {
-    app.ref_completion_seeds.get(&field).cloned()
-}
-
-/// The `[ref-seeds]` rule naming a `ref` field's targets (spec-gui "Ref value
+/// The `[ref-seeds]` rule naming a `ref` field's targets (doc "Ref value
 /// seeds"): `{query, columns}`, or null when neither the field nor the `"*"`
 /// default has a rule.
 #[tauri::command]
@@ -637,7 +614,7 @@ pub fn prompt_resolve(app: AppHandle, confirm: bool, text: Option<String>) -> bo
     app.input.resolve_prompt(confirm, text)
 }
 
-/// Reported by PanelHost once a panel iframe finished initializing.
+/// Reported by PanelHost once a panel's `mount` has returned.
 #[tauri::command]
 pub fn panel_ready(app: AppHandle, ws_id: String, panel_type: String) -> Result<(), String> {
     app.gui.set_panel_ready(&ws_id, &panel_type)

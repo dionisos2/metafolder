@@ -102,7 +102,7 @@ function stub(vars: Record<string, unknown>, existing: Set<string>) {
       grammarSource: async () => '',
     },
     pick: { start: async () => '' },
-    config: { pickerSeed: async () => null },
+    config: {},
     workspace: {
       get: async (key: string) => store.get(key) ?? null,
       set: async (key: string, value: unknown) => {

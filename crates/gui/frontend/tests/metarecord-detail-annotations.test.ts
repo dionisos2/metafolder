@@ -122,7 +122,7 @@ describe('ref annotations', () => {
   test('a seeded ref shows the target\'s path in the seed forest', async () => {
     // The tag model: a tag metarecord carries its position as a TreeRef `path`
     // and needs no `name` at all, so a `tag` ref would otherwise show nothing
-    // but its uuid. `[ref-completion-seeds]` already maps tag -> path.
+    // but its uuid. The `[ref-seeds]` rule of `tag` names it by `path`.
     const music: Entry = { uuid: 'm000', fields: [{ name: 'path', value: treeRef(null, 'music') }] };
     const jazz: Entry = { uuid: 'j000', fields: [{ name: 'path', value: treeRef('m000', 'jazz') }] };
     const { annotator, resolvePaths } = annotatorFor([music, jazz], { tag: 'path' });

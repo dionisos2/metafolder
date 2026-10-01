@@ -88,7 +88,7 @@ function stubApi(handlers: Map<string, Handler>, calls: Call[], queryCalls: unkn
         grammarSource: async () => '',
       },
       pick: { start: async () => '' },
-      config: { pickerSeed: async () => null },
+      config: {},
       workspace: {
         get: async (key: string) => store.get(key) ?? null,
         set: setVar,

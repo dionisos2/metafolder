@@ -95,7 +95,7 @@ function stubApi(vars: Record<string, unknown>, reads: Read[]) {
         grammarSource: async () => '',
       },
       pick: { start: async () => '' },
-      config: { pickerSeed: async () => null },
+      config: {},
       workspace: {
         get: async (key: string) => store.get(key) ?? null,
         set: vi.fn(async (key: string, value: unknown) => void store.set(key, value)),
