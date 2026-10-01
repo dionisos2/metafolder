@@ -293,9 +293,6 @@ declare namespace Metafolder {
 
   interface CommandOptions {
     label?: string;
-    /** Accepted and ignored: where a key applies is said by the binding
-     *  (`addKeybinding`), not by the command. */
-    textInput?: boolean;
     /** Put the owning panel on screen before running, when it is not
      *  (doc "Writing a panel type"). */
     reveal?: boolean;

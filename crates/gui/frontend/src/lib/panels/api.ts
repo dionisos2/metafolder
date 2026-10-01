@@ -525,7 +525,6 @@ export function createPanelApi(deps: PanelApiDeps, ctx: PanelApiCtx): PanelApiIn
         name: string,
         { label, reveal, log, handler, args }: {
           label?: string;
-          textInput?: boolean;
           reveal?: boolean;
           log?: boolean;
           handler?: (...args: string[]) => unknown;

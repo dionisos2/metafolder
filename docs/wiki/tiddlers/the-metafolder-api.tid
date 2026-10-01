@@ -109,8 +109,8 @@ await metafolder.invoke('panel:split');
 |`log` |`false` keeps the invocations out of the message log — for a command run at each key press |
 
 A command of this name defined in `commands.js` is dropped in favour of the
-panel's ([[User commands]]). `register` also accepts `textInput`, and ignores it:
-where a key applies is said by the binding, not by the command.
+panel's ([[User commands]]). Where a key applies is said by the binding, not by
+the command.
 
 `addKeybinding(invocation, combo, {when?, textInput?, focus?})` ''suggests'' a key:
 it is applied unless `keybindings.toml` already binds that combo in that scope, and
