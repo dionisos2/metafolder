@@ -142,6 +142,11 @@ export async function mount(root, metafolder) {
   // (a drill-in path has no metarecord in hand).
   /** @type {Selected|null} */
   let selected = null;
+  // The workspace's repository, read with the selection: what the file actions
+  // of the right-click menu need (the trash is a repository's), whether or not
+  // the file shown has a metarecord.
+  /** @type {string|null} */
+  let activeRepo = null;
   /** @type {string|null} uuid last recorded in the recently-viewed list, so
    *  following the same selection again (or a re-render) does not churn the
    *  list. */
@@ -960,6 +965,8 @@ export async function mount(root, metafolder) {
     // click in metarecord-detail) must not re-target the played file's
     // position onto another metarecord.
     selected = /** @type {Selected|null} */ ((await workspace.get('selected_metarecord')) ?? null);
+    const repo = await workspace.get('active_repo');
+    activeRepo = typeof repo === 'string' && repo !== '' ? repo : null;
     // Record the view in the repo's recently-viewed list (GUI-side, no daemon
     // write) when the selection points at a tracked metarecord — only on an
     // actual change, so re-selecting the same file does not churn the list.
@@ -1172,7 +1179,9 @@ export async function mount(root, metafolder) {
   // one: after a drill-in or a step back that is not the selected path, and a
   // menu aimed at the selection would act on something that is not on screen.
   metafolder.contextMenu.addDefaultItems(() => {
-    const repo = selected?.repo;
+    // An untracked file has the same actions: they work on the path, and only
+    // need a repository for its trash.
+    const repo = selected?.repo ?? activeRepo;
     const path = viewedPath();
     if (!repo || typeof path !== 'string' || path === '') return [];
     return fileMenuItems({

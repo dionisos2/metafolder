@@ -32,13 +32,13 @@ type Provider = (event: MouseEvent) => MenuItem[];
 
 const DIRS = new Set(['/repo/album']);
 
-function stub(path: string) {
+function stub(path: string, tracked = true) {
   const noop = () => {};
   const handlers = new Map<string, Handler>();
   const providers: Provider[] = [];
   const vars = new Map<string, unknown>([
     ['selected_paths', [path]],
-    ['selected_metarecord', { uuid: 'u1', repo: 'r1' }],
+    ['selected_metarecord', tracked ? { uuid: 'u1', repo: 'r1' } : null],
     ['active_repo', 'r1'],
   ]);
   return {
@@ -103,8 +103,8 @@ describe('file panel — context menu target', () => {
     );
   });
 
-  async function mountPanel(path: string) {
-    const s = stub(path);
+  async function mountPanel(path: string, tracked = true) {
+    const s = stub(path, tracked);
     const root = shadowRoot();
     const mod = await import('../../default-config/panel-types/file/main.js');
     await mod.mount(root, s.api as never);
@@ -114,6 +114,11 @@ describe('file panel — context menu target', () => {
 
   test('following the selection, the menu acts on the selected file', async () => {
     const { providers } = await mountPanel('/repo/album/notes.txt');
+    expect(copiedBy(providers[0])).toEqual(['/repo/album/notes.txt']);
+  });
+
+  test('an untracked file has the file actions too, in the active repository', async () => {
+    const { providers } = await mountPanel('/repo/album/notes.txt', false);
     expect(copiedBy(providers[0])).toEqual(['/repo/album/notes.txt']);
   });
 

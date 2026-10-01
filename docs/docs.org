@@ -1227,10 +1227,10 @@ comme une vidéo (glyphe 🎬, puis « cannot play »). Retirer =ts= de l'une de
 listes est un choix d'usage ; (b) les listes d'extensions de
 =[panel-defaults.file]= ne commandent que le panel : celles du serveur
 (=POSTER_EXTENSIONS=, =DOCUMENT_EXTENSIONS=) sont en dur, donc une extension vidéo
-ou document ajoutée en configuration n'a ni poster ni page ; (c) le menu contextuel
-du panel =file= n'existe que si la sélection est un metarecord (il lui faut un
-dépôt) : un fichier non suivi n'y a pas d'actions, alors que le file manager les
-offre.
+ou document ajoutée en configuration n'a ni poster ni page.
+*Tranché par l'utilisateur*, fait dans un commit à part, test d'abord : le menu
+contextuel du panel =file= n'existait que si la sélection était un metarecord ; un
+fichier non suivi a maintenant les mêmes actions, dans le dépôt du workspace.
 Sources retirées (pointeurs) : spec-gui « =file= panel type » (avec « Video playback
 position », « Media transport », « Documents »), « =file-manager= panel type »,
 « Media codec support », « Slow decoders » ; de la table « Command names », les

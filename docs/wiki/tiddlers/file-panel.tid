@@ -77,7 +77,8 @@ the others.
 
 !! Right click
 
-When the selection is a tracked file, a right click offers the file's actions —
+In a workspace that has a repository, a right click offers the file's actions,
+tracked or not —
 ''Open with…'', the clipboard, ''Rename…'', ''Duplicate'', ''Copy full path'', ''Move to
 trash'' ([[Context menus]]). They act on the file ''shown'', which after a click on a
 tile or a step up is not the selected one.
