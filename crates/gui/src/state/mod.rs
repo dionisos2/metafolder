@@ -574,6 +574,21 @@ impl GuiState {
         Ok(ws.vars.get(key).cloned().unwrap_or(Value::Null))
     }
 
+    /// Every variable of a workspace (doc "Workspace variables"), `active_repo`
+    /// included — it is one to whoever reads them, though it lives as a
+    /// workspace field. What a panel built after some were set starts from: the
+    /// change events only tell it what moves afterwards.
+    pub fn vars(&self, ws_id: &str) -> Result<Map<String, Value>, String> {
+        let inner = self.lock();
+        let ws = inner.workspace(ws_id)?;
+        let mut vars: Map<String, Value> =
+            ws.vars.iter().map(|(key, value)| (key.clone(), value.clone())).collect();
+        if let Some(repo) = ws.active_repo.as_deref() {
+            vars.insert("active_repo".to_string(), Value::from(repo));
+        }
+        Ok(vars)
+    }
+
     // ── Workspace commands ───────────────────────────────────────────────
 
     /// Creates a workspace without assigning it to a slot (GUI HTTP API).
@@ -1829,6 +1844,21 @@ mod tests {
     }
 
     // ── Workspace variables ──────────────────────────────────────────────
+
+    #[test]
+    fn test_vars_lists_every_variable_with_active_repo() {
+        let (_notifier, state) = state();
+        state.adopt_repo("ws-1", "repo-1").unwrap();
+        state.set_var("ws-1", "selected_paths", json!(["/tmp/a"])).unwrap();
+        state.set_var("ws-1", "metarecord-list:query", json!("rating > 3")).unwrap();
+        let vars = state.vars("ws-1").unwrap();
+        // `active_repo` lives as a workspace field, but it is a variable to
+        // whoever reads them — `get_var` answers it, so the listing holds it.
+        assert_eq!(vars.get("active_repo"), Some(&json!("repo-1")));
+        assert_eq!(vars.get("selected_paths"), Some(&json!(["/tmp/a"])));
+        assert_eq!(vars.get("metarecord-list:query"), Some(&json!("rating > 3")));
+        assert!(state.vars("ws-nope").is_err());
+    }
 
     #[test]
     fn test_vars_set_get_and_notify() {

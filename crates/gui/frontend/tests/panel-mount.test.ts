@@ -79,6 +79,7 @@ function stubApi(panelType: string, defaults: Record<string, unknown> = {}) {
     workspace: {
       get: async () => null,
       set: async () => {},
+      all: async () => ({}),
       adoptRepo: async () => {},
       onChange: noop,
     },

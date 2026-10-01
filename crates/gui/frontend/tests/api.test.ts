@@ -301,6 +301,12 @@ describe('panel api — workspace', () => {
     expect(invoke).toHaveBeenCalledWith('ws_set_var', { wsId: 'ws-1', key: 'k', value: 42 });
   });
 
+  test('all() reads every variable of the panel workspace at once', async () => {
+    const { api, invoke } = setup();
+    await api.workspace.all();
+    expect(invoke).toHaveBeenCalledWith('ws_vars', { wsId: 'ws-1' });
+  });
+
   test('onChange listeners fire on pushVarChanged (and * receives the key)', () => {
     const { api, instance } = setup();
     const direct = vi.fn();

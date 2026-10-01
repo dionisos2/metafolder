@@ -490,6 +490,7 @@ export function createPanelApi(deps: PanelApiDeps, ctx: PanelApiCtx): PanelApiIn
       get: (key: string) => invoke('ws_get_var', { wsId: ctx.wsId, key }),
       set: (key: string, value: unknown) =>
         invoke('ws_set_var', { wsId: ctx.wsId, key, value }) as Promise<void>,
+      all: () => invoke('ws_vars', { wsId: ctx.wsId }) as Promise<Record<string, unknown>>,
       adoptRepo: (repo: string) => invoke('adopt_repo', { wsId: ctx.wsId, repo }) as Promise<void>,
       onChange(key: string, listener: (value: unknown, key?: string) => void) {
         let set = varListeners.get(key);

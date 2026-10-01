@@ -36,6 +36,7 @@ function stubWorkspace(vars: Record<string, unknown> = {}) {
         writes.push({ key, value });
         pendingEchoes.push({ key, value });
       },
+      all: async () => ({}),
       adoptRepo: async () => {},
       onChange: (key: string, listener: Listener) => {
         let set = listeners.get(key);

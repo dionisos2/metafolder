@@ -1,6 +1,6 @@
 // workspace-info panel: reactive JSON view of every workspace variable
-// (spec-gui "workspace-info panel type"). Read-only; useful to debug
-// panel communication and to monitor the GUI from scripts.
+// (doc "workspace-info panel"). Read-only; useful to debug panel communication
+// and to monitor the GUI from scripts.
 
 import { byId, el } from '/__ui.js';
 
@@ -10,6 +10,7 @@ const STANDARD = [
   'selected_metarecord',
   'selected_metarecords',
   'selected_log_entry',
+  'selected_treeref',
 ];
 
 /** @param {ShadowRoot} root @param {MetafolderApi} metafolder */
@@ -49,8 +50,12 @@ export async function mount(root, metafolder) {
     render();
   });
 
-  for (const key of STANDARD) {
-    values.set(key, await workspace.get(key));
+  // What the workspace already holds: the listener above only reports what
+  // changes from now on, and the panel is built long after the others wrote
+  // their variables. A change that landed while this read was in flight is
+  // newer than what it returns, so it is not overwritten.
+  for (const [key, value] of Object.entries(await workspace.all())) {
+    if (!values.has(key)) values.set(key, value);
   }
   render();
 }

@@ -11,7 +11,7 @@ use crate::state::workspace::{MessageEntry, WorkspaceInfo};
 use crate::state::GuiState;
 use metafolder_core::sync::MutexExt;
 use serde::Serialize;
-use serde_json::Value;
+use serde_json::{Map, Value};
 use std::sync::{Arc, Mutex};
 
 /// Shared application context managed by Tauri.
@@ -235,6 +235,11 @@ pub fn panel_set_type(app: AppHandle, slot: SlotId, panel_type: String) -> Resul
 #[tauri::command]
 pub fn ws_get_var(app: AppHandle, ws_id: String, key: String) -> Result<Value, String> {
     app.gui.get_var(&ws_id, &key)
+}
+
+#[tauri::command]
+pub fn ws_vars(app: AppHandle, ws_id: String) -> Result<Map<String, Value>, String> {
+    app.gui.vars(&ws_id)
 }
 
 #[tauri::command]

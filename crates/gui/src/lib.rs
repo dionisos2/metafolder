@@ -496,6 +496,7 @@ pub fn run(options: Options) {
             commands::panel_swap,
             commands::ws_get_var,
             commands::ws_set_var,
+            commands::ws_vars,
             commands::adopt_repo,
             commands::list_commands,
             commands::register_command,

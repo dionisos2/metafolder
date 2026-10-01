@@ -219,6 +219,10 @@ declare namespace Metafolder {
   interface Workspace {
     get(key: string): Promise<unknown>;
     set(key: string, value: unknown): Promise<void>;
+    /** Every variable the workspace holds now, `active_repo` included — what a
+     *  panel built after some were set starts from (`onChange` only reports
+     *  what moves afterwards). */
+    all(): Promise<Record<string, unknown>>;
     adoptRepo(repo: string): Promise<void>;
     /** Subscribe to one variable, or to `'*'` for every change (the listener
      *  then also receives the key). */
