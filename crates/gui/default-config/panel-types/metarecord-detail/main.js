@@ -1995,8 +1995,13 @@ export async function mount(root, metafolder) {
     handler: async (schema) => {
       const repo = await repoForAdd();
       const loaded = repo ? await loadSchema(repo) : null;
-      const type = schema && schemaTypes(loaded).includes(schema) ? schema : null;
-      await createMetarecord(type, loaded);
+      // A blank answer is an empty record; a name the schema does not declare
+      // is a mistake to report, not a blank (as `treeref:add` does).
+      const wanted = (schema ?? '').trim();
+      if (wanted !== '' && !schemaTypes(loaded).includes(wanted)) {
+        throw new Error(`unknown schema type: "${wanted}"`);
+      }
+      await createMetarecord(wanted === '' ? null : wanted, loaded);
     },
   });
   void commands.register('metarecord:delete', {

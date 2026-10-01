@@ -378,3 +378,22 @@ describe('metarecord:bulk — the target is the first argument', () => {
     });
   });
 });
+
+describe('metarecord:create — the schema type', () => {
+  test('a type the schema does not declare is refused, not read as blank', async () => {
+    const { specs, calls } = await mountPanel([]);
+    // A mistyped type used to create an empty record without a word: the
+    // user asked for a template and got none. `treeref:add` already refuses.
+    await expect(
+      Promise.resolve(specs.get('metarecord:create')!.handler('bogus')),
+    ).rejects.toThrow(/unknown schema type/);
+    expect(calls.filter((c) => c.method === 'POST')).toEqual([]);
+  });
+
+  test('a blank answer still creates an empty record', async () => {
+    const { specs, calls } = await mountPanel([]);
+    await specs.get('metarecord:create')!.handler('');
+    const post = calls.find((c) => c.method === 'POST' && c.path.endsWith('/metarecords'));
+    expect(post?.body).toEqual({ fields: [] });
+  });
+});
