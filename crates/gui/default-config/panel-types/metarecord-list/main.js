@@ -1650,6 +1650,13 @@ export async function mount(root, metafolder) {
     reveal: true,
     handler: () => toggleBulkForm(),
   });
+  /** Lays the rows out as `value` says; anything that is no mode (a stale or
+   *  mistyped stored value) is the table. @param {unknown} value */
+  function applyMode(value) {
+    mode = value === 'grid' ? 'grid' : 'table';
+    bodyEl.classList.toggle('grid', mode === 'grid');
+  }
+
   // View settings: what is displayed, not what is stored. `set` names the
   // setting as its first argument, so a new one costs a table entry.
   /** @type {Record<string, {values?: string[], apply: (value: string) => unknown}>} */
@@ -1659,8 +1666,8 @@ export async function mount(root, metafolder) {
       apply: (value) => {
         if (value !== 'table' && value !== 'grid')
           throw new Error(`unknown mode: "${value ?? ''}" (expected table / grid)`);
-        mode = value;
-        bodyEl.classList.toggle('grid', mode === 'grid');
+        applyMode(value);
+        return workspace.set('metarecord-list:mode', value);
       },
     },
     'page-size': {
@@ -1860,6 +1867,7 @@ export async function mount(root, metafolder) {
     pageSize = next;
     if (queryRan) void fetchPage(true);
   });
+  workspace.onChange('metarecord-list:mode', applyMode);
   workspace.onChange('metarecord-list:finder-fields', (value) => {
     finderFields = Array.isArray(value) && value.length ? value : defaultFinderFields.slice();
     updateFinderFieldsLabel();
@@ -1874,6 +1882,7 @@ export async function mount(root, metafolder) {
     (await workspace.get('metarecord-list:column-widths')) ?? {}
   );
   pageSize = sanitizePageSize(await workspace.get('metarecord-list:page-size'));
+  applyMode(await workspace.get('metarecord-list:mode'));
 
   // Restore the finder (quick filter) state.
   finderText = asText(await workspace.get('metarecord-list:finder'));

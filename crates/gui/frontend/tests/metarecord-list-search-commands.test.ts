@@ -389,3 +389,29 @@ describe('zone commands', () => {
     expect(p.shadow.activeElement).toBe(p.finder);
   });
 });
+
+describe('display mode', () => {
+  beforeEach(() => {
+    vi.stubGlobal('fetch', vi.fn(async () => new Response('[]', { status: 200 })));
+    document.body.replaceChildren();
+  });
+  const isGrid = (shadow: ShadowRoot) =>
+    shadow.querySelector('.mf-panel-body')!.classList.contains('grid');
+
+  test('the mode is a workspace variable, like the other view settings', async () => {
+    const p = await mountPanel();
+    await p.invoke('metarecord-list:set', 'mode', 'grid');
+    expect(p.vars.get('metarecord-list:mode')).toBe('grid');
+    expect(isGrid(p.shadow)).toBe(true);
+  });
+
+  test('a stored mode is what the panel opens in', async () => {
+    const p = await mountPanel({ 'metarecord-list:mode': 'grid' });
+    expect(isGrid(p.shadow)).toBe(true);
+  });
+
+  test('a stored value that is no mode falls back to the table', async () => {
+    const p = await mountPanel({ 'metarecord-list:mode': 'mosaic' });
+    expect(isGrid(p.shadow)).toBe(false);
+  });
+});
