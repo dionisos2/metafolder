@@ -3,4 +3,4 @@ tags: [[GUI command]] [[Find in a panel]]
 kind: reference
 summary: Go to the next find match
 
-Moves to the next match of the find bar's text in the focused panel, going back to the first after the last. The search is run again on what the panel shows now. See [[Find in a panel]].
+Moves to the next match of the find bar's text in the focused panel, going back to the first after the last. The search is run again on what the panel shows now. Does nothing while the find bar is closed. See [[Find in a panel]].

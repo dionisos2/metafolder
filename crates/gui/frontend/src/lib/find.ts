@@ -51,9 +51,12 @@ export function runFind(needle: string) {
   paint();
 }
 
-/** Moves to the next (`delta` 1) or previous (-1) match, wrapping. */
+/** Moves to the next (`delta` 1) or previous (-1) match, wrapping. Nothing
+ *  while the bar is closed: `find:next` typed as a command, or sent by a
+ *  script, would otherwise paint matches with no bar to close them from. */
 export function stepFind(delta: number) {
   const find = store.ui.find;
+  if (!find.open) return;
   runFind(find.needle);
   find.index = stepIndex(find.index, delta, ranges.length);
   paint();

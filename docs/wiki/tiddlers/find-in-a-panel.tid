@@ -46,6 +46,7 @@ Nothing is selected. To move a list's cursor onto a row by its name, see
 
 `find:open <text>` searches `text` at once, so a script can drive the bar with
 `mf gui command 'find:open "…"'`, then `find:next`, `find:prev` and `find:close`.
+`find:next` and `find:prev` do nothing while the bar is closed.
 
 !! How it is done
 

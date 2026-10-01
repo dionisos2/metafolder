@@ -4,7 +4,7 @@
 // around at both ends.
 
 import { beforeEach, describe, expect, test } from 'vitest';
-import { closeFind, currentRange, runFind, stepFind, stepIndex } from '../src/lib/find';
+import { closeFind, currentRange, openFind, runFind, stepFind, stepIndex } from '../src/lib/find';
 import { setFindRootProvider } from '../src/lib/panels/roots';
 import { store } from '../src/lib/store.svelte';
 
@@ -59,7 +59,7 @@ describe('runFind', () => {
   });
 
   test('keeps the current match position when the needle is re-run', () => {
-    runFind('alpha');
+    openFind('alpha');
     stepFind(1);
     expect(store.ui.find.index).toBe(1);
     runFind('alpha');
@@ -78,7 +78,7 @@ describe('runFind', () => {
 
 describe('stepFind', () => {
   test('walks the matches and wraps around', () => {
-    runFind('alpha');
+    openFind('alpha');
     stepFind(1);
     expect(store.ui.find.index).toBe(1);
     stepFind(1);
@@ -88,7 +88,7 @@ describe('stepFind', () => {
   });
 
   test('is a no-op without matches', () => {
-    runFind('zzz');
+    openFind('zzz');
     stepFind(1);
     expect(store.ui.find.index).toBe(-1);
   });
@@ -100,6 +100,19 @@ describe('closeFind', () => {
     closeFind();
     expect(store.ui.find.open).toBe(false);
     expect(store.ui.find.count).toBe(0);
+    expect(currentRange()).toBe(null);
+  });
+});
+
+describe('stepping with the bar closed', () => {
+  test('does nothing: no match is painted behind a bar that is not there', () => {
+    runFind('alpha');
+    closeFind();
+    stepFind(1);
+    expect(store.ui.find.count).toBe(0);
+    expect(store.ui.find.index).toBe(-1);
+    expect(currentRange()).toBe(null);
+    stepFind(-1);
     expect(currentRange()).toBe(null);
   });
 });
