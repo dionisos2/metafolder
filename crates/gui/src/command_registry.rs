@@ -50,6 +50,29 @@ impl CommandRegistry {
         });
     }
 
+    /// Registers a command defined in `commands.js` (doc "User commands"): a
+    /// builtin in every respect, except that it never replaces one. Returns
+    /// false, leaving the registry untouched, when `name` is a builtin already
+    /// — the loader forgets the previous file's commands before registering,
+    /// so whatever ownerless command is still there is the shell's own.
+    pub fn register_user(&self, name: &str, label: &str, log: bool) -> bool {
+        let mut commands = self.commands.lock_recover();
+        if commands.get(name).is_some_and(|def| def.owner.is_none()) {
+            return false;
+        }
+        commands.insert(
+            name.to_string(),
+            CommandDef {
+                name: name.to_string(),
+                label: label.to_string(),
+                owner: None,
+                reveal: false,
+                log,
+            },
+        );
+        true
+    }
+
     /// Registers a command from a panel type. Re-registering the same
     /// name replaces the previous definition (panels re-register on
     /// iframe reload).
@@ -160,6 +183,23 @@ mod tests {
 
         let names: Vec<String> = registry.list().into_iter().map(|c| c.name).collect();
         assert_eq!(names, vec!["panel:split", "quit", "workspace:new"]);
+    }
+
+    #[test]
+    fn test_a_user_command_never_replaces_a_builtin() {
+        // doc "User commands": a `commands.js` entry adds to the command set;
+        // one named like a builtin is refused and leaves the builtin as it was
+        // — label included, and a later reload must not remove it.
+        let registry = CommandRegistry::new();
+        registry.register_builtin("quit", "Exit the GUI", false);
+
+        assert!(!registry.register_user("quit", "Mine", true));
+        let quit = registry.get("quit").unwrap();
+        assert_eq!(quit.label, "Exit the GUI");
+        assert!(!quit.log);
+
+        assert!(registry.register_user("user:mine", "Mine", true));
+        assert_eq!(registry.get("user:mine").unwrap().owner, None);
     }
 
     #[test]

@@ -293,9 +293,8 @@ pub fn register_user_command(
     name: String,
     label: String,
     log: Option<bool>,
-) -> Result<(), String> {
-    app.registry.register_builtin(&name, &label, log.unwrap_or(true));
-    Ok(())
+) -> Result<bool, String> {
+    Ok(app.registry.register_user(&name, &label, log.unwrap_or(true)))
 }
 
 /// Forgets the commands a previous `commands.js` registered, before the module

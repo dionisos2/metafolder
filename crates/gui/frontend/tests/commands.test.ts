@@ -262,6 +262,30 @@ describe('installUserCommands', () => {
     ]);
   });
 
+  test('an entry named like a builtin is left out, and the builtin untouched', async () => {
+    // The registry refuses the name (`register` answers false): the entry must
+    // then install nothing — no handler, and above all no argument spec, which
+    // would replace the builtin's own.
+    registerArgs('quit', [{ name: 'builtin-arg', prompt: () => 'really?' }]);
+    const refused: string[] = [];
+    const names = await installUserCommands(
+      {
+        quit: { args: [{ name: 'mine' }], run: () => {} },
+        'user:a': { run: () => {} },
+      },
+      mf,
+      async (name) => name !== 'quit',
+      (name) => void refused.push(name),
+    );
+    expect(names).toEqual(['user:a']);
+    expect(refused).toEqual(['quit']);
+    expect(await runUserCommand('quit', [])).toBe(false);
+    expect(argSpecFor('quit')![0].name).toBe('builtin-arg');
+    // A reload forgets what the file installed, and only that.
+    expect(clearUserCommands()).toEqual(['user:a']);
+    expect(argSpecFor('quit')![0].name).toBe('builtin-arg');
+  });
+
   test('`run` is called with the api first, then the collected arguments', async () => {
     const seen: unknown[] = [];
     await installUserCommands(

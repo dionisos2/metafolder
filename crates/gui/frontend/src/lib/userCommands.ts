@@ -1,4 +1,4 @@
-// Loading ~/.config/metafolder/gui/commands.js (spec-gui "User commands").
+// Loading ~/.config/metafolder/gui/commands.js (doc "User commands").
 //
 // The module is served by the GUI's own HTTP server, like a panel's, and
 // imported into the shell realm. Unlike a panel it is NOT wrapped in an error
@@ -10,6 +10,7 @@ import {
   dispatch,
   installUserCommands,
   setUserCommandReloader,
+  status,
   validateUserCommands,
 } from './commands';
 import { invoke } from './ipc';
@@ -61,10 +62,20 @@ export async function loadUserCommands(): Promise<string[]> {
     },
     { guiServer: base, sessionToken: store.sessionToken, focusedWs },
   );
-  const names = await installUserCommands(module.default, api, (name, label, log) =>
-    invoke('register_user_command', { name, label, log }),
+  const refused: string[] = [];
+  const names = await installUserCommands(
+    module.default,
+    api,
+    (name, label, log) => invoke<boolean>('register_user_command', { name, label, log }),
+    (name) => refused.push(name),
   );
   await refreshCommands();
+  // Said rather than swallowed: the entry is in the file and does nothing.
+  if (refused.length > 0) {
+    await status(
+      `commands.js: ${refused.join(', ')} ${refused.length > 1 ? 'are' : 'is'} already a command of the GUI — left out, the builtin stands`,
+    );
+  }
   return names;
 }
 

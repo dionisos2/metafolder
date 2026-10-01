@@ -463,10 +463,18 @@ export function validateUserCommands(module: unknown): [string, UserCommand][] {
 export async function installUserCommands(
   module: unknown,
   mf: unknown,
-  register: (name: string, label: string, log: boolean) => Promise<void>,
+  register: (name: string, label: string, log: boolean) => Promise<boolean | void>,
+  onRefused: (name: string) => void = () => {},
 ): Promise<string[]> {
   const names: string[] = [];
   for (const [name, command] of validateUserCommands(module)) {
+    // Registered first: a name the registry refuses is a builtin's, and the
+    // entry must then install nothing at all — its argument spec would replace
+    // the builtin's, and a reload would forget the builtin with it.
+    if ((await register(name, command.label ?? name, command.log ?? true)) === false) {
+      onRefused(name);
+      continue;
+    }
     if (command.args) {
       registerArgs(
         name,
@@ -494,7 +502,6 @@ export async function installUserCommands(
       );
     }
     userHandlers.set(name, (...args: string[]) => command.run(mf, ...args));
-    await register(name, command.label ?? name, command.log ?? true);
     names.push(name);
   }
   return names;
