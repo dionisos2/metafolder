@@ -19,11 +19,6 @@ use std::path::{Path, PathBuf};
 /// source's identity (not its rendering) are no longer reused.
 const DOCUMENT_VERSION: u32 = 1;
 
-/// Extensions rendered as documents. Poppler is a PDF engine, so this is the
-/// one format — mirrored by `document-extensions` in the `file` panel's config
-/// and by `DOCUMENT_THUMBNAILABLE` in `panel-shim/ui.js`.
-const DOCUMENT_EXTENSIONS: &[&str] = &["pdf"];
-
 /// Resolution bounds for a rendered page. The requested DPI comes from the
 /// panel (a query parameter), so it is a client value: 0 would make poppler
 /// fail, and 10 000 would render a gigapixel page that the rlimits would only
@@ -51,22 +46,22 @@ pub enum DocError {
     Failed,
 }
 
-/// Whether `path`'s extension is a document type we render pages of.
+/// Whether the file at `path` is a document we render pages of — a PDF,
+/// poppler being a PDF engine — told from its content, not its name
+/// (`file_kind`). A missing or unreadable file is not one.
 pub fn is_document(path: &Path) -> bool {
-    path.extension()
-        .and_then(|ext| ext.to_str())
-        .map(|ext| ext.to_ascii_lowercase())
-        .is_some_and(|ext| DOCUMENT_EXTENSIONS.contains(&ext.as_str()))
+    crate::file_kind::detect(path) == Some(crate::file_kind::Kind::Document)
 }
 
 /// How many pages `path` has, read with `pdfinfo`. `Failed` covers both "no
 /// poppler installed" and "not a document poppler can read" — the panel treats
 /// them alike (no preview).
 pub fn page_count(path: &Path) -> Result<u32, DocError> {
+    // Existence first: a missing file is `NotFound`, not a wrong type.
+    regular_file(path)?;
     if !is_document(path) {
         return Err(DocError::Unsupported);
     }
-    regular_file(path)?;
     let cmd = crate::sandbox::command(&pdfinfo_spec(path)).ok_or(DocError::Failed)?;
     let output = crate::proc::run_with_timeout(cmd, POPPLER_TIMEOUT).ok_or(DocError::Failed)?;
     if !output.status.success() {
@@ -86,10 +81,10 @@ pub fn render_page(
     dpi: u32,
     cache_dir: &Path,
 ) -> Result<PathBuf, DocError> {
+    let meta = regular_file(path)?;
     if !is_document(path) {
         return Err(DocError::Unsupported);
     }
-    let meta = regular_file(path)?;
     let dpi = clamp_dpi(dpi);
     let page = page.max(1);
 
@@ -116,7 +111,7 @@ pub fn render_page(
 /// image was produced; `thumbnails::generate` owns the caching around it, so a
 /// PDF tile is cached exactly like a video poster.
 pub fn render_poster(path: &Path, output: &Path) -> bool {
-    is_document(path) && run_poppler(&poster_spec(path, output), output)
+    run_poppler(&poster_spec(path, output), output)
 }
 
 /// `path`'s metadata, as a regular file.
@@ -257,12 +252,18 @@ mod tests {
     use super::*;
 
     #[test]
-    fn test_is_document_by_extension_case_insensitive() {
-        assert!(is_document(Path::new("/a/report.pdf")));
-        assert!(is_document(Path::new("/a/REPORT.PDF")));
-        assert!(!is_document(Path::new("/a/clip.mp4")));
-        assert!(!is_document(Path::new("/a/note.txt")));
-        assert!(!is_document(Path::new("noextension")));
+    fn test_a_document_is_told_by_its_content_not_its_name() {
+        let dir = std::env::temp_dir().join("metafolder-tests").join("mf-is-document");
+        std::fs::create_dir_all(&dir).expect("mkdir");
+        let unnamed = dir.join("report.bin");
+        std::fs::write(&unnamed, b"%PDF-1.4\n").expect("write");
+        let liar = dir.join("notes.pdf");
+        std::fs::write(&liar, b"plain text, whatever the name says").expect("write");
+
+        assert!(is_document(&unnamed));
+        assert!(!is_document(&liar));
+        assert!(!is_document(&dir.join("absent.pdf")));
+        std::fs::remove_dir_all(&dir).ok();
     }
 
     /// Poppler parses an untrusted file: it must run under the sandbox, seeing
@@ -360,14 +361,19 @@ mod tests {
 
     #[test]
     fn test_render_page_rejects_unsupported_types() {
-        assert_eq!(
-            render_page(Path::new("/tmp/note.txt"), 1, 150, Path::new("/tmp")),
-            Err(DocError::Unsupported)
-        );
-        assert_eq!(
-            render_page(Path::new("/tmp/clip.mp4"), 1, 150, Path::new("/tmp")),
-            Err(DocError::Unsupported)
-        );
+        let dir = std::env::temp_dir().join("metafolder-tests").join("mf-doc-unsupported");
+        std::fs::create_dir_all(&dir).unwrap();
+        let text = dir.join("note.txt");
+        std::fs::write(&text, b"hello").unwrap();
+        // Named like a document, holding none: poppler is not run on it.
+        let liar = dir.join("notes.pdf");
+        std::fs::write(&liar, b"not a pdf at all").unwrap();
+
+        for path in [&text, &liar] {
+            assert_eq!(render_page(path, 1, 150, &dir), Err(DocError::Unsupported), "{path:?}");
+            assert_eq!(page_count(path), Err(DocError::Unsupported), "{path:?}");
+        }
+        std::fs::remove_dir_all(&dir).ok();
     }
 
     #[test]
@@ -484,8 +490,8 @@ mod tests {
         std::fs::remove_dir_all(&dir).ok();
     }
 
-    /// A file that is not a PDF at all (or a corrupt one) fails cleanly rather
-    /// than producing an empty PNG the panel would show as a blank page.
+    /// A file that opens like a PDF and is not one fails cleanly rather than
+    /// producing an empty PNG the panel would show as a blank page.
     #[test]
     fn test_corrupt_document_fails_when_poppler_present() {
         if !poppler_present() {
@@ -496,7 +502,7 @@ mod tests {
             .join(format!("mf-doc-corrupt-{}", std::process::id()));
         std::fs::create_dir_all(&dir).unwrap();
         let pdf = dir.join("broken.pdf");
-        std::fs::write(&pdf, b"not a pdf at all").unwrap();
+        std::fs::write(&pdf, b"%PDF-1.4\nand then nothing a parser can read").unwrap();
         assert_eq!(page_count(&pdf), Err(DocError::Failed));
         assert_eq!(render_page(&pdf, 1, 150, &dir.join("cache")), Err(DocError::Failed));
         std::fs::remove_dir_all(&dir).ok();

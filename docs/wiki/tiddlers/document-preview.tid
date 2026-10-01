@@ -25,16 +25,14 @@ Rendered pages are kept in the repository holding the file, under
 is inside no loaded repository has nowhere to keep them: its page count is read, and
 the page shows ''cannot render this page''.
 
-!! Settings
+!! Setting
 
-In `[panel-defaults.file]` ([[GUI configuration]]):
+`document-dpi` in `[panel-defaults.file]` ([[GUI configuration]]) is the resolution a
+page is rendered at: 150 by default, a readable A4 page, and between 20 and 600.
+Raise it for a sharper zoom, at the price of a slower render.
 
-|!Key |!Default |!Is |
-|`document-dpi` |150 |the resolution a page is rendered at, between 20 and 600 — a readable A4 page at 150; raise it for a sharper zoom, at the price of a slower render |
-|`document-extensions` |`["pdf"]` |the extensions the panel sends down this route |
-
-PDF is the only format rendered: an extension added to `document-extensions` is
-tried, and gets ''no preview available''.
+A PDF is recognised by its content, whatever its name. It is the only document
+format rendered.
 
 !! Why not the web view's own viewer
 

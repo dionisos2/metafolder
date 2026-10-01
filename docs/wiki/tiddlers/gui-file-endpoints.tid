@@ -49,14 +49,44 @@ A non-2xx answer means ''show a glyph'' to a tile and a message to the preview; 
 status is for whoever reads the network log.
 
 |!Status |!Means |
-|`415` |not a type this route renders |
+|`415` |the file's content is not of a kind this route renders |
 |`404` |no such file, or a file inside no loaded repository |
 |`500` |the helper failed: not installed, no sandbox, a file it cannot read, a timeout (20 s) |
 
-The types are fixed in the server (`POSTER_EXTENSIONS` in `thumbnails.rs`,
-`DOCUMENT_EXTENSIONS` in `documents.rs`), mirrored in `/__ui.js`. The extension lists
-of `[panel-defaults.file]` only decide what the ''panel'' tries: an extension added
-there and unknown here gets no poster and no page.
+A missing file is `404` before its type is looked at.
+
+!! What a file is
+
+Every decision above is taken on the file's ''content'', never its extension
+(`crates/gui/src/file_kind.rs`): the first 8 KiB go through the `infer` crate — magic
+bytes, the detector behind the daemon's `mfr_mime` ([[File metadata fields]]), so the
+GUI and the repository agree — and give one of five kinds, or none.
+
+|!Kind |!Is |
+|`image` |JPEG, PNG, WebP, BMP, AVIF, ICO — what an `<img>` draws — and SVG |
+|`gif` |a GIF: an image shown as a still |
+|`video` |any `video/*` type, and an MPEG transport stream |
+|`audio` |any `audio/*` type |
+|`document` |a PDF |
+
+Two formats `infer` does not know are added. An MPEG transport stream is three packets
+in a row opening with the sync byte `0x47`, 188 bytes apart, or 192 for a Blu-ray
+`.m2ts` — one `G` at the start of a text is not enough. An SVG is text, with no magic
+bytes: it must be named `.svg` ''and'' hold an `<svg` element.
+
+`/thumbnail` makes a poster for a `video`, a `gif` and a `document`; `/document*`
+answers for a `document`. A panel gets the kind from `metafolder.fs.stat(path).kind`
+([[The metafolder API]]), which is how the [[file panel]] chooses its preview.
+
+Extensions were used before, from lists kept in three places — the panel's
+configuration, `thumbnails.rs`, `documents.rs` — which could disagree, and a name
+says little: `.ts` is a transport stream or a TypeScript source. One trace is left:
+`thumbnail()` still picks the ''route'' a tile tries by extension, a grid being unable
+to pay one round-trip per entry to ask. It is a hint: the server answers `415` for
+what the content is not, and the tile shows its glyph.
+
+Reading those bytes runs in the GUI's own process, unlike the decoders: it compares
+bytes and decodes nothing ([[Sandboxing the media decoders]]).
 
 !! The two probes
 

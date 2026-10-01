@@ -139,8 +139,11 @@ export function isThumbnailable(pathOrName) {
 }
 
 /**
- * Video extensions for which the GUI server can extract a poster frame
- * (`GET /thumbnail`). Mirrors `VIDEO_EXTENSIONS` in `src/thumbnails.rs`.
+ * Extensions a tile takes for a video, and so points at `GET /thumbnail` for a
+ * poster frame. A *hint* for which URL a tile tries, nothing more: the server
+ * reads the file's content and answers 415 for what is not a video (the tile
+ * then shows its glyph). A tile cannot ask first — a grid would pay one
+ * round-trip per entry.
  * A video must NEVER be handed to `<img src=/fsraw>` (WebKit would decode the
  * whole file and crash); the poster PNG from /thumbnail is safe.
  */
@@ -157,9 +160,9 @@ export function isVideoThumbnailable(pathOrName) {
 }
 
 /**
- * Document extensions the GUI server renders a first-page poster for
- * (`GET /thumbnail`, via poppler). Mirrors `DOCUMENT_EXTENSIONS` in
- * `src/documents.rs`. Like a video, a document must NEVER be handed to
+ * Extensions a tile takes for a document, whose first-page poster the GUI
+ * server renders (`GET /thumbnail`, via poppler) — a hint like the video one
+ * above, the server deciding from the content. Like a video, a document must NEVER be handed to
  * `<img src=/fsraw>` — WebKit would try to decode the file as an image.
  */
 export const DOCUMENT_THUMBNAILABLE = new Set(['pdf']);

@@ -16,6 +16,9 @@ tauri-build = { version = "2", features = [] }
 
 [dependencies]
 metafolder-core = { path = "../core" }
+# Content-based file type detection (magic bytes, pure Rust): the detector
+# behind the daemon's `mfr_mime`, so the previews agree with the repository.
+infer = "0.19"
 # devtools: the WebKit inspector stays available in release builds via
 # the devtools:open command (the native context menu is disabled).
 tauri = { version = "2", features = ["devtools"] }

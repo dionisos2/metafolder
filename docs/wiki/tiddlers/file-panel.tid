@@ -15,24 +15,28 @@ drop-down there, to choose which one is previewed.
 
 !! What is shown
 
-What a file is shown as depends on its extension.
+What a file is shown as depends on what it ''is'', read from its first bytes — not on
+its name. A video without an extension is a video; `clip.ts` holding an MPEG
+transport stream is a video and `main.ts` holding TypeScript is text.
 
 |!File |!Shown as |
-|image (`png`, `jpg`, `webp`, `svg`…) |the image |
+|image (PNG, JPEG, WebP, BMP, AVIF, ICO, SVG) |the image |
 |GIF |its first frame; ''animate'' in the toolbar (`file:toggle gif-animation`) plays it |
 |video |its poster frame, until you ask to play it ([[Media preview]]) |
 |audio |a type glyph, until you ask to play it ([[Media preview]]) |
 |PDF |one page at a time ([[Document preview]]) |
-|text (`txt`, `md`, `json`, `rs`…) |its first 256 KiB, then `… (truncated preview)` |
 |a folder |a grid of thumbnails (below) |
-|anything else |as text when its content looks like text, else ''no preview available for this format'' |
+|anything else |text when it is text — its first 256 KiB, then `… (truncated preview)` — else ''no preview available for this format'' |
 
-The lists of extensions, and the limits, are settings of `[panel-defaults.file]`
-([[GUI configuration]]). The lists are tried in the order of the table, so an
-extension in two of them is what comes first: `ts`, shipped both as a video
-(MPEG transport stream) and as a text extension, is a video. A listed text extension
+Text has no signature to read, so it is what is left once the file is none of the
+above. A file whose extension is in `text-extensions` (`txt`, `md`, `json`, `rs`…)
 is shown as text whatever it contains, which is how a UTF-16 file — full of the zero
-bytes the content test rejects — still previews.
+bytes the content test rejects — still previews; any other is shown as text when its
+content looks like text. That list, the size read and the zoom's step and bounds are
+settings of `[panel-defaults.file]` ([[GUI configuration]]).
+
+An image format the web view cannot draw (TIFF, HEIF, a camera's raw file) is not
+counted as an image, and gets ''no preview available''.
 
 A file on a volume that is not mounted says which volume, instead of failing to load
 ([[Unmounted volumes in the GUI]]).

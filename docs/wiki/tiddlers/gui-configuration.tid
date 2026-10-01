@@ -20,7 +20,7 @@ panels.
 |`[panels]` |timings shared by every panel: the finder's and the live preview's debounce, the repos panel's task poll; `status-message-ms` and `status-error-ms` are left without effect since status messages stopped clearing themselves ([[Status bar and task bar]]) |
 |`[ref-seeds]` |how the targets of a `ref` field are named where a value is typed or shown: which metarecords (a query) and by which columns, per field, `*` being the default rule ([[Ref value seeds]]) |
 |`[completion]` |the separator joining the columns of a multi-column completion label |
-|`[panel-defaults.<panel>]` |each panel type's initial values — the columns `metarecord-list` opens on, the fields its finder searches, the field `treeref` opens on, the extensions `file` previews… — handed to that panel as `metafolder.defaults`. A custom panel type gets its own table the same way; the GUI knows nothing of the keys. Where a panel keeps a setting per workspace, the stored value wins |
+|`[panel-defaults.<panel>]` |each panel type's initial values — the columns `metarecord-list` opens on, the fields its finder searches, the field `treeref` opens on, the text extensions and the zoom of `file`… — handed to that panel as `metafolder.defaults`. A custom panel type gets its own table the same way; the GUI knows nothing of the keys. Where a panel keeps a setting per workspace, the stored value wins |
 
 Every key is optional: a key, or a whole table, left out keeps its default. The
 file itself must exist ([[No runtime fallback]]).

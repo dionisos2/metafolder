@@ -784,13 +784,13 @@ mod tests {
         // Numbers, floats, booleans and arrays survive the TOML → JSON hop, so
         // a panel reads a real number rather than a string.
         let parsed: GuiConfig = toml::from_str(
-            "[panel-defaults.file]\ntext-preview-limit = 262144\nzoom-step = 1.25\n             image-extensions = ['png', 'jpg']\n",
+            "[panel-defaults.file]\ntext-preview-limit = 262144\nzoom-step = 1.25\n             text-extensions = ['txt', 'md']\n",
         )
         .unwrap();
         let file = parsed.panel_defaults.get("file").unwrap();
         assert_eq!(file["text-preview-limit"], serde_json::json!(262144));
         assert_eq!(file["zoom-step"], serde_json::json!(1.25));
-        assert_eq!(file["image-extensions"], serde_json::json!(["png", "jpg"]));
+        assert_eq!(file["text-extensions"], serde_json::json!(["txt", "md"]));
     }
 
     #[test]
@@ -818,7 +818,7 @@ mod tests {
         assert_eq!(file["zoom-step"], serde_json::json!(1.25));
         assert_eq!(file["zoom-min"], serde_json::json!(0.05));
         assert_eq!(file["zoom-max"], serde_json::json!(40));
-        assert!(file["video-extensions"].as_array().unwrap().contains(&serde_json::json!("mkv")));
+        assert!(file["text-extensions"].as_array().unwrap().contains(&serde_json::json!("md")));
     }
 
     fn kb_dir() -> ConfigDir {

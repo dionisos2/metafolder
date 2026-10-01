@@ -13,6 +13,7 @@
 //! same tile, a different helper behind it. Every other type gets an emoji
 //! glyph in the panel, never this endpoint.
 
+use crate::file_kind::Kind;
 use std::ffi::OsString;
 use std::path::{Path, PathBuf};
 
@@ -23,14 +24,6 @@ const THUMB_VERSION: u32 = 1;
 /// Width of the generated poster, in pixels; the height keeps the aspect
 /// ratio. Small enough that a grid of them stays cheap to fetch and decode.
 const THUMB_WIDTH: u32 = 320;
-
-/// File extensions we generate poster thumbnails for: the video types
-/// (mirrors the `VIDEO` set in the `file` panel's `main.js`) plus `gif`
-/// (animated image shown as a still — see the module doc).
-const POSTER_EXTENSIONS: &[&str] = &[
-    "mp4", "webm", "mkv", "mov", "avi", "wmv", "m4v", "mpg", "mpeg", "flv", "3gp", "ts", "m2ts",
-    "gif",
-];
 
 /// Why a thumbnail could not be produced (maps to the HTTP status; any
 /// non-2xx makes the panel's `<img>` `onerror` fall back to a glyph).
@@ -44,15 +37,12 @@ pub enum ThumbError {
     Failed,
 }
 
-/// Whether `path`'s extension is a type we make poster thumbnails for: a
-/// video, a GIF, or a document (whose poster is its first page).
-pub fn is_posterable(path: &Path) -> bool {
-    crate::documents::is_document(path)
-        || path
-            .extension()
-            .and_then(|ext| ext.to_str())
-            .map(|ext| ext.to_ascii_lowercase())
-            .is_some_and(|ext| POSTER_EXTENSIONS.contains(&ext.as_str()))
+/// Whether a file of this kind gets a poster thumbnail: a video, a GIF
+/// (animated image shown as a still — see the module doc), or a document
+/// (whose poster is its first page). The kind is the file's content's
+/// (`file_kind`), never its extension's.
+pub fn is_posterable(kind: Option<Kind>) -> bool {
+    matches!(kind, Some(Kind::Video | Kind::Gif | Kind::Document))
 }
 
 /// Among the loaded repositories — each a `(root, internal_dir)` pair from the
@@ -110,12 +100,14 @@ fn ffmpeg_args(input: &Path, output: &Path, seek: &str) -> Vec<OsString> {
 /// a file outside any repo never reaches here). Blocking (spawns a process and
 /// does file I/O): call from `spawn_blocking`, not the async runtime.
 pub fn generate(path: &Path, cache_dir: &Path) -> Result<PathBuf, ThumbError> {
-    if !is_posterable(path) {
-        return Err(ThumbError::Unsupported);
-    }
+    // Existence first: a missing file is `NotFound`, not a wrong type.
     let meta = std::fs::metadata(path).map_err(|_| ThumbError::NotFound)?;
     if !meta.is_file() {
         return Err(ThumbError::NotFound);
+    }
+    let kind = crate::file_kind::detect(path);
+    if !is_posterable(kind) {
+        return Err(ThumbError::Unsupported);
     }
     let mtime_ms = meta
         .modified()
@@ -137,7 +129,7 @@ pub fn generate(path: &Path, cache_dir: &Path) -> Result<PathBuf, ThumbError> {
     let temp = scratch.file("out.png");
     // A document's first page, or a video frame — the retry at seek 0 covers a
     // clip shorter than the first offset.
-    let produced = if crate::documents::is_document(path) {
+    let produced = if kind == Some(Kind::Document) {
         crate::documents::render_poster(path, &temp)
     } else {
         run_ffmpeg(path, &temp, "1") || run_ffmpeg(path, &temp, "0")
@@ -201,21 +193,19 @@ mod tests {
     }
 
     #[test]
-    fn test_is_posterable_by_extension_case_insensitive() {
-        assert!(is_posterable(Path::new("/a/clip.mkv")));
-        assert!(is_posterable(Path::new("/a/CLIP.MP4")));
-        assert!(is_posterable(Path::new("movie.webm")));
+    fn test_posters_are_made_for_videos_gifs_and_documents() {
+        use crate::file_kind::Kind;
+        assert!(is_posterable(Some(Kind::Video)));
         // Animated images get a still poster too, so a thumbnail grid of
         // GIFs does not animate.
-        assert!(is_posterable(Path::new("/a/anim.gif")));
-        assert!(is_posterable(Path::new("/a/ANIM.GIF")));
+        assert!(is_posterable(Some(Kind::Gif)));
         // A document's poster is its first page (rendered by `documents`),
         // so a PDF tile shows the cover rather than the 📕 glyph.
-        assert!(is_posterable(Path::new("/a/doc.pdf")));
-        assert!(is_posterable(Path::new("/a/DOC.PDF")));
-        assert!(!is_posterable(Path::new("/a/photo.png")));
-        assert!(!is_posterable(Path::new("/a/song.mp3")));
-        assert!(!is_posterable(Path::new("noextension")));
+        assert!(is_posterable(Some(Kind::Document)));
+        // An image is its own thumbnail (`/fsraw`); audio has no frame.
+        assert!(!is_posterable(Some(Kind::Image)));
+        assert!(!is_posterable(Some(Kind::Audio)));
+        assert!(!is_posterable(None));
     }
 
     #[test]
@@ -297,14 +287,20 @@ trailer\n<</Size 6/Root 1 0 R>>\nstartxref\n364\n%%EOF\n";
 
     #[test]
     fn test_generate_rejects_unsupported_types() {
-        assert_eq!(
-            generate(Path::new("/tmp/note.txt"), Path::new("/tmp")),
-            Err(ThumbError::Unsupported)
-        );
-        assert_eq!(
-            generate(Path::new("/tmp/photo.png"), Path::new("/tmp")),
-            Err(ThumbError::Unsupported)
-        );
+        let dir = std::env::temp_dir().join("metafolder-tests").join("mf-thumb-unsupported");
+        std::fs::create_dir_all(&dir).expect("mkdir");
+        let text = dir.join("note.txt");
+        std::fs::write(&text, b"hello").expect("write");
+        let image = dir.join("photo.png");
+        std::fs::write(&image, b"\x89PNG\r\n\x1a\n\x00\x00\x00\rIHDR").expect("write");
+        // The name says video, the content does not: no decoder is run on it.
+        let liar = dir.join("main.ts");
+        std::fs::write(&liar, b"export const answer = 42;\n").expect("write");
+
+        for path in [&text, &image, &liar] {
+            assert_eq!(generate(path, &dir), Err(ThumbError::Unsupported), "{path:?}");
+        }
+        std::fs::remove_dir_all(&dir).ok();
     }
 
     #[test]

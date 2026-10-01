@@ -17,6 +17,7 @@ mod doc_gen;
 pub mod documents;
 pub mod duplicates;
 pub mod events;
+pub mod file_kind;
 pub mod fs_commands;
 pub mod fs_path;
 pub mod history;

@@ -34,6 +34,8 @@ function shadowRoot(): ShadowRoot {
 
 type Handler = (...args: string[]) => unknown;
 
+const KINDS: Record<string, string> = { pdf: 'document', png: 'image', mp4: 'video', mp3: 'audio' };
+
 function stub(path: string) {
   const noop = () => {};
   const handlers = new Map<string, Handler>();
@@ -64,7 +66,12 @@ function stub(path: string) {
         invoke: () => null,
       },
       daemon: { call: async () => ({}), repoRoot: async () => '/' },
-      fs: { stat: async () => ({ is_dir: false }), exists: async () => true, readDir: async () => [] },
+      fs: {
+        // What the GUI's content detection answers for these fixtures.
+        stat: async (p: string) => ({ is_dir: false, kind: KINDS[p.split('.').pop() ?? ''] ?? null }),
+        exists: async () => true,
+        readDir: async () => [],
+      },
       statusBar: { message: vi.fn(async () => {}), error: vi.fn(async () => {}) },
       recent: { touch: vi.fn(async () => {}) },
       contextMenu: Object.assign(noop, { addDefaultItems: noop }),

@@ -42,8 +42,8 @@ pub async fn page(State(state): State<ServerState>, Query(params): Query<PagePar
     // The panels hand back the escaped handle they were given, so the exact
     // bytes come back here (doc "Tree names").
     let path = crate::fs_path::from_handle(&params.path);
-    if !documents::is_document(&path) {
-        return StatusCode::UNSUPPORTED_MEDIA_TYPE.into_response();
+    if let Some(refused) = refusal(&path) {
+        return refused.into_response();
     }
     let Some(internal) =
         super::repo_dirs::internal_dir(&state.daemon, &path, state.repo_list_cache_ttl).await
@@ -78,14 +78,23 @@ pub async fn page(State(state): State<ServerState>, Query(params): Query<PagePar
 
 pub async fn info(Query(params): Query<InfoParams>) -> Response {
     let path = crate::fs_path::from_handle(&params.path);
-    if !documents::is_document(&path) {
-        return StatusCode::UNSUPPORTED_MEDIA_TYPE.into_response();
+    if let Some(refused) = refusal(&path) {
+        return refused.into_response();
     }
     match tokio::task::spawn_blocking(move || documents::page_count(&path)).await {
         Ok(Ok(pages)) => axum::Json(serde_json::json!({ "pages": pages })).into_response(),
         Ok(Err(error)) => status_of(error).into_response(),
         Err(_) => StatusCode::INTERNAL_SERVER_ERROR.into_response(),
     }
+}
+
+/// Why `path` gets no answer at all, before anything is resolved or run: it is
+/// not there (`404`), or its content is not a document's (`415`).
+fn refusal(path: &std::path::Path) -> Option<StatusCode> {
+    if !path.is_file() {
+        return Some(StatusCode::NOT_FOUND);
+    }
+    (!documents::is_document(path)).then_some(StatusCode::UNSUPPORTED_MEDIA_TYPE)
 }
 
 /// Any non-2xx makes the panel fall back to a message or a glyph; the

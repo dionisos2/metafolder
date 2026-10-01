@@ -126,7 +126,7 @@ changed here is recorded when the watcher sees it or at the next reconcile.
 
 |!Method |!Does |
 |`readDir(path)` |`[{name, path, is_dir, escaped}]` |
-|`stat(path)` |`{path, is_dir, size, mtime}`, following symbolic links; `mtime` in milliseconds |
+|`stat(path)` |`{path, is_dir, size, mtime, kind}`, following symbolic links; `mtime` in milliseconds; `kind` is what the file is, read from its content — `image`, `gif`, `video`, `audio`, `document`, or `null` ([[GUI file endpoints]]) |
 |`exists(path)` |whether anything is there, a broken link included |
 |`homeDir()` |the user's home directory |
 |`mkdir(path)` |one directory, whose parent must exist |

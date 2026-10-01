@@ -91,12 +91,6 @@ declare namespace Metafolder {
     field?: string;
     /** treeref: the Ref field `treeref:list-refs` follows back into the forest. */
     refField?: string;
-    /** file: extensions previewed as an image. */
-    imageExtensions?: string[];
-    /** file: extensions played as audio. */
-    audioExtensions?: string[];
-    /** file: extensions played as video. */
-    videoExtensions?: string[];
     /** file: extensions taking the text-preview fast path. */
     textExtensions?: string[];
     /** file: bytes of a text file read into the preview. */
@@ -332,6 +326,9 @@ declare namespace Metafolder {
 
   interface Fs {
     readDir(path: string): Promise<FsEntry[]>;
+    /** `{path, is_dir, size, mtime, kind}`, following links. `kind` is what
+     *  the file *is*, read from its first bytes: `image`, `gif`, `video`,
+     *  `audio`, `document`, or null (a directory, text, anything else). */
     stat(path: string): Promise<unknown>;
     /** Is anything at `path` — the entry itself, a broken symlink included?
      *  `stat` follows links (so a link to a directory reads as a directory);

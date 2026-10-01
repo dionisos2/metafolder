@@ -27,6 +27,10 @@ pub struct StatInfo {
     pub size: u64,
     /// Milliseconds since the Unix epoch.
     pub mtime: u64,
+    /// How a panel shows the file — `image`, `gif`, `video`, `audio`,
+    /// `document` — told from its first bytes (`file_kind`); `None` for a
+    /// directory, and for anything else (text has no magic bytes).
+    pub kind: Option<&'static str>,
 }
 
 #[tauri::command]
@@ -73,7 +77,8 @@ pub fn fs_stat(path: String) -> Result<StatInfo, String> {
         .and_then(|t| t.duration_since(UNIX_EPOCH).ok())
         .map(|d| d.as_millis() as u64)
         .unwrap_or(0);
-    Ok(StatInfo { path, is_dir: metadata.is_dir(), size: metadata.len(), mtime })
+    let kind = crate::file_kind::detect(&from_handle(&path)).map(crate::file_kind::Kind::as_str);
+    Ok(StatInfo { path, is_dir: metadata.is_dir(), size: metadata.len(), mtime, kind })
 }
 
 // ── Write operations (doc "file-manager panel") ────────────────────
@@ -197,6 +202,21 @@ mod tests {
 
         let dir_info = fs_stat(dir.path().display().to_string()).unwrap();
         assert!(dir_info.is_dir);
+    }
+
+    /// The kind is the content's (doc "GUI file endpoints"): a name says nothing.
+    #[test]
+    fn test_stat_tells_the_kind_from_the_content() {
+        let dir = tempfile::tempdir().unwrap();
+        let stat = |name: &str, bytes: &[u8]| {
+            let file = dir.path().join(name);
+            std::fs::write(&file, bytes).unwrap();
+            fs_stat(file.display().to_string()).unwrap().kind
+        };
+        assert_eq!(stat("report.bin", b"%PDF-1.4\n"), Some("document"));
+        assert_eq!(stat("main.ts", b"export const answer = 42;\n"), None);
+        assert_eq!(stat("anim", b"GIF89a\x01\x00\x01\x00"), Some("gif"));
+        assert_eq!(fs_stat(dir.path().display().to_string()).unwrap().kind, None);
     }
 
     #[test]

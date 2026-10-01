@@ -1221,14 +1221,22 @@ pour =file= : le message d'un volume non monté, le menu contextuel, l'enregistr
 dans « recent », l'échelle des vitesses, les bornes du DPI (20–600), « cannot render
 this page » pour un PDF hors de tout dépôt chargé, l'intervalle d'écriture de la
 position (15 s) et le seuil d'une seconde.
-*Signalé, non tranché* : (a) =ts= est livré à la fois dans =video-extensions= et
-=text-extensions= ; la vidéo étant essayée d'abord, un fichier TypeScript s'ouvre
-comme une vidéo (glyphe 🎬, puis « cannot play »). Retirer =ts= de l'une des deux
-listes est un choix d'usage ; (b) les listes d'extensions de
-=[panel-defaults.file]= ne commandent que le panel : celles du serveur
-(=POSTER_EXTENSIONS=, =DOCUMENT_EXTENSIONS=) sont en dur, donc une extension vidéo
-ou document ajoutée en configuration n'a ni poster ni page.
-*Tranché par l'utilisateur*, fait dans un commit à part, test d'abord : le menu
+*Tranché par l'utilisateur*, fait dans un commit à part, test d'abord : le type d'un
+fichier se lit dans son /contenu/, plus dans son extension. =ts= était livré à la
+fois dans =video-extensions= et =text-extensions=, et la vidéo étant essayée
+d'abord un fichier TypeScript s'ouvrait comme une vidéo ; par ailleurs les listes
+de =[panel-defaults.file]= ne commandaient que le panel, celles du serveur
+(=POSTER_EXTENSIONS=, =DOCUMENT_EXTENSIONS=) étant en dur. Le serveur de la GUI lit
+maintenant les premiers octets (=file_kind.rs= : la crate =infer=, celle de
+=mfr_mime=, plus le flux de transport MPEG et le SVG qu'elle ignore) ; =/thumbnail=
+et =/document*= décident là-dessus, =fs.stat= rend le type (=kind=, ajout additif)
+et le panel =file= s'en sert. Les réglages =image-extensions=, =audio-extensions=,
+=video-extensions= et =document-extensions= disparaissent de la configuration
+livrée (une configuration qui les garde n'est pas refusée : ils sont ignorés) ;
+=text-extensions= reste, le texte n'ayant pas de signature. Reste par extension :
+la /route/ qu'essaie une tuile de grille (=thumbnail()=), simple indice que le
+serveur corrige par un =415=.
+De même, dans son commit : le menu
 contextuel du panel =file= n'existait que si la sélection était un metarecord ; un
 fichier non suivi a maintenant les mêmes actions, dans le dépôt du workspace.
 Sources retirées (pointeurs) : spec-gui « =file= panel type » (avec « Video playback

@@ -31,13 +31,14 @@ import { fetchMounts, offlineMountFor, relativeTo, unavailableLabel } from '/__m
 // the fallback when no config value is provided.
 const DIR_PAGE_DEFAULT = 150;
 
-// Extension sets and viewer limits below are *fallbacks*: the effective values
-// come from the GUI config (`[panel-defaults.file]`), read in `mount`.
-const IMAGE = new Set(['png', 'jpg', 'jpeg', 'gif', 'webp', 'svg', 'bmp', 'avif']);
-const AUDIO = new Set(['mp3', 'ogg', 'oga', 'flac', 'wav', 'm4a', 'opus', 'wma', 'aac']);
-const VIDEO = new Set([
-  'mp4', 'webm', 'mkv', 'mov', 'avi', 'wmv', 'm4v', 'mpg', 'mpeg', 'flv', '3gp', 'ts', 'm2ts',
-]);
+// What a file is shown as comes from its content, not its name
+// (doc "GUI file endpoints"): the GUI reads the kind from the file's first
+// bytes (`fs.stat().kind`) — image, gif, video, audio or document. Text has no
+// magic bytes, so it is what is left, decided below.
+//
+// The viewer limits are *fallbacks*: the effective values come from the GUI
+// config (`[panel-defaults.file]`), read in `mount`.
+
 // Known text extensions: a *fast path* to the text preview (not the only way
 // in). A file with one of these is always rendered as text — this is also how
 // encodings the content sniff rejects still preview (UTF-16 holds NULs). Any
@@ -48,10 +49,8 @@ const TEXT = new Set([
   'rs', 'py', 'sh', 'c', 'h', 'cpp', 'java', 'log', 'csv', 'ini', 'conf',
 ]);
 const TEXT_PREVIEW_LIMIT = 256 * 1024;
-// Documents rendered page by page by the GUI server (`GET /document`), never
-// handed to the WebView as a file: see `server/document.rs` for why. Mirrors
-// `DOCUMENT_EXTENSIONS` in `src/documents.rs`.
-const DOCUMENT = new Set(['pdf']);
+// A document is rendered page by page by the GUI server (`GET /document`),
+// never handed to the WebView as a file: see `server/document.rs` for why.
 // Resolution of a rendered page, in DPI. 150 is a readable A4 page on a normal
 // screen; the zoom controls work on the resulting image, so this is the
 // *rendering* detail, not the displayed size.
@@ -119,14 +118,10 @@ export async function mount(root, metafolder) {
   const { workspace, fs, commands, daemon, statusBar } = metafolder;
   const dirPage = metafolder.pageSize ?? DIR_PAGE_DEFAULT;
   const statusMessageMs = metafolder.settings?.statusMessageMs ?? 5000;
-  // Which extensions preview as what, and the viewer's limits (GUI config
+  // The text fast path and the viewer's limits (GUI config
   // `[panel-defaults.file]`, falling back to the module constants above).
   const { defaults } = metafolder;
-  const image = extensionSet(defaults.imageExtensions, IMAGE);
-  const audio = extensionSet(defaults.audioExtensions, AUDIO);
-  const video = extensionSet(defaults.videoExtensions, VIDEO);
   const text = extensionSet(defaults.textExtensions, TEXT);
-  const documents = extensionSet(defaults.documentExtensions, DOCUMENT);
   const documentDpi = positiveNumber(defaults.documentDpi, DOCUMENT_DPI);
   const textPreviewLimit = positiveNumber(defaults.textPreviewLimit, TEXT_PREVIEW_LIMIT);
   const zoomStep = positiveNumber(defaults.zoomStep, ZOOM_STEP);
@@ -877,10 +872,10 @@ export async function mount(root, metafolder) {
       return;
     }
     // A directory has no meaningful file preview: list its contents instead.
-    /** @type {{is_dir?: boolean}|null} */
+    /** @type {{is_dir?: boolean, kind?: string|null}|null} */
     let info = null;
     try {
-      info = /** @type {{is_dir?: boolean}} */ (await fs.stat(path));
+      info = /** @type {{is_dir?: boolean, kind?: string|null}} */ (await fs.stat(path));
     } catch {
       // Unreachable/removed: fall through to the file preview.
     }
@@ -891,8 +886,12 @@ export async function mount(root, metafolder) {
     const extension = (path.split('.').pop() ?? '').toLowerCase();
     const url = rawUrl(path);
 
-    if (image.has(extension)) {
-      const gif = extension === 'gif';
+    // The kind is the content's. A name that lies — or says nothing — changes
+    // nothing: `main.ts` is text and `clip.ts` a video, and both are right.
+    const kind = info?.kind ?? null;
+
+    if (kind === 'image' || kind === 'gif') {
+      const gif = kind === 'gif';
       gifAnimateWrap.hidden = !gif;
       const img = el('img', { onerror: () => placeholder('cannot load the file') });
       if (gif && !animateGifs) {
@@ -912,16 +911,17 @@ export async function mount(root, metafolder) {
       }
       viewer.replaceChildren(img);
       setZoomTarget(img);
-    } else if (audio.has(extension) || video.has(extension)) {
-      renderMedia(video.has(extension) ? 'video' : 'audio', path, url, generation);
-    } else if (documents.has(extension)) {
+    } else if (kind === 'audio' || kind === 'video') {
+      renderMedia(kind, path, url, generation);
+    } else if (kind === 'document') {
       await renderDocument(path, generation);
     } else if (text.has(extension)) {
       // A known text extension: render as text unconditionally.
       await renderText(url, generation, true);
     } else {
-      // Unknown/absent extension: sniff the bytes and preview it only if it
-      // looks like text (so plain-text files with an unlisted extension work).
+      // Neither a known kind nor a listed text extension: sniff the bytes and
+      // preview it only if it looks like text (so plain-text files with an
+      // unlisted extension work).
       await renderText(url, generation, false);
     }
   }
