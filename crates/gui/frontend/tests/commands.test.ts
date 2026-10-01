@@ -855,6 +855,20 @@ describe('resolveSubmission', () => {
     expect(resolveSubmission('pan', sugg, -1)).toBe('panel:swap');
   });
 
+  test('a typed invocation of a known command wins over the list', () => {
+    // `panel:set type` is an incomplete invocation: it asks for the type. It
+    // must not run the first bound variant the list happens to show.
+    const known = ['panel:set', 'help', 'help:cursor'];
+    const variants = [{ name: 'panel:set type duplicates' }, { name: 'panel:set type file' }];
+    expect(resolveSubmission('panel:set type', variants, 0, known)).toBe('panel:set type');
+    // An abbreviation names no command: the highlighted row runs.
+    expect(resolveSubmission('pan ty', variants, 0, known)).toBe('panel:set type duplicates');
+    // A highlight the user moved is a choice, and wins.
+    expect(resolveSubmission('panel:set type', variants, 1, known)).toBe('panel:set type file');
+    const helps = [{ name: 'help' }, { name: 'help:cursor' }];
+    expect(resolveSubmission('help', helps, 1, known)).toBe('help:cursor');
+  });
+
   test('falls back to the typed text when there is no suggestion', () => {
     expect(resolveSubmission('panel:set type file', [], 0)).toBe('panel:set type file');
     expect(resolveSubmission('!ls', [], 0)).toBe('!ls');

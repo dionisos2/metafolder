@@ -905,12 +905,11 @@ Ignorés par la spec : =Home=/=End= dans la liste, la complétion bash d'une lig
 vide (les commandes du shell, pas tout le =PATH=), =[exit N]= et l'erreur en barre
 d'état d'une commande =!= qui échoue, les types de référence non substituables
 par =%<champ>=, le plafond de 200 candidats affichés. Elle parlait encore
-d'iframes (registre). *Signalé, non tranché* : puisque =Enter= exécute la ligne
-surlignée, une ligne qui est le début d'une entrée listée exécute cette entrée —
-=panel:set type= puis =Enter= lance le premier =panel:set type …= lié à une touche
-(=duplicates=) au lieu de demander le type, et =metarecord:bulk selection= lance
-=… selection add= ; la note le dit, mais une invocation incomplète tapée en
-entier devrait sans doute l'emporter sur la liste. Sources retirées (pointeurs) :
+d'iframes (registre). *Tranché par l'utilisateur* : comme =Enter= exécute la
+ligne surlignée, =panel:set type= puis =Enter= lançait le premier =panel:set type …=
+lié à une touche au lieu de demander le type ; une ligne dont le premier mot est
+le nom entier d'une commande s'exécute maintenant telle que tapée, tant que la
+surbrillance n'a pas été déplacée (corrigé, test d'abord). Sources retirées (pointeurs) :
 spec-gui « Value picker », « Command » (avec « Dead keys », « Command listing »,
 « Naming convention »), les deux « Command input » (avec « Interactive command
 arguments », « Completion views », « Bash completion », « Placeholders »),

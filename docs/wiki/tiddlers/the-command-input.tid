@@ -24,7 +24,7 @@ has the focus.
 
 * The match is by ordered pieces, not by prefix: the text is split at spaces and the pieces must appear in the name in that order, in any case. `con def` matches like `.*con.*def.*`. Names starting with the first piece come first.
 * The first row is highlighted. `Up` and `Down` move the highlight, `Home` and `End` jump to the ends.
-* <<key "editing:confirm" Enter>> ''runs the highlighted row'' — so `pa sw` then `Enter` runs `panel:swap`. When nothing is listed, because arguments were typed after the name, it runs the line as typed.
+* <<key "editing:confirm" Enter>> ''runs the highlighted row'' — so `pa sw` then `Enter` runs `panel:swap`. When nothing is listed, or when the line already starts with a command's whole name, it runs the line as typed (below).
 * `Tab` writes the highlighted row into the line without running it, ready for arguments.
 
 A row ending in `…` is a command that will ask for something before acting
@@ -36,9 +36,10 @@ with arguments'': `panel:set type file` has its row, with its key, because a key
 it. So every shortcut can be found by reading the list, and the variants nobody bound
 do not fill it — they are reached by running the command bare and answering.
 
-Since `Enter` runs the highlighted row, a line that is the beginning of a listed row
-runs that row: `panel:set type` then `Enter` runs the first `panel:set type …` listed,
-it does not ask for the type. Type `panel:set` alone to be asked.
+A line whose first word is already a command's whole name is run ''as typed'', whatever
+the list shows: `panel:set type` then `Enter` asks for the type, it does not run the
+first `panel:set type …` listed. Moving the highlight is a choice, and then the
+highlighted row runs.
 
 !! Editing keys
 

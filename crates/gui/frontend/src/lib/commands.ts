@@ -157,13 +157,24 @@ export function filterCommands<C extends { name: string }>(commands: C[], query:
 /** What the command input runs on Enter (command mode only): the
  *  highlighted suggestion when the list is non-empty, otherwise the raw
  *  typed text. Commands with arguments (e.g. `panel:set type file`) empty
- *  the suggestion list, so they fall through to the typed text. */
+ *  the suggestion list, so they fall through to the typed text.
+ *
+ *  A line whose first word is a command's whole name is an invocation, not an
+ *  abbreviation, and runs as typed: `panel:set type` asks for the type — it
+ *  used to run the first bound `panel:set type …` the list happened to show.
+ *  That holds while the highlight is where typing left it; a highlight the
+ *  user moved is a choice and wins (doc "The command input"). */
 export function resolveSubmission(
   draft: string,
   suggestions: { name: string }[],
   selectedIndex: number,
+  commandNames: Iterable<string> = [],
 ): string {
   if (suggestions.length === 0) return draft;
+  if (selectedIndex === 0) {
+    const first = draft.trim().split(/\s+/)[0];
+    for (const name of commandNames) if (name === first) return draft;
+  }
   const index = Math.min(Math.max(selectedIndex, 0), suggestions.length - 1);
   return suggestions[index].name;
 }

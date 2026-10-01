@@ -340,14 +340,22 @@
   }
 
   // Enter runs the highlighted suggestion when the list is non-empty,
-  // otherwise the typed text (resolveSubmission). Snapshot before clearing
+  // otherwise the typed text — and the typed text too when it already names
+  // a command (resolveSubmission). Snapshot before clearing
   // the draft, since `suggestions` recomputes from it. In a prompt, plain
   // Enter accepts the highlighted completion while `raw` (Ctrl-Enter, or a
   // deselected list) confirms the typed free value.
   async function submit(raw = false) {
     const input = draft;
     const picked =
-      promptText === null ? resolveSubmission(input, suggestions, selectedIndex) : input;
+      promptText === null
+        ? resolveSubmission(
+            input,
+            suggestions,
+            selectedIndex,
+            store.commands.map((c) => c.name),
+          )
+        : input;
     const promptValue = resolvePromptValue(input, suggestions, selectedIndex, raw, promptChoices);
     draft = '';
     bashCandidates = [];
