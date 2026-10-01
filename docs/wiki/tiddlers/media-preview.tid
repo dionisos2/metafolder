@@ -1,0 +1,73 @@
+title: Media preview
+tags: [[file panel]]
+kind: reference
+aliases: media codec codecs player playback gstreamer
+summary: A video or an audio file shows a poster until you ask to play it; then the player's keys are mpv's, a video resumes where it stopped, and a missing or slow decoder is named.
+
+In the [[file panel]], a video or an audio file is ''not played on sight''. It shows
+a poster — a frame of the video, a glyph for audio, which has no frame — under the
+line ''▶ play (space) — the player loads on demand''. The player is built when you
+ask: <<key "file:play-pause" Space>>, or a click on the poster. Browsing a folder of
+videos therefore decodes nothing ([[Why a media file is not played on sight]]).
+
+!! The keys
+
+They are mpv's, so that the habit carries over. Each is a command, to rebind or to
+type ([[Keybindings]]).
+
+|!Key |!Does |
+|<<key "file:play-pause" Space>> |play or pause; in front of a poster, load the player and start |
+|<<key "file:seek -10" ←>> / <<key "file:seek +10" →>> |10 s back, forward |
+|<<key "file:seek -60" Shift+←>> / <<key "file:seek +60" Shift+→>> |60 s back, forward |
+|<<key "file:restart" r>> |from the start |
+|<<key "file:speed down" "[">> / <<key "file:speed up" "]">> |slower, faster: 0.25, 0.5, 0.75, 1, 1.25, 1.5, 1.75, 2, 3, 4 |
+|<<key "file:speed reset" Shift+Backspace>> |back to normal speed |
+|<<key "file:volume down" Shift+↓>> / <<key "file:volume up" Shift+↑>> |10 % quieter, louder; louder also unmutes |
+|<<key "file:mute" Ctrl+m>> |mute or unmute |
+
+`file:seek` takes any signed number of seconds, so `file:seek +5` can be bound too. A
+seek stops at the start and at the end.
+
+Where a key differs from mpv's, another meaning had it first: plain `Backspace` goes
+up a level here as in every panel, so the speed reset takes `Shift`; plain `m` starts
+the keys that edit a metarecord, so mute takes `Ctrl`.
+
+All of them do nothing while no player is loaded — in front of an image, a text, a
+folder — with two exceptions. `file:play-pause` in front of a poster is what loads the
+player. And the ''volume and mute are the panel's'', not the player's: set them in
+front of the poster and the player starts at that level, from the first sample; the
+poster's line then says `volume 40%` or `muted`. The level is kept from one file to
+the next, like the zoom.
+
+!! Resuming a video
+
+A video starts where you stopped watching it. The position is a field of the file's
+metarecord, `playback_position` (a `float`, in seconds) — an ordinary field of yours,
+to query or delete like any other. When a video resumes, the toolbar shows where:
+`↩ 12:34`.
+
+It is written when you pause, seek or reach the end, when the preview moves to
+another file, and every 15 seconds while the video plays. Each write is a revision of
+the event log, so a position that has not moved by a second is not written again.
+
+* Stopped in the first 5 seconds, or in the last 10: nothing is kept, and a stored position is removed — nothing was watched, or everything was.
+* A stored position beyond the end of the file is ignored.
+* Nothing is stored for a file without a metarecord, nor for a video reached by clicking a tile of a folder's grid: the position follows the ''selected'' metarecord.
+* Audio does not resume.
+
+!! When it cannot play
+
+The checks happen when the player is asked for, not when the poster is shown.
+
+* ''media preview disabled: missing GStreamer elements…'' — the audio or video output the WebView needs is not installed (`gst-plugins-good`).
+* ''cannot play this file: missing GStreamer plugin(s)…'' — this file's format has no decoder installed; the message names it (`gst-libav`, `gst-plugins-bad`, `gst-plugins-ugly`).
+* An amber bar above a video that plays — ''slow playback expected…'' — every decoder is there, but the one that would be used cannot keep up with this stream. The video plays, badly. So far that is 4K-class AV1 without `gst-plugin-dav1d` ([[Why only measured codecs warn as slow]]).
+* ''cannot play this file (unsupported or corrupt media)'' — the player itself gave up.
+
+A video that stutters here and plays well in mpv is the third case, or one like it:
+mpv decodes with ffmpeg, the GUI with GStreamer, and the two do not have the same
+decoders. [[GUI runtime dependencies]] lists the packages; to hand the file to mpv,
+see [[Opening a file with another program]].
+
+A poster needs `ffmpeg`, and a file inside a loaded repository — the poster is cached
+there. Without either, a video shows its glyph and plays all the same.

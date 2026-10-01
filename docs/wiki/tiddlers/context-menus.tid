@@ -14,7 +14,7 @@ Its entries come under headers, always in this order, so the same right-click re
 the same way in every panel:
 
 |!Header |!Entries |
-|''Metarecord'' |the panel's operations on the clicked metarecord: open it in `metarecord-detail` or `file`, show its folder in the file manager or in `metarecord-list` ([[Cross-panel selection]]), add it to or remove it from the checked selection, copy its uuid, and what the panel adds (delete it…) |
+|''Metarecord'' |the panel's operations on the clicked metarecord: open it in `metarecord-detail` or the [[file panel]], show its folder in the [[file manager|file-manager panel]] or in `metarecord-list` ([[Cross-panel selection]]), add it to or remove it from the checked selection, copy its uuid, and what the panel adds (delete it…) |
 |''File'' |the ''file actions'': Open with… ([[Opening a file with another program]]), Cut, Copy, Paste, Rename…, Duplicate, Copy full path, Move to trash |
 |''Directory'' |in the file manager: New folder…, New file… |
 |''Ignore'' |ignore patterns for the clicked path ([[Setting ignore patterns]]) |

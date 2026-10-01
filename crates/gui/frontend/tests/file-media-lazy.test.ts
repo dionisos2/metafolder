@@ -1,5 +1,6 @@
-// The `file` panel never builds a media pipeline on sight (spec-gui "file panel
-// type" / "Untrusted media"): opening a video or an audio file shows its poster
+// The `file` panel never builds a media pipeline on sight
+// (doc "Why a media file is not played on sight"): opening a video or an audio
+// file shows its poster
 // frame — rendered out of process by ffmpeg and cached — and the <video>/<audio>
 // element is created only when playback is actually asked for.
 //

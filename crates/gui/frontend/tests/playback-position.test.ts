@@ -1,4 +1,4 @@
-// Video playback position (spec-gui "file panel type" — resume where you
+// Video playback position (doc "Media preview" — resume where you
 // stopped): the decision of what to persist, and the daemon round-trips that
 // store it on the metarecord of the played file.
 
@@ -177,7 +177,7 @@ describe('write throttling', () => {
 });
 
 
-// ── Playback controls (spec-gui "file panel type") ──────────────────────
+// ── Playback controls (doc "Media preview") ──────────────────────
 //
 // The arithmetic behind the file panel's transport commands, kept pure so the
 // clamping is tested without a media element.

@@ -22,7 +22,7 @@ GUI asks `GET /health` ([[Health and diagnostics]]).
 * ''Incompatible daemon'' — it answers, but reports an `api_version` other than the GUI's own, or none: the banner says that data may be missing or wrong, and that both should be rebuilt from the same source. It is the usual mishap of development — a rebuilt daemon restarted under a GUI still running the old code, or the reverse — which otherwise shows as empty or broken panels without a word.
 
 The panels never pass a failed read off as an empty result: `metarecord-list` and
-`file-manager` show the error in their body, and stay there, rather than an empty
+[[file-manager panel]] show the error in their body, and stay there, rather than an empty
 list; `file-manager` falls back to browsing the disk alone rather than hanging on
 ''Loading…'' when the daemon does not answer.
 

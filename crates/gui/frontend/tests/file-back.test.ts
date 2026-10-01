@@ -1,4 +1,4 @@
-// Going back in the `file` panel (spec-gui "file panel type"): Backspace steps
+// Going back in the `file` panel (doc "file panel"): Backspace steps
 // up one level — out of a drilled-in listing, or from the followed selection
 // into the folder holding the previewed file — the way it does in the file
 // manager. `backTarget` is the pure decision; the mount test checks it is

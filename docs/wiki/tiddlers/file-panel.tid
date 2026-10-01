@@ -1,0 +1,86 @@
+title: file panel
+tags: Panel [[Panel types]]
+kind: reference
+aliases: file viewer preview zoom gif
+summary: A preview of the selected file — image, video, audio, PDF, text — or a folder as a grid of thumbnails, with zoom, a media player's keys and a way up.
+
+Open it with `panel:set type file` (<<key "panel:set type file" "t f">>). It shows
+the file the workspace has selected, and follows the selection: move the cursor in
+[[metarecord-list panel]] or [[file-manager panel]] beside it and the preview changes
+([[Cross-panel selection]]). The file need not be tracked. With nothing selected it
+says ''No file selected''.
+
+Its path is in the bar at the top. A metarecord that has several paths gets a
+drop-down there, to choose which one is previewed.
+
+!! What is shown
+
+What a file is shown as depends on its extension.
+
+|!File |!Shown as |
+|image (`png`, `jpg`, `webp`, `svg`…) |the image |
+|GIF |its first frame; ''animate'' in the toolbar (`file:toggle gif-animation`) plays it |
+|video |its poster frame, until you ask to play it ([[Media preview]]) |
+|audio |a type glyph, until you ask to play it ([[Media preview]]) |
+|PDF |one page at a time ([[Document preview]]) |
+|text (`txt`, `md`, `json`, `rs`…) |its first 256 KiB, then `… (truncated preview)` |
+|a folder |a grid of thumbnails (below) |
+|anything else |as text when its content looks like text, else ''no preview available for this format'' |
+
+The lists of extensions, and the limits, are settings of `[panel-defaults.file]`
+([[GUI configuration]]). The lists are tried in the order of the table, so an
+extension in two of them is what comes first: `ts`, shipped both as a video
+(MPEG transport stream) and as a text extension, is a video. A listed text extension
+is shown as text whatever it contains, which is how a UTF-16 file — full of the zero
+bytes the content test rejects — still previews.
+
+A file on a volume that is not mounted says which volume, instead of failing to load
+([[Unmounted volumes in the GUI]]).
+
+!! A folder
+
+A folder is a grid of tiles, folders first: an image is its own thumbnail, a video
+its poster frame, a GIF a still, a PDF its first page, the rest a type glyph. The
+tiles are loaded 150 at a time (`[page-size]`), the next ones on scroll; the footer
+gives `shown/total`.
+
+Clicking a tile goes into it — a subfolder's grid, a file's preview — without
+changing the selection. <<key "file:back" Backspace>>, or ''←'' in the path bar,
+comes back up. It also works on a plain preview: it then shows the folder the file
+is in, so the panel browses upwards from wherever it is. The panel follows the
+selection again once the walk is back on the selected path, or as soon as the
+selection changes.
+
+!! Zoom
+
+For an image, a document page and a video once its player is loaded. The toolbar
+has the same four as buttons.
+
+|!Key |!Does |
+|<<key "file:zoom in" "+">> / <<key "file:zoom out" "-">> |one step larger, smaller (×1.25) |
+|<<key "file:zoom fit" "=">> |fit the panel, proportions kept — the default |
+|<<key "file:zoom reset" "0">> |the original size |
+
+A manual zoom sizes the picture from its own pixels, between 5 % and 4000 %, and the
+panel scrolls when it overflows; the first step starts from what ''fit'' was showing.
+The zoom is kept from one file to the next. In `keybindings.toml` the `+` key is
+written `plus`, `+` being what joins the keys of a combination ([[Keybindings]]).
+
+!! Walking a list from the preview
+
+<<key "metarecord-list:next" ↓>> / <<key "metarecord-list:prev" ↑>> and
+<<key "metarecord-list:first" Home>> / <<key "metarecord-list:last" End>> are bound
+here to the ''list's'' commands: they move the cursor of the workspace's
+[[metarecord-list panel]], and the preview follows. That is how a folder of pictures
+is flipped through without leaving the preview — plain keybindings, to change like
+the others.
+
+!! Right click
+
+When the selection is a tracked file, a right click offers the file's actions —
+''Open with…'', the clipboard, ''Rename…'', ''Duplicate'', ''Copy full path'', ''Move to
+trash'' ([[Context menus]]). They act on the file ''shown'', which after a click on a
+tile or a step up is not the selected one.
+
+A tracked file the selection brings here is recorded as viewed, for the
+[[recent panel]].

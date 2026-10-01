@@ -11,8 +11,8 @@ use crate::keybindings::KeybindingSet;
 use serde::{Deserialize, Serialize};
 use std::path::{Path, PathBuf};
 
-/// Per-panel list page sizes (spec-gui "metarecord-list / file / file-manager
-/// panel types"), read from the `[page-size]` table of `config.toml`. They tune
+/// Per-panel list page sizes (doc "GUI configuration"), read from the
+/// `[page-size]` table of `config.toml`. They tune
 /// progressive list loading: how many rows/tiles each list panel renders per
 /// window before more are fetched on scroll. Smallest for `metarecord-list`
 /// (each row needs several daemon round-trips), largest for `file-manager`

@@ -1,0 +1,6 @@
+title: file-manager:select
+tags: [[GUI command]] [[file-manager panel]]
+kind: reference
+summary: File manager: change the checked multi-selection (toggle / all / none)
+
+Changes the checked selection from the [[file-manager panel]]: `toggle` checks or unchecks the metarecord of the entry under the cursor, `all` checks every tracked entry of the directory on top of what is already checked, `none` unchecks everything. An untracked entry has no metarecord to check, and says so. The set is the workspace's, shared with the [[metarecord-list panel]] ([[Cross-panel selection]]).

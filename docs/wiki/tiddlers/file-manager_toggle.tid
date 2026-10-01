@@ -1,0 +1,6 @@
+title: file-manager:toggle
+tags: [[GUI command]] [[file-manager panel]]
+kind: reference
+summary: File manager: toggle a view flag (root constraint / hidden dot-entries / sort by watch activity)
+
+Flips one of the three view settings of the [[file-manager panel]], named as the argument: `root` (browse inside the repository root only, or the whole disk), `hidden` (show the dot-entries), `activity` (order the entries by watcher events, busiest first — [[Watch activity]]).

@@ -58,7 +58,7 @@ In the metarecord list, <<key "metarecord-list:focus finder" "/">> and
 <<key "metarecord-list:clear finder" f>> go to the finder instead: its rows come
 from a query, so finding one is asking the daemon.
 
-While the `file` panel shows a file, the arrows and <<key "metarecord-list:first" Home>> /
+While the [[file panel]] shows a file, the arrows and <<key "metarecord-list:first" Home>> /
 <<key "metarecord-list:last" End>> still move the cursor of the list beside it —
 the next file is previewed without leaving the preview.
 

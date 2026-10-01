@@ -1,5 +1,5 @@
 // file panel: media/text preview of the active path from selected_paths
-// (spec-gui "file panel type"). Files are streamed by the GUI server's
+// (doc "file panel"). Files are streamed by the GUI server's
 // /fsraw endpoint (HTTP Range supported, so audio/video can seek).
 // When the active path is a directory, its contents are shown as a
 // thumbnail grid the user can click into (drill-in, with a back button).
@@ -83,7 +83,7 @@ function positiveNumber(configured, fallback) {
 }
 
 /**
- * Where "up one level" lands (spec-gui "file panel type"): out of a drilled-in
+ * Where "up one level" lands (doc "file panel"): out of a drilled-in
  * listing, or — when the panel is following the selection — into the folder
  * holding the previewed file, so Backspace browses upwards the way it does in
  * the file manager rather than being a dead end.
@@ -367,7 +367,7 @@ export async function mount(root, metafolder) {
   // --- Playback position ------------------------------------------------
   //
   // Where the user stopped watching, kept on the metarecord of the played
-  // file so the next open resumes there (spec-gui "file panel type"). The
+  // file so the next open resumes there (doc "file panel"). The
   // state of the video currently mounted, or null when none is (or when it
   // has no metarecord to store a position on): { media, repo, uuid, stored,
   // timer }, with `stored` mirroring the field's value so a redundant write
@@ -978,8 +978,8 @@ export async function mount(root, metafolder) {
 
   // --- Playback controls -------------------------------------------------
   //
-  // Transport commands for the mounted <audio>/<video> (spec-gui "file panel
-  // type"): what a media player's keyboard does, reachable from the command
+  // Transport commands for the mounted <audio>/<video>
+  // (doc "Media preview"): what a media player's keyboard does, reachable from the command
   // input and the keybindings. They are no-ops when the preview holds no media
   // (an image, a text file, a directory listing), so a key bound in this panel
   // is always harmless.

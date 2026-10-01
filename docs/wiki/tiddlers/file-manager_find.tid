@@ -1,0 +1,6 @@
+title: file-manager:find
+tags: [[GUI command]] [[file-manager panel]]
+kind: reference
+summary: File manager: jump to an entry by name
+
+Moves the cursor of the [[file-manager panel]] onto an entry named in the command input ([[Jumping to an entry]]). Only the displayed directory is searched — its dot-entries only while they are shown — and a directory is selected, not entered; directories carry a trailing `/` among the candidates.

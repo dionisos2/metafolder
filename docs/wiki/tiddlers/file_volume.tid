@@ -1,0 +1,6 @@
+title: file:volume
+tags: [[GUI command]] [[file panel]]
+kind: reference
+summary: File: step the volume
+
+Raises (`up`) or lowers (`down`) the volume of the [[file panel]] by 10 %; raising it also unmutes. The level is the panel's, so it can be set in front of a poster, before any sound ([[Media preview]]).

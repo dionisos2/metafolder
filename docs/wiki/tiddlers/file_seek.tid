@@ -1,0 +1,6 @@
+title: file:seek
+tags: [[GUI command]] [[file panel]]
+kind: reference
+summary: File: seek the previewed media by a signed number of seconds
+
+Moves the playback position of the [[file panel]] by a signed number of seconds — `+10`, `-60`, or any other — never before the start nor past the end. Does nothing unless a player is loaded ([[Media preview]]).

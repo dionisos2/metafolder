@@ -36,7 +36,7 @@ only once ([[Cross-panel selection]]).
 `selected_metarecord` and `selected_paths` name the ''same'' highlighted thing, and
 whatever moves the selection writes `selected_metarecord` first and `selected_paths`
 second. The panels react to `selected_paths` and read `selected_metarecord` at that
-moment — the `file` panel does, to know which metarecord holds the playback position
+moment — the [[file panel]] does, to know which metarecord holds the playback position
 of the file it is about to show — so the matching metarecord has to be in place
 already. Writing the paths first hands every one of them the ''previous'' metarecord:
 one file on screen, another one read from and written to.
@@ -47,5 +47,5 @@ variable. A script walking a folder one `mf gui view left file --path` at a time
 (`gui-tag-folder.sh`) otherwise ran a whole session one answer behind.
 
 A panel may move `selected_metarecord` ''alone'' — following a reference in
-`metarecord-detail` does — and the `file` panel deliberately ignores that, keeping the
+`metarecord-detail` does — and the [[file panel]] deliberately ignores that, keeping the
 file it was showing.

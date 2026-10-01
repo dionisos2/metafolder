@@ -1,0 +1,72 @@
+title: GUI file endpoints
+tags: [[file panel]]
+kind: reference
+audience: dev
+aliases: fsraw thumbnail
+summary: The routes of the GUI's server that hand files to panels — /fsraw, /thumbnail, /document, and the two media probes — their caches and what a failure means.
+
+Served by the GUI's own server on the loopback (`crates/gui/src/server/`), for panels:
+the web view cannot read a local file. All but `/__media-support` need the session
+token, and accept it as `?token=` — an `<img>` or `<video>` source cannot send a
+header ([[Session tokens]]). `path` is an absolute path, in the escaped form the
+panels are given ([[Tree names]]).
+
+|!Route |!Answers |
+|`GET /fsraw?path=` |the file's bytes, with `Range` support (seeking in a video, the first bytes of a text) |
+|`GET /thumbnail?path=` |a still PNG, 320 px wide: a frame of a video, the first frame of a GIF (`ffmpeg`), the first page of a PDF (poppler) |
+|`GET /document?path=&page=N&dpi=D` |page `N` (from 1) of a PDF as a PNG; `dpi` clamped to 20–600, 150 when absent |
+|`GET /document/info?path=` |`{"pages": n}` |
+|`GET /__media-support` |`{audio, video, missing}` — whether the output elements WebKit needs exist |
+|`GET /__media-probe?path=` |`{missing, slow}` — the decoders this file lacks, or a warning that the one it would get is too slow |
+
+The panels reach them through `thumbnail()` of `/__ui.js` and the [[file panel]]
+([[The metafolder API]]).
+
+!! Media, never a document
+
+`/fsraw` is safe only as the source of an `<img>`, `<video>` or `<audio>`
+([[Why /fsraw never serves a document]]). Hence two rules of `thumbnail()`:
+
+* a video never goes to an `<img>` through `/fsraw` — WebKit fetches the whole file, tries to decode it as an image, and its process grows to gigabytes and dies. A video tile points at `/thumbnail`.
+* a GIF tile points at `/thumbnail` too: served raw it animates, and a grid of animations is noise. If the still cannot be made, the tile falls back to the animated original, then to the glyph.
+
+`/fsraw`, `/thumbnail` and `/document` responses carry
+`Content-Security-Policy: sandbox; default-src 'none'; …` and `nosniff`.
+
+!! The caches
+
+`/thumbnail` and `/document` write what they render inside the repository holding the
+file: `<internal>/thumbnails/` and `<internal>/documents/`
+([[Repository layout on disk]]). The cache is the repository's, and goes with it.
+
+* The repository is found from the daemon's `GET /repos` — each `root` and `internal_dir`, the longest root that contains the path — never by walking the disk. Nested repositories give the innermost, an external `.metafolder` is handled, and a stray `.metafolder/` directory is not taken for one. The list is kept `repo-list-cache-ttl-secs` (3 s), or a grid would ask once per tile.
+* A file inside no loaded repository gets `404` and nothing is written. `/document/info` writes nothing, and answers for any readable file.
+* The name of a cached file hashes the source's path, modification time and size — and the page and resolution, for a document — so a changed file is rendered again. The helper writes into a scratch directory, and the one PNG expected is moved in.
+
+!! Failures
+
+A non-2xx answer means ''show a glyph'' to a tile and a message to the preview; the
+status is for whoever reads the network log.
+
+|!Status |!Means |
+|`415` |not a type this route renders |
+|`404` |no such file, or a file inside no loaded repository |
+|`500` |the helper failed: not installed, no sandbox, a file it cannot read, a timeout (20 s) |
+
+The types are fixed in the server (`POSTER_EXTENSIONS` in `thumbnails.rs`,
+`DOCUMENT_EXTENSIONS` in `documents.rs`), mirrored in `/__ui.js`. The extension lists
+of `[panel-defaults.file]` only decide what the ''panel'' tries: an extension added
+there and unknown here gets no poster and no page.
+
+!! The two probes
+
+`/__media-support` runs `gst-inspect-1.0 --exists` on `autoaudiosink` and
+`autovideosink`, once per process; without the tool it looks for
+`libgstautodetect.so` in the plugin directories. What cannot be determined counts as
+''missing''. Video needs both: a soundtrack is the rule.
+
+`/__media-probe` runs `gst-discoverer-1.0` on the file, sandboxed, with a 15 s
+timeout, and remembers the answer per path and modification time. `missing` lists the
+descriptions under the tool's ''Missing plugins''. `slow` is set only when nothing is
+missing ([[Why only measured codecs warn as slow]]). No sandbox, no tool or a
+timeout: an empty answer, and the player is tried.

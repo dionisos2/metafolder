@@ -1,0 +1,6 @@
+title: file-manager:new
+tags: [[GUI command]] [[file-manager panel]]
+kind: reference
+summary: File manager: create a new folder or empty file
+
+Creates a `folder` or an empty `file` in the directory the [[file-manager panel]] shows; the name is asked in a dialog. A name already taken is refused, never overwritten.

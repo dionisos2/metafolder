@@ -1,5 +1,5 @@
 // The `file` panel previews a document (PDF) as server-rendered page images
-// (spec-gui "Documents"). Two things are load-bearing here:
+// (doc "Document preview"). Two things are load-bearing here:
 //
 //  - the document's own bytes never reach the WebView. `/fsraw` carries the
 //    session token in its URL, so a PDF loaded *as a document* (an <iframe>,

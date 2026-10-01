@@ -266,7 +266,6 @@ Moved to the wiki: doc "The command input".
 | =panel:set type <name>= | Switch focused slot to the named panel type |
 | =panel:swap=         | Exchange the two slots' panel types            |
 | =panel:toggle fullscreen=   | Toggle showing only the focused panel fullscreen (default =z=; escape also exits) |
-| =file-manager:reveal= | Open the selected metarecord's folder in the file manager, replacing the focused panel (directory → itself, file → containing folder with the file highlighted) — see [[*Cross-panel selection]] |
 | =reconcile:run=      | Trigger reconcile on the active repo           |
 | =mf:duplicate scan=  | Scan the active repo for byte-identical files and record the groups — the GUI half of =mf duplicate scan=; progress in the [[*Task bar]], summary in the status bar (see [[*Duplicates]]) |
 | =orphan:detect=      | Mark the active repo's orphaned metarecords =orphan = true= and unmark the rest (=POST /orphans/mark=) — the GUI half of =mf orphan detect=; the count lands in the status bar and the message log |
@@ -274,7 +273,6 @@ Moved to the wiki: doc "The command input".
 | =orphan:detect-delete= | =orphan:detect= then =orphan:delete=, one confirmation between the two — the convenience form for "find the records whose file is gone and be rid of them" |
 | =mf:order= | Number the selected folder's direct children (=order_file= / =order_dir=) and mark the folder =order_numbered= — the GUI half of =mf order=; no prompt: the selected folder, or the selected file's folder (default =m o=) — see doc "Ordering a folder" |
 | =script:run [name]=  | Run an installed helper script — completes over the scripts in =~/.config/metafolder/scripts/=, the description taken from each script's =# Summary:= header; the chosen script runs as a subprocess (output in the =message= panel) — see doc "Shipped defaults in the source tree" |
-| =file:open-with [program]= | Open the selected file or folder with an external program (default =g w=) — see [[*Opening a file with another program]] |
 | =ignore:list=        | Show the installed ignore presets and the target's active patterns in the =message= panel — see doc "Setting ignore patterns" |
 | =ignore:add <preset>= | Append an ignore preset's patterns to the target directory (completes over the installed presets) |
 | =ignore:remove <preset>= | Remove an ignore preset's patterns from the target directory |
@@ -292,26 +290,6 @@ Moved to the wiki: doc "The command input".
 | =answer:send <value>=     | Resolve the current =POST /gui/input= wait with =<value>=     |
 | =script-keys:toggle=      | Give the keys a script's question awaits back to the GUI, or take them again (default =tab=; see [[*Script keys]]) |
 | =script:stop [<task>]=    | Stop a running script — its whole process group. No argument: the script asking the current question |
-| =file-manager:track=        | Add selected path via =POST .../track= (=mf_watch = false=)   |
-| =file-manager:root=  | Jump to the root in =file-manager= — the =active_repo= root, or =/= with no repo (default =/=) |
-| =file-manager:refresh=    | Reload the current directory in =file-manager=               |
-| =file-manager:toggle root= | Toggle the "constrain to root" checkbox in =file-manager=    |
-| =file-manager:toggle hidden= | Toggle the "hidden files" checkbox in =file-manager= (default =ctrl+h=) |
-| =file-manager:find=       | Jump to an entry of the displayed directory by name (default =f=; see doc "Jumping to an entry") |
-| =file:back=               | Up one level in the =file= panel: out of a drilled-in listing, or to the folder holding the previewed file (default =backspace=) |
-| =file:zoom in=            | Enlarge the previewed image/video (default =+=)              |
-| =file:zoom out=           | Shrink the previewed image/video (default =-=)               |
-| =file:zoom fit=           | Fit the previewed image/video to the panel (default ~=~)     |
-| =file:zoom reset=         | Show the previewed image/video at original size (default =0=) |
-| =file:toggle gif-animation= | Toggle the "animate" checkbox of the =file= GIF preview    |
-| =file:play-pause=         | Load the player behind the poster, then play/pause it (default =space=) |
-| =file:seek +10= / =-backward= | Seek the previewed media ±10 s (default =right= / =left=) |
-| =file:seek +60= / =-backward-long= | Seek ±60 s (default =shift+right= / =shift+left=) |
-| =file:restart=            | Play the previewed media from the start (default =r=)         |
-| =file:speed up= / =-down= | Step the playback rate up/down the ladder (default =]= / =[=) |
-| =file:speed reset=        | Back to normal speed (default =shift+backspace=)              |
-| =file:volume up= / =-down= | Step the volume ±10 %, before or during playback (default =shift+up= / =shift+down=) |
-| =file:mute=               | Mute/unmute, before or during playback (default =ctrl+m=)     |
 
 ** Input history
 
@@ -381,374 +359,17 @@ references, creating and reconciling) and doc "Editing metarecords in the GUI"
 
 *** =file= panel type
 
-Displays a preview of the file at the currently active path from
-=selected_paths=. When =selected_paths= is empty, shows a "no file selected"
-message. When =selected_paths= has more than one element (metarecord accessible at
-multiple locations), a dropdown in the panel header lets the user choose which
-path to preview. Uses the HTML5 =<img>=, =<audio>=, or =<video>= element
-depending on the file type; renders documents (PDF) as page images (see
-[[*Documents]]); falls back to a plain-text view for text files; shows "no
-preview available" for unsupported formats. Works with both tracked and
-untracked files.
-
-*Serving files*: Raw local files for the =file= panel type are served by
-=GET /fsraw?path=...= with HTTP Range support (media seeking). Poster
-thumbnails (videos and GIFs) are served by =GET /thumbnail?path=...=: a small
-still PNG of one frame
-extracted with =ffmpeg= and cached on disk inside the file's repository, under
-=<repo>/.metafolder/internal/thumbnails= (keyed by the source's
-path/mtime/size), so the cache is scoped to the repo and removed with it. The
-owning repository is resolved from the daemon's =GET /repos= (each entry's
-=root= and =internal_dir=) by longest-root match — the innermost repo when
-repos are nested — not by walking the filesystem, so the external-database
-layout is handled and a stray =.metafolder/= directory cannot be mistaken for a
-repo. A file inside no repository is not cached and gets no thumbnail — the
-panel shows a glyph. A video must never be
-handed to an =<img src=/fsraw>= — WebKit would decode the whole file and crash
-the web process — so the panels point video tiles at =/thumbnail= instead; a
-non-2xx (unsupported type, not in a repo, missing decoder…) falls back to a
-type glyph. GIF tiles also go through =/thumbnail= — served raw they would
-*animate*, and a grid of animated tiles is a distraction — but their non-2xx
-fallback is the animated =/fsraw= original first (safe for an =<img>=), then
-the glyph.
-
-Which extensions take which route — and how much of a text file is read into
-the preview — is configuration, not a constant:
-=[panel-defaults.file].image-extensions= / =audio-extensions= /
-=video-extensions= / =text-extensions= and =text-preview-limit= (default 256
-KiB, fetched with a =Range= header so a multi-GB log only pulls that prefix).
-See doc "GUI configuration". The text extensions are a *fast path*, not the only
-way in: any other extension is decided by sniffing the fetched bytes, so an
-unlisted script still previews — while a listed one previews even when the
-sniff would reject its encoding (UTF-16 holds NULs).
-
-GIFs are shown as a still of their first frame by default (an animation
-looping in a preview is more often a distraction than wanted). While a GIF is
-previewed, the media toolbar shows an *animate* checkbox (unchecked by
-default, mirrored by the =file:toggle gif-animation= command) that plays the
-real animation; the state persists while browsing other files. If the still
-frame cannot be produced, the animated original is shown as a fallback.
-
-When the active path is a directory, the panel instead lists its contents as
-a thumbnail grid (images as thumbnails via =/fsraw=, videos and GIFs as
-still poster-frame
-thumbnails via =/thumbnail=, other entries as a type glyph). The grid is
-rendered in windows (page size from =[page-size].file= in =config.toml=, default
-150 — larger than =metarecord-list='s since each tile is only a lazy =<img>=,
-with more appended on scroll) so a folder with many thousands of files neither
-freezes on open nor holds every thumbnail at once; a footer shows =shown/total=. Clicking an entry drills in — into a
-subdirectory's listing, or a file's inline preview — and a back button in the
-header steps back out, returning to the selection once the originally selected
-path is reached.
-
-=file:back= (default =Backspace=, the key that goes up in every other panel)
-is that same step, and it also applies while the panel is merely *following the
-selection*: it then shows the folder holding the previewed file, so the panel
-browses upwards instead of being a dead end — the way =Backspace= does in
-=file-manager=. The selection is followed again as soon as it changes (or as
-soon as the walk back reaches the selected path). At the filesystem root, and
-with nothing shown, it does nothing. Since plain =Backspace= is taken, mpv's
-"back to normal speed" (=file:speed reset=) keeps the key with shift.
-
-An audio or video file is *not played on sight*: the preview shows its poster
-frame (=GET /thumbnail= for a video, the type glyph for audio, which has no
-frame to extract) with a hint, and the =<audio>= / =<video>= element is created
-only when playback is asked for — =file:play-pause= (default =space=) or a
-click on the poster. Mounting the element makes WebKit's web process build a
-GStreamer pipeline; one that stalls — a software decoder on a machine with no
-GPU, a 4K AV1 stream — freezes the whole window, repaint and keys included,
-until it is killed, and an interactive walk that shows one file per question
-(the tagging scripts) meets that reliably. The poster costs an out-of-process,
-cached =ffmpeg= extraction instead, and nothing is decoded in the web process
-until the viewer asks for it. Same bargain as the GIF stills above.
-
-The decoder checks therefore happen at that moment, not on display: the panel
-queries =GET /__media-support= on the GUI server and, when the required
-GStreamer elements are missing, shows an explanatory message instead of
-attempting playback (see [[*Media codec support]]). It then probes the file
-itself with =GET /__media-probe=: a missing decoder replaces the preview with a
-message naming it, while a decoder that is merely *too slow* for the stream
-raises a warning bar above the viewer and plays the file anyway (see
-[[*Slow decoders]]). Showing a media file costs neither probe.
-
-When an image or video is previewed, a toolbar offers zoom controls, mirrored
-by commands and default keybindings (active only while the =file= panel is
-focused):
-
-| Command           | Default key | Effect                                              |
-|-------------------+-------------+-----------------------------------------------------|
-| =file:zoom in=    | =+=         | Enlarge by one step                                 |
-| =file:zoom out=   | =-=         | Shrink by one step                                  |
-| =file:zoom fit=   | ~=~         | Fit the available space (aspect preserved) — default |
-| =file:zoom reset= | =0=         | Original (1:1) size                                 |
-
-The step and the bounds of a manual zoom are configurable
-(=[panel-defaults.file].zoom-step= / =zoom-min= / =zoom-max=, defaults 1.25 /
-0.05 / 40 — see doc "GUI configuration").
-
-"Fit" fills the viewer, scaling to whichever of full width or full height comes
-first without distortion. A manual zoom (=+= / =-= / =0=) sizes the media in
-pixels relative to its natural dimensions, with the viewer scrolling when the
-result overflows; the first =+= / =-= continues smoothly from whatever "fit" is
-currently showing. The chosen zoom state persists while browsing other files.
-The "+" key is spelled =plus= in keybindings TOML (a literal =+= is the chord
-separator).
-
-Default keybindings map the arrow keys, when the =file= panel is focused,
-to =metarecord-list:next= / =metarecord-list:prev=: they move the metarecord-list
-selection of the same workspace (commands dispatch to their owning panel
-type), and the preview follows through =selected_paths= — flipping through
-files without leaving the preview. Pure keybindings, no coupling in
-either panel; rebindable like everything else.
-
-**** Video playback position
-
-A video resumes where it was last stopped. The position (in seconds) is stored
-on the *metarecord of the played file* as an ordinary user field,
-=playback_position= (=float=) — not an =mfr_*= one: it is user data, not a
-filesystem fact, and a reserved name would need =force=. Nothing is stored for
-an untracked file (no metarecord to hold it), nor for a file reached by
-drilling into a directory listing, where the panel holds a path but no
-metarecord: the position follows =selected_metarecord=, which every panel
-publishing =selected_paths= sets *first* (see doc "Workspace variables").
-
-When the player is loaded, a stored position is seeked to and shown in the
-media toolbar
-(=↩ 12:34=). It is read *before the media element is created*, and the seek is
-armed before the element is given its source: the seek then happens the moment
-the duration is known, so the opening frame of the file is never shown. (Doing
-it afterwards left a daemon round trip during which the browser had already
-painted frame 0, only for the answer to jump it elsewhere — a visible flicker
-on every resumed video.) It is written back on pause, seek and end, when the preview is
-torn down (another file selected, panel or workspace closed), and periodically
-while the video plays — which bounds what an abruptly killed window can lose.
-Never on =timeupdate=: it fires several times a second, and *every write is an
-event-log revision*.
-
-Two positions are not worth resuming, and *clear* the stored one rather than
-overwrite it: the very beginning (under 5 s — nothing was watched) and the end
-(under 10 s left — the video was watched through, so the next open starts from
-scratch). That end margin is absolute, not a percentage: 5 % of a three-hour
-film is nine minutes, which is not "the end". A stored position past the end of
-the file (it changed underneath) is ignored, and when the duration is unknown
-nothing is written at all — a position that could never be recognized as stale
-is worse than none.
-
-**** Media transport
-
-The previewed audio/video is driven from the keyboard as a media player is,
-on mpv's keys so the muscle memory carries over — play/pause (=space=), seek
-±10 s (=left= / =right=) and ±60 s (=shift+left= / =shift+right=), playback
-rate up/down a fixed ladder (=]= / =[=, =backspace= to return to 1×), volume
-±10 % (=shift+up= / =shift+down=), mute (=ctrl+m=, since a bare =m= opens
-the metarecord-edit key sequence) and back to the start (=r=: the key that
-refreshes a list panel means "play it again" where there is no list to
-re-read). Each has a command (=file:play-pause=, =file:seek-*=, =file:restart=,
-=file:speed-*=, =file:volume-*=, =file:mute=), so all of them are rebindable
-and reachable from the command input.
-
-Every one of them is a *no-op when the preview holds no media* — an image, a
-text file, a directory listing — so binding them inside the =file= panel is
-harmless. The exception is =file:play-pause= in front of a media poster, where
-there is no element *yet*: it is then the gesture that loads the player and
-starts it. Seeks are clamped to the media (never before its start nor past its
-end), the rate walks a fixed ladder rather than scaling freely, and raising the
-volume also unmutes (the natural way to undo a mute).
-
-*Volume and mute are panel state, not the element's* (=file:volume-*= /
-=file:mute= are therefore the one other exception to the no-op rule). The
-element exists only while something plays, so a level held on it could only be
-set *after* the first sound had already come out at whatever the last file
-left behind — and a video that starts at full blast has made the noise before
-anyone can turn it down. Held by the panel, the level is settable in front of
-the poster, is applied to each element before its source (so it holds from the
-first sample), and persists while browsing other files, exactly like the zoom
-state. While the poster is showing — the only moment with nothing to read it
-off — it is written into the poster's hint line ("volume 40 %", "muted"),
-which says nothing at a plain unmuted 100 %.
-
-**** Documents
-
-A document — a PDF — is previewed **one page at a time, as an image the GUI
-server rendered**. The panel asks =GET /document/info?path== for the page
-count, then shows =GET /document?path=&page=N&dpi=D= in an ordinary =<img>=,
-which makes the whole zoom machinery above apply to a page unchanged. Turning a
-page swaps that image's =src= rather than rebuilding the view, so the zoom the
-user set survives it.
-
-| Command            | Default key | Effect                |
-|--------------------+-------------+-----------------------|
-| =file:page next=   | =pagedown=  | Next page             |
-| =file:page prev=   | =pageup=    | Previous page         |
-| =file:page first=  | —           | First page            |
-| =file:page last=   | —           | Last page             |
-
-Each is a no-op unless a document is previewed, like the zoom and transport
-commands. =home= / =end= are deliberately *not* bound to first/last page: in
-this panel they already jump the metarecord-list to its first/last row (like
-the arrow keys), and flipping through the files of a folder is the more
-frequent gesture. Which extensions take this route, and at what resolution,
-are =[panel-defaults.file].document-extensions= / =document-dpi= (defaults
-=["pdf"]= / 150 — see doc "GUI configuration"); the zoom works on the rendered
-image, so the DPI is the *rendering* detail, not the displayed size.
-
-*The file's own bytes never reach the WebView*, and that is the whole reason
-for the endpoint. WebKitGTK ships a built-in PDF.js viewer, so an
-=<iframe src="/fsraw?path=…pdf">= would display the document with no work at
-all — and would also be a full compromise: =/fsraw= carries the session token
-in its URL (an =<img>= =src= cannot set a header), so a crafted PDF loaded *as
-a document* runs as code in the GUI server's origin, can read
-=location.search=, and can drive the whole =/gui/*= scripting API including
-=POST /gui/command= and its =!= shell commands. That is the invariant stated in
-=server/fsraw.rs= and enforced by =tests/panel_invariants.rs= (no shipped panel
-may contain =iframe=, =<object=, =<embed=, =window.open=, =location.href=…),
-and the WebView's CSP says the same with =object-src 'none'= / =frame-src
-'none'=. Rendering out of process keeps the PDF parser — a large C++ library
-facing untrusted input — inside =bwrap= + rlimits, exactly like the =ffmpeg=
-poster extraction (see [[*Untrusted media]]), and hands the web process nothing
-but a PNG.
-
-Rendering is done by *poppler* (=pdftoppm= for the pages, =pdfinfo= for the
-count), an optional runtime dependency: without it a document shows "no preview
-available for this format" and its grid tile falls back to the 📕 glyph. The
-page PNGs are cached in =<repo>/.metafolder/internal/documents/=, keyed by the
-source's path/mtime/size *and* the rendering (page number, DPI), so an edited
-document is never served a stale page. Writing that cache is why =GET /document=
-needs the file's repository and answers 404 for a file inside none — the same
-rule as =/thumbnail=; =GET /document/info= writes nothing and answers for any
-readable file.
-
-A document's *grid tile* is its first page, through the same =GET /thumbnail=
-endpoint as a video poster (=thumbnails::is_posterable= accepts it, and
-dispatches to poppler instead of ffmpeg), so a folder of PDFs shows its covers
-rather than a wall of identical 📕.
+Moved to the wiki: doc "file panel" (what is shown for each kind of file, the folder
+grid, going back up, the zoom), doc "Media preview" (the poster, the transport keys,
+the playback position, the decoder checks), doc "Document preview" (PDF pages) and
+doc "GUI file endpoints" (=/fsraw=, =/thumbnail=, =/document=, the two media probes,
+their caches).
 
 *** =file-manager= panel type
 
-A filesystem tree navigator. The GUI backend (Tauri/Rust) reads the disk
-directly; the daemon is not involved in directory listing.
-
-*Display*: a tree/list of files and directories, each row prefixed with a
-type icon (📁 for a directory, otherwise =fileTypeGlyph= — 🎬 video, 🎵 music,
-📕 PDF…), with a visual distinction
-between tracked metarecords (have =mfr_path= metadata in the active repo) and
-untracked ones. When =active_repo= is =null=, all metarecords are shown as
-untracked (no distinction is possible). The listing starts with two
-synthetic rows, =.= (the displayed directory itself) and =..= (its parent),
-as in a Unix directory listing; this makes the directory's own metarecord —
-including the repo root — selectable. The tracked distinction is resolved
-per displayed directory (the direct children plus the =.= / =..= rows),
-never by scanning the whole repository.
-
-Hidden files (dot-entries) are not listed by default; a *hidden files*
-checkbox in the toolbar (unchecked by default, mirrored by the
-=file-manager:toggle hidden= command) reveals them. The synthetic =.= / =..=
-rows are always shown, and navigating directly into a hidden directory
-(e.g. via a seeded start path) still works.
-
-The active repo's =.metafolder/internal/= directory and its contents are
-shown in red (=--mf-error=) with an =internal= badge: they are hard-excluded
-from tracking (see doc "Watch sources and regimes"),
-so the add-to-DB actions are disabled on them. The path comes from the
-=internal_dir= field of =GET /repos= (=metafolder.daemon.repoInternalDir=) —
-it is matched absolutely, not by name, since the metafolder may live
-anywhere.
-
-*Root behaviour*: a checkbox (default: checked) constrains navigation to the
-=active_repo= root. When unchecked, the user can navigate anywhere on the
-disk. Adding files to the DB is only available for paths inside the
-=active_repo= root; attempting it outside returns an error in the status bar.
-When =active_repo= is =null=, the checkbox is disabled and =file-manager:track=
-returns an error.
-
-The toolbar's root button (and =file-manager:root=, default =/=) jumps to
-the =active_repo= root — but with no repository there is no repo root to jump
-to, and the panel is then a plain disk browser: the button reads *root* instead
-of *repo root* and goes to the filesystem root (=/=). It is never a dead end,
-and never an error.
-
-*Selection*: moving the cursor sets =workspace.selected_paths= to a
-single-element list containing the highlighted path. If the path has an
-existing metadata metarecord in the active repo, =workspace.selected_metarecord= is also
-updated; otherwise it is set to =null=. A *tracked* row can also be checked
-into =workspace.selected_metarecords= (doc "Cross-panel selection" — the
-multi-selection the =metarecord-list= gathers and the bulk
-operations act on, kept across lists): an untracked entry has no metarecord to
-check and says so rather than silently doing nothing.
-
-*Reveal*: the panel also honours a =file-manager:reveal-path= workspace variable
-(={ path, nonce }=), set by =file-manager:reveal= from another panel — it
-stats the path, navigates to the folder (its parent for a file, highlighting the
-file), and drops the root constraint if the target lies outside the repo. See
-[[*Cross-panel selection]].
-
-*Keyboard*: =Up= / =Down= navigate; =Enter= expands a directory or confirms
-selection for a file; =Backspace= goes up one level; =/= jumps to the root and
-=Ctrl+H= shows/hides the dot-entries; =r= refreshes;
-=Space= checks/unchecks the highlighted entry for the multi-selection and
-=Ctrl+Space= clears it (doc "Cross-panel selection");
-=Delete= deletes the highlighted entry; =F2= renames; =Ctrl+C= / =Ctrl+X= /
-=Ctrl+V= copy / cut / paste; =Ctrl+D= duplicates; =Ctrl+Shift+N= creates a
-folder.
-
-*Listing*: the directory's entries are rendered in windows (page size from
-=[page-size].file-manager= in =config.toml=, default 200 — the largest of the
-list panels, since a plain text row is the cheapest to build — with more
-revealed on scroll), so a directory with many thousands of files stays
-responsive; a footer shows =shown/total entries= (mirroring the
-=metarecord-list= count). The tracked status of the rows is queried *per
-rendered window* (a =Follows(parent) AND Matches(^(name…)$)= query over just
-that window's names), not for every child up front, so the per-entry daemon
-lookups are bounded to what is on screen. =file-manager:refresh= re-reads the
-current directory and its tracked status, preserving the cursor.
-
-*File operations*: the panel edits the disk directly (via =metafolder.fs=, doc "The metafolder API", never
-the daemon — the same way it reads it), so it can stand in for a general
-file browser: create a folder or an empty file, copy/cut/paste, rename,
-duplicate and delete. This is deliberately *disk-only*: a tracked
-metarecord whose file is renamed/moved/deleted here goes stale until the
-watcher (=mf_watch = true= subtrees) or a reconcile catches up — matching the
-panel's read-side, which never involves the daemon in filesystem I/O. The
-backend refuses to overwrite an existing destination, so a name clash is a
-clear error, never a silent clobber. New/duplicated/pasted names that would
-collide are de-duplicated with a " copy" suffix ("=foo copy.txt=",
-"=foo copy 2.txt="…). The clipboard (copy/cut) is a single store shared by
-*every* file-manager panel in the GUI, like a desktop file manager: cut in one,
-paste in another (even a different workspace); a cut is cleared once pasted.
-Pasting a directory into itself or a descendant is refused. *Delete* is
-restorable when a repository is active — the entry (tracked or not) is sent to
-the repo trash (doc "Trash") as a manual entry, restorable from the trash
-panel; browsing the raw disk with no active repo, it is a permanent removal.
-Both are confirmed.
-
-*Context menu*: right-clicking a row moves the cursor there and opens an
-HTML menu ([[*Context menus]]). A tracked row opens with the shared *Metarecord*
-category (open in detail/file, copy UUID) and its checked-selection toggle
-(=Add to the selection= / =Remove from the selection=, doc "Cross-panel selection"). Then come =Open= (directories), =Track=
-(disabled when there is no active repo, the path is already tracked, or it is
-outside the repo root), the clipboard actions (=Cut=, =Copy=, =Paste=), =Rename…=,
-=Duplicate=, =Copy full path=, the delete action (=Move to trash= with a repo,
-else =Delete…=),
-and the directory-level =New folder…= / =New file…=. Right-clicking empty
-space in the listing offers just =New folder…= / =New file…= / =Paste=.
-
-| Command                   | Description                                              |
-|---------------------------+----------------------------------------------------------|
-| =file-manager:track=        | Add the selected path to the DB via =POST .../track= (creates metarecord with =mf_watch = false=; parent metarecords created automatically). Error if already tracked (=409=) or outside =active_repo= root. |
-| =file-manager:root=  | Jump to the root directory: the =active_repo= root, or =/= when no repository is active (=/=) |
-| =file-manager:refresh=    | Reload the current directory (and tracked status), keeping the cursor |
-| =file-manager:toggle root= | Toggle the "constrain to root" checkbox                 |
-| =file-manager:toggle hidden= | Show/hide the dot-entries (=ctrl+h=)                  |
-| =file-manager:new folder= | Create a new folder in the current directory (name prompted) |
-| =file-manager:new file=   | Create a new empty file in the current directory (name prompted) |
-| =file-manager:rename=     | Rename the selected entry (=F2=; name pre-filled)        |
-| =file-manager:duplicate=  | Copy the selected entry beside itself under a " copy" name (=Ctrl+D=) |
-| =file-manager:copy=       | Copy the selected entry to the shared clipboard (=Ctrl+C=) |
-| =file-manager:cut=        | Cut the selected entry to the shared clipboard (=Ctrl+X=) |
-| =file-manager:paste=      | Paste the clipboard into the current directory (=Ctrl+V=; copy or move) |
-| =file-manager:delete=     | Delete the selected entry (=Delete=): to the repo trash when a repo is active, else permanently; confirmed. A *tracked* entry has its metarecords captured and deleted like any other trashing (doc "What trashing does") — the GUI is the path most deletions take, and must not be the one that still leaves orphans |
-| =file-manager:find=       | Move the cursor onto an entry of the current directory (=f=), its name collected in the command input — the shared list-panel find, see doc "Jumping to an entry". Only the displayed directory is searched (hidden entries only when they are shown), and a directory is selected, not entered. |
-| =file-manager:select=     | Change the checked multi-selection (=toggle= / =all= / =none=): check/uncheck the highlighted entry's metarecord (=toggle=; an untracked entry has none and says so), check every tracked entry of the directory on top of what is already checked (=all=), or empty the selection (=none=) — the workspace-wide set shared with =metarecord-list=, see doc "Cross-panel selection" |
+Moved to the wiki: doc "file-manager panel" (the listing and its marks, the root
+constraint, the selection, tracking, the file operations, the context menu, the
+folder picker, the panel's workspace variables).
 
 *** =treeref= panel type
 
@@ -1341,65 +962,11 @@ Moved to the wiki: doc "GUI design decisions".
 
 ** Media codec support
 
-The =file= panel type uses HTML5 =<audio>= / =<video>=; supported formats
-depend on the system WebView, which differs per platform (WebKit2GTK on
-Linux, WKWebView on macOS, WebView2 on Windows — wiki: doc "Platform"). On Linux, H.264 may require
-GStreamer plugin packages (e.g. =gst-plugins-bad=, =gst-libav=).
-
-On Linux, a missing audio sink does not fail gracefully: WebKitGTK
-crashes its web process while building the playback pipeline, which
-freezes the entire GUI (the shell and every panel live in that one
-process). Two defenses are implemented:
-
-- =GET /__media-support= on the GUI server reports
-  ={"audio": bool, "video": bool, "missing": [elements]}=, probed once
-  per process with =gst-inspect-1.0 --exists= on =autoaudiosink= /
-  =autovideosink= (falling back to a plugin-file scan for
-  =libgstautodetect.so= when the tool is unavailable; undeterminable
-  counts as missing). The =file= panel checks it before creating a media
-  element and otherwise shows a message naming the missing elements
-  (provided by =gst-plugins-good=).
-- The GUI connects WebKitGTK's =web-process-terminated= signal and
-  reloads the shell when the web process dies for any reason — Rust owns
-  all canonical state, so the session survives. A second termination
-  within 10 seconds of the previous one is assumed to be a reload-crash
-  loop and is not followed by another reload.
+Moved to the wiki: doc "Media preview" (what the user sees),
+doc "Why a media file is not played on sight" (the crashes and stalls behind the
+checks), doc "GUI file endpoints" (=/__media-support=, =/__media-probe=) and
+doc "GUI runtime dependencies" (the packages).
 
 *** Slow decoders
 
-A *present* decoder is not necessarily a *usable* one, and the difference is
-invisible to every check above: =gst-discoverer-1.0= reports no missing
-plugin, the element is created, the file plays — at a few frames per second.
-The user sees a video that stutters and looks degraded in the GUI while
-playing perfectly in mpv or smplayer, with nothing anywhere to explain why.
-The cause is that those players decode through ffmpeg, and the GUI through
-whatever GStreamer element WebKit picks, which for some codecs is a much
-slower implementation.
-
-=GET /__media-probe= therefore also returns =slow=: a message when the
-codec's *fallback* decoder is known to be slow, no fast alternative is
-installed, and the stream's pixel rate (=width × height × fps=) exceeds a
-budget. It is =null= otherwise, and always =null= when =missing= is
-non-empty (a decoder that is absent cannot also be slow). The panel shows it
-as a warning bar and still plays the file.
-
-The judgement is deliberately narrow — a warning that fires on files that
-play fine is worse than no warning — so a codec is listed only once it has
-been *measured*. One entry so far:
-
-| Codec | Fallback              | Fast decoders                         | Package            |
-|-------+-----------------------+---------------------------------------+--------------------|
-| AV1   | libaom =av1dec=       | =dav1ddec=, =avdec_av1=, VA-API/NVDEC | =gst-plugin-dav1d= |
-
-=av1dec= is the only AV1 decoder in =gst-plugins-bad= and is single-threaded:
-on a 4-core reference box it decoded a 3840×2160 stream at 25 fps (≈207
-Mpx/s) against dav1d's 75 fps through ffmpeg — below the 29.97 fps the file
-needs, before the WebView's own RGBA conversion (33 MB per 4K frame) and
-compositing. The budget is 150 Mpx/s: 1080p60 (124 Mpx/s) stays silent,
-1440p60 and 4K30 (221 and 248 Mpx/s) do not.
-
-Decoder presence is probed with =gst-inspect-1.0= and memoized per process.
-Unlike the sink probe, an undeterminable answer counts as *present* (no
-warning): there the cost of being wrong is a false alarm, whereas a wrong
-sink verdict is a GUI-freezing crash.
-
+Moved to the wiki: doc "Why only measured codecs warn as slow".

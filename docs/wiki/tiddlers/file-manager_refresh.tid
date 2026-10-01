@@ -1,0 +1,6 @@
+title: file-manager:refresh
+tags: [[GUI command]] [[file-manager panel]]
+kind: reference
+summary: File manager: reload the current directory
+
+Reads the displayed directory again, and what the repository says of its entries, keeping the cursor where it was. The [[file-manager panel]] does not watch the disk: a file another program created appears on a refresh.

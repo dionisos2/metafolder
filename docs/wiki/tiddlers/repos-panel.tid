@@ -24,7 +24,7 @@ violations, and says how many it found in the message log ([[Schema]]).
 
 !! Loading and creating
 
-* ''Load repo…'' opens a form holding the root directory, typed or picked with ''Browse…'' — a `file-manager` [[Value picker]] on the whole disk, starting at the path already typed or at your home directory.
+* ''Load repo…'' opens a form holding the root directory, typed or picked with ''Browse…'' — the [[file-manager panel]] as a [[Value picker]] on the whole disk, starting at the path already typed or at your home directory.
 * <<key "repos:load" "g l">> (`repos:load`) skips the form: the folder picker opens at once and the folder picked is loaded. Cancelling the picker loads nothing.
 * ''Init new repo…'' (`repos:open-init`) opens the form creating a repository: a root directory and an optional name, which defaults to the folder's — picking the folder fills it. The new root gets the `default` ignore preset ([[Ignore presets]]). A `.metafolder` kept outside the root is command-line only (`mf repo init --metafolder`).
 

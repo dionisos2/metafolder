@@ -1,20 +1,20 @@
 title: Cross-panel selection
 tags: GUI
 kind: reference
-aliases: selection select checked multi-select reveal file-manager:reveal
+aliases: selection select checked multi-select reveal
 summary: Selecting a metarecord in one panel shows it in the others of the workspace; checking metarecords gathers a set for a bulk operation, across lists.
 
 !! The highlighted metarecord
 
-Moving the cursor in [[metarecord-list panel]], `file-manager`, [[treeref panel]] or
+Moving the cursor in [[metarecord-list panel]], [[file-manager panel]], [[treeref panel]] or
 [[recent panel]] sets the
 workspace's selection ([[Workspace variables]]). Every panel of the ''same'' workspace
-that follows it — [[metarecord-detail panel]], `file`, [[workspace-info panel]] — updates at once, in
+that follows it — [[metarecord-detail panel]], [[file panel]], [[workspace-info panel]] — updates at once, in
 either slot; a slot showing another workspace is not affected.
 
 ''Opening'' a row of `metarecord-list` — a double-click, or
 <<key "metarecord-list:open" Enter>> — shows it in the other slot of the same
-workspace: in the `file` panel when the metarecord has a path, in
+workspace: in the [[file panel]] when the metarecord has a path, in
 `metarecord-detail` otherwise (`panel:reveal`). A hidden slot is opened for it.
 
 When `metarecord-detail` is editing a field, it asks before showing another

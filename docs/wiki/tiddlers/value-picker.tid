@@ -29,7 +29,7 @@ stays open.
 * For a `tree_ref`, the uuid is the ''parent''; the name remains to be typed. Picking `/document/test` and typing `report` gives `/document/test/report`.
 
 A picker can also return a ''path'': the [[repos panel]]'s //Browse…// opens the
-`file-manager` on the disk, and the folder highlighted there comes back.
+[[file-manager panel]] on the disk, and the folder highlighted there comes back.
 
 !! How it works
 

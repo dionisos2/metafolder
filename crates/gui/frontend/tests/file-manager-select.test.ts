@@ -1,5 +1,5 @@
-// The file manager joins the checked multi-selection (spec-gui "file-manager
-// panel type", "The checked selection"): a tracked row can be checked into
+// The file manager joins the checked multi-selection (doc "file-manager panel",
+// doc "Cross-panel selection"): a tracked row can be checked into
 // `selected_metarecords` — the same workspace-wide set the metarecord list
 // gathers and the bulk operations act on — so a selection can be gathered from
 // the disk view too. Only rows that HAVE a metarecord can join it: an untracked

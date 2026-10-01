@@ -76,7 +76,7 @@ pub fn fs_stat(path: String) -> Result<StatInfo, String> {
     Ok(StatInfo { path, is_dir: metadata.is_dir(), size: metadata.len(), mtime })
 }
 
-// ── Write operations (spec-gui "file-manager panel type") ────────────────────
+// ── Write operations (doc "file-manager panel") ────────────────────
 //
 // The file-manager panel edits the disk directly, the same way it reads it: the
 // daemon is never involved. A tracked metarecord therefore goes stale until the

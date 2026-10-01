@@ -1,0 +1,6 @@
+title: file:open-with
+tags: [[GUI command]] GUI
+kind: reference
+summary: Open the selected file or folder with an external program
+
+Hands the selected file or folder to another program, asked in the command input ([[Opening a file with another program]]). It acts on the workspace's selection, from any panel.

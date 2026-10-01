@@ -1,0 +1,6 @@
+title: file-manager:first
+tags: [[GUI command]] [[file-manager panel]]
+kind: reference
+summary: File manager: move to the first entry
+
+Moves the cursor of the [[file-manager panel]] to the first row, which is `.` — the displayed directory itself.

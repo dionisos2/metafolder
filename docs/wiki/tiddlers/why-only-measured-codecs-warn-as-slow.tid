@@ -1,0 +1,35 @@
+title: Why only measured codecs warn as slow
+tags: [[file panel]]
+kind: rationale
+audience: dev
+aliases: slow-decoder av1 dav1d
+summary: A decoder can be present and unusable — AV1 through libaom — so the probe warns; but only for a codec whose fallback was measured too slow, since a warning on files that play fine is worse than none.
+
+A ''present'' decoder is not a ''usable'' one. `gst-discoverer-1.0` reports nothing
+missing, the element is created, the file plays — at a few frames per second. And the
+same file plays perfectly in mpv, which decodes with ffmpeg where the GUI decodes with
+whatever GStreamer element WebKit picks. Nothing on screen explained it.
+
+So `GET /__media-probe` also answers `slow`: a message when the codec's ''fallback''
+decoder is known to be slow, no fast one is installed, and the stream's pixel rate
+(width × height × frames per second) is over a budget. The [[file panel]] shows it
+above the video and plays the file anyway — the user may only want to look through
+it.
+
+The judgement is narrow on purpose. A codec is listed in `SLOW_FALLBACKS`
+(`crates/gui/src/media_support.rs`) only once it has been measured. One so far:
+
+|!Codec |!Fallback |!Fast decoders |!Package |
+|AV1 |libaom `av1dec` |`dav1ddec`, `avdec_av1`, the VA-API and NVDEC ones |`gst-plugin-dav1d` |
+
+`av1dec` is the only AV1 decoder of `gst-plugins-bad`, and it is single-threaded. On
+a 4-core machine it decoded a 3840×2160 stream at 25 frames per second (about
+207 Mpx/s) where dav1d reached 75 through ffmpeg — under the 29.97 the file needs,
+before the web view converts each frame to RGBA and composites it. The budget is
+150 Mpx/s: 1080p60 (124) stays silent, 1440p60 and 4K30 (221 and 248) warn. A codec
+whose fallback is a threaded libav decoder does not belong in the table.
+
+Two details follow from what a wrong answer costs:
+
+* a decoder whose presence cannot be determined counts as ''present'' — no warning. For the output elements it is the reverse, since there a wrong ''present'' is a crash ([[Why a media file is not played on sight]]);
+* `slow` is never set when a decoder is missing: there is no playback to be slow.

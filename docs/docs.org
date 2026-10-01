@@ -1184,19 +1184,64 @@ ceux de =TreeRef forest=, =recent= est le titre de la commande). Mémoires
 =recently-viewed-metarecords= et =ref-list-replaced-by-treeref= réduites à un
 pointeur.
 
-** TODO 39. Panels de fichiers
+** FAIT 39. Panels de fichiers
 
-- [ ] =file-manager panel= — reference
-- [ ] =file panel= — reference (aperçu image/vidéo/audio/PDF, grille)
-- [ ] =Media preview= — reference (codecs, sondage, décodeurs lents, =gst-plugin-dav1d=)
-- [ ] =Document preview= — reference (poppler, hors processus)
-- [ ] =GUI runtime dependencies= — reference (bwrap, police emoji, ffmpeg, poppler, GStreamer)
+- [X] =file-manager panel= — reference (la liste et ses marques, la contrainte de racine, la sélection, le suivi, les opérations sur fichiers, le menu, le sélecteur de dossier, ses variables)
+- [X] =file panel= — reference (ce qui est montré par type de fichier, la grille d'un dossier, remonter, le zoom) — sert de tag aux quatre notes qui suivent
+- [X] =Media preview= — reference (le poster, les touches du lecteur, la reprise d'une vidéo, les messages de décodeur)
+- [X] =Document preview= — reference (PDF page par page, poppler, les réglages)
+- [X] =GUI runtime dependencies= — reference (bwrap, police emoji, ffmpeg, poppler, GStreamer)
+- [X] =GUI file endpoints= — reference, dev (ajoutée : =/fsraw=, =/thumbnail=, =/document*=, les deux sondes, leurs caches et leurs statuts)
+- [X] =Why a media file is not played on sight= — rationale, dev (ajoutée : la mémoire =gui-media-preview-crash=)
+- [X] =Why only measured codecs warn as slow= — rationale, dev (ajoutée : spec-gui « Slow decoders » et la mémoire =gui-slow-decoder-av1=)
+- [X] les notes de commande : =file-manager:*= (20 ; =file-manager:track= existait), =file:*= (11)
 
-GUI : =file-manager:*= (20), =file:*= (11) ; panels =file-manager=, =file=.
-Sources : spec-gui « file », « file-manager », « Media codec support », « Slow
-decoders » ; help =file.html=, =file-manager.html= ; CLAUDE.md « Runtime
-dependencies (GUI) » ; mémoires =gui-media-preview-crash=, =gui-slow-decoder-av1=,
-=pdf-document-preview=, =gui-runtime-deps=.
+Vérification contre le code. *Corrigé, test d'abord* (deux commits à part) : (1) le
+menu contextuel du panel =file= prenait sa cible dans la /sélection/ et non dans ce
+que le panel montre : après un clic sur une tuile, ou un =file:back=, « Rename… » ou
+« Move to trash » agissaient sur un fichier qui n'était pas à l'écran ; (2)
+=scripts/check-deps.sh= listait toutes les dépendances optionnelles de la GUI sauf
+poppler.
+Écarts de la spec et des pages help, corrigés dans les notes : le statut « suivi »
+du file manager n'est pas demandé /par fenêtre/ par une requête =Follows AND
+Matches= — c'est un seul =GET /tree/children= par dossier, plus un
+=tree/resolve-path= pour =.= et =..= ; la ligne =..= disparaît à la racine du dépôt
+tant que la contrainte est cochée (la spec disait « toujours affichée ») ;
+=file-manager:track= sur un chemin déjà suivi ne rend pas =409=, =POST /track= est
+idempotent ; =Enter= sur un fichier ne « confirme » rien, il le sélectionne ; la page
+help du panel =file= disait qu'il montre « le fichier avec les fields de son
+metarecord » (il ne montre aucun field) ; l'image fixe d'un GIF dans l'aperçu est
+faite dans la WebView (=createImageBitmap=), seule la tuile passe par =/thumbnail=.
+Ignorés par la spec : les marques du file manager (=ignored=, =not watched=, =⏏ not
+mounted=, le compteur d'activité, =⚠= d'un nom échappé), =file-manager:toggle
+activity= et =toggle root= (=ctrl+r=), =ctrl+n= pour un fichier, le menu « Ignore »,
+« Pick this folder » en sélecteur, les variables =file-manager:dir= et
+=file-manager:start-dir=, le fait que les /entrées/ ne sont relues que sur =r= ;
+pour =file= : le message d'un volume non monté, le menu contextuel, l'enregistrement
+dans « recent », l'échelle des vitesses, les bornes du DPI (20–600), « cannot render
+this page » pour un PDF hors de tout dépôt chargé, l'intervalle d'écriture de la
+position (15 s) et le seuil d'une seconde.
+*Signalé, non tranché* : (a) =ts= est livré à la fois dans =video-extensions= et
+=text-extensions= ; la vidéo étant essayée d'abord, un fichier TypeScript s'ouvre
+comme une vidéo (glyphe 🎬, puis « cannot play »). Retirer =ts= de l'une des deux
+listes est un choix d'usage ; (b) les listes d'extensions de
+=[panel-defaults.file]= ne commandent que le panel : celles du serveur
+(=POSTER_EXTENSIONS=, =DOCUMENT_EXTENSIONS=) sont en dur, donc une extension vidéo
+ou document ajoutée en configuration n'a ni poster ni page ; (c) le menu contextuel
+du panel =file= n'existe que si la sélection est un metarecord (il lui faut un
+dépôt) : un fichier non suivi n'y a pas d'actions, alors que le file manager les
+offre.
+Sources retirées (pointeurs) : spec-gui « =file= panel type » (avec « Video playback
+position », « Media transport », « Documents »), « =file-manager= panel type »,
+« Media codec support », « Slow decoders » ; de la table « Command names », les
+lignes =file-manager:*= et =file:*= ; help =file.html=, =file-manager.html= et leurs
+entrées d'index (=file=, =viewer=, =preview=, =zoom=, =gif= deviennent des alias de
+=file panel= ; =media=, =codec= de =Media preview= ; =file-manager=, =files= de
+=file-manager panel=) ; les alias =file-manager:reveal=, =file-manager:find= et
+=file:open-with= quittent leurs notes de sujet, ces commandes ayant la leur ; la
+section « Runtime dependencies (GUI) » de CLAUDE.md devient un pointeur. Mémoires
+=gui-media-preview-crash= et =gui-slow-decoder-av1= réduites à l'environnement et à
+la méthode de mesure, =pdf-document-preview= et =gui-runtime-deps= à un pointeur.
 
 ** TODO 40. Scripts
 

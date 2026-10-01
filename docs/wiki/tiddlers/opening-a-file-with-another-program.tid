@@ -1,11 +1,11 @@
 title: Opening a file with another program
 tags: GUI
 kind: guide
-aliases: open-with file:open-with xdg-open external-program
+aliases: open-with xdg-open external-program
 summary: Hand the selected file or folder to another program — the desktop's default, an image editor, a player — from any panel.
 
 What the GUI cannot show itself goes to another program. Select the file or folder
-in any panel carrying the selection — the list, the detail, `file`, the file manager,
+in any panel carrying the selection — the list, the detail, the [[file panel]], the [[file manager|file-manager panel]],
 `recent`, `treeref` — and run `file:open-with` (<<key "file:open-with" "g w">>), or
 choose ''Open with…'' in the right-click menu of a file row, which selects that row
 first.

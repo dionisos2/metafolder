@@ -1,0 +1,6 @@
+title: file-manager:duplicate
+tags: [[GUI command]] [[file-manager panel]]
+kind: reference
+summary: File manager: duplicate the selected entry
+
+Copies the entry under the cursor of the [[file-manager panel]] beside itself, as `name copy.ext`, then `name copy 2.ext`… A directory is copied with its content.

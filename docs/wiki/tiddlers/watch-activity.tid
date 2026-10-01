@@ -21,7 +21,7 @@ Then decide: `mf_watch = false` on the directory, or an ignore pattern
 afternoon, a large copy and a build directory all produce many events, and only the
 last is noise.
 
-In the GUI the file manager shows each row's count (`7`, `1.2k`, `46k`; the `.` row is
+In the GUI the [[file manager|file-manager panel]] shows each row's count (`7`, `1.2k`, `46k`; the `.` row is
 the current directory's own), the hover giving how many, since when and the share of
 the total. A row holding a tenth of all events or more (once the repository has seen a
 hundred) is a ''hot spot'', in bold amber: browse from the root down the hot rows.

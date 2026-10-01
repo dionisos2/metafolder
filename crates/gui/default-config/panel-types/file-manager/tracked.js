@@ -7,7 +7,7 @@ import { isWithin, parentDir } from '/__file-actions.js';
 
 export { isWithin, parentDir };
 
-// File-manager footer summary (spec-gui "file-manager panel type"): how
+// File-manager footer summary (doc "file-manager panel"): how
 // many of the directory's entries are currently rendered. The listing is
 // windowed (only the first `shown` rows are in the DOM) so a directory with
 // thousands of files stays responsive, mirroring metarecord-list's footer.
@@ -42,7 +42,7 @@ export function filterHidden(items, showHidden) {
 // The synthetic navigation rows prepended to a directory listing: "." (the
 // directory itself) is always present; ".." (its parent) is present too —
 // except at the repo root while the root constraint is on, where going up is
-// blocked, so the row would only mislead (spec-gui "file-manager panel type").
+// blocked, so the row would only mislead (doc "file-manager panel").
 // `repoRoot` is null when no repo is active (free disk browsing), and then
 // ".." is always kept.
 /**

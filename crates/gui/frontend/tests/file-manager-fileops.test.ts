@@ -1,4 +1,4 @@
-// Shared filesystem-operation helpers (spec-gui "file-manager panel type" /
+// Shared filesystem-operation helpers (doc "file-manager panel" /
 // "Context menus"): path joining and collision-free destination naming for the
 // new-folder/new-file, copy/cut/paste, duplicate and rename actions. These now
 // live in the shared /__file-actions.js shim (was file-manager/fileops.js).

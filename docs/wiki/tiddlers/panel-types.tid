@@ -20,8 +20,8 @@ the file manager…
 |!Panel type |!Shows |
 |[[metarecord-list panel]] |the metarecords a query selects, as a table or a grid; the main source of the selection |
 |[[metarecord-detail panel]] |every field of the selected metarecord |
-|`file` |a preview of the selected file — image, video, audio, text, PDF — or a folder's thumbnails |
-|`file-manager` |the file tree on disk, tracked or not, with file operations |
+|[[file panel]] |a preview of the selected file — image, video, audio, text, PDF — or a folder's thumbnails |
+|[[file-manager panel]] |the file tree on disk, tracked or not, with file operations |
 |[[treeref panel]] |a tree of metarecords (a `tree_ref` field such as `mfr_path` or tags), from the roots down |
 |[[recent panel]] |the metarecords most recently viewed in this GUI |
 |[[repos panel]] |the repositories: load, create, unload, their running tasks |

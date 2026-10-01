@@ -87,7 +87,7 @@ re-reads the paths of its rows whenever the daemon reports a change in the repos
 !! The cursor and the selection
 
 * <<key "metarecord-list:next" "↓ or j">> / <<key "metarecord-list:prev" "↑ or k">>, <<key "metarecord-list:first" Home>> / <<key "metarecord-list:last" End>> (the last row ''loaded'') — move the cursor. The row under it is the workspace's selection, which the other panels follow; the arrows work from the finder too.
-* <<key "metarecord-list:open" "Enter or →">>, or a double click — show it in the other slot: the `file` panel when it has a file, [[metarecord-detail panel]] otherwise.
+* <<key "metarecord-list:open" "Enter or →">>, or a double click — show it in the other slot: the [[file panel]] when it has a file, [[metarecord-detail panel]] otherwise.
 * <<key "metarecord-list:select toggle" Space>> — check the row; `metarecord-list:select all` checks every loaded row, <<key "metarecord-list:select none" Ctrl+Space>> unchecks everything ([[Cross-panel selection]]).
 * <<key "metarecord-list:refresh" r>> — run the query again; the cursor stays on its metarecord.
 * <<key "metarecord:remove" Delete>>, <<key "metarecord:trash" Ctrl+Delete>>, <<key "metarecord:delete" Shift+Delete>> — remove the selected metarecord, its file, or the metarecord alone ([[Sending files to the trash]]).

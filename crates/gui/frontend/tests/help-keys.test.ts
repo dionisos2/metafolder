@@ -87,10 +87,10 @@ describe('help page key hints', () => {
   test('the pages do tag their shortcuts', () => {
     const tagged = taggedCommands();
     // The pages are leaving for the wiki, topic by topic (docs/docs.org): what
-    // is left is the file panels' and the scripting page. The floor only keeps
-    // the checks below from passing on nothing.
-    expect(tagged.length).toBeGreaterThan(20);
-    expect(new Set(tagged.map((t) => t.page)).size).toBeGreaterThan(2);
+    // is left is the scripting and the sync page. The floor only keeps the
+    // checks below from passing on nothing.
+    expect(tagged.length).toBeGreaterThan(2);
+    expect(new Set(tagged.map((t) => t.page)).size).toBeGreaterThan(1);
   });
 
   test('no shipped page advertises a shortcut the shipped bindings do not give', () => {

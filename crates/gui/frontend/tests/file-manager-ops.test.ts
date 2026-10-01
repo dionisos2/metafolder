@@ -1,5 +1,5 @@
 // file-manager filesystem operations, end to end through the panel's mount
-// (spec-gui "file-manager panel type"): the create / clipboard / rename /
+// (doc "file-manager panel"): the create / clipboard / rename /
 // duplicate / delete commands are registered, wired to metafolder.fs and the
 // trash, and use collision-free destination names. Mounts the real panel
 // against its markup with a controllable stub, then drives the registered

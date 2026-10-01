@@ -1,5 +1,5 @@
 //! `GET /document` and `GET /document/info`: sandboxed page rendering for the
-//! `file` panel's document preview (spec-gui "Documents").
+//! `file` panel's document preview (doc "Document preview").
 //!
 //! A PDF is never handed to the WebView — `/fsraw` bytes loaded as a document
 //! would run in the GUI server's origin (see `tests/panel_invariants.rs`). The

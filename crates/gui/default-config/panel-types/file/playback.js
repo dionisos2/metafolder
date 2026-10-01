@@ -1,4 +1,4 @@
-// Video playback position (spec-gui "file panel type"): where the user
+// Video playback position (doc "Media preview"): where the user
 // stopped watching, stored as an ordinary field on the metarecord of the
 // played file, so reopening the video resumes there.
 //

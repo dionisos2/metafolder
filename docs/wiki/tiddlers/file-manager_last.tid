@@ -1,0 +1,6 @@
+title: file-manager:last
+tags: [[GUI command]] [[file-manager panel]]
+kind: reference
+summary: File manager: move to the last entry
+
+Moves the cursor of the [[file-manager panel]] to the last entry of the directory, rendering the rows up to it if they were not yet.

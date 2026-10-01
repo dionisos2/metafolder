@@ -31,7 +31,7 @@ The metarecord panels also offer ''Move to trash'' in their context menu ([[Cont
 
 !! From the file manager
 
-In the `file-manager` panel, deleting the highlighted entry sends it to the
+In the [[file-manager panel]], deleting the highlighted entry sends it to the
 repository's trash when a repository is active (its metarecords go with it if it
 is tracked, the bytes alone if it is not); with no active repository the removal
 is permanent. Both are confirmed.

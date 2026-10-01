@@ -31,8 +31,8 @@ mf -n music track ./albums/new.flac      # prints its uuid
 missing parent directories — with `mf_watch = false`, so it is recorded but not
 followed; it ignores eligibility, deciding the watch scope is left to you. It is
 idempotent: a path already tracked prints its existing uuid. A path outside the
-repository is refused (exit code 1). The file manager's ''Add to DB'' button
-(`file-manager:track`) does the same for the selected entries.
+repository is refused (exit code 1). The [[file manager|file-manager panel]]'s ''Add to DB'' button
+(`file-manager:track`) does the same for the entry under its cursor.
 
 !! Stopping
 

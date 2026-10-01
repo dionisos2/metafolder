@@ -1,0 +1,6 @@
+title: file-manager:delete
+tags: [[GUI command]] [[file-manager panel]]
+kind: reference
+summary: File manager: delete the selected entry (trash when a repo is active)
+
+Deletes the entry under the cursor of the [[file-manager panel]], after a confirmation. With an active repository it goes to the repository's trash, tracked or not, and its metarecords with it ([[Sending files to the trash]]); with none there is no trash to restore from, and the removal is permanent — the confirmation says so.

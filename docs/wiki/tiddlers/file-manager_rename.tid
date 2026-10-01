@@ -1,0 +1,6 @@
+title: file-manager:rename
+tags: [[GUI command]] [[file-manager panel]]
+kind: reference
+summary: File manager: rename the selected entry
+
+Renames the entry under the cursor of the [[file-manager panel]]; the new name is asked in a dialog, pre-filled with the current one. A name already taken is refused. The file moves on disk only: its metarecord follows when the watcher sees the move, or at the next reconcile ([[Watcher]]).

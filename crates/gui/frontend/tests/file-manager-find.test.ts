@@ -1,4 +1,4 @@
-// file-manager "jump to an entry" picker (spec-gui "file-manager panel type"):
+// file-manager "jump to an entry" picker (doc "file-manager panel"):
 // `file-manager:find` collects the entry name in the command input, completing
 // over the current directory's entries (filtered by ordered substring like every
 // other picker), and moves the cursor onto the chosen entry.

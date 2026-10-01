@@ -11,7 +11,7 @@ the semgrep rule the second item, and nothing the first.
 
 !! CSS
 
-* ''An element with an explicit `display` ignores its `hidden` attribute.'' A rule of the panel beats the browser's own `[hidden] { display: none }`, so `element.hidden = true` does nothing on an element the panel styled as `display: flex`. The media toolbar of the `file` panel stayed over a folder's grid for that reason. Put `[hidden] { display: none !important; }` at the top of the panel's `<style>` instead of hunting the rule. The panel tests strip the styles, so only the real window shows this.
+* ''An element with an explicit `display` ignores its `hidden` attribute.'' A rule of the panel beats the browser's own `[hidden] { display: none }`, so `element.hidden = true` does nothing on an element the panel styled as `display: flex`. The media toolbar of the [[file panel]] stayed over a folder's grid for that reason. Put `[hidden] { display: none !important; }` at the top of the panel's `<style>` instead of hunting the rule. The panel tests strip the styles, so only the real window shows this.
 * ''There is no `body`.'' The panel's markup lives in `<div class="mf-panel-body">` inside the shadow root: a `body { … }` rule matches nothing, write `.mf-panel-body { … }`. That element fills the slot.
 * ''The panel's style sheet comes after the user's.'' At equal weight the panel wins, so a colour hard-coded in a panel cannot be themed: use the variables of `style.css` ([[Style and theming]]).
 * A panel's `<style>` is adopted as a constructed style sheet: `@import` does not work in it, and a relative `url()` does not resolve against the panel's directory.
@@ -36,4 +36,4 @@ the semgrep rule the second item, and nothing the first.
 
 * Nothing of a panel is reloaded while the GUI runs. `main.js` is imported with a parameter that changes at each start of the GUI; the modules it imports (`./columns.js`, `/__ui.js`) are not, and a page loads a module once. Restart the GUI.
 * A built-in panel edited in the source tree is not the one served: run `metafolder-sync-config`. A `/__*.js` helper or the shell needs a rebuild of the GUI binary ([[Writing a panel type]]).
-* Icons shown as empty boxes are a missing emoji font, not a stale build: the file manager's row icons and the type glyphs are emoji.
+* Icons shown as empty boxes are a missing emoji font, not a stale build: the file manager's row icons and the type glyphs are emoji ([[GUI runtime dependencies]]).

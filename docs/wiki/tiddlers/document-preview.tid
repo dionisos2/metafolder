@@ -1,0 +1,44 @@
+title: Document preview
+tags: [[file panel]]
+kind: reference
+aliases: pdf document documents poppler
+summary: A PDF is previewed one page at a time, as an image rendered outside the application by poppler; the document itself never reaches the web view.
+
+In the [[file panel]], a PDF is shown ''one page at a time'', as a picture of the
+page. The toolbar gives the page and the count (`3 / 12`) between ''‹'' and ''›''.
+
+|!Key |!Does |
+|<<key "file:page next" PageDown>> / <<key "file:page prev" PageUp>> |next, previous page |
+|`file:page first` / `file:page last` |first, last page — no key: `Home` and `End` move the list here, like the arrows |
+
+A page being a picture, the zoom of the panel applies to it as to any image, and
+turning the page keeps the zoom. In a folder's grid, and in the grid of
+[[metarecord-list panel]], a PDF's tile is its first page.
+
+The pages are rendered by ''poppler'' (`pdftoppm`, and `pdfinfo` for the count), a
+separate program run in a sandbox ([[Sandboxing the media decoders]]). Without the
+`poppler` package a PDF shows ''no preview available for this format'', and its tile
+the 📕 glyph ([[GUI runtime dependencies]]).
+
+Rendered pages are kept in the repository holding the file, under
+`.metafolder/internal/documents/`, and a changed file is rendered again. A PDF that
+is inside no loaded repository has nowhere to keep them: its page count is read, and
+the page shows ''cannot render this page''.
+
+!! Settings
+
+In `[panel-defaults.file]` ([[GUI configuration]]):
+
+|!Key |!Default |!Is |
+|`document-dpi` |150 |the resolution a page is rendered at, between 20 and 600 — a readable A4 page at 150; raise it for a sharper zoom, at the price of a slower render |
+|`document-extensions` |`["pdf"]` |the extensions the panel sends down this route |
+
+PDF is the only format rendered: an extension added to `document-extensions` is
+tried, and gets ''no preview available''.
+
+!! Why not the web view's own viewer
+
+WebKit can display a PDF by itself. It is not used, because a PDF loaded as a
+document would run inside the GUI's own page, with access to everything the GUI can
+do ([[Why /fsraw never serves a document]]). Rendering it elsewhere and showing the
+picture keeps an untrusted file out.

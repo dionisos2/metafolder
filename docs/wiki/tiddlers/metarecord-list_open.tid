@@ -3,4 +3,4 @@ tags: [[GUI command]] Metarecord
 kind: reference
 summary: Metarecord list: open the selection in the other panel
 
-Shows the row under the cursor of the [[metarecord-list panel]] in the other slot — the `file` panel when the metarecord has a file, [[metarecord-detail panel]] otherwise ([[Cross-panel selection]]).
+Shows the row under the cursor of the [[metarecord-list panel]] in the other slot — the [[file panel]] when the metarecord has a file, [[metarecord-detail panel]] otherwise ([[Cross-panel selection]]).

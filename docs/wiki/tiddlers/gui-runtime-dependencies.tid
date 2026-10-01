@@ -1,0 +1,30 @@
+title: GUI runtime dependencies
+tags: GUI
+kind: reference
+aliases: runtime-dependencies dependencies emoji tofu ffmpeg
+summary: The programs and fonts the GUI uses when it runs — bubblewrap, required; an emoji font, ffmpeg, poppler and GStreamer plugins, each of which costs a feature when missing.
+
+None of these is needed to build or to test. One is required to run; the others each
+switch a feature off when missing — never a crash, but the feature ''looks broken''
+with nothing on screen to say why. `scripts/check-deps.sh` (`make check-deps`) lists
+what is missing. Package names are Arch Linux's.
+
+|!Needed |!Package |!For |!Without it |
+|`bwrap` |`bubblewrap` |confining every program that reads your files ([[Sandboxing the media decoders]]) |''the GUI refuses to start'' |
+|an emoji colour font |`noto-fonts-emoji` |the icons of [[file-manager panel]] rows and the type glyphs of thumbnails (📁 🎬 🎵 📕 🖼️) |blank boxes where the icons should be |
+|`ffmpeg` |`ffmpeg` |the poster frame of a video, the still of a GIF tile |a 🎬 glyph; a GIF tile shows the animation itself |
+|`pdftoppm`, `pdfinfo` |`poppler` |PDF pages and PDF tiles ([[Document preview]]) |''no preview available'', a 📕 glyph |
+|`autoaudiosink`, `autovideosink` |`gst-plugins-good` |the audio and video output of the player |playing is disabled, with a message ([[Media preview]]) |
+|`gst-discoverer-1.0` |`gst-plugins-base` |naming the decoder a file lacks, before playing it |the player is tried without that check: a generic message at best ([[Why a media file is not played on sight]]) |
+|the decoders themselves |`gst-libav`, `gst-plugins-bad`, `gst-plugins-ugly` |H.264 and most other formats |the file is refused, naming the decoder |
+|a fast AV1 decoder |`gst-plugin-dav1d` |playing 4K-class AV1 smoothly |it plays, stuttering, under a warning bar |
+
+The missing emoji font is the one that misleads: the code, the build and the
+configuration are all right, and the icons are simply not drawn. `fc-list | grep -i
+emoji` tells.
+
+`ffmpeg` and poppler are used only on files inside a loaded repository, where their
+output is cached.
+
+Inside a container that forbids WebKit's own sandbox, see
+[[Running inside a container]].

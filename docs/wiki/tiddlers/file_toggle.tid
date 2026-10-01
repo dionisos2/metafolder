@@ -1,0 +1,6 @@
+title: file:toggle
+tags: [[GUI command]] [[file panel]]
+kind: reference
+summary: File: toggle a view flag
+
+Flips a view setting of the [[file panel]]. The one flag is `gif-animation`: play a previewed GIF instead of showing its first frame.

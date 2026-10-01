@@ -1,6 +1,6 @@
 title: file-manager:track
-tags: [[GUI command]] [[File tracking]]
+tags: [[GUI command]] [[File tracking]] [[file-manager panel]]
 kind: reference
 summary: File manager: track the selected path (mf_watch = false)
 
-The file manager's ''Add to DB'': records the selected untracked entries with `mf_watch = false` — recorded, not yet watched ([[Tracking a folder]]).
+The ''Add to DB'' of the [[file-manager panel]]: creates the metarecord of the entry under the cursor, and those of its parent directories, with `mf_watch = false` — recorded, not yet watched ([[Tracking a folder]]). On an entry already tracked it changes nothing; outside the repository root, or with no repository, it is refused in the status bar.

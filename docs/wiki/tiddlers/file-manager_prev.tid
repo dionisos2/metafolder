@@ -1,0 +1,6 @@
+title: file-manager:prev
+tags: [[GUI command]] [[file-manager panel]]
+kind: reference
+summary: File manager: move up
+
+Moves the cursor of the [[file-manager panel]] up one row. The row under the cursor is the workspace's selection ([[Cross-panel selection]]).

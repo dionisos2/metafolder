@@ -1,0 +1,6 @@
+title: file-manager:root
+tags: [[GUI command]] [[file-manager panel]]
+kind: reference
+summary: File manager: jump to the root (the repo root, or / with no repo)
+
+Shows the root in the [[file-manager panel]]: the active repository's root, or the filesystem root `/` when the workspace has no repository — the toolbar button then reads ''root'' and not ''repo root''.

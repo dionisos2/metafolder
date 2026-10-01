@@ -42,7 +42,7 @@ commands exist from the start ([[Panel types]]). The names follow one rule
 Every command is listed and can be run whatever panel has the focus. A panel's
 command is handed to the panel type that registered it, in the ''focused workspace'':
 acting on a panel that is not focused — or not even displayed — is legitimate. The
-arrow keys of the `file` panel run `metarecord-list:next` and `metarecord-list:prev`
+arrow keys of the [[file panel]] run `metarecord-list:next` and `metarecord-list:prev`
 on the list of the other slot; a workspace that never showed the panel has it built
 for the occasion.
 

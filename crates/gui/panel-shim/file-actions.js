@@ -266,7 +266,7 @@ export function fileMenuItems({ metafolder, repo, path, name, isDir, onChanged }
   const label = name || baseName(path);
   const nudge =
     onChanged ?? (() => void metafolder.workspace.set('metarecords:dirty', Date.now()));
-  // One "File" category, in the order spec-gui lists it, and with no separator
+  // One "File" category, in the order doc "Context menus" lists it, and with no separator
   // inside it: a rule in a metafolder menu marks a category boundary and
   // nothing else (orderMenu derives them — see /__menu.js).
   return [

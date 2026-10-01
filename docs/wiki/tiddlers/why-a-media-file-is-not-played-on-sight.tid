@@ -1,0 +1,24 @@
+title: Why a media file is not played on sight
+tags: [[file panel]]
+kind: rationale
+audience: dev
+summary: Creating a media element makes WebKit build a decoding pipeline in the one process that runs the whole GUI; a pipeline that crashes or stalls takes the window with it, so nothing is built until the user asks.
+
+The shell and every panel run in one WebKit web process. An `<audio>` or `<video>`
+element makes that process build a GStreamer pipeline, and three things were seen to
+go wrong there, none of which reaches the page as an `error` event.
+
+* ''A missing output element crashes the process.'' Without `autoaudiosink`, WebKitGTK connects a signal to a null sink and dies. Hence `GET /__media-support`, asked before any element exists.
+* ''A missing decoder or demuxer crashes it too'', before any event, and the window freezes for seconds. Knowing that the outputs exist says nothing of one file. Hence `GET /__media-probe`: `gst-discoverer-1.0` reads the file's streams and names the missing plugins without building the pipeline.
+* ''A pipeline can stall with every decoder present'': a software decoder, no GPU, a heavy stream. The window stops repainting and takes no key. A script that shows one file per question builds and drops a pipeline at each, and met this every time.
+
+No check answers the third. So the [[file panel]] builds nothing when it shows a
+media file: a poster rendered out of process, and the element only on
+`file:play-pause` or a click ([[Media preview]]). The checks moved to that moment;
+walking through videos costs neither a probe nor a decoder.
+
+Around the element itself:
+
+* it is torn down explicitly when the view changes — pause, drop the source, `load()`. A detached element keeps its pipeline until it is collected, and where no device consumes the output the decoder's queue grows without bound.
+* it is created with `preload="metadata"`, and its source is set last, after the volume and the resume seek, so nothing plays or shows before they apply.
+* when the web process dies anyway, the GUI reloads the shell — the state is Rust's, so the session survives — unless it died less than ten seconds before, which is taken for a crash loop.

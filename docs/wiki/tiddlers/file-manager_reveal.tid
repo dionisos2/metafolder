@@ -1,0 +1,6 @@
+title: file-manager:reveal
+tags: [[GUI command]] [[file-manager panel]]
+kind: reference
+summary: Open the selected metarecord's folder in the file manager (focused panel)
+
+Shows the folder of the workspace's selection in the [[file-manager panel]], in place of the focused panel: the folder itself when a folder is selected, the one holding the file otherwise, with the file under the cursor. A folder outside the repository root unchecks ''constrain to repo root''. Defined in the shipped `gui/commands.js` ([[User commands]]); its mirror is `metarecord-list:folder` ([[Cross-panel selection]]).

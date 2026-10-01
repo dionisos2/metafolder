@@ -1,0 +1,6 @@
+title: file-manager:cut
+tags: [[GUI command]] [[file-manager panel]]
+kind: reference
+summary: File manager: cut the selected entry to the clipboard
+
+Puts the entry under the cursor of the [[file-manager panel]] in the GUI's file clipboard, to be ''moved'' where `file-manager:paste` is run. Nothing moves until the paste, which empties the clipboard.

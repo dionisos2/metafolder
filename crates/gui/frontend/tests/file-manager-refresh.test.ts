@@ -1,4 +1,4 @@
-// file-manager live refresh (spec-gui "file-manager panel type"): the panel
+// file-manager live refresh (doc "file-manager panel"): the panel
 // must re-query its directory's tracked status when the daemon's change feed
 // reports a change (an external rename, or the watcher repairing the
 // metarecord↔file link ~500 ms after a GUI rename), and it must schedule

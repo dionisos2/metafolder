@@ -1,5 +1,5 @@
 // The `file` panel's volume and mute are panel state, not the media element's
-// (spec-gui "Media transport"): the element only exists while something plays,
+// (doc "Media preview"): the element only exists while something plays,
 // so a level that lived on it could only ever be set *after* the sound had
 // already come out at full blast. They are settable in front of the poster,
 // carry to the element when it is built, and stay put while browsing files —

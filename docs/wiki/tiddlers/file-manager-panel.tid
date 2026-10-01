@@ -1,0 +1,132 @@
+title: file-manager panel
+tags: Panel [[Panel types]]
+kind: reference
+aliases: file-manager files file-browser
+summary: The disk, one directory at a time: which entries have a metarecord, which are left out and why, and the file operations of a file browser.
+
+Open it with `panel:set type file-manager`
+(<<key "panel:set type file-manager" "t m">>). It reads the disk itself and asks the
+daemon only what the repository knows about the entries shown. So it lists a file
+whether it is tracked or not, and it works with no repository at all, as a plain disk
+browser.
+
+!! The listing
+
+One row per entry of the directory, sorted by name: a type icon, the name, and at the
+right what the repository says about it. Two rows come first, as in a Unix listing:
+`.`, the directory itself, and `..`, its parent. They make the directory's own
+metarecord selectable — the repository root's included.
+
+|!Mark |!Means |
+|green name, `tracked` |the entry has a metarecord in the workspace's repository |
+|`✓` and a green row |its metarecord is checked ([[Cross-panel selection]]) |
+|`⊘`, `ignored` or `not watched` |left out on purpose: an `mf_ignore` pattern excludes it, or an `mf_watch = false` starts there; the tooltip names the pattern and the directory it is set on ([[Setting ignore patterns]]) |
+|amber, `⏏ not mounted` |it sits on a volume that is not plugged in: unavailable, not deleted ([[Unmounted volumes in the GUI]]) |
+|red, `internal` |the repository's `.metafolder/internal/`, which is never tracked ([[Repository layout on disk]]) |
+|a number |watcher events under the entry since the repository was loaded, amber on a hot spot ([[Watch activity]]) |
+|`⚠` after the name |the name holds bytes that are not text and is shown escaped ([[Tree names]]) |
+
+An untracked entry of a directory that is not watched carries no mark: only the place
+where an exclusion ''starts'' is marked, or a fresh repository would mark every row.
+Without a repository nothing is marked.
+
+Dot-entries are hidden until ''hidden files'' is checked
+(<<key "file-manager:toggle hidden" Ctrl+h>>); `.` and `..` always show. ''by
+activity'' (<<key "file-manager:toggle activity" Ctrl+Shift+a>>) puts the busiest
+entries first.
+
+The rows are drawn 200 at a time (`[page-size]`, [[GUI configuration]]), the next
+ones when the scroll reaches the end; the footer gives `shown/total entries` and how
+many metarecords are checked. A directory that cannot be read shows the reason in
+place of its rows.
+
+The marks follow the repository: they are read again whenever the daemon reports a
+change. The ''entries'' are not watched — a file another program creates appears on
+<<key "file-manager:refresh" r>>, or after an operation of the panel's own.
+
+!! Moving around
+
+* <<key "file-manager:next" "↓ or j">> / <<key "file-manager:prev" "↑ or k">>, <<key "file-manager:first" Home>> / <<key "file-manager:last" End>> — move the cursor.
+* <<key "file-manager:activate" Enter>>, or a double click — enter the directory under the cursor. On a file it selects it, like a click.
+* <<key "file-manager:parent" Backspace>>, or ''↑ up'' — the parent directory.
+* <<key "file-manager:root" "/">>, or the root button — the repository root; `/` when the workspace has no repository, and the button then reads ''root''.
+* <<key "file-manager:find" f>> — jump to an entry of this directory by name ([[Jumping to an entry]]).
+
+''constrain to repo root'' (<<key "file-manager:toggle root" Ctrl+r>>, checked at
+first) keeps the browsing inside the repository: going above its root is refused, and
+the root has no `..` row. Unchecked, the whole disk is reachable. Without a
+repository the box is disabled.
+
+!! The selection
+
+The row under the cursor is the workspace's selection: its path, and its metarecord
+when it has one. The panels beside it follow — a [[file panel]] previews the file,
+[[metarecord-detail panel]] shows its fields ([[Cross-panel selection]]).
+
+<<key "file-manager:select toggle" Space>> checks the metarecord of the row,
+`file-manager:select all` every tracked entry of the directory, and
+<<key "file-manager:select none" Ctrl+Space>> unchecks everything. The checked set is
+the one [[metarecord-list panel]] gathers and the bulk operations act on. An untracked
+entry has no metarecord to check, and the status bar says so.
+
+!! Tracking
+
+''Add to DB'' (`file-manager:track`) creates the metarecord of the entry under the
+cursor, and those of its parent directories, with `mf_watch = false`: recorded, not
+watched ([[Tracking a folder]]). The button is disabled on an entry that is already
+tracked, outside the repository root or inside `internal/`.
+
+!! File operations
+
+|!Key |!Does |
+|<<key "file-manager:new folder" Ctrl+Shift+n>>, <<key "file-manager:new file" Ctrl+n>> |create a folder, an empty file — the name is asked |
+|<<key "file-manager:rename" F2>> |rename the entry |
+|<<key "file-manager:duplicate" Ctrl+d>> |copy it beside itself, as `name copy.ext` |
+|<<key "file-manager:copy" Ctrl+c>>, <<key "file-manager:cut" Ctrl+x>>, <<key "file-manager:paste" Ctrl+v>> |copy, cut, paste into the directory shown |
+|<<key "file-manager:delete" Delete>> |delete the entry, after a confirmation |
+
+They act on the disk directly, not through the daemon. A tracked file that is renamed
+or moved here keeps its metarecord once the [[Watcher]] has seen the move — a couple
+of seconds later, and the `tracked` mark comes back by itself — or at the next
+[[Reconcile]] where the directory is not watched.
+
+Nothing is ever overwritten: creating or renaming onto a taken name is refused, and
+a paste or a duplicate that would collide takes a ` copy` suffix (`foo copy.txt`,
+`foo copy 2.txt`…). A directory is not pasted into itself or below.
+
+The clipboard belongs to the GUI, not to the panel: cut here, paste in the file
+manager of another workspace, or from the right-click menu of a list
+([[Context menus]]). A cut is emptied by its paste.
+
+Deleting sends the entry to the repository's trash, tracked or not, together with its
+metarecords, and the [[trash panel]] restores it ([[Sending files to the trash]]).
+With no repository there is no trash: the removal is permanent, and the confirmation
+says so.
+
+!! Right click
+
+A right click moves the cursor to the row, then offers ([[Context menus]]):
+
+* for a tracked row, the metarecord's actions and ''Add to the selection'';
+* ''Track'';
+* ''Open'' for a directory, the clipboard actions, ''Rename…'', ''Duplicate'', ''Copy full path'', ''Move to trash'' (''Delete…'' without a repository);
+* ''Ignore “name” here'', ''Ignore *.ext here'' and ''Apply an ignore preset…'', which write on the directory shown ([[Setting ignore patterns]]);
+* ''New folder…'', ''New file…''.
+
+On the empty part of the listing: ''Paste'', ''New folder…'', ''New file…''.
+
+!! As a folder picker
+
+Where a form asks for a folder — the root of a repository to create or load in
+[[repos panel]] — it opens this panel in the other slot ([[Value picker]]). The right
+click then starts with ''Pick this folder'', which confirms without a key.
+
+!! Its variables
+
+|!Variable |!Holds |
+|`file-manager:dir` |the directory shown, written at each listing — what the `ignore:*` commands take as their target |
+|`file-manager:start-dir` |the directory to open first, instead of the repository root — how a folder picker is started where the form already points |
+|`file-manager:reveal-path` |`{path, nonce}` — a path another panel asks it to show, which `file-manager:reveal` writes ([[Cross-panel selection]]) |
+
+The three view settings — the root constraint, hidden files, the activity order — are
+not variables: they are the panel's, for the session.

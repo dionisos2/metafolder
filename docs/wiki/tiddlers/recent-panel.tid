@@ -4,7 +4,7 @@ kind: reference
 aliases: recently-viewed
 summary: The metarecords you looked at last in this repository, newest first — as a panel, and as a pick from the command input.
 
-A metarecord is ''viewed'' when `metarecord-detail` or the `file` panel shows it. The
+A metarecord is ''viewed'' when `metarecord-detail` or the [[file panel]] shows it. The
 GUI keeps the last 200 of each repository, most recent first, each once: viewing one
 again moves it to the front. The list is the GUI's — a file of the repository,
 `.metafolder/gui/recent` — and no field of the metarecord: recording a view writes
@@ -14,7 +14,7 @@ nothing to the daemon, so it adds no revision to the event log.
 
 <<key "recent" "g r">> (`recent`) lists them in the command input, each as its path,
 its `label` and its `name`. Type to narrow, `Enter` to open: the metarecord becomes
-the selection and is shown in the ''other'' slot — in the `file` panel when it has a
+the selection and is shown in the ''other'' slot — in the [[file panel]] when it has a
 file, in `metarecord-detail` otherwise ([[Cross-panel selection]]). The lines are
 built by `recentLine` in the shipped `gui/commands.js` ([[User commands]]): change it
 there to change what a line shows.

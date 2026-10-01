@@ -17,7 +17,9 @@ lift the token, and drive the whole scripting API — `POST /gui/command` and th
 So no panel may load an `/fsraw` URL as a document; the shipped panels are checked
 by `crates/gui/tests/panel_invariants.rs`. A panel that truly needed a document
 view would first have to stop passing the token in the URL. That is why a PDF is
-rendered to images out of process rather than shown by the WebView.
+rendered to images out of process rather than shown by the WebView
+([[Document preview]]) — and the route any further document format (EPUB, DjVu, a
+comic archive) has to take: a sandboxed helper that produces a picture.
 
 The rule is also enforced where the browser can: every `/fsraw`, `/thumbnail` and
 `/document` response carries `Content-Security-Policy: sandbox; default-src 'none'; …`

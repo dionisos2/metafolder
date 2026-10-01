@@ -26,7 +26,7 @@ path is silently left alone.
 !! Asking
 
 `POST /repos/:repo/eligibility` runs it for up to 1000 repository-relative paths
-(leading `/`, `""` the root), with the reason — what the file manager marks rows with:
+(leading `/`, `""` the root), with the reason — what the [[file manager|file-manager panel]] marks rows with:
 
 ```
 {"paths": ["/music/track.flac", "/target/debug/deps"]}

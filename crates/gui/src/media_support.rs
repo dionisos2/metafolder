@@ -5,7 +5,7 @@
 //! (`g_signal_connect` on a NULL sink), freezing the shell and every
 //! panel. The file panel therefore asks `GET /__media-support` before
 //! creating an `<audio>`/`<video>` element and shows a plain message
-//! when the required elements are missing (spec-gui "file panel type").
+//! when the required elements are missing (doc "Why a media file is not played on sight").
 
 use metafolder_core::sync::MutexExt;
 use serde::Serialize;

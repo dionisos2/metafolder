@@ -1,0 +1,6 @@
+title: file:speed
+tags: [[GUI command]] [[file panel]]
+kind: reference
+summary: File: step the playback rate
+
+Steps the playback rate of the [[file panel]] `up` or `down` a fixed ladder — 0.25, 0.5, 0.75, 1, 1.25, 1.5, 1.75, 2, 3, 4 — or brings it back to 1 with `reset`; the status bar says the new rate. Does nothing unless a player is loaded ([[Media preview]]).

@@ -9,18 +9,6 @@
     ]
   },
   {
-    "id": "file-manager",
-    "title": "File manager panel",
-    "file": "file-manager.html",
-    "aliases": ["files"]
-  },
-  {
-    "id": "file",
-    "title": "File panel",
-    "file": "file.html",
-    "aliases": ["viewer", "media", "preview", "zoom", "codec", "gif"]
-  },
-  {
     "id": "sync",
     "title": "Sync panel",
     "file": "sync.html",

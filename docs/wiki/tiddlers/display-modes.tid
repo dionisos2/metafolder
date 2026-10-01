@@ -19,4 +19,4 @@ them. The mode is the workspace variable `metarecord-list:mode`, so a script rea
 and sets it like the panel's other settings ([[Workspace variables]]).
 
 Other panels choose their layout from what they show rather than offering a mode:
-the `file` panel previews a file, and shows a folder as a grid of thumbnails.
+the [[file panel]] previews a file, and shows a folder as a grid of thumbnails.

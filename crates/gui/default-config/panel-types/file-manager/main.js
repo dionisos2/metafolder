@@ -1,6 +1,6 @@
 // file-manager panel: browse the disk (via metafolder.fs, not the
 // daemon), distinguish tracked metarecords, add paths to the DB
-// (spec-gui "file-manager panel type").
+// (doc "file-manager panel").
 
 import { byId, el, fileTypeGlyph } from '/__ui.js';
 import { copyText } from '/__menu.js';
@@ -858,7 +858,7 @@ export async function mount(root, metafolder) {
     if (revealed) await applyReveal(revealed);
   }
 
-  // ── Filesystem operations (spec-gui "file-manager panel type") ─────────────
+  // ── Filesystem operations (doc "file-manager panel") ─────────────
   // The panel edits the disk directly, like it reads it — the daemon is never
   // involved, so a tracked metarecord goes stale until the watcher (mf_watch)
   // or a reconcile catches up (matching the panel's disk-only nature). The Rust

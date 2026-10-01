@@ -1,0 +1,6 @@
+title: file-manager:activate
+tags: [[GUI command]] [[file-manager panel]]
+kind: reference
+summary: File manager: open directory / confirm file
+
+Opens the directory under the cursor of the [[file-manager panel]]; on a file it only selects it, which is what a double click does too. The file is then the workspace's selection, shown by a [[file panel]] beside it ([[Cross-panel selection]]).

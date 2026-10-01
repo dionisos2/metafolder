@@ -1,5 +1,5 @@
-// file-manager tracked-children lookup (spec-gui "file-manager panel
-// type"): a directory's tracked entries come from a single GET /tree/children
+// file-manager tracked-children lookup (doc "file-manager panel"): a
+// directory's tracked entries come from a single GET /tree/children
 // on its node (one read of the daemon's forest), so a directory
 // with thousands of tracked files costs neither a query nor a per-record fetch.
 

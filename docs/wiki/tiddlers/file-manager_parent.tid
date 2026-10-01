@@ -1,0 +1,6 @@
+title: file-manager:parent
+tags: [[GUI command]] [[file-manager panel]]
+kind: reference
+summary: File manager: go up one level
+
+Shows the parent of the directory displayed in the [[file-manager panel]]. At the repository root it is refused while ''constrain to repo root'' is checked.

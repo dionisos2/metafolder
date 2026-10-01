@@ -1,0 +1,6 @@
+title: file:mute
+tags: [[GUI command]] [[file panel]]
+kind: reference
+summary: File: mute / unmute
+
+Mutes or unmutes the [[file panel]]. Like the volume it is the panel's setting, so it works in front of a poster and holds from one file to the next ([[Media preview]]).

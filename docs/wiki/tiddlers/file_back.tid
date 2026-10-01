@@ -1,0 +1,6 @@
+title: file:back
+tags: [[GUI command]] [[file panel]]
+kind: reference
+summary: File: go up one level (out of a listing, or to the containing folder)
+
+Goes up one level in the [[file panel]]: out of a folder or a file reached by clicking a tile, or — while the panel follows the selection — to the folder holding the previewed file. The panel follows the selection again once the walk is back on the selected path, or when the selection changes. Does nothing at `/`, or with nothing shown.

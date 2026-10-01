@@ -228,8 +228,8 @@ pub async fn trash_selected_metarecord(
 }
 
 /// Sends a raw filesystem path to the repo's trash. Used by the file-manager
-/// panel's delete, which operates on the disk directly (spec-gui "file-manager
-/// panel type").
+/// panel's delete, which operates on the disk directly
+/// (doc "file-manager panel").
 ///
 /// Operating on a path does not mean operating behind the repository's back: if
 /// a metarecord tracks that path it is trashed along with the bytes, exactly as

@@ -1,0 +1,6 @@
+title: file:page
+tags: [[GUI command]] [[file panel]]
+kind: reference
+summary: File: go to a page of the document
+
+Turns the page of the document the [[file panel]] previews: `next`, `prev`, `first`, `last`. Does nothing in front of anything else ([[Document preview]]).

@@ -1,0 +1,6 @@
+title: file-manager:paste
+tags: [[GUI command]] [[file-manager panel]]
+kind: reference
+summary: File manager: paste the clipboard into the current directory
+
+Copies, or moves after a cut, what the GUI's file clipboard holds into the directory the [[file-manager panel]] shows. A name already taken there gets a ` copy` suffix instead of being overwritten, and a directory is not pasted into itself or below.
