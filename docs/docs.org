@@ -1087,7 +1087,9 @@ doublons hérités de l'API le sont aussi — =daemon.parseQuery= / =expandQuery
 (=metarecords/batch=, =tree/resolve= : restent =daemon.metarecords= /
 =treePaths=), et =config.pickerSeed= / =refCompletionSeed= avec les deux tables
 de =config.toml= qu'ils lisaient (=[picker-seeds]=, =[ref-completion-seeds]=,
-désormais ignorées : =[ref-seeds]= est la seule règle) ; (3) les mentions
+désormais refusées au démarrage comme toute clé inconnue de =gui/config.toml= —
+=deny_unknown_fields=, sauf =[panel-defaults]= ; une table =[cache]= héritée, que
+un test faisait tolérer, est refusée elle aussi : =[ref-seeds]= est la seule règle) ; (3) les mentions
 d'iframes qui restaient dans =spec-gui= et dans trois commentaires du code sont
 corrigées. La mesure « panel detail
 ≈ 25 ms » de la mémoire n'a pas été reprise : non revérifiable ici.

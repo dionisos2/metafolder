@@ -6,6 +6,11 @@ summary: gui/config.toml — ports, programs to open files with, list page sizes
 `~/.config/metafolder/gui/config.toml`. The shipped file comments every key and
 its default; this note says what each part is for.
 
+A key or a table the GUI does not know stops it at startup, with a message naming
+it: a typo, or a setting that no longer exists, would otherwise be read as "the
+default". The one exception is `[panel-defaults.<type>]`, whose keys belong to the
+panels.
+
 |!Key or table |!For |
 |`daemon-port` |the daemon to connect to, on `127.0.0.1` (default 7523, the daemon's own); `--daemon-port` overrides it |
 |`gui-port` |the port the GUI's own server binds (default 7524); `--gui-port` overrides it, and `mf gui` reads this same value — there is no port file to discover |

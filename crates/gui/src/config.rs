@@ -18,7 +18,7 @@ use std::path::{Path, PathBuf};
 /// (each row needs several daemon round-trips), largest for `file-manager`
 /// (a plain text row is the cheapest to build).
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-#[serde(rename_all = "kebab-case", default)]
+#[serde(rename_all = "kebab-case", default, deny_unknown_fields)]
 pub struct PageSizes {
     pub metarecord_list: u32,
     pub file: u32,
@@ -36,7 +36,7 @@ impl Default for PageSizes {
 /// These stay Rust-side (they drive background loops and the GUI HTTP server),
 /// unlike `[page-size]`/`[panels]` which are handed to the panels.
 #[derive(Debug, Clone, PartialEq, Deserialize)]
-#[serde(rename_all = "kebab-case", default)]
+#[serde(rename_all = "kebab-case", default, deny_unknown_fields)]
 pub struct Settings {
     /// How often (seconds) the GUI polls the daemon's health endpoint.
     pub daemon_health_poll_secs: u64,
@@ -67,7 +67,7 @@ impl Default for Settings {
 /// UX timing knobs shared by the panels (the `[panels]` table), handed to each
 /// panel through the `metafolder` object (`metafolder.settings`).
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-#[serde(rename_all = "kebab-case", default)]
+#[serde(rename_all = "kebab-case", default, deny_unknown_fields)]
 pub struct PanelSettings {
     /// Duration (ms) the panels attach to an ordinary status message. No
     /// longer acted on: a status message stays until the next one replaces it
@@ -108,8 +108,12 @@ pub type PanelDefaults =
 /// doc "Connection to the daemon"). Missing fields fall back to the
 /// defaults below — notably the daemon's own default port, so a fresh install
 /// connects without any flag or extra file.
+///
+/// A key the GUI does not know is refused, in every table but
+/// `[panel-defaults.<type>]`, whose keys belong to the panels: a typo or a
+/// retired setting must not be read as "the default".
 #[derive(Debug, Clone, PartialEq, Deserialize)]
-#[serde(rename_all = "kebab-case", default)]
+#[serde(rename_all = "kebab-case", default, deny_unknown_fields)]
 pub struct GuiConfig {
     /// Port of the daemon the GUI talks to (on 127.0.0.1, the only address it
     /// listens on).
@@ -143,7 +147,7 @@ pub struct GuiConfig {
 /// Completion-wide knobs (config.toml `[completion]`, spec-gui "Completion
 /// views").
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-#[serde(rename_all = "kebab-case")]
+#[serde(rename_all = "kebab-case", deny_unknown_fields)]
 pub struct CompletionSettings {
     /// What joins the columns of a multi-column completion label — the label
     /// is typed back whole, so the join must be deterministic and typeable.
@@ -596,6 +600,35 @@ mod tests {
     }
 
     #[test]
+    fn test_unknown_keys_are_refused() {
+        // A key the GUI does not know is a typo or a retired setting: either
+        // way the file does not say what its author thinks, so it is refused
+        // rather than ignored (doc "GUI configuration").
+        for src in [
+            "gui-prot = 1\n",
+            "[picker-seeds]\ntag = 'x'\n",
+            "[ref-completion-seeds]\ntag = 'path'\n",
+            // Retired tables included: the cache budgets went with the cache.
+            "[cache]\nmax-entities = 5\n",
+            "[settings]\nreconcile-pol-ms = 1\n",
+            "[panels]\nfinder-debounce = 1\n",
+            "[page-size]\nmy-panel = 10\n",
+            "[completion]\nseparator = '/'\n",
+        ] {
+            let err = toml::from_str::<GuiConfig>(src).expect_err(src).to_string();
+            assert!(err.contains("unknown field"), "{src}: {err}");
+        }
+    }
+
+    #[test]
+    fn test_panel_defaults_keep_any_key() {
+        // Panel types are user-extensible: a custom panel's keys are its own.
+        let parsed: GuiConfig =
+            toml::from_str("[panel-defaults.my-panel]\nanything = 3\n").unwrap();
+        assert_eq!(parsed.panel_defaults["my-panel"]["anything"], 3);
+    }
+
+    #[test]
     fn test_config_overrides_each_field() {
         let parsed: GuiConfig = toml::from_str("daemon-port = 9000\ngui-port = 8800\n").unwrap();
         assert_eq!(parsed.daemon_port, 9000);
@@ -645,15 +678,6 @@ mod tests {
         assert_eq!(parsed.settings.daemon_health_poll_secs, 12);
         // Unspecified keys keep their defaults.
         assert_eq!(parsed.settings.reconcile_poll_ms, 200);
-    }
-
-    #[test]
-    fn test_a_leftover_cache_table_is_ignored() {
-        // The GUI kept a daemon-data cache whose budgets lived in `[cache]`; it
-        // is gone, and a config written for it must still load.
-        let parsed: GuiConfig =
-            toml::from_str("[cache]\nmax-entities = 5\nmax-queries = 1000\n").unwrap();
-        assert_eq!(parsed, toml::from_str::<GuiConfig>("").unwrap());
     }
 
     #[test]
