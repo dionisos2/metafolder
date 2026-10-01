@@ -1203,7 +1203,26 @@ export async function mount(root, metafolder) {
     return asked ?? (await fieldTypeOf(row.name));
   }
 
-  /** @param {string} prompt */
+  /** Several writes on the displayed metarecord as ONE revision
+   *  (`POST /query/fields/batch`, doc "Query endpoints"), so that an operation
+   *  touching several rows is undone in one step. Each op is given the query
+   *  naming this metarecord alone.
+   *  @param {Selection} cur @param {Record<string, unknown>[]} ops */
+  async function batchOnCurrent(cur, ops) {
+    const query = { type: 'uuid_in', uuids: [cur.uuid] };
+    await daemon.call('POST', `/repos/${cur.repo}/query/fields/batch`, {
+      ops: ops.map(({ op, ...rest }) => ({ op, query, ...rest })),
+    });
+  }
+
+  /** `values` without its repeats — a field holds a value once (doc "No
+   *  duplicate rows"). @param {Metafolder.Value[]} values */
+  function distinctValues(values) {
+    /** @type {Metafolder.Value[]} */
+    const out = [];
+    for (const v of values) if (!out.some((o) => sameValue(o, v))) out.push(v);
+    return out;
+  }
 
   // ── Field operations on the current metarecord ──────────────────────────
   //
@@ -1390,11 +1409,25 @@ export async function mount(root, metafolder) {
         if (rows.length === 0) throw new Error(`no field "${field}"`);
         const matches = await rowsMatching(cur, rows, raw);
         if (matches.length === 0) throw new Error(`no value "${raw}" on "${field}"`);
-        for (const row of matches) {
+        const force = isReserved(field) ? { force: true } : {};
+        if (matches.length === 1) {
           await daemon.call(
             'DELETE',
-            `/repos/${cur.repo}/fields/${row.id}`,
-            isReserved(row.name) ? { force: true } : null,
+            `/repos/${cur.repo}/fields/${matches[0].id}`,
+            isReserved(field) ? { force: true } : null,
+          );
+        } else {
+          // Several rows: one write, so one revision and one undo. A value
+          // names every row equal to it, which is what the daemon's `remove`
+          // deletes — one op per distinct value matched.
+          await batchOnCurrent(
+            cur,
+            distinctValues(matches.map((r) => r.value)).map((value) => ({
+              op: 'remove',
+              name: field,
+              value,
+              ...force,
+            })),
           );
         }
         await load();
@@ -1428,15 +1461,17 @@ export async function mount(root, metafolder) {
         const cur = requireCurrent();
         // Rename every row of this field, Nothing rows included — an explicit
         // absence should move with the field, not be orphaned under the old name.
-        const rows = (metarecord?.fields ?? []).filter((f) => f.name === field);
+        const rows = rowsOfName(field);
         if (rows.length === 0) throw new Error(`no field "${field}"`);
+        if (newName === field) return;
         const force = isReserved(field) || isReserved(newName) ? { force: true } : {};
-        for (const r of rows) {
-          await daemon.call('PATCH', `/repos/${cur.repo}/fields/${r.id}`, {
-            name: newName,
-            ...force,
-          });
-        }
+        // One revision: the old name goes, and the new one holds what it had
+        // plus the moved values.
+        const values = distinctValues([...rowsOfName(newName), ...rows].map((r) => r.value));
+        await batchOnCurrent(cur, [
+          { op: 'unset', name: field, ...force },
+          { op: 'set', name: newName, values, ...force },
+        ]);
         await load();
         await dirty();
       },
@@ -1468,18 +1503,32 @@ export async function mount(root, metafolder) {
         if (all.length === 0) throw new Error(`no field "${field}"`);
         const concrete = all.filter((f) => f.value.type !== 'nothing');
         const force = isReserved(field) ? { force: true } : {};
+        // One revision either way: the field's rows are rewritten together.
+        /** @type {Metafolder.Value[]} */
+        let values;
         if (concrete.length === 0) {
-          const value = await parseValueForField(cur.repo, field, type, raw);
-          for (const r of all) {
-            await daemon.call('PATCH', `/repos/${cur.repo}/fields/${r.id}`, { value, ...force });
-          }
+          // Only absences: the new type comes with the value that carries it.
+          values = [/** @type {Metafolder.Value} */ (await parseValueForField(cur.repo, field, type, raw))];
         } else {
-          for (const r of concrete) {
-            const raw = await rawOfValue(cur.repo, cur.uuid, field, r.value);
-            const value = await parseValueForField(cur.repo, field, type, raw);
-            await daemon.call('PATCH', `/repos/${cur.repo}/fields/${r.id}`, { value, ...force });
+          // Each value re-read as the new type; an explicit absence has
+          // nothing to convert and stays one.
+          values = [];
+          for (const r of all) {
+            if (r.value.type === 'nothing') {
+              values.push(r.value);
+              continue;
+            }
+            const text = await rawOfValue(cur.repo, cur.uuid, field, r.value);
+            values.push(
+              /** @type {Metafolder.Value} */ (
+                await parseValueForField(cur.repo, field, type, text)
+              ),
+            );
           }
         }
+        await batchOnCurrent(cur, [
+          { op: 'set', name: field, values: distinctValues(values), ...force },
+        ]);
         await load();
         await dirty();
       },
@@ -1560,7 +1609,13 @@ export async function mount(root, metafolder) {
       // is read back the way it was collected.
       const wantsRow = spec.which !== undefined && (spec.which.when?.([op, target]) ?? true);
       const which = wantsRow ? (rest.shift() ?? '') : '';
-      const { type, value } = splitTypeValue(rest);
+      // The value argument is dropped the same way (`retype` on a field that
+      // holds values takes a type and nothing after it): the tail is then the
+      // type alone, which reading it from the end would take for a value.
+      const wantsValue = spec.value !== undefined && (spec.value.when?.([op, target]) ?? true);
+      const { type, value } = wantsValue
+        ? splitTypeValue(rest)
+        : { type: rest[0] ?? null, value: '' };
       // `when` dropped the type argument when it was settled, so an invocation
       // that carries none is one whose type must be read back from the record.
       const typed = spec.type !== undefined;

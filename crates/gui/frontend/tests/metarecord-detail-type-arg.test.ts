@@ -240,9 +240,18 @@ describe('metarecord:field — the type is an argument', () => {
     ]);
     await specs.get('metarecord:field')!.handler(...args!);
     expect(calls).toContainEqual({
-      method: 'PATCH',
-      path: `/repos/${REPO}/fields/9`,
-      body: { value: { type: 'int', value: 5 } },
+      method: 'POST',
+      path: `/repos/${REPO}/query/fields/batch`,
+      body: {
+        ops: [
+          {
+            op: 'set',
+            query: { type: 'uuid_in', uuids: [UUID] },
+            name: 'rating',
+            values: [{ type: 'int', value: 5 }],
+          },
+        ],
+      },
     });
   });
 

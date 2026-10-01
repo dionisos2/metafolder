@@ -270,9 +270,24 @@ describe('metarecord:field remove — the field, then the value', () => {
     ];
     const { specs, calls } = await mountPanel(fields);
     await specs.get('metarecord:field')!.handler('remove', 'rating', '5');
-    expect(calls.filter((c) => c.method === 'DELETE').map((c) => c.path)).toEqual([
-      `/repos/${REPO}/fields/3`,
-      `/repos/${REPO}/fields/4`,
+    // Several rows go in ONE write — one revision, so one undo — and not one
+    // DELETE per row.
+    expect(calls.filter((c) => c.method === 'DELETE')).toEqual([]);
+    expect(calls.filter((c) => c.method === 'POST')).toEqual([
+      {
+        method: 'POST',
+        path: `/repos/${REPO}/query/fields/batch`,
+        body: {
+          ops: [
+            {
+              op: 'remove',
+              query: { type: 'uuid_in', uuids: [UUID] },
+              name: 'rating',
+              value: { type: 'int', value: 5 },
+            },
+          ],
+        },
+      },
     ]);
   });
 
@@ -397,5 +412,75 @@ describe('metarecord:field edit — the field, the row, the new value', () => {
     await expect(
       specs.get('metarecord:field')!.handler('edit', 'tag', '/fruits/rock', 'x'),
     ).rejects.toThrow('no value "/fruits/rock" on "tag"');
+  });
+});
+
+describe('metarecord:field rename / retype — one revision', () => {
+  const ME = { type: 'uuid_in', uuids: [UUID] };
+
+  test('rename moves every row of the field in one batch', async () => {
+    const fields: Field[] = [
+      { id: 1, name: 'genre', value: { type: 'string', value: 'jazz' } },
+      { id: 2, name: 'genre', value: { type: 'nothing' } },
+      { id: 3, name: 'style', value: { type: 'string', value: 'bop' } },
+    ];
+    const { specs, calls } = await mountPanel(fields);
+    await specs.get('metarecord:field')!.handler('rename', 'genre', 'style');
+    const writes = calls.filter((c) => c.method !== 'GET');
+    expect(writes).toEqual([
+      {
+        method: 'POST',
+        path: `/repos/${REPO}/query/fields/batch`,
+        body: {
+          ops: [
+            { op: 'unset', query: ME, name: 'genre' },
+            {
+              op: 'set',
+              query: ME,
+              name: 'style',
+              // What the new name already held stays, the moved rows follow.
+              values: [
+                { type: 'string', value: 'bop' },
+                { type: 'string', value: 'jazz' },
+                { type: 'nothing' },
+              ],
+            },
+          ],
+        },
+      },
+    ]);
+  });
+
+  test('renaming a field to its own name writes nothing', async () => {
+    const fields: Field[] = [{ id: 1, name: 'genre', value: { type: 'string', value: 'jazz' } }];
+    const { specs, calls } = await mountPanel(fields);
+    await specs.get('metarecord:field')!.handler('rename', 'genre', 'genre');
+    expect(calls.filter((c) => c.method !== 'GET')).toEqual([]);
+  });
+
+  test('retype converts every value in one write, the absences kept', async () => {
+    const fields: Field[] = [
+      { id: 1, name: 'rating', value: { type: 'string', value: '5' } },
+      { id: 2, name: 'rating', value: { type: 'string', value: '7' } },
+      { id: 3, name: 'rating', value: { type: 'nothing' } },
+    ];
+    const { specs, calls } = await mountPanel(fields);
+    await specs.get('metarecord:field')!.handler('retype', 'rating', 'int');
+    expect(calls.filter((c) => c.method !== 'GET')).toEqual([
+      {
+        method: 'POST',
+        path: `/repos/${REPO}/query/fields/batch`,
+        body: {
+          ops: [
+            {
+              op: 'set',
+              query: ME,
+              name: 'rating',
+              values: [{ type: 'int', value: 5 }, { type: 'int', value: 7 }, { type: 'nothing' }],
+            },
+          ],
+        },
+      },
+    ]);
   });
 });
