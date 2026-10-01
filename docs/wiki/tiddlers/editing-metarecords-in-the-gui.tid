@@ -58,14 +58,13 @@ something is checked. An empty selection is nothing to do; it never falls back o
 |<<key "metarecord:bulk selection unset" "m m r">> |`unset` a field |
 |<<key "metarecord:bulk selection delete" "m m d">> |`delete` the metarecords themselves; their files stay on disk |
 
-On the checked metarecords an operation runs at once — they were chosen one by one.
-On `query` it first asks, giving the number of metarecords it will change. `delete`
-always asks.
+Every operation asks before it writes, giving the number of metarecords it will
+change — the checked ones as much as a query's matches.
 
 The same with the mouse: ''Edit / delete…'' in the footer of
 [[metarecord-list panel]] opens a form — target, operation, field, type and value
-([[Field editor]]). Its target starts on ''Query shown'', and it always asks before
-writing.
+([[Field editor]]). Its target starts on ''Query shown'', and it asks before writing
+as well.
 
 !! Typing a value
 

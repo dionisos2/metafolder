@@ -398,3 +398,22 @@ describe('metarecord:create — the schema type', () => {
     expect(post?.body).toEqual({ fields: [] });
   });
 });
+
+describe('metarecord:bulk — every write is confirmed', () => {
+  test('a write on the checked selection asks first, naming the count', async () => {
+    const { specs, calls } = await mountPanel([], { rating: 'int' }, { selected_metarecords: ['uuid-a', 'uuid-b'] });
+    const confirm = vi.fn((_question: string) => true);
+    vi.stubGlobal('confirm', confirm);
+    await specs.get('metarecord:bulk')!.handler('selection', 'set', 'rating', '5');
+    expect(confirm).toHaveBeenCalledTimes(1);
+    expect(confirm.mock.calls[0][0]).toMatch(/2 selected metarecords/);
+    expect(calls.some((c) => c.path.endsWith('/query/fields/set'))).toBe(true);
+  });
+
+  test('declining writes nothing', async () => {
+    const { specs, calls } = await mountPanel([], { rating: 'int' }, { selected_metarecords: ['uuid-a'] });
+    vi.stubGlobal('confirm', vi.fn(() => false));
+    await specs.get('metarecord:bulk')!.handler('selection', 'set', 'rating', '5');
+    expect(calls.filter((c) => c.path.includes('/query/fields/'))).toEqual([]);
+  });
+});

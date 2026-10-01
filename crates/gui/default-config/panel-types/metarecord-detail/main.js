@@ -1672,10 +1672,9 @@ export async function mount(root, metafolder) {
   /** Resolves what a bulk command targets, by its argument: `selection` acts
    *  on the checked records, `query` on what the list shows. `count` is always
    *  the number of metarecords the target holds (the selection size, or a
-   *  COUNT of the query), so confirmations can name it. `explicit` says a
-   *  deliberate checkbox pick (acts immediately) apart from a broad query
-   *  (confirmed first) — and an empty selection is nothing to do, never a
-   *  detour onto the query. @param {string} target
+   *  COUNT of the query), so confirmations can name it. `explicit` tells the
+   *  checkbox selection from the query — and an empty selection is nothing to
+   *  do, never a detour onto the query. @param {string} target
    *  @returns {Promise<BulkTarget>} */
   async function bulkTarget(target) {
     const repo = await repoForAdd();
@@ -1713,11 +1712,11 @@ export async function mount(root, metafolder) {
     }
   }
 
-  /** A broad query-scope bulk write (target `query`) is confirmed first, naming
-   *  the number of metarecords it will affect; an explicit checkbox selection
-   *  acts immediately. Either way an empty target is nothing to do — an empty
-   *  selection is *not* a detour onto the query — and says so. Returns false
-   *  when there is nothing to act on. @param {BulkTarget} t @param {string} action */
+  /** A bulk write is confirmed first, whatever its target, naming what it will
+   *  change: the checked metarecords by their count, the query by its match
+   *  count. An empty target is nothing to do — an empty selection is *not* a
+   *  detour onto the query — and says so. Returns false when there is nothing
+   *  to act on, or when the user declined. @param {BulkTarget} t @param {string} action */
   async function confirmBulk(t, action) {
     if (t.count === 0) {
       void statusBar.message(
@@ -1726,8 +1725,8 @@ export async function mount(root, metafolder) {
       );
       return false;
     }
-    if (t.explicit) return true;
-    return confirm(`${action} on ${t.count} metarecord${t.count === 1 ? '' : 's'}?`);
+    const on = t.explicit ? t.desc : `${t.count} metarecord${t.count === 1 ? '' : 's'}`;
+    return confirm(`${action} on ${on}?`);
   }
 
   // One command for the whole family, the target and the operation as its
