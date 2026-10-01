@@ -59,7 +59,11 @@ run_case "missing optional dep ⇒ exit 0"       0 "ffmpeg"      "$tmp/no-ffmpeg
 printf 'gst-av1=0\n' >"$tmp/no-dav1d"
 run_case "missing AV1 fast decoder ⇒ exit 0" 0 "gst-plugin-dav1d" "$tmp/no-dav1d"
 
-# 6. --help works and exits 0 (its own invocation — an explicit flag, no stub).
+# 6. Poppler renders the PDF previews and tiles: optional, named by its package.
+printf 'poppler=0\n' >"$tmp/no-poppler"
+run_case "missing poppler ⇒ exit 0"            0 "poppler"     "$tmp/no-poppler"
+
+# 7. --help works and exits 0 (its own invocation — an explicit flag, no stub).
 out=$("$script" --help 2>&1); rc=$?
 if [ "$rc" -eq 0 ] && grep -qiE "usage|check-deps" <<<"$out"; then
     echo "ok   — --help exits 0"; pass=$((pass+1))

@@ -57,6 +57,7 @@ deps=(
     "bwrap|runtime|cmd|bwrap|bubblewrap|sandbox — the GUI refuses to start without it"
     "emoji-font|optional|emoji||noto-fonts-emoji|file-manager / thumbnail glyphs"
     "ffmpeg|optional|cmd|ffmpeg|ffmpeg|video/GIF poster thumbnails"
+    "poppler|optional|cmd|pdftoppm|poppler|PDF page previews and tiles"
     "gst-discoverer|optional|cmd|gst-discoverer-1.0|gst-plugins-base|per-file codec probe"
     "gst-sink|optional|gst|autoaudiosink|gst-plugins-good|audio/video sinks WebKit needs"
     "gst-h264|optional|gst|avdec_h264|gst-libav|H.264 decode for inline preview"
