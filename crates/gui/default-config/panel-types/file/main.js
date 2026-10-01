@@ -1168,10 +1168,12 @@ export async function mount(root, metafolder) {
   // Keybindings for this panel live in keybindings.toml (when = "file").
 
   // Right-click the preview to cut/copy/paste/rename/duplicate/trash the shown
-  // file (shared with the file manager — see /__file-actions.js).
+  // file (shared with the file manager — see /__file-actions.js). The *shown*
+  // one: after a drill-in or a step back that is not the selected path, and a
+  // menu aimed at the selection would act on something that is not on screen.
   metafolder.contextMenu.addDefaultItems(() => {
     const repo = selected?.repo;
-    const path = paths[activeIndex];
+    const path = viewedPath();
     if (!repo || typeof path !== 'string' || path === '') return [];
     return fileMenuItems({
       metafolder,
