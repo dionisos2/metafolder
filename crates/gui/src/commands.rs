@@ -489,7 +489,7 @@ pub fn parse_query(dsl: String) -> Result<Value, String> {
 }
 
 /// Returns the source of the simplified-query grammar in effect, for the help
-/// panel's query page (spec-gui "Help"). It does not re-read the file —
+/// panel's query page (doc "How the help panel finds a page"). It does not re-read the file —
 /// `config:reload grammar` does that, and swaps both halves together.
 #[tauri::command]
 pub fn grammar_source(app: AppHandle) -> String {

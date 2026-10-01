@@ -9,7 +9,7 @@ space, file size, number of copies, hash. The ''Scan'' button runs
 `mf:duplicate scan` ([[Finding duplicates]]).
 
 * <<key "duplicates:toggle" Enter>> — expand a group into its members' paths; a `+` marks a member that shares an inode with another (a hard link: removing it frees nothing).
-* <<key "duplicates:find" f>> — jump to a group by hash, or to a copy by path.
+* <<key "duplicates:find" f>> — jump to a group by hash, or to a copy by path ([[Jumping to an entry]]).
 * <<key "duplicates:next" "↓ or j">> / <<key "duplicates:prev" "↑ or k">>, <<key "duplicates:first" Home>> / <<key "duplicates:last" End>> — move; <<key "duplicates:refresh" r>> — reload.
 * <<key "duplicates:keep" Shift+k>> — keep the copy under the cursor, trash the others; <<key "duplicates:trash" Delete>> — trash that copy alone ([[Deleting duplicate copies]]).
 

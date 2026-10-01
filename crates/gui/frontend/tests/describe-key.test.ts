@@ -1,4 +1,4 @@
-// `help:key` — the Emacs `C-h k` (spec-gui "Help"): the shell swallows the next
+// `help:key` — the Emacs `C-h k` (doc "In-app help"): the shell swallows the next
 // key sequence and reports the command it runs instead of running it. The step
 // function is pure: given the combos described so far and one more combo, it
 // either waits for the rest of the sequence, produces the report, or cancels on

@@ -3,3 +3,4 @@ tags: [[GUI command]] Duplicates
 kind: reference
 summary: Duplicates: jump to a group or a copy by name
 
+Moves the cursor onto a group, named by its hash, or onto a copy, named by its path. See [[Jumping to an entry]] and [[duplicates panel]].

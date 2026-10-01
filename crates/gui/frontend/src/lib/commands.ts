@@ -1607,7 +1607,7 @@ async function runCommand(name: string, args: string[], ws: string | null): Prom
       setHelpCursor(true);
       return true;
     case 'help:key':
-      // Arm the describe-key wait (spec-gui "Help"): the next key combo is
+      // Arm the describe-key wait (doc "In-app help"): the next key combo is
       // swallowed and reported on instead of dispatched. Like the help cursor
       // above, it takes over from the other help gesture.
       if (store.ui.helpCursorActive) {

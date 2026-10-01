@@ -1,15 +1,15 @@
-# Default keybindings shipped with the metafolder GUI.
-# Copy entries you want to change into your own
-# ~/.config/metafolder/gui/keybindings.toml — this file IS the complete set
-# (the git-backed config model already merges the shipped defaults with your
-# edits), so edit it in place.
+# The keybindings of the metafolder GUI (doc "Keybindings"). Installed as
+# ~/.config/metafolder/gui/keybindings.toml, this file IS the complete set —
+# the shipped keys and your changes, merged by git — so edit it in place
+# (doc "Changing keybindings").
 #
 # Format: each key is a combo (or a whitespace-separated sequence like "s l").
 # Its value is either a single binding table, or — when the same combo maps to
 # a different command depending on the focused panel — an ARRAY of bindings,
 # each scoped with `when = "<panel-type>"`. `text-input = true` lets a binding
-# fire even while a text input is focused (e.g. editing commands). A binding
-# with no `when` is global.
+# fire even while a text input is focused (e.g. editing commands);
+# `focus = "<name>"` restricts it to one named text field. A binding with no
+# `when` is global.
 
 # Command input (spec default suggestions): `:` for commands, `!` for the
 # bash input (the same widget in shell mode, with Tab bash completion).
@@ -107,7 +107,7 @@
 "t v" = { command = "panel:set type recent" }
 "t u" = { command = "panel:set type duplicates" }
 
-# Help (spec-gui "Help"). "h" then a letter; F1 also arms the help cursor.
+# Help (doc "In-app help"). "h" then a letter; F1 also arms the help cursor.
 "h h" = { command = "help:open" }
 "h c" = { command = "help:cursor" }
 "h k" = { command = "help:key" }
@@ -416,10 +416,10 @@
 "e q" = { command = "metarecord-list:focus normal", when = "metarecord-list" }
 # "f" = find. In the list panels it jumps to a row by name, completing over
 # what the panel displays and filtered by ordered substring like every other
-# picker (spec-gui "Find an entry"); in metarecord-list — whose rows come from
+# picker (doc "Jumping to an entry"); in metarecord-list — whose rows come from
 # a query, not from a loaded list — the same key edits the finder, which asks
 # the daemon the same question. Ctrl+f is the other find: it highlights
-# rendered text without moving any cursor (spec-gui "Find in panel").
+# rendered text without moving any cursor (doc "Find in a panel").
 "f" = [
   { command = "metarecord-list:clear finder", when = "metarecord-list" },
   { command = "file-manager:find", when = "file-manager" },
@@ -582,7 +582,7 @@
 # (above), so the reset keeps the key with shift.
 "shift+backspace" = { command = "file:speed reset", when = "file" }
 
-# Find in panel (spec-gui "Find in panel"): the browser's Ctrl-F over the text
+# Find in panel (doc "Find in a panel"): the browser's Ctrl-F over the text
 # the focused panel currently renders. `text-input = true` so it also works
 # from inside a panel's own search box, and pressing it again re-focuses the
 # find bar and selects what is in it. Enter / shift+Enter / escape while the

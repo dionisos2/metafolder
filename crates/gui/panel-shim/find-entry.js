@@ -1,5 +1,5 @@
-// "Jump to an entry by name", shared by every list panel (spec-gui "Find an
-// entry"). A panel that shows a cursor over named rows registers its
+// "Jump to an entry by name", shared by every list panel
+// (doc "Jumping to an entry"). A panel that shows a cursor over named rows registers its
 // `<panel>:find` command through `registerFind`: the name is collected in the
 // command input, completing over the rows on display, and the cursor moves onto
 // the answer. Shared so that finding an entry works the same — and sits on the
@@ -7,8 +7,7 @@
 // list alike.
 //
 // It is the cursor-moving counterpart of the shell's `ctrl+f` find bar, which
-// highlights rendered text without selecting anything (spec-gui "Find in
-// panel").
+// highlights rendered text without selecting anything (doc "Find in a panel").
 
 import { osmMatch, splitTerms } from '/__finder.js';
 

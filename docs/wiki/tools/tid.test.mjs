@@ -238,6 +238,17 @@ describe('checkWiki', () => {
     assert.doesNotMatch(out, /trash:restore|panel:set/);
   });
 
+  test('a key hint may name several commands, each one checked', () => {
+    const out = errors([
+      hand('K', { tags: '[[GUI command]]' }, '<<key "trash:next, log:next, no:such" "j">>'),
+      gen('GUI command', 'K'),
+      gen('GUI command', 'trash:next'),
+      gen('GUI command', 'log:next'),
+    ]).join('\n');
+    assert.match(out, /K: key hint for unknown command "no:such"/);
+    assert.doesNotMatch(out, /trash:next|log:next/);
+  });
+
   test('code citations must name an existing note', () => {
     const out = errors([], [{ file: 'crates/x.rs', line: 3, title: 'Nope' }]).join('\n');
     assert.match(out, /crates\/x\.rs:3: doc "Nope"/);

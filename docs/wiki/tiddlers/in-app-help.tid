@@ -1,0 +1,72 @@
+title: In-app help
+tags: GUI
+kind: overview
+aliases: help-cursor click-to-help describe-key documentation-panel
+summary: This documentation inside the GUI: open a page by name, click something to get its page, or press a key to learn what it runs.
+
+The documentation is shipped with metafolder and read in the GUI, in the
+[[help panel]]. Three commands lead to it or answer on the spot. They are part of
+the shell, so they work before the help panel was ever shown.
+
+!! Opening a page: `help:open`
+
+<<key "help:open" "h h">> opens the help panel in the focused slot. With a text —
+`help:open trash`, or `help trash` — it goes straight to a page when the text is the
+''exact name'' of one, and searches every page for it otherwise:
+
+* a page's title, such as `find in a panel` (case does not matter), or one of its other names: `ctrl-f`, `shortcuts`;
+* a command, with or without arguments: `panel:set type treeref` opens the note of `panel:set`. A command with no note of its own leads to its panel;
+* a panel type, when no page has that very name: `log-detail` opens the note of the `log-detail` panel.
+
+A `#` in front always searches: `help #trash` lists the pages that mention the
+trash.
+
+!! Asking about something on screen: `help:cursor`
+
+<<key "help:cursor" "h c">> — or <<key "help:cursor" F1>>, which also works while
+typing — turns the pointer into a `?`. The next click does not reach what is
+clicked; it opens the page about it: the page of the zone clicked when there is
+one (the command input, the tab bar, the status bar, the finder or the query of
+the list…), and the page of the panel otherwise. `Escape` gives up.
+
+!! Asking about a key: `help:key`
+
+<<key "help:key" "h k">> waits for a key and says what it runs, instead of running
+it:
+
+```
+t l runs panel:set type metarecord-list — Set the focused slot's panel type
+```
+
+The answer is what the key would do ''now'': it is looked up for the panel that has
+the focus, and for the text field being typed in, if any. A key that is bound, but
+not here, says so:
+
+```
+f is not bound to any command here (elsewhere: file-manager:find in file-manager, trash:find in trash)
+```
+
+A sequence is followed to its end, its continuations listed above the status bar as
+usual. `Escape` gives up — which is why `Escape` itself cannot be asked about. The
+answer goes to the status bar, and so stays in the message log.
+
+`help:cursor` and `help:key` each cancel the other: one question at a time.
+
+!! The keys in the pages are yours
+
+A page does not contain a key. It names the command, and the help panel writes the
+keys bound to that command when it shows the page, read from your bindings as they
+are at that moment ([[Keybindings]]). After a key is changed, the next page opened
+says so; a command with no key reads ''unbound''. A page cannot go out of date with
+`keybindings.toml`, the shipped one or yours.
+
+!! Where the pages come from
+
+They are this wiki: notes kept with the source code in `docs/wiki/`, rendered to
+plain HTML and installed with the configuration in `~/.config/metafolder/docs/`
+([[Shipped defaults in the source tree]]). Everything is installed, the developer
+documentation included; the search leaves that part out unless asked.
+
+<<tagged-with "GUI command">>
+
+<<list-kind reference>>

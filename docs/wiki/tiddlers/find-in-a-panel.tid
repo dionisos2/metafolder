@@ -1,0 +1,58 @@
+title: Find in a panel
+tags: GUI
+kind: guide
+aliases: find ctrl-f ctrl+f find-bar search-in-page find-in-page
+summary: ctrl+f searches the text the focused panel is showing, in any panel type — what is on screen, not the repository.
+
+<<key "find:open" Ctrl+f>> searches the text the focused panel is showing, as a
+browser's find does for a page. It works in every panel type — this documentation
+included — because the shell does it: a panel has nothing to provide.
+
+|!Key |!Does |
+|<<key "find:open" Ctrl+f>> |opens the find bar, above the command input, ready to type in. Pressed again, it goes back to the bar and selects what is in it, so that typing starts a new search |
+|<<key "find:next" Enter>> / <<key "find:prev" Shift+Enter>> |the next / the previous match, going round at both ends |
+|<<key "find:close" Escape>> |closes the bar and removes the highlighting |
+
+The search runs as you type and ignores case. The bar gives the position of the
+current match (`3/17`), or `no match`. Every match is highlighted, the current one
+differently; it is scrolled into view only when it is not already comfortably
+visible, so the text does not jump at each letter.
+
+The text searched for is kept when the bar closes:
+<<key "find:open" Ctrl+f>> then <<key "find:next" Enter>> resumes the last search.
+
+!! What is searched
+
+What the panel ''displays'':
+
+* a match may run across formatting (a word partly in bold), and across a line break of the page's source;
+* it never runs from one paragraph, row or cell into the next;
+* hidden parts of the panel are not searched;
+* neither is anything the panel has not loaded — the rows of a long list beyond those fetched.
+
+So this is reading what is on screen, not asking the repository. To search a whole
+repository, use the finder or the query of `metarecord-list`
+(<<key "metarecord-list:focus finder" "/">>): they ask the daemon, and find
+metarecords that are not displayed.
+
+The search follows the panel: when the panel redraws, the matches are looked for
+again in what it shows now; when another slot or workspace gets the focus, the
+search moves to its panel.
+
+Nothing is selected. To move a list's cursor onto a row by its name, see
+[[Jumping to an entry]].
+
+!! From a script
+
+`find:open <text>` searches `text` at once, so a script can drive the bar with
+`mf gui command 'find:open "…"'`, then `find:next`, `find:prev` and `find:close`.
+
+!! How it is done
+
+The matches are painted with the CSS Custom Highlight API (`::highlight(mf-find)`,
+`::highlight(mf-find-current)`, styled in the sheet every panel adopts): the panel's
+content is not modified, so its handlers and its redraws are not disturbed by a
+search running over them. The find bar's keys are ordinary bindings restricted to
+the bar (`focus = "find"`, [[Keybindings]]).
+
+<<tagged-with "GUI command">>

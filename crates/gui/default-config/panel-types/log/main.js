@@ -752,7 +752,7 @@ export async function mount(root, metafolder) {
     handler: () => moveToEdge('last'),
   });
   // Jump to a revision by number or label, like every other list panel
-  // (spec-gui "Find an entry"). A log is the list one most often arrives at
+  // (doc "Jumping to an entry"). A log is the list one most often arrives at
   // knowing exactly which revision is wanted, so scrolling to it was the odd
   // one out.
   void registerFind(metafolder, 'log:find', {

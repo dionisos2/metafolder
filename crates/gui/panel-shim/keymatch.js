@@ -1,11 +1,12 @@
-// Shared keybinding matcher, used identically by the Svelte shell and the
-// panel shim (key events inside an iframe never reach the parent, so each
-// document runs its own matcher against the same compiled table).
+// The keybinding matcher. Panels run in the shell's realm, so their key events
+// bubble to the one matcher the shell installs (lib/keys.ts); `help:key` reads
+// the same table through `lookupKeys`.
 //
 // Bindings come from the Rust engine (keybindings.rs):
-//   { keys: ["ctrl+k"] | ["g","g"], invocation, when: string|null, text_input: bool }
+//   { keys: ["ctrl+k"] | ["g","g"], invocation, when: string|null,
+//     focus: string|null, text_input: bool }
 //
-// Precedence (spec-gui "Keybinding"): focus-scoped over panel-local over
+// Precedence (doc "Keybindings"): focus-scoped over panel-local over
 // global, then text-input=false over text-input=true.
 
 /**
@@ -130,7 +131,7 @@ function startsWith(keys, prefix) {
 /**
  * Everything one combo sequence can mean in `context`, answered at once — the
  * shared core of `createMatcher` (which projects it to its `MatchResult`) and
- * of the `help:key` describe lookup (spec-gui "Help"):
+ * of the `help:key` describe lookup (doc "In-app help"):
  *
  *  - `fired`: the binding that would run now (best precedence first);
  *  - `pending`: the bindings that would keep a longer sequence going;

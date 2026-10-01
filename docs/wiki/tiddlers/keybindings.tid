@@ -1,0 +1,88 @@
+title: Keybindings
+tags: GUI
+kind: overview
+aliases: keybinding keys shortcuts shortcut bindings sequence combo
+summary: A key runs a command: every binding is a line of one file, restricted if need be to a panel type, to one text field, or to when nothing is being typed.
+
+A ''keybinding'' maps a key — or a sequence of keys — to a command invocation,
+arguments included: `ctrl+t` to `workspace:new`, `t l` to
+`panel:set type metarecord-list`. Nothing else is behind a key, so whatever a key
+does can also be typed in [[the command input|The command input]], clicked or sent
+by a script ([[Commands]]).
+
+All of them are in one file, `gui/keybindings.toml`, which can be edited
+([[Changing keybindings]], [[The keybindings file]]). [[Keyboard navigation]] gives
+the keys as they are shipped, and <<key "help:key" "h k">> tells what a key runs
+([[In-app help]]).
+
+!! A key
+
+A ''combo'' is a key name, with its modifiers in front: `ctrl+k`, `alt+x`,
+`ctrl+shift+z`. The modifiers are `ctrl`, `alt`, `shift` and `meta`, in any order,
+and case does not matter.
+
+* A character key is named by the character it produces: `a`, `/`, `:`, `[`.
+* The other keys have a name: `enter`, `escape`, `backspace`, `delete`, `tab`, `space`, `up`, `down`, `left`, `right`, `home`, `end`, `pageup`, `pagedown`, `f1`…`f12`.
+* The `+` key is written `plus`, since `+` joins the parts of a combo.
+
+`shift` is written only where the key does not already say it. The character a
+shifted key produces is the key's name — `:`, not `shift+;` — so `shift` appears
+with a named key (`shift+enter`), with another modifier (`ctrl+shift+z`), and with a
+letter (`shift+f`), whose two cases would otherwise be the same key.
+
+A ''sequence'' is several combos typed one after the other, written with spaces:
+`g r`, `m m s`. The shipped keys use it to group related commands under a first
+letter: `t` then a letter for a panel type, `g` to go somewhere, `h` for help.
+
+* Once the beginning of a sequence is typed, the GUI waits for the rest, with no time limit, and lists the possible continuations just above the status bar ([[Status bar and task bar]]).
+* `Escape` gives the sequence up.
+* A key that continues nothing gives it up too, and is ''not'' run on its own: the status bar says `'g x' is undefined`.
+* A key that runs a command on its own never starts a sequence: with `g` bound, `g r` could not be typed where `g` applies.
+
+!! Where a binding applies
+
+A binding with nothing else applies everywhere, except while typing in a text
+field. Three settings change that:
+
+|!Setting |!Effect |
+|`when = "<panel type>"` |only while a panel of that type has the focus — which is what lets `j` move the cursor in each list panel, with a different command in each |
+|`text-input = true` |also while typing in a text field. Without it the key is left to the field: a binding on `n` must not fire in the middle of a word |
+|`focus = "<name>"` |only while one particular text field has the focus, and then ''even though'' it is a text field. Two fields have a name: `find`, the find bar ([[Find in a panel]]), and `finder`, the finder of `metarecord-list` |
+
+`when` may be combined with either of the other two. A text field is anything typed
+or chosen in: an input, a text area, a drop-down list — whose arrow keys must keep
+choosing in the list.
+
+When the same key has several bindings that apply, the most specific wins: one with
+`focus`, then one with `when`, then a general one; and between two of these, the one
+without `text-input` — the stricter. That is how `Enter` steps through the matches
+in the find bar, applies the finder in its field, opens the row in the list, and
+confirms the command input everywhere else.
+
+One key can have only one binding in a given place: the same key, `when` and `focus`.
+
+!! What does not go through the bindings
+
+A few keys are taken before the bindings are looked at:
+
+* an open context menu has the keyboard to itself ([[Context menus]]);
+* `Escape` first cancels a help gesture ([[In-app help]]), then leaves the full-screen mode ([[Panel slots and layout]]);
+* while a script asks a question, the keys it awaits go to the script, unless a text field has the focus.
+
+And a text field keeps its own keys: the command input's list and completion
+([[The command input]]), and `ctrl+p`, `ctrl+n`, `ctrl+r` of [[Input history]].
+
+!! Keys suggested by a panel or a user command
+
+A panel type that is not shipped with the GUI, and the user's `gui/commands.js`,
+can ''suggest'' a key for their commands (`metafolder.addKeybinding`). A suggestion
+applies only where the file has no binding for the same key in the same place: the
+file always wins. Suggestions are not written to the file. The built-in panels
+suggest nothing — all their keys are in the file, where they can be seen and
+changed.
+
+<<list-kind guide>>
+
+<<list-kind reference>>
+
+<<list-kind rationale>>

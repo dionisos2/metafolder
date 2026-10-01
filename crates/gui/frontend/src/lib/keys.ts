@@ -105,7 +105,7 @@ export function installKeys() {
         deactivateHelpCursor();
         return;
       }
-      // A `help:key` describe wait (spec-gui "Help"): the next key sequence is
+      // A `help:key` describe wait (doc "In-app help"): the next key sequence is
       // swallowed and reported on — what it runs, or that it runs nothing —
       // instead of dispatched. The lookup sees the context the key arrived in,
       // so the answer is what the key *would* have done. Escape cancels the
@@ -225,7 +225,7 @@ export function installKeys() {
     { capture: true },
   );
 
-  // Help-cursor (spec-gui "Help"): while armed, the next click anywhere is
+  // Help-cursor (doc "In-app help"): while armed, the next click anywhere is
   // swallowed and resolved to a help topic instead of reaching the target.
   // composedPath() pierces panel Shadow DOM, so a click inside a panel is
   // resolved against that panel's tagged zones (data-help-topic) and, as a

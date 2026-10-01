@@ -1,0 +1,35 @@
+title: Jumping to an entry
+tags: GUI
+kind: guide
+aliases: find-entry jump-to-entry file-manager:find treeref:find recent:find
+summary: In a list panel, f asks for a name in the command input and moves the cursor onto the row — selected, not opened.
+
+In a panel that shows rows under a cursor,
+<<key "file-manager:find, treeref:find, log:find, trash:find, recent:find, duplicates:find" f>>
+asks for an entry in the command input and moves the cursor onto it. Where
+[[Find in a panel]] highlights text and selects nothing, this selects a row and
+highlights nothing: the panel's keys — open, enter, restore, trash — then act on
+what was found.
+
+Each panel has the command under its own name, on the same key:
+
+|!Command |!Finds |!A candidate reads |
+|`file-manager:find` |an entry of the directory shown |its name, with a final `/` for a directory |
+|`treeref:find` |a child of the current node |its name |
+|<<cmd "log:find">> |a revision listed |`#12`, followed by its label when it has one |
+|<<cmd "trash:find">> |an entry of the trash |its name, then the path it was trashed from |
+|`recent:find` |a metarecord seen recently |its name, then its path |
+|<<cmd "duplicates:find">> |a group or a copy |the group's hash and number of copies; the copy's path |
+
+They all behave the same way:
+
+* The line starts empty and completes over the rows the panel shows ''now'', narrowed by the pieces typed, in order ([[Interactive command arguments]]).
+* What is typed is matched against the whole candidate. Where two rows can have the same name — the trash, the recent list — the path that tells them apart can therefore be typed too.
+* Choosing a candidate selects that row. A text that is not a candidate (<<key "pick:confirm" Ctrl+Enter>>, or pieces matching several rows) selects the first row it matches, which is the first one the list was showing.
+* A text matching nothing leaves the cursor where it was, and the status bar says `no entry matching "…"`. An empty answer does nothing.
+* The row is ''selected, not opened'': a directory is not entered, a node is not descended into, a trashed file is not restored.
+* Only the rows the panel has loaded are looked at.
+
+`metarecord-list` has no such command. Its rows come from a query, not from a list
+already loaded, so the same key (<<key "metarecord-list:clear finder" f>>) edits its
+finder: the same question, asked of the daemon.

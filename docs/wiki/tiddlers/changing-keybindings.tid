@@ -1,0 +1,75 @@
+title: Changing keybindings
+tags: Keybindings Configuration
+kind: guide
+aliases: rebind keybindings.toml keybinding-editor settings
+summary: Bind, rebind or unbind a key from the settings view or by editing gui/keybindings.toml, without restarting.
+
+To find out what a key does now, press <<key "help:key" "h k">> then the key
+([[In-app help]]). The command input also shows, next to each command, the keys
+that run it.
+
+!! From the GUI
+
+`config:open` opens the settings view. Under the paths of the configuration files,
+it lists every binding in effect: the key, the invocation, and where it applies —
+`global`, a panel type, or `@name` for a text field — followed by `⌨` when it also
+applies while typing ([[Keybindings]]).
+
+* ''Add or change'': fill in the form above the list — key, command, and optionally `when`, `focus` and `text-input` — and press ''Save''. ''Edit'' on a row copies it into the form.
+* ''Unbind'': ''Remove'' on the row.
+
+A change applies at once, in every panel, and is written to the file.
+
+Saving replaces the binding of the ''same key in the same place'' (same `when`, same
+`focus`). So giving a command another key is two steps: save it under the new key,
+then remove the old row. And changing only the `when` of a row adds a second
+binding beside the first.
+
+A key suggested by a panel or by `commands.js` is listed too, but is not in the
+file: ''Remove'' does nothing to it. Bind the same key in the same place to what
+you want instead.
+
+!! In the file
+
+`~/.config/metafolder/gui/keybindings.toml` has one entry per key. Its value is one
+binding, or a list of them when the key does different things in different places:
+
+```
+"ctrl+t" = { command = "workspace:new" }
+"ctrl+a" = { command = "editing:goto line-start", text-input = true }
+
+"j" = [
+  { command = "metarecord-list:next", when = "metarecord-list" },
+  { command = "file-manager:next",    when = "file-manager" },
+]
+
+"enter" = [
+  { command = "editing:confirm", text-input = true },
+  { command = "find:next", focus = "find" },
+]
+```
+
+A key appears once in the file — TOML refuses a second entry of the same name — which
+is why its bindings are a list.
+
+After editing the file, `config:reload keybindings` reads it again. A file that
+cannot be read as TOML, or a malformed key, is refused with the reason, and the
+bindings in effect stay. At startup the same mistake stops the GUI
+([[No runtime fallback]]).
+
+The settings view edits this same file, and only the entry concerned: comments,
+order and layout are kept. That matters beyond tidiness — an update of metafolder
+merges the newly shipped keys into this file ([[Updating the configuration]]), and a
+file rewritten from top to bottom would conflict with every one of them.
+
+!! Going back to the shipped keys
+
+The file is the whole set, the shipped keys and yours together; there is no
+separate list of defaults that an entry could fall back to. Unbinding a key leaves
+it unbound. Getting a shipped binding back is done with git
+([[The keybindings file]]).
+
+!! A key that does nothing
+
+A binding whose command does not exist runs nothing. At startup the GUI lists such
+bindings in the message log ([[Commands]]) — a typo, or a command that was renamed.

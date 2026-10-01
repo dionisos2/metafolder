@@ -1,4 +1,4 @@
-// Pure help logic (spec-gui "Help"), shared by the help panel and the shell.
+// Pure help logic (doc "How the help panel finds a page"), shared by the help panel and the shell.
 // No DOM, no fetch — unit-tested in crates/gui/frontend/tests/help.test.ts.
 //
 //  - resolvePage: an "exact name" (a page id, title, alias, or a `panel:command`)

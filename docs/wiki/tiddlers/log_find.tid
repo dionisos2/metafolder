@@ -3,4 +3,4 @@ tags: [[GUI command]] [[Event log]]
 kind: reference
 summary: Log: jump to a revision by number or label
 
-Jumps to a revision by number or label ([[log panel]]).
+Moves the cursor onto a revision named by its number or its label ([[Jumping to an entry]], [[log panel]]).

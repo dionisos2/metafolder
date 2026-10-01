@@ -257,9 +257,12 @@ export function checkWiki(tiddlers, codeRefs) {
   );
   for (const t of hand) {
     for (const m of stripCode(t.text).matchAll(/<<key\s+"([^"]+)"/g)) {
-      const name = m[1].split(/\s+/)[0];
-      if (!guiCommands.has(name)) {
-        errors.push(`${t.fields.title}: key hint for unknown command "${name}"`);
+      // Several invocations separated by commas: the keys of any of them.
+      for (const invocation of m[1].split(',')) {
+        const name = invocation.trim().split(/\s+/)[0];
+        if (!guiCommands.has(name)) {
+          errors.push(`${t.fields.title}: key hint for unknown command "${name}"`);
+        }
       }
     }
   }

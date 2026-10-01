@@ -1,0 +1,41 @@
+title: help panel
+tags: Panel [[In-app help]]
+kind: reference
+summary: Shows the documentation: a box to open a page by name or search all of them, and the page, with the keys read from your bindings.
+
+Open it with <<key "help:open" "h h">> (`help:open`, optionally followed by what to
+look for) or with `panel:set type help` (<<key "panel:set type help" "t h">>).
+Without anything to look for, it shows the starting page.
+
+!! The box
+
+The box at the top has the focus when the panel is shown.
+
+* An ''exact name'' opens the page as soon as it is typed: a page's title or one of its other names, a command, a panel type ([[In-app help]]).
+* Anything else searches every page, as you type, without regard to case: the pages whose title contains the text first, then those whose body does, each with the line around the first occurrence. Clicking a result opens the page.
+* `#` in front searches even for an exact name.
+* An empty box lists every page, by title.
+
+The search leaves out the developer documentation unless ''include developer
+documentation in the search'' is ticked. An exact name opens a developer page
+regardless.
+
+!! A page
+
+Above a page are its topics, as buttons opening each topic's own page, and a badge
+when the page is developer documentation or describes something that is not
+implemented (`deferred`, `proposed`) or no longer current (`record`).
+
+A link goes to another page. The keys are filled in from your bindings
+([[In-app help]]). To search inside the page, use <<key "find:open" Ctrl+f>>
+([[Find in a panel]]).
+
+!! When the documentation is not installed
+
+A bar says so and names the step that installs it; only the older built-in pages
+are available. The documentation is installed with the rest of the configuration
+([[Updating the configuration]]).
+
+While the documentation is being moved to this wiki, the panel still has older
+pages of its own for the subjects not moved yet. A page of the wiki replaces the
+older one of the same name.

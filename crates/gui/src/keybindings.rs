@@ -20,7 +20,7 @@ pub struct BindingSpec {
     pub when: Option<String>,
     #[serde(default, rename = "text-input")]
     pub text_input: bool,
-    /// Named focus scope (spec-gui "Keybinding"): fires only while the widget
+    /// Named focus scope (doc "Keybindings"): fires only while the widget
     /// tagged `data-mf-focus="<focus>"` is focused, even inside a text input.
     /// `None` = not focus-scoped. The most specific scope dimension.
     #[serde(default)]
@@ -589,7 +589,7 @@ mod tests {
             && b.focus.as_deref() == Some("finder")
             && b.invocation == "pick:confirm"));
 
-        // Find in panel (spec-gui "Find in panel"): ctrl+f opens it from
+        // Find in panel (doc "Find in a panel"): ctrl+f opens it from
         // anywhere, text input included, and the stepping keys are scoped to
         // the find bar's own focus so they never shadow a panel's Enter.
         assert!(table

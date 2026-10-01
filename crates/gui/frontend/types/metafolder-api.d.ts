@@ -308,7 +308,7 @@ declare namespace Metafolder {
     invoke(invocation: string): unknown;
     /** The compiled keybinding table as it stands now — what the user's
      *  `keybindings.toml` and the panel suggestions add up to. A snapshot: call
-     *  it again to see a rebinding (spec-gui "Help"). */
+     *  it again to see a rebinding (doc "How the help panel finds a page"). */
     keybindings(): Promise<Binding[]>;
   }
 

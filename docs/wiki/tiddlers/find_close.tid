@@ -1,0 +1,6 @@
+title: find:close
+tags: [[GUI command]] [[Find in a panel]]
+kind: reference
+summary: Close the find bar
+
+Closes the find bar and removes the highlighting. The text searched for is kept for the next <<cmd "find:open">>. See [[Find in a panel]].

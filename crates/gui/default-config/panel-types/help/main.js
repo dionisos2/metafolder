@@ -1,4 +1,4 @@
-// Help panel (spec-gui "Help"). Loads two page sets — the documentation wiki's,
+// Help panel (doc "How the help panel finds a page"). Loads two page sets — the documentation wiki's,
 // rendered and installed in ~/.config/metafolder/docs/ (served at /docs/), and
 // the panel's own older pages/index.json, which the wiki replaces page by page
 // — offers a grep search box on top, and resolves an exact name (a page id, an
@@ -33,7 +33,7 @@ export async function mount(root, metafolder) {
   // from the live keybinding table, never written into the HTML: a page states
   // which *command* a shortcut runs, and the key shown is the one actually
   // bound to it — the shipped default, or whatever the user rebound it to
-  // (spec-gui "Help"). Read once per mount and refreshed on every page display,
+  // (doc "How the help panel finds a page"). Read once per mount and refreshed on every page display,
   // so a rebinding shows on the next page opened.
   /** @type {Metafolder.Binding[]} */
   let keytable = [];

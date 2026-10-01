@@ -17,7 +17,7 @@ From top to bottom, the window holds:
 
 Four principles shape it:
 
-* ''Keyboard first'': every command can be reached from the keyboard, and every key can be rebound.
+* ''Keyboard first'': every command can be reached from the keyboard, and every key can be rebound ([[Keybindings]]).
 * ''Command driven'': everything the GUI does is a named command, typed in the command input or bound to a key; the menus and buttons invoke the same commands ([[Commands]]).
 * ''Scriptable'': the GUI serves a local HTTP API, so that a script — through `mf gui` — can open panels and wait for the user's answer.
 * ''Themeable'': its look is a CSS file read at startup.

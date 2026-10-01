@@ -1,0 +1,6 @@
+title: help:open
+tags: [[GUI command]] [[In-app help]]
+kind: reference
+summary: Open help for a topic
+
+Shows the [[help panel]] in the focused slot. With a text, opens the page of that exact name — a page, a command, a panel type — or searches every page for it; a `#` in front always searches. Without one, shows the starting page. See [[In-app help]].

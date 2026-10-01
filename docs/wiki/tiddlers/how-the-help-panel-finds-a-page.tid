@@ -1,0 +1,69 @@
+title: How the help panel finds a page
+tags: [[In-app help]]
+kind: reference
+audience: dev
+summary: The two manifests, the order in which a name is resolved, the attributes that tag a zone for the help cursor, and how a page names a key without writing it.
+
+!! The pages
+
+The help panel loads two sets of pages and merges them (`mergeManifests`, the wiki's
+first, so that they win):
+
+* the wiki's, fetched from the GUI server's `/docs/`: `index.json` describes each page as `{id, title, file, aliases[], tags[], kind, audience, status, summary}` — the note's fields, `id` being the slug of the title;
+* the panel's own older pages, `panel-types/help/pages/`, described by `pages/index.json` as `{id, title, file, aliases[]}`. Each is removed when the wiki takes its subject over.
+
+Every page is fetched when the panel is built, and its text kept for the search. The
+pages are plain HTML: the wiki's renderer expands every list and macro at build
+time, and the panel knows nothing of TiddlyWiki.
+
+!! Resolving a name
+
+`resolvePage` (`/__help.js`) turns a text into a page, or into nothing — and then
+the text is searched for. Without regard to case, and in this order:
+
+# a text starting with `#` is never a name;
+# the page with that `id`, else with that `title`, else with that alias. The title comes before the aliases so that a command's own note wins over a page that lists the command among its aliases;
+# for a text containing `:` — a command: the same lookup for the command without its arguments, then for what follows the colon (`metarecord-list:focus-query` reaches an alias `focus-query`), then for what precedes it (the panel type);
+# `<type> panel` and `<type>` stand for each other when nothing has the exact name: `treeref` finds a note titled `treeref panel`, and `file panel` finds an older page whose id is `file`.
+
+`scripts/doc check` keeps the three kinds of name apart: an alias may not be the
+title or the id of another note.
+
+!! What the shell sends
+
+`help` and `help:open` write `{topic, nonce}` to the workspace variable
+`help.request` and set the focused slot's panel type to `help`. The nonce makes the
+same topic asked twice count as a change. The panel reads the variable when it is
+built and on each change.
+
+The help cursor resolves a click with `resolveClickTopic`, along the click's
+`composedPath()`, which goes through the panels' shadow roots:
+
+* the nearest element with a `data-help-topic` attribute gives the topic — the shell's zones have one (`command-input`, `tab-bar`, `status-bar`, `find`…), and a panel tags its own (`finder`, `focus-query`, `columns` in `metarecord-list`);
+* failing that, the nearest `data-slot-body` gives the slot, and the topic is `<panel type> panel`.
+
+A panel type therefore gets help-cursor support by having a note named after it,
+and finer answers by tagging its zones with the name or an alias of a note.
+
+!! Key hints
+
+A note writes `<<key "command" fallback>>`, rendered as
+`<span data-mf-key="command">fallback</span>`. When it shows a page, the panel
+replaces the content of each such element with the keys bound to the command, read
+from `metafolder.commands.keybindings()` (`applyKeyHints`, `/__keyhints.js`):
+
+* the attribute holds one invocation, or several separated by commas — the keys of any of them, each once, in the order of the table. That is how a row common to several panels is written;
+* a bare command name matches every invocation of it (`panel:set` lists the keys of all its bindings), a fuller one only itself (`panel:set type treeref`) — the rule the command input uses to show a command's keys;
+* modifiers are capitalised (`Ctrl+Shift+z`), arrows drawn as arrows, a sequence written as its keys in order (`t l`), several keys joined by ''or'';
+* a command nothing is bound to reads `unbound`;
+* the table is read again at each page shown.
+
+The fallback is only what the page's source and the search index contain; it is
+never displayed once the panel has the table. `scripts/doc check` refuses a hint
+naming a command the GUI does not have.
+
+A `data-mf-live="grammar"` element is filled the same way, with the current
+simplified-query grammar (`<<live grammar>>`).
+
+These functions are pure and tested in the frontend (`help.test.ts`,
+`keyhints.test.ts`).

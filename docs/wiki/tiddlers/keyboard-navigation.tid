@@ -1,0 +1,78 @@
+title: Keyboard navigation
+tags: Keybindings
+kind: reference
+aliases: keyboard default-keys
+summary: The shipped keys, by family: the same key does the same kind of thing in every panel, and a first letter groups the rest.
+
+Every command can be run from the keyboard: through
+<<key "command-input:focus command" ":">> and its name if nothing else
+([[The command input]]), and through a key for the common ones. The keys below are
+read from your bindings as they are now ([[Changing keybindings]]); the [[GUI command]]
+catalog gives the keys of each command, and each panel's note, the keys of that panel.
+
+!! Everywhere
+
+|!Key |!Does |
+|<<key "command-input:focus command" ":">> / <<key "command-input:focus bash" "!">> |the command input, for a command / for a shell line |
+|<<key "workspace:new" Ctrl+t>> / <<key "workspace:close" Ctrl+w>> |a new workspace / close this one ([[Workspaces]]) |
+|<<key "workspace:next" n>> / <<key "workspace:prev" p>> |the next / the previous workspace |
+|<<key "workspace:goto 1" 1>> … <<key "workspace:goto 9" 9>> |the workspace of that rank |
+|<<key "panel:toggle split" v>> / <<key "panel:unsplit" u>> |two panels side by side, or one / back to one ([[Panel slots and layout]]) |
+|<<key "panel:focus next" o>> / <<key "panel:swap" x>> |the other panel / exchange the two |
+|<<key "panel:toggle fullscreen" z>> |the focused panel alone on the screen, and back (`Escape` leaves it too) |
+|<<key "log:undo" Ctrl+z>> / <<key "log:redo" Ctrl+Shift+z>> |undo your last change / redo it ([[Revision commands in the GUI]]) |
+|<<key "find:open" Ctrl+f>> |search the text of the focused panel ([[Find in a panel]]) |
+|<<key "status:clear" Ctrl+l>> |clear the status bar's message |
+
+!! First letters
+
+A sequence groups commands under a first key. Typing that key shows what can follow,
+just above the status bar.
+
+|!Sequence |!Does |
+|`t` then a letter |the panel type of the focused slot: <<key "panel:set type metarecord-list" "t l">> list, <<key "panel:set type metarecord-detail" "t d">> detail, <<key "panel:set type file" "t f">> file, <<key "panel:set type file-manager" "t m">> file manager, <<key "panel:set type treeref" "t t">> tree, <<key "panel:set type log" "t o">> log, <<key "panel:set type log-detail" "t e">> log detail, <<key "panel:set type repos" "t r">> repositories, <<key "panel:set type trash" "t b">> trash, <<key "panel:set type duplicates" "t u">> duplicates, <<key "panel:set type recent" "t v">> recent, <<key "panel:set type sync" "t y">> sync, <<key "panel:set type message" "t g">> messages, <<key "panel:set type workspace-info" "t w">> workspace variables, <<key "panel:set type help" "t h">> help ([[Panel types]]) |
+|`g` then a letter |go somewhere: <<key "repos:switch" "g o">> a loaded repository, <<key "repos:load" "g l">> a repository to load, <<key "recent" "g r">> a metarecord seen recently, <<key "metarecord-list:folder" "g f">> the selection's folder as a list, <<key "file:open-with" "g w">> the selection in another program ([[Opening a file with another program]]), <<key "script:run" "g s">> a script |
+|`h` then a letter |help: <<key "help:open" "h h">> the documentation, <<key "help:cursor" "h c">> on what is clicked next, <<key "help:key" "h k">> on what a key runs ([[In-app help]]) |
+|`m` then a letter |in the list and the detail, edit the fields of metarecords from the command input: <<key "metarecord:field set" "m s">> set, <<key "metarecord:field add" "m a">> add a value… and <<key "metarecord:bulk" "m b">> for several metarecords at once |
+|`e` then a letter |in the list, edit one of its search fields: <<key "metarecord-list:focus finder" "e f">> the finder, <<key "metarecord-list:focus simplified" "e s">> the query, <<key "metarecord-list:focus normal" "e q">> the query in the full language |
+
+!! In a list
+
+The panels that show rows under a cursor — the metarecord list, the file manager,
+the tree, the log, the trash, the duplicates, the recent list, and the fields of
+the detail — share their keys. Each has its own command behind the key
+([[Keybindings]]).
+
+|!Key |!Does |
+|<<key "metarecord-list:next, file-manager:next, treeref:next, log:next, trash:next, recent:next, duplicates:next, metarecord:row-next" "↓ or j">> / <<key "metarecord-list:prev, file-manager:prev, treeref:prev, log:prev, trash:prev, recent:prev, duplicates:prev, metarecord:row-prev" "↑ or k">> |the next / the previous row |
+|<<key "metarecord-list:first, file-manager:first, treeref:first, log:first, trash:first, recent:first, duplicates:first" Home>> / <<key "metarecord-list:last, file-manager:last, treeref:last, log:last, trash:last, recent:last, duplicates:last" End>> |the first / the last row |
+|<<key "metarecord-list:open, file-manager:activate, treeref:descend, log:toggle ops, trash:restore, recent:open, duplicates:toggle, metarecord:row-edit" Enter>> |what the panel is for: open the row, enter the directory, go down the tree, expand the revision or the group, restore the entry, edit the field |
+|<<key "file-manager:parent, treeref:parent, metarecord:back, file:back" Backspace>> |go back up: the parent directory, the parent node, the metarecord shown before, the folder of the previewed file |
+|<<key "file-manager:root, treeref:root" "/">> |the top: the root directory, the roots of the tree |
+|<<key "file-manager:find, treeref:find, log:find, trash:find, recent:find, duplicates:find" f>> |move the cursor to a row named in the command input ([[Jumping to an entry]]) |
+|<<key "metarecord-list:select toggle, file-manager:select toggle" Space>> |check or uncheck the row ([[Cross-panel selection]]) |
+|<<key "metarecord-list:refresh, file-manager:refresh, treeref:refresh, log:refresh, trash:refresh, recent:refresh, duplicates:refresh, repos:refresh" r>> |read the content again |
+|<<key "metarecord:remove, file-manager:delete, trash:delete, duplicates:trash" Delete>> |remove what is selected, after a confirmation: to the trash where there is a file ([[Trash]]) |
+
+In the metarecord list, <<key "metarecord-list:focus finder" "/">> and
+<<key "metarecord-list:clear finder" f>> go to the finder instead: its rows come
+from a query, so finding one is asking the daemon.
+
+While the `file` panel shows a file, the arrows and <<key "metarecord-list:first" Home>> /
+<<key "metarecord-list:last" End>> still move the cursor of the list beside it —
+the next file is previewed without leaving the preview.
+
+!! While typing
+
+Most keys are left to the text field that has the focus. These still apply:
+
+|!Key |!Does |
+|<<key "editing:unfocus" Escape>> |leave the field, keeping what was typed |
+|<<key "editing:confirm" Enter>> |submit the command input |
+|<<key "editing:discard" Ctrl+q>> |leave the field and discard what was typed |
+|<<key "editing:goto line-start" Ctrl+a>> / <<key "editing:goto line-end" Ctrl+e>> |the start / the end of the line |
+|<<key "completion:cycle forward" "Ctrl+,">> / <<key "completion:cycle back" "Ctrl+.">> |the next / the previous view of the candidates ([[Completion views]]) |
+|<<key "pick:confirm" Ctrl+Enter>> / <<key "pick:cancel" Ctrl+Escape>> |confirm / cancel a [[Value picker]] |
+|<<key "help:cursor" F1>>, <<key "find:open" Ctrl+f>>, <<key "status:clear" Ctrl+l>> |as everywhere |
+
+`ctrl+p`, `ctrl+n` and `ctrl+r` recall what was typed before ([[Input history]]).

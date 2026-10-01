@@ -1,4 +1,4 @@
-// Find in panel (spec-gui "Find in panel"): a browser-style Ctrl-F over the
+// Find in panel (doc "Find in a panel"): a browser-style Ctrl-F over the
 // *rendered* text of one panel's Shadow DOM. Framework-free and panel-agnostic
 // — the shell drives it against whichever panel root is focused, so no panel
 // has to implement anything.

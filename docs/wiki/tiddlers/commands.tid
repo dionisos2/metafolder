@@ -9,7 +9,7 @@ A ''command'' is a named operation, with arguments: `panel:split`,
 one. The same invocation string runs it from anywhere:
 
 * typed in [[the command input|The command input]];
-* bound to a key (the keybindings map a key to an invocation, arguments included);
+* bound to a key ([[Keybindings]] map a key to an invocation, arguments included);
 * clicked — a button or a menu entry invokes the command, it does not have code of its own ([[Context menus]]);
 * sent by a script, with `mf gui command`.
 
@@ -51,7 +51,7 @@ in the other slot when that one shows the same workspace, else in place of the
 focused panel.
 
 What depends on the focus is the ''key'', not the command: a keybinding may be
-restricted to a panel type (`when`).
+restricted to a panel type (`when`, [[Keybindings]]).
 
 !! Every control is a command
 
@@ -75,7 +75,7 @@ command: …''.
 
 A key bound to a command that does not exist runs nothing. Once every panel is built,
 the GUI lists these bindings in the message log, key and invocation — a typo in
-`keybindings.toml`, or a command renamed since. Only the first word of the invocation
+`keybindings.toml` ([[Changing keybindings]]), or a command renamed since. Only the first word of the invocation
 is looked up, since the rest are arguments. A test checks the shipped keybindings the
 same way.
 

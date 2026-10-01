@@ -1,4 +1,4 @@
-// Find in panel (spec-gui "Find in panel"): the browser-style incremental
+// Find in panel (doc "Find in a panel"): the browser-style incremental
 // search over a panel's rendered text. The flattening is what makes it usable
 // on hand-written HTML (help pages): source indentation collapses the way the
 // rendering does, and block boundaries break a match so two paragraphs never

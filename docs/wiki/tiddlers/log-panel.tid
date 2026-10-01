@@ -17,7 +17,7 @@ An expanded operation that reverted another names it, and one that was reverted 
 
 !! Moving around
 
-* <<key "log:next" "↓ or j">> / <<key "log:prev" "↑ or k">>, <<key "log:first" Home>> / <<key "log:last" End>>, <<key "log:find" f>> (a revision by number or label) — the selection, over every listed row.
+* <<key "log:next" "↓ or j">> / <<key "log:prev" "↑ or k">>, <<key "log:first" Home>> / <<key "log:last" End>>, <<key "log:find" f>> (a revision by number or label, [[Jumping to an entry]]) — the selection, over every listed row.
 * <<key "log:toggle ops" Enter>> (or a double click) — expand a revision into its operations, and collapse it. The cursor then walks the operations too, and a revert aims at the operation under it.
 * <<key "log:toggle watcher" Shift+w>> — hide or show the watcher's revisions (shown by default). A display filter over what was fetched: the revision HEAD is on is never hidden, the status line says how many are, and in the graph a shown revision hangs from its nearest shown ancestor. A selection inside a revision that gets hidden is dropped; a blocked revert whose blocker is a hidden watcher revision shows them again, since that is the row it points at.
 * <<key "log:toggle graph" Shift+g>> — every branch drawn as a graph (`mode=tree`) instead of the active line (`mode=active`, which keeps a rolled-back future listed for redo).

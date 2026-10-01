@@ -217,7 +217,7 @@ describe('createMatcher', () => {
 
   test('a pending sequence never expires', () => {
     // No clock is consulted at all: a prefix stays pending until a key
-    // completes, aborts or cancels it (spec-gui "Keybinding").
+    // completes, aborts or cancels it (doc "Keybindings").
     const matcher = createMatcher([b(['g', 'g'], 'goto-top')]);
     expect(matcher.feed('g', noInput)).toMatchObject({ pending: true });
     expect(matcher.feed('g', noInput)).toEqual({ invocation: 'goto-top' });

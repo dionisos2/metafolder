@@ -52,6 +52,12 @@ On la complète item par item. La conception est dans
   un commentaire =///= de =crates/cli/src/main.rs= est un texte d'aide de clap.
 - Une note de commande ne répète pas sa partie générée (usage, options,
   touches) : elle dit ce que la commande fait et renvoie aux notes du sujet.
+- =<<key "a, b" repli>>= accepte plusieurs commandes séparées par des virgules
+  (une ligne commune à plusieurs panels) ; chacune est vérifiée.
+- Deux titres ne peuvent pas donner le même identifiant, casse comprise : le
+  sujet =Help= aurait pris celui de la commande =help=, d'où =In-app help=.
+- L'aide résout un nom par identifiant, puis titre, puis alias ; le curseur
+  d'aide demande =<type> panel= : une note de panel n'a pas besoin d'alias.
 
 * Ordre
 
@@ -920,19 +926,56 @@ sur =Nothing= pour l'item 38) ; help =command-input.html=, =input-history.html=,
 =input-history-feature= supprimées, =gui-command-vocabulary= réduite aux pièges
 du renommage en masse.
 
-** TODO 35. Raccourcis, recherche, aide
+** FAIT 35. Raccourcis, recherche, aide
 
-- [ ] =Keybindings= — overview (combos, séquences, =when=, portée de focus)
-- [ ] =Changing keybindings= — guide (=gui/keybindings.toml=, l'éditeur)
-- [ ] =Keyboard navigation= — reference
-- [ ] =Find in a panel= — guide (=ctrl-f=)
-- [ ] =Jumping to an entry= — guide (les commandes =*:find=)
-- [ ] =Help= — overview (le panel, =help:cursor=, =help:key=, et ce wiki)
-- [ ] =help panel= — reference
+- [X] =Keybindings= — overview (combos, séquences, =when= / =text-input= / =focus=, priorité, touches suggérées)
+- [X] =Changing keybindings= — guide (la vue des réglages, le fichier, =config:reload keybindings=)
+- [X] =Keyboard navigation= — reference (les touches livrées, par famille)
+- [X] =Find in a panel= — guide (=ctrl-f=)
+- [X] =Jumping to an entry= — guide (les commandes =*:find=)
+- [X] =In-app help= — overview (renommée : =Help= et la commande =help= auraient eu le même identifiant ; =help:open=, =help:cursor=, =help:key=, et ce wiki)
+- [X] =help panel= — reference
+- [X] =How the help panel finds a page= — reference, dev (ajoutée : manifestes, résolution d'un nom, =data-help-topic=, indices de touches)
+- [X] les notes de commande : =find:*= (4), =help=, =help:*= (3) ; =trash:find=, =log:find=, =duplicates:find= complétées
 
-GUI : =find:*= (4), =help=, =help:*= (4) ; panel =help=. Sources : spec-gui
-« Keybinding », « Keyboard navigation », « Find in panel », « Find an entry »,
-« Help » ; help =keybindings.html=, =find.html=.
+Vérification contre le code : la spec disait =keybindings.toml= réduit aux
+personnalisations de l'utilisateur, fusionnées au démarrage avec des défauts
+internes ; c'est le fichier complet depuis le dépôt de configuration git (le
+commentaire d'en-tête de =keybindings.rs= et celui du fichier livré le disaient
+encore). *Corrigé, test d'abord* : (1) l'éditeur de raccourcis réécrivait le
+fichier entier à chaque modification — commentaires perdus, entrées triées,
+tables en ligne changées en en-têtes =[combo]= — donc toute mise à jour suivante
+de la configuration tombait en conflit sur tout le fichier ; il ne modifie plus
+que l'entrée concernée (=toml_edit=) ; (2) relire le fichier (après une telle
+modification, ou =config:reload keybindings=) perdait les touches suggérées par
+=addKeybinding= (panel tiers, =commands.js=) ; elles sont reportées ; (3) le
+bouton « Reset » de l'éditeur délie : il s'appelle « Remove » ; (4) l'aide ne
+résolvait un nom que par identifiant et alias : =help:open trash:find= n'ouvrait
+pas la note de la commande (son identifiant ne peut pas contenir =:=), et le
+curseur d'aide sur le panel =log= ne trouvait rien, sur =help= la commande ; un
+titre est maintenant un nom, une invocation avec arguments ouvre la note de sa
+commande, et le curseur demande =<type> panel=. La spec disait les touches de
+=metarecord-detail= suggérées par le panel (elles sont dans le fichier, comme
+toutes celles des panels livrés) ; la page help, qu'il faut relancer
+=metafolder-sync-config= après avoir édité le fichier (=config:reload
+keybindings= suffit) et donnait =s l= en exemple de séquence. Ignorés par la
+spec : =log:find= et =duplicates:find= (six panels, pas quatre), la recherche
+insensible à la casse, la recherche qui suit le focus, =F1=, =t e=, la touche =+=
+écrite =plus=, « une touche qui lance une commande ne commence jamais une
+séquence ». =scripts/doc check= accepte maintenant =<<key "a, b">>= (plusieurs
+commandes, chacune vérifiée). *Signalé, non tranché* : (1) deux clés TOML qui
+écrivent la même combinaison (="shift+ctrl+a"= et ="ctrl+shift+a"=) dans la même
+portée ne sont pas refusées, et laquelle gagne dépend de l'ordre d'une table de
+hachage ; (2) =find:next= / =find:prev= lancées barre fermée (commande tapée,
+script) repeignent les correspondances sans rouvrir la barre ; (3) dans
+l'éditeur, « Remove » sur une touche suggérée ne fait rien et ne le dit pas.
+Sources retirées (pointeurs) : spec-gui « Keybinding », « Keyboard navigation »
+(ses paragraphes propres à =metarecord-list= et =metarecord-detail=, dont les
+familles =metarecord:field= / =metarecord:bulk=, déplacés dans les sections de
+ces panels, pour l'item 38), « Find in panel », « Find an entry », « Help » ; de
+la table « Command names », les lignes des commandes de cet item ; help
+=keybindings.html=, =find.html= et leurs alias (=help= et =help-cursor= retirés
+de =getting-started=).
 
 ** TODO 36. Personnalisation
 

@@ -1,4 +1,4 @@
-// Help-cursor styling (spec-gui "Help"). While armed, the pointer must read as
+// Help-cursor styling (doc "In-app help"). While armed, the pointer must read as
 // `?` everywhere — including over text inputs and inside panel Shadow DOM, which
 // a shell-level `<style>`/`:global` rule cannot reach (and WebKit lacks
 // `:host-context`). A single constructed stylesheet, adopted by both the shell

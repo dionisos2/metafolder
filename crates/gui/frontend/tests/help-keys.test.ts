@@ -1,4 +1,4 @@
-// The help pages name commands, not keys (spec-gui "Help"): every
+// The help pages name commands, not keys (doc "How the help panel finds a page"): every
 // `data-mf-key` is filled in at display from the live keybinding table. A typo
 // in one of those names would silently render "unbound" — the page would claim
 // a shortcut does not exist. So pin them against the commands that actually

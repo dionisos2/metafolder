@@ -1,5 +1,5 @@
 <script lang="ts">
-  // The find bar (spec-gui "Find in panel"): Ctrl-F over the focused panel's
+  // The find bar (doc "Find in a panel"): Ctrl-F over the focused panel's
   // rendered text, the way a browser's own find works. Shown only while the
   // search is open; the input carries `data-mf-focus="find"` so its Enter /
   // Escape / step keys are focus-scoped keybindings (see keybindings.toml)

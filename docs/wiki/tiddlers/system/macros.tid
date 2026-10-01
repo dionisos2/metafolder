@@ -102,7 +102,7 @@ Not documented yet:
 The project's procedures, usable from every note (docs/doc-wiki-proposal.md,
 "Sous-ensemble de wikitext autorisé"):
 
-* `<<key "command" [fallback]>>` — the key bound to a GUI command, filled in
+* `<<key "command" [fallback]>>` — the key bound to a GUI command (or to any of several, separated by commas), filled in
   from the live keybinding table by the help panel.
 * `<<cmd "name">>` — a link to a command's note, in code form.
 * `<<live name>>` — a zone the help panel fills at display (`grammar`: the

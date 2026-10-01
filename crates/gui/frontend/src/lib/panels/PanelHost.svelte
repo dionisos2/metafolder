@@ -59,7 +59,7 @@
   const baseSheet = new CSSStyleSheet();
   // The find bar paints its matches with the CSS Custom Highlight API, which
   // needs a `::highlight()` rule in the tree the text lives in — i.e. in every
-  // panel's shadow root (spec-gui "Find in panel").
+  // panel's shadow root (doc "Find in a panel").
   baseSheet.replaceSync(
     ':host{display:block;height:100%}' +
       '.mf-panel-body{width:100%;height:100%;box-sizing:border-box}' +

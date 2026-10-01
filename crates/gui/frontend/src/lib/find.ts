@@ -1,4 +1,4 @@
-// The find bar's driver (spec-gui "Find in panel"): a browser-style Ctrl-F
+// The find bar's driver (doc "Find in a panel"): a browser-style Ctrl-F
 // over the focused panel's rendered text. The matching itself is the pure,
 // panel-agnostic `/__find.js` shim; this module holds the shell state (needle,
 // match list, current index) and paints/scrolls.

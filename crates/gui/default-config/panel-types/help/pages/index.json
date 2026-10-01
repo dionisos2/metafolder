@@ -3,28 +3,7 @@
     "id": "getting-started",
     "title": "Getting started",
     "file": "getting-started.html",
-    "aliases": ["help", "start", "help-cursor", "config-open"]
-  },
-  {
-    "id": "find",
-    "title": "Find in panel (Ctrl+F)",
-    "file": "find.html",
-    "aliases": [
-      "find", "find:in-panel", "find:next", "find:prev", "find:close",
-      "ctrl-f", "ctrl+f", "search-in-page", "find-in-page",
-      "file-manager:find", "treeref:find", "trash:find", "recent:find",
-      "log:find", "duplicates:find",
-      "find-entry", "jump-to-entry"
-    ]
-  },
-  {
-    "id": "keybindings",
-    "title": "Keyboard shortcuts",
-    "file": "keybindings.html",
-    "aliases": [
-      "keybindings", "keybinding", "keys", "shortcuts", "shortcut", "keyboard",
-      "bindings", "sequence", "combo", "config", "keybindings.toml"
-    ]
+    "aliases": ["start", "config-open"]
   },
   {
     "id": "scripting",
@@ -40,7 +19,7 @@
     "title": "Metarecord list panel",
     "file": "metarecord-list.html",
     "aliases": [
-      "columns", "metarecords", "finder", "find", "quick-filter",
+      "columns", "metarecords", "finder", "quick-filter",
       "watched", "watch", "not-watched"
     ]
   },

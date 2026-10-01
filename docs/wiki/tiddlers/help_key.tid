@@ -1,0 +1,6 @@
+title: help:key
+tags: [[GUI command]] [[In-app help]]
+kind: reference
+summary: Describe the command a key runs (press the key)
+
+Waits for a key, or a whole sequence, and says in the status bar which command it runs where the focus is now — or that it runs none here, and where it does. The key is not run. `Escape` gives up. See [[In-app help]].

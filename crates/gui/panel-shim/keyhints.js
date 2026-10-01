@@ -2,7 +2,7 @@
 // shortcut runs (`<kbd data-mf-key="treeref:find">`) and the help panel fills
 // in the key that is actually bound to it, read from the live keybinding table.
 // So the pages cannot drift from keybindings.toml: neither when a shipped
-// default moves nor when the user rebinds something (spec-gui "Help").
+// default moves nor when the user rebinds something (doc "How the help panel finds a page").
 //
 // Pure and DOM-only (no fetch, no Tauri): unit-tested in
 // crates/gui/frontend/tests/keyhints.test.ts.

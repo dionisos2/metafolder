@@ -1,0 +1,6 @@
+title: help
+tags: [[GUI command]] [[In-app help]]
+kind: reference
+summary: Open the help panel (optional topic)
+
+The short name of <<cmd "help:open">>, easier to type in the command input: `help trash`. See [[In-app help]] for what the documentation offers, and [[help panel]] for the panel that shows it.

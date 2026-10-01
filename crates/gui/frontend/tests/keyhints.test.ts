@@ -1,4 +1,4 @@
-// Key hints in the help pages (spec-gui "Help"): a page names the *command*
+// Key hints in the help pages (doc "How the help panel finds a page"): a page names the *command*
 // and the panel fills in the key that is actually bound to it, so the help
 // cannot drift from keybindings.toml — neither when a shipped default changes
 // nor when the user rebinds something.

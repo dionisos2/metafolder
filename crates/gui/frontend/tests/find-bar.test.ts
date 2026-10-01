@@ -1,4 +1,4 @@
-// The shell's find-bar driver (spec-gui "Find in panel"): it re-runs the
+// The shell's find-bar driver (doc "Find in a panel"): it re-runs the
 // search against the focused panel's root on every change, so a panel that
 // re-rendered under it can never leave a stale match behind, and it wraps
 // around at both ends.

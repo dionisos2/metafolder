@@ -1,0 +1,6 @@
+title: help:cursor
+tags: [[GUI command]] [[In-app help]]
+kind: reference
+summary: Click an element to open its help
+
+Turns the pointer into a `?` until the next click, which opens the page about what was clicked — a zone of the window, or the panel — instead of reaching it. `Escape` gives up. See [[In-app help]].

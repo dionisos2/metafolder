@@ -3,3 +3,4 @@ tags: [[GUI command]] Trash
 kind: reference
 summary: Trash: jump to an entry by name
 
+Moves the cursor onto an entry of the trash named in the command input; each candidate carries the path it was trashed from. The entry is selected, not restored. See [[Jumping to an entry]] and [[trash panel]].

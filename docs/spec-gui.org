@@ -39,110 +39,10 @@ doc "Command naming" (the naming convention and its verbs).
 
 ** Keybinding
 
-A mapping from a key combo (e.g. =ctrl+k=, =alt+x=, =g g= for a two-key
-sequence) to a command invocation string (e.g. =metarecord-list:set mode grid=).
-Keybindings are loaded from a configuration file and can be edited at runtime.
-No keybinding is hard-coded; the defaults ship in the default config file.
-
-The user's =keybindings.toml= contains only their customisations and
-overrides; it does not need to list every binding. The GUI engine supplies all
-defaults separately and merges them at startup, with the user file taking
-precedence.
-
-A combo is a key name, optionally prefixed by modifiers in the order
-=ctrl+alt+shift+meta=; a sequence separates its combos with spaces. =shift= is
-written only where the keyboard does not already spell it: the character a
-shifted key *produces* is the key name (=:=, not =shift+;=), so =shift= is
-carried only by keys whose shifted form is not a distinct character — a special
-key (=shift+enter=, =shift+left=), a key held with another modifier
-(=ctrl+shift+z=), and a **letter** (=shift+f=), whose shifted form differs only
-in case and would otherwise collapse onto the unshifted binding.
-
-Each keybinding has three independent scope dimensions:
-
-- =when= (optional) — restricts the binding to a specific panel type. Absent
-  means the binding is *global* (fires regardless of which panel type is
-  focused). A panel type name (e.g. =metarecord-list=) makes it *local* (fires
-  only when that panel type is focused).
-- =text-input= (boolean, default =false=) — whether the binding also fires
-  when a text input is focused (command input or field editor). =false= means
-  the binding is suppressed while the user is typing; =true= means it fires
-  regardless. A focused form control — =input=, =textarea=, =select= (so its
-  arrow keys drive the options, not panel shortcuts), or a contenteditable —
-  counts as a text input; the check consults both the event target and the
-  focused element (an open native =select= popup may target neither).
-- =focus= (optional) — restricts the binding to a specific focused *widget*
-  inside a panel, identified by a =data-mf-focus="<scope>"= attribute on (or
-  around) the focused element. This is finer-grained than =when=, which can
-  only name a whole panel type: a panel may hold several text inputs (the
-  metarecord-list has a finder, a query editor and a columns editor) and a
-  =focus= binding targets exactly one. A =focus=-scoped binding **fires even
-  while a text input is focused** (it bypasses the =text-input= gate — the
-  widget it targets is itself typically an input); an optional =when= may be
-  combined with it to also require a panel type. Absent means the binding is
-  not widget-scoped. The scope is read from the DOM =composedPath()= of the key
-  event, so it works across the panel Shadow DOM.
-
-The dimensions combine independently:
-
-| =focus=      | =when=         | =text-input= | Fires when                                        |
-|--------------+----------------+--------------+---------------------------------------------------|
-| absent       | absent         | =false=      | Any panel focused; no text input active (default) |
-| absent       | absent         | =true=       | Any panel focused; even inside a text input       |
-| absent       | =<panel-type>= | =false=      | Named panel focused; no text input active         |
-| absent       | =<panel-type>= | =true=       | Named panel focused; even inside a text input     |
-| =<scope>=    | (either)       | (ignored)    | The =data-mf-focus="<scope>"= widget is focused   |
-
-When the same key matches several bindings, a more specific binding wins:
-=focus= over =when= over global, and among non-=focus= bindings =text-input =
-false= over =text-input = true= (the less permissive one takes precedence when
-both would fire). A =focus= binding therefore always beats a non-=focus= one
-for the same combo, which is what lets e.g. the arrow keys and =ctrl+enter=
-drive the metarecord-list selection while the caret sits in its finder input.
-
-Multi-key sequences never expire: once a prefix is typed, the matcher
-waits indefinitely for the next key. While a sequence is pending, the
-shell shows the possible continuations (keys and invocations) in a strip
-above the status bar — also for sequences typed inside a panel iframe
-(the panel matcher forwards its pending state to the shell). =escape=
-cancels the pending sequence (it never matches an =escape= binding in
-that state); a key that fits no continuation aborts the sequence and is
-*swallowed* — it does not fall back to its own single-key binding (a combo
-in progress takes priority), and the shell flashes ='<sequence>' is
-undefined=. The defaults use this for panel type switching: =t=
-followed by one letter (=t l= metarecord-list, =t d= metarecord-detail, =t f=
-file, =t m= file-manager, =t o= log, =t e= log-detail, =t r= repos, =t g= message, =t w=
-workspace-info, =t t= treeref, =t b= trash, =t y= sync, =t v= recent, =t u=
-duplicates, =t h= help).
-
-Config file examples. A combo's value is either a single binding table, or —
-when the same combo maps to a different command depending on the focused panel
-— an array of tables, each scoped with its own =when=:
-
-#+BEGIN_SRC toml
-"escape"  = { command = "editing:unfocus",         text-input = true              }
-"ctrl+a"  = { command = "editing:goto line-start", text-input = true              }
-"ctrl+e"  = { command = "my-panel:edit",           when = "my-panel", text-input = true }
-"ctrl+t"  = { command = "workspace:new"                                            }
-
-# The same combo, several scopes: one array, one entry per `when`.
-"j" = [
-  { command = "metarecord-list:next", when = "metarecord-list" },
-  { command = "file-manager:next",    when = "file-manager" },
-]
-#+END_SRC
-
-Override granularity is per =(combo, when)=: a user entry for =j= /
-=when = "metarecord-list"= replaces only that scope, leaving the other =j=
-bindings intact. Removing a binding at runtime (settings view) likewise targets
-one =(combo, when)=.
-
-Panel types may suggest default keybindings via =metafolder.addKeybinding=;
-these are the weakest layer, applied only when no configured binding has the
-same combo and =when=. The built-in panels declare all of their bindings in the
-shipped =keybindings.toml= (as =when=-scoped arrays) rather than suggesting
-them, so every shortcut is visible and editable in that one file;
-=addKeybinding= remains for third-party panels.
+Moved to the wiki: doc "Keybindings" (combos, sequences, the =when= /
+=text-input= / =focus= scopes and their precedence, suggested keys),
+doc "Changing keybindings" (the settings view, the file) and
+doc "The keybindings file".
 
 ** Status bar
 
@@ -521,13 +421,6 @@ Moved to the wiki: doc "The command input".
 | =log:undo=           | Undo the newest change the user made, on the active repo (default =ctrl+z=) |
 | =log:redo=           | Take the newest undo back, on the active repo (default =ctrl+shift+z=) |
 | =log:prune=          | Prune the event log                            |
-| =find:open [text]= | Open the find bar over the focused panel (default =ctrl+f=) — see [[*Find in panel]] |
-| =find:next= / =find:prev= | Go to the next / previous find match (wrapping) |
-| =find:close=         | Close the find bar and unpaint its matches     |
-| =help=               | Open the =help= panel (alias of =help:open=)   |
-| =help:open [text]=   | Open the =help= panel for a topic (an exact name opens its page; else search) |
-| =help:cursor=   | Turn the pointer into =?=; the next click opens the matching help page (escape cancels) |
-| =help:key=   | Describe what a key runs: wait for the key combo and report its invocation and description — or that it is unbound (default =h k=) |
 | =config:open=        | Open settings (keybindings, style, daemon URL) |
 | =config:reload <what>= | Re-read user configuration without a restart — see [[*Reloading configuration]] |
 | =user:*=             | Whatever =~/.config/metafolder/gui/commands.js= defines — see [[*User commands]] |
@@ -543,7 +436,7 @@ Moved to the wiki: doc "The command input".
 | =file-manager:refresh=    | Reload the current directory in =file-manager=               |
 | =file-manager:toggle root= | Toggle the "constrain to root" checkbox in =file-manager=    |
 | =file-manager:toggle hidden= | Toggle the "hidden files" checkbox in =file-manager= (default =ctrl+h=) |
-| =file-manager:find=       | Jump to an entry of the displayed directory by name (default =f=; see [[*Find an entry]]) |
+| =file-manager:find=       | Jump to an entry of the displayed directory by name (default =f=; see doc "Jumping to an entry") |
 | =treeref:find=            | Jump to a child of the displayed node by name (default =f=)   |
 | =trash:find=              | Jump to a trash entry by name (default =f=)                   |
 | =recent:find=             | Jump to a recently-viewed metarecord by name (default =f=)    |
@@ -580,275 +473,25 @@ Moved to the wiki: doc "Input history".
 
 ** Keyboard navigation
 
-Every command is reachable from the keyboard. No command requires the mouse.
-
-Within =metarecord-list=:
-- =/= focuses the finder (=metarecord-list:focus finder=); =Ctrl+/= the structural query
-  editor (=metarecord-list:focus simplified=).
-- Two families edit the three search fields (in addition to =/= and =Ctrl+/=),
-  both scoped to the panel: an =e= chord edits a field (focus, keep content),
-  the bare field letter clears it first. The field letter is shared: =f= finder,
-  =s= simplified query (=e s= / =s= *unfreeze* B — a frozen B stays
-  authoritative, so typing in A would otherwise change nothing), =q= the normal
-  DSL (opens + freezes it). So =e f= / =e s= / =e q= to edit, =f= / =s= / =q= to
-  clear-then-edit, and =c= clears all three at once (=clear all=).
-- =Enter= in any of the search fields applies and *leaves* the field (blur), so
-  the panel accelerators resume without a separate =Escape=; =Shift+Enter=
-  applies but keeps the focus for another edit.
-- =Up= / =Down= move the selection (updates =selected_metarecord=).
-- =Enter= or =Right= switches the other slot to =metarecord-detail= (or =file= if
-  =selected_paths= is non-empty), opening the slot if hidden. See
-  [[*Cross-panel selection]].
-- =Space= checks/unchecks the row for the multi-selection (updates
-  =selected_metarecords=; see doc "Cross-panel selection" — the checks are kept
-  when the list changes).
-- =Ctrl+Space= clears the multi-selection (=metarecord-list:select none=,
-  resets =selected_metarecords= to =[]=).
-
-Within =metarecord-detail= (every action is also a command, so the panel is
-fully keyboard-drivable):
-- =Down= / =Up= (or =j= / =k=) move the field-row cursor
-  (=metarecord:row-next= / =metarecord:row-prev=).
-- =Enter= on a row starts inline editing (=metarecord:row-edit=); in the
-  inline editor =Enter= confirms and =Escape= cancels.
-- =d= deletes the field row under the cursor (=metarecord:row-delete=, with
-  confirmation).
-- =a= opens the add-field form (=metarecord:open-add-field=); =Ctrl-n= creates a new
-  metarecord (=metarecord:create=) and selects it.
-All defaults are =when = metarecord-detail= suggestions (the weakest layer), so
-a user binding overrides them.
-
-Beyond the cursor-driven inline editor, the panel also registers a family of
-*command-input-driven* field operations that need no cursor navigation: they
-declare their arguments (see [[*Command]]), so invoking one from the command
-input collects the field name (or a value to edit, selected among the record's
-current values), then the type, then the new value through the minibuffer, with
-completion and the current value pre-filled. =TreeRef= values are edited as
-paths (completed against the field's forest, resolved through
-=POST …/tree/resolve-path= on commit); =ref= values are named by their rule
-(see [[*Ref value seeds]]). A =bool= value completes
-over its closed set — =false= / =true= — with no repository lookup. This value
-completion and resolution is shared by the direct and the bulk value commands
-alike.
-
-*The type is an argument.* When a value command targets a field whose value
-type cannot be determined automatically (no row on the record, nothing in the
-schema-aware catalog), the type is *asked* through the command input rather
-than silently defaulting to =string= — for =metarecord:field set= / =add= /
-=edit= and for =metarecord:bulk set= / =add= / =remove= alike. The per-record
-=remove= asks none: every row it can name carries the type its value is read
-as. It is one of the
-command's declared arguments like any other, so it is completed over the
-concrete types (every type but =nothing=, which has no value to parse) and it
-is asked *before* the value: the value is parsed as that type, and a question
-that decides how the next answer is read cannot come after it. Being an
-argument, it is also positional — a fully inline invocation names it between
-the field and the value (=metarecord:field set rating int 5=), and only when it
-would have been asked: the shorter form stays the whole story for a field whose
-type is already settled (=metarecord:field set tag jazz=). An invocation that
-names none, on a field nothing settles, is refused rather than guessed.
-=retype= is the one operation that always takes it — naming a new type is what
-it does — and when the field it retypes holds nothing but an explicit =Nothing=
-there is no value to re-encode, so the new type is followed by the value that
-gives it meaning. The two commands are =metarecord:field <op>= on the
-current metarecord (=set=, =add=, =edit=, =remove=, =unset=, =rename=,
-=retype=) and =metarecord:bulk <target> <op>= (=set=, =add=, =remove=,
-=unset=, =delete=) over the target the invocation names — the checkbox
-selection (=selected_metarecords=) or the current query, asked first with
-completion (pre-filled with what a checked selection means, so the common
-answer is still Enter, and naming what each choice would act on: the checked
-count and the query's match count). There is no inferred target: a selection
-that silently widens to the whole query — or the reverse — was exactly the
-confusion the argument removed, so an empty selection is "nothing to do" and a
-broad query is what =query= spells. The default
-suggestions bind them under an =m= sequence prefix (=m s= set, =m a= add, =m v=
-edit a value, =m d= remove a value, =m u= unset, =m n= rename, =m t= retype,
-and =m b= / =m m <op>= for the bulk half), active in both
-the =metarecord-list= and =metarecord-detail= panels so the family is reachable
-whether the list or the detail is focused.
-
-For bulk edits there are two entry points. The *mouse-oriented* one is an
-in-panel =metarecord-list= form (target drop-down + operation picker + typed
-value widget + =force=), opened by the footer "Edit / delete…" button
-(=metarecord-list:open-bulk-edit=); its target defaults to the query, the scope
-that flow has always acted on. The *keyboard-oriented* one is
-=metarecord:bulk= itself: invoked bare (=m b=) it collects the target and then
-the operation in the command input, and a keybinding may name both up front
-(=m m s= set on the selection, =m m a= add, =m m v= remove one value, =m m r=
-unset the field, =m m d= delete the metarecords — the fastest bulk flow, the
-checked selection; the query-scoped one goes through =m b=) — the same command
-either way, since arguments supplied inline skip their prompt. Both families
-are bound in the list *and* the detail panel:
-a command reaches its panel whatever is focused, so which panel registered it
-is not a scope. A bulk operation counts its matches (daemon-side =count=) and
-names that number in its confirmation.
-
-Keybindings are stored in =~/.config/metafolder/gui/keybindings.toml=
-(see [[*Keybinding]] for the =when= and =text-input= scope dimensions).
-The =config:open= command opens a settings view where they can be edited
-interactively; changes take effect immediately.
+Moved to the wiki: doc "Keyboard navigation" (the shipped keys, by family) and
+doc "Keybindings". The keys of =metarecord-list= and of =metarecord-detail=, with
+the =metarecord:field= / =metarecord:bulk= families, are in those panels'
+sections below ("Keyboard" in each).
 
 ** Find in panel
 
-=Ctrl+f= searches the *text the focused panel currently renders* — the
-browser's own find, over one panel. It is a shell feature, not a panel one: no
-panel implements anything, and it therefore works in every panel type, built-in
-or third-party, including the =help= pages it was first asked for.
-
-- The find bar appears above the command input, with the match position
-  (=3/17=, or =no match=). Typing re-runs the search on every keystroke.
-- =Enter= / =Shift+Enter= step to the next / previous match, wrapping at both
-  ends; =Escape= closes the bar. These are =focus = "find"= keybindings, so
-  they only apply while the bar has the focus (see [[*Keybinding]]).
-- =Ctrl+f= again re-focuses the bar and selects its content, so a second press
-  starts a new search. The needle survives a close, so =Ctrl+f Enter= resumes
-  the previous one.
-- The current match is painted distinctly from the others and scrolled into
-  view — but only when it is not comfortably visible already, so incremental
-  typing does not make the text jump under the reader. Painting uses the CSS
-  Custom Highlight API (=::highlight(mf-find)= / =::highlight(mf-find-current)=,
-  styled in the sheet every panel adopts): *no DOM is mutated*, so a panel's
-  markup, event handlers and re-renders are untouched by a search running over
-  them.
-- Every operation re-runs the search against the panel as it is *now* rather
-  than reusing the previous match list: panels re-render under the bar (a query
-  re-runs, a page loads, the slot shows another workspace), and a stale match
-  would highlight text that is no longer there.
-- What is searched is what is *rendered*: hidden subtrees are skipped, source
-  indentation collapses the way the layout collapses it (so a term broken over
-  two lines in a help page still matches), and block elements are separated so
-  two paragraphs never concatenate into a word nobody can see. A match may span
-  inline markup (=hello <b>world</b>=).
-- Its scope is one panel's *loaded* DOM — like a browser's find, and unlike a
-  query. Rows a paged list has not fetched are not searched; that is what the
-  finder and the query editor are for (see [[*Finder (quick filter)]]).
-- =find:open <text>= searches =text= directly, so a script can drive the
-  find bar through =mf gui command= like any other command.
+Moved to the wiki: doc "Find in a panel".
 
 ** Find an entry
 
-The other find: =f= moves the *cursor* onto a row of the focused list panel,
-named in the command input. Where =Ctrl+f= paints text and selects nothing,
-this one selects a row and paints nothing — so the panel's actions (open,
-descend, restore, trash) then apply to what was found.
-
-Every panel that shows a cursor over named rows registers it, under its own
-name and on the same key: =file-manager:find= (an entry of the displayed
-directory), =treeref:find= (a child of the current node), =trash:find= (a
-trashed entry), =recent:find= (a recently-viewed metarecord). One helper
-(=/__find-entry.js=) implements all of them, so they behave identically:
-
-- The name is an *interactive command argument* (see [[*Interactive command
-  arguments (command mode)]]) completing over the rows the panel displays *now*,
-  filtered by ordered substring like every other picker. The minibuffer starts
-  empty.
-- The candidate carries what identifies the row: the file manager marks a
-  directory with a trailing =/=, and the trash and recent lists — where two rows
-  can share a name — append the path that tells them apart. The typed terms are
-  matched against that whole candidate, so the path is searchable too.
-- Accepting a completion selects that row. A *typed* answer (=Ctrl+Enter=, or
-  terms matching several rows) selects the first row it ordered-substring-
-  matches — the first one the picker was showing. An answer matching nothing is
-  a status-bar error and the cursor stays where it was; an empty answer does
-  nothing.
-- The row is *selected, not activated*: a directory is not entered, a tree node
-  is not descended into, a trashed file is not restored.
-- Only the rows the panel has *loaded* are searched, as with the find bar: a
-  paged list's unfetched pages are not, which is what the finder and the query
-  editor are for.
-
-=metarecord-list= is the exception that proves the rule: its rows come from a
-query rather than a loaded list, so =f= there edits the *finder* (see [[*Finder
-(quick filter)]]) — the same question, asked of the daemon.
+Moved to the wiki: doc "Jumping to an entry".
 
 ** Help
 
-In-app help is a dedicated =help= panel type plus four shell builtins. The
-builtins are *builtins* (not panel commands) so they work before the help panel
-has ever been mounted.
-
-- =help= / =help:open [text]= open the =help= panel in the focused slot. The
-  optional =text= is handed to the panel through the =help.request= workspace
-  variable (with a nonce so an identical repeated topic still re-triggers). If
-  =text= is an *exact name* — a page id, an alias, or a =panel:command= (the
-  command's verb is tried first, then its panel-type prefix, so e.g.
-  =metarecord-list:focus= and =focus-query= both reach the queries page) —
-  that page opens directly; otherwise the text greps across all pages. Prefixing
-  =text= with =#= forces grep even on an exact name.
-- =help:cursor= arms a "click-to-help" mode: a =?= pointer (a
-  =mf-help-cursor= class on the document element) until the next click, which is
-  swallowed and resolved to a help topic instead of reaching its target. Escape
-  cancels. Resolution walks the click's =composedPath()= (piercing panel Shadow
-  DOM) for the nearest =data-help-topic= attribute; failing that, the nearest
-  =data-slot-body= gives the clicked slot's panel type. Shell chrome and panels
-  tag their zones with =data-help-topic= (e.g. the metarecord-list query box →
-  =focus-query=); everything else falls back to its panel type's page.
-- =help:key= (default =h k=) is the Emacs =C-h k=: it waits for a key combo and
-  *describes it*. The combo — a multi-key sequence counts, its possible
-  continuations shown in the hint strip while one is pending, exactly like a
-  real binding — is swallowed and looked up in the live keybinding table, in
-  the context it arrived in (the focused panel type, the focus scope, whether a
-  text input is active), so the answer is what the key *would do now*. It is
-  posted to the status bar (and so lands in the [[*Message view][message log]]):
-  =<combo> runs <invocation>= followed by the command's description, or
-  =<combo> is not bound to any command= — followed, when the combo does bind
-  commands in *other* contexts, by those invocations and the scope that keeps
-  them out of this one (=elsewhere: file-manager:find in file-manager, …=), so
-  a panel-local shortcut does not read as unbound from another panel. Escape
-  cancels the wait. Arming =help:key= and =help:cursor= dismisses the other —
-  one help gesture at a time.
-
-The =help= panel renders static HTML pages with a grep search box on top. They
-come from two sets, during the migration of the documentation to the wiki
-([[file:doc-wiki-proposal.md][design]]):
-
-- the *documentation wiki*'s, rendered from =docs/wiki/= by =scripts/doc build=
-  and installed in =~/.config/metafolder/docs/= (doc "Shipped defaults in the source tree"), fetched from the GUI server's =/docs/=. Its
-  =index.json= describes each page as ={id, title, file, aliases[], tags[],
-  kind, audience, status, summary}= — the note's fields;
-- the panel's own older pages (=panel-types/help/pages/=, described by
-  =pages/index.json= as ={id, title, file, aliases[]}=), each replaced by the
-  wiki page of the same id once migrated, and removed with it.
-
-There is at least one page per panel type, in one set or the other. The wiki's
-pages come first, so they win name resolution. A wiki that is not
-installed (=/docs/index.json= missing) raises a warning bar naming the build
-step; the older pages still work. Everything is shipped, developer documentation
-included (=audience: dev=): the search leaves it out unless the /include
-developer documentation/ box is ticked, and an exact name opens it regardless.
-Above a wiki page, its tags are shown as buttons opening each tag's own note,
-with a badge for a developer page or a status other than =implemented=
-(=deferred=, =proposed=, =record=). The pages are plain HTML — the renderer
-expands every list at build time — so the panel knows nothing of TiddlyWiki;
-the only things it fills in at display are the key hints below and the
-=data-mf-live= zones (=grammar=: the *current* simplified-query grammar, read
-via the =grammar_source= command, =metafolder.query.grammarSource()=; the older
-queries page's =#grammar-source= is still honoured). The exact-name resolution,
-the grep filter and the merge of the two sets are the pure functions in
-=/__help.js= (=resolvePage=, =filterPages=, =mergeManifests=,
-=resolveClickTopic=), unit-tested in the frontend.
-
-*Key hints*: a help page never writes a key. It writes the *command*
-(=<span data-mf-key="treeref:find">f</span>=) and the panel fills the element in
-at display from the live keybinding table (=metafolder.commands.keybindings()=),
-one =<kbd>= per combo, several joined with "or". So a page shows the key the
-user *actually* has: rebinding something changes the help, and a page cannot
-drift from =keybindings.toml= the way a hand-written key did. Rules
-(=/__keyhints.js=, =formatCombo= / =keysFor= / =applyKeyHints=):
-
-- The attribute holds one invocation, or several separated by commas — the union
-  of their keys, deduplicated, in table order. Several is how a generic row is
-  written ("move the cursor down" means the =:next= command of every list panel).
-- A bare command name matches every invocation of it (so =panel:set type= alone
-  would list all of them); a fuller one (=panel:set type treeref=) matches only
-  itself. Same rule as the command input's shortcut display.
-- Combos are spelled as the pages spell them: modifiers capitalised
-  (=Ctrl+Shift+z=), arrows as arrows, a sequence as its combos in order (=t l=).
-- A command *nothing* is bound to reads =unbound=, rather than a key that would
-  not work. The element's shipped content is only a fallback for reading the
-  page source, and is what the grep index holds.
-- The table is re-read on every page display, so a rebinding shows on the next
-  page opened without restarting.
+Moved to the wiki: doc "In-app help" (=help:open=, =help:cursor=, =help:key=,
+the keys read from the live table), doc "help panel" and
+doc "How the help panel finds a page" (manifests, name resolution,
+=data-help-topic=, key hints).
 
 ** Context menus
 
@@ -1541,6 +1184,31 @@ daemon down, or older than the endpoint), is left unmarked: "unknown" never
 reads as "unwatched". The amber yields to the stronger signals — the orphan
 purple and the unplugged-volume note keep their own marking.
 
+**** Keyboard
+
+The shipped keys (=when = "metarecord-list"=):
+- =/= focuses the finder (=metarecord-list:focus finder=); =Ctrl+/= the structural query
+  editor (=metarecord-list:focus simplified=).
+- Two families edit the three search fields (in addition to =/= and =Ctrl+/=),
+  both scoped to the panel: an =e= chord edits a field (focus, keep content),
+  the bare field letter clears it first. The field letter is shared: =f= finder,
+  =s= simplified query (=e s= / =s= *unfreeze* B — a frozen B stays
+  authoritative, so typing in A would otherwise change nothing), =q= the normal
+  DSL (opens + freezes it). So =e f= / =e s= / =e q= to edit, =f= / =s= / =q= to
+  clear-then-edit, and =c= clears all three at once (=clear all=).
+- =Enter= in any of the search fields applies and *leaves* the field (blur), so
+  the panel accelerators resume without a separate =Escape=; =Shift+Enter=
+  applies but keeps the focus for another edit.
+- =Up= / =Down= move the selection (updates =selected_metarecord=).
+- =Enter= or =Right= switches the other slot to =metarecord-detail= (or =file= if
+  =selected_paths= is non-empty), opening the slot if hidden. See
+  doc "Cross-panel selection".
+- =Space= checks/unchecks the row for the multi-selection (updates
+  =selected_metarecords=; see doc "Cross-panel selection" — the checks are kept
+  when the list changes).
+- =Ctrl+Space= clears the multi-selection (=metarecord-list:select none=,
+  resets =selected_metarecords= to =[]=).
+
 **** Finder (quick filter)
 
 A search box at the top of the panel — the /finder/ — is an incremental
@@ -1713,6 +1381,85 @@ At the bottom of the panel:
 
 Protected =mfr_*= fields are read-only by default; an advanced toggle exposes
 a =force= checkbox.
+
+**** Keyboard
+
+Every action is also a command, so the panel is fully keyboard-drivable:
+- =Down= / =Up= (or =j= / =k=) move the field-row cursor
+  (=metarecord:row-next= / =metarecord:row-prev=).
+- =Enter= on a row starts inline editing (=metarecord:row-edit=); in the
+  inline editor =Enter= confirms and =Escape= cancels.
+- =d= deletes the field row under the cursor (=metarecord:row-delete=, with
+  confirmation).
+- =a= opens the add-field form (=metarecord:open-add-field=); =Ctrl-n= creates a new
+  metarecord (=metarecord:create=) and selects it.
+All of these are =when = "metarecord-detail"= bindings of the shipped
+=keybindings.toml= (doc "Keybindings").
+
+Beyond the cursor-driven inline editor, the panel also registers a family of
+*command-input-driven* field operations that need no cursor navigation: they
+declare their arguments (doc "Interactive command arguments"), so invoking one from the command
+input collects the field name (or a value to edit, selected among the record's
+current values), then the type, then the new value through the minibuffer, with
+completion and the current value pre-filled. =TreeRef= values are edited as
+paths (completed against the field's forest, resolved through
+=POST …/tree/resolve-path= on commit); =ref= values are named by their rule
+(see [[*Ref value seeds]]). A =bool= value completes
+over its closed set — =false= / =true= — with no repository lookup. This value
+completion and resolution is shared by the direct and the bulk value commands
+alike.
+
+*The type is an argument.* When a value command targets a field whose value
+type cannot be determined automatically (no row on the record, nothing in the
+schema-aware catalog), the type is *asked* through the command input rather
+than silently defaulting to =string= — for =metarecord:field set= / =add= /
+=edit= and for =metarecord:bulk set= / =add= / =remove= alike. The per-record
+=remove= asks none: every row it can name carries the type its value is read
+as. It is one of the
+command's declared arguments like any other, so it is completed over the
+concrete types (every type but =nothing=, which has no value to parse) and it
+is asked *before* the value: the value is parsed as that type, and a question
+that decides how the next answer is read cannot come after it. Being an
+argument, it is also positional — a fully inline invocation names it between
+the field and the value (=metarecord:field set rating int 5=), and only when it
+would have been asked: the shorter form stays the whole story for a field whose
+type is already settled (=metarecord:field set tag jazz=). An invocation that
+names none, on a field nothing settles, is refused rather than guessed.
+=retype= is the one operation that always takes it — naming a new type is what
+it does — and when the field it retypes holds nothing but an explicit =Nothing=
+there is no value to re-encode, so the new type is followed by the value that
+gives it meaning. The two commands are =metarecord:field <op>= on the
+current metarecord (=set=, =add=, =edit=, =remove=, =unset=, =rename=,
+=retype=) and =metarecord:bulk <target> <op>= (=set=, =add=, =remove=,
+=unset=, =delete=) over the target the invocation names — the checkbox
+selection (=selected_metarecords=) or the current query, asked first with
+completion (pre-filled with what a checked selection means, so the common
+answer is still Enter, and naming what each choice would act on: the checked
+count and the query's match count). There is no inferred target: a selection
+that silently widens to the whole query — or the reverse — was exactly the
+confusion the argument removed, so an empty selection is "nothing to do" and a
+broad query is what =query= spells. The default
+suggestions bind them under an =m= sequence prefix (=m s= set, =m a= add, =m v=
+edit a value, =m d= remove a value, =m u= unset, =m n= rename, =m t= retype,
+and =m b= / =m m <op>= for the bulk half), active in both
+the =metarecord-list= and =metarecord-detail= panels so the family is reachable
+whether the list or the detail is focused.
+
+For bulk edits there are two entry points. The *mouse-oriented* one is an
+in-panel =metarecord-list= form (target drop-down + operation picker + typed
+value widget + =force=), opened by the footer "Edit / delete…" button
+(=metarecord-list:open-bulk-edit=); its target defaults to the query, the scope
+that flow has always acted on. The *keyboard-oriented* one is
+=metarecord:bulk= itself: invoked bare (=m b=) it collects the target and then
+the operation in the command input, and a keybinding may name both up front
+(=m m s= set on the selection, =m m a= add, =m m v= remove one value, =m m r=
+unset the field, =m m d= delete the metarecords — the fastest bulk flow, the
+checked selection; the query-scoped one goes through =m b=) — the same command
+either way, since arguments supplied inline skip their prompt. Both families
+are bound in the list *and* the detail panel:
+a command reaches its panel whatever is focused, so which panel registered it
+is not a scope. A bulk operation counts its matches (daemon-side =count=) and
+names that number in its confirmation.
 
 *** =file= panel type
 
@@ -2061,7 +1808,7 @@ space in the listing offers just =New folder…= / =New file…= / =Paste=.
 | =file-manager:cut=        | Cut the selected entry to the shared clipboard (=Ctrl+X=) |
 | =file-manager:paste=      | Paste the clipboard into the current directory (=Ctrl+V=; copy or move) |
 | =file-manager:delete=     | Delete the selected entry (=Delete=): to the repo trash when a repo is active, else permanently; confirmed. A *tracked* entry has its metarecords captured and deleted like any other trashing (doc "What trashing does") — the GUI is the path most deletions take, and must not be the one that still leaves orphans |
-| =file-manager:find=       | Move the cursor onto an entry of the current directory (=f=), its name collected in the command input — the shared list-panel find, see [[*Find an entry]]. Only the displayed directory is searched (hidden entries only when they are shown), and a directory is selected, not entered. |
+| =file-manager:find=       | Move the cursor onto an entry of the current directory (=f=), its name collected in the command input — the shared list-panel find, see doc "Jumping to an entry". Only the displayed directory is searched (hidden entries only when they are shown), and a directory is selected, not entered. |
 | =file-manager:select=     | Change the checked multi-selection (=toggle= / =all= / =none=): check/uncheck the highlighted entry's metarecord (=toggle=; an untracked entry has none and says so), check every tracked entry of the directory on top of what is already checked (=all=), or empty the selection (=none=) — the workspace-wide set shared with =metarecord-list=, see doc "Cross-panel selection" |
 
 *** =treeref= panel type
@@ -2116,7 +1863,7 @@ so =metarecord-detail= follows) and =selected_treeref=
 *Keyboard*: =Up=/=Down= (or =j=/=k=) move; =Enter=/=Right= descend;
 =Backspace=/=Left= go up; =/= jumps back to the forest roots (as it jumps to the
 root in the file manager); =r= refreshes; =f= jumps to a child by name (see
-[[*Find an entry]]), =Shift+F= picks the explored field; =l= lists what points at
+doc "Jumping to an entry"), =Shift+F= picks the explored field; =l= lists what points at
 the node, =s= toggles the scope, =e= picks the Ref field; =ctrl+n= adds an
 element under the current node (see above).
 
@@ -2151,7 +1898,7 @@ mode — which is the reason a dedicated panel type is not needed for it.
 | =treeref:refresh=  | Reload the field lists and current children  |
 | =treeref:add=      | Add an element under the current node (args: schema type, then name) |
 | =treeref:set field= | Explore another TreeRef field (arg: field name, no pre-fill) |
-| =treeref:find=     | Jump to a loaded child by name (=f=; see [[*Find an entry]]) |
+| =treeref:find=     | Jump to a loaded child by name (=f=; see doc "Jumping to an entry") |
 | =treeref:list-refs= | List the metarecords whose Ref field points at the selected node |
 | =treeref:toggle scope= | Toggle between =exact= and =+ descendants= |
 | =treeref:set ref-field= | Choose the Ref field to follow back (arg: field name) |

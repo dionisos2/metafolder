@@ -20,7 +20,7 @@ Editing the recalled text ends the walk: the edited text is the new draft. Leavi
 the zone ends it too, so the first `ctrl+p` after coming back recalls the newest
 entry again.
 
-These three keys belong to the zones themselves and are not in `keybindings.toml`.
+These three keys belong to the zones themselves and are not in `keybindings.toml` ([[Keybindings]]).
 Binding `ctrl+p`, `ctrl+n` or `ctrl+r` there with `text-input = true` would take
 them over.
 

@@ -1,4 +1,4 @@
-// The shared "jump to an entry by name" helper (spec-gui "Find an entry"):
+// The shared "jump to an entry by name" helper (doc "Jumping to an entry"):
 // every list panel with a row cursor registers its `<panel>:find` command with
 // it, so they all complete, match and fail the same way — and can all sit on
 // the same key.

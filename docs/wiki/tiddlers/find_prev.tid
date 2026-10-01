@@ -1,0 +1,6 @@
+title: find:prev
+tags: [[GUI command]] [[Find in a panel]]
+kind: reference
+summary: Go to the previous find match
+
+Moves to the previous match of the find bar's text in the focused panel, going to the last before the first. See [[Find in a panel]].

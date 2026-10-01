@@ -413,7 +413,7 @@ export function mount(root, metafolder) {
     handler: () => select(rows.length - 1),
   });
   // Jump to a group by hash or to a member by path, like every other list panel
-  // (spec-gui "Find an entry"). A scan of a large repository produces hundreds
+  // (doc "Jumping to an entry"). A scan of a large repository produces hundreds
   // of groups, which is exactly when scrolling stops being an option.
   void registerFind(metafolder, 'duplicates:find', {
     label: 'Duplicates: jump to a group or a copy by name',

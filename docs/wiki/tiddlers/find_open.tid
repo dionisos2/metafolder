@@ -1,0 +1,6 @@
+title: find:open
+tags: [[GUI command]] [[Find in a panel]]
+kind: reference
+summary: Find text in the focused panel (optional text)
+
+Opens the find bar and gives it the keyboard; when the bar is already open, goes back to it and selects its content. With a text, searches for that text at once — which is how a script drives the bar; without one, the last search comes back. See [[Find in a panel]].

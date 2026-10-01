@@ -1,5 +1,5 @@
 // recent panel: `recent:find` — the shared list-panel find over the
-// recently-viewed rows (spec-gui "Find an entry"). A row's identity is its
+// recently-viewed rows (doc "Jumping to an entry"). A row's identity is its
 // display name, and since several records can share one, each candidate carries
 // the path that tells them apart.
 

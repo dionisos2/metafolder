@@ -79,7 +79,7 @@ export default defineConfig({
       // lowered to turn a red run green, only moved when the number it tracks
       // has moved, and three of the four keep climbing.
       //
-      // The shared list-panel find (spec-gui "Find an entry") did it once more:
+      // The shared list-panel find (doc "Jumping to an entry") did it once more:
       // its tests are the first to drive the treeref and recent panels, taking
       // statements 68.8 → 70.5 and functions 58.5 → 60.8 while branches went
       // 83.4 → 82.3 — the same trade, so the branch floor follows to 82.
