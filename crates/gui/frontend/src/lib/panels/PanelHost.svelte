@@ -11,7 +11,7 @@
     status,
   } from '../commands';
   import { addDefaultMenuItems } from '../keys';
-  import { focusedWs, refreshCommands, slotPayload, store } from '../store.svelte';
+  import { currentStyle, focusedWs, refreshCommands, slotPayload, store } from '../store.svelte';
   import { createPanelApi, type PanelApiInstance } from './api';
   import { createPanelArgSource } from './argSource';
   import { setFindRootProvider } from './roots';
