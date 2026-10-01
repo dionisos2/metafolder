@@ -1,5 +1,5 @@
 title: Why /fsraw never serves a document
-tags: Security
+tags: Security [[Key invariants]]
 kind: rationale
 audience: dev
 summary: /fsraw carries the session token in its URL, so a file loaded as a document could steal it: media only, and inert if anything slips.

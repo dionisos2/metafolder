@@ -1,0 +1,75 @@
+title: Architecture
+tags: Documentation
+kind: overview
+audience: dev
+aliases: crates design
+summary: Four programs — daemon, mf, GUI, broker — over one HTTP API; seven crates, and what each owns.
+
+!! The programs
+
+|!Program |!Crate |!What it is |
+|`metafolder-daemon` |`daemon` |the HTTP server on `127.0.0.1:7523` holding the loaded repositories; the only program that reads or writes a store ([[Daemon]]) |
+|`mf` |`cli` |a thin client of the daemon ([[Command line]]); `mf gui` is a client of the GUI's scripting API instead |
+|`metafolder-gui` |`gui` |a Tauri v2 desktop application, client of the daemon, with its own HTTP server on `127.0.0.1:7524` for its panels' files and for scripts ([[GUI]]) |
+|`metafolder-watchd` |`watchd` |an optional privileged service watching whole filesystems for every daemon of the machine, over a Unix socket ([[The fanotify broker]]) |
+|`metafolder-sync-config` |`core`, behind the `sync-config` feature |the install step that applies the shipped defaults to the configuration repository; the only program that uses git ([[Updating the configuration]]) |
+
+Everything is local: the servers listen on loopback, behind session tokens, and
+nothing calls a remote host ([[Security]], [[No network access]]).
+
+```
+ mf ──HTTP──▶ daemon ◀──HTTP── GUI (Rust) ◀──events/commands──▶ shell and panels (WebView)
+  │             │  ▲              ▲
+  │             │  └─ Unix socket ── metafolder-watchd (optional)
+  │             ▼
+  │         .metafolder/internal/kv   (one store per repository, locked)
+  └──HTTP (mf gui)────────────────▶ GUI server
+```
+
+The daemon offers ''mechanisms'' and the clients choose: it has no undo endpoint
+([[The undo selection]] is computed by the client), it never expands a simplified
+query ([[Why expansion runs in the client]]), and the trash is filesystem work
+done by the clients ([[Why the trash owns the metarecord]]). What two clients must
+do alike therefore lives in `core`, not in either of them.
+
+!! The crates
+
+|!Crate |!Depends on |!Owns |
+|`core` |— |the data model (`MetaRecord`, `Field`, `Value`), the query IR and the DSL parser, the simplified language, the session-token helpers, the configuration paths, and the client-side orchestration shared by `mf` and the GUI: sync, trash, the undo and redo selections; `API_VERSION` |
+|`daemon` |`core`, `watchd` (the broker's protocol) |the store, the log and its `Writer`, the query engine, the watcher and its executor, reconcile, the schema, tasks, the HTTP routes. A library plus a thin binary: the tests drive the router directly |
+|`cli` |`core` |the clap command tree and one function per command |
+|`gui` |`core` |the canonical state of the window (workspaces, slots, variables, keybindings, the command registry), the proxy to the daemon, the GUI server, the sandboxed media helpers; its `frontend/` is the Svelte shell, its `default-config/panel-types/` the built-in panels |
+|`watchd` |— |the broker, and the protocol its clients speak |
+|`query-oracle` |`core`, `daemon` |the naive evaluator the query engine is tested against; a dev-dependency of the daemon, linked into no shipped binary ([[The query oracle]]) |
+|`bench` |`core`, `daemon` |the benchmark harness and the timed regression suite |
+
+!! Inside the daemon
+
+A request goes through the same few layers whatever it asks:
+
+* ''Routes'' (`routes/`) — authentication, validation, and the two API layers: resources addressed directly, and the set layer where every body carries a query ([[Metarecord endpoints]], [[Query endpoints]]).
+* ''The writer'' (`log.rs`) — every write is one revision, in one transaction, logged ([[Writes and atomicity]], [[Revisions and operations]]).
+* ''The storage boundary'' (`store.rs`) — the traits everything above speaks; the key-value store is the one implementation ([[The storage boundary]], [[Why a key-value store]]).
+* ''The query engine'' (`index/`) — the only thing that serves a filter, reading the store's derived key spaces ([[Query engine]], [[No operand runs in SQL]]).
+* ''The file side'' — the watcher feeds an in-memory buffer that the executor flushes ([[Watcher]], [[Event batching]]); reconcile walks on demand ([[Reconcile]]); both decide what is tracked through the same rule index ([[The watch rule index]]).
+* ''Tasks'' (`tasks.rs`) — the registry that makes long work observable ([[Task registry and retention]]).
+
+!! Inside the GUI
+
+The Rust side owns every piece of state and the Svelte shell mirrors it through
+events; panels are plain HTML and JavaScript running in the shell's page, each in
+its shadow root, and read the daemon with no cache between them and it
+([[GUI]], [[Panel types]]). Media is decoded out of process, sandboxed
+([[Sandboxing the media decoders]]).
+
+!! Configuration and defaults
+
+No program carries a built-in copy of its configuration: the defaults are files
+in the source tree, installed into a git repository the programs read
+([[Shipped defaults in the source tree]], [[No runtime fallback]],
+[[The configuration repository]]).
+
+!! What holds it together
+
+[[Key invariants]] lists what must stay true across every change, and
+[[Version scope and non-goals]] what the project does not try to do.

@@ -1,11 +1,5 @@
 [
   {
-    "id": "getting-started",
-    "title": "Getting started",
-    "file": "getting-started.html",
-    "aliases": ["start", "config-open"]
-  },
-  {
     "id": "scripting",
     "title": "Scripts and their questions",
     "file": "scripting.html",

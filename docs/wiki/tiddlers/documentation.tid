@@ -1,27 +1,49 @@
 title: Documentation
 kind: overview
-summary: The entry point of the metafolder documentation.
+aliases: home index contents
+summary: The entry point: what metafolder is, where to start, every topic and every catalog.
 
-metafolder keeps metadata about files — and about things that are not files —
-as ''metarecords'' in per-directory repositories, served by a daemon and used
-through the `mf` command line and a desktop GUI.
+metafolder is a local metadata manager. It keeps metadata about files — and about
+things that are not files: a tag, a collection, a set of duplicates — as
+''metarecords'' ([[Metarecord]]): a uuid and a set of named, typed fields. They
+live in ''repositories'' ([[Repository]]), each a directory tree with its store
+beside it.
+
+Three programs work together, all on your machine and none of them on the network:
+
+* the ''daemon'' holds the repositories, follows the files as they move and change, and records every write in a history that can be undone ([[Daemon]]);
+* `mf`, the ''command line'', asks the daemon ([[Command line]]);
+* the ''GUI'' shows the same repositories in panels, driven from the keyboard ([[GUI]]).
+
+What it gives you:
+
+* a metarecord that ''follows its file'' — renamed, moved, edited, or deleted — once its folder is tracked ([[File tracking]]);
+* fields of your own on anything, and ''queries'' over them, over references and over trees ([[Query]]);
+* a ''history'' of every change, yours and the watcher's, to undo, revert or navigate ([[Event log]]);
+* a trash that keeps the bytes and the metadata together ([[Trash]]), duplicate detection ([[Duplicates]]), hierarchical tags ([[Hierarchical tags]]).
+
+!! Start here
+
+* [[Getting started]] — a first repository, a first tracked folder, a first query; the GUI in brief
+* [[Glossary]] — every term, in one line, with the note that defines it
 
 !! Topics
 
 * [[Command line]] — `mf`: its options, selectors, field specs and verbs
 * [[Configuration]] — one git repository under `~/.config/metafolder/`, merged on update
-* [[Data model]] — metarecords, fields and their typed values; reading and editing them
 * [[Daemon]] — the server holding your repositories: loading, configuring, its reports
+* [[Data model]] — metarecords, fields and their typed values; reading and editing them
 * [[Duplicates]] — finding byte-identical files and deleting the copies you choose
 * [[Event log]] — the history of every change: reading it, undoing, reverting, rolling back
-* [[GUI]] — the desktop interface: workspaces, panels, the command input, the bars
 * [[File tracking]] — what is tracked, the watcher, reconcile, ignore patterns
+* [[GUI]] — the desktop interface: workspaces, panels, the command input, the bars
+* [[Hierarchical tags]] — tags as a tree of metarecords: adding, denying, querying
 * [[Platform]] — what runs where; paths, case sensitivity, symlinks, moving a repository
 * [[Query]] — selecting metarecords: the DSL, its predicates, pages and sorts
 * [[Schema]] — types of metarecords and the constraints on their fields
 * [[Security]] — session tokens, sandboxed decoders, no network
-* [[Storage]] — the on-disk store behind each repository: checks, backups, how it answers queries
 * [[Slow log]] — the operations that took too long, and where their time went
+* [[Storage]] — the on-disk store behind each repository: checks, backups, how it answers queries
 * [[Tasks]] — the daemon's long work, observable and often stoppable
 * [[Trash]] — the per-repository bin: trashing, restoring, undoing
 
@@ -33,3 +55,9 @@ Every item of these lists exists in the code; the lists are complete.
 * [[GUI command]] — every command of the GUI's command input
 * [[Panel]] — every panel type of the GUI
 * [[Shipped script]] — the helper scripts installed with the configuration
+
+!! For developers
+
+* [[Architecture]] — the programs, the crates behind them, and who talks to whom
+* [[Key invariants]] — what must stay true across every change, and what checks it
+* [[Version scope and non-goals]] — what version 0.3 covers, and what metafolder will not do

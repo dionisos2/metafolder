@@ -80,18 +80,43 @@ le panel help, les catalogues générés.
 
 * Entrée
 
-** TODO 1. Accueil et vue d'ensemble
+** FAIT 1. Accueil et vue d'ensemble
 
-- [ ] =Documentation= — overview (à réécrire : présentation, liste des sujets, catalogues)
-- [ ] =Getting started= — guide (premier dépôt, premier suivi, première requête ; la GUI en bref)
-- [ ] =Glossary= — reference (une ligne par concept, liens vers les notes)
-- [ ] =Architecture= — overview, dev (daemon, CLI, GUI, watchd, les crates et leurs rôles)
-- [ ] =Version scope and non-goals= — rationale
-- [ ] =Key invariants= — overview, dev (hub du catalogue manuel =Invariant= : une note par invariant, écrites dans les items de leur sujet)
+- [X] =Documentation= — overview (réécrite : présentation, « Start here », liste des sujets, catalogues, entrée développeurs)
+- [X] =Getting started= — guide (premier dépôt, premier suivi, première requête, premier undo ; la GUI en bref)
+- [X] =Glossary= — reference (une ligne par concept, liens vers les notes)
+- [X] =Architecture= — overview, dev (daemon, CLI, GUI, watchd, les crates et leurs rôles)
+- [X] =Version scope and non-goals= — rationale
+- [X] =Key invariants= — overview, dev (hub du catalogue manuel des invariants)
 
-Sources : spec-main « Project Overview », « General description », « Non-goals »,
-« Version scope », « Key invariants » ; help =getting-started.html= ;
-CLAUDE.md « Architecture », « Key invariants ».
+Vérification contre le code. Chaque commande de =Getting started= a été exécutée
+contre un daemon jetable (=init=, =mf_watch= sur la racine, reconcile, lecture et
+écriture de champs, =-s=, =mf path=, =log undo= / =redo=, et le watcher qui
+enregistre un fichier créé après coup) ; les dépendances entre crates de
+=Architecture= sont lues dans les =Cargo.toml= ; chaque invariant renvoie à la
+note qui le porte et, quand il y en a une, à la règle semgrep ou au test qui le
+garde. Écarts : la spec comptait « four crates » (il y en a sept) ; l'invariant
+« aucune réécriture à l'ouverture d'un store à jour » n'était dans aucune note
+(vérifié dans =kvstore/mod.rs= : les migrations ne tournent que si =layout= ou
+=derived= diffère) ; l'ancienne page d'aide listait les panels et les concepts,
+ce que fait maintenant =Documentation=. Les citations périmées de
+=.semgrep/invariants.yml= (=spec-event-log=, =spec-file-tracking=, =spec-gui
+"Untrusted media"=, =CLAUDE.md "Key invariants"=) et de =roadmap.org= visent des
+notes.
+*Choix à signaler* : (1) le catalogue des invariants n'a pas de tag =Invariant=
+séparé : le hub =Key invariants= sert de tag, comme pour tout sujet (onze notes
+existantes le portent : =No duplicate rows=, =One position per forest=, =The
+repository lock=…). Le hub énonce /tous/ les invariants en une ligne chacun, y
+compris ceux qui n'ont pas de note à eux ; (2) sans rien à chercher, le panel
+help ouvre =Documentation= (et non plus =getting-started=) : c'est la page
+d'entrée, et =Getting started= y est le premier lien ; (3) l'invariant de la
+synchronisation renvoie à =docs/spec-sync.org= en texte, faute de notes (item
+29) ; (4) l'alias =config-open= de l'ancienne page n'est pas repris (la commande
+=config:open= a sa note), =start= passe sur =Getting started=.
+Sources retirées (pointeurs) : spec-main « Project Overview », « Non-goals »,
+« Version scope », « Key invariants » — =spec-main.org= ne contient plus que des
+pointeurs, à supprimer à l'item 43 ; help =getting-started.html= et son entrée
+d'index.
 
 * Démon, CLI, configuration
 

@@ -1,5 +1,5 @@
 title: Why background tasks hold a weak reference
-tags: Daemon
+tags: Daemon [[Key invariants]]
 kind: rationale
 audience: dev
 summary: The watcher and the executor must never keep their repository alive, or an unload would leak it with its store locked.

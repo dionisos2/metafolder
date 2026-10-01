@@ -1,5 +1,5 @@
 title: No operand runs in SQL
-tags: [[Query engine]]
+tags: [[Query engine]] [[Key invariants]]
 kind: rationale
 audience: dev
 status: record

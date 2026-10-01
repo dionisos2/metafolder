@@ -3,15 +3,7 @@
 
 * Project Overview
 
-Metafolder is a local metadata management system. It tracks files and
-directories in /repositories/ — watched directory trees — and associates
-arbitrary structured metadata with each metarecord. The system is split into
-four crates:
-
-- =core=: shared data model (metarecords, fields, values, queries)
-- =daemon=: background HTTP server managing repositories and exposing a REST API
-- =cli=: command-line tool that communicates with the daemon
-- =gui=: graphical interface (Tauri v2 + Svelte 5, see spec-gui.org)
+Moved to the wiki: doc "Documentation", doc "Architecture".
 
 * Daemon
 
@@ -21,88 +13,15 @@ Moved to the wiki: doc "Daemon".
 
 ** Non-goals
 
-- No built-in remote protocol: the daemon is local-only and makes no network
-  calls. Cross-machine synchronisation is handled at the CLI/script level (e.g.
-  loading a remote repo over an SSH-mounted filesystem into the local daemon).
-- No multi-user access control. A single local user is assumed; the only
-  authentication is the loopback session token of doc "Session tokens"
-  (which keeps non-token-bearing local processes, notably browser content, out
-  — it is not a user-to-user mechanism).
-- No conflict resolution between concurrent daemon instances on the same repo.
+Moved to the wiki: doc "Version scope and non-goals".
 
 ** Version scope
 
-These specifications describe version *0.3*, the current one. Everything they
-describe is implemented unless the passage says otherwise: work still to come
-is tagged =:deferred:= on a heading, or says so in place, and names what is
-missing rather than a version number.
-
-(An earlier draft tagged deferred work =:v2:=, which read as "version 2" but
-meant version *0.2*. The notation outlived its meaning — 0.2 and 0.3 shipped,
-and most of what carried the tag with them — so it is gone.)
-
-Implemented: CRUD, =TreeRef= / tree cache, file watcher, reconcile, query
-language, reserved fields (=mfr_*= / =mf_*=), the watch/ignore system, the user
-schema (doc "Schema"), cursor pagination, the
-daemon-side event log (doc "Event log") with
-the coordinated navigation protocol and the =mf log= CLI, background tasks and
-progress reporting (doc "Tasks"), the trash-bin
-(doc "Trash") and cross-repo sync
-([[file:spec-sync.org][spec-sync.org]]).
+Moved to the wiki: doc "Version scope and non-goals".
 
 ** Key invariants
 
-- Every filesystem metarecord in a watched repository has exactly one corresponding
-  metadata metarecord in the database.
-- When a file or directory is deleted, its metadata metarecord is preserved; the
-  =mfr_path= field is set to =Nothing= rather than deleting the row.
-- =set_field= replaces *all* rows for =(uuid, field_name)=, collapsing multi-map
-  fields to a single value.
-- A metarecord never holds two field rows with the same =(name, value)=: the
-  multi-map is a set of pairs, not a bag. Appending a value a metarecord already
-  has is a no-op (no row, no version bump, nothing logged), and a multi-valued or
-  whole-record write keeps the first occurrence of each value. Log navigation is
-  exempt — it restores what a snapshot recorded (see doc "No duplicate rows").
-- Cross-repo sync state (links and snapshots) lives outside the data model,
-  in per-pair sync databases under =.metafolder/internal/=; it is never
-  recorded in the event log and can only be modified when both repositories
-  of the pair are simultaneously loaded in the same daemon instance
-  (see [[file:spec-sync.org][spec-sync.org]]).
-- The =version= of a metadata metarecord is managed exclusively by the daemon
-  and cannot be set directly by users. It is a *hash of the metarecord's own
-  content* (see doc "Metarecord version"), carrying no ordering and compared
-  only for equality: equal versions imply identical field states and identical
-  field states imply equal versions, by construction, on every branch of the log
-  and across rollback/redo cycles. Nothing restores a version — restoring the
-  field rows restores it.
-- A repository's store must be held under an exclusive lock for the entire
-  lifetime of the daemon's handle on it (an =flock= on =internal/kv/daemon.lock=,
-  doc "How the storage backend was built"). This prevents a second daemon instance from loading the same repo
-  simultaneously, which would cause version drift and watcher conflicts (e.g.
-  one daemon's watcher updating =mfr_path= and moving =version= while the other
-  is committing a sync). A load that finds the lock already held is refused
-  *immediately* — the lock belongs to a live daemon and waiting for it is
-  pointless — with a =409 Conflict= naming the cause: another metafolder daemon
-  is already using this repository (a transient holder, such as a child
-  process that inherited the descriptor for an instant, is waited out for a
-  second).
-- Opening a repository's store performs *no* rewrite once it is up to date: a
-  layout or derived-data migration detects that its result is in place and
-  does nothing (the store records its =layout= and =derived= versions).
-- =TreeRef= references must form a forest (no cycles per =field_name=) with a
-  maximum depth of 1000. The daemon rejects any write that would create a cycle
-  or exceed this depth. The check walks the parent chain iteratively using the
-  tree cache (fetching missing nodes from the DB step by step as needed).
-- That forest is *referentially closed*: a manual write may neither name a
-  parent that carries no position of its own, nor remove the last position of a
-  metarecord others are placed under (=400= either way). The watcher, which
-  cascades on the filesystem's authority, and log navigation, which restores
-  rows directly, are exempt. See
-  doc "Referential integrity of a forest".
-
-The daemon listens on =127.0.0.1:7523= by default (configurable via =--port=).
-All request and response bodies are JSON. Errors return a JSON object
-={"error": "<message>"}= with an appropriate HTTP status code.
+Moved to the wiki: doc "Key invariants".
 
 ** Daemon configuration
 

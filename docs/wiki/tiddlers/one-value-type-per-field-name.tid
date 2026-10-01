@@ -1,5 +1,5 @@
 title: One value type per field name
-tags: [[Data model]]
+tags: [[Data model]] [[Key invariants]]
 kind: reference
 summary: A field name has one value type in the whole repository, fixed by its first write; nothing coexists with it.
 

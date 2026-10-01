@@ -1,0 +1,87 @@
+title: Glossary
+tags: Documentation
+kind: reference
+aliases: terms definitions
+summary: Every term of metafolder in one line, with the note that defines it.
+
+!! Data
+
+* ''Metarecord'' — the unit of metadata: a uuid, a version and fields, about one subject — a file, a tag, a collection ([[Metarecord]]).
+* ''Field'' — a name and a typed value on a metarecord; several fields may share a name, never the same value twice ([[Fields and values]], [[No duplicate rows]]).
+* ''Value type'' — one of ten: `nothing`, `string`, `int`, `float`, `bool`, `datetime`, `ref`, `tree_ref`, `ref_base`, `external_ref` ([[Value types]]); a field name has one in the whole repository ([[One value type per field name]]).
+* ''Nothing'' — a value saying "this field does not apply"; ''unknown'' is the field not being there at all ([[Nothing versus unknown]]).
+* ''Field spec'' — `name:type=value`, a field as written on the command line ([[Field specifications]]).
+* ''Reference'' (`ref`) — a value pointing at another metarecord ([[Following references]]).
+* ''TreeRef'' (`tree_ref`) — a value placing a metarecord under a parent, with a name; the ''position'' of that metarecord ([[TreeRef forest]], [[One position per forest]]).
+* ''Forest'' — the trees one `tree_ref` field name draws; `mfr_path` is the forest of files ([[TreeRef forest]]).
+* ''Path'' — a position read from its root down, `/`-separated, relative to the repository root ([[Path representation]], [[TreeRef path conventions]]).
+* ''Reserved field'' — `mfr_*` is written by the daemon, `mf_*` is read by it ([[Reserved fields]]).
+* ''Version'' — a hash of a metarecord's content, compared for equality only ([[Metarecord version]]).
+* ''Schema'' — the declared types of metarecords and the constraints on their fields ([[Schema]]).
+
+!! Repositories and the daemon
+
+* ''Repository'' — a directory tree and its metadata store, in `.metafolder/` ([[Repository]], [[Repository layout on disk]]).
+* ''Root metarecord'' — the metarecord of the repository's root directory, whose path is empty; it carries the tracking defaults ([[Watch and ignore fields]]).
+* ''Store'' — the on-disk key-value database of one repository ([[Storage]]).
+* ''Daemon'' — the background server holding the loaded repositories ([[Daemon]]).
+* ''Loading'' — making the daemon work on a repository; one daemon at a time, enforced by a lock ([[Creating and loading a repository]], [[The repository lock]]).
+* ''Session token'' — the secret every request to the daemon carries ([[Session tokens]]).
+* ''Task'' — long daemon work that can be observed and often stopped ([[Tasks]]).
+* ''Slow log'' — the record of the operations that took too long ([[Slow log]]).
+* ''Configuration repository'' — `~/.config/metafolder/`, a git repository of every setting ([[Configuration]]).
+
+!! Queries
+
+* ''Query'' — a condition selecting metarecords ([[Query]]).
+* ''DSL'' — the query language in its full, exact form ([[Writing queries]], [[Query DSL grammar]]).
+* ''Simplified query'' — a shorter language, expanded into the DSL by an editable grammar ([[Simplified query language]]).
+* ''Aspect'' — the part of a value a predicate reads: `field:value`, `field:parent`, `field:path` ([[Field aspects]]).
+* ''osm'' — ordered substring matching, the finder-style match ([[Ordered substring matching]]).
+* ''Selector'' — how a command names its metarecords: `-i`, `-q`, or none for all ([[Selectors]]).
+* ''Cursor'' — the mark a paged query hands back to continue from ([[Pagination and sorting]]).
+
+!! File tracking
+
+* ''Tracked'' — having a metarecord with an `mfr_path`; ''watched'' — being followed live ([[File tracking]]).
+* ''Eligible'' — inside a watched folder and not ignored ([[Eligibility]]).
+* ''Watch'' and ''ignore'' — the `mf_watch` and `mf_ignore` fields that decide eligibility ([[Watch and ignore fields]], [[Ignore presets]]).
+* ''Watcher'' — the part of the daemon that follows filesystem events ([[Watcher]]).
+* ''Flush'' — the moment buffered events are applied, after the disk has been quiet ([[Event batching]]).
+* ''Reconcile'' — the walk that brings a repository in line with the disk on demand ([[Reconcile]]).
+* ''Fingerprint'' — the content hashes by which a moved file is recognised ([[File fingerprint]]).
+* ''Candidate'' — a likely move the reconcile will not decide alone ([[Moves and candidates]]).
+* ''Orphan'' — a metarecord whose file went away without being asked to ([[Orphans]]).
+* ''Mount point'' — a removable volume inside a repository; unplugged, its subtree is ''offline'' ([[Mount points]], [[Offline subtrees]]).
+* ''Watch budget'' — the limit on what the inotify watcher may place ([[The watch budget]]).
+* ''Broker'' — `metafolder-watchd`, the privileged service watching whole filesystems ([[The fanotify broker]]).
+
+!! History
+
+* ''Event log'' — the history of every write to a repository ([[Event log]]).
+* ''Operation'' — one atomic change; ''revision'' — the operations of one request ([[Revisions and operations]]).
+* ''HEAD'' — the operation the data currently reflects ([[History tree and HEAD]]).
+* ''Rollback'' — moving HEAD elsewhere in the history, files included ([[Rollback]]).
+* ''Revert'' — undoing one past revision in place, as a new revision ([[Revert]]).
+* ''Undo'' and ''redo'' — taking back the newest change you made, and bringing it back ([[Undo and redo]]).
+* ''Pruning'' — dropping old history ([[Pruning the log]], [[Automatic retention]]).
+
+!! Functions
+
+* ''Trash'' — the per-repository bin holding trashed bytes with their metarecords ([[Trash]]).
+* ''Duplicate group'' — the metarecord a set of byte-identical files points at ([[Duplicate groups]]).
+* ''Tag'' — a metarecord placed in a tree by its path, which other metarecords point at ([[Hierarchical tags]]).
+* ''Subsumption'' — having a tag implies having its ancestors ([[Tag subsumption and exclusivity]]).
+
+!! GUI
+
+* ''Workspace'' — one tab: a repository and the state of its panels ([[Workspaces]]).
+* ''Panel'' — what a slot shows; a ''panel type'' is a kind of panel ([[Panel types]]).
+* ''Slot'' — one of the two places a panel is shown in ([[Panel slots and layout]]).
+* ''Command'' — a named action, typed, bound to a key or clicked ([[Commands]]).
+* ''Command input'' — the line where commands and shell lines are typed ([[The command input]]).
+* ''Keybinding'' — a key, or a sequence of keys, running a command ([[Keybindings]]).
+* ''Selection'' — the metarecords a panel hands to the others ([[Cross-panel selection]]).
+* ''Workspace variable'' — a named value panels of a workspace share ([[Workspace variables]]).
+* ''Value picker'' — the completion that fills a reference field ([[Value picker]]).
+* ''Shipped script'' — a helper script installed with the configuration, run from the GUI ([[Shipped script]]).

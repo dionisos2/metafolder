@@ -1,5 +1,5 @@
 title: Referential integrity of a forest
-tags: [[TreeRef forest]]
+tags: [[TreeRef forest]] [[Key invariants]]
 kind: reference
 summary: A position's parent must exist in the same forest, a position with children cannot be taken away, and the repository root cannot be deleted.
 

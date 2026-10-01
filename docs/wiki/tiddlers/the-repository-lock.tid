@@ -1,5 +1,5 @@
 title: The repository lock
-tags: Daemon
+tags: Daemon [[Key invariants]]
 kind: reference
 audience: dev
 summary: A daemon holds each loaded store under an exclusive flock; a second daemon's load is refused at once.

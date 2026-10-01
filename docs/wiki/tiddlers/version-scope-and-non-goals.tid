@@ -1,0 +1,31 @@
+title: Version scope and non-goals
+tags: Documentation
+kind: rationale
+aliases: non-goals scope roadmap deferred
+summary: The documentation describes version 0.3, all of it implemented unless a note says otherwise; no remote protocol, no user accounts, no two daemons on one repository.
+
+!! What the documentation describes
+
+Version ''0.3'', the current one. Everything a note describes is implemented
+unless the note says otherwise: a note about work still to come says so in its
+status — ''deferred'' (decided, not done), ''proposed'' (not decided) — and names
+what is missing rather than a version number. A ''record'' is a note kept for
+what it explains about a past design, not for what the code does today.
+
+The one area still described outside this documentation is the synchronisation
+between two repositories (`mf sync`, the `sync` panel), in `docs/spec-sync.org`.
+
+!! Non-goals
+
+* ''No remote protocol.'' The daemon is local-only and makes no network call ([[No network access]]). Working across machines is done around it: a repository's files may sit on a mounted remote filesystem as long as its store is kept local ([[Network and special filesystems]]), and synchronising two repositories needs both loaded in the same daemon.
+* ''No user accounts, no access control.'' A single local user is assumed. The session token is not a user-to-user mechanism: it keeps the processes that cannot read it — web pages in your browser first of all — away from the loopback ports ([[Session tokens]], [[Why a session token]]).
+* ''No two daemons on one repository.'' There is no conflict resolution between daemon instances: a repository's store is locked by the daemon that loaded it, and a second load is refused at once ([[The repository lock]]).
+
+Portability is a separate matter: Linux is the platform metafolder runs on, macOS
+and Windows are design targets ([[Platform]]).
+
+!! Why say so
+
+Each of these is a door deliberately left closed, not an oversight: a change
+that needs one of them is a change of scope, to be decided as such. They also
+bound the threat model — single user, loopback — that [[Security]] starts from.

@@ -1,0 +1,104 @@
+title: Getting started
+tags: Documentation
+kind: guide
+aliases: start tutorial quickstart
+summary: A first repository, a first tracked folder, a first query and a first undo with mf; then the GUI in brief.
+
+The examples use a music folder, `~/music`, holding `albums/one.flac` and
+`albums/two.flac`.
+
+!! Before anything
+
+From a checkout, `scripts/complete-build.sh` builds the programs into
+`target/debug/` and installs the configuration under `~/.config/metafolder/`
+([[Updating the configuration]]). Then start the daemon and leave it running:
+
+```
+metafolder-daemon
+```
+
+It listens on `127.0.0.1:7523` and loads nothing until asked ([[Daemon]]).
+
+!! A first repository
+
+```
+mf repo init ~/music          # prints the repository's uuid
+mf repo                       # the loaded repositories
+```
+
+`init` creates `~/music/.metafolder/` and loads the repository, named `music`
+after its directory ([[Creating and loading a repository]]). Every command about a
+repository names it before the command, with `-n <name>` ([[Global options]]).
+
+!! Tracking the files
+
+A new repository follows nothing: tracking is opt-in. Say that the root is watched
+— it is the metarecord whose path is empty — then bring in what is already there:
+
+```
+mf -n music metarecord -q 'mfr_path = ""' field set mf_watch:bool=true    # 1
+mf -n music reconcile                                                     # created: 3  moved: 0
+```
+
+The first command prints how many metarecords it wrote to; the reconcile created
+one metarecord for `albums` and one per file ([[Tracking a folder]]). From now on
+the watcher follows the folder: a file created, renamed, edited or deleted there is
+recorded a couple of seconds later, with nothing to run ([[Watcher]]).
+
+!! Reading and writing fields
+
+A metarecord is selected by a query (`-q`) or by its uuid (`-i`), given before the
+verb ([[Selectors]]); a field is written as `name:type=value`
+([[Field specifications]]).
+
+```
+mf -n music metarecord -q 'mfr_path ->* "/albums"' get                    # the uuids under albums/
+mf -n music metarecord -q 'mfr_path = "/albums/one.flac"' field set rating:int=4
+mf -n music metarecord -q 'rating > 3' get                                # one uuid
+mf -n music metarecord -i <uuid> get                                      # the whole metarecord, as JSON
+mf -n music path <uuid>                                                   # where its file is
+```
+
+`mfr_path` is the field the daemon keeps for a file's place in the tree; `rating`
+is yours, as is any name outside the `mfr_` and `mf_` prefixes ([[Reserved fields]]). The query
+language is described in [[Writing queries]]; a shorter form exists for everyday
+use, `-s` ([[Using simplified queries]]):
+
+```
+mf -n music metarecord -q 'rating>=4' -s get --count
+```
+
+!! Taking a change back
+
+Every write is a revision of the repository's history ([[Event log]]):
+
+```
+mf -n music log               # the revisions, newest first
+mf -n music log undo          # takes back the newest change you made
+mf -n music log redo          # … and brings it back
+```
+
+([[Undo and redo]].)
+
+!! The GUI in brief
+
+```
+metafolder-gui
+```
+
+The GUI connects to the running daemon ([[Connection to the daemon]]) and starts
+with one empty workspace: pick a repository in the `repos` panel, and the
+workspace is on it ([[Workspaces]]).
+
+* The window shows one or two ''panels'' side by side; each slot can show any panel type — the list of metarecords, the detail of one, the file manager, the log… ([[Panel types]], [[Panel slots and layout]]).
+* Everything is a ''command'': <<key "command-input:focus command" ":">> focuses the command input, which completes command names; <<key "command-input:focus bash" "!">> runs a shell line instead ([[The command input]], [[Commands]]).
+* Almost every command has a ''key'', and every key can be changed ([[Keyboard navigation]], [[Changing keybindings]]).
+* Typing in the list's query box filters the metarecords, in the simplified language ([[Using simplified queries]]).
+* <<key "help:open" "h h">> opens this documentation; <<key "help:cursor" "h c">> then a click opens the page of what was clicked, and <<key "help:key" "h k">> says what a key runs ([[In-app help]]).
+
+!! Next
+
+* [[Glossary]] — the vocabulary, one line each
+* [[Setting ignore patterns]] — leaving build output and the like out of tracking
+* [[Hierarchical tags]], [[Duplicates]], [[Trash]] — what is built on top
+* [[Customising the GUI]] — keys, commands, style

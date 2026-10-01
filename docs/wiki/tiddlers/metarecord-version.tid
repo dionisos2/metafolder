@@ -1,5 +1,5 @@
 title: Metarecord version
-tags: [[Data model]]
+tags: [[Data model]] [[Key invariants]]
 kind: reference
 summary: A hash of the metarecord's content, maintained by the daemon — compare two versions for equality only.
 

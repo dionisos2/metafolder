@@ -5,7 +5,7 @@ summary: Shows the documentation: a box to open a page by name or search all of 
 
 Open it with <<key "help:open" "h h">> (`help:open`, optionally followed by what to
 look for) or with `panel:set type help` (<<key "panel:set type help" "t h">>).
-Without anything to look for, it shows the starting page.
+Without anything to look for, it shows the entry page ([[Documentation]]).
 
 !! The box
 

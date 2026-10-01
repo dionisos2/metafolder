@@ -1,5 +1,5 @@
 title: No network access
-tags: Security
+tags: Security [[Key invariants]]
 kind: reference
 audience: dev
 aliases: network proxy csp

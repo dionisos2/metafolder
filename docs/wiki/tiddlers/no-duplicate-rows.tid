@@ -1,5 +1,5 @@
 title: No duplicate rows
-tags: [[Data model]]
+tags: [[Data model]] [[Key invariants]]
 kind: reference
 summary: A metarecord never holds the same (name, value) twice; writes collapse duplicates instead of failing, except an edit by row id.
 

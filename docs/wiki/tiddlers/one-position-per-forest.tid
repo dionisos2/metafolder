@@ -1,5 +1,5 @@
 title: One position per forest
-tags: [[TreeRef forest]]
+tags: [[TreeRef forest]] [[Key invariants]]
 kind: reference
 summary: A metarecord holds at most one tree_ref row per field name, so every node has one path and a subtree hangs from one place.
 

@@ -1,0 +1,73 @@
+title: Key invariants
+tags: Documentation
+kind: overview
+audience: dev
+aliases: invariants invariant
+summary: What must stay true across every change — in the data, the forests, the log, file tracking, the daemon and the GUI — with the note that owns each rule and what checks it.
+
+An invariant here is a rule the rest of the code relies on without checking it
+again. Each line states one, names the note that owns it, and says what guards
+it when something does. The static guards are the rules of
+`.semgrep/invariants.yml`, run by `scripts/check.sh`: they catch what neither the
+compiler nor a test of today's code can see — a future write placed in the wrong
+layer.
+
+A change that breaks one of these is not a bug fix or a refactoring: it is a
+change of design, to be decided as such, with its note rewritten.
+
+!! Data
+
+* A metarecord never holds the same `(name, value)` twice: writes collapse duplicates ([[No duplicate rows]]).
+* Setting a field replaces ''every'' row of that name on the metarecord; adding appends ([[Fields and values]], [[The verb pattern]]).
+* A field name has one value type in the whole repository, `nothing` aside ([[One value type per field name]]).
+* A metarecord's `version` is a hash of its content, maintained by the daemon alone, never set by a client and never restored — restoring the rows restores it. Compare two versions for equality only ([[Metarecord version]]).
+* A metarecord belongs to the repository whose store holds it; there is no owner field ([[Metarecord]], [[Repository]]).
+
+!! Forests
+
+* The `tree_ref` values of one field name form a forest: no cycle, at most 1000 deep; a write that would break it is refused with `400` ([[TreeRef forest]]).
+* A metarecord holds at most one position per forest ([[One position per forest]]; `crates/daemon/tests/one_position.rs`).
+* A forest is referentially closed: a parent must have a position of its own, and a position with children cannot be taken away. The watcher and log navigation are exempt ([[Referential integrity of a forest]]).
+
+!! Writes and the log
+
+* Every write goes through `log::Writer`: one revision is one transaction covering the rows, the log, HEAD and the derived key spaces, so HEAD and the data never disagree ([[Writes and atomicity]], [[Revisions and operations]]; semgrep `mf-write-outside-writer`).
+* A write on a loaded repository goes through the repository's own writer, so that its configured retention applies ([[Automatic retention]]; semgrep `mf-writer-bypasses-retention`).
+* Log navigation restores what the snapshots recorded — rows with their original ids — and is exempt from the rules a manual write must meet ([[Log storage]]).
+
+!! File tracking
+
+* Tracking is opt-in: nothing is followed until `mf_watch = true` is set ([[Watch and ignore fields]], [[Eligibility]]).
+* A file's metarecord outlives the file: on deletion `mfr_path` becomes `nothing`, the metarecord stays ([[Event semantics]]).
+* Only the watcher, the orphan commands and a manual `force` write set `mfr_path` to `nothing`; reconcile never does, it leaves the stale path ([[Reconcile]], [[Orphans]]; semgrep `mf-mfr-path-nothing-outside-watcher`).
+* The watcher and a reconcile must reach the same state from the same filesystem history ([[Testing the watcher]]).
+* Whether a path is there is asked of the entry itself, never through a symlink: a broken link is an ordinary tracked file ([[Symbolic links]]; semgrep `mf-path-exists-follows-symlinks`).
+* `.metafolder/internal/` is the only part of a repository excluded from tracking ([[Repository layout on disk]]).
+
+!! The daemon and its stores
+
+* A loaded repository's store is held under an exclusive lock for as long as the daemon holds it: no second daemon on the same repository ([[The repository lock]]).
+* The watcher and the executor hold a `Weak<RepoState>`, never an `Arc`, or an unloaded repository would stay alive, locked ([[Why background tasks hold a weak reference]]; semgrep `mf-repostate-arc-in-background-task`).
+* Opening a store that is up to date rewrites nothing: the store records the versions of its layout and of its derived data, and a migration runs only when one differs ([[Store tables]]).
+* The query engine alone serves a filter, and nothing falls back: a shape it cannot answer is a daemon bug, reported as one ([[No operand runs in SQL]]). The engine and the naive oracle must agree on every query ([[The query oracle]]).
+* The cost of a bounded operation does not grow with the repository; it is asserted by counting the keys read, never by timing ([[Reading the log costs the window]]; `crates/daemon/tests/kv_cost.rs`, `log_cost.rs`).
+* The sync state of a pair of repositories lives outside the data model, in a per-pair database under `internal/`: it is never in the event log, and changes only while both repositories are loaded in the same daemon (`docs/spec-sync.org`).
+
+!! The wire and the configuration
+
+* Every request to the daemon carries its session token; no route is exempt, `/health` included. The GUI server gates its scripting API and every route serving a file ([[Session tokens]]).
+* `core::API_VERSION` is the wire-protocol version, not the crate version: a change to the HTTP contract that would make an older client misbehave bumps it by one; a purely additive change does not ([[Health and diagnostics]], [[Connection to the daemon]]).
+* Nothing reaches a remote host ([[No network access]]).
+* No program falls back to a built-in default: a missing required file, or a malformed one, stops it ([[No runtime fallback]], [[Shipped defaults in the source tree]]).
+
+!! The GUI
+
+* Every media decoder runs sandboxed, and the GUI refuses to start without the sandbox ([[Sandboxing the media decoders]]; semgrep `mf-unsandboxed-decoder`).
+* A file's bytes are never loaded into the WebView as a document ([[Why /fsraw never serves a document]]).
+* A panel queries its shadow root, never `document`, which is the shell (semgrep `mf-panel-queries-document`).
+* The GUI's JavaScript is typechecked without exception (semgrep `mf-typecheck-suppressed-in-gui-js`).
+* The Rust side owns the state of the window; the shell mirrors it ([[GUI]]).
+
+!! The notes that are an invariant
+
+<<catalog "Key invariants">>

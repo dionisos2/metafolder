@@ -1,5 +1,5 @@
 title: No runtime fallback
-tags: Configuration
+tags: Configuration [[Key invariants]]
 kind: reference
 summary: A missing or malformed configuration file stops the program with a message naming it; no program carries built-in copies.
 

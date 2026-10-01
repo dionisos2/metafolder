@@ -215,7 +215,7 @@ export async function mount(root, metafolder) {
     const topic = (typeof request?.topic === 'string' ? request.topic : '').trim();
     searchInput.value = topic;
     if (topic === '') {
-      showPage('getting-started');
+      showPage('documentation');
     } else {
       runSearch(topic);
     }

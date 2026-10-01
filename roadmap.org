@@ -2,7 +2,7 @@
 
 What is left to do, most urgent first. Done work is not kept here: it is in
 the git history and the CHANGELOG. Deferred work inside a spec is tagged
-=:deferred:= and named there (spec-main "Version scope"); the ones worth
+=:deferred:= and named there (doc "Version scope and non-goals"); the ones worth
 keeping in view are listed at the end.
 
 * TODO performance
