@@ -1,7 +1,7 @@
 // Pure help logic (spec-gui "Help"), shared by the help panel and the shell.
 // No DOM, no fetch — unit-tested in crates/gui/frontend/tests/help.test.ts.
 //
-//  - resolvePage: an "exact name" (a page id, an alias, or a `panel:command`)
+//  - resolvePage: an "exact name" (a page id, title, alias, or a `panel:command`)
 //    resolved to its help page, or null to fall back to a grep search. `#name`
 //    forces grep (it is never an exact name).
 //  - filterPages: a grep over the page index (title hits ranked above body
@@ -29,8 +29,11 @@
  */
 
 /**
- * The page in `manifest` whose `id` or one of whose `aliases` equals `name`
- * (case-insensitive).
+ * The page in `manifest` named `name` (case-insensitive): by its `id`, else by
+ * its `title`, else by one of its `aliases`. The title is what names a command's
+ * note — `trash:find`, whose id cannot hold the colon — and it comes before
+ * the aliases so that a command's own note wins over a page that merely lists
+ * the command among its aliases.
  *
  * @param {Page[]} manifest
  * @param {string} name already lower-cased
@@ -38,21 +41,24 @@
  */
 function directMatch(manifest, name) {
   return (
-    manifest.find(
-      (page) =>
-        page.id.toLowerCase() === name ||
-        (page.aliases ?? []).some((alias) => alias.toLowerCase() === name),
-    ) ?? null
+    manifest.find((page) => page.id.toLowerCase() === name) ??
+    manifest.find((page) => page.title.toLowerCase() === name) ??
+    manifest.find((page) => (page.aliases ?? []).some((alias) => alias.toLowerCase() === name)) ??
+    null
   );
 }
 
+const PANEL_SUFFIX = ' panel';
+
 /** Resolves an exact name to a help page, or null when it should grep instead.
  *
- *  Order: empty/`#`-prefixed → null; a direct id/alias hit; else, for a
- *  `prefix:rest` command name, the more specific `rest` taken as an alias
- *  (so `metarecord-list:focus-query` → the queries page), then the `prefix`
- *  taken as a panel type (so every `panel:command` lands on at least its
- *  panel's page); else null.
+ *  Order: empty/`#`-prefixed → null; a direct id/title/alias hit; else, for a
+ *  `prefix:rest` command name, the command itself without its arguments (so
+ *  `panel:set type treeref` → the `panel:set` note), then the more specific
+ *  `rest` taken as an alias (so `metarecord-list:focus-query` → the queries
+ *  page), then the `prefix` taken as a panel type (so every `panel:command`
+ *  lands on at least its panel's page); else a panel type and its
+ *  "<type> panel" note, either standing for the other; else null.
  *
  * @param {Page[]} manifest
  * @param {unknown} name
@@ -62,16 +68,22 @@ export function resolvePage(manifest, name) {
   if (typeof name !== 'string') return null;
   const n = name.trim().toLowerCase();
   if (n === '' || n.startsWith('#')) return null;
-
   const direct = directMatch(manifest, n);
   if (direct) return direct;
-
   const colon = n.indexOf(':');
   if (colon > 0) {
-    return directMatch(manifest, n.slice(colon + 1)) ?? directMatch(manifest, n.slice(0, colon));
+    const command = n.split(/\s+/)[0] ?? n;
+    return (
+      (command !== n ? directMatch(manifest, command) : null) ??
+      directMatch(manifest, n.slice(colon + 1)) ??
+      directMatch(manifest, n.slice(0, colon))
+    );
   }
-
-  return null;
+  // A panel is asked for as "<type> panel" (the help cursor's fallback) and its
+  // note carries that title; a panel with no note of its own is the page named
+  // by the type alone, and the bare type reaches the note the other way round.
+  if (n.endsWith(PANEL_SUFFIX)) return directMatch(manifest, n.slice(0, -PANEL_SUFFIX.length));
+  return directMatch(manifest, n + PANEL_SUFFIX);
 }
 
 /** Case-insensitive grep over the page index (`{id, title, text}`). Pages whose
@@ -143,8 +155,9 @@ export function mergeManifests(legacy, legacyBase, wiki, wikiBase) {
 
 /** The help topic for a clicked element, given `descriptors` in composedPath
  *  order (innermost first). The nearest element carrying a `helpTopic` wins;
- *  otherwise the nearest `slotBody` resolves to that slot's panel type via
- *  `slotPanelType`; otherwise null.
+ *  otherwise the nearest `slotBody` resolves to the panel that slot shows
+ *  ("<type> panel", via `slotPanelType`) — the panel's own note rather than a
+ *  topic or a command that happens to share the type's name; otherwise null.
  *
  * @param {({helpTopic?: string|null, slotBody?: string|null}|null|undefined)[]} descriptors
  *   in composedPath order (innermost first)
@@ -156,7 +169,10 @@ export function resolveClickTopic(descriptors, slotPanelType) {
     if (d && d.helpTopic) return d.helpTopic;
   }
   for (const d of descriptors) {
-    if (d && d.slotBody) return slotPanelType(d.slotBody) ?? null;
+    if (d && d.slotBody) {
+      const type = slotPanelType(d.slotBody);
+      return type ? type + PANEL_SUFFIX : null;
+    }
   }
   return null;
 }

@@ -48,6 +48,52 @@ describe('resolvePage', () => {
     expect(resolvePage(MANIFEST, 'repos:open')?.id).toBe('repos');
   });
 
+  // The wiki has one note per command, titled by its name (its id cannot hold
+  // the colon), and one per concept, titled in words.
+  const WIKI_NOTES = [
+    { id: 'find-in-a-panel', title: 'Find in a panel', file: 'a.html', aliases: ['find'] },
+    { id: 'trash_find', title: 'trash:find', file: 'b.html' },
+    { id: 'panel_set', title: 'panel:set', file: 'c.html' },
+    { id: 'trash', title: 'Trash', file: 'd.html', aliases: ['bin'] },
+  ];
+
+  test('resolves by title, so a command name opens the command note', () => {
+    expect(resolvePage(WIKI_NOTES, 'trash:find')?.id).toBe('trash_find');
+    expect(resolvePage(WIKI_NOTES, 'Find in a panel')?.id).toBe('find-in-a-panel');
+    expect(resolvePage(WIKI_NOTES, 'find in a PANEL')?.id).toBe('find-in-a-panel');
+  });
+
+  test('an invocation with arguments opens the note of its command', () => {
+    expect(resolvePage(WIKI_NOTES, 'panel:set type treeref')?.id).toBe('panel_set');
+  });
+
+  test('a command without a note still falls back to its verb, then its panel', () => {
+    expect(resolvePage(WIKI_NOTES, 'recent:find')?.id).toBe('find-in-a-panel');
+    expect(resolvePage(WIKI_NOTES, 'trash:restore')?.id).toBe('trash');
+  });
+
+  // A panel's own note is titled "<type> panel"; the topic of the same name is
+  // another page.
+  const PANELS = [
+    { id: 'trash', title: 'Trash', file: 'a.html' },
+    { id: 'trash-panel', title: 'trash panel', file: 'b.html' },
+    { id: 'log-panel', title: 'log panel', file: 'c.html' },
+    { id: 'file', title: 'File viewer', file: 'd.html' },
+  ];
+
+  test('"<type> panel" opens the panel note, or the page named by the type', () => {
+    expect(resolvePage(PANELS, 'trash panel')?.id).toBe('trash-panel');
+    // Not migrated yet: the older page, whose id is the panel type.
+    expect(resolvePage(PANELS, 'file panel')?.id).toBe('file');
+    expect(resolvePage(PANELS, 'nothing panel')).toBeNull();
+  });
+
+  test('a bare panel type with no page of its own opens the panel note', () => {
+    expect(resolvePage(PANELS, 'log')?.id).toBe('log-panel');
+    // A page of that exact name comes first.
+    expect(resolvePage(PANELS, 'trash')?.id).toBe('trash');
+  });
+
   test('a #-prefixed term forces grep (null) even on an exact name', () => {
     expect(resolvePage(MANIFEST, '#queries')).toBeNull();
   });
@@ -148,9 +194,9 @@ describe('resolveClickTopic', () => {
     expect(resolveClickTopic(descriptors, slotPanelType)).toBe('edit-query');
   });
 
-  test('falls back to the slot panel type when no topic is tagged', () => {
+  test('falls back to the panel of the clicked slot when no topic is tagged', () => {
     const descriptors = [{}, { slotBody: 'right' }, {}];
-    expect(resolveClickTopic(descriptors, slotPanelType)).toBe('repos');
+    expect(resolveClickTopic(descriptors, slotPanelType)).toBe('repos panel');
   });
 
   test('returns null when neither a topic nor a slot is present', () => {
