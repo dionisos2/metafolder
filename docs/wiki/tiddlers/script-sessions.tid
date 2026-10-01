@@ -1,0 +1,110 @@
+title: Script sessions
+tags: [[Scripting the GUI]]
+kind: reference
+aliases: scripting question script-keys [[script keys]]
+summary: What a running script is to the GUI — the workspaces it owns, its question bar, the keys it borrows and gives back, the four keys it can never take, and how it is stopped.
+
+
+A ''script session'' is a process driving the GUI through `mf gui`
+([[Scripting the GUI]]). What follows is what the GUI guarantees while one runs —
+to you, who answer it, and to whoever writes it.
+
+!! The question
+
+A script asks with [[mf gui input]]: the question appears in ''its own bar'', just
+above the status line, with the keys it accepts. A status or error message cannot
+hide it. Press one of the keys shown, or type <<cmd "answer:send">> and the value in
+the command input.
+
+By convention the shipped scripts pair the arrow keys with the letters, the same way
+everywhere:
+
+|!Key |!Means |
+|`y` or → |yes |
+|`n` or ← |no |
+|`m` or ↑ |mixed |
+|`s` or ↓ |skip — leave the entry alone; for a folder, its whole subtree |
+|`u` or Backspace |take the previous answer back |
+|`q` |stop |
+
+A script may also ask for a line of text ([[mf gui prompt]]): the question is then the
+prompt of [[The command input]], which offers the script's candidates; Enter
+answers, Escape cancels.
+
+Only ''one'' question exists at a time, whatever the number of scripts: a second one is
+refused, not queued ([[GUI design decisions]]).
+
+!! Script keys
+
+While a question is up, the keys it awaits are ''borrowed from the GUI'': they are
+seen before every panel and global binding, so a script offering `y`, `n` and `s` is
+never in conflict with an `n` bound in the panel underneath — and that panel cannot be
+used meanwhile. A key typed in a text field is text, and reaches neither.
+
+The ''script keys'' checkbox in the question bar gives them back
+(<<key "script-keys:toggle" tab>>, `script-keys:toggle`). Unticked, every key means
+again what it means in the panel; the question stays, its keys struck through, and
+is answered with `answer:send`, or by ticking the box again. The choice holds from
+one question to the next, but every ''new'' run starts with its keys live: a script is
+never deprived, without anyone noticing, of the answers it waits for.
+
+!! Reserved keys
+
+Four keys are yours, and a script cannot take them. A question asking for one is
+refused (`400`) before it is shown.
+
+|!Key |!Does |
+|Escape |stops the asking script |
+|Backspace |goes back: answers `back` |
+|<<key "command-input:focus command" ":">>, <<key "command-input:focus bash" "!">> |open the command input |
+|<<key "script-keys:toggle" tab>> |flips the script keys |
+
+Escape and Backspace are reserved as such; the others are whatever keys are bound to
+`command-input:focus` and `script-keys:toggle`, so rebinding those moves the
+reservation with them ([[Keybindings]]).
+
+''Escape'' stops the run and everything it started: the script's whole process group
+gets `SIGTERM`, then `SIGKILL` if it is still there two seconds later. The command
+blocked on the question dies with it, which releases the question. A bash script
+still runs its `EXIT` trap — how the shipped ones close their workspace and put the
+layout back — but nothing after the question it was on. One that has a result to
+report or work to finish offers its own quit key — `q`, in every shipped script —
+which it receives as an ordinary answer.
+
+''Backspace'' ends an answer, not the run. It answers the question with the value
+`back`, and the script decides what that means, since only it knows what its last
+answer wrote ([[Why going back is the script's business]]). The shipped walks undo
+the answer exactly, through the event log, and ask it again; they show `u`, the
+letter doing the same. A script with no way back asks its question again: the key
+is never a silent no-op, and never read as ''stop''.
+
+Both keys work this way only while the script keys are ticked. Unticked, Escape and
+Backspace are the GUI's own again, and <<cmd "script:stop">> stops the script from
+the command input.
+
+!! The workspaces a script owns
+
+A script started by the GUI owns the workspace it was launched from, and every
+workspace it opens. Its question bar, its prompt in the command input and its
+task-bar entry show ''only while one of those workspaces is in a visible slot'':
+switching tab puts the question away instead of leaving it over unrelated panels.
+
+* The keys follow the bar: while the question is put away its keys are not borrowed, and Escape does not stop a script whose question is off screen.
+* A prompt put away gives the command input back — its own prompt, its draft, its history, Enter running commands — and what was typed as an answer is kept, and comes back with the focus when an owned workspace returns.
+* The script keeps waiting throughout. Nothing is cancelled by looking elsewhere.
+
+A question from a script the GUI did not start — one run from a terminal — belongs to
+nobody, and is always shown.
+
+!! Working, or waiting for you
+
+In the task bar, a script ''spins'' while it works — next to its progress bar when it
+reports one — and stops moving, saying ''your answer'', while it waits for a key or a
+line. Motion is the signal: a progress bar that only advances between two questions
+stands as still as a blocked one ([[Status bar and task bar]]).
+
+!! Failure is never silent
+
+* A script that exits with an error is reported in red on the status bar of the workspace it was launched from, with its name and exit code, besides the `[exit N]` line of that workspace's message log. Its output goes there too — not to a scratch workspace it opened, which is gone by then.
+* A question that could not be ''asked'' — the GUI closed, a timeout, another question already up — ends the shipped scripts with the reason on the status bar, instead of being read as an Escape.
+* A script killed while it waits releases its question: the next one is not refused for the rest of the session.

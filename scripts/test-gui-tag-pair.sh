@@ -111,7 +111,7 @@ msg_line=$(mf_log | grep -n '^gui message .*--workspace saved-left' | head -n1 |
 assert "summary: posted after the scratch workspace is removed" \
     [ "$msg_line" -gt "$rm_line" ]
 
-# ── The query is the scope (spec-gui "A query is the scope") ────────────────
+# ── The query is the scope (doc "A query is the scope") ────────────────
 
 # ── Case 5: what the GUI shows narrows the walk ─────────────────────────────
 mock_reset

@@ -94,7 +94,8 @@ clean up; the cost is that two GUIs need two ports given by hand.
 
 A script waits for the user with `POST /gui/input` or `POST /gui/prompt`. Only one
 such wait exists at a time: a second one is refused at once with `409`, not queued.
-A queue would show the user a question whose script may have given up since.
+A queue would show the user a question whose script may have given up since
+([[Script sessions]], [[GUI scripting endpoints]]).
 
 !! Updates are a merge
 

@@ -37,7 +37,7 @@ already there or not, once per request.
 
 Besides the one highlighted metarecord, a workspace has a ''set'' of checked ones:
 what the bulk operations act on (the ''Checked selection'' target of
-`metarecord:bulk`, [[Editing metarecords in the GUI]]), and what `mf gui selected` prints for a script.
+`metarecord:bulk`, [[Editing metarecords in the GUI]]), and what [[mf gui selected]] prints for a script.
 
 * <<key "metarecord-list:select toggle" Space>> checks or unchecks the row, in `metarecord-list` and in `file-manager` alike; so does ''Add to the selection'' in a row's right-click menu. A file-manager row is checked through its metarecord: an untracked file has none, and says so — track it first.
 * ''It survives changing the list'': a checked metarecord stays checked when the query or the finder moves on, so a set can be gathered from several lists — and from the file manager — before anything acts on it. `select all` checks every loaded row ''on top of'' what is checked; `select none` (<<key "metarecord-list:select none" ctrl+space>>) empties it.

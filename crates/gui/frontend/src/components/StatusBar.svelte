@@ -8,7 +8,7 @@
 
   // A script's question belongs to the workspaces that script owns: switching
   // to another tab puts it away instead of leaving it on screen over unrelated
-  // panels (spec-gui "Script session"). A wait owned by nobody is always shown.
+  // panels (doc "Script sessions"). A wait owned by nobody is always shown.
   const questionVisible = $derived(
     store.ui.inputWait !== null && ownedByVisible(store.ui.inputWait.workspaces, barWorkspaces),
   );
@@ -45,7 +45,7 @@
       <span class="keycap" class:off={!store.ui.scriptKeys}>{key}</span>
     {/each}
     <!-- The script's keys are borrowed from the panels: this is where they are
-         given back, without abandoning the question (spec-gui "Script keys"). -->
+         given back, without abandoning the question (doc "Script sessions"). -->
     <label class="script-keys" title="Let the script's keys take priority over the GUI shortcuts">
       <input
         type="checkbox"

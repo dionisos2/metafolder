@@ -28,8 +28,8 @@ fn default_panel_type(active_repo: Option<&str>) -> &'static str {
     }
 }
 
-/// One running shell script, as surfaced in the task bar (spec-gui
-/// "Scripting"). `done`/`total` drive a determinate progress bar when the
+/// One running shell script, as surfaced in the task bar (doc
+/// "Script sessions"). `done`/`total` drive a determinate progress bar when the
 /// script reports them (via `mf gui progress`); absent ⇒ a spinner.
 #[derive(Clone, Default)]
 struct ScriptTask {
@@ -40,8 +40,8 @@ struct ScriptTask {
     total: Option<u64>,
     /// The workspaces this script owns: the one it was launched from, plus
     /// every workspace it created through the GUI API. A script's question and
-    /// task entry are shown only while one of them is on screen (spec-gui
-    /// "Script session"), so switching tab puts them away.
+    /// task entry are shown only while one of them is on screen (doc
+    /// "Script sessions"), so switching tab puts them away.
     workspaces: Vec<String>,
     /// True while the script blocks on an input/prompt wait: it is *not*
     /// working, so the entry stops spinning and says the answer is awaited.
@@ -60,8 +60,8 @@ pub struct GuiState {
     /// Kept out of `Inner` so the workspace/message lock is never held across
     /// the notify that broadcasts the running set.
     scripts: Mutex<HashMap<String, ScriptTask>>,
-    /// Whether a script's awaited keys currently reach the script (spec-gui
-    /// "Script keys"). The question bar's checkbox flips it; it holds for the
+    /// Whether a script's awaited keys currently reach the script (doc
+    /// "Script sessions"). The question bar's checkbox flips it; it holds for the
     /// rest of the session, but every new run starts with its keys live.
     script_keys: AtomicBool,
     /// The question a script is asking right now, kept so the keytable can be
@@ -342,7 +342,7 @@ impl GuiState {
 
     /// Marks a shell script (run id `task_id`, launched from `ws_id`) as running
     /// under a human `label` and broadcasts the running set, so the frontend can
-    /// show a loading indicator (spec-gui "Scripting"). Paired with
+    /// show a loading indicator (doc "Script sessions"). Paired with
     /// [`Self::script_end`].
     pub fn script_begin(&self, task_id: &str, ws_id: &str, label: &str) {
         self.scripts.lock_recover().insert(

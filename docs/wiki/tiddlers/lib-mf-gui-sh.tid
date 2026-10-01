@@ -1,0 +1,6 @@
+title: lib/mf-gui.sh
+tags: [[Shipped script]] [[Scripting the GUI]]
+kind: reference
+summary: (no Summary: header — a helper, not offered by script:run)
+
+Not run on its own: the library every `gui-*` script sources — the scratch session and its guaranteed teardown, the questions with their arrow keys, the argument prompts, the scope, going back through the log, and the reports that make a failure visible ([[Writing a GUI script]]).

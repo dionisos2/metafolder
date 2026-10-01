@@ -376,7 +376,7 @@ const LINEAR_WIDEN: usize = 8;
 /// step, so a walk to the root of the log there is paid once per operation
 /// undone. Going back over a tag applied to a folder of a thousand files then
 /// costs a thousand walks over the whole history — the "back" key of a
-/// classification walk (spec-gui "Reserved keys") taking minutes to answer.
+/// classification walk (doc "Script sessions") taking minutes to answer.
 ///
 /// The budget widens instead of being guessed: [`Delta::Budget`] means "look
 /// further", [`Delta::Unrelated`] means "not this way", and only two

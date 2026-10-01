@@ -1,0 +1,6 @@
+title: mf gui selected
+tags: [[CLI command]] [[Scripting the GUI]]
+kind: reference
+summary: Print the checked metarecords' UUIDs, one per line (nothing checked = no output)
+
+Prints the uuids of the metarecords checked in the focused workspace, one per line — nothing, with exit 0, when none is checked ([[Cross-panel selection]], [[A query is the scope]]).

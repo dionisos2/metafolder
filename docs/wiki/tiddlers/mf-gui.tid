@@ -1,0 +1,6 @@
+title: mf gui
+tags: [[CLI command]] [[Scripting the GUI]]
+kind: reference
+summary: Drive the GUI through its scripting HTTP API
+
+The command line of the GUI's scripting API: every subcommand is one request to the running GUI, printed as plain text so that a shell script needs neither `curl` nor `jq` ([[Scripting the GUI]]). `--gui-url` or `METAFOLDER_GUI_URL` names the GUI; by default it is `127.0.0.1` on the `gui-port` of [[GUI configuration]]. It takes no repository: `-n` and `-u` are the daemon's.

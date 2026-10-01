@@ -1251,20 +1251,74 @@ section « Runtime dependencies (GUI) » de CLAUDE.md devient un pointeur. Mémo
 =gui-media-preview-crash= et =gui-slow-decoder-av1= réduites à l'environnement et à
 la méthode de mesure, =pdf-document-preview= et =gui-runtime-deps= à un pointeur.
 
-** TODO 40. Scripts
+** FAIT 40. Scripts
 
-- [ ] =Scripting the GUI= — overview (sessions de script, =mf gui=)
-- [ ] =Writing a GUI script= — guide (=lib/mf-gui.sh=, questions, touches, échec jamais silencieux, retour arrière)
-- [ ] =Script sessions= — reference (propriété des workspaces, attente d'une réponse, touches de réponse, touches de script, touches réservées)
-- [ ] =GUI scripting endpoints= — reference, dev (=/gui/*=)
-- [ ] =Running shipped scripts= — guide (=script:run=, =# Summary:=)
-- [ ] =Example: comparing images= — guide
-- [ ] une note par script livré qui n'est pas déjà dans l'item 30 : =example-gui-sort-folder.sh=, =gui-unwatch-folder.sh=, =lib/mf-gui.sh=
+- [X] =Scripting the GUI= — overview (ce qu'un script peut faire, la table des =mf gui=, par où lire)
+- [X] =Running shipped scripts= — guide (=script:run=, =# Summary:=, ce qui se passe pendant le run, depuis un terminal)
+- [X] =Script sessions= — reference (la barre de question, les touches de réponse, les touches de script, les touches réservées, la propriété des workspaces, travail ou attente, l'échec jamais silencieux) — porte l'alias =scripting= de la barre de question
+- [X] =Writing a GUI script= — guide (=lib/mf-gui.sh= : le squelette, les questions, le texte mis dans une requête, l'échec visible, le retour arrière, la progression, le coût par entrée)
+- [X] =A query is the scope= — reference (ajoutée : la section de spec que onze commentaires citaient ; d'où vient la requête, l'exception =gui-unwatch-folder.sh=)
+- [X] =GUI scripting endpoints= — reference, dev (=/gui/*=, l'identifiant de run, le verrou des deux attentes)
+- [X] =Example: comparing images= — guide (réécrit avec =mf gui= et =lib/mf-gui.sh=)
+- [X] =Why going back is the script's business= — rationale, dev (ajoutée : la mémoire =script-answer-back=)
+- [X] =Testing shipped scripts= — reference, dev (ajoutée : la mémoire =shipped-scripts-test-harness=)
+- [X] les notes de script : =example-gui-sort-folder.sh=, =gui-unwatch-folder.sh=, =lib/mf-gui.sh=
+- [X] les notes de commande : =mf gui *= (16), =script:run=, =script:stop=, =script-keys:toggle=, =answer:send=
 
-CLI : =mf gui *= (16). GUI : =script:*= (2), =script-keys:toggle=, =answer:send=.
-Sources : spec-gui « Script session », « Scripting / GUI API » ; help
-=scripting.html= ; mémoires =script-answer-back=, =shipped-scripts-test-harness=,
-=bash-set-e-disabled-in-tested-context=, =bash-fork-per-entry=.
+Vérification contre le code. L'exemple de la spec ne pouvait pas tourner : il
+appelait =/gui/*= avec =curl=, sans le jeton de session, et aurait reçu =401= à
+chaque requête. Il est réécrit avec =mf gui= et la bibliothèque, puis /exécuté/ :
+contre un daemon jetable (=scripts/lib/daemon-fixture.sh=, seul =mf gui= étant
+simulé), sur un dépôt de deux images, avec ses écritures relues — et passé à
+=shellcheck=. Le reste est lu dans =gui_api.rs=, =input_wait.rs=, =keybindings.rs=,
+=shell_exec.rs=, =cli/src/gui.rs=, le shell Svelte et =lib/mf-gui.sh=.
+Écarts de la spec et de la page help, corrigés dans les notes : la page help
+donnait =b= pour revenir en arrière (c'est =u=) ; « un script arrêté par Échap ne
+peut pas faire son ménage » est faux pour bash — le =SIGTERM= laisse tourner le trap
+=EXIT= (vérifié), et c'est par lui que les scripts livrés ferment leur workspace et
+rendent la disposition ; ce qu'un script arrêté ne fait pas, c'est finir ou
+rapporter, d'où =q= ; =POST /gui/prompt= répond aussi =timeout= et =closed= ;
+=GET /gui/status= porte =repo_name= ; le choix de la case « script keys » ne tient
+pas « pour le reste de la session » mais jusqu'au prochain lancement, toute ligne =!=
+comprise. Ignorés par la spec : les touches attendues ne sont pas prises dans un
+champ de texte ; Échap et Retour arrière n'agissent sur le script que case cochée ;
+=!= est réservée comme =:= (toute touche liée à =command-input:focus=) ; =script:run=
+lance le script /sans argument/ ; un script lancé d'un terminal n'appartient à
+personne — sa question reste affichée quel que soit l'onglet, et Échap la ferme au
+lieu de tuer le script ; =PUT /gui/panels/:slot/view= sur un slot sans workspace
+prend celui du slot focalisé (=409= sans) ; =POST /gui/message= rend =409= quand le
+slot focalisé n'a pas de workspace ; =timeout_ms= d'un message n'efface plus rien.
+*Corrigé dans le code* (commentaires seulement) : =gui-unwatch-folder.sh= disait
+attendre « la période de calme de 500 ms » du watcher et « que son tampon se
+vide » ; la période vaut 2 s et le script attend 1 s. L'attente n'a pas ce rôle :
+une fois =mf_watch = false= écrit, ce que le tampon tient encore sous le dossier est
+écarté au flush, qui revérifie l'éligibilité. L'en-tête et le commentaire disent
+maintenant ce qu'elle couvre (un flush déjà en cours).
+*Signalé, non tranché* : (1) =mf gui view --state= est envoyé et /ignoré/ — le corps
+de =PUT /gui/panels/:slot/view= ne lit que =type= et =path=, aucun panel ne reçoit
+d'état initial ; l'option est à retirer ou à implémenter ; (2) le délai en dur de
+=gui-unwatch-folder.sh= (=MF_UNWATCH_SETTLE=, 1 s) contredit la règle « jamais de
+délai en dur côté client » de =Event batching= : s'il doit couvrir un flush en cours,
+il devrait attendre la fin de la tâche plutôt qu'une durée.
+*Choix à signaler* : (a) =Script sessions= est écrite pour qui /répond/ à un script
+autant que pour qui en écrit un — elle reprend la page help, et c'est elle
+qu'ouvre l'aide depuis la barre de question ; le détail du protocole est dans
+=GUI scripting endpoints= ; (b) les pièges bash (=set -e= dans un contexte testé, un
+processus par entrée) sont des sections du guide et non des notes à part ; (c) le
+test =help-keys= exigeait plus de deux raccourcis sur plus d'une page help : il ne
+reste que la page =sync=, le plancher passe à « au moins un ».
+Sources retirées (pointeurs) : spec-gui « Script session » (avec « Ownership of a
+script's workspaces », « Working vs. awaiting an answer », « Answer keys », « Script
+keys », « Reserved keys », « Failure is never silent ») et « Scripting / GUI API »
+(tous les =/gui/*=, « CLI: =mf gui= », « A query is the scope », « Example: image
+comparison script ») ; de la table « Command names », les lignes =script:run=,
+=answer:send=, =script-keys:toggle=, =script:stop= ; help =scripting.html= et son
+entrée d'index (=scripting=, =question=, =script-keys= deviennent des alias de
+=Script sessions= ; =script=, =scripts= de =Scripting the GUI= ; =answer:send=,
+=script:run=, =script:stop= ont leur note). Mémoires =script-answer-back=,
+=shipped-scripts-test-harness=, =bash-set-e-disabled-in-tested-context=,
+=bash-fork-per-entry= et =scripts-accessibility= réduites à un pointeur et à la
+méthode.
 
 * Développement
 

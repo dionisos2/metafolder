@@ -1,0 +1,6 @@
+title: mf gui repo
+tags: [[CLI command]] [[Scripting the GUI]]
+kind: reference
+summary: Print the active repository of the focused workspace
+
+Prints the uuid of the repository of the focused workspace; exit 1 when it has none, or when no slot is focused on a workspace. What a script exports as `METAFOLDER_REPO` to bind every `mf` after it ([[Writing a GUI script]]).

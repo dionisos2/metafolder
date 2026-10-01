@@ -67,7 +67,7 @@ A few keys are taken before the bindings are looked at:
 
 * an open context menu has the keyboard to itself ([[Context menus]]);
 * `Escape` first cancels a help gesture ([[In-app help]]), then leaves the full-screen mode ([[Panel slots and layout]]);
-* while a script asks a question, the keys it awaits go to the script, unless a text field has the focus.
+* while a script asks a question, the keys it awaits go to the script, unless a text field has the focus ([[Script sessions]]).
 
 And a text field keeps its own keys: the command input's list and completion
 ([[The command input]]), and `ctrl+p`, `ctrl+n`, `ctrl+r` of [[Input history]].

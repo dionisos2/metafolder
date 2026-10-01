@@ -1,0 +1,6 @@
+title: script-keys:toggle
+tags: [[GUI command]] [[Scripting the GUI]]
+kind: reference
+summary: Give the script's keys back to the GUI, or take them again
+
+Ticks or unticks the ''script keys'' checkbox of the question bar: unticked, the keys a script's question awaits mean again what they mean in the panel, and the question is answered with `answer:send` ([[Script sessions]]).

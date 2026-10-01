@@ -1,0 +1,6 @@
+title: mf gui progress
+tags: [[CLI command]] [[Scripting the GUI]]
+kind: reference
+summary: Report progress for the running script (updates its task-bar entry)
+
+Moves the running script's entry in the task bar: `--done` and `--total` draw a bar, `--phase` names the current step; only what is given changes ([[Status bar and task bar]]). The script is the one named by `METAFOLDER_GUI_TASK`, set by the GUI when it starts one, so outside the GUI this does nothing and succeeds.

@@ -205,7 +205,7 @@ mf_gui_path_uuid() { # <treepath>
 
 # ── The scope of a script that acts on a set ─────────────────────────────────
 # A shipped script that acts on several metarecords takes that set as a *query*
-# (spec-gui "A query is the scope"), and the query is the boundary: an operation
+# (doc "A query is the scope"), and the query is the boundary: an operation
 # on a folder's subtree is intersected with it, so a metarecord the query
 # excludes is never touched.
 
@@ -269,7 +269,7 @@ mf_gui_scope_get() { # <get args...>
 # memory, and bash arrays are not cheap: a repository of a million files would
 # swap rather than ask a question. A bounded refusal naming the cap is the
 # honest answer, and narrowing the scope is a documented feature — the query IS
-# the scope (spec-gui "A query is the scope").
+# the scope (doc "A query is the scope").
 #
 # Override with MF_GUI_MAX_ENTRIES for a deliberately large run.
 MF_GUI_MAX_ENTRIES=${MF_GUI_MAX_ENTRIES:-20000}
@@ -294,7 +294,7 @@ mf_gui_scope_into() { # <outfile> <get args...>
     fi
 }
 
-# ── Going back (spec-gui "Reserved keys") ────────────────────────────────────
+# ── Going back (doc "Script sessions") ────────────────────────────────────
 # `backspace` during a question always resolves the wait with `back`, and
 # mf_gui_ask_answer turns that into the letter `u` for a script that offers it.
 # What "back" means is the script's own business, but for a walk that writes as
@@ -324,7 +324,7 @@ mf_gui_scoped() { # <predicate>
     if [ -z "${SCOPE:-}" ]; then printf '%s' "$1"; else printf '(%s) AND %s' "$SCOPE" "$1"; fi
 }
 
-# Update this script's entry in the GUI task bar (spec-gui "Scripting"): a
+# Update this script's entry in the GUI task bar (doc "Script sessions"): a
 # determinate progress bar with --done/--total, and/or a --phase label for the
 # current step. A no-op outside the GUI (METAFOLDER_GUI_TASK unset) and never
 # fatal, so scripts may call it unconditionally.
@@ -333,7 +333,7 @@ mf_gui_progress() { mf gui progress "$@" >/dev/null 2>&1 || :; }
 
 # The arrow keys that double the letter answers, so a question can be answered
 # without looking at the keyboard: → yes, ← no, ↑ mixed, ↓ skip. The mapping is
-# fixed (spec-gui "Script session") so every script answers the same way.
+# fixed (doc "Script sessions") so every script answers the same way.
 _mf_gui_arrow_for() { # <letter> -> its arrow key, or nothing
     case $1 in
         y) printf 'right' ;;
@@ -348,7 +348,7 @@ _mf_gui_arrow_for() { # <letter> -> its arrow key, or nothing
 # letter — so a caller's `case` only ever deals with y/n/m/s and its quit key.
 #
 # `escape` is NOT a key a script may await: the GUI keeps it to stop the script
-# outright, whatever keys the script grabbed (spec-gui "Reserved keys"), and
+# outright, whatever keys the script grabbed (doc "Script sessions"), and
 # refuses a wait that asks for it. A script with cleanup to do offers `q`
 # instead — by convention the quit key of every shipped script.
 #     case "$(mf_gui_ask_answer "$msg" y n m s q)" in ...

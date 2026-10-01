@@ -16,4 +16,4 @@ panel's own (`metarecord-list:query`, `treeref:scope`…) and whatever a script 
 
 It is read-only, and has no command of its own. It is the place to look when a panel
 does not follow another, and to find the name of the variable a script should read
-(`GET /gui/workspaces/:id/vars/:key`).
+(`GET /gui/workspaces/:id/vars/:key`, [[GUI scripting endpoints]]).

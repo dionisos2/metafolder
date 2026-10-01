@@ -1,7 +1,7 @@
 // A script's text prompt (POST /gui/prompt) belongs to the workspaces the
 // asking script owns, like its question bar: the command input shows it only
 // while one of them is on screen, and gives the line back to the user
-// meanwhile (spec-gui "Ownership of a script's workspaces").
+// meanwhile (doc "Script sessions").
 
 import { describe, expect, it } from 'vitest';
 import { promptRequestState, promptShown } from '../src/lib/store.svelte';

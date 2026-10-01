@@ -1,0 +1,6 @@
+title: mf gui query
+tags: [[CLI command]] [[Scripting the GUI]]
+kind: reference
+summary: Print the query the metarecord list shows (finder included); an empty line = every metarecord; exit 1 when the list has not run
+
+Prints the query the [[metarecord-list panel]] of the focused workspace shows, its finder narrowing included; an empty line is the empty query — every metarecord. Exit 1 when the list has shown nothing yet in that workspace, which is never to be read as ''everything'' ([[A query is the scope]]).

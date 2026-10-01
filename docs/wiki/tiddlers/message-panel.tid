@@ -12,7 +12,7 @@ the ''top'':
 * every command run in the workspace, as `> name arguments`, written before it runs ([[Commands]]);
 * a shell line as `$ command`, its output line by line, and `[exit N]` when it failed ([[Bash mode]]);
 * the summary of a reconcile, of a duplicate scan, of an orphan detection;
-* what a script posts with `mf gui message`, and the output of a script started with `script:run`;
+* what a script posts with [[mf gui message]], and the output of a script started with `script:run` ([[Running shipped scripts]]);
 * the daemon's warnings about the workspace's repository ([[Connection to the daemon]]).
 
 A new line is added at the top. The view stays there as long as you are reading the

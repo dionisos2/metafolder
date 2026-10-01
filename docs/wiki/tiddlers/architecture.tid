@@ -9,7 +9,7 @@ summary: Four programs — daemon, mf, GUI, broker — over one HTTP API; seven 
 
 |!Program |!Crate |!What it is |
 |`metafolder-daemon` |`daemon` |the HTTP server on `127.0.0.1:7523` holding the loaded repositories; the only program that reads or writes a store ([[Daemon]]) |
-|`mf` |`cli` |a thin client of the daemon ([[Command line]]); `mf gui` is a client of the GUI's scripting API instead |
+|`mf` |`cli` |a thin client of the daemon ([[Command line]]); `mf gui` is a client of the GUI's scripting API instead ([[Scripting the GUI]]) |
 |`metafolder-gui` |`gui` |a Tauri v2 desktop application, client of the daemon, with its own HTTP server on `127.0.0.1:7524` for its panels' files and for scripts ([[GUI]]) |
 |`metafolder-watchd` |`watchd` |an optional privileged service watching whole filesystems for every daemon of the machine, over a Unix socket ([[The fanotify broker]]) |
 |`metafolder-sync-config` |`core`, behind the `sync-config` feature |the install step that applies the shipped defaults to the configuration repository; the only program that uses git ([[Updating the configuration]]) |

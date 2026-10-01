@@ -1,0 +1,6 @@
+title: mf gui status
+tags: [[CLI command]] [[Scripting the GUI]]
+kind: reference
+summary: Print the GUI state (pretty-printed JSON)
+
+Prints the GUI's state as JSON: the workspaces, what each slot shows and which is focused, whether the daemon answers, whether a question is up ([[GUI scripting endpoints]]).

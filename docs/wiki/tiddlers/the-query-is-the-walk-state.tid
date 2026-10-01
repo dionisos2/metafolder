@@ -53,6 +53,6 @@ folder's subtree is still undecided, so both the count and the step query carry 
 query; it keeps its own memory — the entries asked, the folders answered whole — bounded
 by keypresses and restored by `back`.
 
-The unit suite drives the hermetic `mf` mock by declaring the walk as the ''successive
+The unit suite drives the hermetic `mf` mock ([[Testing shipped scripts]]) by declaring the walk as the ''successive
 answers'' to the step queries (queues that empty as the real set would); the semantics
 against a real daemon stay pinned by `scripts/test-scripts-integration.sh`.

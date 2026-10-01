@@ -555,8 +555,8 @@ pub fn answer_send(app: AppHandle, value: String) -> Result<(), String> {
 }
 
 /// `script-keys:toggle` — the question bar's checkbox: whether a script's
-/// awaited keys still take priority over the GUI's own (spec-gui "Script
-/// keys"). Re-pushes the keytable so the temporary answer bindings follow the
+/// awaited keys still take priority over the GUI's own (doc "Script sessions"). Re-pushes the
+/// keytable so the temporary answer bindings follow the
 /// flag, and the question bar's checkbox with it. Returns the new value.
 #[tauri::command]
 pub fn script_keys_toggle(app: AppHandle) -> bool {

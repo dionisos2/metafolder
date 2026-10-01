@@ -1,0 +1,6 @@
+title: mf gui workspace new
+tags: [[CLI command]] [[Scripting the GUI]]
+kind: reference
+summary: Create a workspace and print its id
+
+Opens a workspace and prints its id; `--repo` gives it a repository, by default the first the daemon lists ([[Workspaces]]). It is shown in no slot until [[mf gui layout]] puts it in one. Opened by a script the GUI started, it belongs to that script ([[Script sessions]]).

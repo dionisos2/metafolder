@@ -1,0 +1,41 @@
+title: A query is the scope
+tags: [[Scripting the GUI]]
+kind: reference
+summary: A shipped script that acts on a set takes the set as a query, and never touches a metarecord the query excludes; without an argument it asks — the checked selection, or the query the list shows.
+
+
+A shipped script that acts on several metarecords takes them as a ''query'', and the
+query is the boundary. `gui-tag-folder.sh` answering ''yes'' on a folder writes over
+
+```
+(<query>) AND mfr_path ->* "<folder>"
+```
+
+never over a metarecord the query leaves out — however large the folder.
+
+!! Where the query comes from
+
+# The argument, when one is given.
+# Otherwise the script ''asks'': ''Act on the checked selection (y), or the query the list shows (n)?''
+#* `y` — the metarecords checked in the list ([[mf gui selected]]), written as the query `<uuid> OR <uuid> ...`. With nothing checked the script stops and says so: it does not fall through to the query.
+#* `n` — the query the [[metarecord-list panel]] shows, finder narrowing included ([[mf gui query]]).
+# When the list has shown nothing in this workspace, a folder picked with completion, turned into `mfr_path =>* "<folder>"` — the folder and everything under it.
+
+It is the question the GUI's own bulk commands ask ([[Editing metarecords in the GUI]]),
+so a script and a bulk edit reach the same set by the same decision. The set is
+named, never inferred from whether something happens to be checked.
+
+* An ''empty'' query is every metarecord, and is used as such: the script does not wrap it (`() AND ...` is not a query). `mf_gui_scoped <predicate>` of [[lib/mf-gui.sh]] narrows a predicate to the scope, and leaves it alone when the scope is empty.
+* ''Nothing shown'' is not ''everything'': `mf gui query` fails when the list has not run, and that failure is never read as an empty query.
+* The scope is resolved ''before'' the script opens its scratch workspace, which has neither list nor selection (`mf_gui_default_scope`, [[Writing a GUI script]]).
+
+For `gui-tag-folder.sh` the query is more than a boundary — it is the whole state of
+the walk ([[The query is the walk state]]).
+
+!! The exception
+
+[[gui-unwatch-folder.sh]] takes a ''folder'', as a path on disk. A query matches
+metarecords that exist, and the folder to stop watching often has none yet — the
+script tracks it on the spot so that `mf_watch` has somewhere to live. And `mf_watch`
+is a field of a directory, inherited down the tree: a folder, not a set, is the shape
+of what is being said ([[Tracking a folder]]).

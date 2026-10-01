@@ -250,7 +250,7 @@ fn test_gui_workspace_new_and_rm() {
 }
 
 /// A script's calls carry the run id the GUI injected, so the workspace it
-/// creates and the questions it asks belong to it (spec-gui "Script session").
+/// creates and the questions it asks belong to it (doc "Script sessions").
 #[test]
 fn test_a_script_run_carries_its_run_id() {
     let gui = stub();
@@ -465,7 +465,7 @@ fn test_gui_prompt_cancel_fails() {
     assert_eq!(out.stdout, "");
 }
 
-// ── mf gui query / mf gui selected (spec-gui "CLI: mf gui") ───────────────────
+// ── mf gui query / mf gui selected (doc "Scripting the GUI") ───────────────────
 
 const SEL_A: &str = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
 const SEL_B: &str = "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb";

@@ -11,9 +11,10 @@
 #
 # Order matters and is not configurable: `mf_watch` is written first, so the
 # watcher has already dropped its watches on the subtree when the deletion
-# lands and cannot re-create what we remove. The script then waits
-# $MF_UNWATCH_SETTLE seconds (default 1) for the watcher's pending-event buffer
-# to drain before deleting.
+# lands and cannot re-create what we remove: the events it had buffered for
+# the subtree are dropped at its next flush, which checks eligibility again.
+# The script then waits $MF_UNWATCH_SETTLE seconds (default 1) before deleting,
+# a margin for a flush that was already running when `mf_watch` was written.
 #
 # The metarecords of files that were already gone (`mfr_path = Nothing`) are not
 # in the subtree any more, so they are not covered — clear those with
@@ -25,7 +26,7 @@
 # somewhere to live).
 #
 # WHY NOT A QUERY. The other shipped scripts take their scope as a query
-# (spec-gui "A query is the scope"); this one deliberately does not. A query
+# (doc "A query is the scope"); this one deliberately does not. A query
 # matches metarecords that already exist, and the folder to stop watching is
 # very often one that has none yet — which is exactly why the argument is a
 # filesystem path this script tracks on the fly. `mf_watch` is also a
@@ -93,8 +94,10 @@ if [ "$INSIDE" -eq 0 ]; then
     exit 0
 fi
 
-# Let the watcher's 500 ms quiet period elapse (and its buffered events flush)
-# before the delete, so a late event cannot re-create what we remove.
+# A margin for a flush already running when mf_watch was written. It is not
+# the watcher's quiet period (2 s by default) and need not be: what is still
+# buffered for the subtree is dropped at the flush, now that it is ineligible
+# (doc "Event batching").
 SETTLE=${MF_UNWATCH_SETTLE:-1}
 [ "$SETTLE" = 0 ] || sleep "$SETTLE"
 

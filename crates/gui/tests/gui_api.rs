@@ -1,5 +1,5 @@
-//! The GUI scripting HTTP API on port 7524 (spec-gui "Scripting / GUI
-//! API"), driven with oneshot like the daemon tests.
+//! The GUI scripting HTTP API on port 7524 (doc "GUI scripting endpoints"), driven with oneshot
+//! like the daemon tests.
 
 use axum::body::Body;
 use axum::http::{Request, StatusCode};
@@ -456,8 +456,8 @@ async fn test_progress_updates_running_script() {
 
 #[tokio::test]
 async fn test_input_wait_refuses_the_reserved_keys() {
-    // A script may not take the user's ways out of its own question (spec-gui
-    // "Reserved keys"): escape, the command input, the script-keys toggle.
+    // A script may not take the user's ways out of its own question (doc
+    // "Script sessions"): escape, the command input, the script-keys toggle.
     let ctx = setup().await;
     for key in ["escape", ":", "tab"] {
         let (status, body) =
@@ -605,8 +605,8 @@ async fn test_input_wait_broadcasts_its_prompt() {
 #[tokio::test]
 async fn test_input_wait_carries_the_script_workspaces_and_marks_it_waiting() {
     // A script's question belongs to the workspaces that script owns: the shell
-    // shows the question bar only while one of them is on screen (spec-gui
-    // "Script session"). The task entry also stops spinning while the script is
+    // shows the question bar only while one of them is on screen (doc
+    // "Script sessions"). The task entry also stops spinning while the script is
     // blocked, so "still working" and "your turn" are distinguishable.
     let ctx = setup().await;
     ctx.gui.script_begin("script-7", "ws-1", "gui-tag-folder.sh");
@@ -657,8 +657,8 @@ async fn test_a_workspace_created_without_a_task_is_owned_by_nobody() {
 async fn test_prompt_carries_the_script_workspaces() {
     // A script's text prompt belongs to the workspaces that script owns, exactly
     // like its question bar: the command input gives the line back to the user
-    // while none of them is on screen (spec-gui "Ownership of a script's
-    // workspaces"), and shows the prompt again when one returns.
+    // while none of them is on screen (doc "Script sessions"), and shows the prompt again when one
+    // returns.
     let ctx = setup().await;
     ctx.gui.script_begin("script-9", "ws-1", "gui-tag-folder.sh");
     let (status, body) =
@@ -760,7 +760,7 @@ async fn test_a_dropped_input_request_releases_the_lock() {
     // request; the handler's future is then cancelled. If it left the lock held,
     // EVERY later wait would answer 409 for the rest of the GUI's life — the
     // next script would appear to "just stop" at its first question, with
-    // nothing on screen to say why (spec-gui "Script session").
+    // nothing on screen to say why (doc "Script sessions").
     let ctx = setup().await;
     let router = ctx.router.clone();
     let waiting = tokio::spawn(async move {
@@ -1058,7 +1058,7 @@ async fn test_bench_clear_empties_the_buffer() {
     assert_eq!(body, json!({"records": []}));
 }
 
-// ── Reading a workspace variable (spec-gui "Scripting / GUI API") ───────────
+// ── Reading a workspace variable (doc "GUI scripting endpoints") ───────────
 // A script is a subprocess: it sees nothing of the GUI's state and can only ask
 // through `mf gui …`. This is how it asks — and it is what `mf gui query` reads
 // to start on the query the panel is showing.

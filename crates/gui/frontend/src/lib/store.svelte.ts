@@ -93,8 +93,8 @@ export const store = $state({
     /// The workspaces the prompt belongs to: the ones the asking script owns
     /// (an argument collection owns the workspace it was invoked from). The
     /// command input shows the prompt only while one of them is on screen and
-    /// is an ordinary command line meanwhile (spec-gui "Ownership of a
-    /// script's workspaces"). Empty = owned by nobody, always shown.
+    /// is an ordinary command line meanwhile (doc "Script sessions"). Empty = owned by nobody,
+    /// always shown.
     promptWorkspaces: [] as string[],
     /// The asking script's run id, when a script asked.
     promptTask: null as string | null,
@@ -116,7 +116,7 @@ export const store = $state({
     } | null,
     /// A running script's `POST /gui/input` question and the keys it accepts,
     /// shown in a dedicated bar so a status/error message cannot hide it
-    /// (spec-gui "Scripting"). Null when no input wait is active. `prompt` is
+    /// (doc "Script sessions"). Null when no input wait is active. `prompt` is
     /// always a display string (a generic label when the script gave none).
     /// `workspaces` are the workspaces the asking script owns: the bar is shown
     /// only while one of them is on screen (empty = owned by nobody, always
@@ -128,7 +128,7 @@ export const store = $state({
       task: string | null;
     } | null,
     /// Whether the awaited keys of a script's question reach the script
-    /// (spec-gui "Script keys"). The question bar's checkbox flips it through
+    /// (doc "Script sessions"). The question bar's checkbox flips it through
     /// `script-keys:toggle`; Rust owns the value and pushes it here, so the
     /// temporary answer bindings and this flag can never disagree.
     scriptKeys: true,
@@ -144,7 +144,7 @@ export const store = $state({
       index: -1,
       focusTick: 0,
     },
-    /// Shell scripts currently running (spec-gui "Scripting"): a loading
+    /// Shell scripts currently running (doc "Script sessions"): a loading
     /// indicator so a slow script never looks frozen. Fed by
     /// `script-task-changed`; empty when nothing runs. `done`/`total`/`phase`
     /// are present when the script reports progress (`mf gui progress`).
@@ -175,7 +175,7 @@ export function inputWaitState(payload: {
  *  `visible` ones. An empty or absent owner list means "owned by nobody" — a
  *  wait the GUI did not launch from a script — and is always shown. Pure, so it
  *  is unit-tested; used for both the question bar and the task-bar entry
- *  (spec-gui "Script session"). */
+ *  (doc "Script sessions"). */
 export function ownedByVisible(owned: string[] | undefined, visible: string[]): boolean {
   if (!owned || owned.length === 0) return true;
   return owned.some((ws) => visible.includes(ws));
@@ -215,8 +215,8 @@ export function promptRequestState(payload: {
 
 /** The prompt text the command input should show, given the waiting prompt,
  *  the workspaces it belongs to and the ones on screen — null when no prompt
- *  waits, or when the one that does is put away by a tab switch (spec-gui
- *  "Ownership of a script's workspaces"). Pure, so it is unit-tested. */
+ *  waits, or when the one that does is put away by a tab switch (doc
+ *  "Script sessions"). Pure, so it is unit-tested. */
 export function promptShown(
   text: string | null,
   owned: string[],
@@ -235,7 +235,7 @@ export function activePromptText(): string | null {
 
 /** The question the keys should currently act on: the live input wait, but only
  *  while one of the workspaces its script owns is on screen. A question put
- *  away by a tab switch (spec-gui "Ownership of a script's workspaces") must not
+ *  away by a tab switch (doc "Script sessions") must not
  *  keep the keys of the panel now in front of the user — escape above all, which
  *  would otherwise stop a background script from an unrelated workspace. */
 export function activeQuestion(): { keys: string[]; task: string | null } | null {
@@ -245,7 +245,7 @@ export function activeQuestion(): { keys: string[]; task: string | null } | null
 }
 
 /** What a pressed key does while a script's question is up, before the normal
- *  keybindings get a look at it (spec-gui "Script keys"):
+ *  keybindings get a look at it (doc "Script sessions"):
  *
  *  - `escape` — always stops the asking script. No script can await it (the
  *    GUI refuses a wait asking for a reserved key), so it is the one way out
@@ -269,7 +269,7 @@ export function inputWaitAction(
   if (!wait || !combo || !scriptKeys) return null;
   if (combo === 'escape') return { kind: 'stop', task: wait.task };
   // The way *back* out of a question, next to escape's way out of the run
-  // (spec-gui "Reserved keys"). Reserved like escape — a script cannot await
+  // (doc "Script sessions"). Reserved like escape — a script cannot await
   // the key — but it resolves the wait rather than ending the run: only the
   // script knows what undoing its last answer means, so it is told, and one
   // that has no answer for "back" asks the same question again.
@@ -296,8 +296,8 @@ export interface ScriptTask {
   waiting?: boolean;
 }
 
-/** What a running script's task-bar entry shows (spec-gui "Working vs. awaiting
- *  an answer"). *Motion* is what tells the two states apart, so a working script
+/** What a running script's task-bar entry shows (doc "Script sessions"). *Motion*
+ *  is what tells the two states apart, so a working script
  *  spins whether or not it reports counts: a determinate bar that only advances
  *  when the user answers stands as still as a blocked one, and the entry then
  *  reads as idle for the whole time the script works. A script awaiting an

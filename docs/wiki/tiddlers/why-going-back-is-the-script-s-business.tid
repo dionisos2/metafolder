@@ -1,0 +1,48 @@
+title: Why going back is the script's business
+tags: [[Scripting the GUI]]
+kind: rationale
+summary: Backspace is reserved by the GUI but undoes nothing itself — it tells the script, which returns the event log to where it was before the answer.
+audience: dev
+
+
+Classifying files is a long run of one-key answers, and a wrong one is noticed one
+question too late. Going back was added in September 2026, with two parts that do not
+live in the same place.
+
+!! The key is the GUI's
+
+`backspace` joined `escape` and the keys of `command-input:focus` and
+`script-keys:toggle` among the reserved combos (`keybindings.rs`, `reserved_combos`):
+`POST /gui/input` refuses a wait that asks for it. So no script can take the key for
+something else, and it means the same thing in every script — like Escape. But where
+Escape ends the ''run'', Backspace ends nothing: the shell resolves the wait with the
+value `back` (`inputWaitAction` in `store.svelte.ts`).
+
+!! The meaning is the script's
+
+The GUI does not know what the last answer wrote: one `mf tag`, a write over a whole
+subtree, a file moved. So it undoes nothing. `mf_gui_ask_answer` turns `back` into the
+letter `u` for a caller that listed `u`, and ''asks again'' for one that did not —
+never a silent no-op, and never the default branch of the caller's `case`, which
+stops the run.
+
+A script that writes as it goes undoes through the ''event log'', the one exact way:
+it notes the operation id before each answer (`mf log head`, added for this) and
+returns to it (`mf log rollback --id`). That restores the field rows with their ids
+and the versions ([[Rollback]]); an ''untag'' written by hand restores neither, and has
+to know every rule the write applied ([[Tag subsumption and exclusivity]]).
+
+Two choices were the user's: the stack goes ''back to the first question'', and going
+back ''re-opens the subtree'' the answer had settled — a re-asked question whose
+consequences stay in place would be of no use.
+
+The letter was `b` at first, and became `u` — undo — with the rest of the undo
+vocabulary ([[Undo and redo]]).
+
+!! The counter trap
+
+A script that keeps counters of its own must push, with each answer, the counters as
+they were ''before'' the entry was counted. Taken after, going back subtracts twice and
+''N left'' goes negative — found by a manual run, not by the tests. `gui-tag-folder.sh`
+no longer has the problem: its counter is a `count` over the query that is its state,
+so it is right again as soon as the log is back ([[The query is the walk state]]).

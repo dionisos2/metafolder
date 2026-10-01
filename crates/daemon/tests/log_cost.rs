@@ -235,7 +235,7 @@ fn trimming_the_log_does_not_read_the_operations_it_keeps() {
     assert_eq!(trim_cost(1), trim_cost(2_000), "the trim read the operations it keeps");
 }
 
-// ── Going back (spec-gui "Reserved keys") ────────────────────────────────────
+// ── Going back (doc "Script sessions") ────────────────────────────────────
 // A walk that writes as it goes takes an answer back by navigating the history
 // to where it stood before it (`mf log rollback --id`), one coordinated step
 // per operation written. Both assertions below are about *one* such step: what

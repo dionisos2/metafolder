@@ -11,7 +11,7 @@ one. The same invocation string runs it from anywhere:
 * typed in [[the command input|The command input]];
 * bound to a key ([[Keybindings]] map a key to an invocation, arguments included);
 * clicked — a button or a menu entry invokes the command, it does not have code of its own ([[Context menus]]);
-* sent by a script, with `mf gui command`.
+* sent by a script, with [[mf gui command]] ([[Scripting the GUI]]).
 
 The [[GUI command]] catalog has a note for each.
 

@@ -1,5 +1,5 @@
-//! `mf gui`: thin client over the GUI scripting HTTP API (spec-gui
-//! "Scripting / GUI API"). Plain-text output designed for shell scripts.
+//! `mf gui`: thin client over the GUI scripting HTTP API (doc
+//! "GUI scripting endpoints"). Plain-text output designed for shell scripts.
 
 use std::path::PathBuf;
 
@@ -171,7 +171,7 @@ pub fn selected(ctx: &GuiCtx, workspace: Option<&str>) -> Result<i32, CliError> 
 
 pub fn workspace_new(ctx: &GuiCtx, repo: Option<&str>) -> Result<i32, CliError> {
     // The run id makes the new workspace belong to this script, so the GUI
-    // scopes its questions and task entry to it (spec-gui "Script session").
+    // scopes its questions and task entry to it (doc "Script sessions").
     let body = with_run_task(match repo {
         Some(repo) => json!({ "active_repo": repo }),
         None => json!({}),
@@ -306,7 +306,7 @@ pub fn command(ctx: &GuiCtx, invocation: &str, timeout_ms: Option<u64>) -> Resul
 ///
 /// The GUI refuses a wait that asks for one of the keys it keeps for the user
 /// (`escape`, and the combos that open the command input or toggle the script
-/// keys — spec-gui "Reserved keys"); that comes back as a 400, so a script that
+/// keys — doc "Script sessions"); that comes back as a 400, so a script that
 /// wants its own quit key offers something else (`q`, by convention).
 pub fn input(
     ctx: &GuiCtx,

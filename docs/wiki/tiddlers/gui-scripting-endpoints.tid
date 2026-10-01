@@ -1,0 +1,195 @@
+title: GUI scripting endpoints
+tags: [[Scripting the GUI]]
+kind: reference
+summary: The /gui/* routes of the GUI's server — workspaces, layout, panel views, commands, messages, progress, and the two waits that block on the user.
+audience: dev
+
+
+Served by the GUI's own server on `127.0.0.1`, port `gui-port` (7524;
+[[GUI configuration]]), by `crates/gui/src/server/gui_api.rs`. Every `/gui/*` request
+needs the GUI's session token in `Authorization: Bearer` ([[Session tokens]]):
+`mf gui` sends it, a bare `curl` gets `401`. The routes answer as long as the GUI runs,
+with or without the daemon; the few that ask the daemon something do it best-effort.
+Errors are `{"error": "..."}`: `404` for an unknown workspace, `400` for a malformed
+request.
+
+The Rust side owns the state these routes read and write, and the shell mirrors it
+through events, so a script and the window always agree ([[GUI]]).
+
+|!Route |!Does |
+|`GET /gui/workspaces` |lists the workspaces |
+|`POST /gui/workspaces` |creates one |
+|`DELETE /gui/workspaces/:id` |closes one |
+|`GET /gui/workspaces/:id/vars/:key` |reads one workspace variable |
+|`GET /gui/layout`, `PUT /gui/layout` |which workspace each slot shows |
+|`GET /gui/panels/:slot/view`, `PUT /gui/panels/:slot/view` |the panel type of a slot |
+|`POST /gui/command` |runs a command |
+|`POST /gui/message` |posts a status message |
+|`POST /gui/progress` |updates a script's task-bar entry |
+|`POST /gui/input` |waits for one key |
+|`POST /gui/prompt` |waits for a line in the command input |
+|`GET /gui/status` |the whole state at once |
+|`GET /gui/bench`, `POST /gui/bench/clear` |the recorded timings |
+
+!! The run id
+
+A script the GUI starts — `script:run`, a `!` line, `file:open-with` — runs in its own
+process group with `METAFOLDER_GUI_TASK` set to its run id (`script-3`, counted from
+the GUI's start). `mf gui` sends it as `task` on the four requests that take one. It
+is what ties a request to a script: the workspaces it owns, its task-bar entry, the
+process group to signal ([[Script sessions]]). An absent or unknown `task` is never an
+error — the request then belongs to nobody — so the same script runs from a terminal.
+
+!! Workspaces
+
+`GET /gui/workspaces` answers an array:
+
+```
+[{"id": "ws-1", "name": "music 1", "active_repo": "<uuid>", "repo_name": "music"},
+ {"id": "ws-2", "name": "Workspace 1", "active_repo": null, "repo_name": null}]
+```
+
+`repo_name` is the repository's name as it was when the workspace adopted it
+([[Workspaces]]).
+
+`POST /gui/workspaces` takes `{"active_repo": "<uuid>", "task": "script-3"}`, both
+optional, and answers `{"id": "ws-3"}`. Without `active_repo` the workspace gets the
+first repository the daemon lists, or none. With `task` it belongs to that script.
+
+`DELETE /gui/workspaces/:id` answers `204`. A slot that showed it shows the previous
+workspace in tab order, or none when it was the last.
+
+`GET /gui/workspaces/:id/vars/:key` answers `{"value": <json>}`. A variable never set
+reads as `null`, with `200`: ''nothing published yet'' is an answer a script falls back
+from, and only an unknown workspace is `404` ([[Workspace variables]]). `mf gui query`
+and `mf gui selected` are built on it.
+
+!! Layout and views
+
+`GET /gui/layout` answers `{"left": "ws-1", "right": null}` — `null` for a hidden
+slot. `PUT /gui/layout` takes the same shape and changes only the keys present; `null`
+hides a slot. It answers `{}`.
+
+`PUT /gui/panels/:slot/view` (`left` or `right`) takes
+
+```
+{"type": "file", "path": "/abs/file.jpg"}
+```
+
+and answers `{}`. A hidden slot is shown first; one with no workspace
+takes the focused slot's, and `409` when there is none.
+
+`path` counts only with `"type": "file"`, and selects that file in the slot's
+workspace:
+
+* a path sets `selected_metarecord` to the metarecord at that path — `null` for an untracked file, or when the daemon does not answer — then `selected_paths` to `[path]`. In that order, the lookup done before either write: a panel reacting to the path reads the metarecord right then ([[Cross-panel selection]]).
+* no `path` leaves the selection as it is.
+* an ''empty'' `path` clears both. A script previewing the entry it asks about reaches entries with no file, and leaving the previous file on screen would present it as the subject of the question.
+
+Any other member of the body is ignored — `state` included, which `mf gui view --state`
+sends: no panel receives it.
+
+`GET /gui/panels/:slot/view` answers `{"type": "file", "status": "ready"}` — or
+`"loading"` until the panel has mounted — and `404` for a slot showing nothing.
+
+!! Commands
+
+`POST /gui/command` takes `{"invocation": "panel:set type file", "timeout_ms": null}`.
+The line is handed to the shell's own dispatcher — the one the command input and the
+keys use, so there is a single path — and parsed like typed text; a leading `!` runs a
+shell line. The request blocks until the command resolves:
+
+|!Answer |!Means |
+|`{"event": "ok"}` |it ran |
+|`{"event": "error", "message": "..."}` |it failed, or is unknown |
+|`{"event": "timeout"}` |`timeout_ms` passed first |
+|`{"event": "closed"}` |the GUI is closing |
+
+All with `200`; an empty or missing `invocation` is `400`. Several may be in flight at
+once. ''Resolved'' means the command and what it awaits returned — not that a panel it
+opened has finished drawing.
+
+!! Messages and progress
+
+`POST /gui/message` takes `{"text": "...", "timeout_ms": null}` and posts it on the
+status bar and in the message log of the workspace named by `?workspace_id=`, by
+default the focused one (`409` when the focused slot has no workspace). `timeout_ms` is accepted
+and hides nothing any more ([[Status bar and task bar]]).
+
+`POST /gui/progress` takes
+
+```
+{"task": "script-3", "done": 12, "total": 30, "phase": "/music/x.mp3"}
+```
+
+every member optional, and overwrites only what is given. It always answers `{}`.
+
+!! The two waits
+
+`POST /gui/input` and `POST /gui/prompt` block until the user answers. They share
+''one lock'': while either waits, a second call of either is refused with `409`, not
+queued ([[GUI design decisions]]).
+
+`POST /gui/input` takes
+
+```
+{"keys": ["left", "right", "q"], "prompt": "Which one?", "task": "script-3", "timeout_ms": null}
+```
+
+every member optional. `prompt` is the question shown in its bar (''Waiting for input''
+without one). A key the GUI reserves makes the call fail with `400` ''before'' the lock
+is taken, so the next script is free to ask. With no `keys`, only `answer:send`
+answers.
+
+While it waits, each key is bound to `answer:send <key>` in the compiled keybinding
+table, and the shell looks at the awaited keys ''before'' the matcher, so no narrower
+binding wins. Unticking the script keys removes those bindings — a disabled key must
+not stay bound as a fallback. The shell learns all of it from the `input-wait-changed`
+event: `active`, `temp_keys`, `prompt`, `workspaces` (the asking script's, empty when
+nobody's), `task` and `script_keys`; it is sent again, with the table, when the
+checkbox flips.
+
+|!Answer |!Means |
+|`{"event": "answer", "value": "left"}` |a key, or `answer:send`; `back` for Backspace |
+|`{"event": "timeout"}` |`timeout_ms` passed |
+|`{"event": "closed"}` |the GUI is closing, or `script:stop` closed a question nobody owns |
+
+`POST /gui/prompt` takes
+
+```
+{"prompt": "Rating (1-5): ", "completions": ["1", "2"], "task": "script-3", "timeout_ms": null}
+```
+
+of which only `prompt` is required. `completions` are
+offered by the command input, ranked and navigated like command names; any text may
+still be typed.
+
+|!Answer |!Means |
+|`{"event": "confirm", "text": "4"}` |Enter |
+|`{"event": "cancel"}` |Escape |
+|`{"event": "timeout"}`, `{"event": "closed"}` |as above |
+
+The lock is released by a guard dropped on ''every'' way out — an answer, a timeout,
+and the request going away. A script killed while it waits drops its connection, and
+the handler's future with it: released only after the `await`, the lock stayed held
+for the rest of the GUI's life, and the next script's first question got `409` with
+nothing on screen to say why.
+
+!! Status
+
+```
+{"workspaces": [...],
+ "layout": {"left":  {"workspace_id": "ws-1", "panel_type": "metarecord-list", "focused": true},
+            "right": null},
+ "daemon_connected": true,
+ "input_wait_active": false}
+```
+
+`workspaces` is the array of `GET /gui/workspaces`; a hidden slot is `null`.
+
+!! Bench
+
+`GET /gui/bench` answers `{"records": [{"name": "mf:list:render", "duration_ms": 2.0}]}`:
+the phases the panels timed and every daemon call the shell made for them,
+kept in memory since the last `POST /gui/bench/clear`. A driver clears, runs a
+scenario through `POST /gui/command`, and reads the timings back.

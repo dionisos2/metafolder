@@ -1,0 +1,56 @@
+title: Running shipped scripts
+tags: [[Scripting the GUI]]
+kind: guide
+summary: script:run lists the scripts installed with the configuration and runs the one you pick; its output goes to the message panel and it shows in the task bar until it ends.
+
+
+<<key "script:run" "g s">> (`script:run`) opens the command input on the list of
+installed scripts, each with its one-line description; pick one and it runs.
+
+```
+:script:run gui-tag-folder
+```
+
+The name alone works too, with or without `.sh` — which is how a script is bound to a
+key ([[Keybindings]]).
+
+!! What is listed
+
+The scripts are files of the configuration, in `~/.config/metafolder/scripts/`
+([[The configuration repository]]). A script is ''offered'' when it is a `.sh` file
+directly in that directory whose leading comment block has a line
+
+```
+# Summary: Bulk-apply one tag over a query's metarecords (yes/no/mixed walk).
+```
+
+The text after `Summary:` is the description shown. A file without that line is a
+helper the others source — `gui-tag-next.sh`, everything under `lib/` — and is not
+listed. The directory is read at each launch: a script of your own, dropped there with
+a `# Summary:` line, is offered at once, with no restart ([[Writing a GUI script]]).
+
+The shipped ones are listed in [[Shipped script]].
+
+!! While it runs
+
+The script is run as `bash <path>`, ''without arguments'': a shipped script asks in
+the GUI for what it was not given — a tag, a folder, which set to act on
+([[A query is the scope]]).
+
+* Its output, and its exit code when not zero, go to the message log of the workspace it was launched from; the focused slot switches to the [[message panel]] unless that workspace already shows it.
+* It shows in the task bar under its file name, spinning while it works and still while it waits for you ([[Status bar and task bar]]).
+* Its questions appear in a bar above the status line, and Escape stops it ([[Script sessions]]).
+* A script that fails says so in red on the status bar of the workspace it was launched from: ''gui-tag-folder.sh failed (exit 1)''.
+
+!! From a terminal
+
+The same files run from a shell while the GUI is open, and there they take arguments:
+
+```
+bash ~/.config/metafolder/scripts/gui-tag-folder.sh music/jazz 'mfr_path =>* "/albums"'
+```
+
+They are installed without the execute bit, hence `bash`. Started this way a script is
+not known to the GUI: no task-bar entry, and its questions belong to no workspace, so
+they stay on screen whatever tab is shown. Escape cannot stop it — it closes the
+question instead, which every shipped script takes as ''stop''.

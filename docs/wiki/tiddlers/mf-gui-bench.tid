@@ -1,0 +1,6 @@
+title: mf gui bench
+tags: [[CLI command]] [[Scripting the GUI]]
+kind: reference
+summary: Print the recorded bench measures (JSON), or clear the buffer
+
+Prints as JSON the timings the panels recorded since the last `--clear` — their phases and every daemon call made for them; `--clear` empties the buffer instead ([[GUI scripting endpoints]]).

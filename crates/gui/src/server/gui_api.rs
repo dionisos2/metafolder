@@ -1,4 +1,4 @@
-//! `/gui/*` scripting endpoints (spec-gui "Scripting / GUI API").
+//! `/gui/*` scripting endpoints (doc "GUI scripting endpoints").
 
 use super::ServerState;
 use crate::events;
@@ -54,8 +54,7 @@ pub async fn list_workspaces(State(state): State<ServerState>) -> Response {
 /// A script is a subprocess: it sees nothing of the GUI's state and can only
 /// ask through `mf gui …`, the way it already asks for the repository with
 /// `mf gui repo`. This is the general form, and it is what `mf gui query` reads
-/// to start a script on the query the panel is showing (spec-gui "Scripting /
-/// GUI API").
+/// to start a script on the query the panel is showing (doc "GUI scripting endpoints").
 ///
 /// A variable that was never set reads back as `null` rather than 404: "nothing
 /// published yet" is an ordinary answer a script falls back from, and only an
@@ -77,7 +76,7 @@ pub struct CreateWorkspaceBody {
     /// The run id of the script creating this workspace (`METAFOLDER_GUI_TASK`,
     /// sent by `mf gui workspace new`). The workspace then belongs to that
     /// script, which is how a script that opens two scratch workspaces keeps
-    /// its question bar visible in both (spec-gui "Script session").
+    /// its question bar visible in both (doc "Script sessions").
     #[serde(default)]
     task: Option<String>,
 }
@@ -400,7 +399,7 @@ pub async fn post_message(
 // ── Script progress ───────────────────────────────────────────────────────
 
 /// `POST /gui/progress` — a running script updates its own task bar entry
-/// (spec-gui "Scripting"). `task` is the run id the GUI injected as
+/// (doc "GUI scripting endpoints"). `task` is the run id the GUI injected as
 /// `METAFOLDER_GUI_TASK`; an absent or unknown one is a lenient no-op, so a
 /// script run outside the GUI never fails on it.
 #[derive(Deserialize, Default)]
@@ -438,7 +437,7 @@ pub struct InputBody {
     #[serde(default)]
     task: Option<String>,
     /// Question shown while the wait is active, in a dedicated bar separate
-    /// from the status/error line (spec-gui "Scripting"). Optional.
+    /// from the status/error line (doc "GUI scripting endpoints"). Optional.
     #[serde(default)]
     prompt: Option<String>,
     #[serde(default)]
@@ -497,7 +496,7 @@ fn script_workspaces(state: &ServerState, task: Option<&str>) -> Vec<String> {
 /// future where it is suspended. Releasing the lock only after the `await`
 /// meant it stayed held forever, so every later wait answered 409 for the rest
 /// of the GUI's life — the next script appeared to "just stop" at its first
-/// question, with nothing on screen to say why (spec-gui "Script session").
+/// question, with nothing on screen to say why (doc "Script sessions").
 struct WaitGuard<'a> {
     state: &'a ServerState,
     /// The asking script's run id, marked "awaiting an answer" meanwhile.
@@ -534,8 +533,8 @@ pub async fn post_input(
     body: Option<Json<InputBody>>,
 ) -> Response {
     let body = body.map(|Json(b)| b).unwrap_or_default();
-    // The user's ways out of the question are not a script's to take (spec-gui
-    // "Reserved keys"). Checked before the lock, so a refused wait leaves the
+    // The user's ways out of the question are not a script's to take (doc
+    // "Script sessions"). Checked before the lock, so a refused wait leaves the
     // next script free to ask.
     let reserved =
         crate::keybindings::reserved_combos(&state.keybindings.lock_recover().compiled());
@@ -595,8 +594,7 @@ pub async fn post_prompt(
     };
     // The prompt belongs to the workspaces the asking script owns, like its
     // question bar: the command input gives the line back to the user while
-    // none of them is on screen (spec-gui "Ownership of a script's
-    // workspaces").
+    // none of them is on screen (doc "Script sessions").
     state.gui.notify(
         events::PROMPT_REQUESTED,
         json!({ "prompt": body.prompt,

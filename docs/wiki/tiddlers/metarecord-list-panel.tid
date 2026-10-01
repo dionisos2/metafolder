@@ -121,7 +121,7 @@ script can read and set.
 |`metarecord-list:page-size` |the page size, when changed |
 |`metarecord-list:mode` |`table` or `grid` ([[Display modes]]) |
 |`metarecord-list:effective-query` |what was last run, finder included, as [[Query IR]] — what `metarecord:bulk` acts on |
-|`metarecord-list:effective-query-text` |the same as DSL text (empty for everything), which `mf gui query` prints |
+|`metarecord-list:effective-query-text` |the same as DSL text (empty for everything), which [[mf gui query]] prints |
 |`metarecord-list:base-query-text` |the query without the finder, as DSL text |
 |`metarecord-list:query-request` |`{dsl, nonce}` — a query another panel asks it to show |
 

@@ -1,5 +1,5 @@
 //! The input-wait lock shared by `POST /gui/input` and `POST /gui/prompt`
-//! (spec-gui "Scripting / GUI API"): one wait at a time, resolved by the
+//! (doc "GUI scripting endpoints"): one wait at a time, resolved by the
 //! `answer:send` command, the command input (prompt), a timeout, or GUI
 //! teardown ("closed").
 

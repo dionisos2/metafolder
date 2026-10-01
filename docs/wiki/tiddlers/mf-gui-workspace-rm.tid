@@ -1,0 +1,6 @@
+title: mf gui workspace rm
+tags: [[CLI command]] [[Scripting the GUI]]
+kind: reference
+summary: Close a workspace
+
+Closes a workspace; a slot that showed it shows the previous one in tab order ([[Workspaces]]).

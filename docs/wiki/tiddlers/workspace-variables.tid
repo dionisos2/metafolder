@@ -8,8 +8,8 @@ summary: A per-workspace key-value store the panels communicate through — the 
 Each workspace has a key-value store, shared by every panel loaded in it; a change is
 pushed at once to all of them. Panels talk through it without knowing one another:
 the list writes the selection, the detail and the file panels follow it. The Rust side
-holds it, so a script reads the same values — `GET /gui/workspaces/:id/vars/:key`,
-or `mf gui selected` for the checked set — and the [[workspace-info panel]] shows them
+holds it, so a script reads the same values — `GET /gui/workspaces/:id/vars/:key`
+([[GUI scripting endpoints]]), or [[mf gui selected]] for the checked set — and the [[workspace-info panel]] shows them
 live.
 
 !! The standard variables

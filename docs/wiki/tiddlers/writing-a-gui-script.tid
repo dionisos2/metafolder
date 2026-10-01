@@ -1,0 +1,138 @@
+title: Writing a GUI script
+tags: [[Scripting the GUI]]
+kind: guide
+summary: A bash script over lib/mf-gui.sh — take the screen and give it back, ask questions, report a failure where it is seen, go back on an answer, and keep the cost per entry low.
+
+
+A GUI script is a bash script that calls `mf` for the data and `mf gui` for the screen
+([[Scripting the GUI]]). The shipped ones share a library, [[lib/mf-gui.sh]], which
+holds what every one of them needs and what each used to get wrong on its own. Put
+your script next to them, in `~/.config/metafolder/scripts/`, and give it a
+`# Summary:` line to have it offered by `script:run` ([[Running shipped scripts]]).
+
+!! The skeleton
+
+```
+#!/usr/bin/env bash
+# Summary: One line, shown by script:run.
+set -euo pipefail
+
+HERE=$(cd "$(dirname "$0")" && pwd)
+source "$HERE/lib/mf-gui.sh"
+
+mf_gui_bind_repo                      # REPO, and METAFOLDER_REPO for every mf below
+mf_gui_session_open metarecord-detail # WS: a scratch workspace in both slots
+
+# ... the questions ...
+
+mf_gui_finish "done."
+```
+
+* `mf_gui_bind_repo` takes the repository of the focused workspace ([[mf gui repo]]) and exports it, so the `mf` commands that follow need no `-u`. It ends the script when no GUI answers.
+* `mf_gui_session_open [<panel>]` saves the layout, opens a scratch workspace shown in ''both'' slots — the [[file panel]] on the left, `<panel>` on the right, `metarecord-detail` by default — and installs an `EXIT` trap that closes the workspace and puts the layout back, whatever way the script ends. Read what you need from the user's own workspace ''before'' it: the scratch workspace has no query and no selection.
+* `mf_gui_show_file <path>` previews a file on the left and selects its metarecord, which the detail on the right follows. An ''empty'' path clears the panel: an entry with no file must not leave the previous one on screen, offered as the subject of the question.
+* `mf_gui_finish <text>` is the script's last word. It is posted once the session is closed, on the workspace the script was launched from — sent earlier it would land on the scratch workspace and go with it.
+
+A script that needs another layout — two workspaces side by side — does the same by
+hand: [[Example: comparing images]].
+
+!! Asking
+
+```
+case "$(mf_gui_ask_answer "Keep it?   [y →] yes   [n ←] no   [q] stop" y n q)" in
+    y) ... ;;
+    n) ... ;;
+    *) stop=user ;;
+esac
+```
+
+`mf_gui_ask_answer <question> <letter>...` shows the question in its bar and prints
+the answer as a ''letter''. Each of `y`, `n`, `m`, `s` also accepts its arrow key —
+→, ←, ↑, ↓ — and the arrow is folded back onto the letter.
+`mf_gui_ask <question> <key>...` is the plain form, for keys of your own.
+
+* The question is the wait's own prompt. Posted apart, with `mf gui message`, it sits on the status line, where the next message replaces it.
+* Never ask for a key the GUI reserves — `escape`, `backspace`, and by default `tab`, `:` and `!`: the wait is refused ([[Script sessions]]). Offer `q` to stop.
+* When the question could not be asked at all, both helpers report why and print `escape`. Give every `case` a default branch that stops.
+
+A missing ''argument'' is asked in the command input, with completion:
+
+```
+TAG=${1:-$(mf_gui_prompt_tag "Tag: ")} || mf_die "cancelled"
+```
+
+`mf_gui_prompt <message>` completes over the lines of its standard input;
+`mf_gui_prompt_tag` over the tag vocabulary; `mf_gui_prompt_folder` and
+`mf_gui_prompt_file` over the tracked directories and files, printing a path from the
+repository root that `mf_gui_path_uuid` turns into a metarecord. Each fails when
+the user cancels. A script that acts on a ''set'' takes it as a query, and asks for it
+with `mf_gui_default_scope` ([[A query is the scope]]).
+
+!! Text that goes into a query
+
+A file or a tag name is user data. Put between the quotes of a query as it is, a folder
+called `Rock "n" Roll` ends the literal early, and the query is a syntax error.
+
+```
+mf metarecord -q "mfr_path ->* \"$(mf_dsl_str "$(mf_gui_query_path "$folder")")\"" get
+```
+
+`mf_dsl_str` escapes it. `mf_gui_query_path` writes the repository root the way
+queries name it — the empty string, where `mf path --relative` prints `/`
+([[TreeRef path conventions]]).
+
+!! A failure must be seen
+
+A GUI script that dies shows nothing by itself: its output goes to a message log
+nobody is looking at. The library therefore installs an `ERR` trap naming the command
+and the line, on the status bar of the launching workspace. Three habits keep it
+honest:
+
+* ''An empty answer must not hide a failure.'' `mapfile < <(mf ...)` and `$(mf ... | grep -c .)` throw the exit status away, so a stopped daemon or an invalid query reads as ''nothing matches'' — and the script reports success on work it did not do. `mf_into <file> <mf arguments...>` runs `mf` into a file and ends the script, with the reason, when it fails; `mf_gui_scope_into` is the same within the scope.
+* ''`set -e` is off wherever a failure is tested.'' In `handler || stop=1`, in `if cmd`, and inside a function called in a tested command substitution, bash disables both `errexit` and the `ERR` trap: a command failing in there does not stop anything. So a handler's exit status cannot mean both ''the user wants to stop'' and ''something failed'' — a failed `mf tag` then ends the run with a cheerful ''stopped.'' and exit 0. Keep an explicit state instead: empty, `user`, or the error message.
+* ''`set -E`'' — the library sets it — makes the `ERR` trap fire inside functions and subshells.
+
+`mf_gui_report <text>` posts a message where it will be seen; `mf_die <text>` posts it
+and exits 1.
+
+!! Going back
+
+Backspace answers any question with `back`. List `u` among the letters of
+`mf_gui_ask_answer` and you receive `u`; leave it out and the question is asked again.
+For a script that writes as it goes, going back is always the same thing — return the
+repository to where it was before the answer, and ask again:
+
+```
+head=$(mf_log_head)          # before writing
+mf tag -i "$uuid" add "$TAG"
+...
+mf_log_back_to "$head"       # on u
+```
+
+`mf_log_head` is [[mf log head]], and `mf_log_back_to` a [[rollback|Rollback]] to it —
+the very field rows and versions come back, which no hand-written ''untag'' would do.
+Keep a stack of what each answer changed in the script too: the position, the
+counters ''as they were before the entry was counted'', whatever the answer had
+settled. Restoring counters saved after the entry was counted subtracts twice.
+
+!! Progress
+
+`mf_gui_progress --done 3 --total 10 --phase "/music/x.mp3"` moves the script's bar in
+the task bar ([[mf gui progress]]). It does nothing outside the GUI and never fails.
+
+!! What a run costs
+
+A daemon answer takes a few milliseconds, and so does starting a process — `mf`, `awk`,
+or a command substitution, even of a pure function. Over a scope of thousands, the
+number of ''processes per entry'' is the whole cost: `gui-tag-folder.sh` went from
+45.6 s to 1.8 s on two thousand records without one query getting faster.
+
+* Read once for the whole scope, not once per entry: three `field get` per entry became three queries for the run.
+* Use parameter expansion, not a process: `${path//[!\/]/}` then `${#slashes}` counts the slashes of a path where an `awk` per entry took 8.5 s.
+* Report progress by steps, not per entry.
+* Better, hold nothing: when every answer is a write, what is left to ask is a query ([[The query is the walk state]]).
+
+The scripts that read their scope first refuse one larger than `MF_GUI_MAX_ENTRIES`
+(20 000): `mf_check_scope_size <count> <what>`.
+
+How the shipped scripts are tested, and how to test yours: [[Testing shipped scripts]].

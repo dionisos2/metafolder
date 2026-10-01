@@ -1,0 +1,6 @@
+title: mf gui prompt
+tags: [[CLI command]] [[Scripting the GUI]]
+kind: reference
+summary: Prompt the user in the command input and print the answer
+
+Asks for a line of text in the command input and prints it; exit 1 when the user cancels with Escape, on a timeout, or when another question is up ([[Script sessions]]). `--completion`, repeated, or `--completions-stdin`, one candidate per line, offer values to complete over — any text may still be typed. It is how a script asks for the argument it was not given ([[Writing a GUI script]]).

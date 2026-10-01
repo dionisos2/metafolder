@@ -1,0 +1,6 @@
+title: example-gui-sort-folder.sh
+tags: [[Shipped script]] [[Scripting the GUI]]
+kind: reference
+summary: Example/template — classify then sort a folder's files by metadata.
+
+A template to copy, not a tool: for each file of a folder it runs [[gui-tag-classify.sh]], asks three more questions — a flag, a number, a text — then moves the file to a destination computed from its tags and fields. The rules, in `destination()`, are the part to rewrite ([[Writing a GUI script]]). `SORT_DIR` (the argument, `~/a_trier` by default) must be inside the repository; a file moved out of it keeps its metarecord and loses its path.

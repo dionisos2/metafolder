@@ -1,0 +1,6 @@
+title: answer:send
+tags: [[GUI command]] [[Scripting the GUI]]
+kind: reference
+summary: Resolve the pending script input wait
+
+Answers the question a script is asking with the given value — what pressing one of its keys does. The way to answer with the script keys unticked; it completes over the keys the question awaits, and fails when no script is waiting for a key ([[Script sessions]]).

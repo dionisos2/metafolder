@@ -26,6 +26,6 @@ spellings. So a UI may show and send the root as `/`.
 
 Pitfalls, each met more than once:
 
-* ''Never prepend a `/` to a path the daemon resolved.'' It doubles the slash on `mfr_path` (`//projects`) and wrongly slashes a named root (`/music`). The GUI's `treeRefPath()` (`panel-types/treeref/queries.js`) and the scripts' `mf_gui_query_path()` (`lib/mf-gui.sh`) are the helpers.
+* ''Never prepend a `/` to a path the daemon resolved.'' It doubles the slash on `mfr_path` (`//projects`) and wrongly slashes a named root (`/music`). The GUI's `treeRefPath()` (`panel-types/treeref/queries.js`) and the scripts' `mf_gui_query_path()` ([[lib/mf-gui.sh]]) are the helpers.
 * ''Test the root and a named forest.'' Code that handles `/projects` right is where the root (`""`) and a tag root (`music`) break.
 * `mf path --relative` prints the root as `/`.

@@ -1,0 +1,6 @@
+title: mf gui command
+tags: [[CLI command]] [[Scripting the GUI]]
+kind: reference
+summary: Run a command invocation through the GUI (same as the command input)
+
+Runs a GUI command as if typed in the command input — a leading `!` runs a shell line — and returns when it has resolved: exit 1 with its message when it failed, is unknown, timed out, or the GUI closed ([[Commands]]). A command given fewer arguments than it needs asks for them in the command input, and this waits. A panel the command opened may still be drawing when it returns.

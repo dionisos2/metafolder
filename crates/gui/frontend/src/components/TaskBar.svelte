@@ -69,7 +69,7 @@
 
   // Unlike daemon tasks, a script's entry belongs to the workspaces that script
   // owns — it is part of what the script displays, so it goes away with its tab
-  // (spec-gui "Script session").
+  // (doc "Script sessions").
   const scripts = $derived(
     store.ui.scriptTasks.filter((s) => ownedByVisible(s.workspaces, visibleWorkspaces())),
   );

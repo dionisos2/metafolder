@@ -130,7 +130,7 @@ pop() {
 case "$sig" in
     "gui input"*)
         # The GUI refuses a wait that asks for one of the keys it keeps for the
-        # user (spec-gui "Reserved keys"): escape stops the script, tab toggles
+        # user (doc "Script sessions"): escape stops the script, tab toggles
         # the script keys, ":" opens the command input. Refuse them here too, or
         # a script asking for one would pass its tests and fail in the GUI.
         # The awaited keys are the bare arguments after `gui input`; --prompt
@@ -145,7 +145,7 @@ case "$sig" in
                 --*) continue ;;
                 escape|tab|:)
                     # The GUI refuses a wait that asks for one of the keys it
-                    # keeps for the user (spec-gui "Reserved keys"): escape stops
+                    # keeps for the user (doc "Script sessions"): escape stops
                     # the script, tab toggles the script keys, ":" opens the
                     # command input. Refuse them here too, or a script asking for
                     # one would pass its tests and fail in the GUI.

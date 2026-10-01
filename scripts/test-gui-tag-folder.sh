@@ -564,8 +564,8 @@ assert "up: the deep file is asked" [ "$(asked /a/b/c/d.txt)" -eq 1 ]
 assert "up: the sibling left behind is found on the way up" [ "$(asked /a/b/z.txt)" -eq 1 ]
 
 # ── Case 20: going back undoes the previous answer and asks it again ────────
-# `backspace` during a question resolves the wait with `back` (spec-gui
-# "Reserved keys"); the letter `u` (undo) is its typed twin. The answer is undone
+# `backspace` during a question resolves the wait with `back` (doc
+# "Script sessions"); the letter `u` (undo) is its typed twin. The answer is undone
 # through the event log — which restores the exact rows — and the entry, open
 # once more, is what the next step query returns.
 mock_reset

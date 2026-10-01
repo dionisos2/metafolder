@@ -1,0 +1,6 @@
+title: script:run
+tags: [[GUI command]] [[Scripting the GUI]]
+kind: reference
+summary: Run an installed helper script
+
+Runs one of the scripts installed in `~/.config/metafolder/scripts/`: without an argument it lists those carrying a `# Summary:` line, with their description; with a name — the `.sh` optional — it runs that one. The script gets no argument and asks for what it needs ([[Running shipped scripts]]).

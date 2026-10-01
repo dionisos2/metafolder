@@ -1,0 +1,60 @@
+title: Scripting the GUI
+tags: GUI
+kind: overview
+aliases: script scripts
+summary: A shell script drives the running GUI through mf gui — it shows files, posts messages, asks a question and waits for your key — and the GUI runs the installed ones for you.
+
+
+The GUI serves a small HTTP API on the loopback, and `mf gui` is its command line: a
+shell script can put a panel in a slot, show a file, post a message, run any GUI
+command, and — what makes it more than remote control — ''ask you a question and wait
+for your key''. That is how the tagging walks of [[Classifying with tags]] work: the
+script decides what to show and what to write, the GUI shows it and collects the
+answers.
+
+A script is an ordinary process. It can be started from a terminal while the GUI is
+open, or by the GUI itself — from <<cmd "script:run">> or a `!` line ([[Bash mode]]) —
+and then the GUI knows it: it shows in the task bar, owns the workspaces it opens, and
+can be stopped with one key ([[Script sessions]]).
+
+* To ''run'' the installed scripts: [[Running shipped scripts]].
+* To ''answer'' one — the question bar, the script keys, going back, stopping: [[Script sessions]].
+* To ''write'' one: [[Writing a GUI script]], then [[Example: comparing images]] for a complete one to start from.
+
+!! What a script can do
+
+|!Command |!Does |
+|[[mf gui repo]] |prints the repository of the focused workspace — what a script binds itself to |
+|[[mf gui query]], [[mf gui selected]] |print the query the metarecord list shows, and the checked metarecords — what to act on ([[A query is the scope]]) |
+|[[mf gui workspace new]], [[mf gui workspace rm]] |open and close a workspace |
+|[[mf gui layout]] |prints or sets which workspace each slot shows |
+|[[mf gui view]] |prints or sets the panel type of a slot, and the file a `file` panel shows |
+|[[mf gui message]] |posts a message on a status bar |
+|[[mf gui progress]] |moves the script's bar in the task bar |
+|[[mf gui input]] |asks a question and waits for one key |
+|[[mf gui prompt]] |asks for a line of text in the command input, with completion |
+|[[mf gui command]] |runs a GUI command, as if typed |
+|[[mf gui status]] |prints the GUI's state as JSON |
+|[[mf gui bench]] |prints or clears the timings the panels recorded |
+
+Everything else a script does goes through the ordinary `mf` commands, to the daemon:
+the GUI is only the screen and the keyboard.
+
+`mf gui` finds the GUI by `gui-port` of [[GUI configuration]] (`--gui-url` or
+`METAFOLDER_GUI_URL` override it) and sends the GUI's session token, which it reads as
+the same user ([[Session tokens]]). The API answers for as long as the GUI runs,
+whether or not the daemon does.
+
+<<list-kind guide>>
+
+<<list-kind reference>>
+
+<<list-kind rationale>>
+
+!! Commands
+
+<<tagged-with "CLI command">>
+
+<<tagged-with "GUI command">>
+
+<<tagged-with "Shipped script">>

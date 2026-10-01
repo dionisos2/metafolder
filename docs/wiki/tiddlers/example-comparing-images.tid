@@ -1,0 +1,65 @@
+title: Example: comparing images
+tags: [[Scripting the GUI]]
+kind: guide
+summary: A complete script, forty lines — two workspaces side by side, a random pair of images, one key to say which is better, and the answer written as a ref.
+
+
+Two images side by side, one key to say which is better, and the answer kept as a
+field: a script small enough to read whole, and to start your own from. Save it as
+`~/.config/metafolder/scripts/compare-images.sh`; it is then offered by `script:run`
+([[Running shipped scripts]]).
+
+```
+#!/usr/bin/env bash
+# Summary: Show two images side by side and record which one you prefer.
+set -euo pipefail
+
+HERE=$(cd "$(dirname "$0")" && pwd)
+source "$HERE/lib/mf-gui.sh"
+
+mf_gui_bind_repo
+QUERY=${1:-'mfr_mime MATCHES "^image/"'}
+
+# Two scratch workspaces, one per slot. Whatever happens, they are closed and
+# the layout is put back.
+SAVED_LEFT=$(mf gui layout left)
+SAVED_RIGHT=$(mf gui layout right)
+WS_LEFT=$(mf gui workspace new --repo "$REPO")
+WS_RIGHT=$(mf gui workspace new --repo "$REPO")
+IMAGES=$(mktemp)
+cleanup() {
+    rm -f "$IMAGES"
+    mf gui workspace rm "$WS_LEFT" >/dev/null 2>&1 || :
+    mf gui workspace rm "$WS_RIGHT" >/dev/null 2>&1 || :
+    mf gui layout left "$SAVED_LEFT" >/dev/null 2>&1 || :
+    mf gui layout right "$SAVED_RIGHT" >/dev/null 2>&1 || :
+}
+trap cleanup EXIT
+mf gui layout left "$WS_LEFT"
+mf gui layout right "$WS_RIGHT"
+
+mf_into "$IMAGES" metarecord -q "$QUERY" get
+[ "$(grep -c . "$IMAGES" || true)" -ge 2 ] || mf_die "the query matches fewer than two metarecords"
+
+while :; do
+    mapfile -t pair < <(shuf -n 2 "$IMAGES")
+    mf gui view left file --path "$(mf path "${pair[0]}")"
+    mf gui view right file --path "$(mf path "${pair[1]}")"
+    case "$(mf_gui_ask "Which one is better?   ← left   → right   q stop" left right q)" in
+        left)  mf metarecord -i "${pair[0]}" field add "better_than:ref=${pair[1]}" >/dev/null ;;
+        right) mf metarecord -i "${pair[1]}" field add "better_than:ref=${pair[0]}" >/dev/null ;;
+        *)     break ;;
+    esac
+done
+```
+
+What each part is for:
+
+* ''The scope.'' The images are a query — by default every file whose content is an image (`mfr_mime`, [[File metadata fields]]); pass another as the argument. `mf_into` reads the matches into a file and ends the script if `mf` fails, so that a stopped daemon is not read as ''no image'' ([[Writing a GUI script]]).
+* ''Two workspaces.'' A workspace has one selection, hence one previewed file: showing two takes two workspaces, one per slot. Both are opened by the script, so they are ''its own'' — the question is on screen while either is, and put away when you switch to another tab ([[Script sessions]]). This is the one thing `mf_gui_session_open` does not do, so the script saves the layout and restores it itself, in an `EXIT` trap: Escape kills the script, and the trap is what still closes the two workspaces.
+* ''Showing.'' [[mf gui view]] with `--path` puts the [[file panel]] in the slot and selects the file in that slot's workspace. [[mf path]] gives the path on disk of a metarecord.
+* ''Asking.'' `mf_gui_ask` waits for one of three keys. The arrows are free to take; Escape is not, and need not be listed: it stops the script whatever it asks. A question that cannot be asked comes back as `escape`, and falls in the branch that stops.
+* ''Writing.'' The winner gets a `better_than` field, a `ref` to the loser. It is an ordinary write: `better_than IS PRESENT` finds the images that won at least once, <<key "log:undo" Ctrl+z>> takes the last answer back ([[Undo and redo]]).
+
+Made longer, it would not show the same pair twice, would offer `u` to go back, and
+would report its progress — each a few lines of [[Writing a GUI script]].

@@ -137,8 +137,8 @@ const FILESYSTEM_OPS: &[&str] =
 /// (`POST /rollback`) instead of one round-trip — and one transaction — per
 /// operation.
 ///
-/// This is what "back" costs in a classification walk (spec-gui "Reserved
-/// keys"): a "yes" on a folder writes one operation per file under it, so
+/// This is what "back" costs in a classification walk (doc "Script sessions"): a "yes" on a folder
+/// writes one operation per file under it, so
 /// taking it back stepped a thousand times over the network to undo a single
 /// keypress. The daemon counts the steps with a file action
 /// (`filesystem_steps`); failing that the op types are read, and an unreadable
@@ -663,7 +663,7 @@ mod tests {
         MovePolicies { on_available, on_unavailable }
     }
 
-    /// "Back" in a classification walk (spec-gui "Reserved keys") undoes a
+    /// "Back" in a classification walk (doc "Script sessions") undoes a
     /// whole subtree of tag writes. Nothing in that touches a file, so the
     /// navigation goes in one atomic call — one round-trip per record is what
     /// made going back take minutes.

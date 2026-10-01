@@ -1,5 +1,5 @@
 //! The command-dispatch wait registry shared by `POST /gui/command`
-//! (spec-gui "Scripting / GUI API"): an external invocation is run by the
+//! (doc "GUI scripting endpoints"): an external invocation is run by the
 //! frontend's own `dispatch()` — the exact same path as the command input and
 //! keybindings — and its outcome is reported back through the `command_done`
 //! Tauri command. Unlike the input/prompt wait, several command waits may be

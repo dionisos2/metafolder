@@ -38,8 +38,8 @@ pub async fn run_to_completion(
     command.process_group(0);
     let mut child = command.spawn().map_err(|e| format!("cannot run shell command: {e}"))?;
 
-    // Show a running indicator until this function returns (spec-gui
-    // "Scripting"). The guard clears it on every exit path — early `?`
+    // Show a running indicator until this function returns (doc
+    // "Script sessions"). The guard clears it on every exit path — early `?`
     // returns and panics included — so the spinner can never get stuck on.
     gui.script_begin(&task_id, &ws_id, &script_label(&command_line));
     let _running = RunningGuard { gui: gui.clone(), task_id: task_id.clone() };
@@ -64,7 +64,7 @@ pub async fn run_to_completion(
         // The message log alone is not enough: a GUI script writes it into a
         // scratch workspace its own teardown removes, so a run killed by
         // `set -e` would vanish without a trace. Say so on the launching
-        // workspace's status bar too (spec-gui "Script session").
+        // workspace's status bar too (doc "Script sessions").
         let _ = gui.post_status(
             &ws_id,
             &format!("{} failed (exit {code})", script_label(&command_line)),
@@ -231,8 +231,8 @@ mod tests {
 
     #[tokio::test]
     async fn test_stop_script_kills_the_run_and_its_children() {
-        // Escape during a question must actually end the script (spec-gui
-        // "Stopping a script"): the whole process group dies, so the `mf gui
+        // Escape during a question must actually end the script (doc
+        // "Script sessions"): the whole process group dies, so the `mf gui
         // input` child blocked on the question goes with it.
         let notifier = Arc::new(RecordingNotifier::new());
         let gui = Arc::new(GuiState::new(notifier.clone()));

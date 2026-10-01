@@ -1,0 +1,6 @@
+title: mf gui layout
+tags: [[CLI command]] [[Scripting the GUI]]
+kind: reference
+summary: Print or assign the slot layout ('-' = hidden slot)
+
+Without arguments prints both slots, one `left <workspace>` or `right <workspace>` line each, `-` for a hidden slot; with a slot, that slot's workspace alone; with a slot and a workspace id, shows that workspace there — `-` hides the slot ([[Panel slots and layout]]).

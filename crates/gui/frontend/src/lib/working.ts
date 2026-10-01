@@ -1,5 +1,4 @@
-// The "the daemon is working" indicator (spec-gui "Working vs. awaiting an
-// answer").
+// The "the daemon is working" indicator (doc "Script sessions").
 //
 // A daemon call is normally too fast to be worth showing — announcing every one
 // of them would strobe. A few are not: a write the daemon has to settle, a query

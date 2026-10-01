@@ -15,7 +15,7 @@
 # Files already referencing the tag either way are excluded, so it is resumable.
 # Skipped files come back on the next run.
 #
-# THE QUERY IS THE SCOPE (spec-gui "A query is the scope"), as in
+# THE QUERY IS THE SCOPE (doc "A query is the scope"), as in
 # gui-tag-folder.sh: given as the argument, else ASKED — the checked
 # selection, or the query the list shows, like the GUI's bulk commands; when
 # the list has published nothing, a folder chosen from the completion. An

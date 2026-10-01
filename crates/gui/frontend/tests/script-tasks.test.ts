@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { ownedByVisible, scriptIndicator, scriptTasksState } from '../src/lib/store.svelte';
 
-// The running-scripts loading indicator (spec-gui "Scripting"): the shell emits
+// The running-scripts loading indicator (doc "Script sessions"): the shell emits
 // `script-task-changed` with the set of scripts still running; the task bar
 // shows a spinner per entry (or a determinate bar once the script reports
 // done/total via `mf gui progress`) so a slow script never looks frozen.
@@ -39,7 +39,7 @@ describe('scriptTasksState', () => {
   });
 });
 
-// Scoping (spec-gui "Script session"): a script's question and task entry
+// Scoping (doc "Script sessions"): a script's question and task entry
 // belong to the workspaces it owns — the launching one plus every workspace it
 // created — so switching tab hides them instead of leaving them on screen.
 describe('ownedByVisible', () => {
@@ -85,7 +85,7 @@ describe('scriptTasksState waiting flag', () => {
   });
 });
 
-// What the entry actually shows (spec-gui "Working vs. awaiting an answer").
+// What the entry actually shows (doc "Script sessions").
 // The two states are told apart by *motion*: reporting done/total used to
 // replace the spinner with a determinate bar, and a bar that only advances
 // when the user answers is exactly as still as a blocked one — so a working

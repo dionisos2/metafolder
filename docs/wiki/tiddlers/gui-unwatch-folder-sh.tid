@@ -1,0 +1,6 @@
+title: gui-unwatch-folder.sh
+tags: [[Shipped script]] [[Scripting the GUI]]
+kind: reference
+summary: Stop watching a folder and delete every metarecord inside it.
+
+Stops watching a folder — `mf_watch = false` on its metarecord, which is kept — then deletes every metarecord ''inside'' it, after a confirmation giving their number. No file is touched ([[Tracking a folder]]). It takes a folder and not a query, the one shipped script that does ([[A query is the scope]]); the metarecords of files already gone are not under the folder any more and stay ([[Orphans]]).

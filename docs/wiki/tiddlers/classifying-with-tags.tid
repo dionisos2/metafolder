@@ -5,11 +5,12 @@ aliases: classify
 summary: Three GUI scripts ask the questions for you — every tag of one file, one tag over many files, or one tag over a folder tree answered a subtree at a time.
 
 The GUI ships three tagging scripts, run from the GUI's `script:run` launcher or from a
-shell while the GUI is open. Each shows what it asks about in the panels and waits for a
+shell while the GUI is open ([[Running shipped scripts]]). Each shows what it asks about in the panels and waits for a
 key; each writes through `mf tag`, so the rules of
 [[Tag subsumption and exclusivity]] hold whatever you answer. All three take a
 ''query as their scope'': the argument if given, else the selection checked in the list,
-or the query the list shows, or — when the list shows nothing — a folder you pick. And
+or the query the list shows, or — when the list shows nothing — a folder you pick
+([[A query is the scope]]). And
 all three are ''resumable'': what is already decided is not asked again, so a run can be
 stopped at any time and started again later. `gui-tag-classify.sh` and `gui-tag-pair.sh`
 read their whole scope first and refuse one larger than `MF_GUI_MAX_ENTRIES` (20 000,

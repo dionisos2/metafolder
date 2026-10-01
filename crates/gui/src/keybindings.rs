@@ -86,7 +86,7 @@ fn normalize_chord(chord: &str) -> Result<String, String> {
 }
 
 /// Commands whose keybinding a script may never take over: they are the user's
-/// only ways out of a script's question (spec-gui "Reserved keys").
+/// only ways out of a script's question (doc "Script sessions").
 // `command-input:focus` is listed bare so both of its modes are covered: the
 // match below also accepts an invocation that pre-fills arguments, and a script
 // must be unable to take over `!` any more than `:`.
@@ -95,7 +95,7 @@ const RESERVED_COMMANDS: [&str; 2] = ["command-input:focus", "script-keys:toggle
 /// The combos a script's `mf gui input` may not await: whatever opens the
 /// command input, whatever toggles the script keys, `escape` (which always
 /// stops the script) and `backspace` (which always sends "back" — the way out
-/// of an answer already given, spec-gui "Reserved keys"). Single chords only —
+/// of an answer already given, doc "Script sessions"). Single chords only —
 /// a script awaits one key press, so a multi-chord sequence can never collide
 /// with it. Sorted and deduplicated.
 pub fn reserved_combos(compiled: &[CompiledBinding]) -> Vec<String> {
@@ -876,7 +876,7 @@ mod tests {
     #[test]
     fn test_reserved_combos_are_the_exits_plus_escape() {
         // The user's ways out of a script question must never be a script's to
-        // take (spec-gui "Reserved keys"): whatever opens the command input,
+        // take (doc "Script sessions"): whatever opens the command input,
         // whatever toggles the script keys, and escape.
         let defaults = r#"
 ":" = { command = "command-input:focus command" }

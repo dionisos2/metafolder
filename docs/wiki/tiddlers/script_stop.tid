@@ -1,0 +1,6 @@
+title: script:stop
+tags: [[GUI command]] [[Scripting the GUI]]
+kind: reference
+summary: Stop the running script (the one asking, by default)
+
+Stops a script the GUI started, with everything it started: `SIGTERM` to its process group, `SIGKILL` two seconds later. Without an argument, the script asking the current question — what Escape does while a question is up; with a run id (`script-3`), that one. A question nobody owns is closed instead ([[Script sessions]]).

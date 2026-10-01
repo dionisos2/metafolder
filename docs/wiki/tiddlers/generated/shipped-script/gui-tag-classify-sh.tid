@@ -30,7 +30,7 @@ The vocabulary and exclusivity flags come from `mf tag list`
 loops. Resumable: answered questions are skipped, so re-run until nothing is
 left to ask.
 
-THE QUERY IS THE SCOPE (spec-gui "A query is the scope"), as in the other
+THE QUERY IS THE SCOPE (doc "A query is the scope"), as in the other
 shipped scripts: given as the argument, else ASKED — the checked selection,
 or the query the list shows, like the GUI's bulk commands; when the list has
 published nothing, a folder chosen from the completion. `q` on any

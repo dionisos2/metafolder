@@ -36,8 +36,8 @@
   /** The prompt that owns the input right now — a script's POST /gui/prompt or
    *  an interactive argument collection — but only while one of the workspaces
    *  it belongs to is on screen. A prompt put away by a tab switch leaves an
-   *  ordinary command line behind (spec-gui "Ownership of a script's
-   *  workspaces"), so every question below is asked of this, never of
+   *  ordinary command line behind (doc "Script sessions"), so every question below is asked of
+   *  this, never of
    *  `store.ui.promptText`. */
   const promptText = $derived(activePromptText());
   /** Whether the line currently holds the prompt's answer rather than a

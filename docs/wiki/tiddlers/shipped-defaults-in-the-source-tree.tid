@@ -22,7 +22,7 @@ script may drive the GUI, the CLI or both — hence their own top-level director
 The build and check scripts stay in `scripts/` and are not shipped. Living under
 `main`, a shipped script can be edited or joined by your own, and a new shipped
 version merges in. A launchable script carries a one-line `# Summary:` comment
-right after its shebang: the GUI's `script:run` lists exactly those. Libraries
+right after its shebang: the GUI's `script:run` lists exactly those ([[Running shipped scripts]]). Libraries
 that are only sourced carry none: installed, but not offered.
 
 ''Documentation.'' The rendered wiki is the one category that is a build product,

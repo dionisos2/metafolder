@@ -58,7 +58,7 @@ They act on the command input, and on any text field of a panel that has the foc
 
 When a command needs an argument, or a script asks something, the prompt shows the
 question in place of `:` and the list shows the possible answers. The keys differ
-slightly from command mode — see [[Interactive command arguments]]. `Escape` gives up.
+slightly from command mode — see [[Interactive command arguments]], and [[Script sessions]] for a script's questions. `Escape` gives up.
 
 A question belongs to the workspace it was asked in. Showing another workspace puts
 it away — the line is an ordinary command line again — and coming back restores it,

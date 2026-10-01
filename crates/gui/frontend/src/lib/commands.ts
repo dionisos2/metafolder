@@ -1225,7 +1225,7 @@ async function promptForArg(request: ArgPromptRequest): Promise<string | null> {
     store.ui.promptSource = null;
     // The collection belongs to the workspace the command was invoked from:
     // switching tab puts its question away with the rest of that workspace's
-    // work (spec-gui "Ownership of a script's workspaces"). The command input
+    // work (doc "Script sessions"). The command input
     // focuses itself when the prompt is on screen.
     store.ui.promptWorkspaces = ws === null ? [] : [ws];
     store.ui.promptTask = null;
@@ -1663,7 +1663,7 @@ async function runCommand(name: string, args: string[], ws: string | null): Prom
     case 'script-keys:toggle': {
       // The question bar's checkbox: hand the script's keys back to the panels,
       // or take them again. Rust owns the flag and re-pushes the keytable, so
-      // the temporary answer bindings follow it (spec-gui "Script keys").
+      // the temporary answer bindings follow it (doc "Script sessions").
       const enabled = await invoke<boolean>('script_keys_toggle');
       await status(enabled ? 'script keys enabled' : 'script keys disabled', 'info');
       return true;
