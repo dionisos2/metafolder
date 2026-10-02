@@ -242,12 +242,22 @@ export function checkWiki(tiddlers, codeRefs) {
       }
     }
   }
+  // An exemption is a target prefix an enforced catalog may leave without a
+  // note while its topic is deferred; one that covers nothing undocumented is
+  // an error, so that the list empties itself as the notes get written.
   const handTitles = new Set(hand.map((t) => t.fields.title));
+  const exemptions = parseTitleList(config('$:/mf/config/catalog-exemptions').list);
+  const usedExemptions = new Set();
   for (const g of generated) {
     const { catalog, target } = g.fields;
     if (enforced.has(catalog) && !handTitles.has(target)) {
-      errors.push(`"${target}" (${catalog}) has no note — scripts/doc new --from-gen "${target}"`);
+      const exemption = exemptions.find((prefix) => target.startsWith(prefix));
+      if (exemption !== undefined) usedExemptions.add(exemption);
+      else errors.push(`"${target}" (${catalog}) has no note — scripts/doc new --from-gen "${target}"`);
     }
+  }
+  for (const prefix of exemptions) {
+    if (!usedExemptions.has(prefix)) errors.push(`exemption "${prefix}" is no longer needed`);
   }
 
   // Key hints: the help panel fills `<<key "command">>` from the live table,

@@ -93,6 +93,7 @@ It runs in `scripts/check.sh` as `wiki` ([[Static checks]]):
 * every `doc "Title"` in `crates/` and `scripts/` names a note;
 * every key hint names a command that exists;
 * a note tagged with a catalog documents something the code has;
+* every item of the code has its note — every catalog is complete, save the exemptions below;
 * the generated notes of the shipped scripts are current.
 
 !! Citing a note from the code
@@ -112,8 +113,11 @@ hand-written note of the same name says the rest.
 note fails `cargo test` (`doc_gen` in the `cli` and `gui` crates), and a `///`
 comment on a clap argument ''is'' the help text, so editing one changes a generated
 note. `scripts/doc new --from-gen "mf trash restore"` starts a hand-written note
-from a generated one; until then the item shows under "Not documented yet" in its
-catalog.
+from a generated one: every catalog is enforced, so `check` fails until the note
+exists. The one exception is a deferred topic: `$:/mf/config/catalog-exemptions`
+lists target prefixes left without a note for now (sync's commands, panel and
+endpoints), shown under "Not documented yet" in their catalog. An exemption that
+no longer covers anything undocumented fails `check`.
 
 !! Rendering
 

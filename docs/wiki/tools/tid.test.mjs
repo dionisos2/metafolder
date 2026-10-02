@@ -227,6 +227,35 @@ describe('checkWiki', () => {
     );
   });
 
+  test('an exemption lets an enforced catalog wait for a deferred topic', () => {
+    const config = (list, exempted) => [
+      ...CONFIG.map((t) =>
+        t.fields.title === '$:/mf/config/enforced-catalogs' ? { ...t, fields: { ...t.fields, list } } : t,
+      ),
+      system('$:/mf/config/catalog-exemptions', { list: exempted }),
+    ];
+    const tiddlers = [gen('GUI command', 'sync:open'), gen('GUI command', 'sync:run')];
+    // A prefix of the targets the catalog may leave without a note.
+    assert.deepEqual(checkWiki([...config('[[GUI command]]', 'sync:'), ROOT, GUI_HUB, ...tiddlers], []), []);
+    const other = [...tiddlers, gen('GUI command', 'trash:next')];
+    assert.match(
+      checkWiki([...config('[[GUI command]]', 'sync:'), ROOT, GUI_HUB, ...other], []).join('\n'),
+      /"trash:next" \(GUI command\) has no note/,
+    );
+    // An exemption nothing needs any more is an error, so it gets removed.
+    const documented = [
+      ...tiddlers,
+      hand('sync:open', { tags: '[[GUI command]]' }),
+      hand('sync:run', { tags: '[[GUI command]]' }),
+    ];
+    assert.match(
+      checkWiki([...config('[[GUI command]]', 'sync: nothing:'), ROOT, GUI_HUB, ...documented], []).join(
+        '\n',
+      ),
+      /exemption "sync:" is no longer needed[\s\S]*exemption "nothing:" is no longer needed/,
+    );
+  });
+
   test('a key hint names a command the GUI has', () => {
     const out = errors([
       hand('K', { tags: '[[GUI command]]' }, '<<key "trash:restore" Enter>> <<key "panel:set type trash">> <<key "no:such">>'),
