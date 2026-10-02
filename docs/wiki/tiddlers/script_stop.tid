@@ -1,6 +1,6 @@
 title: script:stop
 tags: [[GUI command]] [[Scripting the GUI]]
 kind: reference
-summary: Stop the running script (the one asking, by default)
+summary: Ask the running script to stop (the one asking, by default)
 
-Stops a script the GUI started, with everything it started: `SIGTERM` to its process group, `SIGKILL` two seconds later. Without an argument, the script asking the current question — what Escape does while a question is up; with a run id (`script-3`), that one. The GUI then closes the workspaces the script opened and gives their slots back. A question nobody owns is closed instead ([[Script sessions]]).
+Asks a script the GUI started to stop: `SIGTERM` to its whole process group, which a script may trap to finish what it is doing. Without an argument, the script asking the current question — what Escape does while a question is up; with a run id (`script-3`), that one. Once the script is gone the GUI closes the workspaces it opened and gives their slots back. A script that ignores the signal goes on: <<cmd "script:kill">> ends it. A question nobody owns is closed instead ([[Script sessions]]).

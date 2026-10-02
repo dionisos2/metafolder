@@ -143,7 +143,7 @@ case "$sig" in
                 gui|input) continue ;;
                 --prompt|--timeout-ms) skip=1; continue ;;
                 --*) continue ;;
-                escape|tab|:)
+                escape|ctrl+escape|backspace|tab|:)
                     # The GUI refuses a wait that asks for one of the keys it
                     # keeps for the user (doc "Script sessions"): escape stops
                     # the script, tab toggles the script keys, ":" opens the

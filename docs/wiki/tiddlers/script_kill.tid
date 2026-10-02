@@ -1,0 +1,6 @@
+title: script:kill
+tags: [[GUI command]] [[Scripting the GUI]]
+kind: reference
+summary: Kill the running script outright (the one asking, by default)
+
+Kills a script the GUI started, with everything it started: `SIGKILL` to its process group, so nothing of it runs any more — what Ctrl+Escape does while a question is up. For a script that did not end on <<cmd "script:stop">>. Takes the same argument, and the GUI cleans up after it the same way ([[Script sessions]]).

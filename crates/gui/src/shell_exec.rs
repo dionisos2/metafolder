@@ -5,7 +5,6 @@
 use crate::state::GuiState;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
-use std::time::Duration;
 use tokio::io::{AsyncBufReadExt, BufReader};
 use tokio::process::Command;
 
@@ -58,13 +57,13 @@ pub async fn run_to_completion(
     let _ = out_task.await;
     let _ = err_task.await;
 
-    if gui.script_stopped(&task_id) {
+    if let Some(how) = gui.script_stopped(&task_id) {
         // Asked for by the user: neither a failure nor an exit code worth
         // naming (a signal has none), and nothing in red.
-        gui.append_message(&ws_id, "[stopped]")?;
+        gui.append_message(&ws_id, &format!("[{how}]"))?;
         let _ = gui.post_status(
             &ws_id,
-            &format!("{} stopped", script_label(&command_line)),
+            &format!("{} {how}", script_label(&command_line)),
             "info",
             None,
         );
@@ -150,35 +149,39 @@ pub fn run_shell(
     Ok(())
 }
 
-/// How long a stopped script may take to die on `SIGTERM` before it is killed
-/// outright.
-const STOP_GRACE: Duration = Duration::from_secs(2);
+/// The two ways the user ends a run (doc "Script sessions").
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Stop {
+    /// `script:stop` — `SIGTERM`: the script is asked to end, and may trap the
+    /// signal to finish what it is doing.
+    Terminate,
+    /// `script:kill` — `SIGKILL`: the script ends now and runs nothing more.
+    Kill,
+}
 
-/// `script:stop` — ends run `task_id`: `SIGTERM` to its whole process group,
-/// then `SIGKILL` to whatever is still there after [`STOP_GRACE`]. Returns
-/// false when no such run is known (already finished, or never GUI-launched),
-/// so the caller can say so rather than pretend.
+/// `script:stop` / `script:kill` — ends run `task_id` by signalling its whole
+/// process group. Returns false when no such run is known (already finished,
+/// or never GUI-launched), so the caller can say so rather than pretend.
 ///
-/// The script's pending question needs no separate resolution: killing the
-/// group takes its `mf gui input` with it, the HTTP connection drops and the
+/// One signal, and no escalation: a stop the script ignores is not turned into
+/// a kill behind the user's back — killing is their own, second command.
+///
+/// The script's pending question needs no separate resolution: when the group
+/// dies its `mf gui input` goes with it, the HTTP connection drops and the
 /// wait's guard releases the lock.
-pub fn stop_script(gui: &Arc<GuiState>, task_id: &str) -> bool {
+pub fn stop_script(gui: &Arc<GuiState>, task_id: &str, how: Stop) -> bool {
     let Some(pid) = gui.script_pid(task_id) else { return false };
-    if !signal_group(pid, SIGTERM) {
+    let (signal, word) = match how {
+        Stop::Terminate => (SIGTERM, "stopped"),
+        Stop::Kill => (SIGKILL, "killed"),
+    };
+    if !signal_group(pid, signal) {
         return false;
     }
-    // The script is being killed and cleans nothing up: the GUI does, once the
+    // Ended by the user: reported under that word, and — a script that is
+    // being ended cleans nothing up — cleaned up after by the GUI, once the
     // run has ended (`GuiState::script_end`).
-    gui.script_mark_stopped(task_id);
-    let gui = gui.clone();
-    let task_id = task_id.to_string();
-    tauri::async_runtime::spawn(async move {
-        tokio::time::sleep(STOP_GRACE).await;
-        // Still registered ⇒ it ignored the SIGTERM (or is stuck in a syscall).
-        if let Some(pid) = gui.script_pid(&task_id) {
-            signal_group(pid, SIGKILL);
-        }
-    });
+    gui.script_mark_stopped(task_id, word);
     true
 }
 
@@ -274,7 +277,10 @@ mod tests {
         // A workspace the script opened: `sleep` has no exit trap to close it.
         let scratch = take_over(&gui, &task_id);
 
-        assert!(stop_script(&gui, &task_id), "stopping a live run reports success");
+        assert!(
+            stop_script(&gui, &task_id, Stop::Terminate),
+            "stopping a live run reports success"
+        );
         let stopped = tokio::time::timeout(Duration::from_secs(5), running).await;
         assert!(stopped.is_ok(), "the killed script must not outlive its stop");
         assert!(
@@ -294,7 +300,54 @@ mod tests {
         assert!(log.iter().any(|m| m.text == "[stopped]"), "the log says so too");
         assert!(log.iter().all(|m| !m.text.starts_with("[exit")), "and names no exit code");
         // The run is gone from the registry, so a second stop finds nothing.
-        assert!(!stop_script(&gui, &task_id));
+        assert!(!stop_script(&gui, &task_id, Stop::Terminate));
+    }
+
+    /// Runs `command_line` and returns its run id once it has a pid to signal.
+    async fn started(
+        gui: &Arc<GuiState>,
+        notifier: &Arc<RecordingNotifier>,
+        command_line: &str,
+    ) -> (String, tokio::task::JoinHandle<Result<(), String>>) {
+        let running = tokio::spawn({
+            let gui = gui.clone();
+            let command_line = command_line.to_string();
+            async move { run_to_completion(gui, "ws-1".into(), command_line).await }
+        });
+        for _ in 0..100 {
+            let payloads = notifier.payloads(crate::events::SCRIPT_TASK_CHANGED);
+            let id = payloads
+                .last()
+                .and_then(|p| p["tasks"][0]["task"].as_str().map(str::to_string))
+                .filter(|id| gui.script_pid(id).is_some());
+            if let Some(id) = id {
+                return (id, running);
+            }
+            tokio::time::sleep(Duration::from_millis(20)).await;
+        }
+        panic!("the run should be registered with a pid");
+    }
+
+    #[tokio::test]
+    async fn test_a_script_that_ignores_the_stop_is_ended_by_the_kill() {
+        // Stopping asks (SIGTERM) and nothing more: a script may trap it to
+        // finish what it is doing, or ignore it. Killing (SIGKILL) is the
+        // user's second, separate command — the GUI never escalates by itself.
+        let notifier = Arc::new(RecordingNotifier::new());
+        let gui = Arc::new(GuiState::new(notifier.clone()));
+        let (task_id, mut running) = started(&gui, &notifier, "trap '' TERM; sleep 30").await;
+        // Let the shell install its trap before it is signalled.
+        tokio::time::sleep(Duration::from_millis(300)).await;
+
+        assert!(stop_script(&gui, &task_id, Stop::Terminate));
+        let ignored = tokio::time::timeout(Duration::from_millis(2500), &mut running).await;
+        assert!(ignored.is_err(), "a stop that is ignored is not turned into a kill");
+
+        assert!(stop_script(&gui, &task_id, Stop::Kill));
+        let killed = tokio::time::timeout(Duration::from_secs(5), running).await;
+        assert!(killed.is_ok(), "nothing survives the kill");
+        let statuses = notifier.payloads(crate::events::STATUS_MESSAGE);
+        assert_eq!(statuses.last().unwrap()["text"], json!("trap '' TERM; sleep 30 killed"));
     }
 
     #[test]
@@ -388,7 +441,7 @@ mod tests {
         let scratch = take_over(&gui, "script-1");
         assert_eq!(shown(&gui), (Some(scratch.clone()), Some(scratch.clone())));
 
-        gui.script_mark_stopped("script-1");
+        gui.script_mark_stopped("script-1", "stopped");
         gui.script_end("script-1");
 
         assert!(gui.workspaces().iter().all(|w| w.id != scratch), "the scratch workspace goes");
@@ -419,7 +472,7 @@ mod tests {
         let scratch = take_over(&gui, "script-1");
         gui.tab_assign(&other, SlotId::Right).unwrap();
 
-        gui.script_mark_stopped("script-1");
+        gui.script_mark_stopped("script-1", "stopped");
         gui.script_end("script-1");
 
         assert!(gui.workspaces().iter().all(|w| w.id != scratch));
@@ -433,7 +486,7 @@ mod tests {
         // The workspace a script was launched from is owned, not opened by it.
         let gui = gui();
         gui.script_begin("script-1", "ws-1", "gui-tag-folder.sh");
-        gui.script_mark_stopped("script-1");
+        gui.script_mark_stopped("script-1", "stopped");
         gui.script_end("script-1");
         assert!(gui.workspaces().iter().any(|w| w.id == "ws-1"));
     }

@@ -10,7 +10,7 @@ in bash mode: the prompt reads `!` and the line is a shell command.
 
 * The line is written to the workspace's messages as `$ command`, then each line of its output as it comes; a failure adds `[exit N]` and an error in the status bar. The output also goes to the terminal the GUI was started from.
 * The focused slot switches to the [[message panel]] so that the output shows — unless a [[message panel]] is already visible for this workspace, in which case nothing moves.
-* While it runs, it shows in the task bar as a script, and <<cmd "script:stop">> stops it with everything it started ([[Status bar and task bar]]).
+* While it runs, it shows in the task bar as a script, and <<cmd "script:stop">> stops it with everything it started — <<cmd "script:kill">> if it will not stop ([[Status bar and task bar]]).
 
 The mode is a convenience of the input, not another format: in a keybinding or in
 [[mf gui command]], a shell line is an invocation starting with `!`.

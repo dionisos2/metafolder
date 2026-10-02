@@ -50,33 +50,35 @@ never deprived, without anyone noticing, of the answers it waits for.
 
 !! Reserved keys
 
-Four keys are yours, and a script cannot take them. A question asking for one is
+Five keys are yours, and a script cannot take them. A question asking for one is
 refused (`400`) before it is shown.
 
 |!Key |!Does |
 |Escape |stops the asking script |
+|Ctrl+Escape |kills it |
 |Backspace |goes back: answers `back` |
 |<<key "command-input:focus command" ":">>, <<key "command-input:focus bash" "!">> |open the command input |
 |<<key "script-keys:toggle" tab>> |flips the script keys |
 
-Escape and Backspace are reserved as such; the others are whatever keys are bound to
-`command-input:focus` and `script-keys:toggle`, so rebinding those moves the
-reservation with them ([[Keybindings]]).
+Escape, Ctrl+Escape and Backspace are reserved as such; the others are whatever keys
+are bound to `command-input:focus` and `script-keys:toggle`, so rebinding those moves
+the reservation with them ([[Keybindings]]).
 
-''Escape'' stops the run and everything it started: the script's whole process group
-gets `SIGTERM`, then `SIGKILL` if it is still there two seconds later. The command
-blocked on the question dies with it, which releases the question.
+There are two ways to end a run, and they are two commands — the GUI never turns the
+first into the second by itself:
 
-A stopped script ''does not get to clean up'': it is being killed. So the GUI does it,
-once the script is gone — it closes the workspaces the script opened, and gives each
-slot that was showing one of them the workspace it showed when the script was
-launched. A slot you pointed elsewhere meanwhile is left as you put it. Whatever the
-script wrote before the stop stays written, and what else it had in progress — a
-temporary file, a half-done step — is its loss: a script with a result to report or
-work to finish offers its own quit key — `q`, in every shipped script — which it
+* ''Escape'' (<<cmd "script:stop">>) ''asks'': the script's whole process group gets `SIGTERM`. A script may trap it to finish what it is doing — a bash `EXIT` trap runs — and the command blocked on the question dies with the group, which releases the question. A script that ignores the signal goes on running.
+* ''Ctrl+Escape'' (<<cmd "script:kill">>) ''kills'': the group gets `SIGKILL`. Nothing of the script runs any more; a temporary file or a half-done step is left as it is. For a script that did not end on Escape. Some desktops keep Ctrl+Escape for themselves: `script:kill` in the command input does the same.
+
+Either way the GUI cleans up what is its own to clean, once the script is gone: it
+closes the workspaces the script opened, and gives each slot that was showing one of
+them the workspace it showed when the script was launched. A slot you pointed
+elsewhere meanwhile is left as you put it. Whatever the script wrote before stays
+written. A script with a result to report or work to finish does not rely on being
+stopped gently: it offers its own quit key — `q`, in every shipped script — which it
 receives as an ordinary answer and acts on before exiting.
 
-Only a ''stopped'' script is cleaned up after. One that ends by itself, even on an
+Only a script ''you ended'' is cleaned up after. One that ends by itself, even on an
 error, leaves what it chose to leave: `!mf gui workspace new` is a script too, and
 the workspace it opens is the point of it.
 
@@ -87,9 +89,9 @@ the answer exactly, through the event log, and ask it again; they show `u`, the
 letter doing the same. A script with no way back asks its question again: the key
 is never a silent no-op, and never read as ''stop''.
 
-Both keys work this way only while the script keys are ticked. Unticked, Escape and
-Backspace are the GUI's own again, and <<cmd "script:stop">> stops the script from
-the command input.
+These keys work this way only while the script keys are ticked. Unticked, they are
+the GUI's own again, and `script:stop` or `script:kill` ends the script from the
+command input.
 
 !! The workspaces a script owns
 
@@ -98,7 +100,7 @@ workspace it opens. Its question bar, its prompt in the command input and its
 task-bar entry show ''only while one of those workspaces is in a visible slot'':
 switching tab puts the question away instead of leaving it over unrelated panels.
 
-* The keys follow the bar: while the question is put away its keys are not borrowed, and Escape does not stop a script whose question is off screen.
+* The keys follow the bar: while the question is put away its keys are not borrowed, and neither Escape nor Ctrl+Escape ends a script whose question is off screen.
 * A prompt put away gives the command input back — its own prompt, its draft, its history, Enter running commands — and what was typed as an answer is kept, and comes back with the focus when an owned workspace returns.
 * The script keeps waiting throughout. Nothing is cancelled by looking elsewhere.
 
@@ -114,7 +116,7 @@ stands as still as a blocked one ([[Status bar and task bar]]).
 
 !! Failure is never silent
 
-* A script you stopped is reported as ''stopped'' on the status bar of the workspace it was launched from, and `[stopped]` in its message log — not as a failure.
+* A script you stopped is reported as ''stopped'' (''killed'', after Ctrl+Escape) on the status bar of the workspace it was launched from, and `[stopped]` in its message log — not as a failure.
 * A script that exits with an error is reported in red on the status bar of the workspace it was launched from, with its name and exit code, besides the `[exit N]` line of that workspace's message log. Its output goes there too — not to a scratch workspace it opened, which is gone by then.
 * A question that could not be ''asked'' — the GUI closed, a timeout, another question already up — ends the shipped scripts with the reason on the status bar, instead of being read as an Escape.
 * A script killed while it waits releases its question: the next one is not refused for the rest of the session.

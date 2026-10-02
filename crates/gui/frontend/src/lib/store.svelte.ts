@@ -247,6 +247,8 @@ export function activeQuestion(): { keys: string[]; task: string | null } | null
 /** What a pressed key does while a script's question is up, before the normal
  *  keybindings get a look at it (doc "Script sessions"):
  *
+ *  - `ctrl+escape` — always kills the asking script, for one that ignored
+ *    the stop.
  *  - `escape` — always stops the asking script. No script can await it (the
  *    GUI refuses a wait asking for a reserved key), so it is the one way out
  *    that is guaranteed to work, whatever keys the script grabbed. A
@@ -265,9 +267,16 @@ export function inputWaitAction(
   wait: { keys: string[]; task: string | null } | null,
   scriptKeys: boolean,
   combo: string | null,
-): { kind: 'answer'; value: string } | { kind: 'stop'; task: string | null } | null {
+):
+  | { kind: 'answer'; value: string }
+  | { kind: 'stop'; task: string | null }
+  | { kind: 'kill'; task: string | null }
+  | null {
   if (!wait || !combo || !scriptKeys) return null;
   if (combo === 'escape') return { kind: 'stop', task: wait.task };
+  // The second way out of the run, for a script the stop did not end: escape
+  // asks (SIGTERM), ctrl+escape kills (SIGKILL). Reserved like escape.
+  if (combo === 'ctrl+escape') return { kind: 'kill', task: wait.task };
   // The way *back* out of a question, next to escape's way out of the run
   // (doc "Script sessions"). Reserved like escape — a script cannot await
   // the key — but it resolves the wait rather than ending the run: only the

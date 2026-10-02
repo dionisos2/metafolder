@@ -60,7 +60,7 @@
       />
       script keys
     </label>
-    <span class="hint dim">escape stops the script</span>
+    <span class="hint dim">escape stops the script, ctrl+escape kills it</span>
   </div>
 {/if}
 

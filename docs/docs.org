@@ -1303,7 +1303,13 @@ par =script:stop=, elle ferme les workspaces que le script a ouverts et rend à 
 slot qui en montrait un le workspace qu'il montrait au lancement ; un slot que
 l'utilisateur a pointé ailleurs n'est pas touché, et un script qui finit de lui-même
 garde ce qu'il a ouvert (=!mf gui workspace new= est un run aussi).
-*De même*, dans son commit : =mf gui view
+*De même*, chacun dans son commit : (1) un script arrêté par l'utilisateur
+s'affichait « failed (exit ?) » en rouge, comme un plantage ; la barre d'état dit
+« stopped » (ou « killed »), le journal =[stopped]= ; (2) l'arrêt se fait en deux
+commandes au lieu d'une escalade automatique — Échap (=script:stop=) envoie
+=SIGTERM=, que le script peut intercepter pour finir, Ctrl+Échap (=script:kill=,
+ajoutée) envoie =SIGKILL= ; la GUI n'enchaîne plus l'un sur l'autre après deux
+secondes, et =ctrl+escape= rejoint les touches réservées ; (3) =mf gui view
 --state= est retirée. L'option était envoyée et /ignorée/ — le corps de =PUT
 /gui/panels/:slot/view= ne lit que =type= et =path=, aucun panel ne reçoit d'état
 initial — et rien ne s'en servait.

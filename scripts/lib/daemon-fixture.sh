@@ -95,7 +95,7 @@ pop() { local qf=$1 first; [ -s "$qf" ] || return 1
     mv "$qf.r" "$qf"; printf '%s' "$first"; }
 case "$sig" in
     "gui repo"*)   printf '%s\n' "$HYBRID_REPO"; exit 0 ;;
-    "gui input"*)  for a in "$@"; do case "$a" in escape|tab|:)
+    "gui input"*)  for a in "$@"; do case "$a" in escape|ctrl+escape|backspace|tab|:)
                        echo "'$a' is reserved by the GUI" >&2; exit 1 ;; esac; done
                    v=$(pop "$HY_DIR/input") || v=escape; [ -n "$v" ] || v=escape
                    printf '%s\n' "$v"; exit 0 ;;

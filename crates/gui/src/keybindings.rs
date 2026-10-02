@@ -94,7 +94,7 @@ const RESERVED_COMMANDS: [&str; 2] = ["command-input:focus", "script-keys:toggle
 
 /// The combos a script's `mf gui input` may not await: whatever opens the
 /// command input, whatever toggles the script keys, `escape` (which always
-/// stops the script) and `backspace` (which always sends "back" — the way out
+/// stops the script), `ctrl+escape` (which always kills it) and `backspace` (which always sends "back" — the way out
 /// of an answer already given, doc "Script sessions"). Single chords only —
 /// a script awaits one key press, so a multi-chord sequence can never collide
 /// with it. Sorted and deduplicated.
@@ -108,7 +108,7 @@ pub fn reserved_combos(compiled: &[CompiledBinding]) -> Vec<String> {
                     .any(|c| b.invocation == *c || b.invocation.starts_with(&format!("{c} ")))
         })
         .map(|b| b.keys[0].clone())
-        .chain(["escape".to_string(), "backspace".to_string()])
+        .chain(["escape", "ctrl+escape", "backspace"].map(str::to_string))
         .collect();
     combos.sort();
     combos.dedup();
@@ -887,7 +887,9 @@ mod tests {
 "#;
         let set = KeybindingSet::from_sources(defaults, "").unwrap();
         let reserved = reserved_combos(&set.compiled());
-        assert_eq!(reserved, vec![":", "backspace", "ctrl+p", "escape", "tab"]);
+        assert_eq!(reserved, vec![":", "backspace", "ctrl+escape", "ctrl+p", "escape", "tab"]);
+        // Both ways of ending the run: escape asks, ctrl+escape kills.
+        assert!(is_reserved(&reserved, "Ctrl+Escape"));
 
         // A script's key is compared normalized, so "Escape" and "CTRL+P" hit.
         assert!(is_reserved(&reserved, "Escape"));
@@ -909,7 +911,7 @@ mod tests {
 "g c" = { command = "command-input:focus command" }
 "#;
         let set = KeybindingSet::from_sources(defaults, "").unwrap();
-        // Only the two literals remain: they are reserved whatever is bound.
-        assert_eq!(reserved_combos(&set.compiled()), vec!["backspace", "escape"]);
+        // Only the literals remain: they are reserved whatever is bound.
+        assert_eq!(reserved_combos(&set.compiled()), vec!["backspace", "ctrl+escape", "escape"]);
     }
 }

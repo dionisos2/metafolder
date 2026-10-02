@@ -1,0 +1,9 @@
+title: $:/mf/gen/GUI command/script:kill
+catalog: GUI command
+target: script:kill
+summary: Kill the running script outright (the one asking, by default)
+
+!! Reference
+
+* Defined by the shell (a builtin)
+* No default key

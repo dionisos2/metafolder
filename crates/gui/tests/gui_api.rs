@@ -459,7 +459,7 @@ async fn test_input_wait_refuses_the_reserved_keys() {
     // A script may not take the user's ways out of its own question (doc
     // "Script sessions"): escape, the command input, the script-keys toggle.
     let ctx = setup().await;
-    for key in ["escape", ":", "tab"] {
+    for key in ["escape", "ctrl+escape", ":", "tab"] {
         let (status, body) =
             request(&ctx.router, "POST", "/gui/input", Some(json!({"keys": ["y", key]}))).await;
         assert_eq!(status, StatusCode::BAD_REQUEST, "'{key}' should be refused");

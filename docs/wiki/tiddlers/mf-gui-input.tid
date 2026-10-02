@@ -3,4 +3,4 @@ tags: [[CLI command]] [[Scripting the GUI]]
 kind: reference
 summary: Wait for one of the given keys and print it
 
-Asks a question in the question bar and waits for one of the keys, which it prints — or `back` when the user pressed Backspace, or whatever `answer:send` was given ([[Script sessions]]). Exit 1 when the wait ended otherwise: a timeout, the GUI closing, another question already up, or a key the GUI reserves (`escape`, `backspace`, and the keys of the command input and of the script keys). In a script, call it through `mf_gui_ask_answer` ([[Writing a GUI script]]).
+Asks a question in the question bar and waits for one of the keys, which it prints — or `back` when the user pressed Backspace, or whatever `answer:send` was given ([[Script sessions]]). Exit 1 when the wait ended otherwise: a timeout, the GUI closing, another question already up, or a key the GUI reserves (`escape`, `ctrl+escape`, `backspace`, and the keys of the command input and of the script keys). In a script, call it through `mf_gui_ask_answer` ([[Writing a GUI script]]).

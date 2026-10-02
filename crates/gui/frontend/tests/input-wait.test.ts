@@ -88,6 +88,11 @@ describe('inputWaitAction (what a key does while a question is up)', () => {
     });
   });
 
+  it('kills the asking script on ctrl+escape, for one that ignores the stop', () => {
+    expect(inputWaitAction(wait, true, 'ctrl+escape')).toEqual({ kind: 'kill', task: 'script-3' });
+    expect(inputWaitAction(wait, false, 'ctrl+escape')).toBeNull();
+  });
+
   it('does nothing with the script keys disabled: the GUI bindings take over', () => {
     expect(inputWaitAction(wait, false, 'n')).toBeNull();
     expect(inputWaitAction(wait, false, 'escape')).toBeNull();

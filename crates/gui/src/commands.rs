@@ -565,24 +565,27 @@ pub fn script_keys_toggle(app: AppHandle) -> bool {
     enabled
 }
 
-/// `script:stop [<task>]` — ends a running script (escape during its question,
-/// or a manual invocation). With no run id it stops the script asking the
-/// current question. A question owned by nobody has no script to stop: the wait
-/// is closed instead, so the GUI never keeps a bar for an answer that will
-/// never come.
+/// `script:stop [<task>]` and `script:kill [<task>]` — end a running script:
+/// escape, resp. ctrl+escape, during its question, or a manual invocation. The
+/// first asks (`SIGTERM`), the second kills (`SIGKILL`, `kill = true`). With no
+/// run id it is the script asking the current question. A question owned by
+/// nobody has no script to end: the wait is closed instead, so the GUI never
+/// keeps a bar for an answer that will never come.
 #[tauri::command]
-pub fn script_stop(app: AppHandle, task: Option<String>) -> Result<(), String> {
+pub fn script_stop(app: AppHandle, task: Option<String>, kill: Option<bool>) -> Result<(), String> {
+    use crate::shell_exec::Stop;
+    let how = if kill.unwrap_or(false) { Stop::Kill } else { Stop::Terminate };
     let task = task.or_else(|| app.gui.question().and_then(|q| q.task));
     match task {
         Some(task) => {
-            if crate::shell_exec::stop_script(&app.gui, &task) {
+            if crate::shell_exec::stop_script(&app.gui, &task, how) {
                 Ok(())
             } else {
                 Err(format!("no running script '{task}' to stop"))
             }
         }
         None => {
-            // Nothing to kill: just release whoever is waiting.
+            // Nothing to signal: just release whoever is waiting.
             app.input.close_all();
             Ok(())
         }

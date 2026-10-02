@@ -1116,6 +1116,10 @@ registerArgs('script:stop', [
   { name: 'task', optional: true, prompt: () => 'Stop which script? (empty: the one asking)' },
 ]);
 
+registerArgs('script:kill', [
+  { name: 'task', optional: true, prompt: () => 'Kill which script? (empty: the one asking)' },
+]);
+
 // ── Dispatch ───────────────────────────────────────────────────────────
 
 /** Posts a status message on the focused workspace's status bar (and so to
@@ -1671,7 +1675,12 @@ async function runCommand(name: string, args: string[], ws: string | null): Prom
     case 'script:stop':
       // Escape during a question, or a manual invocation: end the run (and the
       // question with it). No argument = whichever script is asking.
-      await invoke('script_stop', { task: args[0] ?? null });
+      await invoke('script_stop', { task: args[0] ?? null, kill: false });
+      return true;
+    case 'script:kill':
+      // Ctrl+escape during a question: the same, with SIGKILL — for a script
+      // that did not end on the stop.
+      await invoke('script_stop', { task: args[0] ?? null, kill: true });
       return true;
     case 'status:clear': {
       // Dismiss the transient status-bar message (and the last-command echo).

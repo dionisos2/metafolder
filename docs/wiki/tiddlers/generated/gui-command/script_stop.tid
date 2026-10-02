@@ -1,7 +1,7 @@
 title: $:/mf/gen/GUI command/script:stop
 catalog: GUI command
 target: script:stop
-summary: Stop the running script (the one asking, by default)
+summary: Ask the running script to stop (the one asking, by default)
 
 !! Reference
 

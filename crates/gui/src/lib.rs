@@ -141,7 +141,8 @@ fn register_builtins(registry: &CommandRegistry) {
         ("log:redo", "Take the newest undo back", true),
         ("answer:send", "Resolve the pending script input wait", true),
         ("script-keys:toggle", "Give the script's keys back to the GUI, or take them again", true),
-        ("script:stop", "Stop the running script (the one asking, by default)", true),
+        ("script:stop", "Ask the running script to stop (the one asking, by default)", true),
+        ("script:kill", "Kill the running script outright (the one asking, by default)", true),
         ("pick:confirm", "Confirm the value picker's selection", true),
         ("pick:cancel", "Cancel the value picker", true),
         // Find in panel (doc "Find in a panel"). `log=false`: stepping

@@ -29,7 +29,7 @@ mf_gui_finish "done."
 ```
 
 * `mf_gui_bind_repo` takes the repository of the focused workspace ([[mf gui repo]]) and exports it, so the `mf` commands that follow need no `-u`. It ends the script when no GUI answers.
-* `mf_gui_session_open [<panel>]` saves the layout, opens a scratch workspace shown in ''both'' slots — the [[file panel]] on the left, `<panel>` on the right, `metarecord-detail` by default — and installs an `EXIT` trap that closes the workspace and puts the layout back when the script ends, on a failure too. When Escape kills the script, the GUI does that part itself; nothing else of the script's is cleaned up ([[Script sessions]]). Read what you need from the user's own workspace ''before'' it: the scratch workspace has no query and no selection.
+* `mf_gui_session_open [<panel>]` saves the layout, opens a scratch workspace shown in ''both'' slots — the [[file panel]] on the left, `<panel>` on the right, `metarecord-detail` by default — and installs an `EXIT` trap that closes the workspace and puts the layout back when the script ends, on a failure too. Escape sends the script a `SIGTERM`, on which bash still runs that trap; Ctrl+Escape kills it outright. In both cases the GUI closes the workspace and gives the slots back itself, and after a kill nothing else of the script's is cleaned up ([[Script sessions]]). Read what you need from the user's own workspace ''before'' it: the scratch workspace has no query and no selection.
 * `mf_gui_show_file <path>` previews a file on the left and selects its metarecord, which the detail on the right follows. An ''empty'' path clears the panel: an entry with no file must not leave the previous one on screen, offered as the subject of the question.
 * `mf_gui_finish <text>` is the script's last word. It is posted once the session is closed, on the workspace the script was launched from — sent earlier it would land on the scratch workspace and go with it.
 
@@ -52,7 +52,7 @@ the answer as a ''letter''. Each of `y`, `n`, `m`, `s` also accepts its arrow ke
 `mf_gui_ask <question> <key>...` is the plain form, for keys of your own.
 
 * The question is the wait's own prompt. Posted apart, with `mf gui message`, it sits on the status line, where the next message replaces it.
-* Never ask for a key the GUI reserves — `escape`, `backspace`, and by default `tab`, `:` and `!`: the wait is refused ([[Script sessions]]). Offer `q` to stop.
+* Never ask for a key the GUI reserves — `escape`, `ctrl+escape`, `backspace`, and by default `tab`, `:` and `!`: the wait is refused ([[Script sessions]]). Offer `q` to stop.
 * When the question could not be asked at all, both helpers report why and print `escape`. Give every `case` a default branch that stops.
 
 A missing ''argument'' is asked in the command input, with completion:

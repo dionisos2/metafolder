@@ -57,9 +57,10 @@ struct ScriptTask {
     /// The visible workspace of the left and of the right slot when the run
     /// began — what a slot is given back when the run is stopped.
     launch_layout: (Option<String>, Option<String>),
-    /// Set by `script:stop`: the run is being killed and will clean nothing
-    /// up, so the GUI does it when the run ends (doc "Script sessions").
-    stopped: bool,
+    /// Set by `script:stop` ("stopped") and `script:kill` ("killed"): the user
+    /// ended the run, so it is reported under that word rather than as a
+    /// failure, and the GUI cleans up after it (doc "Script sessions").
+    ended_by: Option<&'static str>,
 }
 
 pub struct GuiState {
@@ -473,17 +474,18 @@ impl GuiState {
         self.emit_scripts();
     }
 
-    /// Records that run `task_id` is being stopped (`script:stop`), so that
-    /// [`Self::script_end`] cleans up after it. Unknown run ids are ignored.
-    pub fn script_mark_stopped(&self, task_id: &str) {
+    /// Records that the user is ending run `task_id` — `how` is "stopped" or
+    /// "killed" — so that [`Self::script_end`] cleans up after it. Unknown run
+    /// ids are ignored.
+    pub fn script_mark_stopped(&self, task_id: &str, how: &'static str) {
         if let Some(task) = self.scripts.lock_recover().get_mut(task_id) {
-            task.stopped = true;
+            task.ended_by = Some(how);
         }
     }
 
-    /// Whether run `task_id` was stopped by the user.
-    pub fn script_stopped(&self, task_id: &str) -> bool {
-        self.scripts.lock_recover().get(task_id).is_some_and(|task| task.stopped)
+    /// How the user ended run `task_id` ("stopped" or "killed"), if they did.
+    pub fn script_stopped(&self, task_id: &str) -> Option<&'static str> {
+        self.scripts.lock_recover().get(task_id).and_then(|task| task.ended_by)
     }
 
     /// Clears the running mark for run id `task_id` and rebroadcasts.
@@ -496,7 +498,7 @@ impl GuiState {
     pub fn script_end(&self, task_id: &str) {
         let ended = self.scripts.lock_recover().remove(task_id);
         self.emit_scripts();
-        if let Some(task) = ended.filter(|task| task.stopped) {
+        if let Some(task) = ended.filter(|task| task.ended_by.is_some()) {
             self.clean_up_after(&task);
         }
     }
