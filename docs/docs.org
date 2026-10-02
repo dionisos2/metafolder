@@ -1273,12 +1273,7 @@ simulé), sur un dépôt de deux images, avec ses écritures relues — et pass�
 =shellcheck=. Le reste est lu dans =gui_api.rs=, =input_wait.rs=, =keybindings.rs=,
 =shell_exec.rs=, =cli/src/gui.rs=, le shell Svelte et =lib/mf-gui.sh=.
 Écarts de la spec et de la page help, corrigés dans les notes : la page help
-donnait =b= pour revenir en arrière (c'est =u=) ; la spec disait qu'un script arrêté
-par Échap ne peut pas faire son ménage, sans dire que les scripts livrés rendent
-pourtant la disposition par un trap =EXIT= : la règle reste (un script arrêté est
-tué, il ne doit compter sur rien — /confirmé par l'utilisateur/), et la note précise
-que les deux secondes avant =SIGKILL= sont une grâce où ce trap tient d'ordinaire,
-pas une garantie, d'où =q= pour ce qui doit être fait ; =POST /gui/prompt= répond aussi =timeout= et =closed= ;
+donnait =b= pour revenir en arrière (c'est =u=) ; =POST /gui/prompt= répond aussi =timeout= et =closed= ;
 =GET /gui/status= porte =repo_name= ; le choix de la case « script keys » ne tient
 pas « pour le reste de la session » mais jusqu'au prochain lancement, toute ligne =!=
 comprise. Ignorés par la spec : les touches attendues ne sont pas prises dans un
@@ -1300,7 +1295,15 @@ ce qu'il tient encore sous le dossier. Le délai et =MF_UNWATCH_SETTLE= sont ret
 de tâche à attendre), et =test-scripts-integration.sh= le garde contre un vrai
 watcher — des fichiers arrivent dans le dossier, le script tourne aussitôt, rien
 n'est recréé.
-*Tranché par l'utilisateur*, fait dans un commit à part, test d'abord : =mf gui view
+*Tranché par l'utilisateur*, fait dans un commit à part, test d'abord : un script
+arrêté est tué et ne fait pas son ménage (la spec le disait, alors que les scripts
+livrés comptaient sur leur trap =EXIT=, qui ne tient que dans les deux secondes
+laissées avant =SIGKILL=) ; c'est donc la GUI qui le fait — à la fin d'un run arrêté
+par =script:stop=, elle ferme les workspaces que le script a ouverts et rend à chaque
+slot qui en montrait un le workspace qu'il montrait au lancement ; un slot que
+l'utilisateur a pointé ailleurs n'est pas touché, et un script qui finit de lui-même
+garde ce qu'il a ouvert (=!mf gui workspace new= est un run aussi).
+*De même*, dans son commit : =mf gui view
 --state= est retirée. L'option était envoyée et /ignorée/ — le corps de =PUT
 /gui/panels/:slot/view= ne lit que =type= et =path=, aucun panel ne reçoit d'état
 initial — et rien ne s'en servait.

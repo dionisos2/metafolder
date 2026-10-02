@@ -157,6 +157,9 @@ pub fn stop_script(gui: &Arc<GuiState>, task_id: &str) -> bool {
     if !signal_group(pid, SIGTERM) {
         return false;
     }
+    // The script is being killed and cleans nothing up: the GUI does, once the
+    // run has ended (`GuiState::script_end`).
+    gui.script_mark_stopped(task_id);
     let gui = gui.clone();
     let task_id = task_id.to_string();
     tauri::async_runtime::spawn(async move {
@@ -195,6 +198,7 @@ fn signal_group(_pid: u32, _signal: i32) -> bool {
 mod tests {
     use super::*;
     use crate::notifier::RecordingNotifier;
+    use crate::state::layout::SlotId;
     use serde_json::json;
     use std::time::Duration;
 
@@ -257,9 +261,16 @@ mod tests {
         }
         let task_id = task_id.expect("the run should be registered with a pid");
 
+        // A workspace the script opened: `sleep` has no exit trap to close it.
+        let scratch = take_over(&gui, &task_id);
+
         assert!(stop_script(&gui, &task_id), "stopping a live run reports success");
         let stopped = tokio::time::timeout(Duration::from_secs(5), running).await;
         assert!(stopped.is_ok(), "the killed script must not outlive its stop");
+        assert!(
+            gui.workspaces().iter().all(|w| w.id != scratch),
+            "the GUI closes what the killed script opened"
+        );
         // The run is gone from the registry, so a second stop finds nothing.
         assert!(!stop_script(&gui, &task_id));
     }
@@ -323,6 +334,86 @@ mod tests {
         assert_eq!(task["done"], 4);
         assert_eq!(task["total"], 10, "total persists across a done-only update");
         assert_eq!(task["phase"], "/music/x.mp3");
+    }
+
+    /// The visible workspace of each slot, as `GET /gui/layout` reports it.
+    fn shown(gui: &GuiState) -> (Option<String>, Option<String>) {
+        let layout = gui.layout();
+        let slot = |s: &crate::state::layout::SlotPayload| {
+            s.visible.then(|| s.workspace_id.clone()).flatten()
+        };
+        (slot(&layout.left), slot(&layout.right))
+    }
+
+    /// A script's takeover, the way `mf_gui_session_open` does it: a scratch
+    /// workspace of its own, shown in both slots. Returns that workspace.
+    fn take_over(gui: &GuiState, task: &str) -> String {
+        let scratch = gui.create_workspace_named(None, None);
+        gui.script_claim_workspace(task, &scratch);
+        gui.tab_assign(&scratch, SlotId::Left).unwrap();
+        gui.tab_assign(&scratch, SlotId::Right).unwrap();
+        scratch
+    }
+
+    #[test]
+    fn test_a_stopped_script_is_cleaned_up_by_the_gui() {
+        // A stopped script is killed, and a killed script cleans nothing up
+        // (doc "Script sessions"): the GUI closes the workspaces the script
+        // opened and gives the slots back what they showed at its launch.
+        let gui = gui();
+        let before = shown(&gui);
+        gui.script_begin("script-1", "ws-1", "gui-tag-folder.sh");
+        let scratch = take_over(&gui, "script-1");
+        assert_eq!(shown(&gui), (Some(scratch.clone()), Some(scratch.clone())));
+
+        gui.script_mark_stopped("script-1");
+        gui.script_end("script-1");
+
+        assert!(gui.workspaces().iter().all(|w| w.id != scratch), "the scratch workspace goes");
+        assert_eq!(shown(&gui), before, "the layout is the one of the launch");
+    }
+
+    #[test]
+    fn test_a_script_that_ends_by_itself_keeps_what_it_opened() {
+        // Only a *stopped* run is cleaned up. One that ends on its own decided
+        // what to leave: `!mf gui workspace new` typed in the command input is
+        // a run too, and its workspace is the whole point of it.
+        let gui = gui();
+        gui.script_begin("script-1", "ws-1", "mf gui workspace new");
+        let scratch = take_over(&gui, "script-1");
+        gui.script_end("script-1");
+
+        assert!(gui.workspaces().iter().any(|w| w.id == scratch));
+        assert_eq!(shown(&gui), (Some(scratch.clone()), Some(scratch)));
+    }
+
+    #[test]
+    fn test_the_cleanup_leaves_a_slot_the_user_moved() {
+        // The slots are given back, not reset: one the user pointed elsewhere
+        // while the script ran shows what the user chose.
+        let gui = gui();
+        let other = gui.create_workspace_named(None, None);
+        gui.script_begin("script-1", "ws-1", "gui-tag-folder.sh");
+        let scratch = take_over(&gui, "script-1");
+        gui.tab_assign(&other, SlotId::Right).unwrap();
+
+        gui.script_mark_stopped("script-1");
+        gui.script_end("script-1");
+
+        assert!(gui.workspaces().iter().all(|w| w.id != scratch));
+        let (left, right) = shown(&gui);
+        assert_eq!(left.as_deref(), Some("ws-1"));
+        assert_eq!(right, Some(other));
+    }
+
+    #[test]
+    fn test_the_cleanup_keeps_the_launching_workspace() {
+        // The workspace a script was launched from is owned, not opened by it.
+        let gui = gui();
+        gui.script_begin("script-1", "ws-1", "gui-tag-folder.sh");
+        gui.script_mark_stopped("script-1");
+        gui.script_end("script-1");
+        assert!(gui.workspaces().iter().any(|w| w.id == "ws-1"));
     }
 
     #[test]

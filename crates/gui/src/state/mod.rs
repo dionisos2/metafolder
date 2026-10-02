@@ -50,6 +50,16 @@ struct ScriptTask {
     /// `script:stop` signals to end the script and every child it spawned.
     /// `None` for a run registered without one (tests, a foreign launcher).
     pid: Option<u32>,
+    /// The workspaces the script *opened* (a subset of `workspaces`, which
+    /// also holds the one it was launched from): what the GUI closes when the
+    /// run is stopped.
+    opened: Vec<String>,
+    /// The visible workspace of the left and of the right slot when the run
+    /// began — what a slot is given back when the run is stopped.
+    launch_layout: (Option<String>, Option<String>),
+    /// Set by `script:stop`: the run is being killed and will clean nothing
+    /// up, so the GUI does it when the run ends (doc "Script sessions").
+    stopped: bool,
 }
 
 pub struct GuiState {
@@ -345,12 +355,16 @@ impl GuiState {
     /// show a loading indicator (doc "Script sessions"). Paired with
     /// [`Self::script_end`].
     pub fn script_begin(&self, task_id: &str, ws_id: &str, label: &str) {
+        // Read before the scripts lock is taken: the two locks are never held
+        // together.
+        let launch_layout = self.shown_workspaces();
         self.scripts.lock_recover().insert(
             task_id.to_string(),
             ScriptTask {
                 ws_id: ws_id.to_string(),
                 label: label.to_string(),
                 workspaces: vec![ws_id.to_string()],
+                launch_layout,
                 ..Default::default()
             },
         );
@@ -409,6 +423,7 @@ impl GuiState {
                 return;
             }
             task.workspaces.push(ws_id.to_string());
+            task.opened.push(ws_id.to_string());
         }
         self.emit_scripts();
     }
@@ -458,10 +473,72 @@ impl GuiState {
         self.emit_scripts();
     }
 
+    /// Records that run `task_id` is being stopped (`script:stop`), so that
+    /// [`Self::script_end`] cleans up after it. Unknown run ids are ignored.
+    pub fn script_mark_stopped(&self, task_id: &str) {
+        if let Some(task) = self.scripts.lock_recover().get_mut(task_id) {
+            task.stopped = true;
+        }
+    }
+
     /// Clears the running mark for run id `task_id` and rebroadcasts.
+    ///
+    /// A run that was *stopped* is cleaned up here (doc "Script sessions"): a
+    /// killed script runs nothing more, so the workspaces it opened would stay
+    /// open and the slots it took would keep showing them. A run that ended on
+    /// its own is left alone — what it leaves behind is its decision, and
+    /// `!mf gui workspace new` is a run too.
     pub fn script_end(&self, task_id: &str) {
-        self.scripts.lock_recover().remove(task_id);
+        let ended = self.scripts.lock_recover().remove(task_id);
         self.emit_scripts();
+        if let Some(task) = ended.filter(|task| task.stopped) {
+            self.clean_up_after(&task);
+        }
+    }
+
+    /// Closes the workspaces a stopped script opened, and gives each slot that
+    /// was showing one of them what it showed when the script was launched. A
+    /// slot the user pointed elsewhere meanwhile is not touched: the slots are
+    /// given back, not reset.
+    fn clean_up_after(&self, task: &ScriptTask) {
+        let layout = self.layout();
+        let taken = |slot: &layout::SlotPayload| {
+            slot.workspace_id.as_ref().is_some_and(|ws| task.opened.contains(ws))
+        };
+        let slots = [
+            (SlotId::Left, taken(&layout.left), &task.launch_layout.0),
+            (SlotId::Right, taken(&layout.right), &task.launch_layout.1),
+        ];
+        for ws_id in &task.opened {
+            // Already closed by the script's own exit trap, or by the user.
+            let _ = self.close_workspace(ws_id);
+        }
+        for (slot_id, taken, before) in slots {
+            if !taken {
+                continue;
+            }
+            match before {
+                // A workspace closed since the launch cannot come back: the
+                // slot keeps what closing the script's workspace left it.
+                Some(ws_id) => {
+                    let _ = self.tab_assign(ws_id, slot_id);
+                }
+                None => self.hide_slot(slot_id),
+            }
+        }
+    }
+
+    /// The visible workspace of the left and of the right slot.
+    fn shown_workspaces(&self) -> (Option<String>, Option<String>) {
+        let layout = self.layout();
+        let shown = |slot: &layout::SlotPayload| {
+            if slot.visible {
+                slot.workspace_id.clone()
+            } else {
+                None
+            }
+        };
+        (shown(&layout.left), shown(&layout.right))
     }
 
     fn emit_scripts(&self) {
