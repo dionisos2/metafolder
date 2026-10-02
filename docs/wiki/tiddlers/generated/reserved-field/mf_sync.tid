@@ -1,0 +1,9 @@
+title: $:/mf/gen/Reserved field/mf_sync
+catalog: Reserved field
+target: mf_sync
+summary: Whether metafolder or another tool owns this content during sync.
+
+!! Reference
+
+|!Type |`string` |
+|!Written by |you; the daemon reads it |

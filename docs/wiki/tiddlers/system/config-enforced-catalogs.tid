@@ -1,5 +1,5 @@
 title: $:/mf/config/enforced-catalogs
-list: [[CLI command]] [[GUI command]] Panel [[Shipped script]]
+list: [[CLI command]] [[GUI command]] Panel [[Shipped script]] [[Reserved field]]
 
 The catalogs whose completeness is enforced: every generated item must have a
 hand-written note. A catalog joins this list once its notes are all written.

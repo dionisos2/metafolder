@@ -1,6 +1,6 @@
 title: File tracking
 kind: overview
-aliases: tracking track watch mf_watch untracked mfr_path
+aliases: tracking track watch untracked
 summary: Tracking is opt-in — nothing is followed until mf_watch is set — and a tracked file's metarecord follows it as it moves, changes and disappears.
 
 A metarecord can describe anything, but most describe a file: they carry an

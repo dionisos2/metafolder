@@ -1,0 +1,9 @@
+title: $:/mf/gen/Reserved field/mfr_inode
+catalog: Reserved field
+target: mfr_inode
+summary: The device and inode of a file with more than one hard link.
+
+!! Reference
+
+|!Type |`string` |
+|!Written by |the daemon (a write of your own needs `force`) |

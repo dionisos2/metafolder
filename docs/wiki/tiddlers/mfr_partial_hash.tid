@@ -1,0 +1,7 @@
+title: mfr_partial_hash
+tags: [[Reserved field]] [[File fingerprint]]
+kind: reference
+summary: xxHash3 of a file's first and last 4 KiB, hex; absent until computed, cleared by a modification.
+
+The second step of the [[File fingerprint]], after the size. Kept between runs with
+[[The duplicate hash cache]].

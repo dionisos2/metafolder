@@ -1,0 +1,9 @@
+title: mf_sync
+tags: [[Reserved field]] [[Data model]]
+kind: reference
+summary: Whether metafolder (internal, the default) or another tool (external) owns this content during sync; inherited down mfr_path.
+
+`internal` (the default) or `external`. An external subtree's content is owned by an
+outside tool: metafolder's sync does no file operation for it. Like `mf_watch` it is
+inherited down the `mfr_path` tree. Sync itself is not documented here yet
+(`docs/spec-sync.org`).

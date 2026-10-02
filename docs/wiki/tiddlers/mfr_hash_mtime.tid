@@ -1,0 +1,7 @@
+title: mfr_hash_mtime
+tags: [[Reserved field]] [[The duplicate hash cache]]
+kind: reference
+summary: The file's mtime when its hashes were computed, written and cleared with them.
+
+With `mfr_hash_size`, what lets a stored hash be trusted without rereading the file
+([[The duplicate hash cache]]).

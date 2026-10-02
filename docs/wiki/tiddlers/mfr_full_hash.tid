@@ -1,0 +1,8 @@
+title: mfr_full_hash
+tags: [[Reserved field]] [[File fingerprint]]
+kind: reference
+summary: xxHash3 of a file's whole content, hex.
+
+The last step of the [[File fingerprint]], computed only when the partial hash is not
+enough to tell files apart; what a duplicate group's `mfr_content_hash` holds
+([[Duplicate groups]]).

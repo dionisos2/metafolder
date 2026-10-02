@@ -1,0 +1,7 @@
+title: mfr_mtime
+tags: [[Reserved field]] [[File metadata fields]]
+kind: reference
+summary: The file's last content modification (a symlink's own).
+
+Written with the other stat fields ([[File metadata fields]]). It is never used to
+judge identity: the [[File fingerprint]] is content only.

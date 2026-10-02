@@ -1,0 +1,9 @@
+title: $:/mf/gen/Reserved field/mfr_path
+catalog: Reserved field
+target: mfr_path
+summary: A file's position in the filesystem's tree.
+
+!! Reference
+
+|!Type |`tree_ref` |
+|!Written by |the daemon (a write of your own needs `force`) |

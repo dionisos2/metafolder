@@ -1,7 +1,7 @@
 title: File metadata fields
 tags: [[File tracking]]
 kind: reference
-aliases: stat mime mfr_mime
+aliases: stat mime
 summary: The mfr_* fields read from the filesystem — which exist on which platform — and the MIME type reconcile detects from content.
 
 The watcher and reconcile write the stat-derived fields of every tracked file and

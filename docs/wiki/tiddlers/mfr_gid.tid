@@ -1,0 +1,6 @@
+title: mfr_gid
+tags: [[Reserved field]] [[File metadata fields]]
+kind: reference
+summary: The id of the file's group; Unix only.
+
+Never written on Windows ([[File metadata fields]]).

@@ -1,0 +1,9 @@
+title: mf_schema
+tags: [[Reserved field]] Schema
+kind: reference
+summary: A type of the metarecord, one row per type: the schema checks the fields the type requires.
+
+Each row names a type the user schema defines; a write that leaves a typed metarecord
+violating its type is refused with the list of violations ([[Schema]]). The daemon
+writes it once of its own accord, on the duplicate groups it creates
+(`duplicate_group`, [[Duplicate groups]]).

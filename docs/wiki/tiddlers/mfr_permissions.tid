@@ -1,0 +1,8 @@
+title: mfr_permissions
+tags: [[Reserved field]] [[File metadata fields]]
+kind: reference
+summary: The Unix permission bits in octal ("0644"); Unix only.
+
+Never written on Windows ([[File metadata fields]]). Restoring permissions after a
+mistaken recursive change is one legitimate use of a forced write
+([[Reserved fields]]).

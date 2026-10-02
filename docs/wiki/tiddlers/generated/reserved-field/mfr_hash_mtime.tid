@@ -1,0 +1,9 @@
+title: $:/mf/gen/Reserved field/mfr_hash_mtime
+catalog: Reserved field
+target: mfr_hash_mtime
+summary: The file's mtime when its hashes were computed.
+
+!! Reference
+
+|!Type |`datetime` |
+|!Written by |the daemon (a write of your own needs `force`) |

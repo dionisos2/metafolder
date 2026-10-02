@@ -1,0 +1,7 @@
+title: mfr_btime
+tags: [[Reserved field]] [[File metadata fields]]
+kind: reference
+summary: The file's creation time, when the filesystem records one.
+
+Absent where the filesystem keeps no creation time; which platforms have it:
+[[File metadata fields]].

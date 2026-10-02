@@ -1,0 +1,6 @@
+title: mfr_uid
+tags: [[Reserved field]] [[File metadata fields]]
+kind: reference
+summary: The id of the file's owner; Unix only.
+
+Never written on Windows ([[File metadata fields]]).

@@ -1,0 +1,9 @@
+title: $:/mf/gen/Reserved field/mfr_mtime
+catalog: Reserved field
+target: mfr_mtime
+summary: The file's last content modification.
+
+!! Reference
+
+|!Type |`datetime` |
+|!Written by |the daemon (a write of your own needs `force`) |

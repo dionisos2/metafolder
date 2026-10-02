@@ -1,0 +1,9 @@
+title: $:/mf/gen/Reserved field/mfr_hash_size
+catalog: Reserved field
+target: mfr_hash_size
+summary: The file's size when its hashes were computed.
+
+!! Reference
+
+|!Type |`int` |
+|!Written by |the daemon (a write of your own needs `force`) |

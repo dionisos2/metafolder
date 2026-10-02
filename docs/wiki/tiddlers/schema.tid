@@ -1,6 +1,6 @@
 title: Schema
 kind: overview
-aliases: schema.json mf_schema
+aliases: schema.json
 summary: Declare types of metarecords and the fields they may carry — value type and how many rows — and the daemon refuses writes that break them.
 
 A repository may have a ''user schema'': a JSON file declaring ''types'' of

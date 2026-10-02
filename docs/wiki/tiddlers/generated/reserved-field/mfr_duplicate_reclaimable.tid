@@ -1,0 +1,9 @@
+title: $:/mf/gen/Reserved field/mfr_duplicate_reclaimable
+catalog: Reserved field
+target: mfr_duplicate_reclaimable
+summary: The bytes freed by reducing a duplicate group to one file.
+
+!! Reference
+
+|!Type |`int` |
+|!Written by |the daemon (a write of your own needs `force`) |

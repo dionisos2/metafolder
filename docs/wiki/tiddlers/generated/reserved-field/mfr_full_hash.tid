@@ -1,0 +1,9 @@
+title: $:/mf/gen/Reserved field/mfr_full_hash
+catalog: Reserved field
+target: mfr_full_hash
+summary: The hash of a file's whole content.
+
+!! Reference
+
+|!Type |`string` |
+|!Written by |the daemon (a write of your own needs `force`) |

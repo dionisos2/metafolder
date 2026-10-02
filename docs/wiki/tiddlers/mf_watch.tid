@@ -1,0 +1,9 @@
+title: mf_watch
+tags: [[Reserved field]] [[Watch and ignore fields]]
+kind: reference
+summary: Whether a metarecord and what lies under it are tracked: inherited down mfr_path, false on a new root.
+
+Tracking is opt-in: the daemon writes `mf_watch = false` on a new root, and nothing is
+tracked until `true` is set somewhere. The value is inherited from the nearest
+ancestor that has it, so `false` on a subdirectory stops tracking there. The rule,
+with `mf_ignore`: [[Watch and ignore fields]]; setting it: [[Tracking a folder]].

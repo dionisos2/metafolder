@@ -1,0 +1,7 @@
+title: mfr_meta_*
+tags: [[Reserved field]] [[Embedded metadata]]
+kind: reference
+summary: A piece of embedded metadata (tags, EXIF…), named by the repository's metadata map.
+
+One field per entry of [[The metadata map]]: `mfr_meta_artist`, `mfr_meta_date`,
+`mfr_meta_track`… Its type is the entry's ([[Embedded metadata]]).

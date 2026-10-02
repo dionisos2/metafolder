@@ -1,0 +1,8 @@
+title: mfr_duplicate_group
+tags: [[Reserved field]] [[Duplicate groups]]
+kind: reference
+summary: On a file: the duplicate group it belongs to.
+
+A `ref` to the group's metarecord; present only while the file exists and had an
+identical twin at the last scan ([[Duplicate groups]]). Listing what else is identical
+to a file is `same(mfr_duplicate_group, <uuid>)` ([[Finding duplicates]]).

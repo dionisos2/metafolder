@@ -1,0 +1,6 @@
+title: mfr_duplicate_count
+tags: [[Reserved field]] [[Duplicate groups]]
+kind: reference
+summary: On a duplicate group: the number of its members.
+
+Kept true as copies leave the group ([[Duplicate groups]]).

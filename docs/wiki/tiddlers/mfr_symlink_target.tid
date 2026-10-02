@@ -1,0 +1,6 @@
+title: mfr_symlink_target
+tags: [[Reserved field]] [[File metadata fields]]
+kind: reference
+summary: A symlink's target path; only on symlinks.
+
+The link's own content, not followed ([[Symbolic links]]).

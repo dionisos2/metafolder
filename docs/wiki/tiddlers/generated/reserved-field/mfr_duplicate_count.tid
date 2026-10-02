@@ -1,0 +1,9 @@
+title: $:/mf/gen/Reserved field/mfr_duplicate_count
+catalog: Reserved field
+target: mfr_duplicate_count
+summary: The number of files in a duplicate group.
+
+!! Reference
+
+|!Type |`int` |
+|!Written by |the daemon (a write of your own needs `force`) |

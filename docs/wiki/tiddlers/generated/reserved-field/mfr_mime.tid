@@ -1,0 +1,9 @@
+title: $:/mf/gen/Reserved field/mfr_mime
+catalog: Reserved field
+target: mfr_mime
+summary: The MIME type, from the content.
+
+!! Reference
+
+|!Type |`string` |
+|!Written by |the daemon (a write of your own needs `force`) |

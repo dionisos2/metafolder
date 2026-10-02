@@ -1,0 +1,9 @@
+title: $:/mf/gen/Reserved field/mfr_uid
+catalog: Reserved field
+target: mfr_uid
+summary: The id of the file's owner.
+
+!! Reference
+
+|!Type |`int` |
+|!Written by |the daemon (a write of your own needs `force`) |

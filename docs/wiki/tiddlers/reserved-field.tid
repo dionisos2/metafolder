@@ -1,0 +1,7 @@
+title: Reserved field
+kind: overview
+summary: Every reserved field — the mfr_* fields the daemon writes and the mf_* fields that steer it — one note each.
+
+The rules both prefixes follow: [[Reserved fields]].
+
+<<catalog "Reserved field">>

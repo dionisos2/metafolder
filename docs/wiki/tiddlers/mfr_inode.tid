@@ -1,0 +1,8 @@
+title: mfr_inode
+tags: [[Reserved field]] [[What counts as a duplicate]]
+kind: reference
+summary: <dev>:<ino>, only on a file with more than one hard link — its presence marks a hard link.
+
+Two files with the same `mfr_inode` are one file under two names: they are not
+counted as reclaimable duplicates ([[What counts as a duplicate]]). Unix only
+([[File metadata fields]]).

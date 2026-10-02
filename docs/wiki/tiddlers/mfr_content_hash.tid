@@ -1,0 +1,6 @@
+title: mfr_content_hash
+tags: [[Reserved field]] [[Duplicate groups]]
+kind: reference
+summary: On a duplicate group: its members' full hash.
+
+With `mfr_content_size`, the identity of the group ([[Duplicate groups]]).

@@ -1,0 +1,9 @@
+title: $:/mf/gen/Reserved field/mfr_content_hash
+catalog: Reserved field
+target: mfr_content_hash
+summary: A duplicate group's content hash.
+
+!! Reference
+
+|!Type |`string` |
+|!Written by |the daemon (a write of your own needs `force`) |

@@ -1,5 +1,5 @@
 title: mfr_mount
-tags: [[Mount points]]
+tags: [[Reserved field]] [[Mount points]]
 kind: reference
 summary: The field marking a directory as a mount point, holding the mounted volume's best-effort identity — written by the daemon, never cleared by it.
 

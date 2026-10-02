@@ -1,0 +1,9 @@
+title: $:/mf/gen/Reserved field/mfr_path_old
+catalog: Reserved field
+target: mfr_path_old
+summary: Where an orphaned metarecord last lived.
+
+!! Reference
+
+|!Type |`string` |
+|!Written by |the daemon (a write of your own needs `force`) |

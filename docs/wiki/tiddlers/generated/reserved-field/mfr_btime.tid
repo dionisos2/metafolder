@@ -1,0 +1,9 @@
+title: $:/mf/gen/Reserved field/mfr_btime
+catalog: Reserved field
+target: mfr_btime
+summary: The file's creation time, when the filesystem records one.
+
+!! Reference
+
+|!Type |`datetime` |
+|!Written by |the daemon (a write of your own needs `force`) |

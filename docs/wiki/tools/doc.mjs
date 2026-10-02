@@ -296,6 +296,7 @@ export async function main(argv) {
       for (const args of [
         ['test', '-q', '-p', 'metafolder-cli', '--bin', 'mf', 'doc_gen'],
         ['test', '-q', '-p', 'metafolder-gui', '--lib', 'doc_gen'],
+        ['test', '-q', '-p', 'metafolder-daemon', '--lib', 'reserved::tests::the_wiki_catalog'],
       ]) {
         const run = spawnSync('cargo', args, {
           cwd: REPO,

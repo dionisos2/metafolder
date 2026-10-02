@@ -1,0 +1,7 @@
+title: mfr_size
+tags: [[Reserved field]] [[File metadata fields]]
+kind: reference
+summary: The file's size in bytes at its last update; a symlink's is the length of its target path.
+
+Written with the other stat fields on every update ([[File metadata fields]]); the
+first step of the [[File fingerprint]].

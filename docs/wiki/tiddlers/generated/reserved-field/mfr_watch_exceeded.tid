@@ -1,0 +1,9 @@
+title: $:/mf/gen/Reserved field/mfr_watch_exceeded
+catalog: Reserved field
+target: mfr_watch_exceeded
+summary: On a directory the watch budget could not cover.
+
+!! Reference
+
+|!Type |`bool` |
+|!Written by |the daemon (a write of your own needs `force`) |

@@ -1,0 +1,7 @@
+title: mfr_watch_exceeded
+tags: [[Reserved field]] [[The watch budget]]
+kind: reference
+summary: On a directory the watch budget could not cover; inherited like mf_watch.
+
+Marks the subtree whose changes are not being recorded because the watcher ran out of
+watches ([[The watch budget]]).

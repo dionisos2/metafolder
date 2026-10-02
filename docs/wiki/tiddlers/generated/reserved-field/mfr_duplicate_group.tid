@@ -1,0 +1,9 @@
+title: $:/mf/gen/Reserved field/mfr_duplicate_group
+catalog: Reserved field
+target: mfr_duplicate_group
+summary: The duplicate group a file belongs to.
+
+!! Reference
+
+|!Type |`ref` |
+|!Written by |the daemon (a write of your own needs `force`) |

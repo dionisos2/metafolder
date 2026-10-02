@@ -1,0 +1,9 @@
+title: $:/mf/gen/Reserved field/mfr_permissions
+catalog: Reserved field
+target: mfr_permissions
+summary: The Unix permission bits, in octal.
+
+!! Reference
+
+|!Type |`string` |
+|!Written by |the daemon (a write of your own needs `force`) |

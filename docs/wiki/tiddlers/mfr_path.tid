@@ -1,0 +1,11 @@
+title: mfr_path
+tags: [[Reserved field]] [[File tracking]]
+kind: reference
+summary: A file's position in the filesystem's tree — a tree_ref, nothing once the file was seen removed.
+
+The field that makes a metarecord a file's. Its value is a `tree_ref` (the parent
+directory's metarecord and the name), so the paths form a forest
+([[TreeRef path conventions]]). It has four states — a position, a stale position,
+`nothing`, no field — listed in [[Reserved fields]]. Only the watcher, `mf orphan clear`
+and a forced write set it to `nothing`; reconcile never does ([[Orphans]],
+[[Event semantics]]).

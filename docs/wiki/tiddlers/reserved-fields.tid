@@ -20,37 +20,37 @@ misdetected MIME type, settling an `mfr_path` conflict the watcher cannot.
 !! The fields of a file
 
 |!Field |!Type |!Holds |
-|`mfr_path` |`tree_ref` |the position in the filesystem's tree ([[TreeRef path conventions]]) — see below |
-|`mfr_type` |`string` |`file`, `dir` or `symlink` (a symlink is never followed) |
-|`mfr_size` |`int` |the size in bytes at the last update; a symlink's is its target path's length |
-|`mfr_mtime` |`datetime` |the last content modification (a symlink's own) |
-|`mfr_btime` |`datetime` |the creation time, when the filesystem records one |
-|`mfr_symlink_target` |`string` |a symlink's target path; only on symlinks |
-|`mfr_permissions` |`string` |the Unix permission bits in octal, `"0644"`; Unix only |
-|`mfr_uid`, `mfr_gid` |`int` |the owner's user and group ids; Unix only |
-|`mfr_inode` |`string` |`<dev>:<ino>`, only on a file with more than one hard link — its presence marks a hard link ([[What counts as a duplicate]]); Unix only |
-|`mfr_mime` |`string` |the MIME type from the content, computed by reconcile ([[Moves and candidates]]); absent when undetectable or not yet computed |
-|`mfr_partial_hash` |`string` |xxHash3 of the first and last 4 KiB, hex; absent until computed, cleared by a modification |
-|`mfr_full_hash` |`string` |xxHash3 of the whole content, hex |
-|`mfr_hash_mtime`, `mfr_hash_size` |`datetime`, `int` |the file's mtime and size when its hashes were computed, written and cleared with them ([[The duplicate hash cache]]) |
-|`mfr_duplicate_group` |`ref` |the duplicate group the file belongs to ([[Duplicate groups]]) |
-|`mfr_mount` |`string` |on a directory that is a mount point: the mounted volume's identity, best effort; never cleared ([[mfr_mount]]) |
-|`mfr_path_old` |`string` |where an orphaned metarecord last lived, frozen when its `mfr_path` became `nothing` ([[Orphans]], [[Event semantics]]) |
-|`mfr_watch_exceeded` |`bool` |on a directory the watch budget could not cover, inherited like `mf_watch` ([[The watch budget]]) |
-|`mfr_meta_<name>` |any |a piece of embedded metadata (tags, EXIF…), by the repository's metadata map ([[Embedded metadata]]) |
-|`mfr_meta_extracted` |`bool` |that the file's embedded metadata has been read |
+|<<cmd "mfr_path">> |`tree_ref` |the position in the filesystem's tree ([[TreeRef path conventions]]) — see below |
+|<<cmd "mfr_type">> |`string` |`file`, `dir` or `symlink` (a symlink is never followed) |
+|<<cmd "mfr_size">> |`int` |the size in bytes at the last update; a symlink's is its target path's length |
+|<<cmd "mfr_mtime">> |`datetime` |the last content modification (a symlink's own) |
+|<<cmd "mfr_btime">> |`datetime` |the creation time, when the filesystem records one |
+|<<cmd "mfr_symlink_target">> |`string` |a symlink's target path; only on symlinks |
+|<<cmd "mfr_permissions">> |`string` |the Unix permission bits in octal, `"0644"`; Unix only |
+|<<cmd "mfr_uid">>, <<cmd "mfr_gid">> |`int` |the owner's user and group ids; Unix only |
+|<<cmd "mfr_inode">> |`string` |`<dev>:<ino>`, only on a file with more than one hard link — its presence marks a hard link ([[What counts as a duplicate]]); Unix only |
+|<<cmd "mfr_mime">> |`string` |the MIME type from the content, computed by reconcile ([[Moves and candidates]]); absent when undetectable or not yet computed |
+|<<cmd "mfr_partial_hash">> |`string` |xxHash3 of the first and last 4 KiB, hex; absent until computed, cleared by a modification |
+|<<cmd "mfr_full_hash">> |`string` |xxHash3 of the whole content, hex |
+|<<cmd "mfr_hash_mtime">>, <<cmd "mfr_hash_size">> |`datetime`, `int` |the file's mtime and size when its hashes were computed, written and cleared with them ([[The duplicate hash cache]]) |
+|<<cmd "mfr_duplicate_group">> |`ref` |the duplicate group the file belongs to ([[Duplicate groups]]) |
+|<<cmd "mfr_mount">> |`string` |on a directory that is a mount point: the mounted volume's identity, best effort; never cleared ([[mfr_mount]]) |
+|<<cmd "mfr_path_old">> |`string` |where an orphaned metarecord last lived, frozen when its `mfr_path` became `nothing` ([[Orphans]], [[Event semantics]]) |
+|<<cmd "mfr_watch_exceeded">> |`bool` |on a directory the watch budget could not cover, inherited like `mf_watch` ([[The watch budget]]) |
+|<<cmd "mfr_meta_*">> |any |a piece of embedded metadata (tags, EXIF…), by the repository's metadata map ([[Embedded metadata]]) |
+|<<cmd "mfr_meta_extracted">> |`bool` |that the file's embedded metadata has been read |
 
 !! The fields that steer the daemon
 
 |!Field |!Type |!Holds |
-|`mf_watch` |`bool` |whether this metarecord and what lies under it are tracked — inherited down `mfr_path`, off by default ([[Watch and ignore fields]]) |
-|`mf_ignore` |`string` |an ignore pattern, one row per pattern ([[Ignore presets]]) |
-|`mf_schema` |`string` |the metarecord's types, one row per type ([[Schema]]) |
-|`mf_sync` |`string` |`internal` (default) or `external`: whether metafolder or another tool owns this content during sync; inherited down `mfr_path` |
+|<<cmd "mf_watch">> |`bool` |whether this metarecord and what lies under it are tracked — inherited down `mfr_path`, off by default ([[Watch and ignore fields]]) |
+|<<cmd "mf_ignore">> |`string` |an ignore pattern, one row per pattern ([[Ignore presets]]) |
+|<<cmd "mf_schema">> |`string` |the metarecord's types, one row per type ([[Schema]]) |
+|<<cmd "mf_sync">> |`string` |`internal` (default) or `external`: whether metafolder or another tool owns this content during sync; inherited down `mfr_path` |
 
 A duplicate group is a metarecord the daemon creates with no file behind it
-(`mf_schema = duplicate_group`), carrying `mfr_content_hash`, `mfr_content_size`,
-`mfr_duplicate_count` and `mfr_duplicate_reclaimable` ([[Duplicate groups]]) — the one
+(`mf_schema = duplicate_group`), carrying <<cmd "mfr_content_hash">>, <<cmd "mfr_content_size">>,
+<<cmd "mfr_duplicate_count">> and <<cmd "mfr_duplicate_reclaimable">> ([[Duplicate groups]]) — the one
 place the daemon writes an `mf_*` field of its own accord.
 
 !! The four states of mfr_path

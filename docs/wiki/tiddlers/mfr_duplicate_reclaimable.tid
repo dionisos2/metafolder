@@ -1,0 +1,7 @@
+title: mfr_duplicate_reclaimable
+tags: [[Reserved field]] [[Duplicate groups]]
+kind: reference
+summary: On a duplicate group: the bytes freed by reducing it to one file.
+
+Stored so that "the groups wasting the most space" is one sorted query
+([[Duplicate groups]], [[What counts as a duplicate]]).

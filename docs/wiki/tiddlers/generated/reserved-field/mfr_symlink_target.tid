@@ -1,0 +1,9 @@
+title: $:/mf/gen/Reserved field/mfr_symlink_target
+catalog: Reserved field
+target: mfr_symlink_target
+summary: A symlink's target path.
+
+!! Reference
+
+|!Type |`string` |
+|!Written by |the daemon (a write of your own needs `force`) |

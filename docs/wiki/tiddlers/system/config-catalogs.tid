@@ -1,5 +1,5 @@
 title: $:/mf/config/catalogs
-list: [[CLI command]] [[GUI command]] Panel [[Shipped script]]
+list: [[CLI command]] [[GUI command]] Panel [[Shipped script]] [[Reserved field]]
 
 The catalog tags. A note tagged with one documents an item of the code, whose
 generated data is `$:/mf/gen/<catalog>/<title>` (under tiddlers/generated/).

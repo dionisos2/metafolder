@@ -1,0 +1,9 @@
+title: $:/mf/gen/Reserved field/mf_ignore
+catalog: Reserved field
+target: mf_ignore
+summary: An ignore pattern; one row per pattern.
+
+!! Reference
+
+|!Type |`string` |
+|!Written by |you; the daemon reads it |

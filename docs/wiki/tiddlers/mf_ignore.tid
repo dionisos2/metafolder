@@ -1,0 +1,9 @@
+title: mf_ignore
+tags: [[Reserved field]] [[Ignore presets]]
+kind: reference
+summary: An ignore pattern on a directory, one row per pattern; the nearest directory holding some decides.
+
+A regular expression tested against a candidate's path relative to its tracking scope.
+The nearest ancestor with at least one row provides the whole set — sets are not
+merged ([[Watch and ignore fields]]). The daemon writes none: the familiar patterns
+are the `default` preset a client applies at init ([[Ignore presets]]).

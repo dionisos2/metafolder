@@ -1,0 +1,7 @@
+title: mfr_type
+tags: [[Reserved field]] [[File metadata fields]]
+kind: reference
+summary: What the path is: file, dir or symlink.
+
+`file`, `dir` or `symlink`. A symlink is recorded as itself and never followed
+([[Symbolic links]]). Written with the other stat fields ([[File metadata fields]]).

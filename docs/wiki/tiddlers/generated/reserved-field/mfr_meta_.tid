@@ -1,0 +1,9 @@
+title: $:/mf/gen/Reserved field/mfr_meta_*
+catalog: Reserved field
+target: mfr_meta_*
+summary: A piece of embedded metadata, named by the metadata map.
+
+!! Reference
+
+|!Type |`any` |
+|!Written by |the daemon (a write of your own needs `force`) |

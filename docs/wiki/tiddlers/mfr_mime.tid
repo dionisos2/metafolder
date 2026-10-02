@@ -1,0 +1,7 @@
+title: mfr_mime
+tags: [[Reserved field]] [[File metadata fields]]
+kind: reference
+summary: The MIME type detected from the content by reconcile; absent when undetectable.
+
+Filled by reconcile for the files that lack it, never recomputed: a content change is
+not reflected until the field is cleared ([[File metadata fields]]).

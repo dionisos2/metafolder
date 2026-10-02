@@ -1,0 +1,7 @@
+title: mfr_path_old
+tags: [[Reserved field]] Orphans
+kind: reference
+summary: Where an orphaned metarecord last lived, frozen when its mfr_path became nothing.
+
+A path string, kept so that an orphan can still be told apart and relinked
+([[Orphans]], [[Event semantics]]).

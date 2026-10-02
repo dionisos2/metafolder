@@ -1,0 +1,7 @@
+title: mfr_meta_extracted
+tags: [[Reserved field]] [[Embedded metadata]]
+kind: reference
+summary: That the file's embedded metadata has been read.
+
+Set once extraction has run on the file, whatever it found, so that reconcile does not
+read it again ([[When metadata is extracted]]).

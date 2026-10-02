@@ -1,7 +1,7 @@
 title: Ignore presets
 tags: [[File tracking]]
 kind: reference
-aliases: ignore mf_ignore ignores preset presets ignore-presets excluded
+aliases: ignore ignores preset presets ignore-presets excluded
 summary: Named groups of mf_ignore patterns in core/ignore-presets.toml, expanded by the client — the daemon only ever sees patterns.
 
 A ''preset'' is a named, reusable group of `mf_ignore` patterns, in

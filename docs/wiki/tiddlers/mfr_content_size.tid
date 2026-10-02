@@ -1,0 +1,6 @@
+title: mfr_content_size
+tags: [[Reserved field]] [[Duplicate groups]]
+kind: reference
+summary: On a duplicate group: its members' size, in bytes.
+
+With `mfr_content_hash`, the identity of the group ([[Duplicate groups]]).
