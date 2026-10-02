@@ -1020,9 +1020,6 @@ enum GuiCommand {
         /// File path (file panel type)
         #[arg(long)]
         path: Option<String>,
-        /// Initial panel state as a JSON object
-        #[arg(long)]
-        state: Option<String>,
     },
     /// Post a message to a workspace's status bar
     Message {
@@ -1727,8 +1724,8 @@ fn dispatch_gui(gui_url: Option<String>, command: GuiCommand) -> CmdResult {
         GuiCommand::Layout { slot, value } => {
             gui::layout(&gui_ctx, slot.as_deref(), value.as_deref())
         }
-        GuiCommand::View { slot, panel_type, path, state } => {
-            gui::view(&gui_ctx, &slot, panel_type.as_deref(), path.as_deref(), state.as_deref())
+        GuiCommand::View { slot, panel_type, path } => {
+            gui::view(&gui_ctx, &slot, panel_type.as_deref(), path.as_deref())
         }
         GuiCommand::Progress { done, total, phase, task } => {
             gui::progress(&gui_ctx, done, total, phase.as_deref(), task)

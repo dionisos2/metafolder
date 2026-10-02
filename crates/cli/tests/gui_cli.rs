@@ -321,6 +321,18 @@ fn test_gui_view_set_and_get() {
     assert_eq!(out.stdout.trim(), "entry-list");
 }
 
+/// `--state` promised an "initial panel state" the GUI never read: the route
+/// keeps `type` and `path` and drops the rest, so the option did nothing and
+/// said nothing. It is gone, and asking for it is a usage error with no request
+/// sent — not a silent success.
+#[test]
+fn test_gui_view_has_no_state_option() {
+    let gui = stub();
+    let out = mf_gui(&gui, &["view", "left", "file", "--state", "{}"]);
+    assert_eq!(out.code, 2, "stdout: {}\nstderr: {}", out.stdout, out.stderr);
+    assert!(gui.recorded.all().is_empty());
+}
+
 /// An empty `--path` is a value, not an absent option: it travels as `""` and
 /// tells the GUI to CLEAR the selection (spec-gui `PUT /gui/panels/:slot/view`).
 /// A shipped script that previews the entry it is asking about needs to say

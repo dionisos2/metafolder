@@ -21,9 +21,6 @@ Options:
       --path <PATH>
           File path (file panel type)
 
-      --state <STATE>
-          Initial panel state as a JSON object
-
   -h, --help
           Print help
 ```

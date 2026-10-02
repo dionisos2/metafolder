@@ -212,13 +212,12 @@ pub fn layout(ctx: &GuiCtx, slot: Option<&str>, value: Option<&str>) -> Result<i
 }
 
 /// `mf gui view <slot>` prints the current panel type; with a type (and
-/// optional `--path` / `--state`), sets it.
+/// optional `--path`), sets it.
 pub fn view(
     ctx: &GuiCtx,
     slot: &str,
     panel_type: Option<&str>,
     path: Option<&str>,
-    state: Option<&str>,
 ) -> Result<i32, CliError> {
     check_slot(slot)?;
     let url = format!("/gui/panels/{slot}/view");
@@ -231,10 +230,6 @@ pub fn view(
             let mut body = json!({"type": panel_type});
             if let Some(path) = path {
                 body["path"] = json!(path);
-            }
-            if let Some(state) = state {
-                body["state"] = serde_json::from_str(state)
-                    .map_err(|e| CliError::Usage(format!("invalid --state JSON: {e}")))?;
             }
             ctx.client.request("PUT", &url, &[], Some(&body))?;
         }

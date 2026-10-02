@@ -3,4 +3,4 @@ tags: [[CLI command]] [[Scripting the GUI]]
 kind: reference
 summary: Print or set the panel type shown in a slot
 
-With a slot alone, prints the panel type it shows. With a type, sets it, showing the slot if it was hidden ([[Panel types]]). `--path`, for the `file` type, also selects that file in the slot's workspace — its metarecord with it — and an ''empty'' path clears the selection, so that the panel shows no file ([[file panel]]). `--state` is sent and ignored: no panel receives it ([[GUI scripting endpoints]]).
+With a slot alone, prints the panel type it shows. With a type, sets it, showing the slot if it was hidden ([[Panel types]]). `--path`, for the `file` type, also selects that file in the slot's workspace — its metarecord with it — and an ''empty'' path clears the selection, so that the panel shows no file ([[file panel]]).

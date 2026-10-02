@@ -86,8 +86,8 @@ workspace:
 * no `path` leaves the selection as it is.
 * an ''empty'' `path` clears both. A script previewing the entry it asks about reaches entries with no file, and leaving the previous file on screen would present it as the subject of the question.
 
-Any other member of the body is ignored — `state` included, which `mf gui view --state`
-sends: no panel receives it.
+Any other member of the body is ignored: there is no way to hand a panel an initial
+state.
 
 `GET /gui/panels/:slot/view` answers `{"type": "file", "status": "ready"}` — or
 `"loading"` until the panel has mounted — and `404` for a slot showing nothing.

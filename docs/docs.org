@@ -1294,9 +1294,11 @@ vide » ; la période vaut 2 s et le script attend 1 s. L'attente n'a pas ce rô
 une fois =mf_watch = false= écrit, ce que le tampon tient encore sous le dossier est
 écarté au flush, qui revérifie l'éligibilité. L'en-tête et le commentaire disent
 maintenant ce qu'elle couvre (un flush déjà en cours).
-*Signalé, non tranché* : (1) =mf gui view --state= est envoyé et /ignoré/ — le corps
-de =PUT /gui/panels/:slot/view= ne lit que =type= et =path=, aucun panel ne reçoit
-d'état initial ; l'option est à retirer ou à implémenter ; (2) le délai en dur de
+*Tranché par l'utilisateur*, fait dans un commit à part, test d'abord : =mf gui view
+--state= est retirée. L'option était envoyée et /ignorée/ — le corps de =PUT
+/gui/panels/:slot/view= ne lit que =type= et =path=, aucun panel ne reçoit d'état
+initial — et rien ne s'en servait.
+*Signalé, non tranché* : le délai en dur de
 =gui-unwatch-folder.sh= (=MF_UNWATCH_SETTLE=, 1 s) contredit la règle « jamais de
 délai en dur côté client » de =Event batching= : s'il doit couvrir un flush en cours,
 il devrait attendre la fin de la tâche plutôt qu'une durée.
