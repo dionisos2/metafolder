@@ -420,11 +420,11 @@ async fn watch_activity_counts_recursively_per_path() {
     assert_eq!(
         body["results"],
         json!([
-            {"path": "", "events": 4},
-            {"path": "/a", "events": 3},
-            {"path": "/a/b", "events": 2},
-            {"path": "/d", "events": 1},
-            {"path": "/nowhere", "events": 0},
+            {"path": "", "events": 4, "operations": 0},
+            {"path": "/a", "events": 3, "operations": 0},
+            {"path": "/a/b", "events": 2, "operations": 0},
+            {"path": "/d", "events": 1, "operations": 0},
+            {"path": "/nowhere", "events": 0, "operations": 0},
         ])
     );
 }
@@ -442,13 +442,19 @@ async fn watch_activity_lists_the_busiest_children_and_resets() {
     assert_eq!(body["path"], json!(""));
     assert_eq!(body["events"], json!(4));
     assert_eq!(body["total"], json!(4));
-    assert_eq!(body["children"], json!([{"path": "/a", "events": 3}, {"path": "/d", "events": 1}]));
+    assert_eq!(
+        body["children"],
+        json!([
+            {"path": "/a", "events": 3, "operations": 0},
+            {"path": "/d", "events": 1, "operations": 0},
+        ])
+    );
 
     let (status, body) =
         request(&app, "GET", &format!("/repos/{repo}/watch/activity?path=/a&limit=1"), None).await;
     assert_eq!(status, StatusCode::OK, "{body}");
     assert_eq!(body["events"], json!(3));
-    assert_eq!(body["children"], json!([{"path": "/a/b", "events": 2}]));
+    assert_eq!(body["children"], json!([{"path": "/a/b", "events": 2, "operations": 0}]));
 
     let (status, body) =
         request(&app, "POST", &format!("/repos/{repo}/watch/activity/reset"), Some(json!({})))
@@ -457,6 +463,63 @@ async fn watch_activity_lists_the_busiest_children_and_resets() {
     assert_eq!(body["total"], json!(0));
     let (_, body) = request(&app, "GET", &format!("/repos/{repo}/watch/activity"), None).await;
     assert_eq!(body["children"], json!([]));
+}
+
+/// Counts written operations against paths, as a flush would.
+fn wrote(state: &AppState, repo: &str, written: &[(&str, u64)]) {
+    use metafolder_daemon::relpath::RelPath;
+    let repo_state = state.repo(uuid::Uuid::parse_str(repo).unwrap()).unwrap();
+    let written: Vec<(Vec<RelPath>, u64)> =
+        written.iter().map(|(p, n)| (vec![RelPath::from_display(p)], *n)).collect();
+    repo_state.watch_activity.lock().unwrap().record_operations(&written);
+}
+
+#[tokio::test]
+async fn watch_activity_reports_operations_and_ranks_by_them_on_request() {
+    let state = std::sync::Arc::new(AppState::new());
+    let app = routes::build(state.clone());
+    let root = TempDir::new("watch_activity_operations");
+    let repo = init_repo(&app, &root).await;
+    deliver(&state, &repo, &["/noisy/x", "/noisy/x", "/noisy/x", "/costly/y"]);
+    wrote(&state, &repo, &[("/noisy/x", 1), ("/costly/y", 7)]);
+
+    let (status, body) = request(
+        &app,
+        "POST",
+        &format!("/repos/{repo}/watch/activity"),
+        Some(json!({"paths": ["/costly"]})),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    assert_eq!(body["total"], json!(4));
+    assert_eq!(body["total_operations"], json!(8));
+    assert_eq!(body["results"], json!([{"path": "/costly", "events": 1, "operations": 7}]));
+
+    // Events by default.
+    let (_, body) = request(&app, "GET", &format!("/repos/{repo}/watch/activity"), None).await;
+    assert_eq!(body["operations"], json!(8));
+    assert_eq!(body["total_operations"], json!(8));
+    assert_eq!(body["children"][0]["path"], json!("/noisy"));
+
+    let (status, body) =
+        request(&app, "GET", &format!("/repos/{repo}/watch/activity?sort=operations"), None).await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    assert_eq!(
+        body["children"],
+        json!([
+            {"path": "/costly", "events": 1, "operations": 7},
+            {"path": "/noisy", "events": 3, "operations": 1},
+        ])
+    );
+
+    let (status, _) =
+        request(&app, "GET", &format!("/repos/{repo}/watch/activity?sort=size"), None).await;
+    assert_eq!(status, StatusCode::BAD_REQUEST);
+
+    let (_, body) =
+        request(&app, "POST", &format!("/repos/{repo}/watch/activity/reset"), Some(json!({})))
+            .await;
+    assert_eq!(body["total_operations"], json!(0));
 }
 
 #[tokio::test]

@@ -1,6 +1,6 @@
 title: mf watch activity
 tags: [[CLI command]] [[Watcher]]
 kind: reference
-summary: How many watcher events arrived under a directory since the load, and under which of its children — walk down from / to find the noise
+summary: How many watcher events arrived under a directory since the load, how many operations they wrote, and under which of its children — walk down from / to find the noise
 
-A directory's event count and its busiest children, each as a share of the total; `--reset` starts over ([[Watch activity]]).
+A directory's event and operation counts and its busiest children, each as a share of the total; `--by-operations` ranks them by what reached the log instead of by what the kernel sent, `--reset` starts over ([[Watch activity]]).

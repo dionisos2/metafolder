@@ -1,7 +1,15 @@
 //! Watch activity (doc "Watch activity"): how many filesystem
 //! events the watcher delivered under each path since the repository was
-//! loaded (or the counter last reset). In memory only — a diagnosis of where
-//! the event load comes from right now, not a history.
+//! loaded (or the counter last reset), and how many operations its flushes
+//! wrote for them. In memory only — a diagnosis of where the load comes from
+//! right now, not a history.
+//!
+//! The two numbers answer different questions. An *event* is what the kernel
+//! sends: a large copy is thousands of them and costs next to nothing, since
+//! they compact into one modification. An *operation* is what reached the log:
+//! it is durable, spends the retention budget and buries the user's own
+//! changes — a file touched every few seconds is few events and a revision
+//! each time.
 //!
 //! Counts are *recursive*: an event at `/a/b/c` counts once on `/a/b/c`, `/a/b`,
 //! `/a` and the root, so the root's count is the total and a client can walk
@@ -18,10 +26,34 @@ use crate::relpath::RelPath;
 /// active paths are dropped (see [`WatchActivity::evict`]).
 pub const DEFAULT_CAP: usize = 100_000;
 
-/// The recursive per-path event counter of one repository.
+/// What one path counted, itself and everything below it.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+struct Counts {
+    events: u64,
+    operations: u64,
+}
+
+/// Which of the two counts ranks a listing.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Metric {
+    /// The events the watcher delivered.
+    Events,
+    /// The operations the flushes wrote.
+    Operations,
+}
+
+/// A direct child of a listed path, with both its counts.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Child {
+    pub path: RelPath,
+    pub events: u64,
+    pub operations: u64,
+}
+
+/// The recursive per-path counter of one repository.
 #[derive(Debug)]
 pub struct WatchActivity {
-    counts: HashMap<RelPath, u64>,
+    counts: HashMap<RelPath, Counts>,
     since_ms: i64,
     cap: usize,
 }
@@ -37,22 +69,35 @@ impl WatchActivity {
         let mut touched: HashSet<RelPath> = HashSet::new();
         for (event, _) in events {
             touched.clear();
-            match event {
-                FsEvent::Create(p)
-                | FsEvent::Remove(p)
-                | FsEvent::RenameFrom(p)
-                | FsEvent::RenameTo(p)
-                | FsEvent::ModifyData(p)
-                | FsEvent::ModifyMeta(p) => add_chain(&mut touched, p),
-                FsEvent::Rename(a, b) => {
-                    add_chain(&mut touched, a);
-                    add_chain(&mut touched, b);
-                }
+            for path in event_paths(event) {
+                add_chain(&mut touched, path);
             }
             for path in touched.drain() {
-                *self.counts.entry(path).or_insert(0) += 1;
+                self.counts.entry(path).or_default().events += 1;
             }
         }
+        self.bound();
+    }
+
+    /// Counts the operations a flush wrote: each entry is the path(s) of one
+    /// applied event (see [`event_paths`]) and how many operations applying it
+    /// recorded. Called once the revision is committed — what was rolled back
+    /// cost nothing.
+    pub fn record_operations(&mut self, written: &[(Vec<RelPath>, u64)]) {
+        let mut touched: HashSet<RelPath> = HashSet::new();
+        for (paths, operations) in written {
+            touched.clear();
+            for path in paths {
+                add_chain(&mut touched, path);
+            }
+            for path in touched.drain() {
+                self.counts.entry(path).or_default().operations += operations;
+            }
+        }
+        self.bound();
+    }
+
+    fn bound(&mut self) {
         if self.counts.len() > self.cap {
             self.evict();
         }
@@ -60,7 +105,12 @@ impl WatchActivity {
 
     /// The events counted under `path` (itself included).
     pub fn count(&self, path: &RelPath) -> u64 {
-        self.counts.get(path).copied().unwrap_or(0)
+        self.counts.get(path).map_or(0, |c| c.events)
+    }
+
+    /// The operations written for the events under `path` (itself included).
+    pub fn operations(&self, path: &RelPath) -> u64 {
+        self.counts.get(path).map_or(0, |c| c.operations)
     }
 
     /// Every event counted: the root's count.
@@ -68,17 +118,26 @@ impl WatchActivity {
         self.count(&RelPath::root())
     }
 
-    /// The direct children of `path` that received events, most active first
-    /// (ties by path), at most `limit`.
-    pub fn children(&self, path: &RelPath, limit: usize) -> Vec<(RelPath, u64)> {
+    /// Every operation counted: the root's.
+    pub fn total_operations(&self) -> u64 {
+        self.operations(&RelPath::root())
+    }
+
+    /// The direct children of `path` that counted anything, the largest
+    /// `by` first (ties by the other count, then by path), at most `limit`.
+    pub fn children(&self, path: &RelPath, limit: usize, by: Metric) -> Vec<Child> {
         let depth = path.depth() + 1;
-        let mut out: Vec<(RelPath, u64)> = self
+        let mut out: Vec<Child> = self
             .counts
             .iter()
             .filter(|(p, _)| p.depth() == depth && p.parent() == *path)
-            .map(|(p, n)| (p.clone(), *n))
+            .map(|(p, c)| Child { path: p.clone(), events: c.events, operations: c.operations })
             .collect();
-        out.sort_by(|(pa, a), (pb, b)| b.cmp(a).then_with(|| pa.cmp(pb)));
+        let key = |c: &Child| match by {
+            Metric::Events => (c.events, c.operations),
+            Metric::Operations => (c.operations, c.events),
+        };
+        out.sort_by(|a, b| key(b).cmp(&key(a)).then_with(|| a.path.cmp(&b.path)));
         out.truncate(limit);
         out
     }
@@ -107,15 +166,20 @@ impl WatchActivity {
     /// Drops the least active paths down to three quarters of the cap, so the
     /// sort is paid once per quarter-cap of new paths rather than per event.
     ///
-    /// Ordered by count, then deepest first: an ancestor has counted every
-    /// event its descendants did, so it always sorts after all of them, and
-    /// what is dropped is closed under descendants — no surviving path is ever
-    /// left without its parent. A dropped path that becomes active again
-    /// restarts from zero: small counts are approximate, large ones exact.
+    /// Ordered by weight — events plus operations, so a path that costs the
+    /// log is kept over a merely noisy one — then deepest first: an ancestor
+    /// has counted everything its descendants did, in both counts, so it always
+    /// sorts after all of them, and what is dropped is closed under
+    /// descendants — no surviving path is ever left without its parent. A
+    /// dropped path that becomes active again restarts from zero: small counts
+    /// are approximate, large ones exact.
     fn evict(&mut self) {
         let keep = self.cap * 3 / 4;
-        let mut order: Vec<(u64, usize, RelPath)> =
-            self.counts.iter().map(|(p, n)| (*n, p.depth(), p.clone())).collect();
+        let mut order: Vec<(u64, usize, RelPath)> = self
+            .counts
+            .iter()
+            .map(|(p, c)| (c.events.saturating_add(c.operations), p.depth(), p.clone()))
+            .collect();
         order.sort_by(|a, b| a.0.cmp(&b.0).then_with(|| b.1.cmp(&a.1)));
         let drop = order.len().saturating_sub(keep);
         for (_, _, path) in order.into_iter().take(drop) {
@@ -123,6 +187,19 @@ impl WatchActivity {
                 self.counts.remove(&path);
             }
         }
+    }
+}
+
+/// The path(s) an event is about: both sides of a whole rename, one otherwise.
+pub fn event_paths(event: &FsEvent) -> Vec<&RelPath> {
+    match event {
+        FsEvent::Create(p)
+        | FsEvent::Remove(p)
+        | FsEvent::RenameFrom(p)
+        | FsEvent::RenameTo(p)
+        | FsEvent::ModifyData(p)
+        | FsEvent::ModifyMeta(p) => vec![p],
+        FsEvent::Rename(a, b) => vec![a, b],
     }
 }
 
@@ -200,18 +277,72 @@ mod tests {
             ev(FsEvent::ModifyData(p("/a/deep/z"))),
             ev(FsEvent::ModifyData(p("/c"))),
         ]);
-        let root = a.children(&RelPath::root(), 10);
-        assert_eq!(root, vec![(p("/a"), 3), (p("/b"), 2), (p("/c"), 1)]);
-        assert_eq!(a.children(&RelPath::root(), 2).len(), 2);
-        assert_eq!(a.children(&p("/a"), 10), vec![(p("/a/deep"), 3)]);
+        let events = |path: &RelPath, limit| -> Vec<(RelPath, u64)> {
+            a.children(path, limit, Metric::Events)
+                .into_iter()
+                .map(|c| (c.path, c.events))
+                .collect()
+        };
+        assert_eq!(events(&RelPath::root(), 10), vec![(p("/a"), 3), (p("/b"), 2), (p("/c"), 1)]);
+        assert_eq!(events(&RelPath::root(), 2).len(), 2);
+        assert_eq!(events(&p("/a"), 10), vec![(p("/a/deep"), 3)]);
+    }
+
+    #[test]
+    fn operations_count_apart_from_events_on_the_path_and_every_ancestor() {
+        let mut a = WatchActivity::new(0, DEFAULT_CAP);
+        a.record(&[ev(FsEvent::ModifyData(p("/a/b/c.txt"))), ev(FsEvent::ModifyData(p("/d")))]);
+        a.record_operations(&[(vec![p("/a/b/c.txt")], 3)]);
+        assert_eq!(a.operations(&p("/a/b/c.txt")), 3);
+        assert_eq!(a.operations(&p("/a")), 3);
+        assert_eq!(a.total_operations(), 3);
+        assert_eq!(a.operations(&p("/d")), 0);
+        // The events are untouched.
+        assert_eq!(a.count(&p("/a")), 1);
+        assert_eq!(a.total(), 2);
+    }
+
+    #[test]
+    fn a_rename_s_operations_count_once_on_the_common_ancestors() {
+        let mut a = WatchActivity::new(0, DEFAULT_CAP);
+        a.record_operations(&[(vec![p("/a/b/x"), p("/a/c/y")], 2)]);
+        assert_eq!(a.total_operations(), 2);
+        assert_eq!(a.operations(&p("/a")), 2);
+        assert_eq!(a.operations(&p("/a/b")), 2);
+        assert_eq!(a.operations(&p("/a/c/y")), 2);
+    }
+
+    #[test]
+    fn children_can_be_ranked_by_operations() {
+        let mut a = WatchActivity::new(0, DEFAULT_CAP);
+        for _ in 0..5 {
+            a.record(&[ev(FsEvent::ModifyData(p("/noisy/x")))]);
+        }
+        a.record(&[ev(FsEvent::ModifyData(p("/costly/y")))]);
+        a.record_operations(&[(vec![p("/noisy/x")], 1), (vec![p("/costly/y")], 9)]);
+        let by_events = a.children(&RelPath::root(), 10, Metric::Events);
+        assert_eq!(
+            by_events.iter().map(|c| c.path.clone()).collect::<Vec<_>>(),
+            [p("/noisy"), p("/costly")]
+        );
+        let by_ops = a.children(&RelPath::root(), 10, Metric::Operations);
+        assert_eq!(
+            by_ops,
+            vec![
+                Child { path: p("/costly"), events: 1, operations: 9 },
+                Child { path: p("/noisy"), events: 5, operations: 1 },
+            ]
+        );
     }
 
     #[test]
     fn reset_forgets_everything_and_restarts_the_clock() {
         let mut a = WatchActivity::new(5, DEFAULT_CAP);
         a.record(&[ev(FsEvent::Create(p("/a")))]);
+        a.record_operations(&[(vec![p("/a")], 4)]);
         a.reset(42);
         assert_eq!(a.total(), 0);
+        assert_eq!(a.total_operations(), 0);
         assert!(a.is_empty());
         assert_eq!(a.since_ms(), 42);
     }
@@ -234,8 +365,21 @@ mod tests {
         // No surviving path is ever above an ancestor that was dropped.
         for (path, n) in &a.counts {
             if !path.is_root() {
-                assert!(a.count(&path.parent()) >= *n, "{} orphaned", path.display());
+                assert!(a.count(&path.parent()) >= n.events, "{} orphaned", path.display());
             }
         }
+    }
+
+    #[test]
+    fn a_path_that_costs_operations_outlives_the_merely_noisy_ones() {
+        let mut a = WatchActivity::new(0, 10);
+        a.record(&[ev(FsEvent::ModifyData(p("/costly/f")))]);
+        a.record_operations(&[(vec![p("/costly/f")], 50)]);
+        for i in 0..20 {
+            a.record(&[ev(FsEvent::Create(p(&format!("/cold/h{i}/x"))))]);
+        }
+        assert!(a.len() <= 10, "{} paths held", a.len());
+        assert_eq!(a.operations(&p("/costly/f")), 50);
+        assert_eq!(a.count(&p("/costly/f")), 1);
     }
 }

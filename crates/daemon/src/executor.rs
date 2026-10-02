@@ -562,12 +562,21 @@ fn flush_pending_once(repo: &RepoState, report: FlushReport) -> Result<FlushStat
                 cancel: &cancel,
                 ignored: 0,
             };
+            // What each event of the group wrote, for the activity counter.
+            let mut written: Vec<(Vec<RelPath>, u64)> = Vec::new();
             for ev in group {
                 apply.check_cancelled()?;
                 applied += 1;
                 report(FlushProgress::Applying { index: applied, total: n_events, event: &ev });
                 let started = std::time::Instant::now();
+                let paths: Vec<RelPath> =
+                    crate::watch_activity::event_paths(&ev).into_iter().cloned().collect();
+                let ops_before = apply.writer.op_count();
                 apply.apply(ev)?;
+                let ops = apply.writer.op_count() - ops_before;
+                if ops > 0 {
+                    written.push((paths, ops as u64));
+                }
                 report(FlushProgress::Applied {
                     index: applied,
                     total: n_events,
@@ -582,6 +591,9 @@ fn flush_pending_once(repo: &RepoState, report: FlushReport) -> Result<FlushStat
             if wrote {
                 revisions += 1;
             }
+            // Only once committed: a group that rolled back cost the log
+            // nothing (doc "Watch activity").
+            repo.watch_activity.lock_recover().record_operations(&written);
         }
 
         Ok((revisions, ignored))

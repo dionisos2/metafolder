@@ -594,6 +594,48 @@ fn test_rename_to_without_match_creates_new_metarecord() {
     std::fs::remove_dir_all(root).unwrap();
 }
 
+// ── Watch activity: the operations a flush writes (doc "Watch activity") ───────
+
+#[test]
+fn test_a_flush_counts_the_operations_it_wrote_per_path() {
+    use metafolder_daemon::relpath::RelPath;
+    let (repo, root, _) = setup("activity_ops");
+    write_file(&root, "dir/m.txt", b"v1");
+    write_file(&root, "other.txt", b"v1");
+    enqueue(&repo, &[FsEvent::Create("/dir/m.txt".into()), FsEvent::Create("/other.txt".into())]);
+    let before = op_count(&repo, None);
+    executor::flush_pending(&repo).unwrap();
+    let written = (op_count(&repo, None) - before) as u64;
+    assert!(written > 0);
+
+    let rel = |p: &str| RelPath::from_display(p);
+    let (dir, other) = {
+        let activity = repo.watch_activity.lock().unwrap();
+        // Everything the flush wrote, and nothing else, is counted.
+        assert_eq!(activity.total_operations(), written);
+        let dir = activity.operations(&rel("/dir"));
+        let other = activity.operations(&rel("/other.txt"));
+        assert!(dir > 0 && other > 0);
+        assert_eq!(dir + other, written);
+        assert_eq!(activity.operations(&rel("/dir/m.txt")), dir);
+        // Enqueued by hand here: no event was *delivered*.
+        assert_eq!(activity.total(), 0);
+        (dir, other)
+    };
+
+    // A later flush adds exactly what it wrote, on the path it wrote it for.
+    write_file(&root, "other.txt", b"version two, longer");
+    enqueue(&repo, &[FsEvent::ModifyData("/other.txt".into())]);
+    let before = op_count(&repo, None);
+    executor::flush_pending(&repo).unwrap();
+    let more = (op_count(&repo, None) - before) as u64;
+    assert!(more > 0);
+    let activity = repo.watch_activity.lock().unwrap();
+    assert_eq!(activity.total_operations(), written + more);
+    assert_eq!(activity.operations(&rel("/other.txt")), other + more);
+    assert_eq!(activity.operations(&rel("/dir")), dir);
+}
+
 // ── Modify ────────────────────────────────────────────────────────────────────
 
 #[test]

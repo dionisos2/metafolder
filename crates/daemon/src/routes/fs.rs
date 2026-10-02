@@ -174,8 +174,12 @@ fn watch_rel_path(path: &str) -> Result<crate::relpath::RelPath, ApiError> {
     Ok(crate::relpath::RelPath::from_display(path))
 }
 
-fn activity_entry(path: &crate::relpath::RelPath, events: u64) -> serde_json::Value {
-    json!({ "path": path.display(), "events": events })
+fn activity_entry(
+    path: &crate::relpath::RelPath,
+    events: u64,
+    operations: u64,
+) -> serde_json::Value {
+    json!({ "path": path.display(), "events": events, "operations": operations })
 }
 
 #[derive(Deserialize)]
@@ -201,10 +205,14 @@ pub(super) async fn watch_activity_of(
     }
     let paths = body.paths.iter().map(|p| watch_rel_path(p)).collect::<Result<Vec<_>, _>>()?;
     let activity = repo_state.watch_activity.lock_recover();
-    let results: Vec<_> = paths.iter().map(|p| activity_entry(p, activity.count(p))).collect();
+    let results: Vec<_> = paths
+        .iter()
+        .map(|p| activity_entry(p, activity.count(p), activity.operations(p)))
+        .collect();
     Ok(Json(json!({
         "since_ms": activity.since_ms(),
         "total": activity.total(),
+        "total_operations": activity.total_operations(),
         "results": results,
     })))
 }
@@ -214,11 +222,13 @@ pub(super) struct WatchActivityParams {
     #[serde(default)]
     path: String,
     limit: Option<usize>,
+    sort: Option<String>,
 }
 
-/// `GET /repos/:repo/watch/activity?path=&limit=`: one path's count and its
-/// busiest direct children — one step of the walk down from the root to where
-/// the events come from.
+/// `GET /repos/:repo/watch/activity?path=&limit=&sort=`: one path's counts and
+/// its busiest direct children — one step of the walk down from the root to
+/// where the events come from. `sort` ranks the children by `events` (the
+/// default) or by `operations`, what the flushes wrote for them.
 pub(super) async fn watch_activity_children(
     State(state): State<Arc<AppState>>,
     Path(repo): Path<String>,
@@ -227,14 +237,28 @@ pub(super) async fn watch_activity_children(
     let repo_state = state.repo(parse_uuid(&repo)?)?;
     let path = watch_rel_path(&params.path)?;
     let limit = params.limit.unwrap_or(ACTIVITY_DEFAULT_CHILDREN);
+    let by = match params.sort.as_deref() {
+        None | Some("events") => crate::watch_activity::Metric::Events,
+        Some("operations") => crate::watch_activity::Metric::Operations,
+        Some(other) => {
+            return Err(ApiError::bad_request(format!(
+                "sort must be \"events\" or \"operations\", got {other:?}"
+            )))
+        }
+    };
     let activity = repo_state.watch_activity.lock_recover();
-    let children: Vec<_> =
-        activity.children(&path, limit).iter().map(|(p, n)| activity_entry(p, *n)).collect();
+    let children: Vec<_> = activity
+        .children(&path, limit, by)
+        .iter()
+        .map(|c| activity_entry(&c.path, c.events, c.operations))
+        .collect();
     Ok(Json(json!({
         "since_ms": activity.since_ms(),
         "total": activity.total(),
+        "total_operations": activity.total_operations(),
         "path": path.display(),
         "events": activity.count(&path),
+        "operations": activity.operations(&path),
         "children": children,
     })))
 }
@@ -248,7 +272,11 @@ pub(super) async fn watch_activity_reset(
     let repo_state = state.repo(parse_uuid(&repo)?)?;
     let mut activity = repo_state.watch_activity.lock_recover();
     activity.reset(metafolder_core::date::now_ms());
-    Ok(Json(json!({ "since_ms": activity.since_ms(), "total": activity.total() })))
+    Ok(Json(json!({
+        "since_ms": activity.since_ms(),
+        "total": activity.total(),
+        "total_operations": activity.total_operations(),
+    })))
 }
 
 #[derive(Deserialize)]

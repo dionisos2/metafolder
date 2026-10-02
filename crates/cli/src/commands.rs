@@ -2382,6 +2382,7 @@ pub fn watch_activity(
     ctx: &Ctx,
     path: Option<&str>,
     limit: usize,
+    by_operations: bool,
     reset: bool,
     raw_json: bool,
 ) -> Result<i32, CliError> {
@@ -2408,7 +2409,11 @@ pub fn watch_activity(
     let resp = ctx.client.request(
         "GET",
         &format!("{base}/watch/activity"),
-        &[("path", rel), ("limit", limit.to_string())],
+        &[
+            ("path", rel),
+            ("limit", limit.to_string()),
+            ("sort", if by_operations { "operations" } else { "events" }.to_string()),
+        ],
         None,
     )?;
     if raw_json {
@@ -2419,24 +2424,43 @@ pub fn watch_activity(
     Ok(0)
 }
 
-/// The path's count, then its busiest children, each as a share of the total —
+/// The path's counts, then its busiest children, each as a share of the total —
 /// the share of the whole load is what says whether a subtree is worth
-/// excluding.
+/// excluding. Events are what the kernel sent, operations what reached the log.
 fn format_watch_activity(resp: &Json) -> String {
+    let share = |n: u64, total: u64| if total == 0 { 0.0 } else { n as f64 * 100.0 / total as f64 };
     let total = resp["total"].as_u64().unwrap_or(0);
     let events = resp["events"].as_u64().unwrap_or(0);
-    let pct = |n: u64| if total == 0 { 0.0 } else { n as f64 * 100.0 / total as f64 };
+    // Absent from a daemon older than the count: unknown, not zero.
+    let total_ops = resp["total_operations"].as_u64();
     let path = shown_path(resp, "path");
+    let nested = path != "/";
     let since = metafolder_core::date::iso8601_from_ms(resp["since_ms"].as_i64().unwrap_or(0));
-    let mut out = format!("{path}: {events} event(s) since {since}");
-    if path != "/" {
-        out.push_str(&format!(" ({:.1}% of {total})", pct(events)));
+    let mut out = format!("{path}: {events} event(s)");
+    if nested {
+        out.push_str(&format!(" ({:.1}% of {total})", share(events, total)));
     }
-    out.push('\n');
-    for child in resp["children"].as_array().into_iter().flatten() {
+    if let Some(total_ops) = total_ops {
+        let ops = resp["operations"].as_u64().unwrap_or(0);
+        out.push_str(&format!(", {ops} operation(s)"));
+        if nested {
+            out.push_str(&format!(" ({:.1}% of {total_ops})", share(ops, total_ops)));
+        }
+    }
+    out.push_str(&format!(" since {since}\n"));
+    let children: Vec<&Json> = resp["children"].as_array().into_iter().flatten().collect();
+    if total_ops.is_some() && !children.is_empty() {
+        out.push_str("  events          operations\n");
+    }
+    for child in children {
         let n = child["events"].as_u64().unwrap_or(0);
         let p = child["path"].as_str().unwrap_or_default();
-        out.push_str(&format!("{n:>8}  {:>5.1}%  {p}\n", pct(n)));
+        out.push_str(&format!("{n:>8}  {:>5.1}%", share(n, total)));
+        if let Some(total_ops) = total_ops {
+            let ops = child["operations"].as_u64().unwrap_or(0);
+            out.push_str(&format!("  {ops:>8}  {:>5.1}%", share(ops, total_ops)));
+        }
+        out.push_str(&format!("  {p}\n"));
     }
     out
 }
@@ -2950,17 +2974,44 @@ mod tests {
     #[test]
     fn watch_activity_names_the_path_and_ranks_its_children_against_the_total() {
         let resp = json!({
-            "since_ms": 0, "total": 200, "path": "/dev", "events": 150,
-            "children": [{"path": "/dev/proj", "events": 120}, {"path": "/dev/x", "events": 30}],
+            "since_ms": 0, "total": 200, "total_operations": 40,
+            "path": "/dev", "events": 150, "operations": 10,
+            "children": [
+                {"path": "/dev/proj", "events": 120, "operations": 2},
+                {"path": "/dev/x", "events": 30, "operations": 8},
+            ],
         });
         assert_eq!(
             format_watch_activity(&resp),
-            "/dev: 150 event(s) since 1970-01-01T00:00:00Z (75.0% of 200)\n\
-             \x20    120   60.0%  /dev/proj\n\
-             \x20     30   15.0%  /dev/x\n"
+            "/dev: 150 event(s) (75.0% of 200), 10 operation(s) (25.0% of 40) \
+             since 1970-01-01T00:00:00Z\n\
+             \x20 events          operations\n\
+             \x20    120   60.0%         2    5.0%  /dev/proj\n\
+             \x20     30   15.0%         8   20.0%  /dev/x\n"
         );
-        let root = json!({"since_ms": 0, "total": 0, "path": "", "events": 0, "children": []});
-        assert_eq!(format_watch_activity(&root), "/: 0 event(s) since 1970-01-01T00:00:00Z\n");
+        let root = json!({
+            "since_ms": 0, "total": 0, "total_operations": 0,
+            "path": "", "events": 0, "operations": 0, "children": [],
+        });
+        assert_eq!(
+            format_watch_activity(&root),
+            "/: 0 event(s), 0 operation(s) since 1970-01-01T00:00:00Z\n"
+        );
+    }
+
+    /// A daemon older than the operations count answers without it: the
+    /// column reads as unknown, never as zero.
+    #[test]
+    fn watch_activity_from_a_daemon_without_operations_shows_events_only() {
+        let resp = json!({
+            "since_ms": 0, "total": 200, "path": "", "events": 200,
+            "children": [{"path": "/dev", "events": 120}],
+        });
+        assert_eq!(
+            format_watch_activity(&resp),
+            "/: 200 event(s) since 1970-01-01T00:00:00Z\n\
+             \x20    120   60.0%  /dev\n"
+        );
     }
     use super::*;
 

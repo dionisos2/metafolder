@@ -1,12 +1,12 @@
 title: $:/mf/gen/CLI command/mf watch activity
 catalog: CLI command
 target: mf watch activity
-summary: How many watcher events arrived under a directory since the load, and under which of its children — walk down from / to find the noise
+summary: How many watcher events arrived under a directory since the load, how many operations they wrote, and under which of its children — walk down from / to find the noise
 
 !! Reference
 
 ```
-How many watcher events arrived under a directory since the load, and under which of its children — walk down from / to find the noise
+How many watcher events arrived under a directory since the load, how many operations they wrote, and under which of its children — walk down from / to find the noise
 
 Usage: mf watch activity [OPTIONS] [PATH]
 
@@ -19,6 +19,9 @@ Options:
           How many children to list
           
           [default: 20]
+
+      --by-operations
+          Rank the children by the operations written to the log for them, instead of by the events received
 
       --reset
           Forget every count and start again

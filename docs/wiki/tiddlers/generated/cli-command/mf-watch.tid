@@ -17,7 +17,7 @@ Commands:
   check     Report whether the watcher records a change at each path
   pause     Stop the flush in progress and pause ingestion (nothing is lost)
   resume    Resume ingestion and apply what was buffered meanwhile
-  activity  How many watcher events arrived under a directory since the load, and under which of its children — walk down from / to find the noise
+  activity  How many watcher events arrived under a directory since the load, how many operations they wrote, and under which of its children — walk down from / to find the noise
   exceeded  Subtrees left unwatched for want of inotify watches (the budget)
   help      Print this message or the help of the given subcommand(s)
 
