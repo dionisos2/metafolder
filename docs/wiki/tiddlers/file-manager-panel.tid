@@ -24,6 +24,7 @@ metarecord selectable — the repository root's included.
 |amber, `⏏ not mounted` |it sits on a volume that is not plugged in: unavailable, not deleted ([[Unmounted volumes in the GUI]]) |
 |red, `internal` |the repository's `.metafolder/internal/`, which is never tracked ([[Repository layout on disk]]) |
 |a number |watcher events under the entry since the repository was loaded, amber on a hot spot ([[Watch activity]]) |
+|a number followed by `op` |operations the watcher wrote to the log for the entry — what those events cost |
 |`⚠` after the name |the name holds bytes that are not text and is shown escaped ([[Tree names]]) |
 
 An untracked entry of a directory that is not watched carries no mark: only the place
@@ -33,7 +34,8 @@ Without a repository nothing is marked.
 Dot-entries are hidden until ''hidden files'' is checked
 (<<key "file-manager:toggle hidden" Ctrl+h>>); `.` and `..` always show. ''by
 activity'' (<<key "file-manager:toggle activity" Ctrl+Shift+a>>) puts the busiest
-entries first.
+entries first, ''by operations'' (<<key "file-manager:toggle operations" Ctrl+Shift+o>>)
+the ones the watcher wrote the most for; choosing one leaves the other.
 
 The rows are drawn 200 at a time (`[page-size]`, [[GUI configuration]]), the next
 ones when the scroll reaches the end; the footer gives `shown/total entries` and how
@@ -128,5 +130,5 @@ click then starts with ''Pick this folder'', which confirms without a key.
 |`file-manager:start-dir` |the directory to open first, instead of the repository root — how a folder picker is started where the form already points |
 |`file-manager:reveal-path` |`{path, nonce}` — a path another panel asks it to show, which `file-manager:reveal` writes ([[Cross-panel selection]]) |
 
-The three view settings — the root constraint, hidden files, the activity order — are
+The view settings — the root constraint, hidden files, the activity or operations order — are
 not variables: they are the panel's, for the session.

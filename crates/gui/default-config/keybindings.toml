@@ -378,6 +378,8 @@
 # Busiest entries first (watch activity): the walk down to where the watcher's
 # events come from.
 "ctrl+shift+a" = { command = "file-manager:toggle activity", when = "file-manager" }
+# Costliest entries first: what the watcher wrote to the log, not what it received.
+"ctrl+shift+o" = { command = "file-manager:toggle operations", when = "file-manager" }
 
 # metarecord-list: selection, finder, query editing. Space checks the row under
 # the cursor into the multi-selection — the workspace-wide set the bulk

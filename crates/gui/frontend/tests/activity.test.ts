@@ -9,6 +9,7 @@ import {
   fetchActivity,
   fetchActivityChildren,
   isHot,
+  operationsTitle,
   orderByActivity,
 } from '../../panel-shim/activity.js';
 
@@ -28,6 +29,33 @@ describe('fetchActivity', () => {
     expect(got?.sinceMs).toBe(1000);
     expect(got?.counts.get('/a')).toBe(40);
     expect(got?.counts.get('/b')).toBe(0);
+  });
+
+  test('keeps the operations beside the events', async () => {
+    const call = vi.fn(async () => ({
+      since_ms: 1000,
+      total: 50,
+      total_operations: 12,
+      results: [
+        { path: '/a', events: 40, operations: 3 },
+        { path: '/b', events: 0, operations: 0 },
+      ],
+    }));
+    const got = await fetchActivity({ call }, 'r1', ['/a', '/b']);
+    expect(got?.totalOperations).toBe(12);
+    expect(got?.operations.get('/a')).toBe(3);
+    expect(got?.operations.get('/b')).toBe(0);
+  });
+
+  test('a daemon older than the operations count leaves them unknown', async () => {
+    const call = vi.fn(async () => ({
+      since_ms: 1000,
+      total: 50,
+      results: [{ path: '/a', events: 40 }],
+    }));
+    const got = await fetchActivity({ call }, 'r1', ['/a']);
+    expect(got?.totalOperations).toBe(null);
+    expect(got?.operations.size).toBe(0);
   });
 
   test('chunks a long listing under the daemon cap', async () => {
@@ -83,6 +111,15 @@ describe('labels', () => {
   });
 });
 
+describe('operationsTitle', () => {
+  test('says how many, since when and the share of what was written', () => {
+    const since = new Date(2026, 8, 27, 14, 2).getTime();
+    expect(operationsTitle(30, 120, since, since + 3_600_000)).toBe(
+      '30 operation(s) written to the log since 14:02 — 25% of all the watcher wrote in this repository',
+    );
+  });
+});
+
 describe('fetchActivityChildren', () => {
   test('one GET for the directory, children mapped by path', async () => {
     const call = vi.fn(async () => ({
@@ -100,6 +137,24 @@ describe('fetchActivityChildren', () => {
     expect([...(got ?? new Map())]).toEqual([
       ['/a b/x', 7],
       ['/a b/y', 2],
+    ]);
+  });
+
+  test('ranked by operations on request, mapping the operations', async () => {
+    const call = vi.fn(async () => ({
+      children: [
+        { path: '/y', events: 2, operations: 9 },
+        { path: '/x', events: 7, operations: 1 },
+      ],
+    }));
+    const got = await fetchActivityChildren({ call }, 'r1', '', 5, 'operations');
+    expect(call).toHaveBeenCalledWith(
+      'GET',
+      '/repos/r1/watch/activity?path=&limit=5&sort=operations',
+    );
+    expect([...(got ?? new Map())]).toEqual([
+      ['/y', 9],
+      ['/x', 1],
     ]);
   });
 

@@ -5,7 +5,7 @@ import { byId, el, messageOf, valueEl } from '/__ui.js';
 import { orphanState, orphanLabel } from '/__orphan.js';
 import { fetchMounts, offlineMountFor, relativeTo, unavailableLabel } from '/__mounts.js';
 import { fetchWatched, summarizeWatched } from '/__watched.js';
-import { activityTitle, fetchActivity, isHot } from '/__activity.js';
+import { activityTitle, fetchActivity, isHot, operationsTitle } from '/__activity.js';
 import {
   createTypePicker,
   parseRawValue,
@@ -613,7 +613,8 @@ export async function mount(root, metafolder) {
    *  events arrived at the record's file (under it, for a directory) since the
    *  load. Were there several paths (an older repository's multi-position
    *  record), the busiest one is shown — the counts of nested paths overlap,
-   *  so a sum would count events twice. Nothing is shown
+   *  so a sum would count events twice. What the flushes wrote to the log for
+   *  them follows, when they wrote anything. Nothing is shown
    *  for a quiet record or an unanswered call.
    *  @param {import('/__activity.js').Activity|null} activity @param {string[]} rels */
   function applyActivityNote(activity, rels) {
@@ -622,7 +623,12 @@ export async function mount(root, metafolder) {
       activityNote.hidden = true;
       return;
     }
-    activityNote.textContent = activityTitle(events, activity.total, activity.sinceMs);
+    const operations = Math.max(0, ...rels.map((rel) => activity.operations.get(rel) ?? 0));
+    activityNote.textContent =
+      activityTitle(events, activity.total, activity.sinceMs) +
+      (operations > 0
+        ? ` · ${operationsTitle(operations, activity.totalOperations ?? 0, activity.sinceMs)}`
+        : '');
     activityNote.classList.toggle('hot', isHot(events, activity.total));
     activityNote.hidden = false;
   }

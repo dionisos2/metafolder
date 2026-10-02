@@ -147,6 +147,14 @@
         color: var(--mf-warning, #d6a75e);
         font-weight: bold;
       }
+      /* What the watcher's flushes wrote to the log for the entry: the cost, beside the noise. */
+      .operations {
+        font-size: 0.8em;
+        color: var(--mf-fg-dim, #8a8a96);
+        font-variant-numeric: tabular-nums;
+        margin-right: 6px;
+        cursor: help;
+      }
       .badge {
         font-size: 0.8em;
         color: var(--mf-fg-dim, #8a8a96);
@@ -178,6 +186,9 @@
       <label><input type="checkbox" id="show-hidden" /> hidden files</label>
       <label title="Busiest first: watcher events under each entry since the daemon loaded the repository"
         ><input type="checkbox" id="sort-activity" /> by activity</label
+      >
+      <label title="Costliest first: operations the watcher wrote to the log for each entry since the daemon loaded the repository"
+        ><input type="checkbox" id="sort-operations" /> by operations</label
       >
       <span id="current-path"></span>
     </div>

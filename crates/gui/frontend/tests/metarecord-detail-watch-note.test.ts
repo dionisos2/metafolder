@@ -14,6 +14,8 @@ const REPO = 'repo-1';
 
 /** What POST /watch/activity answers, path → count (null = the endpoint fails). */
 let activityCounts: Record<string, number> | null = null;
+/** The operations it reports beside them (null = a daemon that does not count them). */
+let activityOperations: Record<string, number> | null = null;
 const UUID = 'aaa';
 
 /** The shadow root the shell's mount path builds. */
@@ -103,12 +105,15 @@ async function mountPanel(
         if (path.endsWith('/watch/activity')) {
           if (activityCounts === null) throw new Error('no such endpoint');
           const counts = activityCounts;
+          const ops = activityOperations;
           return {
             since_ms: 0,
             total: counts[''] ?? 0,
+            ...(ops && { total_operations: ops[''] ?? 0 }),
             results: (callBody as { paths: string[] }).paths.map((p) => ({
               path: p,
               events: counts[p] ?? 0,
+              ...(ops && { operations: ops[p] ?? 0 }),
             })),
           };
         }
@@ -172,6 +177,7 @@ describe('metarecord-detail watch note', () => {
     Element.prototype.scrollIntoView = () => {};
     document.body.replaceChildren();
     activityCounts = null;
+    activityOperations = null;
   });
 
   test('a not-watched record shows the reason in amber, and the watch button', async () => {
@@ -218,6 +224,23 @@ describe('metarecord-detail watch note', () => {
     expect(p.activity.textContent).toContain('400 watcher event(s) since');
     expect(p.activity.textContent).toContain('40% of all events');
     expect(p.activity.classList.contains('hot')).toBe(true);
+  });
+
+  test('the activity note adds what was written to the log for the record', async () => {
+    activityCounts = { '': 1000, '/notes.txt': 400 };
+    activityOperations = { '': 60, '/notes.txt': 15 };
+    const p = await mountPanel([watchResult()]);
+    expect(p.activity.textContent).toContain('400 watcher event(s) since');
+    expect(p.activity.textContent).toContain('15 operation(s) written to the log');
+    expect(p.activity.textContent).toContain('25% of all the watcher wrote');
+  });
+
+  test('events that wrote nothing say nothing about operations', async () => {
+    activityCounts = { '': 1000, '/notes.txt': 400 };
+    activityOperations = { '': 60 };
+    const p = await mountPanel([watchResult()]);
+    expect(p.activity.textContent).toContain('400 watcher event(s) since');
+    expect(p.activity.textContent).not.toContain('operation(s)');
   });
 
   test('a quiet record, or an unanswered call, shows no activity note', async () => {

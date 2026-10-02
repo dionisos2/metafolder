@@ -34,7 +34,11 @@ const DIR_ENTRIES = [
   { name: 'zcache', path: '/r/zcache', is_dir: true },
 ];
 
-function stub(repo: string | null, activity: Record<string, number> | null) {
+function stub(
+  repo: string | null,
+  activity: Record<string, number> | null,
+  operations: Record<string, number> | null = null,
+) {
   const noop = () => {};
   const handlers = new Map<string, Handler>();
   const varListeners = new Map<string, ((v: unknown) => void)[]>();
@@ -49,10 +53,17 @@ function stub(repo: string | null, activity: Record<string, number> | null) {
     if (path.startsWith('/repos/r1/watch/activity?')) {
       if (activity === null) throw new Error('no such endpoint');
       const counts = activity;
-      const children = Object.keys(counts)
+      const byOps = path.includes('sort=operations');
+      const children = [...new Set([...Object.keys(counts), ...Object.keys(operations ?? {})])]
         .filter((p) => p !== '' && p.lastIndexOf('/') === 0)
-        .map((p) => ({ path: p, events: counts[p] }))
-        .sort((a, b) => b.events - a.events);
+        .map((p) => ({
+          path: p,
+          events: counts[p] ?? 0,
+          ...(operations && { operations: operations[p] ?? 0 }),
+        }))
+        .sort((a, b) =>
+          byOps ? (b.operations ?? 0) - (a.operations ?? 0) : b.events - a.events,
+        );
       return { since_ms: 0, total: counts[''] ?? 0, path: '', events: counts[''] ?? 0, children };
     }
     if (path.endsWith('/watch/activity')) {
@@ -60,7 +71,12 @@ function stub(repo: string | null, activity: Record<string, number> | null) {
       return {
         since_ms: 0,
         total: activity[''] ?? 0,
-        results: ((body as { paths: string[] }).paths).map((p) => ({ path: p, events: activity[p] ?? 0 })),
+        ...(operations && { total_operations: operations[''] ?? 0 }),
+        results: ((body as { paths: string[] }).paths).map((p) => ({
+          path: p,
+          events: activity[p] ?? 0,
+          ...(operations && { operations: operations[p] ?? 0 }),
+        })),
       };
     }
     return { results: [], next_cursor: null };
@@ -133,8 +149,12 @@ function stub(repo: string | null, activity: Record<string, number> | null) {
   return { api, handlers, daemonCall, fireVar, fireChange };
 }
 
-async function mount(repo: string | null, activity: Record<string, number> | null) {
-  const s = stub(repo, activity);
+async function mount(
+  repo: string | null,
+  activity: Record<string, number> | null,
+  operations: Record<string, number> | null = null,
+) {
+  const s = stub(repo, activity, operations);
   const root = shadowRoot();
   const mod = await import('../../default-config/panel-types/file-manager/main.js');
   await mod.mount(root, s.api as never);
@@ -193,6 +213,62 @@ describe('file-manager watch activity', () => {
 
     await handlers.get('file-manager:toggle')!('activity');
     expect(names(root)).toEqual(['.', 'build', 'song.mp3', 'zcache']);
+  });
+
+  test('each row carries the operations written for it, beside its events', async () => {
+    const { root } = await mount(
+      'r1',
+      { '': 1000, '/build': 900, '/song.mp3': 3 },
+      { '': 40, '/build': 2, '/song.mp3': 38 },
+    );
+    const song = row(root, 'song.mp3').querySelector('.operations') as HTMLElement;
+    expect(song.textContent).toBe('38 op');
+    expect(song.title).toContain('38 operation(s) written to the log');
+    expect(song.title).toContain('95% of all the watcher wrote');
+    expect(row(root, 'build').querySelector('.operations')?.textContent).toBe('2 op');
+    // The events are still there, and still what marks a hot spot.
+    expect(row(root, 'build').querySelector('.activity')?.textContent).toBe('900');
+    expect(row(root, 'build').classList.contains('hot')).toBe(true);
+    expect(row(root, 'song.mp3').classList.contains('hot')).toBe(false);
+    // Nothing written, or a daemon that does not count them: nothing shown.
+    expect(row(root, 'zcache').querySelector('.operations')?.textContent ?? '').toBe('');
+    const older = await mount('r1', { '': 1000, '/build': 900 });
+    expect(row(older.root, 'build').querySelector('.operations')?.textContent ?? '').toBe('');
+  });
+
+  test('sorting by operations puts what wrote the most first', async () => {
+    const { root, handlers } = await mount(
+      'r1',
+      { '': 1000, '/zcache': 700, '/song.mp3': 200 },
+      { '': 40, '/song.mp3': 30, '/build': 10 },
+    );
+    await handlers.get('file-manager:toggle')!('operations');
+    expect(names(root)).toEqual(['.', 'song.mp3', 'build', 'zcache']);
+    expect((root.getElementById('sort-operations') as HTMLInputElement).checked).toBe(true);
+
+    await handlers.get('file-manager:toggle')!('operations');
+    expect(names(root)).toEqual(['.', 'build', 'song.mp3', 'zcache']);
+  });
+
+  test('the two orders exclude each other', async () => {
+    const { root, handlers } = await mount(
+      'r1',
+      { '': 1000, '/zcache': 700, '/song.mp3': 200 },
+      { '': 40, '/song.mp3': 30, '/build': 10 },
+    );
+    const byActivity = root.getElementById('sort-activity') as HTMLInputElement;
+    const byOperations = root.getElementById('sort-operations') as HTMLInputElement;
+
+    await handlers.get('file-manager:toggle')!('activity');
+    await handlers.get('file-manager:toggle')!('operations');
+    expect(byActivity.checked).toBe(false);
+    expect(byOperations.checked).toBe(true);
+    expect(names(root)).toEqual(['.', 'song.mp3', 'build', 'zcache']);
+
+    await handlers.get('file-manager:toggle')!('activity');
+    expect(byActivity.checked).toBe(true);
+    expect(byOperations.checked).toBe(false);
+    expect(names(root)).toEqual(['.', 'zcache', 'song.mp3', 'build']);
   });
 
   // What `mf:watch-activity reset` relies on: the reset is in no log, so the

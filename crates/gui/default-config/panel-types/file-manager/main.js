@@ -27,6 +27,7 @@ import {
   fetchActivity,
   fetchActivityChildren,
   isHot,
+  operationsTitle,
   orderByActivity,
 } from '/__activity.js';
 import { fetchMounts, offlineMountFor, relativeTo, unavailableLabel } from '/__mounts.js';
@@ -94,9 +95,10 @@ export async function mount(root, metafolder) {
   let cursorIndex = -1;
   let constrainToRoot = true;
   let showHidden = false;
-  /** Order the entries by watch activity, busiest first (doc "Watch activity"), instead of the
-   * disk's order. */
-  let sortActivity = false;
+  /** Order the entries by one of the watch activity counts, largest first (doc "Watch activity"),
+   *  instead of the disk's order: the events received, or the operations written for them.
+   *  @type {import('/__activity.js').Metric|null} */
+  let sortBy = null;
   /** The directory's entries in the disk's order (hidden ones filtered), what
    *  `listing` is rebuilt from when the activity order changes.
    *  @type {Entry[]} */
@@ -139,6 +141,7 @@ export async function mount(root, metafolder) {
   const gotoRootButton = byId(root, 'goto-root');
   const showHiddenBox = byId(root, 'show-hidden', HTMLInputElement);
   const sortActivityBox = byId(root, 'sort-activity', HTMLInputElement);
+  const sortOperationsBox = byId(root, 'sort-operations', HTMLInputElement);
   const statusLine = byId(root, 'status-line');
   const listingElement = byId(root, 'listing');
 
@@ -230,8 +233,8 @@ export async function mount(root, metafolder) {
     if (dir === null) return;
     const dirRel = relPath(dir, repoRoot);
     const children =
-      sortActivity && dirRel !== null
-        ? await fetchActivityChildren(daemon, repo, dirRel, Math.max(1, dirEntries.length))
+      sortBy !== null && dirRel !== null
+        ? await fetchActivityChildren(daemon, repo, dirRel, Math.max(1, dirEntries.length), sortBy)
         : null;
     if (currentDir !== dir) return;
     const body = children
@@ -253,6 +256,13 @@ export async function mount(root, metafolder) {
   function activityOf(path) {
     const rel = activity ? relPath(path, repoRoot) : null;
     return (rel !== null && activity?.counts.get(rel)) || 0;
+  }
+
+  /** The operations written for an absolute path, or 0 when unknown or none.
+   *  @param {string} path */
+  function operationsOf(path) {
+    const rel = activity ? relPath(path, repoRoot) : null;
+    return (rel !== null && activity?.operations.get(rel)) || 0;
   }
 
   // Re-query the tracked status of the current directory (after a write, or an
@@ -367,6 +377,7 @@ export async function mount(root, metafolder) {
         const excluded = excludedPaths.get(item.path);
         const unmounted = offlineFor(item.path);
         const events = activityOf(item.path);
+        const operations = operationsOf(item.path);
         const hot = activity !== null && isHot(events, activity.total);
         const title = unmounted
           ? unavailableLabel(unmounted)
@@ -423,6 +434,21 @@ export async function mount(root, metafolder) {
                 activity && { title: activityTitle(events, activity.total, activity.sinceMs) }),
             },
             events > 0 ? activityLabel(events) : '',
+          ),
+          el(
+            'span',
+            {
+              class: 'operations',
+              ...(operations > 0 &&
+                activity && {
+                  title: operationsTitle(
+                    operations,
+                    activity.totalOperations ?? 0,
+                    activity.sinceMs,
+                  ),
+                }),
+            },
+            operations > 0 ? `${activityLabel(operations)} op` : '',
           ),
           el(
             'span',
@@ -1072,14 +1098,23 @@ export async function mount(root, metafolder) {
   showHiddenBox.addEventListener('change', () => void setShowHidden(showHiddenBox.checked));
   // Re-order the listing in place: the counts and the order come from the
   // daemon, the directory is not re-read.
-  /** @param {boolean} on */
-  async function setSortActivity(on) {
-    sortActivity = on;
-    sortActivityBox.checked = on;
+  // One order at a time: choosing a count leaves the other.
+  /** @param {import('/__activity.js').Metric|null} by */
+  async function setSortBy(by) {
+    sortBy = by;
+    sortActivityBox.checked = by === 'events';
+    sortOperationsBox.checked = by === 'operations';
     await refreshActivity();
     render();
   }
-  sortActivityBox.addEventListener('change', () => void setSortActivity(sortActivityBox.checked));
+  sortActivityBox.addEventListener(
+    'change',
+    () => void setSortBy(sortActivityBox.checked ? 'events' : null),
+  );
+  sortOperationsBox.addEventListener(
+    'change',
+    () => void setSortBy(sortOperationsBox.checked ? 'operations' : null),
+  );
   const detachScroll = pager.attach(listingElement);
   byId(root, 'up').addEventListener('click', () => void goUp());
   gotoRootButton.addEventListener('click', () => void gotoRoot());
@@ -1099,13 +1134,14 @@ export async function mount(root, metafolder) {
   const FM_FLAGS = {
     root: () => setConstrain(!constrainToRoot),
     hidden: () => setShowHidden(!showHidden),
-    activity: () => setSortActivity(!sortActivity),
+    activity: () => setSortBy(sortBy === 'events' ? null : 'events'),
+    operations: () => setSortBy(sortBy === 'operations' ? null : 'operations'),
   };
 
   void commands.register('file-manager:toggle', {
     label:
       'File manager: toggle a view flag (root constraint / hidden dot-entries / ' +
-      'sort by watch activity)',
+      'sort by watch activity / sort by operations written)',
     args: [
       {
         name: 'flag',
