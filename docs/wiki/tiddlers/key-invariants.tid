@@ -8,7 +8,7 @@ summary: What must stay true across every change — in the data, the forests, t
 An invariant here is a rule the rest of the code relies on without checking it
 again. Each line states one, names the note that owns it, and says what guards
 it when something does. The static guards are the rules of
-`.semgrep/invariants.yml`, run by `scripts/check.sh`: they catch what neither the
+`.semgrep/invariants.yml`, run by `scripts/check.sh` ([[Static checks]]): they catch what neither the
 compiler nor a test of today's code can see — a future write placed in the wrong
 layer.
 
@@ -48,15 +48,15 @@ change of design, to be decided as such, with its note rewritten.
 
 * A loaded repository's store is held under an exclusive lock for as long as the daemon holds it: no second daemon on the same repository ([[The repository lock]]).
 * The watcher and the executor hold a `Weak<RepoState>`, never an `Arc`, or an unloaded repository would stay alive, locked ([[Why background tasks hold a weak reference]]; semgrep `mf-repostate-arc-in-background-task`).
-* Opening a store that is up to date rewrites nothing: the store records the versions of its layout and of its derived data, and a migration runs only when one differs ([[Store tables]]).
+* Opening a store that is up to date rewrites nothing: the store records the versions of its layout and of its derived data, and a migration runs only when one differs ([[Store tables]], [[Persisted format changes]]).
 * The query engine alone serves a filter, and nothing falls back: a shape it cannot answer is a daemon bug, reported as one ([[No operand runs in SQL]]). The engine and the naive oracle must agree on every query ([[The query oracle]]).
-* The cost of a bounded operation does not grow with the repository; it is asserted by counting the keys read, never by timing ([[Reading the log costs the window]]; `crates/daemon/tests/kv_cost.rs`, `log_cost.rs`).
+* The cost of a bounded operation does not grow with the repository; it is asserted by counting the keys read, never by timing ([[Performance testing]], [[Reading the log costs the window]]; `crates/daemon/tests/kv_cost.rs`, `log_cost.rs`).
 * The sync state of a pair of repositories lives outside the data model, in a per-pair database under `internal/`: it is never in the event log, and changes only while both repositories are loaded in the same daemon (`docs/spec-sync.org`).
 
 !! The wire and the configuration
 
 * Every request to the daemon carries its session token; no route is exempt, `/health` included. The GUI server gates its scripting API and every route serving a file ([[Session tokens]]).
-* `core::API_VERSION` is the wire-protocol version, not the crate version: a change to the HTTP contract that would make an older client misbehave bumps it by one; a purely additive change does not ([[Health and diagnostics]], [[Connection to the daemon]]).
+* `core::API_VERSION` is the wire-protocol version, not the crate version: a change to the HTTP contract that would make an older client misbehave bumps it by one; a purely additive change does not ([[The wire protocol version]]).
 * Nothing reaches a remote host ([[No network access]]).
 * No program falls back to a built-in default: a missing required file, or a malformed one, stops it ([[No runtime fallback]], [[Shipped defaults in the source tree]]).
 

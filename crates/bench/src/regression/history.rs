@@ -1,5 +1,5 @@
 //! The measurement history: one JSON object per line, per machine
-//! (spec-perf "The history").
+//! (doc "The timed regression suite").
 //!
 //! A benchmark without a baseline says nothing — "the query took 41 ms" is not
 //! a result, "41 ms where it was 12 ms last month" is. So every run appends

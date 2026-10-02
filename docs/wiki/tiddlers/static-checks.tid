@@ -1,0 +1,74 @@
+title: Static checks
+tags: Development
+kind: reference
+audience: dev
+aliases: check.sh lint clippy semgrep
+summary: scripts/check.sh runs every check the project has in one pass — format, lints, tests, the wiki, types, dependencies, the invariants — and a missing tool is a loud skip, not a pass.
+
+```
+scripts/check.sh              # the standard pass, about ten minutes
+scripts/check.sh --lax        # clippy warnings stay warnings, for work in progress
+scripts/check.sh --coverage   # also measures test coverage (slow, ~9 GiB in target/)
+```
+
+One line per check, in increasing order of cost; every check runs even after one
+failed, and the last thirty lines of each failure are printed at the end. The exit
+status is 1 when a check failed.
+
+|!Check |!Runs |!What it is for |
+|`fmt` |`cargo fmt --all --check` |the workspace is rustfmt-formatted (`rustfmt.toml`); enforcing it stops a stray `cargo fmt` from burying a real change under a reformatting diff |
+|`clippy` |`cargo clippy --workspace --all-targets -- -D warnings` |the tree is clean, and stays so only if the first new warning fails |
+|`test` |`scripts/run-tests.sh` |the Rust suites, with the global total cargo never prints ([[Testing conventions]]) |
+|`scripts` |`scripts/test-shipped-scripts.sh` |the shipped GUI scripts against a scripted `mf` and a throwaway daemon ([[Testing shipped scripts]]) |
+|`tooling` |`scripts/test-tooling.sh` |the project's own build, check and prune scripts, and the wiki's tools |
+|`wiki` |`scripts/doc check` |this documentation: links, fields, catalogs, the notes the code cites ([[Writing documentation]]) |
+|`types` |`tsc --noEmit`, then `svelte-check --fail-on-warnings` |nothing else compiles the frontend's types — vite strips them unchecked — and `svelte-check` alone reads the `.svelte` files |
+|`frontend` |vitest with coverage |the JavaScript suites; the coverage thresholds are a ratchet at the measured floor, to raise and never to lower |
+|`lint` |`npx eslint .` |type-aware rules: a floating promise, an async handler where a void return is expected |
+|`deny` |`cargo deny check` |vulnerabilities, licenses and sources of the dependencies |
+|`semgrep` |`semgrep scan --config .semgrep/invariants.yml` |the project's invariants no type checker can express |
+|`coverage` |`cargo llvm-cov --workspace --summary-only` |only with `--coverage` |
+
+A missing optional tool — `cargo-deny`, `semgrep`, `cargo-llvm-cov`, `node`, the npm
+packages — makes its check a ''skip'', printed with the line that installs it, and
+the summary then says that the skipped checks verified nothing.
+
+The timed benchmarks are deliberately not here ([[Performance testing]]). `target/`
+is not pruned either; a nearly full disk is announced instead
+([[Keeping the target directory small]]).
+
+!! Formatting
+
+`rustfmt.toml` holds two settings: `max_width = 100` and
+`use_small_heuristics = "Max"`, which derives every sub-width from the maximum and
+keeps the dense style the code was written in — struct literals, method chains and
+match arms on one line where they fit. Run `cargo fmt --all` before committing, and
+never align by hand. The commit that reformatted the workspace is listed in
+`.git-blame-ignore-revs`; enable it once per clone with
+`git config blame.ignoreRevsFile .git-blame-ignore-revs`.
+
+!! The invariants
+
+`.semgrep/invariants.yml` holds the rules that guard a design decision against a
+future edit placed in the wrong layer. Zero findings is the expected state.
+
+|!Rule |!Refuses |!Note |
+|`mf-write-outside-writer` |a write transaction opened outside the storage layer |[[Writes and atomicity]] |
+|`mf-writer-bypasses-retention` |`Writer::begin` on a loaded repository, which ignores its configured retention |[[Automatic retention]] |
+|`mf-mfr-path-nothing-outside-watcher` |`mfr_path = Nothing` written by anything but the watcher, the orphan commands and a forced manual write |[[Orphans]] |
+|`mf-repostate-arc-in-background-task` |a background task holding an `Arc<RepoState>` |[[Why background tasks hold a weak reference]] |
+|`mf-unsandboxed-decoder` |a media decoder run outside the sandbox |[[Sandboxing the media decoders]] |
+|`mf-panel-queries-document` |a panel querying `document`, which is the shell, instead of its shadow root |[[Writing a panel type]] |
+|`mf-typecheck-suppressed-in-gui-js` |a typecheck suppression in the GUI's JavaScript |[[Key invariants]] |
+|`mf-simplified-query-read-as-dsl` |the list's query variable, which holds ''simplified'' text, handed to the DSL parser |[[Simplified query language]] |
+|`mf-path-exists-follows-symlinks` |`Path::exists()`, which reads a broken symlink as absent |[[Symbolic links]] |
+
+[[Key invariants]] lists every invariant, with or without a static guard.
+
+!! Dependencies
+
+`deny.toml` configures `cargo deny`: advisories (each ignored one carries its reason
+in the file — today, code unreachable or unused behind a dependency pinned by Tauri
+or `git2`), an allow-list of licenses, wildcard version requirements denied, and no
+registry or git source other than crates.io. Keep it green: a new advisory is either
+fixed by a bump or ignored with its justification written down.

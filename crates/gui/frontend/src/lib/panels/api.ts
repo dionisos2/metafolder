@@ -184,7 +184,7 @@ export function createPanelApi(deps: PanelApiDeps, ctx: PanelApiCtx): PanelApiIn
   const resolvers = new Map<string, ReturnType<typeof createPathResolver>>();
   const repoInfos = new Map<string, Record<string, unknown>>();
 
-  // ── Bench harness instrumentation (spec-gui "Bench harness") ──────────────
+  // ── Bench harness instrumentation (doc "Benchmarks") ──────────────
   function recordBench(name: string, durationMs: number) {
     void invoke('bench_record', { name, durationMs });
   }

@@ -384,29 +384,7 @@ Moved to the wiki: doc "GUI design decisions".
 
 ** Bench harness
 
-A JS profiling harness for finding GUI slowness, built on the existing single
-command path rather than a parallel control API.
-
-Mechanism:
-- Panels wrap their phases with =metafolder.bench.measure(name, fn)= and the
-  shim auto-instruments every daemon round-trip. Built-in labels:
-  =mf:list:enrich= / =mf:list:render=, =mf:detail:load= / =mf:detail:render=,
-  =mf:fm:load= / =mf:fm:render=, and =mf:daemon <method> <path>=.
-- Each measure is both a =performance.measure= (visible in the WebKit inspector
-  Timeline) and a report to the shell, appended to an in-memory buffer.
-- =GET /gui/bench= reads the buffer, =POST /gui/bench/clear= empties it.
-- A scenario is driven externally with =POST /gui/command= (the same
-  =dispatch()= the command input uses), so internal and external invocation
-  stay identical. =scripts/bench-gui.sh= runs the built-in scenarios (panel
-  opens, list+detail navigation, file-manager navigation, paging), clearing the
-  buffer before each and printing the per-phase timings after.
-
-Because a panel's render happens asynchronously, after its command returned, the
-=POST /gui/command= call alone cannot time it — the harness's per-phase reports,
-not the command's resolution, are the source of truth for render cost. The
-=metarecord-list:page next= command loads the next page on demand (the
-scriptable equivalent of scrolling to the bottom) so paging can be driven
-reproducibly.
+Moved to the wiki: doc "Benchmarks".
 
 ** Untrusted media (resolved: sandbox every decoder)
 

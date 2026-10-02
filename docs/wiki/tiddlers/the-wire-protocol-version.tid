@@ -1,0 +1,43 @@
+title: The wire protocol version
+tags: Development
+kind: reference
+audience: dev
+aliases: API_VERSION api_version
+summary: core::API_VERSION is one integer for the whole HTTP contract — bumped by one whenever an older client would misbehave, never for an additive change — which the GUI compares with the daemon's.
+
+`metafolder_core::API_VERSION` (`crates/core/src/lib.rs`) identifies the HTTP
+contract between the programs: request and response shapes, the query IR, the wire
+form of the log. It is ''not'' the crates' version. It is a single integer on
+purpose: the same number means compatible, a different one means incompatible, and
+nothing is negotiated.
+
+!! Who reads it
+
+* The daemon reports it as `api_version` in `GET /health` ([[Health and diagnostics]]).
+* The GUI compares that with the value it was compiled with, each time it polls the daemon's health, and shows the ''incompatible daemon'' banner on a difference — or when the daemon reports none ([[Connection to the daemon]]). That is the usual mishap of development: a rebuilt daemon restarted under a GUI still running the old code, which otherwise shows as empty or broken panels without a word.
+* `mf` does not compare it: an incompatible daemon shows as the error of the request that fails.
+* The benchmark harness puts it in the stamp of its generated repositories, which are rebuilt when it moves ([[The timed regression suite]]).
+
+!! When to bump it
+
+''By one, whenever a change to the contract would make an older client
+misbehave'':
+
+* a field renamed or removed in a request or a response;
+* a JSON shape changed — an array that becomes an object, a string that becomes a number;
+* a parameter that becomes required;
+* the same request meaning something else.
+
+It is part of the breaking change itself, like the note that describes the route:
+forgetting it means the GUI cannot warn.
+
+!! When not to
+
+A purely ''additive'' change — a new route, a new optional parameter, a new field
+in a response — does not move it. An older daemon then answers `404` to the new
+route with nothing to announce it, so the client that calls it says so itself:
+`mf duplicate scan` and the GUI's duplicate and orphan commands turn that `404` into
+"this daemon does not support …" ([[POST /repos/:repo/duplicates/scan]]).
+
+What is stored on disk is another matter, with its own rule
+([[Persisted format changes]]).

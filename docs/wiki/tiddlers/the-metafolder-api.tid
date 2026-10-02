@@ -165,7 +165,7 @@ literally, so creating `new%file.txt` creates exactly that. `readDir` marks with
 |`orphans.detect()`, `count()`, `delete()` |the orphaned metarecords of the workspace's repository ([[Orphans in the GUI]]) |
 |`ignore.presets()`, `current`, `apply`, `write` |ignore presets ([[Setting ignore patterns]]) |
 |`sync.status`, `link`, `unlink`, `plan`, `run`, `show` |synchronisation between two repositories |
-|`bench.measure(name, fn)`, `bench.record(name, ms)` |times a phase for the profiling harness; every daemon call is timed already, as `mf:daemon <method> <path>` |
+|`bench.measure(name, fn)`, `bench.record(name, ms)` |times a phase for the profiling harness ([[Benchmarks]]); every daemon call is timed already, as `mf:daemon <method> <path>` |
 
 These go through the Rust side rather than the daemon because they are either not
 the daemon's business — the history, the recent list, the trash are files the GUI

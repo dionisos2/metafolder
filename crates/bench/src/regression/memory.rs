@@ -1,4 +1,4 @@
-//! What a scenario costs in memory (spec-perf "Memory"): the daemon's
+//! What a scenario costs in memory (doc "The timed regression suite"): the daemon's
 //! anonymous resident memory, sampled while the scenario runs, above what it
 //! was before. Anonymous only — the pages of a mapped store count in the
 //! resident set too, and they are the operating system's cache, not memory

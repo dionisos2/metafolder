@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# JS profiling harness for the metafolder GUI (spec-gui "Bench harness").
+# JS profiling harness for the metafolder GUI (doc "Benchmarks").
 #
 # Drives the running GUI entirely through the mf CLI (mf gui command / view /
 # bench) and prints, per scenario, the panel phase timings the panels record
@@ -44,7 +44,7 @@ cleanup() {
 trap cleanup EXIT
 
 # A fresh workspace gives every "open" scenario a first, uncached panel load
-# (PanelHost keeps one live iframe per workspace×panel-type, so re-showing a
+# (PanelHost keeps one live host per workspace×panel-type, so re-showing a
 # type in the same workspace does not reload it). Each scenario drops its own
 # workspace when done (drop_ws) so only its panels are ever alive — otherwise a
 # panel command like metarecord-list:page next is ambiguous across the leftover

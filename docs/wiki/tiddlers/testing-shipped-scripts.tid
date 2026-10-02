@@ -64,7 +64,7 @@ files, each phase timed apart.
 !! The suites
 
 One per script, `scripts/test-<script>.sh`, run by `scripts/test-shipped-scripts.sh`,
-which is the `scripts` check of `scripts/check.sh`. `gui-tag-next.sh`, a pure
+which is the `scripts` check of `scripts/check.sh` ([[Static checks]]). `gui-tag-next.sh`, a pure
 selector, needs no mock. Lint a script with `shellcheck -x -P SCRIPTDIR`.
 
 For a new script, write a suite that sources the two libraries. In the response

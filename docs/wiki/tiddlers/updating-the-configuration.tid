@@ -15,7 +15,7 @@ history; it is an install step, never run by a long-lived process. `--source <di
 is the checkout to read the defaults from (default: the current directory),
 `--config-dir <dir>` the configuration to update (default: `~/.config/metafolder/`).
 It refuses a checkout whose documentation has not been rendered
-(`scripts/doc build`, which `complete-build.sh` runs first).
+(`scripts/doc build`, which `complete-build.sh` runs first — [[Building]]).
 
 !! What it does
 

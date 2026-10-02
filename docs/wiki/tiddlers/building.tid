@@ -1,0 +1,74 @@
+title: Building
+tags: Development
+kind: guide
+audience: dev
+aliases: build complete-build
+summary: cargo build for one crate's work, scripts/complete-build.sh for everything — the frontend bundle, the rendered documentation, the installed configuration — and what each needs.
+
+!! The quick build
+
+```
+cargo build                      # every crate, debug
+cargo build -p metafolder-daemon # one crate
+cargo run -p metafolder-daemon   # the daemon, port 7523
+cargo run -p metafolder-cli -- --help    # mf
+cargo run -p metafolder-gui      # the GUI (build the frontend first)
+```
+
+This is enough for work inside one Rust crate. It does ''not'' build the GUI's
+frontend, render the documentation or install the configuration — and the daemon
+and the GUI read their configuration from `~/.config/metafolder/`, with no built-in
+copy to fall back on ([[No runtime fallback]]).
+
+The compiler is pinned by `rust-toolchain.toml` (version, plus `clippy`, `rustfmt`
+and `llvm-tools`): `rustup` installs it on first use. Bump it there, deliberately
+([[Keeping the target directory small]] says why it is pinned).
+
+!! The complete build
+
+```
+scripts/complete-build.sh
+```
+
+It takes no argument and does, in the one order that works:
+
+# `cargo build`, `cargo test --workspace --no-run`, and `cargo build -p metafolder-core --features sync-config` — the three sets of artifacts the project uses;
+# `scripts/prune-target.sh`, which deletes what those builds superseded;
+# `npm install`, the first time, then `npm --prefix crates/gui/frontend run build` — the Svelte shell, which Tauri embeds into the GUI binary at compile time;
+# `scripts/doc build` — this wiki, rendered into `docs/wiki/dist/`;
+# `target/debug/metafolder-sync-config` — the shipped defaults, the shipped scripts and the rendered documentation applied to the configuration repository ([[Updating the configuration]], [[Shipped defaults in the source tree]]).
+
+Use it after pulling, after touching the frontend or a shipped default, and whenever
+`target/` has grown. `scripts/test-complete-build.sh` holds its order and its paths.
+
+!! What needs rebuilding after an edit
+
+|!Edited |!Then |
+|a panel type under `crates/gui/default-config/panel-types/` |`metafolder-sync-config` (the panels are served from the configuration repository), and restart the GUI |
+|`crates/gui/panel-shim/*.js` |`cargo build -p metafolder-gui` — the helpers are compiled into the binary — and restart |
+|the Svelte shell, `crates/gui/frontend/src/` |`npm --prefix crates/gui/frontend run build`, then `cargo build -p metafolder-gui`, and restart |
+|a note of this wiki |`scripts/doc build`, then `metafolder-sync-config` |
+|a default configuration file, a shipped script |`metafolder-sync-config` |
+
+A plain `cargo build` succeeds without a built frontend — `build.rs` writes a
+placeholder — but the window is then empty.
+
+`metafolder-sync-config` is behind a Cargo feature, so a plain `cargo build` does not
+build it. Always scope the feature to its crate (`-p metafolder-core --features
+sync-config`): on the whole workspace it would recompile every crate against a
+feature-enabled `core`.
+
+!! What the build needs
+
+* Rust, through `rustup`; `npm` and `node` for the frontend and the wiki.
+* The Tauri system libraries to build the `gui` crate (on Arch: `webkit2gtk-4.1 gtk3 librsvg`).
+* Nothing else to build or to test. What the GUI needs to ''run'' — `bwrap`, an emoji font, `ffmpeg`, `poppler`, the GStreamer plugins — is in [[GUI runtime dependencies]], checked by `scripts/check-deps.sh`; in a container that forbids WebKit's sandbox, see [[Running inside a container]].
+* Optional tools, each skipped out loud by `scripts/check.sh` when missing: `cargo-deny`, `semgrep`, `cargo-llvm-cov` ([[Static checks]]).
+
+!! Disk space
+
+`target/` is never cleaned by cargo. `scripts/prune-target.sh [--dry-run]` removes
+the artifacts that newer ones superseded; run it only right after a complete build,
+which is what `complete-build.sh` does ([[Keeping the target directory small]]).
+`scripts/check.sh` warns when less than 10 GiB is free on the disk holding `target/`
+(`METAFOLDER_CHECK_MIN_FREE_GIB`).

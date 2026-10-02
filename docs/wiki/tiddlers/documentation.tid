@@ -60,4 +60,5 @@ Every item of these lists exists in the code; the lists are complete.
 
 * [[Architecture]] — the programs, the crates behind them, and who talks to whom
 * [[Key invariants]] — what must stay true across every change, and what checks it
+* [[Development]] — building, testing, the static checks, measuring performance, writing this documentation
 * [[Version scope and non-goals]] — what version 0.3 covers, and what metafolder will not do

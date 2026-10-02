@@ -1,0 +1,81 @@
+title: Benchmarks
+tags: Development
+kind: guide
+audience: dev
+aliases: bench metafolder-bench
+summary: metafolder-bench on real folders — the daemon through mf and HTTP, the watcher, and the GUI's panels phase by phase — and the profiling harness the panels are instrumented with.
+
+`metafolder-bench` (`crates/bench`) has four modes. Three of them run on ''real''
+folders and print numbers to read; the fourth, `regression`, is the suite with a
+history that `scripts/bench.sh` wraps ([[The timed regression suite]]). To know
+whether a change made something slower, use that one; to see how the programs behave
+on real files, or where a panel spends its time, use the ones below.
+
+```
+cargo run -p metafolder-bench               # data: the daemon on both folders
+cargo run -p metafolder-bench -- gui        # the same, then the GUI scenarios (a window opens)
+cargo run -p metafolder-bench -- attach [scenario...]    # drive a GUI already running
+cargo run -p metafolder-bench -- --small DIR --big DIR   # other folders
+```
+
+The harness runs the binaries found in `target/release`, and in `target/debug`
+otherwise: build first, and mind a release build left from another commit — it
+wins. A debug build measures the debug build.
+
+!! The two folders
+
+`benchmarks/bench_data` and `benchmarks/bench_data_big` (neither is committed) hold
+real files, so that the effect of the number of files is comparable from one run to
+the next. They are ''consumed, never generated'': each must exist, hold files, and
+hold no `.metafolder` — the run refuses otherwise. For each, the harness starts a
+daemon of its own on port 7610 with an empty configuration, creates a repository in
+place, turns tracking on, reconciles, measures, and removes the `.metafolder` at the
+end; the folders are left as found.
+
+!! What `data` measures
+
+* ''Building'' — the first reconcile of each folder, and the size of its store.
+* ''Through `mf`'' — every metarecord, two queries and a second reconcile once each (their cost follows the store); one metarecord, one path and one creation twenty times each (the latency of one call, a process included).
+* ''Over HTTP'' — the same queries limited to a hundred results, ten times each, with no process in the way: the numbers to compare with what a panel's `mf:daemon POST …/query` shows.
+* ''The watcher'' — up to two hundred files renamed in place, the time until every metarecord carries the new name, then the names put back. The quiet period of two seconds is in that number ([[Event batching]]).
+
+!! The GUI scenarios
+
+`gui` launches a GUI on port 7611 against the bench daemon and runs the scenarios on
+both repositories; `attach` runs them on the repository of the focused workspace of
+a GUI you started (found by `gui-port` and `daemon-port` of [[GUI configuration]], or
+`METAFOLDER_GUI_URL` and `METAFOLDER_DAEMON_PORT`). `scripts/bench-gui.sh
+[scenario...]` is the same thing in shell, through `mf gui` alone.
+
+|!Scenario |!Does |
+|`open-list` |shows a `metarecord-list` in a new workspace and loads it |
+|`open-detail` |selects a row, then shows `metarecord-detail` for it |
+|`open-fm` |shows a `file-manager` |
+|`list-detail-nav` |moves the selection down ten times, list and detail side by side |
+|`fm-nav` |moves the selection down ten times in the file manager |
+|`paging` |loads ten more pages with `metarecord-list:page next` |
+
+Each scenario empties the timings, acts, waits half a second, and prints the
+recorded phases by name — count, total, mean, maximum — next to the same calls made
+directly over HTTP, so that the GUI's share reads off as the difference. Every
+scenario opens a workspace of its own and closes it, and the layout is put back at
+the end.
+
+The panels must carry the instrumentation: after editing a panel, run
+`metafolder-sync-config` and restart the GUI ([[Building]]). The `gui` mode refuses
+to start against the placeholder frontend.
+
+!! The profiling harness
+
+The scenarios are built on the GUI's single command path, not on a control API of
+their own:
+
+* A panel wraps a phase in `metafolder.bench.measure(name, fn)` ([[The metafolder API]]). The built-in labels are `mf:list:enrich` and `mf:list:render`, `mf:detail:load` and `mf:detail:render`, `mf:fm:load` and `mf:fm:render`; every daemon call is timed without asking, as `mf:daemon <method> <path>`.
+* Each measure is a `performance.measure` — visible, labelled, in the WebKit inspector's timeline (<<cmd "devtools:open">>) — and a record appended to a buffer the GUI keeps in memory.
+* `GET /gui/bench` reads the buffer and `POST /gui/bench/clear` empties it ([[GUI scripting endpoints]]; [[mf gui bench]]).
+* A scenario is driven from outside with [[mf gui command]], through the very `dispatch()` the command input uses, so a command run by the harness is the command a key runs.
+
+A panel renders after its command has returned, so the time of the command says
+nothing about the render: the recorded phases are the source of truth.
+<<cmd "metarecord-list:page">> exists so that paging — scrolling to the bottom, for
+a user — can be driven reproducibly.

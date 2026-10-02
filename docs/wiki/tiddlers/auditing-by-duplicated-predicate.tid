@@ -1,0 +1,40 @@
+title: Auditing by duplicated predicate
+tags: Development
+kind: guide
+audience: dev
+summary: On a mature code base, linear re-reading finds nothing; looking for a question the code answers in two places, and comparing the two answers, found five bugs.
+
+On a code base that is already clean — clippy at `-D warnings`, the invariants
+checked, differential oracles everywhere — reading the code from top to bottom
+returns nothing. What does: ''find a question the code answers in two places, and
+compare the two answers.''
+
+When one implementation states its rule ("a broken symlink still counts") and
+another does the opposite three files away, that is a bug, with no expected
+behaviour to guess. It is the logic of the oracles ([[Testing conventions]]),
+applied by reading and without a harness. The audit of September 2026 found five
+that way, among them the broken symbolic link ([[Symbolic links]]).
+
+!! Pairs that paid
+
+* the orphan scan of `orphans.rs` against the one in `reconcile.rs`;
+* `copy_tree` against `copy_path`, in the same file;
+* the daemon against the GUI on "does this file exist?";
+* `path_of` (daemon, the root is `""`) against `treeRefPath` (JavaScript, the root was `"/"`) — [[TreeRef path conventions]].
+
+!! Pairs checked, with nothing to find
+
+`reconcile::walk` against the watcher's `compute_watched_dirs` (one benign
+difference); the three JavaScript copies of `dslString`; `escapeRegex` against the
+metacharacters of the `regex` crate.
+
+!! Angles that returned nothing
+
+`TODO` and `FIXME` (none in the sources), `let _ =` (all legitimate), `.unwrap()`
+(nearly all in tests), endpoints without a test (none), copy-paste detection (only in
+tests, on purpose).
+
+The other method that pays on this code base is to measure rather than read
+([[Storage pitfalls]], [[Performance testing]]). To find a cost paid once per
+element, grep for a costly call inside a loop, then ''count'' it with a stub — a
+`DaemonClient` that counts requests needs neither a daemon nor a large repository.

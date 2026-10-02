@@ -1,11 +1,11 @@
-//! The timed regression suite (spec-perf "The timed suite").
+//! The timed regression suite (doc "The timed regression suite").
 //!
 //! A fixed list of scenarios, run against repositories the harness generates
 //! itself, measured the same way every time, compared against what the same
 //! machine measured before, and appended to a history that is kept.
 //!
-//! The cost assertions in `crates/daemon/tests/perf_cost.rs` are the other
-//! half: they catch a change of *shape* without a clock and run in the ordinary
+//! The cost assertions in `crates/daemon/tests/{kv_cost,log_cost}.rs` are the
+//! other half (doc "Performance testing"): they catch a change of *shape* without a clock and run in the ordinary
 //! test suite. This half catches what only a clock can see — a constant factor
 //! that doubled — and is run on purpose, before and after a change that could
 //! cost something.

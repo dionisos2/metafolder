@@ -1,5 +1,5 @@
 //! Cost assertions for the event log: what an operation *does*, not how long
-//! it takes (spec-perf "Cost assertions").
+//! it takes (doc "Performance testing").
 //!
 //! Every test here counts the keys the store reads — its queries' and its
 //! writes' alike. Nothing is timed, so nothing flakes under load, and the

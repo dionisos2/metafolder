@@ -1,0 +1,124 @@
+title: Writing documentation
+tags: Development
+kind: guide
+audience: dev
+aliases: wiki scripts/doc
+summary: The documentation is this wiki — one note per question, plain .tid files under docs/wiki/tiddlers — read, created, renamed and checked with scripts/doc, cited from the code as doc "Title".
+
+The documentation is one wiki, `docs/wiki/`: hand-written notes in
+`tiddlers/*.tid`, notes generated from the code in `tiddlers/generated/`, and the
+few system notes that configure it in `tiddlers/system/`. It is rendered to HTML and
+shown by the GUI's help ([[In-app help]]). When a change alters a behaviour, its
+note changes in the same commit.
+
+!! A note
+
+```
+title: mf trash restore
+tags: Trash [[CLI command]]
+kind: reference
+summary: Put a trashed entry back at its original path and re-link its metarecord.
+aliases: trash:restore
+
+Restores the entry …
+```
+
+|!Field |!Values |!Role |
+|`title` |free, unique |the note's identity: what links and the code name |
+|`tags` |topics and catalogs |a note belongs to the topics it is tagged with; a tag with a space is written `[[Event log]]` |
+|`kind` |`overview` `guide` `reference` `rationale` `question` |required, exactly one |
+|`summary` |one sentence |required: shown in every list and search result |
+|`audience` |`user` (default), `dev` |a `dev` note is about the code, and the help marks it "developer documentation" |
+|`status` |`implemented` (default), `deferred`, `proposed`, `record` |what is not built says so; `record` is a design document kept for its reasoning |
+|`aliases` |a list of titles |other names the help resolves to this note |
+
+The file is named after the title's identifier (`scripts/doc new` picks it).
+
+!! What goes in a note
+
+* ''One note answers one question'' someone would look for; aim for 20 to 150 lines. A section worth linking to becomes a note.
+* Each ''topic'' has an overview note carrying its name, which is the tag of its notes; it stays short — what the topic is, then `<<list-kind guide>>`, `<<list-kind reference>>`, `<<list-kind rationale>>`.
+* `guide` says how to do something, `reference` states what is true, `rationale` says why it is so — with the measurement or the incident behind it —, `question` holds one open question.
+* Titles are natural English. Only the catalogs follow a convention, so that a title can be guessed: the literal command (`mf trash restore`, `trash:restore`), `<type> panel`, the script's file name, `POST /repos/:repo/query`.
+* A command's note does not repeat its generated part — usage, options, keys: it says what the command does and points to the topic's notes.
+* Every statement is ''checked in the code'', not copied from an older text.
+
+!! The wikitext that is allowed
+
+Headings (`!!`), paragraphs, lists, tables, code blocks, inline code, `''bold''`,
+`//italic//`, `[[links]]`, and the project's procedures. No widget, no raw HTML, no
+definition: `scripts/doc check` refuses them outside `system/`.
+
+|!Procedure |!Gives |
+|`<<cmd "name">>` |a link to a command's note, in code form |
+|`<<key "command" fallback>>` |the key bound to a GUI command — several commands separated by commas —, filled in from the live keybindings by the help; the fallback is the default key |
+|`<<list-kind kind>>` |the notes tagged with this one, of that kind |
+|`<<tagged-with "tag">>` |the notes tagged with this one and with `tag` — a topic's commands |
+|`<<catalog "tag">>` |a catalog's notes, then what the code has and the wiki does not |
+|`<<live name>>` |a zone the help fills at display (`grammar`); alone on its line |
+|`<<topic-full>>` |every note of the topic, in full |
+
+Traps:
+
+* a list item is ''one line'' — no indented continuation;
+* outside code, two hyphens become a dash: a command-line option is always written in backticks;
+* a link goes to a note that exists — the check refuses the others. Name what has no note yet in plain text or in code;
+* two titles cannot differ by case or punctuation only: they would share an identifier.
+
+!! `scripts/doc`
+
+```
+scripts/doc ls [--tag T] [--kind K] [--audience A] [--status S]
+scripts/doc show NAME          # a note, by title, alias or identifier
+scripts/doc find TEXT          # search, grouped by note
+scripts/doc topic NAME         # a topic's note, then every note tagged with it
+scripts/doc links NAME         # what it links to, and what links to it
+scripts/doc refs NAME          # where the code cites it
+scripts/doc new TITLE [--tags L] [--kind K] [--summary S] [--audience A] [--from-gen]
+scripts/doc rename OLD NEW     # the note, every link, every tag, every citation in the code
+scripts/doc check
+scripts/doc gen
+scripts/doc build [OUT]
+```
+
+Prefer it to grepping the files: `find` and `topic` read titles, tags and aliases.
+
+!! What `check` holds
+
+It runs in `scripts/check.sh` as `wiki` ([[Static checks]]):
+
+* every note has a `kind` and a `summary`, with allowed values, in a file named after its title;
+* every link and every tag names a note; no alias collides with a title, an identifier or another alias;
+* every note is reachable from [[Documentation]];
+* every `doc "Title"` in `crates/` and `scripts/` names a note;
+* every key hint names a command that exists;
+* a note tagged with a catalog documents something the code has;
+* the generated notes of the shipped scripts are current.
+
+!! Citing a note from the code
+
+A comment points at the note that owns the behaviour with `doc "Title"` — the
+title, in double quotes. Any such sequence under `crates/` or `scripts/` counts,
+comment or not, and `scripts/doc rename` rewrites them with the note.
+
+!! The generated catalogs
+
+Four catalogs come from the code — [[CLI command]], [[GUI command]], [[Panel]],
+[[Shipped script]] — one generated note per item under `tiddlers/generated/`, holding
+what the code knows: the usage and options of a command, its default keys. The
+hand-written note of the same name says the rest.
+
+`scripts/doc gen` rewrites them. The Rust ones are golden tests: a stale generated
+note fails `cargo test` (`doc_gen` in the `cli` and `gui` crates), and a `///`
+comment on a clap argument ''is'' the help text, so editing one changes a generated
+note. `scripts/doc new --from-gen "mf trash restore"` starts a hand-written note
+from a generated one; until then the item shows under "Not documented yet" in its
+catalog.
+
+!! Rendering
+
+`scripts/doc build` renders every hand-written note into `docs/wiki/dist/` — one
+HTML fragment per note plus `index.json` — which is not committed.
+`metafolder-sync-config` installs it under `~/.config/metafolder/docs/`, and refuses
+to run before it exists; `scripts/complete-build.sh` does both ([[Building]]). The
+GUI serves it at `/docs/`. The tools are tested by `scripts/test-doc-tools.sh`.

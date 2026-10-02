@@ -41,7 +41,7 @@ do alike therefore lives in `core`, not in either of them.
 |`gui` |`core` |the canonical state of the window (workspaces, slots, variables, keybindings, the command registry), the proxy to the daemon, the GUI server, the sandboxed media helpers; its `frontend/` is the Svelte shell, its `default-config/panel-types/` the built-in panels |
 |`watchd` |— |the broker, and the protocol its clients speak |
 |`query-oracle` |`core`, `daemon` |the naive evaluator the query engine is tested against; a dev-dependency of the daemon, linked into no shipped binary ([[The query oracle]]) |
-|`bench` |`core`, `daemon` |the benchmark harness and the timed regression suite |
+|`bench` |`core`, `daemon` |the benchmark harness ([[Benchmarks]]) and [[The timed regression suite]] |
 
 !! Inside the daemon
 
@@ -71,5 +71,6 @@ in the source tree, installed into a git repository the programs read
 
 !! What holds it together
 
-[[Key invariants]] lists what must stay true across every change, and
-[[Version scope and non-goals]] what the project does not try to do.
+[[Key invariants]] lists what must stay true across every change,
+[[Version scope and non-goals]] what the project does not try to do, and
+[[Development]] how to build, test and check a change.

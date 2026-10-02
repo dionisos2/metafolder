@@ -11,7 +11,7 @@ The examples use a music folder, `~/music`, holding `albums/one.flac` and
 
 From a checkout, `scripts/complete-build.sh` builds the programs into
 `target/debug/` and installs the configuration under `~/.config/metafolder/`
-([[Updating the configuration]]). Then start the daemon and leave it running:
+([[Building]], [[Updating the configuration]]). Then start the daemon and leave it running:
 
 ```
 metafolder-daemon

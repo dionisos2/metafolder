@@ -1,0 +1,47 @@
+title: Persisted format changes
+tags: Development
+kind: reference
+audience: dev
+aliases: migration migrations
+summary: Since version 0.3, a change to anything written on disk ships its conversion — existing repositories and configurations are migrated, never broken — and how each format does it today.
+
+!! The rule
+
+From version 0.3 on, a change to a ''persisted format'' comes with the path that
+converts what already exists: a repository created by an earlier version must load,
+and a configuration must keep working. Before 0.3, breaking the development
+repositories was acceptable; it no longer is.
+
+The rule protects ''data on disk'' only. The HTTP routes and the command tree may
+still change without a deprecation period — that is what
+[[The wire protocol version]] announces.
+
+Prefer a conversion at opening, which nobody has to run; write a dedicated command
+when it cannot be done there. Either way the conversion is tested on a repository of
+the old format, and an up-to-date one must be opened without being rewritten
+([[Key invariants]]).
+
+!! What is persisted, and how each changes
+
+|!Format |!Where |!How it migrates |
+|the store's primary tables |`.metafolder/internal/kv/` ([[Store tables]]) |`layout` in the `meta` table: a store of another layout is converted when it is opened, in one transaction (`KvStore::migrate_layout`) |
+|the store's derived key spaces |the same file |`derived` in `meta`: on a difference they are derived again from the primary tables — a reindex ''is'' their migration |
+|a row's value |inside the store and the log's snapshots ([[The column form of a value]]) |changes only with a layout migration |
+|the repository's configuration |`.metafolder/config.json` ([[Repository layout on disk]]) |a `version` field; a new key is optional with a default, so an older file reads unchanged |
+|the user's configuration |`~/.config/metafolder/` ([[The configuration repository]]) |a git merge of the shipped defaults into the user's branch at each update ([[Updating the configuration]]) |
+|the trash's index |`.metafolder/internal/trash/index/` ([[Trash on-disk layout]]) |''not migrated'': the SQLite index it replaced (`index.sqlite`) is not read, so what was trashed before the change stays on disk as blobs the index does not know — a breach of the rule, noted here |
+|backups |[[Backups and restore]] |a backup is a store: it migrates when it is restored and opened |
+|a pair's sync state |a store per pair under `internal/`, with a `format_version` in its `meta` table |nothing reads the version yet: a change of format would have to |
+|the benchmark history |`benchmarks/history/*.jsonl` ([[The timed regression suite]]) |rewritten in place when a field goes |
+
+!! The precedent: SQLite to the key-value store
+
+The largest change so far replaced the storage backend. Its conversion was the
+migration: a faithful copy — every row, operation and revision under its own id — in
+one transaction, both stores compared by digest before the switch
+([[How the storage backend was built]]). SQLite was removed only once no real
+repository was left on it, and a repository still on it is refused at load with
+what to do, not opened wrong.
+
+When a format cannot be read any more, that is the minimum: a refusal that names the
+version able to convert it.

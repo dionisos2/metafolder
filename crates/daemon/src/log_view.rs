@@ -3,7 +3,7 @@
 //!
 //! It lives beside the log rather than inside the route for one reason: the
 //! cost of a *bounded* read is an invariant worth testing on its own
-//! (spec-perf "Cost assertions"). A window of fifty operations must cost the
+//! (doc "Performance testing"). A window of fifty operations must cost the
 //! same on a log of five thousand and one of five hundred thousand, and that is
 //! a property of this function, not of Axum.
 
@@ -77,7 +77,7 @@ pub fn listing(log: &dyn Log, q: &LogQuery) -> Result<serde_json::Value> {
 
     // The revisions of the operations in hand — never the whole table. A
     // window of fifty operations must not pay for the log behind it
-    // (spec-perf "Cost assertions").
+    // (doc "Performance testing").
     let rev_meta = revision_meta(log, ops.iter().map(|op| op.rev_id))?;
 
     // A revision whose first operation is not in the window was cut by the

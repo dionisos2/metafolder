@@ -373,7 +373,7 @@ const LOG_OP_CAP: usize = 500;
 ///
 /// The bound matters: the listing displays a window, and asking the daemon for
 /// the whole log to show twenty revisions of it makes every listing cost the
-/// size of the log (spec-perf). `--all` and the graph are the deliberate
+/// size of the log (doc "Reading the log costs the window"). `--all` and the graph are the deliberate
 /// exceptions — the graph cannot be drawn without every branch.
 fn log_query(args: &LogArgs) -> Result<Vec<(&'static str, String)>, CliError> {
     let mut query: Vec<(&'static str, String)> = Vec::new();
@@ -917,7 +917,7 @@ mod tests {
     /// for those, not for the whole log. Fetching everything and trimming it
     /// here made the listing cost grow with the log — seven seconds of daemon
     /// time and two minutes of formatting on a 200 000-operation repository
-    /// (spec-perf).
+    /// (doc "Reading the log costs the window").
     #[test]
     fn log_list_bounds_what_it_asks_the_daemon_for() {
         let q = log_query(&LogArgs::default()).unwrap();

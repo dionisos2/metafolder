@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# The timed performance-regression suite (spec-perf).
+# The timed performance-regression suite (doc "The timed regression suite").
 #
 #   scripts/bench.sh                  # the standard suite: generated data, release
 #   scripts/bench.sh --quick          # the small size only, for a fast answer

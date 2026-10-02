@@ -1,0 +1,32 @@
+title: Keeping the target directory small
+tags: Development
+kind: rationale
+audience: dev
+summary: cargo never collects target/ — 15 GB in a day — so debug info is cut down, feature builds are scoped to one crate, a script prunes superseded artifacts, and the compiler is pinned.
+
+Cargo never garbage-collects `target/`: every dependency bump, feature change or
+compiler update writes new hash-named artifacts ''next to'' the old ones
+(rust-lang/cargo#13136). On this project it passed 15 GB in a day. Four measures
+brought it to about 4 GB, in order of effect:
+
+# ''Less debug info'' (about −70 %). `[profile.dev] debug = "line-tables-only"` and `[profile.dev.package."*"] debug = false` in the workspace `Cargo.toml`: each of the fifty-odd test binaries carried the full DWARF of every dependency. Backtraces keep their line numbers.
+# ''Feature builds scoped to a crate.'' `cargo build --features X` on the workspace recompiles every crate against the variant — a second complete set. `cargo build -p <crate> --features X` builds the one binary that needs it.
+# ''`scripts/prune-target.sh`''. A state file remembers the artifact hashes seen per crate name; when a name gains a new hash, its previous ones go. A second pass removes the artifacts of dependency versions `Cargo.lock` no longer holds, and two more trim the incremental caches. Deleting in `target/` can only cost a recompile, never corrupt anything.
+# ''One pinned compiler'' (`rust-toolchain.toml`). The compiler version is part of every artifact hash: a container and its host sharing one checkout with two versions kept two complete sets and overwrote each other's binaries at every switch — 21 GB two hours after a clean. To diagnose: the `rustc` field of `target/debug/.fingerprint/*/*.json` holding several values.
+
+''Prune only after every set has been rebuilt'' — the workspace, the test binaries,
+the feature variants. Pruning between two builds of different feature sets makes
+each look new and evict the other, and they are then rebuilt at every run. That is
+why `scripts/complete-build.sh` builds all three before pruning, and why
+`scripts/check.sh` never prunes: clippy and the tests are not every set. It warns
+on a nearly full disk instead — a `target/` left alone reached 38 GB and a test died
+on `No space left on device`.
+
+What does not help, checked: `resolver.feature-unification = "workspace"` is still
+nightly-only (cargo#14774, ignored with a warning on stable); the garbage collection
+stabilised in 1.88 covers the global `~/.cargo` cache only; `cargo clean gc` is
+nightly-only too. Thirteen copies of one library are not thirteen versions: distinct
+versions × host and target × the feature sets of each invocation.
+
+The script is generic — no metafolder assumption — and tested by
+`scripts/test-prune-target.sh` (it must never delete a live artifact).

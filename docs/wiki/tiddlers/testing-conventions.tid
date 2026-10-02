@@ -1,0 +1,110 @@
+title: Testing conventions
+tags: Development
+kind: reference
+audience: dev
+aliases: tests tdd
+summary: Test first; where each kind of test lives; disposable directories under one parent, removed by guards; oracles rather than expected values; no assertion on a duration.
+
+!! Test first
+
+Every new function starts as a failing test: write it, run it, see it fail for the
+right reason, then implement. A bug fix starts with the test that reproduces it.
+
+!! Running them
+
+```
+cargo test                                   # everything
+cargo test -p metafolder-daemon              # one crate
+cargo test -p metafolder-daemon --test storage      # one integration file
+cargo test -p metafolder-daemon test_reconcile_creates_records_for_new_files
+scripts/run-tests.sh [cargo test arguments]  # the same, with a global total
+npm --prefix crates/gui/frontend test        # the frontend (vitest)
+scripts/test-shipped-scripts.sh              # the shipped scripts
+scripts/test-tooling.sh                      # the project's own scripts, and this wiki's tools
+```
+
+Cargo prints one result line per test binary and no total, so a run of dozens of suites
+ends on the count of the last one. `scripts/run-tests.sh` passes the output through
+and adds the totals and the failing tests with the suite each belongs to; "no suite
+reported" is a failure, not zero failures. `scripts/check.sh` runs all of the above
+([[Static checks]]).
+
+!! Where tests live
+
+|!Tests |!Where |!How |
+|unit |next to the code, `#[cfg(test)]` |pure functions: parsers, formatters, the compaction of events |
+|daemon |`crates/daemon/tests/*.rs`, one file per area |most of the coverage. The low-level ones write into a throwaway store (`common::kv::store()`); the HTTP ones build the router on a fresh `AppState` and send it requests with `tower::ServiceExt::oneshot`, no socket |
+|CLI |`crates/cli/tests/cli_e2e.rs` |the real `mf` binary against one in-process daemon on an ephemeral port, shared by the file |
+|GUI, Rust |`crates/gui/tests/*.rs`, unit tests in `src/` |the GUI's router with `oneshot` and a stub daemon on an ephemeral port; state, keybindings and the registry as unit tests, events caught by a `RecordingNotifier` |
+|GUI, JavaScript |`crates/gui/frontend/tests/` |vitest under jsdom: the key matcher, command parsing, the panel API, the panels' own modules |
+|broker |`crates/watchd/tests/`, `scripts/watchd-live-test.sh` |[[Testing the watcher]] |
+|shipped scripts |`scripts/test-*.sh` |[[Testing shipped scripts]] |
+|tooling |`scripts/test-{check,check-deps,complete-build,prune-target,run-tests}.sh`, `docs/wiki/tools/*.test.mjs` |each script against stubbed probes |
+
+Each `tests/` directory is a crate of its own, so its helpers (`tests/common/mod.rs`)
+are deliberately copied per crate.
+
+jsdom mounts neither two panels at once nor the stylesheets: what only shows in the
+real window is checked in the real window ([[Panel pitfalls]]).
+
+!! Oracles, not expected values
+
+Where two independent paths answer the same question, the test demands that they
+agree and predicts nothing:
+
+* every query runs through the engine and through a naive evaluator that reads every row (`common::engines::both`; [[The query oracle]]);
+* the watcher and a full reconcile must reach the same state from the same filesystem history ([[Testing the watcher]]);
+* the rule index that decides what is watched is held to the old walk up the tree (`tests/eligibility_oracle.rs`; [[The watch rule index]]);
+* a second storage backend would run `tests/store_contract.rs`, which asks every method through the traits only ([[The storage boundary]]).
+
+The same idea works without a harness, by reading ([[Auditing by duplicated predicate]]).
+
+!! Disposable directories
+
+A test that needs a directory takes it from a guard, `TempDir::new("prefix")` (or
+`TempFile`), from its crate's `tests/common/mod.rs`. Every one of them lives under a
+single parent, `$TMPDIR/metafolder-tests/`, and removes itself when dropped —
+''including when the test panics'', which is exactly the case an explicit
+`remove_dir_all` at the end of a test skips (`crates/daemon/tests/temp_guard.rs`).
+
+The guard must stay bound for as long as the directory is used:
+
+* `let (repo, _root) = init_repo(…)` keeps it; `let (repo, _) = …` drops it on the spot;
+* `temp_dir(x).join("f")` deletes the directory before anything is written into it;
+* a helper that creates a directory hands the guard back with whatever it returns.
+
+The unit tests in `src/` still clean up by hand, under the same parent; give them
+guards as you touch them. After a crashed run, one command purges everything:
+
+```
+rm -rf "${TMPDIR:-/tmp}/metafolder-tests"
+```
+
+Why it matters: the suites used to leave their repository behind whenever a test
+failed or was interrupted — 31 000 directories and 12 GB over a few hundred runs,
+until the disk was full, the store answered "database or disk is full" and the
+watcher's flush failed on it. When a daemon behaves strangely, look at `df -h`
+before the code.
+
+!! The watcher in tests
+
+A suite that drives the real watcher builds its state with
+`common::watching_state()`: a quiet period of 500 ms instead of the shipped 2 s
+([[Event batching]]), and the watch source ''chosen'' — the daemon takes the broker
+whenever one answers, so the same test would otherwise exercise fanotify on one
+machine and inotify on another. `on_every_regime!` runs a test under inotify, under
+the simulated broker, and under a real one when it answers — a skip announced on
+stderr otherwise ([[Watch sources and regimes]]).
+
+!! Never assert on a duration
+
+A timing assertion tight enough to catch a regression fails on a loaded machine
+([[Tests that fail under load]]). Cost is tested by counting what the store reads,
+and time by comparing a measurement to its own history ([[Performance testing]]).
+
+!! A test that hangs
+
+Look for the deadlock before blaming the machine: a test "stuck in the container"
+turned out to be a real one, more than once ([[Watcher pitfalls]]). A test that passes here
+and fails elsewhere differs by its environment first — a broker running, the
+filesystem, the rights.

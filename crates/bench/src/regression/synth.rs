@@ -1,5 +1,5 @@
 //! Synthetic repositories: the same repository, on any machine, today and in a
-//! year (spec-perf "Where the data comes from").
+//! year (doc "The timed regression suite").
 //!
 //! The persistent data folders the other bench modes use are representative in
 //! a way no generator is — and they exist on exactly one machine. A history of

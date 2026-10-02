@@ -377,7 +377,7 @@ pub async fn post_command(
 // ── Bench harness ─────────────────────────────────────────────────────────
 
 /// Snapshots the recorded `performance.measure` (`mf:*`) entries reported by
-/// the panels (spec-gui "Bench harness").
+/// the panels (doc "Benchmarks").
 pub async fn get_bench(State(state): State<ServerState>) -> Response {
     Json(json!({"records": state.bench.snapshot()})).into_response()
 }

@@ -50,7 +50,7 @@ For a while the backend was a property of the repository (`storage` in
 `config.json`, chosen at `init`), and `mf repo convert` moved a repository between
 them: a faithful copy — every row, operation and revision under its own id, and the
 id counters — in one transaction, then both stores compared by digest before the
-switch (50 000 files in 9 s). Per the migration policy, the conversion was the
+switch (50 000 files in 9 s). Per the migration policy ([[Persisted format changes]]), the conversion was the
 migration script for the format.
 
 !! One backend

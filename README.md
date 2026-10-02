@@ -143,9 +143,9 @@ make test          # or: scripts/run-tests.sh [extra cargo test args]
 npm --prefix crates/gui/frontend install   # once (or after package.json changes)
 npm --prefix crates/gui/frontend test
 
-# Performance. Two layers (docs/spec-perf.org): the cost assertions run in the
-# ordinary suite above — they count SQL statements and read query plans, never
-# a clock, so they catch an N+1 or a new full table scan without flaking. The
+# Performance. Two layers (wiki: "Performance testing"): the cost assertions
+# run in the ordinary suite above — they count the keys the store reads, never
+# a clock, so they catch an N+1 or a new scan without flaking. The
 # timed benchmarks are separate, slow, and keep a per-machine history in
 # benchmarks/history/ that every run is compared against:
 scripts/bench.sh            # the standard suite (generated repositories)

@@ -195,4 +195,4 @@ nothing on screen to say why.
 `GET /gui/bench` answers `{"records": [{"name": "mf:list:render", "duration_ms": 2.0}]}`:
 the phases the panels timed and every daemon call the shell made for them,
 kept in memory since the last `POST /gui/bench/clear`. A driver clears, runs a
-scenario through `POST /gui/command`, and reads the timings back.
+scenario through `POST /gui/command`, and reads the timings back ([[Benchmarks]]).

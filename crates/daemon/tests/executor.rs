@@ -1185,7 +1185,7 @@ fn test_departures_do_not_make_a_flush_superlinear() {
 // the repository, not in the batch: the same directory that landed in a second
 // in a fresh repo took minutes in a real one.
 //
-// Counted, not timed (spec-perf): the same arrivals, flushed into a small
+// Counted, not timed (doc "Performance testing"): the same arrivals, flushed into a small
 // repository and into one already holding eight times as many files, must read
 // about the same number of keys.
 #[test]

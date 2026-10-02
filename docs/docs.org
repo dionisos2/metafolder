@@ -1335,23 +1335,63 @@ méthode.
 
 * Développement
 
-** TODO 41. Développer metafolder
+** FAIT 41. Développer metafolder
 
 (tout /dev/)
-- [ ] =Development= — overview
-- [ ] =Building= — guide (=complete-build.sh=, taille de =target/=, =prune-target.sh=, toolchain épinglée)
-- [ ] =Testing conventions= — reference (TDD, répertoires jetables, oracles, tests e2e)
-- [ ] =Static checks= — reference (=check.sh=, semgrep, =cargo deny=)
-- [ ] =Performance testing= — reference (assertions de coût, suite chronométrée, historique)
-- [ ] =Benchmarks= — guide (=metafolder-bench= : modes, dossiers persistants)
-- [ ] =The wire protocol version= — reference (=API_VERSION=, quand l'incrémenter)
-- [ ] =Persisted format changes= — reference (script de conversion obligatoire)
-- [ ] =Writing documentation= — guide (ce wiki, =scripts/doc=, les conventions)
+- [X] =Development= — overview (la boucle d'un changement, par où lire)
+- [X] =Building= — guide (=cargo build=, =complete-build.sh= et son ordre, quoi reconstruire après quelle édition, ce qu'il faut pour construire)
+- [X] =Keeping the target directory small= — rationale (ajoutée : la mémoire =rust-target-size= ; le titre évite =target/=, dont la barre oblique donnait un identifiant ambigu)
+- [X] =Testing conventions= — reference (TDD, où vit chaque sorte de test, oracles, répertoires jetables et leurs gardes, le watcher dans les tests, jamais d'assertion sur une durée)
+- [X] =Tests that fail under load= — reference (ajoutée : la mémoire =load-sensitive-timing-tests=)
+- [X] =Auditing by duplicated predicate= — guide (ajoutée : la mémoire =duplicated-predicate-audit=, gardée pour cet item depuis l'item 12)
+- [X] =Static checks= — reference (=check.sh= contrôle par contrôle, rustfmt, les neuf règles semgrep, =cargo deny=)
+- [X] =Performance testing= — reference (les deux couches, les assertions de coût, ce qui n'y est volontairement pas)
+- [X] =The timed regression suite= — reference (ajoutée, détachée de la précédente : scénarios, tailles, mémoire, données, historique, comparaison)
+- [X] =Benchmarks= — guide (=metafolder-bench= : modes, dossiers persistants, scénarios GUI, le harnais de profilage des panels)
+- [X] =The wire protocol version= — reference (=API_VERSION=, qui la lit, quand l'incrémenter)
+- [X] =Persisted format changes= — reference (la règle, l'inventaire des formats et comment chacun migre)
+- [X] =Writing documentation= — guide (ce wiki, =scripts/doc=, les conventions du pilote reprises en anglais)
 
-Sources : spec-perf entier ; spec-gui « Bench harness » ; CLAUDE.md « Commands »,
-« Testing conventions » ; mémoires =rust-target-size=, =test-temp-dirs-fill-the-disk=,
-=load-sensitive-timing-tests=, =perf-regression-suite=, =migrations-required-from-v03=,
-=rustfmt-adopted=, =background-builds-killed-low-memory=.
+Vérification contre le code. *Corrigé dans le code*, dans un commit à part
+(=d0dc63e=), test d'abord : =metafolder-bench= ne tournait plus dans ses modes
+=data= et =gui=. Il appelait =mf= avec une ligne de commande disparue
+(=--daemon-url=, =--repo=, =list=, =query=, =get=, =create=), lisait =GET
+/metarecords?limit== (=405=), cherchait les fichiers renommés par un =MATCHES= sans
+aspect sur =mfr_path= (=400=, lu comme « rien encore » : deux minutes d'attente puis
+« timeout », imputé au watcher), et lançait la GUI avec =--daemon-url= (c'est
+=--daemon-port=, comme la clé de =config.toml=). Les invocations sont maintenant des
+données qu'un test confie à l'analyseur du vrai binaire ; le mode =data= a été
+/exécuté/ sur les deux dossiers réels (5 000 et 50 000 fichiers) puis sur deux
+petits. Le mode =gui= n'a pas pu l'être ici (pas de GUI dans le conteneur) : seules
+ses options sont vérifiées, contre =metafolder-gui --help=.
+Écarts de spec-perf, corrigés dans les notes : les assertions de coût des requêtes
+comparent 2 000 et 16 000 fichiers (×8, pas ×16) et tolèrent moitié plus de clés,
+seul le journal exige l'égalité ; =query.sorted_page= ne passe par aucun BSI (il
+n'y en a pas) ; l'exemple d'historique portait un nom de scénario disparu
+(=log.list_bounded=) ; la CLI omettait =--big=, =--tolerance= et =--debug= ; le nom
+de machine vient de =/etc/hostname= ou de =METAFOLDER_BENCH_MACHINE= (dans le
+conteneur, c'est un identifiant aléatoire) ; les dépôts générés sont refaits quand
+=API_VERSION= bouge. Ignoré par la spec : =mf= ne compare pas la version du
+protocole, seule la GUI le fait.
+*Signalé, non corrigé* (deux écarts à la règle des migrations, écrits tels quels
+dans =Persisted format changes=) : (1) l'index de la corbeille est passé de SQLite
+à LMDB sans conversion — =index.sqlite= n'est plus lu, ce qui avait été mis à la
+corbeille avant reste sur le disque en blobs que l'index ne connaît pas ; (2) le
+store d'une paire de sync écrit un =format_version= que rien ne relit. La mémoire
+disait aussi que les notes =dev= sont cachées de la recherche de l'aide : elles
+portent seulement un badge.
+*Choix à signaler* : (a) le harnais de profilage de la GUI est une section de
+=Benchmarks= et non une note à part — son API est déjà dans =The metafolder API= et
+=GUI scripting endpoints= ; (b) les pièges d'environnement
+(=background-builds-killed-low-memory=, le broker absent du conteneur) restent en
+mémoire ; (c) =README.md= cite encore d'autres specs supprimées : seul son
+paragraphe sur la performance, qui parlait de requêtes SQL, est corrigé — le reste
+relève de l'item 43, comme =CHANGELOG.md=, qui est de l'histoire.
+Sources retirées : =spec-perf.org= (supprimée) ; spec-gui « Bench harness »
+(pointeur). Mémoires =rust-target-size=, =test-temp-dirs-fill-the-disk=,
+=load-sensitive-timing-tests=, =perf-regression-suite=,
+=migrations-required-from-v03=, =rustfmt-adopted=, =duplicated-predicate-audit= et
+=gui-perf-bench= réduites à un pointeur et à ce qui est propre à l'environnement.
 
 * Clôture
 

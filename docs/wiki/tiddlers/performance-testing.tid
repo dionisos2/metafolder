@@ -1,0 +1,81 @@
+title: Performance testing
+tags: Development
+kind: reference
+audience: dev
+aliases: performance perf
+summary: Two layers for two kinds of regression — cost assertions that count the keys the store reads, in every test run, and a timed suite compared against its own recorded history, run on purpose.
+
+metafolder has had the same failure several times: a change that is correct, and
+passes every test, makes an operation ten times slower, and nobody notices until
+the interface feels wrong weeks later — one query per metarecord on an index build,
+one write per transaction in the watcher's flush ([[Slow log]] was born of that
+one), a whole-forest rebuild on every `tree_ref` write, one HTTP request per
+metarecord in `mf sync plan`, a process per entry in the shipped scripts
+([[Writing a GUI script]]). Each was found afterwards, by a user.
+
+The numbers are therefore taken on purpose, kept, and compared with what they were.
+This is neither a metrics system nor a profiler: the slow log already answers
+"where did the time go in ''this'' run". The question here is "is this slower than
+it was last month, and by how much".
+
+A regression comes in two shapes, and a clock catches only one.
+
+!! Cost assertions — the shape of the work
+
+An algorithmic regression changes ''how much work'' an operation does: a read per
+row instead of one, a scan where a seek was enough, a walk over the whole log for a
+bounded window. A clock is the wrong instrument for that — an assertion tight enough
+to catch a threefold slowdown fails on a loaded machine
+([[Tests that fail under load]]).
+
+So this layer measures a ''counter'': the number of keys the store reads, for a
+query and for a write alike (`KvStore::reads()`). It is exact, reproducible and the
+same on every machine, so it runs in `cargo test` and in `scripts/check.sh`, and a
+regression fails like any broken test.
+
+```
+cargo test -p metafolder-daemon --test kv_cost --test log_cost
+```
+
+One assertion carries the layer, ''growth invariance'': the same operation runs on
+a repository and on a much larger one, and a bounded operation must not read more
+on the larger. A count that grows with the data is one read per element, or a scan —
+caught on a few thousand rows, in under a second.
+
+|!File |!Holds |
+|`crates/daemon/tests/log_cost.rs` |the log: a window of fifty operations, a window of twenty revisions, one metarecord read, one trim, one navigation step — the ''same'' number of keys on a log sixteen times longer, or a target further away ([[Reading the log costs the window]], [[What undoing used to cost]]) |
+|`crates/daemon/tests/kv_cost.rs` |queries: a rare value, a sorted page, a text search, a subtree, the finder's search, combined operands, a path comparison — on 2 000 and 16 000 files, the same answer for at most half as many keys again ([[Sorting and postings]], [[Text search in the store]], [[The forest in the store]]) |
+|`crates/daemon/tests/executor.rs` |the watcher's flush: the same arrivals cost the same in a repository eight times larger |
+|`crates/daemon/tests/query_interrupt.rs`, `kv_postings.rs` |an abandoned query stops reading; a posting is read instead of its rows |
+
+Three rules for writing one:
+
+* ''The data must be larger than the bound.'' On a log shorter than the window, the whole log ''is'' the window, and the two sizes differ for the right reason.
+* ''Go through the route's own preparation.'' A cost test that evaluates a query without the forest rewrite the route applies stayed green while the real request walked the whole forest ([[Storage pitfalls]]).
+* ''Combine operands.'' Single-operand queries never exercised what a real search does; the combined shapes found that an equality read one key per holder.
+
+!! Timed benchmarks — the size of the work
+
+What remains needs a clock — a constant factor that doubled — and a clock needs a
+baseline. [[The timed regression suite]] runs a fixed list of scenarios on
+generated repositories, records each number with its machine, profile and commit,
+and compares the run to the history of the same machine:
+
+```
+scripts/bench.sh
+```
+
+It takes minutes, so it is run on purpose, before and after a change that could
+plausibly cost something.
+
+!! What is deliberately not here
+
+* ''No gate on timings in `check.sh`.'' A machine-dependent measurement that fails a build teaches people to ignore failing builds.
+* ''No percentiles, no sampling, no aggregation across machines.'' The history is a list of numbers taken the same way on the same machine.
+* ''No absolute target.'' "Under 100 ms" is a product decision, which belongs to the feature's own note; the suite only compares a measurement to its own past.
+
+!! Other instruments
+
+* [[Slow log]] and [[Diagnosing a slow operation]] — where the time of one real operation went, by phase; `mf slow replay` re-runs a logged query for its phases now.
+* [[Benchmarks]] — the daemon and the GUI on real folders, and the per-phase timings of the panels.
+* [[Storage pitfalls]] — reading `/proc` when a daemon seems stuck.

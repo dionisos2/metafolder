@@ -1,0 +1,131 @@
+title: The timed regression suite
+tags: Development
+kind: reference
+audience: dev
+aliases: bench.sh regression
+summary: scripts/bench.sh times a fixed list of scenarios on generated repositories and compares each to the median of this machine's last five runs, kept in benchmarks/history/ — non-zero exit on a regression.
+
+```
+scripts/bench.sh                  # the standard suite: generated data, release build
+scripts/bench.sh --quick          # the small size only, for a fast answer
+scripts/bench.sh --big            # also the large size (minutes to generate)
+scripts/bench.sh --real           # also copies of the benchmarks/bench_data* folders
+scripts/bench.sh --filter log.    # only the scenarios whose name starts with log.
+scripts/bench.sh --tolerance 0.5  # the threshold, as a fraction (default 0.30)
+scripts/bench.sh --no-history     # measure and compare, record nothing
+scripts/bench.sh --report         # print the recorded history, measure nothing
+scripts/bench.sh --debug          # measure the debug build (a history of its own)
+```
+
+The script builds the daemon and the harness in the same profile, then runs
+`metafolder-bench regression`: it starts a daemon of its own on port 7611, with an
+empty configuration, loads each generated repository, runs every scenario once to
+warm up and five times timed, prints a table — median, baseline, difference,
+verdict — and appends the measurements to the history. The exit status is 1 when a
+scenario regressed, so a release can gate on it. It is the second layer of
+[[Performance testing]], and never part of `scripts/check.sh`.
+
+!! Scenarios
+
+A scenario has a ''stable name'', `<area>.<name>`: the string that joins a
+measurement to the ones taken before. Renaming one starts a new history — on
+purpose, rather than comparing two different things silently.
+
+|!Scenario |!Measures |
+|`log.window_ops` |`GET /log?mode=active&limit=50` — the window of the GUI's log panel |
+|`log.window_revisions` |`GET /log?mode=active&revisions=20&limit=500` — what `mf log list` asks for |
+|`log.undo_window` |`GET /log?mode=linear&limit=500` — the window `mf log undo` reads |
+|`log.change_feed` |`GET /log/since` — the delta every client polls |
+|`log.whole_tree` |`GET /log?mode=tree` — the unbounded read a graph needs |
+|`query.count` |a count over every file's metarecord |
+|`query.page` |the first hundred results of a broad query |
+|`query.sorted_page` |a hundred results sorted by `mfr_size` |
+|`query.folder` |opening a directory (`mfr_path` below `/dir0`) |
+|`query.finder` |the GUI's search box: the same two terms as an `osm` path and two direct `osm` |
+|`query.wide_and_rare` |`mfr_type = "file"` (every file) and one `mfr_size` value |
+|`query.rare_and_wide` |the same, operands swapped — the order must not matter |
+|`query.subtree_range_text` |a subtree, `rating > 4` and a pattern on the name |
+|`query.negation` |`not kind = "photo"` in a subtree |
+|`query.combined_sorted` |a page of three combined operands, sorted on a field of ten values |
+|`query.size_range_in_folder` |a subtree and `mfr_size > 900000` — a known gap, below |
+|`metarecord.get` |one metarecord by uuid: the point read everything else is built on |
+|`metarecord.write` |one field write, derived key spaces included |
+|`tree.resolve_page` |the paths of a hundred metarecords — what a listing resolves per page |
+|`tree.write` |one write that ''moves a position'', the forest's upkeep included |
+|`repo.load` |unloading the repository and loading it again, until it serves |
+
+* `log.whole_tree` is ''expected'' to grow with the log — a graph cannot be drawn without every branch. It is measured so that the day it grows faster than the log, the number says so.
+* The `query.` scenarios after `query.folder` combine operands of different types, which is what the bitmaps are for: a combination should cost about its narrowest operand. They were added when a search no single-operand scenario exercised took twenty seconds on a real repository; their counterparts without a clock are in `kv_cost.rs`.
+* `query.size_range_in_folder` measures a known gap: a range over a number of many distinct values reads its matches one by one ([[Sorting and postings]]).
+* `tree.write` moves a position in a forest of its own, so it measures the ''upkeep'' and not the size of the tree: updating one position costs the position, anything whole-forest costs the repository, and the two differ on the larger sizes while looking alike on the small one ([[The forest in the store]]). Each run writes a different name — rewriting the same one would move nothing.
+* `repo.load` is the only scenario that is not one request: the load answers as soon as the uuid is known and finishes in the background, so "loaded" means "answers a query" ([[Creating and loading a repository]]). The store's pages stay in the operating system's cache across the unload: it measures the work, not the disk.
+
+!! Sizes
+
+|!Size |!Directories |!Files |!Revisions |
+|`S` |100 |2 000 |500 |
+|`M` |1 000 |20 000 |5 000 |
+|`L` (`--big`) |5 000 |100 000 |50 000 |
+
+The revision count matters as much as the file count: reading the log back is a
+different problem from reading the data, and it is the one that regressed in
+practice. Each scenario runs at every size, so a regression in complexity shows as
+a change of ''shape'', not only of value.
+
+!! Memory
+
+Every scenario also records what the daemon ''allocated'' for it, as a series of its
+own, `mem.<scenario>`, in MiB: the daemon's anonymous resident memory (`RssAnon` in
+`/proc/<pid>/status`), sampled every 2 ms from before the warm-up to after the last
+run — its peak minus its value at the start. Anonymous only: the store's pages are
+mapped, and counting them would measure the operating system's cache. The warm-up
+is included because memory the allocator keeps is only visible the first time. Where
+`/proc` cannot be read, the series is skipped.
+
+It is coarse — its noise floor is 8 MiB — and is not there to size a working set
+but to see the day a query materialises what it should have streamed.
+
+!! Where the data comes from
+
+* ''Generated'' (the default): repositories built by the harness from a fixed seed — the same tree, values and log on any machine, today and in a year. They are written through the daemon's own library, one `Writer` per revision, because over HTTP a 5 000-revision log took longer to generate than to measure. They live in `target/bench-data/<size>` and are reused until the shape or the wire version changes ([[The wire protocol version]]).
+* ''Real'' (`--real`): `benchmarks/bench_data` and `benchmarks/bench_data_big` as `real-S` and `real-M`, when they exist. Representative in a way no generator is, but present on one machine only. They are never made repositories in place ([[Benchmarks]] needs them bare): the suite measures a copy under `target/bench-data/`, its files hard-linked, initialised, tracked and reconciled once. There, the combined scenarios look into the top folder of the deepest file among a page of files, and search for the first four letters of its parent's name and of its own.
+
+A repository generated during the run has cold pages: the suite says so, and a
+number worth keeping as a baseline comes from the next run.
+
+!! The history
+
+One line of JSON per measurement, appended to `benchmarks/history/<machine>.jsonl`
+and ''committed''. One file per machine — the content of `/etc/hostname`, or
+`METAFOLDER_BENCH_MACHINE` (worth setting in a container, whose host name is a
+random identifier) — because comparing a laptop's numbers with a desktop's is worse
+than having no baseline.
+
+```
+{"at": "2026-09-21T10:12:03Z", "commit": "6cbe41d", "dirty": false,
+ "machine": "thinkpad", "cpu": "AMD Ryzen 7 5800U", "cores": 16,
+ "profile": "release", "rustc": "1.96.0",
+ "scenario": "log.window_ops", "size": "M", "unit": "ms",
+ "median": 41.2, "min": 39.8, "runs": 5}
+```
+
+`median` is the number compared; `min` is kept because it is the least noisy
+estimate of the true cost. `dirty` marks a run taken on an uncommitted tree.
+
+!! The comparison
+
+A measurement is compared to the ''median of the last five values'' recorded for
+the same machine, profile, scenario and size. It is a regression when it is slower
+by more than the tolerance (30 %), an improvement when faster by as much. Two rules
+keep the verdict honest:
+
+* ''A noise floor'': one millisecond, 8 MiB for memory. The fast scenarios move by a third between two runs of the same binary — 0.6 ms to 0.85 ms is +40 % and means nothing — so a verdict needs the tolerance ''and'' the floor. A suite that cries regression at every run is a suite nobody runs. A memory baseline under its floor shows no percentage: a ratio over next to nothing is unbounded.
+* ''A dirty baseline is better than none.'' Clean runs are the baseline wherever there is one; but a change is worked on with a dirty tree, which is exactly when the comparison is wanted, so a scenario with no clean measurement is compared to its dirty ones.
+
+`--report` prints the last ten values of every series, a `*` on the dirty ones.
+
+!! Traps met building it
+
+* A fresh HTTP client per request put about 25 ms of connection setup into every measurement and buried the differences; the suite keeps one client for the run.
+* After a load, every data route answers `503` until the warm-up ends: the suite waits by retrying the request it is about to measure.
+* A folder that names no node is an empty subtree, and every scenario looking into it measured nothing, silently; the suite now refuses to run when its folder is empty.

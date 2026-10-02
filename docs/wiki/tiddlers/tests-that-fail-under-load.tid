@@ -1,0 +1,47 @@
+title: Tests that fail under load
+tags: Development
+kind: reference
+audience: dev
+summary: A few tests measure time and fall when the machine is busy — a different one at each run, which is how to tell them from a regression — and how to check without touching the working tree.
+
+A handful of tests depend on real time, and fail now and then in a full
+`cargo test --workspace` or `scripts/check.sh` on a busy machine while passing alone:
+
+* `crates/daemon/tests/slow_log.rs` — its fixtures set the slow log's threshold very low, so a watcher flush that happens to take a millisecond adds an entry nobody expected;
+* `correlate_is_linear_when_nothing_pairs` (`crates/daemon/src/executor.rs`) — compares two measured times to show that pairing is not quadratic;
+* the tests that drive the real watcher — their waits are budgets (`early_journey.rs`, `watcher_e2e.rs`, the `sync` tests of `cli_e2e.rs`, where the target's watcher may ingest the file just written after the sync counted);
+* the `bash_complete` tests of the `gui` crate, which run `bash`.
+
+!! Telling it from a regression
+
+''It is a different test at each run.'' A real regression fails the same test every
+time. Three distinct tests once failed over three runs during a plain field rename,
+each passing 50 times out of 50 alone.
+
+Before investigating, run the failing test alone; then look at whether it is the one
+that failed the time before.
+
+!! Checking without dirtying the tree
+
+```
+git worktree add /tmp/mf-check HEAD
+cd /tmp/mf-check && CARGO_TARGET_DIR=<the main checkout>/target cargo test -p metafolder-daemon --test slow_log
+```
+
+Sharing the target directory avoids a full rebuild. The `bash_complete` tests fail
+in a worktree for another reason — they complete file names of the current
+directory.
+
+!! What to do about one
+
+A timed assertion is replaced by a counted one whenever the cost can be counted:
+the arrival cost of the executor was a ratio of durations and is now a number of
+keys read (`test_arrival_cost_does_not_grow_with_the_repository`;
+[[Performance testing]]). A wait is a budget in steps, not a fixed sleep, and when a
+production delay changes, the budgets of the watcher suites are the first thing to
+re-read — the quiet period going from 500 ms to 2 s failed
+`test_first_minutes_of_a_repository`, hence `watching_state()`
+([[Testing conventions]]).
+
+Not every such failure is timing: one that persisted on another machine was the
+fanotify broker running there, and a real bug of its own ([[Testing the watcher]]).

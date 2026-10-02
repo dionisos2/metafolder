@@ -1,6 +1,7 @@
-//! The real data folders as repositories of the suite (spec-perf "Where the
-//! data comes from"): `benchmarks/bench_data*` are consume-only — the data
-//! bench inits them in place and needs them bare — so the suite measures a
+//! The real data folders as repositories of the suite
+//! (doc "The timed regression suite"): `benchmarks/bench_data*` are
+//! consume-only — the data bench inits them in place and needs them bare — so
+//! the suite measures a
 //! copy of each under `target/bench-data/`, its files hard-linked (no byte
 //! copied) and its repository built.
 
