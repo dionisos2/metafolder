@@ -114,6 +114,7 @@ stands as still as a blocked one ([[Status bar and task bar]]).
 
 !! Failure is never silent
 
+* A script you stopped is reported as ''stopped'' on the status bar of the workspace it was launched from, and `[stopped]` in its message log — not as a failure.
 * A script that exits with an error is reported in red on the status bar of the workspace it was launched from, with its name and exit code, besides the `[exit N]` line of that workspace's message log. Its output goes there too — not to a scratch workspace it opened, which is gone by then.
 * A question that could not be ''asked'' — the GUI closed, a timeout, another question already up — ends the shipped scripts with the reason on the status bar, instead of being read as an Escape.
 * A script killed while it waits releases its question: the next one is not refused for the rest of the session.

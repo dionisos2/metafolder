@@ -41,6 +41,7 @@ the GUI for what it was not given — a tag, a folder, which set to act on
 * It shows in the task bar under its file name, spinning while it works and still while it waits for you ([[Status bar and task bar]]).
 * Its questions appear in a bar above the status line, and Escape stops it ([[Script sessions]]).
 * A script that fails says so in red on the status bar of the workspace it was launched from: ''gui-tag-folder.sh failed (exit 1)''.
+* A script you stopped says ''gui-tag-folder.sh stopped'' there, not in red: a stop you asked for is not a failure.
 
 !! From a terminal
 

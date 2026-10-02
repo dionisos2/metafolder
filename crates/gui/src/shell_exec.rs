@@ -58,7 +58,17 @@ pub async fn run_to_completion(
     let _ = out_task.await;
     let _ = err_task.await;
 
-    if !status.success() {
+    if gui.script_stopped(&task_id) {
+        // Asked for by the user: neither a failure nor an exit code worth
+        // naming (a signal has none), and nothing in red.
+        gui.append_message(&ws_id, "[stopped]")?;
+        let _ = gui.post_status(
+            &ws_id,
+            &format!("{} stopped", script_label(&command_line)),
+            "info",
+            None,
+        );
+    } else if !status.success() {
         let code = status.code().map_or("?".to_string(), |c| c.to_string());
         gui.append_message(&ws_id, &format!("[exit {code}]"))?;
         // The message log alone is not enough: a GUI script writes it into a
@@ -271,6 +281,18 @@ mod tests {
             gui.workspaces().iter().all(|w| w.id != scratch),
             "the GUI closes what the killed script opened"
         );
+        // A stop the user asked for is not a failure, and is not reported as
+        // one: "stopped", and nothing in red.
+        let statuses = notifier.payloads(crate::events::STATUS_MESSAGE);
+        assert!(
+            statuses.iter().all(|p| p["kind"] != "error"),
+            "a stopped script is not an error: {statuses:?}"
+        );
+        let last = statuses.last().expect("the stop is reported");
+        assert_eq!(last["text"], json!("sleep 30 & sleep 30 stopped"));
+        let log = gui.messages("ws-1").unwrap();
+        assert!(log.iter().any(|m| m.text == "[stopped]"), "the log says so too");
+        assert!(log.iter().all(|m| !m.text.starts_with("[exit")), "and names no exit code");
         // The run is gone from the registry, so a second stop finds nothing.
         assert!(!stop_script(&gui, &task_id));
     }

@@ -481,6 +481,11 @@ impl GuiState {
         }
     }
 
+    /// Whether run `task_id` was stopped by the user.
+    pub fn script_stopped(&self, task_id: &str) -> bool {
+        self.scripts.lock_recover().get(task_id).is_some_and(|task| task.stopped)
+    }
+
     /// Clears the running mark for run id `task_id` and rebroadcasts.
     ///
     /// A run that was *stopped* is cleaned up here (doc "Script sessions"): a
