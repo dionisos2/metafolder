@@ -1,0 +1,9 @@
+title: POST /repos/:repo/check
+tags: [[HTTP endpoint]] [[Repository endpoints]]
+kind: reference
+audience: dev
+summary: Lists what no longer holds together in a repository's store.
+
+[[Checking and reindexing a repository]].
+
+Bodies, answers and errors: [[Repository endpoints]].

@@ -1,0 +1,9 @@
+title: $:/mf/gen/HTTP endpoint/POST /repos/:repo/metarecords
+catalog: HTTP endpoint
+target: POST /repos/:repo/metarecords
+summary: Served by the daemon.
+
+!! Reference
+
+|!Server |daemon |
+|!Handler |``create_record_endpoint`` |

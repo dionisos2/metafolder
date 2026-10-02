@@ -1,0 +1,7 @@
+title: GET /fsraw
+tags: [[HTTP endpoint]] [[GUI file endpoints]]
+kind: reference
+audience: dev
+summary: A file's bytes, with Range support.
+
+Bodies, answers and errors: [[GUI file endpoints]].

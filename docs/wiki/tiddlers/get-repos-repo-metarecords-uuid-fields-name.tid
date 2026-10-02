@@ -1,0 +1,7 @@
+title: GET /repos/:repo/metarecords/:uuid/fields/:name
+tags: [[HTTP endpoint]] [[Metarecord endpoints]]
+kind: reference
+audience: dev
+summary: The values of one field of a metarecord — empty when the field is unknown.
+
+Bodies, answers and errors: [[Metarecord endpoints]].

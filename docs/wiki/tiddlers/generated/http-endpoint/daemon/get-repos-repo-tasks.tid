@@ -1,0 +1,9 @@
+title: $:/mf/gen/HTTP endpoint/GET /repos/:repo/tasks
+catalog: HTTP endpoint
+target: GET /repos/:repo/tasks
+summary: Served by the daemon.
+
+!! Reference
+
+|!Server |daemon |
+|!Handler |``list_repo_tasks`` |

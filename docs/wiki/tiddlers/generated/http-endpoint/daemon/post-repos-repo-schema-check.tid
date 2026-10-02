@@ -1,0 +1,9 @@
+title: $:/mf/gen/HTTP endpoint/POST /repos/:repo/schema/check
+catalog: HTTP endpoint
+target: POST /repos/:repo/schema/check
+summary: Served by the daemon.
+
+!! Reference
+
+|!Server |daemon |
+|!Handler |``check_schema`` |

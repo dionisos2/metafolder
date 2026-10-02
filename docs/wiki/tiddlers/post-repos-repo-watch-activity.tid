@@ -1,0 +1,9 @@
+title: POST /repos/:repo/watch/activity
+tags: [[HTTP endpoint]] [[Watcher endpoints]]
+kind: reference
+audience: dev
+summary: The watcher's event and operation counts for given paths.
+
+[[Watch activity]].
+
+Bodies, answers and errors: [[Watcher endpoints]].

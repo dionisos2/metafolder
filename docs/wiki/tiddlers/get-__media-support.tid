@@ -1,0 +1,7 @@
+title: GET /__media-support
+tags: [[HTTP endpoint]] [[GUI file endpoints]]
+kind: reference
+audience: dev
+summary: Whether the audio and video outputs WebKit needs exist.
+
+Bodies, answers and errors: [[GUI file endpoints]].

@@ -1,0 +1,7 @@
+title: POST /repos/:repo/query/fields/add
+tags: [[HTTP endpoint]] [[Query endpoints]]
+kind: reference
+audience: dev
+summary: Appends a row to every metarecord a query matches that does not hold the value.
+
+Bodies, answers and errors: [[Query endpoints]].

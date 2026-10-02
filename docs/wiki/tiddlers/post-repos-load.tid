@@ -1,0 +1,9 @@
+title: POST /repos/load
+tags: [[HTTP endpoint]] [[Repository endpoints]]
+kind: reference
+audience: dev
+summary: Loads a repository, answering at once with a task for the background part of the load.
+
+The repository answers its data routes with `503` until the `load` task is done ([[Creating and loading a repository]]).
+
+Bodies, answers and errors: [[Repository endpoints]].

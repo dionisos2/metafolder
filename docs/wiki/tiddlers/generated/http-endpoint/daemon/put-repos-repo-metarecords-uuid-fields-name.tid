@@ -1,0 +1,9 @@
+title: $:/mf/gen/HTTP endpoint/PUT /repos/:repo/metarecords/:uuid/fields/:name
+catalog: HTTP endpoint
+target: PUT /repos/:repo/metarecords/:uuid/fields/:name
+summary: Served by the daemon.
+
+!! Reference
+
+|!Server |daemon |
+|!Handler |``set_record_field`` |

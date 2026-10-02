@@ -1,0 +1,9 @@
+title: $:/mf/gen/HTTP endpoint/PUT /gui/layout
+catalog: HTTP endpoint
+target: PUT /gui/layout
+summary: Served by the GUI.
+
+!! Reference
+
+|!Server |GUI |
+|!Handler |``gui_api::put_layout`` |

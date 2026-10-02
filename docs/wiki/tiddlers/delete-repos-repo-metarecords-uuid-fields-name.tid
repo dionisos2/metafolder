@@ -1,0 +1,7 @@
+title: DELETE /repos/:repo/metarecords/:uuid/fields/:name
+tags: [[HTTP endpoint]] [[Metarecord endpoints]]
+kind: reference
+audience: dev
+summary: Unsets one field of a metarecord: every row goes, the field becomes unknown.
+
+Bodies, answers and errors: [[Metarecord endpoints]].

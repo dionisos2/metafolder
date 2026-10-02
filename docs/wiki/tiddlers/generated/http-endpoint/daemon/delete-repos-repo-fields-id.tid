@@ -1,0 +1,9 @@
+title: $:/mf/gen/HTTP endpoint/DELETE /repos/:repo/fields/:id
+catalog: HTTP endpoint
+target: DELETE /repos/:repo/fields/:id
+summary: Served by the daemon.
+
+!! Reference
+
+|!Server |daemon |
+|!Handler |``delete_field_by_id`` |

@@ -1,0 +1,9 @@
+title: PUT /repos/:repo/metarecords/:uuid
+tags: [[HTTP endpoint]] [[Metarecord endpoints]]
+kind: reference
+audience: dev
+summary: Replaces a metarecord's whole field set, keeping its uuid.
+
+A literal overwrite: the fields not listed go, reserved ones included.
+
+Bodies, answers and errors: [[Metarecord endpoints]].

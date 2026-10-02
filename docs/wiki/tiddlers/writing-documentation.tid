@@ -104,16 +104,18 @@ comment or not, and `scripts/doc rename` rewrites them with the note.
 
 !! The generated catalogs
 
-Five catalogs come from the code — [[CLI command]], [[GUI command]], [[Panel]],
-[[Shipped script]], [[Reserved field]] — one generated note per item under
-`tiddlers/generated/`, holding what the code knows: the usage and options of a command,
-its default keys, a field's type. The
+Six catalogs come from the code — [[CLI command]], [[GUI command]], [[Panel]],
+[[Shipped script]], [[Reserved field]], [[HTTP endpoint]] — one generated note per item
+under `tiddlers/generated/`, holding what the code knows: the usage and options of a
+command, its default keys, a field's type, a route's handler. The
 hand-written note of the same name says the rest.
 
 `scripts/doc gen` rewrites them. The Rust ones are golden tests: a stale generated
-note fails `cargo test` (`doc_gen` in the `cli` and `gui` crates, `reserved` in the
-daemon's, whose registry `RESERVED_FIELDS` a test holds every `mfr_*` name of the daemon
-to), and a `///`
+note fails `cargo test` (`doc_gen` in the `cli` and `gui` crates,
+`the_wiki_catalog_matches_the_code` in the daemon's — `reserved.rs`, whose registry
+`RESERVED_FIELDS` a test holds every `mfr_*` name of the daemon to, and the router). The
+endpoints are read from the routers' source, `.route("path", get(handler)…)` by
+`.route(…)`, the JavaScript modules at `/__*.js` counted as one, and a `///`
 comment on a clap argument ''is'' the help text, so editing one changes a generated
 note. `scripts/doc new --from-gen "mf trash restore"` starts a hand-written note
 from a generated one: every catalog is enforced, so `check` fails until the note

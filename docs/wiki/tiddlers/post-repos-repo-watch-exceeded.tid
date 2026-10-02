@@ -1,0 +1,9 @@
+title: POST /repos/:repo/watch/exceeded
+tags: [[HTTP endpoint]] [[Watcher endpoints]]
+kind: reference
+audience: dev
+summary: Sets or clears mfr_watch_exceeded on a directory.
+
+[[The watch budget]].
+
+Bodies, answers and errors: [[Watcher endpoints]].

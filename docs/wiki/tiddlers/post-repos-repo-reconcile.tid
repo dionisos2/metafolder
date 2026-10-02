@@ -1,0 +1,18 @@
+title: POST /repos/:repo/reconcile
+tags: [[HTTP endpoint]] [[Running a reconcile]]
+kind: reference
+audience: dev
+summary: Starts a full or scoped reconcile as a task.
+
+The body is optional, every key too:
+
+|!Key |!Default |!Does |
+|`metarecord` |— |32-hex: reconcile only the subtree of that metarecord |
+|`threshold` |— |the similarity phase's minimum score, in [0, 1]; absent, no similarity phase |
+|`mime` |`true` |compute `mfr_mime` for the files that lack it |
+|`metadata` |`true` |extract the embedded metadata of the files not yet read ([[Embedded metadata]]) |
+|`refresh` |`true` |refresh the stat fields of what is still at its recorded path |
+
+`202` with `{"task_id"}`, followed through the [[Task endpoints]]; `409` when a
+reconcile is already active, `400` for a threshold out of range ([[Task kinds]],
+[[Running a reconcile]]).

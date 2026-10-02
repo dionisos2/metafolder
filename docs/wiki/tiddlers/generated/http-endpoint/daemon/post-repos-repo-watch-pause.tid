@@ -1,0 +1,9 @@
+title: $:/mf/gen/HTTP endpoint/POST /repos/:repo/watch/pause
+catalog: HTTP endpoint
+target: POST /repos/:repo/watch/pause
+summary: Served by the daemon.
+
+!! Reference
+
+|!Server |daemon |
+|!Handler |``watch_pause`` |

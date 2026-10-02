@@ -1,0 +1,7 @@
+title: GET /document
+tags: [[HTTP endpoint]] [[GUI file endpoints]]
+kind: reference
+audience: dev
+summary: One page of a PDF as a PNG.
+
+Bodies, answers and errors: [[GUI file endpoints]].

@@ -1,0 +1,9 @@
+title: POST /repos/:repo/restore
+tags: [[HTTP endpoint]] [[Repository endpoints]]
+kind: reference
+audience: dev
+summary: Puts a backup of a loaded repository back and loads it again.
+
+[[Backups and restore]].
+
+Bodies, answers and errors: [[Repository endpoints]].

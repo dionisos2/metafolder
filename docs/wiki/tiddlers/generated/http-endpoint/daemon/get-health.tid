@@ -1,0 +1,9 @@
+title: $:/mf/gen/HTTP endpoint/GET /health
+catalog: HTTP endpoint
+target: GET /health
+summary: Served by the daemon.
+
+!! Reference
+
+|!Server |daemon |
+|!Handler |``health`` |

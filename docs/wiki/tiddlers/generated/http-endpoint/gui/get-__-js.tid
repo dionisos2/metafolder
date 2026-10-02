@@ -1,0 +1,9 @@
+title: $:/mf/gen/HTTP endpoint/GET /__*.js
+catalog: HTTP endpoint
+target: GET /__*.js
+summary: Served by the GUI.
+
+!! Reference
+
+|!Server |GUI |
+|!Handler |``a closure`` |

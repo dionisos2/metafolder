@@ -1,0 +1,7 @@
+title: POST /repos/:repo/tree/resolve-path
+tags: [[HTTP endpoint]] [[Tree endpoints]]
+kind: reference
+audience: dev
+summary: A path to the uuid of its node, or null.
+
+Bodies, answers and errors: [[Tree endpoints]].

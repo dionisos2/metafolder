@@ -1,0 +1,9 @@
+title: $:/mf/gen/HTTP endpoint/GET /repos/:repo/watch
+catalog: HTTP endpoint
+target: GET /repos/:repo/watch
+summary: Served by the daemon.
+
+!! Reference
+
+|!Server |daemon |
+|!Handler |``watch_status`` |

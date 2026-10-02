@@ -1,0 +1,7 @@
+title: GET /repos/:repo/log/since
+tags: [[HTTP endpoint]] [[Log endpoints]]
+kind: reference
+audience: dev
+summary: The change feed: HEAD, and every operation created after a given one.
+
+Bodies, answers and errors: [[Log endpoints]].

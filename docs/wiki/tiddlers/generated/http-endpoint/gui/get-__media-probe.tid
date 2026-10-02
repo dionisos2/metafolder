@@ -1,0 +1,9 @@
+title: $:/mf/gen/HTTP endpoint/GET /__media-probe
+catalog: HTTP endpoint
+target: GET /__media-probe
+summary: Served by the GUI.
+
+!! Reference
+
+|!Server |GUI |
+|!Handler |``media_probe`` |

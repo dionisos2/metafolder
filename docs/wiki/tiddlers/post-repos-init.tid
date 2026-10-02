@@ -1,0 +1,9 @@
+title: POST /repos/init
+tags: [[HTTP endpoint]] [[Repository endpoints]]
+kind: reference
+audience: dev
+summary: Creates a repository at a root and loads it.
+
+What it refuses: [[Creating and loading a repository]].
+
+Bodies, answers and errors: [[Repository endpoints]].

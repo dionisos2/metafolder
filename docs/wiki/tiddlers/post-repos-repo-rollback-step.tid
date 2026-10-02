@@ -1,0 +1,7 @@
+title: POST /repos/:repo/rollback/step
+tags: [[HTTP endpoint]] [[Rollback endpoints]]
+kind: reference
+audience: dev
+summary: Applies, or skips, the current step of a rollback and answers the next.
+
+Bodies, answers and errors: [[Rollback endpoints]].

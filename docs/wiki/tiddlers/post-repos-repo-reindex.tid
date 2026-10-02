@@ -1,0 +1,9 @@
+title: POST /repos/:repo/reindex
+tags: [[HTTP endpoint]] [[Repository endpoints]]
+kind: reference
+audience: dev
+summary: Derives again everything the store derives.
+
+[[Checking and reindexing a repository]].
+
+Bodies, answers and errors: [[Repository endpoints]].

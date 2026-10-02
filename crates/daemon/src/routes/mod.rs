@@ -429,3 +429,40 @@ fn ensure_exists(conn: &dyn crate::store::Store, uuid: Uuid) -> Result<(), ApiEr
     }
     Ok(())
 }
+
+#[cfg(test)]
+mod doc_gen {
+    //! The daemon's half of the `HTTP endpoint` catalog of the documentation
+    //! wiki: one generated note per method and route of [`super::build`], read
+    //! from this file's source (`metafolder_core::doc_gen::routes`; rewritten by
+    //! `scripts/doc gen`, checked here otherwise).
+
+    use metafolder_core::doc_gen::{endpoint_notes, generated_dir, routes, sync_generated};
+
+    /// The source of `build`, the router.
+    fn router_source() -> &'static str {
+        let src = include_str!("mod.rs");
+        let start = src.find("pub fn build(").unwrap();
+        let end = src.find("pub fn build_authenticated(").unwrap();
+        &src[start..end]
+    }
+
+    #[test]
+    fn every_route_is_read() {
+        let src = router_source();
+        let found = routes(src);
+        let mut paths: Vec<&str> = found.iter().map(|r| r.path.as_str()).collect();
+        paths.dedup();
+        assert_eq!(paths.len(), src.matches(".route(").count(), "{paths:#?}");
+        assert!(found.iter().any(|r| r.method == "PATCH" && r.path == "/repos/:repo"));
+    }
+
+    #[test]
+    fn the_wiki_catalog_matches_the_code() {
+        let found = routes(router_source());
+        let notes = endpoint_notes("daemon", &found);
+        assert_eq!(notes.len(), found.len(), "two endpoints share a file name");
+        let dir = generated_dir(env!("CARGO_MANIFEST_DIR"), "HTTP endpoint").join("daemon");
+        sync_generated(&dir, &notes).unwrap();
+    }
+}

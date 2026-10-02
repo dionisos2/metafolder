@@ -1,0 +1,9 @@
+title: POST /repos/:repo/retype
+tags: [[HTTP endpoint]] [[Metarecord endpoints]]
+kind: reference
+audience: dev
+summary: Converts every value of a field name to another type.
+
+[[Changing a field's type]].
+
+Bodies, answers and errors: [[Metarecord endpoints]].

@@ -1,0 +1,7 @@
+title: DELETE /repos/:repo/metarecords/:uuid
+tags: [[HTTP endpoint]] [[Metarecord endpoints]]
+kind: reference
+audience: dev
+summary: Deletes a metarecord and its fields; the repository's root is refused.
+
+Bodies, answers and errors: [[Metarecord endpoints]].

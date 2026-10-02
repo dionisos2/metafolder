@@ -1,0 +1,9 @@
+title: $:/mf/gen/HTTP endpoint/POST /repos/:repo/revert/commit
+catalog: HTTP endpoint
+target: POST /repos/:repo/revert/commit
+summary: Served by the daemon.
+
+!! Reference
+
+|!Server |daemon |
+|!Handler |``revert_commit`` |

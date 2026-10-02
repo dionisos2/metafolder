@@ -116,9 +116,200 @@ fn sync_generated_with(
     }
 }
 
+/// One method of one route of an Axum router, as its source declares it.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Route {
+    /// Upper case: `GET`, `POST`…
+    pub method: String,
+    /// The route pattern (`/repos/:repo/query`).
+    pub path: String,
+    /// The handler's path (`gui_api::post_command`), or `a closure`.
+    pub handler: String,
+}
+
+#[derive(Debug, PartialEq)]
+enum Token {
+    Str(String),
+    Ident(String),
+    Punct(char),
+}
+
+/// Rust source as identifiers (with their `::` paths), string literals and
+/// punctuation; comments and whitespace dropped. Just enough to read a router.
+fn tokens(src: &str) -> Vec<Token> {
+    let chars: Vec<char> = src.chars().collect();
+    let mut out = Vec::new();
+    let mut i = 0;
+    while i < chars.len() {
+        let c = chars[i];
+        if c.is_whitespace() {
+            i += 1;
+        } else if c == '/' && chars.get(i + 1) == Some(&'/') {
+            while i < chars.len() && chars[i] != '\n' {
+                i += 1;
+            }
+        } else if c == '"' {
+            let mut s = String::new();
+            i += 1;
+            while i < chars.len() && chars[i] != '"' {
+                if chars[i] == '\\' {
+                    i += 1;
+                }
+                if let Some(&c) = chars.get(i) {
+                    s.push(c);
+                }
+                i += 1;
+            }
+            i += 1;
+            out.push(Token::Str(s));
+        } else if c.is_alphabetic() || c == '_' {
+            let mut s = String::new();
+            while i < chars.len() {
+                let c = chars[i];
+                if c.is_alphanumeric() || c == '_' {
+                    s.push(c);
+                    i += 1;
+                } else if c == ':'
+                    && chars.get(i + 1) == Some(&':')
+                    && chars.get(i + 2).is_some_and(|c| c.is_alphabetic() || *c == '_')
+                {
+                    s.push_str("::");
+                    i += 2;
+                } else {
+                    break;
+                }
+            }
+            out.push(Token::Ident(s));
+        } else {
+            out.push(Token::Punct(c));
+            i += 1;
+        }
+    }
+    out
+}
+
+/// Every route of the Axum router `src` builds — each `.route("path",
+/// get(handler).post(other)…)` call — one entry per method, in source order.
+pub fn routes(src: &str) -> Vec<Route> {
+    const METHODS: [&str; 5] = ["get", "post", "put", "patch", "delete"];
+    let t = tokens(src);
+    let mut out = Vec::new();
+    let mut i = 0;
+    while i + 3 < t.len() {
+        let path = match (&t[i], &t[i + 1], &t[i + 2], &t[i + 3]) {
+            (Token::Punct('.'), Token::Ident(r), Token::Punct('('), Token::Str(p))
+                if r == "route" =>
+            {
+                p
+            }
+            _ => {
+                i += 1;
+                continue;
+            }
+        };
+        let mut depth = 1;
+        let mut j = i + 4;
+        while j < t.len() && depth > 0 {
+            match &t[j] {
+                Token::Punct('(') => depth += 1,
+                Token::Punct(')') => depth -= 1,
+                Token::Ident(m)
+                    if depth == 1
+                        && METHODS.contains(&m.as_str())
+                        && t.get(j + 1) == Some(&Token::Punct('(')) =>
+                {
+                    let handler = match (t.get(j + 2), t.get(j + 3)) {
+                        (Some(Token::Ident(h)), Some(Token::Punct(')'))) => h.clone(),
+                        _ => "a closure".to_string(),
+                    };
+                    out.push(Route { method: m.to_uppercase(), path: path.clone(), handler });
+                }
+                _ => {}
+            }
+            j += 1;
+        }
+        i = j;
+    }
+    out
+}
+
+/// The `HTTP endpoint` catalog's generated notes for the routes of one server
+/// (`daemon`, `GUI`), keyed by file name: one per method and path.
+pub fn endpoint_notes(server: &str, routes: &[Route]) -> BTreeMap<String, String> {
+    routes
+        .iter()
+        .map(|r| {
+            let target = format!("{} {}", r.method, r.path);
+            let title = format!("$:/mf/gen/HTTP endpoint/{target}");
+            let summary = format!("Served by the {server}.");
+            let handler = code(&r.handler);
+            let text = format!("!! Reference\n\n|!Server |{server} |\n|!Handler |{handler} |\n");
+            let fields = [
+                ("title", title.as_str()),
+                ("catalog", "HTTP endpoint"),
+                ("target", target.as_str()),
+                ("summary", summary.as_str()),
+            ];
+            (format!("{}.tid", slug(&target)), tid(&fields, &text))
+        })
+        .collect()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn an_endpoint_note_is_named_by_method_and_path() {
+        let route = Route {
+            method: "POST".into(),
+            path: "/repos/:repo/query".into(),
+            handler: "run_query".into(),
+        };
+        let notes = endpoint_notes("daemon", &[route]);
+        let note = &notes["post-repos-repo-query.tid"];
+        assert!(
+            note.starts_with("title: $:/mf/gen/HTTP endpoint/POST /repos/:repo/query\n"),
+            "{note}"
+        );
+        assert!(note.contains("catalog: HTTP endpoint\n"), "{note}");
+        assert!(note.contains("target: POST /repos/:repo/query\n"), "{note}");
+        assert!(note.contains("|!Handler |``run_query`` |"), "{note}");
+    }
+
+    #[test]
+    fn routes_reads_every_method_of_every_route() {
+        let src = r#"
+            Router::new()
+                .route("/health", get(health))
+                .route("/repos/:repo", get(get_repo).patch(rename_repo))
+                // a comment with .route("/not", get(a_route))
+                .route(
+                    "/repos/:repo/fields/:id",
+                    get(by_id).patch(patch_by_id).delete(delete_by_id),
+                )
+                .route("/fsraw", get(fsraw::serve).layer(map_response(fsraw::inert)))
+                .route(
+                    "/__commands.js",
+                    get(|State(state): State<S>| async move { state.get("x(") }),
+                )
+        "#;
+        let found: Vec<(String, String, String)> =
+            routes(src).into_iter().map(|r| (r.method, r.path, r.handler)).collect();
+        let want = [
+            ("GET", "/health", "health"),
+            ("GET", "/repos/:repo", "get_repo"),
+            ("PATCH", "/repos/:repo", "rename_repo"),
+            ("GET", "/repos/:repo/fields/:id", "by_id"),
+            ("PATCH", "/repos/:repo/fields/:id", "patch_by_id"),
+            ("DELETE", "/repos/:repo/fields/:id", "delete_by_id"),
+            ("GET", "/fsraw", "fsraw::serve"),
+            ("GET", "/__commands.js", "a closure"),
+        ];
+        let want: Vec<(String, String, String)> =
+            want.iter().map(|(m, p, h)| (m.to_string(), p.to_string(), h.to_string())).collect();
+        assert_eq!(found, want);
+    }
 
     fn scratch(name: &str) -> PathBuf {
         let dir = std::env::temp_dir()

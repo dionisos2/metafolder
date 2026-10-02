@@ -1,0 +1,7 @@
+title: POST /repos/:repo/orphans/clear
+tags: [[HTTP endpoint]] [[Orphan scan]]
+kind: reference
+audience: dev
+summary: Orphans the given metarecords properly: mfr_path_old frozen, mfr_path = nothing.
+
+Bodies, answers and errors: [[Orphan scan]].

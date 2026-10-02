@@ -1,0 +1,9 @@
+title: POST /repos/:repo/backup
+tags: [[HTTP endpoint]] [[Repository endpoints]]
+kind: reference
+audience: dev
+summary: Takes a verified copy of a repository's store while it stays loaded.
+
+[[Backups and restore]].
+
+Bodies, answers and errors: [[Repository endpoints]].

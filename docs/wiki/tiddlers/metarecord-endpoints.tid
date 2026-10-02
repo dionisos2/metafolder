@@ -10,20 +10,20 @@ query ([[Query endpoints]]). They overlap only on one metarecord (its URL, or a 
 ''several'' metarecords is a query: there is no list or batch-read route.
 
 |!Route |!Does |
-|`POST /repos/:repo/metarecords` |creates one: `{"fields": […], "force"?}` → the full metarecord, `id` on each field |
-|`POST /repos/:repo/metarecords/bulk` |creates many in one revision (below) |
-|`GET /repos/:repo/metarecords/:uuid` |reads one, each field with its row `id` |
-|`PUT /repos/:repo/metarecords/:uuid` |replaces its whole field set, keeping the uuid: `{"fields": […], "force"?}` → the metarecord |
-|`DELETE /repos/:repo/metarecords/:uuid` |deletes it and its fields → `204`; the repository's root is refused (`400`) |
-|`POST /repos/:repo/metarecords/:uuid/fields` |appends one row: `{"name", "value", "force"?}` → the metarecord (unchanged when the value was there) |
-|`GET /repos/:repo/metarecords/:uuid/fields/:name` |`{"name", "values": […]}` — empty when the field is unknown |
-|`PUT /repos/:repo/metarecords/:uuid/fields/:name` |sets the field: `{"value"}` or `{"values": […]}`, exactly one, `"force"?` → the metarecord |
-|`DELETE /repos/:repo/metarecords/:uuid/fields/:name` |unsets it (every row goes; the field becomes unknown) → `204` |
-|`GET /repos/:repo/fields/:id` |one row by its id alone: `{"id", "name", "value"}`; `404` when unknown |
-|`PATCH /repos/:repo/fields/:id` |changes its name and/or value, keeping the id: `{"name"?, "value"?, "force"?}`; `400` if it would duplicate a sibling |
-|`DELETE /repos/:repo/fields/:id` |deletes the row: `{"force"?}` → `204` |
-|`POST /repos/:repo/retype` |`{"name", "to"}` → `{"converted", "fallback_count", "fallback_uuids"}` ([[Changing a field's type]]) |
-|`GET /repos/:repo/fields[?type=<t>]` |the distinct field names with their type, by name (below) |
+|<<cmd "POST /repos/:repo/metarecords">> |creates one: `{"fields": […], "force"?}` → the full metarecord, `id` on each field |
+|<<cmd "POST /repos/:repo/metarecords/bulk">> |creates many in one revision (below) |
+|<<cmd "GET /repos/:repo/metarecords/:uuid">> |reads one, each field with its row `id` |
+|<<cmd "PUT /repos/:repo/metarecords/:uuid">> |replaces its whole field set, keeping the uuid: `{"fields": […], "force"?}` → the metarecord |
+|<<cmd "DELETE /repos/:repo/metarecords/:uuid">> |deletes it and its fields → `204`; the repository's root is refused (`400`) |
+|<<cmd "POST /repos/:repo/metarecords/:uuid/fields">> |appends one row: `{"name", "value", "force"?}` → the metarecord (unchanged when the value was there) |
+|<<cmd "GET /repos/:repo/metarecords/:uuid/fields/:name">> |`{"name", "values": […]}` — empty when the field is unknown |
+|<<cmd "PUT /repos/:repo/metarecords/:uuid/fields/:name">> |sets the field: `{"value"}` or `{"values": […]}`, exactly one, `"force"?` → the metarecord |
+|<<cmd "DELETE /repos/:repo/metarecords/:uuid/fields/:name">> |unsets it (every row goes; the field becomes unknown) → `204` |
+|<<cmd "GET /repos/:repo/fields/:id">> |one row by its id alone: `{"id", "name", "value"}`; `404` when unknown |
+|<<cmd "PATCH /repos/:repo/fields/:id">> |changes its name and/or value, keeping the id: `{"name"?, "value"?, "force"?}`; `400` if it would duplicate a sibling |
+|<<cmd "DELETE /repos/:repo/fields/:id">> |deletes the row: `{"force"?}` → `204` |
+|<<cmd "POST /repos/:repo/retype">> |`{"name", "to"}` → `{"converted", "fallback_count", "fallback_uuids"}` ([[Changing a field's type]]) |
+|<<cmd "GET /repos/:repo/fields">> `[?type=<t>]` |the distinct field names with their type, by name (below) |
 
 The whole-record `PUT` is a literal overwrite: fields not listed go, `mfr_*` and
 `mf_*` included — a careless one untracks a file. Read the metarecord first to keep

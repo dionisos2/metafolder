@@ -1,0 +1,9 @@
+title: $:/mf/gen/HTTP endpoint/GET /docs/*path
+catalog: HTTP endpoint
+target: GET /docs/*path
+summary: Served by the GUI.
+
+!! Reference
+
+|!Server |GUI |
+|!Handler |``docs::serve`` |

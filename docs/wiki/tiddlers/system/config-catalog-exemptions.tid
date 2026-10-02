@@ -1,5 +1,5 @@
 title: $:/mf/config/catalog-exemptions
-list: [[mf sync]] sync: [[sync panel]]
+list: [[mf sync]] sync: [[sync panel]] [[GET /sync/]] [[POST /sync/]] [[DELETE /sync/]] [[GET /repos/:repo/metarecords/:uuid/mf-sync]]
 
 Target prefixes an enforced catalog may leave without a note, while the topic
 they belong to is deferred (sync: docs/docs.org item 29). The catalog page still

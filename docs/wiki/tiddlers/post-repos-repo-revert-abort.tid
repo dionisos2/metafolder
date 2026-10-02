@@ -1,0 +1,7 @@
+title: POST /repos/:repo/revert/abort
+tags: [[HTTP endpoint]] [[Revert endpoints]]
+kind: reference
+audience: dev
+summary: Releases a coordinated revert's lock, writing nothing.
+
+Bodies, answers and errors: [[Revert endpoints]].

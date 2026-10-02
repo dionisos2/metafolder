@@ -1,0 +1,9 @@
+title: $:/mf/gen/HTTP endpoint/POST /gui/progress
+catalog: HTTP endpoint
+target: POST /gui/progress
+summary: Served by the GUI.
+
+!! Reference
+
+|!Server |GUI |
+|!Handler |``gui_api::post_progress`` |

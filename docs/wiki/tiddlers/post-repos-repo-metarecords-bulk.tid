@@ -1,0 +1,7 @@
+title: POST /repos/:repo/metarecords/bulk
+tags: [[HTTP endpoint]] [[Metarecord endpoints]]
+kind: reference
+audience: dev
+summary: Creates many metarecords in one revision, all or nothing.
+
+Bodies, answers and errors: [[Metarecord endpoints]].

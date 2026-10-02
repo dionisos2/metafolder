@@ -17,19 +17,19 @@ The Rust side owns the state these routes read and write, and the shell mirrors 
 through events, so a script and the window always agree ([[GUI]]).
 
 |!Route |!Does |
-|`GET /gui/workspaces` |lists the workspaces |
-|`POST /gui/workspaces` |creates one |
-|`DELETE /gui/workspaces/:id` |closes one |
-|`GET /gui/workspaces/:id/vars/:key` |reads one workspace variable |
-|`GET /gui/layout`, `PUT /gui/layout` |which workspace each slot shows |
-|`GET /gui/panels/:slot/view`, `PUT /gui/panels/:slot/view` |the panel type of a slot |
-|`POST /gui/command` |runs a command |
-|`POST /gui/message` |posts a status message |
-|`POST /gui/progress` |updates a script's task-bar entry |
-|`POST /gui/input` |waits for one key |
-|`POST /gui/prompt` |waits for a line in the command input |
-|`GET /gui/status` |the whole state at once |
-|`GET /gui/bench`, `POST /gui/bench/clear` |the recorded timings |
+|<<cmd "GET /gui/workspaces">> |lists the workspaces |
+|<<cmd "POST /gui/workspaces">> |creates one |
+|<<cmd "DELETE /gui/workspaces/:id">> |closes one |
+|<<cmd "GET /gui/workspaces/:id/vars/:key">> |reads one workspace variable |
+|<<cmd "GET /gui/layout">>, <<cmd "PUT /gui/layout">> |which workspace each slot shows |
+|<<cmd "GET /gui/panels/:slot/view">>, <<cmd "PUT /gui/panels/:slot/view">> |the panel type of a slot |
+|<<cmd "POST /gui/command">> |runs a command |
+|<<cmd "POST /gui/message">> |posts a status message |
+|<<cmd "POST /gui/progress">> |updates a script's task-bar entry |
+|<<cmd "POST /gui/input">> |waits for one key |
+|<<cmd "POST /gui/prompt">> |waits for a line in the command input |
+|<<cmd "GET /gui/status">> |the whole state at once |
+|<<cmd "GET /gui/bench">>, <<cmd "POST /gui/bench/clear">> |the recorded timings |
 
 !! The run id
 

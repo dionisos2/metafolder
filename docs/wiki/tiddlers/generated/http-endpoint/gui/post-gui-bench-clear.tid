@@ -1,0 +1,9 @@
+title: $:/mf/gen/HTTP endpoint/POST /gui/bench/clear
+catalog: HTTP endpoint
+target: POST /gui/bench/clear
+summary: Served by the GUI.
+
+!! Reference
+
+|!Server |GUI |
+|!Handler |``gui_api::clear_bench`` |

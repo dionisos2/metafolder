@@ -1,0 +1,7 @@
+title: PATCH /repos/:repo/fields/:id
+tags: [[HTTP endpoint]] [[Metarecord endpoints]]
+kind: reference
+audience: dev
+summary: Changes a field row's name or value, keeping its id.
+
+Bodies, answers and errors: [[Metarecord endpoints]].

@@ -1,0 +1,9 @@
+title: $:/mf/gen/HTTP endpoint/POST /repos/:repo/metarecords/trash
+catalog: HTTP endpoint
+target: POST /repos/:repo/metarecords/trash
+summary: Served by the daemon.
+
+!! Reference
+
+|!Server |daemon |
+|!Handler |``trash_delete_endpoint`` |

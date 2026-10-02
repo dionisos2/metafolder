@@ -1,0 +1,7 @@
+title: POST /repos/:repo/rollback
+tags: [[HTTP endpoint]] [[Rollback endpoints]]
+kind: reference
+audience: dev
+summary: Navigates the log atomically to a target, metadata only.
+
+Bodies, answers and errors: [[Rollback endpoints]].

@@ -5,15 +5,15 @@ audience: dev
 summary: GET /watch and pause/resume, watch check, the activity counts, the exceeded subtrees — the watcher's HTTP surface.
 
 |!Route |!Does |
-|`GET /repos/:repo/watch` |the watch status (below) |
-|`POST /repos/:repo/watch/pause` |pauses ingestion, stopping the flush in progress; answers the status |
-|`POST /repos/:repo/watch/resume` |resumes and pings the executor; answers the status |
-|`POST /repos/:repo/watch/check` |`{"paths": [...]}` (≤ 1000) → one verdict per path ([[Checking whether a path is watched]]) |
-|`POST /repos/:repo/watch/activity` |`{"paths": [...]}` (≤ 1000) → `{"since_ms", "total", "total_operations", "results": [{"path", "events", "operations"}]}` |
-|`GET /repos/:repo/watch/activity?path=&limit=&sort=` |one path's counts and its busiest direct children (default the root, 50), ranked by `sort` = `events` (default) or `operations` |
-|`POST /repos/:repo/watch/activity/reset` |forgets every count → `{"since_ms", "total": 0, "total_operations": 0}` |
-|`GET /repos/:repo/watch/exceeded` |the directories carrying `mfr_watch_exceeded` |
-|`POST /repos/:repo/watch/exceeded` |`{"path": "/dir", "exceeded": true}` sets it (always allowed), `false` clears it (`409` without headroom, budget regime) |
+|<<cmd "GET /repos/:repo/watch">> |the watch status (below) |
+|<<cmd "POST /repos/:repo/watch/pause">> |pauses ingestion, stopping the flush in progress; answers the status |
+|<<cmd "POST /repos/:repo/watch/resume">> |resumes and pings the executor; answers the status |
+|<<cmd "POST /repos/:repo/watch/check">> |`{"paths": [...]}` (≤ 1000) → one verdict per path ([[Checking whether a path is watched]]) |
+|<<cmd "POST /repos/:repo/watch/activity">> |`{"paths": [...]}` (≤ 1000) → `{"since_ms", "total", "total_operations", "results": [{"path", "events", "operations"}]}` |
+|<<cmd "GET /repos/:repo/watch/activity">> `?path=&limit=&sort=` |one path's counts and its busiest direct children (default the root, 50), ranked by `sort` = `events` (default) or `operations` |
+|<<cmd "POST /repos/:repo/watch/activity/reset">> |forgets every count → `{"since_ms", "total": 0, "total_operations": 0}` |
+|<<cmd "GET /repos/:repo/watch/exceeded">> |the directories carrying `mfr_watch_exceeded` |
+|<<cmd "POST /repos/:repo/watch/exceeded">> |`{"path": "/dir", "exceeded": true}` sets it (always allowed), `false` clears it (`409` without headroom, budget regime) |
 
 ```
 {"paused": true, "pending_events": 12043, "quiet_period_ms": 2000, "backend": "inotify",

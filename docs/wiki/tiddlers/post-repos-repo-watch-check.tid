@@ -1,0 +1,9 @@
+title: POST /repos/:repo/watch/check
+tags: [[HTTP endpoint]] [[Watcher endpoints]]
+kind: reference
+audience: dev
+summary: Whether a change at given paths would be recorded, with the reason.
+
+[[Checking whether a path is watched]].
+
+Bodies, answers and errors: [[Watcher endpoints]].

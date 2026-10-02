@@ -1,0 +1,7 @@
+title: GET /docs/*path
+tags: [[HTTP endpoint]] [[GUI asset endpoints]]
+kind: reference
+audience: dev
+summary: A page of the rendered documentation.
+
+Bodies, answers and errors: [[GUI asset endpoints]].

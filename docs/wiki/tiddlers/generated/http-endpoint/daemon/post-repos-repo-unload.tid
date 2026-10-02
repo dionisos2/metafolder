@@ -1,0 +1,9 @@
+title: $:/mf/gen/HTTP endpoint/POST /repos/:repo/unload
+catalog: HTTP endpoint
+target: POST /repos/:repo/unload
+summary: Served by the daemon.
+
+!! Reference
+
+|!Server |daemon |
+|!Handler |``unload_repo`` |

@@ -244,3 +244,59 @@ async fn media_probe(
         Err(_) => axum::http::StatusCode::INTERNAL_SERVER_ERROR.into_response(),
     }
 }
+
+#[cfg(test)]
+mod doc_gen {
+    //! The GUI's half of the `HTTP endpoint` catalog of the documentation wiki:
+    //! one generated note per method and route of [`super::build_router`], read
+    //! from this file's source (`metafolder_core::doc_gen::routes`; rewritten by
+    //! `scripts/doc gen`, checked here otherwise).
+
+    use metafolder_core::doc_gen::{endpoint_notes, generated_dir, routes, sync_generated, Route};
+
+    /// The source of `build_router`.
+    fn router_source() -> &'static str {
+        let src = include_str!("mod.rs");
+        let start = src.find("pub fn build_router(").unwrap();
+        let end = src.find("pub fn build_router_authenticated(").unwrap();
+        &src[start..end]
+    }
+
+    /// The routes, the JavaScript modules served at `/__<name>.js` counted as
+    /// one endpoint: they are a family, documented together.
+    fn endpoints() -> Vec<Route> {
+        let mut out: Vec<Route> = Vec::new();
+        for r in routes(router_source()) {
+            let module = r.path.starts_with("/__") && r.path.ends_with(".js");
+            let r = if module {
+                Route { path: "/__*.js".into(), handler: "a closure".into(), ..r }
+            } else {
+                r
+            };
+            if !out.contains(&r) {
+                out.push(r);
+            }
+        }
+        out
+    }
+
+    #[test]
+    fn every_route_is_read() {
+        let src = router_source();
+        let found = routes(src);
+        let mut paths: Vec<&str> = found.iter().map(|r| r.path.as_str()).collect();
+        paths.dedup();
+        assert_eq!(paths.len(), src.matches(".route(").count(), "{paths:#?}");
+        let family = endpoints().into_iter().filter(|r| r.path == "/__*.js").count();
+        assert_eq!(family, 1);
+    }
+
+    #[test]
+    fn the_wiki_catalog_matches_the_code() {
+        let found = endpoints();
+        let notes = endpoint_notes("GUI", &found);
+        assert_eq!(notes.len(), found.len(), "two endpoints share a file name");
+        let dir = generated_dir(env!("CARGO_MANIFEST_DIR"), "HTTP endpoint").join("gui");
+        sync_generated(&dir, &notes).unwrap();
+    }
+}

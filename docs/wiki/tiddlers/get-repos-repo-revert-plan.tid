@@ -1,0 +1,7 @@
+title: GET /repos/:repo/revert/plan
+tags: [[HTTP endpoint]] [[Revert endpoints]]
+kind: reference
+audience: dev
+summary: What a revert would do; writes nothing, takes no lock.
+
+Bodies, answers and errors: [[Revert endpoints]].

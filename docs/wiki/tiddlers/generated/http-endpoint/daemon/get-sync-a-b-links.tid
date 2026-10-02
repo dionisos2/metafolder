@@ -1,0 +1,9 @@
+title: $:/mf/gen/HTTP endpoint/GET /sync/:a/:b/links
+catalog: HTTP endpoint
+target: GET /sync/:a/:b/links
+summary: Served by the daemon.
+
+!! Reference
+
+|!Server |daemon |
+|!Handler |``sync_list_links`` |

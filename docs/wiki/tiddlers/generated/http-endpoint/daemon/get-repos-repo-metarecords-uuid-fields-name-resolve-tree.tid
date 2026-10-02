@@ -1,0 +1,9 @@
+title: $:/mf/gen/HTTP endpoint/GET /repos/:repo/metarecords/:uuid/fields/:name/resolve-tree
+catalog: HTTP endpoint
+target: GET /repos/:repo/metarecords/:uuid/fields/:name/resolve-tree
+summary: Served by the daemon.
+
+!! Reference
+
+|!Server |daemon |
+|!Handler |``resolve_record_field_tree`` |

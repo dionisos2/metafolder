@@ -55,6 +55,7 @@ Every item of these lists exists in the code; the lists are complete.
 * [[GUI command]] — every command of the GUI's command input
 * [[Panel]] — every panel type of the GUI
 * [[Shipped script]] — the helper scripts installed with the configuration
+* [[HTTP endpoint]] — every route of the daemon's and the GUI's servers
 * [[Reserved field]] — the `mfr_*` fields the daemon writes and the `mf_*` fields that steer it
 
 !! For developers

@@ -1,0 +1,9 @@
+title: $:/mf/gen/HTTP endpoint/GET /repos/:repo/metarecords/:uuid
+catalog: HTTP endpoint
+target: GET /repos/:repo/metarecords/:uuid
+summary: Served by the daemon.
+
+!! Reference
+
+|!Server |daemon |
+|!Handler |``get_record_endpoint`` |

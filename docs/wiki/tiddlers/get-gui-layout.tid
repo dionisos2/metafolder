@@ -1,0 +1,7 @@
+title: GET /gui/layout
+tags: [[HTTP endpoint]] [[GUI scripting endpoints]]
+kind: reference
+audience: dev
+summary: Which workspace each slot shows.
+
+Bodies, answers and errors: [[GUI scripting endpoints]].

@@ -1,0 +1,7 @@
+title: GET /repos/:repo/metarecords/:uuid
+tags: [[HTTP endpoint]] [[Metarecord endpoints]]
+kind: reference
+audience: dev
+summary: Reads one metarecord, each field with its row id.
+
+Bodies, answers and errors: [[Metarecord endpoints]].

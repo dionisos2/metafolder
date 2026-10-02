@@ -1,5 +1,5 @@
 title: POST /repos/:repo/query/profile
-tags: [[Slow log]]
+tags: [[HTTP endpoint]] [[Slow log]]
 kind: reference
 audience: dev
 summary: Runs a query exactly as POST /query does and answers its slow-log entry — phases, time, reads — whatever it cost.

@@ -1,0 +1,9 @@
+title: $:/mf/gen/HTTP endpoint/GET /repos/:repo/schema
+catalog: HTTP endpoint
+target: GET /repos/:repo/schema
+summary: Served by the daemon.
+
+!! Reference
+
+|!Server |daemon |
+|!Handler |``get_schema`` |

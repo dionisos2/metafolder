@@ -1,5 +1,5 @@
 title: POST /repos/:repo/metarecords/trash
-tags: Trash
+tags: [[HTTP endpoint]] Trash
 kind: reference
 audience: dev
 summary: The trash-bin's only daemon endpoint: delete the metarecords a trashing takes, in one revision stamped trash.

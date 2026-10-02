@@ -1,0 +1,9 @@
+title: POST /repos/restore
+tags: [[HTTP endpoint]] [[Repository endpoints]]
+kind: reference
+audience: dev
+summary: Puts a backup back for a repository named by its path, loaded or not.
+
+[[Backups and restore]].
+
+Bodies, answers and errors: [[Repository endpoints]].

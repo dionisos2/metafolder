@@ -1,0 +1,7 @@
+title: POST /repos/:repo/revert/start
+tags: [[HTTP endpoint]] [[Revert endpoints]]
+kind: reference
+audience: dev
+summary: Takes the navigation lock for a coordinated revert and answers its plan.
+
+Bodies, answers and errors: [[Revert endpoints]].

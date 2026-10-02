@@ -1,0 +1,7 @@
+title: GET /repos/:repo/schema
+tags: [[HTTP endpoint]] [[Schema endpoints]]
+kind: reference
+audience: dev
+summary: The schema as loaded, or an empty one.
+
+Bodies, answers and errors: [[Schema endpoints]].

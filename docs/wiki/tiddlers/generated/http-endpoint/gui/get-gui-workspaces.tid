@@ -1,0 +1,9 @@
+title: $:/mf/gen/HTTP endpoint/GET /gui/workspaces
+catalog: HTTP endpoint
+target: GET /gui/workspaces
+summary: Served by the GUI.
+
+!! Reference
+
+|!Server |GUI |
+|!Handler |``gui_api::list_workspaces`` |

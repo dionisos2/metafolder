@@ -1,0 +1,9 @@
+title: POST /repos/:repo/orphans/relink
+tags: [[HTTP endpoint]] [[Orphan scan]]
+kind: reference
+audience: dev
+summary: Starts re-homing orphans onto the files carrying their content, as a task.
+
+[[Relinking orphans]].
+
+Bodies, answers and errors: [[Orphan scan]].

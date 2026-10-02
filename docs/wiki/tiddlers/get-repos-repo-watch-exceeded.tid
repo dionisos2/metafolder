@@ -1,0 +1,9 @@
+title: GET /repos/:repo/watch/exceeded
+tags: [[HTTP endpoint]] [[Watcher endpoints]]
+kind: reference
+audience: dev
+summary: The directories carrying mfr_watch_exceeded.
+
+[[The watch budget]].
+
+Bodies, answers and errors: [[Watcher endpoints]].

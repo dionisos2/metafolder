@@ -1,0 +1,7 @@
+title: POST /gui/workspaces
+tags: [[HTTP endpoint]] [[GUI scripting endpoints]]
+kind: reference
+audience: dev
+summary: Creates a workspace.
+
+Bodies, answers and errors: [[GUI scripting endpoints]].

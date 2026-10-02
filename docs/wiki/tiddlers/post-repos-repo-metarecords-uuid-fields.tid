@@ -1,0 +1,7 @@
+title: POST /repos/:repo/metarecords/:uuid/fields
+tags: [[HTTP endpoint]] [[Metarecord endpoints]]
+kind: reference
+audience: dev
+summary: Appends one row to a metarecord.
+
+Bodies, answers and errors: [[Metarecord endpoints]].

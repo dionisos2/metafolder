@@ -1,0 +1,9 @@
+title: GET /gui/bench
+tags: [[HTTP endpoint]] [[GUI scripting endpoints]]
+kind: reference
+audience: dev
+summary: The timings the GUI recorded.
+
+[[Benchmarks]].
+
+Bodies, answers and errors: [[GUI scripting endpoints]].

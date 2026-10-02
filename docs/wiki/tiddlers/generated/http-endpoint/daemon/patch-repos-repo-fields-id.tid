@@ -1,0 +1,9 @@
+title: $:/mf/gen/HTTP endpoint/PATCH /repos/:repo/fields/:id
+catalog: HTTP endpoint
+target: PATCH /repos/:repo/fields/:id
+summary: Served by the daemon.
+
+!! Reference
+
+|!Server |daemon |
+|!Handler |``patch_field_by_id`` |

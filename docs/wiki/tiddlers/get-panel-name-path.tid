@@ -1,0 +1,7 @@
+title: GET /panel/:name/*path
+tags: [[HTTP endpoint]] [[GUI asset endpoints]]
+kind: reference
+audience: dev
+summary: A file of a panel type's directory, served verbatim.
+
+Bodies, answers and errors: [[GUI asset endpoints]].

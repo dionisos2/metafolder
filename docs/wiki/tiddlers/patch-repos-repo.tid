@@ -1,0 +1,7 @@
+title: PATCH /repos/:repo
+tags: [[HTTP endpoint]] [[Repository endpoints]]
+kind: reference
+audience: dev
+summary: Renames a repository; 409 when the name is taken.
+
+Bodies, answers and errors: [[Repository endpoints]].

@@ -228,9 +228,9 @@ attendant, la page du catalogue liste ce qui n'est « pas encore documenté ».
 Le second sens s'applique tout de suite.
 
 La note générée d'un panel a pour cible `<nom> panel` (le titre de la note
-écrite à la main), et liste les commandes du panel. Les routes HTTP et les
-champs réservés ne sont pas encore générés : ils le seront à la migration de
-leurs sujets (côté daemon). Il intègre ainsi l'actuelle règle « au moins une page par type de
+écrite à la main), et liste les commandes du panel. Les routes HTTP (lues dans le
+source des deux routeurs) et les champs réservés (le registre de `reserved.rs`)
+sont générés depuis l'item 42 de `docs.org`. Il intègre ainsi l'actuelle règle « au moins une page par type de
 panel ». La comparaison porte sur deux ensembles de titres : celui des notes
 générées, et celui des notes taguées avec le catalogue (`[tag[GUI command]]`).
 Elle ne demande aucune analyse du texte des notes.

@@ -1,0 +1,7 @@
+title: POST /repos/:repo/rollback/abort
+tags: [[HTTP endpoint]] [[Rollback endpoints]]
+kind: reference
+audience: dev
+summary: Releases the navigation lock; HEAD stays where the steps left it.
+
+Bodies, answers and errors: [[Rollback endpoints]].

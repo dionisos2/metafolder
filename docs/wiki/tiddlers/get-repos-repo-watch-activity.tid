@@ -1,0 +1,9 @@
+title: GET /repos/:repo/watch/activity
+tags: [[HTTP endpoint]] [[Watcher endpoints]]
+kind: reference
+audience: dev
+summary: One path's watcher counts and its busiest direct children.
+
+[[Watch activity]].
+
+Bodies, answers and errors: [[Watcher endpoints]].

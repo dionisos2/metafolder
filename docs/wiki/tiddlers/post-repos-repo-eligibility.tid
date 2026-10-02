@@ -1,0 +1,7 @@
+title: POST /repos/:repo/eligibility
+tags: [[HTTP endpoint]] [[Eligibility]]
+kind: reference
+audience: dev
+summary: Whether paths are eligible for tracking, with the reason.
+
+Bodies, answers and errors: [[Eligibility]].

@@ -1,0 +1,9 @@
+title: $:/mf/gen/HTTP endpoint/GET /__media-support
+catalog: HTTP endpoint
+target: GET /__media-support
+summary: Served by the GUI.
+
+!! Reference
+
+|!Server |GUI |
+|!Handler |``a closure`` |

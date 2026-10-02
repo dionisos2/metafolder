@@ -1,0 +1,9 @@
+title: $:/mf/gen/HTTP endpoint/POST /repos/:repo/query/fields/batch
+catalog: HTTP endpoint
+target: POST /repos/:repo/query/fields/batch
+summary: Served by the daemon.
+
+!! Reference
+
+|!Server |daemon |
+|!Handler |``batch_writes`` |

@@ -1,0 +1,7 @@
+title: GET /repos
+tags: [[HTTP endpoint]] [[Repository endpoints]]
+kind: reference
+audience: dev
+summary: The loaded repositories; the system ones only with ?all=true.
+
+Bodies, answers and errors: [[Repository endpoints]].

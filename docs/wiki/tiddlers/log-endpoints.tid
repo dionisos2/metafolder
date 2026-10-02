@@ -5,10 +5,10 @@ audience: dev
 summary: GET /log (linear, active or tree, bounded two ways), the change feed GET /log/since, one revision in detail, and setting a label.
 
 |!Route |!Does |
-|`GET /repos/:repo/log` |the history, as operations and revisions (below) |
-|`GET /repos/:repo/log/since?op=<id>` |the change feed: HEAD, and every operation created after `op` |
-|`GET /repos/:repo/log/revisions/:rev_id` |one revision with all its operations and their snapshots; `head` for HEAD's |
-|`PATCH /repos/:repo/log/revisions/:rev_id` |`{"label": "…"}` or `{"label": null}` |
+|<<cmd "GET /repos/:repo/log">> |the history, as operations and revisions (below) |
+|<<cmd "GET /repos/:repo/log/since">> `?op=<id>` |the change feed: HEAD, and every operation created after `op` |
+|<<cmd "GET /repos/:repo/log/revisions/:rev_id">> |one revision with all its operations and their snapshots; `head` for HEAD's |
+|<<cmd "PATCH /repos/:repo/log/revisions/:rev_id">> |`{"label": "…"}` or `{"label": null}` |
 
 !! GET /log
 

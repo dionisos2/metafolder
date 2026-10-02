@@ -1,0 +1,9 @@
+title: $:/mf/gen/HTTP endpoint/POST /repos/:repo/retype
+catalog: HTTP endpoint
+target: POST /repos/:repo/retype
+summary: Served by the daemon.
+
+!! Reference
+
+|!Server |daemon |
+|!Handler |``retype_field`` |

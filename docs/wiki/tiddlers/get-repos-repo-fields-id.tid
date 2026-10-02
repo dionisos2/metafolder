@@ -1,0 +1,7 @@
+title: GET /repos/:repo/fields/:id
+tags: [[HTTP endpoint]] [[Metarecord endpoints]]
+kind: reference
+audience: dev
+summary: One field row, by its id alone.
+
+Bodies, answers and errors: [[Metarecord endpoints]].

@@ -1,0 +1,9 @@
+title: $:/mf/gen/HTTP endpoint/GET /repos/:repo/tree/roots
+catalog: HTTP endpoint
+target: GET /repos/:repo/tree/roots
+summary: Served by the daemon.
+
+!! Reference
+
+|!Server |daemon |
+|!Handler |``tree_roots`` |

@@ -1,0 +1,9 @@
+title: $:/mf/gen/HTTP endpoint/POST /repos/:repo/query/fields/unset
+catalog: HTTP endpoint
+target: POST /repos/:repo/query/fields/unset
+summary: Served by the daemon.
+
+!! Reference
+
+|!Server |daemon |
+|!Handler |``batch_unset`` |

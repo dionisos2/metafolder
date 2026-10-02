@@ -1,0 +1,7 @@
+title: GET /repos/:repo/watch
+tags: [[HTTP endpoint]] [[Watcher endpoints]]
+kind: reference
+audience: dev
+summary: The watch status: paused, pending events, the source and its budget.
+
+Bodies, answers and errors: [[Watcher endpoints]].

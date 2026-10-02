@@ -1,5 +1,5 @@
 title: GET /repos/:repo/slow
-tags: [[Slow log]]
+tags: [[HTTP endpoint]] [[Slow log]]
 kind: reference
 audience: dev
 summary: Reads the repository's slow log, both sources merged, newest first; DELETE empties it.

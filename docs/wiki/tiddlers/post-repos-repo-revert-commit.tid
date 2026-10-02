@@ -1,0 +1,7 @@
+title: POST /repos/:repo/revert/commit
+tags: [[HTTP endpoint]] [[Revert endpoints]]
+kind: reference
+audience: dev
+summary: Writes what the client managed of a coordinated revert and releases the lock.
+
+Bodies, answers and errors: [[Revert endpoints]].

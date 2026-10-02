@@ -1,0 +1,9 @@
+title: POST /gui/bench/clear
+tags: [[HTTP endpoint]] [[GUI scripting endpoints]]
+kind: reference
+audience: dev
+summary: Forgets the timings the GUI recorded.
+
+[[Benchmarks]].
+
+Bodies, answers and errors: [[GUI scripting endpoints]].

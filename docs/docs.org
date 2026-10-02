@@ -726,7 +726,8 @@ panels (repris à l'item 37 dans =Panel pitfalls=).
 CLI : =mf sync *= (7). GUI : =sync:*= (4) ; panel =sync=. Sources : spec-sync entier ;
 help =sync.html= ; mémoires =sync-design=, =http-n-plus-one=.
 
-*Reporté (30 sept. 2026) : trop gros pour l'instant.* La vérification contre le
+*Reporté (30 sept. 2026) : trop gros pour l'instant.* (L'item 42 a exempté ses éléments des catalogues
+obligatoires : vider =$:/mf/config/catalog-exemptions= en le faisant.) La vérification contre le
 code (=core::sync=, =daemon/src/sync.rs=, =routes/sync.rs=) a montré que la spec
 décrit bien plus que ce qui est fait. À régler (ou à documenter comme limite)
 avant d'écrire les notes :
@@ -1395,13 +1396,41 @@ Sources retirées : =spec-perf.org= (supprimée) ; spec-gui « Bench harness »
 
 * Clôture
 
-** TODO 42. Catalogues complets
+** FAIT 42. Catalogues complets
 
-- [ ] ajouter =CLI command=, =GUI command=, =Panel= et =Shipped script= à
+- [X] ajouter =CLI command=, =GUI command=, =Panel= et =Shipped script= à
   =$:/mf/config/enforced-catalogs= (ils doivent déjà être complets à ce stade)
-- [ ] générer le catalogue =HTTP endpoint= (depuis le routeur) et le rendre
+- [X] générer le catalogue =HTTP endpoint= (depuis le routeur) et le rendre
   obligatoire ; les notes =… endpoints= des items deviennent les hubs
-- [ ] générer le catalogue =Reserved field= (depuis =reserved.rs=) et le rendre obligatoire
+- [X] générer le catalogue =Reserved field= (depuis =reserved.rs=) et le rendre obligatoire
+
+*Écart signalé, tranché par l'utilisateur* : les catalogues n'étaient pas complets —
+il manquait toute la sync (item 29, reporté) : les 7 =mf sync *=, les 4 =sync:*=, le
+panel =sync=, et côté HTTP les 6 routes =/sync/…= et =GET …/mf-sync=. Choix :
+une *exemption temporaire*, =$:/mf/config/catalog-exemptions= (préfixes de cibles
+qu'un catalogue obligatoire peut laisser sans note ; elles restent listées « Not
+documented yet »). Une exemption qui ne couvre plus rien de non documenté fait
+échouer =scripts/doc check= : *l'item 29 doit la vider*. Les six catalogues sont
+obligatoires (commit =6428bdf= pour les quatre premiers).
+=Reserved field= (=3c111d1=) : =reserved.rs= gagne le registre =RESERVED_FIELDS=
+(nom, type, résumé) ; =check_writable= y lit les =mf_*= connus ; un test exige que
+tout littéral ="mfr_…"= du source du démon y soit (=mfr_meta_*= est une famille) ;
+son golden test écrit le catalogue. 30 notes (=mfr_mount= existait), hub =Reserved
+field= ; les tableaux de =Reserved fields= pointent dessus. Les alias =mfr_mime=,
+=mf_watch=, =mfr_path=, =mf_ignore=, =mf_schema=, =mfr_watch_exceeded= des notes de
+sujet sont retirés (ils auraient masqué les nouvelles notes).
+=HTTP endpoint= : démon *et* GUI (décision de l'utilisateur). =core::doc_gen::routes=
+lit les appels =.route("…", get(h).post(…))= dans le source de chaque routeur (un
+test compte les =.route(= pour qu'aucun ne soit manqué) ; les modules =/__*.js= de
+la GUI sont une seule entrée. Les générés vont dans =generated/http-endpoint/daemon=
+et =…/gui=. 106 notes nouvelles (4 existaient), courtes : un résumé, le hub qui
+porte corps et réponses. Les tableaux des hubs (douze =… endpoints= et =Orphan
+scan=) pointent sur les notes. Ajoutés : le hub de catalogue =HTTP endpoint= et
+=GUI asset endpoints= (=/panel/…=, =/__*.js=, =/docs/…=, les routes ouvertes) ; les
+routes sans hub sont rattachées à la note de leur sujet (=Health and diagnostics=,
+=Eligibility=, =Mount status=, =Orphan scan=, =Pruning the log=, =Running a
+reconcile=, =Tracking a folder=) — =POST …/track= et =POST …/reconcile= y étaient à
+peine décrits : leurs notes portent le corps, lu dans =routes/fs.rs=.
 
 ** TODO 43. Retrait de l'ancienne documentation
 

@@ -1,0 +1,9 @@
+title: POST /repos/:repo/log/prune
+tags: [[HTTP endpoint]] [[Pruning the log]]
+kind: reference
+audience: dev
+summary: Prunes the log before an operation, or linearizes it up to one — irreversibly.
+
+Runs as a task ([[Task kinds]]).
+
+Bodies, answers and errors: [[Pruning the log]].

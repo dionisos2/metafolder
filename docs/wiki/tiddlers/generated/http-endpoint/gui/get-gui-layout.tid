@@ -1,0 +1,9 @@
+title: $:/mf/gen/HTTP endpoint/GET /gui/layout
+catalog: HTTP endpoint
+target: GET /gui/layout
+summary: Served by the GUI.
+
+!! Reference
+
+|!Server |GUI |
+|!Handler |``gui_api::get_layout`` |

@@ -1,0 +1,9 @@
+title: $:/mf/gen/HTTP endpoint/POST /repos/:repo/watch/check
+catalog: HTTP endpoint
+target: POST /repos/:repo/watch/check
+summary: Served by the daemon.
+
+!! Reference
+
+|!Server |daemon |
+|!Handler |``watch_check`` |

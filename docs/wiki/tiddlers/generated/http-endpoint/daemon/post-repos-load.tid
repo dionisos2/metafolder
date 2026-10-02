@@ -1,0 +1,9 @@
+title: $:/mf/gen/HTTP endpoint/POST /repos/load
+catalog: HTTP endpoint
+target: POST /repos/load
+summary: Served by the daemon.
+
+!! Reference
+
+|!Server |daemon |
+|!Handler |``load_repo`` |

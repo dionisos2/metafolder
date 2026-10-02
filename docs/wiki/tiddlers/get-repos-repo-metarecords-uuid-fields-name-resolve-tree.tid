@@ -1,0 +1,7 @@
+title: GET /repos/:repo/metarecords/:uuid/fields/:name/resolve-tree
+tags: [[HTTP endpoint]] [[Tree endpoints]]
+kind: reference
+audience: dev
+summary: One metarecord's paths in a forest.
+
+Bodies, answers and errors: [[Tree endpoints]].

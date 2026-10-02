@@ -12,12 +12,12 @@ header ([[Session tokens]]). `path` is an absolute path, in the escaped form the
 panels are given ([[Tree names]]).
 
 |!Route |!Answers |
-|`GET /fsraw?path=` |the file's bytes, with `Range` support (seeking in a video, the first bytes of a text) |
-|`GET /thumbnail?path=` |a still PNG, 320 px wide: a frame of a video, the first frame of a GIF (`ffmpeg`), the first page of a PDF (poppler) |
-|`GET /document?path=&page=N&dpi=D` |page `N` (from 1) of a PDF as a PNG; `dpi` clamped to 20–600, 150 when absent |
-|`GET /document/info?path=` |`{"pages": n}` |
-|`GET /__media-support` |`{audio, video, missing}` — whether the output elements WebKit needs exist |
-|`GET /__media-probe?path=` |`{missing, slow}` — the decoders this file lacks, or a warning that the one it would get is too slow |
+|<<cmd "GET /fsraw">> `?path=` |the file's bytes, with `Range` support (seeking in a video, the first bytes of a text) |
+|<<cmd "GET /thumbnail">> `?path=` |a still PNG, 320 px wide: a frame of a video, the first frame of a GIF (`ffmpeg`), the first page of a PDF (poppler) |
+|<<cmd "GET /document">> `?path=&page=N&dpi=D` |page `N` (from 1) of a PDF as a PNG; `dpi` clamped to 20–600, 150 when absent |
+|<<cmd "GET /document/info">> `?path=` |`{"pages": n}` |
+|<<cmd "GET /__media-support">> |`{audio, video, missing}` — whether the output elements WebKit needs exist |
+|<<cmd "GET /__media-probe">> `?path=` |`{missing, slow}` — the decoders this file lacks, or a warning that the one it would get is too slow |
 
 The panels reach them through `thumbnail()` of `/__ui.js` and the [[file panel]]
 ([[The metafolder API]]).

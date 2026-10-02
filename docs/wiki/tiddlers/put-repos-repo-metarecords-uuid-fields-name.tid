@@ -1,0 +1,7 @@
+title: PUT /repos/:repo/metarecords/:uuid/fields/:name
+tags: [[HTTP endpoint]] [[Metarecord endpoints]]
+kind: reference
+audience: dev
+summary: Sets one field of a metarecord, replacing all its rows.
+
+Bodies, answers and errors: [[Metarecord endpoints]].

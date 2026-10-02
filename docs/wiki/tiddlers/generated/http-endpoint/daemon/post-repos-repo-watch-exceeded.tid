@@ -1,0 +1,9 @@
+title: $:/mf/gen/HTTP endpoint/POST /repos/:repo/watch/exceeded
+catalog: HTTP endpoint
+target: POST /repos/:repo/watch/exceeded
+summary: Served by the daemon.
+
+!! Reference
+
+|!Server |daemon |
+|!Handler |``watch_exceeded_set`` |

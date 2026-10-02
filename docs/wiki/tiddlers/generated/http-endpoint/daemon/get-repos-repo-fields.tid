@@ -1,0 +1,9 @@
+title: $:/mf/gen/HTTP endpoint/GET /repos/:repo/fields
+catalog: HTTP endpoint
+target: GET /repos/:repo/fields
+summary: Served by the daemon.
+
+!! Reference
+
+|!Server |daemon |
+|!Handler |``list_fields`` |

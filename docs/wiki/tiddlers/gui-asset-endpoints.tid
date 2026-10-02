@@ -1,0 +1,22 @@
+title: GUI asset endpoints
+tags: [[Writing a panel type]]
+kind: reference
+audience: dev
+summary: The open routes of the GUI's server that serve code and pages — panel files, the shell's JavaScript modules, the rendered documentation.
+
+|!Route |!Serves |
+|<<cmd "GET /panel/:name/*path">> |a file of the panel type `name`'s directory (`~/.config/metafolder/gui/panel-types/<name>/`), verbatim, with a type from its extension |
+|<<cmd "GET /__*.js">> |the shell's helper modules, compiled into the GUI binary (`/__ui.js`, `/__menu.js`…), and `/__commands.js`, the user's own command module ([[User commands]]) |
+|<<cmd "GET /docs/*path">> |a page of the rendered documentation (`~/.config/metafolder/docs/`), which the [[help panel]] reads |
+
+They are the routes ''without'' the session token: they are loaded by `import()` or
+`<link>`, which cannot send a header, and they hold shipped or user-written code, no
+private data ([[Session tokens]]). The CORS policy is permissive for the same reason —
+panels run in the shell's origin and fetch from this one.
+
+A file path is taken as plain name components only — no `..`, no absolute segment —
+so nothing outside the directory is reachable; anything unreadable is a `404`, a
+missing `commands.js` included. A panel file is served as it is on disk: an edit shows
+at the next GUI restart, the module URL being cache-busted per session ([[Panel pitfalls]]).
+The helper modules are compiled in, so editing one needs a rebuild of the GUI
+([[Building]]).

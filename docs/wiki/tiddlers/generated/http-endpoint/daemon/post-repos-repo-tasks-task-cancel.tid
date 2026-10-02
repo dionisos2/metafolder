@@ -1,0 +1,9 @@
+title: $:/mf/gen/HTTP endpoint/POST /repos/:repo/tasks/:task/cancel
+catalog: HTTP endpoint
+target: POST /repos/:repo/tasks/:task/cancel
+summary: Served by the daemon.
+
+!! Reference
+
+|!Server |daemon |
+|!Handler |``cancel_task`` |

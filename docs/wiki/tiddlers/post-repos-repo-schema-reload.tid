@@ -1,0 +1,7 @@
+title: POST /repos/:repo/schema/reload
+tags: [[HTTP endpoint]] [[Schema endpoints]]
+kind: reference
+audience: dev
+summary: Re-reads the schema file; the old schema stays when the new one is refused.
+
+Bodies, answers and errors: [[Schema endpoints]].

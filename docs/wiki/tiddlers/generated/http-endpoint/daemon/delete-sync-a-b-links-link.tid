@@ -1,0 +1,9 @@
+title: $:/mf/gen/HTTP endpoint/DELETE /sync/:a/:b/links/:link
+catalog: HTTP endpoint
+target: DELETE /sync/:a/:b/links/:link
+summary: Served by the daemon.
+
+!! Reference
+
+|!Server |daemon |
+|!Handler |``sync_delete_link`` |

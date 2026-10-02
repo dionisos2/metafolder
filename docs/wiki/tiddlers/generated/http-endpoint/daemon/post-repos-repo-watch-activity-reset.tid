@@ -1,0 +1,9 @@
+title: $:/mf/gen/HTTP endpoint/POST /repos/:repo/watch/activity/reset
+catalog: HTTP endpoint
+target: POST /repos/:repo/watch/activity/reset
+summary: Served by the daemon.
+
+!! Reference
+
+|!Server |daemon |
+|!Handler |``watch_activity_reset`` |

@@ -1,0 +1,9 @@
+title: $:/mf/gen/HTTP endpoint/GET /fsraw
+catalog: HTTP endpoint
+target: GET /fsraw
+summary: Served by the GUI.
+
+!! Reference
+
+|!Server |GUI |
+|!Handler |``fsraw::serve`` |

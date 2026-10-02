@@ -1,0 +1,9 @@
+title: $:/mf/gen/HTTP endpoint/POST /repos/:repo/log/prune
+catalog: HTTP endpoint
+target: POST /repos/:repo/log/prune
+summary: Served by the daemon.
+
+!! Reference
+
+|!Server |daemon |
+|!Handler |``prune_log`` |

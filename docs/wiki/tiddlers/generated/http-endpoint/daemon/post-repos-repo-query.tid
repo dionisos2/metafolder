@@ -1,0 +1,9 @@
+title: $:/mf/gen/HTTP endpoint/POST /repos/:repo/query
+catalog: HTTP endpoint
+target: POST /repos/:repo/query
+summary: Served by the daemon.
+
+!! Reference
+
+|!Server |daemon |
+|!Handler |``run_query`` |

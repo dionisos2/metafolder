@@ -1,0 +1,7 @@
+title: GET /__media-probe
+tags: [[HTTP endpoint]] [[GUI file endpoints]]
+kind: reference
+audience: dev
+summary: The decoders a media file lacks, or a warning that the one it would get is too slow.
+
+Bodies, answers and errors: [[GUI file endpoints]].

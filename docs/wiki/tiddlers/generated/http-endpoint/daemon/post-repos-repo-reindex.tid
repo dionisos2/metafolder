@@ -1,0 +1,9 @@
+title: $:/mf/gen/HTTP endpoint/POST /repos/:repo/reindex
+catalog: HTTP endpoint
+target: POST /repos/:repo/reindex
+summary: Served by the daemon.
+
+!! Reference
+
+|!Server |daemon |
+|!Handler |``reindex_repo`` |

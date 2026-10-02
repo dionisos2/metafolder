@@ -1,0 +1,7 @@
+title: PATCH /repos/:repo/log/revisions/:rev_id
+tags: [[HTTP endpoint]] [[Log endpoints]]
+kind: reference
+audience: dev
+summary: Sets or clears a revision's label.
+
+Bodies, answers and errors: [[Log endpoints]].

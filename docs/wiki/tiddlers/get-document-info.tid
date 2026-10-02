@@ -1,0 +1,7 @@
+title: GET /document/info
+tags: [[HTTP endpoint]] [[GUI file endpoints]]
+kind: reference
+audience: dev
+summary: The number of pages of a PDF.
+
+Bodies, answers and errors: [[GUI file endpoints]].

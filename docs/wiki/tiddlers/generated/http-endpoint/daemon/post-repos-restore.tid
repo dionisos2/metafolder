@@ -1,0 +1,9 @@
+title: $:/mf/gen/HTTP endpoint/POST /repos/restore
+catalog: HTTP endpoint
+target: POST /repos/restore
+summary: Served by the daemon.
+
+!! Reference
+
+|!Server |daemon |
+|!Handler |``restore_repo`` |

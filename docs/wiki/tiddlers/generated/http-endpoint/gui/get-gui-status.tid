@@ -1,0 +1,9 @@
+title: $:/mf/gen/HTTP endpoint/GET /gui/status
+catalog: HTTP endpoint
+target: GET /gui/status
+summary: Served by the GUI.
+
+!! Reference
+
+|!Server |GUI |
+|!Handler |``gui_api::get_status`` |

@@ -1,0 +1,9 @@
+title: $:/mf/gen/HTTP endpoint/POST /repos/:repo/duplicates/scan
+catalog: HTTP endpoint
+target: POST /repos/:repo/duplicates/scan
+summary: Served by the daemon.
+
+!! Reference
+
+|!Server |daemon |
+|!Handler |``duplicates_scan`` |

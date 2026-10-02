@@ -1,0 +1,7 @@
+title: POST /repos/:repo/schema/check
+tags: [[HTTP endpoint]] [[Schema endpoints]]
+kind: reference
+audience: dev
+summary: Lists the schema violations, optionally among a query's matches.
+
+Bodies, answers and errors: [[Schema endpoints]].

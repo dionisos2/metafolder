@@ -1,0 +1,9 @@
+title: POST /repos/:repo/tasks/:task/cancel
+tags: [[HTTP endpoint]] [[Task endpoints]]
+kind: reference
+audience: dev
+summary: Requests a task's stop and answers the task as it stands.
+
+The stop itself happens at the worker's next checkpoint ([[Cancelling a task]]).
+
+Bodies, answers and errors: [[Task endpoints]].

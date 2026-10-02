@@ -1,0 +1,9 @@
+title: $:/mf/gen/HTTP endpoint/PATCH /repos/:repo
+catalog: HTTP endpoint
+target: PATCH /repos/:repo
+summary: Served by the daemon.
+
+!! Reference
+
+|!Server |daemon |
+|!Handler |``rename_repo`` |

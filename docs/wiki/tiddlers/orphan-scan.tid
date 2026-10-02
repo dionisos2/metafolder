@@ -19,10 +19,10 @@ are what make acting on the answer safe: neither a permission drop nor an unplug
 drive can orphan a subtree.
 
 |!Route |!Does |
-|`POST /repos/:repo/orphans/scan` |read-only: `{"count": N, "orphans": [{"uuid", "stale_path"}]}` |
-|`POST /repos/:repo/orphans/mark` |writes `orphan = true` on both kinds and unmarks the rest, one revision: `{"orphans": N, "marked": A, "unmarked": B}` |
-|`POST /repos/:repo/orphans/clear` |`{"uuids": [...]}`: for each still missing (re-verified), `mfr_path_old` captured, `mfr_path = nothing`, cascade — one revision: `{"cleared": N}` |
-|`POST /repos/:repo/orphans/relink` |a task (`202`), result `relinked`, `conflicts`, `skipped` ([[Relinking orphans]]) |
+|<<cmd "POST /repos/:repo/orphans/scan">> |read-only: `{"count": N, "orphans": [{"uuid", "stale_path"}]}` |
+|<<cmd "POST /repos/:repo/orphans/mark">> |writes `orphan = true` on both kinds and unmarks the rest, one revision: `{"orphans": N, "marked": A, "unmarked": B}` |
+|<<cmd "POST /repos/:repo/orphans/clear">> |`{"uuids": [...]}`: for each still missing (re-verified), `mfr_path_old` captured, `mfr_path = nothing`, cascade — one revision: `{"cleared": N}` |
+|<<cmd "POST /repos/:repo/orphans/relink">> |a task (`202`), result `relinked`, `conflicts`, `skipped` ([[Relinking orphans]]) |
 
 Marking counts both populations — the missing (which needs the disk) and the deleted
 (`mfr_path IS ABSENT`) — with the scan's guards unchanged. Deleting the marked set is not

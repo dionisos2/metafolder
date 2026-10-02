@@ -1,0 +1,9 @@
+title: POST /repos/:repo/watch/activity/reset
+tags: [[HTTP endpoint]] [[Watcher endpoints]]
+kind: reference
+audience: dev
+summary: Forgets every watcher count.
+
+[[Watch activity]].
+
+Bodies, answers and errors: [[Watcher endpoints]].

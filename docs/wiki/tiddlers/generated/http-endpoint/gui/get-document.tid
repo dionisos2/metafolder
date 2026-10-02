@@ -1,0 +1,9 @@
+title: $:/mf/gen/HTTP endpoint/GET /document
+catalog: HTTP endpoint
+target: GET /document
+summary: Served by the GUI.
+
+!! Reference
+
+|!Server |GUI |
+|!Handler |``document::page`` |

@@ -5,12 +5,12 @@ audience: dev
 summary: The atomic POST /rollback, the plan and its summary, and the coordinated start / step / abort.
 
 |!Route |!Does |
-|`POST /repos/:repo/rollback` |navigates atomically, metadata only (no file is moved) |
-|`GET /repos/:repo/rollback/plan` |the ordered steps, without the lock |
-|`GET /repos/:repo/rollback/plan/summary` |counts, without the lock |
-|`POST /repos/:repo/rollback/start` |takes the lock, plans, answers the first step |
-|`POST /repos/:repo/rollback/step` |`{}` or `{"skip": true}`: applies the current step, answers the next |
-|`POST /repos/:repo/rollback/abort` |releases the lock → `{"head"}`; HEAD stays |
+|<<cmd "POST /repos/:repo/rollback">> |navigates atomically, metadata only (no file is moved) |
+|<<cmd "GET /repos/:repo/rollback/plan">> |the ordered steps, without the lock |
+|<<cmd "GET /repos/:repo/rollback/plan/summary">> |counts, without the lock |
+|<<cmd "POST /repos/:repo/rollback/start">> |takes the lock, plans, answers the first step |
+|<<cmd "POST /repos/:repo/rollback/step">> |`{}` or `{"skip": true}`: applies the current step, answers the next |
+|<<cmd "POST /repos/:repo/rollback/abort">> |releases the lock → `{"head"}`; HEAD stays |
 
 ''Targets'' (`{"target": …}`; for the plans, `target_id`, `target_label`,
 `target_timestamp`, `target_prev_revision`):

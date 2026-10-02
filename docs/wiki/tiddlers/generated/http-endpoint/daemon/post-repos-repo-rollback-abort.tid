@@ -1,0 +1,9 @@
+title: $:/mf/gen/HTTP endpoint/POST /repos/:repo/rollback/abort
+catalog: HTTP endpoint
+target: POST /repos/:repo/rollback/abort
+summary: Served by the daemon.
+
+!! Reference
+
+|!Server |daemon |
+|!Handler |``rollback_abort`` |

@@ -1,0 +1,7 @@
+title: DELETE /repos/:repo/slow
+tags: [[HTTP endpoint]] [[Slow log]]
+kind: reference
+audience: dev
+summary: Empties the repository's slow log.
+
+Described with its reading counterpart: [[GET /repos/:repo/slow]].

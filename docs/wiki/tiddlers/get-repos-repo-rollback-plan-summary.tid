@@ -1,0 +1,7 @@
+title: GET /repos/:repo/rollback/plan/summary
+tags: [[HTTP endpoint]] [[Rollback endpoints]]
+kind: reference
+audience: dev
+summary: The counts of a rollback's plan — whether it needs any file moved.
+
+Bodies, answers and errors: [[Rollback endpoints]].

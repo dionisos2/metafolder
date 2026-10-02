@@ -1,0 +1,11 @@
+title: POST /repos/:repo/track
+tags: [[HTTP endpoint]] [[Tracking a folder]]
+kind: reference
+audience: dev
+summary: Records one path — and its missing parents — with mf_watch = false, and answers its uuid; idempotent.
+
+`{"path": "<absolute path>"}` → `{"uuid": "<32hex>"}`, in one revision. A path already
+recorded answers its existing metarecord rather than an error, so a client can track
+without checking first. `400` when the path does not exist, lies outside the
+repository's root, or is the root itself ([[Path representation]]). `mf track` is its
+client ([[Tracking a folder]]).

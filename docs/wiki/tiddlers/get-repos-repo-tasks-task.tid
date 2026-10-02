@@ -1,0 +1,7 @@
+title: GET /repos/:repo/tasks/:task
+tags: [[HTTP endpoint]] [[Task endpoints]]
+kind: reference
+audience: dev
+summary: One task, with its progress, result or error; 404 when unknown or evicted.
+
+Bodies, answers and errors: [[Task endpoints]].

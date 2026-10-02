@@ -1,0 +1,9 @@
+title: $:/mf/gen/HTTP endpoint/POST /gui/workspaces
+catalog: HTTP endpoint
+target: POST /gui/workspaces
+summary: Served by the GUI.
+
+!! Reference
+
+|!Server |GUI |
+|!Handler |``gui_api::create_workspace`` |

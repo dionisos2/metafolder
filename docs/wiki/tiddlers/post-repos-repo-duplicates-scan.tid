@@ -1,5 +1,5 @@
 title: POST /repos/:repo/duplicates/scan
-tags: Duplicates
+tags: [[HTTP endpoint]] Duplicates
 kind: reference
 audience: dev
 summary: Starts a duplicate scan as a background task; the result is a summary, and reading the groups is an ordinary query.

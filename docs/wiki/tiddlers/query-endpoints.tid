@@ -5,15 +5,15 @@ audience: dev
 summary: POST /query and the /query/* family — every operation over a set of metarecords takes a query.
 
 |!Route |!Body |!Answers |
-|`POST /repos/:repo/query` |`{"query", "select"?, "sort"?, "limit"?, "cursor"?, "count"?, "timeout_ms"?}` |the matches (below) |
-|`POST /repos/:repo/query/delete` |`{"query"}` |`{"deleted": N}` |
-|`POST /repos/:repo/query/fields/set` |`{"query", "name", "value" or "values", "force"?}` |`{"updated": N}` |
-|`POST /repos/:repo/query/fields/add` |`{"query", "name", "value", "force"?}` |`{"updated": N}` |
-|`POST /repos/:repo/query/fields/remove` |`{"query", "name", "value", "force"?}` |`{"updated": N}` |
-|`POST /repos/:repo/query/fields/unset` |`{"query", "name", "force"?}` |`{"updated": N}` |
-|`POST /repos/:repo/query/fields/batch` |`{"ops": [{"op", …}, …]}` |`{"results": [{"uuid"} or {"updated": N}, …]}` (below) |
-|`POST /repos/:repo/query/fields/resolve-tree` |`{"query", "field"?}` |`{"<uuid>": ["<path>"], …}` ([[Tree endpoints]]) |
-|`POST /repos/:repo/query/profile` |a query |its phases ([[POST /repos/:repo/query/profile]]) |
+|<<cmd "POST /repos/:repo/query">> |`{"query", "select"?, "sort"?, "limit"?, "cursor"?, "count"?, "timeout_ms"?}` |the matches (below) |
+|<<cmd "POST /repos/:repo/query/delete">> |`{"query"}` |`{"deleted": N}` |
+|<<cmd "POST /repos/:repo/query/fields/set">> |`{"query", "name", "value" or "values", "force"?}` |`{"updated": N}` |
+|<<cmd "POST /repos/:repo/query/fields/add">> |`{"query", "name", "value", "force"?}` |`{"updated": N}` |
+|<<cmd "POST /repos/:repo/query/fields/remove">> |`{"query", "name", "value", "force"?}` |`{"updated": N}` |
+|<<cmd "POST /repos/:repo/query/fields/unset">> |`{"query", "name", "force"?}` |`{"updated": N}` |
+|<<cmd "POST /repos/:repo/query/fields/batch">> |`{"ops": [{"op", …}, …]}` |`{"results": [{"uuid"} or {"updated": N}, …]}` (below) |
+|<<cmd "POST /repos/:repo/query/fields/resolve-tree">> |`{"query", "field"?}` |`{"<uuid>": ["<path>"], …}` ([[Tree endpoints]]) |
+|<<cmd "POST /repos/:repo/query/profile">> |a query |its phases ([[POST /repos/:repo/query/profile]]) |
 
 !! POST /query
 

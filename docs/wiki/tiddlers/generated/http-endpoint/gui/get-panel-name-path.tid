@@ -1,0 +1,9 @@
+title: $:/mf/gen/HTTP endpoint/GET /panel/:name/*path
+catalog: HTTP endpoint
+target: GET /panel/:name/*path
+summary: Served by the GUI.
+
+!! Reference
+
+|!Server |GUI |
+|!Handler |``panel_assets::serve`` |

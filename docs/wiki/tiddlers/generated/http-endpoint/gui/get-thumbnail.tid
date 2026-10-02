@@ -1,0 +1,9 @@
+title: $:/mf/gen/HTTP endpoint/GET /thumbnail
+catalog: HTTP endpoint
+target: GET /thumbnail
+summary: Served by the GUI.
+
+!! Reference
+
+|!Server |GUI |
+|!Handler |``thumbnail::serve`` |

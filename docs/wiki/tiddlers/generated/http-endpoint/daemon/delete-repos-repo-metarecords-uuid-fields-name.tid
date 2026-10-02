@@ -1,0 +1,9 @@
+title: $:/mf/gen/HTTP endpoint/DELETE /repos/:repo/metarecords/:uuid/fields/:name
+catalog: HTTP endpoint
+target: DELETE /repos/:repo/metarecords/:uuid/fields/:name
+summary: Served by the daemon.
+
+!! Reference
+
+|!Server |daemon |
+|!Handler |``unset_record_field`` |

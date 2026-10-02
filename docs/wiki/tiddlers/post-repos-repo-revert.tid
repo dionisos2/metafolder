@@ -1,0 +1,7 @@
+title: POST /repos/:repo/revert
+tags: [[HTTP endpoint]] [[Revert endpoints]]
+kind: reference
+audience: dev
+summary: Reverts a target in one transaction.
+
+Bodies, answers and errors: [[Revert endpoints]].

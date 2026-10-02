@@ -1,0 +1,7 @@
+title: POST /repos/:repo/watch/resume
+tags: [[HTTP endpoint]] [[Watcher endpoints]]
+kind: reference
+audience: dev
+summary: Resumes the ingestion of filesystem events.
+
+Bodies, answers and errors: [[Watcher endpoints]].

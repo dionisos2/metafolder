@@ -1,0 +1,9 @@
+title: $:/mf/gen/HTTP endpoint/DELETE /repos/:repo/slow
+catalog: HTTP endpoint
+target: DELETE /repos/:repo/slow
+summary: Served by the daemon.
+
+!! Reference
+
+|!Server |daemon |
+|!Handler |``clear_slow_log`` |

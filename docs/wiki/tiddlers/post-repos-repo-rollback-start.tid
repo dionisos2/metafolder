@@ -1,0 +1,7 @@
+title: POST /repos/:repo/rollback/start
+tags: [[HTTP endpoint]] [[Rollback endpoints]]
+kind: reference
+audience: dev
+summary: Takes the navigation lock, plans a rollback and answers its first step.
+
+Bodies, answers and errors: [[Rollback endpoints]].

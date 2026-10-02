@@ -1,0 +1,9 @@
+title: $:/mf/gen/HTTP endpoint/DELETE /gui/workspaces/:id
+catalog: HTTP endpoint
+target: DELETE /gui/workspaces/:id
+summary: Served by the GUI.
+
+!! Reference
+
+|!Server |GUI |
+|!Handler |``gui_api::delete_workspace`` |

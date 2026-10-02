@@ -1,0 +1,7 @@
+title: GET /repos/:repo/fields
+tags: [[HTTP endpoint]] [[Metarecord endpoints]]
+kind: reference
+audience: dev
+summary: The distinct field names of a repository with their type.
+
+Bodies, answers and errors: [[Metarecord endpoints]].

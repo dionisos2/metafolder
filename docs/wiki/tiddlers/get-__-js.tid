@@ -1,0 +1,7 @@
+title: GET /__*.js
+tags: [[HTTP endpoint]] [[GUI asset endpoints]]
+kind: reference
+audience: dev
+summary: A JavaScript module of the shell's: a panel helper, or the user's commands.js.
+
+Bodies, answers and errors: [[GUI asset endpoints]].

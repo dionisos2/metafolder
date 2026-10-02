@@ -1,0 +1,7 @@
+title: POST /repos/:repo/unload
+tags: [[HTTP endpoint]] [[Repository endpoints]]
+kind: reference
+audience: dev
+summary: Unloads a repository.
+
+Bodies, answers and errors: [[Repository endpoints]].

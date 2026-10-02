@@ -1,0 +1,9 @@
+title: $:/mf/gen/HTTP endpoint/GET /repos/:repo/log/since
+catalog: HTTP endpoint
+target: GET /repos/:repo/log/since
+summary: Served by the daemon.
+
+!! Reference
+
+|!Server |daemon |
+|!Handler |``get_log_since`` |

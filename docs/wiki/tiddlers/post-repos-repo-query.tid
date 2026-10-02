@@ -1,0 +1,7 @@
+title: POST /repos/:repo/query
+tags: [[HTTP endpoint]] [[Query endpoints]]
+kind: reference
+audience: dev
+summary: The metarecords a query matches, shaped by select, sorted and paged.
+
+Bodies, answers and errors: [[Query endpoints]].

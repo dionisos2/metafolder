@@ -5,11 +5,11 @@ audience: dev
 summary: GET /revert/plan, the single-shot POST /revert, and the coordinated start/commit/abort — and the target they share.
 
 |!Route |!Does |
-|`GET /repos/:repo/revert/plan?target_rev_id=…` or `target_op_ids=…&with_dependents=…` |what a revert would do; writes nothing, takes no lock |
-|`POST /repos/:repo/revert` |checks, writes and commits in one transaction |
-|`POST /repos/:repo/revert/start` |the coordinated form: takes the lock, fixes the target, answers the plan (`409` if blocked, lock not taken) |
-|`POST /repos/:repo/revert/commit` |`{"apply": [ids], "label"?}` — writes what the client managed, releases the lock |
-|`POST /repos/:repo/revert/abort` |releases the lock, writes nothing → `{"head"}` |
+|<<cmd "GET /repos/:repo/revert/plan">> `?target_rev_id=…` or `target_op_ids=…&with_dependents=…` |what a revert would do; writes nothing, takes no lock |
+|<<cmd "POST /repos/:repo/revert">> |checks, writes and commits in one transaction |
+|<<cmd "POST /repos/:repo/revert/start">> |the coordinated form: takes the lock, fixes the target, answers the plan (`409` if blocked, lock not taken) |
+|<<cmd "POST /repos/:repo/revert/commit">> |`{"apply": [ids], "label"?}` — writes what the client managed, releases the lock |
+|<<cmd "POST /repos/:repo/revert/abort">> |releases the lock, writes nothing → `{"head"}` |
 
 ''The target'', the same everywhere: `{"rev_id": N}`, `{"rev_id": "head"}`, or
 `{"op_ids": [22, 23]}`; every member on HEAD's ancestry (`400` otherwise). With

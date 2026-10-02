@@ -1,0 +1,9 @@
+title: $:/mf/gen/HTTP endpoint/POST /sync/:a/:b/links/commit
+catalog: HTTP endpoint
+target: POST /sync/:a/:b/links/commit
+summary: Served by the daemon.
+
+!! Reference
+
+|!Server |daemon |
+|!Handler |``sync_commit`` |

@@ -1,0 +1,9 @@
+title: $:/mf/gen/HTTP endpoint/GET /repos/:repo/rollback/plan/summary
+catalog: HTTP endpoint
+target: GET /repos/:repo/rollback/plan/summary
+summary: Served by the daemon.
+
+!! Reference
+
+|!Server |daemon |
+|!Handler |``rollback_plan_summary`` |

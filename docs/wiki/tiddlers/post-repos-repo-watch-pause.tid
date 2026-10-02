@@ -1,0 +1,7 @@
+title: POST /repos/:repo/watch/pause
+tags: [[HTTP endpoint]] [[Watcher endpoints]]
+kind: reference
+audience: dev
+summary: Pauses the ingestion of filesystem events, stopping the flush in progress.
+
+Bodies, answers and errors: [[Watcher endpoints]].

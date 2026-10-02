@@ -1,0 +1,7 @@
+title: POST /repos/:repo/query/fields/set
+tags: [[HTTP endpoint]] [[Query endpoints]]
+kind: reference
+audience: dev
+summary: Sets a field on every metarecord a query matches, in one revision.
+
+Bodies, answers and errors: [[Query endpoints]].

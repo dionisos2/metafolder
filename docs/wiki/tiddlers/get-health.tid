@@ -1,0 +1,9 @@
+title: GET /health
+tags: [[HTTP endpoint]] [[Health and diagnostics]]
+kind: reference
+audience: dev
+summary: Says the daemon is up, its version and the protocol version it speaks.
+
+Like every daemon route it needs the session token. What a client compares: `api_version` ([[The wire protocol version]]).
+
+Bodies, answers and errors: [[Health and diagnostics]].

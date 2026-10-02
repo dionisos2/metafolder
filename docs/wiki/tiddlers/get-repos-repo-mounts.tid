@@ -1,0 +1,7 @@
+title: GET /repos/:repo/mounts
+tags: [[HTTP endpoint]] [[Mount status]]
+kind: reference
+audience: dev
+summary: The declared mount points with their state now: online, mismatch or offline.
+
+Bodies, answers and errors: [[Mount status]].

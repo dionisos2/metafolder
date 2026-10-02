@@ -5,11 +5,11 @@ audience: dev
 summary: Walking a forest top-down (roots, children), and turning paths into nodes and back.
 
 |!Route |!Does |
-|`GET /repos/:repo/tree/roots[?field=<f>]` |the roots of a forest (default `mfr_path`): `[{"uuid", "name"}, …]` by name |
-|`GET /repos/:repo/tree/children?field=<f>&uuid=<hex>` |the direct children of one node, same shape, by name |
-|`POST /repos/:repo/tree/resolve-path` |`{"field"?, "path", "form"?}` → `{"uuid": <hex> or null}` |
-|`GET /repos/:repo/metarecords/:uuid/fields/:name/resolve-tree` |one metarecord's path in that forest: `{"paths": […]}` |
-|`POST /repos/:repo/query/fields/resolve-tree` |`{"query", "field"?}` → `{"<uuid>": ["<path>"], …}` for every match |
+|<<cmd "GET /repos/:repo/tree/roots">> `[?field=<f>]` |the roots of a forest (default `mfr_path`): `[{"uuid", "name"}, …]` by name |
+|<<cmd "GET /repos/:repo/tree/children">> `?field=<f>&uuid=<hex>` |the direct children of one node, same shape, by name |
+|<<cmd "POST /repos/:repo/tree/resolve-path">> |`{"field"?, "path", "form"?}` → `{"uuid": <hex> or null}` |
+|<<cmd "GET /repos/:repo/metarecords/:uuid/fields/:name/resolve-tree">> |one metarecord's path in that forest: `{"paths": […]}` |
+|<<cmd "POST /repos/:repo/query/fields/resolve-tree">> |`{"query", "field"?}` → `{"<uuid>": ["<path>"], …}` for every match |
 
 ''Roots'' are the entry point a query cannot express: the tag hierarchy's top-level
 nodes are reachable only from here. A tree walker then descends with ''children'':
