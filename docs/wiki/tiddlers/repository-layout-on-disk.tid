@@ -26,7 +26,7 @@ store ([[Storage]]) is refused on a network filesystem ([[Storage safety]]). `in
 
 |!Field |!Type |!Meaning |
 |`repo_uuid` |uuid |the repository's stable identifier |
-|`name` |string |its name, unique among loaded repositories (renamed with `PATCH /repos/:repo`) |
+|`name` |string |its name, unique among loaded repositories (renamed with `mf repo rename`, `PATCH /repos/:repo`) |
 |`version` |integer |the version of this file's layout |
 |`root` |path |the watched directory: absolute, or relative to the directory holding `.metafolder/` — `.` for a repository created with `.metafolder/` inside its root, an absolute path for an external one ([[Moving a repository]]) |
 |`schema` |path |optional: the user schema, relative to `.metafolder/` or absolute (default `.metafolder/schema.json`) |

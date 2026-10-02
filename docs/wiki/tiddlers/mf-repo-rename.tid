@@ -1,0 +1,8 @@
+title: mf repo rename
+tags: [[CLI command]] Daemon
+kind: reference
+summary: Rename the selected repository and print its UUID
+
+Gives the repository `-n`/`-u` names a new name (`PATCH /repos/:repo`,
+[[Repository endpoints]]), written to `config.json`; its uuid does not change. Refused
+when another loaded repository has that name ([[Creating and loading a repository]]).

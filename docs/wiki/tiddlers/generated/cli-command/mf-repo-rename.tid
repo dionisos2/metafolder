@@ -1,0 +1,20 @@
+title: $:/mf/gen/CLI command/mf repo rename
+catalog: CLI command
+target: mf repo rename
+summary: Rename the selected repository and print its UUID
+
+!! Reference
+
+```
+Rename the selected repository and print its UUID
+
+Usage: mf repo rename <NAME>
+
+Arguments:
+  <NAME>
+          The new name, unique among the loaded repositories
+
+Options:
+  -h, --help
+          Print help
+```

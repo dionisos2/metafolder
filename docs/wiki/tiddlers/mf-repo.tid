@@ -4,4 +4,4 @@ kind: reference
 summary: Repository management (default: list)
 
 The loaded repositories ([[Creating and loading a repository]]). Alone, `mf repo` is
-`mf repo list`. Daemon-wide: `-n`/`-u` are ignored, except by `unload`.
+`mf repo list`. Daemon-wide: `-n`/`-u` are ignored, except by `unload` and `rename`.

@@ -276,6 +276,9 @@ enum RepoCommand {
         /// External database location (instead of <root>/.metafolder)
         #[arg(long)]
         metafolder: Option<PathBuf>,
+        /// Name of the repository (default: the root directory's name)
+        #[arg(long)]
+        name: Option<String>,
         /// Ignore presets to apply to the new root (comma/space separated;
         /// default: "default")
         #[arg(long = "ignore", value_name = "PRESETS", conflicts_with = "no_ignore")]
@@ -296,6 +299,11 @@ enum RepoCommand {
     },
     /// Unload the selected repository (stops its watcher, releases its DB lock)
     Unload,
+    /// Rename the selected repository and print its UUID
+    Rename {
+        /// The new name, unique among the loaded repositories
+        name: String,
+    },
     /// Check that the selected repository's store holds together
     ///
     /// Its indexes against a rebuild from its data. Exits 1 when a problem is
@@ -1203,9 +1211,15 @@ fn dispatch(ctx: &Ctx, command: Command) -> CmdResult {
     match command {
         Command::Repo { command } => match command.unwrap_or(RepoCommand::List { all: false }) {
             RepoCommand::List { all } => commands::repos(ctx, all),
-            RepoCommand::Init { root, metafolder, ignore, no_ignore } => {
-                commands::init(ctx, &root, metafolder.as_deref(), ignore, no_ignore)
-            }
+            RepoCommand::Init { root, metafolder, name, ignore, no_ignore } => commands::init(
+                ctx,
+                &root,
+                metafolder.as_deref(),
+                name.as_deref(),
+                ignore,
+                no_ignore,
+            ),
+            RepoCommand::Rename { name } => commands::rename_repo(ctx, &name),
             RepoCommand::Load { root, metafolder, no_wait } => {
                 commands::load(ctx, root.as_deref(), metafolder.as_deref(), no_wait)
             }

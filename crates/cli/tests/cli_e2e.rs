@@ -174,6 +174,47 @@ fn test_init_with_external_metafolder() {
     assert!(!root.join(".metafolder").exists());
 }
 
+/// The name `mf repo list` gives the repository `uuid`.
+fn listed_name(uuid: &str) -> Option<String> {
+    let out = mf(&["repo", "list"]);
+    let repos: serde_json::Value = serde_json::from_str(&out.stdout).expect("JSON");
+    let repo = repos.as_array()?.iter().find(|r| r["repo_uuid"] == uuid)?;
+    Some(repo["name"].as_str()?.to_string())
+}
+
+#[test]
+fn test_init_takes_a_name() {
+    let root = temp_dir("init_name");
+    let name = format!("named-{}", root.file_name().unwrap().to_str().unwrap());
+    let out = mf_cfg(&["repo", "init", root.to_str().unwrap(), "--name", &name]);
+    assert_ok(&out);
+    assert_eq!(listed_name(out.stdout.trim()), Some(name));
+}
+
+#[test]
+fn test_rename_changes_the_repository_name() {
+    let (repo, root) = init_repo("rename");
+    let name = format!("renamed-{}", root.file_name().unwrap().to_str().unwrap());
+    let out = mf(&["-u", &repo, "repo", "rename", &name]);
+    assert_ok(&out);
+    assert_eq!(out.stdout.trim(), repo);
+    assert_eq!(listed_name(&repo), Some(name.clone()));
+    // The new name selects it.
+    assert_ok(&mf(&["-n", &name, "repo", "check"]));
+
+    // A name another loaded repository holds is refused.
+    let (other, _other_root) = init_repo("rename_taken");
+    let out = mf(&["-u", &other, "repo", "rename", &name]);
+    assert_eq!(out.code, 1, "stderr: {}", out.stderr);
+    assert!(out.stderr.contains("error:"), "stderr: {}", out.stderr);
+}
+
+#[test]
+fn test_rename_requires_repo() {
+    let out = mf(&["repo", "rename", "x"]);
+    assert_eq!(out.code, 2, "stderr: {}", out.stderr);
+}
+
 #[test]
 fn test_load_root_is_idempotent() {
     let (repo, root) = init_repo("load");

@@ -20,6 +20,9 @@ Options:
       --metafolder <METAFOLDER>
           External database location (instead of <root>/.metafolder)
 
+      --name <NAME>
+          Name of the repository (default: the root directory's name)
+
       --ignore <PRESETS>
           Ignore presets to apply to the new root (comma/space separated; default: "default")
 

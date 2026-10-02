@@ -8,11 +8,12 @@ mf repo init <root>                         # create .metafolder/ inside <root>
 mf repo init <root> --metafolder <path>     # … or anywhere else
 mf repo load <root>                         # load it (--metafolder <path> for an external one)
 mf repo                                     # the loaded repositories (mf repo list)
+mf -n <name> repo rename <new-name>         # rename it
 mf -n <name> repo unload                    # unload it
 ```
 
 ''Init'' creates `config.json` and the store ([[Storage]]); it fails if a repository is already
-there. The name defaults to the root directory's name. A new repository watches
+there. The name defaults to the root directory's name (`--name` gives another). A new repository watches
 nothing: tracking is opt-in ([[Tracking a folder]]).
 
 ''Load'' makes a daemon work on a repository. It is refused (`409`) when a loaded

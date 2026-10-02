@@ -180,6 +180,7 @@ pub fn init(
     ctx: &Ctx,
     root: &Path,
     metafolder: Option<&Path>,
+    name: Option<&str>,
     ignore: Vec<String>,
     no_ignore: bool,
 ) -> Result<i32, CliError> {
@@ -188,6 +189,9 @@ pub fn init(
     let mut body = json!({"root": absolutize(root)?});
     if let Some(dir) = metafolder {
         body["metafolder"] = json!(absolutize(dir)?);
+    }
+    if let Some(name) = name {
+        body["name"] = json!(name);
     }
     let client = &ctx.client;
 
@@ -337,6 +341,15 @@ pub fn reindex_repo(ctx: &Ctx) -> Result<i32, CliError> {
 pub fn unload(ctx: &Ctx) -> Result<i32, CliError> {
     let base = ctx.repo_base()?;
     let resp = ctx.client.request("POST", &format!("{base}/unload"), &[], None)?;
+    println!("{}", resp["repo_uuid"].as_str().unwrap_or_default());
+    Ok(0)
+}
+
+/// `mf repo rename`: renames the repository (`PATCH /repos/:repo`), printing
+/// its UUID. A name another loaded repository holds (409) is an error.
+pub fn rename_repo(ctx: &Ctx, name: &str) -> Result<i32, CliError> {
+    let base = ctx.repo_base()?;
+    let resp = ctx.client.request("PATCH", &base, &[], Some(&json!({"name": name})))?;
     println!("{}", resp["repo_uuid"].as_str().unwrap_or_default());
     Ok(0)
 }
