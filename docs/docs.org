@@ -1288,20 +1288,21 @@ personne — sa question reste affichée quel que soit l'onglet, et Échap la fe
 lieu de tuer le script ; =PUT /gui/panels/:slot/view= sur un slot sans workspace
 prend celui du slot focalisé (=409= sans) ; =POST /gui/message= rend =409= quand le
 slot focalisé n'a pas de workspace ; =timeout_ms= d'un message n'efface plus rien.
-*Corrigé dans le code* (commentaires seulement) : =gui-unwatch-folder.sh= disait
-attendre « la période de calme de 500 ms » du watcher et « que son tampon se
-vide » ; la période vaut 2 s et le script attend 1 s. L'attente n'a pas ce rôle :
-une fois =mf_watch = false= écrit, ce que le tampon tient encore sous le dossier est
-écarté au flush, qui revérifie l'éligibilité. L'en-tête et le commentaire disent
-maintenant ce qu'elle couvre (un flush déjà en cours).
+*Corrigé dans le code*, dans un commit à part : =gui-unwatch-folder.sh= attendait
+une seconde entre l'écriture de =mf_watch = false= et la suppression, « le temps que
+la période de calme de 500 ms passe et que le tampon du watcher se vide » — la
+période vaut 2 s, donc le tampon ne s'était pas vidé. L'attente ne servait à rien :
+l'écriture prend le verrou du dépôt, comme un flush, donc elle arrive avant ou après
+lui, jamais pendant ; et un flush qui vient après revérifie l'éligibilité et écarte
+ce qu'il tient encore sous le dossier. Le délai et =MF_UNWATCH_SETTLE= sont retirés
+(la demande était d'attendre la fin de la tâche plutôt qu'une durée : il n'y a pas
+de tâche à attendre), et =test-scripts-integration.sh= le garde contre un vrai
+watcher — des fichiers arrivent dans le dossier, le script tourne aussitôt, rien
+n'est recréé.
 *Tranché par l'utilisateur*, fait dans un commit à part, test d'abord : =mf gui view
 --state= est retirée. L'option était envoyée et /ignorée/ — le corps de =PUT
 /gui/panels/:slot/view= ne lit que =type= et =path=, aucun panel ne reçoit d'état
 initial — et rien ne s'en servait.
-*Signalé, non tranché* : le délai en dur de
-=gui-unwatch-folder.sh= (=MF_UNWATCH_SETTLE=, 1 s) contredit la règle « jamais de
-délai en dur côté client » de =Event batching= : s'il doit couvrir un flush en cours,
-il devrait attendre la fin de la tâche plutôt qu'une durée.
 *Choix à signaler* : (a) =Script sessions= est écrite pour qui /répond/ à un script
 autant que pour qui en écrit un — elle reprend la page help, et c'est elle
 qu'ouvre l'aide depuis la barre de question ; le détail du protocole est dans

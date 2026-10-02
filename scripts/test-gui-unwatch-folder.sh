@@ -15,8 +15,6 @@ mock_init
 # shellcheck source=lib/assert.sh
 source "$HERE/lib/assert.sh"
 
-export MF_UNWATCH_SETTLE=0 # no watcher-quiesce sleep in the tests
-
 # A real directory to pass as the filesystem-path argument.
 WORKDIR=$(mktemp -d "${TMPDIR:-/tmp}/mf-unwatch.XXXXXX")
 trap 'rm -rf "$WORKDIR"' EXIT

@@ -245,7 +245,6 @@ assert "completion: the repository root is offered as /" [ "$root" -ge 1 ]
 # real `mfr_path ->* "<path>"` subtree query (strict descendants) and the
 # mf_watch write, against the daemon.
 hy_reset
-export MF_UNWATCH_SETTLE=0
 hy_prompt /sub
 hy_input y
 uout=$(bash "$UNWATCH" 2>&1)
@@ -285,5 +284,39 @@ assert_not "orphan: the path-less record is not tagged" has_tag "$GONE" orphanta
 assert "orphan: no question named an empty path" \
     [ "$(hy_log | grep -c "gui input --prompt '' has tag")" -eq 0 ]
 assert "orphan: the tracked files still are asked and tagged" has_tag "$TOP" orphantag
+
+# ── gui-unwatch-folder against a LIVE watcher: nothing comes back ────────────
+# Runs last, on a repository of its own, with the watcher on. Files arrive in
+# the folder and the script runs at once, while their events are still in the
+# watcher's buffer — well inside the quiet period. The script waits for nothing:
+# `mf_watch = false` takes the repository's lock like the flush does, so the
+# write lands either after a flush or before it, and a flush that comes after
+# checks eligibility again and drops what it holds for the folder
+# (doc "Event batching"). It used to sleep a second "to let the buffer drain",
+# against a quiet period of two.
+RACE=$(mktemp -d "${TMPDIR:-/tmp}/mf-it-race.XXXXXX")
+mkdir -p "$RACE/gone"
+echo old >"$RACE/gone/old.txt"
+df_init_repo "$RACE"
+export HYBRID_REPO="$DF_REPO"
+df_mf metarecord -i "$DF_ROOT" field set mf_watch:bool=true >/dev/null 2>&1
+for i in 1 2 3 4 5 6 7 8 9 10; do echo "$i" >"$RACE/gone/new$i.txt"; done
+echo canary >"$RACE/canary.txt"
+hy_reset
+hy_input y
+run_script "$UNWATCH" "$RACE/gone"
+echo late >"$RACE/gone/late.txt"
+# The canary, outside the folder, says when the watcher has flushed that burst.
+quiet=$(df_mf watch status --json 2>/dev/null | sed -n 's/.*"quiet_period_ms": *\([0-9]*\).*/\1/p')
+deadline=$(( $(date +%s) + ${quiet:-2000} / 1000 + 20 ))
+until [ "$(df_mf metarecord -q 'mfr_path = "/canary.txt"' get --count 2>/dev/null)" = 1 ] \
+    || [ "$(date +%s)" -ge "$deadline" ]; do
+    sleep 0.2
+done
+assert "unwatch race: the watcher did flush the burst" \
+    [ "$(df_mf metarecord -q 'mfr_path = "/canary.txt"' get --count 2>/dev/null)" = 1 ]
+assert_eq "unwatch race: nothing inside the folder was re-created" 0 \
+    "$(df_mf metarecord -q 'mfr_path ->* "/gone"' get --count 2>/dev/null)"
+rm -rf "$RACE"
 
 assert_summary

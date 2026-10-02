@@ -10,11 +10,11 @@
 # removes metadata, not files.
 #
 # Order matters and is not configurable: `mf_watch` is written first, so the
-# watcher has already dropped its watches on the subtree when the deletion
-# lands and cannot re-create what we remove: the events it had buffered for
-# the subtree are dropped at its next flush, which checks eligibility again.
-# The script then waits $MF_UNWATCH_SETTLE seconds (default 1) before deleting,
-# a margin for a flush that was already running when `mf_watch` was written.
+# watcher cannot re-create what the deletion removes. Nothing is waited for
+# in between: the write takes the repository's lock, as a watcher flush does,
+# so it lands after a flush or before it — and a flush that comes after checks
+# eligibility again and drops the events it still holds for the subtree
+# (doc "Event batching").
 #
 # The metarecords of files that were already gone (`mfr_path = Nothing`) are not
 # in the subtree any more, so they are not covered — clear those with
@@ -94,12 +94,7 @@ if [ "$INSIDE" -eq 0 ]; then
     exit 0
 fi
 
-# A margin for a flush already running when mf_watch was written. It is not
-# the watcher's quiet period (2 s by default) and need not be: what is still
-# buffered for the subtree is dropped at the flush, now that it is ineligible
-# (doc "Event batching").
-SETTLE=${MF_UNWATCH_SETTLE:-1}
-[ "$SETTLE" = 0 ] || sleep "$SETTLE"
-
+# No pause before the delete: once mf_watch = false is written, no flush can
+# create a metarecord under the folder (see the header).
 DELETED=$(mf metarecord -q "$SUBTREE" delete --force)
 echo "not watching '$FOLDER_TP' any more; deleted $DELETED metarecords inside it."

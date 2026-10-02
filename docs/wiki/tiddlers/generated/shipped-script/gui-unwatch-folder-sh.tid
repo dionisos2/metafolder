@@ -17,11 +17,11 @@ again. Only its contents go. Nothing on the filesystem is touched: this
 removes metadata, not files.
 
 Order matters and is not configurable: `mf_watch` is written first, so the
-watcher has already dropped its watches on the subtree when the deletion
-lands and cannot re-create what we remove: the events it had buffered for
-the subtree are dropped at its next flush, which checks eligibility again.
-The script then waits $MF_UNWATCH_SETTLE seconds (default 1) before deleting,
-a margin for a flush that was already running when `mf_watch` was written.
+watcher cannot re-create what the deletion removes. Nothing is waited for
+in between: the write takes the repository's lock, as a watcher flush does,
+so it lands after a flush or before it — and a flush that comes after checks
+eligibility again and drops the events it still holds for the subtree
+(doc "Event batching").
 
 The metarecords of files that were already gone (`mfr_path = Nothing`) are not
 in the subtree any more, so they are not covered — clear those with
