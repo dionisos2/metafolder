@@ -87,9 +87,17 @@ export function createChangeFeed() {
     return pending;
   }
 
+  /** Tells the subscribers to re-read everything they show of `repo`, for a
+   *  change the log does not carry and the poll therefore never reports — the
+   *  watch activity counts being reset (doc "Watch activity"). */
+  function notify(repo: string) {
+    emit({ repo, uuids: null });
+  }
+
   return {
     sync,
     subscribe,
+    notify,
     baseline,
     trackedRepos: () => [...baselines.keys()],
     _lastHead: (repo: string) => lastHead.get(repo),

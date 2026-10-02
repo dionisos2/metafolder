@@ -124,6 +124,11 @@ fn register_builtins(registry: &CommandRegistry) {
             true,
         ),
         (
+            "mf:watch-activity",
+            "Start the active repository's watcher event counts over (mf watch activity --reset)",
+            true,
+        ),
+        (
             "orphan:detect",
             "Mark the active repository's orphaned metarecords orphan = true (mf orphan detect)",
             true,

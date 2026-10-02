@@ -778,6 +778,31 @@ async function runOrder(): Promise<void> {
   await status(report.message, 'info');
 }
 
+// ── Watch activity (the `mf:watch-activity` builtin) ────────────────────────────────
+
+/** `mf:watch-activity reset`: the GUI half of `mf watch activity --reset` (doc
+ *  "Watch activity") — the active repository's event counts start over. The
+ *  counts live in the daemon's memory and in no log, so the change feed's poll
+ *  cannot report the reset: the panels are told here, or a file manager would
+ *  keep showing the old counts. */
+async function resetWatchActivity(): Promise<void> {
+  const repo = focusedRepo();
+  if (!repo) {
+    await status('no active repository');
+    return;
+  }
+  try {
+    await daemonJson('POST', `/repos/${repo}/watch/activity/reset`, {});
+  } catch (e) {
+    await status(e instanceof Error ? e.message : String(e));
+    return;
+  }
+  // Imported late: `panels/api` imports this module.
+  const { changeFeed } = await import('./panels/api');
+  changeFeed.notify(repo);
+  await status('watch activity reset', 'info');
+}
+
 // ── Reloading the user configuration ───────────────────────────────────────
 // What the GUI can re-read without a restart. Kept in step with
 // `RELOAD_TARGETS` in crates/gui/src/commands.rs, which is where the
@@ -1087,6 +1112,16 @@ registerArgs('panel:reveal', [
 
 registerArgs('mf:duplicate', [
   { name: 'operation', prompt: () => 'Which operation? (scan)', complete: () => ['scan'] },
+]);
+
+const WATCH_ACTIVITY_OPERATIONS = ['reset'];
+
+registerArgs('mf:watch-activity', [
+  {
+    name: 'operation',
+    prompt: () => `Which operation? (${WATCH_ACTIVITY_OPERATIONS.join(' / ')})`,
+    complete: () => [...WATCH_ACTIVITY_OPERATIONS],
+  },
 ]);
 
 registerArgs('daemon:set', [
@@ -1542,6 +1577,13 @@ async function runCommand(name: string, args: string[], ws: string | null): Prom
       // stay CLI-only, as `mf trash prune`'s do: this runs the ordinary
       // whole-repository scan, and the Rust side posts its own status.
       if (ws) await invoke('duplicate_scan', { wsId: ws });
+      return true;
+    case 'mf:watch-activity':
+      if (args[0] !== 'reset') {
+        await status(`unknown operation: "${args[0] ?? ''}" (expected reset)`);
+        return true;
+      }
+      await resetWatchActivity();
       return true;
     case 'orphan:detect':
       // Mark the orphaned metarecords (doc "Finding and clearing orphans").

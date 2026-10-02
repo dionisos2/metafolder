@@ -27,7 +27,7 @@ the total. A row holding a tenth of all events or more (once the repository has 
 hundred) is a ''hot spot'', in bold amber: browse from the root down the hot rows.
 ''by activity'' (`file-manager:toggle activity`, <<key "file-manager:toggle activity" Ctrl+Shift+a>>)
 sorts the entries busiest first. The metarecord detail panel shows the count at the
-record's file. A quiet path shows nothing, and an unanswered call too: unknown never
+record's file. `mf:watch-activity reset` starts the counting again, like `--reset`. A quiet path shows nothing, and an unanswered call too: unknown never
 reads as zero.
 
 !! How it counts

@@ -1,0 +1,9 @@
+title: $:/mf/gen/GUI command/mf:watch-activity
+catalog: GUI command
+target: mf:watch-activity
+summary: Start the active repository's watcher event counts over (mf watch activity --reset)
+
+!! Reference
+
+* Defined by the shell (a builtin)
+* No default key

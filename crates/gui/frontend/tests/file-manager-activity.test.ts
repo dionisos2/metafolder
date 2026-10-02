@@ -195,6 +195,22 @@ describe('file-manager watch activity', () => {
     expect(names(root)).toEqual(['.', 'build', 'song.mp3', 'zcache']);
   });
 
+  // What `mf:watch-activity reset` relies on: the reset is in no log, so the
+  // shell raises a whole-repository change, and the counts must be re-read.
+  test('a whole-repository change re-reads the counts', async () => {
+    const counts: Record<string, number> = { '': 1000, '/build': 900 };
+    const { root, fireChange } = await mount('r1', counts);
+    expect(row(root, 'build').querySelector('.activity')?.textContent).toBe('900');
+
+    for (const path of Object.keys(counts)) delete counts[path];
+    fireChange({ repo: 'r1', uuids: null });
+    await new Promise((r) => setTimeout(r, 0));
+    await new Promise((r) => setTimeout(r, 0));
+
+    expect(row(root, 'build').querySelector('.activity')?.textContent ?? '').toBe('');
+    expect(row(root, 'build').classList.contains('hot')).toBe(false);
+  });
+
   test('the checkbox toggles the same sort', async () => {
     const { root } = await mount('r1', { '': 1000, '/zcache': 700 });
     const box = root.getElementById('sort-activity') as HTMLInputElement;

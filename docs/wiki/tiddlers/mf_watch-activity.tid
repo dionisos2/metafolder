@@ -1,0 +1,9 @@
+title: mf:watch-activity
+tags: [[GUI command]] Watcher
+kind: reference
+summary: Start the active repository's watcher event counts over (mf watch activity --reset)
+
+`mf:watch-activity reset` is the GUI half of `mf watch activity --reset`: the event
+counts of the active repository start over from now ([[Watch activity]]). The
+[[file manager|file-manager panel]] re-reads its counts at once; the metarecord detail
+panel shows the new count the next time it loads a record.
