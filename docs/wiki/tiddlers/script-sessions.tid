@@ -65,11 +65,15 @@ reservation with them ([[Keybindings]]).
 
 ''Escape'' stops the run and everything it started: the script's whole process group
 gets `SIGTERM`, then `SIGKILL` if it is still there two seconds later. The command
-blocked on the question dies with it, which releases the question. A bash script
-still runs its `EXIT` trap — how the shipped ones close their workspace and put the
-layout back — but nothing after the question it was on. One that has a result to
-report or work to finish offers its own quit key — `q`, in every shipped script —
-which it receives as an ordinary answer.
+blocked on the question dies with it, which releases the question.
+
+A stopped script ''does not get to clean up'': it is being killed, and must not count
+on running anything more. The two seconds before `SIGKILL` are a grace, not a
+promise — a bash `EXIT` trap usually fits in them, which is how the shipped scripts
+close their scratch workspace and put the layout back, and nothing longer should be
+hung on it. A script with a result to report or work to finish offers its own quit
+key — `q`, in every shipped script — which it receives as an ordinary answer and acts
+on before exiting.
 
 ''Backspace'' ends an answer, not the run. It answers the question with the value
 `back`, and the script decides what that means, since only it knows what its last

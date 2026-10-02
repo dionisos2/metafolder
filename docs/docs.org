@@ -1273,11 +1273,12 @@ simulé), sur un dépôt de deux images, avec ses écritures relues — et pass�
 =shellcheck=. Le reste est lu dans =gui_api.rs=, =input_wait.rs=, =keybindings.rs=,
 =shell_exec.rs=, =cli/src/gui.rs=, le shell Svelte et =lib/mf-gui.sh=.
 Écarts de la spec et de la page help, corrigés dans les notes : la page help
-donnait =b= pour revenir en arrière (c'est =u=) ; « un script arrêté par Échap ne
-peut pas faire son ménage » est faux pour bash — le =SIGTERM= laisse tourner le trap
-=EXIT= (vérifié), et c'est par lui que les scripts livrés ferment leur workspace et
-rendent la disposition ; ce qu'un script arrêté ne fait pas, c'est finir ou
-rapporter, d'où =q= ; =POST /gui/prompt= répond aussi =timeout= et =closed= ;
+donnait =b= pour revenir en arrière (c'est =u=) ; la spec disait qu'un script arrêté
+par Échap ne peut pas faire son ménage, sans dire que les scripts livrés rendent
+pourtant la disposition par un trap =EXIT= : la règle reste (un script arrêté est
+tué, il ne doit compter sur rien — /confirmé par l'utilisateur/), et la note précise
+que les deux secondes avant =SIGKILL= sont une grâce où ce trap tient d'ordinaire,
+pas une garantie, d'où =q= pour ce qui doit être fait ; =POST /gui/prompt= répond aussi =timeout= et =closed= ;
 =GET /gui/status= porte =repo_name= ; le choix de la case « script keys » ne tient
 pas « pour le reste de la session » mais jusqu'au prochain lancement, toute ligne =!=
 comprise. Ignorés par la spec : les touches attendues ne sont pas prises dans un
