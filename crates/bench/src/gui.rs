@@ -51,8 +51,8 @@ pub async fn run(scenarios: &[String]) -> Result<()> {
         Some(gui) => gui,
         None => {
             println!("GUI not reachable at {gui_url} — start the GUI first, or use");
-            println!("`gui-launch` to have the benchmark spawn its own GUI.");
-            println!("(override URLs with METAFOLDER_GUI_URL / METAFOLDER_DAEMON_URL)");
+            println!("the `gui` mode to have the benchmark spawn its own GUI.");
+            println!("(override with METAFOLDER_GUI_URL / METAFOLDER_DAEMON_PORT)");
             return Ok(());
         }
     };
@@ -74,7 +74,7 @@ pub async fn run(scenarios: &[String]) -> Result<()> {
 /// already-running daemon and run the scenarios against each of `repos`
 /// (label, hex uuid). A GUI window opens for the duration of the run.
 pub async fn run_on_repos(
-    daemon_url: &str,
+    daemon_port: u16,
     repos: &[(String, String)],
     scenarios: &[String],
 ) -> Result<()> {
@@ -86,7 +86,7 @@ pub async fn run_on_repos(
     let log_path =
         std::env::temp_dir().join(format!("metafolder-bench-gui-{}.log", std::process::id()));
     println!("Launching GUI on {GUI_PORT} (a window will open)...");
-    let _gui_proc = Proc(spawn_gui(GUI_PORT, daemon_url, &log_path)?);
+    let _gui_proc = Proc(spawn_gui(GUI_PORT, daemon_port, &log_path)?);
     if let Err(e) = wait_gui_ready(&gui_url).await {
         if let Ok(log) = std::fs::read_to_string(&log_path) {
             eprintln!("--- GUI log (tail) ---");
@@ -101,7 +101,7 @@ pub async fn run_on_repos(
     let gui = Gui {
         http: crate::authed_client(&gui_token()),
         gui_url,
-        daemon_url: daemon_url.to_string(),
+        daemon_url: format!("http://127.0.0.1:{daemon_port}"),
         daemon_token: crate::daemon_token(),
     };
     for (label, repo) in repos {
@@ -187,16 +187,20 @@ fn ensure_frontend_built() -> Result<()> {
     Ok(())
 }
 
-fn spawn_gui(port: u16, daemon_url: &str, log_path: &Path) -> Result<Child> {
+/// The arguments the benchmark launches the GUI with.
+fn gui_args(port: u16, daemon_port: u16) -> Vec<String> {
+    ["--gui-port", &port.to_string(), "--daemon-port", &daemon_port.to_string()]
+        .map(String::from)
+        .to_vec()
+}
+
+fn spawn_gui(port: u16, daemon_port: u16, log_path: &Path) -> Result<Child> {
     let bin = crate::find_binary("metafolder-gui")?;
     let log = std::fs::File::create(log_path)
         .with_context(|| format!("creating GUI log {log_path:?}"))?;
     let err = log.try_clone()?;
     Command::new(&bin)
-        .arg("--gui-port")
-        .arg(port.to_string())
-        .arg("--daemon-url")
-        .arg(daemon_url)
+        .args(gui_args(port, daemon_port))
         .stdout(Stdio::from(log))
         .stderr(Stdio::from(err))
         .spawn()
@@ -224,32 +228,35 @@ async fn wait_gui_ready(url: &str) -> Result<()> {
 // ─── URL discovery ─────────────────────────────────────────────────────────────
 
 /// Resolves (gui_url, daemon_url) the same way `mf gui` and the GUI itself do:
-/// env override wins, then the GUI `config.toml` (`gui-port` / `daemon-url`),
-/// then the defaults (7524 / 7523).
+/// env override wins (`METAFOLDER_GUI_URL`, `METAFOLDER_DAEMON_PORT`), then the
+/// GUI `config.toml` (`gui-port` / `daemon-port`), then the defaults (7524 /
+/// 7523). Both are on loopback, the only address either listens on.
 fn discover_urls() -> (String, String) {
-    let mut gui_port: Option<u16> = None;
-    let mut daemon_url: Option<String> = None;
-    if let Some(path) = gui_config_path() {
-        if let Ok(content) = std::fs::read_to_string(path) {
-            for line in content.lines() {
-                let line = line.trim();
-                if let Some(rest) = line.strip_prefix("gui-port") {
-                    gui_port = rest.trim_start_matches([' ', '=']).trim().parse().ok();
-                } else if let Some(rest) = line.strip_prefix("daemon-url") {
-                    daemon_url = Some(
-                        rest.trim_start_matches([' ', '=']).trim().trim_matches('"').to_string(),
-                    );
-                }
-            }
-        }
-    }
-    let gui_url = std::env::var("METAFOLDER_GUI_URL")
-        .unwrap_or_else(|_| format!("http://127.0.0.1:{}", gui_port.unwrap_or(7524)));
-    let daemon_url = std::env::var("METAFOLDER_DAEMON_URL")
-        .ok()
-        .or(daemon_url)
-        .unwrap_or_else(|| "http://127.0.0.1:7523".to_string());
-    (gui_url, daemon_url)
+    let config = gui_config_path().and_then(|path| std::fs::read_to_string(path).ok());
+    urls_from(
+        config.as_deref().unwrap_or(""),
+        std::env::var("METAFOLDER_GUI_URL").ok(),
+        std::env::var("METAFOLDER_DAEMON_PORT").ok(),
+    )
+}
+
+/// [`discover_urls`] over what it read: the GUI's `config.toml` and the two
+/// environment overrides.
+fn urls_from(
+    config: &str,
+    gui_env: Option<String>,
+    daemon_env: Option<String>,
+) -> (String, String) {
+    let port_of = |key: &str| {
+        config.lines().find_map(|line| {
+            line.trim().strip_prefix(key)?.trim_start_matches([' ', '=']).trim().parse::<u16>().ok()
+        })
+    };
+    let gui_url = gui_env
+        .unwrap_or_else(|| format!("http://127.0.0.1:{}", port_of("gui-port").unwrap_or(7524)));
+    let daemon_port =
+        daemon_env.and_then(|p| p.parse().ok()).or_else(|| port_of("daemon-port")).unwrap_or(7523);
+    (gui_url, format!("http://127.0.0.1:{daemon_port}"))
 }
 
 /// `~/.config/metafolder/gui/config.toml` from `$XDG_CONFIG_HOME` or `$HOME`.
@@ -443,13 +450,13 @@ impl Gui {
     /// metarecord listing (every uuid) and a `mfr_path IS PRESENT` query limited
     /// to 100 — the direct counterpart to the panel's `mf:daemon POST /query`.
     async fn http_baseline(&self, repo: &str) -> Result<()> {
-        let base = format!("{}/repos/{repo}/metarecords", self.daemon_url);
-
+        // No `limit`: the answer is then the bare array of every uuid.
         let t = Instant::now();
         let all: Vec<String> = self
             .http
-            .get(&base)
+            .post(format!("{}/repos/{repo}/query", self.daemon_url))
             .bearer_auth(&self.daemon_token)
+            .json(&json!({ "query": crate::match_all() }))
             .send()
             .await?
             .error_for_status()?
@@ -628,6 +635,41 @@ fn report(title: &str, records: &[BenchRecord]) {
         println!(
             "  {name:<34} n={n:<3} total={total:8.2} ms  mean={:7.2} ms  max={max:7.2} ms",
             total / n as f64,
+        );
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::tests::{accepts, debug_binary};
+
+    #[test]
+    fn the_gui_is_launched_with_options_it_accepts() {
+        let Some(gui) = debug_binary("metafolder-gui") else {
+            eprintln!("SKIP: target/debug/metafolder-gui is not built");
+            return;
+        };
+        let args = gui_args(7611, 7610);
+        assert!(accepts(&gui, &args), "metafolder-gui refuses {args:?}");
+    }
+
+    #[test]
+    fn the_running_gui_and_its_daemon_are_found_from_the_gui_config() {
+        // The keys of the shipped config.toml: two ports, the host is loopback.
+        let config = "daemon-port = 8100\n\n# the GUI's own server\ngui-port = 8200\n";
+        assert_eq!(
+            urls_from(config, None, None),
+            ("http://127.0.0.1:8200".to_string(), "http://127.0.0.1:8100".to_string())
+        );
+        assert_eq!(
+            urls_from("", None, None),
+            ("http://127.0.0.1:7524".to_string(), "http://127.0.0.1:7523".to_string())
+        );
+        // The environment wins, under the names `mf` reads.
+        assert_eq!(
+            urls_from(config, Some("http://127.0.0.1:1".into()), Some("9".into())),
+            ("http://127.0.0.1:1".to_string(), "http://127.0.0.1:9".to_string())
         );
     }
 }

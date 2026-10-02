@@ -7,6 +7,7 @@
 //!   cargo run -p metafolder-bench -- gui        # + GUI scenarios (a window opens)
 //!   cargo run -p metafolder-bench -- attach     # drive an already-running GUI
 //!   cargo run -p metafolder-bench -- --small DIR --big DIR
+//!   scripts/bench.sh                            # the timed regression suite
 //!
 //!   cargo build --release              # or release for more realistic numbers
 //!
@@ -165,9 +166,17 @@ fn is_present(field: &str) -> serde_json::Value {
     json!({ "type": "is_present", "field": field })
 }
 
-/// `mfr_path MATCHES "<pattern>"`: the regex applies to the TreeRef name.
+/// The query every metarecord matches — the one `mf metarecord get` sends when
+/// it is given no selector (the daemon has no listing endpoint beside it).
+pub(crate) fn match_all() -> serde_json::Value {
+    json!({ "type": "is_unknown", "field": "__never__" })
+}
+
+/// `mfr_path:value MATCHES "<pattern>"`: the regex applies to the node's own
+/// name. The aspect is required — a pattern has no meaning on a `tree_ref`'s
+/// `(parent, name)` couple, and the daemon refuses it (doc "Field aspects").
 fn name_matches(pattern: &str) -> serde_json::Value {
-    json!({ "type": "matches", "field": "mfr_path", "pattern": pattern })
+    json!({ "type": "matches", "field": "mfr_path", "aspect": "value", "pattern": pattern })
 }
 
 // ─── HTTP helpers ─────────────────────────────────────────────────────────────
@@ -268,20 +277,23 @@ pub(crate) async fn api_reconcile(url: &str, repo: Uuid, mime: bool) -> Result<(
     }
 }
 
-/// Poll until `query` matches at least `expected` metarecords.
+/// Poll until `query` matches at least `expected` metarecords; `None` when
+/// they are still not there after [`TIMEOUT`]. A query the daemon refuses is an
+/// error, not "nothing yet": read as zero matches, it made the watcher
+/// benchmark wait two minutes and blame the watcher.
 async fn wait_for_count(
     url: &str,
     repo: Uuid,
     query: serde_json::Value,
     expected: usize,
     since: Instant,
-) -> Option<Duration> {
+) -> Result<Option<Duration>> {
     loop {
-        if api_query(url, repo, query.clone()).await.map(|v| v.len()).unwrap_or(0) >= expected {
-            return Some(since.elapsed());
+        if api_query(url, repo, query.clone()).await?.len() >= expected {
+            return Ok(Some(since.elapsed()));
         }
         if since.elapsed() > TIMEOUT {
-            return None;
+            return Ok(None);
         }
         tokio::time::sleep(POLL_INTERVAL).await;
     }
@@ -289,13 +301,40 @@ async fn wait_for_count(
 
 // ─── CLI runner ───────────────────────────────────────────────────────────────
 
-fn cli_run(bin: &Path, url: &str, repo: Option<Uuid>, args: &[&str]) -> Result<Duration> {
-    let mut cmd = Command::new(bin);
-    cmd.arg("--daemon-url").arg(url);
+/// The arguments of one `mf` run against the bench daemon: the user's CLI
+/// configuration left out (its default repository and port are not the
+/// benchmark's), the daemon by its port, the repository by its uuid.
+fn cli_args(port: u16, repo: Option<Uuid>, args: &[&str]) -> Vec<String> {
+    let mut out = vec!["--no-config".to_string(), "-p".to_string(), port.to_string()];
     if let Some(r) = repo {
-        cmd.arg("--repo").arg(r.to_string());
+        out.extend(["-u".to_string(), r.simple().to_string()]);
     }
-    cmd.args(args).stdout(Stdio::null()).stderr(Stdio::piped());
+    out.extend(args.iter().map(|a| a.to_string()));
+    out
+}
+
+/// The commands the CLI benchmark times, as `(label, repetitions, arguments)`:
+/// the whole-repository ones once — their cost scales with the store — and the
+/// point ones (on `sample`, a file's metarecord) [`LOOP_N`] times, which
+/// isolates the latency of one call.
+fn cli_commands(sample: Option<&str>) -> Vec<(&'static str, usize, Vec<&str>)> {
+    let mut out = vec![
+        ("metarecord get (all metarecords)", 1, vec!["metarecord", "get"]),
+        ("query mfr_path IS PRESENT", 1, vec!["metarecord", "-q", "mfr_path IS PRESENT", "get"]),
+        ("query mfr_type = file", 1, vec!["metarecord", "-q", "mfr_type = \"file\"", "get"]),
+        ("reconcile (re-walk)", 1, vec!["reconcile", "--no-mime"]),
+    ];
+    if let Some(s) = sample {
+        out.push(("metarecord get <file>", LOOP_N, vec!["metarecord", "-i", s, "get"]));
+        out.push(("path <file>", LOOP_N, vec!["path", s]));
+    }
+    out.push(("metarecord add (write)", LOOP_N, vec!["metarecord", "add", "bench:int=1"]));
+    out
+}
+
+fn cli_run(bin: &Path, port: u16, repo: Option<Uuid>, args: &[&str]) -> Result<Duration> {
+    let mut cmd = Command::new(bin);
+    cmd.args(cli_args(port, repo, args)).stdout(Stdio::null()).stderr(Stdio::piped());
     let t = Instant::now();
     let output = cmd.spawn()?.wait_with_output()?;
     let elapsed = t.elapsed();
@@ -440,7 +479,6 @@ async fn build_repo(url: &str, dir: &Path, label: &str) -> Result<DataRepo> {
 
 async fn bench_repo_cli(url: &str, bin: &Path, repo: &DataRepo) -> Result<()> {
     let r = repo.repo;
-    let n = LOOP_N;
 
     // A non-root file metarecord for the point lookups.
     let files = api_query(
@@ -452,32 +490,9 @@ async fn bench_repo_cli(url: &str, bin: &Path, repo: &DataRepo) -> Result<()> {
     let sample = files.first().cloned();
 
     let mut rows: Vec<(String, usize, Duration)> = Vec::new();
-
-    // Full-scan commands (×1): cost scales with the DB size.
-    let t = Instant::now();
-    cli_run(bin, url, Some(r), &["list"])?;
-    rows.push(("list (all metarecords)".into(), 1, t.elapsed()));
-
-    let t = Instant::now();
-    cli_run(bin, url, Some(r), &["query", "mfr_path IS PRESENT"])?;
-    rows.push(("query mfr_path IS PRESENT".into(), 1, t.elapsed()));
-
-    let t = Instant::now();
-    cli_run(bin, url, Some(r), &["query", "mfr_type = \"file\""])?;
-    rows.push(("query mfr_type = file".into(), 1, t.elapsed()));
-
-    let t = Instant::now();
-    cli_run(bin, url, Some(r), &["reconcile", "--no-mime"])?;
-    rows.push(("reconcile (re-walk)".into(), 1, t.elapsed()));
-
-    // Point commands (×n): roughly constant, isolate per-call latency.
-    if let Some(s) = sample {
-        rows.push(bench_loop("get <file>", n, || cli_run(bin, url, Some(r), &["get", &s]))?);
-        rows.push(bench_loop("path <file>", n, || cli_run(bin, url, Some(r), &["path", &s]))?);
+    for (label, n, args) in cli_commands(sample.as_deref()) {
+        rows.push(bench_loop(label, n, || cli_run(bin, DAEMON_PORT, Some(r), &args))?);
     }
-    rows.push(bench_loop("create (write)", n, || {
-        cli_run(bin, url, Some(r), &["create", "--field", "bench:int=1"])
-    })?);
 
     print_section(
         &format!(
@@ -515,22 +530,11 @@ async fn timed_query_limited(
     Ok(v["results"].as_array().map(|a| a.len()).unwrap_or(0))
 }
 
-/// `GET /metarecords?limit=` (the unfiltered first page).
-async fn timed_list_limited(url: &str, repo: Uuid, limit: usize) -> Result<usize> {
-    let v: serde_json::Value = daemon_client()
-        .get(format!("{url}/repos/{repo}/metarecords?limit={limit}"))
-        .send()
-        .await?
-        .error_for_status()?
-        .json()
-        .await?;
-    Ok(v["results"].as_array().map(|a| a.len()).unwrap_or(0))
-}
-
 async fn bench_repo_limited(url: &str, repo: &DataRepo) -> Result<()> {
     let r = repo.repo;
     let n = LIMITED_ITERS;
-    let queries: [(&str, serde_json::Value); 2] = [
+    let queries: [(&str, serde_json::Value); 3] = [
+        ("every metarecord", match_all()),
         ("query mfr_path IS PRESENT", is_present("mfr_path")),
         (
             "query mfr_type = file",
@@ -546,12 +550,6 @@ async fn bench_repo_limited(url: &str, repo: &DataRepo) -> Result<()> {
         }
         rows.push((label.to_string(), n, t.elapsed()));
     }
-    let t = Instant::now();
-    for _ in 0..n {
-        timed_list_limited(url, r, LIMITED_N).await?;
-    }
-    rows.push(("list".to_string(), n, t.elapsed()));
-
     print_section(
         &format!(
             "[{}] limited to {LIMITED_N} (direct HTTP) — DB {} metarecords",
@@ -600,7 +598,7 @@ async fn bench_repo_watcher(url: &str, repo: &DataRepo) -> Result<()> {
         let _ = std::fs::rename(to, from);
     }
 
-    match detected {
+    match detected? {
         Some(elapsed) => print_section(
             &format!("[{}] watcher — {k} in-place renames", repo.label),
             &[
@@ -633,7 +631,7 @@ async fn main() -> Result<()> {
             "--big" if mode.as_deref() != Some("regression") => {
                 big = it.next().context("--big needs a path")?.into()
             }
-            // Regression-suite options (spec-perf "CLI").
+            // Regression-suite options (doc "The timed regression suite").
             "--quick" => opts.quick = true,
             "--big" => opts.big = true,
             "--real" => opts.real = true,
@@ -704,10 +702,46 @@ async fn run_data_suite(small: &Path, big: &Path, with_gui: bool) -> Result<()> 
     if with_gui {
         let pairs: Vec<(String, String)> =
             repos.iter().map(|r| (r.label.clone(), r.repo.simple().to_string())).collect();
-        gui::run_on_repos(&daemon.url, &pairs, &[]).await?;
+        gui::run_on_repos(DAEMON_PORT, &pairs, &[]).await?;
     }
 
     println!("\n=== done ===");
     Ok(())
     // daemon dropped here (killed), then `_cleanup` removes the .metafolder dirs.
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// A binary of the debug build — the one `cargo test --workspace` has just
+    /// rebuilt, where a release one may be months old.
+    pub(crate) fn debug_binary(name: &str) -> Option<PathBuf> {
+        let root = Path::new(env!("CARGO_MANIFEST_DIR")).parent()?.parent()?;
+        let bin = root.join("target/debug").join(name);
+        bin.exists().then_some(bin)
+    }
+
+    /// Whether `bin` parses `args`: with `--help` appended, clap prints the
+    /// help of the command it reached and exits 0, and refuses an option or a
+    /// subcommand it does not know before getting there.
+    pub(crate) fn accepts(bin: &Path, args: &[String]) -> bool {
+        let out = Command::new(bin).args(args).arg("--help").output().expect("run the binary");
+        out.status.success()
+    }
+
+    #[test]
+    fn every_mf_invocation_of_the_cli_benchmark_is_one_mf_accepts() {
+        // The benchmark kept a command line `mf` had long dropped, and nothing
+        // said so until someone ran it.
+        let Some(mf) = debug_binary("mf") else {
+            eprintln!("SKIP: target/debug/mf is not built");
+            return;
+        };
+        let sample = Uuid::nil().simple().to_string();
+        for (label, _, args) in cli_commands(Some(&sample)) {
+            let full = cli_args(DAEMON_PORT, Some(Uuid::nil()), &args);
+            assert!(accepts(&mf, &full), "{label}: mf refuses {full:?}");
+        }
+    }
 }
