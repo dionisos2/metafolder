@@ -65,14 +65,17 @@ GUI and the repository agree — and give one of five kinds, or none.
 |!Kind |!Is |
 |`image` |JPEG, PNG, WebP, BMP, AVIF, ICO — what an `<img>` draws — and SVG |
 |`gif` |a GIF: an image shown as a still |
-|`video` |any `video/*` type, and an MPEG transport stream |
+|`video` |any `video/*` type, an MPEG transport stream and a 3GPP file |
 |`audio` |any `audio/*` type |
 |`document` |a PDF |
 
-Two formats `infer` does not know are added. An MPEG transport stream is three packets
+Three formats `infer` does not know are added. An MPEG transport stream is three packets
 in a row opening with the sync byte `0x47`, 188 bytes apart, or 192 for a Blu-ray
-`.m2ts` — one `G` at the start of a text is not enough. An SVG is text, with no magic
-bytes: it must be named `.svg` ''and'' hold an `<svg` element.
+`.m2ts` — one `G` at the start of a text is not enough. A 3GPP file, what a phone
+records, is an MP4-family container whose `ftyp` box names a `3gp…` or `3g2…` brand:
+`infer` matches a closed list of MP4 brands, which has neither. Only those brands are
+added, not every `ftyp` container — a Canon raw file is one too. An SVG is text, with
+no magic bytes: it must be named `.svg` ''and'' hold an `<svg` element.
 
 `/thumbnail` makes a poster for a `video`, a `gif` and a `document`; `/document*`
 answers for a `document`. A panel gets the kind from `metafolder.fs.stat(path).kind`

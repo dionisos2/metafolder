@@ -6,7 +6,7 @@
 //! stream or a TypeScript source. The first bytes say which. Detection is the
 //! `infer` crate's (magic bytes, pure Rust — the detector behind the daemon's
 //! `mfr_mime`), so the GUI and the repository agree on a file's type, plus the
-//! two formats it does not know and the panels need.
+//! three formats it does not know and the panels need.
 //!
 //! Only the head of the file is read, and nothing is decoded: this is a
 //! comparison of bytes, which is why it runs in-process while every decoder
@@ -80,13 +80,13 @@ pub fn of_head(head: &[u8], path: &Path) -> Option<Kind> {
         Some(mime) if mime.starts_with("video/") => Some(Kind::Video),
         Some(mime) if mime.starts_with("audio/") => Some(Kind::Audio),
         // Unknown to `infer`, or known as something no panel previews (an
-        // SVG reads as XML): the two checks below still apply.
+        // SVG reads as XML): the checks below still apply.
         _ => None,
     };
     if known.is_some() {
         return known;
     }
-    if is_mpeg_ts(head) {
+    if is_mpeg_ts(head) || is_3gpp(head) {
         return Some(Kind::Video);
     }
     if is_svg(head, path) {
@@ -104,6 +104,15 @@ fn is_mpeg_ts(head: &[u8]) -> bool {
     let synced =
         |offset: usize, packet: usize| (0..3).all(|n| head.get(offset + n * packet) == Some(&SYNC));
     synced(0, 188) || synced(4, 192)
+}
+
+/// A 3GPP or 3GPP2 file (`.3gp`, `.3g2`), what a phone records: an MP4-family
+/// container whose `ftyp` box names a `3gp…` or `3g2…` major brand. `infer`
+/// matches a closed list of MP4 brands and these are not in it. Only these
+/// brands are added, not every `ftyp` container: a Canon raw is one too.
+fn is_3gpp(head: &[u8]) -> bool {
+    head.get(4..8) == Some(b"ftyp")
+        && head.get(8..11).is_some_and(|brand| brand == b"3gp" || brand == b"3g2")
 }
 
 /// An SVG: named `.svg` and holding an `<svg` element. The name alone is not
@@ -160,6 +169,30 @@ mod tests {
     #[test]
     fn test_a_blu_ray_transport_stream_has_192_byte_packets() {
         assert_eq!(kind(&transport_stream(4, 192), "00001.m2ts"), Some(Kind::Video));
+    }
+
+    #[test]
+    fn test_a_3gpp_file_is_a_video() {
+        // What a phone records: `infer` knows the MP4 brands, not these.
+        assert_eq!(
+            kind(b"\x00\x00\x00\x18ftyp3gp5\x00\x00\x01\x003gp5isom", "a"),
+            Some(Kind::Video)
+        );
+        assert_eq!(
+            kind(b"\x00\x00\x00\x18ftyp3gp4\x00\x00\x02\x003gp4isom", "a"),
+            Some(Kind::Video)
+        );
+        assert_eq!(
+            kind(b"\x00\x00\x00\x18ftyp3g2a\x00\x00\x00\x003g2a3gp6", "a"),
+            Some(Kind::Video)
+        );
+    }
+
+    #[test]
+    fn test_an_unknown_brand_is_not_taken_for_a_video() {
+        // A Canon raw (CR3) is an `ftyp` container too, and no video.
+        assert_eq!(kind(b"\x00\x00\x00\x18ftypcrx \x00\x00\x00\x01crx isom", "IMG.CR3"), None);
+        assert_eq!(kind(b"3gp5 is a brand, this is a text", "notes"), None);
     }
 
     #[test]
