@@ -12,7 +12,7 @@ what is missing. Package names are Arch Linux's.
 |!Needed |!Package |!For |!Without it |
 |`bwrap` |`bubblewrap` |confining every program that reads your files ([[Sandboxing the media decoders]]) |''the GUI refuses to start'' |
 |an emoji colour font |`noto-fonts-emoji` |the icons of [[file-manager panel]] rows and the type glyphs of thumbnails (📁 🎬 🎵 📕 🖼️) |blank boxes where the icons should be |
-|`ffmpeg` |`ffmpeg` |the poster frame of a video, the still of a GIF tile |a 🎬 glyph; a GIF tile shows the animation itself |
+|`ffmpeg`, `ffprobe` |`ffmpeg` |the poster frame of a video, the still of a GIF tile; telling whether a container of an unlisted brand is a video ([[GUI file endpoints]]) |a 🎬 glyph; a GIF tile shows the animation itself; such a video says ''no preview available'' |
 |`pdftoppm`, `pdfinfo` |`poppler` |PDF pages and PDF tiles ([[Document preview]]) |''no preview available'', a 📕 glyph |
 |`autoaudiosink`, `autovideosink` |`gst-plugins-good` |the audio and video output of the player |playing is disabled, with a message ([[Media preview]]) |
 |`gst-discoverer-1.0` |`gst-plugins-base` |naming the decoder a file lacks, before playing it |the player is tried without that check: a generic message at best ([[Why a media file is not played on sight]]) |
@@ -24,7 +24,7 @@ configuration are all right, and the icons are simply not drawn. `fc-list | grep
 emoji` tells.
 
 `ffmpeg` and poppler are used only on files inside a loaded repository, where their
-output is cached.
+output is cached. `ffprobe` writes nothing, and is asked about a file wherever it is.
 
 Inside a container that forbids WebKit's own sandbox, see
 [[Running inside a container]].

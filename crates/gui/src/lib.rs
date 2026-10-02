@@ -23,6 +23,7 @@ pub mod fs_path;
 pub mod history;
 pub mod ignore;
 pub mod keybindings;
+pub mod media_brands;
 pub mod media_support;
 pub mod notifier;
 pub mod order;

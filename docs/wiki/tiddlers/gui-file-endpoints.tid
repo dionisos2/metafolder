@@ -65,7 +65,7 @@ GUI and the repository agree — and give one of five kinds, or none.
 |!Kind |!Is |
 |`image` |JPEG, PNG, WebP, BMP, AVIF, ICO — what an `<img>` draws — and SVG |
 |`gif` |a GIF: an image shown as a still |
-|`video` |any `video/*` type, an MPEG transport stream and a 3GPP file |
+|`video` |any `video/*` type, an MPEG transport stream, a 3GPP file, and a container brand `ffprobe` found media in (below) |
 |`audio` |any `audio/*` type |
 |`document` |a PDF |
 
@@ -76,6 +76,22 @@ records, is an MP4-family container whose `ftyp` box names a `3gp…` or `3g2…
 `infer` matches a closed list of MP4 brands, which has neither. Only those brands are
 added, not every `ftyp` container — a Canon raw file is one too. An SVG is text, with
 no magic bytes: it must be named `.svg` ''and'' hold an `<svg` element.
+
+!! A container brand nobody listed
+
+An MP4-family file names its ''brand'' in its `ftyp` box (`isom`, `3gp5`, `XAVC`…), and
+`infer` matches a closed list of them: a video of any other brand had no kind, and
+opened on ''no preview available''. A longer list only moves the hole. So when `infer`
+knows nothing of a file that has an `ftyp` box, the first file of that brand is handed
+to `ffprobe` — sandboxed, like every program that reads your files
+([[Sandboxing the media decoders]]) — and the answer is kept ''per brand'', not per
+file: a folder of a thousand such files costs one probe, once.
+
+* The answers are kept in `~/.local/state/metafolder/gui/media-brands` (under `$XDG_STATE_HOME` when set), one line per brand: the brand, a tab, `video` or `none`. It is not in the configuration repository — the GUI writes it by itself, and nothing there is written at run time. It is yours to edit: change a line to correct an answer, delete it to have the brand asked again. It is read when the GUI starts.
+* A brand is a `video` as soon as `ffprobe` names the codec of one audio or video stream. One answer stands for every file of the brand, and a brand holds films and voice memos alike; in doubt it is the video player, which plays an audio-only file — the audio player would show no picture.
+* A probe that fails — no `ffmpeg` package, a truncated file — teaches nothing: that file has no kind, and the next one of its brand is asked. One broken file does not settle its brand.
+* Only what `infer` does not know is asked about. A HEIF picture is a type it names, deliberately not an image here, and `ffprobe` would find a video stream in it.
+* A file without an `ftyp` box has no brand, so nothing to keep an answer under: it is never probed, and stays ''no preview available'' ([[file panel]]).
 
 `/thumbnail` makes a poster for a `video`, a `gif` and a `document`; `/document*`
 answers for a `document`. A panel gets the kind from `metafolder.fs.stat(path).kind`

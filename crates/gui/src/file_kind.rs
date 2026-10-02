@@ -10,7 +10,9 @@
 //!
 //! Only the head of the file is read, and nothing is decoded: this is a
 //! comparison of bytes, which is why it runs in-process while every decoder
-//! runs sandboxed (doc "Sandboxing the media decoders").
+//! runs sandboxed (doc "Sandboxing the media decoders"). One case leaves the
+//! process: an MP4-family container of a brand `infer` does not list, which
+//! `media_brands` asks a sandboxed `ffprobe` about — once per brand.
 
 use std::io::Read;
 use std::path::Path;
@@ -66,7 +68,9 @@ pub fn detect(path: &Path) -> Option<Kind> {
     }
     let mut head = Vec::new();
     file.take(HEAD_LEN).read_to_end(&mut head).ok()?;
-    of_head(&head, path)
+    // A container brand the signatures do not cover is settled by `ffprobe`,
+    // once per brand (`media_brands`).
+    of_head(&head, path).or_else(|| crate::media_brands::kind(&head, path))
 }
 
 /// The kind told by the first bytes of a file. `path` only settles SVG, which
