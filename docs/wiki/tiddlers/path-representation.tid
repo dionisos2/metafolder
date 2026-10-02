@@ -24,7 +24,7 @@ the copies and moves of a sync).
 
 Absolute, native paths appear in only two places:
 
-* `config.json`'s `root`, and `schema` when absolute ([[Repository layout on disk]]);
+* `config.json`'s `root` and `schema`, when absolute — either may be relative to the repository instead ([[Repository layout on disk]]);
 * the API parameters that name a location on this machine: `POST /repos/init`, `POST /repos/load`, `POST /repos/:repo/track` — and so `mf repo init`, `mf repo load`, `mf track`, `mf trash -f`, `mf order`, `mf watch check`.
 
 They are not portable, and need not be: the CLI, the GUI and the daemon run on the same

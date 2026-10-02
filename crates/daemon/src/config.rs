@@ -34,7 +34,17 @@ pub struct RepoConfig {
     pub version: u32,
     /// Absolute path of the watched root directory. Usually the parent of
     /// `.metafolder/`, but it can point elsewhere (external database).
+    ///
+    /// Absolute *here*: `config.json` may hold it relative to the directory
+    /// containing `.metafolder/` (see `root_relative`), so that a repository
+    /// moves with its files (doc "Moving a repository").
     pub root: PathBuf,
+    /// The root as `config.json` writes it when that is a relative path —
+    /// `.` for the standard form. `read` resolves it into `root`; `write` puts
+    /// it back, so the file keeps what it said. Change the two together
+    /// (`set_root`).
+    #[serde(skip)]
+    pub root_relative: Option<PathBuf>,
     /// Optional path of the user schema file, relative to `.metafolder/`
     /// (or absolute). When absent, `.metafolder/schema.json` is probed.
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -73,6 +83,7 @@ impl RepoConfig {
             name,
             version: CURRENT_VERSION,
             root,
+            root_relative: None,
             schema: None,
             created_at,
             log_retention_revisions: None,
@@ -86,7 +97,23 @@ impl RepoConfig {
         let path = metafolder_dir.join(CONFIG_FILE);
         let content =
             std::fs::read_to_string(&path).with_context(|| format!("Failed to read {path:?}"))?;
-        serde_json::from_str(&content).context("Failed to parse config.json")
+        let mut config: Self =
+            serde_json::from_str(&content).context("Failed to parse config.json")?;
+        if config.root.is_relative() {
+            let joined = containing_dir(metafolder_dir).join(&config.root);
+            // Not required to exist: a backup's copy of the file is read too.
+            let resolved = joined.canonicalize().unwrap_or(joined);
+            config.root_relative = Some(std::mem::replace(&mut config.root, resolved));
+        }
+        Ok(config)
+    }
+
+    /// Sets the root (absolute), recorded as `.` when it is the directory
+    /// containing `metafolder_dir` and as the absolute path otherwise — an
+    /// external `.metafolder/`, or a symlinked one.
+    pub fn set_root(&mut self, root: PathBuf, metafolder_dir: &Path) {
+        self.root_relative = (containing_dir(metafolder_dir) == root).then(|| PathBuf::from("."));
+        self.root = root;
     }
 
     /// Writes `config.json` atomically — a complete new file renamed over
@@ -97,7 +124,12 @@ impl RepoConfig {
     pub fn write(&self, metafolder_dir: &Path) -> anyhow::Result<()> {
         use std::io::Write as _;
         let path = metafolder_dir.join(CONFIG_FILE);
-        let content = serde_json::to_string_pretty(self).context("Failed to serialize config")?;
+        let on_disk = match &self.root_relative {
+            Some(relative) => Self { root: relative.clone(), ..self.clone() },
+            None => self.clone(),
+        };
+        let content =
+            serde_json::to_string_pretty(&on_disk).context("Failed to serialize config")?;
         let internal = metafolder_dir.join(crate::repo::INTERNAL_DIR);
         std::fs::create_dir_all(&internal)
             .with_context(|| format!("Failed to create {internal:?}"))?;
@@ -128,6 +160,12 @@ impl RepoConfig {
     pub fn exists(metafolder_dir: &Path) -> bool {
         metafolder_dir.join(CONFIG_FILE).exists()
     }
+}
+
+/// The directory a relative `root` is relative to: the one holding
+/// `.metafolder/`.
+fn containing_dir(metafolder_dir: &Path) -> &Path {
+    metafolder_dir.parent().unwrap_or(metafolder_dir)
 }
 
 #[cfg(test)]

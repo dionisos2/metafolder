@@ -185,7 +185,8 @@ pub fn init_repository(
             .map(|n| n.to_string_lossy().to_string())
             .unwrap_or_else(|| "repository".to_string()),
     };
-    let mut config = RepoConfig::new(root, name);
+    let mut config = RepoConfig::new(root.clone(), name);
+    config.set_root(root, &metafolder_dir);
     config.system = system;
     config.write(&metafolder_dir)?;
 
@@ -289,7 +290,7 @@ pub fn load_repository(locator: RepoLocator) -> Result<OpenedRepo> {
         // symlinked `.metafolder/` would put elsewhere.
         let root = root.canonicalize()?;
         if config.root != root {
-            config.root = root;
+            config.set_root(root, &metafolder_dir);
             config.write(&metafolder_dir)?;
         }
     }

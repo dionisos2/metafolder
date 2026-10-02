@@ -1,7 +1,7 @@
 title: Moving a repository
 tags: Platform
 kind: guide
-summary: A repository moves with its files — to another directory, another machine, a drive mounted elsewhere; only an external .metafolder needs its root edited by hand.
+summary: A repository moves with its files — to another directory, another machine, a drive mounted elsewhere; only an external .metafolder with an absolute root needs it edited by hand.
 
 Nothing in a repository's store names an absolute path: every tracked path is relative to
 the root ([[Path representation]]). Only `config.json` records the root, and how it is
@@ -17,9 +17,14 @@ mf -n music repo unload           # on the daemon that had it, if any
 mf repo load /run/media/me/Drive/Music
 ```
 
-The root is wherever `.metafolder/` is: a load by root corrects `config.json`'s `root`
-when it has changed. A drive mounted at `/media/Drive` on one machine and
-`/run/media/me/Drive` on another is the same repository on both.
+The root is wherever `.metafolder/` is: `config.json` records it as `.`, a path relative
+to the directory holding `.metafolder/`, so nothing in the repository names where it
+is. A drive mounted at `/media/Drive` on one machine and `/run/media/me/Drive` on
+another is the same repository on both, and a load by `--metafolder` finds the root as well as a
+load by root does.
+
+A repository created before the relative root holds an absolute one. A load by root
+corrects it when it has changed, and writes `.` in its place.
 
 !! External `.metafolder/`
 
@@ -31,6 +36,11 @@ it as usual:
 ```
 mf repo load --metafolder <path>
 ```
+
+`mf repo init --metafolder` writes an absolute `root`. A relative one is accepted there
+too, resolved against the directory holding `.metafolder/`: with `base/meta` as the
+`.metafolder/` and `base/data` as the files, `"root": "data"` lets `base` move as a
+whole. The daemon keeps a relative `root` as written when it rewrites `config.json`.
 
 !! Things to know
 

@@ -344,3 +344,91 @@ fn a_sqlite_repository_is_refused_at_load() {
     }
     assert!(repo::load_repository(RepoLocator::Root(root.path().to_path_buf())).is_ok());
 }
+
+/// The `root` key of `config.json`, as written.
+fn root_on_disk(metafolder: &std::path::Path) -> String {
+    let raw = std::fs::read_to_string(metafolder.join("config.json")).unwrap();
+    let json: serde_json::Value = serde_json::from_str(&raw).unwrap();
+    json["root"].as_str().unwrap().to_string()
+}
+
+#[test]
+fn test_standard_form_records_a_relative_root() {
+    // The root is the directory holding `.metafolder/`: written as that, the
+    // repository names no absolute path and can be moved as a whole.
+    let root = temp_dir("relroot");
+    let opened = repo::init_repository(&root, None, None, false).unwrap();
+    assert_eq!(opened.config.root, root.canonicalize().unwrap(), "absolute in memory");
+    assert_eq!(root_on_disk(&root.join(".metafolder")), ".");
+}
+
+#[test]
+fn test_external_form_records_an_absolute_root() {
+    let root = temp_dir("absroot");
+    let meta_parent = temp_dir("absroot_meta");
+    let meta = meta_parent.join("meta");
+    drop(repo::init_repository(&root, Some(&meta), None, false).unwrap());
+    assert_eq!(root_on_disk(&meta), root.canonicalize().unwrap().to_str().unwrap());
+}
+
+#[test]
+fn test_a_moved_repository_loads_by_its_metafolder_too() {
+    // Nothing tells this load where the root is but config.json: a relative
+    // root follows the directory, where an absolute one stayed behind.
+    let parent = temp_dir("moved_meta");
+    let old = parent.join("before");
+    std::fs::create_dir(&old).unwrap();
+    drop(repo::init_repository(&old, None, None, false).unwrap());
+    let new = parent.join("after");
+    std::fs::rename(&old, &new).unwrap();
+
+    let loaded = repo::load_repository(RepoLocator::Metafolder(new.join(".metafolder"))).unwrap();
+    assert_eq!(loaded.config.root, new.canonicalize().unwrap());
+}
+
+#[test]
+fn test_a_relative_root_resolves_against_the_metafolders_parent() {
+    // Hand-written in an external repository: `<base>/meta` next to
+    // `<base>/data`, movable together.
+    let base = temp_dir("relext");
+    let data = base.join("data");
+    std::fs::create_dir(&data).unwrap();
+    let meta = base.join("meta");
+    drop(repo::init_repository(&data, Some(&meta), None, false).unwrap());
+    let raw = std::fs::read_to_string(meta.join("config.json")).unwrap();
+    let mut json: serde_json::Value = serde_json::from_str(&raw).unwrap();
+    json["root"] = "data".into();
+    std::fs::write(meta.join("config.json"), json.to_string()).unwrap();
+
+    let loaded = repo::load_repository(RepoLocator::Metafolder(meta.clone())).unwrap();
+    assert_eq!(loaded.config.root, data.canonicalize().unwrap());
+    // Rewriting the config (a rename does) keeps what was written.
+    loaded.config.write(&meta).unwrap();
+    assert_eq!(root_on_disk(&meta), "data");
+    drop(loaded);
+
+    let moved = TempDir::new("metafolder_relext_moved");
+    let there = moved.join("base");
+    std::fs::rename(&*base, &there).unwrap();
+    let loaded = repo::load_repository(RepoLocator::Metafolder(there.join("meta"))).unwrap();
+    assert_eq!(loaded.config.root, there.join("data").canonicalize().unwrap());
+}
+
+#[test]
+fn test_a_stale_absolute_root_is_corrected_to_the_relative_one() {
+    // A repository created before the relative root, then moved: the load by
+    // root corrects config.json, and writes the form that needs no correcting.
+    let parent = temp_dir("stale");
+    let root = parent.join("repo");
+    std::fs::create_dir(&root).unwrap();
+    drop(repo::init_repository(&root, None, None, false).unwrap());
+    let meta = root.join(".metafolder");
+    let raw = std::fs::read_to_string(meta.join("config.json")).unwrap();
+    let mut json: serde_json::Value = serde_json::from_str(&raw).unwrap();
+    json["root"] = "/somewhere/else".into();
+    std::fs::write(meta.join("config.json"), json.to_string()).unwrap();
+
+    let loaded = repo::load_repository(RepoLocator::Root(root.clone())).unwrap();
+    assert_eq!(loaded.config.root, root.canonicalize().unwrap());
+    assert_eq!(root_on_disk(&meta), ".");
+}
