@@ -249,6 +249,24 @@ fn test_gui_workspace_new_and_rm() {
     assert_eq!(requests[1].1, "/gui/workspaces/ws-9");
 }
 
+/// `--left`/`--right` name the panel each slot shows the first time the
+/// workspace is put there, so a script's scratch workspace never mounts the
+/// default panel. Absent, the request is exactly what it always was.
+#[test]
+fn test_gui_workspace_new_names_its_panels() {
+    let gui = stub();
+    let out = mf_gui(&gui, &["workspace", "new", "--left", "file", "--right", "metarecord-detail"]);
+    assert_ok(&out);
+    assert_eq!(
+        gui.recorded.all()[0].2,
+        json!({"panels": {"left": "file", "right": "metarecord-detail"}})
+    );
+
+    let gui = stub();
+    assert_ok(&mf_gui(&gui, &["workspace", "new", "--left", "file"]));
+    assert_eq!(gui.recorded.all()[0].2, json!({"panels": {"left": "file"}}));
+}
+
 /// A script's calls carry the run id the GUI injected, so the workspace it
 /// creates and the questions it asks belong to it (doc "Script sessions").
 #[test]

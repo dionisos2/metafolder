@@ -14,6 +14,12 @@ Options:
       --repo <REPO>
           Active repository UUID (default: the daemon's first repo)
 
+      --left <LEFT>
+          Panel type the left slot shows when the workspace is first put there (default: the workspace's default panel)
+
+      --right <RIGHT>
+          Panel type the right slot shows when the workspace is first put there
+
   -h, --help
           Print help
 ```

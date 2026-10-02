@@ -1103,6 +1103,14 @@ enum GuiWorkspaceCommand {
         /// Active repository UUID (default: the daemon's first repo)
         #[arg(long)]
         repo: Option<String>,
+        /// Panel type the left slot shows when the workspace is first put
+        /// there (default: the workspace's default panel)
+        #[arg(long)]
+        left: Option<String>,
+        /// Panel type the right slot shows when the workspace is first put
+        /// there
+        #[arg(long)]
+        right: Option<String>,
     },
     /// Close a workspace
     Rm { id: String },
@@ -1732,7 +1740,9 @@ fn dispatch_gui(gui_url: Option<String>, command: GuiCommand) -> CmdResult {
         GuiCommand::Query { workspace } => gui::query(&gui_ctx, workspace.as_deref()),
         GuiCommand::Selected { workspace } => gui::selected(&gui_ctx, workspace.as_deref()),
         GuiCommand::Workspace { command } => match command {
-            GuiWorkspaceCommand::New { repo } => gui::workspace_new(&gui_ctx, repo.as_deref()),
+            GuiWorkspaceCommand::New { repo, left, right } => {
+                gui::workspace_new(&gui_ctx, repo.as_deref(), left.as_deref(), right.as_deref())
+            }
             GuiWorkspaceCommand::Rm { id } => gui::workspace_rm(&gui_ctx, &id),
         },
         GuiCommand::Layout { slot, value } => {

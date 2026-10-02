@@ -4,3 +4,5 @@ kind: reference
 summary: Create a workspace and print its id
 
 Opens a workspace and prints its id; `--repo` gives it a repository, by default the first the daemon lists ([[Workspaces]]). It is shown in no slot until [[mf gui layout]] puts it in one. Opened by a script the GUI started, it belongs to that script ([[Script sessions]]).
+
+`--left <panel>` and `--right <panel>` name the panel a slot shows the first time the workspace is put there. Without them it opens on its default panel, the [[metarecord-list panel]] — which a script should not let happen: the list loads the repository and publishes its first row as the workspace's selection when that load ends, over whatever the script showed in the meantime with [[mf gui view]]. A workspace created with its panels named never mounts the list.

@@ -98,11 +98,17 @@ mf_gui_session_open() {
     # Report to the workspace that was on screen before the takeover: the
     # scratch one below does not survive the run.
     [ "$_MF_SAVED_LEFT" = "-" ] || _MF_HOME_WS=$_MF_SAVED_LEFT
-    _MF_WS=$(mf gui workspace new --repo "$REPO") || mf_die "cannot create a workspace"
+    # The panels are named at creation, not set once the workspace is on
+    # screen: shown bare, it mounts its default panel — the metarecord list —
+    # which loads the whole repository and publishes its first row as the
+    # selection, whenever that load ends. On a large repository that is after
+    # the script's first `mf_gui_show_file`, so the first question was asked
+    # over the wrong file.
+    _MF_WS=$(mf gui workspace new --repo "$REPO" --left file --right "$right") \
+        || mf_die "cannot create a workspace"
     trap _mf_gui_session_cleanup EXIT
     mf gui layout left "$_MF_WS" >/dev/null
     mf gui layout right "$_MF_WS" >/dev/null
-    mf gui view right "$right" >/dev/null
     WS=$_MF_WS
 }
 

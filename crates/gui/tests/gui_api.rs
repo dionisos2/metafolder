@@ -171,6 +171,48 @@ async fn test_workspace_create_without_daemon_gets_null_repo() {
     assert_eq!(workspaces.iter().find(|w| w.id == id).unwrap().active_repo, None);
 }
 
+/// A script that opens a scratch workspace names the panels it wants there.
+/// Without that the workspace is first shown with its default panel — the
+/// metarecord list — which loads the whole repository and publishes its first
+/// row as the selection, some time later: over the file the script had just
+/// shown for its first question.
+#[tokio::test]
+async fn test_workspace_create_with_panels_never_shows_the_default_panel() {
+    let ctx = setup().await;
+    let (status, body) = request(
+        &ctx.router,
+        "POST",
+        "/gui/workspaces",
+        Some(json!({
+            "active_repo": "cafe0000000000000000000000000000",
+            "panels": {"left": "file", "right": "metarecord-detail"},
+        })),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    let id = body["id"].as_str().unwrap().to_string();
+
+    for slot in ["left", "right"] {
+        let (status, _) =
+            request(&ctx.router, "PUT", "/gui/layout", Some(json!({slot: id.as_str()}))).await;
+        assert_eq!(status, StatusCode::OK);
+    }
+    let layout = ctx.gui.layout();
+    assert_eq!(layout.left.workspace_id.as_deref(), Some(id.as_str()));
+    assert_eq!(layout.left.panel_type.as_deref(), Some("file"));
+    assert_eq!(layout.right.panel_type.as_deref(), Some("metarecord-detail"));
+
+    // An unknown slot name is a mistake to report, not a key to ignore.
+    let (status, _) = request(
+        &ctx.router,
+        "POST",
+        "/gui/workspaces",
+        Some(json!({"panels": {"middle": "file"}})),
+    )
+    .await;
+    assert_eq!(status, StatusCode::BAD_REQUEST);
+}
+
 // ── Layout ────────────────────────────────────────────────────────────────
 
 #[tokio::test]

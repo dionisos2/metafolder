@@ -773,4 +773,22 @@ assert "unresolved preview: the unresolvable one clears the panel" \
 assert "unresolved preview: both questions were asked" \
     [ "$(mock_count 'gui input*')" -eq 3 ]  # the scope question, then two entries
 
+# ── Case 29: the scratch workspace opens on the session's own panels ────────
+# Created bare, it is first shown with its default panel — the metarecord list
+# — which loads the repository and publishes its first row as the selection,
+# some time later: over the file the first question had just shown. So the
+# panels are named at creation and the list is never mounted there.
+mock_reset
+setup_top
+walk_children "" file file-a
+walk_path file-a /a.txt
+mock_respond 'path file-a' '/abs/a.txt'
+walk_counts 1 1
+mock_prompt '/top'
+mock_input n y
+bash "$SCRIPT" music >/dev/null; code=$?
+assert "session panels: exits 0" [ "$code" -eq 0 ]
+assert "session panels: the workspace is created with both panels named" \
+    [ "$(mock_count 'gui workspace new --repo repo-1 --left file --right metarecord-detail')" -eq 1 ]
+
 assert_summary

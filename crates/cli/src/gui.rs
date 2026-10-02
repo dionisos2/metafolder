@@ -169,13 +169,26 @@ pub fn selected(ctx: &GuiCtx, workspace: Option<&str>) -> Result<i32, CliError> 
     Ok(0)
 }
 
-pub fn workspace_new(ctx: &GuiCtx, repo: Option<&str>) -> Result<i32, CliError> {
-    // The run id makes the new workspace belong to this script, so the GUI
-    // scopes its questions and task entry to it (doc "Script sessions").
-    let body = with_run_task(match repo {
+pub fn workspace_new(
+    ctx: &GuiCtx,
+    repo: Option<&str>,
+    left: Option<&str>,
+    right: Option<&str>,
+) -> Result<i32, CliError> {
+    let mut body = match repo {
         Some(repo) => json!({ "active_repo": repo }),
         None => json!({}),
-    });
+    };
+    // The panels the workspace opens on, so its default one is never mounted
+    // (doc "Script sessions"). Absent rather than empty when none is named.
+    for (slot, panel_type) in SLOTS.into_iter().zip([left, right]) {
+        if let Some(panel_type) = panel_type {
+            body["panels"][slot] = json!(panel_type);
+        }
+    }
+    // The run id makes the new workspace belong to this script, so the GUI
+    // scopes its questions and task entry to it (doc "Script sessions").
+    let body = with_run_task(body);
     let resp = ctx.client.post("/gui/workspaces", &body)?;
     println!("{}", resp["id"].as_str().unwrap_or_default());
     Ok(0)

@@ -688,7 +688,29 @@ impl GuiState {
         active_repo: Option<String>,
         repo_name: Option<String>,
     ) -> String {
-        self.update(|inner| (inner.new_workspace(active_repo, repo_name), Emit::WORKSPACES))
+        self.create_workspace_with_panels(active_repo, repo_name, &[])
+    }
+
+    /// [`create_workspace_named`](Self::create_workspace_named) with the panel
+    /// type each slot shows the first time the workspace is assigned to it,
+    /// in place of the default one. For a script's scratch workspace: shown
+    /// with its default panel first, it mounts the metarecord list, which
+    /// loads the repository and publishes its first row as the selection —
+    /// later, over what the script had shown meanwhile (doc "Script sessions").
+    pub fn create_workspace_with_panels(
+        &self,
+        active_repo: Option<String>,
+        repo_name: Option<String>,
+        panels: &[(SlotId, String)],
+    ) -> String {
+        self.update(|inner| {
+            let id = inner.new_workspace(active_repo, repo_name);
+            let ws = inner.workspace_mut(&id).expect("freshly created workspace");
+            for (slot, panel_type) in panels {
+                ws.last_panel.insert(*slot, panel_type.clone());
+            }
+            (id, Emit::WORKSPACES)
+        })
     }
 
     /// `workspace:new` — creates a workspace and shows it in both slots.

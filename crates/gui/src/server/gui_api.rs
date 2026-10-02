@@ -79,6 +79,11 @@ pub struct CreateWorkspaceBody {
     /// its question bar visible in both (doc "Script sessions").
     #[serde(default)]
     task: Option<String>,
+    /// The panel type each slot shows when the workspace is first assigned to
+    /// it (`{"left": "file"}`), in place of the default one — which a script
+    /// never wants to see mounted (doc "Script sessions").
+    #[serde(default)]
+    panels: Map<String, Value>,
 }
 
 pub async fn create_workspace(
@@ -87,6 +92,20 @@ pub async fn create_workspace(
 ) -> Response {
     let body = body.map(|Json(b)| b).unwrap_or_default();
     let task = body.task;
+    let mut panels = Vec::new();
+    for (slot, panel_type) in &body.panels {
+        let slot_id = match parse_slot(slot) {
+            Ok(slot_id) => slot_id,
+            Err(response) => return *response,
+        };
+        let Some(panel_type) = panel_type.as_str() else {
+            return error_response(
+                StatusCode::BAD_REQUEST,
+                &format!("panels: '{slot}' must be a panel type, got {panel_type}"),
+            );
+        };
+        panels.push((slot_id, panel_type.to_string()));
+    }
     let mut active_repo = body.active_repo;
     // Resolve the repo's human name so the workspace is auto-named after it
     // (doc "Workspaces"); best-effort, falls back to "Workspace N".
@@ -100,7 +119,7 @@ pub async fn create_workspace(
     } else if let Some(uuid) = &active_repo {
         repo_name = state.daemon.repo_name(uuid).await;
     }
-    let id = state.gui.create_workspace_named(active_repo, repo_name);
+    let id = state.gui.create_workspace_with_panels(active_repo, repo_name, &panels);
     if let Some(task) = task {
         state.gui.script_claim_workspace(&task, &id);
     }

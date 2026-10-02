@@ -24,8 +24,8 @@ QUERY=${1:-'mfr_mime MATCHES "^image/"'}
 # the layout is put back.
 SAVED_LEFT=$(mf gui layout left)
 SAVED_RIGHT=$(mf gui layout right)
-WS_LEFT=$(mf gui workspace new --repo "$REPO")
-WS_RIGHT=$(mf gui workspace new --repo "$REPO")
+WS_LEFT=$(mf gui workspace new --repo "$REPO" --left file)
+WS_RIGHT=$(mf gui workspace new --repo "$REPO" --right file)
 IMAGES=$(mktemp)
 cleanup() {
     rm -f "$IMAGES"

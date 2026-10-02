@@ -52,9 +52,12 @@ error — the request then belongs to nobody — so the same script runs from a 
 `repo_name` is the repository's name as it was when the workspace adopted it
 ([[Workspaces]]).
 
-`POST /gui/workspaces` takes `{"active_repo": "<uuid>", "task": "script-3"}`, both
-optional, and answers `{"id": "ws-3"}`. Without `active_repo` the workspace gets the
-first repository the daemon lists, or none. With `task` it belongs to that script.
+`POST /gui/workspaces` takes
+`{"active_repo": "<uuid>", "task": "script-3", "panels": {"left": "file"}}`, all
+optional, and answers `{"id": "ws-3"}`. Without `active_repo` the workspace gets the first repository the
+daemon lists, or none. With `task` it belongs to that script. `panels` names the panel
+type a slot shows the first time the workspace is put there, in place of its default
+one; a slot other than `left` or `right` is a `400`.
 
 `DELETE /gui/workspaces/:id` answers `204`. A slot that showed it shows the previous
 workspace in tab order, or none when it was the last.
