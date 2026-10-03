@@ -1631,12 +1631,30 @@ export async function mount(root, metafolder) {
     },
   });
 
+  // `mode` flips the table ⇄ the grid through the `mode` setting, so the
+  // toggle and `metarecord-list:set mode` persist the same variable.
+  /** @type {Record<string, () => unknown>} */
+  const TOGGLES = {
+    normal: () => setNormalShown(!normalShown),
+    mode: () => SETTINGS.mode.apply(mode === 'grid' ? 'table' : 'grid'),
+  };
+
   void commands.register('metarecord-list:toggle', {
-    label: 'Metarecord list: toggle a view flag (normal)',
-    args: [{ name: 'flag', prompt: () => 'Which flag? (normal)', complete: () => ['normal'] }],
+    label: `Metarecord list: toggle a view flag (${Object.keys(TOGGLES).join(' / ')})`,
+    args: [
+      {
+        name: 'flag',
+        prompt: () => `Which flag? (${Object.keys(TOGGLES).join(' / ')})`,
+        complete: () => Object.keys(TOGGLES),
+      },
+    ],
     handler: (flag) => {
-      if (flag !== 'normal') throw new Error(`unknown flag: "${flag ?? ''}" (expected normal)`);
-      return setNormalShown(!normalShown);
+      const toggle = TOGGLES[flag];
+      if (!toggle)
+        throw new Error(
+          `unknown flag: "${flag ?? ''}" (expected ${Object.keys(TOGGLES).join(' / ')})`,
+        );
+      return toggle();
     },
   });
 

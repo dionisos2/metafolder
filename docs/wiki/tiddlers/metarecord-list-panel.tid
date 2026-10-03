@@ -68,7 +68,8 @@ footer gives `loaded/total` — the total is asked from the daemon apart, after 
 first page ([[Sorting and postings]]) — and how many metarecords are checked.
 
 `metarecord-list:set mode grid` shows a thumbnail per metarecord instead of the table,
-named by the path ([[Display modes]]).
+named by the path ([[Display modes]]);
+<<key "metarecord-list:toggle mode" Shift+G>> switches between the two.
 
 A row's colour says something about its file:
 

@@ -20,4 +20,4 @@ summary: The metarecord-list panel type
 * ``metarecord-list:refresh`` — Metarecord list: reload from the daemon
 * ``metarecord-list:select`` — Metarecord list: change the multi-selection (toggle / all / none)
 * ``metarecord-list:set`` — Metarecord list: change a view setting
-* ``metarecord-list:toggle`` — Metarecord list: toggle a view flag (normal)
+* ``metarecord-list:toggle`` — Metarecord list: toggle a view flag

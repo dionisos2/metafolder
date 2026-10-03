@@ -414,4 +414,14 @@ describe('display mode', () => {
     const p = await mountPanel({ 'metarecord-list:mode': 'mosaic' });
     expect(isGrid(p.shadow)).toBe(false);
   });
+
+  test('toggle mode flips between the table and the grid, and is persisted', async () => {
+    const p = await mountPanel();
+    await p.invoke('metarecord-list:toggle', 'mode');
+    expect(isGrid(p.shadow)).toBe(true);
+    expect(p.vars.get('metarecord-list:mode')).toBe('grid');
+    await p.invoke('metarecord-list:toggle', 'mode');
+    expect(isGrid(p.shadow)).toBe(false);
+    expect(p.vars.get('metarecord-list:mode')).toBe('table');
+  });
 });
