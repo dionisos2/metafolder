@@ -507,5 +507,16 @@ number = n:NUMBER "MB" => {num($n) * 1048576}
             expand(&g, r#"#"music/jazz""#).unwrap(),
             r#"tag -> (mf_schema = "tag" AND osm(path, "music/jazz"))"#
         );
+        // Accented letters are word material, as in the normal DSL: no quotes
+        // needed.
+        assert_eq!(
+            expand(&g, "#écriture").unwrap(),
+            r#"tag -> (mf_schema = "tag" AND osm(path, "écriture"))"#
+        );
+        assert_eq!(
+            expand(&g, "#=littérature/poésie").unwrap(),
+            r#"tag -> (mf_schema = "tag" AND path =>* "littérature/poésie")"#
+        );
+        assert_eq!(expand(&g, "genre=électro").unwrap(), r#"genre = "électro""#);
     }
 }

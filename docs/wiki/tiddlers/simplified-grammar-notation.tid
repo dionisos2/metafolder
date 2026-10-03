@@ -10,7 +10,7 @@ tokens is dropped.
 
 |!Token |!Matches |
 |`UUID` |exactly 32 hex characters, maximal on both sides — tried first, since a uuid may start like a number or a word |
-|`WORD` |`[A-Za-z_][A-Za-z0-9_]*` |
+|`WORD` |a letter or `_`, then letters, digits and `_` — any Unicode letter, so `écriture` is one word (a word cannot start with an ASCII digit: that is a `NUMBER`) |
 |`NUMBER` |an integer or float |
 |`STRING` |a double-quoted literal, with escapes |
 |`SYMBOL` |a maximal run of punctuation (`:`, `~`, `>=`, `..`, `+`, `#=`…) |

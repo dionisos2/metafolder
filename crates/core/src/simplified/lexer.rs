@@ -6,7 +6,9 @@
 /// Token categories produced by [`lex`].
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum TokKind {
-    /// `[A-Za-z_][A-Za-z0-9_]*`.
+    /// A letter or `_`, then letters, digits and `_` — Unicode ones, as in
+    /// the normal DSL, so `#écriture` needs no quotes. (An ASCII digit starts
+    /// a `Number` instead.)
     Word,
     /// An integer or float literal.
     Number,
@@ -81,9 +83,9 @@ pub fn lex(input: &str) -> Result<Vec<Tok>, String> {
                 }
             }
             toks.push(Tok { kind: TokKind::Number, text: chars[start..i].iter().collect() });
-        } else if c.is_ascii_alphabetic() || c == '_' {
+        } else if is_word_char(c) {
             let start = i;
-            while i < chars.len() && (chars[i].is_ascii_alphanumeric() || chars[i] == '_') {
+            while i < chars.len() && is_word_char(chars[i]) {
                 i += 1;
             }
             toks.push(Tok { kind: TokKind::Word, text: chars[start..i].iter().collect() });
@@ -121,16 +123,21 @@ fn uuid_run_end(chars: &[char], start: usize) -> Option<usize> {
         return None;
     }
     // `<32 hex>x` / `<32 hex>_x` is one longer word, not a UUID.
-    if chars.get(end).is_some_and(|c| c.is_ascii_alphanumeric() || *c == '_') {
+    if chars.get(end).is_some_and(|c| is_word_char(*c)) {
         return None;
     }
     Some(end)
 }
 
+/// Word material: any Unicode letter or digit, or `_`.
+fn is_word_char(c: char) -> bool {
+    c.is_alphanumeric() || c == '_'
+}
+
 /// A symbol is any character that is not whitespace, word/number material, a
 /// string quote, or a parenthesis (parentheses are their own single tokens).
 fn is_symbol_char(c: char) -> bool {
-    !c.is_whitespace() && !c.is_ascii_alphanumeric() && c != '_' && c != '"' && c != '(' && c != ')'
+    !c.is_whitespace() && !is_word_char(c) && c != '"' && c != '(' && c != ')'
 }
 
 #[cfg(test)]
@@ -266,6 +273,24 @@ mod tests {
             lx("8f3a2b1c4d5e6f708192a3b4c5d6e7f8_x"),
             vec![n("8"), w("f3a2b1c4d5e6f708192a3b4c5d6e7f8_x")]
         );
+    }
+
+    #[test]
+    fn non_ascii_letters_are_word_material() {
+        // As in the normal DSL: `#écriture` needs no quotes.
+        assert_eq!(lx("#écriture"), vec![sym("#"), w("écriture")]);
+        assert_eq!(lx("über_größe"), vec![w("über_größe")]);
+        assert_eq!(lx("日本語"), vec![w("日本語")]);
+        // A word ends where the letters do, accented or not.
+        assert_eq!(lx("été:2"), vec![w("été"), sym(":"), n("2")]);
+        // A non-ASCII digit is word material too, never an empty symbol.
+        assert_eq!(lx("٣"), vec![w("٣")]);
+    }
+
+    #[test]
+    fn a_uuid_glued_to_an_accented_letter_is_one_word() {
+        let u = "8f3a2b1c4d5e6f708192a3b4c5d6e7f8";
+        assert_eq!(lx(&format!("{u}é")), vec![n("8"), w(&format!("{}é", &u[1..]))]);
     }
 
     #[test]
