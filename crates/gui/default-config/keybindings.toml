@@ -547,7 +547,13 @@
   { command = "metarecord:bulk selection delete", when = "metarecord-detail" },
   { command = "metarecord:bulk selection delete", when = "metarecord-list" },
 ]
-# "m q <op>": the same five operations on what the list's query matches
+# "t" sends the files to the trash, their metarecords with them (one revision,
+# restorable from the trash panel); metarecords without a file are left alone.
+"m m t" = [
+  { command = "metarecord:bulk selection trash", when = "metarecord-detail" },
+  { command = "metarecord:bulk selection trash", when = "metarecord-list" },
+]
+# "m q <op>": the same operations on what the list's query matches
 # (q = query) instead of the checked rows. Each one still confirms, naming the
 # count, so a whole-repository edit is never one keystroke away.
 "m q s" = [
@@ -569,6 +575,10 @@
 "m q d" = [
   { command = "metarecord:bulk query delete", when = "metarecord-detail" },
   { command = "metarecord:bulk query delete", when = "metarecord-list" },
+]
+"m q t" = [
+  { command = "metarecord:bulk query trash", when = "metarecord-detail" },
+  { command = "metarecord:bulk query trash", when = "metarecord-list" },
 ]
 
 # sync (doc "sync panel"): the four steps of a cross-repo sync, on the prefix that

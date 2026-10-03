@@ -457,6 +457,13 @@ describe('panel api — misc surface', () => {
     expect(invoke).toHaveBeenCalledWith('trash_empty', { repo: 'r1' });
     await api.trash.trashPath('r1', '/tmp/r1/song.mp3');
     expect(invoke).toHaveBeenCalledWith('trash_path', { repo: 'r1', path: '/tmp/r1/song.mp3' });
+    const query = { type: 'uuid_in', uuids: ['a'] };
+    await api.trash.trashQuery('r1', query);
+    expect(invoke).toHaveBeenCalledWith('trash_query_metarecords', {
+      wsId: expect.any(String),
+      repo: 'r1',
+      query,
+    });
   });
 
   test('log navigation routes to the coordinated navigation commands', async () => {

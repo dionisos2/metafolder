@@ -114,7 +114,16 @@ async function mountPanel(fields: Field[], catalog: Record<string, string> = {},
       exists: async () => true,
       homeDir: async () => '/home/user',
     },
-    trash: { list: async () => [], restore: async () => '', remove: async () => {}, empty: async () => 0 },
+    trash: {
+      list: async () => [],
+      restore: async () => '',
+      remove: async () => {},
+      empty: async () => 0,
+      trashQuery: async (repo: string, query: unknown) => {
+        calls.push({ method: 'TRASH', path: repo, body: query });
+        return { trashed: 2, inside: 0, without_file: 0, root_kept: false, failed: [] };
+      },
+    },
     history: { read: async () => [], append: async () => {} },
     statusBar: { message: async () => {}, error: async () => {} },
     messages: { list: async () => [], append: async () => {}, onAppend: noop },
@@ -318,7 +327,7 @@ describe('metarecord:bulk — the target is the first argument', () => {
     // default, now a visible, editable answer instead of a silent fallback.
     expect(initials[0]).toBe('query');
     expect(prompts.slice(1)).toEqual([
-      'Operation? (set / add / remove / unset / delete)',
+      'Operation? (set / add / remove / unset / delete / trash)',
       'Field to set?',
       'Value for "rating"?',
     ]);
@@ -386,6 +395,50 @@ describe('metarecord:bulk — the target is the first argument', () => {
       query: { type: 'match', field: 'rating', op: '>', value: 3 },
       name: 'rating',
     });
+  });
+});
+
+describe('metarecord:bulk trash — the files of a whole set', () => {
+  test('trash takes neither a field nor a value', async () => {
+    const { specs } = await mountPanel([]);
+    const { prompts, args } = await collect(specs.get('metarecord:bulk')!, ['query', 'trash'], []);
+    expect(prompts).toEqual([]);
+    expect(args).toEqual(['query', 'trash']);
+  });
+
+  test('the checked metarecords go to the trash as one set, once confirmed', async () => {
+    const { specs, calls } = await mountPanel([], {}, { selected_metarecords: ['uuid-a', 'uuid-b'] });
+    const confirm = vi.fn(() => true);
+    vi.stubGlobal('confirm', confirm);
+    await specs.get('metarecord:bulk')!.handler('selection', 'trash');
+    expect(confirm).toHaveBeenCalledWith(expect.stringContaining('2 selected metarecords'));
+    const trashed = calls.filter((c) => c.method === 'TRASH');
+    expect(trashed).toHaveLength(1);
+    expect(trashed[0].body).toEqual({ type: 'uuid_in', uuids: ['uuid-a', 'uuid-b'] });
+  });
+
+  test('the query target trashes what the list shows', async () => {
+    const effective = { type: 'match', field: 'rating', op: '>', value: 3 };
+    const { specs, calls } = await mountPanel([], {}, { 'metarecord-list:effective-query': effective });
+    vi.stubGlobal('confirm', vi.fn(() => true));
+    await specs.get('metarecord:bulk')!.handler('query', 'trash');
+    expect(calls.find((c) => c.method === 'TRASH')?.body).toEqual(effective);
+  });
+
+  test('declining trashes nothing', async () => {
+    const { specs, calls } = await mountPanel([], {}, { selected_metarecords: ['uuid-a'] });
+    vi.stubGlobal('confirm', vi.fn(() => false));
+    await specs.get('metarecord:bulk')!.handler('selection', 'trash');
+    expect(calls.filter((c) => c.method === 'TRASH')).toEqual([]);
+  });
+
+  test('an empty selection is nothing to trash', async () => {
+    const { specs, calls } = await mountPanel([]);
+    const confirm = vi.fn(() => true);
+    vi.stubGlobal('confirm', confirm);
+    await specs.get('metarecord:bulk')!.handler('selection', 'trash');
+    expect(confirm).not.toHaveBeenCalled();
+    expect(calls.filter((c) => c.method === 'TRASH')).toEqual([]);
   });
 });
 

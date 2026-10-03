@@ -560,6 +560,7 @@ pub fn run(options: Options) {
             trash::trash_list,
             trash::trash_selected_metarecord,
             trash::trash_path,
+            trash::trash_query_metarecords,
             trash::trash_restore,
             trash::trash_remove,
             trash::trash_empty,

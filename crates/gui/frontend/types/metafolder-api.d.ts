@@ -377,6 +377,25 @@ declare namespace Metafolder {
      *  and deleted before the bytes move, doc "Trash") — the file-manager
      *  panel's delete, and `metarecord:remove`'s OK. */
     trashPath(repo: string, path: string): Promise<string>;
+    /** Sends the files of every metarecord `query` matches to the trash, their
+     *  metarecords deleted in one revision (doc "Sending files to the trash").
+     *  Posts the outcome to the status bar itself. `metarecord:bulk <target>
+     *  trash`. */
+    trashQuery(repo: string, query: unknown): Promise<BulkTrashOutcome>;
+  }
+
+  /** What `trash.trashQuery` did. */
+  interface BulkTrashOutcome {
+    /** Trash entries made, one per file or directory moved. */
+    trashed: number;
+    /** Metarecords under a trashed directory of the set (they went with it). */
+    inside: number;
+    /** Metarecords with no file, left alone. */
+    without_file: number;
+    /** Whether the set held the repository root, which is never trashed. */
+    root_kept: boolean;
+    /** `path: reason` for each file whose bytes could not be moved. */
+    failed: string[];
   }
 
   /** What `log.rollback` did. */

@@ -1921,6 +1921,34 @@ export async function mount(root, metafolder) {
         await dirty();
       },
     },
+
+    trash: {
+      // The files of the whole set go to the trash, their metarecords with
+      // them, in one revision (doc "Sending files to the trash"). No field, no
+      // value; confirmed on its own terms like `delete`, naming the count.
+      // The Rust side posts the outcome (files trashed, metarecords without a
+      // file kept) and marks the lists dirty.
+      run: async (t) => {
+        if (t.count === 0) {
+          void statusBar.message(
+            t.explicit
+              ? 'No metarecords are checked — nothing to trash.'
+              : 'No metarecords match — nothing to trash.',
+            statusMessageMs,
+          );
+          return;
+        }
+        const on = t.explicit ? t.desc : `${t.count} metarecord${t.count === 1 ? '' : 's'}`;
+        if (
+          !confirm(
+            `Send the files of ${on} to the trash? ` +
+              `Their metarecords go with them; restore them from the trash panel.`,
+          )
+        )
+          return;
+        await metafolder.trash.trashQuery(t.repo, t.query);
+      },
+    },
   };
 
   const BULK_OPERATIONS = Object.keys(BULK_OPS);

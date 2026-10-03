@@ -816,6 +816,9 @@ mod tests {
             (["m", "q", "v"], "metarecord:bulk query remove"),
             (["m", "q", "r"], "metarecord:bulk query unset"),
             (["m", "q", "d"], "metarecord:bulk query delete"),
+            // `t` sends the files to the trash, their metarecords with them.
+            (["m", "m", "t"], "metarecord:bulk selection trash"),
+            (["m", "q", "t"], "metarecord:bulk query trash"),
         ] {
             let found = bound(&keys);
             assert!(

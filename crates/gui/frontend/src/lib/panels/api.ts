@@ -577,6 +577,12 @@ export function createPanelApi(deps: PanelApiDeps, ctx: PanelApiCtx): PanelApiIn
       empty: (repo: string) => invoke('trash_empty', { repo }) as Promise<number>,
       trashPath: (repo: string, path: string) =>
         invoke('trash_path', { repo, path }) as Promise<string>,
+      trashQuery: (repo: string, query: unknown) =>
+        invoke('trash_query_metarecords', {
+          wsId: ctx.wsId,
+          repo,
+          query,
+        }) as Promise<Metafolder.BulkTrashOutcome>,
     },
 
     /** Coordinated navigation of the event log, files included — the shared

@@ -226,6 +226,7 @@ export async function mount(root, metafolder) {
       { value: 'remove', label: 'Remove (delete matching rows)' },
       { value: 'unset', label: 'Unset (remove the field)' },
       { value: 'delete', label: 'Delete metarecords' },
+      { value: 'trash', label: 'Trash files' },
     ],
     onChange: () => syncBulkOpUi(),
   });
@@ -1157,6 +1158,8 @@ export async function mount(root, metafolder) {
   // `valueless` ops (unset) act on the field name alone — no value widget.
   // `noField` ops (delete) act on the matched metarecords themselves — no field
   // name, no value; the response counts `deleted` rather than `updated`.
+  // `trash` sends their files to the trash (the metarecords with them) through
+  // the GUI, not a daemon route — hence no `path`.
   /** @type {Record<string, {path: string, verb: string, prep: string, valueless?: boolean, noField?: boolean}>} */
   const BULK_OPS = {
     set: { path: 'query/fields/set', verb: 'Set', prep: 'on' },
@@ -1164,6 +1167,7 @@ export async function mount(root, metafolder) {
     remove: { path: 'query/fields/remove', verb: 'Remove', prep: 'from' },
     unset: { path: 'query/fields/unset', verb: 'Unset', prep: 'from', valueless: true },
     delete: { path: 'query/delete', verb: 'Delete', prep: '', valueless: true, noField: true },
+    trash: { path: '', verb: 'Trash', prep: '', valueless: true, noField: true },
   };
 
   // Value picker (doc "Value picker") for the bulk-set value widget.
@@ -1247,6 +1251,22 @@ export async function mount(root, metafolder) {
             : 'No metarecords match — nothing to do.',
           statusMessageMs,
         );
+        return;
+      }
+
+      if (op === BULK_OPS.trash) {
+        // The files go to the trash, their metarecords with them, in one
+        // revision (doc "Sending files to the trash"); the Rust side posts the
+        // outcome and marks the lists dirty.
+        if (
+          !confirm(
+            `Send the files of ${n} metarecord${n === 1 ? '' : 's'} to the trash? ` +
+              `Their metarecords go with them; restore them from the trash panel.`,
+          )
+        )
+          return;
+        await metafolder.trash.trashQuery(repo, effQ ?? MATCH_ALL);
+        bulkForm.classList.remove('open');
         return;
       }
 

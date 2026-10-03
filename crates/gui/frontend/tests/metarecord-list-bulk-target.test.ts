@@ -87,7 +87,16 @@ function stubApi(vars: Record<string, unknown>, calls: Call[]) {
       commands: { register: async () => null, invoke: () => null },
       addKeybinding: async () => null,
       fs: { readDir: async () => [], stat: async () => ({}), exists: async () => true, homeDir: async () => '/home/user' },
-      trash: { list: async () => [], restore: async () => '', remove: async () => {}, empty: async () => 0 },
+      trash: {
+        list: async () => [],
+        restore: async () => '',
+        remove: async () => {},
+        empty: async () => 0,
+        trashQuery: async (repo: string, query: unknown) => {
+          calls.push({ method: 'TRASH', path: repo, body: query });
+          return { trashed: 1, inside: 0, without_file: 0, root_kept: false, failed: [] };
+        },
+      },
       history: { read: async () => [], append: async () => {} },
       statusBar,
       messages: { list: async () => [], append: async () => {}, onAppend: noop },
@@ -186,6 +195,19 @@ describe('the bulk form target', () => {
     await apply(shadow);
     const post = calls.find((c) => c.method === 'POST' && c.path.endsWith('/query/delete'));
     expect(post!.body).toEqual({ query: { type: 'uuid_in', uuids: ['uuid-a'] } });
+  });
+
+  test('trash over the checked selection sends exactly those files to the trash', async () => {
+    const { shadow, calls, store } = await mountList({});
+    store.set('selected_metarecords', ['uuid-a']);
+    (shadow.getElementById('bulk-form') as HTMLElement).classList.add('open');
+    await choose(shadow, 'bulk-target', 'Checked selection');
+    await choose(shadow, 'bulk-op', 'Trash files');
+    await apply(shadow);
+    expect(calls.filter((c) => c.method === 'TRASH')).toEqual([
+      { method: 'TRASH', path: 'r', body: { type: 'uuid_in', uuids: ['uuid-a'] } },
+    ]);
+    expect(calls.filter((c) => c.method === 'POST' && c.path.endsWith('/query/delete'))).toEqual([]);
   });
 });
 describe('the bulk form and reserved fields', () => {

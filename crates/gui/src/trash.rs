@@ -149,6 +149,108 @@ fn trash_selected_blocking(base: String, uuid: String, repo: String) -> Result<S
     trash_tracked(&base, &repo, &internal, &abs, Some(Path::new(&root)), Some(uuid))
 }
 
+/// What a bulk trashing ([`trash_query`]) did, for the status line.
+#[derive(Debug, Default, serde::Serialize)]
+pub struct BulkTrashOutcome {
+    /// Trash entries made: one per file or directory moved.
+    pub trashed: usize,
+    /// Metarecords of the set under a directory of the set: they went with it.
+    pub inside: usize,
+    /// Metarecords of the set with no file (no `mfr_path`, or an orphan).
+    pub without_file: usize,
+    /// Whether the set held the repository root, which is never trashed.
+    pub root_kept: bool,
+    /// The paths whose bytes could not be moved, with the reason.
+    pub failed: Vec<String>,
+}
+
+/// Splits `resolve-tree`'s answer (uuid → paths) into the paths to trash: the
+/// first path of each metarecord, minus those under another path of the set
+/// (they go with their directory) and the root. Sorted, so a directory comes
+/// before what it holds.
+fn plan_bulk_trash(
+    paths: &serde_json::Map<String, Value>,
+) -> (Vec<(String, String)>, BulkTrashOutcome) {
+    let mut outcome = BulkTrashOutcome::default();
+    let mut items: Vec<(String, String)> = Vec::new();
+    for (uuid, list) in paths {
+        match list.as_array().and_then(|l| l.first()).and_then(Value::as_str) {
+            None => outcome.without_file += 1,
+            Some("") => outcome.root_kept = true,
+            Some(rel) => items.push((rel.to_string(), uuid.clone())),
+        }
+    }
+    items.sort();
+    let mut kept: Vec<(String, String)> = Vec::new();
+    for (rel, uuid) in items {
+        let under = kept.iter().any(|(dir, _)| rel.starts_with(&format!("{dir}/")));
+        if under {
+            outcome.inside += 1;
+        } else {
+            kept.push((rel, uuid));
+        }
+    }
+    (kept.into_iter().map(|(rel, uuid)| (uuid, rel)).collect(), outcome)
+}
+
+/// Trashes the files of every metarecord `query` matches (doc "Sending files
+/// to the trash"): the order of [`trash_tracked`], over a set. Everything is
+/// captured first, then the metarecords are deleted in **one** call — one
+/// revision to undo, and a reference from one member of the set to another is
+/// not a refusal — and only then do the bytes move, one trash entry per file
+/// or directory. A refusal from the daemon therefore leaves every file where
+/// it was; a move that fails afterwards is reported in `failed` and the others
+/// go on.
+pub fn trash_query(base: &str, repo: &str, query: &Value) -> Result<BulkTrashOutcome, String> {
+    let client = BlockingClient::new(base.to_string());
+    let info = client.get(&format!("/repos/{repo}")).map_err(|e| e.message)?;
+    let (root, internal) = root_and_internal(&info)?;
+    let resolved = client
+        .post(
+            &format!("/repos/{repo}/query/fields/resolve-tree"),
+            &serde_json::json!({"query": query, "field": "mfr_path"}),
+        )
+        .map_err(|e| e.message)?;
+    let paths = resolved.as_object().ok_or("the daemon did not answer with paths")?;
+    let (items, mut outcome) = plan_bulk_trash(paths);
+
+    // Capture: the record (for its version) and its subtree, per item.
+    let mut captured = Vec::with_capacity(items.len());
+    let mut doomed: Vec<metafolder_core::trash::TrashedNode> = Vec::new();
+    let mut seen = std::collections::HashSet::new();
+    for (uuid, rel) in &items {
+        let record =
+            client.get(&format!("/repos/{repo}/metarecords/{uuid}")).map_err(|e| e.message)?;
+        let subtree = metafolder_core::trash::capture_nodes(&client, repo, &record, rel)
+            .map_err(|e| e.message)?;
+        for node in subtree.iter().filter(|n| n.trashed) {
+            if seen.insert(node.uuid.clone()) {
+                doomed.push(node.clone());
+            }
+        }
+        captured.push((uuid.clone(), rel.clone(), record["version"].as_u64(), subtree));
+    }
+    metafolder_core::trash::delete_trashed(&client, repo, &doomed, false).map_err(|e| e.message)?;
+
+    let dir = trash_dir(&internal);
+    for (uuid, rel, version, subtree) in captured {
+        let abs = abs_path(&root, &rel);
+        let moved =
+            dir.trash_path(&abs, Reason::Manual, None, Some(uuid), version).and_then(|entry| {
+                if subtree.is_empty() {
+                    Ok(())
+                } else {
+                    dir.attach_subtree(&entry.id, subtree)
+                }
+            });
+        match moved {
+            Ok(()) => outcome.trashed += 1,
+            Err(e) => outcome.failed.push(format!("{rel}: {}", e.0)),
+        }
+    }
+    Ok(outcome)
+}
+
 /// Blocking worker behind [`trash_restore`]: validates the restore, re-links the
 /// metarecords, then moves the blob back. Returns the restored path.
 fn restore_blocking(base: String, repo: String, id: String) -> Result<String, String> {
@@ -225,6 +327,68 @@ pub async fn trash_selected_metarecord(
         }
     }
     result.map(|_| ())
+}
+
+/// Sends the files of every metarecord `query` matches to the trash
+/// ([`trash_query`]) — the bulk form of [`trash_selected_metarecord`], behind
+/// `metarecord:bulk <target> trash`. The confirmation is the caller's; this
+/// posts the outcome to the status bar and marks metarecords dirty.
+#[tauri::command]
+pub async fn trash_query_metarecords(
+    app: tauri::State<'_, Arc<App>>,
+    ws_id: String,
+    repo: String,
+    query: Value,
+) -> Result<BulkTrashOutcome, String> {
+    let timeouts = app.status_timeouts();
+    let base = app.daemon.base_url();
+    let result = tokio::task::spawn_blocking(move || trash_query(&base, &repo, &query))
+        .await
+        .map_err(|e| format!("trash task panicked: {e}"))?;
+    match &result {
+        Ok(outcome) => {
+            app.gui.post_status(
+                &ws_id,
+                &bulk_trash_message(outcome),
+                if outcome.failed.is_empty() { "info" } else { "error" },
+                Some(timeouts.message_ms),
+            )?;
+            app.gui.mark_metarecords_dirty(&ws_id)?;
+        }
+        Err(error) => {
+            app.gui.post_status(&ws_id, error, "error", Some(timeouts.error_ms))?;
+        }
+    }
+    result
+}
+
+/// The status line of a bulk trashing: what moved, then what did not and why.
+fn bulk_trash_message(outcome: &BulkTrashOutcome) -> String {
+    let plural =
+        |n: usize, one: &str, many: &str| format!("{n} {}", if n == 1 { one } else { many });
+    let mut parts = vec![format!(
+        "Trashed {} — restore from the trash panel",
+        plural(outcome.trashed, "file", "files")
+    )];
+    if outcome.inside > 0 {
+        parts.push(format!(
+            "{} inside a trashed folder",
+            plural(outcome.inside, "metarecord", "metarecords")
+        ));
+    }
+    if outcome.without_file > 0 {
+        parts.push(format!(
+            "{} without a file kept",
+            plural(outcome.without_file, "metarecord", "metarecords")
+        ));
+    }
+    if outcome.root_kept {
+        parts.push("the repository root kept".to_string());
+    }
+    if !outcome.failed.is_empty() {
+        parts.push(format!("failed: {}", outcome.failed.join("; ")));
+    }
+    parts.join(" · ")
 }
 
 /// Sends a raw filesystem path to the repo's trash. Used by the file-manager
