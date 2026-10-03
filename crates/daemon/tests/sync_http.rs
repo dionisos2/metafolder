@@ -246,6 +246,52 @@ async fn test_status_never_synced_then_in_sync_then_ahead() {
     assert_eq!(detail["record_b"]["uuid"], rb);
 }
 
+/// A snapshot entry may belong to one side only: what is *not* equalized
+/// between the two repositories — a file's own size and mtime — is recorded
+/// per side, so the next sync can tell which side changed it.
+#[tokio::test]
+async fn test_snapshot_keeps_per_side_entries() {
+    let app = app();
+    let (a, _ar, b, _br) = two_repos(&app).await;
+    let ra = create(&app, &a, json!([])).await["uuid"].as_str().unwrap().to_string();
+    let rb = create(&app, &b, json!([])).await["uuid"].as_str().unwrap().to_string();
+    let link = make_link(&app, &a, &b, &ra, &rb).await;
+    let (status, body) = request(
+        &app,
+        "POST",
+        &format!("/sync/{a}/{b}/links/commit"),
+        Some(json!({"commits": [{
+            "link": link, "version_a": 1, "version_b": 2,
+            "snapshot": [
+                {"name": "tag", "value": {"type": "string", "value": "hi"}},
+                {"name": "mfr_size", "value": {"type": "int", "value": 3}, "side": "a"},
+                {"name": "mfr_size", "value": {"type": "int", "value": 4}, "side": "b"},
+            ],
+        }]})),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "commit failed: {body}");
+    let (_, detail) = request(&app, "GET", &format!("/sync/{a}/{b}/links/{link}"), None).await;
+    let snap = detail["snapshot"].as_array().unwrap();
+    let side_of =
+        |v: i64| snap.iter().find(|e| e["value"]["value"] == v).map(|e| e["side"].clone()).unwrap();
+    assert_eq!(side_of(3), "a", "{detail}");
+    assert_eq!(side_of(4), "b", "{detail}");
+    let common = snap.iter().find(|e| e["name"] == "tag").unwrap();
+    assert!(common["side"].is_null(), "a common entry names no side: {common}");
+
+    // Any other side is refused.
+    let (status, _) = request(
+        &app,
+        "POST",
+        &format!("/sync/{a}/{b}/links/commit"),
+        Some(json!({"commits": [{"link": link, "version_a": 1, "version_b": 2,
+            "snapshot": [{"name": "x", "value": {"type": "int", "value": 1}, "side": "c"}]}]})),
+    )
+    .await;
+    assert_eq!(status, StatusCode::BAD_REQUEST);
+}
+
 #[tokio::test]
 async fn test_status_missing_endpoint_takes_precedence() {
     let app = app();

@@ -178,6 +178,7 @@ pub(super) async fn sync_get_link(
                     "name": f.name,
                     "value": &f.value,
                     "value_b": f.value_uuid_b.map(hex),
+                    "side": f.side.map(sync::Side::name),
                 })
             })
             .collect();
@@ -308,6 +309,9 @@ pub(super) struct SnapshotEntry {
     value: Value,
     #[serde(default)]
     value_b: Option<String>,
+    /// `"a"` / `"b"`: an entry one repository alone held (absent: common).
+    #[serde(default)]
+    side: Option<String>,
 }
 
 /// `POST /sync/:a/:b/links/commit` — batched sync-commit (spec-sync).
@@ -330,7 +334,13 @@ pub(super) async fn sync_commit(
                         Some(h) => Some(parse_uuid(&h)?),
                         None => None,
                     };
-                    Ok(sync::SnapshotField { name: f.name, value: f.value, value_uuid_b })
+                    let side = match f.side.as_deref() {
+                        None => None,
+                        Some(s) => Some(sync::Side::parse(s).map_err(|e| {
+                            ApiError::bad_request(format!("snapshot entry '{}': {e}", f.name))
+                        })?),
+                    };
+                    Ok(sync::SnapshotField { name: f.name, value: f.value, value_uuid_b, side })
                 })
                 .collect::<Result<Vec<_>, ApiError>>()?;
             commits.push(sync::Commit {

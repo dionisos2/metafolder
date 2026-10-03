@@ -224,6 +224,24 @@ pub enum Side {
     B,
 }
 
+impl Side {
+    /// `"a"` / `"b"`, as the wire and the store spell it.
+    pub fn name(self) -> &'static str {
+        match self {
+            Side::A => "a",
+            Side::B => "b",
+        }
+    }
+
+    pub fn parse(s: &str) -> Result<Side> {
+        match s {
+            "a" => Ok(Side::A),
+            "b" => Ok(Side::B),
+            other => bail!("a side is 'a' or 'b', not '{other}'"),
+        }
+    }
+}
+
 /// Creates a link with no versions and no snapshot (state `never_synced`).
 /// A record already linked in this pair, on either side, is refused.
 pub fn create_link(db: &SyncDb, record_a: Uuid, record_b: Uuid) -> Result<Link> {
@@ -256,14 +274,18 @@ pub fn delete_link(db: &SyncDb, uuid: Uuid) -> Result<bool> {
     Ok(true)
 }
 
-/// One snapshot field: the common value at the last sync, in dual perspective
-/// (spec-sync "Ref and TreeRef fields in the snapshot"). `value` holds repo A's
-/// perspective; `value_uuid_b` the B-perspective UUID for `ref`/`tree_ref`.
+/// One snapshot field. A *common* one (`side` = `None`) is a value both
+/// repositories held at the last sync, in dual perspective (spec-sync "Ref and
+/// TreeRef fields in the snapshot"): `value` is repo A's, `value_uuid_b` the
+/// B-perspective UUID of a `ref` target or a `tree_ref` parent. A *per-side*
+/// one records what one repository alone held — what sync does not equalize,
+/// such as a file's own size and mtime.
 #[derive(Debug, Clone)]
 pub struct SnapshotField {
     pub name: String,
     pub value: Value,
     pub value_uuid_b: Option<Uuid>,
+    pub side: Option<Side>,
 }
 
 /// A snapshot field as stored: the value in its column form
@@ -280,6 +302,10 @@ struct StoredField {
     value_name: Option<String>,
     name_bytes: Option<String>,
     uuid_b: Option<String>,
+    /// `"a"` / `"b"` for a per-side entry; absent (every entry written before
+    /// per-side entries existed) for a common one.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    side: Option<String>,
 }
 
 fn enc_field(f: &SnapshotField) -> Result<Vec<u8>> {
@@ -296,6 +322,7 @@ fn enc_field(f: &SnapshotField) -> Result<Vec<u8>> {
         value_name: e.name,
         name_bytes: h(e.name_bytes),
         uuid_b: f.value_uuid_b.map(|u| hex::encode(u.as_bytes())),
+        side: f.side.map(|s| s.name().to_string()),
     })?)
 }
 
@@ -315,7 +342,8 @@ fn dec_field(b: &[u8]) -> Result<SnapshotField> {
         name_bytes: bytes(s.name_bytes)?,
     })?;
     let value_uuid_b = bytes(s.uuid_b)?.map(|b| Uuid::from_slice(&b)).transpose()?;
-    Ok(SnapshotField { name: s.name, value, value_uuid_b })
+    let side = s.side.as_deref().map(Side::parse).transpose()?;
+    Ok(SnapshotField { name: s.name, value, value_uuid_b, side })
 }
 
 /// Deletes one link's snapshot fields: the keys its uuid prefixes.
@@ -413,8 +441,14 @@ mod tests {
                 name: "s".into(),
                 value: Value::String("x".into()),
                 value_uuid_b: None,
+                side: None,
             },
-            SnapshotField { name: "f".into(), value: Value::Float(1.5), value_uuid_b: None },
+            SnapshotField {
+                name: "f".into(),
+                value: Value::Float(1.5),
+                value_uuid_b: None,
+                side: Some(Side::B),
+            },
             SnapshotField {
                 name: "p".into(),
                 value: Value::TreeRef {
@@ -422,6 +456,7 @@ mod tests {
                     name: TreeName::from_bytes(b"caf\xe9".to_vec()),
                 },
                 value_uuid_b: Some(Uuid::new_v4()),
+                side: None,
             },
         ];
         commit_batch(
@@ -432,7 +467,10 @@ mod tests {
         let got = read_snapshot(&db, link.uuid).unwrap();
         assert_eq!(got.len(), 3);
         for (g, w) in got.iter().zip(&fields) {
-            assert_eq!((&g.name, &g.value, g.value_uuid_b), (&w.name, &w.value, w.value_uuid_b));
+            assert_eq!(
+                (&g.name, &g.value, g.value_uuid_b, g.side),
+                (&w.name, &w.value, w.value_uuid_b, w.side)
+            );
         }
         let l = get_link(&db, link.uuid).unwrap().unwrap();
         assert_eq!((l.version_a, l.version_b), (Some(1), Some(2)));
