@@ -1,5 +1,5 @@
-//! Integration tests for the cross-repo sync HTTP primitives (spec-sync "HTTP
-//! API"): two repositories loaded on one daemon, driven through the Axum router
+//! Integration tests for the cross-repo sync HTTP primitives (doc "Sync
+//! endpoints"): two repositories loaded on one daemon, driven through the Axum router
 //! with `oneshot`. Covers canonical pair ordering, link CRUD, the `status`
 //! truth table, batched commit + snapshot round-trip, and endpoint-coupled
 //! deletion. (Matching is now CLI-side by TreeRef identity — see the CLI
@@ -329,6 +329,33 @@ async fn test_delete_link_with_endpoint_deletes_record_first() {
     // Record A is untouched.
     let (status, _) = request(&app, "GET", &format!("/repos/{a}/metarecords/{ra}"), None).await;
     assert_eq!(status, StatusCode::OK);
+}
+
+/// Deleting the endpoint with the link is fenced like any single-record write:
+/// a record that changed since the client read it is not deleted — a deletion
+/// propagated from the other side must not destroy what was written meanwhile.
+#[tokio::test]
+async fn test_delete_link_with_endpoint_is_fenced_by_expected_version() {
+    let app = app();
+    let (a, _ar, b, _br) = two_repos(&app).await;
+    let ra = create(&app, &a, json!([])).await["uuid"].as_str().unwrap().to_string();
+    let rb_m = create(&app, &b, json!([])).await;
+    let rb = rb_m["uuid"].as_str().unwrap().to_string();
+    let link = make_link(&app, &a, &b, &ra, &rb).await;
+    let uri = format!("/sync/{a}/{b}/links/{link}?with_endpoint=b&expected_version=");
+
+    let (status, body) = request(&app, "DELETE", &format!("{uri}12345"), None).await;
+    assert_eq!(status, StatusCode::CONFLICT, "{body}");
+    let (status, _) = request(&app, "GET", &format!("/repos/{b}/metarecords/{rb}"), None).await;
+    assert_eq!(status, StatusCode::OK, "the record survives");
+    let (status, _) = request(&app, "GET", &format!("/sync/{a}/{b}/links/{link}"), None).await;
+    assert_eq!(status, StatusCode::OK, "and so does the link");
+
+    let v = rb_m["version"].as_u64().unwrap();
+    let (status, _) = request(&app, "DELETE", &format!("{uri}{v}"), None).await;
+    assert_eq!(status, StatusCode::OK);
+    let (status, _) = request(&app, "GET", &format!("/repos/{b}/metarecords/{rb}"), None).await;
+    assert_eq!(status, StatusCode::NOT_FOUND);
 }
 
 #[tokio::test]

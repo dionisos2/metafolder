@@ -1,0 +1,39 @@
+title: Sync conflicts
+tags: Sync
+kind: guide
+summary: A field, a position, a file's content or its mode changed on both sides: decide by a rule of the intents file, by --on-conflict, or when the plan asks — and change your mind in the plan before the run.
+
+A ''conflict'' is something changed on both sides since the last sync, to
+different values ([[Change detection in sync]]): a field, the position
+(`mfr_path`), a file's content (`mfr_content`) or its mode (`mfr_permissions`). At
+the first sync of a link, two different values are a conflict.
+
+!! Deciding
+
+The plan decides each conflict when it writes it, by the first of:
+
+* `--on-conflict ask|skip|prefer:<repo>` on `mf sync plan`, which overrides everything;
+* the first matching `[[conflict]]` rule of the intents file ([[The intents file]]);
+* otherwise, ''ask''.
+
+`prefer:<repo>` keeps that repository's value — by name or uuid. `skip` leaves both
+sides as they are: the link is not recorded, and the conflict comes back at the next
+plan, until it is decided.
+
+Asked, the plan shows the field, the record's path and each repository's value, and
+reads one letter: `a` or `b` keeps that repository's value, `l` leaves the whole link
+out of this plan, anything else — an empty line, no terminal — skips the field. The
+GUI never asks: its conflicts are skipped, to be decided in the panel.
+
+!! Changing a decision
+
+Each conflict is an operation of the plan, its decision in `plan_resolve`
+([[The sync plan]]); the run reads it then, so it can still change:
+
+```
+mf sync show laptop nas --conflicts
+mf -u <plan> metarecord -q 'plan_kind = "conflict"' get --select '*'
+mf -u <plan> metarecord -i <op> field set plan_resolve:string=b
+```
+
+The [[sync panel]] lists the conflicts with a `skip` / `a` / `b` choice each.

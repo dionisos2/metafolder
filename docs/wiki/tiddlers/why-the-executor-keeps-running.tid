@@ -1,0 +1,18 @@
+title: Why the executor keeps running
+tags: Sync
+kind: rationale
+audience: dev
+summary: A sync never pauses the watcher: the running executor is what keeps versions current, and current versions are what makes a run skip a record that changed under it.
+
+An earlier design suspended each repository's executor during a run, with owner
+tokens and a resume command. It was removed: a frozen executor freezes the versions,
+and a file modified during the run would then still show its baseline — the run
+would copy or move it as if it had not changed.
+
+With the executor running, a file changed during the run bumps its record's version
+through the watcher, the run's next check against the version it expects fails, and
+the operation is skipped ([[Running a sync]]). Every concurrent writer — the watcher,
+the user, a rollback (whose writes are refused while it runs) — is handled by the same
+`expected_version` fence, with no lock between the sync and anything else. The run's
+own file operations do not trip it: they refresh their records themselves
+([[Suppressing sync's echoes]]).

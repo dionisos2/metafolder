@@ -1120,7 +1120,7 @@ impl<'c> Writer<'c> {
     }
 
     /// Like [`create_metarecord`] but at a caller-supplied UUID (sync
-    /// bare-record creation, spec-sync). The UUID must not already exist — the
+    /// bare-record creation, doc "Sync endpoints"). The UUID must not already exist — the
     /// `metarecord` PRIMARY KEY rejects a duplicate.
     pub fn create_metarecord_with_uuid(
         &mut self,

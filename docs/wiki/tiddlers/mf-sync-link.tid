@@ -1,0 +1,9 @@
+title: mf sync link
+tags: [[CLI command]] Sync
+kind: reference
+summary: Link a record of one repository to a record of the other, by hand.
+
+For what the plan cannot decide — an ambiguous match, an incoherence that stopped
+it ([[Matching records across repositories]]). The first record belongs to the first
+repository named. Prints the link's uuid. `--host` places the pair's sync database
+when this link creates it.

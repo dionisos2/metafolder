@@ -1,0 +1,7 @@
+title: POST /sync/:a/:b/links
+tags: [[HTTP endpoint]] [[Sync endpoints]]
+kind: reference
+audience: dev
+summary: Links two records of the pair, creating its sync database on first use.
+
+Bodies, answers and errors: [[Sync endpoints]].

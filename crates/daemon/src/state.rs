@@ -910,7 +910,7 @@ pub struct RepoInfo {
     /// clients can flag it without guessing the metafolder location.
     pub internal_dir: PathBuf,
     pub created_at: u64,
-    /// A daemon-internal repository (spec-sync plan repo), hidden from the
+    /// A daemon-internal repository (the sync plan repo, doc "The sync plan"), hidden from the
     /// default `GET /repos` listing.
     pub system: bool,
 }
@@ -1197,7 +1197,7 @@ impl AppState {
     }
 
     /// Loaded repositories, sorted by UUID. `include_system` keeps daemon-internal
-    /// repos (spec-sync plan repos) that are otherwise hidden.
+    /// repos (sync plan repos, doc "The sync plan") that are otherwise hidden.
     pub fn list_repos(&self, include_system: bool) -> Vec<RepoInfo> {
         let repos = self.repos.lock_recover();
         let mut infos: Vec<RepoInfo> =

@@ -1,0 +1,8 @@
+title: mf sync unlink
+tags: [[CLI command]] Sync
+kind: reference
+summary: Remove a link, optionally deleting one of its records first.
+
+`--with-endpoint a` (or `b`) deletes the link's record in the first (or second)
+repository named, then the link — the order a propagated deletion follows
+([[Deletion propagation]]). Without it, both records stay, unlinked.

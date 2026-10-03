@@ -12,9 +12,6 @@ status — ''deferred'' (decided, not done), ''proposed'' (not decided) — and 
 what is missing rather than a version number. A ''record'' is a note kept for
 what it explains about a past design, not for what the code does today.
 
-The one area still described outside this documentation is the synchronisation
-between two repositories (`mf sync`, the `sync` panel), in `docs/spec-sync.org`.
-
 !! Non-goals
 
 * ''No remote protocol.'' The daemon is local-only and makes no network call ([[No network access]]). Working across machines is done around it: a repository's files may sit on a mounted remote filesystem as long as its store is kept local ([[Network and special filesystems]]), and synchronising two repositories needs both loaded in the same daemon.

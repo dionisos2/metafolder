@@ -25,7 +25,7 @@ pub fn run(ctx: &Ctx, repo_a: &str, repo_b: &str, yes: bool) -> Result<i32, CliE
 }
 
 /// Prints external-record content/path divergences, aggregated by subtree —
-/// never one line per file (spec-sync).
+/// never one line per file (doc "Running a sync").
 fn report_divergences(paths: &[String]) {
     let aggregated = core_run::aggregate_divergences(paths);
     if aggregated.is_empty() {

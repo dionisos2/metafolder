@@ -1,0 +1,23 @@
+title: Suppressing sync's echoes
+tags: Sync
+kind: reference
+audience: dev
+summary: After each of its file operations the run refreshes the target record itself, so the watcher's event for that same change writes nothing and the version the run records stays true.
+
+A sync's file operations are seen by the watcher of the repository they happen in.
+Applied a quiet period later, their events would refresh the records' stat fields
+and move the versions the run had just recorded — and the next plan would find every
+link it touched changed again.
+
+So the run refreshes the target record right after each `copy`, `move` and `chmod`
+(`POST /repos/:repo/metarecords/:uuid/refresh`, fenced by the version it expects —
+[[Refreshing a record]]): the record then describes the file, and the version the run
+records is that one. The watcher's refresh is idempotent — a recorded size and mtime
+equal to the file's write nothing ([[Event semantics]]) —, so the echo finds nothing
+to do. The directories the run made by path, for a parent that was not linked, are
+refreshed the same way once its batch's file operations are done.
+
+A ''real'' change made meanwhile has another size or mtime: it is applied, moves the
+version, and the link shows changed at the next sync — which is right.
+
+The watcher is never paused for a sync: [[Why the executor keeps running]].

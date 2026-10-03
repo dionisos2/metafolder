@@ -247,7 +247,7 @@ async fn test_single_metarecord_reconcile_endpoint() {
 /// `POST …/metarecords/:uuid/refresh` re-reads a record's file *now*, with the
 /// watcher's semantics, and answers the record it left — so a client that has
 /// just written a file can make the database agree with it before the
-/// watcher's own event arrives (spec-sync "Suppressing sync's own echoes").
+/// watcher's own event arrives (doc "Suppressing sync's echoes").
 #[tokio::test]
 async fn test_refresh_rereads_the_file_now() {
     let (app, repo, root) = setup("refresh").await;

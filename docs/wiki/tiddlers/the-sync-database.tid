@@ -1,0 +1,53 @@
+title: The sync database
+tags: Sync
+kind: reference
+audience: dev
+summary: A pair's links and snapshots, in one small key-value store under the host's internal/ — not metarecords, not in the event log, one copy per pair.
+
+!! Where
+
+`.metafolder/internal/sync-<a>-<b>/`, an LMDB store, where `<a>` and `<b>` are the
+two repository uuids in ''canonical order'' — the smaller uuid is A. That order
+names the store, the `a`/`b` roles of the HTTP API and of the plan, and the
+perspective a snapshot's values are stored in; the order the user names the
+repositories in never matters.
+
+It sits in one repository's `internal/` — the ''host'': canonical A unless
+`mf sync plan --host` (or `mf sync link --host`) chose the other when the store was
+created. There is one copy: every change is one transaction, so the link state is
+always consistent, and losing the store loses only the pair's sync state — the next
+sync starts over as a first sync. A pair is found by looking in both repositories'
+`internal/`; in both is a `409` until the stale one is deleted (the daemon never
+merges two), in neither is an empty pair. Its `meta` table names the pair, checked
+on every opening (`409` on a mismatch — a store copied from another pair), and the
+host, updated when the directory was moved by hand.
+
+!! What
+
+|!Table |!Key |!Value |
+|`meta` |name |`format_version` (`2`), `repo_a`, `repo_b`, `host` |
+|`links` |link uuid |`record_a`, `record_b`, `version_a`, `version_b` |
+|`by_a`, `by_b` |record |its link — one link per record, on each side |
+|`snaps` |link uuid · index |one snapshot entry |
+
+The versions are those of the two records at the last commit, absent before the
+first ([[Change detection in sync]]). A snapshot entry is a field name and a value,
+in the column form ([[The column form of a value]]), either ''common'' — what both
+sides held, in A's perspective, with `value_b` the B-perspective uuid of a `ref`
+target or a `tree_ref` parent — or ''per side'' (`side`: `a` or `b`), what one side
+held alone: its content and mode stamps. A commit replaces a link's versions and
+snapshot together; deleting a link deletes its snapshot.
+
+!! Access
+
+The daemon opens a pair's store when a primitive first needs it and keeps it open
+for the process — LMDB allows one opening per process, and two requests on one pair
+may run at once. Writes serialise on LMDB's write lock; nothing else orders the
+calls on a pair: concurrency between a sync and other writers is what
+`expected_version` is for ([[Running a sync]]). A second daemon cannot touch the pair:
+both repositories must be loaded, and each is locked by the daemon that holds it.
+
+Until September 2026 the store was a SQLite file, `sync-<a>-<b>.sqlite`; none
+existed outside the tests, so nothing converts one. A snapshot from before
+positions were snapshotted as `tree_ref` values holds `mfr_path` as a string: that
+entry is ignored, and the two paths compared afresh at the next sync.

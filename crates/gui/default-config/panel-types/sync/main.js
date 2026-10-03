@@ -1,4 +1,4 @@
-// sync panel: manage cross-repo synchronisation (spec-sync "GUI"). Pick the two
+// sync panel: manage cross-repo synchronisation (doc "sync panel"). Pick the two
 // repositories, review the status and the plan (grouped by op kind, live
 // red/green overlay), edit conflict resolutions in place, and run — all through
 // metafolder.sync (the shared core::sync orchestration; no shell).
@@ -6,7 +6,7 @@
 import { byId, el } from '/__ui.js';
 import { createSelect } from '/__select.js';
 
-/** Canonical plan-repo name for a pair (spec-sync: smaller UUID is A). The
+/** Canonical plan-repo name for a pair (doc "The sync database": smaller UUID is A). The
  *  32-hex simple form sorts identically to the UUID bytes.
  *  @param {string} a @param {string} b */
 function planRepoName(a, b) {

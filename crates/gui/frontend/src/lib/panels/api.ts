@@ -615,7 +615,7 @@ export function createPanelApi(deps: PanelApiDeps, ctx: PanelApiCtx): PanelApiIn
         invoke('ignore_write', { repo, target, patterns }) as Promise<void>,
     },
 
-    /** Cross-repo synchronisation (spec-sync): the shared `core::sync`
+    /** Cross-repo synchronisation (doc "Sync"): the shared `core::sync`
      *  orchestration, driven through the sync Tauri commands. `plan`/`run` run
      *  non-interactively (conflicts are left for `plan_resolve` editing). */
     sync: {

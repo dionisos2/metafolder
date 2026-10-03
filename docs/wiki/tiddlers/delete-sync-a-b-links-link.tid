@@ -1,0 +1,7 @@
+title: DELETE /sync/:a/:b/links/:link
+tags: [[HTTP endpoint]] [[Sync endpoints]]
+kind: reference
+audience: dev
+summary: Deletes a link — and, with with_endpoint, one of its records first, fenced by expected_version.
+
+Bodies, answers and errors: [[Sync endpoints]].

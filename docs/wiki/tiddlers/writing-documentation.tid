@@ -120,9 +120,9 @@ comment on a clap argument ''is'' the help text, so editing one changes a genera
 note. `scripts/doc new --from-gen "mf trash restore"` starts a hand-written note
 from a generated one: every catalog is enforced, so `check` fails until the note
 exists. The one exception is a deferred topic: `$:/mf/config/catalog-exemptions`
-lists target prefixes left without a note for now (sync's commands, panel and
-endpoints), shown under "Not documented yet" in their catalog. An exemption that
-no longer covers anything undocumented fails `check`.
+lists target prefixes left without a note for now (none today), shown under "Not
+documented yet" in their catalog. An exemption that no longer covers anything
+undocumented fails `check`.
 
 !! Rendering
 

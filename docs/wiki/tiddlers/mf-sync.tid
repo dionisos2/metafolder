@@ -1,0 +1,7 @@
+title: mf sync
+tags: [[CLI command]] Sync
+kind: reference
+summary: Cross-repo synchronisation: plan, review, run, and the links between two repositories.
+
+The sync commands, each naming the two repositories — by name or uuid, in either
+order ([[Sync]]). The usual round is `plan`, `show`, `run` ([[Syncing two repositories]]); `status`, `link` and `unlink` read and adjust the links.

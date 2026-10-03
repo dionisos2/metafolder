@@ -1,7 +1,7 @@
-//! The `mf sync plan` intents file (spec-sync "The intents file"): a TOML
-//! document declaring the sync **scope** (directional link queries) and a few
-//! policies (ordered conflict rules + batch/threshold settings). Parsing is
-//! pure and offline — no daemon involvement.
+//! The `mf sync plan` intents file (doc "The intents file"): a TOML document
+//! declaring the sync **scope** (directional link queries) and a few policies
+//! (ordered conflict rules, batch sizes). Parsing is pure and offline — no
+//! daemon involvement.
 
 use serde::Deserialize;
 
@@ -15,7 +15,7 @@ pub struct Intents {
     /// source repo) to the set that must be linked. Their union is the scope.
     #[serde(default, rename = "intents")]
     pub scope: Vec<Intent>,
-    /// Ordered conflict rules; first match wins (spec-sync "Conflict resolution").
+    /// Ordered conflict rules; first match wins (doc "Sync conflicts").
     #[serde(default)]
     pub conflict: Vec<ConflictRule>,
     /// Optional tuning.
@@ -49,7 +49,7 @@ pub struct ConflictRule {
     pub policy: String,
 }
 
-/// A resolved conflict policy (spec-sync "Conflict resolution").
+/// A resolved conflict policy (doc "Sync conflicts").
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Policy {
     /// Interactive prompt at plan time.
@@ -81,20 +81,17 @@ pub fn parse_policy(s: &str) -> Result<Policy, CliError> {
     }
 }
 
-/// Optional `[settings]` (spec-sync "The intents file").
+/// Optional `[settings]`: how `mf sync run` batches its work (doc "How a run
+/// is batched").
 #[derive(Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct Settings {
-    /// Links per `POST …/links/commit` call.
+    /// At most this many links per batch — one `POST …/links/commit` each.
     #[serde(rename = "commit-batch-size", default = "default_commit_batch")]
     pub commit_batch_size: usize,
-    /// File transfers between metadata batches.
+    /// A batch closes once its links hold this many content transfers.
     #[serde(rename = "transfer-batch-size", default = "default_transfer_batch")]
     pub transfer_batch_size: usize,
-    /// Enable similar-record matching in the linking phase at this minimum
-    /// score; absent means exact matches only.
-    #[serde(rename = "similarity-threshold", default)]
-    pub similarity_threshold: Option<f64>,
 }
 
 fn default_commit_batch() -> usize {
@@ -110,21 +107,20 @@ impl Default for Settings {
         Settings {
             commit_batch_size: default_commit_batch(),
             transfer_batch_size: default_transfer_batch(),
-            similarity_threshold: None,
         }
     }
 }
 
 /// Parses and validates the intents TOML. Rejects an empty scope (nothing to
-/// sync), an unknown key, and an invalid conflict policy.
+/// sync), an unknown key, a batch size of zero, and an invalid conflict policy.
 pub fn parse_intents(text: &str) -> Result<Intents, CliError> {
     let intents: Intents =
         toml::from_str(text).map_err(|e| CliError::Usage(format!("invalid intents file: {e}")))?;
     if intents.scope.is_empty() {
         return Err(CliError::Usage("the intents file declares no [[intents]] scope entry".into()));
     }
-    if intents.settings.similarity_threshold.is_some_and(|t| !(0.0..=1.0).contains(&t)) {
-        return Err(CliError::Usage("similarity-threshold must be in [0, 1]".into()));
+    if intents.settings.commit_batch_size == 0 || intents.settings.transfer_batch_size == 0 {
+        return Err(CliError::Usage("a batch size must be at least 1".into()));
     }
     // Validate every policy eagerly so a typo fails at parse time, not mid-run.
     for rule in &intents.conflict {
@@ -161,7 +157,6 @@ mod tests {
         [settings]
         commit-batch-size    = 25
         transfer-batch-size  = 10
-        similarity-threshold = 0.7
     "#;
 
     #[test]
@@ -179,7 +174,6 @@ mod tests {
 
         assert_eq!(it.settings.commit_batch_size, 25);
         assert_eq!(it.settings.transfer_batch_size, 10);
-        assert_eq!(it.settings.similarity_threshold, Some(0.7));
     }
 
     #[test]
@@ -187,7 +181,6 @@ mod tests {
         let it = parse_intents("[[intents]]\nrepo='a'\nquery='x'\n").unwrap();
         assert_eq!(it.settings.commit_batch_size, 50);
         assert_eq!(it.settings.transfer_batch_size, 20);
-        assert_eq!(it.settings.similarity_threshold, None);
         assert!(it.conflict.is_empty());
     }
 
@@ -208,6 +201,25 @@ mod tests {
     fn prefer_requires_a_repo() {
         assert!(parse_policy("prefer:").is_err());
         assert_eq!(parse_policy("prefer:nas").unwrap(), Policy::Prefer("nas".into()));
+    }
+
+    /// Matching is by path, exact: there is no similarity to tune, and a file
+    /// still asking for one is told so rather than silently ignored.
+    #[test]
+    fn a_similarity_threshold_is_refused() {
+        let err = parse_intents(
+            "[[intents]]\nrepo='a'\nquery='x'\n[settings]\nsimilarity-threshold = 0.7\n",
+        )
+        .unwrap_err();
+        assert!(err.message().contains("similarity-threshold"), "{}", err.message());
+    }
+
+    #[test]
+    fn a_zero_batch_size_is_refused() {
+        let err =
+            parse_intents("[[intents]]\nrepo='a'\nquery='x'\n[settings]\ncommit-batch-size = 0\n")
+                .unwrap_err();
+        assert!(err.message().contains("batch size"), "{}", err.message());
     }
 
     #[test]

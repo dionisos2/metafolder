@@ -1,4 +1,4 @@
-//! Cross-repo sync (spec-sync "HTTP API"): links, status, commits.
+//! Cross-repo sync (doc "Sync endpoints"): links, status, commits.
 
 use super::*;
 
@@ -29,8 +29,8 @@ pub(super) struct PairDb {
     host: Uuid,
 }
 
-/// Locates and opens the pair's sync database (spec-sync "Location and
-/// discovery"). `create_host` (a repo of the pair) creates the file under that
+/// Locates and opens the pair's sync database (doc "The sync
+/// database"). `create_host` (a repo of the pair) creates the file under that
 /// repo's `internal/` when absent; `None` is a read-only call, which returns
 /// `None` for a pair that has no sync database yet.
 fn open_pair_db(
@@ -197,11 +197,14 @@ pub(super) async fn sync_get_link(
 #[derive(Deserialize, Default)]
 pub(super) struct WithEndpointParam {
     with_endpoint: Option<String>,
+    /// Fences the endpoint's deletion like any single-record write.
+    expected_version: Option<u64>,
 }
 
-/// `DELETE /sync/:a/:b/links/:link[?with_endpoint=a|b]` — delete a link (and its
-/// snapshot). With `with_endpoint`, the endpoint metarecord on that side is
-/// deleted first (spec-sync "Metarecord deletion propagation" normative order).
+/// `DELETE /sync/:a/:b/links/:link[?with_endpoint=a|b[&expected_version=n]]` —
+/// delete a link (and its snapshot). With `with_endpoint`, the endpoint
+/// metarecord on that side is deleted first (doc "Deletion
+/// propagation": the normative order), fenced by `expected_version` when given.
 pub(super) async fn sync_delete_link(
     State(state): State<Arc<AppState>>,
     Path((a, b, link)): Path<(String, String, String)>,
@@ -225,6 +228,7 @@ pub(super) async fn sync_delete_link(
             let mut conn = repo.conn.lock_recover();
             if Rows::version(&*conn, record)?.is_some() {
                 let mut writer = repo.writer(&mut conn, None)?;
+                ensure_version(writer.store(), record, ep.expected_version)?;
                 writer.delete_metarecord(record)?;
                 let effects = writer.effects();
                 slowlog::timed("commit", || writer.commit())?;
@@ -237,8 +241,8 @@ pub(super) async fn sync_delete_link(
     .await
 }
 
-/// `GET /sync/:a/:b/status` — per-link change/conflict state (spec-sync
-/// truth table). Read-only.
+/// `GET /sync/:a/:b/status` — per-link change/conflict state (doc "Change
+/// detection in sync"). Read-only.
 pub(super) async fn sync_status(
     State(state): State<Arc<AppState>>,
     Path((a, b)): Path<(String, String)>,
@@ -270,7 +274,7 @@ pub(super) async fn sync_status(
     .await
 }
 
-/// The change-detection state of a link (spec-sync "status"), by precedence.
+/// The change-detection state of a link (doc "Change detection in sync"), by precedence.
 fn link_state(ea: Option<u64>, eb: Option<u64>, va: Option<u64>, vb: Option<u64>) -> &'static str {
     match (ea.is_none(), eb.is_none()) {
         (true, true) => return "missing_both",
@@ -314,7 +318,7 @@ pub(super) struct SnapshotEntry {
     side: Option<String>,
 }
 
-/// `POST /sync/:a/:b/links/commit` — batched sync-commit (spec-sync).
+/// `POST /sync/:a/:b/links/commit` — batched sync-commit (doc "Sync endpoints").
 pub(super) async fn sync_commit(
     State(state): State<Arc<AppState>>,
     Path((a, b)): Path<(String, String)>,

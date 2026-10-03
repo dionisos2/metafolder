@@ -306,7 +306,7 @@ fn test_watch_default_is_false_when_no_ancestor_defines_it() {
     assert!(!is_eligible(&conn, &cache, "/file.txt").unwrap());
 }
 
-// ── mf_sync inheritance (spec-sync) ─────────────────────────────────────────
+// ── mf_sync inheritance (doc "mf_sync") ─────────────────────────────────────────
 
 #[test]
 fn test_mf_sync_inherits_with_nearest_ancestor_override() {

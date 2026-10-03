@@ -1,0 +1,8 @@
+title: mf sync run
+tags: [[CLI command]] Sync
+kind: reference
+summary: Carry the current plan out, then report what was done, what was skipped, and where an external tool diverges.
+
+Asks for a confirmation (unless `--yes`), runs the plan of the pair, deletes from it
+every operation that succeeded and records each link it fully synced
+([[Running a sync]]).

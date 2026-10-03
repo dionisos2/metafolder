@@ -1,0 +1,60 @@
+title: Change detection in sync
+tags: Sync
+kind: reference
+summary: Each link's two versions say whether anything changed since its last sync; a three-way comparison against the snapshot then says, field by field, which side changed — or both.
+
+!! Has anything changed?
+
+A committed link records the two records' versions at its last sync. A version is
+a hash of the record's content ([[Metarecord version]]), so ''equal means
+unchanged'' — whatever happened in between, a rollback included. `GET …/status`
+and `mf sync status` give each link's state, by precedence:
+
+|!State |!Means |
+|`missing_a`, `missing_b`, `missing_both` |a record of the link no longer exists ([[Deletion propagation]]) |
+|`never_synced` |never committed |
+|`in_sync` |both versions as recorded |
+|`ahead_a`, `ahead_b` |only that side changed |
+|`conflict` |both changed — which says nothing yet about their fields |
+
+The plan passes over an `in_sync` link. For any other, the state is only a hint:
+what decides is the comparison below.
+
+!! Which side changed?
+
+The ''snapshot'' holds what the two sides agreed on at the last sync, each value
+in both perspectives — A's and B's, since a reference names a different uuid in
+each repository ([[The sync database]]). Per field name, each side is compared with
+its own perspective of the snapshot, and the two sides with each other after
+translating A's values ([[Ref translation during sync]]):
+
+|!The two sides |!Since the snapshot |!Decision |
+|agree | |nothing to do |
+|differ |neither changed |left as they are (something the last sync left: see below) |
+|differ |one changed |its value goes to the other side |
+|differ |both changed |a conflict ([[Sync conflicts]]) |
+
+A field is compared as the set of its values ([[No duplicate rows]]); a field absent
+on a side differs from one holding `nothing`, and carrying an absence over removes
+the field. With no snapshot entry for the name — a first sync, or a field new on
+both sides — one side's value is that side's change, and two different values are a
+conflict. A link is committed only once its two sides agree, so a skipped conflict
+is met again next time.
+
+!! Content and mode
+
+A file's bytes and its mode are not fields both sides hold the same way: each side
+has its own size, mtime and mode, and the snapshot keeps them ''per side''. A side's
+content changed when its `mfr_type`, `mfr_size`, `mfr_mtime` or
+`mfr_symlink_target` differs from what that side held at the last sync; its mode,
+when `mfr_permissions` does. A side with no recorded stamp has changed.
+
+Only then are the contents compared: the same kind, and for a file the same bytes
+(sizes first, then read until the first difference); two directories are equal, two
+symlinks when they point at the same place. Equal: nothing to copy. Otherwise the
+table above applies, with `mfr_content` and `mfr_permissions` as the conflicting
+field.
+
+A rewrite that keeps the size and the second of the mtime is not seen — the same
+blind spot as the watcher's ([[Event semantics]]); `mf reconcile` does not see it
+either.

@@ -31,7 +31,7 @@ Commands:
   ignore      Named mf_ignore presets: apply/replace/remove them on a directory (default: list). The target directory is chosen with -d <path> (default: the repository root)
   schema      User schema commands
   gui         Drive the GUI through its scripting HTTP API
-  sync        Cross-repo synchronisation (spec-sync). Repos are named positionally; their order does not matter (roles are canonical)
+  sync        Cross-repo synchronisation. Repos are named positionally; their order does not matter (roles are canonical)
   help        Print this message or the help of the given subcommand(s)
 
 Options:

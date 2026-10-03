@@ -1,0 +1,20 @@
+title: Why schemas must be identical
+tags: Sync
+kind: rationale
+summary: Syncing two repositories whose schemas differ would carry metadata legal on one side to a side where it is not; plan and run both refuse.
+
+With different schemas ([[Schema]]), the same metadata is legal on one side and not
+on the other: a sync would either fail on every such write, or need a translation of
+one schema into the other that nothing could define in general. So `mf sync plan`
+and `mf sync run` both start by comparing the two repositories' schemas
+(`GET /repos/:repo/schema`) and stop when they differ. ''Identical'' is equality of
+the parsed documents — layout and key order do not count —; two repositories without
+a schema are identical.
+
+The schema file is not synced: bringing the two into agreement is a step of its own,
+done by hand.
+
+Identical schemas do not make every write pass: a field carried over is validated
+by the target like any write, and may break a constraint together with the target
+record's other fields. That write is refused, its operation skipped and reported,
+and the link left for the next sync. Sync never bypasses a schema.

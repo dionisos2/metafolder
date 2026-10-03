@@ -1,0 +1,12 @@
+title: mf sync plan
+tags: [[CLI command]] Sync
+kind: reference
+summary: Compute a sync plan into a freshly recreated plan repo, asking about conflicts no rule decides.
+
+Reads both repositories — nothing in them is changed —, links what the intents file
+selects ([[Matching records across repositories]]), compares every link that changed
+([[Change detection in sync]]) and writes the operations into the plan repository,
+recreated for the occasion ([[The sync plan]]). Prints its uuid and the number of
+operations. `--on-conflict` decides every conflict at once ([[Sync conflicts]]);
+`--host` picks the repository that keeps the plan and, when the pair has none yet,
+its sync database ([[The sync database]]).

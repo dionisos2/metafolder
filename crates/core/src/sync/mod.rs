@@ -1,4 +1,4 @@
-//! Cross-repo synchronisation (spec-sync) — the shared orchestration.
+//! Cross-repo synchronisation (doc "Sync") — the shared orchestration.
 //!
 //! The `mf sync` orchestration (`plan`, `run`, `show`) and its utility
 //! operations (`status`, `link`, `unlink`) live here so that **both** the CLI
@@ -15,12 +15,17 @@
 //!
 //! Orchestration functions return **structured reports** ([`plan::PlanReport`],
 //! [`run::RunReport`], [`run::ShowReport`]) instead of printing; each frontend
-//! formats them (the CLI to its text output, the GUI to JSON).
+//! formats them (the CLI to its text output, the GUI to JSON). The decisions
+//! themselves are pure ([`model`]); [`lookup`] holds the daemon reads both
+//! halves share, [`content`] the disk operations.
 
 mod concurrency;
 pub use concurrency::MutexExt;
 
+pub mod content;
 pub mod intents;
+pub mod lookup;
+pub mod model;
 pub mod plan;
 pub mod run;
 
@@ -72,14 +77,42 @@ impl From<DaemonError> for SyncError {
     }
 }
 
+/// A conflict the `ask` policy puts to the user (doc "Sync conflicts").
+#[derive(Debug, Clone)]
+pub struct ConflictQuestion<'a> {
+    /// The field, or `mfr_content` / `mfr_permissions` for a file's content or
+    /// mode.
+    pub field: &'a str,
+    /// Where the record is, for the user: its path, else its uuid.
+    pub record: &'a str,
+    /// The two repositories' names (canonical A, then B).
+    pub repo_a: &'a str,
+    pub repo_b: &'a str,
+    /// What each side holds.
+    pub values_a: &'a [crate::metarecord::Value],
+    pub values_b: &'a [crate::metarecord::Value],
+}
+
+/// The answer to a [`ConflictQuestion`].
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Resolution {
+    /// Keep repository A's value (it goes to B).
+    A,
+    /// Keep repository B's value.
+    B,
+    /// Leave both sides as they are; the conflict comes back next time.
+    Skip,
+    /// Leave this whole link out of the plan.
+    SkipLink,
+}
+
 /// Interactivity injected by the frontend. The CLI implements this with stdin
 /// prompts; the GUI answers non-interactively (skip conflicts — they are left
 /// for `plan_resolve` editing — and confirm, since the panel already did).
 pub trait Prompter {
-    /// Resolve a conflicting field interactively (`ask` policy): returns the
-    /// winning side `"a"` / `"b"`, or `"skip"` to leave both untouched. A
-    /// non-interactive prompter returns `"skip"`.
-    fn resolve_conflict(&self, field: &str, rec_a: Uuid, rec_b: Uuid) -> Result<String, SyncError>;
+    /// Resolve a conflict interactively (`ask` policy). A non-interactive
+    /// prompter answers [`Resolution::Skip`].
+    fn resolve_conflict(&self, question: &ConflictQuestion) -> Result<Resolution, SyncError>;
 
     /// Confirm a destructive/bulk action (`run`). A non-interactive prompter
     /// returns `true` (the caller has already confirmed).
@@ -101,7 +134,7 @@ pub struct SyncCtx<'a> {
 
 impl SyncCtx<'_> {
     /// Resolves a repository selector — a UUID or a unique loaded name — to its
-    /// UUID (spec-sync: the two repos are positional arguments).
+    /// UUID (the two repos are positional arguments).
     pub fn resolve_repo(&self, sel: &str) -> Result<Uuid, SyncError> {
         match Uuid::parse_str(sel) {
             Ok(uuid) => Ok(uuid),
@@ -123,7 +156,8 @@ pub fn expand_simplified(text: &str) -> Result<String, SyncError> {
 
 // ── Pair helpers ────────────────────────────────────────────────────────────
 
-/// Canonical pair order (spec-sync): the lexicographically smaller UUID is A.
+/// Canonical pair order (doc "The sync database"): the lexicographically
+/// smaller UUID is A.
 pub fn canonical_pair(a: Uuid, b: Uuid) -> (Uuid, Uuid) {
     if a.as_bytes() < b.as_bytes() {
         (a, b)
@@ -239,8 +273,8 @@ mod tests {
     /// A prompter that never interacts (for op tests that never hit a prompt).
     struct NoopPrompter;
     impl Prompter for NoopPrompter {
-        fn resolve_conflict(&self, _: &str, _: Uuid, _: Uuid) -> Result<String, SyncError> {
-            Ok("skip".into())
+        fn resolve_conflict(&self, _: &ConflictQuestion) -> Result<Resolution, SyncError> {
+            Ok(Resolution::Skip)
         }
         fn confirm(&self, _: &str) -> Result<bool, SyncError> {
             Ok(true)

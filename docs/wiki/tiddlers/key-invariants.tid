@@ -51,7 +51,7 @@ change of design, to be decided as such, with its note rewritten.
 * Opening a store that is up to date rewrites nothing: the store records the versions of its layout and of its derived data, and a migration runs only when one differs ([[Store tables]], [[Persisted format changes]]).
 * The query engine alone serves a filter, and nothing falls back: a shape it cannot answer is a daemon bug, reported as one ([[No operand runs in SQL]]). The engine and the naive oracle must agree on every query ([[The query oracle]]).
 * The cost of a bounded operation does not grow with the repository; it is asserted by counting the keys read, never by timing ([[Performance testing]], [[Reading the log costs the window]]; `crates/daemon/tests/kv_cost.rs`, `log_cost.rs`).
-* The sync state of a pair of repositories lives outside the data model, in a per-pair database under `internal/`: it is never in the event log, and changes only while both repositories are loaded in the same daemon (`docs/spec-sync.org`).
+* The sync state of a pair of repositories lives outside the data model, in a per-pair database under `internal/`: it is never in the event log, and changes only while both repositories are loaded in the same daemon ([[The sync database]]). A sync commits, for a link, only versions it read or wrote itself — never re-read ([[Running a sync]]).
 
 !! The wire and the configuration
 

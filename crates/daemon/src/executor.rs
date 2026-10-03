@@ -1291,7 +1291,7 @@ impl Apply<'_, '_> {
         // this event describes a state the database is already in — produce no
         // operation (no version bump). It suppresses a watcher echo of a change
         // the daemon itself just recorded (a cross-repo sync file operation,
-        // spec-sync "Suppressing sync's own echoes"), a crash replay, and the
+        // doc "Suppressing sync's echoes"), a crash replay, and the
         // spurious `Create`/`Modify` a tool can fire without touching content.
         //
         // The check deliberately looks at the *stat only*. It used to also
@@ -1382,7 +1382,7 @@ impl Apply<'_, '_> {
 /// it describes and writes nothing either (its refresh is idempotent on size +
 /// mtime), so the record's version does not move a second time. A cross-repo
 /// sync calls it right after its own file operations for exactly that reason
-/// (spec-sync "Suppressing sync's own echoes").
+/// (doc "Suppressing sync's echoes").
 ///
 /// Unlike the watcher's refresh, the *whole* stat set is written, not only the
 /// size and mtime: a record created before its file — a sync's bare record —

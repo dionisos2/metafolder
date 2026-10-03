@@ -1,0 +1,52 @@
+title: Sync
+kind: overview
+aliases: synchronise synchronize synchronisation synchronization cross-repo
+summary: Two repositories loaded in one daemon kept in step: records linked across them, their metadata and files compared and copied, in two steps — a plan you can review, then a run.
+
+Sync keeps a selection of two repositories in step: a record of one is ''linked''
+to a record of the other, and each sync compares the two and carries what changed
+on one side to the other — fields, positions, file contents, modes, deletions. What
+is linked is a query of your choosing, per repository ([[The intents file]]); a
+file is linked to the file at the same path on the other side ([[Matching records across repositories]]).
+
+It works in two steps. `mf sync plan` reads both repositories and writes what it
+would do into a ''plan'' — a repository of its own you can read and edit before
+anything happens ([[The sync plan]]); `mf sync run` does it ([[Running a sync]]).
+Both repositories must be loaded in the same daemon, with identical schemas
+([[Why schemas must be identical]]).
+
+Nothing is destroyed. A file a sync overwrites or removes goes to that
+repository's trash ([[Trash]]); a metarecord it deletes is a revision of the event
+log, which an undo takes back ([[Event log]]). What sync knows about a pair — its
+links, and what the two sides held at their last sync — is kept apart from both
+repositories' data ([[The sync database]]).
+
+The orchestration runs in the clients, `mf sync` and the [[sync panel]], which share
+one implementation (`core::sync`); the daemon offers the primitives it needs
+([[Sync endpoints]]).
+
+!! Use it
+
+<<list-kind guide>>
+
+!! Reference
+
+<<list-kind reference>>
+
+!! Why it works this way
+
+<<list-kind rationale>>
+
+!! Open questions
+
+<<list-kind question>>
+
+!! Commands
+
+<<tagged-with "CLI command">>
+
+<<tagged-with "GUI command">>
+
+!! In the GUI
+
+<<tagged-with "Panel">>

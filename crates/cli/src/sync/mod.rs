@@ -1,4 +1,4 @@
-//! `mf sync` — cross-repo synchronisation (spec-sync "* CLI").
+//! `mf sync` — cross-repo synchronisation (doc "Sync").
 //!
 //! The orchestration lives in [`metafolder_core::sync`] (shared with the GUI).
 //! This module is the **CLI adapter**: it wires the daemon HTTP client and an
@@ -8,8 +8,10 @@
 pub mod plan;
 pub mod run;
 
-use metafolder_core::sync::{self as core_sync, Prompter, SyncCtx, SyncError};
-use uuid::Uuid;
+use metafolder_core::metarecord::Value;
+use metafolder_core::sync::{
+    self as core_sync, ConflictQuestion, Prompter, Resolution, SyncCtx, SyncError,
+};
 
 use crate::client::CliError;
 use crate::commands::Ctx;
@@ -28,23 +30,20 @@ impl From<SyncError> for CliError {
 pub struct CliPrompter;
 
 impl Prompter for CliPrompter {
-    fn resolve_conflict(&self, field: &str, rec_a: Uuid, rec_b: Uuid) -> Result<String, SyncError> {
+    fn resolve_conflict(&self, q: &ConflictQuestion) -> Result<Resolution, SyncError> {
+        eprintln!("conflict on '{}' of {}:", q.field, q.record);
+        eprintln!("  {}: {}", q.repo_a, show_values(q.values_a));
+        eprintln!("  {}: {}", q.repo_b, show_values(q.values_b));
         eprint!(
-            "conflict on '{field}' ({} / {}): keep [a]/[b]/[s]kip? ",
-            rec_a.as_simple(),
-            rec_b.as_simple()
+            "keep [a] {} / keep [b] {} / [s]kip the field / skip the [l]ink? ",
+            q.repo_a, q.repo_b
         );
         std::io::Write::flush(&mut std::io::stderr()).ok();
         let mut answer = String::new();
         std::io::stdin()
             .read_line(&mut answer)
             .map_err(|e| SyncError::Op(format!("cannot read the conflict reply: {e}")))?;
-        Ok(match answer.trim().to_ascii_lowercase().as_str() {
-            "a" => "a",
-            "b" => "b",
-            _ => "skip",
-        }
-        .into())
+        Ok(parse_resolution(&answer))
     }
 
     fn confirm(&self, message: &str) -> Result<bool, SyncError> {
@@ -62,6 +61,34 @@ impl Prompter for CliPrompter {
     fn warn(&self, message: &str) {
         eprintln!("{message}");
     }
+}
+
+/// A conflict reply: `a` / `b` keep that side, `l` skips the whole link;
+/// anything else — an empty line, end of input — skips the field.
+fn parse_resolution(answer: &str) -> Resolution {
+    match answer.trim().to_ascii_lowercase().as_str() {
+        "a" => Resolution::A,
+        "b" => Resolution::B,
+        "l" | "link" => Resolution::SkipLink,
+        _ => Resolution::Skip,
+    }
+}
+
+/// A value set as the prompt shows it: `(none)` for an absent field.
+fn show_values(values: &[Value]) -> String {
+    if values.is_empty() {
+        return "(none)".into();
+    }
+    values
+        .iter()
+        .map(|v| match v {
+            Value::String(s) => format!("{s:?}"),
+            other => {
+                serde_json::to_value(other).map(|j| j["value"].to_string()).unwrap_or_default()
+            }
+        })
+        .collect::<Vec<_>>()
+        .join(", ")
 }
 
 /// Builds the core orchestration context from the CLI `Ctx` and a prompter.
@@ -124,4 +151,24 @@ pub fn unlink(
     let uuid = core_sync::unlink(&sctx, repo_a, repo_b, link, with_endpoint)?;
     println!("{}", uuid.as_simple());
     Ok(0)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a_conflict_reply_names_a_side_the_field_or_the_link() {
+        assert_eq!(parse_resolution("a\n"), Resolution::A);
+        assert_eq!(parse_resolution("B"), Resolution::B);
+        assert_eq!(parse_resolution("l"), Resolution::SkipLink);
+        assert_eq!(parse_resolution(""), Resolution::Skip, "end of input skips the field");
+        assert_eq!(parse_resolution("s"), Resolution::Skip);
+    }
+
+    #[test]
+    fn values_are_shown_plainly() {
+        assert_eq!(show_values(&[]), "(none)");
+        assert_eq!(show_values(&[Value::String("jazz".into()), Value::Int(3)]), "\"jazz\", 3");
+    }
 }

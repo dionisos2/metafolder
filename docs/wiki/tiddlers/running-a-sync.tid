@@ -1,0 +1,54 @@
+title: Running a sync
+tags: Sync
+kind: reference
+summary: mf sync run carries the plan out — links, then each link's metadata before its files — with every write fenced by the version it expects, and records each link it fully synced.
+
+!! Order
+
+# The `create-link` ops: bare records are created at the uuid the plan gave them, then the links. Every reference written afterwards may lead to one.
+# The links, parents first (by the depth of their path), in batches ([[How a run is batched]]). In each batch: every `sync`, then every `copy`, `move`, `chmod`; then the batch is committed.
+# The `delete` and `drop-link` ops.
+
+''Metadata gates the disk'': a link's files are touched only once its `sync` went
+through. A record a sync creates exists at its path before its file does, so the
+watcher's event for the file finds it rather than creating a second one ([[Event semantics]]).
+
+!! Versions
+
+The run knows, for each record it touches, the version it expects: the plan's
+baseline, then the version its own last write left. Every field write carries it
+(`?expected_version=`, [[Conditional writes]]); every file operation first checks
+that the record is still at it, and after changing the file makes the record agree
+with it ([[Suppressing sync's echoes]]). A record found elsewhere — the user, or
+the watcher, wrote meanwhile — makes that operation skip: it stays in the plan, the
+link's remaining file operations do not run, and the link is not recorded. The
+change is not lost: the next plan sees it.
+
+!! Recording a link
+
+A link whose `sync` went through, and whose two records now agree on everything
+sync carries, is ''committed'': the sync database records the two versions the run
+expects and a snapshot of what the two sides hold ([[The sync database]]). The run
+never re-reads a version to record it — a change that came after its last write is
+then still a change at the next sync, instead of being declared in sync without
+having reached the other side.
+
+A link is left uncommitted, for the next plan, when one of its operations was
+skipped, when an external tool's content diverges ([[What sync copies]]), when a
+conflict was skipped, or when a reference had no counterpart. The next plan then
+meets the same state and decides the same way.
+
+!! What is left
+
+Each operation that succeeds is deleted from the plan, as are the conflicts of a
+committed link; the plan keeps what did not happen. The run prints how many
+operations were done and skipped (each skip with its reason on the way), the
+subtrees where an external tool's files diverge — a count per top-level directory,
+never one line per file —, and suggests `mf reconcile` on both repositories for any
+drift the watcher has not reported yet.
+
+A run stopped in the middle loses nothing it did: what was written stays, and its
+links are simply not committed. Running the same plan again tolerates the links
+and bare records already made; an operation whose record its first attempt had
+already changed is skipped. The next `mf sync plan` sees each uncommitted link
+afresh, and plans only what is still to do.

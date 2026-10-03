@@ -10,8 +10,9 @@ Until October 2026 the documentation was a set of long specifications
 different words, drifted apart, and drifted from the code: checked against the code
 subject by subject during the move, nearly every specification described something
 that had since changed. The wiki replaced them ([[Writing documentation]] says how
-it is written). Cross-repository sync is the one subject not moved yet: its
-specification, `docs/spec-sync.org`, stays until it is.
+it is written). Cross-repository sync was the last subject moved (October 2026):
+checked against the code, its specification described more than was built and some
+behaviour that was wrong, which was fixed before the notes were written ([[Sync]]).
 
 !! One source, several readers
 

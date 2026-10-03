@@ -452,7 +452,7 @@ declare namespace Metafolder {
     touch(repo: string, uuid: string): Promise<void>;
   }
 
-  /** Cross-repo synchronisation (spec-sync): the shared `core::sync`
+  /** Cross-repo synchronisation (doc "Sync"): the shared `core::sync`
    *  orchestration, driven through the sync Tauri commands. Repos are named
    *  positionally (name or UUID), order-independent. `plan`/`run` run
    *  non-interactively — conflicts are left unresolved for `plan_resolve`

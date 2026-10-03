@@ -8,7 +8,7 @@ pub(super) struct CreateBody {
     fields: Vec<Field>,
     #[serde(default)]
     force: bool,
-    /// Optional caller-supplied UUID (sync bare-record creation, spec-sync).
+    /// Optional caller-supplied UUID (sync bare-record creation, doc "Sync endpoints").
     /// Rejected with 409 if a metarecord already has it.
     #[serde(default)]
     uuid: Option<String>,

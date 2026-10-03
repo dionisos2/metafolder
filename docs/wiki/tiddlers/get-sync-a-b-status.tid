@@ -1,0 +1,7 @@
+title: GET /sync/:a/:b/status
+tags: [[HTTP endpoint]] [[Sync endpoints]]
+kind: reference
+audience: dev
+summary: Each link's state, by comparing its recorded versions with its records' current ones.
+
+Bodies, answers and errors: [[Sync endpoints]].

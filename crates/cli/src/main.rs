@@ -250,7 +250,7 @@ enum Command {
         #[command(subcommand)]
         command: GuiCommand,
     },
-    /// Cross-repo synchronisation (spec-sync). Repos are named positionally;
+    /// Cross-repo synchronisation. Repos are named positionally;
     /// their order does not matter (roles are canonical).
     Sync {
         #[command(subcommand)]

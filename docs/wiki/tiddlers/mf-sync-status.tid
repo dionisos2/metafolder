@@ -1,0 +1,7 @@
+title: mf sync status
+tags: [[CLI command]] Sync
+kind: reference
+summary: Each link's state: in sync, changed on one side or both, or missing a record.
+
+One line per link, its uuid and its state ([[Change detection in sync]]); `--json`
+prints the daemon's answer, versions included.

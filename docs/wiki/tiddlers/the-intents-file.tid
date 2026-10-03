@@ -1,0 +1,40 @@
+title: The intents file
+tags: Sync
+kind: reference
+summary: The TOML file a sync plan reads: one query per repository naming what to link, the rules that decide conflicts, the run's batch sizes.
+
+```
+[[intents]]
+repo       = "laptop"                   # one of the pair: name or uuid
+query      = 'mfr_path ->* "/projects"'
+simplified = false                      # true: expand the simplified grammar first
+
+[[conflict]]
+field  = "rating"                       # optional
+query  = 'mfr_path ->* "/photos"'       # optional, tested on either record
+policy = "prefer:nas"                   # ask | skip | prefer:<repo>
+
+[settings]
+commit-batch-size   = 50
+transfer-batch-size = 20
+```
+
+''`[[intents]]`'' — the scope. Each entry's query runs on its own repository only:
+its result is the set of that repository's records to link to the other one
+([[Matching records across repositories]]). The scope is the union of the entries;
+an existing link is synced when either of its records is in it, and left alone
+otherwise — a link is never dropped because the scope changed. At least one entry
+is required.
+
+''`[[conflict]]`'' — the rules deciding a conflict, in order, first match wins: a
+rule matches when its `field` (if given) is the conflicting field and its `query`
+(if given) matches either of the two records. A rule with neither is a default;
+with no rule matching, the plan asks ([[Sync conflicts]]). `prefer:` names a
+repository, never `a` or `b`.
+
+''`[settings]`'' — how the run batches its work ([[How a run is batched]]). The
+plan records them for the run, which does not read the file.
+
+Any other key is refused, and so is a batch size of 0. There is no similarity
+threshold: records are matched by path, exactly, so a file that still has
+`similarity-threshold` is told it is not a key rather than having it ignored.

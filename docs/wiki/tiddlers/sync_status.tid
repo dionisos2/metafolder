@@ -1,0 +1,6 @@
+title: sync:status
+tags: [[GUI command]] Sync
+kind: reference
+summary: Sync: show the pair status
+
+See [[sync panel]] and [[Change detection in sync]].

@@ -1068,14 +1068,14 @@ fn test_skip_delete_rerecords_deletion_on_replay() {
     std::fs::remove_dir_all(root).unwrap();
 }
 
-// ── Idempotent refresh (spec-sync echo suppression) ─────────────────────────
+// ── Idempotent refresh (doc "Suppressing sync's echoes") ─────────────────────────
 
 #[test]
 fn test_modify_data_on_unchanged_file_is_idempotent() {
     // A Modify(Data) event for a file whose stat did not change (e.g. the
     // watcher's echo of a change the daemon itself just recorded) must produce
     // no operation and no version bump — the executor's data refresh is
-    // idempotent (spec-sync "Suppressing sync's own echoes").
+    // idempotent (doc "Suppressing sync's echoes").
     let (repo, root, _) = setup("idempotent_refresh");
     write_file(&root, "a.txt", b"hello");
     enqueue(&repo, &[FsEvent::Create("/a.txt".into())]);

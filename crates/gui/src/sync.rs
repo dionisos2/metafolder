@@ -1,4 +1,4 @@
-//! Cross-repo synchronisation for the GUI (spec-sync): Tauri commands over the
+//! Cross-repo synchronisation for the GUI (doc "Sync"): Tauri commands over the
 //! shared [`metafolder_core::sync`] orchestration.
 //!
 //! Core's orchestration is **synchronous and blocking** (long sequences of HTTP
@@ -15,11 +15,12 @@ use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 
 use serde_json::{json, Value};
-use uuid::Uuid;
 
 use metafolder_core::sync::plan::PlanReport;
 use metafolder_core::sync::run::{RunReport, RunStatus, ShowOp, ShowReport};
-use metafolder_core::sync::{self as core_sync, Prompter, SyncCtx, SyncError};
+use metafolder_core::sync::{
+    self as core_sync, ConflictQuestion, Prompter, Resolution, SyncCtx, SyncError,
+};
 
 use crate::blocking_client::BlockingClient;
 use crate::commands::App;
@@ -27,7 +28,7 @@ use crate::commands::App;
 /// Pagination size for the internal query loops (mirrors the CLI default).
 const PAGE_SIZE: usize = 500;
 
-/// The non-interactive prompter (spec-sync, GUI): skip conflicts (left for
+/// The non-interactive prompter (doc "Sync conflicts"): skip conflicts (left for
 /// `plan_resolve` editing), confirm implicitly, collect warnings for the panel.
 #[derive(Default)]
 struct GuiPrompter {
@@ -35,13 +36,8 @@ struct GuiPrompter {
 }
 
 impl Prompter for GuiPrompter {
-    fn resolve_conflict(
-        &self,
-        _field: &str,
-        _rec_a: Uuid,
-        _rec_b: Uuid,
-    ) -> Result<String, SyncError> {
-        Ok("skip".into())
+    fn resolve_conflict(&self, _: &ConflictQuestion) -> Result<Resolution, SyncError> {
+        Ok(Resolution::Skip)
     }
 
     fn confirm(&self, _message: &str) -> Result<bool, SyncError> {
@@ -224,12 +220,21 @@ pub async fn sync_show(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use uuid::Uuid;
 
     #[test]
     fn gui_prompter_is_non_interactive() {
         let p = GuiPrompter::default();
         // Conflicts are left unresolved (skip) for `plan_resolve` editing.
-        assert_eq!(p.resolve_conflict("field", Uuid::nil(), Uuid::nil()).unwrap(), "skip");
+        let q = ConflictQuestion {
+            field: "field",
+            record: "/a.txt",
+            repo_a: "a",
+            repo_b: "b",
+            values_a: &[],
+            values_b: &[],
+        };
+        assert_eq!(p.resolve_conflict(&q).unwrap(), Resolution::Skip);
         // The run confirmation is implicit — the panel already confirmed.
         assert!(p.confirm("run 5 operation(s)?").unwrap());
         // Warnings are collected for the panel rather than printed.

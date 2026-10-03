@@ -1,0 +1,38 @@
+title: What sync copies
+tags: Sync
+kind: reference
+summary: User fields, mf_* settings and positions are copied field by field; a file's bytes, kind and mode by disk operations; owner and timestamps stay local; an external tool's content is reported, not touched.
+
+!! Fields
+
+The fields a sync compares and writes are the ''user fields'', the ''`mf_*`
+settings'' — `mf_sync`, `mf_watch`, `mf_ignore`, … ([[Reserved fields]]), written
+with `force` — and ''`mfr_path`'', the record's position. No other `mfr_*` field is
+ever written: each repository derives them from its own files, and a write would
+only be undone by the next refresh. References are translated ([[Ref translation during sync]]).
+
+!! Files
+
+For a record whose content metafolder owns (`mf_sync` is `internal`, the default),
+the disk is made to agree:
+
+* ''Content'' — a file's bytes (its mtime carried over), a symlink as a symlink to the same target ([[Symbolic links]]), a directory as a directory: never its children, which are records of their own.
+* ''Position'' — a rename or a move of the file to the other side's path; parents are moved before children, and a directory's move carries what it holds. A parent that is not linked is found — or made — by its path.
+* ''Mode'' — the permission bits, best-effort: a filesystem without Unix modes keeps its own.
+* ''A file gone'' on one side while its record stays (an orphan, [[Orphans]]) — the other side's file goes to the trash and its record is orphaned too, its old path kept in `mfr_path_old`, as the watcher would have done. The other way round, a record with no file that gets the other side's position also gets its content.
+
+Owner and group (`mfr_uid`, `mfr_gid`) and the birth time stay local: sync never
+changes them, and they are never compared.
+
+''Nothing is destroyed'': whatever a sync overwrites, replaces or removes on disk
+goes to that repository's trash first, with the reason `sync` ([[Trash]]).
+
+!! Content an outside tool owns
+
+A record under `mf_sync = external` — inherited down `mfr_path` like `mf_watch`
+([[mf_sync]]) — has its content owned by another tool: a git checkout, an `rsync`.
+Its fields sync as any; no file operation runs. Where its content, path or mode
+differ between the two sides, the run reports the divergence — counted per top-level
+directory — and leaves the link uncommitted, so it is reported again until the tool
+has brought the two sides together. Mark a git working tree once, on its root; a
+subdirectory metafolder should still manage gets `mf_sync = internal` below.

@@ -1,0 +1,7 @@
+title: sync:plan
+tags: [[GUI command]] Sync
+kind: reference
+summary: Sync: compute the plan
+
+See [[sync panel]] and [[The sync plan]]. Conflicts are not asked: they are left
+skipped, to decide in the panel ([[Sync conflicts]]).

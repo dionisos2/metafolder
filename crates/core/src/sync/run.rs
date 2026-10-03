@@ -1,25 +1,32 @@
-//! `mf sync run` (spec-sync "=mf sync run="): executes the current plan — reading
-//! its op-metarecords from the plan repo and mutating the two repos — then prunes
-//! every op that succeeds. This module covers the internal-record pipeline
-//! (linking, metadata sync with Ref/TreeRef translation, content transfer through
-//! the trash, commit); move/chmod/delete, re-sync direction, external-record
-//! divergence reporting and batching layer on incrementally.
+//! `mf sync run` (doc "Running a sync"): executes the current plan — reading
+//! its op-metarecords from the plan repo and changing the two repos — prunes
+//! every op that succeeds, and records each link it synced.
+//!
+//! The run knows, for every record it touches, the version it expects: the
+//! plan's baseline, then whatever its own last write left. Every write is
+//! fenced by that version (`expected_version`, doc "Conditional writes"), every
+//! disk operation first checks it, and an op whose record is elsewhere is
+//! skipped — a concurrent change is never overwritten. What it commits for a
+//! link is that version and the state it read or wrote, never a re-read: a
+//! change that slipped in after the run's last write is still a change the
+//! next sync sees.
 
+use std::collections::{BTreeSet, HashMap, HashSet};
 use std::path::PathBuf;
 
 use serde_json::{json, Value as Json};
 use uuid::Uuid;
 
-use crate::trash::{Reason, TrashDir};
-
-use super::plan::{
-    check_schemas_identical, find_repo_by_name, mfr_path_of, record_at_path, syncable_fields,
-};
-use super::{canonical_pair, resolve_pair, SyncCtx as Ctx, SyncError as CliError};
 use crate::daemon_client::with_query;
+use crate::fsentry::path_present;
+use crate::metarecord::{MetaRecord, Value};
+use crate::trash::TrashDir;
 
-/// A record's (or snapshot's) fields as value multisets keyed by name.
-type ByName = std::collections::HashMap<String, Vec<Json>>;
+use super::content;
+use super::lookup::{self, LinkTable, Pair, Translator};
+use super::model::{self, Decision, Side, Snapshot, CONTENT_FIELD};
+use super::plan::{check_schemas_identical, find_repo_by_name};
+use super::{canonical_pair, resolve_pair, SyncCtx as Ctx, SyncError as CliError};
 
 /// How `mf sync run` finished.
 pub enum RunStatus {
@@ -43,6 +50,16 @@ pub struct RunReport {
     pub divergences: Vec<String>,
 }
 
+impl RunReport {
+    fn empty(status: RunStatus) -> Self {
+        RunReport { status, done: 0, skipped: 0, divergences: Vec::new() }
+    }
+}
+
+/// The per-link ops of a plan, by kind, in the order a batch runs them:
+/// metadata first, then the disk (doc "Running a sync").
+const LINK_PHASES: [&str; 4] = ["sync", "copy", "move", "chmod"];
+
 /// Runs `mf sync run`.
 pub fn run(ctx: &Ctx, repo_a: &str, repo_b: &str, yes: bool) -> Result<RunReport, CliError> {
     let (pos_a, pos_b) = resolve_pair(ctx, repo_a, repo_b)?;
@@ -56,83 +73,126 @@ pub fn run(ctx: &Ctx, repo_a: &str, repo_b: &str, yes: bool) -> Result<RunReport
 
     let ops = read_ops(ctx, &plan_base)?;
     if ops.is_empty() {
-        return Ok(RunReport {
-            status: RunStatus::NothingToRun,
-            done: 0,
-            skipped: 0,
-            divergences: vec![],
-        });
+        return Ok(RunReport::empty(RunStatus::NothingToRun));
     }
     if !yes && !ctx.prompter.confirm(&format!("run {} operation(s)? [y/N] ", ops.len()))? {
-        return Ok(RunReport {
-            status: RunStatus::Aborted,
-            done: 0,
-            skipped: 0,
-            divergences: vec![],
-        });
+        return Ok(RunReport::empty(RunStatus::Aborted));
     }
+    let settings = read_settings(ctx, &plan_base)?;
 
-    // Ordered so metadata gates the disk: create-link, then sync, then the disk
-    // ops, then delete. Conflict ops are consumed by their link's sync.
-    let mut done = 0usize;
-    let mut skipped = 0usize;
-    let mut synced_links: Vec<(Uuid, Uuid)> = Vec::new();
-    let mut divergences: Vec<String> = Vec::new();
+    let pair = Pair { a, b };
+    let mut run = Run::new(ctx, pair, plan_base)?;
+    run.host = settings.host;
 
-    for order in ["create-link", "sync", "copy", "move", "chmod", "delete"] {
-        for op in ops.iter().filter(|o| o.kind == order) {
-            let outcome = match order {
-                "create-link" => exec_create_link(ctx, op),
-                "sync" => exec_sync(ctx, op, &ops),
-                "copy" => exec_copy(ctx, op),
-                "move" => exec_move(ctx, op),
-                "chmod" => exec_chmod(ctx, op),
-                "delete" => exec_delete(ctx, a, b, op),
-                _ => Ok(Outcome::Skipped("unknown".into())),
-            }?;
-            match outcome {
-                Outcome::Done => {
-                    if order == "sync" {
-                        synced_links.push((op.rec_a, op.rec_b));
-                    }
-                    prune_op(ctx, &plan_base, op.plan_uuid)?;
-                    done += 1;
-                }
-                Outcome::External(path) => {
-                    divergences.push(path);
-                    prune_op(ctx, &plan_base, op.plan_uuid)?;
-                }
-                Outcome::Skipped(why) => {
-                    ctx.prompter.warn(&format!("skipped {} op: {why}", op.kind));
-                    skipped += 1;
+    // Links first: every reference a sync op translates may lead to one.
+    for op in ops.iter().filter(|o| o.kind == "create-link") {
+        let outcome = run.create_link(op)?;
+        run.settle(op, outcome)?;
+    }
+    run.reload_links()?;
+
+    // Then the links, in batches: each batch's metadata, then its disk
+    // operations, then one commit — so a crash costs at most one batch.
+    let mut by_link: HashMap<(Uuid, Uuid), Vec<&Op>> = HashMap::new();
+    for op in ops.iter().filter(|o| LINK_PHASES.contains(&o.kind.as_str())) {
+        by_link.entry(op.link()).or_default().push(op);
+    }
+    let mut keys: Vec<(Uuid, Uuid)> = by_link.keys().copied().collect();
+    keys.sort();
+    // Parents before children: a directory moved or made before what it holds.
+    let mut depth = HashMap::new();
+    for key in &keys {
+        depth.insert(*key, run.depth(*key)?);
+    }
+    keys.sort_by_key(|k| depth[k]);
+    for batch in batches(&keys, &by_link, settings.commit_batch, settings.transfer_batch) {
+        for kind in LINK_PHASES {
+            for key in &batch {
+                for op in by_link[key].iter().filter(|o| o.kind == kind) {
+                    let outcome = run.link_op(op, &ops)?;
+                    run.settle(op, outcome)?;
                 }
             }
         }
+        run.refresh_created()?;
+        run.commit(&batch, &ops)?;
     }
 
-    // Commit every link that got a metadata sync in one batched call (records
-    // their new baselines and snapshots); prune the consumed conflict ops.
-    let mut commits = Vec::new();
-    for (rec_a, rec_b) in &synced_links {
-        if let Some(entry) = commit_entry(ctx, a, b, *rec_a, *rec_b)? {
-            commits.push(entry);
-        }
-        for op in
-            ops.iter().filter(|o| o.kind == "conflict" && o.rec_a == *rec_a && o.rec_b == *rec_b)
-        {
-            prune_op(ctx, &plan_base, op.plan_uuid)?;
-        }
-    }
-    if !commits.is_empty() {
-        let prefix = format!("/sync/{}/{}", a.as_simple(), b.as_simple());
-        ctx.client.post(&format!("{prefix}/links/commit"), &json!({"commits": commits}))?;
+    // Deletions last.
+    for op in ops.iter().filter(|o| o.kind == "delete" || o.kind == "drop-link") {
+        let outcome = if op.kind == "delete" { run.delete(op)? } else { run.drop_link(op)? };
+        run.settle(op, outcome)?;
     }
 
-    Ok(RunReport { status: RunStatus::Ran, done, skipped, divergences })
+    Ok(RunReport {
+        status: RunStatus::Ran,
+        done: run.done,
+        skipped: run.skipped,
+        divergences: run.divergences,
+    })
+}
+
+/// Splits the links into batches of at most `links` links, closing a batch
+/// early once it holds `transfers` content transfers: a batch is what a crash
+/// can cost, and a transfer is the slow part to redo (doc "How a run is
+/// batched").
+fn batches(
+    keys: &[(Uuid, Uuid)],
+    by_link: &HashMap<(Uuid, Uuid), Vec<&Op>>,
+    links: usize,
+    transfers: usize,
+) -> Vec<Vec<(Uuid, Uuid)>> {
+    let mut out: Vec<Vec<(Uuid, Uuid)>> = Vec::new();
+    let mut current: Vec<(Uuid, Uuid)> = Vec::new();
+    let mut copies = 0;
+    for key in keys {
+        current.push(*key);
+        copies += by_link[key].iter().filter(|o| o.kind == "copy").count();
+        if current.len() >= links.max(1) || copies >= transfers.max(1) {
+            out.push(std::mem::take(&mut current));
+            copies = 0;
+        }
+    }
+    if !current.is_empty() {
+        out.push(current);
+    }
+    out
+}
+
+/// What the plan recorded besides its ops.
+struct RunSettings {
+    commit_batch: usize,
+    transfer_batch: usize,
+    /// The repository to hold the pair's sync database, should the run create
+    /// it (`mf sync plan --host`).
+    host: Option<Uuid>,
+}
+
+/// The settings the plan recorded (doc "How a run is batched"); the defaults
+/// for a plan from before they were recorded.
+fn read_settings(ctx: &Ctx, plan_base: &str) -> Result<RunSettings, CliError> {
+    let defaults = super::intents::Settings::default();
+    let query = json!({"type": "is_present", "field": "plan_commit_batch_size"});
+    let resp = ctx
+        .client
+        .post(&format!("{plan_base}/query"), &json!({"query": query, "select": "*", "limit": 1}))?;
+    let fields = resp["results"]
+        .as_array()
+        .and_then(|r| r.first())
+        .and_then(|m| m["fields"].as_array().cloned())
+        .unwrap_or_default();
+    let size = |name: &str, default: usize| {
+        field_u64(&fields, name).map(|n| n as usize).filter(|n| *n > 0).unwrap_or(default)
+    };
+    Ok(RunSettings {
+        commit_batch: size("plan_commit_batch_size", defaults.commit_batch_size),
+        transfer_batch: size("plan_transfer_batch_size", defaults.transfer_batch_size),
+        host: field_str(&fields, "plan_host").and_then(|h| Uuid::parse_str(&h).ok()),
+    })
 }
 
 /// Aggregates external-record content/path divergences by subtree (the
-/// top-level path component) — never one line per file (spec-sync). Returns
+/// top-level path component) — never one line per file. Returns
 /// `(subtree, count)` pairs, sorted; empty when there is nothing to report.
 pub fn aggregate_divergences(paths: &[String]) -> Vec<(String, usize)> {
     let mut by_subtree: std::collections::BTreeMap<String, usize> =
@@ -167,7 +227,7 @@ pub enum ShowReport {
     Summary { total: usize, counts: Vec<(String, usize)>, reds: Vec<ShowOp> },
 }
 
-/// `mf sync show` (spec-sync "=mf sync show="): renders the current plan with
+/// `mf sync show` (doc "The sync plan"): renders the current plan with
 /// live context — each op's endpoints followed into the synced repos — and a
 /// red/green flag: green when the baselines still match (will run at `run`), red
 /// when a record changed since planning (will be skipped). `conflicts` /
@@ -231,8 +291,8 @@ fn is_file_op(kind: &str) -> bool {
 /// A short live description of an op: its record's current path (following the
 /// ExternalRef into the repo), plus the field for a conflict.
 fn op_context(ctx: &Ctx, op: &Op) -> Result<String, CliError> {
-    let path = mfr_path_of(ctx, op.a, op.rec_a)?
-        .or(mfr_path_of(ctx, op.b, op.rec_b)?)
+    let path = lookup::mfr_path_of(ctx, op.a, op.rec_a)?
+        .or(lookup::mfr_path_of(ctx, op.b, op.rec_b)?)
         .unwrap_or_else(|| op.rec_a.as_simple().to_string());
     Ok(match &op.field {
         Some(f) => format!("{path} [{f}]"),
@@ -249,6 +309,623 @@ enum Outcome {
     External(String),
 }
 
+/// A write the daemon refused because the record is not what the run expected,
+/// or because the value breaks a rule (a schema, a forest): the op is skipped,
+/// not the run.
+fn refused(e: &crate::daemon_client::DaemonError) -> bool {
+    matches!(e.status, Some(400) | Some(409) | Some(423))
+}
+
+/// The run's state.
+struct Run<'a> {
+    ctx: &'a Ctx<'a>,
+    pair: Pair,
+    plan_base: String,
+    /// Translates for a write: a reference with no counterpart yet gets one.
+    tr: Translator<'a>,
+    /// Translates to compare: never creates anything.
+    look: Translator<'a>,
+    /// The link uuid of each `(record_a, record_b)`.
+    link_uuids: HashMap<(Uuid, Uuid), Uuid>,
+    /// Each record touched, keyed by `(repo, record)`: as read at its expected
+    /// version, then as each of the run's own writes left it. What the run
+    /// commits, and what it expects to find.
+    known: HashMap<(Uuid, Uuid), MetaRecord>,
+    /// Links whose `sync` op ran: the ones a commit may record.
+    synced: HashSet<(Uuid, Uuid)>,
+    /// Links an op of failed or was skipped for, or whose external content
+    /// diverges: no file of theirs is touched any more, and they are not
+    /// committed — the next plan sees them again.
+    unsettled: HashSet<(Uuid, Uuid)>,
+    /// Links left disagreeing on purpose — a conflict skipped, a value with no
+    /// counterpart: their other ops run, but they are not committed either, so
+    /// the next plan meets the disagreement again.
+    held: HashSet<(Uuid, Uuid)>,
+    roots: HashMap<Uuid, PathBuf>,
+    trashes: HashMap<Uuid, TrashDir>,
+    /// Where a sync database the run creates goes.
+    host: Option<Uuid>,
+    done: usize,
+    skipped: usize,
+    divergences: Vec<String>,
+}
+
+impl<'a> Run<'a> {
+    fn new(ctx: &'a Ctx<'a>, pair: Pair, plan_base: String) -> Result<Self, CliError> {
+        let mut roots = HashMap::new();
+        let mut trashes = HashMap::new();
+        for repo in [pair.a, pair.b] {
+            let info = ctx.client.get(&format!("/repos/{}", repo.as_simple()))?;
+            let root = info["root"]
+                .as_str()
+                .ok_or_else(|| CliError::Op("daemon did not report the repo root".into()))?;
+            let internal = info["internal_dir"]
+                .as_str()
+                .ok_or_else(|| CliError::Op("daemon did not report internal_dir".into()))?;
+            roots.insert(repo, PathBuf::from(root));
+            trashes.insert(repo, TrashDir::new(std::path::Path::new(internal).join("trash")));
+        }
+        Ok(Run {
+            ctx,
+            pair,
+            plan_base,
+            tr: Translator::new(ctx, pair, LinkTable::default(), true),
+            look: Translator::new(ctx, pair, LinkTable::default(), false),
+            link_uuids: HashMap::new(),
+            known: HashMap::new(),
+            synced: HashSet::new(),
+            unsettled: HashSet::new(),
+            held: HashSet::new(),
+            roots,
+            trashes,
+            host: None,
+            done: 0,
+            skipped: 0,
+            divergences: Vec::new(),
+        })
+    }
+
+    /// Reads the pair's links (after the run created its own).
+    fn reload_links(&mut self) -> Result<(), CliError> {
+        let rows = lookup::read_links(self.ctx, self.pair)?;
+        let table = LinkTable::from_rows(&rows);
+        self.tr = Translator::new(self.ctx, self.pair, table.clone(), true);
+        self.look = Translator::new(self.ctx, self.pair, table, false);
+        self.link_uuids = rows.iter().map(|l| ((l.record_a, l.record_b), l.uuid)).collect();
+        Ok(())
+    }
+
+    /// Records an op's outcome: a success is pruned from the plan, a skip
+    /// stays (and keeps its link from being committed).
+    fn settle(&mut self, op: &Op, outcome: Outcome) -> Result<(), CliError> {
+        match outcome {
+            Outcome::Done => {
+                if op.kind == "sync" {
+                    self.synced.insert(op.link());
+                }
+                prune_op(self.ctx, &self.plan_base, op.plan_uuid)?;
+                self.done += 1;
+            }
+            Outcome::External(path) => {
+                self.divergences.push(path);
+                self.unsettled.insert(op.link());
+                prune_op(self.ctx, &self.plan_base, op.plan_uuid)?;
+            }
+            Outcome::Skipped(why) => {
+                self.ctx.prompter.warn(&format!("skipped {} op: {why}", op.kind));
+                self.unsettled.insert(op.link());
+                self.skipped += 1;
+            }
+        }
+        Ok(())
+    }
+
+    fn repo(&self, side: Side) -> Uuid {
+        self.pair.repo(side)
+    }
+
+    fn key(&self, op: &Op, side: Side) -> (Uuid, Uuid) {
+        (self.repo(side), op.record(side))
+    }
+
+    /// The record as the run last knew it.
+    fn record(&self, op: &Op, side: Side) -> &MetaRecord {
+        &self.known[&self.key(op, side)]
+    }
+
+    /// Checks that both of an op's records are at the version the run expects
+    /// — the plan's baseline, or what its own last write left — and reads them.
+    fn fresh(&mut self, op: &Op) -> Result<Option<String>, CliError> {
+        for side in [Side::A, Side::B] {
+            let key = self.key(op, side);
+            let expected = self.known.get(&key).map(|r| r.version).or(op.baseline(side));
+            let Some(expected) = expected else {
+                return Ok(Some(format!("record {} was never created", key.1.as_simple())));
+            };
+            match lookup::get_record(self.ctx, key.0, key.1)? {
+                Some(current) if current.version == expected => {
+                    self.known.insert(key, current);
+                }
+                Some(_) => {
+                    return Ok(Some(format!("record {} changed since planning", key.1.as_simple())))
+                }
+                None => return Ok(Some(format!("record {} is gone", key.1.as_simple()))),
+            }
+        }
+        Ok(None)
+    }
+
+    /// Sets `name` on `side`'s record to `values`, fenced by the version the
+    /// run expects; the answer becomes what it knows. `Some(why)` when the
+    /// daemon refused.
+    fn put(
+        &mut self,
+        op: &Op,
+        side: Side,
+        name: &str,
+        values: &[Value],
+    ) -> Result<Option<String>, CliError> {
+        let key = self.key(op, side);
+        let path = with_query(
+            &format!(
+                "/repos/{}/metarecords/{}/fields/{name}",
+                key.0.as_simple(),
+                key.1.as_simple()
+            ),
+            &[("expected_version", self.known[&key].version.to_string())],
+        );
+        match self.ctx.client.put(&path, &json!({"values": values, "force": true})) {
+            Ok(resp) => {
+                self.known.insert(key, lookup::parse_record(&resp)?);
+                Ok(None)
+            }
+            Err(e) if refused(&e) => Ok(Some(format!("{name}: {}", e.message))),
+            Err(e) => Err(e.into()),
+        }
+    }
+
+    /// Makes `side`'s record agree with its file, right after the run changed
+    /// the file: the watcher's echo of that change then finds nothing to do
+    /// (doc "Suppressing sync's echoes").
+    fn refresh(&mut self, op: &Op, side: Side) -> Result<Option<String>, CliError> {
+        let key = self.key(op, side);
+        let path = with_query(
+            &format!("/repos/{}/metarecords/{}/refresh", key.0.as_simple(), key.1.as_simple()),
+            &[("expected_version", self.known[&key].version.to_string())],
+        );
+        match self.ctx.client.post(&path, &json!({})) {
+            Ok(resp) => {
+                self.known.insert(key, lookup::parse_record(&resp)?);
+                Ok(None)
+            }
+            Err(e) if refused(&e) => Ok(Some(format!("refresh: {}", e.message))),
+            Err(e) => Err(e.into()),
+        }
+    }
+
+    /// Where `side`'s record's file is on disk, from its current position.
+    fn abs_path(&self, op: &Op, side: Side) -> Result<Option<(String, PathBuf)>, CliError> {
+        let key = self.key(op, side);
+        Ok(lookup::mfr_path_of(self.ctx, key.0, key.1)?
+            .map(|p| (p.clone(), self.roots[&key.0].join(p.trim_start_matches('/')))))
+    }
+
+    fn trash(&self, side: Side) -> &TrashDir {
+        &self.trashes[&self.repo(side)]
+    }
+
+    /// Whether `side`'s record's content belongs to an outside tool.
+    fn is_external(&self, op: &Op, side: Side) -> Result<bool, CliError> {
+        let key = self.key(op, side);
+        let m = self.ctx.client.get(&format!(
+            "/repos/{}/metarecords/{}/mf-sync",
+            key.0.as_simple(),
+            key.1.as_simple()
+        ))?;
+        Ok(m["mf_sync"] == "external")
+    }
+
+    /// The side an op takes its value from: the plan's `plan_from`, else the
+    /// resolution of the link's conflict on `field`. `None`: leave both.
+    fn winner(&self, op: &Op, all: &[Op], field: &str) -> Option<Side> {
+        op.from.or_else(|| conflict_resolve(all, op, field).as_deref().and_then(Side::parse))
+    }
+
+    /// How deep a link sits in the filesystem (0 without a path), to run
+    /// parents first.
+    fn depth(&self, key: (Uuid, Uuid)) -> Result<usize, CliError> {
+        for (repo, rec) in [(self.pair.a, key.0), (self.pair.b, key.1)] {
+            if let Ok(Some(p)) = lookup::mfr_path_of(self.ctx, repo, rec) {
+                return Ok(p.split('/').filter(|c| !c.is_empty()).count());
+            }
+        }
+        Ok(0)
+    }
+
+    // ── ops ─────────────────────────────────────────────────────────────────
+
+    /// Creates the link's bare endpoint(s) at their planned uuid, then the link.
+    fn create_link(&mut self, op: &Op) -> Result<Outcome, CliError> {
+        for side in [Side::A, Side::B] {
+            if op.baseline(side).is_some() {
+                continue;
+            }
+            let (repo, record) = self.key(op, side);
+            let body = json!({"uuid": record.as_simple().to_string(), "fields": []});
+            match self.ctx.client.post(&format!("/repos/{}/metarecords", repo.as_simple()), &body) {
+                Ok(resp) => {
+                    self.known.insert((repo, record), lookup::parse_record(&resp)?);
+                }
+                // Made by an earlier, interrupted run.
+                Err(e) if e.status == Some(409) => {}
+                Err(e) => return Err(e.into()),
+            }
+        }
+        if let Some(why) = self.fresh(op)? {
+            return Ok(Outcome::Skipped(why));
+        }
+        let mut body = json!({
+            "record_a": op.rec_a.as_simple().to_string(),
+            "record_b": op.rec_b.as_simple().to_string(),
+        });
+        if let Some(host) = self.host {
+            body["host"] = json!(host.as_simple().to_string());
+        }
+        match self.ctx.client.post(&format!("{}/links", self.pair.prefix()), &body) {
+            Ok(_) => Ok(Outcome::Done),
+            // A link already made by an earlier, interrupted run.
+            Err(e) if e.status == Some(409) => Ok(Outcome::Done),
+            Err(e) => Err(e.into()),
+        }
+    }
+
+    fn link_op(&mut self, op: &Op, all: &[Op]) -> Result<Outcome, CliError> {
+        if op.kind != "sync" && self.unsettled.contains(&op.link()) {
+            // Metadata gates the disk: no file is touched for a link whose
+            // metadata did not go through.
+            return Ok(Outcome::Skipped("its link's metadata was not synced".into()));
+        }
+        if let Some(why) = self.fresh(op)? {
+            return Ok(Outcome::Skipped(why));
+        }
+        match op.kind.as_str() {
+            "sync" => self.sync(op, all),
+            "copy" => self.copy(op, all),
+            "move" => self.relocate(op, all),
+            "chmod" => self.chmod(op, all),
+            other => Ok(Outcome::Skipped(format!("unknown op kind '{other}'"))),
+        }
+    }
+
+    /// The metadata phase: every field the three-way diff says one side
+    /// changed goes to the other — references translated, a conflict decided
+    /// by its `plan_resolve`. A bare endpoint is placed: its `mfr_path` written
+    /// before its file exists (its `copy` follows).
+    fn sync(&mut self, op: &Op, all: &[Op]) -> Result<Outcome, CliError> {
+        let snap = self.snapshot(op)?;
+        let (a, b) = (self.record(op, Side::A).clone(), self.record(op, Side::B).clone());
+        let mut names: BTreeSet<String> = model::synced_names(&a);
+        names.extend(model::synced_names(&b));
+        names.extend(snap.common.keys().cloned());
+        names.remove("mfr_path");
+        for name in names {
+            let (va, vb) = (model::values_of(&a, &name), model::values_of(&b, &name));
+            let from = match model::decide_field(&name, &va, &vb, &snap, &self.look)? {
+                Decision::Propagate { from } => Some(from),
+                Decision::Conflict => {
+                    let side = conflict_resolve(all, op, &name).as_deref().and_then(Side::parse);
+                    if side.is_none() {
+                        self.held.insert(op.link());
+                    }
+                    side
+                }
+                Decision::InSync | Decision::Untouched => None,
+            };
+            if let Some(from) = from {
+                if let Some(why) = self.propagate(op, from, &name)? {
+                    return Ok(Outcome::Skipped(why));
+                }
+            }
+        }
+        for side in [Side::A, Side::B] {
+            let here = self.record(op, side);
+            let there = self.record(op, side.other());
+            if here.get("mfr_path").is_none() && there.get("mfr_path").is_some() {
+                if let Some(why) = self.propagate(op, side.other(), "mfr_path")? {
+                    return Ok(Outcome::Skipped(why));
+                }
+            }
+        }
+        Ok(Outcome::Done)
+    }
+
+    /// Writes `from`'s values of `name` on the other side, translated. A value
+    /// with no counterpart is left out with a warning — the field stays as it
+    /// was, and so does its snapshot.
+    fn propagate(&mut self, op: &Op, from: Side, name: &str) -> Result<Option<String>, CliError> {
+        let values = model::values_of(self.record(op, from), name);
+        match model::translate_all(&values, from, name, &self.tr)? {
+            Some(translated) => self.put(op, from.other(), name, &translated),
+            None => {
+                self.ctx.prompter.warn(&format!(
+                    "'{name}' of {} names a record with no counterpart; left out",
+                    op.record(from).as_simple()
+                ));
+                self.held.insert(op.link());
+                Ok(None)
+            }
+        }
+    }
+
+    /// Gives the other side `from`'s content — the bytes of a file, the target
+    /// of a symlink, a directory — and refreshes its record.
+    fn copy(&mut self, op: &Op, all: &[Op]) -> Result<Outcome, CliError> {
+        let Some(from) = self.winner(op, all, CONTENT_FIELD) else {
+            self.held.insert(op.link());
+            return Ok(Outcome::Done);
+        };
+        let to = from.other();
+        if self.is_external(op, to)? {
+            let path = self.abs_path(op, to)?.map(|(p, _)| p).unwrap_or_default();
+            return Ok(Outcome::External(path));
+        }
+        let (Some((_, src)), Some((_, dst))) = (self.abs_path(op, from)?, self.abs_path(op, to)?)
+        else {
+            return Ok(Outcome::Skipped("an endpoint has no path".into()));
+        };
+        if !path_present(&src) {
+            return Ok(Outcome::Skipped(format!("{} is not on disk", src.display())));
+        }
+        if let Err(e) = content::place_content(&src, &dst, self.trash(to)) {
+            return Ok(Outcome::Skipped(e.message().to_string()));
+        }
+        Ok(match self.refresh(op, to)? {
+            Some(why) => Outcome::Skipped(why),
+            None => Outcome::Done,
+        })
+    }
+
+    /// Gives the loser the winner's position: renames its file there (what
+    /// occupies the destination goes to the trash), or — when the winner's
+    /// file is gone — sends the loser's to the trash and leaves its record
+    /// where the watcher would, orphaned (doc "Orphans"). A loser with no file
+    /// gets the winner's content.
+    fn relocate(&mut self, op: &Op, all: &[Op]) -> Result<Outcome, CliError> {
+        let Some(winner) = self.winner(op, all, "mfr_path") else {
+            self.held.insert(op.link()); // a skipped conflict: both stay
+            return Ok(Outcome::Done);
+        };
+        let loser = winner.other();
+        if self.is_external(op, loser)? {
+            let path = self.abs_path(op, loser)?.map(|(p, _)| p).unwrap_or_default();
+            return Ok(Outcome::External(path));
+        }
+        let old = self.abs_path(op, loser)?;
+        let target = match self.record(op, winner).get("mfr_path").cloned() {
+            Some(v @ Value::TreeRef { .. }) => {
+                match model::translate(&v, winner, "mfr_path", &self.tr)? {
+                    Some(t) => t,
+                    None => {
+                        return Ok(Outcome::Skipped("the new parent has no counterpart".into()))
+                    }
+                }
+            }
+            _ => Value::Nothing,
+        };
+        if target == Value::Nothing {
+            if let Some((rel, abs)) = old {
+                if let Some(why) = self.put(op, loser, "mfr_path_old", &[Value::String(rel)])? {
+                    return Ok(Outcome::Skipped(why));
+                }
+                if let Some(why) = self.put(op, loser, "mfr_path", &[Value::Nothing])? {
+                    return Ok(Outcome::Skipped(why));
+                }
+                content::trash_occupant(self.trash(loser), &abs)?;
+            } else if let Some(why) = self.put(op, loser, "mfr_path", &[Value::Nothing])? {
+                return Ok(Outcome::Skipped(why));
+            }
+            return Ok(Outcome::Done);
+        }
+        if let Some(why) = self.put(op, loser, "mfr_path", &[target])? {
+            return Ok(Outcome::Skipped(why));
+        }
+        let Some((_, new)) = self.abs_path(op, loser)? else {
+            return Ok(Outcome::Skipped("the new position has no path".into()));
+        };
+        let moved = match old.filter(|(_, abs)| path_present(abs)) {
+            Some((_, abs)) => content::relocate(&abs, &new, self.trash(loser)),
+            None => match self.abs_path(op, winner)? {
+                Some((_, src)) if path_present(&src) => {
+                    content::place_content(&src, &new, self.trash(loser))
+                }
+                _ => Ok(()),
+            },
+        };
+        if let Err(e) = moved {
+            return Ok(Outcome::Skipped(e.message().to_string()));
+        }
+        if !path_present(&new) {
+            return Ok(Outcome::Done); // nothing on disk on either side
+        }
+        Ok(match self.refresh(op, loser)? {
+            Some(why) => Outcome::Skipped(why),
+            None => Outcome::Done,
+        })
+    }
+
+    /// Gives the other side `from`'s mode (best-effort: a filesystem without
+    /// Unix modes keeps its own).
+    fn chmod(&mut self, op: &Op, all: &[Op]) -> Result<Outcome, CliError> {
+        let Some(from) = self.winner(op, all, "mfr_permissions") else {
+            self.held.insert(op.link());
+            return Ok(Outcome::Done);
+        };
+        let to = from.other();
+        if self.is_external(op, to)? {
+            let path = self.abs_path(op, to)?.map(|(p, _)| p).unwrap_or_default();
+            return Ok(Outcome::External(path));
+        }
+        let mode = match self.record(op, from).get("mfr_permissions") {
+            Some(Value::String(m)) => m.clone(),
+            _ => return Ok(Outcome::Done),
+        };
+        let Some((_, dst)) = self.abs_path(op, to)? else {
+            return Ok(Outcome::Skipped("the target has no path".into()));
+        };
+        if !path_present(&dst) {
+            return Ok(Outcome::Skipped(format!("{} is not on disk", dst.display())));
+        }
+        content::set_mode(&dst, &mode);
+        Ok(match self.refresh(op, to)? {
+            Some(why) => Outcome::Skipped(why),
+            None => Outcome::Done,
+        })
+    }
+
+    /// Propagates a deletion (doc "Deletion propagation"): the surviving
+    /// record is deleted with its link — fenced by its baseline — and its file
+    /// goes to the trash. Nothing is destroyed.
+    fn delete(&mut self, op: &Op) -> Result<Outcome, CliError> {
+        let Some(side) = op.side else {
+            return Ok(Outcome::Skipped("delete op has no plan_side".into()));
+        };
+        let Some(link) = self.link_uuids.get(&op.link()).copied() else {
+            return Ok(Outcome::Skipped("link already gone".into()));
+        };
+        let (repo, record) = self.key(op, side);
+        let Some(current) = lookup::get_record(self.ctx, repo, record)? else {
+            return Ok(Outcome::Skipped(format!("record {} is already gone", record.as_simple())));
+        };
+        if Some(current.version) != op.baseline(side) {
+            return Ok(Outcome::Skipped(format!(
+                "record {} changed since planning",
+                record.as_simple()
+            )));
+        }
+        let file = if self.is_external(op, side)? { None } else { self.abs_path(op, side)? };
+        let path = with_query(
+            &format!("{}/links/{}", self.pair.prefix(), link.as_simple()),
+            &[
+                ("with_endpoint", side.name().to_string()),
+                ("expected_version", current.version.to_string()),
+            ],
+        );
+        match self.ctx.client.request("DELETE", &path, None) {
+            Ok(_) => {}
+            Err(e) if refused(&e) => return Ok(Outcome::Skipped(e.message)),
+            Err(e) => return Err(e.into()),
+        }
+        if let Some((_, abs)) = file {
+            content::trash_occupant(self.trash(side), &abs)?;
+        }
+        Ok(Outcome::Done)
+    }
+
+    /// Removes a link whose two records are both gone.
+    fn drop_link(&mut self, op: &Op) -> Result<Outcome, CliError> {
+        let Some(link) = self.link_uuids.get(&op.link()).copied() else {
+            return Ok(Outcome::Done);
+        };
+        for side in [Side::A, Side::B] {
+            let (repo, record) = self.key(op, side);
+            if lookup::get_record(self.ctx, repo, record)?.is_some() {
+                return Ok(Outcome::Skipped(format!("record {} is back", record.as_simple())));
+            }
+        }
+        self.ctx.client.request(
+            "DELETE",
+            &format!("{}/links/{}", self.pair.prefix(), link.as_simple()),
+            None,
+        )?;
+        Ok(Outcome::Done)
+    }
+
+    // ── commit ──────────────────────────────────────────────────────────────
+
+    /// A link's snapshot as the last sync recorded it.
+    fn snapshot(&self, op: &Op) -> Result<Snapshot, CliError> {
+        let Some(link) = self.link_uuids.get(&op.link()) else { return Ok(Snapshot::default()) };
+        let body =
+            self.ctx.client.get(&format!("{}/links/{}", self.pair.prefix(), link.as_simple()))?;
+        Ok(Snapshot::from_wire(body["snapshot"].as_array().map(Vec::as_slice).unwrap_or_default()))
+    }
+
+    /// Refreshes the directory records the run's path fallback made, once its
+    /// disk operations have made the directories.
+    fn refresh_created(&mut self) -> Result<(), CliError> {
+        for (repo, record) in self.tr.take_created() {
+            if lookup::mfr_path_of(self.ctx, repo, record)?.is_none() {
+                continue; // a node of another forest: nothing on disk
+            }
+            let path =
+                format!("/repos/{}/metarecords/{}/refresh", repo.as_simple(), record.as_simple());
+            match self.ctx.client.post(&path, &json!({})) {
+                Ok(_) => {}
+                Err(e) if refused(&e) => {} // not on disk: the watcher will see it if it comes
+                Err(e) => return Err(e.into()),
+            }
+        }
+        Ok(())
+    }
+
+    /// Records each link of the batch the run synced: the versions it expects
+    /// — never re-read — and the snapshot of what the two sides now agree on
+    /// (doc "The sync database"). A link with a skipped op, or one still
+    /// disagreeing, is left for the next plan.
+    fn commit(&mut self, batch: &[(Uuid, Uuid)], all: &[Op]) -> Result<(), CliError> {
+        let mut commits = Vec::new();
+        let mut committed = Vec::new();
+        for key in batch {
+            if !self.synced.contains(key) || self.unsettled.contains(key) || self.held.contains(key)
+            {
+                continue;
+            }
+            let Some(link) = self.link_uuids.get(key).copied() else { continue };
+            let (Some(a), Some(b)) =
+                (self.known.get(&(self.pair.a, key.0)), self.known.get(&(self.pair.b, key.1)))
+            else {
+                continue;
+            };
+            let body = self.ctx.client.get(&format!(
+                "{}/links/{}",
+                self.pair.prefix(),
+                link.as_simple()
+            ))?;
+            let old = Snapshot::from_wire(
+                body["snapshot"].as_array().map(Vec::as_slice).unwrap_or_default(),
+            );
+            let snap = model::next_snapshot(a, b, &old, &self.look)?;
+            commits.push(json!({
+                "link": link.as_simple().to_string(),
+                "version_a": a.version,
+                "version_b": b.version,
+                "snapshot": snap.to_wire(),
+            }));
+            committed.push(*key);
+        }
+        if commits.is_empty() {
+            return Ok(());
+        }
+        self.ctx
+            .client
+            .post(&format!("{}/links/commit", self.pair.prefix()), &json!({"commits": commits}))?;
+        // The conflicts of a committed link were consumed by its sync.
+        for op in all.iter().filter(|o| o.kind == "conflict" && committed.contains(&o.link())) {
+            prune_op(self.ctx, &self.plan_base, op.plan_uuid)?;
+        }
+        Ok(())
+    }
+}
+
+/// The `plan_resolve` of the link's conflict on `field`, if any.
+fn conflict_resolve(ops: &[Op], op: &Op, field: &str) -> Option<String> {
+    ops.iter()
+        .find(|o| {
+            o.kind == "conflict" && o.link() == op.link() && o.field.as_deref() == Some(field)
+        })
+        .and_then(|o| o.resolve.clone())
+}
+
 /// One parsed op-metarecord from the plan repo.
 struct Op {
     plan_uuid: Uuid,
@@ -259,10 +936,30 @@ struct Op {
     rec_b: Uuid,
     ver_a: Option<u64>,
     ver_b: Option<u64>,
-    from: Option<String>,
-    side: Option<String>,
+    from: Option<Side>,
+    side: Option<Side>,
     field: Option<String>,
     resolve: Option<String>,
+}
+
+impl Op {
+    fn link(&self) -> (Uuid, Uuid) {
+        (self.rec_a, self.rec_b)
+    }
+
+    fn record(&self, side: Side) -> Uuid {
+        match side {
+            Side::A => self.rec_a,
+            Side::B => self.rec_b,
+        }
+    }
+
+    fn baseline(&self, side: Side) -> Option<u64> {
+        match side {
+            Side::A => self.ver_a,
+            Side::B => self.ver_b,
+        }
+    }
 }
 
 /// Reads and parses every op-metarecord from the plan repo.
@@ -302,661 +999,22 @@ fn parse_op(m: &Json) -> Option<Op> {
         rec_b,
         ver_a: field_u64(fields, "plan_version_a"),
         ver_b: field_u64(fields, "plan_version_b"),
-        from: field_str(fields, "plan_from"),
-        side: field_str(fields, "plan_side"),
+        from: field_str(fields, "plan_from").as_deref().and_then(Side::parse),
+        side: field_str(fields, "plan_side").as_deref().and_then(Side::parse),
         field: field_str(fields, "plan_field"),
         resolve: field_str(fields, "plan_resolve"),
     })
 }
 
-// ── op execution ────────────────────────────────────────────────────────────
-
-/// Creates the link's bare endpoint(s) at their planned UUID and the link.
-fn exec_create_link(ctx: &Ctx, op: &Op) -> Result<Outcome, CliError> {
-    if op.ver_a.is_none() {
-        create_bare(ctx, op.a, op.rec_a)?;
-    }
-    if op.ver_b.is_none() {
-        create_bare(ctx, op.b, op.rec_b)?;
-    }
-    if let Some(why) = stale(ctx, op)? {
-        return Ok(Outcome::Skipped(why));
-    }
-    let prefix = format!("/sync/{}/{}", op.a.as_simple(), op.b.as_simple());
-    let body = json!({
-        "record_a": op.rec_a.as_simple().to_string(),
-        "record_b": op.rec_b.as_simple().to_string(),
-    });
-    // A link may already exist from a partial prior run — tolerate the conflict.
-    match ctx.client.post(&format!("{prefix}/links"), &body) {
-        Ok(_) => Ok(Outcome::Done),
-        Err(e) if e.message.contains("already linked") => Ok(Outcome::Done),
-        Err(e) => Err(e.into()),
-    }
-}
-
-/// Propagates a link's metadata: for a first sync (one bare endpoint), the source
-/// side's syncable fields plus its translated `mfr_path`. Re-sync direction and
-/// conflict application layer on next.
-fn exec_sync(ctx: &Ctx, op: &Op, ops: &[Op]) -> Result<Outcome, CliError> {
-    if let Some(why) = stale(ctx, op)? {
-        return Ok(Outcome::Skipped(why));
-    }
-    match (op.ver_a, op.ver_b) {
-        // First sync: one endpoint is bare → propagate the source wholesale and
-        // place the record at its translated path.
-        (Some(_), None) => sync_bare(ctx, op.a, op.b, op.a, op.rec_a, op.b, op.rec_b),
-        (None, Some(_)) => sync_bare(ctx, op.a, op.b, op.b, op.rec_b, op.a, op.rec_a),
-        // Re-sync: three-way diff, per-field direction, conflicts by plan_resolve.
-        (Some(_), Some(_)) => sync_resync(ctx, op, ops),
-        (None, None) => Ok(Outcome::Skipped("both endpoints bare".into())),
-    }
-}
-
-/// First-sync propagation: the source's syncable fields (refs translated through
-/// the link table, or by identity path) plus its translated `mfr_path` onto the
-/// bare target. `a`/`b` are the canonical pair (for the link table).
-#[allow(clippy::too_many_arguments)]
-fn sync_bare(
-    ctx: &Ctx,
-    a: Uuid,
-    b: Uuid,
-    src_repo: Uuid,
-    src_rec: Uuid,
-    tgt_repo: Uuid,
-    tgt_rec: Uuid,
-) -> Result<Outcome, CliError> {
-    for (name, value) in syncable_fields(ctx, src_repo, src_rec)? {
-        let out = if value["type"] == "ref" {
-            match translate_ref_value(ctx, a, b, src_repo, tgt_repo, &value)? {
-                Some(v) => v,
-                None => {
-                    ctx.prompter
-                        .warn(&format!("skipped ref field '{name}': target out of sync scope"));
-                    continue;
-                }
-            }
-        } else {
-            value
-        };
-        put_field(ctx, tgt_repo, tgt_rec, &name, &out, None)?;
-    }
-    if let Some(tree) = translate_mfr_path(ctx, src_repo, tgt_repo, src_rec)? {
-        put_field(ctx, tgt_repo, tgt_rec, "mfr_path", &tree, None)?;
-    }
-    Ok(Outcome::Done)
-}
-
-/// Translates a `ref` field value to the target repo — **link-first**: the linked
-/// counterpart of the referenced record; **path-fallback**: its TreeRef identity
-/// resolved (find-or-create) in the target. `None` when the target is out of
-/// sync scope (no link, no identity).
-fn translate_ref_value(
-    ctx: &Ctx,
-    a: Uuid,
-    b: Uuid,
-    src_repo: Uuid,
-    tgt_repo: Uuid,
-    value: &Json,
-) -> Result<Option<Json>, CliError> {
-    let Some(src_target) = value["value"].as_str().and_then(|s| Uuid::parse_str(s).ok()) else {
-        return Ok(None);
-    };
-    // Link-first.
-    let prefix = format!("/sync/{}/{}", a.as_simple(), b.as_simple());
-    let links = ctx.client.get(&format!("{prefix}/links"))?;
-    let (src_key, tgt_key) =
-        if src_repo == a { ("record_a", "record_b") } else { ("record_b", "record_a") };
-    let linked = links["links"].as_array().and_then(|ls| {
-        ls.iter()
-            .find(|l| l[src_key].as_str() == Some(&src_target.as_simple().to_string()))
-            .and_then(|l| l[tgt_key].as_str())
-            .and_then(|s| Uuid::parse_str(s).ok())
-    });
-    if let Some(t) = linked {
-        return Ok(Some(json!({"type": "ref", "value": t.as_simple().to_string()})));
-    }
-    // Path-fallback: the referenced record's TreeRef identity, resolved in target.
-    if let Some((field, path)) =
-        super::plan::identity_paths(ctx, src_repo, src_target)?.into_iter().next()
-    {
-        let t = find_or_create_path(ctx, tgt_repo, &field, &path)?;
-        return Ok(Some(json!({"type": "ref", "value": t.as_simple().to_string()})));
-    }
-    Ok(None)
-}
-
-/// Re-sync propagation: three-way diff of the two existing records against the
-/// link's snapshot. A one-sided change propagates; a both-sided change is a
-/// conflict resolved by the link's `conflict` op (`plan_resolve`). Refs deferred.
-fn sync_resync(ctx: &Ctx, op: &Op, ops: &[Op]) -> Result<Outcome, CliError> {
-    let (snap_a, snap_b) = link_snapshot(ctx, op.a, op.b, op.rec_a, op.rec_b)?;
-    let by_a = scalar_by_name(ctx, op.a, op.rec_a)?;
-    let by_b = scalar_by_name(ctx, op.b, op.rec_b)?;
-
-    let mut names: std::collections::BTreeSet<&String> = std::collections::BTreeSet::new();
-    names.extend(by_a.keys());
-    names.extend(by_b.keys());
-    for name in names {
-        let av = by_a.get(name);
-        let bv = by_b.get(name);
-        if av == bv {
-            continue;
-        }
-        let a_changed = av != snap_a.get(name);
-        let b_changed = bv != snap_b.get(name);
-        if a_changed && b_changed {
-            match conflict_resolve(ops, op.rec_a, op.rec_b, name).as_deref() {
-                Some("a") => set_field_multi(ctx, op.b, op.rec_b, name, av)?,
-                Some("b") => set_field_multi(ctx, op.a, op.rec_a, name, bv)?,
-                _ => {} // skip
-            }
-        } else if a_changed {
-            set_field_multi(ctx, op.b, op.rec_b, name, av)?;
-        } else {
-            set_field_multi(ctx, op.a, op.rec_a, name, bv)?;
-        }
-    }
-    Ok(Outcome::Done)
-}
-
-/// A record's syncable fields by name, excluding refs (translation deferred).
-fn scalar_by_name(ctx: &Ctx, repo: Uuid, record: Uuid) -> Result<ByName, CliError> {
-    let mut map = super::plan::syncable_by_name(ctx, repo, record)?;
-    map.retain(|_, values| values.iter().all(|v| v["type"] != "ref"));
-    Ok(map)
-}
-
-/// The link's snapshot as A- and B-perspective (non-ref) value multisets by name.
-fn link_snapshot(
-    ctx: &Ctx,
-    a: Uuid,
-    b: Uuid,
-    rec_a: Uuid,
-    rec_b: Uuid,
-) -> Result<(ByName, ByName), CliError> {
-    let prefix = format!("/sync/{}/{}", a.as_simple(), b.as_simple());
-    let links = ctx.client.get(&format!("{prefix}/links"))?;
-    let link = links["links"].as_array().and_then(|ls| {
-        ls.iter().find(|l| {
-            l["record_a"].as_str() == Some(&rec_a.as_simple().to_string())
-                && l["record_b"].as_str() == Some(&rec_b.as_simple().to_string())
-        })
-    });
-    let (mut sa, mut sb): (ByName, ByName) = Default::default();
-    if let Some(uuid) = link.and_then(|l| l["uuid"].as_str()) {
-        let body = ctx.client.get(&format!("{prefix}/links/{uuid}"))?;
-        for e in body["snapshot"].as_array().cloned().unwrap_or_default() {
-            let Some(name) = e["name"].as_str() else { continue };
-            if e["value"]["type"] == "ref" || name.starts_with("mfr_") {
-                continue;
-            }
-            sa.entry(name.to_string()).or_default().push(e["value"].clone());
-            sb.entry(name.to_string()).or_default().push(e["value"].clone());
-        }
-    }
-    for v in sa.values_mut() {
-        v.sort_by_key(|x| x.to_string());
-    }
-    for v in sb.values_mut() {
-        v.sort_by_key(|x| x.to_string());
-    }
-    Ok((sa, sb))
-}
-
-/// The `plan_resolve` of the `conflict` op for `(rec_a, rec_b, field)`, if any.
-fn conflict_resolve(ops: &[Op], rec_a: Uuid, rec_b: Uuid, field: &str) -> Option<String> {
-    ops.iter()
-        .find(|o| {
-            o.kind == "conflict"
-                && o.rec_a == rec_a
-                && o.rec_b == rec_b
-                && o.field.as_deref() == Some(field)
-        })
-        .and_then(|o| o.resolve.clone())
-}
-
-/// Sets a record's `name` field to the value multiset `values` (`None`/empty →
-/// unset): replace with the first value, then append the rest.
-fn set_field_multi(
-    ctx: &Ctx,
-    repo: Uuid,
-    record: Uuid,
-    name: &str,
-    values: Option<&Vec<Json>>,
-) -> Result<(), CliError> {
-    match values.filter(|v| !v.is_empty()) {
-        None => {
-            ctx.client.request(
-                "DELETE",
-                &format!(
-                    "/repos/{}/metarecords/{}/fields/{}",
-                    repo.as_simple(),
-                    record.as_simple(),
-                    name
-                ),
-                None,
-            )?;
-        }
-        Some(vals) => {
-            put_field(ctx, repo, record, name, &vals[0], None)?;
-            for v in &vals[1..] {
-                ctx.client.post(
-                    &format!(
-                        "/repos/{}/metarecords/{}/fields",
-                        repo.as_simple(),
-                        record.as_simple()
-                    ),
-                    &json!({"name": name, "value": v, "force": true}),
-                )?;
-            }
-        }
-    }
-    Ok(())
-}
-
-/// Transfers a file's content from the `plan_from` side to the other, routing any
-/// overwrite through the trash.
-fn exec_copy(ctx: &Ctx, op: &Op) -> Result<Outcome, CliError> {
-    let (src_repo, src_rec, tgt_repo, tgt_rec) = match op.from.as_deref() {
-        Some("a") => (op.a, op.rec_a, op.b, op.rec_b),
-        Some("b") => (op.b, op.rec_b, op.a, op.rec_a),
-        _ => return Ok(Outcome::Skipped("copy op has no plan_from".into())),
-    };
-    // An external target's content is owned by an outside tool: no transfer, the
-    // divergence (the copy was planned because content differs) is reported.
-    if is_external(ctx, tgt_repo, tgt_rec)? {
-        let path = mfr_path_of(ctx, tgt_repo, tgt_rec)?.unwrap_or_default();
-        return Ok(Outcome::External(path));
-    }
-    let (Some(src_abs), Some(tgt_abs)) =
-        (abs_path(ctx, src_repo, src_rec)?, abs_path(ctx, tgt_repo, tgt_rec)?)
-    else {
-        return Ok(Outcome::Skipped("endpoint has no path".into()));
-    };
-    // `path_present`, not `exists()`: the latter follows a symlink, so a broken
-    // one at the target read as free and the copy below destroyed it — against
-    // this module's rule that only a trash prune ever deletes.
-    if crate::fsentry::path_present(&tgt_abs) {
-        target_trash(ctx, tgt_repo)?.trash_path(&tgt_abs, Reason::Sync, None, None, None)?;
-    }
-    if let Some(parent) = tgt_abs.parent() {
-        std::fs::create_dir_all(parent)
-            .map_err(|e| CliError::Op(format!("cannot create {}: {e}", parent.display())))?;
-    }
-    let bytes = std::fs::read(&src_abs)
-        .map_err(|e| CliError::Op(format!("cannot read {}: {e}", src_abs.display())))?;
-    std::fs::write(&tgt_abs, &bytes)
-        .map_err(|e| CliError::Op(format!("cannot write {}: {e}", tgt_abs.display())))?;
-    Ok(Outcome::Done)
-}
-
-/// Relocates a file whose position diverged: the side that changed (vs the
-/// snapshot's `mfr_path`) wins; the other's file moves to match and its
-/// `mfr_path` is updated. Any occupant of the destination is trashed.
-fn exec_move(ctx: &Ctx, op: &Op) -> Result<Outcome, CliError> {
-    if let Some(why) = stale(ctx, op)? {
-        return Ok(Outcome::Skipped(why));
-    }
-    let (Some(pa), Some(pb)) =
-        (mfr_path_of(ctx, op.a, op.rec_a)?, mfr_path_of(ctx, op.b, op.rec_b)?)
-    else {
-        return Ok(Outcome::Skipped("an endpoint has no path".into()));
-    };
-    if pa == pb {
-        return Ok(Outcome::Done); // already aligned (a prior run)
-    }
-    // Winner = the side whose path changed since the snapshot; the loser moves.
-    let base = snapshot_mfr_path(ctx, op.a, op.b, op.rec_a, op.rec_b)?;
-    let a_won = Some(&pa) != base.as_ref();
-    let (winner_path, loser_repo, loser_rec, loser_path) =
-        if a_won { (pa, op.b, op.rec_b, pb) } else { (pb, op.a, op.rec_a, pa) };
-    if is_external(ctx, loser_repo, loser_rec)? {
-        return Ok(Outcome::External(loser_path));
-    }
-    let root = repo_root(ctx, loser_repo)?;
-    let old_abs = root.join(loser_path.trim_start_matches('/'));
-    let new_abs = root.join(winner_path.trim_start_matches('/'));
-    if crate::fsentry::path_present(&old_abs) {
-        relocate(ctx, loser_repo, &old_abs, &new_abs)?;
-    }
-    // Update the loser's mfr_path to the winner's position.
-    if let Some(tree) = mfr_path_tree_for(ctx, loser_repo, &winner_path)? {
-        put_field(ctx, loser_repo, loser_rec, "mfr_path", &tree, None)?;
-    }
-    Ok(Outcome::Done)
-}
-
-/// Moves a file (rename, cross-device copy fallback); any destination occupant
-/// and the cross-device source go to the trash — nothing is destroyed.
-fn relocate(
-    ctx: &Ctx,
-    repo: Uuid,
-    old: &std::path::Path,
-    new: &std::path::Path,
-) -> Result<(), CliError> {
-    if let Some(p) = new.parent() {
-        std::fs::create_dir_all(p)
-            .map_err(|e| CliError::Op(format!("cannot create {}: {e}", p.display())))?;
-    }
-    // See `exec_copy`: a broken symlink occupying the destination is something
-    // to trash, not something absent — the rename below would destroy it.
-    if crate::fsentry::path_present(new) {
-        target_trash(ctx, repo)?.trash_path(new, Reason::Sync, None, None, None)?;
-    }
-    if std::fs::rename(old, new).is_err() {
-        std::fs::copy(old, new)
-            .map_err(|e| CliError::Op(format!("cannot copy to {}: {e}", new.display())))?;
-        target_trash(ctx, repo)?.trash_path(old, Reason::Sync, None, None, None)?;
-    }
-    Ok(())
-}
-
-/// The link snapshot's stored `mfr_path` (the common path at the last sync).
-fn snapshot_mfr_path(
-    ctx: &Ctx,
-    a: Uuid,
-    b: Uuid,
-    rec_a: Uuid,
-    rec_b: Uuid,
-) -> Result<Option<String>, CliError> {
-    let prefix = format!("/sync/{}/{}", a.as_simple(), b.as_simple());
-    let links = ctx.client.get(&format!("{prefix}/links"))?;
-    let uuid = links["links"].as_array().and_then(|ls| {
-        ls.iter()
-            .find(|l| {
-                l["record_a"].as_str() == Some(&rec_a.as_simple().to_string())
-                    && l["record_b"].as_str() == Some(&rec_b.as_simple().to_string())
-            })
-            .and_then(|l| l["uuid"].as_str())
-            .map(String::from)
-    });
-    let Some(uuid) = uuid else { return Ok(None) };
-    let body = ctx.client.get(&format!("{prefix}/links/{uuid}"))?;
-    Ok(body["snapshot"]
-        .as_array()
-        .and_then(|s| s.iter().find(|e| e["name"] == "mfr_path"))
-        .and_then(|e| e["value"]["value"].as_str())
-        .map(String::from))
-}
-
-/// Sets the target file's mode to the source's `mfr_permissions` (best-effort:
-/// a no-op where the target filesystem has no Unix permissions).
-fn exec_chmod(ctx: &Ctx, op: &Op) -> Result<Outcome, CliError> {
-    let (src_repo, src_rec, tgt_repo, tgt_rec) = match op.from.as_deref() {
-        Some("a") => (op.a, op.rec_a, op.b, op.rec_b),
-        Some("b") => (op.b, op.rec_b, op.a, op.rec_a),
-        _ => return Ok(Outcome::Skipped("chmod op has no plan_from".into())),
-    };
-    if is_external(ctx, tgt_repo, tgt_rec)? {
-        let path = mfr_path_of(ctx, tgt_repo, tgt_rec)?.unwrap_or_default();
-        return Ok(Outcome::External(path));
-    }
-    let Some(tgt_abs) = abs_path(ctx, tgt_repo, tgt_rec)? else {
-        return Ok(Outcome::Skipped("target has no path".into()));
-    };
-    if let Some(mode) = mfr_permissions_of(ctx, src_repo, src_rec)? {
-        #[cfg(unix)]
-        if let Ok(bits) = u32::from_str_radix(mode.trim_start_matches("0o"), 8) {
-            use std::os::unix::fs::PermissionsExt;
-            // Best-effort: ignore failures (e.g. a filesystem without Unix modes).
-            let _ = std::fs::set_permissions(&tgt_abs, std::fs::Permissions::from_mode(bits));
-        }
-        let _ = &tgt_abs; // used on Unix only
-    }
-    Ok(Outcome::Done)
-}
-
-/// A file record's stored `mfr_permissions` (octal string), if any.
-fn mfr_permissions_of(ctx: &Ctx, repo: Uuid, record: Uuid) -> Result<Option<String>, CliError> {
-    let m = ctx.client.get(&format!(
-        "/repos/{}/metarecords/{}",
-        repo.as_simple(),
-        record.as_simple()
-    ))?;
-    Ok(m["fields"].as_array().and_then(|fs| {
-        fs.iter()
-            .find(|f| f["name"] == "mfr_permissions")
-            .and_then(|f| f["value"]["value"].as_str())
-            .map(String::from)
-    }))
-}
-
-/// Propagates a deletion (spec-sync, normative order): trash the surviving file,
-/// then delete its metarecord (logged) and the link. Non-destructive.
-fn exec_delete(ctx: &Ctx, a: Uuid, b: Uuid, op: &Op) -> Result<Outcome, CliError> {
-    let side = op.side.as_deref().unwrap_or("");
-    let (repo, record) = match side {
-        "a" => (op.a, op.rec_a),
-        "b" => (op.b, op.rec_b),
-        _ => return Ok(Outcome::Skipped("delete op has no plan_side".into())),
-    };
-    if let Some(why) = stale(ctx, op)? {
-        return Ok(Outcome::Skipped(why));
-    }
-    let prefix = format!("/sync/{}/{}", a.as_simple(), b.as_simple());
-    let links = ctx.client.get(&format!("{prefix}/links"))?;
-    let link_uuid = links["links"].as_array().and_then(|ls| {
-        ls.iter()
-            .find(|l| {
-                l["record_a"].as_str() == Some(&op.rec_a.as_simple().to_string())
-                    && l["record_b"].as_str() == Some(&op.rec_b.as_simple().to_string())
-            })
-            .and_then(|l| l["uuid"].as_str())
-            .map(String::from)
-    });
-    let Some(link_uuid) = link_uuid else {
-        return Ok(Outcome::Skipped("link already gone".into()));
-    };
-    // Trash the surviving file (nothing is destroyed — trash prune is the only
-    // real deleter).
-    if let Some(abs) = abs_path(ctx, repo, record)? {
-        if crate::fsentry::path_present(&abs) {
-            target_trash(ctx, repo)?.trash_path(&abs, Reason::Sync, None, None, None)?;
-        }
-    }
-    // Delete the endpoint metarecord (logged/rollbackable) then the link, in one
-    // call (the daemon's normative-order helper).
-    ctx.client.request(
-        "DELETE",
-        &with_query(&format!("{prefix}/links/{link_uuid}"), &[("with_endpoint", side.to_string())]),
-        None,
-    )?;
-    Ok(Outcome::Done)
-}
-
-/// One commit-batch entry for a synced link: its UUID, its endpoints' current
-/// versions, and a snapshot of the synced (scalar) fields plus the common path
-/// (the move op's direction baseline). `None` when the link is missing.
-fn commit_entry(
-    ctx: &Ctx,
-    a: Uuid,
-    b: Uuid,
-    rec_a: Uuid,
-    rec_b: Uuid,
-) -> Result<Option<Json>, CliError> {
-    let prefix = format!("/sync/{}/{}", a.as_simple(), b.as_simple());
-    let links = ctx.client.get(&format!("{prefix}/links"))?;
-    let link = links["links"].as_array().and_then(|ls| {
-        ls.iter().find(|l| {
-            l["record_a"].as_str() == Some(&rec_a.as_simple().to_string())
-                && l["record_b"].as_str() == Some(&rec_b.as_simple().to_string())
-        })
-    });
-    let Some(link_uuid) = link.and_then(|l| l["uuid"].as_str()) else {
-        return Ok(None); // link missing (e.g. skipped) — nothing to commit
-    };
-    let va = version_of(ctx, a, rec_a)?.unwrap_or(0);
-    let vb = version_of(ctx, b, rec_b)?.unwrap_or(0);
-    let mut snapshot: Vec<Json> = syncable_fields(ctx, a, rec_a)?
-        .into_iter()
-        .filter(|(_, v)| v["type"] != "ref")
-        .map(|(name, value)| json!({"name": name, "value": value}))
-        .collect();
-    if let Some(path) = mfr_path_of(ctx, a, rec_a)? {
-        snapshot.push(json!({"name": "mfr_path", "value": {"type": "string", "value": path}}));
-    }
-    Ok(Some(json!({"link": link_uuid, "version_a": va, "version_b": vb, "snapshot": snapshot})))
-}
-
-// ── translation ─────────────────────────────────────────────────────────────
-
-/// The target-repo `mfr_path` TreeRef value placing `source_record` at the same
-/// reconstructed path (parent found-or-created top-down, portable name kept).
-fn translate_mfr_path(
-    ctx: &Ctx,
-    source_repo: Uuid,
-    target_repo: Uuid,
-    source_record: Uuid,
-) -> Result<Option<Json>, CliError> {
-    match mfr_path_of(ctx, source_repo, source_record)? {
-        Some(path) => mfr_path_tree_for(ctx, target_repo, &path),
-        None => Ok(None),
-    }
-}
-
-/// The target-repo `mfr_path` TreeRef value placing a record at `path` (parent
-/// found-or-created top-down). `None` for the forest root (not placed by sync).
-fn mfr_path_tree_for(ctx: &Ctx, target_repo: Uuid, path: &str) -> Result<Option<Json>, CliError> {
-    let trimmed = path.trim_matches('/');
-    if trimmed.is_empty() {
-        return Ok(None);
-    }
-    let (parent_path, name) = match trimmed.rsplit_once('/') {
-        Some((p, n)) => (format!("/{p}"), n.to_string()),
-        None => (String::new(), trimmed.to_string()),
-    };
-    let parent = find_or_create_path(ctx, target_repo, "mfr_path", &parent_path)?;
-    Ok(Some(json!({
-        "type": "tree_ref",
-        "value": {"parent": parent.as_simple().to_string(), "name": name}
-    })))
-}
-
-/// The target-repo record at `path` in `field`'s forest, creating the ancestor
-/// chain top-down if absent (`find-or-create`). Empty path → the forest root.
-fn find_or_create_path(ctx: &Ctx, repo: Uuid, field: &str, path: &str) -> Result<Uuid, CliError> {
-    let trimmed = path.trim_matches('/');
-    if trimmed.is_empty() {
-        let roots = ctx.client.get(&with_query(
-            &format!("/repos/{}/tree/roots", repo.as_simple()),
-            &[("field", field.to_string())],
-        ))?;
-        return roots
-            .as_array()
-            .and_then(|a| a.iter().find(|r| r["name"] == ""))
-            .and_then(|r| r["uuid"].as_str())
-            .and_then(|s| Uuid::parse_str(s).ok())
-            .ok_or_else(|| CliError::Op(format!("no {field} forest root in target repo")));
-    }
-    if let Some(u) = record_at_path(ctx, repo, field, path)? {
-        return Ok(u);
-    }
-    let (parent_path, name) = match trimmed.rsplit_once('/') {
-        Some((p, n)) => (format!("/{p}"), n.to_string()),
-        None => (String::new(), trimmed.to_string()),
-    };
-    let parent = find_or_create_path(ctx, repo, field, &parent_path)?;
-    let value = json!({"type": "tree_ref", "value": {"parent": parent.as_simple().to_string(), "name": name}});
-    let resp = ctx.client.post(
-        &format!("/repos/{}/metarecords", repo.as_simple()),
-        &json!({"fields": [{"name": field, "value": value}], "force": true}),
-    )?;
-    resp["uuid"]
-        .as_str()
-        .and_then(|s| Uuid::parse_str(s).ok())
-        .ok_or_else(|| CliError::Op("create ancestor: no uuid".into()))
-}
-
-// ── helpers ─────────────────────────────────────────────────────────────────
-
-/// Whether an op's baselines are stale (a record changed since planning) → skip.
+/// Whether an op's baselines no longer hold (a record changed since planning).
 fn stale(ctx: &Ctx, op: &Op) -> Result<Option<String>, CliError> {
-    if let Some(v) = op.ver_a {
-        if version_of(ctx, op.a, op.rec_a)? != Some(v) {
-            return Ok(Some(format!("record {} changed since planning", op.rec_a.as_simple())));
-        }
-    }
-    if let Some(v) = op.ver_b {
-        if version_of(ctx, op.b, op.rec_b)? != Some(v) {
-            return Ok(Some(format!("record {} changed since planning", op.rec_b.as_simple())));
+    for (repo, rec, baseline) in [(op.a, op.rec_a, op.ver_a), (op.b, op.rec_b, op.ver_b)] {
+        let Some(v) = baseline else { continue };
+        if lookup::get_record(ctx, repo, rec)?.map(|r| r.version) != Some(v) {
+            return Ok(Some(format!("record {} changed since planning", rec.as_simple())));
         }
     }
     Ok(None)
-}
-
-fn create_bare(ctx: &Ctx, repo: Uuid, record: Uuid) -> Result<(), CliError> {
-    let body = json!({"uuid": record.as_simple().to_string(), "fields": []});
-    match ctx.client.post(&format!("/repos/{}/metarecords", repo.as_simple()), &body) {
-        Ok(_) => Ok(()),
-        Err(e) if e.message.contains("already exists") => Ok(()),
-        Err(e) => Err(e.into()),
-    }
-}
-
-/// Writes a field on a record (reserved names use `force`); `expected` fences it.
-fn put_field(
-    ctx: &Ctx,
-    repo: Uuid,
-    record: Uuid,
-    name: &str,
-    value: &Json,
-    expected: Option<u64>,
-) -> Result<(), CliError> {
-    let mut query: Vec<(&str, String)> = Vec::new();
-    if let Some(v) = expected {
-        query.push(("expected_version", v.to_string()));
-    }
-    let path =
-        format!("/repos/{}/metarecords/{}/fields/{}", repo.as_simple(), record.as_simple(), name);
-    let body = json!({"value": value, "force": true});
-    ctx.client.request("PUT", &with_query(&path, &query), Some(&body))?;
-    Ok(())
-}
-
-/// Whether a record's effective `mf_sync` mode is `external` (its content is
-/// owned by an outside tool — metafolder does no file operation for it).
-fn is_external(ctx: &Ctx, repo: Uuid, record: Uuid) -> Result<bool, CliError> {
-    let m = ctx.client.get(&format!(
-        "/repos/{}/metarecords/{}/mf-sync",
-        repo.as_simple(),
-        record.as_simple()
-    ))?;
-    Ok(m["mf_sync"] == "external")
-}
-
-fn version_of(ctx: &Ctx, repo: Uuid, record: Uuid) -> Result<Option<u64>, CliError> {
-    match ctx.client.get(&format!("/repos/{}/metarecords/{}", repo.as_simple(), record.as_simple()))
-    {
-        Ok(m) => Ok(Some(m["version"].as_u64().unwrap_or(0))),
-        Err(e) if e.is_not_found() => Ok(None),
-        Err(e) => Err(e.into()),
-    }
-}
-
-/// The absolute filesystem path of a record (repo root + reconstructed mfr_path).
-fn abs_path(ctx: &Ctx, repo: Uuid, record: Uuid) -> Result<Option<PathBuf>, CliError> {
-    let Some(rel) = mfr_path_of(ctx, repo, record)? else {
-        return Ok(None);
-    };
-    let root = repo_root(ctx, repo)?;
-    Ok(Some(root.join(rel.trim_start_matches('/'))))
-}
-
-fn repo_root(ctx: &Ctx, repo: Uuid) -> Result<PathBuf, CliError> {
-    let info = ctx.client.get(&format!("/repos/{}", repo.as_simple()))?;
-    info["root"]
-        .as_str()
-        .map(PathBuf::from)
-        .ok_or_else(|| CliError::Op("daemon did not report the repo root".into()))
-}
-
-fn target_trash(ctx: &Ctx, repo: Uuid) -> Result<TrashDir, CliError> {
-    let info = ctx.client.get(&format!("/repos/{}", repo.as_simple()))?;
-    let internal = info["internal_dir"]
-        .as_str()
-        .ok_or_else(|| CliError::Op("daemon did not report internal_dir".into()))?;
-    Ok(TrashDir::new(std::path::Path::new(internal).join("trash")))
 }
 
 fn prune_op(ctx: &Ctx, plan_base: &str, plan_uuid: Uuid) -> Result<(), CliError> {
@@ -991,9 +1049,10 @@ fn extref(fields: &[Json], name: &str) -> Option<(Uuid, Uuid)> {
 
 #[cfg(test)]
 mod tests {
-    use super::{aggregate_divergences, version_of};
+    use super::aggregate_divergences;
     use crate::daemon_client::{DaemonClient, DaemonError};
-    use crate::sync::{Prompter, SyncCtx, SyncError};
+    use crate::sync::lookup::get_record;
+    use crate::sync::{ConflictQuestion, Prompter, Resolution, SyncCtx, SyncError};
     use serde_json::Value as Json;
     use uuid::Uuid;
 
@@ -1007,8 +1066,8 @@ mod tests {
 
     struct Silent;
     impl Prompter for Silent {
-        fn resolve_conflict(&self, _: &str, _: Uuid, _: Uuid) -> Result<String, SyncError> {
-            Ok("skip".into())
+        fn resolve_conflict(&self, _: &ConflictQuestion) -> Result<Resolution, SyncError> {
+            Ok(Resolution::Skip)
         }
         fn confirm(&self, _: &str) -> Result<bool, SyncError> {
             Ok(true)
@@ -1024,7 +1083,7 @@ mod tests {
         let version = |error: DaemonError| {
             let client = Failing(error);
             let ctx = SyncCtx { client: &client, prompter: &Silent, page_size: 10 };
-            version_of(&ctx, Uuid::nil(), Uuid::nil())
+            get_record(&ctx, Uuid::nil(), Uuid::nil()).map(|r| r.map(|r| r.version))
         };
         assert_eq!(version(DaemonError { status: Some(404), message: "gone".into() }), Ok(None));
         assert!(version(DaemonError::local("cannot reach the daemon")).is_err());

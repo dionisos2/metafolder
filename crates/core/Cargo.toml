@@ -11,7 +11,7 @@ uuid = { version = "1", features = ["v4", "serde"] }
 # The repository trash index is a small dedicated key-value store (LMDB, the
 # daemon's store); the blobs stay on disk.
 heed = { version = "0.22", default-features = false }
-# The `mf sync` intents file (spec-sync) is TOML; parsing lives in core so the
+# The `mf sync` intents file (doc "The intents file") is TOML; parsing lives in core so the
 # CLI and GUI share it.
 toml = "1.0"
 # Only the config-sync command links libgit2; reading configuration never does.

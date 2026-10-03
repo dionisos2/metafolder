@@ -1,4 +1,4 @@
-//! Cross-repo synchronisation state (spec-sync.org). Sync state — the links
+//! Cross-repo synchronisation state (doc "The sync database"). Sync state — the links
 //! between metarecords of two repositories and the snapshot of their common
 //! field state at the last sync — lives *outside the data model*, in a
 //! per-pair key-value store (`sync-<uuid_a>-<uuid_b>/`, LMDB) held under one
@@ -116,7 +116,7 @@ pub fn read_meta(db: &SyncDb, key: &str) -> Result<Option<String>> {
 }
 
 /// The result of locating a pair's sync store across the two loaded repos'
-/// `internal/` directories (spec-sync "Location and discovery").
+/// `internal/` directories (doc "The sync database").
 pub enum Located {
     /// Found in exactly one repo's `internal/`.
     Found(PathBuf),
@@ -140,7 +140,7 @@ pub fn locate(a_internal: &Path, b_internal: &Path, a: Uuid, b: Uuid) -> Located
     }
 }
 
-/// One link (spec-sync "Links").
+/// One link (doc "The sync database").
 #[derive(Debug, Clone)]
 pub struct Link {
     pub uuid: Uuid,
@@ -275,8 +275,8 @@ pub fn delete_link(db: &SyncDb, uuid: Uuid) -> Result<bool> {
 }
 
 /// One snapshot field. A *common* one (`side` = `None`) is a value both
-/// repositories held at the last sync, in dual perspective (spec-sync "Ref and
-/// TreeRef fields in the snapshot"): `value` is repo A's, `value_uuid_b` the
+/// repositories held at the last sync, in dual perspective (doc "The sync
+/// database"): `value` is repo A's, `value_uuid_b` the
 /// B-perspective UUID of a `ref` target or a `tree_ref` parent. A *per-side*
 /// one records what one repository alone held — what sync does not equalize,
 /// such as a file's own size and mtime.
@@ -375,8 +375,8 @@ pub struct Commit {
     pub snapshot: Vec<SnapshotField>,
 }
 
-/// Applies a batch of sync-commits in a single transaction (spec-sync
-/// `POST …/links/commit`): per commit, update the link's versions and replace
+/// Applies a batch of sync-commits in a single transaction (doc "Sync
+/// endpoints", `POST …/links/commit`): per commit, update the link's versions and replace
 /// its snapshot.
 pub fn commit_batch(db: &SyncDb, commits: &[Commit]) -> Result<()> {
     let mut w = db.env.write_txn()?;

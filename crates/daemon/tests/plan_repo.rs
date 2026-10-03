@@ -1,5 +1,5 @@
-//! Phase-3 plumbing for the cross-repo sync **plan repository** (spec-sync
-//! "The plan"): a daemon-internal, data-only repository whose op-metarecords
+//! Phase-3 plumbing for the cross-repo sync **plan repository** (doc "The
+//! sync plan"): a daemon-internal, data-only repository whose op-metarecords
 //! describe a pending sync. The daemon delta is thin — a repo can be created as
 //! `system` (hidden from `GET /repos`) and holds abstract records (no
 //! `mfr_path`) with ordinary `plan_*` user fields, including cross-repo

@@ -1,0 +1,29 @@
+title: Deletion propagation
+tags: Sync
+kind: reference
+summary: A record deleted on one side is deleted on the other at the next sync — its file to the trash, the deletion a revision you can undo — and a link whose two records are gone is removed.
+
+A link in scope whose record is gone on one side (`missing_a`, `missing_b`) gets a
+`delete` op for the surviving record. The run checks that the survivor is still at
+its baseline, deletes it and the link in one call —
+`DELETE /sync/:a/:b/links/:link?with_endpoint=…&expected_version=…`, the record
+first, then the link — and then sends its file to the repository's trash. Nothing
+is destroyed: the record's deletion is a revision of the event log ([[Event log]]),
+the bytes are in the trash ([[Trash]]). For an external tool's content
+([[What sync copies]]) only the record goes.
+
+There is no confirmation. A sync's deletions are as recoverable as any other of its
+writes, and `mf sync show --files` lists them before the run. A deletion the user
+did not mean is carried over too — a rollback that undoes a record's creation looks
+exactly like one: restore the file from the trash and undo the revision.
+
+The order is normative: a crash between the two writes leaves the link with one
+record missing, which the next plan finishes — never a link gone while a record it
+joined lives on, which a later sync would take for a new record.
+
+A link whose ''two'' records are gone (`missing_both`) is removed by the next sync
+with a `drop-link` op, whether or not it is in scope — a deleted record matches no
+query.
+
+A file deleted while its record stays — an orphan — is not a deletion of the
+record: see [[What sync copies]].

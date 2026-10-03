@@ -546,7 +546,7 @@
   { command = "metarecord:bulk selection delete", when = "metarecord-list" },
 ]
 
-# sync (spec-sync): the four steps of a cross-repo sync, on the prefix that
+# sync (doc "sync panel"): the four steps of a cross-repo sync, on the prefix that
 # names it. The panel's own source claimed these lived here long before they
 # did — it was the one panel type with no keybinding at all.
 "y s" = { command = "sync:status", when = "sync" }

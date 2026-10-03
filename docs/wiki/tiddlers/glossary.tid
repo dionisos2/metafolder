@@ -72,6 +72,9 @@ summary: Every term of metafolder in one line, with the note that defines it.
 * ''Duplicate group'' — the metarecord a set of byte-identical files points at ([[Duplicate groups]]).
 * ''Tag'' — a metarecord placed in a tree by its path, which other metarecords point at ([[Hierarchical tags]]).
 * ''Subsumption'' — having a tag implies having its ancestors ([[Tag subsumption and exclusivity]]).
+* ''Link'' — the pairing of a record of one repository with its counterpart in another, which a sync keeps in step ([[Matching records across repositories]]).
+* ''Sync plan'' — what a sync will do, written as one metarecord per operation in a repository of its own, before anything happens ([[The sync plan]]).
+* ''Snapshot'' — what the two records of a link held at their last sync, in each repository's perspective ([[Change detection in sync]]).
 
 !! GUI
 

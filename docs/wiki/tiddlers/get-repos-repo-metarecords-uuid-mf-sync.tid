@@ -1,0 +1,7 @@
+title: GET /repos/:repo/metarecords/:uuid/mf-sync
+tags: [[HTTP endpoint]] [[Sync endpoints]]
+kind: reference
+audience: dev
+summary: A record's effective mf_sync mode, inherited down mfr_path.
+
+Bodies, answers and errors: [[Sync endpoints]].

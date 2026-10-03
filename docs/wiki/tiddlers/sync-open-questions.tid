@@ -1,0 +1,35 @@
+title: Sync open questions
+tags: Sync
+kind: question
+status: deferred
+summary: The batch-size defaults, the matching of records without a position, and the content changes a stamp cannot see.
+
+!! Batch sizes
+
+`commit-batch-size` (50) and `transfer-batch-size` (20) were never measured
+([[How a run is batched]]). A benchmark would trade the cost of a commit — a disk
+sync — against the work a crash makes the next run redo.
+
+!! Records without a position
+
+Matching a record with no `tree_ref` field asks for an exact twin among the other
+side's unlinked, positionless records ([[Matching records across repositories]]).
+It is deliberately minimal: any field edited on one side before the first sync
+defeats it, and the record is duplicated. A tolerant match — a similarity of fields —
+would want a threshold, which the intents file does not have.
+
+!! Content a stamp cannot see
+
+A side's content counts as changed when its size, mtime, kind or link target did
+([[Change detection in sync]]). A rewrite of the same size within the same second is
+missed, as by the watcher. A content hash in the stamp would see it, at the cost of
+hashing every changed file on both sides — which the planner, comparing bytes only
+when a stamp moved, avoids today.
+
+!! A file moved before its first sync
+
+A file moved on one side before it was ever linked is matched by its new path, and
+its old position on the other side is not recognised as the same bytes: it is synced
+as a new file, and the old one stays. Matching by content was ruled out for
+everything else ([[Matching records across repositories]]); for this one case it
+would need a hash of every unmatched file.

@@ -1,12 +1,12 @@
 title: $:/mf/gen/CLI command/mf sync
 catalog: CLI command
 target: mf sync
-summary: Cross-repo synchronisation (spec-sync). Repos are named positionally; their order does not matter (roles are canonical)
+summary: Cross-repo synchronisation. Repos are named positionally; their order does not matter (roles are canonical)
 
 !! Reference
 
 ```
-Cross-repo synchronisation (spec-sync). Repos are named positionally; their order does not matter (roles are canonical)
+Cross-repo synchronisation. Repos are named positionally; their order does not matter (roles are canonical)
 
 Usage: mf sync <COMMAND>
 

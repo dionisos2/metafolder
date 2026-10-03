@@ -60,7 +60,7 @@ pub(super) async fn resolve_record_field_tree(
 }
 
 /// `GET /repos/:repo/metarecords/:uuid/mf-sync`: the record's effective
-/// `mf_sync` mode (spec-sync) — `external` when an external tool owns its
+/// `mf_sync` mode (doc "mf_sync") — `external` when an external tool owns its
 /// content, else `internal`. Resolved from the record's `mfr_path` position
 /// (inherited like `mf_watch`); a record with no `mfr_path` is `internal`.
 pub(super) async fn get_record_mf_sync(

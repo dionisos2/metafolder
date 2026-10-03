@@ -4,6 +4,9 @@ kind: reference
 summary: Whether metafolder (internal, the default) or another tool (external) owns this content during sync; inherited down mfr_path.
 
 `internal` (the default) or `external`. An external subtree's content is owned by an
-outside tool: metafolder's sync does no file operation for it. Like `mf_watch` it is
-inherited down the `mfr_path` tree. Sync itself is not documented here yet
-(`docs/spec-sync.org`).
+outside tool — a git checkout, an `rsync` —: a sync copies its fields but does no
+file operation for it, and reports where its files differ between the two sides
+([[What sync copies]]). Like `mf_watch` it is inherited down the `mfr_path` tree:
+the nearest ancestor that sets it wins, and `GET …/mf-sync` answers the effective
+mode ([[Sync endpoints]]). It is synced like any `mf_*` field, so the two sides agree
+on it before any file is touched. Setting it needs `force`.

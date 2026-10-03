@@ -1,10 +1,11 @@
-//! `mf sync plan` (spec-sync "=mf sync plan="): read-only w.r.t. the synced
-//! repos, it (re)creates the per-pair **plan repo** and writes one op-metarecord
-//! per planned action. This module currently establishes the command's skeleton
-//! — intents parsing, pair/host resolution, the schema-identity gate, and the
-//! plan-repo lifecycle — onto which the scope/diff/conflict phases are layered.
+//! `mf sync plan` (doc "The sync plan"): read-only with respect to the synced
+//! repos, it (re)creates the per-pair **plan repo** and writes one
+//! op-metarecord per planned action. The *linking phase* decides which records
+//! must be linked (doc "Matching records across repositories"); the *sync
+//! phase* what each link needs, from the pure decisions of [`super::model`]
+//! (doc "Change detection in sync").
 
-use std::collections::{HashMap, HashSet};
+use std::collections::{BTreeSet, HashMap, HashSet};
 use std::path::{Path, PathBuf};
 
 use serde_json::{json, Value as Json};
@@ -12,10 +13,14 @@ use uuid::Uuid;
 
 use crate::daemon_client::with_query;
 use crate::dsl;
+use crate::metarecord::{MetaRecord, Value};
 
-use super::intents::{self, Intents};
+use super::intents::{self, Intents, Settings};
+use super::lookup::{self, LinkRow, LinkTable, Pair, Translator};
+use super::model::{self, Decision, Side, Snapshot, CONTENT_FIELD, CONTENT_STAMP, MODE_STAMP};
 use super::{
-    canonical_pair, expand_simplified, resolve_pair, SyncCtx as Ctx, SyncError as CliError,
+    canonical_pair, expand_simplified, resolve_pair, ConflictQuestion, Resolution, SyncCtx as Ctx,
+    SyncError as CliError,
 };
 
 /// A freshly created plan repo, ready to receive op-metarecords.
@@ -65,38 +70,63 @@ pub fn run(
         }
     };
 
-    // Both repos must share the same schema (spec-sync "Schemas must be
+    // Both repos must share the same schema (doc "Why schemas must be
     // identical") — the plan and its writes assume one field vocabulary.
     check_schemas_identical(ctx, a, b)?;
 
     let plan = recreate_plan_repo(ctx, a, b, host_uuid)?;
 
-    let linked = linking_phase(ctx, a, b, &plan, &intents)?;
-    let sync_ops = sync_phase(ctx, a, b, &plan, &linked, &intents, on_conflict)?;
+    // Every decision is made before anything is written: a multi-TreeRef
+    // incoherence, or a link the user leaves out, must not leave half a plan.
+    let linked = linking_phase(ctx, a, b, &intents)?;
+    let planner = Planner::new(ctx, Pair { a, b }, &intents, on_conflict, &linked)?;
+    let mut ops: Vec<OpSpec> = Vec::new();
+    for (end_a, end_b) in &linked.creates {
+        if let Some(link_ops) = planner.plan_link(end_a, end_b, None)? {
+            ops.push(OpSpec::new("create-link", end_a, end_b));
+            ops.extend(link_ops);
+        }
+    }
+    for el in &linked.existing {
+        if let Some(link_ops) = planner.plan_link(&el.end_a, &el.end_b, Some(&el.row))? {
+            ops.extend(link_ops);
+        }
+    }
+    for (end_a, end_b, side) in &linked.deletes {
+        let mut op = OpSpec::new("delete", end_a, end_b);
+        op.side = Some(*side);
+        ops.push(op);
+    }
+    for (end_a, end_b) in &linked.drops {
+        ops.push(OpSpec::new("drop-link", end_a, end_b));
+    }
 
-    // Moves, chmod and deletions layer on next.
-    Ok(PlanReport { plan_uuid: plan.uuid, operations: linked.op_count + sync_ops })
+    write_settings(ctx, &plan, &intents.settings, host_uuid)?;
+    for op in &ops {
+        write_op(ctx, &plan, op)?;
+    }
+    Ok(PlanReport { plan_uuid: plan.uuid, operations: ops.len() })
 }
 
-/// The linking phase (spec-sync "Two-phase sync process"): from the scope,
-/// create the links that must exist (matching an existing record, or a freshly
-/// UUID-allocated bare record) and pick up the in-scope existing links for a
-/// re-sync. Out-of-scope existing links are left untouched (persistent state),
-/// never dropped. Returns the link ops written plus the links to diff.
-/// An existing link kept for a re-sync: both endpoints and the link UUID (to
-/// read its snapshot).
+/// An existing link kept for a re-sync: both endpoints and its row.
 struct ExistingLink {
-    side_a: Side,
-    side_b: Side,
-    link: Uuid,
+    end_a: End,
+    end_b: End,
+    row: LinkRow,
 }
 
-/// The linking phase's output: the ops written plus the links the sync phase
-/// must diff — newly created (first sync, union) and surviving existing ones.
+/// The linking phase's output — nothing written yet.
 struct LinkingResult {
-    op_count: usize,
-    new_links: Vec<(Side, Side)>,
+    /// Links to create: onto an existing record, or a bare one allocated here.
+    creates: Vec<(End, End)>,
+    /// In-scope existing links with both endpoints alive.
     existing: Vec<ExistingLink>,
+    /// In-scope links with one endpoint deleted: delete the survivor.
+    deletes: Vec<(End, End, Side)>,
+    /// Links whose two endpoints are both gone: only the link is left to remove.
+    drops: Vec<(End, End)>,
+    /// What the phase read, for the sync phase to reuse.
+    reads: Reads,
 }
 
 /// The reads the linking phase makes over and over, answered from memory.
@@ -233,11 +263,15 @@ impl Reads {
     }
 }
 
+/// The linking phase (doc "Matching records across repositories"): from the
+/// scope, the links that must exist (matching an existing record, or a freshly
+/// UUID-allocated bare record), the in-scope existing links to re-sync, and the
+/// deletions to propagate. Out-of-scope existing links are left untouched
+/// (persistent state), never dropped.
 fn linking_phase(
     ctx: &Ctx,
     a: Uuid,
     b: Uuid,
-    plan: &PlanRepo,
     intents: &Intents,
 ) -> Result<LinkingResult, CliError> {
     // Scope: each intent runs on its source repo; its result joins that side.
@@ -269,63 +303,61 @@ fn linking_phase(
     scope_b_all.sort();
     reads.preload(ctx, a, &scope_a_all);
     reads.preload(ctx, b, &scope_b_all);
-    let reads = reads;
 
-    let links = get_links(ctx, a, b)?;
+    let pair = Pair { a, b };
+    let links = lookup::read_links(ctx, pair)?;
     let linked_a: HashSet<Uuid> = links.iter().map(|l| l.record_a).collect();
     let linked_b: HashSet<Uuid> = links.iter().map(|l| l.record_b).collect();
 
-    // Compute every decision first, then write: a multi-TreeRef incoherence
-    // aborts the plan with no partial ops (spec-sync). A record already spoken
-    // for by a planned link is skipped, so the reverse pass never double-links.
-    let mut creates: Vec<(Side, Side)> = Vec::new();
+    // A record already spoken for by a planned link is skipped, so the reverse
+    // pass never double-links.
+    let mut creates: Vec<(End, End)> = Vec::new();
     let mut planned_a: HashSet<Uuid> = HashSet::new();
     let mut planned_b: HashSet<Uuid> = HashSet::new();
 
     // Pass 1 — from A into B.
-    let scope_a_v = &scope_a_all;
-    for &rec_a in scope_a_v {
+    for &rec_a in &scope_a_all {
         if linked_a.contains(&rec_a) || planned_a.contains(&rec_a) {
             continue;
         }
-        let side_a = existing_side(ctx, &reads, a, rec_a)?;
-        let side_b = match resolve_link(ctx, &reads, a, b, rec_a, &linked_b, &planned_b)? {
+        let end_a = existing_end(ctx, &reads, a, rec_a)?;
+        let end_b = match resolve_link(ctx, &reads, a, b, rec_a, &linked_b, &planned_b)? {
             LinkDecision::To(rec_b) => {
                 planned_b.insert(rec_b);
-                existing_side(ctx, &reads, b, rec_b)?
+                existing_end(ctx, &reads, b, rec_b)?
             }
-            LinkDecision::Create => bare_side(b),
+            LinkDecision::Create => bare_end(b),
             LinkDecision::Skip => continue,
         };
         planned_a.insert(rec_a);
-        creates.push((side_a, side_b));
+        creates.push((end_a, end_b));
     }
 
     // Pass 2 — from B into A (records not already used as a Pass-1 target).
-    let scope_b_v = &scope_b_all;
-    for &rec_b in scope_b_v {
+    for &rec_b in &scope_b_all {
         if linked_b.contains(&rec_b) || planned_b.contains(&rec_b) {
             continue;
         }
-        let side_b = existing_side(ctx, &reads, b, rec_b)?;
-        let side_a = match resolve_link(ctx, &reads, b, a, rec_b, &linked_a, &planned_a)? {
+        let end_b = existing_end(ctx, &reads, b, rec_b)?;
+        let end_a = match resolve_link(ctx, &reads, b, a, rec_b, &linked_a, &planned_a)? {
             LinkDecision::To(rec_a) => {
                 planned_a.insert(rec_a);
-                existing_side(ctx, &reads, a, rec_a)?
+                existing_end(ctx, &reads, a, rec_a)?
             }
-            LinkDecision::Create => bare_side(a),
+            LinkDecision::Create => bare_end(a),
             LinkDecision::Skip => continue,
         };
         planned_b.insert(rec_b);
-        creates.push((side_a, side_b));
+        creates.push((end_a, end_b));
     }
 
-    // Referential closure (spec-sync): every in-scope, to-be-synced record's
-    // `ref` targets must be translatable. A target that is out of scope, has no
-    // TreeRef identity, and is not yet linked is materialised on the other side
-    // (bare + link) — the link is the only memory of the correspondence. Identity
-    // targets need nothing here: the run resolves them by path at translation.
-    for &rec in scope_a_v {
+    // Referential closure (doc "Ref translation during sync"): every in-scope,
+    // to-be-synced record's `ref` targets must be translatable. A target that is
+    // out of scope, has no TreeRef identity, and is not yet linked is
+    // materialised on the other side (bare + link) — the link is the only memory
+    // of the correspondence. Identity targets need nothing here: the run
+    // resolves them by path at translation.
+    for &rec in &scope_a_all {
         if !(linked_a.contains(&rec) || planned_a.contains(&rec)) {
             continue; // skipped record → not synced
         }
@@ -336,11 +368,11 @@ fn linking_phase(
             {
                 continue;
             }
-            creates.push((existing_side(ctx, &reads, a, y)?, bare_side(b)));
+            creates.push((existing_end(ctx, &reads, a, y)?, bare_end(b)));
             planned_a.insert(y);
         }
     }
-    for &rec in scope_b_v {
+    for &rec in &scope_b_all {
         if !(linked_b.contains(&rec) || planned_b.contains(&rec)) {
             continue;
         }
@@ -351,334 +383,397 @@ fn linking_phase(
             {
                 continue;
             }
-            creates.push((bare_side(a), existing_side(ctx, &reads, b, y)?));
+            creates.push((bare_end(a), existing_end(ctx, &reads, b, y)?));
             planned_b.insert(y);
         }
     }
 
-    // Existing links: only those *in scope* (an endpoint selected) are picked up,
-    // for a re-sync (diff vs snapshot). A link whose neither endpoint is in scope
-    // is left untouched in the sync database — persistent state, in case the
-    // scope later includes it again — never dropped. Links with a deleted
-    // endpoint are left for deletion propagation (A4), not re-synced here.
+    // Existing links. Those *in scope* (an endpoint selected) are re-synced; one
+    // whose neither endpoint is in scope is left untouched — persistent state,
+    // in case the scope later includes it again. A deleted endpoint is a
+    // deletion to propagate (doc "Deletion propagation") — non-destructive: the
+    // run trashes the file and logs the metarecord deletion. A link whose two
+    // endpoints are both gone is dead whatever the scope (a deleted record
+    // matches no query): only the link is left to remove.
     let mut existing: Vec<ExistingLink> = Vec::new();
-    // Deletion propagation: an in-scope link with exactly one endpoint deleted →
-    // a `delete` op removing the *surviving* side (plan_side). Non-destructive:
-    // the run trashes the file and logs the metarecord deletion.
-    let mut deletes: Vec<(Side, Side, &'static str)> = Vec::new();
+    let mut deletes: Vec<(End, End, Side)> = Vec::new();
+    let mut drops: Vec<(End, End)> = Vec::new();
+    let states = link_states(ctx, pair)?;
     for l in &links {
+        if states.get(&l.uuid).map(String::as_str) == Some("missing_both") {
+            let gone = |repo, record| End { repo, record, baseline: None };
+            drops.push((gone(a, l.record_a), gone(b, l.record_b)));
+            continue;
+        }
         if !scope_a.contains(&l.record_a) && !scope_b.contains(&l.record_b) {
             continue;
         }
-        let side_a = existing_side(ctx, &reads, a, l.record_a)?;
-        let side_b = existing_side(ctx, &reads, b, l.record_b)?;
-        match (side_a.baseline.is_some(), side_b.baseline.is_some()) {
-            (true, true) => existing.push(ExistingLink { side_a, side_b, link: l.uuid }),
+        let end_a = existing_end(ctx, &reads, a, l.record_a)?;
+        let end_b = existing_end(ctx, &reads, b, l.record_b)?;
+        match (end_a.baseline.is_some(), end_b.baseline.is_some()) {
+            (true, true) => existing.push(ExistingLink { end_a, end_b, row: l.clone() }),
             // B was deleted → delete the surviving A; and vice versa.
-            (true, false) => deletes.push((side_a, side_b, "a")),
-            (false, true) => deletes.push((side_a, side_b, "b")),
-            (false, false) => {} // both gone → link cleanup, deferred
+            (true, false) => deletes.push((end_a, end_b, Side::A)),
+            (false, true) => deletes.push((end_a, end_b, Side::B)),
+            (false, false) => drops.push((end_a, end_b)),
         }
     }
 
-    // No incoherence aborted us: commit the link and delete ops.
-    let op_count = creates.len() + deletes.len();
-    let new_links = creates.clone();
-    for (sa, sb) in creates {
-        write_op(ctx, plan, "create-link", sa, sb)?;
-    }
-    for (sa, sb, side) in deletes {
-        write_delete_op(ctx, plan, sa, sb, side)?;
-    }
-    Ok(LinkingResult { op_count, new_links, existing })
+    Ok(LinkingResult { creates, existing, deletes, drops, reads })
 }
 
-/// The sync phase (spec-sync): for each link to sync — newly created (union) or
-/// an existing one (three-way diff vs its snapshot) — write the metadata `sync`
-/// op, a `conflict` op per conflicting field, and a `copy` for a bare file.
-fn sync_phase(
-    ctx: &Ctx,
-    a: Uuid,
-    b: Uuid,
-    plan: &PlanRepo,
-    linked: &LinkingResult,
-    intents: &Intents,
-    on_conflict: Option<&str>,
-) -> Result<usize, CliError> {
-    let mut ops = 0;
-    for (side_a, side_b) in &linked.new_links {
-        ops += sync_link(ctx, a, b, plan, side_a, side_b, None, intents, on_conflict)?;
+/// Each link's state, as `GET …/status` reports it.
+fn link_states(ctx: &Ctx, pair: Pair) -> Result<HashMap<Uuid, String>, CliError> {
+    let body = ctx.client.get(&format!("{}/status", pair.prefix()))?;
+    Ok(body["links"]
+        .as_array()
+        .into_iter()
+        .flatten()
+        .filter_map(|l| {
+            let uuid = l["uuid"].as_str().and_then(|s| Uuid::parse_str(s).ok())?;
+            Some((uuid, l["state"].as_str()?.to_string()))
+        })
+        .collect())
+}
+
+/// One operation to write into the plan repo.
+struct OpSpec {
+    kind: &'static str,
+    a: End,
+    b: End,
+    /// The source side of a `copy` / `move` / `chmod`; absent when a conflict
+    /// decides it (its `plan_resolve`, read at run).
+    from: Option<Side>,
+    /// The side a `delete` removes.
+    side: Option<Side>,
+    /// A conflict's field, its two value sets, and its resolution.
+    field: Option<String>,
+    values: (Vec<Value>, Vec<Value>),
+    resolve: Option<&'static str>,
+}
+
+impl OpSpec {
+    fn new(kind: &'static str, a: &End, b: &End) -> Self {
+        OpSpec {
+            kind,
+            a: a.clone(),
+            b: b.clone(),
+            from: None,
+            side: None,
+            field: None,
+            values: (Vec::new(), Vec::new()),
+            resolve: None,
+        }
     }
-    for el in &linked.existing {
-        let snapshot = fetch_snapshot(ctx, a, b, el.link)?;
-        ops += sync_link(
+
+    fn from(mut self, from: Option<Side>) -> Self {
+        self.from = from;
+        self
+    }
+}
+
+/// The sync phase (doc "The sync plan"): what each link needs.
+struct Planner<'a> {
+    ctx: &'a Ctx<'a>,
+    pair: Pair,
+    intents: &'a Intents,
+    on_conflict: Option<&'a str>,
+    reads: &'a Reads,
+    /// The existing links *and* the planned ones, so a reference to a record
+    /// this plan links translates already.
+    tr: Translator<'a>,
+    names: HashMap<Uuid, String>,
+    roots: HashMap<Uuid, PathBuf>,
+}
+
+impl<'a> Planner<'a> {
+    fn new(
+        ctx: &'a Ctx<'a>,
+        pair: Pair,
+        intents: &'a Intents,
+        on_conflict: Option<&'a str>,
+        linked: &'a LinkingResult,
+    ) -> Result<Self, CliError> {
+        let mut links = LinkTable::from_rows(&lookup::read_links(ctx, pair)?);
+        for (end_a, end_b) in &linked.creates {
+            links.insert(end_a.record, end_b.record);
+        }
+        let mut names = HashMap::new();
+        let mut roots = HashMap::new();
+        for repo in [pair.a, pair.b] {
+            let info = ctx.client.get(&format!("/repos/{}", repo.as_simple()))?;
+            let name = info["name"].as_str().map(String::from);
+            names.insert(repo, name.unwrap_or_else(|| repo.as_simple().to_string()));
+            if let Some(root) = info["root"].as_str() {
+                roots.insert(repo, PathBuf::from(root));
+            }
+        }
+        Ok(Planner {
             ctx,
-            a,
-            b,
-            plan,
-            &el.side_a,
-            &el.side_b,
-            Some(&snapshot),
+            pair,
             intents,
             on_conflict,
-        )?;
+            reads: &linked.reads,
+            tr: Translator::new(ctx, pair, links, false),
+            names,
+            roots,
+        })
     }
-    Ok(ops)
-}
 
-/// The sync-phase ops for one link. `snapshot` is `None` for a first sync
-/// (union) and `Some` for a re-sync (three-way diff).
-#[allow(clippy::too_many_arguments)]
-fn sync_link(
-    ctx: &Ctx,
-    a: Uuid,
-    b: Uuid,
-    plan: &PlanRepo,
-    side_a: &Side,
-    side_b: &Side,
-    snapshot: Option<&Snapshot>,
-    intents: &Intents,
-    on_conflict: Option<&str>,
-) -> Result<usize, CliError> {
-    let mut ops = 0;
-    let diff = link_diff(ctx, side_a, side_b, snapshot)?;
-    // A bare endpoint must be placed/populated even when the existing side has no
-    // syncable field; otherwise a `sync` op is written only on a real change.
-    let bare = side_a.baseline.is_none() || side_b.baseline.is_none();
-    if bare || diff.changed {
-        write_op(ctx, plan, "sync", side_a.clone(), side_b.clone())?;
-        ops += 1;
-    }
-    for c in diff.conflicts {
-        let resolve = resolve_conflict(ctx, a, b, side_a, side_b, &c.field, intents, on_conflict)?;
-        write_conflict_op(ctx, plan, side_a.clone(), side_b.clone(), &c, &resolve)?;
-        ops += 1;
-    }
-    if let Some(from) = needs_copy(ctx, side_a, side_b)? {
-        write_op_from(ctx, plan, "copy", side_a.clone(), side_b.clone(), Some(from))?;
-        // The freshly created file also takes the source's mode (best-effort at
-        // run). TODO: permission-only divergence on an existing link needs a
-        // baseline for direction — deferred.
-        write_op_from(ctx, plan, "chmod", side_a.clone(), side_b.clone(), Some(from))?;
-        ops += 2;
-    }
-    // Position: two linked records whose reconstructed `mfr_path` diverged → the
-    // target file must move to match (the sync op writes the new path). At first
-    // sync a matched pair shares its path, so this only fires on a re-sync.
-    if needs_move(ctx, side_a, side_b)? {
-        write_op(ctx, plan, "move", side_a.clone(), side_b.clone())?;
-        ops += 1;
-    }
-    Ok(ops)
-}
-
-/// Whether a link's two endpoints occupy different `mfr_path` positions (both
-/// existing) → a file move is needed. The run derives the direction and moves
-/// the target file to the `mfr_path` the `sync` op wrote.
-fn needs_move(ctx: &Ctx, side_a: &Side, side_b: &Side) -> Result<bool, CliError> {
-    if side_a.baseline.is_none() || side_b.baseline.is_none() {
-        return Ok(false);
-    }
-    let pa = mfr_path_of(ctx, side_a.repo, side_a.record)?;
-    let pb = mfr_path_of(ctx, side_b.repo, side_b.record)?;
-    Ok(matches!((pa, pb), (Some(x), Some(y)) if x != y))
-}
-
-/// A record's reconstructed `mfr_path` (its first position), or `None`.
-pub(crate) fn mfr_path_of(ctx: &Ctx, repo: Uuid, record: Uuid) -> Result<Option<String>, CliError> {
-    let resp = ctx.client.get(&format!(
-        "/repos/{}/metarecords/{}/fields/mfr_path/resolve-tree",
-        repo.as_simple(),
-        record.as_simple()
-    ))?;
-    Ok(resp["paths"].as_array().and_then(|a| a.first()).and_then(|p| p.as_str()).map(String::from))
-}
-
-/// The snapshot of a link, as per-name value multisets in each perspective.
-struct Snapshot {
-    a: HashMap<String, Vec<Json>>,
-    b: HashMap<String, Vec<Json>>,
-}
-
-/// Reads a link's snapshot (`GET …/links/:link`), building the A- and
-/// B-perspective value multisets of its syncable fields.
-fn fetch_snapshot(ctx: &Ctx, a: Uuid, b: Uuid, link: Uuid) -> Result<Snapshot, CliError> {
-    let body = ctx.client.get(&format!(
-        "/sync/{}/{}/links/{}",
-        a.as_simple(),
-        b.as_simple(),
-        link.as_simple()
-    ))?;
-    let (mut sa, mut sb): (HashMap<String, Vec<Json>>, HashMap<String, Vec<Json>>) =
-        Default::default();
-    for e in body["snapshot"].as_array().cloned().unwrap_or_default() {
-        let Some(name) = e["name"].as_str() else { continue };
-        if name.starts_with("mfr_") || e["value"]["type"] == "tree_ref" {
-            continue;
+    /// The endpoint's record as the linking phase read it (its baseline), or an
+    /// empty one for a bare endpoint the run will create.
+    fn record(&self, end: &End) -> Result<MetaRecord, CliError> {
+        if end.baseline.is_none() {
+            return Ok(MetaRecord { uuid: end.record, version: 0, fields: Vec::new() });
         }
-        let va = e["value"].clone();
-        // A ref's B-perspective is stored as a bare uuid; re-wrap it as {type,value}.
-        let vb = if e["value_b"].is_null() {
-            va.clone()
-        } else {
-            json!({"type": e["value"]["type"], "value": e["value_b"]})
+        lookup::parse_record(&self.reads.record(self.ctx, end.repo, end.record)?)
+    }
+
+    /// Where an endpoint's file is on disk.
+    fn abs_path(&self, end: &End) -> Result<Option<PathBuf>, CliError> {
+        let Some(root) = self.roots.get(&end.repo) else { return Ok(None) };
+        Ok(lookup::mfr_path_of(self.ctx, end.repo, end.record)?
+            .map(|p| root.join(p.trim_start_matches('/'))))
+    }
+
+    /// Whether the two endpoints' entries on disk hold the same content. One
+    /// that is not on disk does not.
+    fn content_equal(&self, a: &End, b: &End) -> Result<bool, CliError> {
+        let (Some(pa), Some(pb)) = (self.abs_path(a)?, self.abs_path(b)?) else {
+            return Ok(false);
         };
-        sa.entry(name.to_string()).or_default().push(va);
-        sb.entry(name.to_string()).or_default().push(vb);
-    }
-    for v in sa.values_mut() {
-        v.sort_by_key(|x| x.to_string());
-    }
-    for v in sb.values_mut() {
-        v.sort_by_key(|x| x.to_string());
-    }
-    Ok(Snapshot { a: sa, b: sb })
-}
-
-/// A field in conflict: changed on both sides to different value multisets.
-struct FieldConflict {
-    field: String,
-    values_a: Vec<Json>,
-    values_b: Vec<Json>,
-}
-
-/// The result of diffing a link's two endpoints (three-way against the snapshot).
-struct LinkDiff {
-    /// Any field changed → the link needs a metadata `sync` op.
-    changed: bool,
-    conflicts: Vec<FieldConflict>,
-}
-
-/// Three-way field diff of a link. Per syncable field name: `a_changed` iff A's
-/// multiset differs from the snapshot's A-perspective (idem B). One side changed
-/// → propagate; both changed to different values → conflict; both to the same →
-/// in sync. A `None` snapshot is empty, so this reduces to union (first sync).
-fn link_diff(
-    ctx: &Ctx,
-    side_a: &Side,
-    side_b: &Side,
-    snapshot: Option<&Snapshot>,
-) -> Result<LinkDiff, CliError> {
-    let by_a = existing_syncable(ctx, side_a)?;
-    let by_b = existing_syncable(ctx, side_b)?;
-    let empty = HashMap::new();
-    let (snap_a, snap_b) = snapshot.map(|s| (&s.a, &s.b)).unwrap_or((&empty, &empty));
-
-    let mut names: std::collections::BTreeSet<&String> = std::collections::BTreeSet::new();
-    names.extend(by_a.keys());
-    names.extend(by_b.keys());
-    names.extend(snap_a.keys());
-    names.extend(snap_b.keys());
-
-    let mut changed = false;
-    let mut conflicts = Vec::new();
-    for name in names {
-        let av = by_a.get(name);
-        let bv = by_b.get(name);
-        // The sides already agree → nothing to do (regardless of the snapshot).
-        if av == bv {
-            continue;
+        if !crate::fsentry::path_present(&pa) || !crate::fsentry::path_present(&pb) {
+            return Ok(false);
         }
-        changed = true;
-        // They disagree: a one-sided change propagates; both diverged from the
-        // snapshot → a conflict.
-        let a_changed = av != snap_a.get(name);
-        let b_changed = bv != snap_b.get(name);
-        if a_changed && b_changed {
-            conflicts.push(FieldConflict {
-                field: name.clone(),
-                values_a: av.cloned().unwrap_or_default(),
-                values_b: bv.cloned().unwrap_or_default(),
-            });
-        }
+        super::content::content_equal(&pa, &pb)
     }
-    Ok(LinkDiff { changed, conflicts })
-}
 
-/// A side's syncable fields by name, or empty when the side is bare.
-fn existing_syncable(ctx: &Ctx, side: &Side) -> Result<HashMap<String, Vec<Json>>, CliError> {
-    if side.baseline.is_none() {
-        return Ok(HashMap::new());
-    }
-    syncable_by_name(ctx, side.repo, side.record)
-}
-
-/// A record's syncable fields grouped by name into a sorted value multiset.
-pub(crate) fn syncable_by_name(
-    ctx: &Ctx,
-    repo: Uuid,
-    record: Uuid,
-) -> Result<HashMap<String, Vec<Json>>, CliError> {
-    let mut map: HashMap<String, Vec<Json>> = HashMap::new();
-    for (name, value) in syncable_fields(ctx, repo, record)? {
-        map.entry(name).or_default().push(value);
-    }
-    for values in map.values_mut() {
-        values.sort_by_key(|v| v.to_string());
-    }
-    Ok(map)
-}
-
-/// Resolves a conflicting field to a winning side (=a= | =b= | =skip=), by
-/// =--on-conflict=, else the first matching =[[conflict]]= rule, else an
-/// interactive prompt (=ask=; a non-TTY reads as =skip=).
-#[allow(clippy::too_many_arguments)]
-fn resolve_conflict(
-    ctx: &Ctx,
-    a: Uuid,
-    b: Uuid,
-    side_a: &Side,
-    side_b: &Side,
-    field: &str,
-    intents: &Intents,
-    on_conflict: Option<&str>,
-) -> Result<String, CliError> {
-    let policy = match on_conflict {
-        Some(oc) => intents::parse_policy(oc)?,
-        None => matching_policy(ctx, a, b, side_a, side_b, field, intents)?,
-    };
-    match policy {
-        intents::Policy::Skip => Ok("skip".into()),
-        intents::Policy::Prefer(repo) => {
-            let r = ctx.resolve_repo(&repo)?;
-            if r == a {
-                Ok("a".into())
-            } else if r == b {
-                Ok("b".into())
-            } else {
-                Err(CliError::Usage(format!("prefer:{repo} is not one of the pair")))
+    /// What one link needs, as ops: `None` when the user leaves the link out.
+    /// An existing link neither of whose records changed since its last sync
+    /// needs nothing. Any other gets a `sync` op — its metadata phase, and the
+    /// commit that records the link's new state — plus a `copy`, `move` or
+    /// `chmod` for what its files need, and a `conflict` per conflicting field.
+    fn plan_link(
+        &self,
+        end_a: &End,
+        end_b: &End,
+        row: Option<&LinkRow>,
+    ) -> Result<Option<Vec<OpSpec>>, CliError> {
+        let a = self.record(end_a)?;
+        let b = self.record(end_b)?;
+        if let Some(row) = row {
+            if row.version_a == Some(a.version) && row.version_b == Some(b.version) {
+                return Ok(Some(Vec::new()));
             }
         }
-        intents::Policy::Ask => ctx.prompter.resolve_conflict(field, side_a.record, side_b.record),
-    }
-}
+        let snap = match row {
+            Some(row) => self.snapshot(row.uuid)?,
+            None => Snapshot::default(),
+        };
+        let mut ops = vec![OpSpec::new("sync", end_a, end_b)];
+        let mut conflicts: Vec<(String, Vec<Value>, Vec<Value>)> = Vec::new();
 
-/// The policy of the first matching `[[conflict]]` rule (spec-sync "Conflict
-/// resolution"), else `Ask`. A rule matches when its `field` (if any) equals the
-/// conflicting field name *and* its `query` (if any) matches either endpoint.
-fn matching_policy(
-    ctx: &Ctx,
-    a: Uuid,
-    b: Uuid,
-    side_a: &Side,
-    side_b: &Side,
-    field: &str,
-    intents: &Intents,
-) -> Result<intents::Policy, CliError> {
-    for rule in &intents.conflict {
-        if rule.field.as_deref().is_some_and(|f| f != field) {
-            continue;
+        // Fields.
+        let mut names: BTreeSet<String> = model::synced_names(&a);
+        names.extend(model::synced_names(&b));
+        names.extend(snap.common.keys().cloned());
+        names.remove("mfr_path");
+        for name in names {
+            let (va, vb) = (model::values_of(&a, &name), model::values_of(&b, &name));
+            if model::decide_field(&name, &va, &vb, &snap, &self.tr)? == Decision::Conflict {
+                conflicts.push((name, va, vb));
+            }
         }
-        if let Some(q) = &rule.query {
-            let hit = record_matches_query(ctx, a, side_a.record, q)?
-                || record_matches_query(ctx, b, side_b.record, q)?;
-            if !hit {
+
+        // Position: a bare endpoint is placed by the `sync` op and its content
+        // copied after; an existing one is moved.
+        let (pa, pb) = (model::values_of(&a, "mfr_path"), model::values_of(&b, "mfr_path"));
+        let mut both_placed = model::has_real_path(&a) && model::has_real_path(&b);
+        match model::decide_field("mfr_path", &pa, &pb, &snap, &self.tr)? {
+            Decision::Propagate { from } => {
+                let (src, dst) = if from == Side::A { (&a, end_b) } else { (&b, end_a) };
+                if dst.baseline.is_none() {
+                    if model::has_real_path(src) && src.get("mfr_type").is_some() {
+                        ops.push(OpSpec::new("copy", end_a, end_b).from(Some(from)));
+                        ops.push(OpSpec::new("chmod", end_a, end_b).from(Some(from)));
+                    }
+                } else {
+                    ops.push(OpSpec::new("move", end_a, end_b).from(Some(from)));
+                }
+                both_placed = false;
+            }
+            Decision::Conflict => {
+                conflicts.push(("mfr_path".into(), pa, pb));
+                ops.push(OpSpec::new("move", end_a, end_b));
+                both_placed = false;
+            }
+            Decision::InSync | Decision::Untouched => {}
+        }
+
+        // Content and mode, between two files that stay where they are.
+        if both_placed {
+            let changed =
+                |rec: &MetaRecord, side, names| model::stamp_changed(rec, &snap, side, names);
+            let content = model::decide_aspect(
+                changed(&a, Side::A, CONTENT_STAMP),
+                changed(&b, Side::B, CONTENT_STAMP),
+                || self.content_equal(end_a, end_b),
+            )?;
+            match content {
+                Decision::Propagate { from } => {
+                    ops.push(OpSpec::new("copy", end_a, end_b).from(Some(from)))
+                }
+                Decision::Conflict => {
+                    let stamp =
+                        |r: &MetaRecord| model::stamp(r, CONTENT_STAMP).into_values().collect();
+                    conflicts.push((CONTENT_FIELD.into(), stamp(&a), stamp(&b)));
+                    ops.push(OpSpec::new("copy", end_a, end_b));
+                }
+                Decision::InSync | Decision::Untouched => {}
+            }
+            let symlink =
+                |r: &MetaRecord| r.get("mfr_type") == Some(&Value::String("symlink".into()));
+            let (ma, mb) = (a.get("mfr_permissions"), b.get("mfr_permissions"));
+            if ma.is_some() && mb.is_some() && !symlink(&a) && !symlink(&b) {
+                let mode = model::decide_aspect(
+                    changed(&a, Side::A, MODE_STAMP),
+                    changed(&b, Side::B, MODE_STAMP),
+                    || Ok(ma == mb),
+                )?;
+                match mode {
+                    Decision::Propagate { from } => {
+                        ops.push(OpSpec::new("chmod", end_a, end_b).from(Some(from)))
+                    }
+                    Decision::Conflict => {
+                        let one = |m: Option<&Value>| m.cloned().into_iter().collect();
+                        conflicts.push(("mfr_permissions".into(), one(ma), one(mb)));
+                        ops.push(OpSpec::new("chmod", end_a, end_b));
+                    }
+                    Decision::InSync | Decision::Untouched => {}
+                }
+            }
+        }
+
+        for (field, va, vb) in conflicts {
+            let va = self.shown(end_a, &field, &va)?;
+            let vb = self.shown(end_b, &field, &vb)?;
+            let resolve = match self.resolve(end_a, end_b, &field, &va, &vb)? {
+                Resolution::A => "a",
+                Resolution::B => "b",
+                Resolution::Skip => "skip",
+                Resolution::SkipLink => return Ok(None),
+            };
+            let mut op = OpSpec::new("conflict", end_a, end_b);
+            op.field = Some(field);
+            op.values = (va, vb);
+            op.resolve = Some(resolve);
+            ops.push(op);
+        }
+        Ok(Some(ops))
+    }
+
+    /// A conflict's values as the user reads them, one string each: a
+    /// position as its path, a reference as the uuid it names, a file's
+    /// content as its size and mtime. They go into the plan repo as text — a
+    /// `tree_ref` naming another repository's record could not be written
+    /// there, and the two sides' values need not share a type.
+    fn shown(&self, end: &End, field: &str, values: &[Value]) -> Result<Vec<Value>, CliError> {
+        if end.baseline.is_some() && values.iter().any(|v| matches!(v, Value::TreeRef { .. })) {
+            let paths = lookup::tree_paths(self.ctx, end.repo, end.record, field)?;
+            return Ok(paths.into_iter().map(Value::String).collect());
+        }
+        if field == CONTENT_FIELD {
+            let rec = self.record(end)?;
+            let size = match rec.get("mfr_size") {
+                Some(Value::Int(n)) => format!("{n} bytes"),
+                _ => "no size".into(),
+            };
+            let when = match rec.get("mfr_mtime") {
+                Some(Value::DateTime(ms)) => {
+                    format!(", modified {}", crate::date::iso8601_from_ms(*ms))
+                }
+                _ => String::new(),
+            };
+            return Ok(vec![Value::String(format!("{size}{when}"))]);
+        }
+        Ok(values.iter().map(|v| Value::String(model::display(v))).collect())
+    }
+
+    /// A link's snapshot (`GET …/links/:link`).
+    fn snapshot(&self, link: Uuid) -> Result<Snapshot, CliError> {
+        let body =
+            self.ctx.client.get(&format!("{}/links/{}", self.pair.prefix(), link.as_simple()))?;
+        Ok(Snapshot::from_wire(body["snapshot"].as_array().map(Vec::as_slice).unwrap_or_default()))
+    }
+
+    /// Resolves a conflict by `--on-conflict`, else the first matching
+    /// `[[conflict]]` rule, else by asking (doc "Sync conflicts").
+    fn resolve(
+        &self,
+        end_a: &End,
+        end_b: &End,
+        field: &str,
+        values_a: &[Value],
+        values_b: &[Value],
+    ) -> Result<Resolution, CliError> {
+        let policy = match self.on_conflict {
+            Some(oc) => intents::parse_policy(oc)?,
+            None => self.matching_policy(end_a, end_b, field)?,
+        };
+        match policy {
+            intents::Policy::Skip => Ok(Resolution::Skip),
+            intents::Policy::Prefer(repo) => {
+                let r = self.ctx.resolve_repo(&repo)?;
+                if r == self.pair.a {
+                    Ok(Resolution::A)
+                } else if r == self.pair.b {
+                    Ok(Resolution::B)
+                } else {
+                    Err(CliError::Usage(format!("prefer:{repo} is not one of the pair")))
+                }
+            }
+            intents::Policy::Ask => {
+                let path = [end_a, end_b]
+                    .iter()
+                    .filter(|e| e.baseline.is_some())
+                    .find_map(|e| lookup::mfr_path_of(self.ctx, e.repo, e.record).ok().flatten());
+                let record = path.unwrap_or_else(|| end_a.record.as_simple().to_string());
+                self.ctx.prompter.resolve_conflict(&ConflictQuestion {
+                    field,
+                    record: &record,
+                    repo_a: &self.names[&self.pair.a],
+                    repo_b: &self.names[&self.pair.b],
+                    values_a,
+                    values_b,
+                })
+            }
+        }
+    }
+
+    /// The policy of the first matching `[[conflict]]` rule, else `Ask`. A rule
+    /// matches when its `field` (if any) equals the conflicting field name
+    /// *and* its `query` (if any) matches either endpoint.
+    fn matching_policy(
+        &self,
+        end_a: &End,
+        end_b: &End,
+        field: &str,
+    ) -> Result<intents::Policy, CliError> {
+        for rule in &self.intents.conflict {
+            if rule.field.as_deref().is_some_and(|f| f != field) {
                 continue;
             }
+            if let Some(q) = &rule.query {
+                let hit = record_matches_query(self.ctx, end_a.repo, end_a.record, q)?
+                    || record_matches_query(self.ctx, end_b.repo, end_b.record, q)?;
+                if !hit {
+                    continue;
+                }
+            }
+            return rule.parsed_policy();
         }
-        return rule.parsed_policy();
+        Ok(intents::Policy::Ask)
     }
-    Ok(intents::Policy::Ask)
 }
 
 /// Whether `record` in `repo` matches the DSL `query` (a conflict rule's
@@ -702,91 +797,71 @@ fn record_matches_query(
     Ok(resp["results"].as_array().is_some_and(|a| !a.is_empty()))
 }
 
-/// Writes a `conflict` op-metarecord (spec-sync "The plan repo"): `plan_field`,
-/// the two candidate value multisets, and the editable `plan_resolve`.
-fn write_conflict_op(
-    ctx: &Ctx,
-    plan: &PlanRepo,
-    side_a: Side,
-    side_b: Side,
-    c: &FieldConflict,
-    resolve: &str,
-) -> Result<(), CliError> {
+/// Writes one op-metarecord (doc "The sync plan"). `plan_version_*` is written
+/// only for an endpoint that exists — a bare one has nothing to check.
+fn write_op(ctx: &Ctx, plan: &PlanRepo, op: &OpSpec) -> Result<(), CliError> {
+    let string = |s: &str| json!({"type": "string", "value": s});
     let mut fields = vec![
-        json!({"name": "plan_kind", "value": {"type": "string", "value": "conflict"}}),
-        json!({"name": "plan_a", "value": external_ref(side_a.repo, side_a.record)}),
-        json!({"name": "plan_b", "value": external_ref(side_b.repo, side_b.record)}),
-        json!({"name": "plan_field", "value": {"type": "string", "value": c.field}}),
-        json!({"name": "plan_resolve", "value": {"type": "string", "value": resolve}}),
+        json!({"name": "plan_kind", "value": string(op.kind)}),
+        json!({"name": "plan_a", "value": external_ref(op.a.repo, op.a.record)}),
+        json!({"name": "plan_b", "value": external_ref(op.b.repo, op.b.record)}),
     ];
-    if let Some(v) = side_a.baseline {
+    if let Some(v) = op.a.baseline {
         fields.push(json!({"name": "plan_version_a", "value": {"type": "int", "value": v}}));
     }
-    if let Some(v) = side_b.baseline {
+    if let Some(v) = op.b.baseline {
         fields.push(json!({"name": "plan_version_b", "value": {"type": "int", "value": v}}));
     }
-    for v in &c.values_a {
+    if let Some(from) = op.from {
+        fields.push(json!({"name": "plan_from", "value": string(from.name())}));
+    }
+    if let Some(side) = op.side {
+        fields.push(json!({"name": "plan_side", "value": string(side.name())}));
+    }
+    if let Some(field) = &op.field {
+        fields.push(json!({"name": "plan_field", "value": string(field)}));
+    }
+    if let Some(resolve) = op.resolve {
+        fields.push(json!({"name": "plan_resolve", "value": string(resolve)}));
+    }
+    for v in &op.values.0 {
         fields.push(json!({"name": "plan_value_a", "value": v}));
     }
-    for v in &c.values_b {
+    for v in &op.values.1 {
         fields.push(json!({"name": "plan_value_b", "value": v}));
     }
     ctx.client.post(&format!("{}/metarecords", plan.base), &json!({"fields": fields}))?;
     Ok(())
 }
 
-/// The source side (=a= | =b=) of a content transfer, when one is needed: a bare
-/// endpoint whose existing counterpart is a file. `None` otherwise (both exist —
-/// deferred content-conflict handling — or the existing side is not a file).
-fn needs_copy(ctx: &Ctx, side_a: &Side, side_b: &Side) -> Result<Option<&'static str>, CliError> {
-    let (from, source) = match (side_a.baseline.is_none(), side_b.baseline.is_none()) {
-        (true, false) => ("b", side_b),
-        (false, true) => ("a", side_a),
-        _ => return Ok(None),
-    };
-    Ok(is_file(ctx, source.repo, source.record)?.then_some(from))
-}
-
-/// Whether a record is a file (=mfr_type = "file"=) — i.e. has content to transfer.
-fn is_file(ctx: &Ctx, repo: Uuid, record: Uuid) -> Result<bool, CliError> {
-    let m = ctx.client.get(&format!(
-        "/repos/{}/metarecords/{}",
-        repo.as_simple(),
-        record.as_simple()
-    ))?;
-    Ok(m["fields"].as_array().is_some_and(|fs| {
-        fs.iter().any(|f| f["name"] == "mfr_type" && f["value"]["value"] == "file")
-    }))
-}
-
-/// A record's *syncable* fields — everything the field diff writes: user data,
-/// `mf_*`, and references, but not `mfr_*` and not `tree_ref` positions (those
-/// are handled by placement/move). Refs are compared by local UUID here (a
-/// coarse check: a spurious `sync` op the run finds is empty is harmless).
-pub(crate) fn syncable_fields(
+/// Records what the run needs besides the ops — the intents file's
+/// `[settings]`, and the host chosen for the pair's sync database — in the plan
+/// repo: a metarecord without `plan_kind`, so no op.
+fn write_settings(
     ctx: &Ctx,
-    repo: Uuid,
-    record: Uuid,
-) -> Result<Vec<(String, Json)>, CliError> {
-    let m = ctx.client.get(&format!(
-        "/repos/{}/metarecords/{}",
-        repo.as_simple(),
-        record.as_simple()
-    ))?;
-    let mut out: Vec<(String, Json)> = Vec::new();
-    for f in m["fields"].as_array().cloned().unwrap_or_default() {
-        let Some(name) = f["name"].as_str() else { continue };
-        if name.starts_with("mfr_") || f["value"]["type"] == "tree_ref" {
-            continue;
-        }
-        out.push((name.to_string(), f["value"].clone()));
-    }
-    out.sort_by(|x, y| (x.0.as_str(), x.1.to_string()).cmp(&(y.0.as_str(), y.1.to_string())));
-    Ok(out)
+    plan: &PlanRepo,
+    settings: &Settings,
+    host: Uuid,
+) -> Result<(), CliError> {
+    let int = |n: usize| json!({"type": "int", "value": n});
+    let fields = vec![
+        json!({"name": "plan_commit_batch_size", "value": int(settings.commit_batch_size)}),
+        json!({"name": "plan_transfer_batch_size", "value": int(settings.transfer_batch_size)}),
+        json!({"name": "plan_host", "value": {"type": "string", "value": host.as_simple().to_string()}}),
+    ];
+    ctx.client.post(&format!("{}/metarecords", plan.base), &json!({"fields": fields}))?;
+    Ok(())
 }
 
-/// The other-side endpoint decision for an in-scope record (spec-sync "The
-/// linking phase").
+fn external_ref(repo: Uuid, metarecord: Uuid) -> Json {
+    json!({
+        "type": "externalref",
+        "value": {"repo": repo.as_simple().to_string(), "metarecord": metarecord.as_simple().to_string()}
+    })
+}
+
+/// The other-side endpoint decision for an in-scope record (doc "Matching
+/// records across repositories").
 enum LinkDecision {
     /// Link onto this existing target-side record.
     To(Uuid),
@@ -798,7 +873,7 @@ enum LinkDecision {
 
 /// Resolves an in-scope `record` (in `source_repo`) to its counterpart in
 /// `target_repo` by *TreeRef identity* — the reconstructed path of each of its
-/// `tree_ref` fields (spec-sync). Returns [`LinkDecision`], or aborts the plan
+/// `tree_ref` fields (doc "Matching records across repositories"). Returns [`LinkDecision`], or aborts the plan
 /// on a multi-TreeRef incoherence.
 fn resolve_link(
     ctx: &Ctx,
@@ -812,7 +887,7 @@ fn resolve_link(
     let ids = identity_paths_in(ctx, reads, source_repo, record)?;
     if ids.is_empty() {
         // No TreeRef identity → the case-0 heuristic: link to an unambiguous
-        // field-equal target, else create a bare record (spec-sync).
+        // field-equal target, else create a bare record (doc "Matching records across repositories").
         return Ok(
             match match_by_fields(
                 ctx,
@@ -831,7 +906,11 @@ fn resolve_link(
     // Occupant of each identity position on the target side.
     let mut occ: Vec<(String, String, Option<Uuid>)> = Vec::with_capacity(ids.len());
     for (field, path) in &ids {
-        occ.push((field.clone(), path.clone(), record_at_path(ctx, target_repo, field, path)?));
+        occ.push((
+            field.clone(),
+            path.clone(),
+            lookup::resolve_path(ctx, target_repo, field, path)?,
+        ));
     }
     let mut existing: Vec<Uuid> = occ.iter().filter_map(|(_, _, o)| *o).collect();
     existing.sort();
@@ -871,17 +950,7 @@ fn resolve_link(
 }
 
 /// A record's identity: `(field_name, reconstructed_path)` for each of its
-/// `tree_ref` fields (a field with several positions — an older repository's —
-/// contributes several).
-pub(crate) fn identity_paths(
-    ctx: &Ctx,
-    repo: Uuid,
-    record: Uuid,
-) -> Result<Vec<(String, String)>, CliError> {
-    identity_paths_in(ctx, &Reads::default(), repo, record)
-}
-
-/// [`identity_paths`] served from the bulk pass when the record was in it.
+/// `tree_ref` fields, served from the bulk pass when the record was in it.
 ///
 /// A preloaded record's paths are authoritative: absent means it carries no
 /// TreeRef at all, which is the case-0 heuristic's input, so it must not be
@@ -923,7 +992,7 @@ fn identity_paths_in(
     Ok(out)
 }
 
-/// The case-0 heuristic (spec-sync "The linking phase"): for a no-identity
+/// The case-0 heuristic (doc "Matching records across repositories"): for a no-identity
 /// `record`, the unambiguous target-side record with the *same* sync-relevant
 /// field multiset (excluded `mfr_*` and reference-typed values ignored), or
 /// `None` when there is no match, several matches, or no distinguishing fields.
@@ -1020,8 +1089,8 @@ fn field_signature(m: &Json) -> Vec<(String, Json)> {
 ///
 /// Restricted to the fields the metadata diff actually writes: user fields,
 /// `mf_*`, and `mfr_path`. Every *other* `mfr_*` field is content- or
-/// stat-derived and each repository re-derives its own (spec-sync "The metadata
-/// diff"), so closing over one would materialise a counterpart for something
+/// stat-derived and each repository re-derives its own (doc "What sync
+/// copies"), so closing over one would materialise a counterpart for something
 /// that is never synced — a bare, empty record per referent on the target side,
 /// for no purpose. `mfr_duplicate_group` (doc "Duplicates") is the first
 /// `Ref`-valued field this applies to.
@@ -1044,56 +1113,8 @@ fn ref_targets(ctx: &Ctx, reads: &Reads, repo: Uuid, record: Uuid) -> Result<Vec
     Ok(out)
 }
 
-/// The record occupying position `path` in `repo`'s `field` forest, via the
-/// parent-and-name idiom (=field -> "/parent" AND field:value = "name"=). The
-/// root (empty path) is resolved through the forest-roots endpoint.
-///
-/// The leaf comparison names the `value` aspect explicitly (doc "Field aspects"): a bare `=` on a
-/// TreeRef is the *exact node* at a path, which is
-/// not what this half of the intersection asks. The idiom is kept rather than
-/// replaced by that single exact-node lookup because the function serves any
-/// forest, whatever its root convention, while a path operand must follow the
-/// one belonging to its field.
-pub(crate) fn record_at_path(
-    ctx: &Ctx,
-    repo: Uuid,
-    field: &str,
-    path: &str,
-) -> Result<Option<Uuid>, CliError> {
-    let trimmed = path.trim_matches('/');
-    if trimmed.is_empty() {
-        let roots = ctx.client.get(&with_query(
-            &format!("/repos/{}/tree/roots", repo.as_simple()),
-            &[("field", field.to_string())],
-        ))?;
-        return Ok(roots
-            .as_array()
-            .and_then(|a| a.iter().find(|r| r["name"] == ""))
-            .and_then(|r| r["uuid"].as_str())
-            .and_then(|s| Uuid::parse_str(s).ok()));
-    }
-    let (parent, name) = match trimmed.rsplit_once('/') {
-        Some((p, n)) => (format!("/{p}"), n.to_string()),
-        None => (String::new(), trimmed.to_string()),
-    };
-    let query = json!({"type": "and", "operands": [
-        {"type": "follows", "field": field, "target": parent},
-        {"type": "eq", "field": field, "value": {"type": "string", "value": name},
-         "aspect": "value"},
-    ]});
-    let resp = ctx.client.post(
-        &format!("/repos/{}/query", repo.as_simple()),
-        &json!({"query": query, "limit": 1}),
-    )?;
-    Ok(resp["results"]
-        .as_array()
-        .and_then(|a| a.first())
-        .and_then(|v| v.as_str())
-        .and_then(|s| Uuid::parse_str(s).ok()))
-}
-
-/// Builds the plan-aborting incoherence error for a record (spec-sync
-/// "multi-TreeRef incoherence").
+/// Builds the plan-aborting incoherence error for a record (doc "Matching
+/// records across repositories").
 fn incoherence(record: Uuid, occ: &[(String, String, Option<Uuid>)], why: &str) -> CliError {
     let positions: Vec<String> = occ
         .iter()
@@ -1109,121 +1130,26 @@ fn incoherence(record: Uuid, occ: &[(String, String, Option<Uuid>)], why: &str) 
     ))
 }
 
-/// One side of a link op: its repo, record, and the `version` the record was
-/// read at (the run-time baseline). `baseline` is `None` for a record that does
-/// not exist yet — a **bare** endpoint the plan is allocating — so no
+/// One endpoint of a link op: its repo, record, and the `version` the record
+/// was read at (the run-time baseline). `baseline` is `None` for a record that
+/// does not exist yet — a **bare** endpoint the plan is allocating — so no
 /// `plan_version_*` is written for it and `run` creates it (the caller-supplied
 /// -UUID create fails closed if it has since appeared, so no baseline is needed).
 #[derive(Clone)]
-struct Side {
+struct End {
     repo: Uuid,
     record: Uuid,
     baseline: Option<u64>,
 }
 
-/// A side onto an existing record, tagged with its current version baseline.
-fn existing_side(ctx: &Ctx, reads: &Reads, repo: Uuid, record: Uuid) -> Result<Side, CliError> {
-    Ok(Side { repo, record, baseline: baseline(ctx, reads, repo, record)? })
+/// An endpoint onto an existing record, tagged with its current version.
+fn existing_end(ctx: &Ctx, reads: &Reads, repo: Uuid, record: Uuid) -> Result<End, CliError> {
+    Ok(End { repo, record, baseline: baseline(ctx, reads, repo, record)? })
 }
 
-/// A bare side: a freshly allocated UUID, no baseline (does not exist yet).
-fn bare_side(repo: Uuid) -> Side {
-    Side { repo, record: Uuid::new_v4(), baseline: None }
-}
-
-/// Writes one op-metarecord into the plan repo. `plan_version_*` is emitted only
-/// for a side with a baseline; a bare side carries none.
-fn write_op(
-    ctx: &Ctx,
-    plan: &PlanRepo,
-    kind: &str,
-    side_a: Side,
-    side_b: Side,
-) -> Result<(), CliError> {
-    write_op_from(ctx, plan, kind, side_a, side_b, None)
-}
-
-/// Like [`write_op`] but also records `plan_from` (=a= | =b=) — the source side
-/// of a `copy` / `chmod`.
-fn write_op_from(
-    ctx: &Ctx,
-    plan: &PlanRepo,
-    kind: &str,
-    side_a: Side,
-    side_b: Side,
-    from: Option<&str>,
-) -> Result<(), CliError> {
-    let mut fields = vec![
-        json!({"name": "plan_kind", "value": {"type": "string", "value": kind}}),
-        json!({"name": "plan_a", "value": external_ref(side_a.repo, side_a.record)}),
-        json!({"name": "plan_b", "value": external_ref(side_b.repo, side_b.record)}),
-    ];
-    if let Some(v) = side_a.baseline {
-        fields.push(json!({"name": "plan_version_a", "value": {"type": "int", "value": v}}));
-    }
-    if let Some(v) = side_b.baseline {
-        fields.push(json!({"name": "plan_version_b", "value": {"type": "int", "value": v}}));
-    }
-    if let Some(f) = from {
-        fields.push(json!({"name": "plan_from", "value": {"type": "string", "value": f}}));
-    }
-    ctx.client.post(&format!("{}/metarecords", plan.base), &json!({"fields": fields}))?;
-    Ok(())
-}
-
-/// Writes a `delete` op (spec-sync "Metarecord deletion propagation"):
-/// `plan_side` (=a= | =b=) is the surviving side to delete. Non-destructive —
-/// the run trashes the file and the metarecord deletion is logged/rollback-able.
-fn write_delete_op(
-    ctx: &Ctx,
-    plan: &PlanRepo,
-    side_a: Side,
-    side_b: Side,
-    side: &str,
-) -> Result<(), CliError> {
-    let mut fields = vec![
-        json!({"name": "plan_kind", "value": {"type": "string", "value": "delete"}}),
-        json!({"name": "plan_a", "value": external_ref(side_a.repo, side_a.record)}),
-        json!({"name": "plan_b", "value": external_ref(side_b.repo, side_b.record)}),
-        json!({"name": "plan_side", "value": {"type": "string", "value": side}}),
-    ];
-    if let Some(v) = side_a.baseline {
-        fields.push(json!({"name": "plan_version_a", "value": {"type": "int", "value": v}}));
-    }
-    if let Some(v) = side_b.baseline {
-        fields.push(json!({"name": "plan_version_b", "value": {"type": "int", "value": v}}));
-    }
-    ctx.client.post(&format!("{}/metarecords", plan.base), &json!({"fields": fields}))?;
-    Ok(())
-}
-
-fn external_ref(repo: Uuid, metarecord: Uuid) -> Json {
-    json!({
-        "type": "externalref",
-        "value": {"repo": repo.as_simple().to_string(), "metarecord": metarecord.as_simple().to_string()}
-    })
-}
-
-/// One row of a repo pair's link table.
-struct LinkRow {
-    uuid: Uuid,
-    record_a: Uuid,
-    record_b: Uuid,
-}
-
-fn get_links(ctx: &Ctx, a: Uuid, b: Uuid) -> Result<Vec<LinkRow>, CliError> {
-    let body = ctx.client.get(&format!("/sync/{}/{}/links", a.as_simple(), b.as_simple()))?;
-    let mut out = Vec::new();
-    for l in body["links"].as_array().cloned().unwrap_or_default() {
-        if let (Some(u), Some(ra), Some(rb)) = (
-            l["uuid"].as_str().and_then(|s| Uuid::parse_str(s).ok()),
-            l["record_a"].as_str().and_then(|s| Uuid::parse_str(s).ok()),
-            l["record_b"].as_str().and_then(|s| Uuid::parse_str(s).ok()),
-        ) {
-            out.push(LinkRow { uuid: u, record_a: ra, record_b: rb });
-        }
-    }
-    Ok(out)
+/// A bare endpoint: a freshly allocated UUID, no baseline (does not exist yet).
+fn bare_end(repo: Uuid) -> End {
+    End { repo, record: Uuid::new_v4(), baseline: None }
 }
 
 /// Evaluates a DSL (or simplified) query on `repo`, returning the matching UUIDs.
@@ -1314,7 +1240,7 @@ fn plan_repo_name(a: Uuid, b: Uuid) -> String {
 }
 
 /// The plan repo's directory: `<host internal_dir>/plan-<a>-<b>` — under the
-/// host's `internal/`, which the host never tracks (spec-repo).
+/// host's `internal/`, which the host never tracks.
 fn plan_repo_dir(ctx: &Ctx, host: Uuid, name: &str) -> Result<PathBuf, CliError> {
     let info = ctx.client.get(&format!("/repos/{}", host.as_simple()))?;
     let internal = info["internal_dir"]
@@ -1339,7 +1265,7 @@ mod tests {
     use std::cell::RefCell;
 
     use super::*;
-    use crate::sync::{DaemonClient, Prompter, SyncCtx, SyncError};
+    use crate::sync::{ConflictQuestion, DaemonClient, Prompter, Resolution, SyncCtx, SyncError};
 
     /// Serves a scripted sequence of `POST /…/query` pages, plus the one
     /// `GET …/metarecords/…` the matcher starts from.
@@ -1368,8 +1294,8 @@ mod tests {
 
     struct NoopPrompter;
     impl Prompter for NoopPrompter {
-        fn resolve_conflict(&self, _: &str, _: Uuid, _: Uuid) -> Result<String, SyncError> {
-            Ok("skip".into())
+        fn resolve_conflict(&self, _: &ConflictQuestion) -> Result<Resolution, SyncError> {
+            Ok(Resolution::Skip)
         }
         fn confirm(&self, _: &str) -> Result<bool, SyncError> {
             Ok(true)
@@ -1423,6 +1349,16 @@ mod tests {
             if path.ends_with("/links") {
                 return Ok(json!({"links": []}));
             }
+            if path.ends_with("/tree/resolve-path") {
+                // The occupant of an identity position on the other side.
+                if self.occupied {
+                    return Ok(json!({"uuid": uuid(0x77).as_simple().to_string()}));
+                }
+                return Ok(json!({"uuid": null}));
+            }
+            if path.ends_with("/status") {
+                return Ok(json!({"links": []}));
+            }
             if path.ends_with("/query/fields/resolve-tree") {
                 if self.bulk_fails {
                     return Err(crate::daemon_client::DaemonError::local("no bulk form here"));
@@ -1438,15 +1374,7 @@ mod tests {
                 return Ok(Json::Object(paths));
             }
             if path.ends_with("/query") {
-                // The scope listing vs `record_at_path`'s single-row lookup,
-                // told apart by the limit the caller sets.
-                if body.and_then(|b| b["limit"].as_u64()) == Some(1) {
-                    // No `select`: the daemon answers bare uuid strings here.
-                    if self.occupied {
-                        return Ok(json!({"results": [uuid(0x77).as_simple().to_string()]}));
-                    }
-                    return Ok(json!({"results": []})); // the position is free
-                }
+                let _ = body;
                 // `select: "*"` returns whole metarecords, version included —
                 // the same shape as `GET …/metarecords/:uuid`.
                 let results: Vec<Json> = self.scope.iter().map(|u| Self::metarecord(*u)).collect();
@@ -1491,8 +1419,6 @@ mod tests {
         let ctx = SyncCtx { client: &client, prompter: &prompter, page_size: 500 };
         let a = uuid(0xAA);
         let b = uuid(0xBB);
-        let plan =
-            PlanRepo { uuid: uuid(0xCC), base: format!("/repos/{}", uuid(0xCC).as_simple()) };
         let intents = Intents {
             scope: vec![crate::sync::intents::Intent {
                 repo: a.as_simple().to_string(),
@@ -1503,13 +1429,10 @@ mod tests {
             settings: crate::sync::intents::Settings {
                 commit_batch_size: 100,
                 transfer_batch_size: 100,
-                similarity_threshold: None,
             },
         };
-        linking_phase(&ctx, a, b, &plan, &intents).expect("linking phase runs");
-        // Reads only: the plan's own writes (one `POST …/metarecords` per
-        // operation it records) are its product, not a round-trip to save.
-        let reads = client.calls.borrow().iter().filter(|c| !c.ends_with("/metarecords")).count();
+        linking_phase(&ctx, a, b, &intents).expect("linking phase runs");
+        let reads = client.calls.borrow().len();
         reads
     }
 
@@ -1548,8 +1471,6 @@ mod tests {
             let ctx = SyncCtx { client: &client, prompter: &prompter, page_size: 500 };
             let a = uuid(0xAA);
             let b = uuid(0xBB);
-            let plan =
-                PlanRepo { uuid: uuid(0xCC), base: format!("/repos/{}", uuid(0xCC).as_simple()) };
             let intents = Intents {
                 scope: vec![crate::sync::intents::Intent {
                     repo: a.as_simple().to_string(),
@@ -1560,14 +1481,13 @@ mod tests {
                 settings: crate::sync::intents::Settings {
                     commit_batch_size: 100,
                     transfer_batch_size: 100,
-                    similarity_threshold: None,
                 },
             };
-            let out = linking_phase(&ctx, a, b, &plan, &intents).expect("linking phase runs");
+            let out = linking_phase(&ctx, a, b, &intents).expect("linking phase runs");
             let mut links: Vec<(Uuid, Uuid)> =
-                out.new_links.iter().map(|(x, y)| (x.record, y.record)).collect();
+                out.creates.iter().map(|(x, y)| (x.record, y.record)).collect();
             links.sort();
-            (out.op_count, links)
+            (out.creates.len(), links)
         }
 
         let (ops_bulk, links_bulk) = plan_with(false);

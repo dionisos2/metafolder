@@ -1,0 +1,21 @@
+title: Why sync state lives outside the data model
+tags: Sync
+kind: rationale
+audience: dev
+summary: Links and snapshots are bookkeeping of a pair, not data of either repository: kept in their own store, they stay out of queries, the event log and rollback — while the plan, whose point is to be browsed, is a repository.
+
+An earlier design made a link a metarecord shared by both repositories, owned by
+two databases at once. It was dropped (with the multi-owner model, `6357e5b`): links
+and snapshots describe the relation between two repositories, not either of them,
+and as metarecords they would have shown in queries, entered the event log and been
+moved by rollbacks of one side only.
+
+So they live in a store of their own ([[The sync database]]): the repositories'
+queries, indexes and logs never see them, and an undo never makes a link point
+nowhere. What a rollback does to a linked record is just another change to that
+record — its version says so ([[Change detection in sync]]).
+
+The plan goes the other way, deliberately: it ''is'' a repository ([[The sync plan]]),
+because reviewing and editing it is its purpose, and queries, `mf … field set`, the
+log and the GUI's panels then come for free. It is isolated in its own system
+repository, so it adds nothing to the two synced ones.

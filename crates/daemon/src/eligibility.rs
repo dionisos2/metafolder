@@ -105,7 +105,7 @@ fn ancestor_chain(
     Ok(chain)
 }
 
-/// The effective `mf_sync` mode of the record at `rel_path` (spec-sync): the
+/// The effective `mf_sync` mode of the record at `rel_path` (doc "mf_sync"): the
 /// value of the nearest ancestor (including the record itself) that defines
 /// `mf_sync`, defaulting to `internal` when none does. `external` means an
 /// external tool owns the content; anything else (incl. absent) is `internal`.

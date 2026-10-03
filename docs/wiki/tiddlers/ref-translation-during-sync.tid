@@ -1,0 +1,27 @@
+title: Ref translation during sync
+tags: Sync
+kind: reference
+summary: A reference names a uuid of its own repository; carried to the other side it names the counterpart — the linked record first, else the record at the same path, made there when the run needs it.
+
+A `ref` and a `tree_ref` hold uuids local to their repository. Written on the
+other side, each names the referenced record's ''counterpart'':
+
+* ''`ref`'' — the record it is linked to; with no link, the record at the referenced record's position (its first `tree_ref` path) on the other side.
+* ''`tree_ref`'' — the name is kept; the parent is the record it is linked to, else the record at the parent's path ''in that field's forest'' on the other side. A linked parent is followed through its renames; an unlinked one is found by its path — which is how `category = "music/jazz"` reaches the other side though `music` itself is out of scope.
+
+When nothing holds that path yet, the ''run'' makes it — the record and the
+ancestors it lacks, top-down, as nodes carrying only their position; a directory
+made that way is refreshed once the run's file operations have put it on disk. The
+plan only looks. A referenced record with no link and no position has no
+counterpart: the linking phase links such a target before anything is written
+([[Matching records across repositories]]). A value that still has none at run time
+— its target deleted meanwhile, say — leaves that field out, with a warning, and the
+link uncommitted.
+
+`externalref` and `refbase` values already say which repository they mean: they
+are copied as they are.
+
+The snapshot keeps both perspectives of each reference ([[The sync database]]):
+comparing a side with its own past needs no translation, and a link deleted or made
+since the last sync cannot change what that past was. Translation is needed only to
+compare the two sides now, and to write.

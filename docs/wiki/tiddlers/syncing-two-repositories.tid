@@ -1,0 +1,54 @@
+title: Syncing two repositories
+tags: Sync
+kind: guide
+summary: Load both repositories, write an intents file naming what to keep in step, plan, review, run — then plan again whenever you want them in step again.
+
+!! Once
+
+Both repositories are loaded in the same daemon (`mf repo load`), and their schemas
+are identical ([[Why schemas must be identical]]). An ''intents file'' says what
+to keep in step — one query per repository, run on that repository
+([[The intents file]]):
+
+```
+[[intents]]
+repo  = "laptop"
+query = 'mfr_path ->* "/projects"'
+
+[[intents]]
+repo  = "nas"
+query = 'tag = "family"'
+```
+
+!! Each time
+
+```
+mf sync plan laptop nas --intents sync.toml
+mf sync show laptop nas
+mf sync run laptop nas
+```
+
+<<cmd "mf sync plan">> matches what the queries select to records of the other side,
+compares every linked pair, and writes the result into the plan: it prints the plan
+repository's uuid and the number of operations. A field changed on both sides is a
+''conflict'': the plan asks which side wins, unless a rule of the intents file or
+`--on-conflict` answers ([[Sync conflicts]]). Nothing in the two repositories is
+changed yet. The order of the two repositories on the command line does not
+matter.
+
+<<cmd "mf sync show">> reviews the plan: how many operations of each kind, and,
+in red, those the run would skip because a record changed since the plan
+(`--conflicts`, `--files` and `--summary` narrow it). The plan is a repository like
+any other ([[The sync plan]]): a conflict's resolution can still be changed there.
+
+<<cmd "mf sync run">> asks for a confirmation (`--yes` skips it), carries the plan
+out, and reports what it did and what it skipped ([[Running a sync]]). A skipped
+operation stays in the plan; the next `mf sync plan` sees whatever it left
+undone.
+
+<<cmd "mf sync status">> tells, per link, whether the two records are still as the
+last sync left them. The next sync only works on what changed since.
+
+!! In the GUI
+
+The [[sync panel]] does the same four steps, without a shell.

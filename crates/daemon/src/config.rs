@@ -64,7 +64,7 @@ pub struct RepoConfig {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub log_retention_keep_labels: Option<bool>,
     /// A daemon-internal repository (e.g. a cross-repo sync plan repo,
-    /// spec-sync): loaded and usable like any repo, but hidden from
+    /// doc "The sync plan"): loaded and usable like any repo, but hidden from
     /// `GET /repos` unless `?all=true`.
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub system: bool,

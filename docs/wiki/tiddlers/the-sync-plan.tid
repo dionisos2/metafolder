@@ -1,0 +1,61 @@
+title: The sync plan
+tags: Sync
+kind: reference
+aliases: [[plan repo]]
+summary: What mf sync plan writes: one metarecord per operation in a hidden plan repository, each carrying the versions it was planned against — browsable, editable, and what the run carries out.
+
+The plan lives in a repository of its own, `plan-<a>-<b>` (the pair's two uuids in
+canonical order), under the host's `.metafolder/internal/` — canonical A's, or
+`--host`'s. Each `mf sync plan` recreates it, so only the latest plan exists. It is
+a ''system'' repository: loaded beside the two, hidden from `mf repo list` unless
+`--all`. Being a repository, it is read and edited with the ordinary tools —
+queries, `mf … field set`, the GUI — which is the point of keeping it there.
+
+!! An operation
+
+One metarecord per operation, with these fields:
+
+|!Field |!Holds |
+|`plan_kind` |what to do (below) |
+|`plan_a`, `plan_b` |the two records, as `externalref` values |
+|`plan_version_a`, `plan_version_b` |the version each was read at — its ''baseline''. Absent for a bare record the run creates |
+|`plan_from` |`a` or `b`: the side a `copy`, `move` or `chmod` takes its value from. Absent when a conflict decides |
+|`plan_side` |`a` or `b`: the side a `delete` removes |
+|`plan_field`, `plan_value_a`, `plan_value_b` |a conflict's field and the two sides' values, as text |
+|`plan_resolve` |a conflict's resolution: `a`, `b` or `skip` — the field to edit |
+
+|!Kind |!Does |
+|`create-link` |links the two records, creating a bare one first |
+|`sync` |the link's metadata: every field one side changed goes to the other; a bare record is placed. Then records the link ([[Running a sync]]) |
+|`copy` |gives one side the other's content |
+|`move` |gives one side the other's position: a rename, or the trash when the other's file is gone |
+|`chmod` |gives one side the other's mode |
+|`conflict` |one per conflicting field of a link ([[Sync conflicts]]) |
+|`delete` |carries a deletion over ([[Deletion propagation]]) |
+|`drop-link` |removes a link whose two records are both gone |
+
+A metarecord without `plan_kind` records what the run needs besides: the batch
+sizes and the host ([[How a run is batched]]).
+
+!! What a link gets
+
+A link neither of whose records changed since its last sync gets nothing. Any other
+gets a `sync` op, then what the comparison of the two records asks for ([[Change detection in sync]]): a `move` when one side's position changed — or a `copy` and a
+`chmod` to give a bare record its content —, a `copy` when one side's content
+changed, a `chmod` when one side's mode changed, and a `conflict` per field changed
+on both sides.
+
+!! Reviewing it
+
+<<cmd "mf sync show">> follows each operation's records into the two repositories:
+it counts the operations by kind and lists, in red, those whose records are no
+longer at their baseline — the run will skip them. `--conflicts` lists the
+conflicts, `--files` the operations on files (`copy`, `move`, `chmod`,
+`delete`), `--summary` only the counts. The plan itself is a query away:
+
+```
+mf -u <plan> metarecord -q 'plan_kind = "conflict"' get --select '*'
+mf -u <plan> metarecord -i <op> field set plan_resolve:string=b
+```
+
+The [[sync panel]] shows the same, and edits a resolution in place.

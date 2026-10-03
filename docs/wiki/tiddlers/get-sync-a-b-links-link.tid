@@ -1,0 +1,7 @@
+title: GET /sync/:a/:b/links/:link
+tags: [[HTTP endpoint]] [[Sync endpoints]]
+kind: reference
+audience: dev
+summary: One link, with its snapshot decoded and both records inline.
+
+Bodies, answers and errors: [[Sync endpoints]].

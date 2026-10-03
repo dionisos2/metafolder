@@ -202,7 +202,7 @@ pub(super) struct InitBody {
     metafolder: Option<PathBuf>,
     #[serde(default)]
     name: Option<String>,
-    /// Create a daemon-internal repository (e.g. a sync plan repo, spec-sync):
+    /// Create a daemon-internal repository (e.g. a sync plan repo, doc "The sync plan"):
     /// hidden from `GET /repos` unless `?all=true`.
     #[serde(default)]
     system: bool,

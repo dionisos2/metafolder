@@ -1,0 +1,39 @@
+title: Sync endpoints
+tags: Sync
+kind: reference
+audience: dev
+summary: The daemon's sync primitives — a pair's links, their states, commits — and the per-record ones sync relies on; the orchestration is the clients'.
+
+The daemon never decides what to sync and never touches a file for it: it serves a
+pair's state and the fenced writes the clients' orchestration needs (`core::sync`,
+shared by `mf sync` and the GUI). Every pair route takes the two repository uuids in
+either order and answers in canonical roles, `repo_a` < `repo_b`, naming both. Both
+repositories must be loaded (`404`); a repository paired with itself is a `400`.
+
+!! A pair
+
+|!Route |!Does |
+|<<cmd "GET /sync/:a/:b/links">> |`{"repo_a", "repo_b", "host", "links": [{"uuid", "record_a", "record_b", "version_a", "version_b"}]}` — `host` is `null`, and the list empty, while the pair has no store; versions are `null` before the first commit |
+|<<cmd "POST /sync/:a/:b/links">> |links two records: `{"record_a", "record_b", "host"?}` in canonical roles → the link. Both must exist (`404`), neither be linked in the pair already (`409`). `host` names the repository to hold the store, and counts only when it creates it (default: A) |
+|<<cmd "GET /sync/:a/:b/links/:link">> |`{"link", "snapshot": [{"name", "value", "value_b", "side"}], "record_a", "record_b"}` — the snapshot decoded, both records inline (`null` when gone) |
+|<<cmd "DELETE /sync/:a/:b/links/:link">> |deletes the link → `{"deleted": true}`; with `?with_endpoint=` (`a` or `b`), that side's record first, fenced by `&expected_version=` when given ([[Deletion propagation]]) |
+|<<cmd "GET /sync/:a/:b/status">> |`{"repo_a", "repo_b", "links": [{"uuid", "state", "e_a_version", "e_b_version", "version_a", "version_b"}]}` — each link's state ([[Change detection in sync]]) |
+|<<cmd "POST /sync/:a/:b/links/commit">> |`{"commits": [{"link", "version_a", "version_b", "snapshot": […]}]}` → `{"committed": N}`, all in one transaction |
+
+A commit sets each link's two versions and replaces its snapshot ([[The sync database]]). A snapshot entry is `{"name", "value"}` plus, for a common one, the
+B-perspective uuid `value_b` of a `ref` target or a `tree_ref` parent, or a `side`
+(`a` or `b`) for one side's own value — any other side is a `400`. The versions are the
+client's: those whose state it read and wrote — no check could tell an honest one
+from a re-read, so this is the client's rule ([[Running a sync]]).
+
+!! A record
+
+|!Route |!Does |
+|<<cmd "GET /repos/:repo/metarecords/:uuid/mf-sync">> |`{"mf_sync": …}`, `internal` or `external` — the effective mode, inherited down `mfr_path` from the nearest ancestor that sets it ([[mf_sync]]); `internal` for a record with no path |
+|<<cmd "POST /repos/:repo/metarecords/:uuid/refresh">> |re-reads the record's file now ([[Refreshing a record]]) |
+
+And the ordinary routes, with what sync takes from them: a metarecord created at a
+uuid the client chose (`POST /repos/:repo/metarecords` with `uuid`, `409` when taken
+— a bare record), `?expected_version=` on every single-record write ([[Conditional writes]]), `POST /repos/:repo/tree/resolve-path` to find a record by its position,
+`POST /repos/init` with `"system": true` for the plan repository, and
+`GET /repos?all=true` to see it.

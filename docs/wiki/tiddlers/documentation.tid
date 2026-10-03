@@ -20,7 +20,8 @@ What it gives you:
 * a metarecord that ''follows its file'' — renamed, moved, edited, or deleted — once its folder is tracked ([[File tracking]]);
 * fields of your own on anything, and ''queries'' over them, over references and over trees ([[Query]]);
 * a ''history'' of every change, yours and the watcher's, to undo, revert or navigate ([[Event log]]);
-* a trash that keeps the bytes and the metadata together ([[Trash]]), duplicate detection ([[Duplicates]]), hierarchical tags ([[Hierarchical tags]]).
+* a trash that keeps the bytes and the metadata together ([[Trash]]), duplicate detection ([[Duplicates]]), hierarchical tags ([[Hierarchical tags]]);
+* two repositories kept in step, metadata and files, through a plan you review first ([[Sync]]).
 
 !! Start here
 
@@ -44,6 +45,7 @@ What it gives you:
 * [[Security]] — session tokens, sandboxed decoders, no network
 * [[Slow log]] — the operations that took too long, and where their time went
 * [[Storage]] — the on-disk store behind each repository: checks, backups, how it answers queries
+* [[Sync]] — keeping two repositories in step: links, plans, runs, conflicts
 * [[Tasks]] — the daemon's long work, observable and often stoppable
 * [[Trash]] — the per-repository bin: trashing, restoring, undoing
 

@@ -1,0 +1,7 @@
+title: mf sync show
+tags: [[CLI command]] Sync
+kind: reference
+summary: Review the current plan: operations by kind, and those the run would skip.
+
+Follows each operation's records into the two repositories, and flags in red those
+no longer at the version they were planned against ([[The sync plan]]).

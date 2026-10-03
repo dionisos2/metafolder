@@ -1,0 +1,6 @@
+title: sync:run
+tags: [[GUI command]] Sync
+kind: reference
+summary: Sync: run the plan
+
+See [[sync panel]] and [[Running a sync]].

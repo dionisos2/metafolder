@@ -1,0 +1,21 @@
+title: Cross-machine sync
+tags: Sync
+kind: reference
+status: deferred
+summary: Syncing with a repository on another machine is not built: both repositories must be loaded in one daemon, and a store may not live on a network filesystem.
+
+Every sync primitive needs both repositories loaded in the same daemon
+([[Sync endpoints]]), and a repository's store is refused on a network filesystem
+([[Storage safety]]): mounting a remote repository over SSHFS and loading it is not
+an option.
+
+The way proposed (September 2026) is to bring the remote repository's store over for
+the sync:
+
+# copy the remote `.metafolder/` to the local disk, as an external `.metafolder` whose root is the mount of the remote files — its roots rewritten, its store copied consistently (`mf repo backup`);
+# sync against that local copy, as against any loaded repository;
+# send the synced `.metafolder/` back, replacing the remote one.
+
+Nothing may write to the remote repository in between, or step 3 loses it: the copy
+would hold a lock on the remote — a marker its daemon refuses to load past, lifted by
+step 3. Neither the commands nor that lock exist.

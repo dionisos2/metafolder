@@ -1,0 +1,19 @@
+title: How a run is batched
+tags: Sync
+kind: reference
+summary: A run works through its links in batches — at most commit-batch-size links, fewer when they hold transfer-batch-size copies — each committed on its own, so a crash costs one batch.
+
+A batch takes links in order (parents first) until it holds `commit-batch-size`
+links, or until those links hold `transfer-batch-size` `copy` operations, whichever
+comes first. Each batch runs its metadata, then its files, then one
+`POST …/links/commit` ([[Running a sync]]). A crash in the middle of a batch leaves
+its links uncommitted: the next plan finds them, and redoes what it must — the
+transfers being the slow part, they bound the batch.
+
+Both sizes come from the intents file's `[settings]` ([[The intents file]]): 50 and
+20 by default. The plan records them — and the host chosen for the sync database —
+in a metarecord of the plan repository with no `plan_kind`, since the run does not
+read the intents file. A plan from before they were recorded runs with the
+defaults.
+
+The defaults were not measured ([[Sync open questions]]).

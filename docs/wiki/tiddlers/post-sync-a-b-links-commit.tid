@@ -1,0 +1,7 @@
+title: POST /sync/:a/:b/links/commit
+tags: [[HTTP endpoint]] [[Sync endpoints]]
+kind: reference
+audience: dev
+summary: Records links' new versions and snapshots, in one transaction.
+
+Bodies, answers and errors: [[Sync endpoints]].

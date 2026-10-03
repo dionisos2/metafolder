@@ -1,0 +1,48 @@
+title: Matching records across repositories
+tags: Sync
+kind: reference
+summary: An in-scope record gets linked to the record at the same path on the other side — or to a bare record created for it; content is never what matches.
+
+A link joins one record of each repository, one to one; once made, it follows
+both records whatever happens to their paths. The plan's ''linking phase'' looks for
+a counterpart for each in-scope record that has no link yet — first A's records
+into B, then B's into A.
+
+!! By position
+
+A record's identity is its position in each forest it sits in: the path of each
+of its `tree_ref` fields ([[TreeRef forest]]) — `mfr_path` for a file, the tag
+forest for a tag. A position holds one record, so the path names at most one
+counterpart.
+
+* ''One position'' (a file, a tag): the record at that path on the other side, found through `tree/resolve-path` — any forest, whatever its root convention ([[TreeRef path conventions]]). None there: a ''bare'' record is planned, created by the run and placed at that path by the link's first sync.
+* ''Several positions'': each position's occupant on the other side. Two different occupants, or one that already sits elsewhere in a forest where this record's position is free, is an ''incoherence'': the plan stops and names the record and its positions, so that no half-plan is written; `mf sync link` settles it by hand. One occupant, otherwise: linked to it. None: a bare record.
+
+''Content is never what matches'': a file moved on one side before it was ever
+linked is matched by its new path. When that duplicates it, delete the copy you do
+not want in one repository; the next sync carries that deletion over.
+
+!! Without a position
+
+A record with no `tree_ref` field (an abstract record, an orphan whose path is
+gone) is linked to the one record of the other side with ''exactly'' the same
+fields — `mfr_*` fields and references aside —, that has no position and no link
+either. None, or more than one: a bare record. The other side is searched to the
+end of its pages, stopping at the second match: the one record that qualifies can
+sit anywhere in a result ordered by uuid.
+
+!! Closing over references
+
+A reference must have a counterpart to be written on the other side ([[Ref translation during sync]]). So the linking phase follows the `ref` fields of every
+record it is going to sync: a target outside the scope, with no position and no
+link, is linked to a bare record created for it — that link is the only memory of
+the correspondence. A target with a position needs nothing: it is found, or made,
+by its path when the reference is written. Only the fields the diff writes are
+followed ([[What sync copies]]): a reference held in another `mfr_*` field is
+never synced, so nothing is made for it ([[Duplicates and sync]]).
+
+!! By hand
+
+<<cmd "mf sync link">> links two records you name; <<cmd "mf sync unlink">>
+removes a link, optionally deleting one of its records. Links are otherwise removed
+only by a deletion carried over ([[Deletion propagation]]).
