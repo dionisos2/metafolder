@@ -1372,6 +1372,55 @@ impl Apply<'_, '_> {
     }
 }
 
+/// Re-reads one record's file from disk *now*: every stat field that differs
+/// from the stored one is written, and a size or mtime change also drops what
+/// was derived from the old content — the hashes and the duplicate group —
+/// exactly as the watcher's data refresh does (doc "Refreshing a record").
+///
+/// Writing nothing when the stored stat already matches is the point: the
+/// watcher's own event for the same change then finds the database in the state
+/// it describes and writes nothing either (its refresh is idempotent on size +
+/// mtime), so the record's version does not move a second time. A cross-repo
+/// sync calls it right after its own file operations for exactly that reason
+/// (spec-sync "Suppressing sync's own echoes").
+///
+/// Unlike the watcher's refresh, the *whole* stat set is written, not only the
+/// size and mtime: a record created before its file — a sync's bare record —
+/// has none of them yet.
+pub(crate) fn refresh_from_disk(
+    writer: &mut Writer,
+    root: &std::path::Path,
+    uuid: Uuid,
+    abs: &std::path::Path,
+) -> Result<()> {
+    let stat = fs_meta::stat_fields_in(root, abs)?;
+    let stored = |writer: &Writer, name: &str| -> Result<Vec<Value>> {
+        Ok(Rows::rows_named(writer.store(), uuid, name)?.into_iter().map(|r| r.value).collect())
+    };
+    let new_of = |name: &str| stat.iter().find(|f| f.name == name).map(|f| f.value.clone());
+    let mut content_changed = false;
+    for name in ["mfr_size", "mfr_mtime"] {
+        content_changed |= stored(writer, name)?.into_iter().next() != new_of(name);
+    }
+    for field in &stat {
+        if stored(writer, &field.name)? == [field.value.clone()] {
+            continue;
+        }
+        writer.set_field_as(OpType::FileModified, uuid, &field.name, field.value.clone())?;
+    }
+    clear_absent_conditional_stat_fields(writer, uuid, &stat)?;
+    if content_changed {
+        for name in crate::fingerprint::CONTENT_DERIVED_FIELDS {
+            if *name == crate::duplicates::GROUP_FIELD {
+                continue;
+            }
+            writer.clear_field_as(OpType::FileModified, uuid, name)?;
+        }
+        crate::duplicates::leave_group(writer, OpType::FileModified, uuid)?;
+    }
+    Ok(())
+}
+
 /// Writes the *disappearance* of the conditional stat fields — today only
 /// `mfr_inode`, which a file carries while it has more than one name.
 ///

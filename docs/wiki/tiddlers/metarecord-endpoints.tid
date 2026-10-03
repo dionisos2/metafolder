@@ -19,6 +19,7 @@ query ([[Query endpoints]]). They overlap only on one metarecord (its URL, or a 
 |<<cmd "GET /repos/:repo/metarecords/:uuid/fields/:name">> |`{"name", "values": […]}` — empty when the field is unknown |
 |<<cmd "PUT /repos/:repo/metarecords/:uuid/fields/:name">> |sets the field: `{"value"}` or `{"values": […]}`, exactly one, `"force"?` → the metarecord |
 |<<cmd "DELETE /repos/:repo/metarecords/:uuid/fields/:name">> |unsets it (every row goes; the field becomes unknown) → `204` |
+|<<cmd "POST /repos/:repo/metarecords/:uuid/refresh">> |re-reads its file now, as the watcher would → the metarecord ([[Refreshing a record]]) |
 |<<cmd "GET /repos/:repo/fields/:id">> |one row by its id alone: `{"id", "name", "value"}`; `404` when unknown |
 |<<cmd "PATCH /repos/:repo/fields/:id">> |changes its name and/or value, keeping the id: `{"name"?, "value"?, "force"?}`; `400` if it would duplicate a sibling |
 |<<cmd "DELETE /repos/:repo/fields/:id">> |deletes the row: `{"force"?}` → `204` |
@@ -27,7 +28,7 @@ query ([[Query endpoints]]). They overlap only on one metarecord (its URL, or a 
 
 The whole-record `PUT` is a literal overwrite: fields not listed go, `mfr_*` and
 `mf_*` included — a careless one untracks a file. Read the metarecord first to keep
-what should stay. The single-record writes take `?expected_version=`
+what should stay. The single-record writes (the refresh included) take `?expected_version=`
 ([[Conditional writes]]). A reserved name needs `force` ([[Reserved fields]]); a
 schema violation is a `400` with a `violations` array ([[Delta validation]]).
 

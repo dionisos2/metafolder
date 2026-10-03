@@ -1,0 +1,8 @@
+title: POST /repos/:repo/metarecords/:uuid/refresh
+tags: [[HTTP endpoint]] [[Metarecord endpoints]]
+kind: reference
+audience: dev
+summary: Re-reads one record's file from disk now, as the watcher would, and answers the record.
+
+What it writes and why: [[Refreshing a record]]. Bodies, answers and errors:
+[[Metarecord endpoints]].

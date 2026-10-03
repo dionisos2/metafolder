@@ -5,7 +5,7 @@ audience: dev
 summary: ?expected_version= makes a single-record write fail with 409 when the metarecord changed since it was read.
 
 The single-record writes — whole-record `PUT`, metarecord `DELETE`, field `POST`,
-field `PUT` and `DELETE` by name — take an optional `?expected_version=<n>`. When the
+field `PUT` and `DELETE` by name, the [[refresh|Refreshing a record]] — take an optional `?expected_version=<n>`. When the
 metarecord's current version differs, the write is refused with `409`: nothing
 written, no revision. It is the optimistic-concurrency primitive sync's propagation
 uses, so that a concurrent user write is never overwritten; any client may use it

@@ -1,0 +1,28 @@
+title: Refreshing a record
+tags: [[Data model]]
+kind: reference
+summary: POST …/refresh makes one record agree with its file now, with the watcher's semantics, so the watcher's own event for the same change writes nothing.
+audience: dev
+
+
+<<cmd "POST /repos/:repo/metarecords/:uuid/refresh">> `[?expected_version=<n>]`
+stats the file at the record's path and writes, in one revision, every stat field
+that differs from the stored one ([[File metadata fields]]). When the size or the
+mtime moved, what was derived from the old content goes with it — the hashes and
+the duplicate group — as on a watcher `Modify(Data)` ([[Event semantics]]). It
+answers the metarecord, version included.
+
+A state the record is already in writes nothing, so the version does not move:
+the call is idempotent, and so is the watcher's refresh that follows it for the
+same change. That is its use: a client that has just written a file itself (a
+cross-repo sync copying, moving or re-moding one) refreshes the target record at
+once, gets the version that describes the file, and the watcher's echo of that
+same write then finds nothing to do. Without it the echo would arrive a quiet
+period later and move the version the client had just recorded.
+
+It differs from the watcher's refresh in one way: it writes the ''whole'' stat set
+(`mfr_type`, `mfr_permissions`, …), not only the size and mtime — a record created
+before its file exists has none of them yet.
+
+It is a single-record write: `?expected_version=` fences it ([[Conditional writes]]).
+A record with no path, or no entry on disk at it, is a `400`; nothing is written.

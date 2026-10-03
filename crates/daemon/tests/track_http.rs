@@ -243,3 +243,113 @@ async fn test_single_metarecord_reconcile_endpoint() {
 
     std::fs::remove_dir_all(root).unwrap();
 }
+
+/// `POST …/metarecords/:uuid/refresh` re-reads a record's file *now*, with the
+/// watcher's semantics, and answers the record it left — so a client that has
+/// just written a file can make the database agree with it before the
+/// watcher's own event arrives (spec-sync "Suppressing sync's own echoes").
+#[tokio::test]
+async fn test_refresh_rereads_the_file_now() {
+    let (app, repo, root) = setup("refresh").await;
+    std::fs::write(root.join("f.txt"), b"one").unwrap();
+    let (status, body) = request(
+        &app,
+        "POST",
+        &format!("/repos/{repo}/track"),
+        Some(json!({"path": root.join("f.txt").to_str().unwrap()})),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "track failed: {body}");
+    let uuid = body["uuid"].as_str().unwrap().to_string();
+    // A hash the content change must invalidate.
+    let (status, _) = request(
+        &app,
+        "PUT",
+        &format!("/repos/{repo}/metarecords/{uuid}/fields/mfr_partial_hash"),
+        Some(json!({"value": {"type": "string", "value": "abc"}, "force": true})),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    let before = get_metarecord(&app, &repo, &uuid).await;
+
+    // New content, new size.
+    std::fs::write(root.join("f.txt"), b"three").unwrap();
+    let refresh = format!("/repos/{repo}/metarecords/{uuid}/refresh");
+    let (status, after) = request(&app, "POST", &refresh, None).await;
+    assert_eq!(status, StatusCode::OK, "refresh failed: {after}");
+    assert_eq!(after["uuid"], uuid, "answers the record: {after}");
+    assert_eq!(field(&after, "mfr_size").unwrap()["value"], 5);
+    assert_eq!(field(&after, "mfr_partial_hash"), None, "a content change drops the hashes");
+    assert_ne!(after["version"], before["version"]);
+
+    // Nothing changed since: the same state, the same version — which is what
+    // makes the watcher's echo of a write the client already refreshed a no-op.
+    let (status, again) = request(&app, "POST", &refresh, None).await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(again["version"], after["version"], "idempotent: {again}");
+
+    // Fenced like every single-record write.
+    let (status, body) =
+        request(&app, "POST", &format!("{refresh}?expected_version=12345"), None).await;
+    assert_eq!(status, StatusCode::CONFLICT, "stale expected_version: {body}");
+    let (status, _) =
+        request(&app, "POST", &format!("{refresh}?expected_version={}", after["version"]), None)
+            .await;
+    assert_eq!(status, StatusCode::OK);
+
+    // Nothing on disk to read: refused, the record untouched.
+    std::fs::remove_file(root.join("f.txt")).unwrap();
+    let (status, body) = request(&app, "POST", &refresh, None).await;
+    assert_eq!(status, StatusCode::BAD_REQUEST, "missing file: {body}");
+    // A record with no path at all: refused too.
+    let (_, abstract_record) = request(
+        &app,
+        "POST",
+        &format!("/repos/{repo}/metarecords"),
+        Some(json!({"fields": [{"name": "label", "value": {"type": "string", "value": "x"}}]})),
+    )
+    .await;
+    let (status, _) = request(
+        &app,
+        "POST",
+        &format!("/repos/{repo}/metarecords/{}/refresh", abstract_record["uuid"].as_str().unwrap()),
+        None,
+    )
+    .await;
+    assert_eq!(status, StatusCode::BAD_REQUEST);
+}
+
+/// A record created bare — by a cross-repo sync, which writes the metadata
+/// before the file exists — gets *every* stat field from its first refresh,
+/// not only the size and mtime a watcher refresh updates.
+#[tokio::test]
+async fn test_refresh_fills_a_bare_record() {
+    let (app, repo, root) = setup("refreshbare").await;
+    let (_, roots) =
+        request(&app, "GET", &format!("/repos/{repo}/tree/roots?field=mfr_path"), None).await;
+    let root_uuid = roots[0]["uuid"].as_str().unwrap().to_string();
+    let (status, created) = request(
+        &app,
+        "POST",
+        &format!("/repos/{repo}/metarecords"),
+        Some(json!({"fields": [{"name": "mfr_path", "value": {"type": "tree_ref",
+            "value": {"parent": root_uuid, "name": "new.txt"}}}], "force": true})),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{created}");
+    std::fs::write(root.join("new.txt"), b"hello").unwrap();
+
+    let (status, after) = request(
+        &app,
+        "POST",
+        &format!("/repos/{repo}/metarecords/{}/refresh", created["uuid"].as_str().unwrap()),
+        None,
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{after}");
+    assert_eq!(field(&after, "mfr_type").unwrap()["value"], "file");
+    assert_eq!(field(&after, "mfr_size").unwrap()["value"], 5);
+    assert!(field(&after, "mfr_mtime").is_some());
+    #[cfg(unix)]
+    assert!(field(&after, "mfr_permissions").is_some());
+}

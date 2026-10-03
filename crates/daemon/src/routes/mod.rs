@@ -79,6 +79,7 @@ pub fn build(state: Arc<AppState>) -> Router {
             get(resolve_record_field_tree),
         )
         .route("/repos/:repo/metarecords/:uuid/mf-sync", get(get_record_mf_sync))
+        .route("/repos/:repo/metarecords/:uuid/refresh", post(refresh_record))
         .route(
             "/repos/:repo/fields/:id",
             get(get_field_by_id).patch(patch_field_by_id).delete(delete_field_by_id),

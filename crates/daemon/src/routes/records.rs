@@ -399,6 +399,35 @@ pub(super) async fn unset_record_field(
     Ok(StatusCode::NO_CONTENT)
 }
 
+/// `POST /repos/:repo/metarecords/:uuid/refresh` — re-read the record's file
+/// now, as the watcher would, and answer the record (doc "Refreshing a
+/// record"). `400` when the record has no path or nothing is on disk there.
+pub(super) async fn refresh_record(
+    State(state): State<Arc<AppState>>,
+    Path((repo, uuid)): Path<(String, String)>,
+    Query(ev): Query<ExpectedVersion>,
+) -> Result<Json<MetaRecord>, ApiError> {
+    let repo_uuid = parse_uuid(&repo)?;
+    let uuid = parse_uuid(&uuid)?;
+    let repo_state = state.repo(repo_uuid)?;
+    let root = repo_state.config.root.clone();
+    let cache = repo_state.tree();
+    write_record_checked(&state, repo_uuid, uuid, ev.expected_version, move |writer| {
+        ensure_exists(writer.store(), uuid)?;
+        let Some(path) = cache.path_of(writer.store(), "mfr_path", uuid)? else {
+            return Err(ApiError::bad_request(format!("metarecord {uuid} has no path")));
+        };
+        let abs = crate::relpath::RelPath::from_display(&path).to_abs(&root);
+        if !metafolder_core::fsentry::path_present(&abs) {
+            return Err(ApiError::bad_request(format!("nothing on disk at {path}")));
+        }
+        crate::executor::refresh_from_disk(writer, &root, uuid, &abs)?;
+        Ok(Vec::new())
+    })
+    .await
+    .map(Json)
+}
+
 #[derive(Deserialize)]
 pub(super) struct SetRecordBody {
     fields: Vec<Field>,
