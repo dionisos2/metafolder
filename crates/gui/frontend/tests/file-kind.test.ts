@@ -68,7 +68,7 @@ describe('file panel — the kind comes from the content', () => {
     vi.stubGlobal(
       'fetch',
       vi.fn(async (input: RequestInfo | URL) => {
-        const url = String(input);
+        const url = input instanceof Request ? input.url : input.toString();
         if (url.includes('/document/info')) {
           return { ok: true, status: 200, json: async () => ({ pages: 2 }) };
         }

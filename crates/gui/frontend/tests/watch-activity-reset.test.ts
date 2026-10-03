@@ -12,7 +12,7 @@ import { store } from '../src/lib/store.svelte';
 
 const { invoked, daemon } = vi.hoisted(() => ({
   invoked: [] as { cmd: string; args: any }[],
-  daemon: { status: 200, body: {} as unknown },
+  daemon: { status: 200, body: {} },
 }));
 
 vi.mock('../src/lib/ipc', () => ({
