@@ -518,5 +518,25 @@ number = n:NUMBER "MB" => {num($n) * 1048576}
             r#"tag -> (mf_schema = "tag" AND path =>* "littérature/poésie")"#
         );
         assert_eq!(expand(&g, "genre=électro").unwrap(), r#"genre = "électro""#);
+        // `#!X`: the records that *deny* a tag (a `negative_tag` ref), found
+        // fuzzily like `#X` — an answer, unlike `! #X`, which also holds every
+        // record never asked.
+        assert_eq!(
+            expand(&g, "#!le_tag").unwrap(),
+            r#"negative_tag -> (mf_schema = "tag" AND osm(path, "le_tag"))"#
+        );
+        assert_eq!(
+            expand(&g, "#!musique/jazz").unwrap(),
+            r#"negative_tag -> (mf_schema = "tag" AND osm(path, "musique jazz"))"#
+        );
+        assert_eq!(
+            expand(&g, "! #jazz").unwrap(),
+            r#"NOT tag -> (mf_schema = "tag" AND osm(path, "jazz"))"#
+        );
+        // The records never asked: neither the tag nor its denial.
+        assert_eq!(
+            expand(&g, "! #jazz ! #!jazz").unwrap(),
+            r#"NOT tag -> (mf_schema = "tag" AND osm(path, "jazz")) AND NOT negative_tag -> (mf_schema = "tag" AND osm(path, "jazz"))"#
+        );
     }
 }

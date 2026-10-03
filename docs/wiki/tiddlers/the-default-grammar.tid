@@ -33,7 +33,7 @@ from numbers.
 |`f ?`, `f !?`, `f ??` |`f IS PRESENT`, `f IS ABSENT`, `f IS UNKNOWN` |
 |`under v` |`mfr_path ->* "v"` — `v` a word or a quoted string, so a path is quoted |
 |`modified`/`created` + `younger`, `older`, `since`, `before`, `between … and …` |[[Dates in simplified queries]] |
-|`#v`, `#=v`, `##=v` |[[Tag syntax in simplified queries]] |
+|`#v`, `#=v`, `##=v`, `#!v` |[[Tag syntax in simplified queries]] |
 |a uuid |that uuid — the DSL's own uuid atom |
 |`f -> <uuid>` |`f -> (<uuid>)`: the records pointing at it |
 |`fav` |`rating >= 4` — an example rule; adapt it |

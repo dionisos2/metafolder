@@ -1,7 +1,7 @@
 title: Tag syntax in simplified queries
 tags: [[Simplified query language]]
 kind: reference
-summary: #X finds a tag by fuzzy path, #=P a tag and its subtree by full path, ##=P exactly one tag.
+summary: #X finds a tag by fuzzy path, #=P a tag and its subtree by full path, ##=P exactly one tag, #!X the records that deny a tag.
 
 The default grammar has three tag forms. All select the records whose `tag` ref points
 at a tag entry (`mf_schema = "tag"`) chosen by its `path` ([[Hierarchical tags]]):
@@ -10,6 +10,7 @@ at a tag entry (`mf_schema = "tag"`) chosen by its `path` ([[Hierarchical tags]]
 |`#jazz` |a tag found ''fuzzily'' along its path — name a leaf without its ancestors |`tag -> (mf_schema = "tag" AND osm(path, "jazz"))` |
 |`#=music/jazz` |that tag ''and every tag below it'', by full path from the root |`… path =>* "music/jazz"` |
 |`##=music/jazz` |''exactly'' that tag |`… path = "music/jazz"` |
+|`#!jazz` |the records that ''deny'' a tag found fuzzily, like `#jazz` (a `negative_tag` ref) |`negative_tag -> (mf_schema = "tag" AND osm(path, "jazz"))` |
 
 In `#X`, a `/` separates ordered-substring terms rather than anchoring a path:
 `#mu/ja` matches a path holding `mu` then `ja`, in order, not necessarily contiguous nor
@@ -19,6 +20,13 @@ quotes ([[Simplified grammar notation]]). `#=` and `##=` take an unquoted slash-
 distinct tokens, so their order in the grammar does not matter.
 
 To negate, keep a space — `! #jazz`: `!#` lexes as one symbol.
+
+`! #jazz` and `#!jazz` are not the same question. `! #jazz` holds every record without
+the tag, including the ones never asked about it; `#!jazz` only those that answered
+''no'' — `mf tag deny`, or the tagging scripts ([[Hierarchical tags]]). The records not
+yet asked are `! #jazz AND ! #!jazz`. Like `#jazz`, `#!jazz` looks at the tag named and
+not its neighbours: denying `music` also says "not jazz"
+([[Tag subsumption and exclusivity]]), but a record denying only `music` is found by `#!music`, not `#!jazz`.
 
 `#=` exists because tagging a record with a narrower tag drops the broader one, so
 "music/jazz or anything under it" is the question usually meant. Before August 2026

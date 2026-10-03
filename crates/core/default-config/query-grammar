@@ -53,11 +53,15 @@ predicate =
   # value to match one contiguous substring (`#"jeux video"`). `#=P` / `##=P`
   # anchor the *full* path from the root: `#=` its subtree, `##=` that exact
   # node; an unquoted slash-path is fine (`#=musique/jazz`). Distinct tokens
-  # under maximal munch (`#` vs `#=` vs `##=`), so their order is immaterial. To
-  # negate, keep a space: `! #musique` (a bare `!#` lexes as one symbol).
+  # under maximal munch (`#` vs `#=` vs `##=` vs `#!`), so their order is
+  # immaterial. To negate, keep a space: `! #musique` (a bare `!#` lexes as one
+  # symbol) — every record without the tag, the ones never asked included.
+  # `#!X` is the other question: the records that *deny* the tag (a
+  # `negative_tag` ref), found fuzzily like `#X`.
   | "##=" v:tagpath         => tag -> (mf_schema = "tag" AND path = {str($v)})
   | "#="  v:tagpath         => tag -> (mf_schema = "tag" AND path =>* {str($v)})
   | "#"   v:tagosm          => tag -> (mf_schema = "tag" AND osm(path, {str($v)}))
+  | "#!"  v:tagosm          => negative_tag -> (mf_schema = "tag" AND osm(path, {str($v)}))
   # A pasted UUID — 32 hex characters, what the GUI's `Copy UUID` puts on the
   # clipboard — selects that one metarecord. `tag->UUID` selects the records
   # whose `tag` (or any ref field) points *at* it instead.
