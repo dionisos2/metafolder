@@ -30,6 +30,7 @@ fn setup() -> (tempfile::TempDir, axum::Router) {
         commands: Arc::new(server::command_wait::CommandWait::new()),
         bench: Arc::new(server::bench::BenchBuffer::new()),
         repo_list_cache_ttl: std::time::Duration::from_secs(3),
+        video_thumbnail_percent: 10.0,
     };
     let router = server::build_router_authenticated(state, TOKEN.into());
     (dir, router)

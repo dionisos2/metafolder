@@ -465,6 +465,7 @@ pub fn run(options: Options) {
                     commands: command_wait,
                     bench,
                     repo_list_cache_ttl: settings.repo_list_cache_ttl(),
+                    video_thumbnail_percent: settings.video_thumbnail_percent,
                 },
                 gui_token.clone(),
                 gui_port,

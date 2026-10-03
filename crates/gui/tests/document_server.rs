@@ -91,6 +91,7 @@ fn router_for(daemon_url: String, config_dir: &Path) -> axum::Router {
         // No repository-list caching: the cache is process-wide, so with a
         // TTL these tests would read each other's stub daemons.
         repo_list_cache_ttl: std::time::Duration::ZERO,
+        video_thumbnail_percent: 10.0,
     };
     server::build_router(state)
 }

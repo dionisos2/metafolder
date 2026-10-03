@@ -64,6 +64,9 @@ pub struct ServerState {
     /// How long the thumbnail server reuses the fetched repository list before
     /// re-querying the daemon (config.toml `[settings]`).
     pub repo_list_cache_ttl: std::time::Duration,
+    /// Where a video's poster frame is taken, in percent of its duration
+    /// (config.toml `[settings] video-thumbnail-percent`).
+    pub video_thumbnail_percent: f64,
 }
 
 pub fn build_router(state: ServerState) -> Router {

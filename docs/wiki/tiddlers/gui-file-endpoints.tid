@@ -94,7 +94,13 @@ file: a folder of a thousand such files costs one probe, once.
 * A file without an `ftyp` box has no brand, so nothing to keep an answer under: it is never probed, and stays ''no preview available'' ([[file panel]]).
 
 `/thumbnail` makes a poster for a `video`, a `gif` and a `document`; `/document*`
-answers for a `document`. A panel gets the kind from `metafolder.fs.stat(path).kind`
+answers for a `document`. A video's poster is the frame at `video-thumbnail-percent`
+of its duration (`[settings]`, [[GUI configuration]]; 10 % by default), past the black
+lead-in or the title card a first frame often is: a sandboxed `ffprobe` reads the
+duration first, and when it cannot the frame is taken at 1 s. Either way a seek that
+finds no frame falls back to the first one. A GIF's still is taken near its start. The
+position is part of the cache key, so another value makes new posters — though the
+WebView may show those it already fetched for up to a day (`Cache-Control: max-age`). A panel gets the kind from `metafolder.fs.stat(path).kind`
 ([[The metafolder API]]), which is how the [[file panel]] chooses its preview.
 
 Extensions were used before, from lists kept in three places — the panel's

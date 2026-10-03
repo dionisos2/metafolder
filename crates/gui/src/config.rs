@@ -51,6 +51,9 @@ pub struct Settings {
     /// `0` turns the GUI's side of the log off. The daemon has its own,
     /// separate threshold.
     pub slow_operation_threshold_ms: u64,
+    /// Where a video's thumbnail frame is taken, in percent of its duration
+    /// (0–100): far enough in to pass a black lead-in or a title card.
+    pub video_thumbnail_percent: f64,
 }
 
 impl Default for Settings {
@@ -60,6 +63,7 @@ impl Default for Settings {
             reconcile_poll_ms: 200,
             repo_list_cache_ttl_secs: 3,
             slow_operation_threshold_ms: metafolder_core::slowlog::DEFAULT_THRESHOLD_MS,
+            video_thumbnail_percent: 10.0,
         }
     }
 }
@@ -214,6 +218,20 @@ impl GuiConfig {
     }
 }
 
+impl GuiConfig {
+    /// The checks a value's type cannot make: a malformed file is a hard
+    /// startup error (doc "No runtime fallback"), not a silently clamped one.
+    pub fn validate(&self) -> Result<(), String> {
+        let percent = self.settings.video_thumbnail_percent;
+        if !(0.0..=100.0).contains(&percent) {
+            return Err(format!(
+                "[settings] video-thumbnail-percent must be between 0 and 100, got {percent}"
+            ));
+        }
+        Ok(())
+    }
+}
+
 impl Settings {
     /// The daemon health poll interval as a [`std::time::Duration`].
     pub fn daemon_health_poll(&self) -> std::time::Duration {
@@ -281,7 +299,10 @@ impl ConfigDir {
     /// `metafolder-sync-config` has run.
     pub fn load_config(&self) -> Result<GuiConfig, String> {
         let src = metafolder_core::config::read_required(&self.config_path())?;
-        toml::from_str(&src).map_err(|e| format!("invalid GUI config file: {e}"))
+        let config: GuiConfig =
+            toml::from_str(&src).map_err(|e| format!("invalid GUI config file: {e}"))?;
+        config.validate().map_err(|e| format!("invalid GUI config file: {e}"))?;
+        Ok(config)
     }
 
     // ── Keybindings ──────────────────────────────────────────────────────
@@ -672,12 +693,29 @@ mod tests {
         assert_eq!(empty.settings.daemon_health_poll_secs, 5);
         assert_eq!(empty.settings.reconcile_poll_ms, 200);
         assert_eq!(empty.settings.repo_list_cache_ttl_secs, 3);
+        assert_eq!(empty.settings.video_thumbnail_percent, 10.0);
 
         let parsed: GuiConfig =
             toml::from_str("[settings]\ndaemon-health-poll-secs = 12\n").unwrap();
         assert_eq!(parsed.settings.daemon_health_poll_secs, 12);
         // Unspecified keys keep their defaults.
         assert_eq!(parsed.settings.reconcile_poll_ms, 200);
+    }
+
+    #[test]
+    fn test_video_thumbnail_percent_is_read_and_bounded() {
+        let parsed: GuiConfig =
+            toml::from_str("[settings]\nvideo-thumbnail-percent = 25\n").unwrap();
+        assert_eq!(parsed.settings.video_thumbnail_percent, 25.0);
+        assert!(parsed.validate().is_ok());
+        let float: GuiConfig =
+            toml::from_str("[settings]\nvideo-thumbnail-percent = 2.5\n").unwrap();
+        assert_eq!(float.settings.video_thumbnail_percent, 2.5);
+        for bad in ["-1", "100.5", "nan"] {
+            let parsed: GuiConfig =
+                toml::from_str(&format!("[settings]\nvideo-thumbnail-percent = {bad}\n")).unwrap();
+            assert!(parsed.validate().is_err(), "{bad} must be refused");
+        }
     }
 
     #[test]

@@ -57,6 +57,12 @@ repo-list-cache-ttl-secs = 3
 # daemon. 0 turns the GUI's side of the log off. Default: 2000.
 slow-operation-threshold-ms = 2000
 
+# Where a video's thumbnail is taken, in percent of its duration (0–100): far
+# enough in to pass a black lead-in or a title card. A video whose duration
+# cannot be read gets the frame at 1 s. A change makes new thumbnails, though
+# the GUI may show the ones it already fetched for up to a day. Default: 10.
+video-thumbnail-percent = 10
+
 # Shared panel UX timing knobs, handed to every panel. Every key optional.
 [panels]
 

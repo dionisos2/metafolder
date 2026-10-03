@@ -15,7 +15,7 @@ browsing a directory. So every decoder is confined.
 !! The helpers
 
 `ffmpeg` (video posters, `GET /thumbnail`), `ffprobe` (the kind of a container of an
-unlisted brand, [[GUI file endpoints]]), `pdftoppm` and `pdfinfo` (document
+unlisted brand, and a video's duration for its poster, [[GUI file endpoints]]), `pdftoppm` and `pdfinfo` (document
 tiles and previews, `GET /document*`) and `gst-discoverer-1.0` (the codec probe,
 `GET /__media-probe`) run under `bwrap` (`crates/gui/src/sandbox.rs`):
 

@@ -16,7 +16,7 @@ panels.
 |`gui-port` |the port the GUI's own server binds (default 7524); `--gui-port` overrides it, and `mf gui` reads this same value — there is no port file to discover |
 |`open-with` |the programs `file:open-with` offers to open a file with (completion candidates, not a whitelist; default: the desktop's handler) |
 |`[page-size]` |how many rows or tiles each list panel loads per window, by panel type: `metarecord-list` 100, `file` 150, `file-manager` and `treeref` 200 |
-|`[settings]` |timings of the GUI itself: the daemon health poll, a reconcile's completion poll, the repository-list cache, and the GUI's slow-log threshold ([[Slow log configuration]]) |
+|`[settings]` |timings of the GUI itself: the daemon health poll, a reconcile's completion poll, the repository-list cache, the GUI's slow-log threshold ([[Slow log configuration]]), and where a video's thumbnail is taken (`video-thumbnail-percent`, [[GUI file endpoints]]) |
 |`[panels]` |timings shared by every panel: the finder's and the live preview's debounce, the repos panel's task poll; `status-message-ms` and `status-error-ms` are left without effect since status messages stopped clearing themselves ([[Status bar and task bar]]) |
 |`[ref-seeds]` |how the targets of a `ref` field are named where a value is typed or shown: which metarecords (a query) and by which columns, per field, `*` being the default rule ([[Ref value seeds]]) |
 |`[completion]` |the separator joining the columns of a multi-column completion label |

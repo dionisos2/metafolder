@@ -76,6 +76,7 @@ async fn setup_with_daemon(daemon_url: &str) -> Ctx {
         commands: commands.clone(),
         bench: bench.clone(),
         repo_list_cache_ttl: std::time::Duration::from_secs(3),
+        video_thumbnail_percent: 10.0,
     };
     Ctx {
         _guard: guard,

@@ -38,7 +38,9 @@ pub async fn serve(State(state): State<ServerState>, Query(params): Query<Params
         return StatusCode::NOT_FOUND.into_response();
     };
 
-    let result = tokio::task::spawn_blocking(move || thumbnails::generate(&path, &cache_dir)).await;
+    let percent = state.video_thumbnail_percent;
+    let result =
+        tokio::task::spawn_blocking(move || thumbnails::generate(&path, &cache_dir, percent)).await;
     match result {
         Ok(Ok(png)) => match tokio::fs::read(&png).await {
             Ok(bytes) => (

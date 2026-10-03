@@ -19,7 +19,7 @@ use std::path::{Path, PathBuf};
 
 /// Bump when the extraction parameters change so stale cached PNGs (keyed by
 /// the source file's identity, not its rendering) are no longer reused.
-const THUMB_VERSION: u32 = 1;
+const THUMB_VERSION: u32 = 2;
 
 /// Width of the generated poster, in pixels; the height keeps the aspect
 /// ratio. Small enough that a grid of them stays cheap to fetch and decode.
@@ -63,15 +63,17 @@ pub fn match_internal_dir(repos: &[(PathBuf, PathBuf)], path: &Path) -> Option<P
         .map(|(_, internal)| internal.clone())
 }
 
-/// Cache file name for a source identified by its path, mtime and size: a
-/// content change (which moves mtime/size) yields a new name, so a stale
-/// thumbnail is never served.
-fn cache_filename(path: &Path, mtime_ms: i128, size: u64) -> String {
+/// Cache file name for a source identified by its path, mtime and size, and
+/// for the configured poster position: a content change (which moves
+/// mtime/size) or another position yields a new name, so a stale thumbnail is
+/// never served.
+fn cache_filename(path: &Path, mtime_ms: i128, size: u64, video_percent: f64) -> String {
     use std::hash::{Hash, Hasher};
     let mut hasher = std::collections::hash_map::DefaultHasher::new();
     path.hash(&mut hasher);
     mtime_ms.hash(&mut hasher);
     size.hash(&mut hasher);
+    video_percent.to_bits().hash(&mut hasher);
     THUMB_VERSION.hash(&mut hasher);
     format!("{:016x}.png", hasher.finish())
 }
@@ -93,13 +95,63 @@ fn ffmpeg_args(input: &Path, output: &Path, seek: &str) -> Vec<OsString> {
     args
 }
 
+/// The offsets (seconds, as `ffmpeg -ss` reads them) to try in turn for a
+/// video's poster: `video_percent` % of its `duration`, so the poster is past
+/// a black lead-in or a title card, then the first frame should that seek
+/// find nothing. Without a duration (a probe that failed, a live stream) the
+/// first offset is a fixed second, as before the position was configurable.
+fn video_seeks(duration: Option<f64>, video_percent: f64) -> Vec<String> {
+    let first = match duration {
+        Some(d) if d.is_finite() && d > 0.0 => format!("{:.3}", d * video_percent / 100.0),
+        _ => "1".to_string(),
+    };
+    vec![first, "0".to_string()]
+}
+
+/// Hard timeout for one duration probe; reading a container header is
+/// near-instant.
+const FFPROBE_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(10);
+
+/// The sandbox spec for one duration probe: `ffprobe` demuxes an untrusted
+/// file, so it sees that file (read-only) and nothing else of the user's.
+fn duration_spec(input: &Path) -> crate::sandbox::Spec {
+    let mut args: Vec<OsString> =
+        ["-v", "error", "-show_entries", "format=duration", "-of", "csv=p=0"]
+            .into_iter()
+            .map(OsString::from)
+            .collect();
+    args.push(input.into());
+    crate::sandbox::Spec::new("ffprobe").args(args).read_only(input)
+}
+
+/// A duration as `ffprobe -show_entries format=duration` prints it (seconds),
+/// or `None` for `N/A` and anything that is no positive number.
+fn parse_duration(output: &str) -> Option<f64> {
+    output.trim().parse::<f64>().ok().filter(|d| d.is_finite() && *d > 0.0)
+}
+
+/// The duration of the video at `path`, in seconds, asked of a sandboxed
+/// `ffprobe`. `None` when it could not say (no sandbox, no `ffprobe`, a
+/// timeout, a stream without one).
+fn probe_duration(path: &Path) -> Option<f64> {
+    let cmd = crate::sandbox::command(&duration_spec(path))?;
+    let output = crate::proc::run_with_timeout(cmd, FFPROBE_TIMEOUT)?;
+    if !output.status.success() {
+        return None;
+    }
+    parse_duration(&String::from_utf8_lossy(&output.stdout))
+}
+
 /// Returns the cached PNG path for `path`'s poster frame, generating it on a
 /// cache miss (with `ffmpeg` for a video, poppler for a document) and storing
 /// it in `cache_dir` (the resolved
 /// `<repo>/.metafolder/internal/thumbnails`; the caller resolves the repo, so
 /// a file outside any repo never reaches here). Blocking (spawns a process and
 /// does file I/O): call from `spawn_blocking`, not the async runtime.
-pub fn generate(path: &Path, cache_dir: &Path) -> Result<PathBuf, ThumbError> {
+///
+/// A video's poster is the frame at `video_percent` % of its duration
+/// (`[settings] video-thumbnail-percent`); a GIF's stays near its start.
+pub fn generate(path: &Path, cache_dir: &Path, video_percent: f64) -> Result<PathBuf, ThumbError> {
     // Existence first: a missing file is `NotFound`, not a wrong type.
     let meta = std::fs::metadata(path).map_err(|_| ThumbError::NotFound)?;
     if !meta.is_file() {
@@ -116,7 +168,7 @@ pub fn generate(path: &Path, cache_dir: &Path) -> Result<PathBuf, ThumbError> {
         .map(|since| since.as_millis() as i128)
         .unwrap_or(0);
 
-    let output = cache_dir.join(cache_filename(path, mtime_ms, meta.len()));
+    let output = cache_dir.join(cache_filename(path, mtime_ms, meta.len(), video_percent));
     if output.is_file() {
         return Ok(output);
     }
@@ -129,10 +181,12 @@ pub fn generate(path: &Path, cache_dir: &Path) -> Result<PathBuf, ThumbError> {
     let temp = scratch.file("out.png");
     // A document's first page, or a video frame — the retry at seek 0 covers a
     // clip shorter than the first offset.
-    let produced = if kind == Some(Kind::Document) {
-        crate::documents::render_poster(path, &temp)
-    } else {
-        run_ffmpeg(path, &temp, "1") || run_ffmpeg(path, &temp, "0")
+    let produced = match kind {
+        Some(Kind::Document) => crate::documents::render_poster(path, &temp),
+        Some(Kind::Video) => video_seeks(probe_duration(path), video_percent)
+            .iter()
+            .any(|seek| run_ffmpeg(path, &temp, seek)),
+        _ => run_ffmpeg(path, &temp, "1") || run_ffmpeg(path, &temp, "0"),
     };
     if !produced || !scratch.take("out.png", &output) {
         return Err(ThumbError::Failed);
@@ -211,12 +265,46 @@ mod tests {
     #[test]
     fn test_cache_filename_is_deterministic_and_identity_sensitive() {
         let path = Path::new("/a/clip.mkv");
-        let base = cache_filename(path, 1000, 42);
-        assert_eq!(base, cache_filename(path, 1000, 42));
+        let base = cache_filename(path, 1000, 42, 10.0);
+        assert_eq!(base, cache_filename(path, 1000, 42, 10.0));
         assert!(base.ends_with(".png"));
-        assert_ne!(base, cache_filename(path, 2000, 42)); // mtime changed
-        assert_ne!(base, cache_filename(path, 1000, 43)); // size changed
-        assert_ne!(base, cache_filename(Path::new("/a/other.mkv"), 1000, 42));
+        assert_ne!(base, cache_filename(path, 2000, 42, 10.0)); // mtime changed
+        assert_ne!(base, cache_filename(path, 1000, 43, 10.0)); // size changed
+        assert_ne!(base, cache_filename(Path::new("/a/other.mkv"), 1000, 42, 10.0));
+        // Another configured position is another frame, so another poster.
+        assert_ne!(base, cache_filename(path, 1000, 42, 25.0));
+    }
+
+    #[test]
+    fn test_a_video_poster_is_taken_at_the_configured_share_of_its_duration() {
+        // 10 % of 100 s, then the first frame should the seek find nothing.
+        assert_eq!(video_seeks(Some(100.0), 10.0), vec!["10.000", "0"]);
+        assert_eq!(video_seeks(Some(0.5), 10.0), vec!["0.050", "0"]);
+        assert_eq!(video_seeks(Some(60.0), 0.0), vec!["0.000", "0"]);
+        // No duration known (a stream, a probe that failed): the old fixed
+        // offset, then the first frame.
+        assert_eq!(video_seeks(None, 10.0), vec!["1", "0"]);
+        assert_eq!(video_seeks(Some(f64::NAN), 10.0), vec!["1", "0"]);
+    }
+
+    #[test]
+    fn test_ffprobe_duration_output_is_parsed() {
+        assert_eq!(parse_duration("12.345000\n"), Some(12.345));
+        assert_eq!(parse_duration("N/A\n"), None);
+        assert_eq!(parse_duration(""), None);
+        assert_eq!(parse_duration("-1"), None);
+    }
+
+    #[test]
+    fn test_the_duration_probe_runs_sandboxed_with_only_the_video_bound() {
+        if !crate::sandbox::available() {
+            return;
+        }
+        let spec = duration_spec(Path::new("/home/u/clip.mp4"));
+        assert_eq!(spec.program, "ffprobe");
+        assert_eq!(spec.read_only, vec![PathBuf::from("/home/u/clip.mp4")]);
+        assert!(spec.read_write.is_empty());
+        assert_eq!(crate::sandbox::command(&spec).expect("sandbox").get_program(), "bwrap");
     }
 
     #[test]
@@ -258,12 +346,12 @@ mod tests {
         let pdf = dir.join("report.pdf");
         std::fs::write(&pdf, ONE_PAGE_PDF).unwrap();
 
-        let png = generate(&pdf, &cache_dir).expect("pdf poster generated");
+        let png = generate(&pdf, &cache_dir, 10.0).expect("pdf poster generated");
         assert!(png.starts_with(&cache_dir));
         let bytes = std::fs::read(&png).unwrap();
         assert_eq!(&bytes[..8], b"\x89PNG\r\n\x1a\n", "output is a PNG");
         // Cached like every other poster: the second call re-serves the file.
-        assert_eq!(generate(&pdf, &cache_dir).unwrap(), png);
+        assert_eq!(generate(&pdf, &cache_dir, 10.0).unwrap(), png);
 
         std::fs::remove_dir_all(&dir).ok();
     }
@@ -298,7 +386,7 @@ trailer\n<</Size 6/Root 1 0 R>>\nstartxref\n364\n%%EOF\n";
         std::fs::write(&liar, b"export const answer = 42;\n").expect("write");
 
         for path in [&text, &image, &liar] {
-            assert_eq!(generate(path, &dir), Err(ThumbError::Unsupported), "{path:?}");
+            assert_eq!(generate(path, &dir, 10.0), Err(ThumbError::Unsupported), "{path:?}");
         }
         std::fs::remove_dir_all(&dir).ok();
     }
@@ -330,7 +418,7 @@ trailer\n<</Size 6/Root 1 0 R>>\nstartxref\n364\n%%EOF\n";
     #[test]
     fn test_generate_missing_file_is_not_found() {
         assert_eq!(
-            generate(Path::new("/tmp/does-not-exist-xyz.mp4"), Path::new("/tmp")),
+            generate(Path::new("/tmp/does-not-exist-xyz.mp4"), Path::new("/tmp"), 10.0),
             Err(ThumbError::NotFound)
         );
     }
@@ -367,7 +455,7 @@ trailer\n<</Size 6/Root 1 0 R>>\nstartxref\n364\n%%EOF\n";
             .unwrap();
         assert!(made.success(), "could not synthesize a test video");
 
-        let png = generate(&video, &cache_dir).expect("thumbnail generated");
+        let png = generate(&video, &cache_dir, 10.0).expect("thumbnail generated");
         assert!(
             png.starts_with(&cache_dir),
             "poster must be cached under the given cache dir: {png:?}"
@@ -377,7 +465,12 @@ trailer\n<</Size 6/Root 1 0 R>>\nstartxref\n364\n%%EOF\n";
         assert_eq!(&bytes[..8], b"\x89PNG\r\n\x1a\n", "output is a PNG");
 
         // Second call is a cache hit: same path, no regeneration needed.
-        assert_eq!(generate(&video, &cache_dir).unwrap(), png);
+        assert_eq!(generate(&video, &cache_dir, 10.0).unwrap(), png);
+        // The probe reads the clip's duration (1 s), when it can run.
+        if crate::sandbox::available() {
+            let duration = probe_duration(&video).expect("duration probed");
+            assert!((duration - 1.0).abs() < 0.2, "{duration}");
+        }
 
         // A GIF gets a still poster the same way (short clip: the retry at
         // seek 0 must cover a duration under the first 1 s offset).
@@ -389,7 +482,7 @@ trailer\n<</Size 6/Root 1 0 R>>\nstartxref\n364\n%%EOF\n";
             .status()
             .unwrap();
         assert!(made.success(), "could not synthesize a test gif");
-        let gif_png = generate(&gif, &cache_dir).expect("gif poster generated");
+        let gif_png = generate(&gif, &cache_dir, 10.0).expect("gif poster generated");
         let bytes = std::fs::read(&gif_png).unwrap();
         assert_eq!(&bytes[..8], b"\x89PNG\r\n\x1a\n", "gif poster is a PNG");
 
