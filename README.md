@@ -23,7 +23,7 @@ The project is a Cargo workspace:
 - **`gui`** — the `metafolder-gui` desktop app (Tauri v2 + Svelte 5): workspaces (tabs) with two panel slots, a keybinding system, a command input with autocomplete, and a local scripting HTTP API (`/gui/*`). Panel types are plain HTML/JS directories mounted in Shadow DOM roots (no iframes) and can be customized or added by the user.
 - **`bench`** — benchmarking harness running against two persistent data folders (`data`, `gui`, `attach` modes).
 
-The documentation is a wiki under `docs/wiki/`, read with `scripts/doc` (`scripts/doc show Documentation`) or in the GUI's help panel; start from the note `Documentation`. Cross-repo sync is the one subject not moved there yet: `docs/spec-sync.org`.
+The documentation is a wiki under `docs/wiki/`, read with `scripts/doc` (`scripts/doc show Documentation`) or in the GUI's help panel; start from the note `Documentation`.
 
 ## Quick start (make)
 
