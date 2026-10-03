@@ -517,9 +517,7 @@
 # Bulk operations act on a target they name: `selection` (the checked rows) or
 # `query` (what the list shows). "m b" runs the command bare, so it asks for
 # the target and then the operation; the "m m <op>" sequences name BOTH up
-# front — targeting the checked selection, the fastest bulk flow, while "m b"
-# covers the query-scoped one (and every other combination) through the
-# prompts. The key layout is unchanged from when these were eleven separate
+# front, targeting the checked selection, and "m q <op>" (below) the query. The key layout is unchanged from when these were eleven separate
 # commands — only what they invoke changed — and they work from either panel,
 # like the per-record family above (a command reaches its panel whatever is
 # focused, so the old list/detail split was an artifact of ownership).
@@ -548,6 +546,29 @@
 "m m d" = [
   { command = "metarecord:bulk selection delete", when = "metarecord-detail" },
   { command = "metarecord:bulk selection delete", when = "metarecord-list" },
+]
+# "m q <op>": the same five operations on what the list's query matches
+# (q = query) instead of the checked rows. Each one still confirms, naming the
+# count, so a whole-repository edit is never one keystroke away.
+"m q s" = [
+  { command = "metarecord:bulk query set", when = "metarecord-detail" },
+  { command = "metarecord:bulk query set", when = "metarecord-list" },
+]
+"m q a" = [
+  { command = "metarecord:bulk query add", when = "metarecord-detail" },
+  { command = "metarecord:bulk query add", when = "metarecord-list" },
+]
+"m q r" = [
+  { command = "metarecord:bulk query unset", when = "metarecord-detail" },
+  { command = "metarecord:bulk query unset", when = "metarecord-list" },
+]
+"m q v" = [
+  { command = "metarecord:bulk query remove", when = "metarecord-detail" },
+  { command = "metarecord:bulk query remove", when = "metarecord-list" },
+]
+"m q d" = [
+  { command = "metarecord:bulk query delete", when = "metarecord-detail" },
+  { command = "metarecord:bulk query delete", when = "metarecord-list" },
 ]
 
 # sync (doc "sync panel"): the four steps of a cross-repo sync, on the prefix that

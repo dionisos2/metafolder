@@ -802,12 +802,20 @@ mod tests {
         let bulk_bare = bound(&["m", "b"]);
         assert!(!bulk_bare.is_empty() && bulk_bare.iter().all(|i| i == "metarecord:bulk"));
         assert!(bound(&["m", "m"]).is_empty(), "an exact `m m` would shadow every `m m <op>`");
+        assert!(bound(&["m", "q"]).is_empty(), "an exact `m q` would shadow every `m q <op>`");
         for (keys, invocation) in [
             (["m", "m", "s"], "metarecord:bulk selection set"),
             (["m", "m", "a"], "metarecord:bulk selection add"),
             (["m", "m", "v"], "metarecord:bulk selection remove"),
             (["m", "m", "r"], "metarecord:bulk selection unset"),
             (["m", "m", "d"], "metarecord:bulk selection delete"),
+            // `m q <op>`: the same operations, targeting what the list's query
+            // matches.
+            (["m", "q", "s"], "metarecord:bulk query set"),
+            (["m", "q", "a"], "metarecord:bulk query add"),
+            (["m", "q", "v"], "metarecord:bulk query remove"),
+            (["m", "q", "r"], "metarecord:bulk query unset"),
+            (["m", "q", "d"], "metarecord:bulk query delete"),
         ] {
             let found = bound(&keys);
             assert!(

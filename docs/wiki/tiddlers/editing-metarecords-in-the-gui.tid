@@ -52,12 +52,12 @@ the whole repository, use `mf retype` or the [[repos panel]]'s ''Retype…''
 (`selection = 3 checked · query = 1204 matching`) and proposing `selection` when
 something is checked. An empty selection is nothing to do; it never falls back on the query.
 
-|!Key |!Operation |
-|<<key "metarecord:bulk selection set" "m m s">> |`set` a field on the checked metarecords |
-|<<key "metarecord:bulk selection add" "m m a">> |`add` a value |
-|<<key "metarecord:bulk selection remove" "m m v">> |`remove` a value |
-|<<key "metarecord:bulk selection unset" "m m r">> |`unset` a field |
-|<<key "metarecord:bulk selection delete" "m m d">> |`delete` the metarecords themselves; their files stay on disk |
+|!Checked |!Matching |!Operation |
+|<<key "metarecord:bulk selection set" "m m s">> |<<key "metarecord:bulk query set" "m q s">> |`set` a field |
+|<<key "metarecord:bulk selection add" "m m a">> |<<key "metarecord:bulk query add" "m q a">> |`add` a value |
+|<<key "metarecord:bulk selection remove" "m m v">> |<<key "metarecord:bulk query remove" "m q v">> |`remove` a value |
+|<<key "metarecord:bulk selection unset" "m m r">> |<<key "metarecord:bulk query unset" "m q r">> |`unset` a field |
+|<<key "metarecord:bulk selection delete" "m m d">> |<<key "metarecord:bulk query delete" "m q d">> |`delete` the metarecords themselves; their files stay on disk |
 
 Every operation asks before it writes, giving the number of metarecords it will
 change — the checked ones as much as a query's matches.
