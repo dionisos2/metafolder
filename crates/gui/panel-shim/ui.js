@@ -300,7 +300,7 @@ export function thumbnail(guiServer, path, options = {}) {
 }
 
 /**
- * Display form of a Value ({type, value} JSON, spec-data-model). `value` is
+ * Display form of a Value ({type, value} JSON, doc "Value types"). `value` is
  * absent for `nothing` (explicit absence), which renders as ∅.
  *
  * @param {Metafolder.Value} field

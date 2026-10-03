@@ -1,6 +1,14 @@
 #+TITLE: Metafolder — Cross-repo Synchronisation Specification
 #+OPTIONS: toc:2 num:t
 
+*Not migrated, and not reliable.* This is the last spec left from before the
+documentation wiki (=docs/wiki/=, =scripts/doc=): every other subject is in the
+wiki, sync is deferred (=docs/docs.org=, item 29). Checked against the code, it
+describes a good deal that is not implemented and some behaviour that is wrong
+— the list is in that item. Read it as the design the code was written from,
+not as a description of the code; item 29 replaces it with wiki notes and
+deletes it.
+
 * Overview
 
 The daemon provides low-level primitives for cross-repo sync. Orchestration

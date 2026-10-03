@@ -9,7 +9,7 @@ The documentation is one wiki, `docs/wiki/`: hand-written notes in
 `tiddlers/*.tid`, notes generated from the code in `tiddlers/generated/`, and the
 few system notes that configure it in `tiddlers/system/`. It is rendered to HTML and
 shown by the GUI's help ([[In-app help]]). When a change alters a behaviour, its
-note changes in the same commit.
+note changes in the same commit. Why it is built this way: [[Why a wiki]].
 
 !! A note
 
@@ -91,7 +91,7 @@ It runs in `scripts/check.sh` as `wiki` ([[Static checks]]):
 * every link and every tag names a note; no alias collides with a title, an identifier or another alias;
 * every note is reachable from [[Documentation]];
 * every `doc "Title"` in `crates/` and `scripts/` names a note;
-* every key hint names a command that exists;
+* every key hint names a command that exists, in an invocation a shipped key runs;
 * a note tagged with a catalog documents something the code has;
 * every item of the code has its note — every catalog is complete, save the exemptions below;
 * the generated notes of the shipped scripts are current.

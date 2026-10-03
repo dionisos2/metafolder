@@ -220,7 +220,7 @@
     if (suggestions.length === 0) return;
     // In a prompt, index -1 is the minibuffer itself (no completion
     // highlighted): Up past the top deselects so Enter submits the typed
-    // free value. Command/bash mode keep a highlight always (spec-gui).
+    // free value. Command/bash mode keep a highlight always (doc "The command input").
     const min = promptText !== null ? -1 : 0;
     const span = suggestions.length - min;
     selectedIndex = ((((selectedIndex - min + delta) % span) + span) % span) + min;

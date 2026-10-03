@@ -217,7 +217,7 @@ pub async fn put_panel_view(
         return map_state_error(error);
     }
 
-    // type=file + path: select that file (spec-gui PUT /gui/panels).
+    // type=file + path: select that file (doc "GUI scripting endpoints").
     //
     // The two variables are ONE selection, and the metarecord goes first —
     // like every panel that publishes the pair. A consumer reacting to

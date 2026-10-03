@@ -996,7 +996,7 @@ impl AppState {
 
     /// Rejects a name already held by a loaded repository — names are unique
     /// among loaded repos, so the CLI's `-n <name>` selector resolves to exactly
-    /// one UUID (spec-main "Global selection flags").
+    /// one UUID (doc "Global options").
     fn ensure_name_available(&self, name: &str) -> Result<(), ApiError> {
         if self.repos.lock_recover().values().any(|r| r.name() == name) {
             return Err(ApiError::conflict(format!(

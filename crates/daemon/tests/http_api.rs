@@ -79,7 +79,7 @@ async fn test_health() {
     assert_eq!(status, StatusCode::OK);
     assert_eq!(body["status"], "ok");
     assert!(body["version"].is_string());
-    // The wire-protocol version a client checks for compatibility (spec-gui).
+    // The wire-protocol version a client checks for compatibility (doc "The wire protocol version").
     assert_eq!(body["api_version"], json!(metafolder_core::API_VERSION));
     assert_eq!(body["repos"], json!(0));
 }
@@ -1256,7 +1256,7 @@ async fn test_resolve_tree_path_to_uuid() {
     std::fs::remove_dir_all(root).unwrap();
 }
 
-// ── expected_version (conditional writes, spec-data-model) ──────────────────
+// ── expected_version (doc "Conditional writes") ───────────────────────────
 
 #[tokio::test]
 async fn test_expected_version_precondition() {

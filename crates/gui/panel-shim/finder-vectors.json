@@ -1,7 +1,7 @@
 {
   "_comment": [
     "Shared test vectors for the finder clause, read by BOTH sides so the DSL",
-    "text and the IR cannot drift apart (spec-gui 'Finder'):",
+    "text and the IR cannot drift apart (doc 'metarecord-list panel'):",
     "  - frontend/tests/finder.test.ts asserts finderClause() == ir and",
     "    finderClauseText() == text;",
     "  - crates/gui/tests/finder_dsl.rs asserts parse_query(text) == ir.",

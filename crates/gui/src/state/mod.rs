@@ -574,7 +574,7 @@ impl GuiState {
         // The GUI state is its own source of truth (nothing to repopulate it
         // from), so the guard is reclaimed as-is; a panic mid-mutation may
         // leave a minor inconsistency, far preferable to a permanently dead
-        // GUI. See `docs/review-followups.md` (#5).
+        // GUI.
         self.inner.lock_recover()
     }
 

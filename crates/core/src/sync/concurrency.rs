@@ -9,7 +9,9 @@ use std::sync::{Mutex, MutexGuard, TryLockError};
 /// can take a whole repository (or the GUI) down for the rest of the process.
 /// `lock_recover` instead reclaims the guard — the protected data is still
 /// there — and clears the poison flag so subsequent locks take the normal fast
-/// path. See `docs/review-followups.md` (#5).
+/// path. Recovering is safe for the stores: every write is one atomic LMDB
+/// transaction, so a panic mid-write (the workspace unwinds, never aborts)
+/// commits nothing.
 ///
 /// The caller is responsible for any data-specific recovery (e.g. discarding
 /// an in-memory cache that a panic may have left half-updated); a plain

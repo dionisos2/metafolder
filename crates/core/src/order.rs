@@ -1,4 +1,4 @@
-//! Ordering heuristic for `mf order` (spec-data-model "* CLI"): assigns an
+//! Ordering heuristic for `mf order` (doc "Ordering a folder"): assigns an
 //! integer `order-position` to the children of a folder so a "sort by position"
 //! puts them in a sensible order — album tracks, series seasons, etc.
 //!

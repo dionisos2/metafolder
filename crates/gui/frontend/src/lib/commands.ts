@@ -227,7 +227,7 @@ export function filterCompletions(
     .map((c) => c.name);
 }
 
-/** `filterCompletions` over label/value candidates (spec-gui "Completion
+/** `filterCompletions` over label/value candidates (doc "Completion
  *  views"): the ranking reads the label — what the user sees and types — and
  *  the value rides along untouched. */
 export function filterCompletionItems<T extends { label: string }>(
@@ -420,7 +420,7 @@ export type UserCompletionFn = (
   prior: string[],
 ) => CompletionResult | Promise<CompletionResult>;
 
-/** One cycled view of a user command's completion (spec-gui "Completion
+/** One cycled view of a user command's completion (doc "Completion
  *  views"). */
 export interface UserCompletionView {
   title?: string;
@@ -755,7 +755,7 @@ async function listIgnore(): Promise<void> {
 }
 
 // ── Order a folder's children (the `mf:order` builtin) ─────────────────────
-// The GUI half of `mf order` (spec-gui "Order"): the heuristic and the daemon
+// The GUI half of `mf order` (doc "Ordering a folder"): the heuristic and the daemon
 // work are shared Rust (`metafolder_core::order`, behind the `order_run`
 // command); the shell only works out *which* folder — the selection's, asked
 // of nobody.
@@ -1433,7 +1433,7 @@ async function runCommand(name: string, args: string[], ws: string | null): Prom
       editingTarget?.confirm();
       return true;
     case 'completion:cycle': {
-      // Walks the views of the prompt's completion (spec-gui "Completion
+      // Walks the views of the prompt's completion (doc "Completion
       // views"): one builder is the common case and needs no cycling, so this
       // is a no-op — a keystroke on a plain prompt must not shout. The input
       // owns the cycle (it owns the draft the candidates narrow on).

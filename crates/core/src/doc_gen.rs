@@ -1,5 +1,5 @@
-//! The generated half of the documentation wiki (docs/doc-wiki-proposal.md,
-//! "Références générées depuis le code"): the tests that read a catalog out of
+//! The generated half of the documentation wiki (doc "Writing documentation",
+//! "The generated catalogs"): the tests that read a catalog out of
 //! the code (the CLI's clap tree, the GUI's commands and panels) write it as
 //! `.tid` data notes under `docs/wiki/tiddlers/generated/<catalog>/`, through
 //! [`sync_generated`]. Normally they only *compare* — a stale file fails the

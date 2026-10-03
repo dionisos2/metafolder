@@ -32,10 +32,6 @@ A link goes to another page. The keys are filled in from your bindings
 
 !! When the documentation is not installed
 
-A bar says so and names the step that installs it; only the older built-in pages
-are available. The documentation is installed with the rest of the configuration
+A bar says so and names the step that installs it; the panel has no page to show
+until then. The documentation is installed with the rest of the configuration
 ([[Updating the configuration]]).
-
-While the documentation is being moved to this wiki, the panel still has older
-pages of its own for the subjects not moved yet. A page of the wiki replaces the
-older one of the same name.

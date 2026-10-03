@@ -1,0 +1,60 @@
+title: Why a wiki
+tags: Development
+kind: rationale
+summary: Why the documentation is one wiki of small notes, with its mechanical half generated from the code — and what it replaced.
+audience: dev
+
+Until October 2026 the documentation was a set of long specifications
+(`docs/spec-*.org`, one per subject), 27 hand-written HTML pages inside the
+`help` panel, and the help texts of `mf`. The three said the same things in
+different words, drifted apart, and drifted from the code: checked against the code
+subject by subject during the move, nearly every specification described something
+that had since changed. The wiki replaced them ([[Writing documentation]] says how
+it is written). Cross-repository sync is the one subject not moved yet: its
+specification, `docs/spec-sync.org`, stays until it is.
+
+!! One source, several readers
+
+The wiki under `docs/wiki/` is the only source. Its rendering belongs to no panel:
+it is installed under `~/.config/metafolder/docs/`, where the [[help panel]] reads it
+and where any other reader — a web site, a command — could. The rendering is a
+build product and is not committed, like the frontend's bundle;
+`metafolder-sync-config` refuses to run without it, because applying the
+configuration without it would empty the help.
+
+The developer documentation is in the same wiki and ships with the rest: a note
+says `audience: dev`, and the help leaves those out of a search unless asked. One
+place to look, and no second tree to keep in step.
+
+!! One note per question
+
+A specification is read from the top; documentation is mostly looked up. So a note
+answers one question, a topic is a short overview note listing its notes by kind
+(how to, what is true, why), and the linear reading of a topic is assembled at
+render time rather than kept as a file. The files are flat under `tiddlers/` — tags,
+not folders, say what a note belongs to, so a note touching three topics has no
+wrong place to live.
+
+!! The mechanical half comes from the code
+
+Lists written by hand — every command, every route, every reserved field — go stale
+the day something is added. Six catalogs are generated from the code instead, and
+committed, so a change of the command line shows in the diff of the documentation
+and can be read without a build. Every catalog is enforced: an item of the code
+with no note fails the check, which is what makes "every command is documented"
+true rather than hoped. A note is still written by hand for each item (even a
+trivial GUI command), because the generated part only knows what the code knows.
+
+!! Close to plain text
+
+The notes use a small subset of TiddlyWiki's wikitext, refused otherwise by the
+check, and every list and procedure is expanded when rendering. So a `.tid` file
+reads almost as text, the panel stays a small reader of HTML fragments that knows
+nothing of TiddlyWiki, and `scripts/doc` reads the files directly — no TiddlyWiki
+started, answers at once — for a person or an agent working from the command line.
+
+!! Decided along the way
+
+* No `mf doc` for now: the help panel and `scripts/doc` are the readers.
+* A citation from the code is `doc "Title"`, anywhere under `crates/` or `scripts/`, comment or not — hence the check's name in `scripts/check.sh` is `wiki`, not `doc` (a `skip doc "install node"` line was itself a citation).
+* Design decisions kept in an agent's memory files became `rationale` notes for developers, topic by topic; the memory keeps only environment traps and methods.

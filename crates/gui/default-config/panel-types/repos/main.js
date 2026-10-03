@@ -514,7 +514,7 @@ export async function mount(root, metafolder) {
     }
   }
 
-  // ── Retype a field across a whole repository (spec-data-model) ─────────────
+  // ── Retype a field across a whole repository (doc "Changing a field's type") ────────
 
   /** @param {string} repoUuid @param {string} repoName */
   function openRetype(repoUuid, repoName) {

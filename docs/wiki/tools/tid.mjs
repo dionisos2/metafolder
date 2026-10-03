@@ -1,6 +1,6 @@
 // The wiki's pure logic: the .tid format, slugs, title lists, the links a
 // tiddler makes, the wiki-wide checks and the rename rewrite. No filesystem —
-// doc.mjs does the reading and writing (docs/doc-wiki-proposal.md).
+// doc.mjs does the reading and writing (wiki: Writing documentation).
 
 /** @typedef {{fields: Record<string, string>, text: string}} Tid */
 /**
@@ -262,16 +262,23 @@ export function checkWiki(tiddlers, codeRefs) {
 
   // Key hints: the help panel fills `<<key "command">>` from the live table,
   // so a command the GUI does not have would read "unbound" forever.
-  const guiCommands = new Set(
-    generated.filter((g) => g.fields.catalog === 'GUI command').map((g) => g.fields.target),
-  );
+  // And one no shipped key runs would read "unbound" out of the box: the
+  // invocations bound are listed in each command's generated note ("* ``key``
+  // → ``invocation``"). A bare command matches any invocation of it, a fuller
+  // one only itself — the help's own matching rule.
+  const guiGenerated = generated.filter((g) => g.fields.catalog === 'GUI command');
+  const guiCommands = new Set(guiGenerated.map((g) => g.fields.target));
+  const bound = guiGenerated.flatMap((g) => [...g.text.matchAll(/→ ``([^`]+)``/g)].map((m) => m[1]));
   for (const t of hand) {
     for (const m of stripCode(t.text).matchAll(/<<key\s+"([^"]+)"/g)) {
       // Several invocations separated by commas: the keys of any of them.
-      for (const invocation of m[1].split(',')) {
-        const name = invocation.trim().split(/\s+/)[0];
+      for (const entry of m[1].split(',')) {
+        const invocation = entry.trim();
+        const name = invocation.split(/\s+/)[0];
         if (!guiCommands.has(name)) {
           errors.push(`${t.fields.title}: key hint for unknown command "${name}"`);
+        } else if (!bound.some((b) => b === invocation || b.startsWith(`${invocation} `))) {
+          errors.push(`${t.fields.title}: key hint "${invocation}" is bound to no shipped key`);
         }
       }
     }

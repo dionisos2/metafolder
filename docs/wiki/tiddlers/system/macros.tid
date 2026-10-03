@@ -99,8 +99,8 @@ Not documented yet:
 </$let>
 \end
 
-The project's procedures, usable from every note (docs/doc-wiki-proposal.md,
-"Sous-ensemble de wikitext autorisé"):
+The project's procedures, usable from every note ([[Writing documentation]],
+"The wikitext that is allowed"):
 
 * `<<key "command" [fallback]>>` — the key bound to a GUI command (or to any of several, separated by commas), filled in
   from the live keybinding table by the help panel.

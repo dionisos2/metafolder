@@ -8,17 +8,14 @@
 //    hits), used when no exact name matches or `#` forced grep.
 //  - resolveClickTopic: the help-cursor click resolution — the nearest tagged
 //    element's topic, else the clicked slot's panel type.
-//  - mergeManifests: the documentation wiki's pages (`/docs/index.json`)
-//    together with the panel's own older pages, during the migration.
 
 /**
- * One entry of a help manifest: the panel's own `pages/index.json`, or the
- * wiki's `/docs/index.json`, which adds the note's fields (`audience` = `user`
- * or `dev`, `tags`, `kind`, `status`, `summary`). `base` is the URL directory
- * the page's `file` is fetched from, set by mergeManifests.
+ * One entry of the help manifest, the wiki's `/docs/index.json`: a note's id,
+ * title, rendered `file` and aliases, with its fields (`audience` = `user` or
+ * `dev`, `tags`, `kind`, `status`, `summary`).
  *
  * @typedef {{id: string, title: string, file: string, aliases?: string[],
- *   base?: string, audience?: string, tags?: string[], kind?: string,
+ *   audience?: string, tags?: string[], kind?: string,
  *   status?: string, summary?: string}} Page
  */
 
@@ -134,23 +131,6 @@ function snippetFor(text, term) {
   const start = Math.max(0, at - 30);
   const end = Math.min(body.length, at + term.length + 50);
   return (start > 0 ? '…' : '') + body.slice(start, end) + (end < body.length ? '…' : '');
-}
-
-/** The wiki's pages and the panel's own, each tagged with the `base` it is
- *  fetched from. A page the wiki has (same id) replaces the old one, and the
- *  wiki's pages come first so that they win name resolution (resolvePage takes
- *  the first match). An empty `wiki` — not installed — leaves the old pages.
- *
- * @param {Page[]} legacy @param {string} legacyBase
- * @param {Page[]} wiki @param {string} wikiBase
- * @returns {Page[]}
- */
-export function mergeManifests(legacy, legacyBase, wiki, wikiBase) {
-  const ids = new Set(wiki.map((p) => p.id));
-  return [
-    ...wiki.map((p) => ({ ...p, base: wikiBase })),
-    ...legacy.filter((p) => !ids.has(p.id)).map((p) => ({ ...p, base: legacyBase })),
-  ];
 }
 
 /** The help topic for a clicked element, given `descriptors` in composedPath

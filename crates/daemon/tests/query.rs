@@ -1,6 +1,6 @@
 //! Integration tests for the query semantics — predicates, graph traversal,
 //! sorting — each query run through the serving path and the oracle, which must
-//! agree (doc "Query", spec-data-model).
+//! agree (doc "Query", doc "Data model").
 
 use metafolder_core::metarecord::{Field, Value};
 use metafolder_core::query::{Aspect, FollowTarget, Query};
@@ -1211,7 +1211,7 @@ fn test_sort_multimap_uses_min_for_asc_and_max_for_desc() {
 // cross-type sort precedence (bool < int/float < string < datetime) for a field
 // holding several value types at once. That state is no longer reachable through
 // the Writer: a field name carries a single value type repository-wide (the
-// "one value type per field name" invariant, spec-data-model). The oracle's
+// "one value type per field name" invariant, doc "One value type per field name"). The oracle's
 // cross-type precedence code is kept as a defensive fallback for any pre-invariant
 // data, but it has no supported way to be produced, so the test was removed.
 

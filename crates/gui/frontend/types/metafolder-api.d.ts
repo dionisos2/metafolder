@@ -17,7 +17,7 @@
 // `const api: MetafolderApi = {...}` — so the two cannot drift.
 
 declare namespace Metafolder {
-  // ── The data model (spec-data-model) ──────────────────────────────────────
+  // ── The data model (doc "Data model") ────────────────────────────────────
 
   /**
    * A field value. `nothing` is explicit absence and carries no `value`.

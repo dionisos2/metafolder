@@ -9,7 +9,7 @@ pub type DatabaseId = Uuid;
 pub const ZERO_UUID: Uuid = Uuid::nil();
 
 /// Serde helpers encoding UUIDs as 32-char lowercase hex strings without
-/// hyphens (the API encoding mandated by spec-data-model). Deserialization
+/// hyphens (the API encoding, doc "Value types"). Deserialization
 /// also accepts the hyphenated form.
 pub mod hex_uuid {
     use serde::{Deserialize, Deserializer, Serializer};
@@ -880,7 +880,7 @@ mod tests {
         assert_eq!(Value::Int(5).convert_to(T::Ref), (Value::Nothing, true));
     }
 
-    // ── Value: JSON format (spec-data-model) ─────────────────────────────────
+    // ── Value: JSON format (doc "Value types") ───────────────────────────────
 
     #[test]
     fn test_value_json_format_int() {

@@ -117,12 +117,16 @@ function hand(title, fields = {}, text = '') {
 function system(title, fields = {}, text = '') {
   return { file: `system/${slugify(title)}.tid`, area: 'system', fields: { title, ...fields }, text };
 }
-function gen(catalog, target) {
+// `bindings`: the invocations the shipped keybindings bind, as the generated
+// note of a GUI command lists them under "Default keys".
+function gen(catalog, target, bindings = []) {
   return {
     file: `generated/${slugify(catalog)}/${slugify(target)}.tid`,
     area: 'generated',
     fields: { title: `$:/mf/gen/${catalog}/${target}`, catalog, target, summary: 'label' },
-    text: '',
+    text: bindings.length
+      ? `!! Default keys\n\n${bindings.map((b) => `* \`\`x\`\` → \`\`${b}\`\``).join('\n')}\n`
+      : '',
   };
 }
 const CONFIG = [
@@ -260,19 +264,38 @@ describe('checkWiki', () => {
     const out = errors([
       hand('K', { tags: '[[GUI command]]' }, '<<key "trash:restore" Enter>> <<key "panel:set type trash">> <<key "no:such">>'),
       gen('GUI command', 'K'),
-      gen('GUI command', 'trash:restore'),
-      gen('GUI command', 'panel:set'),
+      gen('GUI command', 'trash:restore', ['trash:restore']),
+      gen('GUI command', 'panel:set', ['panel:set type trash']),
     ]).join('\n');
     assert.match(out, /K: key hint for unknown command "no:such"/);
     assert.doesNotMatch(out, /trash:restore|panel:set/);
+  });
+
+  test('a key hint names an invocation the shipped keybindings bind', () => {
+    // A hint whose command no shipped key runs would read "unbound" out of the
+    // box. A bare command matches any invocation of it, a fuller one only itself.
+    const out = errors([
+      hand(
+        'K',
+        { tags: '[[GUI command]]' },
+        '<<key "log:next">> <<key "panel:set">> <<key "panel:set type log">> <<key "log:prune">>',
+      ),
+      gen('GUI command', 'K'),
+      gen('GUI command', 'log:next', ['log:next']),
+      gen('GUI command', 'panel:set', ['panel:set type trash']),
+      gen('GUI command', 'log:prune'),
+    ]).join('\n');
+    assert.match(out, /K: key hint "panel:set type log" is bound to no shipped key/);
+    assert.match(out, /K: key hint "log:prune" is bound to no shipped key/);
+    assert.doesNotMatch(out, /"log:next"|"panel:set"/);
   });
 
   test('a key hint may name several commands, each one checked', () => {
     const out = errors([
       hand('K', { tags: '[[GUI command]]' }, '<<key "trash:next, log:next, no:such" "j">>'),
       gen('GUI command', 'K'),
-      gen('GUI command', 'trash:next'),
-      gen('GUI command', 'log:next'),
+      gen('GUI command', 'trash:next', ['trash:next']),
+      gen('GUI command', 'log:next', ['log:next']),
     ]).join('\n');
     assert.match(out, /K: key hint for unknown command "no:such"/);
     assert.doesNotMatch(out, /trash:next|log:next/);

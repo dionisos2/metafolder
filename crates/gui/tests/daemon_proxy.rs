@@ -186,7 +186,7 @@ async fn spawn_health_stub(body: Value) -> String {
 #[tokio::test]
 async fn test_incompatible_daemon_flagged() {
     // A reachable daemon that reports a wire-protocol version we do not speak is
-    // connected but not compatible, so the shell can warn (spec-gui) instead of
+    // connected but not compatible, so the shell can warn (doc "The wire protocol version") instead of
     // silently serving requests the two sides may disagree about.
     let url = spawn_health_stub(json!({
         "status": "ok",

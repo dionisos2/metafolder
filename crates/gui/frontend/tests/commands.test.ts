@@ -101,8 +101,8 @@ describe('repos:switch (shipped commands.js)', () => {
 // `editing:discard` (ctrl+q) on a PANEL input: the shell command input handles
 // it through its registered editing target, but a panel's own input (the
 // metarecord-list query box, a metarecord-detail inline editor…) has no such
-// target, so the command falls back to the deep-focused element — spec-gui:
-// "Clear the active text input, then remove focus".
+// target, so the command falls back to the deep-focused element — doc
+// "editing:unfocus": clear the active text input, then remove focus.
 describe('discardActiveInput', () => {
   afterEach(() => document.body.replaceChildren());
 

@@ -2,7 +2,7 @@
 // per hand-written note, named by its slug, plus index.json describing them.
 // The fragments are plain HTML — every list already expanded, links written as
 // `<a data-help-page="<slug>">` — so the help panel that reads them knows
-// nothing of TiddlyWiki (docs/doc-wiki-proposal.md, "Le panel help").
+// nothing of TiddlyWiki (wiki: Why a wiki).
 //
 //   node build.mjs [WIKI_DIR [OUT_DIR]]   (defaults: docs/wiki, docs/wiki/dist)
 

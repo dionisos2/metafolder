@@ -163,7 +163,7 @@ fn check_operand(field: &str, aspect: Aspect, value: &Value) -> Result<(), ApiEr
 /// over a very large value list (an `Or` of many `Eq`) should be decomposed. A
 /// membership filter over *uuids* already is one node: `uuid_in`, which the DSL
 /// folds an `Or` of bare uuid atoms into. (A native `In` over field values
-/// would do the same for them — see docs/review-followups.md §8.)
+/// would do the same for them — on the roadmap.)
 pub const MAX_QUERY_NODES: usize = 2000;
 
 /// Maximum number of operands in a single `And`/`Or`.

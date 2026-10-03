@@ -7,7 +7,7 @@ pub(super) async fn health(State(state): State<Arc<AppState>>) -> Json<serde_jso
     Json(json!({
         "status": "ok",
         "version": env!("CARGO_PKG_VERSION"),
-        // Wire-protocol version (spec-gui): a client compares this against its
+        // Wire-protocol version (doc "The wire protocol version"): a client compares this against its
         // own `core::API_VERSION` and refuses/warns on a mismatch. Distinct
         // from `version` (the crate semver), which does not track the contract.
         "api_version": metafolder_core::API_VERSION,
@@ -422,8 +422,8 @@ fn spawn_load_warmup(state: Arc<AppState>, repo_uuid: Uuid) -> Option<Uuid> {
 }
 
 /// `POST /repos/:repo/unload`: stops the repository's watcher/executor and
-/// releases its database lock, removing it from the loaded set (spec-main
-/// "Repository management"). 404 if not loaded; 409 if a rollback navigation is
+/// releases its database lock, removing it from the loaded set (doc
+/// "Repository endpoints"). 404 if not loaded; 409 if a rollback navigation is
 /// in progress. Runs on a blocking thread because dropping the state joins the
 /// executor thread.
 pub(super) async fn unload_repo(

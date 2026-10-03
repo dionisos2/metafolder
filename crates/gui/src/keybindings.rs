@@ -649,7 +649,7 @@ mod tests {
             .iter()
             .any(|b| b.when.as_deref() == Some("treeref") && b.invocation == "treeref:descend"));
 
-        // The finder's in-input shortcuts are focus-scoped (spec-gui "focus").
+        // The finder's in-input shortcuts are focus-scoped (doc "Keybindings").
         assert!(down.iter().any(|b| b.focus.as_deref() == Some("finder")));
         assert!(table.iter().any(|b| b.keys == ["ctrl+enter"]
             && b.focus.as_deref() == Some("finder")
@@ -819,7 +819,7 @@ mod tests {
 
     #[test]
     fn test_shipped_defaults_bind_find_per_panel_and_fullscreen() {
-        // "Find an entry" (spec-gui): every list panel with a row cursor puts
+        // doc "Jumping to an entry": every list panel with a row cursor puts
         // its find on the same key, so the gesture is one gesture.
         let defaults = include_str!("../default-config/keybindings.toml");
         let table = KeybindingSet::from_sources(defaults, "").unwrap().compiled();

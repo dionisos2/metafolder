@@ -22,8 +22,8 @@ pub struct App {
     /// Shared with the GUI HTTP server (temporary /gui/input bindings).
     pub keybindings: Arc<Mutex<KeybindingSet>>,
     /// The simplified-query grammar and its raw source, for local query
-    /// expansion and for display in the help panel's query page (spec-gui
-    /// "Help"). Behind a lock because `config:reload grammar` swaps them:
+    /// expansion and for display in the help panel's query page (doc
+    /// "In-app help"). Behind a lock because `config:reload grammar` swaps them:
     /// core re-reads the file on every `load_source`, so the GUI holding a
     /// snapshot was the only thing making an edit need a restart.
     pub grammar: Mutex<(metafolder_core::simplified::grammar::Grammar, String)>,
@@ -279,7 +279,7 @@ pub fn register_command(
     Ok(())
 }
 
-/// Registers a command defined in the user's `commands.js` (spec-gui "User
+/// Registers a command defined in the user's `commands.js` (doc "User
 /// commands"). It is a *builtin registered at runtime* — no owner, because its
 /// code lives in the shell realm and not in any panel — so `register_command`,
 /// which always attributes a panel type, cannot express it.
@@ -637,7 +637,7 @@ pub fn open_devtools(window: tauri::WebviewWindow) {
 
 /// `panel:toggle fullscreen` — drives the OS window in/out of fullscreen; the
 /// frontend pairs this with hiding the chrome so only the focused panel
-/// shows (spec-gui "Fullscreen").
+/// shows (doc "Panel slots and layout").
 #[tauri::command]
 pub fn set_fullscreen(window: tauri::WebviewWindow, on: bool) -> Result<(), String> {
     window.set_fullscreen(on).map_err(|e| e.to_string())

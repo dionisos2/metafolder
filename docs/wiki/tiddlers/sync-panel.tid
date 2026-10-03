@@ -1,0 +1,22 @@
+title: sync panel
+tags: Panel
+kind: reference
+aliases: synchronise synchronize cross-repo
+summary: Synchronises two repositories: pick the pair, read their status, compute and review a plan, resolve its conflicts, run it.
+
+Open it with `panel:set type sync` (<<key "panel:set type sync" "t y">>). It drives
+the same sync engine as `mf sync`, so nothing here needs a shell. Cross-repository
+sync itself is not described in this wiki yet: `mf sync --help` lists its commands.
+
+The toolbar picks repository ''A'' (the active one by default) and ''B'' (another
+loaded one; never the same as A), and takes the path of the intents file the plan
+is computed from. Then, in order:
+
+* ''Status'' (<<key "sync:status" "y s">>) — the links between the two repositories, one row per link with its state.
+* ''Plan'' (<<key "sync:plan" "y p">>) — computes the plan from the intents file: its number of operations and its warnings, then the overlay and the conflicts below.
+* ''Show'' (<<key "sync:open" "y w">>) — the overlay of the current plan: its operations counted by kind, and in red each one the run would skip because its record changed since planning (green when every baseline is still current). Then the conflicts.
+* ''Run'' (<<key "sync:run" "y r">>) — runs the plan, after a confirmation, and reports what was done and skipped, the subtrees diverging from an external tool, and the warnings.
+
+Show and Run need a plan for the pair. A conflict row shows the field and its value
+on each side; choose `skip`, `a` or `b` and ''Save'' to record the resolution in the
+plan, for the run to apply.

@@ -8,7 +8,7 @@
 > fichier de base qui le porte), le GUI (Tauri v2 + Svelte 5, pas `egui`), la sync
 > (commande `mf sync` complète, pas des primitives à scripter) et les noms de
 > commandes (`mf …`, pas `metafolder validate`/`rollback`). La référence à jour
-> est `docs/spec-*.org` (+ `README.md` et `CLAUDE.md`). Conservé pour la trace
+> est le wiki `docs/wiki/` (`scripts/doc`), plus `README.md` et `CLAUDE.md`. Conservé pour la trace
 > du *pourquoi* des choix fondateurs.
 
 ## Stockage

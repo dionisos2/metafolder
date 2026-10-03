@@ -1,4 +1,4 @@
-//! Single metarecords (spec-data-model): create (one or in bulk), read,
+//! Single metarecords (doc "Metarecord endpoints"): create (one or in bulk), read,
 //! delete, trash, per-name field access, and field rows by id.
 
 use super::*;
@@ -28,7 +28,7 @@ pub(super) struct TrashDeleteBody {
 /// names come from the catalogue (a handful), and each one answers "who points
 /// at this set" with one bitmap lookup per target. Proportional to the number of
 /// reference-typed *fields*, never to the number of rows — it must not become a
-/// scan of the value columns (spec-main, the `INDEXED BY` invariant).
+/// scan of the value columns.
 ///
 /// `ExternalRef` and `RefBase` values do not populate those reverse maps, so an
 /// inbound reference of either kind is not seen. The gap is named in doc "What

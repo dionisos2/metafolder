@@ -230,7 +230,7 @@ fn osm_path_seeded(
     let mut paths = AncestorPaths { store, field, known: HashMap::new() };
     let mut subtrees = Vec::new();
     for (uuid, positions) in found {
-        // One position per forest (spec-data-model).
+        // doc "One position per forest".
         let Some((parent, name)) = positions.into_iter().next() else { continue };
         // A root's path is its bare name; every other node joins with '/'.
         let path = match parent {

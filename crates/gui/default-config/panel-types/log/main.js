@@ -352,8 +352,8 @@ export async function mount(root, metafolder) {
   /** What was last published as `selected_log_entry`, to publish changes only. */
   let publishedKey = 'null';
 
-  /** Publishes the selection for the log-detail panel (spec-gui "Log detail
-   *  view"): the revision, and the operation when the cursor is on one. Called
+  /** Publishes the selection for the log-detail panel (doc "log-detail
+   *  panel"): the revision, and the operation when the cursor is on one. Called
    *  from render, so every path that moves or drops the selection publishes. */
   function publishSelection() {
     const entry =

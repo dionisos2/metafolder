@@ -144,7 +144,7 @@ pub struct GuiConfig {
     pub open_with: Vec<String>,
 }
 
-/// Completion-wide knobs (config.toml `[completion]`, spec-gui "Completion
+/// Completion-wide knobs (config.toml `[completion]`, doc "Completion
 /// views").
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "kebab-case", deny_unknown_fields)]

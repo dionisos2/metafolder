@@ -1,5 +1,5 @@
 //! API error type. All error responses are JSON `{"error": "<message>"}`
-//! with the status codes of the spec-main error table.
+//! with the status codes of doc "Error responses".
 
 use axum::http::StatusCode;
 use axum::response::{IntoResponse, Response};

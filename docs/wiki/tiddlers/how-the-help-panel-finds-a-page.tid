@@ -2,15 +2,15 @@ title: How the help panel finds a page
 tags: [[In-app help]]
 kind: reference
 audience: dev
-summary: The two manifests, the order in which a name is resolved, the attributes that tag a zone for the help cursor, and how a page names a key without writing it.
+summary: The manifest, the order in which a name is resolved, the attributes that tag a zone for the help cursor, and how a page names a key without writing it.
 
 !! The pages
 
-The help panel loads two sets of pages and merges them (`mergeManifests`, the wiki's
-first, so that they win):
-
-* the wiki's, fetched from the GUI server's `/docs/`: `index.json` describes each page as `{id, title, file, aliases[], tags[], kind, audience, status, summary}` — the note's fields, `id` being the slug of the title;
-* the panel's own older pages, `panel-types/help/pages/`, described by `pages/index.json` as `{id, title, file, aliases[]}`. Each is removed when the wiki takes its subject over.
+The help panel's pages are the wiki's, fetched from the GUI server's `/docs/`:
+`index.json` describes each page as `{id, title, file, aliases[], tags[], kind,
+audience, status, summary}` — the note's fields, `id` being the slug of the title.
+(The panel had older pages of its own, `panel-types/help/pages/`, merged with the
+wiki's while the documentation moved; the last ones went when it was done.)
 
 Every page is fetched when the panel is built, and its text kept for the search. The
 pages are plain HTML: the wiki's renderer expands every list and macro at build
@@ -24,7 +24,7 @@ the text is searched for. Without regard to case, and in this order:
 # a text starting with `#` is never a name;
 # the page with that `id`, else with that `title`, else with that alias. The title comes before the aliases so that a command's own note wins over a page that lists the command among its aliases;
 # for a text containing `:` — a command: the same lookup for the command without its arguments, then for what follows the colon (`metarecord-list:focus-query` reaches an alias `focus-query`), then for what precedes it (the panel type);
-# `<type> panel` and `<type>` stand for each other when nothing has the exact name: `treeref` finds a note titled `treeref panel`, and `file panel` finds an older page whose id is `file`.
+# `<type> panel` and `<type>` stand for each other when nothing has the exact name: `treeref` finds a note titled `treeref panel`, and `trash panel` would find a note titled `trash` if the panel had no note of its own.
 
 `scripts/doc check` keeps the three kinds of name apart: an alias may not be the
 title or the id of another note.

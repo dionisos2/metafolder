@@ -1,4 +1,4 @@
-//! Metafolder GUI: a Tauri application over the daemon HTTP API (spec-gui).
+//! Metafolder GUI: a Tauri application over the daemon HTTP API (doc "GUI").
 //!
 //! The Rust side owns all canonical state (workspaces, layout, keybindings,
 //! command registry); the Svelte shell in `frontend/` is a thin reflection
@@ -76,8 +76,8 @@ pub(crate) fn push_keybindings(gui: &GuiState, compiled: &[CompiledBinding]) {
     gui.notify(events::KEYBINDINGS_CHANGED, serde_json::json!({ "bindings": compiled }));
 }
 
-/// Shell builtins shown in the command input autocomplete (spec-gui
-/// "Command names"). Handlers live in the frontend dispatcher.
+/// Shell builtins shown in the command input autocomplete (doc
+/// "GUI command"). Handlers live in the frontend dispatcher.
 fn register_builtins(registry: &CommandRegistry) {
     // The `log` column controls whether an invocation is echoed to the
     // message panel. Basic editing primitives (which fire on nearly every

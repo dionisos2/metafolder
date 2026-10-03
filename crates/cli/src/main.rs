@@ -1,8 +1,8 @@
 //! `mf` binary: argument parsing (clap) and dispatch to
-//! [`metafolder_cli::commands`]. Exit codes (spec-main): 0 success,
+//! [`metafolder_cli::commands`]. Exit codes (doc "Output and exit codes"): 0 success,
 //! 1 operation failed, 2 usage error (clap also exits 2 on bad arguments).
 //!
-//! The command tree mirrors the data model (spec-data-model "* CLI"): a verb
+//! The command tree mirrors the data model (doc "The verb pattern"): a verb
 //! quartet (`get`/`set`/`add`/`delete`) at the metarecord, field-name and
 //! field-id levels, plus the `repo`/`task`/`log` management groups. Repository
 //! and daemon are selected once by the global `-n`/`-u`/`-p` flags.

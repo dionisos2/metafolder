@@ -481,7 +481,7 @@ export function createPanelApi(deps: PanelApiDeps, ctx: PanelApiCtx): PanelApiIn
       refSeed: (field: string) =>
         invoke('ref_seed', { field }) as Promise<{ query: string | null; columns: string } | null>,
       // What joins the columns of a multi-column completion label
-      // (config.toml `[completion].label-separator`, spec-gui "Completion
+      // (config.toml `[completion].label-separator`, doc "Completion
       // views").
       labelSeparator: () => invoke('label_separator') as Promise<string>,
     },
@@ -535,7 +535,7 @@ export function createPanelApi(deps: PanelApiDeps, ctx: PanelApiCtx): PanelApiIn
       keybindings: () => invoke('get_compiled_keybindings') as Promise<Metafolder.Binding[]>,
     },
 
-    // `commands.invoke` lifted to the top of the object (spec-gui "User
+    // `commands.invoke` lifted to the top of the object (doc "User
     // commands"): composing existing commands is what a command is *for*, so
     // the call it makes most should not need a path through the object. The
     // same alias the user-command API installs — one API to learn, not two.

@@ -296,7 +296,7 @@
   { command = "file:restart", when = "file" },
 ]
 
-# Delete: remove the selection, confirmed (spec-trash.org "GUI"). On a
+# Delete: remove the selection, confirmed (doc "Trash"). On a
 # metarecord (`metarecord:remove`) the record always goes: without a file that
 # is the whole of it, and with one the question is about the file — trash it
 # (and the record with it) or keep it (the record alone). The two direct forms
@@ -318,7 +318,7 @@
 ]
 
 # The direct answers to the question `metarecord:remove` asks about a
-# metarecord's file (spec-trash.org "GUI"), in the panels that carry a
+# metarecord's file (doc "Trash"), in the panels that carry a
 # metarecord selection: ctrl+delete sends the file to the trash at once
 # (= metarecord:trash), shift+delete deletes the metarecord alone
 # (= metarecord:delete, the file kept). Both are confirmed, as the bare

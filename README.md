@@ -18,12 +18,12 @@ File identity is hash-based, so metadata follows files when they are moved or re
 The project is a Cargo workspace:
 
 - **`core`** — shared data model (`MetaRecord`, `Field`, `Value`, `Query`), its JSON serialization, the query DSL parser, and the simplified-query language (a user-editable grammar that expands client-side into the normal DSL).
-- **`daemon`** — single background process managing one or more repositories: SQLite storage (EAV schema + FTS5 trigram index) with a full event log, filesystem watcher (inotify), on-demand reconcile with fingerprint matching, an in-memory tree cache and bitmap/BSI query accelerator, user schema validation, and an HTTP API.
+- **`daemon`** — single background process managing one or more repositories: a key-value store (LMDB) with derived bitmap and trigram indexes and a full event log, filesystem watcher (inotify, or the fanotify broker `watchd`), on-demand reconcile with fingerprint matching, user schema validation, and an HTTP API.
 - **`cli`** — the `mf` command-line client: a thin client over the daemon's HTTP API (repository management, metarecord CRUD, query DSL, reconcile/track, log/rollback/prune, schema, and GUI scripting).
 - **`gui`** — the `metafolder-gui` desktop app (Tauri v2 + Svelte 5): workspaces (tabs) with two panel slots, a keybinding system, a command input with autocomplete, and a local scripting HTTP API (`/gui/*`). Panel types are plain HTML/JS directories mounted in Shadow DOM roots (no iframes) and can be customized or added by the user.
 - **`bench`** — benchmarking harness running against two persistent data folders (`data`, `gui`, `attach` modes).
 
-The full specification lives under `docs/` (`spec-*.org`).
+The documentation is a wiki under `docs/wiki/`, read with `scripts/doc` (`scripts/doc show Documentation`) or in the GUI's help panel; start from the note `Documentation`. Cross-repo sync is the one subject not moved there yet: `docs/spec-sync.org`.
 
 ## Quick start (make)
 
@@ -125,8 +125,8 @@ cargo run -p metafolder-core --features sync-config --bin metafolder-sync-config
 `metafolder-sync-config` is the only git actor: it gathers each crate's
 `default-config/`, keeps them on a `default` branch (shipped defaults), and
 3-way-merges them into `main` (your edits) without clobbering your changes.
-Re-run it after pulling new built-in panels or default keybindings. See
-`docs/spec-config.org`.
+Re-run it after pulling new built-in panels or default keybindings. See the
+wiki note `Configuration`.
 
 ## Build and test
 
@@ -168,7 +168,7 @@ daemon writes to a user-only file at startup
 `XDG_RUNTIME_DIR` is unset). This keeps browser content — which can also reach
 `127.0.0.1` — out, since it cannot read the file. `mf` reads the token
 automatically; a raw `curl` client must pass it (see below). The GUI server has
-its own `gui.token`. See `docs/spec-auth.org`.
+its own `gui.token`. See the wiki note `Session tokens`.
 
 Repositories listed in `~/.config/metafolder/daemon/config.toml` are auto-loaded
 at startup.
@@ -192,7 +192,8 @@ Ports come from `~/.config/metafolder/gui/config.toml` (`gui-port` default 7524,
 installs or upgrades anything at startup — its keybindings, stylesheet and panel
 types come from the config repo (run `metafolder-sync-config` first). The local
 HTTP API on the GUI port lets external scripts drive the GUI (workspaces,
-layout, panel views, messages, input prompts). See `docs/spec-gui.org`.
+layout, panel views, messages, input prompts). See the wiki notes `GUI` and
+`Scripting the GUI`.
 
 ## Quick tour (mf)
 
@@ -264,8 +265,8 @@ Run `mf --help` (and `mf <command> --help`) for the full set of options.
 
 ## Quick tour (curl)
 
-The HTTP API has two layers (see `docs/spec-data-model.org` /
-`docs/spec-query.org`): a **resource layer** for a single directly-addressed
+The HTTP API has two layers (see the wiki notes
+`Metarecord endpoints` / `Query endpoints`): a **resource layer** for a single directly-addressed
 thing (`…/metarecords/:uuid`, `…/fields/:name`, `…/fields/:id`) and a **set
 layer** (`POST …/query/*`) where every body carries a `query`.
 
@@ -315,7 +316,7 @@ All bodies are JSON; errors are `{"error": "<message>"}` with a meaningful
 status code. UUIDs are 32-char lowercase hex strings. **Every route (including
 `GET /health`) requires `Authorization: Bearer <token>`** — see "Running the
 daemon".
-See the `docs/` specs for the full request/response formats.
+See the wiki (`HTTP endpoint`, one note per route) for the full request/response formats.
 
 | Route | Description |
 |---|---|
@@ -339,10 +340,10 @@ See the `docs/` specs for the full request/response formats.
 | `GET /repos/:repo/log`, `GET .../log/since` | Event-log reading / change feed |
 | `GET\|PATCH .../log/revisions/:rev_id`, `POST .../log/prune` | Revision labels / pruning |
 | `POST /repos/:repo/rollback` (+ `/plan`, `/start`, `/step`, `/abort`) | Atomic & coordinated navigation |
-| `GET /repos/:repo/schema`, `POST .../schema/{reload,check}` | User schema (spec-schema) |
+| `GET /repos/:repo/schema`, `POST .../schema/{reload,check}` | User schema (wiki: `Schema`) |
 | `GET /repos/:repo/tasks`, `GET\|POST .../tasks/:task[/cancel]` | Background tasks |
 
-Key concepts (see `docs/spec-data-model.org`):
+Key concepts (see the wiki note `Data model`):
 
 - Everything is a **metarecord**: a multi-map of `(name, value)` fields with
   ten value types, including `tree_ref` (a position in a named tree — the

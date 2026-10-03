@@ -3,9 +3,12 @@
 
 La liste de toutes les pages du wiki (=docs/wiki/=) et d'où vient leur contenu.
 On la complète item par item. La conception est dans
-[[file:doc-wiki-proposal.md][doc-wiki-proposal.md]] ; l'outil est =scripts/doc=.
+la note =Why a wiki= (=scripts/doc show "Why a wiki"=) ; l'outil est =scripts/doc=.
 
 * Mode d'emploi
+
+Tous les items sont faits sauf le 29 (sync, reporté) ; l'ancienne
+documentation est retirée (item 43), à l'exception de =spec-sync.org=.
 
 - *Un item = un sujet = un commit.* Un item est =FAIT= quand :
   1. ses notes sont écrites (les cases ci-dessous, cochées au fur et à mesure) ;
@@ -1432,12 +1435,42 @@ routes sans hub sont rattachées à la note de leur sujet (=Health and diagnosti
 reconcile=, =Tracking a folder=) — =POST …/track= et =POST …/reconcile= y étaient à
 peine décrits : leurs notes portent le corps, lu dans =routes/fs.rs=.
 
-** TODO 43. Retrait de l'ancienne documentation
+** FAIT 43. Retrait de l'ancienne documentation
 
-- [ ] plus aucun =docs/spec-*.org= (tout est repris ou délibérément abandonné, et c'est dit)
-- [ ] plus de =pages/= dans le panel help ; retirer =mergeManifests= et l'ancien manifeste
-- [ ] plus aucune citation =spec-x "…"= dans le code
-- [ ] CLAUDE.md : « Specs and roadmap » renvoie au wiki, règle « when deviating, update the doc »
-- [ ] =docs/doc-wiki-proposal.md= devient une note =rationale= (=Why a wiki=) ou est supprimé
-- [ ] =docs/review-followups.md= : ce qui reste ouvert va dans =roadmap.org=
-- [ ] la mémoire ne contient plus de décisions de conception déjà dans le wiki
+- [X] plus aucun =docs/spec-*.org= (tout est repris ou délibérément abandonné, et c'est dit)
+  — *sauf =spec-sync.org=* (voir ci-dessous)
+- [X] plus de =pages/= dans le panel help ; retirer =mergeManifests= et l'ancien manifeste
+- [X] plus aucune citation =spec-x "…"= dans le code — *sauf =spec-sync=*
+- [X] CLAUDE.md : « Specs and roadmap » renvoie au wiki, règle « when deviating, update the doc »
+- [X] =docs/doc-wiki-proposal.md= devient une note =rationale= (=Why a wiki=) ou est supprimé
+- [X] =docs/review-followups.md= : ce qui reste ouvert va dans =roadmap.org=
+- [X] la mémoire ne contient plus de décisions de conception déjà dans le wiki
+
+*Conflit signalé avec l'item 29 (reporté), tranché par l'utilisateur* : la sync
+reste à l'item 29. =spec-sync.org= reste en place, avec un en-tête « non migré,
+pas fiable, voir item 29 », et le code garde ses citations =spec-sync "…"= (la
+seule forme =spec-x= restante). La note =sync panel= est écrite (vérifiée sur
+=panel-types/sync/main.js=) à partir de =pages/sync.html=, ce qui a permis de
+retirer =pages/= et =mergeManifests= ; son exemption de catalogue est retirée,
+celles de =mf sync=, =sync:= et des routes =/sync/= restent. *L'item 29 doit
+supprimer =spec-sync.org= et réécrire ces citations.*
+Ce qui restait des trois autres specs n'était que des pointeurs, sauf dans
+spec-gui : le tableau « Command names » (couvert par le catalogue =GUI command=,
+obligatoire) et la partie doublons de « Reconcile » (couverte par =Finding
+duplicates=, =duplicates panel=, =Deleting duplicate copies=). =hello.html= : la
+note =hello panel= existait (alias =example= repris). Le test vitest
+=help-keys.test.ts= ne lisait que les anciennes pages : sa règle « un raccourci
+annoncé est lié par les keybindings livrées » passe dans =scripts/doc check=
+(=<<key>>=, lu dans les notes générées ; aucune violation), le reste y était déjà.
+Citations : 60 réécrites vers =doc "…"= ; =CHANGELOG.md= et
+=benchmarks/bench_result/= gardent les leurs (historiques). =README.md= renvoie
+au wiki (et ne parle plus de SQLite). =review-followups.md= : §7 était déjà dans
+la roadmap, §8 (=In= natif), §10 et §11 y entrent ; les §5/§6 résolus restent
+expliqués dans les commentaires du code (pointeurs retirés). La roadmap ne cite
+plus de spec migrée ; sa ligne « =routes.rs= : 4 647 lignes » était périmée
+(=routes/= est découpé), retirée. =doc-wiki-proposal.md= → note =Why a wiki=
+(dev, rationale), les outils du wiki y renvoient. Mémoire :
+=doc-wiki-migration=, =version-tags-and-links-retired=,
+=disk-storage-backend-prototype= réduites à des pointeurs ;
+=gui-implementation-state= (périmée : iframes, auto-upgrade) réduite aux
+méthodes de débogage de la WebView. =sync-design= reste pour l'item 29.

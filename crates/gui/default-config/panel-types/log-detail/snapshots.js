@@ -1,7 +1,7 @@
 // log-detail: an operation's before/after snapshots read back as values and
 // paired field by field — "what this operation changed". Pure and unit-tested.
 
-/** The zero uuid: a tree_ref's parent at a forest root (spec-data-model). */
+/** The zero uuid: a tree_ref's parent at a forest root (doc "TreeRef forest"). */
 const ZERO_UUID = '0'.repeat(32);
 
 /**

@@ -174,7 +174,7 @@ fn print_pretty(value: &Json) {
     println!("{}", serde_json::to_string_pretty(value).expect("JSON serialization"));
 }
 
-// ── Repository commands (spec-main) ───────────────────────────────────────────
+// ── Repository commands (doc "Repository") ────────────────────────────────────────
 
 pub fn init(
     ctx: &Ctx,
@@ -354,7 +354,7 @@ pub fn rename_repo(ctx: &Ctx, name: &str) -> Result<i32, CliError> {
     Ok(0)
 }
 
-// ── MetaRecord manipulation (spec-data-model) ──────────────────────────────────────
+// ── MetaRecord manipulation (doc "Data model") ───────────────────────────────────
 
 pub fn get(
     ctx: &Ctx,
@@ -570,7 +570,7 @@ fn raw_value_line(value: &Json) -> Option<String> {
     }
 }
 
-// ── --eq selector, --tsv output (spec-data-model "* CLI") ─────────────────────
+// ── --eq selector, --tsv output (doc "Selectors") ────────────────────────────
 
 /// Renders a scalar [`Value`] as a query-DSL literal for `--eq`, escaping so a
 /// value can never break out of its string (the injection the scripts guard
@@ -766,7 +766,7 @@ fn parse_sort(specs: &[String]) -> Result<Json, CliError> {
     Ok(Json::Array(keys))
 }
 
-// ── Verb tree: metarecord / field (spec-data-model "* CLI") ───────────────────
+// ── Verb tree: metarecord / field (doc "The verb pattern") ────────────────────
 
 /// `mf metarecord get [<selector>]` — merges the former list/query/get:
 /// a UUID selector prints the full JSON object; a predicate (or no selector)

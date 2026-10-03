@@ -2,8 +2,8 @@
 //! repo for byte-identical files, with a busy status while it runs, a summary
 //! in the status bar and the full result in the message log.
 //!
-//! The GUI half of `mf duplicate scan`, hence the `mf:` prefix (spec-gui
-//! "Naming"). Like `reconcile:run` it only polls the task to know when it ends
+//! The GUI half of `mf duplicate scan`, hence the `mf:` prefix (doc
+//! "Command naming"). Like `reconcile:run` it only polls the task to know when it ends
 //! — live progress belongs to the task bar, which polls `GET /tasks` itself.
 
 use crate::daemon_proxy::DaemonProxy;

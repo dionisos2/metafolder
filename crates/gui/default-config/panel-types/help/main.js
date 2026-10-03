@@ -1,17 +1,16 @@
-// Help panel (doc "How the help panel finds a page"). Loads two page sets — the documentation wiki's,
-// rendered and installed in ~/.config/metafolder/docs/ (served at /docs/), and
-// the panel's own older pages/index.json, which the wiki replaces page by page
-// — offers a grep search box on top, and resolves an exact name (a page id, an
+// Help panel (doc "How the help panel finds a page"). Loads the documentation
+// wiki, rendered and installed in ~/.config/metafolder/docs/ (served at
+// /docs/), offers a grep search box on top, and resolves an exact name (a page id, an
 // alias, or a `panel:command`) straight to its page. The
 // shell hands a requested topic in via the `help.request` workspace var (set by
 // the `help` / `help:open` builtins and the help-cursor click resolution).
 
 import { byId, el } from '/__ui.js';
-import { resolvePage, filterPages, mergeManifests } from '/__help.js';
+import { resolvePage, filterPages } from '/__help.js';
 import { applyKeyHints } from '/__keyhints.js';
 
 /**
- * A page of the manifest (pages/index.json), as /__help.js describes it.
+ * A page of the manifest (/docs/index.json), as /__help.js describes it.
  * @typedef {import('/__help.js').Page} Page
  * @typedef {import('/__help.js').IndexedPage} IndexedPage
  *
@@ -26,7 +25,6 @@ export async function mount(root, metafolder) {
   const pageInfo = byId(root, 'help-page-info');
   const includeDev = byId(root, 'help-dev', HTMLInputElement);
 
-  const legacyBase = `${metafolder.guiServer}/panel/help/pages`;
   const wikiBase = `${metafolder.guiServer}/docs`;
 
   // The key hints of the pages (`<kbd data-mf-key="command">`) are filled in
@@ -47,9 +45,8 @@ export async function mount(root, metafolder) {
   }
   await readKeytable();
 
-  // Load the manifests and every page (raw HTML kept for display; textContent
-  // built into a grep index). A wiki that is not installed is a warning, not a
-  // failure: the older pages still work.
+  // Load the manifest and every page (raw HTML kept for display; textContent
+  // built into a grep index).
   /** @type {Page[]} */
   let manifest = [];
   /** @type {Map<string, string>} id -> raw HTML */
@@ -57,22 +54,18 @@ export async function mount(root, metafolder) {
   /** @type {IndexedPage[]} */
   const index = [];
   try {
-    const legacy = await (await fetch(`${legacyBase}/index.json`)).json();
-    /** @type {Page[]} */
-    let wiki = [];
     const response = await fetch(`${wikiBase}/index.json`);
-    if (response.ok) {
-      wiki = await response.json();
-    } else {
+    if (!response.ok) {
       warning.textContent =
         'The documentation is not installed (run scripts/complete-build.sh, or ' +
-        'scripts/doc build then metafolder-sync-config): only the older help pages are shown.';
+        'scripts/doc build then metafolder-sync-config).';
       warning.hidden = false;
+      return;
     }
-    manifest = mergeManifests(legacy, legacyBase, wiki, wikiBase);
+    manifest = await response.json();
     await Promise.all(
       manifest.map(async (page) => {
-        const raw = await (await fetch(`${page.base}/${page.file}`)).text();
+        const raw = await (await fetch(`${wikiBase}/${page.file}`)).text();
         html.set(page.id, raw);
         const probe = document.createElement('div');
         probe.innerHTML = raw;
@@ -107,8 +100,8 @@ export async function mount(root, metafolder) {
     void readKeytable().then(() => applyKeyHints(content, keytable));
 
     // Live grammar: the queries page carries a placeholder we fill at display
-    // (`<<live grammar>>` in the wiki, `#grammar-source` in the older pages).
-    const grammar = content.querySelector('[data-mf-live="grammar"], #grammar-source');
+    // (`<<live grammar>>` in the wiki).
+    const grammar = content.querySelector('[data-mf-live="grammar"]');
     if (grammar) {
       void metafolder.query
         .grammarSource()

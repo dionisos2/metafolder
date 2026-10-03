@@ -1,4 +1,4 @@
-//! `mf:order` (spec-gui "Order"): numbers a folder's direct children — the
+//! `mf:order` (doc "Ordering a folder"): numbers a folder's direct children — the
 //! GUI's half of `mf order`. The heuristic and the daemon orchestration are
 //! shared with the CLI ([`metafolder_core::order`]); this module resolves the
 //! folder *path* the shell deduced from the selection to its metarecord and

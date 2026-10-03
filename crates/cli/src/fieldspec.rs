@@ -1,5 +1,5 @@
-//! Field spec parser: `name:type[=value]` (spec-data-model "* CLI",
-//! "Field specification syntax").
+//! Field spec parser: `name:type[=value]` (doc "Field
+//! specifications").
 
 use metafolder_core::metarecord::Value;
 use uuid::Uuid;

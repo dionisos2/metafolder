@@ -1,5 +1,5 @@
 // scripts/doc — read, search, edit and check the documentation wiki from the
-// command line (docs/doc-wiki-proposal.md, "Outil scripts/doc"). The logic is
+// command line (wiki: Writing documentation). The logic is
 // in tid.mjs; this file only reads and writes files.
 
 import fs from 'node:fs';

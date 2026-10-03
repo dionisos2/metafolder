@@ -352,7 +352,7 @@ fn test_gui_view_has_no_state_option() {
 }
 
 /// An empty `--path` is a value, not an absent option: it travels as `""` and
-/// tells the GUI to CLEAR the selection (spec-gui `PUT /gui/panels/:slot/view`).
+/// tells the GUI to CLEAR the selection (doc "PUT /gui/panels/:slot/view").
 /// A shipped script that previews the entry it is asking about needs to say
 /// "no file" — dropping the option would mean "leave it alone", which leaves
 /// the previous question's file on screen.

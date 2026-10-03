@@ -1,5 +1,5 @@
-//! In-memory bench buffer for the JS profiling harness (spec-gui "Bench
-//! harness"). Each panel reports a `performance.measure` (`mf:*`) to the shell
+//! In-memory bench buffer for the JS profiling harness (doc
+//! "Benchmarks"). Each panel reports a `performance.measure` (`mf:*`) to the shell
 //! through the `bench_record` Tauri command as it happens; the shell appends it
 //! here. `GET /gui/bench` snapshots the buffer and `POST /gui/bench/clear`
 //! empties it, so a driver script can `clear` → run a scenario → read the

@@ -64,8 +64,8 @@ export const store = $state({
     /// Active while `help:cursor` waits for a click to resolve to a help
     /// topic; the next click (or escape) ends it. Drives the `?` cursor.
     helpCursorActive: false,
-    /// Non-null while `help:key` waits for the key to describe (spec-gui
-    /// "Help"): the combo sequence typed so far (a pending sequence
+    /// Non-null while `help:key` waits for the key to describe (doc
+    /// "In-app help"): the combo sequence typed so far (a pending sequence
     /// accumulates, its continuations in `pendingKeys`). The next key is
     /// reported on instead of dispatched; escape cancels the wait.
     describeKeys: null as string[] | null,
@@ -76,7 +76,7 @@ export const store = $state({
     promptText: null as string | null,
     /// Completions offered by the active prompt's autocomplete (their labels).
     promptCompletions: [] as string[],
-    /// The same candidates as label/value couples (spec-gui "Completion
+    /// The same candidates as label/value couples (doc "Completion
     /// views"): the label is shown and matched whole, the value is what the
     /// command receives. Identical labels arrive already suffixed with their
     /// values, so every listed row names exactly one thing.

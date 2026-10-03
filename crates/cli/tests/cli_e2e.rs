@@ -244,7 +244,7 @@ fn test_load_with_metafolder_flag() {
 #[test]
 fn test_load_waits_for_warmup_silently_when_stderr_is_piped() {
     // The default load waits for the warmup task; the progress bar is only
-    // drawn on a terminal, so a piped stderr stays clean (spec-main
+    // drawn on a terminal, so a piped stderr stays clean (doc
     // "mf repo load").
     let (repo, root) = init_repo("load_wait");
     let out = mf(&["-u", &repo, "repo", "unload"]);
@@ -1656,7 +1656,7 @@ fn test_prune_without_force_aborts_on_no() {
     assert!(out.stderr.contains("aborted"), "stderr: {}", out.stderr);
 }
 
-// ── Verb-tree additions (spec-data-model "* CLI") ─────────────────────────────
+// ── Verb-tree additions (doc "The verb pattern") ──────────────────────────────
 
 #[test]
 fn test_repo_selected_by_name() {

@@ -32,7 +32,7 @@ pub const ORIGIN_WATCHER: &str = "watcher";
 /// in the trash-bin rather than gone.
 pub const ORIGIN_TRASH: &str = "trash";
 
-/// Maximum depth of a TreeRef chain (spec-main invariant).
+/// Maximum depth of a TreeRef chain (doc "TreeRef forest").
 pub const MAX_TREE_DEPTH: usize = 1000;
 
 /// Operation types recorded in the log (doc "Revisions and operations").
@@ -549,8 +549,8 @@ pub fn coordinated_step(
 /// pre-move location (`is_new=0`), so we rewind to `is_new=1`; on a forward
 /// (redo) step it applied the post-move location (`is_new=1`), so we rewind to
 /// `is_new=0`. Taking the wrong side leaves the metadata where the (skipped,
-/// hence not performed) move would have put it. See `docs/review-followups.md`
-/// (#6).
+/// hence not performed) move would have put it. See doc "Filesystem
+/// coordination".
 fn enqueue_restoration(tx: &dyn WriteTxn, op: &OpRow, dir: NavDir) -> Result<()> {
     let entity = op.entity_uuid;
     let restoration = match op.op_type.as_str() {
@@ -1630,7 +1630,7 @@ impl<'c> Writer<'c> {
             .collect())
     }
 
-    /// Enforces the "one value type per field name" invariant (spec-data-model):
+    /// Enforces the "one value type per field name" invariant (doc "One value type per field name"):
     /// a field name carries a single non-`Nothing` value type repository-wide.
     /// `Nothing` is absence, not a type, so it is always allowed. A non-`Nothing`
     /// value whose type differs from the established one is rejected; changing a
@@ -1703,7 +1703,7 @@ impl<'c> Writer<'c> {
 
     /// For TreeRef values: the parent must be null (root) or an existing metarecord
     /// carrying a TreeRef of the same field name; the write must not create a
-    /// cycle nor exceed [`MAX_TREE_DEPTH`] (spec-main invariants).
+    /// cycle nor exceed [`MAX_TREE_DEPTH`] (doc "TreeRef forest").
     fn validate_tree_ref(&self, metarecord: Uuid, field_name: &str, value: &Value) -> Result<()> {
         let Value::TreeRef { parent, .. } = value else {
             return Ok(());

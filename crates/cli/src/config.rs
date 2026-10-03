@@ -11,7 +11,7 @@ use std::path::{Path, PathBuf};
 
 use serde::Deserialize;
 
-/// Default daemon port on 127.0.0.1 (spec-main). Also the daemon's own default.
+/// Default daemon port on 127.0.0.1 (doc "Global options"). Also the daemon's own default.
 pub const DEFAULT_DAEMON_PORT: u16 = 7523;
 /// Default internal pagination page size for `list`/`get`/`query` streaming.
 pub const DEFAULT_PAGE_SIZE: usize = 500;

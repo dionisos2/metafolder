@@ -1,9 +1,10 @@
 #+TITLE: Roadmap
 
 What is left to do, most urgent first. Done work is not kept here: it is in
-the git history and the CHANGELOG. Deferred work inside a spec is tagged
-=:deferred:= and named there (doc "Version scope and non-goals"); the ones worth
-keeping in view are listed at the end.
+the git history and the CHANGELOG. Deferred work is a wiki note with
+=status: deferred= or =proposed= (=scripts/doc ls --status deferred=; doc
+"Version scope and non-goals"); the ones worth keeping in view are listed at
+the end.
 
 * TODO performance
 The recurring defect of this project is a cost that grows with the repository
@@ -29,7 +30,7 @@ the GUI's finder builds =osm= queries, not these.
 
 ** TODO the query planner: the next choices
 Built September 2026 from the cases profiling found, not from the old design
-(spec-indexing's adaptive planner stays a record): a deferred text leaf's
+(the old adaptive planner stays a record: doc "Indexing architecture"): a deferred text leaf's
 candidates narrowed by trigrams (=495ea1b=), and the first choice made on a
 cost — an =osm= path's anchors cut by a rare earlier term (=1140e07=). What
 is left, each to measure before building:
@@ -39,7 +40,7 @@ is left, each to measure before building:
   read). No bitmap formulation found cheaper on that shape;
 - whatever the slow log shows next on a real repository: reads are logged per
   phase, a read is logged from 100 ms or 100 000 keys, and =mf slow replay=
-  runs a logged query again for its phases now (spec-slow-log).
+  runs a logged query again for its phases now (doc "Slow log").
 
 ** TODO =mf order= writes one revision per child
 N children cost N =PUT=s: N transactions, N fsyncs and N revisions, so undoing
@@ -58,6 +59,14 @@ seek, not a walk), and =query/fields/resolve-tree= maps the answers back to
 their paths. What is left is rewriting the caller.
 
 * TODO query API
+** TODO no native =In { field, values }=
+"This field is one of these N values" is still an =Or= of N =Eq=: about 2N
+nodes, against the caps of =query_validate.rs= (=MAX_QUERY_NODES= 2000,
+=MAX_COMBINATOR_OPERANDS= 200 — kept as guards against a malformed query,
+decided September 2026). A native =In= is one node and makes the caps painless
+for membership. Uuids are done already: =uuid_in=, and the DSL folds an =Or= of
+bare uuids into one.
+
 ** TODO the CLI cannot read a scope by batches: no =--cursor=
 The daemon pages (=POST /query=: =limit=, an opaque keyset =cursor=,
 =next_cursor=), and =mf metarecord get --count= exists, but =--limit N= caps the
@@ -76,7 +85,7 @@ bursts mixing renames and removals of the same names while the broker is
 held, several subscribers on one filesystem with overlapping roots.
 
 ** TODO fanotify: what the note leaves open
-From [[file:docs/watcher-fanotify.md][docs/watcher-fanotify.md]] "Open questions":
+From doc "Watcher open questions" (and doc "The fanotify broker"):
 - events of the covered filesystems outside the roots are dropped by the
   broker, but still queued and read: a flood of them can overflow the group's
   queue for everyone. Ignore marks (=FAN_MARK_IGNORE=, 6.0+) on the busiest
@@ -130,8 +139,6 @@ crate to find what is untested.
 
 * TODO structure
 Not problems of behaviour; worth doing for navigability, each a large diff.
-- =routes.rs=: 4 647 lines, 97 handlers. Splitting it into =routes/=
-  submodules is filing, not simplification.
 - The big panels are one =mount()= each (=metarecord-list= 1 895 lines,
   =metarecord-detail= 2 203): they share the instance's state, so extracting
   anything means passing an explicit context — a rewrite, not to start
@@ -141,17 +148,30 @@ Not problems of behaviour; worth doing for navigability, each a large diff.
   extraction would cost ten-parameter signatures. Left alone deliberately.
 
 * TODO shipped tagging scripts
-See =docs/review-followups.md=: §10 (the mock =mf= log loses argument
-boundaries — deferred, cost above gain) and §11 (=mf path= per question in the
-tagging scripts, waiting on a CLI that prints a repository's root, e.g.
-=mf repo root=).
+** TODO the mock =mf= log loses argument boundaries
+=scripts/lib/mf-mock.sh= (and =daemon-fixture.sh=) log each call as ="$*"=,
+arguments joined by spaces, so an assertion glob can match text *inside* an
+argument — a DSL query holds spaces. No false positive seen, and the log's
+form is the interface of =mock_count= / =mock_calls_matching=: changing it
+rewrites the hundred assertions of six suites. Deferred, cost above gain. If it
+ever bites: keep =$*= as the readable log and write a second one, arguments
+separated by =\x1f=, with a =mock_count_argv= for the assertions that need it.
+
+** TODO =mf path= once per question in the tagging scripts
+=gui-tag-folder.sh= and =gui-tag-pair.sh= call =mf path "$uuid"= for the preview
+at each question, right after reading the same record's *relative* path
+(=--resolve-tree mfr_path=). Only the repository's absolute root is missing to
+build it without the round-trip. One HTTP call per keystroke of a human: not
+felt. Clean fix: a CLI printing a repository's root (=mf repo root=, or a
+=--root= on =mf repo list=, whose JSON would need =jq=), read once per run —
+a CLI addition to weigh first.
 
 * Deferred in the specs
 Named where they are, kept here so they are not forgotten:
-- spec-storage: readers that never block on KV (operations stay sequential —
-  decided September 2026); a KV bit-sliced index.
-- spec-sync: "Performance concerns"; "Cross-machine sync" (the remote
+- doc "Storage open questions": readers that never block on KV (operations
+  stay sequential — decided September 2026); a KV bit-sliced index.
+- =docs/spec-sync.org= (not migrated, docs.org item 29): "Performance concerns"; "Cross-machine sync" (the remote
   =.metafolder/= brought local for the sync and sent back, the remote locked
   meanwhile — a network filesystem is refused since SQLite was dropped).
-- spec-query-cost: =POST /query/explain=, entirely unimplemented (=POST
+- doc "Query cost model": =POST /query/explain=, entirely unimplemented (=POST
   /query/profile= answers the measured half: the phases of a query run now).

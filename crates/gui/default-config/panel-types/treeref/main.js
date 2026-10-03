@@ -237,7 +237,7 @@ export async function mount(root, metafolder) {
     if (r === null) throw new Error('no active repository');
     const leaf = (name ?? '').trim();
     if (leaf === '') throw new Error('a node name is required');
-    // One path component, like every tree_ref name (spec-data-model): the
+    // One path component, like every tree_ref name (doc "Tree names"): the
     // forest structure is the parents, never a slash inside a name.
     if (leaf.includes('/')) {
       throw new Error(`invalid node name "${leaf}": must be a single path component`);

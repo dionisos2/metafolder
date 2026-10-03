@@ -2,9 +2,9 @@
 // and click-target -> topic resolution. No DOM, no fetch.
 
 import { describe, expect, test } from 'vitest';
-import { resolvePage, filterPages, resolveClickTopic, mergeManifests } from '../../panel-shim/help.js';
+import { resolvePage, filterPages, resolveClickTopic } from '../../panel-shim/help.js';
 
-// A miniature manifest mirroring pages/index.json.
+// A miniature manifest mirroring /docs/index.json.
 const MANIFEST = [
   {
     id: 'getting-started',
@@ -152,32 +152,6 @@ describe('filterPages and the audience', () => {
   test('an exact name still opens a developer page', () => {
     const manifest = [{ id: 'trash-layout', title: 'Trash on-disk layout', file: 'x', audience: 'dev' }];
     expect(resolvePage(manifest, 'trash-layout')?.id).toBe('trash-layout');
-  });
-});
-
-describe('mergeManifests', () => {
-  const LEGACY = [
-    { id: 'trash', title: 'Trash panel', file: 'trash.html', aliases: ['bin'] },
-    { id: 'repos', title: 'Repositories', file: 'repos.html' },
-  ];
-  const WIKI = [{ id: 'trash', title: 'Trash', file: 'trash.html', aliases: ['bin'] }];
-
-  test('every page remembers where it is fetched from', () => {
-    const out = mergeManifests(LEGACY, '/panel/help/pages', WIKI, '/docs');
-    expect(out.map((p) => [p.id, p.base])).toEqual([
-      ['trash', '/docs'],
-      ['repos', '/panel/help/pages'],
-    ]);
-  });
-
-  test('a migrated page replaces the old one, and wins name resolution', () => {
-    const out = mergeManifests(LEGACY, '/old', WIKI, '/docs');
-    expect(out.filter((p) => p.id === 'trash')).toHaveLength(1);
-    expect(resolvePage(out, 'bin')?.base).toBe('/docs');
-  });
-
-  test('no wiki (not installed) leaves the old pages', () => {
-    expect(mergeManifests(LEGACY, '/old', [], '/docs').map((p) => p.id)).toEqual(['trash', 'repos']);
   });
 });
 

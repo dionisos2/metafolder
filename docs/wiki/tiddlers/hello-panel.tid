@@ -2,7 +2,7 @@ title: hello panel
 tags: Panel [[Writing a panel type]]
 kind: reference
 audience: dev
-aliases: hello example-panel
+aliases: hello example example-panel
 summary: The smallest panel type: it shows its workspace and the active repository, and registers one command — a directory to copy to start a panel of your own.
 
 `hello` is an example, not a tool: two files, about forty lines, to copy under
